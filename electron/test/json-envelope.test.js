@@ -169,6 +169,42 @@ describe("serializeMessages / stringifyStore", () => {
   });
 });
 
+describe("indexMessagesObject", () => {
+  it("can skip-scan ranges without JSON.parse of message payloads", () => {
+    const canary = "CANARY_" + "q".repeat(400);
+    const raw = JSON.stringify({
+      t1: [
+        { id: "tool", role: "tool", tool: { input: canary } },
+        { id: "asst", role: "assistant", text: "done" },
+      ],
+    });
+    const orig = JSON.parse;
+    const parsedCanary = [];
+    JSON.parse = (text, ...rest) => {
+      if (typeof text === "string" && text.includes("CANARY_")) {
+        parsedCanary.push(text.length);
+      }
+      return orig(text, ...rest);
+    };
+    try {
+      const withPeek = indexMessagesObject(raw);
+      assert.ok(withPeek.ranges.has("t1"));
+      assert.equal(withPeek.lastAssistants.get("t1").text, "done");
+      assert.equal(parsedCanary.length, 0, "tail peek parses only the assistant");
+
+      parsedCanary.length = 0;
+      const noPeek = indexMessagesObject(raw, { peekAssistants: false });
+      assert.ok(noPeek.ranges.has("t1"));
+      assert.equal(noPeek.lastAssistants.size, 0);
+      assert.deepEqual(parsedCanary, []);
+      const r = noPeek.ranges.get("t1");
+      assert.equal(raw.slice(r.start, r.end).includes(canary), true);
+    } finally {
+      JSON.parse = orig;
+    }
+  });
+});
+
 describe("appendJsonArrayItem", () => {
   it("appends to empty, compact, and pretty-printed arrays without parsing siblings", () => {
     const emptyRange = { start: 0, end: 2 };

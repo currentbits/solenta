@@ -341,7 +341,7 @@ describe("Store", () => {
     assert.deepEqual(leftovers, []);
   });
 
-  it("backs off flush delay when save() keeps landing, then resets", async () => {
+  it("keeps a flat 250ms flush delay under sustained save() (#225)", async () => {
     const store = new Store(filePath);
     const realOpen = fs.promises.open;
     fs.promises.open = async (...args) => {
@@ -359,14 +359,14 @@ describe("Store", () => {
       store.save();
       await new Promise((r) => setTimeout(r, SAVE_DEBOUNCE_MS + 150));
       await store.flushPending();
-      assert.equal(store._flushDelayMs, SAVE_DEBOUNCE_MS * 2);
+      assert.equal(store._flushDelayMs, SAVE_DEBOUNCE_MS);
     } finally {
       fs.promises.open = realOpen;
     }
     await new Promise((r) => setTimeout(r, SAVE_DEBOUNCE_MS + 150));
     await store.flushPending();
     assert.equal(store._flushDelayMs, SAVE_DEBOUNCE_MS);
-    assert.ok(SAVE_DEBOUNCE_MAX_MS >= SAVE_DEBOUNCE_MS * 2);
+    assert.equal(SAVE_DEBOUNCE_MAX_MS, SAVE_DEBOUNCE_MS);
   });
 
   it("markDirty remembers mutations without scheduling a flush (#636)", () => {
@@ -1498,8 +1498,12 @@ describe("Store", () => {
         { id: "p1", slug: "a/b", name: "b", path: "/x" },
       ]);
       store.saveNow();
-      const onDisk = fs.readFileSync(filePath, "utf8");
-      assert.ok(onDisk.includes(CANARY));
+      const shard = fs.readFileSync(
+        path.join(tmpDir, "messages", "t-big.json"),
+        "utf8",
+      );
+      assert.ok(shard.includes(CANARY));
+      assert.equal(fs.readFileSync(filePath, "utf8").includes(CANARY), false);
       const reloaded = new Store(filePath);
       assert.equal(reloaded.getProjects()[0].id, "p1");
       assert.equal(reloaded.getMessages("t-big")[0].tool.input, CANARY);
@@ -1762,6 +1766,711 @@ describe("Store", () => {
       const reloaded = new Store(filePath);
       assert.equal(reloaded.getMessages("t-empty").at(-1).role, "event");
       assert.equal(reloaded.getMessages("t-big")[0].tool.input, CANARY);
+    });
+  });
+
+  describe("sharded messages (#225)", () => {
+    const CANARY = "CANARY_" + "x".repeat(4000);
+
+    function writeLegacyBlob() {
+      fs.writeFileSync(
+        filePath,
+        JSON.stringify({
+          projects: [],
+          threads: [
+            {
+              id: "t-big",
+              projectId: "p1",
+              title: "Big",
+              status: "idle",
+              createdAt: 1,
+              updatedAt: 2,
+            },
+            {
+              id: "t-small",
+              projectId: "p1",
+              title: "Small",
+              status: "idle",
+              createdAt: 1,
+              updatedAt: 3,
+            },
+          ],
+          messagesByThread: {
+            "t-big": [
+              {
+                id: "tool-1",
+                role: "tool",
+                tool: { name: "bash", input: CANARY },
+                createdAt: 10,
+              },
+              {
+                id: "asst-1",
+                role: "assistant",
+                text: "all done",
+                createdAt: 11,
+              },
+            ],
+            "t-small": [
+              { id: "u1", role: "user", text: "ping", createdAt: 20 },
+              { id: "a1", role: "assistant", text: "pong", createdAt: 21 },
+            ],
+          },
+          workLogByThread: {
+            "t-small": [{ id: "w1", label: "kept", done: true, timestamp: 30 }],
+          },
+          usageByThread: {},
+        }),
+        "utf8",
+      );
+    }
+
+    function shardPath(id) {
+      return path.join(tmpDir, "messages", `${id}.json`);
+    }
+
+    it("splits a legacy blob into per-thread files and strips the envelope", () => {
+      writeLegacyBlob();
+      const store = new Store(filePath);
+      assert.equal(store.getMessages("t-big")[0].tool.input, CANARY);
+      assert.equal(store.getMessages("t-small")[1].text, "pong");
+      const envelope = JSON.parse(fs.readFileSync(filePath, "utf8"));
+      assert.deepEqual(envelope.messagesByThread, {});
+      assert.equal(JSON.stringify(envelope).includes(CANARY), false);
+      assert.ok(envelope.workLogByThread["t-small"]);
+      assert.equal(
+        JSON.parse(fs.readFileSync(shardPath("t-big"), "utf8"))[0].tool.input,
+        CANARY,
+      );
+      assert.equal(
+        JSON.parse(fs.readFileSync(shardPath("t-small"), "utf8"))[1].text,
+        "pong",
+      );
+    });
+
+    it("does not rewrite a clean shard when another thread mutates", () => {
+      writeLegacyBlob();
+      const store = new Store(filePath);
+      const before = fs.readFileSync(shardPath("t-big"), "utf8");
+      store.appendMessage("t-small", {
+        id: "a2",
+        role: "assistant",
+        text: "again",
+        createdAt: 22,
+      });
+      store.saveNow();
+      assert.equal(fs.readFileSync(shardPath("t-big"), "utf8"), before);
+      assert.equal(
+        JSON.parse(fs.readFileSync(shardPath("t-small"), "utf8")).at(-1).text,
+        "again",
+      );
+      assert.equal(
+        Object.prototype.hasOwnProperty.call(store._messagesHydrated, "t-big"),
+        false,
+      );
+    });
+
+    it("resumes a half-finished split without overwriting the existing shard", () => {
+      writeLegacyBlob();
+      fs.mkdirSync(path.join(tmpDir, "messages"));
+      fs.writeFileSync(
+        shardPath("t-big"),
+        JSON.stringify([
+          {
+            id: "tool-1",
+            role: "tool",
+            tool: { name: "bash", input: CANARY },
+            createdAt: 10,
+          },
+          {
+            id: "asst-1",
+            role: "assistant",
+            text: "all done",
+            createdAt: 11,
+          },
+          { id: "extra", role: "user", text: "from-shard", createdAt: 12 },
+        ]),
+      );
+      const store = new Store(filePath);
+      assert.equal(store.getMessages("t-big").at(-1).text, "from-shard");
+      assert.equal(store.getMessages("t-small")[0].text, "ping");
+      assert.equal(fs.existsSync(shardPath("t-small")), true);
+      const envelope = JSON.parse(fs.readFileSync(filePath, "utf8"));
+      assert.deepEqual(envelope.messagesByThread, {});
+      assert.equal(JSON.stringify(envelope).includes(CANARY), false);
+    });
+
+    it("removeThread deletes the shard file so reload does not resurrect it", () => {
+      writeLegacyBlob();
+      const store = new Store(filePath);
+      store.setThreads(store.getThreads().filter((t) => t.id !== "t-big"));
+      store.removeThread("t-big");
+      store.saveNow();
+      assert.equal(fs.existsSync(shardPath("t-big")), false);
+      assert.equal(fs.existsSync(shardPath("t-small")), true);
+      const reloaded = new Store(filePath);
+      assert.deepEqual(reloaded.getMessages("t-big"), []);
+      assert.equal(
+        Object.prototype.hasOwnProperty.call(
+          reloaded.data.messagesByThread,
+          "t-big",
+        ),
+        false,
+      );
+      assert.ok(reloaded.getMessages("t-small").length > 0);
+    });
+
+    it("does not JSON.parse an unopened shard at construct time", () => {
+      writeLegacyBlob();
+      new Store(filePath); // migrate
+      assert.equal(fs.readFileSync(filePath, "utf8").includes(CANARY), false);
+      assert.equal(fs.existsSync(shardPath("t-big")), true);
+      const orig = JSON.parse;
+      const parsedCanary = [];
+      JSON.parse = (text, ...rest) => {
+        if (typeof text === "string" && text.includes("CANARY_")) {
+          parsedCanary.push(text.length);
+        }
+        return orig(text, ...rest);
+      };
+      try {
+        const store = new Store(filePath);
+        assert.deepEqual(parsedCanary, []);
+        assert.equal(
+          Object.prototype.hasOwnProperty.call(store._messagesHydrated, "t-big"),
+          false,
+        );
+        assert.equal(store.getLastAssistantMessage("t-big").text, "all done");
+        assert.deepEqual(
+          parsedCanary,
+          [],
+          "last-assistant peek must not parse the tool payload",
+        );
+        store.getMessages("t-big");
+        assert.equal(parsedCanary.length, 1);
+      } finally {
+        JSON.parse = orig;
+      }
+    });
+
+    it("saveNow still persists a dirty shard when it aborts an in-flight flush", async () => {
+      const store = new Store(filePath);
+      store.setMessages("t1", [
+        { id: "m1", role: "user", text: "hi", createdAt: 1 },
+      ]);
+      store.save();
+      let release;
+      const gate = new Promise((r) => {
+        release = r;
+      });
+      const realOpen = fs.promises.open;
+      fs.promises.open = async (...args) => {
+        const handle = await realOpen(...args);
+        const realWrite = handle.writeFile.bind(handle);
+        handle.writeFile = (...wargs) => gate.then(() => realWrite(...wargs));
+        return handle;
+      };
+      try {
+        await new Promise((r) => setTimeout(r, SAVE_DEBOUNCE_MS + 50));
+        store.setMessages("t1", [
+          { id: "m1", role: "user", text: "hi", createdAt: 1 },
+          { id: "m2", role: "assistant", text: "there", createdAt: 2 },
+        ]);
+        store.saveNow();
+        release();
+        await store.flushPending();
+      } finally {
+        fs.promises.open = realOpen;
+      }
+      assert.equal(
+        JSON.parse(fs.readFileSync(shardPath("t1"), "utf8")).at(-1).text,
+        "there",
+      );
+      assert.deepEqual(
+        JSON.parse(fs.readFileSync(filePath, "utf8")).messagesByThread,
+        {},
+      );
+    });
+
+    it("does not let a stale async rename overwrite a later saveNow", async () => {
+      const store = new Store(filePath);
+      store.setMessages("t1", [
+        { id: "m1", role: "user", text: "old", createdAt: 1 },
+      ]);
+      store.save();
+      let releaseWrite;
+      const gateWrite = new Promise((r) => {
+        releaseWrite = r;
+      });
+      const realOpen = fs.promises.open;
+      fs.promises.open = async (...args) => {
+        const handle = await realOpen(...args);
+        const realWrite = handle.writeFile.bind(handle);
+        handle.writeFile = (...wargs) => gateWrite.then(() => realWrite(...wargs));
+        return handle;
+      };
+      try {
+        await new Promise((r) => setTimeout(r, SAVE_DEBOUNCE_MS + 50));
+        store.setMessages("t1", [
+          { id: "m1", role: "user", text: "old", createdAt: 1 },
+          { id: "m2", role: "assistant", text: "new", createdAt: 2 },
+        ]);
+        store.saveNow();
+        releaseWrite();
+        await store.flushPending();
+      } finally {
+        fs.promises.open = realOpen;
+      }
+      assert.equal(
+        JSON.parse(fs.readFileSync(shardPath("t1"), "utf8")).at(-1).text,
+        "new",
+      );
+      assert.deepEqual(
+        JSON.parse(fs.readFileSync(filePath, "utf8")).messagesByThread,
+        {},
+      );
+    });
+
+    it("saveNow writes a new thread's shard without embedding it in the envelope", () => {
+      const store = new Store(filePath);
+      store.setThreads([
+        {
+          id: "t1",
+          projectId: "p1",
+          title: "Hello",
+          status: "idle",
+          createdAt: 1,
+          updatedAt: 2,
+        },
+      ]);
+      store.setMessages("t1", [
+        { id: "m1", role: "user", text: "hi", createdAt: 3 },
+      ]);
+      store.setWorkLog("t1", [
+        { id: "w1", label: "step", done: false, timestamp: 4 },
+      ]);
+      store.saveNow();
+      const envelope = JSON.parse(fs.readFileSync(filePath, "utf8"));
+      assert.deepEqual(envelope.messagesByThread, {});
+      assert.equal(envelope.workLogByThread.t1[0].label, "step");
+      assert.deepEqual(JSON.parse(fs.readFileSync(shardPath("t1"), "utf8")), [
+        { id: "m1", role: "user", text: "hi", createdAt: 3 },
+      ]);
+    });
+
+    it("corrupt shard fails safely without touching the envelope or sibling shards", () => {
+      writeLegacyBlob();
+      new Store(filePath);
+      const envelopeBefore = fs.readFileSync(filePath, "utf8");
+      const smallBefore = fs.readFileSync(shardPath("t-small"), "utf8");
+      fs.writeFileSync(shardPath("t-big"), "{not valid json", "utf8");
+      const store = new Store(filePath);
+      assert.deepEqual(store.getMessages("t-big"), []);
+      assert.equal(store.getMessages("t-small")[1].text, "pong");
+      assert.equal(fs.readFileSync(filePath, "utf8"), envelopeBefore);
+      assert.equal(fs.readFileSync(shardPath("t-small"), "utf8"), smallBefore);
+      assert.equal(fs.readFileSync(shardPath("t-big"), "utf8"), "{not valid json");
+      store.setProjects([{ id: "p1", slug: "a/b", name: "b", path: "/x" }]);
+      store.saveNow();
+      assert.equal(
+        JSON.parse(fs.readFileSync(filePath, "utf8")).projects[0].id,
+        "p1",
+      );
+      assert.deepEqual(
+        JSON.parse(fs.readFileSync(filePath, "utf8")).messagesByThread,
+        {},
+      );
+      assert.equal(fs.readFileSync(shardPath("t-small"), "utf8"), smallBefore);
+      assert.equal(fs.readFileSync(shardPath("t-big"), "utf8"), "{not valid json");
+    });
+
+    it("encodes hostile thread ids so shards stay inside messages/", () => {
+      const store = new Store(filePath);
+      const hostile = "../evil";
+      store.setMessages(hostile, [
+        { id: "m1", role: "user", text: "x", createdAt: 1 },
+      ]);
+      store.saveNow();
+      assert.equal(fs.existsSync(path.join(tmpDir, "evil.json")), false);
+      const names = fs.existsSync(path.join(tmpDir, "messages"))
+        ? fs.readdirSync(path.join(tmpDir, "messages"))
+        : [];
+      assert.ok(
+        names.every((n) => !n.includes("/") && !n.includes("\\")),
+        "shard names must be single path segments",
+      );
+      assert.ok(
+        names.some((n) => n.endsWith(".json") && n.includes("%")),
+        "hostile id must be encoded into a messages/ filename",
+      );
+      const envelope = JSON.parse(fs.readFileSync(filePath, "utf8"));
+      assert.deepEqual(envelope.messagesByThread, {});
+      const reloaded = new Store(filePath);
+      assert.equal(reloaded.getMessages(hostile)[0].text, "x");
+    });
+
+    it("does not quarantine a valid envelope when a migration shard write fails", () => {
+      writeLegacyBlob();
+      const original = fs.readFileSync(filePath, "utf8");
+      const realWrite = fs.writeFileSync;
+      let shardWrites = 0;
+      fs.writeFileSync = (p, ...rest) => {
+        const dest = String(p);
+        if (dest.includes(`${path.sep}messages${path.sep}`)) {
+          shardWrites += 1;
+          if (shardWrites === 1) {
+            const err = new Error("ENOSPC");
+            err.code = "ENOSPC";
+            throw err;
+          }
+        }
+        return realWrite(p, ...rest);
+      };
+      let store;
+      try {
+        store = new Store(filePath);
+      } finally {
+        fs.writeFileSync = realWrite;
+      }
+      const quarantined = fs
+        .readdirSync(tmpDir)
+        .filter((n) => n.startsWith("coder-store.json.corrupt-"));
+      assert.equal(quarantined.length, 0);
+      assert.equal(fs.existsSync(filePath), true);
+      const onDisk = fs.readFileSync(filePath, "utf8");
+      assert.ok(onDisk.includes("t-big") || onDisk.includes("t-small"));
+      JSON.parse(onDisk);
+      assert.notEqual(onDisk, "{not valid json");
+      assert.equal(store.getMessages("t-big")[0].tool.input, CANARY);
+      assert.equal(store.getMessages("t-small")[1].text, "pong");
+      assert.equal(original.includes(CANARY), true);
+    });
+
+    it("fails closed on unencodable legacy ids and leaves the inline envelope intact", () => {
+      const badId = "\uD800";
+      fs.writeFileSync(
+        filePath,
+        JSON.stringify({
+          projects: [],
+          threads: [
+            {
+              id: "t-ok",
+              projectId: "p1",
+              title: "Ok",
+              status: "idle",
+              createdAt: 1,
+              updatedAt: 2,
+            },
+          ],
+          messagesByThread: {
+            "t-ok": [{ id: "m1", role: "user", text: "ok", createdAt: 1 }],
+            [badId]: [{ id: "m2", role: "user", text: "kept", createdAt: 2 }],
+          },
+          workLogByThread: {},
+        }),
+        "utf8",
+      );
+      const store = new Store(filePath);
+      const quarantined = fs
+        .readdirSync(tmpDir)
+        .filter((n) => n.startsWith("coder-store.json.corrupt-"));
+      assert.equal(quarantined.length, 0);
+      assert.equal(store.getMessages("t-ok")[0].text, "ok");
+      assert.equal(store.getMessages(badId)[0].text, "kept");
+      const envelope = JSON.parse(fs.readFileSync(filePath, "utf8"));
+      assert.notDeepEqual(envelope.messagesByThread, {});
+      assert.equal(
+        JSON.stringify(envelope.messagesByThread).includes("kept"),
+        true,
+      );
+    });
+
+    it("copies the pre-migration envelope to .bak before the first shard write", () => {
+      writeLegacyBlob();
+      new Store(filePath);
+      assert.equal(fs.existsSync(`${filePath}.bak`), true);
+      const bak = fs.readFileSync(`${filePath}.bak`, "utf8");
+      assert.ok(bak.includes(CANARY), "bak must be the pre-split blob");
+      assert.deepEqual(
+        JSON.parse(fs.readFileSync(filePath, "utf8")).messagesByThread,
+        {},
+      );
+    });
+
+    it("saveNow failure restores dirty ids and the exit hook", () => {
+      const store = new Store(filePath);
+      store.setMessages("t1", [
+        { id: "m1", role: "user", text: "hi", createdAt: 1 },
+      ]);
+      store.setMessages("t2", [
+        { id: "m2", role: "user", text: "yo", createdAt: 1 },
+      ]);
+      store.markDirty();
+      const realRename = fs.renameSync;
+      let n = 0;
+      fs.renameSync = (...args) => {
+        n += 1;
+        if (n >= 2) throw new Error("EIO");
+        return realRename(...args);
+      };
+      try {
+        assert.throws(() => store.saveNow(), /EIO/);
+      } finally {
+        fs.renameSync = realRename;
+      }
+      assert.equal(store._dirty, true);
+      assert.equal(store._exitHookArmed, true);
+      store.saveNow();
+      assert.equal(new Store(filePath).getMessages("t1")[0].text, "hi");
+      assert.equal(new Store(filePath).getMessages("t2")[0].text, "yo");
+    });
+
+    it("inflight delete replay does not beat a newer setMessages", async () => {
+      const store = new Store(filePath);
+      store.setMessages("t1", [
+        { id: "m1", role: "user", text: "old", createdAt: 1 },
+      ]);
+      store.saveNow();
+      store.removeThread("t1");
+      store.save();
+      let release;
+      const gate = new Promise((r) => {
+        release = r;
+      });
+      const realOpen = fs.promises.open;
+      fs.promises.open = async (...args) => {
+        const handle = await realOpen(...args);
+        const realWrite = handle.writeFile.bind(handle);
+        handle.writeFile = (...wargs) => gate.then(() => realWrite(...wargs));
+        return handle;
+      };
+      try {
+        await new Promise((r) => setTimeout(r, SAVE_DEBOUNCE_MS + 50));
+        store.setMessages("t1", [
+          { id: "m2", role: "user", text: "reborn", createdAt: 2 },
+        ]);
+        store.saveNow();
+        release();
+        await store.flushPending();
+      } finally {
+        fs.promises.open = realOpen;
+      }
+      assert.equal(
+        JSON.parse(fs.readFileSync(shardPath("t1"), "utf8")).at(-1).text,
+        "reborn",
+      );
+    });
+
+    it("retains a failed shard delete so a later saveNow can finish it", () => {
+      writeLegacyBlob();
+      const store = new Store(filePath);
+      store.removeThread("t-big");
+      const realUnlink = fs.unlinkSync;
+      fs.unlinkSync = (p, ...rest) => {
+        if (String(p).endsWith(`${path.sep}t-big.json`)) {
+          const err = new Error("EPERM");
+          err.code = "EPERM";
+          throw err;
+        }
+        return realUnlink(p, ...rest);
+      };
+      try {
+        store.saveNow();
+        assert.equal(fs.existsSync(shardPath("t-big")), true);
+        assert.equal(store._deletedMessageIds.has("t-big"), true);
+        assert.equal(store._dirty, true);
+      } finally {
+        fs.unlinkSync = realUnlink;
+      }
+      store.saveNow();
+      assert.equal(fs.existsSync(shardPath("t-big")), false);
+      const reloaded = new Store(filePath);
+      assert.deepEqual(reloaded.getMessages("t-big"), []);
+    });
+
+    it("saveNow wins a stale async commit even when inflight tmp unlink fails", async () => {
+      const store = new Store(filePath);
+      store.setMessages("t1", [
+        { id: "m1", role: "user", text: "old", createdAt: 1 },
+      ]);
+      store.save();
+      let releaseWrite;
+      const gateWrite = new Promise((r) => {
+        releaseWrite = r;
+      });
+      const realOpen = fs.promises.open;
+      const realUnlink = fs.unlinkSync;
+      fs.promises.open = async (...args) => {
+        const handle = await realOpen(...args);
+        const realWrite = handle.writeFile.bind(handle);
+        handle.writeFile = (...wargs) => gateWrite.then(() => realWrite(...wargs));
+        return handle;
+      };
+      fs.unlinkSync = (p, ...rest) => {
+        if (String(p).includes(".tmp")) {
+          const err = new Error("EPERM");
+          err.code = "EPERM";
+          throw err;
+        }
+        return realUnlink(p, ...rest);
+      };
+      try {
+        await new Promise((r) => setTimeout(r, SAVE_DEBOUNCE_MS + 50));
+        store.setMessages("t1", [
+          { id: "m1", role: "user", text: "old", createdAt: 1 },
+          { id: "m2", role: "assistant", text: "new", createdAt: 2 },
+        ]);
+        store.saveNow();
+        releaseWrite();
+        await store.flushPending();
+      } finally {
+        fs.promises.open = realOpen;
+        fs.unlinkSync = realUnlink;
+      }
+      assert.equal(
+        JSON.parse(fs.readFileSync(shardPath("t1"), "utf8")).at(-1).text,
+        "new",
+      );
+    });
+
+    it("does not forget a shard after a transient read error", () => {
+      const store = new Store(filePath);
+      store.setMessages("t1", [
+        { id: "m1", role: "user", text: "keep", createdAt: 1 },
+      ]);
+      store.saveNow();
+      const reloaded = new Store(filePath);
+      const realRead = fs.readFileSync;
+      let blew = false;
+      fs.readFileSync = (p, ...rest) => {
+        if (String(p).endsWith(`${path.sep}t1.json`) && !blew) {
+          blew = true;
+          const err = new Error("EMFILE");
+          err.code = "EMFILE";
+          throw err;
+        }
+        return realRead(p, ...rest);
+      };
+      try {
+        assert.deepEqual(reloaded.getMessages("t1"), []);
+        assert.equal(reloaded._messageShards.has("t1"), true);
+      } finally {
+        fs.readFileSync = realRead;
+      }
+      assert.equal(reloaded.getMessages("t1")[0].text, "keep");
+    });
+
+    it("commits a shard snapshot even when an unrelated save() dirties the envelope", async () => {
+      const store = new Store(filePath);
+      store.setMessages("t1", [
+        { id: "m1", role: "user", text: "keep", createdAt: 1 },
+      ]);
+      store.save();
+      let release;
+      const gate = new Promise((r) => {
+        release = r;
+      });
+      const realOpen = fs.promises.open;
+      fs.promises.open = async (...args) => {
+        const handle = await realOpen(...args);
+        const realWrite = handle.writeFile.bind(handle);
+        handle.writeFile = (...wargs) => gate.then(() => realWrite(...wargs));
+        return handle;
+      };
+      try {
+        await new Promise((r) => setTimeout(r, SAVE_DEBOUNCE_MS + 50));
+        store.setProjects([{ id: "p1", slug: "a/b", name: "b", path: "/x" }]);
+        store.save();
+        release();
+        await store.flushPending();
+        await new Promise((r) => setTimeout(r, SAVE_DEBOUNCE_MS + 50));
+        await store.flushPending();
+      } finally {
+        fs.promises.open = realOpen;
+      }
+      assert.equal(
+        JSON.parse(fs.readFileSync(shardPath("t1"), "utf8"))[0].text,
+        "keep",
+      );
+      assert.equal(new Store(filePath).getProjects()[0].id, "p1");
+    });
+
+    it("inflight write replay does not beat a newer removeThread", async () => {
+      const store = new Store(filePath);
+      store.setMessages("t1", [
+        { id: "m1", role: "user", text: "old", createdAt: 1 },
+      ]);
+      store.saveNow();
+      store.setMessages("t1", [
+        { id: "m1", role: "user", text: "old", createdAt: 1 },
+        { id: "m2", role: "assistant", text: "newer", createdAt: 2 },
+      ]);
+      store.save();
+      let release;
+      const gate = new Promise((r) => {
+        release = r;
+      });
+      const realOpen = fs.promises.open;
+      fs.promises.open = async (...args) => {
+        const handle = await realOpen(...args);
+        const realWrite = handle.writeFile.bind(handle);
+        handle.writeFile = (...wargs) => gate.then(() => realWrite(...wargs));
+        return handle;
+      };
+      try {
+        await new Promise((r) => setTimeout(r, SAVE_DEBOUNCE_MS + 50));
+        store.removeThread("t1");
+        store.saveNow();
+        release();
+        await store.flushPending();
+      } finally {
+        fs.promises.open = realOpen;
+      }
+      assert.equal(fs.existsSync(shardPath("t1")), false);
+      assert.deepEqual(new Store(filePath).getMessages("t1"), []);
+    });
+
+    it("preserves tasksByCrew when stripping a legacy envelope", () => {
+      fs.writeFileSync(
+        filePath,
+        JSON.stringify({
+          projects: [],
+          threads: [
+            {
+              id: "t-root",
+              projectId: "p1",
+              title: "Crew",
+              status: "idle",
+              createdAt: 1,
+              updatedAt: 2,
+            },
+          ],
+          messagesByThread: {
+            "t-root": [{ id: "m1", role: "user", text: "hi", createdAt: 1 }],
+          },
+          workLogByThread: {},
+          tasksByCrew: {
+            "t-root": [{ id: "task-1", title: "Do it", status: "open" }],
+          },
+        }),
+        "utf8",
+      );
+      const store = new Store(filePath);
+      assert.equal(store.getCrewTasks("t-root")[0].id, "task-1");
+      const envelope = JSON.parse(fs.readFileSync(filePath, "utf8"));
+      assert.deepEqual(envelope.messagesByThread, {});
+      assert.equal(envelope.tasksByCrew["t-root"][0].id, "task-1");
+    });
+
+    it("migrates a legacy blob recovered from .bak without requiring the quarantined main", () => {
+      writeLegacyBlob();
+      fs.copyFileSync(filePath, `${filePath}.bak`);
+      fs.writeFileSync(filePath, "{not valid json!!!", "utf8");
+      const store = new Store(filePath);
+      assert.equal(store.getMessages("t-big")[0].tool.input, CANARY);
+      assert.equal(fs.existsSync(shardPath("t-big")), true);
+      const envelope = JSON.parse(fs.readFileSync(filePath, "utf8"));
+      assert.deepEqual(envelope.messagesByThread, {});
+      assert.ok(fs.readFileSync(`${filePath}.bak`, "utf8").includes(CANARY));
     });
   });
 });

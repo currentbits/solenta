@@ -271,13 +271,15 @@ function peekLastAssistant(s, starts, ends) {
 
 /**
  * Index a JSON object: each own key → value [start, end) in `s`.
- * Message arrays also yield a last-assistant peek.
+ * Message arrays also yield a last-assistant peek unless `peekAssistants`
+ * is false (skip-scan only; no JSON.parse of message payloads).
  * @param {string} s
  * @param {number} i opening {
  * @param {number} len
+ * @param {boolean} [peekAssistants=true]
  * @returns {{ end: number, ranges: Map<string, {start:number, end:number}>, lastAssistants: Map<string, object | null> }}
  */
-function indexJsonObject(s, i, len) {
+function indexJsonObject(s, i, len, peekAssistants = true) {
   /** @type {Map<string, { start: number, end: number }>} */
   const ranges = new Map();
   /** @type {Map<string, object | null>} */
@@ -298,7 +300,7 @@ function indexJsonObject(s, i, len) {
     i = skipWs(s, i + 1, len);
     const vs = i;
     let ve;
-    if (s.charCodeAt(i) === 91) {
+    if (peekAssistants && s.charCodeAt(i) === 91) {
       const arr = skipMessageArray(s, i, len);
       ve = arr.end;
       lastAssistants.set(key, arr.lastAssistant);
@@ -501,17 +503,24 @@ function splitMessagesByThread(json) {
 
 /**
  * Index a messagesByThread object string. Called on first mutating save,
- * not at boot.
+ * not at boot. Pass `{ peekAssistants: false }` to skip-scan values without
+ * JSON.parse of each message (the #225 split must not parse tool payloads).
  * @param {string} raw
+ * @param {{ peekAssistants?: boolean }} [opts]
  * @returns {{ ranges: Map<string, {start:number, end:number}>, lastAssistants: Map<string, object | null> }}
  */
-function indexMessagesObject(raw) {
+function indexMessagesObject(raw, opts) {
   const len = raw.length;
   const i = skipWs(raw, 0, len);
   if (i >= len || raw.charCodeAt(i) !== 123) {
     return { ranges: new Map(), lastAssistants: new Map() };
   }
-  const indexed = indexJsonObject(raw, i, len);
+  const indexed = indexJsonObject(
+    raw,
+    i,
+    len,
+    opts && opts.peekAssistants === false ? false : true,
+  );
   return { ranges: indexed.ranges, lastAssistants: indexed.lastAssistants };
 }
 
