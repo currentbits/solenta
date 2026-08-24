@@ -15,6 +15,7 @@ const { JSDOM } = require("jsdom");
 const SITE = path.join(__dirname, "..", "..", "site");
 const HTML = fs.readFileSync(path.join(SITE, "index.html"), "utf8");
 const MAIN = fs.readFileSync(path.join(SITE, "main.js"), "utf8");
+const NGINX = fs.readFileSync(path.join(SITE, "nginx.conf"), "utf8");
 const FALLBACK = /const FALLBACK_TAG = "(v[\d.]+)"/.exec(MAIN)[1];
 const PKG_VERSION = require("../../package.json").version;
 const DL = "https://github.com/currentbits/solenta/releases/latest/download/";
@@ -70,6 +71,12 @@ test("every download link is a releases page until JS narrows it", () => {
   for (const m of HTML.matchAll(/<a[^>]*\bdata-dl=[^>]*>/g)) {
     assert.match(m[0], /href="https:\/\/github\.com\/currentbits\/solenta\/releases\/latest"/);
   }
+});
+
+test("site shell assets revalidate after every deploy", () => {
+  const block = /location ~\* \\\.\((?:css\|js|js\|css)\)\$ \{([^}]+)\}/.exec(NGINX);
+  assert.ok(block, "nginx must define a shared CSS/JS cache policy");
+  assert.match(block[1], /Cache-Control "public, max-age=0, must-revalidate"/);
 });
 
 test("macOS gets a direct asset link and owns its install card", async () => {
