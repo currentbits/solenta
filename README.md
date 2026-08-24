@@ -327,7 +327,6 @@ welcome, and small PRs more so than large ones.
 
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — process split, providers, runner, memory, store
 - [`docs/ISSUES.md`](docs/ISSUES.md) — symptom / cause / fix log
-- `PRODUCT-SPEC.md`, `BRAINSTORM.md` — historical, not kept current
 
 ## Acknowledgments
 

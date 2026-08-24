@@ -10,5 +10,9 @@ assets/Solenta.iconset/
 # Per-session agent scratch: spec drafts, review itineraries, design critiques.
 .solenta/
 .impeccable/
+# Local agent/product docs: generated or historical, not for the public tree.
+AGENTS.md
+BRAINSTORM.md
+PRODUCT-SPEC.md
 trailer/node_modules/
 trailer/out/
