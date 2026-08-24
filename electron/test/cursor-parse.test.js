@@ -8,6 +8,7 @@ const {
   extractSessionId,
   extractUsage,
   parseToolArgs,
+  normalizeCallId,
 } = require("../cursor.js");
 
 // Documented example sequence from
@@ -315,6 +316,19 @@ describe("cursor extractToolEvents", () => {
     assert.equal(events[0].id, "fn_1");
     assert.equal(events[0].phase, "start");
     assert.match(events[0].input, /foo/);
+  });
+
+  it("normalizes newline-packed call_id to the first line (issue #691)", () => {
+    const packed = "call_abc\nfc_def456";
+    assert.equal(normalizeCallId(packed), "call_abc");
+    assert.equal(normalizeCallId("call_plain"), "call_plain");
+    const events = extractToolEvents({
+      type: "tool_call",
+      subtype: "started",
+      call_id: packed,
+      tool_call: { readToolCall: { args: { path: "README.md" } } },
+    });
+    assert.equal(events[0].id, "call_abc");
   });
 
   it("marks completed calls with result.error or result.failure as isError", () => {

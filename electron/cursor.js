@@ -89,6 +89,18 @@ function extractAssistantText(obj) {
 }
 
 /**
+ * Cursor packs two ids into one newline-separated `call_id`
+ * (`call_…\nfc_…`). Pairing and Map keys must use the first line only.
+ * @param {unknown} id
+ * @returns {string}
+ */
+function normalizeCallId(id) {
+  const s = id == null ? "" : String(id);
+  const nl = s.search(/\r?\n/);
+  return nl === -1 ? s : s.slice(0, nl);
+}
+
+/**
  * @typedef {{ id: string, name: string, input: string, output: string | null, phase: "start" | "end" | "single", isError: boolean }} ToolEvent
  */
 
@@ -178,7 +190,7 @@ function extractToolEvents(obj) {
         ? payload.arguments
         : null;
   const input = truncate(asJson(args), INPUT_TRUNCATE);
-  const id = obj.call_id != null ? String(obj.call_id) : "";
+  const id = normalizeCallId(obj.call_id);
 
   if (obj.subtype === "started") {
     return [
@@ -444,6 +456,7 @@ module.exports = {
   extractSessionId,
   extractUsage,
   parseToolArgs,
+  normalizeCallId,
   truncate,
   INPUT_TRUNCATE,
   OUTPUT_TRUNCATE,

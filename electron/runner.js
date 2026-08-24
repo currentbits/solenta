@@ -4896,6 +4896,12 @@ function createRunner(opts) {
         const sid = cursorParse.extractSessionId(ev);
         if (sid) {
           capturedCursorSessionId = sid;
+          // Persist on init, not only on exit 0: Stop+retry must --resume
+          // after a hung turn (#691).
+          const live = store.getThread(threadId);
+          if (live && live.sessionId !== sid) {
+            store.updateThread(threadId, { sessionId: sid });
+          }
         }
 
         const text = cursorParse.extractAssistantText(ev);
@@ -4918,6 +4924,10 @@ function createRunner(opts) {
           const args = cursorParse.parseToolArgs(tool.input);
           const summary = cursorToolCardSummary(tool.name, tool.input, args);
           if (tool.phase === "start") {
+            if (toolMsgById.has(tool.id)) {
+              throttledPush();
+              continue;
+            }
             const toolMeta = {
               id: tool.id,
               name: tool.name,

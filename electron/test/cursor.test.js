@@ -72,6 +72,70 @@ async function main() {
     return;
   }
 
+  if (scenario === "hang-after-init") {
+    emit({
+      type: "system",
+      subtype: "init",
+      apiKeySource: "login",
+      cwd: process.cwd(),
+      session_id: "cursor-sess-1",
+      model: "Composer",
+      permissionMode: "default",
+    });
+    setInterval(() => {}, 60 * 60 * 1000);
+    return;
+  }
+
+  if (scenario === "duplicate-started") {
+    const packedId = "call_dup1\\nfc_second_line";
+    emit({
+      type: "system",
+      subtype: "init",
+      apiKeySource: "login",
+      cwd: process.cwd(),
+      session_id: "cursor-sess-1",
+      model: "Composer",
+      permissionMode: "default",
+    });
+    await delay(10);
+    const started = {
+      type: "tool_call",
+      subtype: "started",
+      call_id: packedId,
+      tool_call: {
+        writeToolCall: { args: { path: "probe.txt", fileText: "hello" } },
+      },
+      session_id: "cursor-sess-1",
+    };
+    emit(started);
+    await delay(10);
+    emit(started);
+    await delay(10);
+    emit({
+      type: "tool_call",
+      subtype: "completed",
+      call_id: packedId,
+      tool_call: {
+        writeToolCall: {
+          args: { path: "probe.txt", fileText: "hello" },
+          result: { success: { path: "probe.txt", linesCreated: 1 } },
+        },
+      },
+      session_id: "cursor-sess-1",
+    });
+    await delay(10);
+    emit({
+      type: "result",
+      subtype: "success",
+      is_error: false,
+      duration_ms: 40,
+      result: "ok",
+      session_id: "cursor-sess-1",
+    });
+    process.exit(0);
+    return;
+  }
+
   if (scenario === "success" || scenario === "resume-echo") {
     emit({
       type: "system",
@@ -427,6 +491,34 @@ describe("cursor runner integration", () => {
     assert.ok(rIdx >= 0, `expected --resume in ${JSON.stringify(argv)}`);
     assert.equal(argv[rIdx + 1], "cursor-sess-1");
     assert.equal(argv[argv.length - 1], "turn two");
+  });
+
+  it("stores sessionId from system/init before the process exits (issue #691)", async () => {
+    process.env.CODER_FAKE_CURSOR_SCENARIO = "hang-after-init";
+    const thread = store.getThreads()[0];
+    await runner.startRun({ threadId: thread.id, prompt: "stay up" });
+    await waitFor(() => runner.isRunning(thread.id));
+    // Longer than the success scenario's delays, so a wrong env cannot pass.
+    await new Promise((r) => setTimeout(r, 400));
+    assert.equal(
+      store.getThread(thread.id).status,
+      "working",
+      "hang-after-init must still be running",
+    );
+    assert.equal(store.getThread(thread.id).sessionId, "cursor-sess-1");
+    await runner.stopRun({ threadId: thread.id });
+    assert.equal(store.getThread(thread.id).sessionId, "cursor-sess-1");
+  });
+
+  it("duplicate tool_call started with a packed call_id leaves one done card", async () => {
+    process.env.CODER_FAKE_CURSOR_SCENARIO = "duplicate-started";
+    const thread = store.getThreads()[0];
+    await runner.startRun({ threadId: thread.id, prompt: "write it" });
+    await waitFor(() => store.getThread(thread.id).status === "done");
+    const tools = store.getMessages(thread.id).filter((m) => m.role === "tool");
+    assert.equal(tools.length, 1);
+    assert.equal(tools[0].tool.done, true);
+    assert.equal(tools[0].tool.id, "call_dup1");
   });
 
   it("fail-exit sets failed + event message", async () => {

@@ -13,7 +13,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
-const { execFileSync } = require("node:child_process");
+const { execFileSync, spawn } = require("node:child_process");
 
 const {
   PLUGIN_NAME,
@@ -108,6 +108,7 @@ describe("materializeCursorPinPlugin", () => {
       `command should exec ${scriptPath}: ${pre[0].command}`,
     );
     assert.ok(pre[0].command.startsWith("node "));
+    assert.equal(pre[0].timeout, 5);
     assert.ok(fs.existsSync(scriptPath));
     assert.match(
       fs.readFileSync(scriptPath, "utf8"),
@@ -128,6 +129,44 @@ describe("pin-task-parent hook (stdin)", () => {
 
   afterEach(() => {
     fs.rmSync(dest, { recursive: true, force: true });
+  });
+
+  it("replies after one JSON object without waiting for stdin EOF (issue #691)", async () => {
+    const child = spawn(process.execPath, [scriptPath], {
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    let stdout = "";
+    child.stdout.setEncoding("utf8");
+    child.stdout.on("data", (chunk) => {
+      stdout += chunk;
+    });
+    child.stdin.write(JSON.stringify(taskPayload()) + "\n");
+    // Cursor may keep the hook pipe open after the payload. Do not end stdin.
+    const started = Date.now();
+    await new Promise((resolve, reject) => {
+      const t = setTimeout(() => {
+        child.kill();
+        reject(
+          new Error(
+            `hook still silent after 1500ms with stdin held open; stdout=${JSON.stringify(stdout)}`,
+          ),
+        );
+      }, 1500);
+      child.stdout.on("data", () => {
+        if (stdout.includes("permission")) {
+          clearTimeout(t);
+          resolve();
+        }
+      });
+      child.on("error", (err) => {
+        clearTimeout(t);
+        reject(err);
+      });
+    });
+    const out = JSON.parse(stdout.trim());
+    assert.equal(out.permission, "allow");
+    assert.ok(Date.now() - started < 1500);
+    child.kill();
   });
 
   it("strips a foreign composer-2.5 model so inherit applies", () => {

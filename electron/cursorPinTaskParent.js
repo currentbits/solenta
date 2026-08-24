@@ -126,7 +126,32 @@ function decidePinTaskParent(payload) {
 }
 
 /**
+ * Parse one hook payload. Cursor may send a single JSON object and leave
+ * stdin open (#691); accept a complete object or the first JSON line.
+ * @param {string} raw
+ * @returns {unknown | null}
+ */
+function parseHookPayload(raw) {
+  const s = String(raw || "").trim();
+  if (!s) return null;
+  try {
+    return JSON.parse(s);
+  } catch {
+    const line = s.split(/\r?\n/).find((l) => l.trim());
+    if (!line || line === s) return null;
+    try {
+      return JSON.parse(line);
+    } catch {
+      return null;
+    }
+  }
+}
+
+/**
  * Stdin/stdout wrapper Cursor actually execs.
+ * Reply as soon as one JSON object is parseable. Do not wait for EOF:
+ * live cursor-agent may keep the hook pipe open, and waiting for `end`
+ * stalls the next Task/Agent for the platform hook timeout (#691).
  * @returns {void}
  */
 function runPinTaskParentHook() {
@@ -136,20 +161,37 @@ function runPinTaskParentHook() {
   }
 
   let raw = "";
-  process.stdin.setEncoding("utf8");
-  process.stdin.on("data", (chunk) => {
-    raw += chunk;
-  });
-  process.stdin.on("error", failOpen);
-  process.stdin.on("end", () => {
+  let done = false;
+  const timer = setTimeout(() => {
+    if (!done) failOpen();
+  }, 2000);
+  if (typeof timer.unref === "function") timer.unref();
+
+  function finish(payload) {
+    if (done) return;
+    done = true;
+    clearTimeout(timer);
     try {
-      const payload = JSON.parse(raw);
       const out = decidePinTaskParent(payload);
       process.stdout.write(JSON.stringify(out) + "\n");
       process.exit(0);
     } catch {
       failOpen();
     }
+  }
+
+  process.stdin.setEncoding("utf8");
+  process.stdin.on("data", (chunk) => {
+    raw += chunk;
+    const payload = parseHookPayload(raw);
+    if (payload != null) finish(payload);
+  });
+  process.stdin.on("error", failOpen);
+  process.stdin.on("end", () => {
+    if (done) return;
+    const payload = parseHookPayload(raw);
+    if (payload != null) finish(payload);
+    else failOpen();
   });
 }
 
@@ -166,6 +208,7 @@ function hookScriptSource() {
     coerceSubagentType.toString(),
     subagentTypeOf.toString(),
     decidePinTaskParent.toString(),
+    parseHookPayload.toString(),
     runPinTaskParentHook.toString(),
     "runPinTaskParentHook();",
     "",
@@ -219,6 +262,7 @@ function materializeCursorPinPlugin(destDir) {
             {
               command,
               matcher: "Task|Agent",
+              timeout: 5,
             },
           ],
         },
@@ -245,6 +289,7 @@ module.exports = {
   BUILTIN_SUBAGENTS,
   cursorPinPluginDir,
   decidePinTaskParent,
+  parseHookPayload,
   hookScriptSource,
   materializeCursorPinPlugin,
   modelsMatch,
