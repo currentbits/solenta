@@ -141,6 +141,64 @@ const RETENTION_SWEEP_INTERVAL_MS = 6 * 60 * 60 * 1000;
 /** Same delay as the boot orphan sweep so startup stays fast. */
 const RETENTION_SWEEP_STARTUP_MS = 15_000;
 
+/**
+ * Idle git-status coalescing (#688). A completion-callback re-arm (header
+ * git.diff, overlapping gcScan) was spawning ~65 `git status --porcelain
+ * -uall`/s. Inflight shares one spawn; TTL absorbs the sequential re-arm.
+ * Destructive paths (checkpoint, orphan sweep, gcClean) pass ttl 0.
+ */
+const GIT_READ_TTL_MS = 2_000;
+const nowMs = () => Date.now();
+/** @type {Map<string, { at: number, result?: unknown, pending: Promise<unknown> | null }>} */
+const diffByCwd = new Map();
+/** @type {Map<string, { at: number, result?: unknown, pending: Promise<unknown> | null }>} */
+const inspectByDir = new Map();
+
+function resetGitReadCaches() {
+  diffByCwd.clear();
+  inspectByDir.clear();
+}
+
+function invalidateGitReads(cwd) {
+  if (!cwd) {
+    resetGitReadCaches();
+    return;
+  }
+  const key = path.resolve(String(cwd));
+  diffByCwd.delete(key);
+  inspectByDir.delete(key);
+}
+
+/**
+ * @template T
+ * @param {Map<string, { at: number, result?: T, pending: Promise<T> | null }>} map
+ * @param {string} key
+ * @param {number} ttlMs
+ * @param {() => Promise<T>} produce
+ * @returns {Promise<T>}
+ */
+function cachedRead(map, key, ttlMs, produce) {
+  const hit = map.get(key);
+  const t = nowMs();
+  if (ttlMs > 0 && hit && hit.result !== undefined && !hit.pending && t - hit.at < ttlMs) {
+    return Promise.resolve(hit.result);
+  }
+  if (hit && hit.pending) return hit.pending;
+  const pending = Promise.resolve()
+    .then(produce)
+    .then((result) => {
+      map.set(key, { at: nowMs(), result, pending: null });
+      return result;
+    })
+    .catch((err) => {
+      const cur = map.get(key);
+      if (cur && cur.pending === pending) map.delete(key);
+      throw err;
+    });
+  map.set(key, { at: t, result: hit ? hit.result : undefined, pending });
+  return pending;
+}
+
 /** MERGED/CLOSED are terminal — never re-query. */
 const TERMINAL_PR_STATES = new Set(["MERGED", "CLOSED"]);
 
@@ -1270,6 +1328,18 @@ async function diff(opts) {
     ? project.remotePath || project.path
     : thread.worktreePath || project.path;
 
+  const key = path.resolve(String(cwd || ""));
+  return cachedRead(diffByCwd, key, GIT_READ_TTL_MS, () =>
+    diffOnce(project, cwd),
+  );
+}
+
+/**
+ * Uncached working-tree diff. `diff()` coalesces this per cwd (#688).
+ * @param {object} project
+ * @param {string} cwd
+ */
+async function diffOnce(project, cwd) {
   /** @type {Map<string, { path: string, status: string, additions: number, deletions: number }>} */
   const byPath = new Map();
 
@@ -1611,6 +1681,7 @@ function commit(opts) {
   if (!res.ok) {
     throw new Error(tailErr(res.stderr || res.combined, "git commit failed"));
   }
+  invalidateGitReads(cwd);
   return { subject: message.split("\n")[0] };
 }
 
@@ -1634,6 +1705,7 @@ function revertFile(opts) {
   const full = path.resolve(cwd, relPath);
   if (status === "??") {
     fs.rmSync(full, { recursive: true, force: true });
+    invalidateGitReads(cwd);
     return { path: relPath };
   }
   if (status === "A") {
@@ -1641,6 +1713,7 @@ function revertFile(opts) {
     if (!rm.ok) {
       throw new Error(tailErr(rm.stderr || rm.combined, "git rm failed"));
     }
+    invalidateGitReads(cwd);
     return { path: relPath };
   }
   const res = gitTry(cwd, [
@@ -1653,6 +1726,7 @@ function revertFile(opts) {
   if (!res.ok) {
     throw new Error(tailErr(res.stderr || res.combined, "git restore failed"));
   }
+  invalidateGitReads(cwd);
   return { path: relPath };
 }
 
@@ -4224,6 +4298,7 @@ async function maybeCreateCheckpoint(store, threadId) {
     if (!commit.ok) return null;
 
     const rev = await gitTryAsync(cwd, ["rev-parse", "HEAD"]);
+    invalidateGitReads(cwd);
     if (!rev.ok || !rev.stdout) return { sha: "", turn: n, message };
     return { sha: String(rev.stdout).trim(), turn: n, message };
   } catch {
@@ -4704,6 +4779,7 @@ async function forceRemoveWorktreeDir(dir, repoPath) {
   if (fs.existsSync(dir)) {
     return { ok: false, error: "directory still exists after force-remove" };
   }
+  invalidateGitReads(dir);
   return { ok: true };
 }
 
@@ -4711,9 +4787,18 @@ async function forceRemoveWorktreeDir(dir, repoPath) {
  * @param {string} dir
  * @param {Map<string, Promise<string | null>>} [baseCache] memo for the owning
  *   repo's branch, so N worktrees of one repo cost one extra git call.
+ * @param {number} [ttlMs] 0 = inflight only (destructive scans). Default GIT_READ_TTL_MS.
  * @returns {Promise<{ repoPath: string | null, readable: boolean, dirty: boolean, branch: string | null, unmerged: number, notARepo: boolean }>}
  */
-async function inspectWorktreeDir(dir, baseCache) {
+async function inspectWorktreeDir(dir, baseCache, ttlMs) {
+  const ttl = ttlMs == null ? GIT_READ_TTL_MS : ttlMs;
+  const key = path.resolve(dir);
+  return cachedRead(inspectByDir, key, ttl, () =>
+    inspectWorktreeDirUncached(dir, baseCache),
+  );
+}
+
+async function inspectWorktreeDirUncached(dir, baseCache) {
   const common = await gitTryAsync(dir, [
     "rev-parse",
     "--path-format=absolute",
@@ -4778,6 +4863,7 @@ async function unmergedCount(dir, branch, repoPath, baseCache) {
  * @param {string} opts.worktreeBase
  * @param {boolean} [opts.skipSizes]  skip `du` — candidates and classification
  *   are stat + git only. Boot retention never needs bytes; the GC dialog does.
+ * @param {boolean} [opts.fresh]  skip inspect TTL (gcClean / enforceRetention).
  * @returns {Promise<{ candidates: object[], usage: object[], totalBytes: number }>}
  */
 async function gcScan(opts) {
@@ -4795,7 +4881,7 @@ async function gcScan(opts) {
  * @param {boolean} [opts.skipSizes]
  */
 async function gcScanInner(opts) {
-  const { store, worktreeBase, skipSizes } = opts || {};
+  const { store, worktreeBase, skipSizes, fresh } = opts || {};
   const empty = { candidates: [], usage: [], totalBytes: 0 };
   if (!worktreeBase) return empty;
 
@@ -4840,8 +4926,9 @@ async function gcScanInner(opts) {
     : await Promise.all(dirs.map((d) => duBytes(d)));
   /** @type {Map<string, Promise<string | null>>} */
   const baseCache = new Map();
+  const inspectTtl = fresh ? 0 : GIT_READ_TTL_MS;
   const inspections = await Promise.all(
-    dirs.map((d) => inspectWorktreeDir(d, baseCache)),
+    dirs.map((d) => inspectWorktreeDir(d, baseCache, inspectTtl)),
   );
 
   /** @type {Map<string, Array<{ thread: object, dir: string }>>} */
@@ -4998,13 +5085,19 @@ async function removeGcWorktree(store, cand) {
     return { ok: true };
   }
   if (cand.corrupt) {
-    return forceRemoveWorktreeDir(dir, repoPath);
+    const forced = await forceRemoveWorktreeDir(dir, repoPath);
+    if (forced.ok) invalidateGitReads(dir);
+    return forced;
   }
   if (!repoPath) return { ok: false, error: "could not find owning repo" };
   const removed = await gitTryAsync(repoPath, ["worktree", "remove", dir]);
-  if (removed.ok) return { ok: true };
+  if (removed.ok) {
+    invalidateGitReads(dir);
+    return { ok: true };
+  }
   if (!fs.existsSync(dir)) {
     await gitTryAsync(repoPath, ["worktree", "prune"]);
+    invalidateGitReads(dir);
     return { ok: true };
   }
   return {
@@ -5028,7 +5121,7 @@ async function removeGcWorktree(store, cand) {
 async function gcClean(opts) {
   const { store, worktreeBase, paths, broadcast, skipSizes } = opts || {};
   const requested = Array.isArray(paths) ? paths : [];
-  const scan = await gcScan({ store, worktreeBase, skipSizes });
+  const scan = await gcScan({ store, worktreeBase, skipSizes, fresh: true });
   /** @type {Map<string, object>} */
   const cleanable = new Map();
   /** @type {Map<string, object>} */
@@ -5124,7 +5217,7 @@ async function enforceRetention(opts) {
   // Unset on every project → nothing to reclaim; don't walk the disk.
   if (configured.size === 0) return { removed: [], failed: [], bytes: 0 };
 
-  const scan = await gcScan({ store, worktreeBase, skipSizes: true });
+  const scan = await gcScan({ store, worktreeBase, skipSizes: true, fresh: true });
   const paths = scan.candidates
     .filter(
       (c) =>
@@ -5439,6 +5532,8 @@ module.exports = {
   PR_REFRESH_TIMEOUT_MS,
   RETENTION_SWEEP_INTERVAL_MS,
   RETENTION_SWEEP_STARTUP_MS,
+  GIT_READ_TTL_MS,
+  resetGitReadCaches,
   maybeCreateCheckpoint,
   listCheckpoints,
   restoreCheckpoint,

@@ -5,6 +5,7 @@
  */
 import assert from "node:assert/strict";
 import { describe, it, afterEach } from "node:test";
+import { useCallback, useState } from "react";
 import { mount, unmountAll } from "./support/dom.ts";
 import { ThreadView } from "../src/components/ThreadView";
 import type {
@@ -615,6 +616,42 @@ describe("next-git-action button", () => {
     await m.flush();
     assert.ok(m.query("[data-blast-radius]"));
     assert.ok(m.query('[data-next-git-action="commit"]'));
+    m.unmount();
+  });
+
+  it("does not refetch git.diff when only updatedAt ticks (#688)", async () => {
+    let fetches = 0;
+    function TickHarness() {
+      const [at, setAt] = useState(1);
+      const onFetchDiff = useCallback(async () => {
+        fetches += 1;
+        return emptyDiff;
+      }, []);
+      return (
+        <>
+          <button type="button" data-tick="" onClick={() => setAt((n) => n + 1)}>
+            tick
+          </button>
+          {view({
+            detail: detail({ thread: thread({ updatedAt: at }) }),
+            onFetchDiff,
+          })}
+        </>
+      );
+    }
+    const m = await mount(<TickHarness />);
+    await m.flush();
+    const afterMount = fetches;
+    assert.ok(afterMount >= 1, "mount fetches once");
+    await m.click(m.query("[data-tick]"));
+    await m.click(m.query("[data-tick]"));
+    await m.click(m.query("[data-tick]"));
+    await m.flush();
+    assert.equal(
+      fetches,
+      afterMount,
+      `updatedAt ticks must not re-spawn git.diff (got ${fetches} vs ${afterMount})`,
+    );
     m.unmount();
   });
 });

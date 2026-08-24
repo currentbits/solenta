@@ -1564,6 +1564,12 @@ function NextGitActionButton({
   }, [thread.id, thread.prNumber, thread.prState, onPrChecks]);
 
   useEffect(() => {
+    // Do not re-poll git on every updatedAt tick: a streaming turn used to
+    // re-arm git.diff from the previous spawn's close callback (~65 git/s
+    // at idle once anything bumped updatedAt). Status / Changes / sync
+    // nonce still refetch. Skip while working — the button is disabled
+    // and the run-end status change is the right refresh (#688).
+    if (thread.status === "working" || thread.status === "quota-wait") return;
     void loadGit();
     void loadForge(false);
   }, [
@@ -1572,7 +1578,6 @@ function NextGitActionButton({
     changesNonce,
     changesOpen,
     thread.status,
-    thread.updatedAt,
     syncRefreshNonce,
   ]);
 
