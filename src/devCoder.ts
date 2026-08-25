@@ -3289,6 +3289,7 @@ function buildDevCoder(): CoderApi {
             status: t.status,
             handoffFrom: t.handoffFrom ?? null,
             runStartedAt: t.runStartedAt ?? null,
+            stoppedAt: t.stoppedAt ?? null,
             awaitingInput: t.awaitingInput === true,
             stalledAt: t.stalledAt ?? null,
             lastActivity: last
@@ -3948,6 +3949,7 @@ function buildDevCoder(): CoderApi {
           status: "working",
           updatedAt: t,
           runStartedAt: t,
+          stoppedAt: null,
           ...(thread.settledOverride === "settled"
             ? { settledOverride: null, settledAt: null }
             : {}),
@@ -4057,6 +4059,7 @@ function buildDevCoder(): CoderApi {
           status: "working",
           updatedAt: t,
           runStartedAt: t,
+          stoppedAt: null,
           ...(thread.settledOverride === "settled"
             ? { settledOverride: null, settledAt: null }
             : {}),
@@ -4123,6 +4126,7 @@ function buildDevCoder(): CoderApi {
           status: "idle",
           updatedAt: t,
           runStartedAt: null,
+          stoppedAt: t,
         };
         detail.thread = thread;
         detail.messages.push({

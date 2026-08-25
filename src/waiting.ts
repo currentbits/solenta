@@ -14,9 +14,10 @@ import type { SubagentInfo, ThreadStatus } from "./shared/ipc";
  * permission prompt (awaitingInput). Finished / failed children are visible
  * on their own card and in the Team roster; counting them here would keep an
  * old failure pinned to the parent forever.
- * ponytail: a worker STOPPED mid-run is indistinguishable from a fork that
- * never ran (both idle, runStartedAt cleared) — add a stopped flag on the
- * thread if that stall needs its own surface.
+ * The exception is a worker STOPPED mid-run (issue #183): it is idle with
+ * runStartedAt cleared, indistinguishable from a fork that never ran, so the
+ * stall it leaves behind would be invisible. Its `stoppedAt` stamp counts it
+ * here under its own label until the thread runs again.
  */
 
 /** Minimal row shape shared by ThreadInfo and ThreadSummaryInfo. */
@@ -26,6 +27,7 @@ export interface WaitRow {
   status: ThreadStatus;
   handoffFrom: string | null;
   runStartedAt?: number | null;
+  stoppedAt?: number | null;
   awaitingInput?: boolean;
   subagents?: readonly SubagentInfo[];
 }
@@ -34,14 +36,19 @@ export interface WaitChild {
   /** Thread id, or null for an in-agent subagent (nothing to navigate to). */
   id: string | null;
   title: string;
-  /** "blocked" = stalled on a prompt only the user can answer. */
-  state: "working" | "blocked";
+  /**
+   * "blocked" = stalled on a prompt only the user can answer.
+   * "stopped" = run killed mid-flight; it will never finish on its own.
+   */
+  state: "working" | "blocked" | "stopped";
 }
 
 export interface WaitState {
   children: WaitChild[];
   /** How many children are blocked on the user. */
   blocked: number;
+  /** How many children were stopped mid-run (issue #183). */
+  stopped: number;
   /** Earliest runStartedAt among live children; null when unknown. */
   since: number | null;
 }
@@ -55,9 +62,11 @@ export function buildWaitStates(
 ): Map<string, WaitState> {
   const out = new Map<string, WaitState>();
   const add = (parentId: string, child: WaitChild, since?: number | null) => {
-    const state = out.get(parentId) ?? { children: [], blocked: 0, since: null };
+    const state =
+      out.get(parentId) ?? { children: [], blocked: 0, stopped: 0, since: null };
     state.children.push(child);
     if (child.state === "blocked") state.blocked += 1;
+    if (child.state === "stopped") state.stopped += 1;
     if (since != null && (state.since == null || since < state.since)) {
       state.since = since;
     }
@@ -65,11 +74,9 @@ export function buildWaitStates(
   };
 
   for (const row of rows) {
-    if (
-      row.status === "working" &&
-      row.handoffFrom != null &&
-      row.handoffFrom !== row.id
-    ) {
+    if (row.handoffFrom == null || row.handoffFrom === row.id) {
+      // Not a fork (or a corrupt self-reference): no parent to report to.
+    } else if (row.status === "working") {
       add(
         row.handoffFrom,
         {
@@ -78,6 +85,15 @@ export function buildWaitStates(
           state: row.awaitingInput ? "blocked" : "working",
         },
         row.runStartedAt,
+      );
+    } else if (row.stoppedAt != null) {
+      // Stopped mid-run and never restarted: the parent is still owed this
+      // work, so surface the stall instead of reading it as a fork that
+      // never ran (issue #183).
+      add(
+        row.handoffFrom,
+        { id: row.id, title: row.title, state: "stopped" },
+        row.stoppedAt,
       );
     }
     for (const sub of row.subagents ?? []) {
@@ -123,21 +139,28 @@ function childPhrase(children: readonly WaitChild[]): string {
   return parts.join(" · ");
 }
 
-/** "Waiting on 2 workers · 3m · 1 blocked". */
+/** "Waiting on 2 workers · 3m · 1 blocked · 1 stopped". */
 export function waitLabel(state: WaitState, now = Date.now()): string {
   const parts = [`Waiting on ${childPhrase(state.children)}`];
   if (state.since != null) parts.push(formatElapsed(state.since, now));
   if (state.blocked > 0) parts.push(`${state.blocked} blocked`);
+  if (state.stopped > 0) parts.push(`${state.stopped} stopped`);
   return parts.join(" · ");
 }
 
-/** Hover detail: one line per child, blocked ones called out. */
+/** Hover detail: one line per child, blocked/stopped ones called out. */
 export function waitTooltip(state: WaitState): string {
   const head = `Waiting on ${childPhrase(state.children)}:`;
   return [
     head,
-    ...state.children.map(
-      (c) => `• ${c.title}${c.state === "blocked" ? " — blocked on you" : ""}`,
-    ),
+    ...state.children.map((c) => {
+      const note =
+        c.state === "blocked"
+          ? " — blocked on you"
+          : c.state === "stopped"
+            ? " — stopped mid-run"
+            : "";
+      return `• ${c.title}${note}`;
+    }),
   ].join("\n");
 }

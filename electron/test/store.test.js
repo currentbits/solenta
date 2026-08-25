@@ -125,6 +125,7 @@ describe("Store", () => {
       createdAt: 1,
       updatedAt: 2,
       runStartedAt: null,
+      stoppedAt: null,
       archived: false,
       settledOverride: null,
       settledAt: null,

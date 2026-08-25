@@ -5609,6 +5609,7 @@ function createRunner(opts) {
         pendingPlan: null,
         lastEventAt: null,
         stalledAt: null,
+        stoppedAt: null,
         quotaWaitUntil: null,
         quotaWaitResumed: input.fromQuotaWait === true,
         pendingWorktree: false,
@@ -6161,6 +6162,7 @@ function createRunner(opts) {
         pendingPlan: keepPlan,
         lastEventAt: null,
         stalledAt: null,
+        stoppedAt: null,
         quotaWaitUntil: null,
         quotaWaitResumed: input.fromQuotaWait === true,
         ...services.clearSettledOnActivity(thread),
@@ -6442,7 +6444,10 @@ function createRunner(opts) {
     appendDoneWorkLog(threadId, runId, "Run stopped");
     store.updateThread(
       threadId,
-      { status: "idle", runStartedAt: null },
+      // stoppedAt distinguishes a user-stopped worker from a fork that never
+      // ran (both idle, runStartedAt null) so the parent's wait state can
+      // count it (issue #183). Cleared when a new run starts on the thread.
+      { status: "idle", runStartedAt: null, stoppedAt: Date.now() },
       { touch: true },
     );
     store.save();
@@ -6555,6 +6560,9 @@ function createRunner(opts) {
       }
       clearRun(threadId);
       // Mirror stopRun's terminal shape (idle + event), quit-specific wording.
+      // stoppedAt included: a quit-interrupted worker never resumes on its own,
+      // so without the stamp the parent's wait state under-reports the stall
+      // exactly like a user stop does (issue #183).
       appendMessage(
         threadId,
         "event",
@@ -6563,7 +6571,7 @@ function createRunner(opts) {
       );
       store.updateThread(
         threadId,
-        { status: "idle", runStartedAt: null },
+        { status: "idle", runStartedAt: null, stoppedAt: Date.now() },
         { touch: true },
       );
       marked = true;

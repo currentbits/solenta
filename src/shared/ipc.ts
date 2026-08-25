@@ -395,6 +395,12 @@ export interface ThreadInfo {
   /** Set while a run is active on this thread; drives the Working elapsed label. */
   runStartedAt: number | null;
   /**
+   * Stamp of a user stop mid-run (issue #183). Stays set while the thread
+   * sits idle afterwards so a stopped worker is distinguishable from a fork
+   * that never ran; cleared when a new run starts on the thread.
+   */
+  stoppedAt?: number | null;
+  /**
    * True while the active run is blocked on the user (a permission prompt or
    * an agent question). Only meaningful when status is "working" — the
    * sidebar renders Waiting instead of Working. Cleared when the prompt is
@@ -926,6 +932,8 @@ export interface ThreadSummaryInfo {
   handoffFrom: string | null;
   /** Mirrors ThreadInfo: drives the "waiting on N · elapsed" line (issue #42). */
   runStartedAt: number | null;
+  /** Mirrors ThreadInfo: the run was stopped mid-flight and never restarted (issue #183). */
+  stoppedAt?: number | null;
   /** Mirrors ThreadInfo: a worker stalled on a permission prompt. */
   awaitingInput?: boolean;
   /** Mirrors ThreadInfo: the turn watchdog flagged this run as quiet (issue #314). */

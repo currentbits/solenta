@@ -71,6 +71,7 @@ describe("threads summaries", () => {
       status: "working",
       handoffFrom: "orch",
       runStartedAt: 90,
+      stoppedAt: null,
       awaitingInput: true,
       stalledAt: null,
       lastActivity: null,
@@ -87,6 +88,14 @@ describe("threads summaries", () => {
     ]);
     const [row] = services.threadSummaries(store);
     assert.equal(row.stalledAt, 1234);
+  });
+
+  it("mirrors stoppedAt onto the summary row (issue #183)", () => {
+    store.setThreads([
+      makeThread({ id: "stopped", status: "idle", stoppedAt: 5678 }),
+    ]);
+    const [row] = services.threadSummaries(store);
+    assert.equal(row.stoppedAt, 5678);
   });
 
   it("lastActivity is the first line of the LAST assistant message", () => {

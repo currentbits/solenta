@@ -81,6 +81,53 @@ describe("buildWaitStates", () => {
     assert.match(waitTooltip(wait), /Fork: migrate — blocked on you/);
   });
 
+  it("a worker stopped mid-run counts under its own label (issue #183)", () => {
+    const states = buildWaitStates([
+      row({ id: "orch", status: "done" }),
+      row({
+        id: "w1",
+        title: "Fork: migrate",
+        handoffFrom: "orch",
+        status: "idle",
+        runStartedAt: null,
+        stoppedAt: NOW - 120_000,
+      }),
+      // Same idle+null shape minus the stamp: a fork that never ran stays invisible.
+      row({ id: "w2", handoffFrom: "orch", status: "idle", runStartedAt: null }),
+    ]);
+
+    const wait = states.get("orch")!;
+    assert.equal(wait.children.length, 1);
+    assert.equal(wait.stopped, 1);
+    assert.equal(wait.blocked, 0);
+    assert.equal(wait.since, NOW - 120_000, "anchors on the stop stamp");
+    assert.equal(waitLabel(wait, NOW), "Waiting on 1 worker · 2m · 1 stopped");
+    assert.match(waitTooltip(wait), /Fork: migrate — stopped mid-run/);
+    assert.equal(
+      isDelegating("done", wait),
+      true,
+      "the parent is still owed the stopped work",
+    );
+  });
+
+  it("a stale stoppedAt on a working worker counts as working, not stopped", () => {
+    const states = buildWaitStates([
+      row({ id: "orch" }),
+      row({
+        id: "w1",
+        handoffFrom: "orch",
+        status: "working",
+        runStartedAt: NOW - 30_000,
+        stoppedAt: NOW - 300_000,
+      }),
+    ]);
+
+    const wait = states.get("orch")!;
+    assert.equal(wait.stopped, 0);
+    assert.equal(wait.children[0]!.state, "working");
+    assert.equal(wait.since, NOW - 30_000);
+  });
+
   it("in-agent subagents count on the thread that spawned them", () => {
     const states = buildWaitStates([
       row({

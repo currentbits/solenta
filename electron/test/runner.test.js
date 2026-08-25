@@ -741,6 +741,10 @@ describe("runner simulated mode", () => {
     assert.equal(detail.thread.status, "idle");
     assert.equal(detail.thread.runStartedAt, null);
     assert.ok(
+      typeof detail.thread.stoppedAt === "number" && detail.thread.stoppedAt > 0,
+      "a user stop mid-flight stamps stoppedAt (issue #183)",
+    );
+    assert.ok(
       detail.messages.some(
         (m) => m.role === "event" && /stopped/i.test(m.text) && m.runId === runId,
       ),
@@ -755,6 +759,35 @@ describe("runner simulated mode", () => {
     const pushCount = pushes.length;
     await new Promise((r) => setTimeout(r, 50));
     assert.equal(pushes.length, pushCount);
+  });
+
+  it("a new run after a stop clears stoppedAt (issue #183)", async () => {
+    const thread = store.getThreads()[0];
+    await runner.startRun({ threadId: thread.id, prompt: "Stop me" });
+    await waitFor(() => store.getThread(thread.id).status === "working");
+    await runner.stopRun({ threadId: thread.id });
+    assert.ok(store.getThread(thread.id).stoppedAt != null);
+
+    await runner.startRun({ threadId: thread.id, prompt: "Go again" });
+    const rerun = store.getThread(thread.id);
+    assert.equal(rerun.status, "working");
+    assert.equal(
+      rerun.stoppedAt,
+      null,
+      "running again reads as a live worker, not a stopped one",
+    );
+
+    await runner.stopRun({ threadId: thread.id });
+  });
+
+  it("stopRun on an idle thread does not stamp stoppedAt", async () => {
+    const thread = store.getThreads()[0];
+    await runner.stopRun({ threadId: thread.id });
+    assert.equal(
+      store.getThread(thread.id).stoppedAt,
+      null,
+      "nothing was in flight: still indistinguishable-and-correct idle",
+    );
   });
 
   it("stopRun push detail workflow matches getActiveWorkflow / threads.get projection", async () => {
@@ -902,6 +935,10 @@ describe("runner simulated mode", () => {
     const after = store.getThread(thread.id);
     assert.equal(after.status, "idle");
     assert.equal(after.runStartedAt, null);
+    assert.ok(
+      typeof after.stoppedAt === "number" && after.stoppedAt > 0,
+      "a quit-interrupted worker counts in the parent's wait state (issue #183)",
+    );
     const msgs = store.getMessages(thread.id);
     assert.ok(msgs.length > msgsBefore);
     assert.ok(
@@ -920,6 +957,7 @@ describe("runner simulated mode", () => {
     const rthread = reloaded.getThread(thread.id);
     assert.equal(rthread.status, "idle");
     assert.equal(rthread.runStartedAt, null);
+    assert.ok(rthread.stoppedAt != null, "stoppedAt survives a store reload");
     const rmsgs = reloaded.getMessages(thread.id);
     assert.ok(
       rmsgs.some((m) => m.text === "Run interrupted by app quit"),

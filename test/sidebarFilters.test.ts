@@ -74,6 +74,7 @@ function wait(over: Partial<WaitState> = {}): WaitState {
       { id: "w1", title: "worker", state: over.blocked ? "blocked" : "working" },
     ],
     blocked: over.blocked ?? 0,
+    stopped: over.stopped ?? 0,
     since: over.since ?? 1,
   };
 }

@@ -921,6 +921,8 @@ function migrateThread(t) {
     webSearch: t.webSearch === true,
     worktreePath: t.worktreePath !== undefined ? t.worktreePath : null,
     runStartedAt: t.runStartedAt !== undefined ? t.runStartedAt : null,
+    // Issue #183: stamp of a user stop mid-run; null = never stopped / running again.
+    stoppedAt: t.stoppedAt !== undefined ? t.stoppedAt : null,
     // Older stores have no lastError; null (not undefined) so the badge is stable.
     lastError: t.lastError !== undefined ? t.lastError : null,
     archived: t.archived != null ? Boolean(t.archived) : false,

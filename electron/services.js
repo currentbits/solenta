@@ -524,6 +524,7 @@ function createThread(store, input) {
     createdAt: now,
     updatedAt: now,
     runStartedAt: null,
+    stoppedAt: null,
     archived: false,
     settledOverride: null,
     settledAt: null,
@@ -3592,6 +3593,7 @@ function threadSummaries(store) {
       status: t.status,
       handoffFrom: t.handoffFrom ?? null,
       runStartedAt: t.runStartedAt ?? null,
+      stoppedAt: t.stoppedAt ?? null,
       awaitingInput: t.awaitingInput === true,
       stalledAt: t.stalledAt ?? null,
       lastActivity: last

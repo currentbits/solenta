@@ -1016,6 +1016,7 @@ async function startWorkflowRun(deps) {
       awaitingInput: false,
       lastEventAt: null,
       stalledAt: null,
+      stoppedAt: null,
       ...services.clearSettledOnActivity(thread),
     },
     { touch: true },
