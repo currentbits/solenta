@@ -1590,17 +1590,23 @@ process.exit(0);
         .trim()
         .split("\n")
         .map((l) => JSON.parse(l));
-      const names = adds.map((a) => a[2]).sort();
+      for (const args of adds) {
+        assert.deepEqual(args.slice(0, 4), [
+          "mcp",
+          "add",
+          "--transport",
+          "http",
+        ]);
+      }
+      const names = adds.map((a) => a[4]).sort();
       assert.deepEqual(names, ["coder-memory", "coder-threads"]);
-      const threadsAdd = adds.find((a) => a[2] === "coder-threads");
-      assert.equal(threadsAdd[0], "mcp");
-      assert.equal(threadsAdd[1], "add");
+      const threadsAdd = adds.find((a) => a[4] === "coder-threads");
       assert.ok(
-        threadsAdd[3].startsWith(
+        threadsAdd[5].startsWith(
           `http://127.0.0.1:${orch.getStatus().port}/mcp`,
         ),
       );
-      assert.ok(threadsAdd.includes("-s"));
+      assert.ok(threadsAdd.includes("--scope"));
       assert.ok(threadsAdd.includes("user"));
     } finally {
       sup.stop();

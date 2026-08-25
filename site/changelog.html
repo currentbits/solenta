@@ -57,6 +57,27 @@
         Every notable change to Solenta, newest first.
       </p>
 
+      <h2 id="v0-13-0">0.13.0 <small>2026-08-25</small></h2>
+      <h3>Added</h3>
+      <ul>
+        <li><strong>Skills and MCP imports.</strong> Browse curated packages or import from GitHub, Markdown, ZIP and JSON. Preview what will install, choose the parts you want, review plugin-code risk and sync skills across providers.</li>
+        <li><strong>Real context recovery.</strong> <code>/compact</code> forks the thread into fresh context, a full context window offers the same escape hatch, and interrupted or failed turns can be retried in place.</li>
+        <li><strong>Editable queued follow-ups.</strong> Change a message while it waits, send it immediately after the thread settles, or cancel it back into the composer without losing the draft.</li>
+        <li><strong>Stay awake control.</strong> Keep the Mac awake while agents work, keep it awake continuously, or let normal sleep rules apply.</li>
+        <li><strong>Planboard sorting.</strong> Order each column by priority, age, activity or reactions without changing the issues themselves.</li>
+      </ul>
+      <h3>Fixed</h3>
+      <ul>
+        <li>Large transcript archives are split into per-thread files and loaded only when opened, so startup no longer parses every historical message.</li>
+        <li>The sidebar and current thread paint from a persisted boot snapshot, avoiding the empty flash while the live state loads.</li>
+        <li>Permission pickers expose only modes each provider can honor, and plan approval cards now work across Cursor, Grok and the other supported agents.</li>
+        <li>Cursor sessions capture their resume ID before exit, background tasks stay attached to their parent turn, and stalled runs recover more reliably.</li>
+        <li>Context meters render accurate windows for Grok and Cursor.</li>
+        <li>Repeated git-status requests are coalesced instead of keeping the main process busy while the app is idle.</li>
+        <li>The packaged app includes every dependency needed by the new skill importer, and package verification now catches missing runtime modules before release.</li>
+        <li>Planboard actions stay scoped to the selected project and report whether starting the thread actually succeeded.</li>
+      </ul>
+
       <h2 id="v0-12-0">0.12.0 <small>2026-08-23</small></h2>
       <h3>Added</h3>
       <ul>

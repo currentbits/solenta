@@ -920,10 +920,19 @@ const IPC_HANDLERS = {
     });
   },
   "mcp:previewImport": async (ctx, input) => {
+    const request = input && typeof input === "object" ? input : {};
+    let source = {};
+    if (request.kind === "json") {
+      source = { kind: "json", text: request.text };
+    } else if (request.kind === "catalog") {
+      source = { kind: "catalog", id: request.id };
+    } else if (request.kind === "github") {
+      source = { kind: "github", url: request.url };
+    }
     const current = services.getSettings(ctx.store).mcpServers;
     return mcpImports.previewImport({
       userDataPath: ctx.userDataPath,
-      input,
+      input: source,
       current,
     });
   },

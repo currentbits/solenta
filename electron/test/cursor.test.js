@@ -588,8 +588,9 @@ describe("cursor runner integration", () => {
     const thread = store.getThreads()[0];
     await runner.startRun({ threadId: thread.id, prompt: "stay up" });
     await waitFor(() => runner.isRunning(thread.id));
-    // Longer than the success scenario's delays, so a wrong env cannot pass.
-    await new Promise((r) => setTimeout(r, 400));
+    await waitFor(
+      () => store.getThread(thread.id).sessionId === "cursor-sess-1",
+    );
     assert.equal(
       store.getThread(thread.id).status,
       "working",

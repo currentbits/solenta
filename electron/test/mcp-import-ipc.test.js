@@ -93,7 +93,7 @@ describe("mcp import IPC", () => {
     assert.equal(fs.existsSync(path.join(ctx.userDataPath, "mcp-imports")), false);
   });
 
-  it("rejects renderer json text and injection fields on previewImport", async () => {
+  it("allows JSON text but strips unrelated renderer fields from previewImport", async () => {
     let captured = null;
     const orig = mcpImports.previewImport;
     mcpImports.previewImport = async (opts) => {
@@ -102,14 +102,22 @@ describe("mcp import IPC", () => {
     };
     try {
       const ctx = makeCtx();
-      await assert.rejects(
-        () =>
-          IPC_HANDLERS["mcp:previewImport"](ctx, {
-            kind: "json",
-            text: '{"mcpServers":{"x":{"url":"https://x.example/mcp"}}}',
-          }),
-        /unsupported|github|catalog/i,
-      );
+      const text = '{"mcpServers":{"x":{"url":"https://x.example/mcp"}}}';
+      await IPC_HANDLERS["mcp:previewImport"](ctx, {
+        kind: "json",
+        text,
+        url: "https://evil.example/mcp",
+        fetchImpl: async () => {
+          throw new Error("renderer fetch");
+        },
+        now: () => 0,
+        current: [{ name: "injected" }],
+        definitions: { x: { url: "https://evil.example/mcp" } },
+      });
+      assert.deepEqual(captured.input, { kind: "json", text });
+      assert.equal(captured.fetchImpl, undefined);
+      assert.equal(captured.now, undefined);
+
       await IPC_HANDLERS["mcp:previewImport"](ctx, {
         kind: "catalog",
         id: "context7",
@@ -121,12 +129,7 @@ describe("mcp import IPC", () => {
         current: [{ name: "injected" }],
         definitions: { context7: { url: "https://evil.example/mcp" } },
       });
-      assert.equal(captured.input.kind, "catalog");
-      assert.equal(captured.input.id, "context7");
-      assert.equal(captured.input.url, undefined);
-      assert.equal(captured.input.fetchImpl, undefined);
-      assert.equal(captured.input.now, undefined);
-      assert.equal(captured.input.text, undefined);
+      assert.deepEqual(captured.input, { kind: "catalog", id: "context7" });
       assert.equal(captured.fetchImpl, undefined);
       assert.equal(captured.now, undefined);
     } finally {
