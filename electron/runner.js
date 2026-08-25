@@ -578,6 +578,13 @@ function createRunner(opts) {
    */
   const active = new Map();
   /**
+   * Threads whose live ExitPlanMode prompt was already answered this turn.
+   * Blocks the post-run fallback card so a claude deny does not reopen a
+   * "plan" made of the result string (issue #707).
+   * @type {Set<string>}
+   */
+  const planPromptHandled = new Set();
+  /**
    * In-flight `/btw` cards, keyed `${threadId}:${cardId}`. Separate from
    * `active` so a side question never occupies the live turn (issue #471).
    * @type {Map<string, { threadId: string, id: string, handle?: { kill?: () => void }, stopping?: boolean }>}
@@ -1534,6 +1541,12 @@ function createRunner(opts) {
    * @param {string | null} [extras.runId] - when set, only that run's msgs
    */
   function notifyRunTerminal(threadId, status, text, extras = {}) {
+    // Plan-mode CLIs without ExitPlanMode: persist an approval card from
+    // the last assistant text before anything drains the type-ahead queue
+    // (issue #707). Done and CLI-cancelled both count; a failed turn does not.
+    if (status === "done" || status === "stopped") {
+      maybePersistPlanApproval(threadId, text);
+    }
     // Checkpoint first so every provider that signals done through here is
     // covered by one call site (generic/claude/codex/kimi/opencode/workflow).
     if (status === "done") {
@@ -1699,6 +1712,10 @@ function createRunner(opts) {
   function maybeDrainQueued(threadId) {
     const thread = store.getThread(threadId);
     if (!thread || thread.status === "working") return;
+    // A persisted plan card is a mode switch, not a message. Hold the
+    // type-ahead until the user approves or keeps planning so a queued
+    // "implement it" does not run still in plan mode (issue #707).
+    if (thread.pendingPlan) return;
     const queued = thread.queued;
     if (queued && queued.inbound) {
       const { normalizeInboundPolicy } = require("./crossThread.js");
@@ -1876,20 +1893,44 @@ function createRunner(opts) {
    */
   function getPendingPermission(threadId) {
     const e = active.get(threadId);
-    if (!e || e.kind !== "claude" || !Array.isArray(e.pendingPermissions)) {
+    if (e && e.kind === "claude" && Array.isArray(e.pendingPermissions)) {
+      const p = e.pendingPermissions[0];
+      if (p) {
+        return {
+          requestId: p.id,
+          toolName: p.toolName,
+          summary: p.summary,
+          input: p.input,
+          command: extractCommand(p.rawInput),
+          questions: questionInfo(p.toolName, p.rawInput),
+          plan: planText(p.toolName, p.rawInput),
+          guardrail: p.guardrail || null,
+        };
+      }
+    }
+    return pendingPlanAsPermission(threadId);
+  }
+
+  /**
+   * Synthesize the live PlanPrompt shape from a persisted pendingPlan so
+   * the renderer and respondPermission stay on one channel (issue #707).
+   * @param {string} threadId
+   */
+  function pendingPlanAsPermission(threadId) {
+    const thread = store.getThread(threadId);
+    const pending = thread && thread.pendingPlan;
+    if (!pending || typeof pending.plan !== "string" || !pending.plan) {
       return null;
     }
-    const p = e.pendingPermissions[0];
-    if (!p) return null;
     return {
-      requestId: p.id,
-      toolName: p.toolName,
-      summary: p.summary,
-      input: p.input,
-      command: extractCommand(p.rawInput),
-      questions: questionInfo(p.toolName, p.rawInput),
-      plan: planText(p.toolName, p.rawInput),
-      guardrail: p.guardrail || null,
+      requestId: String(pending.id || "plan"),
+      toolName: "ExitPlanMode",
+      summary: "Plan approval",
+      input: "",
+      command: null,
+      questions: null,
+      plan: pending.plan,
+      guardrail: null,
     };
   }
 
@@ -1929,7 +1970,7 @@ function createRunner(opts) {
       input || {};
     const e = active.get(threadId);
     if (!e || e.kind !== "claude" || !e.handle) {
-      throw new Error("No active agent run for this thread");
+      return respondPersistedPlan(threadId, requestId, decision);
     }
     const idx = e.pendingPermissions.findIndex((p) => p.id === requestId);
     if (idx < 0) {
@@ -1976,6 +2017,7 @@ function createRunner(opts) {
       };
     }
     e.handle.respond(pending.id, response);
+    if (isPlan) planPromptHandled.add(threadId);
     if (isPlan && decision !== "deny") {
       const t = store.getThread(threadId);
       const patch = {};
@@ -2078,6 +2120,95 @@ function createRunner(opts) {
     store.save();
     pushThreadsChanged();
     refreshDetail(threadId);
+  }
+
+  /**
+   * After a plan-mode turn with no ExitPlanMode prompt, persist the last
+   * assistant text as an approval card (issue #707).
+   * @param {string} threadId
+   * @param {string} [text]
+   */
+  function maybePersistPlanApproval(threadId, text) {
+    if (planPromptHandled.has(threadId)) {
+      planPromptHandled.delete(threadId);
+      return;
+    }
+    const thread = store.getThread(threadId);
+    if (!thread) return;
+    if (thread.permissionMode !== "plan") return;
+    if (thread.pendingQuestion) return;
+    // Prefer this turn's last assistant message. A cancelled turn with no
+    // new prose must not reuse an earlier answer, and notifyRunTerminal's
+    // fallback label "Run stopped" is not a plan (issue #707).
+    const msgs = store.getMessages(threadId) || [];
+    let thisRunId;
+    for (let i = msgs.length - 1; i >= 0; i--) {
+      if (msgs[i].role === "user") {
+        thisRunId = msgs[i].runId;
+        break;
+      }
+    }
+    const fromMsgs = String(lastAssistantText(threadId, thisRunId) || "").trim();
+    const fromNotify = String(text || "").trim();
+    const plan =
+      fromMsgs ||
+      (fromNotify && fromNotify !== "Run stopped" ? fromNotify : "");
+    if (!plan) return;
+    store.updateThread(
+      threadId,
+      {
+        pendingPlan: {
+          id: randomUUID(),
+          plan: truncate(plan, PLAN_TRUNCATE),
+          askedAt: Date.now(),
+        },
+        awaitingInput: true,
+      },
+      { touch: true },
+    );
+    store.save();
+    pushDetail(threadId);
+    pushThreadsChanged();
+  }
+
+  /**
+   * Answer a persisted plan card. Same decisions as ExitPlanMode: allow
+   * stores the plan and leaves plan mode; deny keeps planning.
+   * @param {string} threadId
+   * @param {string} requestId
+   * @param {string} decision
+   */
+  function respondPersistedPlan(threadId, requestId, decision) {
+    const thread = store.getThread(threadId);
+    const pending = thread && thread.pendingPlan;
+    if (
+      !pending ||
+      String(pending.id) !== String(requestId) ||
+      typeof pending.plan !== "string" ||
+      !pending.plan
+    ) {
+      throw new Error("No active agent run for this thread");
+    }
+    /** @type {Record<string, unknown>} */
+    const patch = {
+      pendingPlan: null,
+      awaitingInput: false,
+    };
+    const approved = decision !== "deny";
+    if (approved) {
+      patch.plan = truncate(pending.plan, PLAN_STORE);
+      if (thread.permissionMode === "plan") patch.permissionMode = "default";
+    }
+    store.updateThread(threadId, patch);
+    appendMessage(
+      threadId,
+      "event",
+      approved ? "Plan approved" : "Plan rejected",
+    );
+    store.save();
+    pushDetail(threadId);
+    pushThreadsChanged();
+    maybeDrainQueued(threadId);
   }
 
   function pushThreadsChanged() {
@@ -5467,6 +5598,7 @@ function createRunner(opts) {
         // Any user turn supersedes an open question card (issue #647):
         // answering it IS this message, and so is changing the subject.
         pendingQuestion: null,
+        pendingPlan: null,
         lastEventAt: null,
         stalledAt: null,
         quotaWaitUntil: null,
@@ -6003,6 +6135,7 @@ function createRunner(opts) {
     // 4 of 82 asks were wiped this way, one 2 s after it went up.
     const machineTurn = input.fromNotice === true || input.fromInbound === true;
     const keepQuestion = machineTurn ? thread.pendingQuestion || null : null;
+    const keepPlan = machineTurn ? thread.pendingPlan || null : null;
 
     // Real activity clears a stale "settled" pin (t3 rule). An explicit
     // "active" pin survives so the user can keep a thread out of auto-settle.
@@ -6012,11 +6145,12 @@ function createRunner(opts) {
       {
         status: "working",
         title,
-        awaitingInput: keepQuestion != null,
+        awaitingInput: keepQuestion != null || keepPlan != null,
         runStartedAt: Date.now(),
         // Any user turn supersedes an open question card (issue #647):
         // answering it IS this message, and so is changing the subject.
         pendingQuestion: keepQuestion,
+        pendingPlan: keepPlan,
         lastEventAt: null,
         stalledAt: null,
         quotaWaitUntil: null,

@@ -591,9 +591,17 @@ function setPermissionMode(store, input) {
       `${providerName} does not support permission mode "${mode}"`,
     );
   }
-  const updated = store.updateThread(threadId, { permissionMode: mode });
+  /** @type {Record<string, unknown>} */
+  const patch = { permissionMode: mode };
+  // Leaving plan mode dismisses a persisted approval card (issue #707).
+  // Switching the picker is "I don't want plan mode", not "approve this".
+  if (mode !== "plan" && thread.pendingPlan) {
+    patch.pendingPlan = null;
+    if (!thread.pendingQuestion) patch.awaitingInput = false;
+  }
+  const updated = store.updateThread(threadId, patch);
   store.save();
-  const row = updated || { ...thread, permissionMode: mode };
+  const row = updated || { ...thread, ...patch };
   return decorateThread(store, row);
 }
 

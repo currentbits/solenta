@@ -412,6 +412,15 @@ export interface ThreadInfo {
    */
   pendingQuestion?: PendingQuestionCard | null;
   /**
+   * A plan awaiting approval, PERSISTED (issue #707). Claude asks to leave
+   * plan mode over the live permission channel (ExitPlanMode); other
+   * providers finish the turn with the plan as assistant text, so the card
+   * has to outlive the run. Approving stores ThreadInfo.plan and leaves
+   * plan mode via threads.respondPermission; Keep planning dismisses it.
+   * Cleared by startRun (a new message supersedes the card).
+   */
+  pendingPlan?: PendingPlanCard | null;
+  /**
    * Epoch ms of the last stream event the provider CLI produced on the active
    * run (issue #314). Absent/null until the run emits anything. Feeds the turn
    * watchdog; a run whose CLI hangs keeps runStartedAt but stops moving this.
@@ -1324,8 +1333,10 @@ export interface WorkflowView {
 
 /**
  * A live "may I use this tool?" prompt from the agent CLI, awaiting the
- * user's decision. Runner-ephemeral: it exists only while the run is active
- * and is never persisted; answering routes through threads.respondPermission.
+ * user's decision. Usually runner-ephemeral (dies with the run). Plan
+ * approval for non-claude providers is the exception: getPendingPermission
+ * synthesizes this shape from ThreadInfo.pendingPlan after the turn ends
+ * (issue #707). Answering still routes through threads.respondPermission.
  */
 export interface PendingPermissionInfo {
   /** Provider control-request id; pass back when responding. */
@@ -1370,6 +1381,19 @@ export interface PendingQuestionCard {
   id: string;
   questions: PendingQuestion[];
   /** Epoch ms the agent asked. */
+  askedAt: number;
+}
+
+/**
+ * A persisted plan-approval card on a thread (issue #707): what cursor/grok
+ * (and any CLI without ExitPlanMode) leave behind after a plan-mode turn.
+ */
+export interface PendingPlanCard {
+  /** Card identity; remounts the prompt when the agent plans again. */
+  id: string;
+  /** Plan markdown shown in the approval card. */
+  plan: string;
+  /** Epoch ms the turn ended with this plan. */
   askedAt: number;
 }
 
@@ -2795,9 +2819,10 @@ export interface CoderApi {
      */
     setPermissionMode(input: { threadId: string; mode: PermissionMode }): Promise<ThreadInfo>;
     /**
-     * Answer the active run's pending permission prompt (ThreadDetail.
-     * pendingPermission). Rejects when the run ended or the request was
-     * already answered; the updated detail arrives via thread:updated.
+     * Answer the pending permission prompt (ThreadDetail.pendingPermission).
+     * For claude this is the live control_request. For other providers in
+     * plan mode it is the persisted pendingPlan card (issue #707). Rejects
+     * when nothing is pending; the updated detail arrives via thread:updated.
      */
     respondPermission(input: {
       threadId: string;

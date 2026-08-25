@@ -282,6 +282,34 @@ describe("services", () => {
     );
   });
 
+  it("setPermissionMode leaving plan dismisses a pending plan card (#707)", async () => {
+    const repo = path.join(tmpDir, "pm-plan-repo");
+    fs.mkdirSync(repo);
+    git(repo, ["init"]);
+    const project = await services.addProject(store, repo);
+    const thread = services.createThread(store, {
+      projectId: project.id,
+      title: "T",
+    });
+    store.updateThread(thread.id, {
+      permissionMode: "plan",
+      awaitingInput: true,
+      pendingPlan: {
+        id: "p1",
+        plan: "## Steps\n\n1. Ship it",
+        askedAt: 1,
+      },
+    });
+    const updated = services.setPermissionMode(store, {
+      threadId: thread.id,
+      mode: "default",
+    });
+    assert.equal(updated.permissionMode, "default");
+    assert.equal(updated.pendingPlan, null);
+    assert.equal(updated.awaitingInput, false);
+    assert.equal(store.getThread(thread.id).plan, undefined);
+  });
+
   it("setPermissionMode leaves updatedAt unchanged", async () => {
     const repo = path.join(tmpDir, "pm-at-repo");
     fs.mkdirSync(repo);

@@ -879,6 +879,30 @@ function normalizeFeltEstimate(value) {
   return null;
 }
 
+/**
+ * Heal a persisted plan-approval card (issue #707). Empty/junk plans become
+ * null — a card the user cannot approve would be a permanent stuck badge.
+ * @param {unknown} value
+ */
+function normalizePendingPlan(value) {
+  if (!value || typeof value !== "object") return null;
+  const raw = /** @type {{ id?: unknown, plan?: unknown, askedAt?: unknown }} */ (
+    value
+  );
+  const plan = typeof raw.plan === "string" ? raw.plan.trim() : "";
+  if (!plan) return null;
+  const rawId = typeof raw.id === "string" ? raw.id.trim() : "";
+  const askedAt =
+    typeof raw.askedAt === "number" && Number.isFinite(raw.askedAt)
+      ? raw.askedAt
+      : 0;
+  return {
+    id: (rawId || "plan").slice(0, 64),
+    plan: plan.length > 20000 ? plan.slice(0, 20000) : plan,
+    askedAt,
+  };
+}
+
 function migrateThread(t) {
   if (!t || typeof t !== "object") return t;
   const next = {
@@ -969,6 +993,11 @@ function migrateThread(t) {
   const question = normalizePendingQuestion(t.pendingQuestion);
   if (question) next.pendingQuestion = question;
   else delete next.pendingQuestion;
+  // Plan-mode approval for CLIs without ExitPlanMode (issue #707). Omitted
+  // when absent so old fixtures still deepEqual.
+  const pendingPlan = normalizePendingPlan(t.pendingPlan);
+  if (pendingPlan) next.pendingPlan = pendingPlan;
+  else delete next.pendingPlan;
   if (
     t.crossThreadInbound === "queue-only" ||
     t.crossThreadInbound === "refuse"

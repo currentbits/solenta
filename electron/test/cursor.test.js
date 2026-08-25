@@ -293,6 +293,44 @@ async function main() {
     return;
   }
 
+  // Read-only plan turn (issue #707): assistant prose, no tools, no --force.
+  if (scenario === "plan") {
+    emit({
+      type: "system",
+      subtype: "init",
+      apiKeySource: "login",
+      cwd: process.cwd(),
+      session_id: "cursor-sess-1",
+      model: "Composer",
+      permissionMode: "plan",
+    });
+    await delay(20);
+    emit({
+      type: "assistant",
+      timestamp_ms: 1,
+      message: {
+        content: [
+          {
+            type: "text",
+            text: "## Steps\\n\\n1. Add the card\\n2. Wire the buttons",
+          },
+        ],
+      },
+      session_id: "cursor-sess-1",
+    });
+    await delay(20);
+    emit({
+      type: "result",
+      subtype: "success",
+      is_error: false,
+      duration_ms: 40,
+      result: "## Steps\\n\\n1. Add the card\\n2. Wire the buttons",
+      session_id: "cursor-sess-1",
+    });
+    process.exit(0);
+    return;
+  }
+
   if (scenario === "task-subagent-notification") {
     emit({
       type: "system",
@@ -609,6 +647,211 @@ describe("cursor runner integration", () => {
       !argv.includes("--force"),
       `plan must not emit --force: ${JSON.stringify(argv)}`,
     );
+  });
+
+  it("plan-mode turn leaves a plan approval card (#707)", async () => {
+    process.env.CODER_FAKE_CURSOR_SCENARIO = "plan";
+    const thread = store.getThreads()[0];
+    store.updateThread(thread.id, { permissionMode: "plan" });
+    store.saveNow();
+
+    await runner.startRun({ threadId: thread.id, prompt: "plan it" });
+    await waitFor(() => store.getThread(thread.id).status === "done");
+
+    const pending = runner.getPendingPermission(thread.id);
+    assert.ok(pending, "expected a plan approval card after the run finished");
+    assert.equal(pending.toolName, "ExitPlanMode");
+    assert.equal(
+      pending.plan,
+      "## Steps\n\n1. Add the card\n2. Wire the buttons",
+    );
+    assert.equal(store.getThread(thread.id).permissionMode, "plan");
+    assert.equal(store.getThread(thread.id).plan, undefined);
+    assert.equal(store.getThread(thread.id).awaitingInput, true);
+
+    // Survives a reload: persisted, not runner-ephemeral.
+    store.saveNow();
+    const reloaded = new Store(path.join(tmpDir, "store.json"));
+    assert.equal(
+      reloaded.getThread(thread.id).pendingPlan.plan,
+      "## Steps\n\n1. Add the card\n2. Wire the buttons",
+    );
+  });
+
+  it("approving a persisted plan stores it and leaves plan mode (#707)", async () => {
+    process.env.CODER_FAKE_CURSOR_SCENARIO = "plan";
+    const thread = store.getThreads()[0];
+    store.updateThread(thread.id, { permissionMode: "plan" });
+    store.saveNow();
+
+    await runner.startRun({ threadId: thread.id, prompt: "plan it" });
+    await waitFor(() => store.getThread(thread.id).status === "done");
+    const pendingAllow = runner.getPendingPermission(thread.id);
+    assert.ok(pendingAllow, "expected a plan approval card");
+
+    runner.respondPermission({
+      threadId: thread.id,
+      requestId: pendingAllow.requestId,
+      decision: "allow",
+    });
+
+    const after = store.getThread(thread.id);
+    assert.equal(after.permissionMode, "default");
+    assert.equal(
+      after.plan,
+      "## Steps\n\n1. Add the card\n2. Wire the buttons",
+    );
+    assert.equal(after.pendingPlan, null);
+    assert.equal(after.awaitingInput, false);
+    assert.equal(runner.getPendingPermission(thread.id), null);
+    const msgs = store.getMessages(thread.id);
+    assert.ok(msgs.some((m) => m.role === "event" && m.text === "Plan approved"));
+  });
+
+  it("rejecting a persisted plan keeps planning and does not store it (#707)", async () => {
+    process.env.CODER_FAKE_CURSOR_SCENARIO = "plan";
+    const thread = store.getThreads()[0];
+    store.updateThread(thread.id, { permissionMode: "plan" });
+    store.saveNow();
+
+    await runner.startRun({ threadId: thread.id, prompt: "plan it" });
+    await waitFor(() => store.getThread(thread.id).status === "done");
+    const pendingDeny = runner.getPendingPermission(thread.id);
+    assert.ok(pendingDeny, "expected a plan approval card");
+
+    runner.respondPermission({
+      threadId: thread.id,
+      requestId: pendingDeny.requestId,
+      decision: "deny",
+    });
+
+    const after = store.getThread(thread.id);
+    assert.equal(after.permissionMode, "plan");
+    assert.equal(after.plan, undefined);
+    assert.equal(after.pendingPlan, null);
+    assert.equal(after.awaitingInput, false);
+    assert.equal(runner.getPendingPermission(thread.id), null);
+    const msgs = store.getMessages(thread.id);
+    assert.ok(msgs.some((m) => m.role === "event" && m.text === "Plan rejected"));
+  });
+
+  it("default-mode cursor run does not open a plan card (#707)", async () => {
+    const thread = store.getThreads()[0];
+    await runner.startRun({ threadId: thread.id, prompt: "do the thing" });
+    await waitFor(() => store.getThread(thread.id).status === "done");
+    assert.ok(!store.getThread(thread.id).pendingPlan);
+    assert.equal(runner.getPendingPermission(thread.id), null);
+  });
+
+  it("stopping a plan-mode run with no assistant text does not invent a card (#707)", async () => {
+    process.env.CODER_FAKE_CURSOR_SCENARIO = "hang-after-init";
+    const thread = store.getThreads()[0];
+    store.updateThread(thread.id, { permissionMode: "plan" });
+    store.saveNow();
+
+    await runner.startRun({ threadId: thread.id, prompt: "plan it" });
+    await waitFor(() => runner.isRunning(thread.id));
+    await runner.stopRun({ threadId: thread.id });
+
+    assert.ok(!store.getThread(thread.id).pendingPlan);
+    assert.equal(runner.getPendingPermission(thread.id), null);
+    assert.equal(store.getThread(thread.id).permissionMode, "plan");
+  });
+
+  it("a stopped plan-mode turn does not reuse a previous turn's assistant text (#707)", async () => {
+    const thread = store.getThreads()[0];
+    await runner.startRun({ threadId: thread.id, prompt: "do the thing" });
+    await waitFor(() => store.getThread(thread.id).status === "done");
+    assert.ok(
+      store
+        .getMessages(thread.id)
+        .some((m) => m.role === "assistant" && /cursor/i.test(m.text || "")),
+    );
+
+    store.updateThread(thread.id, { permissionMode: "plan" });
+    store.saveNow();
+    process.env.CODER_FAKE_CURSOR_SCENARIO = "hang-after-init";
+    await runner.startRun({ threadId: thread.id, prompt: "plan it" });
+    await waitFor(() => runner.isRunning(thread.id));
+    await runner.stopRun({ threadId: thread.id });
+
+    assert.ok(!store.getThread(thread.id).pendingPlan);
+    assert.equal(runner.getPendingPermission(thread.id), null);
+  });
+
+  it("leaving plan mode via the picker dismisses the card without storing it (#707)", async () => {
+    process.env.CODER_FAKE_CURSOR_SCENARIO = "plan";
+    const thread = store.getThreads()[0];
+    store.updateThread(thread.id, { permissionMode: "plan" });
+    store.saveNow();
+
+    await runner.startRun({ threadId: thread.id, prompt: "plan it" });
+    await waitFor(() => store.getThread(thread.id).status === "done");
+    assert.ok(runner.getPendingPermission(thread.id));
+
+    services.setPermissionMode(store, {
+      threadId: thread.id,
+      mode: "default",
+    });
+    runner.refreshDetail(thread.id);
+
+    assert.equal(store.getThread(thread.id).pendingPlan, null);
+    assert.equal(store.getThread(thread.id).plan, undefined);
+    assert.equal(runner.getPendingPermission(thread.id), null);
+  });
+
+  it("a new user message supersedes the plan card (#707)", async () => {
+    process.env.CODER_FAKE_CURSOR_SCENARIO = "plan";
+    const thread = store.getThreads()[0];
+    store.updateThread(thread.id, { permissionMode: "plan" });
+    store.saveNow();
+
+    await runner.startRun({ threadId: thread.id, prompt: "plan it" });
+    await waitFor(() => store.getThread(thread.id).status === "done");
+    assert.ok(store.getThread(thread.id).pendingPlan);
+
+    process.env.CODER_FAKE_CURSOR_SCENARIO = "success";
+    await runner.startRun({ threadId: thread.id, prompt: "try again" });
+    await waitFor(() => store.getThread(thread.id).status === "working");
+    assert.ok(!store.getThread(thread.id).pendingPlan);
+    assert.equal(runner.getPendingPermission(thread.id), null);
+    await waitFor(() => store.getThread(thread.id).status === "done");
+  });
+
+  it("queued follow-up waits behind the plan card, then drains on approve (#707)", async () => {
+    process.env.CODER_FAKE_CURSOR_SCENARIO = "plan";
+    const thread = store.getThreads()[0];
+    store.updateThread(thread.id, { permissionMode: "plan" });
+    store.saveNow();
+
+    await runner.startRun({ threadId: thread.id, prompt: "plan it" });
+    await waitFor(() => store.getThread(thread.id).status === "working");
+    services.setQueued(store, { threadId: thread.id, prompt: "implement it" });
+
+    await waitFor(() => store.getThread(thread.id).status === "done");
+    const pendingQueue = runner.getPendingPermission(thread.id);
+    assert.ok(pendingQueue, "expected a plan approval card");
+    assert.equal(store.getThread(thread.id).queued.prompt, "implement it");
+    assert.equal(store.getThread(thread.id).permissionMode, "plan");
+    assert.ok(
+      !store
+        .getMessages(thread.id)
+        .some((m) => m.role === "user" && m.text === "implement it"),
+      "queued prompt must not drain while the plan card is up",
+    );
+
+    process.env.CODER_FAKE_CURSOR_SCENARIO = "success";
+    runner.respondPermission({
+      threadId: thread.id,
+      requestId: runner.getPendingPermission(thread.id).requestId,
+      decision: "allow",
+    });
+    await waitFor(() =>
+      store
+        .getMessages(thread.id)
+        .some((m) => m.role === "user" && m.text === "implement it"),
+    );
+    assert.equal(store.getThread(thread.id).permissionMode, "default");
   });
 
   it("uses CODER_CURSOR_BIN over defaultBin", () => {

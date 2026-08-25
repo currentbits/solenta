@@ -249,6 +249,40 @@ async function main() {
     return;
   }
 
+  // Issue #549 / #707: headless grok auto-cancels asking tools. The turn
+  // dies as "Run stopped", but the plan it already wrote must still become
+  // an approval card — not the event label.
+  if (scenario === "plan-cancelled") {
+    emit({
+      type: "system",
+      subtype: "init",
+      session_id: "grok-sess-001",
+      model: "grok-4.5",
+    });
+    await delay(15);
+    emit({
+      type: "assistant",
+      message: {
+        content: [{ type: "text", text: "## Steps\\n\\n1. Ship the card" }],
+      },
+    });
+    await delay(15);
+    emit({
+      type: "result",
+      subtype: "error_during_execution",
+      duration_ms: 40,
+      is_error: true,
+      num_turns: 1,
+      session_id: "grok-sess-001",
+      total_cost_usd: 0,
+      usage: { input_tokens: 1, output_tokens: 1 },
+      result: "## Steps\\n\\n1. Ship the card",
+      errors: ["cancelled"],
+    });
+    process.exit(0);
+    return;
+  }
+
   if (scenario === "resume-turn") {
     emit({
       type: "system",
@@ -471,6 +505,46 @@ describe("runner grok provider (claude-stream path)", () => {
     assert.equal(usage.costUsd, 0.02);
     assert.equal(usage.turns, 1);
     assert.equal(usage.contextTokens, 120);
+  });
+
+  it("plan-mode grok turn leaves a plan approval card (#707)", async () => {
+    process.env.CODER_FAKE_GROK_SCENARIO = "success";
+    const thread = store.getThreads()[0];
+    store.updateThread(thread.id, { permissionMode: "plan" });
+    store.saveNow();
+
+    await runner.startRun({ threadId: thread.id, prompt: "plan it" });
+    await waitFor(() => store.getThread(thread.id).status === "done");
+
+    const pending = runner.getPendingPermission(thread.id);
+    assert.ok(pending, "expected a plan approval card after the run finished");
+    assert.equal(pending.plan, "Hello from grok");
+    assert.equal(store.getThread(thread.id).permissionMode, "plan");
+
+    runner.respondPermission({
+      threadId: thread.id,
+      requestId: pending.requestId,
+      decision: "allow",
+    });
+    assert.equal(store.getThread(thread.id).permissionMode, "default");
+    assert.equal(store.getThread(thread.id).plan, "Hello from grok");
+    assert.equal(runner.getPendingPermission(thread.id), null);
+  });
+
+  it("cancelled plan-mode grok turn still leaves the written plan (#707)", async () => {
+    process.env.CODER_FAKE_GROK_SCENARIO = "plan-cancelled";
+    const thread = store.getThreads()[0];
+    store.updateThread(thread.id, { permissionMode: "plan" });
+    store.saveNow();
+
+    await runner.startRun({ threadId: thread.id, prompt: "plan it" });
+    await waitFor(() => store.getThread(thread.id).status === "idle");
+
+    const pending = runner.getPendingPermission(thread.id);
+    assert.ok(pending, "expected a plan approval card after CLI cancel");
+    assert.equal(pending.plan, "## Steps\n\n1. Ship the card");
+    assert.notEqual(pending.plan, "Run stopped");
+    assert.equal(store.getThread(thread.id).permissionMode, "plan");
   });
 
   it("grok's ask_user_question leaves a question card behind (#647)", async () => {

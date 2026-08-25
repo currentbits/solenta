@@ -511,6 +511,8 @@ const IPC_HANDLERS = {
   "threads:setPermissionMode": async (ctx, input) => {
     const updated = services.setPermissionMode(ctx.store, input);
     ctx.broadcast("threads:changed", services.listThreads(ctx.store));
+    // Drop a synthesized plan card from the open thread (issue #707).
+    if (ctx.runner.refreshDetail) ctx.runner.refreshDetail(input.threadId);
     return updated;
   },
   "threads:setArchived": async (ctx, input) => {

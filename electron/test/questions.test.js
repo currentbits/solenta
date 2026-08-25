@@ -166,3 +166,37 @@ describe("Store persists the question card", () => {
     }
   });
 });
+
+describe("Store persists the plan-approval card", () => {
+  it("survives a reload, and a corrupt one is healed away", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "coder-plan-"));
+    try {
+      const filePath = path.join(tmpDir, "coder-store.json");
+      fs.writeFileSync(
+        filePath,
+        JSON.stringify({
+          projects: [],
+          threads: [
+            {
+              id: "good",
+              pendingPlan: {
+                id: "p1",
+                askedAt: 5,
+                plan: "## Steps\n\n1. Ship it",
+              },
+            },
+            { id: "junk", pendingPlan: { plan: "   " } },
+            { id: "none" },
+          ],
+          messagesByThread: {},
+        }),
+      );
+      const store = new Store(filePath);
+      assert.equal(store.getThread("good").pendingPlan.plan, "## Steps\n\n1. Ship it");
+      assert.equal(store.getThread("junk").pendingPlan, undefined);
+      assert.equal(store.getThread("none").pendingPlan, undefined);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+});

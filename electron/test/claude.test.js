@@ -1614,6 +1614,10 @@ describe("runner claude provider", () => {
     // The agent is still planning: no card, and plan mode stays on.
     assert.equal(store.getThread(thread.id).plan, undefined);
     assert.equal(store.getThread(thread.id).permissionMode, "plan");
+    // Deny already answered ExitPlanMode; do not reopen a persisted card
+    // from the result string (issue #707).
+    assert.ok(!store.getThread(thread.id).pendingPlan);
+    assert.equal(runner.getPendingPermission(thread.id), null);
   });
 
   it("pairs tool_result is_error into tool message", async () => {
