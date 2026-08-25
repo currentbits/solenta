@@ -696,7 +696,8 @@ describe("cursor runner integration", () => {
     });
 
     const after = store.getThread(thread.id);
-    assert.equal(after.permissionMode, "default");
+    // Cursor honours no asking "default" (#177): approve snaps to bypass.
+    assert.equal(after.permissionMode, "bypassPermissions");
     assert.equal(
       after.plan,
       "## Steps\n\n1. Add the card\n2. Wire the buttons",
@@ -789,9 +790,11 @@ describe("cursor runner integration", () => {
     await waitFor(() => store.getThread(thread.id).status === "done");
     assert.ok(runner.getPendingPermission(thread.id));
 
+    // Cursor honours plan and bypassPermissions only (#177): the picker
+    // leaves plan mode via bypassPermissions, never an asking "default".
     services.setPermissionMode(store, {
       threadId: thread.id,
-      mode: "default",
+      mode: "bypassPermissions",
     });
     runner.refreshDetail(thread.id);
 
@@ -851,7 +854,10 @@ describe("cursor runner integration", () => {
         .getMessages(thread.id)
         .some((m) => m.role === "user" && m.text === "implement it"),
     );
-    assert.equal(store.getThread(thread.id).permissionMode, "default");
+    assert.equal(
+      store.getThread(thread.id).permissionMode,
+      "bypassPermissions",
+    );
   });
 
   it("uses CODER_CURSOR_BIN over defaultBin", () => {

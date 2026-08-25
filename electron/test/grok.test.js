@@ -526,7 +526,8 @@ describe("runner grok provider (claude-stream path)", () => {
       requestId: pending.requestId,
       decision: "allow",
     });
-    assert.equal(store.getThread(thread.id).permissionMode, "default");
+    // Grok honours no asking "default" (#177): approve snaps to bypass.
+    assert.equal(store.getThread(thread.id).permissionMode, "bypassPermissions");
     assert.equal(store.getThread(thread.id).plan, "Hello from grok");
     assert.equal(runner.getPendingPermission(thread.id), null);
   });

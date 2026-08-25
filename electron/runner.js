@@ -27,6 +27,7 @@ const {
   resolveBin,
   isBinAvailable,
   listProviders,
+  snapPermissionMode,
 } = require("./providers.js");
 const orchcommands = require("./orchcommands.js");
 const cliCommands = require("./cliCommands.js");
@@ -2197,7 +2198,14 @@ function createRunner(opts) {
     const approved = decision !== "deny";
     if (approved) {
       patch.plan = truncate(pending.plan, PLAN_STORE);
-      if (thread.permissionMode === "plan") patch.permissionMode = "default";
+      // Snap to a mode the provider honours: cursor has no asking "default"
+      // (#177), so leaving plan lands on bypassPermissions there.
+      if (thread.permissionMode === "plan") {
+        patch.permissionMode = snapPermissionMode(
+          getProvider(thread.provider),
+          "default",
+        );
+      }
     }
     store.updateThread(threadId, patch);
     appendMessage(

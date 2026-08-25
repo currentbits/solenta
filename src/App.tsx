@@ -355,10 +355,18 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     setKanbanProjectId(pid ?? null);
     setView("kanban");
   }, []);
-  const openPlanboard = useCallback((pid?: string | null) => {
-    setPlanboardProjectId(pid ?? null);
-    setView("planboard");
-  }, []);
+  // Unscoped (#597) means "the project I am in": land the board on the
+  // selected thread's project instead of the first project (#207). A scalar
+  // dep keeps the handler identity stable across thread-list churn.
+  const selectedThreadProjectId =
+    threads.find((t) => t.id === selectedThreadId)?.projectId ?? null;
+  const openPlanboard = useCallback(
+    (pid?: string | null) => {
+      setPlanboardProjectId(pid ?? selectedThreadProjectId);
+      setView("planboard");
+    },
+    [selectedThreadProjectId],
+  );
   const openPrs = useCallback(() => {
     setView("prs");
     setDrawer(null);
@@ -1257,13 +1265,9 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
               listPrs={listPrs}
               threads={threads}
               onSelectThread={handleSelectThread}
-              onStartTask={async (input) => {
-                const res = await handleCreateThreadFromIssue(input);
-                // Land on the thread we just started, unless there is a
-                // warning to read here first.
-                if (res.ok && !("warning" in res)) setView("thread");
-                return res;
-              }}
+              // Stay on the board after a start (#207): the card moves to In
+              // progress here, and the new thread is in the sidebar anyway.
+              onStartTask={handleCreateThreadFromIssue}
             />
           ) : view === "kanban" ? (
             <KanbanView
