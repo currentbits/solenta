@@ -45,6 +45,51 @@ if [[ ! -d "$APP_RES/node_modules/cross-spawn" || ! -f "$APP_RES/node_modules/cr
   exit 1
 fi
 
+# Resolve every third-party require() in electron/*.js against the packaged
+# tree. ws/cross-spawn dir checks above are historical; they missed yauzl,
+# which skillPackages.js requires at module load (mcpImports -> ipc -> main),
+# so a nightly can notarize, fail the later boot probe for unrelated reasons,
+# and still ship a bundle that throws "Cannot find module" on first launch.
+#
+# Run from an empty cwd with NODE_PATH=bundled node_modules. require.resolve
+# from the repo would walk into the host node_modules and false-pass.
+APP_RES="$(cd "$APP_RES" && pwd)"
+echo "verify: resolving electron require()s from $APP_RES"
+RESOLVE_CWD="$(mktemp -d "${TMPDIR:-/tmp}/solenta-pkg-resolve.XXXXXX")"
+(
+  cd "$RESOLVE_CWD"
+  NODE_PATH="$APP_RES/node_modules" node - "$APP_RES" <<'NODE'
+const fs = require("fs");
+const path = require("path");
+const appRes = process.argv[2];
+const electronDir = path.join(appRes, "electron");
+const ids = new Set();
+for (const name of fs.readdirSync(electronDir)) {
+  if (!name.endsWith(".js")) continue;
+  const src = fs.readFileSync(path.join(electronDir, name), "utf8");
+  for (const m of src.matchAll(/require\(["']([^"']+)["']\)/g)) {
+    const id = m[1];
+    if (id.startsWith(".") || id.startsWith("node:") || id === "electron") continue;
+    ids.add(id);
+  }
+}
+const missing = [];
+for (const id of ids) {
+  try {
+    require.resolve(id);
+  } catch {
+    missing.push(id);
+  }
+}
+if (missing.length) {
+  console.error("ERROR: packaged app cannot require.resolve: " + missing.sort().join(", "));
+  process.exit(1);
+}
+console.log("  resolved: " + [...ids].sort().join(" "));
+NODE
+)
+rm -rf "$RESOLVE_CWD"
+
 # ---------------------------------------------------------------------------
 # Gatekeeper
 # ---------------------------------------------------------------------------

@@ -123,8 +123,8 @@ for f in electron/*.js; do
   cp "$f" "$PAYLOAD/electron/"
 done
 
-# Same explicit root deps as package-app.sh (ws + cross-spawn tree).
-ROOT_NM_PKGS=(ws cross-spawn path-key shebang-command shebang-regex which isexe)
+# Same explicit root deps as package-app.sh (ws + cross-spawn + yauzl trees).
+ROOT_NM_PKGS=(ws cross-spawn path-key shebang-command shebang-regex which isexe yauzl pend)
 mkdir -p "$PAYLOAD/node_modules"
 for pkg in "${ROOT_NM_PKGS[@]}"; do
   if [[ ! -d "node_modules/$pkg" ]]; then
@@ -245,6 +245,12 @@ for target in "${TARGETS[@]}"; do
   }
   [[ -d "$APP_DIR/node_modules/cross-spawn" ]] || {
     echo "ERROR: [$target] cross-spawn missing" >&2; exit 1;
+  }
+  [[ -d "$APP_DIR/node_modules/yauzl" ]] || {
+    echo "ERROR: [$target] yauzl missing (skillPackages.js, boot-path require)" >&2; exit 1;
+  }
+  [[ -d "$APP_DIR/node_modules/pend" ]] || {
+    echo "ERROR: [$target] pend missing (yauzl transitive)" >&2; exit 1;
   }
 
   SIZE="$(du -sh "$ARCHIVE" | awk '{print $1}')"

@@ -149,12 +149,13 @@ for f in electron/*.js; do
 done
 
 # Root node_modules is NOT copied into the bundle (only memory-server's is).
-# electron/webBridge.js `require("ws")` and the provider spawn path
-# `require("cross-spawn")` therefore need explicit copies. Both trees are
-# pure JS (no native addon). cross-spawn's production deps must come too:
-# a missing nested require hangs the packaged boot (Electron shows a
-# module-not-found dialog and never reaches whenReady).
-ROOT_NM_PKGS=(ws cross-spawn path-key shebang-command shebang-regex which isexe)
+# electron/webBridge.js `require("ws")`, the provider spawn path
+# `require("cross-spawn")`, and skillPackages.js `require("yauzl")` (pulled
+# in at boot via mcpImports -> ipc -> main) therefore need explicit copies.
+# All three trees are pure JS (no native addon). Production transitives
+# must come too: a missing nested require dies at load (Electron dialog,
+# never reaches whenReady). electron/test/package-deps.test.js owns the list.
+ROOT_NM_PKGS=(ws cross-spawn path-key shebang-command shebang-regex which isexe yauzl pend)
 mkdir -p "$APP_DIR/node_modules"
 for pkg in "${ROOT_NM_PKGS[@]}"; do
   if [[ ! -d "node_modules/$pkg" ]]; then
