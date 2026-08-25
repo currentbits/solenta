@@ -64,6 +64,65 @@ export function permissionModeLabel(mode: PermissionMode): string {
 }
 
 /**
+ * Modes this provider's adapter actually honours. Missing `permissionModes`
+ * keeps the full set so legacy fixtures stay clickable; an explicit empty
+ * array means none can be sent.
+ */
+export function providerPermissionModes(
+  info: ProviderInfo | null | undefined,
+): PermissionMode[] {
+  if (!info || info.permissionModes == null) return PERMISSION_MODES.slice();
+  return info.permissionModes.slice();
+}
+
+/** True when picking `mode` would actually change this provider's argv. */
+export function permissionModeHonoured(
+  mode: PermissionMode,
+  info: ProviderInfo | null | undefined,
+): boolean {
+  return providerPermissionModes(info).includes(mode);
+}
+
+/**
+ * Modes the permission menu lists: honoured ones, plus the current stored
+ * mode when it is not honoured (shown disabled so the lie is visible).
+ */
+export function permissionPickerModes(
+  current: PermissionMode,
+  honoured: PermissionMode[],
+): PermissionMode[] {
+  if (honoured.includes(current)) return honoured.slice();
+  return [current, ...honoured.filter((m) => m !== current)];
+}
+
+/**
+ * Nearest honoured mode for a stored value this provider cannot send.
+ * Keep in lockstep with electron/providers.js snapPermissionMode.
+ */
+export function snapToHonouredPermissionMode(
+  honoured: PermissionMode[],
+  mode: PermissionMode,
+): PermissionMode {
+  if (honoured.length === 0) return mode;
+  if (honoured.includes(mode)) return mode;
+  if (mode === "acceptEdits") {
+    if (honoured.includes("bypassPermissions")) return "bypassPermissions";
+    if (honoured.includes("default")) return "default";
+  }
+  if (mode === "default") {
+    if (honoured.includes("bypassPermissions")) return "bypassPermissions";
+  }
+  if (mode === "plan") {
+    if (honoured.includes("default")) return "default";
+    if (honoured.includes("bypassPermissions")) return "bypassPermissions";
+  }
+  if (mode === "bypassPermissions") {
+    if (honoured.includes("default")) return "default";
+  }
+  return honoured[0] ?? mode;
+}
+
+/**
  * Cost display: four decimals under $1 ($0.0123), two decimals at/above ($12.34).
  */
 export function formatCostUsd(costUsd: number): string {

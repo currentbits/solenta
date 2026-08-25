@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   PERMISSION_MODE_LABELS,
-  PERMISSION_MODES,
+  providerPermissionModes,
+  snapToHonouredPermissionMode,
 } from "../format";
 import { formatUsd } from "../digest";
 import {
@@ -245,13 +246,18 @@ function draftFromPoolEntry(
 }
 
 function emptyDraft(providers: readonly ProviderInfo[]): ProfileDraft {
+  const providerId = defaultProviderId(providers);
+  const selected = providers.find((p) => p.id === providerId);
   return {
     id: null,
     name: "",
-    provider: defaultProviderId(providers),
+    provider: providerId,
     model: null,
     reasoningEffort: null,
-    permissionMode: "default",
+    permissionMode: snapToHonouredPermissionMode(
+      providerPermissionModes(selected),
+      "default",
+    ),
     customModel: false,
   };
 }
@@ -270,7 +276,10 @@ function draftFromProfile(
     provider: profile.provider,
     model: profile.model,
     reasoningEffort: profile.reasoningEffort,
-    permissionMode: profile.permissionMode,
+    permissionMode: snapToHonouredPermissionMode(
+      providerPermissionModes(provider),
+      profile.permissionMode,
+    ),
     customModel: profile.model != null && !known,
   };
 }
@@ -703,7 +712,10 @@ export function SettingsModal({
       provider: draft.provider,
       model,
       reasoningEffort,
-      permissionMode: draft.permissionMode,
+      permissionMode: snapToHonouredPermissionMode(
+        providerPermissionModes(selected),
+        draft.permissionMode,
+      ),
     };
     const list = settings?.agentProfiles ?? [];
     const next = draft.id
@@ -2080,6 +2092,7 @@ function ProfileForm({
   const selected = providers.find((p) => p.id === draft.provider);
   const modelInfo = selected?.modelInfo ?? [];
   const efforts = selected?.efforts ?? [];
+  const permissionModes = providerPermissionModes(selected);
   const modelValue = draft.customModel ? CUSTOM_MODEL_ID : (draft.model ?? "");
   const providerMissing =
     draft.provider !== "" &&
@@ -2099,6 +2112,10 @@ function ProfileForm({
       model: modelOk ? draft.model : null,
       customModel: false,
       reasoningEffort: effortOk ? draft.reasoningEffort : null,
+      permissionMode: snapToHonouredPermissionMode(
+        providerPermissionModes(next),
+        draft.permissionMode,
+      ),
     });
   };
 
@@ -2230,8 +2247,16 @@ function ProfileForm({
         <select
           id="profile-permission"
           className={styles.input}
-          value={draft.permissionMode}
-          disabled={saving}
+          value={snapToHonouredPermissionMode(
+            permissionModes,
+            draft.permissionMode,
+          )}
+          disabled={saving || permissionModes.length <= 1}
+          title={
+            permissionModes.length <= 1
+              ? `${selected?.name ?? "This CLI"} always runs tools unprompted`
+              : undefined
+          }
           onChange={(e) =>
             onChange({
               ...draft,
@@ -2239,7 +2264,7 @@ function ProfileForm({
             })
           }
         >
-          {PERMISSION_MODES.map((mode) => (
+          {permissionModes.map((mode) => (
             <option key={mode} value={mode}>
               {PERMISSION_MODE_LABELS[mode]}
             </option>

@@ -68,21 +68,38 @@ describe("resolveSandbox per provider (local)", () => {
     assert.match(bypass.reason, /bypassPermissions \(not gated\)/);
   });
 
-  it("codex: default CLI sandbox, permissionMode does not lift it", () => {
-    for (const permissionMode of [
-      "default",
-      "acceptEdits",
-      "plan",
-      "bypassPermissions",
-    ]) {
-      const out = resolveSandbox({
-        provider: "codex",
-        permissionMode,
-        project: local,
-      });
-      assert.equal(out.sandboxed, true, permissionMode);
-      assert.match(out.reason, /Codex default sandbox/);
-    }
+  it("codex: --sandbox follows permissionMode", () => {
+    const plan = resolveSandbox({
+      provider: "codex",
+      permissionMode: "plan",
+      project: local,
+    });
+    assert.equal(plan.sandboxed, true);
+    assert.match(plan.reason, /Codex --sandbox read-only/);
+
+    const def = resolveSandbox({
+      provider: "codex",
+      permissionMode: "default",
+      project: local,
+    });
+    assert.equal(def.sandboxed, true);
+    assert.match(def.reason, /Codex --sandbox workspace-write/);
+
+    const accept = resolveSandbox({
+      provider: "codex",
+      permissionMode: "acceptEdits",
+      project: local,
+    });
+    assert.equal(accept.sandboxed, true);
+    assert.match(accept.reason, /Codex --sandbox workspace-write/);
+
+    const bypass = resolveSandbox({
+      provider: "codex",
+      permissionMode: "bypassPermissions",
+      project: local,
+    });
+    assert.equal(bypass.sandboxed, false);
+    assert.match(bypass.reason, /Codex --sandbox danger-full-access/);
   });
 
   it("grok: asking modes become bypassPermissions; never passes --sandbox", () => {
@@ -135,20 +152,45 @@ describe("resolveSandbox per provider (local)", () => {
     assert.match(out.reason, /Kimi -p ignores permission mode/);
   });
 
-  it("opencode and simulate have no sandbox", () => {
+  it("opencode and simulate have no OS sandbox", () => {
     assert.equal(
       resolveSandbox({ provider: "opencode", project: local }).sandboxed,
       false,
     );
     assert.match(
       reason({ provider: "opencode", project: local }),
-      /OpenCode run has no permission or sandbox flags/,
+      /OpenCode run without --auto/,
+    );
+    assert.match(
+      reason({
+        provider: "opencode",
+        permissionMode: "bypassPermissions",
+        project: local,
+      }),
+      /OpenCode --auto/,
     );
     assert.equal(
       resolveSandbox({ provider: "simulate", project: local }).sandboxed,
       false,
     );
     assert.match(reason({ provider: "simulate", project: local }), /Simulate/);
+  });
+
+  it("cursor: plan drops --force; other modes are --force", () => {
+    const plan = resolveSandbox({
+      provider: "cursor",
+      permissionMode: "plan",
+      project: local,
+    });
+    assert.equal(plan.sandboxed, false);
+    assert.match(plan.reason, /--mode plan/);
+    const bypass = resolveSandbox({
+      provider: "cursor",
+      permissionMode: "bypassPermissions",
+      project: local,
+    });
+    assert.equal(bypass.sandboxed, false);
+    assert.match(bypass.reason, /--force/);
   });
 
   it("unknown / generic is an honest no", () => {

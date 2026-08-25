@@ -82,6 +82,33 @@ describe("teach mode gate", () => {
     assert.equal(store.thread.permissionMode, "plan");
   });
 
+  it("startTeach on grok Full access lands on Plan, not leftover Ask first", () => {
+    const store = makeStore({
+      provider: "grok",
+      permissionMode: "bypassPermissions",
+    });
+    startTeach(store, { threadId: "t1" });
+    assert.equal(store.thread.permissionMode, "plan");
+  });
+
+  it("startTeach on leftover grok Ask first also lands on Plan", () => {
+    const store = makeStore({
+      provider: "grok",
+      permissionMode: "default",
+    });
+    startTeach(store, { threadId: "t1" });
+    assert.equal(store.thread.permissionMode, "plan");
+  });
+
+  it("startTeach on kimi keeps Full access because no safer mode can be sent", () => {
+    const store = makeStore({
+      provider: "kimi",
+      permissionMode: "bypassPermissions",
+    });
+    startTeach(store, { threadId: "t1" });
+    assert.equal(store.thread.permissionMode, "bypassPermissions");
+  });
+
   it("stopTeach clears the field and leaves permission mode", () => {
     const store = makeStore({ permissionMode: "plan" });
     startTeach(store, { threadId: "t1" });

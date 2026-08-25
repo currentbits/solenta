@@ -52,6 +52,9 @@ const { execFileSync } = require("node:child_process");
  *   config.toml flip in kimi.js); absent means buildArgs emits the flag
  * @property {boolean} [supportsSearch] - CLI accepts `codex exec --search`
  *   (live web search). Absent/false hides the composer Search pill.
+ * @property {Array<"default"|"acceptEdits"|"plan"|"bypassPermissions">} permissionModes
+ *   Modes this adapter actually honours (changes argv / CLI behaviour).
+ *   The composer only offers these; setPermissionMode rejects the rest.
  * @property {"claude-stream" | "codex-json" | "kimi-stream" | "opencode-json" | "cursor-stream" | "simulate"} kind
  * @property {(opts: {
  *   prompt: string,
@@ -62,6 +65,13 @@ const { execFileSync } = require("node:child_process");
  *   webSearch?: boolean,
  * }) => string[]} buildArgs
  */
+
+const ALL_PERMISSION_MODES = [
+  "default",
+  "acceptEdits",
+  "plan",
+  "bypassPermissions",
+];
 
 /**
  * Push an effort flag only when the provider lists that level.
@@ -75,6 +85,71 @@ function maybeEmitEffort(allowed, reasoningEffort, emit) {
   const level = String(reasoningEffort);
   if (!Array.isArray(allowed) || !allowed.includes(level)) return;
   emit(level);
+}
+
+/**
+ * Modes this adapter actually honours. Missing field → all four (legacy);
+ * empty array → none.
+ * @param {ProviderEntry | null | undefined} entry
+ * @returns {string[]}
+ */
+function honouredPermissionModes(entry) {
+  if (!entry) return [];
+  if (!Array.isArray(entry.permissionModes)) return ALL_PERMISSION_MODES.slice();
+  return entry.permissionModes.slice();
+}
+
+/**
+ * Nearest honoured mode for a stored value this provider cannot send.
+ * Asking modes on unprompted CLIs become bypassPermissions; plan on a CLI
+ * without a plan flag becomes default (do not auto-approve).
+ * @param {ProviderEntry | null | undefined} entry
+ * @param {string | null | undefined} mode
+ * @returns {string}
+ */
+function snapPermissionMode(entry, mode) {
+  const allowed = honouredPermissionModes(entry);
+  const requested = String(mode || "default");
+  if (allowed.length === 0) return requested;
+  if (allowed.includes(requested)) return requested;
+
+  if (requested === "acceptEdits") {
+    if (allowed.includes("bypassPermissions")) return "bypassPermissions";
+    if (allowed.includes("default")) return "default";
+  }
+  if (requested === "default") {
+    if (allowed.includes("bypassPermissions")) return "bypassPermissions";
+  }
+  if (requested === "plan") {
+    if (allowed.includes("default")) return "default";
+    if (allowed.includes("bypassPermissions")) return "bypassPermissions";
+  }
+  if (requested === "bypassPermissions") {
+    if (allowed.includes("default")) return "default";
+  }
+  return allowed[0];
+}
+
+/**
+ * Codex exec sandbox for a Solenta permission mode (issue #170).
+ * @param {string | null | undefined} permissionMode
+ * @returns {"read-only" | "workspace-write" | "danger-full-access"}
+ */
+function codexSandboxFor(permissionMode) {
+  const mode = String(permissionMode || "default");
+  if (mode === "plan") return "read-only";
+  if (mode === "bypassPermissions") return "danger-full-access";
+  return "workspace-write";
+}
+
+/**
+ * OpenCode `run --auto` is the only permission lever. Full access and a
+ * leftover acceptEdits both auto-approve; plan/default omit the flag.
+ * @param {string | null | undefined} permissionMode
+ */
+function opencodeAuto(permissionMode) {
+  const mode = String(permissionMode || "default");
+  return mode === "bypassPermissions" || mode === "acceptEdits";
 }
 
 /** @type {ProviderEntry[]} */
@@ -124,6 +199,7 @@ const PROVIDERS = [
     ],
     // claude --help / live warning: low, medium, high, xhigh, max
     efforts: ["low", "medium", "high", "xhigh", "max"],
+    permissionModes: ALL_PERMISSION_MODES.slice(),
     kind: "claude-stream",
     buildArgs({ sessionId, permissionMode, model, reasoningEffort }) {
       // NO trailing prompt: the runner delivers it on stdin (stream-json
@@ -207,8 +283,17 @@ const PROVIDERS = [
     // none|minimal|low|medium|high|xhigh|max; contract has no none/minimal.
     efforts: ["low", "medium", "high", "xhigh", "max"],
     supportsSearch: true,
+    // Issue #170: exec defaults to read-only unless we pass --sandbox.
+    permissionModes: ALL_PERMISSION_MODES.slice(),
     kind: "codex-json",
-    buildArgs({ prompt, sessionId, model, reasoningEffort, webSearch }) {
+    buildArgs({
+      prompt,
+      sessionId,
+      model,
+      reasoningEffort,
+      webSearch,
+      permissionMode,
+    }) {
       const codexEfforts = ["low", "medium", "high", "xhigh", "max"];
       const args = sessionId
         ? [
@@ -229,6 +314,7 @@ const PROVIDERS = [
       if (webSearch === true) {
         args.push("--search");
       }
+      args.push("--sandbox", codexSandboxFor(permissionMode));
       args.push(String(prompt ?? ""));
       return args;
     },
@@ -261,6 +347,10 @@ const PROVIDERS = [
     ],
     // Live CLI: unknown effort level 'bogus'; use one of: xhigh, high, medium, low
     efforts: ["low", "medium", "high", "xhigh"],
+    // Headless -p has no prompt channel, so default/acceptEdits cannot ask.
+    // plan and bypassPermissions are real; asking modes remap in buildArgs
+    // so a leftover stored "default" does not auto-cancel the run (#549).
+    permissionModes: ["plan", "bypassPermissions"],
     kind: "claude-stream",
     /**
      * Grok CLI: options first, then -p/--single <PROMPT> last so the prompt
@@ -393,13 +483,16 @@ const PROVIDERS = [
     // are verified: advertising a level the model rejects is the bug this
     // feature exists to remove.
     efforts: [],
+    // `opencode run --auto` auto-approves non-denied permissions. No plan
+    // flag. Accept-edits is the same lever as full access.
+    permissionModes: ["default", "bypassPermissions"],
     kind: "opencode-json",
     /**
      * Custom model ids allowed (format provider/model).
      * Resume via -s <sessionID>; model override via -m provider/model.
      * Prompt is the last argv element.
      */
-    buildArgs({ prompt, sessionId, model, reasoningEffort }) {
+    buildArgs({ prompt, sessionId, model, reasoningEffort, permissionMode }) {
       const args = ["run", "--format", "json"];
       if (sessionId) {
         args.push("-s", String(sessionId));
@@ -411,6 +504,9 @@ const PROVIDERS = [
       maybeEmitEffort([], reasoningEffort, () => {
         args.push("--variant", "should-not-appear");
       });
+      if (opencodeAuto(permissionMode)) {
+        args.push("--auto");
+      }
       args.push(String(prompt ?? ""));
       return args;
     },
@@ -466,6 +562,9 @@ const PROVIDERS = [
     // config.toml around the spawn instead of emitting argv.
     efforts: ["low", "high", "max"],
     effortVia: "config",
+    // -p cannot combine with -y/--auto/--plan (verified live). Prompt mode
+    // always runs tools unprompted, so the only honest label is full access.
+    permissionModes: ["bypassPermissions"],
     kind: "kimi-stream",
     /**
      * Kimi HAS per-session resume: the stream's meta resume hint carries a
@@ -929,6 +1028,9 @@ const PROVIDERS = [
     ],
     // Effort is baked into Cursor model ids; never --effort / --reasoning-effort.
     efforts: [],
+    // Plan is `--mode plan` without --force. Every other Solenta mode is
+    // the same argv (`--force`); asking cannot prompt (stdio is ignored).
+    permissionModes: ["plan", "bypassPermissions"],
     kind: "cursor-stream",
     /**
      * Cursor Agent CLI (verified 2026.07.09-a3815c0). `-p`/`--print` is a
@@ -982,6 +1084,7 @@ const SIMULATE_ENTRY = {
   models: [],
   modelInfo: [],
   efforts: [],
+  permissionModes: ALL_PERMISSION_MODES.slice(),
   kind: "simulate",
   buildArgs() {
     return [];
@@ -1148,6 +1251,7 @@ function listProviders(opts = {}) {
       modelInfo: (entry.modelInfo || []).map((m) => ({ ...m })),
       efforts: (entry.efforts || []).slice(),
       supportsSearch: entry.supportsSearch === true,
+      permissionModes: honouredPermissionModes(entry),
     });
   }
 
@@ -1161,6 +1265,7 @@ function listProviders(opts = {}) {
       modelInfo: [],
       efforts: [],
       supportsSearch: false,
+      permissionModes: honouredPermissionModes(SIMULATE_ENTRY),
     });
   }
 
@@ -1170,6 +1275,7 @@ function listProviders(opts = {}) {
 module.exports = {
   PROVIDERS,
   SIMULATE_ENTRY,
+  ALL_PERMISSION_MODES,
   getProvider,
   knownProviderIds,
   resolveBin,
@@ -1177,4 +1283,7 @@ module.exports = {
   defaultWhich,
   clearWhichCache,
   listProviders,
+  honouredPermissionModes,
+  snapPermissionMode,
+  codexSandboxFor,
 };

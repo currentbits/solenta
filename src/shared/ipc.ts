@@ -1858,6 +1858,12 @@ export interface ProviderInfo {
    * The composer hides the Search pill when this is missing or false.
    */
   supportsSearch?: boolean;
+  /**
+   * Permission modes this adapter actually honours (issue #177). The composer
+   * only offers these instead of silently ignoring a pick. Missing means the
+   * full set (legacy fixtures); empty means none can be sent.
+   */
+  permissionModes?: PermissionMode[];
 }
 
 /** One phase of a user-defined workflow template. */
@@ -2782,7 +2788,11 @@ export interface CoderApi {
      * the picker does not mark that thread read.
      */
     peek(id: string): Promise<ThreadDetail>;
-    /** Sticky permission mode for future turns of this thread. */
+    /**
+     * Sticky permission mode for future turns of this thread. Rejects when
+     * the provider cannot honour the mode, rather than storing a setting
+     * that would never reach the CLI (issue #177).
+     */
     setPermissionMode(input: { threadId: string; mode: PermissionMode }): Promise<ThreadInfo>;
     /**
      * Answer the active run's pending permission prompt (ThreadDetail.

@@ -288,6 +288,12 @@ function devProvider(
       recommended: i === 0,
     })),
     efforts: ["low", "medium", "high"],
+    permissionModes: [
+      "default",
+      "acceptEdits",
+      "plan",
+      "bypassPermissions",
+    ],
   };
 }
 
@@ -297,9 +303,18 @@ const DEV_PROVIDERS: ProviderInfo[] = [
     ...devProvider("codex", "Codex", ["gpt-5.3-codex", "gpt-5.3"]),
     supportsSearch: true,
   },
-  devProvider("kimi", "Kimi", ["kimi-k3-thinking"]),
-  devProvider("grok", "Grok", ["grok-4.6"], TRAILER),
-  devProvider("opencode", "OpenCode", ["opencode/grok-code"]),
+  {
+    ...devProvider("kimi", "Kimi", ["kimi-k3-thinking"]),
+    permissionModes: ["bypassPermissions"],
+  },
+  {
+    ...devProvider("grok", "Grok", ["grok-4.6"], TRAILER),
+    permissionModes: ["plan", "bypassPermissions"],
+  },
+  {
+    ...devProvider("opencode", "OpenCode", ["opencode/grok-code"]),
+    permissionModes: ["default", "bypassPermissions"],
+  },
 ];
 
 /** Builtin Standard template (id "standard"). Seeded into every dev session. */

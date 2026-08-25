@@ -272,12 +272,13 @@ describe("setProvider lock semantics", () => {
       model: store.getThread(thread.id).model,
     });
     assert.ok(!args.includes("-m"), `unexpected -m in ${JSON.stringify(args)}`);
-    assert.deepEqual(args, [
+    assert.deepEqual(args.slice(0, 3), [
       "exec",
       "--json",
       "--skip-git-repo-check",
-      "hi",
     ]);
+    assert.equal(args[args.length - 1], "hi");
+    assert.equal(args[args.indexOf("--sandbox") + 1], "workspace-write");
   });
 });
 

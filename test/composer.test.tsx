@@ -45,6 +45,7 @@ const CLAUDE_WITH_INFO: ProviderInfo = {
     },
   ],
   efforts: ["low", "medium", "high", "xhigh", "max"],
+  permissionModes: ["default", "acceptEdits", "plan", "bypassPermissions"],
 };
 
 const CODEX: ProviderInfo = {
@@ -56,6 +57,7 @@ const CODEX: ProviderInfo = {
   modelInfo: [],
   efforts: [],
   supportsSearch: true,
+  permissionModes: ["default", "acceptEdits", "plan", "bypassPermissions"],
 };
 
 const GROK: ProviderInfo = {
@@ -74,6 +76,7 @@ const GROK: ProviderInfo = {
   ],
   // Real CLI: low / medium / high only (three segments, not five).
   efforts: ["low", "medium", "high"],
+  permissionModes: ["plan", "bypassPermissions"],
 };
 
 /**
@@ -99,6 +102,7 @@ const KIMI_LIKE: ProviderInfo = {
   // here would hide any meter code that assumes low..high runs unbroken —
   // the same fixture hazard that has hidden bugs three times already.
   efforts: ["low", "high", "max"],
+  permissionModes: ["bypassPermissions"],
 };
 
 const PROVIDERS: ProviderInfo[] = [CLAUDE_WITH_INFO, CODEX, GROK, KIMI_LIKE];
@@ -1323,6 +1327,142 @@ describe("Composer permission mode", () => {
     assert.deepEqual(h.modes, [], "a gated mode must not fire onPermissionModeChange");
     m.unmount();
   });
+
+  it("Grok only offers Plan and Full access; leftover Ask first is annotated", async () => {
+    const h = makeHarness("grok");
+    const m = await mount(
+      composer(h, { provider: "grok", permissionMode: "default" }),
+    );
+    const modePill = Array.from(m.queryAll("button")).find((b) =>
+      (b.textContent || "").includes("Ask first"),
+    ) as HTMLButtonElement | undefined;
+    assert.ok(modePill, "leftover Ask first must stay visible");
+    assert.equal(modePill.disabled, false, "user must be able to pick a real mode");
+    assert.match(modePill.title, /cannot honor Ask first/i);
+    await m.click(modePill);
+    const labels = Array.from(m.queryAll("[data-permission-mode]")).map(
+      (el) => el.textContent?.trim(),
+    );
+    assert.deepEqual(labels, ["Ask first", "Plan mode", "Full access"]);
+    const ask = m.query(
+      '[data-permission-mode="default"]',
+    ) as HTMLButtonElement | null;
+    const accept = m.query('[data-permission-mode="acceptEdits"]');
+    const plan = m.query(
+      '[data-permission-mode="plan"]',
+    ) as HTMLButtonElement | null;
+    assert.ok(ask);
+    assert.equal(ask.disabled, true);
+    assert.equal(ask.getAttribute("data-unhonoured"), "true");
+    assert.equal(accept, null, "Accept edits is the same lie as Ask first");
+    assert.ok(plan);
+    assert.equal(plan.disabled, false);
+    await m.click(plan);
+    assert.deepEqual(h.modes, ["plan"]);
+    m.unmount();
+  });
+
+  it("Kimi Full access is the only honoured mode and the pill is locked", async () => {
+    const h = makeHarness("kimi");
+    const m = await mount(
+      composer(h, {
+        provider: "kimi",
+        permissionMode: "bypassPermissions",
+      }),
+    );
+    const modePill = Array.from(m.queryAll("button")).find((b) =>
+      (b.getAttribute("aria-label") || "").startsWith("Permission:"),
+    ) as HTMLButtonElement | undefined;
+    assert.ok(modePill);
+    assert.equal(modePill.disabled, true);
+    assert.match(modePill.title, /unprompted/i);
+    assert.ok((modePill.textContent || "").includes("Full access"));
+    await m.click(modePill);
+    assert.equal(m.query('[aria-label="Permission mode"]'), null);
+    m.unmount();
+  });
+
+  it("Cursor leftover Ask first is annotated; only Plan and Full access are offered", async () => {
+    const CURSOR: ProviderInfo = {
+      id: "cursor",
+      name: "Cursor",
+      available: true,
+      supportsResume: true,
+      models: ["auto"],
+      modelInfo: [
+        {
+          id: "auto",
+          label: "Auto",
+          description: "Cursor default",
+          vendor: "Cursor",
+        },
+      ],
+      efforts: [],
+      permissionModes: ["plan", "bypassPermissions"],
+    };
+    const h = makeHarness("cursor");
+    const m = await mount(
+      composer(h, {
+        provider: "cursor",
+        permissionMode: "default",
+        providers: [CURSOR],
+      }),
+    );
+    const modePill = Array.from(m.queryAll("button")).find((b) =>
+      (b.textContent || "").includes("Ask first"),
+    ) as HTMLButtonElement | undefined;
+    assert.ok(modePill);
+    assert.match(modePill.title, /cannot honor Ask first/i);
+    await m.click(modePill);
+    const labels = Array.from(m.queryAll("[data-permission-mode]")).map(
+      (el) => el.textContent?.trim(),
+    );
+    assert.deepEqual(labels, ["Ask first", "Plan mode", "Full access"]);
+    const ask = m.query(
+      '[data-permission-mode="default"]',
+    ) as HTMLButtonElement | null;
+    assert.ok(ask);
+    assert.equal(ask.disabled, true);
+    m.unmount();
+  });
+
+  it("OpenCode offers Ask first and Full access, not Plan or Accept edits", async () => {
+    const h = makeHarness("opencode");
+    const OPENCODE: ProviderInfo = {
+      id: "opencode",
+      name: "OpenCode",
+      available: true,
+      supportsResume: true,
+      models: ["opencode/north-mini-code-free"],
+      modelInfo: [
+        {
+          id: "opencode/north-mini-code-free",
+          label: "North Mini",
+          description: "free",
+          vendor: "Cohere",
+        },
+      ],
+      efforts: [],
+      permissionModes: ["default", "bypassPermissions"],
+    };
+    const m = await mount(
+      composer(h, {
+        provider: "opencode",
+        permissionMode: "default",
+        providers: [OPENCODE],
+      }),
+    );
+    const modePill = Array.from(m.queryAll("button")).find((b) =>
+      (b.textContent || "").includes("Ask first"),
+    );
+    assert.ok(modePill);
+    await m.click(modePill);
+    const labels = Array.from(m.queryAll("[data-permission-mode]")).map(
+      (el) => el.textContent?.trim(),
+    );
+    assert.deepEqual(labels, ["Ask first", "Full access"]);
+    m.unmount();
+  });
 });
 
 describe("Composer while hard-disabled (archived thread)", () => {
@@ -1879,6 +2019,32 @@ describe("Composer agent profiles", () => {
       "setReasoningEffort",
       "setPermissionMode",
     ]);
+    m.unmount();
+  });
+
+  it("snaps a leftover Grok profile mode to Full access instead of sending Accept edits", async () => {
+    const grokOk: ProviderInfo = { ...GROK, available: true };
+    const leftover: AgentProfile = {
+      id: "p3",
+      name: "Grok leftover",
+      provider: "grok",
+      model: "grok-4",
+      reasoningEffort: "high",
+      permissionMode: "acceptEdits",
+    };
+    const h = makeHarness();
+    const m = await mount(
+      composer(h, {
+        providers: [CLAUDE_WITH_INFO, grokOk],
+        agentProfiles: [leftover],
+      }),
+    );
+    await m.click(m.query('button[aria-label^="Model:"]'));
+    const btn = m.query('button[aria-label="Profile Grok leftover"]');
+    assert.ok(btn);
+    await m.click(btn);
+    assert.deepEqual(h.providerSets, [{ provider: "grok", model: "grok-4" }]);
+    assert.deepEqual(h.modes, ["bypassPermissions"]);
     m.unmount();
   });
 

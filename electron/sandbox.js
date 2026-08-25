@@ -12,11 +12,11 @@
  *   grok    default/acceptEdits remapped to --always-approve /
  *           --permission-mode bypassPermissions (tools unprompted);
  *           plan/bypassPermissions pass through; no --sandbox
- *   kimi    -p cannot combine with -y/--auto; permission mode ignored
- *   opencode run --format json; no permission or sandbox flags
- *   codex   exec --json --skip-git-repo-check; Solenta never passes -s or
- *           --dangerously-bypass-approvals-and-sandbox, so the CLI's own
- *           default sandbox is the only confinement
+ *   kimi    -p cannot combine with -y/--auto/--plan; tools unprompted
+ *   opencode --auto for bypassPermissions/acceptEdits; omitted otherwise
+ *   cursor  --mode plan without --force; every other mode is --force
+ *   codex   --sandbox read-only | workspace-write | danger-full-access
+ *           from permissionMode (issue #170)
  *   simulate / generic / unknown: nothing
  *
  * Location is a separate confinement story the badge must tell apart:
@@ -56,11 +56,21 @@ function agentSandbox(provider, permissionMode) {
   const mode = String(permissionMode || "default");
 
   if (id === "codex") {
-    // permissionMode is not on the argv, so bypassPermissions does not
-    // lift Codex's default sandbox.
+    const sandbox =
+      mode === "plan"
+        ? "read-only"
+        : mode === "bypassPermissions"
+          ? "danger-full-access"
+          : "workspace-write";
+    if (sandbox === "danger-full-access") {
+      return {
+        sandboxed: false,
+        reason: "Codex --sandbox danger-full-access (not gated)",
+      };
+    }
     return {
       sandboxed: true,
-      reason: "Codex default sandbox (no --sandbox override)",
+      reason: `Codex --sandbox ${sandbox}`,
     };
   }
 
@@ -105,9 +115,25 @@ function agentSandbox(provider, permissionMode) {
   }
 
   if (id === "opencode") {
+    const auto = mode === "bypassPermissions" || mode === "acceptEdits";
     return {
       sandboxed: false,
-      reason: "OpenCode run has no permission or sandbox flags",
+      reason: auto
+        ? "OpenCode --auto (tools unprompted); no OS sandbox"
+        : "OpenCode run without --auto; no OS sandbox",
+    };
+  }
+
+  if (id === "cursor") {
+    if (mode === "plan") {
+      return {
+        sandboxed: false,
+        reason: "Cursor --mode plan (read-only); no --force",
+      };
+    }
+    return {
+      sandboxed: false,
+      reason: "Cursor --force (tools unprompted); no OS sandbox",
     };
   }
 

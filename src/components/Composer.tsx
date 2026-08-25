@@ -21,9 +21,12 @@ import type {
 import type { WorkflowSaveInput } from "../useCoder";
 import {
   PERMISSION_MODE_LABELS,
-  PERMISSION_MODES,
+  permissionModeHonoured,
+  permissionPickerModes,
   providerDisplayName,
+  providerPermissionModes,
   shortSessionId,
+  snapToHonouredPermissionMode,
 } from "../format";
 import {
   buildModelRows,
@@ -722,6 +725,20 @@ export const Composer = memo(function Composer({
   const reasoningVisible = showReasoningControl(efforts);
   const effortUnavailable = currentProviderInfo?.available === false;
   const effortLabel = effortDisplayLabel(reasoningEffort);
+  const honouredModes = providerPermissionModes(currentProviderInfo);
+  const currentModeHonoured = permissionModeHonoured(
+    permissionMode,
+    currentProviderInfo,
+  );
+  const pickerModes = permissionPickerModes(permissionMode, honouredModes);
+  const permissionName = currentProviderInfo?.name ?? "This CLI";
+  const modeChoiceLocked =
+    honouredModes.length <= 1 && currentModeHonoured;
+  const permissionTitle = !currentModeHonoured
+    ? `${permissionName} cannot honor ${PERMISSION_MODE_LABELS[permissionMode]} — pick a mode this CLI actually sends`
+    : modeChoiceLocked
+      ? `${permissionName} always runs tools unprompted`
+      : undefined;
 
   useEffect(() => {
     if (!modeOpen && !modelOpen && !effortOpen && !buildMenuOpen && !bestOfNOpen)
@@ -1166,7 +1183,13 @@ export const Composer = memo(function Composer({
       // setProvider clears effort on a harness switch; effort then permission.
       await onSetProvider({ provider: row.provider, model: row.model });
       await onSetReasoningEffort(row.reasoningEffort);
-      await onPermissionModeChange(row.permissionMode);
+      const next = providers.find((p) => p.id === row.provider);
+      await onPermissionModeChange(
+        snapToHonouredPermissionMode(
+          providerPermissionModes(next),
+          row.permissionMode,
+        ),
+      );
     } catch (err) {
       const msg =
         err instanceof Error && err.message
@@ -1957,12 +1980,16 @@ export const Composer = memo(function Composer({
               <button
                 type="button"
                 className={styles.pill}
-                disabled={locked}
-                aria-disabled={locked ? "true" : undefined}
+                disabled={locked || modeChoiceLocked}
+                aria-disabled={
+                  locked || modeChoiceLocked ? "true" : undefined
+                }
                 aria-haspopup="listbox"
                 aria-expanded={modeOpen}
+                aria-label={`Permission: ${PERMISSION_MODE_LABELS[permissionMode]}`}
+                title={permissionTitle}
                 onClick={() => {
-                  if (!locked) {
+                  if (!locked && !modeChoiceLocked) {
                     setModeOpen((v) => !v);
                     setModelOpen(false);
                     setEffortOpen(false);
@@ -1972,6 +1999,7 @@ export const Composer = memo(function Composer({
                 }}
               >
                 {PERMISSION_MODE_LABELS[permissionMode]}
+                {!modeChoiceLocked && (
                 <span className={styles.caret}>
                   <svg
                     width="10"
@@ -1987,15 +2015,23 @@ export const Composer = memo(function Composer({
                     <path d="M2.5 3.5 5 6l2.5-2.5" />
                   </svg>
                 </span>
+                )}
               </button>
-              {modeOpen && (
+              {modeOpen && !modeChoiceLocked && (
                 <ul
                   className={styles.modeMenu}
                   role="listbox"
                   aria-label="Permission mode"
                 >
-                  {PERMISSION_MODES.map((mode) => {
+                  {pickerModes.map((mode) => {
+                    const honoured = honouredModes.includes(mode);
                     const gated = !teachPermissionAllowed(mode, teach);
+                    const blocked = gated || !honoured;
+                    const title = !honoured
+                      ? `${permissionName} cannot honor ${PERMISSION_MODE_LABELS[mode]} — pick a mode this CLI actually sends`
+                      : gated
+                        ? `Teach mode (${teach?.autonomy ?? "hint"}) does not allow this yet`
+                        : undefined;
                     return (
                       <li
                         key={mode}
@@ -2006,13 +2042,11 @@ export const Composer = memo(function Composer({
                           type="button"
                           className={styles.modeOption}
                           data-active={mode === permissionMode}
+                          data-permission-mode={mode}
                           data-teach-gated={gated ? "true" : undefined}
-                          disabled={gated}
-                          title={
-                            gated
-                              ? `Teach mode (${teach?.autonomy ?? "hint"}) does not allow this yet`
-                              : undefined
-                          }
+                          data-unhonoured={honoured ? undefined : "true"}
+                          disabled={blocked}
+                          title={title}
                           onClick={() => void pickMode(mode)}
                         >
                           {PERMISSION_MODE_LABELS[mode]}

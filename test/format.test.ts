@@ -11,6 +11,10 @@ import {
   formatWorkingLabel,
   shortModelName,
   providerDisplayName,
+  PERMISSION_MODES,
+  providerPermissionModes,
+  permissionPickerModes,
+  snapToHonouredPermissionMode,
 } from "../src/format.ts";
 
 describe("formatRelativeAge", () => {
@@ -113,5 +117,64 @@ describe("providerDisplayName", () => {
 
   it("falls back to the raw id when unknown", () => {
     assert.equal(providerDisplayName("generic", providers), "generic");
+  });
+});
+
+describe("providerPermissionModes", () => {
+  it("treats a missing field as the full set so legacy fixtures stay clickable", () => {
+    assert.deepEqual(
+      providerPermissionModes({
+        id: "claude",
+        name: "Claude Code",
+        available: true,
+        supportsResume: true,
+        models: [],
+        modelInfo: [],
+        efforts: [],
+      }),
+      PERMISSION_MODES,
+    );
+  });
+
+  it("honours an explicit list, including a single Full access mode", () => {
+    assert.deepEqual(
+      providerPermissionModes({
+        id: "kimi",
+        name: "Kimi",
+        available: true,
+        supportsResume: true,
+        models: [],
+        modelInfo: [],
+        efforts: [],
+        permissionModes: ["bypassPermissions"],
+      }),
+      ["bypassPermissions"],
+    );
+  });
+
+  it("lists a leftover current mode first when it is not honoured", () => {
+    assert.deepEqual(
+      permissionPickerModes("default", ["plan", "bypassPermissions"]),
+      ["default", "plan", "bypassPermissions"],
+    );
+    assert.deepEqual(
+      permissionPickerModes("plan", ["plan", "bypassPermissions"]),
+      ["plan", "bypassPermissions"],
+    );
+  });
+
+  it("snaps asking modes to Full access on unprompted CLIs", () => {
+    assert.equal(
+      snapToHonouredPermissionMode(["plan", "bypassPermissions"], "default"),
+      "bypassPermissions",
+    );
+    assert.equal(
+      snapToHonouredPermissionMode(["default", "bypassPermissions"], "plan"),
+      "default",
+    );
+    assert.equal(
+      snapToHonouredPermissionMode(["default", "bypassPermissions"], "acceptEdits"),
+      "bypassPermissions",
+    );
   });
 });

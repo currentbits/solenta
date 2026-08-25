@@ -1359,3 +1359,80 @@ describe("SettingsModal Appearance (#651)", () => {
     m.unmount();
   });
 });
+
+describe("SettingsModal agent profile permission modes (issue #177)", () => {
+  const grok: ProviderInfo = {
+    id: "grok",
+    name: "Grok",
+    available: true,
+    supportsResume: true,
+    models: ["grok-4"],
+    modelInfo: [
+      {
+        id: "grok-4",
+        label: "Grok 4",
+        description: "xAI",
+        vendor: "xAI",
+      },
+    ],
+    efforts: [],
+    permissionModes: ["plan", "bypassPermissions"],
+  };
+
+  it("opens a leftover Grok Ask first profile on Full access, not the first listed mode", async () => {
+    const m = await mount(
+      modal({
+        initialPane: "agents",
+        providers: [grok],
+        settings: {
+          dailyBudgetUsd: null,
+          autoSettleAfterDays: 3,
+          agentProfiles: [
+            {
+              id: "p1",
+              name: "Grok leftover",
+              provider: "grok",
+              model: "grok-4",
+              reasoningEffort: null,
+              permissionMode: "default",
+            },
+          ],
+        } as AppSettings,
+      }),
+    );
+    const edit = Array.from(m.queryAll("button")).find(
+      (b) => (b.textContent || "").trim() === "Edit",
+    );
+    assert.ok(edit, "Edit must open the leftover profile");
+    await m.click(edit);
+    const select = m.query("#profile-permission") as HTMLSelectElement | null;
+    assert.ok(select, "permission select");
+    assert.equal(select.value, "bypassPermissions");
+    assert.deepEqual(
+      Array.from(select.options).map((o) => o.textContent),
+      ["Plan mode", "Full access"],
+    );
+    m.unmount();
+  });
+
+  it("a new profile on a Grok-only catalogue starts on Full access", async () => {
+    const m = await mount(
+      modal({
+        initialPane: "agents",
+        providers: [grok],
+        settings: {
+          dailyBudgetUsd: null,
+          autoSettleAfterDays: 3,
+          agentProfiles: [],
+        } as AppSettings,
+      }),
+    );
+    const add = m.query("[data-add-profile]");
+    assert.ok(add, "Add profile");
+    await m.click(add);
+    const select = m.query("#profile-permission") as HTMLSelectElement | null;
+    assert.ok(select);
+    assert.equal(select.value, "bypassPermissions");
+    m.unmount();
+  });
+});

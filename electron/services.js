@@ -8,6 +8,8 @@ const {
   getProvider,
   knownProviderIds,
   listProviders,
+  honouredPermissionModes,
+  snapPermissionMode,
 } = require("./providers.js");
 const { getMemoryStatus } = require("./memory-sup.js");
 const { execCommandAsync } = require("./ssh.js");
@@ -580,6 +582,15 @@ function setPermissionMode(store, input) {
       `Teach mode (${level}) does not allow permission mode ${mode}`,
     );
   }
+  const entry = getProvider(thread.provider);
+  const allowed = honouredPermissionModes(entry);
+  if (!allowed.includes(mode)) {
+    const providerName =
+      (entry && entry.name) || thread.provider || "provider";
+    throw new Error(
+      `${providerName} does not support permission mode "${mode}"`,
+    );
+  }
   const updated = store.updateThread(threadId, { permissionMode: mode });
   store.save();
   const row = updated || { ...thread, permissionMode: mode };
@@ -1086,10 +1097,14 @@ function forkThread(store, input) {
       autonomy: teachAutonomyFor(reviewsPassed),
       reviewsPassed,
     };
-    if (!teachPermissionAllowed(forkPatch.permissionMode, forkPatch.teach)) {
-      forkPatch.permissionMode = "default";
-    }
   }
+  // Same rule as setProvider (issue #177): a mode the new provider cannot
+  // honour must not be copied onto the fork. Teach-mode caps still win.
+  forkPatch.permissionMode = snapPermissionModeForThread(
+    nextEntry,
+    source.permissionMode,
+    forkPatch.teach,
+  );
   // Ask mode is the same: a fork of a read-only Q&A thread stays read-only
   // and must not grow a worktree (issue #392).
   if (source.ask === true) {
@@ -1259,6 +1274,13 @@ function setProvider(store, input) {
       nextEntry && nextEntry.supportsSearch === true
         ? thread.webSearch === true
         : false;
+    // Same rule as effort: a permission mode the new provider cannot honour
+    // must not survive the switch (issue #177). Teach-mode caps still win.
+    patch.permissionMode = snapPermissionModeForThread(
+      nextEntry,
+      thread.permissionMode,
+      thread.teach,
+    );
   } else if (modelProvided) {
     patch.model = normalizeModelForProvider(nextEntry, input.model);
   }
@@ -2855,6 +2877,33 @@ function teachPermissionAllowed(mode, teach) {
 }
 
 /**
+ * Nearest mode this provider actually honours, still inside the teach cap.
+ * Prefer default then plan so claude Full access still drops to Ask first.
+ * Empty intersection (kimi at hint) keeps the honoured mode rather than
+ * storing Ask first, which the CLI cannot send (issue #177).
+ *
+ * @param {object | null | undefined} entry
+ * @param {string | null | undefined} mode
+ * @param {{ autonomy?: string } | null | undefined} teach
+ */
+function snapPermissionModeForThread(entry, mode, teach) {
+  const snapped = snapPermissionMode(entry, mode);
+  if (teachPermissionAllowed(snapped, teach)) return snapped;
+  const teachOk = honouredPermissionModes(entry).filter((m) =>
+    teachPermissionAllowed(m, teach),
+  );
+  for (const preferred of [
+    "default",
+    "plan",
+    "acceptEdits",
+    "bypassPermissions",
+  ]) {
+    if (teachOk.includes(preferred)) return preferred;
+  }
+  return snapped;
+}
+
+/**
  * Standing note appended to every dispatched prompt while Teach mode is on.
  * Same rule as specNoteFor: returns "" when there is nothing to say.
  *
@@ -2899,9 +2948,13 @@ function startTeach(store, input) {
   /** @type {{ teach: { autonomy: string, reviewsPassed: number }, permissionMode?: string, ask?: boolean }} */
   const patch = { teach };
   if (thread.ask === true) patch.ask = false;
-  if (!teachPermissionAllowed(thread.permissionMode, teach)) {
-    patch.permissionMode = "default";
-  }
+  // Always snap: leftover grok/cursor Ask first is teach-allowed as a label
+  // but the CLI cannot send it, so it would keep remapping to Full access.
+  patch.permissionMode = snapPermissionModeForThread(
+    getProvider(thread.provider),
+    thread.permissionMode,
+    teach,
+  );
   const updated = store.updateThread(threadId, patch);
   store.save();
   return updated ? { ...updated } : { ...thread, ...patch };

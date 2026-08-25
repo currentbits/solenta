@@ -445,9 +445,11 @@ describe("runner grok provider (claude-stream path)", () => {
     assert.ok(argv.includes("--output-format"));
     assert.ok(argv.includes("streaming-messages-json"));
     assert.ok(argv.includes("--permission-mode"));
-    // default is mapped to bypassPermissions for headless grok (issue #578).
+    // setProvider snaps grok's unhonoured "default" to bypassPermissions
+    // (issue #177). --always-approve is only the leftover-asking remap.
+    assert.equal(store.getThread(thread.id).permissionMode, "bypassPermissions");
     assert.ok(argv.includes("bypassPermissions"));
-    assert.ok(argv.includes("--always-approve"));
+    assert.ok(!argv.includes("--always-approve"));
     assert.ok(!argv.includes("auto"));
     assert.ok(!argv.includes("--resume"));
     assert.ok(!argv.includes("--verbose"));
