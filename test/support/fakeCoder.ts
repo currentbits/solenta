@@ -36,7 +36,6 @@ import type {
   ListPrsResult,
   CheckoutPrResult,
   LocalServerInfo,
-  McpCatalogEntry,
   McpImportPreview,
   McpInstallRequest,
   McpInstallResult,
@@ -77,6 +76,7 @@ import type {
   WebhookTestResult,
 } from "../../src/shared/ipc";
 import { buildActivity } from "../../src/activity";
+import { DEV_MCP_CATALOG, devMcpCatalogRows } from "../../src/devCoder.ts";
 import {
   mergeMcpSettingsPatch,
   parseMcpConfigDocument,
@@ -788,7 +788,8 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
           redactMcpServer(saved) as McpServerDefinition,
         );
       },
-      catalog: () => rec("mcp.catalog", [], [] as McpCatalogEntry[]),
+      catalog: () =>
+        rec("mcp.catalog", [], devMcpCatalogRows(settingsState.mcpServers)),
       pickImport: () => rec("mcp.pickImport", [], null),
       previewImport: (input: McpPreviewImportInput) => {
         try {
@@ -812,7 +813,14 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
               mcpPreviewFromParsed("github", "github", parsed),
             );
           }
-          throw new Error("Unknown catalog item");
+          const entry = DEV_MCP_CATALOG.find((e) => e.id === input.id);
+          if (!entry) throw new Error("Unknown catalog item");
+          const parsed = parseMcpConfigDocument([entry.definition]);
+          return rec(
+            "mcp.previewImport",
+            [input],
+            mcpPreviewFromParsed("catalog", entry.name, parsed, entry.id),
+          );
         } catch (err) {
           calls.push({ channel: "mcp.previewImport", args: [input] });
           return Promise.reject(err);
@@ -824,30 +832,40 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
           return Promise.reject(new Error("Import preview is invalid"));
         }
         const selected = new Set(input.selected);
-        const installed: string[] = [];
-        for (const row of pendingMcpImport.servers) {
-          if (!selected.has(row.stored.name)) continue;
-          const entry = { ...row.stored };
-          if (pendingMcpImport.catalogId) {
-            entry.provenance = "curated";
-            entry.catalogId = pendingMcpImport.catalogId;
-          } else {
-            entry.provenance = "added";
+        const installed: McpServerDefinition[] = [];
+        try {
+          for (const row of pendingMcpImport.servers) {
+            if (!selected.has(row.stored.name)) continue;
+            const entry = { ...row.stored };
+            if (pendingMcpImport.catalogId) {
+              entry.provenance = "curated";
+              entry.catalogId = pendingMcpImport.catalogId;
+            } else {
+              entry.provenance = "added";
+            }
+            if (entry.transport === "stdio") {
+              const trusted =
+                input.trustLocal === true || input.trustLocalCommands === true;
+              if (!trusted) {
+                throw new Error("Local MCP commands require explicit trust");
+              }
+              entry.trusted = true;
+              entry.enabled = true;
+            }
+            settingsState = {
+              ...settingsState,
+              mcpServers: upsertMcpServer(
+                settingsState.mcpServers,
+                entry,
+              ) as McpServerInfo[],
+            };
+            installed.push(
+              redactMcpServer(entry) as unknown as McpServerDefinition,
+            );
           }
-          if (entry.transport === "stdio") {
-            const trusted =
-              input.trustLocal === true || input.trustLocalCommands === true;
-            entry.trusted = trusted;
-            entry.enabled = trusted;
-          }
-          settingsState = {
-            ...settingsState,
-            mcpServers: upsertMcpServer(
-              settingsState.mcpServers,
-              entry,
-            ) as McpServerInfo[],
-          };
-          installed.push(row.stored.name);
+        } catch (err) {
+          calls.push({ channel: "mcp.installImport", args: [input] });
+          return Promise.reject(err);
         }
         pendingMcpImport = null;
         return rec(

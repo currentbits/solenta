@@ -99,6 +99,7 @@ import { mockData } from "./mockData.ts";
 import {
   mergeMcpSettingsPatch,
   parseMcpConfigDocument,
+  redactMcpServer,
   redactMcpServers,
   redactSettings,
   upsertMcpServer,
@@ -122,6 +123,101 @@ const DEV_SPEC_ARTIFACTS: Record<SpecArtifact, string> = {
 
 const MEMORY_EXCERPT_LEN = 160;
 const MEMORY_NOT_FOUND = "Memory entry not found";
+
+/**
+ * Browser-twin mirror of the main-process curated catalog
+ * (electron/mcpCatalog.js). Keep ids/definitions in sync with it.
+ */
+export interface DevMcpCatalogEntry {
+  id: string;
+  name: string;
+  description: string;
+  publisher: string;
+  homepage: string;
+  sourceUrl: string;
+  transport: "http" | "sse" | "stdio";
+  risk: string;
+  definition: Record<string, unknown>;
+}
+
+export const DEV_MCP_CATALOG: readonly DevMcpCatalogEntry[] = [
+  {
+    id: "context7",
+    name: "Context7",
+    description:
+      "Up-to-date library documentation and code examples for LLMs over a remote MCP endpoint.",
+    publisher: "Upstash",
+    homepage: "https://context7.com",
+    sourceUrl: "https://context7.com",
+    transport: "http",
+    risk: "Remote HTTP endpoint. Review the vendor before sending repository context.",
+    definition: {
+      name: "context7",
+      transport: "http",
+      url: "https://mcp.context7.com/mcp",
+      enabled: true,
+    },
+  },
+  {
+    id: "linear",
+    name: "Linear",
+    description:
+      "Linear issue tracking and project management over a remote MCP endpoint.",
+    publisher: "Linear",
+    homepage: "https://linear.app",
+    sourceUrl: "https://linear.app",
+    transport: "http",
+    risk: "Remote HTTP with OAuth. No static secret is stored; complete Linear's OAuth flow.",
+    definition: {
+      name: "linear",
+      transport: "http",
+      url: "https://mcp.linear.app/mcp",
+      enabled: true,
+    },
+  },
+  {
+    id: "playwright",
+    name: "Playwright",
+    description:
+      "Browser automation via the Playwright MCP server. Runs a local npx command.",
+    publisher: "Microsoft",
+    homepage: "https://playwright.dev",
+    sourceUrl: "https://playwright.dev",
+    transport: "stdio",
+    risk: "Local stdio via npx. Explicit trust is required before the command can run.",
+    definition: {
+      name: "playwright",
+      transport: "stdio",
+      command: "npx",
+      args: ["-y", "@playwright/mcp@latest"],
+      enabled: false,
+      trusted: false,
+    },
+  },
+];
+
+/** Public catalog rows with `installed` derived from the curated servers. */
+export function devMcpCatalogRows(
+  servers: ReadonlyArray<{ provenance?: string; catalogId?: string }>,
+): McpCatalogEntry[] {
+  const installedIds = new Set(
+    servers
+      .filter((s) => s.provenance === "curated" && s.catalogId)
+      .map((s) => s.catalogId as string),
+  );
+  return DEV_MCP_CATALOG.map((entry) => ({
+    id: entry.id,
+    name: entry.name,
+    description: entry.description,
+    publisher: entry.publisher,
+    sourceUrl: entry.sourceUrl,
+    homepage: entry.homepage,
+    transport: entry.transport,
+    risk: entry.risk,
+    requiredSecrets: [],
+    installed: installedIds.has(entry.id),
+  }));
+}
 
 /** Full in-memory store rows; list/search return excerpts. */
 interface MemoryRow {
@@ -2583,7 +2679,7 @@ function buildDevCoder(): CoderApi {
         return redactDevMcp(saved);
       },
       async catalog(): Promise<McpCatalogEntry[]> {
-        return [];
+        return devMcpCatalogRows(mcpServers);
       },
       async pickImport(): Promise<McpImportPreview | null> {
         return null;
@@ -2601,14 +2697,21 @@ function buildDevCoder(): CoderApi {
             }),
           );
         }
-        throw new Error("Unknown catalog item");
+        const entry = DEV_MCP_CATALOG.find((e) => e.id === input.id);
+        if (!entry) throw new Error("Unknown catalog item");
+        return mcpPreviewFromParsed(
+          "catalog",
+          entry.name,
+          parseMcpConfigDocument([entry.definition]),
+          entry.id,
+        );
       },
       async installImport(input: McpInstallRequest): Promise<McpInstallResult> {
         if (!pendingMcpImport || pendingMcpImport.previewId !== input.previewId) {
           throw new Error("Import preview is invalid");
         }
         const selected = new Set(input.selected);
-        const installed: string[] = [];
+        const installed: McpServerDefinition[] = [];
         for (const row of pendingMcpImport.servers) {
           if (!selected.has(row.stored.name)) continue;
           const entry = { ...row.stored };
@@ -2621,11 +2724,14 @@ function buildDevCoder(): CoderApi {
           if (entry.transport === "stdio") {
             const trusted =
               input.trustLocal === true || input.trustLocalCommands === true;
-            entry.trusted = trusted;
-            entry.enabled = trusted;
+            if (!trusted) {
+              throw new Error("Local MCP commands require explicit trust");
+            }
+            entry.trusted = true;
+            entry.enabled = true;
           }
           mcpServers = upsertMcpServer(mcpServers, entry) as McpServerInfo[];
-          installed.push(row.stored.name);
+          installed.push(redactMcpServer(entry) as unknown as McpServerDefinition);
         }
         pendingMcpImport = null;
         return { installed };

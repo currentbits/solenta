@@ -2389,7 +2389,8 @@ export interface McpInstallRequest {
 }
 
 export interface McpInstallResult {
-  installed: Array<{ name: string } | string>;
+  /** Redacted installed definitions (main), or bare names from older twins. */
+  installed: Array<McpServerDefinition | string>;
 }
 
 /**
