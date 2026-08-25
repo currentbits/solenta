@@ -2150,3 +2150,128 @@ describe("ThreadView transcript windowing (issue #564)", () => {
   });
 });
 
+
+describe("ThreadView stream-in animation", () => {
+  it("marks nothing for stream-in on the initial render", () => {
+    const html = render({ detail: detail({ messages: bulkMessages(40) }) });
+    assert.ok(
+      !html.includes("data-stream-in"),
+      "initial mount must not animate existing messages",
+    );
+  });
+
+  it("marks only the freshly appended tail message for stream-in", async () => {
+    const n = 40;
+    const initial = bulkMessages(n);
+
+    function StreamHarness() {
+      const [messages, setMessages] = useState(initial);
+      return (
+        <div>
+          <button
+            type="button"
+            data-append-stream=""
+            onClick={() =>
+              setMessages((prev) => [
+                ...prev,
+                msg({
+                  id: "streamed-tail",
+                  role: "assistant",
+                  text: "STREAMED_TAIL",
+                  createdAt: n + 1,
+                }),
+              ])
+            }
+          >
+            append
+          </button>
+          {view({ detail: detail({ messages }) })}
+        </div>
+      );
+    }
+
+    const m = await mount(<StreamHarness />);
+    assert.ok(
+      !m.html().includes("data-stream-in"),
+      "nothing animates before the stream append",
+    );
+    await m.click(m.query("[data-append-stream]"));
+    const marks = m.html().match(/data-stream-in/g) ?? [];
+    assert.equal(
+      marks.length,
+      1,
+      "only the new tail message carries the stream-in marker",
+    );
+    m.unmount();
+  });
+
+  it("does not mark entries revealed by Show earlier", async () => {
+    const m = await mount(
+      view({ detail: detail({ messages: bulkMessages(500) }) }),
+    );
+    await m.click(m.query("[data-show-earlier]"));
+    assert.ok(
+      !m.html().includes("data-stream-in"),
+      "prepended history must render silently",
+    );
+    m.unmount();
+  });
+
+  it("shows the streaming caret on the growing assistant message while working", () => {
+    const html = render({
+      detail: detail({
+        thread: thread({ status: "working" }),
+        messages: [
+          msg({ id: "u1", role: "user", text: "go", createdAt: 1 }),
+          msg({ id: "a1", role: "assistant", text: "thinking…", createdAt: 2 }),
+        ],
+      }),
+    });
+    assert.ok(
+      html.includes("data-streaming-caret"),
+      "caret rides the assistant message being written",
+    );
+  });
+
+  it("hides the caret while a tool call is running and once idle", () => {
+    const withTool = render({
+      detail: detail({
+        thread: thread({ status: "working" }),
+        messages: [
+          msg({ id: "u1", role: "user", text: "go", createdAt: 1 }),
+          msg({
+            id: "t1",
+            role: "tool",
+            text: "Bash: npm test",
+            createdAt: 2,
+            tool: {
+              id: "tc1",
+              name: "Bash",
+              input: "npm test",
+              output: null,
+              done: false,
+              isError: false,
+            },
+          }),
+        ],
+      }),
+    });
+    assert.ok(
+      !withTool.includes("data-streaming-caret"),
+      "no caret while the tail is a running tool call",
+    );
+
+    const idle = render({
+      detail: detail({
+        messages: [
+          msg({ id: "u1", role: "user", text: "go", createdAt: 1 }),
+          msg({ id: "a1", role: "assistant", text: "done", createdAt: 2 }),
+        ],
+      }),
+    });
+    assert.ok(
+      !idle.includes("data-streaming-caret"),
+      "no caret once the run is idle",
+    );
+  });
+});

@@ -88,6 +88,7 @@ import { messageMetaLine } from "../messageMeta";
 import {
   buildTimeline,
   workLogDurationLabel,
+  type TimelineEntry,
   type WorkLogGroup,
 } from "../timeline";
 import {
@@ -648,14 +649,23 @@ interface ThreadViewProps {
 function ToolCallCard({
   message,
   autoExpand,
+  animateIn,
   onLoadImage,
 }: {
   message: ChatMessage;
   autoExpand: boolean;
+  /** Freshly appended at the live tail — play the stream-in entrance. */
+  animateIn?: boolean;
   onLoadImage?: (name: string) => Promise<string | null>;
 }) {
   const tool = message.tool;
   const [manual, setManual] = useState<boolean | null>(null);
+  /**
+   * Latch the entrance flag at mount: any later re-render passes animateIn=false
+   * (the key is already seen), and stripping the class mid-flight would cancel
+   * the CSS animation. Remounts (collapse/expand) get a fresh false.
+   */
+  const [entered] = useState(Boolean(animateIn));
   const open = manual ?? autoExpand;
   const [imageUrls, setImageUrls] = useState<string[]>([]);
   // Bytes live under userData, not in the message: fetch an img src (protocol
@@ -676,7 +686,10 @@ function ToolCallCard({
 
   if (!tool) {
     return (
-      <article className={styles.message}>
+      <article
+        className={`${styles.message}${entered ? ` ${styles.streamIn}` : ""}`}
+        data-stream-in={entered ? "" : undefined}
+      >
         <p>{message.text}</p>
       </article>
     );
@@ -689,7 +702,10 @@ function ToolCallCard({
       : "done";
 
   return (
-    <section className={`${styles.card} ${styles.toolCard}`}>
+    <section
+      className={`${styles.card} ${styles.toolCard}${entered ? ` ${styles.streamIn}` : ""}`}
+      data-stream-in={entered ? "" : undefined}
+    >
       <div
         className={styles.toolHeader}
         onClick={() => setManual(!open)}
@@ -862,6 +878,7 @@ const UserMessageBlock = memo(function UserMessageBlock({
   message,
   canEdit,
   confirming,
+  animateIn,
   onRequestResubmit,
   onCancelConfirm,
   onLoadAttachmentImage,
@@ -870,6 +887,8 @@ const UserMessageBlock = memo(function UserMessageBlock({
   message: ChatMessage;
   canEdit: boolean;
   confirming: boolean;
+  /** Freshly appended at the live tail — play the stream-in entrance. */
+  animateIn?: boolean;
   onRequestResubmit?: (messageId: string, prompt: string) => void;
   onCancelConfirm?: () => void;
   onLoadAttachmentImage?: (path: string) => Promise<string | null>;
@@ -891,6 +910,10 @@ const UserMessageBlock = memo(function UserMessageBlock({
   }, [canEdit, editing, message.text]);
 
   const fromThread = message.fromThread;
+  // Latch at mount; see ToolCallCard for why.
+  const [entered] = useState(Boolean(animateIn));
+  const streamCls = entered ? ` ${styles.streamIn}` : "";
+  const streamAttr = entered ? "" : undefined;
   const cancelEdit = () => {
     if (confirming) onCancelConfirm?.();
     setEditing(false);
@@ -905,7 +928,10 @@ const UserMessageBlock = memo(function UserMessageBlock({
 
   if (editing && canEdit) {
     return (
-      <article className={`${styles.message} ${styles.messageUser}`}>
+      <article
+        className={`${styles.message} ${styles.messageUser}${streamCls}`}
+        data-stream-in={streamAttr}
+      >
         <div className={styles.userEdit}>
           <textarea
             ref={taRef}
@@ -957,9 +983,10 @@ const UserMessageBlock = memo(function UserMessageBlock({
     const label = fromThread.title || fromThread.id;
     return (
       <article
-        className={`${styles.message} ${styles.messageInbound}`}
+        className={`${styles.message} ${styles.messageInbound}${streamCls}`}
         data-inbound-card=""
         data-inbound-from={fromThread.id}
+        data-stream-in={streamAttr}
       >
         <div className={styles.inboundCard}>
           <div className={styles.inboundFrom}>
@@ -984,7 +1011,10 @@ const UserMessageBlock = memo(function UserMessageBlock({
   }
 
   return (
-    <article className={`${styles.message} ${styles.messageUser}`}>
+    <article
+      className={`${styles.message} ${styles.messageUser}${streamCls}`}
+      data-stream-in={streamAttr}
+    >
       <div className={styles.userBubbleWrap}>
         <div className={styles.userBubbleCluster}>
           {canEdit && onRequestResubmit && (
@@ -1088,6 +1118,8 @@ function ProvenanceStrip({
 const MessageBlock = memo(function MessageBlock({
   message,
   autoExpandTool,
+  animateIn,
+  streaming,
   showRetry,
   retryTitle,
   onRetry,
@@ -1105,6 +1137,10 @@ const MessageBlock = memo(function MessageBlock({
 }: {
   message: ChatMessage;
   autoExpandTool: boolean;
+  /** Freshly appended at the live tail — play the stream-in entrance. */
+  animateIn?: boolean;
+  /** Actively growing assistant message — show the streaming caret. */
+  streaming?: boolean;
   onLoadImage?: (name: string) => Promise<string | null>;
   onLoadAttachmentImage?: (path: string) => Promise<string | null>;
   showRetry?: boolean;
@@ -1122,11 +1158,14 @@ const MessageBlock = memo(function MessageBlock({
   provenance?: MessageProvenance | null;
   onSelectThread?: (id: string) => void;
 }) {
+  // Latch at mount; see ToolCallCard for why.
+  const [entered] = useState(Boolean(animateIn));
   if (message.role === "tool") {
     return (
       <ToolCallCard
         message={message}
         autoExpand={autoExpandTool}
+        animateIn={entered}
         onLoadImage={onLoadImage}
       />
     );
@@ -1138,6 +1177,7 @@ const MessageBlock = memo(function MessageBlock({
         message={message}
         canEdit={Boolean(canEdit)}
         confirming={Boolean(confirming)}
+        animateIn={entered}
         onRequestResubmit={onRequestResubmit}
         onCancelConfirm={onCancelConfirm}
         onLoadAttachmentImage={onLoadAttachmentImage}
@@ -1148,7 +1188,10 @@ const MessageBlock = memo(function MessageBlock({
 
   if (message.role === "event") {
     return (
-      <section className={styles.card}>
+      <section
+        className={`${styles.card}${entered ? ` ${styles.streamIn}` : ""}`}
+        data-stream-in={entered ? "" : undefined}
+      >
         <div className={styles.eventRow}>
           <div className={styles.eventTitle}>{message.text}</div>
           {showRetry && onRetry && (
@@ -1173,8 +1216,18 @@ const MessageBlock = memo(function MessageBlock({
     duration: metaDuration,
   });
   return (
-    <article className={styles.message}>
+    <article
+      className={`${styles.message}${entered ? ` ${styles.streamIn}` : ""}`}
+      data-stream-in={entered ? "" : undefined}
+    >
       <Markdown text={message.text} />
+      {streaming && (
+        <span
+          className={styles.streamCaret}
+          data-streaming-caret=""
+          aria-hidden
+        />
+      )}
       {provenance && <ProvenanceStrip prov={provenance} text={message.text} />}
       <footer className={styles.msgMeta}>{metaLine}</footer>
     </article>
@@ -1896,15 +1949,23 @@ function NextGitActionButton({
 function WorkLogCard({
   group,
   defaultOpen,
+  animateIn,
 }: {
   group: WorkLogGroup;
   defaultOpen: boolean;
+  /** Freshly appended at the live tail — play the stream-in entrance. */
+  animateIn?: boolean;
 }) {
   const [open, setOpen] = useState(defaultOpen);
+  // Latch at mount; see ToolCallCard for why.
+  const [entered] = useState(Boolean(animateIn));
   const duration = workLogDurationLabel(group.items);
 
   return (
-    <section className={styles.card}>
+    <section
+      className={`${styles.card}${entered ? ` ${styles.streamIn}` : ""}`}
+      data-stream-in={entered ? "" : undefined}
+    >
       <button
         type="button"
         className={styles.cardHeader}
@@ -4109,6 +4170,34 @@ export const ThreadView = memo(function ThreadView({
   const visibleTimeline = start === 0 ? timeline : timeline.slice(start);
   const hiddenCount = start;
 
+  /**
+   * Stream-in gating: an entry plays its entrance animation only when it is
+   * a genuinely new tail append. Thread switches seed the whole visible
+   * timeline; prepends (Show earlier / revealMessageId) seed the newly
+   * included slice — both before children mount, so neither animates.
+   * Run-collapse remounts are covered because keys stay in the set.
+   */
+  const seenEntryKeys = useRef<Set<string>>(new Set());
+  const seenEntryThread = useRef<string | null>(null);
+  const prevTimelineStart = useRef(start);
+  const timelineKey = (entry: TimelineEntry) =>
+    entry.kind === "message" ? entry.message.id : `worklog-${entry.runId}`;
+  if (threadId !== seenEntryThread.current) {
+    seenEntryThread.current = threadId;
+    seenEntryKeys.current = new Set(visibleTimeline.map(timelineKey));
+  } else if (start < prevTimelineStart.current) {
+    for (let i = start; i < prevTimelineStart.current; i++) {
+      const entry = timeline[i];
+      if (entry) seenEntryKeys.current.add(timelineKey(entry));
+    }
+  }
+  prevTimelineStart.current = start;
+  useLayoutEffect(() => {
+    for (const entry of visibleTimeline) {
+      seenEntryKeys.current.add(timelineKey(entry));
+    }
+  });
+
   /** Run duration per runId, for assistant-message meta footers. Opt-in. */
   const showRunDuration = useRunDurationEnabled();
   const durationByRunId = useMemo(() => {
@@ -4179,6 +4268,15 @@ export const ThreadView = memo(function ThreadView({
   }, [detail, latestWorkLogRunId]);
 
   const isWorking = detail?.thread.status === "working";
+  /**
+   * The assistant message currently being written. While a tool runs the
+   * last message is the tool call itself, so the caret correctly disappears.
+   */
+  const streamingMessageId = (() => {
+    if (!isWorking || !detail || detail.messages.length === 0) return null;
+    const last = detail.messages[detail.messages.length - 1];
+    return last.role === "assistant" ? last.id : null;
+  })();
   const stalledAt =
     isWorking && detail?.thread.stalledAt != null
       ? detail.thread.stalledAt
@@ -5603,6 +5701,8 @@ export const ThreadView = memo(function ThreadView({
                     <MessageBlock
                       message={entry.message}
                       autoExpandTool={entry.message.id === latestRunningToolId}
+                      animateIn={!seenEntryKeys.current.has(entry.message.id)}
+                      streaming={entry.message.id === streamingMessageId}
                       onLoadImage={onLoadImage}
                       onLoadAttachmentImage={onLoadAttachmentImage}
                       onSelectThread={onSelectThread}
@@ -5659,6 +5759,7 @@ export const ThreadView = memo(function ThreadView({
               key={`worklog-${entry.runId}`}
               group={entry}
               defaultOpen={entry.runId === latestWorkLogRunId}
+              animateIn={!seenEntryKeys.current.has(`worklog-${entry.runId}`)}
             />
           );
         })}
@@ -5817,7 +5918,7 @@ export const ThreadView = memo(function ThreadView({
 
         {isWorking && (
           <div
-            className={`${styles.statusStrip}${stalledAt != null ? ` ${styles.statusStripStalled}` : ""}`}
+            className={`${styles.statusStrip} ${styles.streamIn}${stalledAt != null ? ` ${styles.statusStripStalled}` : ""}`}
             data-stalled={stalledAt != null ? "" : undefined}
           >
             <div className={styles.statusLeft}>
@@ -5843,7 +5944,10 @@ export const ThreadView = memo(function ThreadView({
         )}
 
         {queuedPrompt != null && (
-          <div className={styles.queuedStrip} data-queued-prompt="">
+          <div
+            className={`${styles.queuedStrip} ${styles.streamIn}`}
+            data-queued-prompt=""
+          >
             <div className={styles.statusLeft}>
               <span className={styles.queuedLabel}>Queued</span>
               <span className={styles.queuedText}>{queuedPrompt}</span>
