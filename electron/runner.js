@@ -105,23 +105,51 @@ function shortError(text) {
  * cache_read/cache_creation; omitting those reads as ~0% then jumps (#317).
  * Returns undefined when the event does not report the cache fields — an
  * inaccurate number is worse than none.
+ *
+ * Grok uses the same stream but often omits the cache keys (fixtures; some
+ * CLI versions). Its input_tokens is still the uncached bucket. When cache
+ * keys are absent, treat them as 0 rather than hiding the ring (#704).
+ * Prefer usage.total_tokens when the CLI reports it.
+ *
  * @param {object | null | undefined} usage
+ * @param {{ allowMissingCache?: boolean }} [opts]
  * @returns {number | undefined}
  */
-function claudeContextTokens(usage) {
+function claudeContextTokens(usage, opts) {
   if (!usage || typeof usage !== "object") return undefined;
+  const allowMissingCache = Boolean(opts && opts.allowMissingCache);
   if (
     usage.cache_read_input_tokens == null &&
-    usage.cache_creation_input_tokens == null
+    usage.cache_creation_input_tokens == null &&
+    !allowMissingCache
   ) {
     return undefined;
   }
+  const reportedTotal = Number(usage.total_tokens);
+  if (Number.isFinite(reportedTotal) && reportedTotal > 0) return reportedTotal;
   const total =
     (Number(usage.input_tokens) || 0) +
     (Number(usage.cache_read_input_tokens) || 0) +
     (Number(usage.cache_creation_input_tokens) || 0) +
     (Number(usage.output_tokens) || 0);
   return total > 0 ? total : undefined;
+}
+
+/**
+ * CLI-reported window from grok's modelUsage row (the same figure grok uses
+ * for auto-compaction). Absent when the CLI omitted it.
+ * @param {object | null | undefined} ev
+ * @returns {number | undefined}
+ */
+function reportedModelUsageWindow(ev) {
+  const mu = ev && ev.modelUsage;
+  if (!mu || typeof mu !== "object") return undefined;
+  for (const row of Object.values(mu)) {
+    if (!row || typeof row !== "object") continue;
+    const w = Number(row.contextWindow);
+    if (Number.isFinite(w) && w > 0) return w;
+  }
+  return undefined;
 }
 
 /**
@@ -3219,8 +3247,16 @@ function createRunner(opts) {
             turns: prev.turns + 1,
           };
           // inputTokens stay billable (no cache). contextTokens is the full
-          // prompt or stays unset when the event omitted cache fields (#317).
-          assignContextUsage(nextUsage, prev, claudeContextTokens(usage));
+          // prompt, or stays unset for Claude when cache fields are omitted
+          // (#317). Grok is allowed to sum without those keys (#704).
+          assignContextUsage(
+            nextUsage,
+            prev,
+            claudeContextTokens(usage, {
+              allowMissingCache: thread.provider === "grok",
+            }),
+            reportedModelUsageWindow(ev),
+          );
           store.setUsage(threadId, nextUsage);
           if (costDelta > 0) {
             store.recordSpend(costDelta);
@@ -4878,7 +4914,12 @@ function createRunner(opts) {
         costUsd: prev.costUsd + costDelta,
         turns: prev.turns + 1,
       };
-      assignContextUsage(nextUsage, prev, undefined, undefined);
+      assignContextUsage(
+        nextUsage,
+        prev,
+        usageInfo.contextTokens,
+        usageInfo.contextWindow,
+      );
       store.setUsage(threadId, nextUsage);
       if (costDelta > 0) {
         store.recordSpend(costDelta);

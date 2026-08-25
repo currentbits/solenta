@@ -468,6 +468,7 @@ describe("runner grok provider (claude-stream path)", () => {
     assert.equal(usage.outputTokens, 40);
     assert.equal(usage.costUsd, 0.02);
     assert.equal(usage.turns, 1);
+    assert.equal(usage.contextTokens, 120);
   });
 
   it("grok's ask_user_question leaves a question card behind (#647)", async () => {

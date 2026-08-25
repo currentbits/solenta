@@ -42,6 +42,17 @@ const providers = [
     ],
   },
   { id: "kimi", modelInfo: [{ id: "kimi-code/k3", contextTokens: 1_000_000 }] },
+  {
+    id: "grok",
+    modelInfo: [
+      { id: "grok-4.6", contextTokens: 500_000, recommended: true },
+      { id: "grok-4.5", contextTokens: 500_000 },
+    ],
+  },
+  {
+    id: "cursor",
+    modelInfo: [{ id: "auto", contextTokens: 200_000, recommended: true }],
+  },
 ] as unknown as ProviderInfo[];
 
 describe("context ring seam: runner usage -> rendered ring", () => {
@@ -88,6 +99,50 @@ describe("context ring seam: runner usage -> rendered ring", () => {
     assert.equal(contextRing({ used: usage.contextTokens, window })?.percentLabel, "33%");
     // Without the reported window the catalog has nothing for codex -> no ring.
     assert.equal(threadContextWindow(undefined, providers, "codex", usage.model), null);
+  });
+
+  it("grok input+output fills the catalog window when cache keys are omitted (#704)", () => {
+    const usage: SessionUsage = {
+      model: "grok-4.6",
+      inputTokens: 80_000,
+      outputTokens: 20_000,
+      costUsd: 0.02,
+      turns: 1,
+      contextTokens: 100_000,
+    };
+    const window = threadContextWindow(
+      usage.contextWindow,
+      providers,
+      "grok",
+      usage.model,
+    );
+    assert.equal(window, 500_000);
+    const ring = contextRing({ used: usage.contextTokens, window });
+    assert.ok(ring);
+    assert.equal(ring.windowLabel, "500k");
+    assert.equal(ring.percentLabel, "20%");
+  });
+
+  it("cursor input+output fills the catalog window (#704)", () => {
+    const usage: SessionUsage = {
+      model: "auto",
+      inputTokens: 50_000,
+      outputTokens: 16_000,
+      costUsd: 0.02,
+      turns: 1,
+      contextTokens: 66_000,
+    };
+    const window = threadContextWindow(
+      usage.contextWindow,
+      providers,
+      "cursor",
+      usage.model,
+    );
+    assert.equal(window, 200_000);
+    const ring = contextRing({ used: usage.contextTokens, window });
+    assert.ok(ring);
+    assert.equal(ring.windowLabel, "200k");
+    assert.equal(ring.percentLabel, "33%");
   });
 
   it("an unmeasurable provider shows no ring rather than a wrong one", () => {

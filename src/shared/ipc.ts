@@ -994,14 +994,16 @@ export interface SessionUsage {
    * Last turn's FULL prompt size: input + cache-read + cache-creation + output.
    * The numerator for the context ring. Under prompt caching plain input_tokens
    * is near zero, so anything that omits the cache fields reads as ~0% and then
-   * jumps (issue #317). Absent when the provider reports too little to measure
-   * it — the ring hides rather than guess.
+   * jumps (issue #317). Claude still requires the cache keys. Grok and cursor
+   * sum the fields they do report (#704). Absent when the provider reports too
+   * little to measure it (kimi) — the ring hides rather than guess.
    */
   contextTokens?: number;
   /**
    * Context window the CLI itself reported for the running model (codex
-   * token_count carries model_context_window). Beats the static provider
-   * catalog, which goes stale on model change. Absent when unreported.
+   * token_count carries model_context_window; grok modelUsage carries
+   * contextWindow). Beats the static provider catalog, which goes stale on
+   * model change. Absent when unreported — the ring then uses modelInfo.
    */
   contextWindow?: number;
 }

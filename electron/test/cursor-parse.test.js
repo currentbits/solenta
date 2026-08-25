@@ -371,7 +371,7 @@ describe("cursor extractUsage", () => {
         type: "result",
         usage: { input_tokens: 10, output_tokens: 4, cost: 0.02 },
       }),
-      { inputTokens: 10, outputTokens: 4, costUsd: 0.02 },
+      { inputTokens: 10, outputTokens: 4, costUsd: 0.02, contextTokens: 14 },
     );
     assert.equal(
       extractUsage({
@@ -379,6 +379,21 @@ describe("cursor extractUsage", () => {
         usage: { input_tokens: 1, output_tokens: 1 },
       }),
       null,
+    );
+  });
+
+  it("includes Anthropic-style cache fields in contextTokens when present", () => {
+    assert.deepEqual(
+      extractUsage({
+        type: "result",
+        usage: {
+          input_tokens: 10,
+          output_tokens: 4,
+          cache_read_input_tokens: 100,
+          cache_creation_input_tokens: 20,
+        },
+      }),
+      { inputTokens: 10, outputTokens: 4, contextTokens: 134 },
     );
   });
 });

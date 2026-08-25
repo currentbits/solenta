@@ -123,7 +123,7 @@ describe("codex extractUsage token_count", () => {
   });
 });
 
-describe("runner contextTokens accuracy (#317)", () => {
+describe("runner contextTokens accuracy (#317, #704)", () => {
   let tmpDir;
   let store;
   let runner;
@@ -134,6 +134,7 @@ describe("runner contextTokens accuracy (#317)", () => {
   let prevClaudeBin;
   let prevCodexBin;
   let prevKimiBin;
+  let prevCursorBin;
   let prevClaudeScenario;
   let prevCodexScenario;
   let prevKimiScenario;
@@ -146,6 +147,7 @@ describe("runner contextTokens accuracy (#317)", () => {
     prevClaudeBin = process.env.CODER_CLAUDE_BIN;
     prevCodexBin = process.env.CODER_CODEX_BIN;
     prevKimiBin = process.env.CODER_KIMI_BIN;
+    prevCursorBin = process.env.CODER_CURSOR_BIN;
     prevClaudeScenario = process.env.CODER_FAKE_CLAUDE_SCENARIO;
     prevCodexScenario = process.env.CODER_FAKE_CODEX_SCENARIO;
     prevKimiScenario = process.env.CODER_FAKE_KIMI_SCENARIO;
@@ -193,6 +195,8 @@ describe("runner contextTokens accuracy (#317)", () => {
     else process.env.CODER_CODEX_BIN = prevCodexBin;
     if (prevKimiBin === undefined) delete process.env.CODER_KIMI_BIN;
     else process.env.CODER_KIMI_BIN = prevKimiBin;
+    if (prevCursorBin === undefined) delete process.env.CODER_CURSOR_BIN;
+    else process.env.CODER_CURSOR_BIN = prevCursorBin;
     if (prevClaudeScenario === undefined) delete process.env.CODER_FAKE_CLAUDE_SCENARIO;
     else process.env.CODER_FAKE_CLAUDE_SCENARIO = prevClaudeScenario;
     if (prevCodexScenario === undefined) delete process.env.CODER_FAKE_CODEX_SCENARIO;
@@ -312,6 +316,170 @@ process.exit(0);
     assert.equal(usage.outputTokens, 20);
     assert.equal(usage.contextTokens, 160);
     assert.equal(usage.contextWindow, 272000);
+  });
+
+  it("claude result without cache fields leaves contextTokens unset (#317)", async () => {
+    process.env.CODER_CLAUDE_BIN = writeScript(
+      tmpDir,
+      "fake-claude-nocache.js",
+      `#!/usr/bin/env node
+"use strict";
+function emit(obj) { process.stdout.write(JSON.stringify(obj) + "\\n"); }
+emit({ type: "system", subtype: "init", session_id: "sess-nocache", model: "claude-opus-test" });
+emit({ type: "assistant", message: { content: [{ type: "text", text: "ok" }] } });
+emit({
+  type: "result",
+  subtype: "success",
+  result: "ok",
+  session_id: "sess-nocache",
+  usage: { input_tokens: 80, output_tokens: 40 },
+  total_cost_usd: 0.01,
+});
+process.exit(0);
+`,
+    );
+
+    const project = store.getProjects()[0];
+    const thread = services.createThread(store, {
+      projectId: project.id,
+      title: "Claude no cache",
+    });
+    await runner.startRun({ threadId: thread.id, prompt: "go" });
+    await waitFor(() => store.getThread(thread.id).status === "done");
+
+    const usage = store.getUsage(thread.id);
+    assert.ok(usage);
+    assert.equal(usage.inputTokens, 80);
+    assert.equal(usage.outputTokens, 40);
+    assert.equal(usage.contextTokens, undefined);
+  });
+
+  it("grok result without cache fields still sets contextTokens (#704)", async () => {
+    process.env.CODER_GROK_BIN = writeScript(
+      tmpDir,
+      "fake-grok.js",
+      `#!/usr/bin/env node
+"use strict";
+function emit(obj) { process.stdout.write(JSON.stringify(obj) + "\\n"); }
+emit({ type: "system", subtype: "init", session_id: "grok-sess-ctx", model: "grok-4.6" });
+emit({ type: "assistant", message: { content: [{ type: "text", text: "ok" }] } });
+emit({
+  type: "result",
+  subtype: "success",
+  is_error: false,
+  result: "ok",
+  session_id: "grok-sess-ctx",
+  usage: { input_tokens: 80, output_tokens: 40 },
+  total_cost_usd: 0.02,
+});
+process.exit(0);
+`,
+    );
+
+    const project = store.getProjects()[0];
+    const thread = services.createThread(store, {
+      projectId: project.id,
+      title: "Grok context",
+    });
+    services.setProvider(store, { threadId: thread.id, provider: "grok" });
+    await runner.startRun({ threadId: thread.id, prompt: "go" });
+    await waitFor(() => store.getThread(thread.id).status === "done");
+
+    const usage = store.getUsage(thread.id);
+    assert.ok(usage);
+    assert.equal(usage.inputTokens, 80);
+    assert.equal(usage.outputTokens, 40);
+    assert.equal(usage.contextTokens, 120);
+    assert.equal(usage.contextWindow, undefined);
+  });
+
+  it("grok cache fields and modelUsage.contextWindow land on SessionUsage (#704)", async () => {
+    process.env.CODER_GROK_BIN = writeScript(
+      tmpDir,
+      "fake-grok-cache.js",
+      `#!/usr/bin/env node
+"use strict";
+function emit(obj) { process.stdout.write(JSON.stringify(obj) + "\\n"); }
+emit({ type: "system", subtype: "init", session_id: "grok-sess-cache", model: "grok-4.6" });
+emit({ type: "assistant", message: { content: [{ type: "text", text: "ok" }] } });
+emit({
+  type: "result",
+  subtype: "success",
+  is_error: false,
+  result: "ok",
+  session_id: "grok-sess-cache",
+  usage: {
+    input_tokens: 7210,
+    cache_read_input_tokens: 41000,
+    cache_creation_input_tokens: 0,
+    output_tokens: 1893,
+    total_tokens: 50103,
+  },
+  modelUsage: { "grok-4.6": { contextWindow: 500000 } },
+  total_cost_usd: 0.0127,
+});
+process.exit(0);
+`,
+    );
+
+    const project = store.getProjects()[0];
+    const thread = services.createThread(store, {
+      projectId: project.id,
+      title: "Grok cache window",
+    });
+    services.setProvider(store, { threadId: thread.id, provider: "grok" });
+    await runner.startRun({ threadId: thread.id, prompt: "go" });
+    await waitFor(() => store.getThread(thread.id).status === "done");
+
+    const usage = store.getUsage(thread.id);
+    assert.ok(usage);
+    assert.equal(usage.inputTokens, 7210);
+    assert.equal(usage.outputTokens, 1893);
+    assert.equal(usage.contextTokens, 50103);
+    assert.equal(usage.contextWindow, 500000);
+  });
+
+  it("cursor result usage sets contextTokens from input+output (#704)", async () => {
+    process.env.CODER_CURSOR_BIN = writeScript(
+      tmpDir,
+      "fake-cursor.js",
+      `#!/usr/bin/env node
+"use strict";
+function emit(obj) { process.stdout.write(JSON.stringify(obj) + "\\n"); }
+emit({
+  type: "system",
+  subtype: "init",
+  session_id: "cursor-sess-ctx",
+  model: "Composer",
+  permissionMode: "default",
+});
+emit({ type: "assistant", message: { content: [{ type: "text", text: "ok" }] } });
+emit({
+  type: "result",
+  subtype: "success",
+  is_error: false,
+  result: "ok",
+  session_id: "cursor-sess-ctx",
+  usage: { input_tokens: 10, output_tokens: 4, cost: 0.02 },
+});
+process.exit(0);
+`,
+    );
+
+    const project = store.getProjects()[0];
+    const thread = services.createThread(store, {
+      projectId: project.id,
+      title: "Cursor context",
+    });
+    services.setProvider(store, { threadId: thread.id, provider: "cursor" });
+    await runner.startRun({ threadId: thread.id, prompt: "go" });
+    await waitFor(() => store.getThread(thread.id).status === "done");
+
+    const usage = store.getUsage(thread.id);
+    assert.ok(usage);
+    assert.equal(usage.inputTokens, 10);
+    assert.equal(usage.outputTokens, 4);
+    assert.equal(usage.contextTokens, 14);
   });
 
   it("kimi usage without a full-prompt measurement leaves contextTokens unset", async () => {

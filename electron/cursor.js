@@ -250,10 +250,29 @@ function extractSessionId(obj) {
 }
 
 /**
+ * Last-turn prompt size for the context ring: input + output, plus
+ * Anthropic-style cache buckets when the CLI reports them. Does not add
+ * OpenAI cached_input_tokens — that value is often already inside input.
+ * @param {Record<string, unknown>} usage
+ * @returns {number | undefined}
+ */
+function cursorPromptTokens(usage) {
+  const total =
+    (Number(usage.input_tokens ?? usage.inputTokens ?? usage.prompt_tokens) ||
+      0) +
+    (Number(
+      usage.output_tokens ?? usage.outputTokens ?? usage.completion_tokens,
+    ) || 0) +
+    (Number(usage.cache_read_input_tokens) || 0) +
+    (Number(usage.cache_creation_input_tokens) || 0);
+  return total > 0 ? total : undefined;
+}
+
+/**
  * Usage from a Cursor result event. Cursor often omits it; return null
  * when no token fields are present. Same names as kimi.
  * @param {object} obj
- * @returns {{ inputTokens: number, outputTokens: number, costUsd?: number } | null}
+ * @returns {{ inputTokens: number, outputTokens: number, costUsd?: number, contextTokens?: number } | null}
  */
 function extractUsage(obj) {
   if (!obj || typeof obj !== "object") return null;
@@ -309,9 +328,11 @@ function extractUsage(obj) {
     obj.cost;
   const costUsd = costRaw != null ? Number(costRaw) || 0 : 0;
 
-  /** @type {{ inputTokens: number, outputTokens: number, costUsd?: number }} */
+  /** @type {{ inputTokens: number, outputTokens: number, costUsd?: number, contextTokens?: number }} */
   const out = { inputTokens, outputTokens };
   if (costRaw != null) out.costUsd = costUsd;
+  const ctx = cursorPromptTokens(usage);
+  if (ctx != null) out.contextTokens = ctx;
   return out;
 }
 
