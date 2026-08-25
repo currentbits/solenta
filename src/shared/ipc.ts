@@ -2917,13 +2917,16 @@ export interface CoderApi {
     /**
      * Persist or clear the type-ahead queue (issue #137). prompt === null
      * clears; a non-null prompt APPENDS to any existing queue so two mid-run
-     * sends cannot race-replace each other across the async hop. Never
-     * bumps updatedAt: queueing is not activity, same rule as setPinned.
+     * sends cannot race-replace each other across the async hop — unless
+     * `replace` is true, which overwrites the whole blob (editing the queued
+     * message in place, issue #364). Never bumps updatedAt: queueing is not
+     * activity, same rule as setPinned.
      */
     setQueued(input: {
       threadId: string;
       prompt: string | null;
       attachments?: AttachmentInfo[];
+      replace?: boolean;
     }): Promise<ThreadInfo>;
     /**
      * Snooze until an epoch ms, or clear with null. Rejects a non-null

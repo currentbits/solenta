@@ -88,6 +88,13 @@
   color: var(--text-dim);
 }
 
+.hints {
+  margin-top: 4px;
+  font-size: 11px;
+  color: var(--text-dim);
+  user-select: none;
+}
+
 .controls {
   display: flex;
   align-items: center;

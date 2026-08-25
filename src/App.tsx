@@ -147,6 +147,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     queued,
     cancelQueued,
     retryQueued,
+    editQueued,
     fetchIssue,
     startWorkflowRun,
     saveWorkflow,
@@ -324,6 +325,11 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
   const [workflowsOpen, setWorkflowsOpen] = useState(false);
   const [distillError, setDistillError] = useState<string | null>(null);
   const [chipError, setChipError] = useState<string | null>(null);
+  /** Discarded queued follow-up, handed back to the composer draft (#364). */
+  const [queuedDraftRestore, setQueuedDraftRestore] = useState<{
+    threadId: string;
+    text: string;
+  } | null>(null);
   /** Freshly created thread the Sidebar should reveal (expand/scroll/flash). */
   const [revealThreadId, setRevealThreadId] = useState<string | null>(null);
   const [drawer, setDrawer] = useState<DrawerId | null>(null);
@@ -652,12 +658,24 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
   // onClick, so cancelQueued's optional threadId would swallow the DOM event
   // and cancel nothing.
   const handleCancelQueued = useCallback(() => {
+    // Non-destructive cancel (#364): hand the discarded text back to the
+    // composer, which applies it only onto an empty draft.
+    const id = selectedThreadId;
+    const text = id ? queued[id]?.prompt : null;
     cancelQueued();
-  }, [cancelQueued]);
+    if (id && text) setQueuedDraftRestore({ threadId: id, text });
+  }, [cancelQueued, selectedThreadId, queued]);
 
   const handleRetryQueued = useCallback(() => {
     retryQueued();
   }, [retryQueued]);
+
+  const handleEditQueued = useCallback(
+    (prompt: string) => {
+      editQueued(prompt);
+    },
+    [editQueued],
+  );
 
   const handleSetArchived = useCallback(
     async (archived: boolean) => {
@@ -1331,6 +1349,8 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         }
         onCancelQueued={handleCancelQueued}
         onRetryQueued={handleRetryQueued}
+        onEditQueued={handleEditQueued}
+        restoreDraft={queuedDraftRestore}
         onSetPermissionMode={setPermissionMode}
         onRespondPermission={respondPermission}
         onClearQuestion={clearQuestion}

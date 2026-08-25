@@ -84,8 +84,16 @@ import {
 } from "./threadPatch";
 import { parseBtwCommand } from "./btw";
 import { parseFeedbackCommand } from "./feedback";
+import {
+  loadBootSnapshot,
+  loadCachedThreadDetail,
+  saveBootSnapshot,
+  saveCachedThreadDetail,
+} from "./bootSnapshot";
 
 const STATUS_POLL_MS = 60_000;
+/** Debounce on the localStorage boot-snapshot writes (#364). */
+const BOOT_SNAPSHOT_DEBOUNCE_MS = 500;
 /** Renderer-side GitHub releases poll. One GET; 60 unauth req/hour is plenty. */
 export const UPDATE_CHECK_INTERVAL_MS = 60 * 60 * 1000;
 
@@ -243,6 +251,8 @@ export interface UseCoderResult {
   cancelQueued: (threadId?: string) => void;
   /** Re-send a queued prompt after a delivery failure (issue #314). */
   retryQueued: (threadId?: string) => void;
+  /** Replace a thread's queued follow-up text in place (issue #364). */
+  editQueued: (prompt: string, threadId?: string) => void;
   /** Fetch a GitHub or Linear issue for a project checkout. */
   fetchIssue: (
     projectPath: string,
@@ -652,12 +662,21 @@ export interface UseCoderResult {
 
 export function useCoder(): UseCoderResult {
   const api = useMemo(() => resolveApi(), []);
-  const [projects, setProjects] = useState<ProjectInfo[]>([]);
-  const [threads, setThreads] = useState<ThreadInfo[]>([]);
+  // Render-first boot (#364): hydrate the first paint from the last persisted
+  // lists; loadBootLists reconciles as soon as IPC answers.
+  const bootSnapshot = useMemo(loadBootSnapshot, []);
+  const [projects, setProjects] = useState<ProjectInfo[]>(
+    () => bootSnapshot?.projects ?? [],
+  );
+  const [threads, setThreads] = useState<ThreadInfo[]>(
+    () => bootSnapshot?.threads ?? [],
+  );
   const [providers, setProviders] = useState<ProviderInfo[]>([]);
   const [workflows, setWorkflows] = useState<WorkflowTemplateInfo[]>([]);
   const [automations, setAutomations] = useState<AutomationInfo[]>([]);
-  const [selectedThreadId, setSelectedThreadId] = useState<string | null>(null);
+  const [selectedThreadId, setSelectedThreadId] = useState<string | null>(
+    () => bootSnapshot?.selectedThreadId ?? null,
+  );
   const [detail, setDetail] = useState<ThreadDetail | null>(null);
   /** Last threads.get failure for the selected thread; retry bumps the nonce. */
   const [detailError, setDetailError] = useState<string | null>(null);
@@ -668,14 +687,18 @@ export function useCoder(): UseCoderResult {
   const [settings, setSettings] = useState<AppSettings | null>(null);
   const [stayAwake, setStayAwake] = useState<StayAwakeStatus | null>(null);
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus | null>(null);
-  const selectedRef = useRef<string | null>(null);
+  const selectedRef = useRef<string | null>(
+    bootSnapshot?.selectedThreadId ?? null,
+  );
   /** Bumped on every threads:changed push so a late initial list cannot clobber it. */
   const threadsListGen = useRef(0);
-  const threadsRef = useRef<ThreadInfo[]>([]);
+  const threadsRef = useRef<ThreadInfo[]>(bootSnapshot?.threads ?? []);
   /** Prior status by thread id; used to detect working → settled for spend refresh. */
   const prevStatusRef = useRef<Map<string, ThreadInfo["status"]>>(new Map());
   /** Open detail, for merging streamed tails (thread:updated is a ThreadPatch). */
   const detailRef = useRef<ThreadDetail | null>(null);
+  /** Details fetched this session, so a switch back paints instantly (#364). */
+  const detailCacheRef = useRef<Map<string, ThreadDetail>>(new Map());
   /** Threads with a full-detail refetch in flight, so pushes can't storm it. */
   const refetchRef = useRef<Set<string>>(new Set());
   /** Last thread:updated seq per thread; a gap means pushes were dropped. */
@@ -708,6 +731,27 @@ export function useCoder(): UseCoderResult {
 
   useEffect(() => {
     detailRef.current = detail;
+    if (detail) detailCacheRef.current.set(detail.thread.id, detail);
+  }, [detail]);
+
+  // Render-first boot (#364): persist the boot inputs so the next launch can
+  // paint the last-known lists before IPC answers. Fire-and-forget
+  // localStorage writes; the threadsListGen guards do not apply here.
+  useEffect(() => {
+    const handle = window.setTimeout(() => {
+      saveBootSnapshot({ projects, threads, selectedThreadId });
+    }, BOOT_SNAPSHOT_DEBOUNCE_MS);
+    return () => window.clearTimeout(handle);
+  }, [projects, threads, selectedThreadId]);
+
+  // Same for the open transcript, so a relaunch (or a switch to a thread not
+  // yet fetched this session) can paint it before threads.get answers.
+  useEffect(() => {
+    if (!detail) return;
+    const handle = window.setTimeout(() => {
+      saveCachedThreadDetail(detail);
+    }, BOOT_SNAPSHOT_DEBOUNCE_MS);
+    return () => window.clearTimeout(handle);
   }, [detail]);
 
   /** Refetch the whole transcript after a patch could not be merged. */
@@ -798,6 +842,36 @@ export function useCoder(): UseCoderResult {
           );
         }
       })();
+    },
+    [api, applyThreads],
+  );
+
+  const editQueued = useCallback(
+    (prompt: string, threadId?: string) => {
+      const id = threadId ?? selectedRef.current;
+      if (!id) return;
+      const held = threadsRef.current.find((t) => t.id === id);
+      if (!held?.queued) return;
+      void api.threads
+        .setQueued({
+          threadId: id,
+          prompt,
+          attachments: held.queued.attachments,
+          replace: true,
+        })
+        .then((updated) => {
+          applyThreads(
+            threadsRef.current.map((t) => (t.id === updated.id ? updated : t)),
+          );
+          setDetail((prev) =>
+            prev && prev.thread.id === updated.id
+              ? { ...prev, thread: updated }
+              : prev,
+          );
+        })
+        .catch((err) => {
+          setError({ scope: "run", message: errorMessage(err) });
+        });
     },
     [api, applyThreads],
   );
@@ -930,7 +1004,12 @@ export function useCoder(): UseCoderResult {
             source.find((t) => !t.archived && t.status === "working")?.id ??
             source.find((t) => !t.archived)?.id ??
             null;
-          setSelectedThreadId((prev) => prev ?? preferred);
+          setSelectedThreadId((prev) => {
+            // A hydrated selection (#364) may name a thread deleted since the
+            // snapshot was written; fall back rather than pin a dead id.
+            if (prev != null && source.some((t) => t.id === prev)) return prev;
+            return preferred;
+          });
           if (selectedRef.current == null && preferred) {
             selectedRef.current = preferred;
           }
@@ -1038,6 +1117,16 @@ export function useCoder(): UseCoderResult {
     }
     let cancelled = false;
     setDetailError(null);
+    // Render-first (#364): paint the last-known transcript for this thread
+    // immediately; the in-flight threads.get replaces it in one round-trip
+    // (replaced wholesale, never merged, so a stale tail is fine). Skip when
+    // the open detail is already this thread — the cache may be staler.
+    const cached =
+      detailCacheRef.current.get(selectedThreadId) ??
+      loadCachedThreadDetail(selectedThreadId);
+    if (cached && detailRef.current?.thread.id !== selectedThreadId) {
+      setDetail(cached);
+    }
     (async () => {
       try {
         const d = await api.threads.get(selectedThreadId);
@@ -3077,6 +3166,7 @@ export function useCoder(): UseCoderResult {
     queued,
     cancelQueued,
     retryQueued,
+    editQueued,
     startWorkflowRun,
     saveWorkflow,
     removeWorkflow,

@@ -1444,6 +1444,7 @@ function setPinned(store, input) {
  *   threadId: string,
  *   prompt: string | null,
  *   attachments?: object[],
+ *   replace?: boolean,
  *   fromThread?: { id: string, title: string } | null,
  *   inbound?: boolean,
  *   posted?: boolean,
@@ -1456,7 +1457,13 @@ function setQueued(store, input) {
     throw new Error(`Unknown thread: ${threadId}`);
   }
   let queued = null;
-  if (prompt !== null) {
+  if (prompt !== null && input.replace === true) {
+    // Edit in place (issue #364): the user rewrote the blob, so it overwrites
+    // prompt AND attachments, and drops any inbound/fromThread provenance —
+    // the content is user-authored now. Still drops the delivery error.
+    queued = { prompt };
+    if (attachments && attachments.length) queued.attachments = attachments;
+  } else if (prompt !== null) {
     const prev = thread.queued;
     const files = [...(prev?.attachments ?? []), ...(attachments ?? [])];
     queued = {

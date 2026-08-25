@@ -2746,6 +2746,24 @@ button.diffLineGutter:focus-visible {
   font-weight: 400;
 }
 
+.queuedEdit {
+  flex: 1;
+  min-width: 0;
+  resize: none;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+  line-height: 1.4;
+  padding: 6px 8px;
+  outline: none;
+}
+
+.queuedEdit:focus {
+  border-color: var(--blue-border);
+}
+
 .statusLeft {
   display: flex;
   align-items: center;

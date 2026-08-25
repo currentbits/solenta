@@ -1516,13 +1516,15 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
       },
       /**
        * Honest type-ahead queue (issue #137). prompt === null clears; a
-       * non-null prompt appends. Never bumps updatedAt.
+       * non-null prompt appends, unless replace overwrites (issue #364).
+       * Never bumps updatedAt.
        */
       setQueued: (input: unknown) => {
         const i = input as {
           threadId: string;
           prompt: string | null;
           attachments?: AttachmentInfo[];
+          replace?: boolean;
         };
         const existing = threads.find((t) => t.id === i.threadId);
         if (!existing) {
@@ -1530,7 +1532,10 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
           return Promise.reject(new Error(`Unknown thread: ${i.threadId}`));
         }
         let queued: ThreadInfo["queued"] = null;
-        if (i.prompt !== null) {
+        if (i.prompt !== null && i.replace === true) {
+          queued = { prompt: i.prompt };
+          if (i.attachments?.length) queued.attachments = i.attachments;
+        } else if (i.prompt !== null) {
           const prev = existing.queued;
           const files = [
             ...(prev?.attachments ?? []),

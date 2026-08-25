@@ -425,6 +425,13 @@ interface ThreadViewProps {
   onCancelQueued?: () => void;
   /** Re-send a queued prompt after a delivery failure. */
   onRetryQueued?: () => void;
+  /** Replace the queued follow-up's text (edit in the strip, issue #364). */
+  onEditQueued?: (prompt: string) => void;
+  /**
+   * Text a cancelled queue pushed back toward the composer (issue #364).
+   * Passed through to Composer, which applies it only onto an empty draft.
+   */
+  restoreDraft?: { threadId: string; text: string } | null;
   onSetPermissionMode: (
     mode: PermissionMode,
     threadId?: string,
@@ -3949,6 +3956,8 @@ export const ThreadView = memo(function ThreadView({
   queuedError = null,
   onCancelQueued,
   onRetryQueued,
+  onEditQueued,
+  restoreDraft = null,
   onSetPermissionMode,
   onRespondPermission,
   onClearQuestion,
@@ -4053,6 +4062,14 @@ export const ThreadView = memo(function ThreadView({
   const [renaming, setRenaming] = useState(false);
   const [renameDraft, setRenameDraft] = useState("");
   const renamingRef = useRef(false);
+  /** Inline edit of the queued follow-up strip (issue #364). */
+  const [editingQueued, setEditingQueued] = useState(false);
+  const [queuedEditDraft, setQueuedEditDraft] = useState("");
+  // The edit is bound to the blob it was seeded from: a thread switch or a
+  // drained/cancelled queue ends it.
+  useEffect(() => {
+    setEditingQueued(false);
+  }, [detail?.thread.id, queuedPrompt == null]);
   const [notesOpen, setNotesOpen] = useState(false);
   const [notesDraft, setNotesDraft] = useState("");
   const notesOpenRef = useRef(false);
@@ -4323,6 +4340,13 @@ export const ThreadView = memo(function ThreadView({
       : null;
   const isArchived = Boolean(detail?.thread.archived);
   const emptyMessages = detail != null && detail.messages.length === 0;
+
+  // Empty save means cancel: editing must never blank the queue (#364).
+  const saveQueuedEdit = () => {
+    const text = queuedEditDraft.trim();
+    setEditingQueued(false);
+    if (text && text !== queuedPrompt) onEditQueued?.(text);
+  };
 
   /** Header context ring; null hides it (unknown window or no measured turn). */
   const ring = useMemo(() => {
@@ -6026,44 +6050,100 @@ export const ThreadView = memo(function ThreadView({
             className={`${styles.queuedStrip} ${styles.streamIn}`}
             data-queued-prompt=""
           >
-            <div className={styles.statusLeft}>
-              <span className={styles.queuedLabel}>Queued</span>
-              <span className={styles.queuedText}>{queuedPrompt}</span>
-              {queuedError ? (
-                <span
-                  className={styles.permissionGuardrail}
-                  data-queued-error=""
-                >
-                  {queuedError}
-                </span>
-              ) : null}
-            </div>
-            <div className={styles.statusLeft}>
-              {/* Any prompt still queued on a settled thread is one main did
-                  not deliver — offer the retry whether or not the failure
-                  reason survived a reload. */}
-              {onRetryQueued ? (
-                <button
-                  type="button"
-                  className={styles.retryBtn}
-                  onClick={onRetryQueued}
-                  disabled={isWorking}
-                  data-retry-queued=""
-                >
-                  Retry
-                </button>
-              ) : null}
-              {onCancelQueued && (
-                <button
-                  type="button"
-                  className={styles.stopBtn}
-                  onClick={onCancelQueued}
-                  data-cancel-queued=""
-                >
-                  Cancel
-                </button>
-              )}
-            </div>
+            {editingQueued ? (
+              <>
+                <span className={styles.queuedLabel}>Queued</span>
+                <textarea
+                  className={styles.queuedEdit}
+                  value={queuedEditDraft}
+                  rows={2}
+                  autoFocus
+                  data-edit-queued-input=""
+                  onChange={(e) => setQueuedEditDraft(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Escape") {
+                      e.preventDefault();
+                      setEditingQueued(false);
+                    }
+                    if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
+                      e.preventDefault();
+                      saveQueuedEdit();
+                    }
+                  }}
+                />
+                <div className={styles.statusLeft}>
+                  <button
+                    type="button"
+                    className={styles.retryBtn}
+                    onClick={saveQueuedEdit}
+                    data-save-queued-edit=""
+                  >
+                    Save
+                  </button>
+                  <button
+                    type="button"
+                    className={styles.stopBtn}
+                    onClick={() => setEditingQueued(false)}
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </>
+            ) : (
+              <>
+                <div className={styles.statusLeft}>
+                  <span className={styles.queuedLabel}>Queued</span>
+                  <span className={styles.queuedText}>{queuedPrompt}</span>
+                  {queuedError ? (
+                    <span
+                      className={styles.permissionGuardrail}
+                      data-queued-error=""
+                    >
+                      {queuedError}
+                    </span>
+                  ) : null}
+                </div>
+                <div className={styles.statusLeft}>
+                  {onEditQueued ? (
+                    <button
+                      type="button"
+                      className={styles.retryBtn}
+                      onClick={() => {
+                        setQueuedEditDraft(queuedPrompt);
+                        setEditingQueued(true);
+                      }}
+                      data-edit-queued=""
+                    >
+                      Edit
+                    </button>
+                  ) : null}
+                  {/* Any prompt still queued on a settled thread is one main
+                      did not deliver — send it now, whether or not the failure
+                      reason survived a reload. */}
+                  {onRetryQueued ? (
+                    <button
+                      type="button"
+                      className={styles.retryBtn}
+                      onClick={onRetryQueued}
+                      disabled={isWorking}
+                      data-retry-queued=""
+                    >
+                      {queuedError ? "Retry" : "Send now"}
+                    </button>
+                  ) : null}
+                  {onCancelQueued && (
+                    <button
+                      type="button"
+                      className={styles.stopBtn}
+                      onClick={onCancelQueued}
+                      data-cancel-queued=""
+                    >
+                      Cancel
+                    </button>
+                  )}
+                </div>
+              </>
+            )}
           </div>
         )}
       </div>
@@ -6101,6 +6181,7 @@ export const ThreadView = memo(function ThreadView({
                 : undefined
         }
         onSend={handleComposerSend}
+        restoreDraft={restoreDraft}
         onBuild={onStartWorkflow}
         onBestOfN={onFork && !thread.ask ? runBestOfN : undefined}
         onDelegate={onFork && !thread.ask ? runDelegate : undefined}

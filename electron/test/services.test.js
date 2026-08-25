@@ -534,6 +534,37 @@ describe("services", () => {
     );
   });
 
+  it("setQueued with replace overwrites the blob instead of appending", async () => {
+    const thread = await makeThread("queued-replace");
+    store.updateThread(thread.id, { updatedAt: 1_700_000_000_000 });
+    services.setQueued(store, {
+      threadId: thread.id,
+      prompt: "first thought",
+      attachments: [{ kind: "folder", path: "/tmp/a", name: "a" }],
+    });
+
+    const replaced = services.setQueued(store, {
+      threadId: thread.id,
+      prompt: "rewritten",
+      attachments: [{ kind: "image", path: "/tmp/b.png", name: "b.png" }],
+      replace: true,
+    });
+    assert.deepEqual(replaced.queued, {
+      prompt: "rewritten",
+      attachments: [{ kind: "image", path: "/tmp/b.png", name: "b.png" }],
+    });
+    assert.equal(replaced.updatedAt, 1_700_000_000_000);
+
+    // Replace without attachments drops them: it is a full overwrite.
+    const bare = services.setQueued(store, {
+      threadId: thread.id,
+      prompt: "text only",
+      replace: true,
+    });
+    assert.deepEqual(bare.queued, { prompt: "text only" });
+    assert.equal(store.getThread(thread.id).updatedAt, 1_700_000_000_000);
+  });
+
   it("setQueued drops a previous delivery error", async () => {
     const thread = await makeThread("queued-error");
     store.updateThread(thread.id, {

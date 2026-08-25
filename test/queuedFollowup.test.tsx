@@ -344,6 +344,178 @@ describe("queued follow-up (issue #92 / #314)", () => {
     );
     m.unmount();
   });
+
+  it("edits the queued follow-up in place via replace (issue #364)", async () => {
+    const { fake, m } = await bootOnBusyThread();
+
+    await m.type(m.query("textarea"), "original words");
+    await m.click(m.query('button[aria-label="Send"]'));
+    await m.flush();
+
+    const edit = m.query("button[data-edit-queued]");
+    assert.ok(edit, "a queued follow-up must be editable");
+    await m.click(edit);
+    const input = m.query(
+      "textarea[data-edit-queued-input]",
+    ) as HTMLTextAreaElement | null;
+    assert.ok(input, "editing swaps the strip text for a textarea");
+    assert.equal(
+      input!.value,
+      "original words",
+      "the textarea seeds from the queued prompt",
+    );
+    await m.type(input!, "edited words");
+    await m.click(m.query("button[data-save-queued-edit]"));
+    await m.flush();
+
+    const replaceCalls = fake
+      .of("threads.setQueued")
+      .filter((c) => (c.args[0] as { replace?: boolean }).replace === true);
+    assert.equal(
+      replaceCalls.length,
+      1,
+      "saving an edit must replace, not append",
+    );
+    assert.deepEqual(replaceCalls[0]!.args[0], {
+      threadId: "t-busy",
+      prompt: "edited words",
+      attachments: undefined,
+      replace: true,
+    });
+    const strip = m.query("[data-queued-prompt]");
+    assert.ok(strip, "the strip stays after an edit");
+    assert.match(strip!.textContent || "", /edited words/);
+    assert.ok(
+      !/original words/.test(strip!.textContent || ""),
+      "replace must not keep the old text",
+    );
+    m.unmount();
+  });
+
+  it("an empty edit save cancels the edit and keeps the queue", async () => {
+    const { fake, m } = await bootOnBusyThread();
+
+    await m.type(m.query("textarea"), "still queued");
+    await m.click(m.query('button[aria-label="Send"]'));
+    await m.flush();
+
+    await m.click(m.query("button[data-edit-queued]"));
+    const input = m.query(
+      "textarea[data-edit-queued-input]",
+    ) as HTMLTextAreaElement;
+    await m.type(input, "   ");
+    await m.click(m.query("button[data-save-queued-edit]"));
+    await m.flush();
+
+    assert.equal(
+      fake.of("threads.setQueued").filter(
+        (c) => (c.args[0] as { replace?: boolean }).replace === true,
+      ).length,
+      0,
+      "an empty save must not blank the queue",
+    );
+    const strip = m.query("[data-queued-prompt]");
+    assert.ok(strip, "the queue survives an empty save");
+    assert.match(strip!.textContent || "", /still queued/);
+    assert.equal(
+      m.query("textarea[data-edit-queued-input]"),
+      null,
+      "the edit box closes",
+    );
+    m.unmount();
+  });
+
+  it("offers Send now on a settled thread with a leftover queue, and it sends", async () => {
+    const idle = thread({
+      id: "t-idle-send",
+      title: "idle with plain queue",
+      status: "idle",
+      queued: { prompt: "ship it" },
+    });
+    const fake = createFakeCoder({
+      projects: [project()],
+      threads: [decoy(), idle],
+      details: {
+        "t-decoy": detail({ thread: decoy() }),
+        "t-idle-send": detail({ thread: idle }),
+      },
+    });
+    const m = await boot(fake);
+    const card = m.query(
+      'button[aria-label^="Select thread: idle with plain queue"]',
+    );
+    assert.ok(card);
+    await m.click(card);
+    await m.flush();
+
+    const sendNow = m.query(
+      "button[data-retry-queued]",
+    ) as HTMLButtonElement | null;
+    assert.ok(sendNow, "a settled thread with a queue must offer Send now");
+    assert.equal(sendNow!.disabled, false);
+    assert.match(sendNow!.textContent || "", /Send now/);
+    assert.equal(
+      m.query("[data-queued-error]"),
+      null,
+      "no error, no Retry label",
+    );
+
+    await m.click(sendNow!);
+    await m.flush();
+    const started = fake.of("runs.start");
+    assert.equal(started.length, 1, "Send now must start the queued prompt");
+    assert.deepEqual(started[0]!.args[0], {
+      threadId: "t-idle-send",
+      prompt: "ship it",
+      attachments: undefined,
+    });
+    m.unmount();
+  });
+
+  it("cancel pushes the discarded prompt back into an empty composer draft", async () => {
+    const { m } = await bootOnBusyThread();
+
+    await m.type(m.query("textarea"), "keep these words");
+    await m.click(m.query('button[aria-label="Send"]'));
+    await m.flush();
+    const ta = m.query("textarea") as HTMLTextAreaElement;
+    assert.equal(ta.value, "", "queueing clears the composer");
+
+    await m.click(m.query("button[data-cancel-queued]"));
+    await m.flush();
+    assert.equal(
+      m.query("[data-queued-prompt]"),
+      null,
+      "cancel still clears the strip",
+    );
+    assert.equal(
+      ta.value,
+      "keep these words",
+      "the discarded text returns to the empty draft",
+    );
+    m.unmount();
+  });
+
+  it("cancel does not clobber an in-progress composer draft", async () => {
+    const { m } = await bootOnBusyThread();
+
+    await m.type(m.query("textarea"), "queued words");
+    await m.click(m.query('button[aria-label="Send"]'));
+    await m.flush();
+    const ta = m.query("textarea") as HTMLTextAreaElement;
+    await m.type(ta, "half-typed draft");
+    await m.flush();
+
+    await m.click(m.query("button[data-cancel-queued]"));
+    await m.flush();
+    assert.equal(m.query("[data-queued-prompt]"), null);
+    assert.equal(
+      ta.value,
+      "half-typed draft",
+      "an in-progress draft always wins",
+    );
+    m.unmount();
+  });
 });
 
 describe("side question /btw during a run (issue #471)", () => {

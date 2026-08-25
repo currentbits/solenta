@@ -11,7 +11,7 @@
 import assert from "node:assert/strict";
 import { describe, it, afterEach } from "node:test";
 import { useState } from "react";
-import { mount, unmountAll } from "./support/dom.ts";
+import { mount, unmountAll, inAct } from "./support/dom.ts";
 import { Composer } from "../src/components/Composer";
 import { setLastReasoningEffort } from "../src/uiPrefs";
 import type {
@@ -2096,6 +2096,52 @@ describe("Composer web-search pill (issue #174)", () => {
     assert.ok(pill, "an enabled thread must render the on state");
     await m.click(pill);
     assert.deepEqual(h.webSearches, [false]);
+    m.unmount();
+  });
+});
+
+describe("Composer keyboard hints (issue #364)", () => {
+  it("shows the hint row only while the textarea is focused", async () => {
+    const h = makeHarness();
+    const m = await mount(composer(h));
+    const ta = m.query("textarea") as HTMLTextAreaElement;
+    const hints = () => m.query("[data-kbd-hints]") as HTMLElement | null;
+    // The row is always in the DOM and toggled by attribute, not state:
+    // a focus setState would re-render the picker chrome on the typing hot
+    // path (#654). The composer auto-focuses on thread open (#73), so the
+    // row starts visible.
+    assert.equal(
+      hints()?.hasAttribute("hidden"),
+      false,
+      "hints show while the composer is focused",
+    );
+    assert.match(hints()!.textContent || "", /⌘Enter send/);
+    assert.match(hints()!.textContent || "", /⌥Enter side question/);
+    assert.ok(!/Esc stop/.test(hints()!.textContent || ""), "idle has no stop");
+    await inAct(() => ta.blur());
+    assert.equal(
+      hints()?.hasAttribute("hidden"),
+      true,
+      "hints hide when the composer loses focus",
+    );
+    await inAct(() => ta.focus());
+    assert.equal(
+      hints()?.hasAttribute("hidden"),
+      false,
+      "hints return with the focus",
+    );
+    m.unmount();
+  });
+
+  it("busy hints mention queueing and Esc stop", async () => {
+    const h = makeHarness();
+    const m = await mount(composer(h, { busy: true }));
+    const ta = m.query("textarea") as HTMLTextAreaElement;
+    await inAct(() => ta.focus());
+    const hints = m.query("[data-kbd-hints]");
+    assert.ok(hints);
+    assert.match(hints!.textContent || "", /⌘Enter queue/);
+    assert.match(hints!.textContent || "", /Esc stop/);
     m.unmount();
   });
 });

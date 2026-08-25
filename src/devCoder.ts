@@ -3514,11 +3514,15 @@ function buildDevCoder(): CoderApi {
         threadId: string;
         prompt: string | null;
         attachments?: AttachmentInfo[];
+        replace?: boolean;
       }) {
         const detail = details.get(input.threadId);
         if (!detail) throw new Error(`Thread not found: ${input.threadId}`);
         let queued: ThreadInfo["queued"] = null;
-        if (input.prompt !== null) {
+        if (input.prompt !== null && input.replace === true) {
+          queued = { prompt: input.prompt };
+          if (input.attachments?.length) queued.attachments = input.attachments;
+        } else if (input.prompt !== null) {
           const prev = detail.thread.queued;
           const files = [
             ...(prev?.attachments ?? []),

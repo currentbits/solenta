@@ -122,6 +122,12 @@ interface ComposerProps {
   busy?: boolean;
   /** Single session turn (send arrow + ⌘Enter). */
   onSend: (prompt: string, attachments?: AttachmentInfo[]) => void | Promise<void>;
+  /**
+   * Text pushed back toward the draft from outside (a cancelled queued
+   * follow-up, issue #364). Applied at most once, and only onto an EMPTY
+   * draft — never clobbers an in-progress one.
+   */
+  restoreDraft?: { threadId: string; text: string } | null;
   /** Multi-phase Build workflow (Build pill main segment). */
   onBuild: (prompt: string, templateId: string) => void | Promise<void>;
   /**
@@ -329,6 +335,7 @@ export const Composer = memo(function Composer({
   disabled = false,
   busy = false,
   onSend,
+  restoreDraft = null,
   onBuild,
   onBestOfN,
   ask = false,
@@ -393,6 +400,26 @@ export const Composer = memo(function Composer({
     () => textareaRef.current?.value ?? draftsRef.current[threadId] ?? "",
     [threadId],
   );
+  /**
+   * A cancelled queued follow-up lands here (issue #364): put its text back
+   * into the draft, but only onto an empty one — an in-progress draft always
+   * wins. Applied at most once per restore payload.
+   */
+  const appliedRestoreRef = useRef<ComposerProps["restoreDraft"]>(null);
+  useEffect(() => {
+    if (!restoreDraft || restoreDraft === appliedRestoreRef.current) return;
+    appliedRestoreRef.current = restoreDraft;
+    if (restoreDraft.threadId !== threadId) return;
+    if (readDraft().trim()) return;
+    writeDraft(restoreDraft.text, restoreDraft.text.length);
+  }, [restoreDraft, threadId, readDraft, writeDraft]);
+  /**
+   * Keyboard hints show only while the textarea is focused (issue #364).
+   * Toggled by direct DOM mutation, not state: the field is uncontrolled so
+   * that typing never re-renders the picker chrome (#654), and a focus
+   * setState would add a render to that same hot path.
+   */
+  const hintsRef = useRef<HTMLDivElement>(null);
   /**
    * Pending attachments keyed by thread, mirroring draftsRef: chips must
    * not leak across a thread switch. Cleared together with the draft on a
@@ -1457,10 +1484,15 @@ export const Composer = memo(function Composer({
             refreshMention();
             refreshCommand();
           }}
+          onFocus={() => hintsRef.current?.removeAttribute("hidden")}
+          onBlur={() => hintsRef.current?.setAttribute("hidden", "")}
           onKeyDown={onKeyDown}
           onPaste={onPaste}
           disabled={disabled || sending}
         />
+        <div ref={hintsRef} className={styles.hints} data-kbd-hints="" hidden>
+          {`⌘Enter ${busy ? "queue" : "send"} · ⌥Enter side question${busy ? " · Esc stop" : ""}`}
+        </div>
         <div className={styles.controls}>
           <div className={styles.pills}>
             {onPickAttachments && !ask && (
