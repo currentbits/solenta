@@ -1,7 +1,7 @@
 "use strict";
 
 /**
- * At-rest encryption for stored secrets (issue #543).
+ * At-rest encryption for stored secrets (issue #543) — DISABLED by default.
  *
  * Disk payload is Electron `safeStorage.encryptString` (Keychain / DPAPI /
  * libsecret). Memory stays plaintext so existing getSettings / spawn paths
@@ -11,6 +11,13 @@
  * When the OS backend is missing (typical: headless Linux, no libsecret)
  * we write plaintext and shout about it — never a silent fallback that
  * looks encrypted.
+ *
+ * DISABLED: on macOS the safeStorage keychain item's ACL pins the creating
+ * binary's code signature, so every unsigned or freshly rebuilt binary made
+ * app startup nag for the login-keychain password. The default (non-injected)
+ * backend is therefore off and secrets are stored plaintext, exactly as
+ * before #543. Already-sealed `enc:v1:` values can no longer be opened and
+ * are dropped on load. Set SOLENTA_ENABLE_SAFE_STORAGE=1 to re-enable.
  */
 
 const fs = require("node:fs");
@@ -41,6 +48,15 @@ const AUDIT_CAP = 1000;
  * @property {() => object[]} getAuditEvents
  * @property {(msg: string) => void} emit
  */
+
+/**
+ * The default backend is opt-IN while the keychain-prompt problem stands:
+ * only an explicit SOLENTA_ENABLE_SAFE_STORAGE=1 turns safeStorage on.
+ * Injected safeStorage (tests) is never affected by this gate.
+ */
+function safeStorageDisabled() {
+  return process.env.SOLENTA_ENABLE_SAFE_STORAGE !== "1";
+}
 
 /**
  * Resolve Electron's safeStorage only inside a real Electron process.
@@ -76,7 +92,16 @@ function loadElectronSafeStorage() {
  */
 function createSecrets(opts = {}) {
   const injected = Object.prototype.hasOwnProperty.call(opts, "safeStorage");
-  let storage = injected ? opts.safeStorage || null : undefined;
+  let storage;
+  // Deliberate disable only governs the default backend; an injected
+  // safeStorage (tests) always wins, even an injected null.
+  let deliberatelyDisabled = false;
+  if (injected) {
+    storage = opts.safeStorage || null;
+  } else if (safeStorageDisabled()) {
+    storage = null;
+    deliberatelyDisabled = true;
+  }
   const inElectron =
     opts.inElectron != null
       ? Boolean(opts.inElectron)
@@ -113,7 +138,7 @@ function createSecrets(opts = {}) {
   }
 
   function warnUnavailable() {
-    if (!inElectron || warnedUnavailable) return;
+    if (!inElectron || warnedUnavailable || deliberatelyDisabled) return;
     warnedUnavailable = true;
     emit(UNAVAILABLE_WARNING);
   }
@@ -158,7 +183,9 @@ function createSecrets(opts = {}) {
     if (!isEncryptionAvailable()) {
       warnUnavailable();
       emit(
-        `[secrets] failed to decrypt ${openOpts.key || "credential"}: OS encryption unavailable`,
+        deliberatelyDisabled
+          ? `[secrets] dropping sealed credential ${openOpts.key || "credential"}: safeStorage encryption is disabled`
+          : `[secrets] failed to decrypt ${openOpts.key || "credential"}: OS encryption unavailable`,
       );
       return null;
     }

@@ -110,6 +110,37 @@ describe("createSecrets", () => {
     assert.equal(logs.length, 0);
   });
 
+  it("default backend is disabled: plaintext, no warning, sealed values dropped", () => {
+    const logs = [];
+    const s = createSecrets({
+      inElectron: true,
+      log: (m) => logs.push(String(m)),
+    });
+    assert.equal(s.isEncryptionAvailable(), false);
+    assert.equal(s.seal("tok"), "tok");
+    assert.equal(s.isSealed(s.seal("tok")), false);
+    assert.equal(logs.length, 0, "deliberate disable must not emit the unavailable warning");
+    const blob = `${PREFIX}${Buffer.from("cipher").toString("base64")}`;
+    assert.equal(s.open(blob, { key: "mcp:team" }), null);
+    assert.ok(logs.some((l) => /disabled/.test(l) && /mcp:team/.test(l)));
+  });
+
+  it("SOLENTA_ENABLE_SAFE_STORAGE=1 re-enables the backend (and its missing-backend warning)", () => {
+    process.env.SOLENTA_ENABLE_SAFE_STORAGE = "1";
+    try {
+      const logs = [];
+      const s = createSecrets({
+        inElectron: true,
+        log: (m) => logs.push(String(m)),
+      });
+      // node has no Electron backend, so enabled-but-missing must warn again.
+      assert.equal(s.seal("tok"), "tok");
+      assert.ok(logs.some((l) => /unavailable/i.test(l)));
+    } finally {
+      delete process.env.SOLENTA_ENABLE_SAFE_STORAGE;
+    }
+  });
+
   it("returns null and logs when ciphertext is corrupt, without echoing the blob", () => {
     const logs = [];
     const s = createSecrets({
