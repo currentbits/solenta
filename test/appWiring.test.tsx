@@ -978,3 +978,101 @@ describe("App selection stamps lastVisitedAt (round 43 unread)", () => {
     }
   });
 });
+
+
+describe("App planboard wiring (#207)", () => {
+  it("opens scoped to the open thread's project when the sidebar is unscoped", async () => {
+    // Two projects; the open thread lives in the SECOND one. The sidebar is
+    // unscoped ("All projects"), so the nav passes null — the open thread's
+    // project must win over projects[0].
+    const pFirst = project({
+      id: "p-first",
+      slug: "acme/first",
+      path: "/tmp/first",
+    });
+    const pSecond = project({
+      id: "p-second",
+      slug: "acme/second",
+      path: "/tmp/second",
+    });
+    const t = thread({
+      id: "t-second",
+      projectId: "p-second",
+      title: "second project thread",
+    });
+    const fake = createFakeCoder({
+      projects: [pFirst, pSecond],
+      threads: [t],
+      details: { "t-second": detail({ thread: t }) },
+    });
+    const m = await boot(fake);
+    try {
+      await m.flush();
+      const nav = m.query('[data-view-nav="planboard"]');
+      assert.ok(nav, "planboard nav button must exist");
+      await m.click(nav as HTMLElement);
+      await m.flush();
+
+      assert.ok(m.query("[data-planboard]"), "planboard must render");
+      const lists = fake.of("issues.list");
+      assert.ok(lists.length > 0, "opening the planboard must list issues");
+      assert.equal(
+        lists[lists.length - 1]!.args[0],
+        "/tmp/second",
+        "the board must load the open thread's project, not projects[0]",
+      );
+    } finally {
+      m.unmount();
+    }
+  });
+
+  it("Start task stays on the planboard instead of jumping to the new thread", async () => {
+    const fake = createFakeCoder({
+      projects: [project({ id: "p1", path: "/tmp/repo" })],
+      threads: [thread({ id: "t1", projectId: "p1" })],
+      issueList: {
+        ok: true,
+        issues: [
+          {
+            number: 12,
+            title: "Fix login",
+            url: "https://github.com/owner/repo/issues/12",
+            state: "OPEN",
+            labels: ["plan:todo"],
+          },
+        ],
+      },
+    });
+    const m = await boot(fake);
+    try {
+      await m.flush();
+      const nav = m.query('[data-view-nav="planboard"]');
+      assert.ok(nav, "planboard nav button must exist");
+      await m.click(nav as HTMLElement);
+      await m.flush();
+
+      const start = m.query('[data-plan-start="12"]') as HTMLElement | null;
+      assert.ok(start, "the Todo card must offer Start task");
+      await m.click(start);
+      await m.flush();
+      await m.flush();
+
+      assert.ok(
+        m.query("[data-planboard]"),
+        "starting a task must not navigate away from the planboard",
+      );
+      assert.equal(
+        fake.of("threads.create").length,
+        1,
+        "the start must still create the thread",
+      );
+      assert.equal(
+        fake.of("runs.start").length,
+        1,
+        "the start must still kick off the run",
+      );
+    } finally {
+      m.unmount();
+    }
+  });
+});

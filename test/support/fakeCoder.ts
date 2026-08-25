@@ -29,6 +29,8 @@ import type {
   DiffResult,
   CreateIssueResult,
   FetchIssueResult,
+  ListIssuesResult,
+  SetPlanStatusResult,
   GitStatus,
   GitSyncInfo,
   GitRepoInfo,
