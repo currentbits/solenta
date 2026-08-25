@@ -1,0 +1,7 @@
+Task 1: complete (uncommitted working tree, review clean; 27 importer + 29 skills tests pass)
+Task 2: complete (uncommitted working tree, review clean; 90 backend + 17 renderer tests pass, typecheck clean)
+Task 3: complete (uncommitted working tree, review clean; 40 renderer tests pass, typecheck clean)
+Task 4: complete (uncommitted working tree, review clean; 48 adapter/import/UI tests pass, typecheck clean)
+Task 5: complete (MCP model/backend; uncommitted; mcp-model/inject/secrets/ipc green)
+Task 6: complete (MCP catalog + JSON/ZIP/GitHub import + Skills tab sections; 168 electron + 56 renderer tests, typecheck clean)
+Task 5: complete (uncommitted working tree, review clean; 182 electron + 54 renderer tests pass, typecheck clean)

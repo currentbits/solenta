@@ -25,10 +25,10 @@ let globalUserDataPath = null;
 /**
  * Additional in-main MCP servers (e.g. coder-threads) registered alongside
  * coder-memory. Every provider hook below serves the whole list.
- * `url` is the full MCP endpoint; for port-based local servers it is derived
- * as http://127.0.0.1:<port>/mcp. `user` marks settings-driven entries so
- * syncUserMcpServers can reconcile them without touching built-ins.
- * @type {Array<{ name: string, port: number | null, token: string, url: string, user?: boolean }>}
+ * Remote entries have `url`; stdio entries have `transport: "stdio"` plus
+ * command/args. `user` marks settings-driven entries so syncUserMcpServers
+ * can reconcile them without touching built-ins.
+ * @type {Array<object>}
  */
 let extraServers = [];
 /** @type {import('node:child_process').ChildProcess | null} */
@@ -57,20 +57,27 @@ function chmodSecret(file) {
 
 /**
  * All MCP servers currently available for injection, coder-memory first.
- * @returns {Array<{ name: string, port: number | null, token: string, url: string, user?: boolean }>}
+ * Built-ins stay remote HTTP. User entries may be remote or stdio.
+ * @returns {Array<object>}
  */
 function activeServers() {
-  /** @type {Array<{ name: string, port: number | null, token: string, url: string, user?: boolean }>} */
+  /** @type {Array<object>} */
   const list = [];
   if (globalStatus.running && globalStatus.port && globalToken) {
     list.push({
       name: "coder-memory",
+      transport: "http",
       port: globalStatus.port,
       token: globalToken,
       url: `http://127.0.0.1:${globalStatus.port}/mcp`,
     });
   }
   return list.concat(extraServers);
+}
+
+/** @param {object} s */
+function isStdioServer(s) {
+  return Boolean(s && s.transport === "stdio");
 }
 
 /**
@@ -98,21 +105,74 @@ function registerMcpServer(opts) {
   const token = String(opts.token || "");
   // "coder-memory" is owned by markHealthy and must not be replaced here.
   if (!name || name === "coder-memory") return false;
-  let url = typeof opts.url === "string" ? opts.url.trim() : "";
-  if (url) {
-    if (!/^https?:\/\//.test(url)) return false;
+  const { isHttpUrl } = require("./mcp.js");
+
+  /** @type {object} */
+  let entry;
+  if (opts.transport === "stdio" || (typeof opts.command === "string" && opts.command && !opts.url)) {
+    const command = typeof opts.command === "string" ? opts.command : "";
+    if (!command) return false;
+    if (typeof opts.cwd === "string" && opts.cwd) {
+      try {
+        if (!fs.existsSync(opts.cwd) || !fs.statSync(opts.cwd).isDirectory()) {
+          log(
+            "memory-server: provider error: stdio cwd does not exist: " +
+              name,
+          );
+          return false;
+        }
+      } catch {
+        log("memory-server: provider error: stdio cwd is not usable: " + name);
+        return false;
+      }
+    }
+    if (opts.user && opts.trusted !== true) return false;
+    /** @type {Record<string, string>} */
+    const serverEnv = {};
+    if (opts.serverEnv && typeof opts.serverEnv === "object" && !Array.isArray(opts.serverEnv)) {
+      for (const [k, v] of Object.entries(opts.serverEnv)) {
+        if (typeof v === "string") serverEnv[k] = v;
+      }
+    }
+    entry = {
+      name,
+      transport: "stdio",
+      command,
+      args: Array.isArray(opts.args) ? opts.args.map((a) => String(a)) : [],
+      env: serverEnv,
+      trusted: opts.trusted === true,
+      port: null,
+      token: "",
+      url: "",
+    };
+    if (typeof opts.cwd === "string" && opts.cwd) entry.cwd = opts.cwd;
   } else {
-    // Port-based local server: bearer token is mandatory (loopback auth).
-    if (!token) return false;
-    if (!port || !Number.isFinite(port)) return false;
-    url = `http://127.0.0.1:${port}/mcp`;
+    const urlRaw = typeof opts.url === "string" ? opts.url : "";
+    let url = urlRaw.trim();
+    if (urlRaw) {
+      if (/[\u0000-\u001f\u007f]/.test(urlRaw) || !isHttpUrl(url)) return false;
+    } else {
+      // Port-based local server: bearer token is mandatory (loopback auth).
+      if (!token) return false;
+      if (!port || !Number.isFinite(port)) return false;
+      url = `http://127.0.0.1:${port}/mcp`;
+    }
+    entry = {
+      name,
+      transport: opts.transport === "sse" ? "sse" : "http",
+      port: Number.isFinite(port) && port > 0 ? port : null,
+      token,
+      url,
+    };
+    if (opts.headers && typeof opts.headers === "object" && !Array.isArray(opts.headers)) {
+      /** @type {Record<string, string>} */
+      const headers = {};
+      for (const [k, v] of Object.entries(opts.headers)) {
+        if (typeof v === "string" && v) headers[k] = v;
+      }
+      if (Object.keys(headers).length) entry.headers = headers;
+    }
   }
-  const entry = {
-    name,
-    port: Number.isFinite(port) && port > 0 ? port : null,
-    token,
-    url,
-  };
   if (opts.user) entry.user = true;
   const idx = extraServers.findIndex((s) => s.name === name);
   if (idx >= 0) {
@@ -185,13 +245,16 @@ function unregisterMcpServer(name, opts = {}) {
  */
 function syncUserMcpServers(servers, opts = {}) {
   const log = opts.log || ((msg) => console.warn(msg));
-  /** @type {Map<string, { name: string, url: string, token?: string, enabled: boolean }>} */
+  /** @type {Map<string, object>} */
   const desired = new Map();
   for (const s of Array.isArray(servers) ? servers : []) {
     if (!s || typeof s !== "object") continue;
     const name = typeof s.name === "string" ? s.name : "";
     if (!name || name === "coder-memory" || name === "coder-threads") continue;
     if (s.enabled === false) continue;
+    if (s.transport === "stdio" || (s.command && !s.url)) {
+      if (s.trusted !== true) continue;
+    }
     desired.set(name, s);
   }
   try {
@@ -203,8 +266,15 @@ function syncUserMcpServers(servers, opts = {}) {
     for (const s of desired.values()) {
       registerMcpServer({
         name: s.name,
+        transport: s.transport,
         url: typeof s.url === "string" ? s.url : "",
         token: typeof s.token === "string" ? s.token : "",
+        headers: s.headers,
+        command: s.command,
+        args: s.args,
+        serverEnv: s.env,
+        cwd: s.cwd,
+        trusted: s.trusted === true,
         user: true,
         userDataPath: opts.userDataPath,
         log,
@@ -276,8 +346,16 @@ function getClaudeMcpArgs() {
  * user, and these tokens drive thread_fork/thread_send (arbitrary agent runs).
  * @param {string} name
  */
+function envNamePart(value) {
+  return String(value).toUpperCase().replace(/[^A-Z0-9]/g, "_");
+}
+
 function codexTokenEnvVar(name) {
-  return "CODER_MCP_TOKEN_" + name.toUpperCase().replace(/[^A-Z0-9]/g, "_");
+  return "CODER_MCP_TOKEN_" + envNamePart(name);
+}
+
+function headerEnvVar(serverName, headerName) {
+  return "CODER_MCP_HEADER_" + envNamePart(serverName) + "_" + envNamePart(headerName);
 }
 
 /**
@@ -287,15 +365,90 @@ function codexTokenEnvVar(name) {
  * getCodexMcpEnv() on the spawn or codex sees no credential.
  * @returns {string[]}
  */
+/**
+ * Escape a string for a TOML basic string used in Codex `-c` values.
+ * @param {unknown} value
+ * @returns {string}
+ */
+function tomlEscape(value) {
+  const s = String(value);
+  let out = "";
+  for (let i = 0; i < s.length; i++) {
+    const c = s[i];
+    const code = s.charCodeAt(i);
+    if (c === "\\") out += "\\\\";
+    else if (c === '"') out += '\\"';
+    else if (c === "\b") out += "\\b";
+    else if (c === "\t") out += "\\t";
+    else if (c === "\n") out += "\\n";
+    else if (c === "\f") out += "\\f";
+    else if (c === "\r") out += "\\r";
+    else if (code < 0x20 || code === 0x7f) {
+      out += "\\u" + code.toString(16).padStart(4, "0");
+    } else {
+      out += c;
+    }
+  }
+  return out;
+}
+
 function getCodexMcpArgs() {
   /** @type {string[]} */
   const args = [];
   for (const s of activeServers()) {
-    args.push("-c", `mcp_servers.${s.name}.url="${s.url}"`);
+    if (isStdioServer(s)) {
+      args.push("-c", `mcp_servers.${s.name}.command="${tomlEscape(s.command)}"`);
+      const argv = Array.isArray(s.args) ? s.args : [];
+      args.push(
+        "-c",
+        `mcp_servers.${s.name}.args=[${argv
+          .map((a) => `"${tomlEscape(a)}"`)
+          .join(", ")}]`,
+      );
+      const envKeys =
+        s.env && typeof s.env === "object" ? Object.keys(s.env) : [];
+      if (envKeys.length) {
+        args.push(
+          "-c",
+          `mcp_servers.${s.name}.env_vars=[${envKeys
+            .map((k) => `"${tomlEscape(k)}"`)
+            .join(",")}]`,
+        );
+      }
+      if (typeof s.cwd === "string" && s.cwd) {
+        args.push("-c", `mcp_servers.${s.name}.cwd="${tomlEscape(s.cwd)}"`);
+      }
+      continue;
+    }
+    if (s.transport === "sse") {
+      console.warn(
+        `memory-server: Codex does not support SSE MCP server ${s.name}; skipping`,
+      );
+      continue;
+    }
+    args.push("-c", `mcp_servers.${s.name}.url="${tomlEscape(s.url)}"`);
     if (s.token) {
       args.push(
         "-c",
         `mcp_servers.${s.name}.bearer_token_env_var="${codexTokenEnvVar(s.name)}"`,
+      );
+    }
+    const headers =
+      s.headers && typeof s.headers === "object" && !Array.isArray(s.headers)
+        ? s.headers
+        : {};
+    const headerKeys = Object.keys(headers).filter(
+      (k) => !(s.token && k.toLowerCase() === "authorization"),
+    );
+    if (headerKeys.length) {
+      args.push(
+        "-c",
+        `mcp_servers.${s.name}.env_http_headers={ ${headerKeys
+          .map(
+            (k) =>
+              `"${tomlEscape(k)}" = "${tomlEscape(headerEnvVar(s.name, k))}"`,
+          )
+          .join(", ")} }`,
       );
     }
   }
@@ -311,9 +464,65 @@ function getCodexMcpEnv() {
   /** @type {Record<string, string>} */
   const env = {};
   for (const s of activeServers()) {
+    if (isStdioServer(s)) {
+      if (s.env && typeof s.env === "object") {
+        for (const [k, v] of Object.entries(s.env)) {
+          if (typeof v === "string") env[k] = v;
+        }
+      }
+      continue;
+    }
+    if (s.transport === "sse") continue;
     if (s.token) env[codexTokenEnvVar(s.name)] = s.token;
+    if (s.headers && typeof s.headers === "object" && !Array.isArray(s.headers)) {
+      for (const [k, v] of Object.entries(s.headers)) {
+        if (typeof v !== "string") continue;
+        if (s.token && k.toLowerCase() === "authorization") continue;
+        env[headerEnvVar(s.name, k)] = v;
+      }
+    }
   }
   return env;
+}
+
+/**
+ * Env values for Grok child processes so config `${VAR}` refs resolve.
+ * Secrets stay out of `grok mcp add` argv.
+ * @returns {Record<string, string>}
+ */
+function getGrokMcpEnv() {
+  /** @type {Record<string, string>} */
+  const env = {};
+  for (const s of activeServers()) {
+    if (isStdioServer(s)) {
+      if (s.env && typeof s.env === "object") {
+        for (const [k, v] of Object.entries(s.env)) {
+          if (typeof v === "string") env[k] = v;
+        }
+      }
+      continue;
+    }
+    if (s.token) env[codexTokenEnvVar(s.name)] = s.token;
+    if (s.headers && typeof s.headers === "object" && !Array.isArray(s.headers)) {
+      for (const [k, v] of Object.entries(s.headers)) {
+        if (typeof v === "string") env[headerEnvVar(s.name, k)] = v;
+      }
+    }
+  }
+  return env;
+}
+
+/**
+ * Merge Grok MCP env onto an existing spawn env (e.g. OTEL).
+ * @param {Record<string, string> | undefined | null} base
+ * @returns {Record<string, string> | undefined}
+ */
+function mergeGrokSpawnEnv(base) {
+  const extra = getGrokMcpEnv();
+  if (!extra || Object.keys(extra).length === 0) {
+    return base && Object.keys(base).length ? base : undefined;
+  }
+  return { ...(base || {}), ...extra };
 }
 
 /**
@@ -350,15 +559,29 @@ function withQuery(url, query) {
  * @param {string} token
  * @param {Record<string, string | null | undefined>} [query]
  */
-function kimiHttpEntry(url, token, query) {
+function kimiHttpEntry(url, token, query, headers, transport) {
   const entry = {
-    type: "http",
+    type: transport === "sse" ? "sse" : "http",
     url: withQuery(url, query),
-    headers: {},
+    headers: { ...(headers && typeof headers === "object" ? headers : {}) },
   };
   if (token) {
     entry.headers.Authorization = `Bearer ${token}`;
   }
+  return entry;
+}
+
+/**
+ * @param {object} s
+ */
+function kimiStdioEntry(s) {
+  const entry = {
+    type: "stdio",
+    command: s.command,
+    args: Array.isArray(s.args) ? s.args : [],
+    env: s.env && typeof s.env === "object" ? { ...s.env } : {},
+  };
+  if (typeof s.cwd === "string" && s.cwd) entry.cwd = s.cwd;
   return entry;
 }
 
@@ -375,11 +598,15 @@ function kimiMcpServersForRun(opts = {}) {
   /** @type {Record<string, { type: string, url: string, headers: { Authorization?: string } }>} */
   const mcpServers = {};
   for (const s of activeServers()) {
+    if (isStdioServer(s)) {
+      mcpServers[s.name] = kimiStdioEntry(s);
+      continue;
+    }
     /** @type {Record<string, string>} */
     const query = {};
     if (s.name === "coder-memory" && projectPath) query.project = projectPath;
     if (s.name === "coder-threads" && projectId) query.projectId = projectId;
-    mcpServers[s.name] = kimiHttpEntry(s.url, s.token, query);
+    mcpServers[s.name] = kimiHttpEntry(s.url, s.token, query, s.headers, s.transport);
   }
   return mcpServers;
 }
@@ -433,7 +660,9 @@ function ensureKimiMcpConfig(opts = {}) {
   /** @type {Record<string, { type: string, url: string, headers: { Authorization?: string } }>} */
   const desiredByName = {};
   for (const s of servers) {
-    desiredByName[s.name] = kimiHttpEntry(s.url, s.token);
+    desiredByName[s.name] = isStdioServer(s)
+      ? kimiStdioEntry(s)
+      : kimiHttpEntry(s.url, s.token, undefined, s.headers, s.transport);
   }
 
   /** @type {Record<string, unknown>} */
@@ -764,7 +993,7 @@ function resolveGrokBin(env, log) {
 }
 
 /**
- * `grok mcp remove <name> -s user` for each name, so the bearer tokens grok
+ * `grok mcp remove <name> --scope user` for each name, so the bearer tokens grok
  * persisted in ~/.grok/config.toml die with the server. Fire-and-forget as a
  * batch (never block quit); members of the batch share the grok mcp queue
  * with ensureGrokMcpConfig so they cannot tear the file (#626).
@@ -783,7 +1012,7 @@ function removeGrokMcpEntries(names, opts = {}) {
   const bin = resolveGrokBin(env, log);
   if (!bin) return false;
 
-  const jobs = names.map((name) => ["mcp", "remove", name, "-s", "user"]);
+  const jobs = names.map((name) => ["mcp", "remove", name, "--scope", "user"]);
   enqueueGrokMcp(async () => {
     const configPath = resolveGrokConfigPath(env);
     const snapshot = snapshotGrokConfig(configPath);
@@ -858,20 +1087,60 @@ function ensureGrokMcpConfig(opts = {}) {
   const bin = resolveGrokBin(env, log);
   if (!bin) return false;
 
-  const jobs = servers.map((s) => {
-    const args = ["mcp", "add", s.name, s.url, "-t", "http"];
-    if (s.token) {
-      args.push("-H", `Authorization: Bearer ${s.token}`);
-    }
-    args.push("-s", "user");
-    return args;
-  });
+  const jobs = servers
+    .map((s) => {
+      if (isStdioServer(s)) {
+        if (typeof s.cwd === "string" && s.cwd) {
+          log(
+            `memory-server: grok cannot express stdio cwd for ${s.name}; skipping`,
+          );
+          return null;
+        }
+        // Official local syntax: `grok mcp add <name> -- <command> <args>`.
+        // Env values never go on argv. Where the CLI accepts `-e`, we persist
+        // `${VAR}` references (not literals) and merge getGrokMcpEnv() into
+        // every Grok spawn so expansion can resolve.
+        const args = ["mcp", "add", s.name, "--scope", "user"];
+        if (s.env && typeof s.env === "object") {
+          for (const k of Object.keys(s.env)) {
+            args.push("-e", `${k}=\${${k}}`);
+          }
+        }
+        args.push("--", s.command, ...(Array.isArray(s.args) ? s.args : []));
+        return args;
+      }
+      const args = [
+        "mcp",
+        "add",
+        "--transport",
+        s.transport === "sse" ? "sse" : "http",
+        s.name,
+        s.url,
+      ];
+      if (s.token) {
+        args.push(
+          "--header",
+          `Authorization: Bearer \${${codexTokenEnvVar(s.name)}}`,
+        );
+      }
+      if (s.headers && typeof s.headers === "object") {
+        for (const [k, v] of Object.entries(s.headers)) {
+          if (typeof v !== "string") continue;
+          if (k.toLowerCase() === "authorization" && s.token) continue;
+          args.push("--header", `${k}: \${${headerEnvVar(s.name, k)}}`);
+        }
+      }
+      args.push("--scope", "user");
+      return args;
+    })
+    .filter(Boolean);
 
   enqueueGrokMcp(async () => {
     const configPath = resolveGrokConfigPath(env);
     const snapshot = snapshotGrokConfig(configPath);
+    const spawnEnv = { ...env, ...getGrokMcpEnv() };
     for (const args of jobs) {
-      const err = await execGrokMcp(bin, args, env);
+      const err = await execGrokMcp(bin, args, spawnEnv);
       if (err) {
         log(
           "memory-server: grok mcp add failed: " +
@@ -1046,10 +1315,28 @@ function writeMcpConfig(userDataPath) {
   /** @type {Record<string, unknown>} */
   const mcpServers = {};
   for (const s of activeServers()) {
+    if (isStdioServer(s)) {
+      const entry = {
+        type: "stdio",
+        command: s.command,
+        args: Array.isArray(s.args) ? s.args : [],
+        env: s.env && typeof s.env === "object" ? { ...s.env } : {},
+      };
+      if (typeof s.cwd === "string" && s.cwd) entry.cwd = s.cwd;
+      if (s.env && Object.keys(s.env).length) {
+        try {
+          recordSecretUse({ purpose: "mcp-inject", key: `mcp:${s.name}` });
+        } catch {
+          // Audit must never block writing the CLI config.
+        }
+      }
+      mcpServers[s.name] = entry;
+      continue;
+    }
     const entry = {
-      type: "http",
+      type: s.transport === "sse" ? "sse" : "http",
       url: s.url,
-      headers: {},
+      headers: { ...(s.headers && typeof s.headers === "object" ? s.headers : {}) },
     };
     if (s.token) {
       entry.headers.Authorization = `Bearer ${s.token}`;
@@ -1366,7 +1653,10 @@ module.exports = {
   createMemorySupervisor,
   getClaudeMcpArgs,
   getCodexMcpArgs,
+  tomlEscape,
   getCodexMcpEnv,
+  getGrokMcpEnv,
+  mergeGrokSpawnEnv,
   ensureKimiMcpConfig,
   kimiMcpServersForRun,
   withQuery,

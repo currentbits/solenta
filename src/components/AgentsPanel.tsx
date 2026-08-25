@@ -17,6 +17,13 @@ import type {
   DevServerState,
   Hypothesis,
   LocalServerInfo,
+  McpCatalogEntry,
+  McpImportPreview,
+  McpInstallRequest,
+  McpInstallResult,
+  McpPreviewImportInput,
+  McpServerDefinition,
+  McpServerSaveInput,
   MemoryEntryInfo,
   AgentConfigDoctorReport,
   AgentConfigPreview,
@@ -25,7 +32,12 @@ import type {
   ProjectInfo,
   ProviderInfo,
   SessionUsage,
+  SkillCatalogEntry,
+  SkillImportPreview,
+  SkillInstallRequest,
+  SkillInstallResult,
   SkillInfo,
+  SkillPreviewImportInput,
   SkillTarget,
   SkillWrite,
   ThreadInfo,
@@ -170,12 +182,33 @@ interface AgentsPanelProps {
   /** Skills tab: settings surface for MCP servers + skills CRUD. */
   settings: AppSettings | null;
   saveSettings: (patch: Partial<AppSettings>) => Promise<AppSettings>;
+  listMcpServers: () => Promise<McpServerDefinition[]>;
+  saveMcpServer: (input: McpServerSaveInput) => Promise<McpServerDefinition>;
+  removeMcpServer: (input: { name: string }) => Promise<void>;
+  setMcpEnabled: (input: {
+    name: string;
+    enabled: boolean;
+  }) => Promise<McpServerDefinition>;
+  listMcpCatalog: () => Promise<McpCatalogEntry[]>;
+  pickMcpImport: () => Promise<McpImportPreview | null>;
+  previewMcpImport: (input: McpPreviewImportInput) => Promise<McpImportPreview>;
+  installMcpImport: (input: McpInstallRequest) => Promise<McpInstallResult>;
+  discardMcpImport: (input: { previewId: string }) => Promise<void>;
   listSkills: (input?: { projectPath?: string }) => Promise<SkillInfo[]>;
   addSkill: (
     input: SkillWrite,
   ) => Promise<{ name: string; installedIn: SkillTarget[] }>;
   removeSkill: (input: { name: string }) => Promise<void>;
   syncSkills: () => Promise<{ copied: number; skills: string[] }>;
+  listSkillCatalog: () => Promise<SkillCatalogEntry[]>;
+  pickSkillImport: () => Promise<SkillImportPreview | null>;
+  previewSkillImport: (
+    input: SkillPreviewImportInput,
+  ) => Promise<SkillImportPreview>;
+  installSkillImport: (
+    input: SkillInstallRequest,
+  ) => Promise<SkillInstallResult>;
+  discardSkillImport: (input: { previewId: string }) => Promise<void>;
   /** Center-pane view, so Pulse/Environment can mark the active destination. */
   activeView?: string;
   onOpenPrs?: () => void;
@@ -2654,10 +2687,24 @@ export const AgentsPanel = memo(function AgentsPanel({
   writeAgentConfig,
   settings,
   saveSettings,
+  listMcpServers,
+  saveMcpServer,
+  removeMcpServer,
+  setMcpEnabled,
+  listMcpCatalog,
+  pickMcpImport,
+  previewMcpImport,
+  installMcpImport,
+  discardMcpImport,
   listSkills,
   addSkill,
   removeSkill,
   syncSkills,
+  listSkillCatalog,
+  pickSkillImport,
+  previewSkillImport,
+  installSkillImport,
+  discardSkillImport,
   activeView,
   onOpenPrs,
   onOpenAutomations,
@@ -2807,10 +2854,24 @@ export const AgentsPanel = memo(function AgentsPanel({
           projectPath={project?.path ?? null}
           settings={settings}
           saveSettings={saveSettings}
+          listMcpServers={listMcpServers}
+          saveMcpServer={saveMcpServer}
+          removeMcpServer={removeMcpServer}
+          setMcpEnabled={setMcpEnabled}
+          listMcpCatalog={listMcpCatalog}
+          pickMcpImport={pickMcpImport}
+          previewMcpImport={previewMcpImport}
+          installMcpImport={installMcpImport}
+          discardMcpImport={discardMcpImport}
           listSkills={listSkills}
           addSkill={addSkill}
           removeSkill={removeSkill}
           syncSkills={syncSkills}
+          listSkillCatalog={listSkillCatalog}
+          pickSkillImport={pickSkillImport}
+          previewSkillImport={previewSkillImport}
+          installSkillImport={installSkillImport}
+          discardSkillImport={discardSkillImport}
         />
       ) : (
         <PulseTab

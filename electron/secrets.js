@@ -183,11 +183,46 @@ function createSecrets(opts = {}) {
     let changed = false;
     const servers = Array.isArray(settings.mcpServers) ? settings.mcpServers : [];
     const nextServers = servers.map((s) => {
-      if (!s || typeof s !== "object" || !s.token) return s;
-      const sealed = seal(s.token);
-      if (sealed === s.token) return s;
-      changed = true;
-      return { ...s, token: sealed };
+      if (!s || typeof s !== "object") return s;
+      let row = s;
+      let rowChanged = false;
+      if (s.token) {
+        const sealed = seal(s.token);
+        if (sealed !== s.token) {
+          row = { ...row, token: sealed };
+          rowChanged = true;
+        }
+      }
+      if (s.headers && typeof s.headers === "object" && !Array.isArray(s.headers)) {
+        /** @type {Record<string, string>} */
+        const out = {};
+        for (const [k, v] of Object.entries(s.headers)) {
+          if (typeof v === "string" && v) {
+            const sealed = seal(v);
+            out[k] = sealed;
+            if (sealed !== v) rowChanged = true;
+          } else {
+            out[k] = v;
+          }
+        }
+        if (rowChanged) row = { ...row, headers: out };
+      }
+      if (s.env && typeof s.env === "object" && !Array.isArray(s.env)) {
+        /** @type {Record<string, string>} */
+        const out = {};
+        for (const [k, v] of Object.entries(s.env)) {
+          if (typeof v === "string" && v) {
+            const sealed = seal(v);
+            out[k] = sealed;
+            if (sealed !== v) rowChanged = true;
+          } else {
+            out[k] = v;
+          }
+        }
+        if (rowChanged) row = { ...row, env: out };
+      }
+      if (rowChanged) changed = true;
+      return row;
     });
     let nextOtel = settings.otel;
     const headers =
@@ -260,20 +295,74 @@ function createSecrets(opts = {}) {
 
     const servers = Array.isArray(settings.mcpServers) ? settings.mcpServers : [];
     const nextServers = servers.map((s) => {
-      if (!s || typeof s !== "object" || !s.token) return s;
-      hasSecret = true;
-      if (isSealed(s.token)) {
-        const plain = open(s.token, { key: `mcp:${s.name || "?"}` });
-        changed = true;
-        if (plain == null || plain === "") {
-          const next = { ...s };
-          delete next.token;
-          return next;
+      if (!s || typeof s !== "object") return s;
+      let row = s;
+      if (s.token) {
+        hasSecret = true;
+        if (isSealed(s.token)) {
+          const plain = open(s.token, { key: `mcp:${s.name || "?"}` });
+          changed = true;
+          if (plain == null || plain === "") {
+            row = { ...row };
+            delete row.token;
+          } else {
+            row = { ...row, token: plain };
+          }
+        } else if (available) {
+          migrated += 1;
         }
-        return { ...s, token: plain };
       }
-      if (available) migrated += 1;
-      return s;
+      if (s.headers && typeof s.headers === "object" && !Array.isArray(s.headers)) {
+        /** @type {Record<string, string>} */
+        const out = {};
+        let headersChanged = false;
+        for (const [k, v] of Object.entries(s.headers)) {
+          if (typeof v !== "string" || !v) {
+            out[k] = v;
+            continue;
+          }
+          hasSecret = true;
+          if (isSealed(v)) {
+            const plain = open(v, { key: `mcp:${s.name || "?"}:header:${k}` });
+            headersChanged = true;
+            if (plain == null || plain === "") continue;
+            out[k] = plain;
+          } else {
+            if (available) migrated += 1;
+            out[k] = v;
+          }
+        }
+        if (headersChanged) {
+          changed = true;
+          row = { ...row, headers: out };
+        }
+      }
+      if (s.env && typeof s.env === "object" && !Array.isArray(s.env)) {
+        /** @type {Record<string, string>} */
+        const out = {};
+        let envChanged = false;
+        for (const [k, v] of Object.entries(s.env)) {
+          if (typeof v !== "string" || !v) {
+            out[k] = v;
+            continue;
+          }
+          hasSecret = true;
+          if (isSealed(v)) {
+            const plain = open(v, { key: `mcp:${s.name || "?"}:env:${k}` });
+            envChanged = true;
+            if (plain == null || plain === "") continue;
+            out[k] = plain;
+          } else {
+            if (available) migrated += 1;
+            out[k] = v;
+          }
+        }
+        if (envChanged) {
+          changed = true;
+          row = { ...row, env: out };
+        }
+      }
+      return row;
     });
 
     let nextOtel = settings.otel;

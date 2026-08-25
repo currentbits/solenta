@@ -22,6 +22,7 @@ const {
   getClaudeMcpArgs,
   getCodexMcpArgs,
   getCodexMcpEnv,
+  mergeGrokSpawnEnv,
   looksGrokConfigCorrupt,
   grokConfigCorruptMessage,
 } = require("./memory-sup.js");
@@ -308,6 +309,8 @@ function spawnAgentClaude(opts) {
     sessionId: null,
     model: model || null,
     interactive,
+    envExtra:
+      entry && entry.id === "grok" ? mergeGrokSpawnEnv(undefined) : undefined,
     onEvent: (ev) => {
       if (!ev || typeof ev !== "object") return;
       if (ev.type === "control_request") {

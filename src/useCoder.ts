@@ -26,6 +26,13 @@ import type {
   FetchIssueResult,
   CreateIssueResult,
   LocalServerInfo,
+  McpCatalogEntry,
+  McpImportPreview,
+  McpInstallRequest,
+  McpInstallResult,
+  McpPreviewImportInput,
+  McpServerDefinition,
+  McpServerSaveInput,
   MemoryCitation,
   MemoryEntryInfo,
   AgentConfigDoctorReport,
@@ -45,7 +52,12 @@ import type {
   ProviderInfo,
   ReasoningEffort,
   CliSlashCommand,
+  SkillCatalogEntry,
+  SkillImportPreview,
+  SkillInstallRequest,
+  SkillInstallResult,
   SkillInfo,
+  SkillPreviewImportInput,
   SkillTarget,
   SkillWrite,
   SpecArtifact,
@@ -594,6 +606,19 @@ export interface UseCoderResult {
     projectId: string;
     targets?: string[];
   }) => Promise<AgentConfigWriteResult>;
+  /** Dedicated MCP CRUD; results are public redacted definitions only. */
+  listMcpServers: () => Promise<McpServerDefinition[]>;
+  saveMcpServer: (input: McpServerSaveInput) => Promise<McpServerDefinition>;
+  removeMcpServer: (input: { name: string }) => Promise<void>;
+  setMcpEnabled: (input: {
+    name: string;
+    enabled: boolean;
+  }) => Promise<McpServerDefinition>;
+  listMcpCatalog: () => Promise<McpCatalogEntry[]>;
+  pickMcpImport: () => Promise<McpImportPreview | null>;
+  previewMcpImport: (input: McpPreviewImportInput) => Promise<McpImportPreview>;
+  installMcpImport: (input: McpInstallRequest) => Promise<McpInstallResult>;
+  discardMcpImport: (input: { previewId: string }) => Promise<void>;
   /** Thin skills passthroughs; SkillsTab holds list state locally. */
   listSkills: (input?: { projectPath?: string }) => Promise<SkillInfo[]>;
   addSkill: (
@@ -601,6 +626,15 @@ export interface UseCoderResult {
   ) => Promise<{ name: string; installedIn: SkillTarget[] }>;
   removeSkill: (input: { name: string }) => Promise<void>;
   syncSkills: () => Promise<{ copied: number; skills: string[] }>;
+  listSkillCatalog: () => Promise<SkillCatalogEntry[]>;
+  pickSkillImport: () => Promise<SkillImportPreview | null>;
+  previewSkillImport: (
+    input: SkillPreviewImportInput,
+  ) => Promise<SkillImportPreview>;
+  installSkillImport: (
+    input: SkillInstallRequest,
+  ) => Promise<SkillInstallResult>;
+  discardSkillImport: (input: { previewId: string }) => Promise<void>;
   listCliCommands: (input?: {
     projectPath?: string;
   }) => Promise<CliSlashCommand[]>;
@@ -2848,6 +2882,60 @@ export function useCoder(): UseCoderResult {
     [api],
   );
 
+  const listMcpServers = useCallback(async () => {
+    return api.mcp.list();
+  }, [api]);
+
+  const saveMcpServer = useCallback(
+    async (input: McpServerSaveInput) => {
+      return api.mcp.save(input);
+    },
+    [api],
+  );
+
+  const removeMcpServer = useCallback(
+    async (input: { name: string }) => {
+      return api.mcp.remove(input);
+    },
+    [api],
+  );
+
+  const setMcpEnabled = useCallback(
+    async (input: { name: string; enabled: boolean }) => {
+      return api.mcp.setEnabled(input);
+    },
+    [api],
+  );
+
+  const listMcpCatalog = useCallback(async () => {
+    return api.mcp.catalog();
+  }, [api]);
+
+  const pickMcpImport = useCallback(async () => {
+    return api.mcp.pickImport();
+  }, [api]);
+
+  const previewMcpImport = useCallback(
+    async (input: McpPreviewImportInput) => {
+      return api.mcp.previewImport(input);
+    },
+    [api],
+  );
+
+  const installMcpImport = useCallback(
+    async (input: McpInstallRequest) => {
+      return api.mcp.installImport(input);
+    },
+    [api],
+  );
+
+  const discardMcpImport = useCallback(
+    async (input: { previewId: string }) => {
+      return api.mcp.discardImport(input);
+    },
+    [api],
+  );
+
   const listSkills = useCallback(
     async (input?: { projectPath?: string }) => {
       return api.skills.list(input);
@@ -2872,6 +2960,35 @@ export function useCoder(): UseCoderResult {
   const syncSkills = useCallback(async () => {
     return api.skills.sync();
   }, [api]);
+
+  const listSkillCatalog = useCallback(async () => {
+    return api.skills.catalog();
+  }, [api]);
+
+  const pickSkillImport = useCallback(async () => {
+    return api.skills.pickImport();
+  }, [api]);
+
+  const previewSkillImport = useCallback(
+    async (input: SkillPreviewImportInput) => {
+      return api.skills.previewImport(input);
+    },
+    [api],
+  );
+
+  const installSkillImport = useCallback(
+    async (input: SkillInstallRequest) => {
+      return api.skills.installImport(input);
+    },
+    [api],
+  );
+
+  const discardSkillImport = useCallback(
+    async (input: { previewId: string }) => {
+      return api.skills.discardImport(input);
+    },
+    [api],
+  );
 
   const listCliCommands = useCallback(
     async (input?: { projectPath?: string }) => {
@@ -3038,10 +3155,24 @@ export function useCoder(): UseCoderResult {
     lintAgentConfig,
     previewAgentConfig,
     writeAgentConfig,
+    listMcpServers,
+    saveMcpServer,
+    removeMcpServer,
+    setMcpEnabled,
+    listMcpCatalog,
+    pickMcpImport,
+    previewMcpImport,
+    installMcpImport,
+    discardMcpImport,
     listSkills,
     addSkill,
     removeSkill,
     syncSkills,
+    listSkillCatalog,
+    pickSkillImport,
+    previewSkillImport,
+    installSkillImport,
+    discardSkillImport,
     listCliCommands,
     searchThreads,
     peekThread,

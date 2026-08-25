@@ -36,6 +36,14 @@ import type {
   ListPrsResult,
   CheckoutPrResult,
   LocalServerInfo,
+  McpCatalogEntry,
+  McpImportPreview,
+  McpInstallRequest,
+  McpInstallResult,
+  McpPreviewImportInput,
+  McpServerInfo,
+  McpServerDefinition,
+  McpServerSaveInput,
   MemoryEntryInfo,
   PrChecksResult,
   PrInfo,
@@ -44,7 +52,14 @@ import type {
   ProviderInfo,
   SourceControlDiscovery,
   CliSlashCommand,
+  SkillCatalogEntry,
+  SkillImportPreview,
+  SkillInstallRequest,
+  SkillInstallResult,
+  SkillPluginExtra,
+  SkillPluginInstallResult,
   SkillInfo,
+  SkillPreviewImportInput,
   SkillTarget,
   SpaceInfo,
   ThreadDetail,
@@ -61,6 +76,15 @@ import type {
   WebhookTestResult,
 } from "../../src/shared/ipc";
 import { buildActivity } from "../../src/activity";
+import {
+  mergeMcpSettingsPatch,
+  parseMcpConfigDocument,
+  redactMcpServer,
+  redactMcpServers,
+  redactSettings,
+  upsertMcpServer,
+  validateMcpServers,
+} from "../../src/shared/mcpModel.ts";
 
 export interface Call {
   channel: string;
@@ -271,6 +295,128 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
   }
 
   /** In-memory skill rows for the Skills tab; add/remove/sync mutate this. */
+  let pendingSkillImport: {
+    kind: "local" | "github" | "catalog";
+    catalogId?: string;
+  } | null = null;
+
+  let pendingMcpImport: {
+    previewId: string;
+    kind: "json" | "github" | "catalog" | "local";
+    catalogId?: string;
+    servers: ReturnType<typeof parseMcpConfigDocument>["servers"];
+  } | null = null;
+
+  function mcpPreviewFromParsed(
+    kind: "json" | "github" | "catalog" | "local",
+    label: string,
+    parsed: ReturnType<typeof parseMcpConfigDocument>,
+    catalogId?: string,
+  ): McpImportPreview {
+    const previewId = "m".repeat(32);
+    pendingMcpImport = { previewId, kind, catalogId, servers: parsed.servers };
+    const existing = new Set(settingsState.mcpServers.map((s) => s.name));
+    return {
+      previewId,
+      source: { kind, label },
+      warnings: parsed.warnings,
+      servers: parsed.servers.map((row) => {
+        const stored = row.stored;
+        return {
+          name: stored.name,
+          transport: stored.transport,
+          command: stored.command,
+          args: stored.args ? [...stored.args] : [],
+          url: stored.url,
+          cwd: stored.cwd,
+          envNames: [...row.meta.envNames],
+          headerNames: [...row.meta.headerNames],
+          hasToken: row.meta.hasToken,
+          requiresTrust: stored.transport === "stdio",
+          collision: existing.has(stored.name),
+          warnings: [...row.meta.warnings],
+          providers: [
+            { id: "claude", supported: true },
+            { id: "kimi", supported: true },
+            { id: "codex", supported: stored.transport !== "sse" },
+            { id: "grok", supported: true },
+          ],
+        };
+      }),
+    };
+  }
+
+  function ponytailPluginPreviewExtras(): SkillPluginExtra[] {
+    return [
+      {
+        provider: "claude",
+        label: "ponytail",
+        executableFiles: [],
+        activation: { kind: "claude-plugin", status: "pending" },
+      },
+      {
+        provider: "codex",
+        label: "ponytail",
+        executableFiles: [],
+        activation: { kind: "codex-plugin", status: "pending" },
+      },
+      {
+        provider: "grok",
+        label: "ponytail",
+        executableFiles: [],
+        activation: { kind: "grok-plugin", status: "pending" },
+      },
+      {
+        provider: "plugin",
+        label: "ponytail",
+        executableFiles: [],
+        activation: { kind: "plugin", status: "pending" },
+      },
+      {
+        provider: "hooks",
+        label: "Hooks",
+        executableFiles: [
+          "hooks/ponytail-statusline.sh",
+          "hooks/ponytail-statusline.ps1",
+        ],
+        activation: { kind: "hooks", status: "pending" },
+      },
+      {
+        provider: "commands",
+        label: "Commands",
+        executableFiles: [],
+        activation: { kind: "commands", status: "pending" },
+      },
+    ];
+  }
+
+  function ponytailPluginInstallResults(
+    trustPluginCode: boolean,
+  ): SkillPluginInstallResult[] {
+    const extras: Array<{ provider: string; label: string }> = [
+      { provider: "claude", label: "ponytail" },
+      { provider: "codex", label: "ponytail" },
+      { provider: "grok", label: "ponytail" },
+      { provider: "plugin", label: "ponytail" },
+      { provider: "hooks", label: "Hooks" },
+      { provider: "commands", label: "Commands" },
+    ];
+    if (trustPluginCode !== true) {
+      return extras.map((extra) => ({ ...extra, status: "skipped" as const }));
+    }
+    const instructions = [
+      "/plugin marketplace add DietrichGebert/ponytail",
+      "/plugin install ponytail@ponytail",
+    ];
+    return [
+      { provider: "claude", label: "ponytail", status: "manual", instructions },
+      { provider: "codex", label: "ponytail", status: "activated" },
+      { provider: "grok", label: "ponytail", status: "activated" },
+      { provider: "plugin", label: "ponytail", status: "covered" },
+      { provider: "hooks", label: "Hooks", status: "covered" },
+      { provider: "commands", label: "Commands", status: "covered" },
+    ];
+  }
   let skillsState: SkillInfo[] = [
     {
       name: "review-pr",
@@ -279,6 +425,7 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
       installedIn: [...ALL_SKILL_TARGETS],
       missingFrom: [],
       bytes: 4800,
+      provenance: "added",
     },
     {
       name: "write-tests",
@@ -287,6 +434,7 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
       installedIn: ["claude", "agents", "codex", "grok", "opencode"],
       missingFrom: ["kimi"],
       bytes: 800,
+      provenance: "added",
     },
     {
       name: "local-rules",
@@ -295,6 +443,7 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
       installedIn: [],
       missingFrom: [],
       bytes: 400,
+      provenance: "project",
     },
   ];
 
@@ -372,7 +521,13 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
       remove: (input: unknown) => rec("memory.remove", [input], undefined),
     },
     settings: {
-      get: () => rec("settings.get", [], { ...settingsState }),
+      get: () =>
+        rec("settings.get", [], {
+          ...settingsState,
+          mcpServers: redactMcpServers(
+            settingsState.mcpServers,
+          ) as AppSettings["mcpServers"],
+        }),
       /**
        * Honest settings.set: validate like electron/store.setSettings so
        * round-trip modal tests cannot pass against a silent merge.
@@ -432,7 +587,14 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
             calls.push({ channel: "settings.set", args: [patch] });
             return Promise.reject(new Error("mcpServers must be an array"));
           }
-          next.mcpServers = v.map((s) => ({ ...s }));
+          try {
+            next.mcpServers = validateMcpServers(
+              mergeMcpSettingsPatch(settingsState.mcpServers, v),
+            ) as McpServerInfo[];
+          } catch (err) {
+            calls.push({ channel: "settings.set", args: [patch] });
+            return Promise.reject(err);
+          }
         }
         if (Object.prototype.hasOwnProperty.call(p, "defaultWorktree")) {
           const v = p.defaultWorktree;
@@ -507,7 +669,11 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
           next.uiScale = Math.min(1.6, Math.max(0.8, stepped));
         }
         settingsState = next;
-        return rec("settings.set", [patch], { ...settingsState });
+        return rec(
+          "settings.set",
+          [patch],
+          redactSettings({ ...settingsState }) as AppSettings,
+        );
       },
       testWebhook: () =>
         rec(
@@ -515,6 +681,154 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
           [],
           opts.testWebhook ?? { ok: true, status: 200 },
         ),
+    },
+    mcp: {
+      list: () =>
+        rec(
+          "mcp.list",
+          [],
+          redactMcpServers(settingsState.mcpServers) as McpServerDefinition[],
+        ),
+      save: (input: McpServerSaveInput) => {
+        try {
+          settingsState = {
+            ...settingsState,
+            mcpServers: upsertMcpServer(
+              settingsState.mcpServers,
+              input,
+            ) as McpServerInfo[],
+          };
+        } catch (err) {
+          calls.push({ channel: "mcp.save", args: [input] });
+          return Promise.reject(err);
+        }
+        const saved = settingsState.mcpServers.find((s) => s.name === input.name);
+        if (!saved) {
+          calls.push({ channel: "mcp.save", args: [input] });
+          return Promise.reject(new Error("MCP save failed"));
+        }
+        return rec(
+          "mcp.save",
+          [input],
+          redactMcpServer(saved) as McpServerDefinition,
+        );
+      },
+      remove: (input: { name: string }) => {
+        settingsState = {
+          ...settingsState,
+          mcpServers: settingsState.mcpServers.filter(
+            (s) => s.name !== input.name,
+          ),
+        };
+        return rec("mcp.remove", [input], undefined);
+      },
+      setEnabled: (input: { name: string; enabled: boolean }) => {
+        const existing = settingsState.mcpServers.find(
+          (s) => s.name === input.name,
+        );
+        if (!existing) {
+          calls.push({ channel: "mcp.setEnabled", args: [input] });
+          return Promise.reject(new Error(`Unknown MCP server: ${input.name}`));
+        }
+        if (
+          existing.transport === "stdio" &&
+          input.enabled &&
+          existing.trusted !== true
+        ) {
+          calls.push({ channel: "mcp.setEnabled", args: [input] });
+          return Promise.reject(
+            new Error("Local MCP server must be trusted to enable"),
+          );
+        }
+        settingsState = {
+          ...settingsState,
+          mcpServers: settingsState.mcpServers.map((s) =>
+            s.name === input.name ? { ...s, enabled: input.enabled } : s,
+          ),
+        };
+        const saved = settingsState.mcpServers.find((s) => s.name === input.name);
+        if (!saved) {
+          calls.push({ channel: "mcp.setEnabled", args: [input] });
+          return Promise.reject(new Error(`Unknown MCP server: ${input.name}`));
+        }
+        return rec(
+          "mcp.setEnabled",
+          [input],
+          redactMcpServer(saved) as McpServerDefinition,
+        );
+      },
+      catalog: () => rec("mcp.catalog", [], [] as McpCatalogEntry[]),
+      pickImport: () => rec("mcp.pickImport", [], null),
+      previewImport: (input: McpPreviewImportInput) => {
+        try {
+          if (input.kind === "json") {
+            const parsed = parseMcpConfigDocument(input.text);
+            return rec(
+              "mcp.previewImport",
+              [input],
+              mcpPreviewFromParsed("json", "JSON", parsed),
+            );
+          }
+          if (input.kind === "github") {
+            const parsed = parseMcpConfigDocument({
+              mcpServers: {
+                "gh-tools": { url: "https://gh.example.com/mcp" },
+              },
+            });
+            return rec(
+              "mcp.previewImport",
+              [input],
+              mcpPreviewFromParsed("github", "github", parsed),
+            );
+          }
+          throw new Error("Unknown catalog item");
+        } catch (err) {
+          calls.push({ channel: "mcp.previewImport", args: [input] });
+          return Promise.reject(err);
+        }
+      },
+      installImport: (input: McpInstallRequest) => {
+        if (!pendingMcpImport || pendingMcpImport.previewId !== input.previewId) {
+          calls.push({ channel: "mcp.installImport", args: [input] });
+          return Promise.reject(new Error("Import preview is invalid"));
+        }
+        const selected = new Set(input.selected);
+        const installed: string[] = [];
+        for (const row of pendingMcpImport.servers) {
+          if (!selected.has(row.stored.name)) continue;
+          const entry = { ...row.stored };
+          if (pendingMcpImport.catalogId) {
+            entry.provenance = "curated";
+            entry.catalogId = pendingMcpImport.catalogId;
+          } else {
+            entry.provenance = "added";
+          }
+          if (entry.transport === "stdio") {
+            const trusted =
+              input.trustLocal === true || input.trustLocalCommands === true;
+            entry.trusted = trusted;
+            entry.enabled = trusted;
+          }
+          settingsState = {
+            ...settingsState,
+            mcpServers: upsertMcpServer(
+              settingsState.mcpServers,
+              entry,
+            ) as McpServerInfo[],
+          };
+          installed.push(row.stored.name);
+        }
+        pendingMcpImport = null;
+        return rec(
+          "mcp.installImport",
+          [input],
+          { installed } as McpInstallResult,
+        );
+      },
+      discardImport: (input: { previewId: string }) => {
+        if (pendingMcpImport?.previewId === input.previewId) pendingMcpImport = null;
+        return rec("mcp.discardImport", [input], undefined);
+      },
     },
     skills: {
       list: (input: unknown) =>
@@ -551,6 +865,7 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
             installedIn,
             missingFrom: [],
             bytes: skillMdBytes(w.name, w.description, w.body),
+            provenance: "added",
           },
         ];
         return rec("skills.add", [input], {
@@ -596,6 +911,92 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
           }));
         return rec("skills.commands", [input], rows);
       },
+      catalog: () => {
+        const rows: SkillCatalogEntry[] = [
+          {
+            id: "ponytail",
+            name: "Ponytail",
+            description:
+              "Lazy senior dev mode. Forces the simplest, shortest solution that actually works.",
+            publisher: "Dietrich Gebert",
+            sourceUrl: "https://github.com/DietrichGebert/ponytail",
+            homepage: "https://github.com/DietrichGebert/ponytail",
+            installed: skillsState.some(
+              (s) =>
+                s.provenance === "curated" && s.origin?.catalogId === "ponytail",
+            ),
+          },
+        ];
+        return rec("skills.catalog", [], rows);
+      },
+      pickImport: () => {
+        pendingSkillImport = { kind: "local" };
+        return rec("skills.pickImport", [], null);
+      },
+      previewImport: (input: SkillPreviewImportInput) => {
+        pendingSkillImport =
+          input.kind === "catalog"
+            ? { kind: "catalog", catalogId: input.id }
+            : { kind: "github" };
+        const preview: SkillImportPreview = {
+          previewId: "0".repeat(32),
+          source: {
+            kind: input.kind,
+            label: input.kind === "catalog" ? "Ponytail" : "github",
+          },
+          skills: [
+            {
+              name: "review-pr",
+              description: "Fake preview skill",
+              files: ["SKILL.md"],
+              bytes: 80,
+              warnings: [],
+              collision: skillsState.some((s) => s.name === "review-pr"),
+            },
+          ],
+          plugins:
+            input.kind === "catalog" ? ponytailPluginPreviewExtras() : [],
+        };
+        return rec("skills.previewImport", [input], preview);
+      },
+      installImport: (input: SkillInstallRequest) => {
+        const installedIn = [...ALL_SKILL_TARGETS];
+        const curated =
+          pendingSkillImport?.kind === "catalog" &&
+          Boolean(pendingSkillImport.catalogId);
+        for (const name of input.selected) {
+          skillsState = [
+            ...skillsState.filter(
+              (s) => !(s.name === name && s.source !== "project"),
+            ),
+            {
+              name,
+              description: name,
+              source: "claude",
+              installedIn,
+              missingFrom: [],
+              bytes: 80,
+              provenance: curated ? "curated" : "added",
+              origin: curated
+                ? { catalogId: pendingSkillImport?.catalogId }
+                : undefined,
+            },
+          ];
+        }
+        return rec("skills.installImport", [input], {
+          installed: input.selected.map((name) => ({
+            name,
+            installedIn: [...installedIn],
+          })),
+          plugins:
+            pendingSkillImport?.kind === "catalog" &&
+            pendingSkillImport.catalogId === "ponytail"
+              ? ponytailPluginInstallResults(input.trustPluginCode === true)
+              : [],
+        } satisfies SkillInstallResult);
+      },
+      discardImport: (input: { previewId: string }) =>
+        rec("skills.discardImport", [input], undefined),
     },
     providers: { list: () => rec("providers.list", [], providers) },
     sourceControl: {

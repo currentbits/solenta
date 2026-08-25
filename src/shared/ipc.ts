@@ -2162,15 +2162,164 @@ export interface SubagentPool {
   entries: SubagentPoolEntry[];
 }
 
-/** A user-registered MCP server entry (settings slice). */
-export interface McpServerInfo {
-  /** Lowercase slug: /^[a-z0-9-]+$/; coder-memory/coder-threads are reserved. */
+/** How an MCP server was added. Independent of transport. */
+export type McpServerProvenance = "added" | "curated";
+
+/** Stored remote MCP server (settings slice). Legacy rows omit transport. */
+export interface McpServerRemoteInfo {
   name: string;
-  /** http(s) MCP endpoint. */
+  transport?: "http" | "sse";
   url: string;
-  /** Optional bearer token; never echoed back by the UI once stored. */
+  headers?: Record<string, string>;
   token?: string;
   enabled: boolean;
+  provenance?: McpServerProvenance;
+  catalogId?: string;
+}
+
+/** Stored local stdio MCP server (settings slice). */
+export interface McpServerStdioInfo {
+  name: string;
+  transport: "stdio";
+  command: string;
+  args: string[];
+  env?: Record<string, string>;
+  cwd?: string;
+  enabled: boolean;
+  trusted: boolean;
+  provenance?: McpServerProvenance;
+  catalogId?: string;
+}
+
+/**
+ * A user-registered MCP server entry (settings slice). Built-ins
+ * coder-memory and coder-threads are app-owned and never appear here.
+ * Legacy `{name,url,token?,enabled}` is remote HTTP.
+ */
+export type McpServerInfo = McpServerRemoteInfo | McpServerStdioInfo;
+
+/** Public remote MCP definition: header names only, never values or token. */
+export interface McpServerRemoteDefinition {
+  name: string;
+  transport: "http" | "sse";
+  url: string;
+  headerNames: string[];
+  hasToken: boolean;
+  enabled: boolean;
+  provenance?: McpServerProvenance;
+  catalogId?: string;
+}
+
+/** Public stdio MCP definition: env names only, never values. */
+export interface McpServerStdioDefinition {
+  name: string;
+  transport: "stdio";
+  command: string;
+  args: string[];
+  envNames: string[];
+  hasSecrets: boolean;
+  cwd?: string;
+  enabled: boolean;
+  trusted: boolean;
+  provenance?: McpServerProvenance;
+  catalogId?: string;
+}
+
+/** Redacted MCP definition returned by mcp.* methods. */
+export type McpServerDefinition =
+  | McpServerRemoteDefinition
+  | McpServerStdioDefinition;
+
+/** Whole-definition upsert input. Omitted secrets preserve existing values. */
+export type McpServerSaveInput =
+  | {
+      name: string;
+      transport?: "http" | "sse";
+      url?: string;
+      headers?: Record<string, string>;
+      token?: string;
+      enabled: boolean;
+      provenance?: McpServerProvenance;
+      catalogId?: string;
+    }
+  | {
+      name: string;
+      transport: "stdio";
+      command?: string;
+      args?: string[];
+      env?: Record<string, string>;
+      cwd?: string;
+      enabled: boolean;
+      trusted?: boolean;
+      provenance?: McpServerProvenance;
+      catalogId?: string;
+    };
+
+/** A row from the main-process curated MCP catalog. */
+export interface McpCatalogEntry {
+  id: string;
+  name: string;
+  description: string;
+  publisher: string;
+  sourceUrl: string;
+  homepage: string;
+  transport?: "http" | "sse" | "stdio";
+  risk?: string;
+  requiredSecrets?: Array<{ id: string; label: string }>;
+  installed: boolean;
+}
+
+export type McpImportKind = "local" | "github" | "catalog" | "json";
+
+export type McpPreviewImportInput =
+  | { kind: "github"; url: string }
+  | { kind: "catalog"; id: string }
+  | { kind: "json"; text: string };
+
+export interface McpProviderSupport {
+  id: string;
+  supported: boolean;
+  note?: string;
+}
+
+/** One server inside an MCP import preview. Never includes secret values. */
+export interface McpPreviewServer {
+  name: string;
+  transport: "http" | "sse" | "stdio";
+  command?: string;
+  args?: string[];
+  url?: string;
+  cwd?: string;
+  envNames: string[];
+  headerNames: string[];
+  hasToken: boolean;
+  requiresTrust: boolean;
+  collision: boolean;
+  warnings: string[];
+  providers: McpProviderSupport[];
+}
+
+export interface McpImportPreview {
+  previewId: string;
+  source: {
+    label: string;
+    kind: McpImportKind;
+  };
+  servers: McpPreviewServer[];
+  warnings: string[];
+}
+
+export interface McpInstallRequest {
+  previewId: string;
+  selected: string[];
+  replace: boolean;
+  trustLocal?: boolean;
+  trustLocalCommands?: boolean;
+  secrets?: Record<string, string>;
+}
+
+export interface McpInstallResult {
+  installed: Array<{ name: string } | string>;
 }
 
 /**
@@ -2189,6 +2338,21 @@ export type SkillTarget =
 /** Where a skill was found on disk; "project" is the read-only project dir. */
 export type SkillSource = SkillTarget | "project";
 
+/**
+ * How the skill arrived. Independent of `source` (which provider copy we
+ * listed). Missing or untrusted on-disk markers are "added".
+ */
+export type SkillProvenance = "curated" | "added" | "project";
+
+/** Optional origin written by a main-owned `.solenta-skill.json` marker. */
+export interface SkillOrigin {
+  catalogId?: string;
+  sourceLabel?: string;
+  sourceUrl?: string;
+  packageId?: string;
+  importedAt?: string;
+}
+
 /** A discovered skill (SKILL.md) as surfaced to the Skills tab. */
 export interface SkillInfo {
   name: string;
@@ -2203,6 +2367,91 @@ export interface SkillInfo {
   missingFrom: SkillTarget[];
   /** SKILL.md size in bytes: the context this skill costs once invoked. */
   bytes: number;
+  provenance: SkillProvenance;
+  origin?: SkillOrigin;
+}
+
+/** A row from the main-process curated catalog. */
+export interface SkillCatalogEntry {
+  id: string;
+  name: string;
+  description: string;
+  publisher: string;
+  sourceUrl: string;
+  homepage: string;
+  installed: boolean;
+}
+
+export type SkillImportKind = "local" | "github" | "catalog";
+
+export type SkillPreviewImportInput =
+  | { kind: "github"; url: string }
+  | { kind: "catalog"; id: string };
+
+export interface SkillPreviewEntry {
+  name: string;
+  description: string;
+  files: string[];
+  bytes: number;
+  warnings: string[];
+  collision: boolean;
+}
+
+export type SkillPluginActivationKind =
+  | "claude-plugin"
+  | "codex-plugin"
+  | "grok-plugin"
+  | "plugin"
+  | "hooks"
+  | "commands";
+
+export interface SkillPluginExtra {
+  provider: string;
+  label: string;
+  executableFiles: string[];
+  activation: {
+    kind: SkillPluginActivationKind;
+    status: "pending";
+  };
+}
+
+export type SkillPluginResultStatus =
+  | "activated"
+  | "manual"
+  | "failed"
+  | "skipped"
+  | "covered"
+  | "unsupported";
+
+export interface SkillPluginInstallResult {
+  provider: string;
+  label: string;
+  status: SkillPluginResultStatus;
+  error?: string;
+  instructions?: string[];
+}
+
+/** Opaque staged import. Never includes absolute staging paths. */
+export interface SkillImportPreview {
+  previewId: string;
+  source: {
+    label: string;
+    kind: SkillImportKind;
+  };
+  skills: SkillPreviewEntry[];
+  plugins: SkillPluginExtra[];
+}
+
+export interface SkillInstallRequest {
+  previewId: string;
+  selected: string[];
+  replace: boolean;
+  trustPluginCode: boolean;
+}
+
+export interface SkillInstallResult {
+  installed: Array<{ name: string; installedIn: SkillTarget[] }>;
+  plugins: SkillPluginInstallResult[];
 }
 
 /** Payload for skills:add; the skill fans out to every active target. */
@@ -2342,6 +2591,25 @@ export interface CoderApi {
     testWebhook(): Promise<WebhookTestResult>;
   };
   /**
+   * Dedicated MCP CRUD. Results are public redacted definitions only —
+   * never token, header values, or env values. settings.get/set still
+   * accept the stored slice so the legacy Skills tab form keeps working.
+   */
+  mcp: {
+    list(): Promise<McpServerDefinition[]>;
+    save(input: McpServerSaveInput): Promise<McpServerDefinition>;
+    remove(input: { name: string }): Promise<void>;
+    setEnabled(input: {
+      name: string;
+      enabled: boolean;
+    }): Promise<McpServerDefinition>;
+    catalog(): Promise<McpCatalogEntry[]>;
+    pickImport(): Promise<McpImportPreview | null>;
+    previewImport(input: McpPreviewImportInput): Promise<McpImportPreview>;
+    installImport(input: McpInstallRequest): Promise<McpInstallResult>;
+    discardImport(input: { previewId: string }): Promise<void>;
+  };
+  /**
    * Agent skills on disk (SKILL.md files). A skill is installed once and
    * mirrored into every active provider skills dir; list merges those into
    * one row per skill (plus read-only rows from <project>/.claude/skills).
@@ -2356,6 +2624,13 @@ export interface CoderApi {
     sync(): Promise<{ copied: number; skills: string[] }>;
     /** CLI `/` extras: invocable skills and custom commands (#606). */
     commands(input?: { projectPath?: string }): Promise<CliSlashCommand[]>;
+    /** Main-owned curated catalog; `installed` requires a matching marker. */
+    catalog(): Promise<SkillCatalogEntry[]>;
+    /** Native Markdown/ZIP picker. Cancel returns null; no renderer path. */
+    pickImport(): Promise<SkillImportPreview | null>;
+    previewImport(input: SkillPreviewImportInput): Promise<SkillImportPreview>;
+    installImport(input: SkillInstallRequest): Promise<SkillInstallResult>;
+    discardImport(input: { previewId: string }): Promise<void>;
   };
   providers: {
     list(): Promise<ProviderInfo[]>;

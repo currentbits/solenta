@@ -36,6 +36,7 @@ const {
   getClaudeMcpArgs,
   getCodexMcpArgs,
   getCodexMcpEnv,
+  mergeGrokSpawnEnv,
   getMemoryStatus,
   looksGrokConfigCorrupt,
   grokConfigCorruptMessage,
@@ -3416,6 +3417,10 @@ function createRunner(opts) {
     // inherited env when this is set, and an empty replacement is not the same.
     const claudeOtel = otel.claudeEnv();
     const otelEnv = Object.keys(claudeOtel).length > 0 ? claudeOtel : undefined;
+    const grokMerged =
+      entryDef.id === "grok" ? mergeGrokSpawnEnv(otelEnv) : otelEnv;
+    const spawnEnv =
+      grokMerged && Object.keys(grokMerged).length > 0 ? grokMerged : undefined;
 
     // Reuse key: everything a spawn bakes into argv/env EXCEPT the session
     // id (--resume changes after turn one; the live process needs no resume).
@@ -3427,7 +3432,7 @@ function createRunner(opts) {
       permissionMode: thread.permissionMode || "default",
       reasoningEffort: thread.reasoningEffort || null,
       mcp: interactive ? getClaudeMcpArgs() : [],
-      otelEnv: otelEnv || null,
+      otelEnv: spawnEnv || null,
     });
 
     const prevSess = claudeSessions.get(threadId);
@@ -3459,7 +3464,7 @@ function createRunner(opts) {
           model: thread.model || null,
           interactive,
           keepAlive: true,
-          envExtra: otelEnv,
+          envExtra: spawnEnv,
           onEvent: (ev) => sess.dispatch.onEvent(ev),
           onExit: (info) => {
             // Process death always retires the session, whatever turn (if
@@ -3484,7 +3489,7 @@ function createRunner(opts) {
           sessionId: thread.sessionId || null,
           model: thread.model || null,
           interactive,
-          envExtra: otelEnv,
+          envExtra: spawnEnv,
           onEvent,
           onExit,
           onError,

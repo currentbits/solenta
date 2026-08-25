@@ -36,15 +36,23 @@ const {
 } = require("../memory-sup.js");
 
 let tmp;
+let prevMcpEnv;
 
 beforeEach(() => {
   tmp = fs.mkdtempSync(path.join(os.tmpdir(), "coder-skills-"));
+  prevMcpEnv = {
+    CODER_KIMI_MCP_PATH: process.env.CODER_KIMI_MCP_PATH,
+    CODER_GROK_MCP_DISABLE: process.env.CODER_GROK_MCP_DISABLE,
+  };
+  process.env.CODER_GROK_MCP_DISABLE = "1";
 });
 
 afterEach(() => {
   resetMemorySupForTests();
-  delete process.env.CODER_KIMI_MCP_PATH;
-  delete process.env.CODER_GROK_MCP_DISABLE;
+  for (const [k, v] of Object.entries(prevMcpEnv)) {
+    if (v === undefined) delete process.env[k];
+    else process.env[k] = v;
+  }
   fs.rmSync(tmp, { recursive: true, force: true });
 });
 
@@ -113,6 +121,35 @@ describe("parseSkillMarkdown", () => {
       name: null,
       description: "",
     });
+  });
+
+  it("reads folded YAML block descriptions used by Ponytail", () => {
+    const parsed = parseSkillMarkdown(
+      [
+        "---",
+        "name: ponytail",
+        "description: >",
+        "  Forces the laziest solution that actually works, simplest, shortest, most",
+        "  minimal.",
+        "argument-hint: \"[lite|full|ultra]\"",
+        "---",
+        "",
+        "# Body",
+        "",
+      ].join("\n"),
+    );
+    assert.equal(parsed.name, "ponytail");
+    assert.equal(
+      parsed.description,
+      "Forces the laziest solution that actually works, simplest, shortest, most minimal.",
+    );
+  });
+
+  it("reads literal YAML block descriptions", () => {
+    const parsed = parseSkillMarkdown(
+      "---\ndescription: |\n  Line one\n  Line two\n---\n",
+    );
+    assert.equal(parsed.description, "Line one\nLine two");
   });
 });
 
@@ -184,6 +221,7 @@ describe("listSkills", () => {
         installedIn: ["claude", "agents"],
         missingFrom: ["codex"],
         bytes: reviewBytes,
+        provenance: "added",
       },
       {
         name: "write-tests",
@@ -192,6 +230,7 @@ describe("listSkills", () => {
         installedIn: ["agents"],
         missingFrom: ["claude", "codex"],
         bytes: writeBytes,
+        provenance: "added",
       },
     ]);
     // Context cost is SKILL.md only, not sibling files under the skill dir.
@@ -223,11 +262,11 @@ describe("listSkills", () => {
     const list = listSkills(project, env);
     assert.equal(list.length, 3);
     assert.deepEqual(
-      list.map((s) => ({ name: s.name, source: s.source })),
+      list.map((s) => ({ name: s.name, source: s.source, provenance: s.provenance })),
       [
-        { name: "shared", source: "claude" },
-        { name: "local-only", source: "project" },
-        { name: "shared", source: "project" },
+        { name: "shared", source: "claude", provenance: "added" },
+        { name: "local-only", source: "project", provenance: "project" },
+        { name: "shared", source: "project", provenance: "project" },
       ],
     );
     const projectShared = list.find(
@@ -260,6 +299,7 @@ describe("listSkills", () => {
         installedIn: ["agents"],
         missingFrom: ["claude"],
         bytes: skillBytes(path.join(tmp, ".agents", "skills"), "one"),
+        provenance: "added",
       },
     ]);
   });
@@ -315,6 +355,7 @@ describe("addSkill / removeSkill", () => {
         installedIn: ["claude", "agents", "codex"],
         missingFrom: [],
         bytes: skillBytes(dirs.claude, "my-skill"),
+        provenance: "added",
       },
     ]);
   });
@@ -478,8 +519,21 @@ describe("mcpServers settings slice", () => {
       ],
     });
     assert.deepEqual(n.mcpServers, [
-      { name: "ok-one", url: "https://a.example.com/mcp", enabled: true, token: "t" },
-      { name: "off", url: "http://127.0.0.1:9000/mcp", enabled: true },
+      {
+        name: "ok-one",
+        transport: "http",
+        url: "https://a.example.com/mcp",
+        enabled: true,
+        token: "t",
+        headers: {},
+      },
+      {
+        name: "off",
+        transport: "http",
+        url: "http://127.0.0.1:9000/mcp",
+        enabled: true,
+        headers: {},
+      },
     ]);
   });
 
@@ -524,9 +578,13 @@ describe("mcpServers settings slice", () => {
 
     store.saveNow();
     const reloaded = new Store(path.join(tmp, "store.json"));
-    assert.deepEqual(reloaded.getSettings().mcpServers, [
-      { name: "team-tools", url: "https://tools.example.com/mcp", enabled: true },
-    ]);
+    assert.equal(reloaded.getSettings().mcpServers[0].name, "team-tools");
+    assert.equal(reloaded.getSettings().mcpServers[0].transport, "http");
+    assert.equal(
+      reloaded.getSettings().mcpServers[0].url,
+      "https://tools.example.com/mcp",
+    );
+    assert.equal(reloaded.getSettings().mcpServers[0].enabled, true);
 
     assert.throws(
       () =>

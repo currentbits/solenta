@@ -28,6 +28,12 @@ const {
   normalizeSetupCommand,
   normalizeQuickActions,
 } = require("./projectCommands.js");
+const {
+  normalizeMcpServers,
+  validateMcpServers,
+  mergeMcpSettingsPatch,
+  RESERVED_MCP_NAMES,
+} = require("./mcp.js");
 
 /** Builtin "Plan and Verify" workflow template (seeded on every store). */
 const STANDARD_TEMPLATE = {
@@ -87,12 +93,6 @@ const EMPTY = {
   },
 };
 
-/** User MCP server names: lowercase slug, same rule as skill names. */
-const MCP_SERVER_NAME_RE = /^[a-z0-9-]+$/;
-
-/** Built-in servers owned by the app; user entries may never use these. */
-const RESERVED_MCP_NAMES = new Set(["coder-memory", "coder-threads"]);
-
 /**
  * @param {unknown} u
  * @returns {boolean}
@@ -105,79 +105,6 @@ function isHttpUrl(u) {
   } catch {
     return false;
   }
-}
-
-/**
- * Lenient normalization for values read from disk: drops invalid entries,
- * coerces enabled (default true), dedupes by name. Never throws.
- * @param {unknown} raw
- * @returns {Array<{ name: string, url: string, token?: string, enabled: boolean }>}
- */
-function normalizeMcpServers(raw) {
-  if (!Array.isArray(raw)) return [];
-  /** @type {Array<{ name: string, url: string, token?: string, enabled: boolean }>} */
-  const out = [];
-  const seen = new Set();
-  for (const item of raw) {
-    if (!item || typeof item !== "object") continue;
-    const name =
-      typeof item.name === "string" ? item.name.trim() : "";
-    const url = typeof item.url === "string" ? item.url.trim() : "";
-    if (!MCP_SERVER_NAME_RE.test(name) || RESERVED_MCP_NAMES.has(name)) {
-      continue;
-    }
-    if (!isHttpUrl(url) || seen.has(name)) continue;
-    seen.add(name);
-    const entry = { name, url, enabled: item.enabled !== false };
-    if (typeof item.token === "string" && item.token) {
-      entry.token = item.token;
-    }
-    out.push(entry);
-  }
-  return out;
-}
-
-/**
- * Strict validation for settings:set patches: throws on the first problem so
- * the UI can show why a server list was refused.
- * @param {unknown} raw
- * @returns {Array<{ name: string, url: string, token?: string, enabled: boolean }>}
- */
-function validateMcpServers(raw) {
-  if (!Array.isArray(raw)) {
-    throw new Error("mcpServers must be an array");
-  }
-  const seen = new Set();
-  return raw.map((item) => {
-    const name =
-      item && typeof item.name === "string" ? item.name.trim() : "";
-    if (!MCP_SERVER_NAME_RE.test(name)) {
-      throw new Error(
-        `MCP server name must be lowercase letters, digits, dashes (got "${name}")`,
-      );
-    }
-    if (RESERVED_MCP_NAMES.has(name)) {
-      throw new Error(
-        `MCP server name "${name}" is reserved for a built-in server`,
-      );
-    }
-    if (seen.has(name)) {
-      throw new Error(`Duplicate MCP server name: ${name}`);
-    }
-    seen.add(name);
-    const url = item && typeof item.url === "string" ? item.url.trim() : "";
-    if (!isHttpUrl(url)) {
-      throw new Error(`MCP server URL must be http(s) (got "${url}")`);
-    }
-    const entry = { name, url, enabled: item.enabled !== false };
-    if (item.token !== undefined && item.token !== null) {
-      if (typeof item.token !== "string") {
-        throw new Error("MCP server token must be a string");
-      }
-      if (item.token) entry.token = item.token;
-    }
-    return entry;
-  });
 }
 
 /** ReasoningEffort in src/shared/ipc.ts. Keep in lockstep. */
@@ -1770,6 +1697,11 @@ class Store {
           p.spaceId.trim() !== "",
       );
     const useLazy = !!(split && split.raw);
+    // Reveal secret-bearing raw settings before canonical normalization so
+    // env-agreement and size caps run on plaintext. Non-deterministic
+    // safeStorage ciphertext would otherwise look like env conflicts, and
+    // sealed envelopes can exceed plaintext length caps.
+    const revealed = this._secrets.revealSettings(parsed.settings);
     const data = {
       projects: rawProjects.map(migrateProject),
       // #568: Spaces retired. Keep the key so old files still parse; never load rows.
@@ -1808,14 +1740,12 @@ class Store {
         !Array.isArray(parsed.tasksByCrew)
           ? parsed.tasksByCrew
           : {},
-      settings: normalizeSettings(parsed.settings),
+      settings: normalizeSettings(revealed.settings),
     };
     ensureWorkflowTemplates(data);
     this._scanMessageShards();
     this._adoptMessages(data, useLazy ? split : null);
     this._recoveredOnLoad = recoverInterruptedRuns(this, data) || hadSpaces;
-    const revealed = this._secrets.revealSettings(data.settings);
-    data.settings = revealed.settings;
     if (revealed.migrated > 0) {
       this._secretsMigrated = revealed.migrated;
       this._recoveredOnLoad = true;
@@ -2574,7 +2504,7 @@ class Store {
    * @param {Partial<{ dailyBudgetUsd: number | null, orchestrationBudgetUsd: number | null, autoSettleAfterDays: number | null, prDiffCapLines: number | null, mcpServers: Array<{ name: string, url: string, token?: string, enabled: boolean }>, defaultWorktree: boolean, defaultOrchestrate: boolean }>} patch
    * @returns {{ dailyBudgetUsd: number | null, orchestrationBudgetUsd: number | null, autoSettleAfterDays: number | null, prDiffCapLines: number | null, mcpServers: Array<{ name: string, url: string, token?: string, enabled: boolean }>, defaultWorktree: boolean, defaultOrchestrate: boolean }}
    */
-  setSettings(patch) {
+  setSettings(patch, opts = {}) {
     if (!patch || typeof patch !== "object") {
       return this.getSettings();
     }
@@ -2653,7 +2583,14 @@ class Store {
       this.data.settings.autoSettleOnMerge = v;
     }
     if (Object.prototype.hasOwnProperty.call(patch, "mcpServers")) {
-      this.data.settings.mcpServers = validateMcpServers(patch.mcpServers);
+      this.data.settings.mcpServers = validateMcpServers(
+        opts.replaceMcpServers
+          ? patch.mcpServers
+          : mergeMcpSettingsPatch(
+              this.data.settings.mcpServers,
+              patch.mcpServers,
+            ),
+      );
     }
     if (Object.prototype.hasOwnProperty.call(patch, "agentProfiles")) {
       this.data.settings.agentProfiles = validateAgentProfiles(

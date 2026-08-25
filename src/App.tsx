@@ -258,10 +258,24 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     lintAgentConfig,
     previewAgentConfig,
     writeAgentConfig,
+    listMcpServers,
+    saveMcpServer,
+    removeMcpServer,
+    setMcpEnabled,
+    listMcpCatalog,
+    pickMcpImport,
+    previewMcpImport,
+    installMcpImport,
+    discardMcpImport,
     listSkills,
     addSkill,
     removeSkill,
     syncSkills,
+    listSkillCatalog,
+    pickSkillImport,
+    previewSkillImport,
+    installSkillImport,
+    discardSkillImport,
     listCliCommands,
     searchThreads,
     peekThread,
@@ -1471,10 +1485,24 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         writeAgentConfig={writeAgentConfig}
         settings={settings}
         saveSettings={saveSettings}
+        listMcpServers={listMcpServers}
+        saveMcpServer={saveMcpServer}
+        removeMcpServer={removeMcpServer}
+        setMcpEnabled={setMcpEnabled}
+        listMcpCatalog={listMcpCatalog}
+        pickMcpImport={pickMcpImport}
+        previewMcpImport={previewMcpImport}
+        installMcpImport={installMcpImport}
+        discardMcpImport={discardMcpImport}
         listSkills={listSkills}
         addSkill={addSkill}
         removeSkill={removeSkill}
         syncSkills={syncSkills}
+        listSkillCatalog={listSkillCatalog}
+        pickSkillImport={pickSkillImport}
+        previewSkillImport={previewSkillImport}
+        installSkillImport={installSkillImport}
+        discardSkillImport={discardSkillImport}
         activeView={view}
         onOpenPrs={openPrs}
         onOpenAutomations={openAutomations}

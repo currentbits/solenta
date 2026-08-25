@@ -38,6 +38,27 @@ function fakeSafeStorage() {
   };
 }
 
+/** Mimics OS safeStorage: same plaintext seals to distinct nonce ciphertext. */
+function nonceSafeStorage() {
+  return {
+    isEncryptionAvailable: () => true,
+    encryptString(plain) {
+      const nonce = crypto.randomBytes(16).toString("hex");
+      return Buffer.from(`ENC(${nonce}:${plain})`, "utf8");
+    },
+    decryptString(buf) {
+      const s = Buffer.from(buf).toString("utf8");
+      if (!s.startsWith("ENC(") || !s.endsWith(")")) {
+        throw new Error("bad cipher");
+      }
+      const inner = s.slice(4, -1);
+      const sep = inner.indexOf(":");
+      if (sep < 0) throw new Error("bad cipher");
+      return inner.slice(sep + 1);
+    },
+  };
+}
+
 describe("createSecrets", () => {
   it("round-trips a string through the enc:v1 envelope", () => {
     const s = createSecrets({ safeStorage: fakeSafeStorage() });
@@ -151,6 +172,53 @@ describe("createSecrets", () => {
     const revealed = s.revealSettings(sealed);
     assert.equal(revealed.settings.linearApiKey, "lin_api_secret");
   });
+
+  it("seals and reveals MCP remote token, header values, and stdio env", () => {
+    const s = createSecrets({ safeStorage: fakeSafeStorage() });
+    const settings = {
+      mcpServers: [
+        {
+          name: "team-tools",
+          transport: "http",
+          url: "https://tools.example.com/mcp",
+          enabled: true,
+          token: "mcp-token-unique",
+          headers: {
+            Authorization: "Bearer header-secret-unique",
+            "X-Api-Key": "header-key-unique",
+          },
+        },
+        {
+          name: "local-tools",
+          transport: "stdio",
+          command: "/usr/bin/mcp-server",
+          args: ["--stdio"],
+          enabled: true,
+          trusted: true,
+          env: { GITHUB_TOKEN: "ghp-env-secret-unique" },
+        },
+      ],
+    };
+    const sealed = s.concealSettings(settings);
+    assert.notEqual(sealed, settings);
+    assert.ok(s.isSealed(sealed.mcpServers[0].token));
+    assert.ok(s.isSealed(sealed.mcpServers[0].headers.Authorization));
+    assert.ok(s.isSealed(sealed.mcpServers[0].headers["X-Api-Key"]));
+    assert.ok(s.isSealed(sealed.mcpServers[1].env.GITHUB_TOKEN));
+    assert.ok(!JSON.stringify(sealed).includes("mcp-token-unique"));
+    assert.ok(!JSON.stringify(sealed).includes("header-secret-unique"));
+    assert.ok(!JSON.stringify(sealed).includes("ghp-env-secret-unique"));
+    const revealed = s.revealSettings(sealed);
+    assert.equal(revealed.settings.mcpServers[0].token, "mcp-token-unique");
+    assert.equal(
+      revealed.settings.mcpServers[0].headers.Authorization,
+      "Bearer header-secret-unique",
+    );
+    assert.equal(
+      revealed.settings.mcpServers[1].env.GITHUB_TOKEN,
+      "ghp-env-secret-unique",
+    );
+  });
 });
 
 describe("Store conceals secrets on disk", () => {
@@ -233,6 +301,46 @@ describe("Store conceals secrets on disk", () => {
     const parsed = JSON.parse(disk);
     assert.ok(parsed.settings.mcpServers[0].token.startsWith(PREFIX));
     assert.ok(parsed.settings.otel.headers.Authorization.startsWith(PREFIX));
+  });
+
+  it("writes MCP header and stdio env values encrypted, keeps memory plaintext", () => {
+    const store = new Store(filePath, { secrets });
+    store.setSettings({
+      mcpServers: [
+        {
+          name: "team-tools",
+          transport: "http",
+          url: "https://tools.example.com/mcp",
+          enabled: true,
+          token: "plain-token-headers-unique",
+          headers: { Authorization: "Bearer hdr-secret-unique" },
+        },
+        {
+          name: "local-tools",
+          transport: "stdio",
+          command: "/usr/bin/mcp-server",
+          args: ["--stdio"],
+          enabled: true,
+          trusted: true,
+          env: { API_KEY: "stdio-env-secret-unique" },
+        },
+      ],
+    });
+    store.saveNow();
+
+    const mem = store.getSettings().mcpServers;
+    assert.equal(mem[0].token, "plain-token-headers-unique");
+    assert.equal(mem[0].headers.Authorization, "Bearer hdr-secret-unique");
+    assert.equal(mem[1].env.API_KEY, "stdio-env-secret-unique");
+
+    const disk = fs.readFileSync(filePath, "utf8");
+    assert.ok(!disk.includes("plain-token-headers-unique"));
+    assert.ok(!disk.includes("hdr-secret-unique"));
+    assert.ok(!disk.includes("stdio-env-secret-unique"));
+    const parsed = JSON.parse(disk);
+    assert.ok(parsed.settings.mcpServers[0].token.startsWith(PREFIX));
+    assert.ok(parsed.settings.mcpServers[0].headers.Authorization.startsWith(PREFIX));
+    assert.ok(parsed.settings.mcpServers[1].env.API_KEY.startsWith(PREFIX));
   });
 
   it("writes the webhook URL encrypted (Slack/Discord tokens live in the path)", () => {
@@ -377,6 +485,147 @@ describe("Store conceals secrets on disk", () => {
     assert.equal(servers.find((s) => s.name === "ok").token, "good-token");
     assert.equal(servers.find((s) => s.name === "bad").token, undefined);
   });
+
+  it("drops corrupt sealed HTTP header and stdio env values rather than ciphertext", () => {
+    const goodHeader = secrets.seal("good-header");
+    const goodEnv = secrets.seal("good-env");
+    fs.writeFileSync(
+      filePath,
+      JSON.stringify({
+        projects: [],
+        threads: [],
+        settings: {
+          mcpServers: [
+            {
+              name: "http-one",
+              transport: "http",
+              url: "https://ok.example.com/mcp",
+              enabled: true,
+              headers: {
+                Authorization: goodHeader,
+                Broken: `${PREFIX}not-valid-cipher`,
+              },
+            },
+            {
+              name: "stdio-one",
+              transport: "stdio",
+              command: "/usr/bin/mcp-server",
+              args: [],
+              enabled: true,
+              trusted: true,
+              env: {
+                GOOD: goodEnv,
+                BAD: `${PREFIX}not-valid-cipher`,
+              },
+            },
+          ],
+        },
+      }),
+      "utf8",
+    );
+    const store = new Store(filePath, { secrets });
+    const servers = store.getSettings().mcpServers;
+    const http = servers.find((s) => s.name === "http-one");
+    const stdio = servers.find((s) => s.name === "stdio-one");
+    assert.equal(http.headers.Authorization, "good-header");
+    assert.equal(http.headers.Broken, undefined);
+    assert.ok(!JSON.stringify(http.headers).includes(PREFIX));
+    assert.equal(stdio.env.GOOD, "good-env");
+    assert.equal(stdio.env.BAD, undefined);
+    assert.ok(!JSON.stringify(stdio.env).includes(PREFIX));
+  });
+
+  it("reloads agreeing stdio env values when ciphertext is non-deterministic", () => {
+    const nonceSecrets = createSecrets({
+      safeStorage: nonceSafeStorage(),
+      inElectron: true,
+      log: (m) => logs.push(String(m)),
+    });
+    const first = nonceSecrets.seal("same-plaintext-env");
+    const second = nonceSecrets.seal("same-plaintext-env");
+    assert.notEqual(
+      first,
+      second,
+      "nonce safeStorage must emit distinct ciphertext for equal plaintext",
+    );
+
+    const store = new Store(filePath, { secrets: nonceSecrets });
+    store.setSettings({
+      mcpServers: [
+        {
+          name: "one",
+          transport: "stdio",
+          command: "/usr/bin/one",
+          args: [],
+          enabled: true,
+          trusted: true,
+          env: { SHARED: "same-plaintext-env" },
+        },
+        {
+          name: "two",
+          transport: "stdio",
+          command: "/usr/bin/two",
+          args: [],
+          enabled: true,
+          trusted: true,
+          env: { SHARED: "same-plaintext-env" },
+        },
+      ],
+    });
+    store.saveNow();
+
+    const disk = JSON.parse(fs.readFileSync(filePath, "utf8"));
+    assert.notEqual(
+      disk.settings.mcpServers[0].env.SHARED,
+      disk.settings.mcpServers[1].env.SHARED,
+      "disk must hold distinct sealed envelopes for the same plaintext",
+    );
+
+    const reloaded = new Store(filePath, { secrets: nonceSecrets });
+    const servers = reloaded.getSettings().mcpServers;
+    assert.deepEqual(
+      servers.map((s) => s.name).sort(),
+      ["one", "two"],
+    );
+    assert.equal(servers.find((s) => s.name === "one").env.SHARED, "same-plaintext-env");
+    assert.equal(servers.find((s) => s.name === "two").env.SHARED, "same-plaintext-env");
+  });
+
+  it("reloads a near-limit env value whose sealed form exceeds the plaintext cap", () => {
+    const nonceSecrets = createSecrets({
+      safeStorage: nonceSafeStorage(),
+      inElectron: true,
+      log: (m) => logs.push(String(m)),
+    });
+    const nearLimit = "N".repeat(32 * 1024);
+    assert.ok(
+      nonceSecrets.seal(nearLimit).length > nearLimit.length,
+      "ciphertext must expand past the plaintext cap",
+    );
+
+    const store = new Store(filePath, { secrets: nonceSecrets });
+    store.setSettings({
+      mcpServers: [
+        {
+          name: "wide",
+          transport: "stdio",
+          command: "/usr/bin/wide",
+          args: [],
+          enabled: true,
+          trusted: true,
+          env: { BIG: nearLimit },
+        },
+      ],
+    });
+    store.saveNow();
+
+    const disk = JSON.parse(fs.readFileSync(filePath, "utf8"));
+    assert.ok(disk.settings.mcpServers[0].env.BIG.startsWith(PREFIX));
+    assert.ok(disk.settings.mcpServers[0].env.BIG.length > 32 * 1024);
+
+    const reloaded = new Store(filePath, { secrets: nonceSecrets });
+    assert.equal(reloaded.getSettings().mcpServers[0].env.BIG, nearLimit);
+  });
 });
 
 describe("credential injection audit (#543 / #262 companion)", () => {
@@ -387,6 +636,10 @@ describe("credential injection audit (#543 / #262 companion)", () => {
   it("records mcp-inject when a token is written into the CLI MCP config", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "coder-secrets-mcp-"));
     const name = `audit-${crypto.randomBytes(6).toString("hex")}`;
+    const prevDisable = process.env.CODER_GROK_MCP_DISABLE;
+    const prevKimi = process.env.CODER_KIMI_MCP_PATH;
+    process.env.CODER_GROK_MCP_DISABLE = "1";
+    process.env.CODER_KIMI_MCP_PATH = path.join(tmp, "kimi-mcp.json");
     try {
       const before = getDefaultSecrets().getAuditEvents().length;
       registerMcpServer({
@@ -409,6 +662,10 @@ describe("credential injection audit (#543 / #262 companion)", () => {
         "Bearer super-secret-token-xyz",
       );
     } finally {
+      if (prevDisable === undefined) delete process.env.CODER_GROK_MCP_DISABLE;
+      else process.env.CODER_GROK_MCP_DISABLE = prevDisable;
+      if (prevKimi === undefined) delete process.env.CODER_KIMI_MCP_PATH;
+      else process.env.CODER_KIMI_MCP_PATH = prevKimi;
       fs.rmSync(tmp, { recursive: true, force: true });
     }
   });

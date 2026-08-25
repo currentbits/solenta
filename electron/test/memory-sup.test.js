@@ -987,15 +987,19 @@ process.exit(0);
       assert.deepEqual(argv.slice(mcpIdx), [
         "mcp",
         "add",
+        "--transport",
+        "http",
         "coder-memory",
         `http://127.0.0.1:${port}/mcp`,
-        "-t",
-        "http",
-        "-H",
-        `Authorization: Bearer ${token}`,
-        "-s",
+        "--header",
+        "Authorization: Bearer ${CODER_MCP_TOKEN_CODER_MEMORY}",
+        "--scope",
         "user",
       ]);
+      assert.ok(
+        !JSON.stringify(argv).includes(token),
+        "Grok argv must not include the bearer token",
+      );
     } finally {
       sup.stop();
       await new Promise((r) => server.close(r));
@@ -1072,7 +1076,9 @@ process.exit(0);
       const mcpIdx = argv.indexOf("mcp");
       assert.ok(mcpIdx >= 0);
       assert.equal(argv[mcpIdx + 1], "add");
-      assert.equal(argv[mcpIdx + 2], "coder-memory");
+      assert.equal(argv[mcpIdx + 2], "--transport");
+      assert.equal(argv[mcpIdx + 3], "http");
+      assert.equal(argv[mcpIdx + 4], "coder-memory");
     } finally {
       sup.stop();
       await new Promise((r) => server.close(r));
@@ -1109,7 +1115,10 @@ process.exit(0);
       assertSerialGrokMcp(logFile, 2);
       const names = grokMcpLog(logFile)
         .filter((e) => e.ev === "start")
-        .map((e) => e.args[2])
+        .map((e) => {
+          const t = e.args.indexOf("--transport");
+          return t >= 0 ? e.args[t + 2] : e.args[2];
+        })
         .sort();
       assert.deepEqual(names, ["coder-memory", "coder-threads"]);
     } finally {
@@ -1302,7 +1311,7 @@ process.exit(0);
     );
   });
 
-  it("unregister runs `grok mcp remove <name> -s user`", async () => {
+  it("unregister runs `grok mcp remove <name> --scope user`", async () => {
     const env = installFakeGrok();
     registerMcpServer({
       name: "coder-threads",
@@ -1327,7 +1336,7 @@ process.exit(0);
       "mcp",
       "remove",
       "coder-threads",
-      "-s",
+      "--scope",
       "user",
     ]);
   });

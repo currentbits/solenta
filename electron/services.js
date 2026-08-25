@@ -4060,8 +4060,8 @@ function getSettings(store) {
  * @param {Partial<{ dailyBudgetUsd: number | null, orchestrationBudgetUsd: number | null, autoSettleAfterDays: number | null }>} patch
  * @returns {{ dailyBudgetUsd: number | null, orchestrationBudgetUsd: number | null, autoSettleAfterDays: number | null }}
  */
-function setSettings(store, patch) {
-  const next = store.setSettings(patch || {});
+function setSettings(store, patch, opts) {
+  const next = store.setSettings(patch || {}, opts);
   store.save();
   return next;
 }

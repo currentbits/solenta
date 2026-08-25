@@ -12,6 +12,7 @@ const path = require("node:path");
 const os = require("node:os");
 
 const SKILL_NAME_RE = /^[a-z0-9-]+$/;
+const SKILL_MARKER_NAME = ".solenta-skill.json";
 
 /** @typedef {"claude" | "agents" | "codex" | "grok" | "opencode" | "kimi" | "cursor"} SkillTarget */
 
@@ -104,6 +105,77 @@ function activeSkillTargets(env = process.env) {
  * @param {unknown} content
  * @returns {{ name: string | null, description: string }}
  */
+function parseFrontmatterFields(block) {
+  /** @type {string | null} */
+  let name = null;
+  let description = "";
+  const lines = String(block).split(/\r?\n/);
+  for (let i = 0; i < lines.length; i += 1) {
+    const kv = lines[i].match(/^([A-Za-z_-]+):\s*(.*)$/);
+    if (!kv) continue;
+    const key = kv[1].toLowerCase();
+    const rest = kv[2];
+    const blockMark = rest.match(/^([>|])[+-]?\s*$/);
+    let value;
+    if (blockMark) {
+      /** @type {string[]} */
+      const collected = [];
+      i += 1;
+      while (i < lines.length) {
+        const next = lines[i];
+        if (next === "" || /^[ \t]/.test(next)) {
+          collected.push(next);
+          i += 1;
+          continue;
+        }
+        break;
+      }
+      i -= 1;
+      value = decodeYamlBlock(collected, blockMark[1] === "|");
+    } else {
+      value = rest.trim().replace(/^["']|["']$/g, "");
+    }
+    if (key === "name" && name == null) name = value || null;
+    if (key === "description" && !description) description = value;
+  }
+  return { name, description };
+}
+
+function decodeYamlBlock(lines, literal) {
+  if (!lines.length) return "";
+  let indent = 0;
+  for (const line of lines) {
+    if (!line.trim()) continue;
+    const pad = line.match(/^[ \t]*/);
+    indent = pad ? pad[0].length : 0;
+    break;
+  }
+  const stripped = lines.map((line) => {
+    if (!line) return "";
+    const pad = line.match(/^[ \t]*/);
+    const n = pad ? Math.min(indent, pad[0].length) : 0;
+    return line.slice(n);
+  });
+  while (stripped.length && stripped[stripped.length - 1] === "") stripped.pop();
+  if (literal) return stripped.join("\n");
+  /** @type {string[]} */
+  const paras = [];
+  /** @type {string[]} */
+  let cur = [];
+  for (const line of stripped) {
+    if (line === "") {
+      if (cur.length) {
+        paras.push(cur.join(" "));
+        cur = [];
+      }
+    } else {
+      cur.push(line.replace(/[ \t]+$/, ""));
+    }
+  }
+  if (cur.length) paras.push(cur.join(" "));
+  return paras.join("\n\n");
+}
+
 function parseSkillMarkdown(content) {
   const text = String(content == null ? "" : content);
   /** @type {string | null} */
@@ -112,15 +184,7 @@ function parseSkillMarkdown(content) {
 
   const fm = text.match(/^---\r?\n([\s\S]*?)\r?\n---/);
   if (fm) {
-    for (const line of fm[1].split(/\r?\n/)) {
-      const kv = line.match(/^([A-Za-z_-]+):\s*(.*)$/);
-      if (!kv) continue;
-      const key = kv[1].toLowerCase();
-      const value = kv[2].trim().replace(/^["']|["']$/g, "");
-      if (key === "name" && name == null) name = value || null;
-      if (key === "description" && !description) description = value;
-    }
-    return { name, description };
+    return parseFrontmatterFields(fm[1]);
   }
 
   for (const line of text.split(/\r?\n/)) {
@@ -181,12 +245,84 @@ function scanSkillDir(baseDir) {
 }
 
 /**
+ * Marker from a user skill dir. Only the install id is used; provenance
+ * comes from the app-owned registry.
+ * @param {string} skillDir
+ * @returns {{ installId: string } | null}
+ */
+function readMarkerInstallId(skillDir) {
+  let raw;
+  try {
+    raw = JSON.parse(
+      fs.readFileSync(path.join(skillDir, SKILL_MARKER_NAME), "utf8"),
+    );
+  } catch {
+    return null;
+  }
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const installId = typeof raw.installId === "string" ? raw.installId.trim() : "";
+  if (!/^[a-f0-9]{32}$/.test(installId)) return null;
+  return { installId };
+}
+
+function catalogHas(id) {
+  const { getCatalogEntry } = require("./skillCatalog.js");
+  return Boolean(getCatalogEntry(id));
+}
+
+/**
+ * @param {string} skillDir
+ * @param {string | undefined} userDataPath
+ * @returns {{
+ *   provenance: "curated" | "added",
+ *   origin?: {
+ *     catalogId?: string,
+ *     sourceLabel?: string,
+ *     sourceUrl?: string,
+ *     packageId?: string,
+ *     importedAt?: string,
+ *   },
+ * } | null}
+ */
+function resolveManagedProvenance(skillDir, userDataPath) {
+  const marker = readMarkerInstallId(skillDir);
+  if (!marker || !userDataPath) return null;
+  const { lookupInstall } = require("./skillRegistry.js");
+  const rec = lookupInstall(userDataPath, marker.installId);
+  if (!rec) return null;
+  if (rec.name !== path.basename(skillDir)) return null;
+  if (rec.provenance === "curated") {
+    if (!rec.catalogId || !catalogHas(rec.catalogId)) return null;
+  } else if (rec.provenance !== "added") {
+    return null;
+  }
+  /** @type {{
+   *   catalogId?: string,
+   *   sourceLabel?: string,
+   *   sourceUrl?: string,
+   *   packageId?: string,
+   *   importedAt?: string,
+   * }} */
+  const origin = {};
+  if (rec.catalogId) origin.catalogId = rec.catalogId;
+  if (rec.sourceLabel) origin.sourceLabel = rec.sourceLabel;
+  if (rec.sourceUrl) origin.sourceUrl = rec.sourceUrl;
+  if (rec.packageId) origin.packageId = rec.packageId;
+  if (rec.importedAt) origin.importedAt = rec.importedAt;
+  return {
+    provenance: rec.provenance,
+    origin: Object.keys(origin).length ? origin : undefined,
+  };
+}
+
+/**
  * List skills as one row per user-skill name (merged across targets) plus
  * separate read-only rows from <project>/.claude/skills. Never throws on
  * unreadable dirs. User rows first (by name), then project rows (by name).
  *
  * @param {string | null | undefined} projectPath
  * @param {NodeJS.ProcessEnv} [env]
+ * @param {string} [userDataPath]
  * @returns {Array<{
  *   name: string,
  *   description: string,
@@ -194,9 +330,17 @@ function scanSkillDir(baseDir) {
  *   installedIn: SkillTarget[],
  *   missingFrom: SkillTarget[],
  *   bytes: number,
+ *   provenance: "curated" | "added" | "project",
+ *   origin?: {
+ *     catalogId?: string,
+ *     sourceLabel?: string,
+ *     sourceUrl?: string,
+ *     packageId?: string,
+ *     importedAt?: string,
+ *   },
  * }>}
  */
-function listSkills(projectPath, env = process.env) {
+function listSkills(projectPath, env = process.env, userDataPath) {
   const dirs = SKILL_DIRS(env);
   const active = new Set(activeSkillTargets(env));
 
@@ -208,23 +352,63 @@ function listSkills(projectPath, env = process.env) {
    *   installedIn: SkillTarget[],
    *   missingFrom: SkillTarget[],
    *   bytes: number,
+   *   provenance: "curated" | "added",
+   *   origin?: {
+   *     catalogId?: string,
+   *     sourceLabel?: string,
+   *     sourceUrl?: string,
+   *     packageId?: string,
+   *     importedAt?: string,
+   *   },
    * }>}
    */
   const byName = new Map();
   for (const target of SKILL_TARGETS) {
     for (const skill of scanSkillDir(dirs[target])) {
       const existing = byName.get(skill.name);
+      const managed = resolveManagedProvenance(
+        path.join(dirs[target], skill.name),
+        userDataPath,
+      );
       if (!existing) {
-        byName.set(skill.name, {
+        /** @type {{
+         *   name: string,
+         *   description: string,
+         *   source: SkillTarget,
+         *   installedIn: SkillTarget[],
+         *   missingFrom: SkillTarget[],
+         *   bytes: number,
+         *   provenance: "curated" | "added",
+         *   origin?: {
+         *     catalogId?: string,
+         *     sourceLabel?: string,
+         *     sourceUrl?: string,
+         *     packageId?: string,
+         *     importedAt?: string,
+         *   },
+         * }} */
+        const row = {
           name: skill.name,
           description: skill.description,
           source: target,
           installedIn: [target],
           missingFrom: [],
           bytes: skill.bytes,
-        });
+          provenance: managed ? managed.provenance : "added",
+        };
+        if (managed && managed.origin) row.origin = managed.origin;
+        byName.set(skill.name, row);
       } else {
         existing.installedIn.push(target);
+        if (
+          managed &&
+          managed.provenance === "curated" &&
+          existing.provenance !== "curated"
+        ) {
+          existing.provenance = "curated";
+          if (managed.origin) existing.origin = managed.origin;
+          else delete existing.origin;
+        }
       }
     }
   }
@@ -256,6 +440,7 @@ function listSkills(projectPath, env = process.env) {
         installedIn: [],
         missingFrom: [],
         bytes: skill.bytes,
+        provenance: "project",
       });
     }
     projectRows.sort((a, b) => a.name.localeCompare(b.name));
@@ -328,7 +513,7 @@ function addSkill(input, env = process.env) {
  * @param {NodeJS.ProcessEnv} [env]
  * @returns {{ name: string }}
  */
-function removeSkill(input, env = process.env) {
+function removeSkill(input, env = process.env, userDataPath) {
   const name = path.basename(
     resolveSkillDir("claude", input && input.name, env),
   );
@@ -341,6 +526,10 @@ function removeSkill(input, env = process.env) {
   }
   if (!found) {
     throw new Error(`Unknown skill: ${name}`);
+  }
+  if (userDataPath) {
+    const { removeInstallsByName } = require("./skillRegistry.js");
+    removeInstallsByName(userDataPath, name);
   }
   return { name };
 }

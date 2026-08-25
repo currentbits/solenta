@@ -43,7 +43,19 @@ const {
 const attachments = require("./attachments.js");
 const mediaProtocol = require("./media-protocol.js");
 const { syncUserMcpServers } = require("./memory-sup.js");
+const {
+  redactMcpServer,
+  redactMcpServers,
+  redactSettings,
+  upsertMcpServer,
+  sanitizeMcpInput,
+} = require("./mcp.js");
+const mcpCatalog = require("./mcpCatalog.js");
+const mcpImports = require("./mcpImports.js");
 const skills = require("./skills.js");
+const skillCatalog = require("./skillCatalog.js");
+const skillImports = require("./skillImports.js");
+const { createSafeCommandRunner } = require("./skillPluginAdapters.js");
 const cliCommands = require("./cliCommands.js");
 const { fetchIssue, listIssues, setPlanStatus, createIssue } = require("./issues.js");
 const automations = require("./automations.js");
@@ -777,7 +789,7 @@ const IPC_HANDLERS = {
     return ctx.memory.remove(input);
   },
   "settings:get": async (ctx) => {
-    return services.getSettings(ctx.store);
+    return redactSettings(services.getSettings(ctx.store));
   },
   "settings:set": async (ctx, patch) => {
     const next = services.setSettings(ctx.store, patch);
@@ -810,7 +822,125 @@ const IPC_HANDLERS = {
     if (patch && Object.prototype.hasOwnProperty.call(patch, "uiScale")) {
       applyZoom(null, next.uiScale, ctx.store);
     }
-    return next;
+    return redactSettings(next);
+  },
+  "mcp:list": async (ctx) => {
+    const settings = services.getSettings(ctx.store);
+    return redactMcpServers(settings.mcpServers);
+  },
+  // No await/yield between get/upsert/set: this async handler runs
+  // synchronously until return, so concurrent IPC cannot interleave the
+  // in-memory store write. store.save() only debounces disk I/O.
+  "mcp:save": async (ctx, input) => {
+    const clean = sanitizeMcpInput(input);
+    const current = services.getSettings(ctx.store).mcpServers;
+    const nextList = upsertMcpServer(current, clean);
+    const next = services.setSettings(
+      ctx.store,
+      { mcpServers: nextList },
+      { replaceMcpServers: true },
+    );
+    try {
+      syncUserMcpServers(next.mcpServers, { userDataPath: ctx.userDataPath });
+    } catch {
+      // ignore
+    }
+    const saved = next.mcpServers.find((s) => s.name === clean.name);
+    return redactMcpServer(saved);
+  },
+  "mcp:remove": async (ctx, input) => {
+    const name =
+      input && typeof input.name === "string" ? input.name.trim() : "";
+    const current = services.getSettings(ctx.store).mcpServers;
+    const nextList = current.filter((s) => s.name !== name);
+    const next = services.setSettings(ctx.store, { mcpServers: nextList });
+    try {
+      syncUserMcpServers(next.mcpServers, { userDataPath: ctx.userDataPath });
+    } catch {
+      // ignore
+    }
+  },
+  "mcp:setEnabled": async (ctx, input) => {
+    const name =
+      input && typeof input.name === "string" ? input.name.trim() : "";
+    const enabled = Boolean(input && input.enabled);
+    const current = services.getSettings(ctx.store).mcpServers;
+    const existing = current.find((s) => s.name === name);
+    if (!existing) throw new Error(`Unknown MCP server: ${name}`);
+    if (
+      existing.transport === "stdio" &&
+      enabled &&
+      existing.trusted !== true
+    ) {
+      throw new Error("Local MCP server must be trusted to enable");
+    }
+    const nextList = current.map((s) =>
+      s.name === name ? { ...s, enabled } : s,
+    );
+    const next = services.setSettings(ctx.store, { mcpServers: nextList });
+    try {
+      syncUserMcpServers(next.mcpServers, { userDataPath: ctx.userDataPath });
+    } catch {
+      // ignore
+    }
+    const saved = next.mcpServers.find((s) => s.name === name);
+    return redactMcpServer(saved);
+  },
+  "mcp:catalog": async (ctx) => {
+    const settings = services.getSettings(ctx.store);
+    return mcpCatalog.listCatalog({ servers: settings.mcpServers });
+  },
+  "mcp:pickImport": async (ctx) => {
+    const current = services.getSettings(ctx.store).mcpServers;
+    return mcpImports.pickImport({
+      userDataPath: ctx.userDataPath,
+      dialog: ctx.dialog,
+      current,
+    });
+  },
+  "mcp:previewImport": async (ctx, input) => {
+    const current = services.getSettings(ctx.store).mcpServers;
+    return mcpImports.previewImport({
+      userDataPath: ctx.userDataPath,
+      input,
+      current,
+    });
+  },
+  "mcp:installImport": async (ctx, input) => {
+    const request = input && typeof input === "object" ? input : {};
+    const current = services.getSettings(ctx.store).mcpServers;
+    const result = await mcpImports.installImport({
+      userDataPath: ctx.userDataPath,
+      current,
+      request: {
+        previewId: request.previewId,
+        selected: request.selected,
+        replace: request.replace,
+        trustLocal: request.trustLocal === true,
+        trustLocalCommands: request.trustLocalCommands === true,
+        secrets: request.secrets,
+      },
+      save: (nextList) => {
+        const next = services.setSettings(
+          ctx.store,
+          { mcpServers: nextList },
+          { replaceMcpServers: true },
+        );
+        try {
+          syncUserMcpServers(next.mcpServers, { userDataPath: ctx.userDataPath });
+        } catch {
+          // ignore
+        }
+        return next.mcpServers;
+      },
+    });
+    return { installed: result.installed };
+  },
+  "mcp:discardImport": async (ctx, input) => {
+    return mcpImports.discardImport({
+      userDataPath: ctx.userDataPath,
+      previewId: input && input.previewId,
+    });
   },
   // "Send test" in Settings (issue #167). The renderer cannot POST these
   // itself — Slack/Discord/ntfy answer no CORS preflight — and a typo'd or
@@ -828,13 +958,13 @@ const IPC_HANDLERS = {
       input && typeof input.projectPath === "string"
         ? input.projectPath
         : null;
-    return skills.listSkills(projectPath);
+    return skills.listSkills(projectPath, process.env, ctx.userDataPath);
   },
   "skills:add": async (ctx, input) => {
     return skills.addSkill(input || {});
   },
   "skills:remove": async (ctx, input) => {
-    return skills.removeSkill(input || {});
+    return skills.removeSkill(input || {}, process.env, ctx.userDataPath);
   },
   "skills:sync": async (ctx) => {
     return skills.syncSkills();
@@ -845,6 +975,40 @@ const IPC_HANDLERS = {
         ? input.projectPath
         : null;
     return cliCommands.listPaletteCommands({ projectPath });
+  },
+  "skills:catalog": async (ctx) => {
+    return skillCatalog.listCatalog({ userDataPath: ctx.userDataPath });
+  },
+  "skills:pickImport": async (ctx) => {
+    return skillImports.pickImport({
+      userDataPath: ctx.userDataPath,
+      dialog: ctx.dialog,
+    });
+  },
+  "skills:previewImport": async (ctx, input) => {
+    return skillImports.previewImport({
+      userDataPath: ctx.userDataPath,
+      input,
+    });
+  },
+  "skills:installImport": async (ctx, input) => {
+    const request = input && typeof input === "object" ? input : {};
+    return skillImports.installImport({
+      userDataPath: ctx.userDataPath,
+      request: {
+        previewId: request.previewId,
+        selected: request.selected,
+        replace: request.replace,
+        trustPluginCode: request.trustPluginCode === true,
+      },
+      runFile: createSafeCommandRunner(),
+    });
+  },
+  "skills:discardImport": async (ctx, input) => {
+    return skillImports.discardImport({
+      userDataPath: ctx.userDataPath,
+      previewId: input && input.previewId,
+    });
   },
   "providers:list": async (ctx) => {
     return services.listProvidersForApi(ctx.store);
