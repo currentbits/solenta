@@ -196,6 +196,8 @@ describe("vibeKanban helpers", () => {
   it("maps executors onto Solenta providers", () => {
     assert.equal(vibe.providerFromExecutor("CLAUDE_CODE"), "claude");
     assert.equal(vibe.providerFromExecutor("codex"), "codex");
+    assert.equal(vibe.providerFromExecutor("CURSOR"), "cursor");
+    assert.equal(vibe.providerFromExecutor("cursor"), "cursor");
     assert.equal(vibe.providerFromExecutor("unknown"), null);
   });
 });

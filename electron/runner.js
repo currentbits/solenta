@@ -722,6 +722,39 @@ function createRunner(opts) {
   }
 
   /**
+   * Scan a stream-json user event for <task-notification> blocks and settle
+   * matching running subagent rows. Claude keeps the CLI alive so these can
+   * land between turns (guard() is null then). Cursor Task rows otherwise
+   * stay running until tool_call/completed or run exit (#708).
+   */
+  function ingestTaskNotifications(threadId, ev, workflow) {
+    if (!ev || ev.type !== "user" || !ev.message) return false;
+    const c = ev.message.content;
+    const texts =
+      typeof c === "string"
+        ? [c]
+        : Array.isArray(c)
+          ? c
+              .filter(
+                (b) =>
+                  b && b.type === "text" && typeof b.text === "string",
+              )
+              .map((b) => b.text)
+          : [];
+    let changed = false;
+    for (const t of texts) {
+      if (t.includes("<task-notification>")) {
+        changed = applyTaskNotifications(threadId, t) || changed;
+      }
+    }
+    if (changed) {
+      store.save();
+      pushDetail(threadId, workflow);
+    }
+    return changed;
+  }
+
+  /**
    * CLI death (idle reap, param change, thread delete, quit) takes its
    * background subagents with it — settle any still-running rows so the
    * panel never shows a live badge for a dead agent.
@@ -2850,32 +2883,7 @@ function createRunner(opts) {
 
         // Background-subagent task notifications can land between turns on a
         // kept-alive CLI (guard() is null then), so scan user text first.
-        if (type === "user" && ev.message) {
-          const c = ev.message.content;
-          const texts =
-            typeof c === "string"
-              ? [c]
-              : Array.isArray(c)
-                ? c
-                    .filter(
-                      (b) =>
-                        b &&
-                        b.type === "text" &&
-                        typeof b.text === "string",
-                    )
-                    .map((b) => b.text)
-                : [];
-          let changed = false;
-          for (const t of texts) {
-            if (t.includes("<task-notification>")) {
-              changed = applyTaskNotifications(threadId, t) || changed;
-            }
-          }
-          if (changed) {
-            store.save();
-            pushDetail(threadId, claudeState);
-          }
-        }
+        ingestTaskNotifications(threadId, ev, claudeState);
 
         if (!guard()) {
           // Kept-alive CLI, no active turn (settling/idle): never leave a
@@ -4896,6 +4904,10 @@ function createRunner(opts) {
       args: spawn.args,
       cwd: spawn.cwd,
       onEvent: (ev) => {
+        // Cursor does not keep the CLI alive between turns, but a background
+        // Task can finish via <task-notification> instead of tool_call/completed
+        // (#708). Scan before guard() so a late user event still settles the row.
+        ingestTaskNotifications(threadId, ev, cursorState);
         if (!guard()) return;
 
         const sid = cursorParse.extractSessionId(ev);

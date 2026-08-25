@@ -29,6 +29,7 @@ const EXECUTOR_TO_PROVIDER = {
   OPENCODE: "opencode",
   KIMI: "kimi",
   GROK: "grok",
+  CURSOR: "cursor",
 };
 
 /**

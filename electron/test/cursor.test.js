@@ -293,6 +293,58 @@ async function main() {
     return;
   }
 
+  if (scenario === "task-subagent-notification") {
+    emit({
+      type: "system",
+      subtype: "init",
+      apiKeySource: "login",
+      cwd: process.cwd(),
+      session_id: "cursor-sess-1",
+      model: "GPT-5.6 Sol High Fast",
+      permissionMode: "default",
+    });
+    await delay(20);
+    emit({
+      type: "tool_call",
+      subtype: "started",
+      call_id: "task-1",
+      tool_call: {
+        taskToolCall: {
+          args: {
+            description: "Background research",
+            prompt: "Look around.",
+            model: "composer-2.5",
+            subagentType: { unspecified: {} },
+          },
+        },
+      },
+      session_id: "cursor-sess-1",
+    });
+    // Hold the background agent visibly running before its notification.
+    await delay(150);
+    emit({
+      type: "user",
+      message: {
+        content: [
+          {
+            type: "text",
+            text:
+              "<task-notification>\\n<task-id>abc123</task-id>\\n" +
+              "<tool-use-id>task-1</tool-use-id>\\n" +
+              "<status>completed</status>\\n" +
+              '<summary>Agent "Background research" finished</summary>\\n' +
+              "</task-notification>",
+          },
+        ],
+      },
+      session_id: "cursor-sess-1",
+    });
+    // Stay alive so the test can observe done while the run is still working
+    // (proves we did not wait for run-exit settle).
+    setInterval(() => {}, 60 * 60 * 1000);
+    return;
+  }
+
   process.stderr.write("unknown scenario\\n");
   process.exit(1);
 }
@@ -610,5 +662,34 @@ describe("cursor runner integration", () => {
     assert.equal(subs[0].id, "task-1");
     assert.equal(subs[0].description, "Re-review operations docs");
     assert.equal(subs[0].status, "done");
+  });
+
+  it("settles a Cursor background Task from a <task-notification> before run exit (issue #708)", async () => {
+    process.env.CODER_FAKE_CURSOR_SCENARIO = "task-subagent-notification";
+    const thread = store.getThreads()[0];
+    await runner.startRun({ threadId: thread.id, prompt: "go" });
+
+    await waitFor(() => {
+      const subs = store.getThread(thread.id).subagents || [];
+      return subs.some((s) => s.id === "task-1" && s.status === "running");
+    });
+
+    await waitFor(() => {
+      const t = store.getThread(thread.id);
+      const subs = t.subagents || [];
+      return (
+        t.status === "working" &&
+        subs.some((s) => s.id === "task-1" && s.status === "done")
+      );
+    });
+
+    const subs = store.getThread(thread.id).subagents;
+    assert.equal(subs.length, 1);
+    assert.equal(subs[0].id, "task-1");
+    assert.equal(subs[0].description, "Background research");
+    assert.equal(subs[0].status, "done");
+    assert.equal(store.getThread(thread.id).status, "working");
+
+    await runner.stopRun({ threadId: thread.id });
   });
 });
