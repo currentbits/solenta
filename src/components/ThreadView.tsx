@@ -212,14 +212,17 @@ function ContextRingBadge({
   used,
   open,
   onOpenChange,
+  onFork,
 }: {
   ring: ContextRingView;
   segments: ContextBreakdownSegment[];
   used: number;
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  onFork?: () => void;
 }) {
   const wrapRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
   useEscapeClose(open, useCallback(() => onOpenChange(false), [onOpenChange]));
   useEffect(() => {
     if (!open) return;
@@ -238,6 +241,7 @@ function ContextRingBadge({
       onMouseLeave={() => onOpenChange(false)}
     >
       <button
+        ref={triggerRef}
         type="button"
         className={styles.contextRing}
         data-context-ring=""
@@ -293,7 +297,23 @@ function ContextRingBadge({
           </ul>
           <p className={styles.contextNote}>Estimated from the thread (chars÷4)</p>
           {ring.warn && (
-            <p className={styles.contextWarnNote}>Compaction is close</p>
+            <div className={styles.contextWarn}>
+              <p className={styles.contextWarnNote}>Compaction is close</p>
+              {onFork && (
+                <button
+                  type="button"
+                  className={styles.contextForkBtn}
+                  data-context-fork=""
+                  onClick={() => {
+                    triggerRef.current?.focus();
+                    onOpenChange(false);
+                    onFork();
+                  }}
+                >
+                  Fork to fresh context
+                </button>
+              )}
+            </div>
           )}
         </div>
       )}
@@ -1120,9 +1140,9 @@ const MessageBlock = memo(function MessageBlock({
   autoExpandTool,
   animateIn,
   streaming,
-  showRetry,
-  retryTitle,
-  onRetry,
+  eventActionLabel,
+  eventActionTitle,
+  onEventAction,
   canEdit,
   confirming,
   onRequestResubmit,
@@ -1143,9 +1163,9 @@ const MessageBlock = memo(function MessageBlock({
   streaming?: boolean;
   onLoadImage?: (name: string) => Promise<string | null>;
   onLoadAttachmentImage?: (path: string) => Promise<string | null>;
-  showRetry?: boolean;
-  retryTitle?: string;
-  onRetry?: () => void;
+  eventActionLabel?: string;
+  eventActionTitle?: string;
+  onEventAction?: () => void;
   canEdit?: boolean;
   confirming?: boolean;
   onRequestResubmit?: (messageId: string, prompt: string) => void;
@@ -1194,14 +1214,14 @@ const MessageBlock = memo(function MessageBlock({
       >
         <div className={styles.eventRow}>
           <div className={styles.eventTitle}>{message.text}</div>
-          {showRetry && onRetry && (
+          {eventActionLabel && onEventAction && (
             <button
               type="button"
               className={styles.retryBtn}
-              title={retryTitle}
-              onClick={() => onRetry()}
+              title={eventActionTitle}
+              onClick={onEventAction}
             >
-              Retry turn
+              {eventActionLabel}
             </button>
           )}
         </div>
@@ -4328,6 +4348,10 @@ export const ThreadView = memo(function ThreadView({
       }),
     };
   }, [detail, providers]);
+  const handleForkFresh = useCallback(() => {
+    if (isWorking || !onFork) return;
+    void onFork();
+  }, [isWorking, onFork]);
   const hasTimeline = timeline.length > 0;
   const hasWorktree = Boolean(detail?.thread.worktreePath);
   const worktree = useWorktreeChrome({
@@ -4361,6 +4385,17 @@ export const ThreadView = memo(function ThreadView({
         : null,
     [detail],
   );
+  const overflowEventId = useMemo(() => {
+    if (
+      !detail ||
+      detail.thread.status !== "failed" ||
+      detail.thread.lastErrorKind !== "context-overflow"
+    ) {
+      return null;
+    }
+    const last = detail.messages[detail.messages.length - 1];
+    return last?.role === "event" ? last.id : null;
+  }, [detail]);
   const retryTitle = useMemo(
     () => (retryUser ? retryButtonTitle(retryUser.text) : ""),
     [retryUser],
@@ -4456,12 +4491,12 @@ export const ThreadView = memo(function ThreadView({
 
   const handleSlashAction = useCallback(
     (action: SlashAction) => {
-      if (action === "usage" || action === "compact") {
+      if (action === "usage") {
         if (ring) setContextOpen(true);
         return;
       }
-      if (action === "fork") {
-        if (!isWorking) void onFork?.();
+      if (action === "compact" || action === "fork") {
+        handleForkFresh();
         return;
       }
       if (action === "rewind") {
@@ -4482,8 +4517,7 @@ export const ThreadView = memo(function ThreadView({
     },
     [
       ring,
-      isWorking,
-      onFork,
+      handleForkFresh,
       handleSlashRewind,
       onNewThread,
       handleSlashClear,
@@ -5176,6 +5210,7 @@ export const ThreadView = memo(function ThreadView({
               used={ring.used}
               open={contextOpen}
               onOpenChange={setContextOpen}
+              onFork={onFork && !isWorking ? handleForkFresh : undefined}
             />
           )}
           {onStopSpec && thread.spec && !thread.ask && (
@@ -5693,7 +5728,12 @@ export const ThreadView = memo(function ThreadView({
 
         {visibleTimeline.map((entry) => {
           if (entry.kind === "message") {
+            const isOverflowSurface =
+              entry.message.role === "event" &&
+              overflowEventId != null &&
+              entry.message.id === overflowEventId;
             const isRetrySurface =
+              !isOverflowSurface &&
               entry.message.role === "event" &&
               retryEventId != null &&
               entry.message.id === retryEventId;
@@ -5726,9 +5766,27 @@ export const ThreadView = memo(function ThreadView({
                       onLoadImage={onLoadImage}
                       onLoadAttachmentImage={onLoadAttachmentImage}
                       onSelectThread={onSelectThread}
-                      showRetry={isRetrySurface}
-                      retryTitle={isRetrySurface ? retryTitle : undefined}
-                      onRetry={isRetrySurface ? handleRetry : undefined}
+                      eventActionLabel={
+                        isOverflowSurface
+                          ? "Fork to fresh context"
+                          : isRetrySurface
+                            ? "Retry turn"
+                            : undefined
+                      }
+                      eventActionTitle={
+                        isOverflowSurface
+                          ? "Fork this thread with recent history in a fresh context"
+                          : isRetrySurface
+                            ? retryTitle
+                            : undefined
+                      }
+                      onEventAction={
+                        isOverflowSurface
+                          ? handleForkFresh
+                          : isRetrySurface
+                            ? handleRetry
+                            : undefined
+                      }
                       canEdit={
                         Boolean(onRewindAndResubmit) &&
                         isEditableUserMessage(

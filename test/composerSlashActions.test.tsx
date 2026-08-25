@@ -155,13 +155,100 @@ describe("ThreadView / palette actions", () => {
     assert.equal(textarea(m).value, "", "token cleared");
   });
 
-  it("/compact also opens the context breakdown until #318 lands", async () => {
-    const m = await mountView();
+  it("/compact forks to fresh context instead of opening usage", async () => {
+    const forks: number[] = [];
+    const m = await mountView({ onFork: () => forks.push(1) });
     await acceptSlash(m, "/compact");
-    assert.ok(
-      m.query("[data-context-popover]"),
-      "compact is not sent as a prompt",
+    assert.deepEqual(forks, [1]);
+    assert.equal(m.query("[data-context-popover]"), null);
+    assert.equal(textarea(m).value, "");
+  });
+
+  it("warn context offers a one-click fresh-context fork", async () => {
+    const forks: number[] = [];
+    const warned = detail({
+      usage: { ...USAGE, contextTokens: 180_000 },
+    });
+    const m = await mountView({
+      detail: warned,
+      onFork: () => forks.push(1),
+    });
+    await acceptSlash(m, "/usage");
+    const action = m.query("[data-context-fork]");
+    assert.ok(action);
+    await m.click(action as HTMLElement);
+    assert.deepEqual(forks, [1]);
+    assert.equal(m.query("[data-context-popover]"), null);
+  });
+
+  it("restores ring focus before a keyboard-focused warning action forks", async () => {
+    let focusAtFork: Element | null = null;
+    const warned = detail({
+      usage: { ...USAGE, contextTokens: 180_000 },
+    });
+    const m = await mountView({
+      detail: warned,
+      onFork: () => {
+        focusAtFork = document.activeElement;
+      },
+    });
+    await acceptSlash(m, "/usage");
+    const ring = m.query("[data-context-ring]") as HTMLButtonElement | null;
+    const action = m.query("[data-context-fork]") as HTMLButtonElement | null;
+    assert.ok(ring);
+    assert.ok(action);
+
+    await inAct(() => action.focus());
+    assert.equal(document.activeElement, action);
+    // Browsers translate Enter/Space on a focused button into this click.
+    await m.click(action);
+
+    assert.equal(
+      focusAtFork === ring,
+      true,
+      "fork callback observes restored trigger focus",
     );
+    assert.equal(document.activeElement === ring, true);
+    assert.equal(m.query("[data-context-popover]"), null);
+  });
+
+  it("does not offer context fork below warn or while working", async () => {
+    const below = await mountView({
+      detail: detail({ usage: USAGE }),
+      onFork: () => {},
+    });
+    await acceptSlash(below, "/usage");
+    assert.equal(below.query("[data-context-fork]"), null);
+    below.unmount();
+
+    const noFork = await mountView({
+      detail: detail({
+        usage: { ...USAGE, contextTokens: 180_000 },
+      }),
+    });
+    await acceptSlash(noFork, "/usage");
+    assert.equal(noFork.query("[data-context-fork]"), null);
+    noFork.unmount();
+
+    const working = await mountView({
+      detail: detail({
+        thread: thread({ status: "working" }),
+        usage: { ...USAGE, contextTokens: 180_000 },
+      }),
+      onFork: () => {},
+    });
+    await acceptSlash(working, "/usage");
+    assert.equal(working.query("[data-context-fork]"), null);
+  });
+
+  it("/compact is inert while the thread is working", async () => {
+    const forks: number[] = [];
+    const m = await mountView({
+      detail: detail({ thread: thread({ status: "working" }) }),
+      onFork: () => forks.push(1),
+    });
+    await acceptSlash(m, "/compact");
+    assert.deepEqual(forks, []);
   });
 
   it("/fork calls the same handler as the Environment Fork card", async () => {

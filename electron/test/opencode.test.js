@@ -74,6 +74,24 @@ async function main() {
     return;
   }
 
+  if (scenario === "structured-overflow") {
+    emit({
+      type: "error",
+      timestamp: Date.now(),
+      sessionID: "ses_opencode_overflow",
+      error: {
+        name: "ContextOverflowError",
+        data: {
+          code: "context_length_exceeded",
+          message:
+            "input length and max_tokens exceed context limit: 131072 tokens",
+        },
+      },
+    });
+    process.exit(1);
+    return;
+  }
+
   if (scenario === "slow") {
     emit({
       type: "text",
@@ -399,6 +417,32 @@ describe("opencode runner integration", () => {
             m.runId === runId,
         ),
     );
+  });
+
+  it("classifies stdout-only error JSON overflow and records one normalized event", async () => {
+    process.env.CODER_FAKE_OPENCODE_SCENARIO = "structured-overflow";
+    const thread = store.getThreads()[0];
+    const { runId } = await runner.startRun({
+      threadId: thread.id,
+      prompt: "overflow",
+    });
+
+    await waitFor(() => store.getThread(thread.id).status === "failed");
+
+    const failed = store.getThread(thread.id);
+    assert.equal(failed.lastErrorKind, "context-overflow");
+    assert.equal(failed.quotaWaitUntil, null);
+    assert.equal(failed.sessionId, "ses_opencode_overflow");
+    assert.match(failed.lastError, /^Context window is full\./);
+
+    const events = store
+      .getMessages(thread.id)
+      .filter((m) => m.role === "event" && m.runId === runId);
+    assert.equal(events.length, 1);
+    assert.match(events[0].text, /^Context window is full\./);
+    assert.match(events[0].text, /context_length_exceeded/);
+    assert.match(events[0].text, /input length and max_tokens/);
+    assert.doesNotMatch(events[0].text, /Quota wait:/);
   });
 
   it("stop kills the running process and sets idle", async () => {

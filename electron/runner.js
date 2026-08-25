@@ -72,6 +72,7 @@ const {
   sessionAllowRule,
 } = require("./permissionCommand.js");
 const {
+  classifyContextOverflow,
   decideQuotaWait,
   formatQuotaWaitClock,
   quotaWaitEnabled,
@@ -2371,19 +2372,29 @@ function createRunner(opts) {
   }
 
   /**
-   * Park or fail. Call instead of writing status:"failed" on a provider
-   * turn so the first threads:changed never flashes Failed.
+   * Record one provider failure event, then park quota failures or mark failed.
    * @param {string} threadId
    * @param {string} errText
+   * @param {string | null | undefined} runId
    * @param {object} [extraPatch]
-   * @returns {{ parked: boolean, until?: number }}
+   * @returns {{
+   *   parked: boolean,
+   *   until?: number,
+   *   text: string,
+   *   kind: "context-overflow" | null
+   * }}
    */
-  function markRunFailed(threadId, errText, extraPatch) {
-    const park = decideQuotaWait({
-      text: errText,
-      thread: store.getThread(threadId),
-      settings: store.getSettings(),
-    });
+  function markRunFailed(threadId, errText, runId, extraPatch) {
+    const overflow = classifyContextOverflow(errText);
+    const text = overflow ? overflow.text : errText;
+    const kind = overflow ? overflow.kind : null;
+    const park = overflow
+      ? null
+      : decideQuotaWait({
+          text: errText,
+          thread: store.getThread(threadId),
+          settings: store.getSettings(),
+        });
     if (park) {
       store.updateThread(
         threadId,
@@ -2391,18 +2402,20 @@ function createRunner(opts) {
           ...(extraPatch || {}),
           status: "quota-wait",
           runStartedAt: null,
-          lastError: shortError(errText),
+          lastError: shortError(text),
+          lastErrorKind: null,
           quotaWaitUntil: park.until,
         },
         { touch: true },
       );
+      appendMessage(threadId, "event", text, runId);
       appendMessage(
         threadId,
         "event",
         `Quota wait: usage limit reached. Resuming at ${formatQuotaWaitClock(park.until)}.`,
       );
       scheduleQuotaWake(threadId, park.until);
-      return { parked: true, until: park.until };
+      return { parked: true, until: park.until, text, kind: null };
     }
     store.updateThread(
       threadId,
@@ -2410,11 +2423,13 @@ function createRunner(opts) {
         ...(extraPatch || {}),
         status: "failed",
         runStartedAt: null,
-        lastError: shortError(errText),
+        lastError: shortError(text),
+        lastErrorKind: kind,
       },
       { touch: true },
     );
-    return { parked: false };
+    appendMessage(threadId, "event", text, runId);
+    return { parked: false, text, kind };
   }
 
   function scheduleQuotaWake(threadId, until) {
@@ -2661,8 +2676,7 @@ function createRunner(opts) {
       } catch (err) {
         clearRun(threadId);
         const errText = `Run error: ${err && err.message ? err.message : String(err)}`;
-        markRunFailed(threadId, errText);
-        appendMessage(threadId, "event", errText, runId);
+        markRunFailed(threadId, errText, runId);
         appendDoneWorkLog(threadId, runId, "Run error");
         store.save();
         pushDetail(threadId, current);
@@ -2852,13 +2866,12 @@ function createRunner(opts) {
 
         realState.agentStatus = "failed";
         const errText = formatRunExitError(exitCode, stderrText);
-        appendMessage(threadId, "event", errText, runId);
+        const failure = markRunFailed(threadId, errText, runId);
         appendDoneWorkLog(threadId, runId, "Run error");
-        markRunFailed(threadId, errText);
         store.save();
         pushDetail(threadId, realState);
         pushThreadsChanged();
-        notifyRunTerminal(threadId, "failed", errText);
+        notifyRunTerminal(threadId, "failed", failure.text);
       },
       onError: (err) => {
         cancelPushTimer();
@@ -2873,13 +2886,12 @@ function createRunner(opts) {
         realState.agentStatus = "failed";
         const msg = err && err.message ? err.message : String(err);
         const errText = `Run error: ${msg}`;
-        appendMessage(threadId, "event", errText, runId);
+        const failure = markRunFailed(threadId, errText, runId);
         appendDoneWorkLog(threadId, runId, "Run error");
-        markRunFailed(threadId, errText);
         store.save();
         pushDetail(threadId, realState);
         pushThreadsChanged();
-        notifyRunTerminal(threadId, "failed", errText);
+        notifyRunTerminal(threadId, "failed", failure.text);
       },
     });
 
@@ -3011,15 +3023,16 @@ function createRunner(opts) {
         capturedSessionId = ev.session_id;
       }
       const failText = "Run error: no output from agent";
-      appendMessage(threadId, "event", failText, runId);
+      const failure = markRunFailed(threadId, failText, runId, {
+        sessionId: capturedSessionId,
+      });
       appendDoneWorkLog(threadId, runId, "Run error");
-      markRunFailed(threadId, failText, { sessionId: capturedSessionId });
       store.save();
       clearRun(threadId);
       scheduleClaudeIdleReap(threadId);
       pushDetail(threadId, claudeState);
       pushThreadsChanged();
-      notifyRunTerminal(threadId, "failed", failText, {
+      notifyRunTerminal(threadId, "failed", failure.text, {
         tokensIn: runUsage.tokensIn,
         tokensOut: runUsage.tokensOut,
         costUsd: runUsage.costUsd,
@@ -3486,13 +3499,12 @@ function createRunner(opts) {
                 lastAssistantText(threadId, runId) || "Run stopped";
             } else {
               const failText = classified.text;
-              appendMessage(threadId, "event", failText, runId);
-              appendDoneWorkLog(threadId, runId, "Run error");
-              markRunFailed(threadId, failText, {
+              const failure = markRunFailed(threadId, failText, runId, {
                 sessionId: classified.sessionLost ? null : capturedSessionId,
               });
+              appendDoneWorkLog(threadId, runId, "Run error");
               terminalStatus = "failed";
-              terminalText = failText;
+              terminalText = failure.text;
             }
           }
 
@@ -3556,13 +3568,12 @@ function createRunner(opts) {
         completeWorkLogStep(threadId, e.workingId);
 
         const errText = formatRunExitError(code, stderr);
-        appendMessage(threadId, "event", errText, runId);
+        const failure = markRunFailed(threadId, errText, runId);
         appendDoneWorkLog(threadId, runId, "Run error");
-        markRunFailed(threadId, errText);
         store.save();
         pushDetail(threadId, claudeState);
         pushThreadsChanged();
-        notifyRunTerminal(threadId, "failed", errText, {
+        notifyRunTerminal(threadId, "failed", failure.text, {
           tokensIn: runUsage.tokensIn,
           tokensOut: runUsage.tokensOut,
           costUsd: runUsage.costUsd,
@@ -3580,13 +3591,12 @@ function createRunner(opts) {
         completeWorkLogStep(threadId, e.workingId);
         const msg = err && err.message ? err.message : String(err);
         const errText = `Run error: ${msg}`;
-        appendMessage(threadId, "event", errText, runId);
+        const failure = markRunFailed(threadId, errText, runId);
         appendDoneWorkLog(threadId, runId, "Run error");
-        markRunFailed(threadId, errText);
         store.save();
         pushDetail(threadId, claudeState);
         pushThreadsChanged();
-        notifyRunTerminal(threadId, "failed", errText, {
+        notifyRunTerminal(threadId, "failed", failure.text, {
           tokensIn: runUsage.tokensIn,
           tokensOut: runUsage.tokensOut,
           costUsd: runUsage.costUsd,
@@ -3769,6 +3779,8 @@ function createRunner(opts) {
     let capturedSessionId = thread.sessionId || null;
     let sawTerminalUsage = false;
     let finishedFromStream = false;
+    /** @type {string | null} */
+    let terminalError = null;
     /** Run-local usage for memory footers (not cumulative store totals). */
     const runUsage = { tokensIn: 0, tokensOut: 0, costUsd: 0 };
 
@@ -3892,6 +3904,9 @@ function createRunner(opts) {
       envExtra: codexMcpEnv,
       onEvent: (ev) => {
         if (!guard()) return;
+
+        const structuredError = codexParse.extractTerminalError(ev);
+        if (structuredError) terminalError = structuredError;
 
         // Session / thread id
         if (
@@ -4036,11 +4051,11 @@ function createRunner(opts) {
         }
 
         // If we never saw usage, still count a turn with zero tokens when ok
-        if (!sawTerminalUsage && code === 0) {
+        if (!sawTerminalUsage && code === 0 && !terminalError) {
           applyUsage({ inputTokens: 0, outputTokens: 0, model: thread.model });
         }
 
-        if (code === 0) {
+        if (code === 0 && !terminalError) {
           store.updateThread(
             threadId,
             {
@@ -4067,15 +4082,14 @@ function createRunner(opts) {
           return;
         }
 
-        const errText = formatRunExitError(code, stderr);
-        appendMessage(threadId, "event", errText, runId);
+        const errText = formatRunExitError(code, terminalError || stderr);
+        const failure = markRunFailed(threadId, errText, runId);
         appendDoneWorkLog(threadId, runId, "Run error");
-        markRunFailed(threadId, errText);
         store.save();
         pushDetail(threadId, codexState);
         pushThreadsChanged();
         void finishedFromStream;
-        notifyRunTerminal(threadId, "failed", errText, {
+        notifyRunTerminal(threadId, "failed", failure.text, {
           tokensIn: runUsage.tokensIn,
           tokensOut: runUsage.tokensOut,
           costUsd: runUsage.costUsd,
@@ -4091,13 +4105,12 @@ function createRunner(opts) {
         completeWorkLogStep(threadId, e.workingId);
         const msg = err && err.message ? err.message : String(err);
         const errText = `Run error: ${msg}`;
-        appendMessage(threadId, "event", errText, runId);
+        const failure = markRunFailed(threadId, errText, runId);
         appendDoneWorkLog(threadId, runId, "Run error");
-        markRunFailed(threadId, errText);
         store.save();
         pushDetail(threadId, codexState);
         pushThreadsChanged();
-        notifyRunTerminal(threadId, "failed", errText, {
+        notifyRunTerminal(threadId, "failed", failure.text, {
           tokensIn: runUsage.tokensIn,
           tokensOut: runUsage.tokensOut,
           costUsd: runUsage.costUsd,
@@ -4467,13 +4480,12 @@ function createRunner(opts) {
         }
 
         const errText = formatRunExitError(code, stderr);
-        appendMessage(threadId, "event", errText, runId);
+        const failure = markRunFailed(threadId, errText, runId);
         appendDoneWorkLog(threadId, runId, "Run error");
-        markRunFailed(threadId, errText);
         store.save();
         pushDetail(threadId, kimiState);
         pushThreadsChanged();
-        notifyRunTerminal(threadId, "failed", errText, {
+        notifyRunTerminal(threadId, "failed", failure.text, {
           tokensIn: runUsage.tokensIn,
           tokensOut: runUsage.tokensOut,
           costUsd: runUsage.costUsd,
@@ -4493,13 +4505,12 @@ function createRunner(opts) {
         completeWorkLogStep(threadId, e.workingId);
         const msg = err && err.message ? err.message : String(err);
         const errText = `Run error: ${msg}`;
-        appendMessage(threadId, "event", errText, runId);
+        const failure = markRunFailed(threadId, errText, runId);
         appendDoneWorkLog(threadId, runId, "Run error");
-        markRunFailed(threadId, errText);
         store.save();
         pushDetail(threadId, kimiState);
         pushThreadsChanged();
-        notifyRunTerminal(threadId, "failed", errText, {
+        notifyRunTerminal(threadId, "failed", failure.text, {
           tokensIn: runUsage.tokensIn,
           tokensOut: runUsage.tokensOut,
           costUsd: runUsage.costUsd,
@@ -4554,6 +4565,8 @@ function createRunner(opts) {
     const toolMsgById = new Map();
     /** @type {string | null} */
     let capturedSessionId = thread.sessionId || null;
+    /** @type {string | null} */
+    let terminalError = null;
     let lastPushAt = 0;
     /** @type {ReturnType<typeof setTimeout> | null} */
     let pushTimer = null;
@@ -4679,6 +4692,9 @@ function createRunner(opts) {
       cwd: spawn.cwd,
       onEvent: (ev) => {
         if (!guard()) return;
+
+        const structuredError = opencodeParse.extractTerminalError(ev);
+        if (structuredError) terminalError = structuredError;
 
         const sid = opencodeParse.extractSessionId(ev);
         if (sid && !capturedSessionId) {
@@ -4823,7 +4839,7 @@ function createRunner(opts) {
         }
 
         // Usage unknown: estimate tokens like text kind.
-        if (code === 0) {
+        if (code === 0 && !terminalError) {
           const tokens = Math.ceil((assistantText || "").length / 4) || 0;
           applyUsage({
             inputTokens: 0,
@@ -4857,14 +4873,13 @@ function createRunner(opts) {
           return;
         }
 
-        const errText = formatRunExitError(code, stderr);
-        appendMessage(threadId, "event", errText, runId);
+        const errText = formatRunExitError(code, terminalError || stderr);
+        const failure = markRunFailed(threadId, errText, runId);
         appendDoneWorkLog(threadId, runId, "Run error");
-        markRunFailed(threadId, errText);
         store.save();
         pushDetail(threadId, opencodeState);
         pushThreadsChanged();
-        notifyRunTerminal(threadId, "failed", errText, {
+        notifyRunTerminal(threadId, "failed", failure.text, {
           tokensIn: runUsage.tokensIn,
           tokensOut: runUsage.tokensOut,
           costUsd: runUsage.costUsd,
@@ -4884,13 +4899,12 @@ function createRunner(opts) {
         completeWorkLogStep(threadId, e.workingId);
         const msg = err && err.message ? err.message : String(err);
         const errText = `Run error: ${msg}`;
-        appendMessage(threadId, "event", errText, runId);
+        const failure = markRunFailed(threadId, errText, runId);
         appendDoneWorkLog(threadId, runId, "Run error");
-        markRunFailed(threadId, errText);
         store.save();
         pushDetail(threadId, opencodeState);
         pushThreadsChanged();
-        notifyRunTerminal(threadId, "failed", errText, {
+        notifyRunTerminal(threadId, "failed", failure.text, {
           tokensIn: runUsage.tokensIn,
           tokensOut: runUsage.tokensOut,
           costUsd: runUsage.costUsd,
@@ -5267,13 +5281,12 @@ function createRunner(opts) {
         }
 
         const errText = formatRunExitError(code, stderr);
-        appendMessage(threadId, "event", errText, runId);
+        const failure = markRunFailed(threadId, errText, runId);
         appendDoneWorkLog(threadId, runId, "Run error");
-        markRunFailed(threadId, errText);
         store.save();
         pushDetail(threadId, cursorState);
         pushThreadsChanged();
-        notifyRunTerminal(threadId, "failed", errText, {
+        notifyRunTerminal(threadId, "failed", failure.text, {
           tokensIn: runUsage.tokensIn,
           tokensOut: runUsage.tokensOut,
           costUsd: runUsage.costUsd,
@@ -5294,13 +5307,12 @@ function createRunner(opts) {
         completeWorkLogStep(threadId, e.workingId);
         const msg = err && err.message ? err.message : String(err);
         const errText = `Run error: ${msg}`;
-        appendMessage(threadId, "event", errText, runId);
+        const failure = markRunFailed(threadId, errText, runId);
         appendDoneWorkLog(threadId, runId, "Run error");
-        markRunFailed(threadId, errText);
         store.save();
         pushDetail(threadId, cursorState);
         pushThreadsChanged();
-        notifyRunTerminal(threadId, "failed", errText, {
+        notifyRunTerminal(threadId, "failed", failure.text, {
           tokensIn: runUsage.tokensIn,
           tokensOut: runUsage.tokensOut,
           costUsd: runUsage.costUsd,
@@ -5718,9 +5730,8 @@ function createRunner(opts) {
     })().catch((err) => {
       if (!active.has(threadId) || active.get(threadId) !== entry) return;
       const errText = `Ask error: ${err && err.message ? err.message : String(err)}`;
-      appendMessage(threadId, "event", errText, runId);
       clearRun(threadId);
-      markRunFailed(threadId, errText);
+      const failure = markRunFailed(threadId, errText, runId);
       store.save();
       pushDetail(threadId);
       pushThreadsChanged();
@@ -5728,7 +5739,7 @@ function createRunner(opts) {
         threadId,
         runId,
         status: "failed",
-        error: shortError(errText),
+        error: failure.text,
       });
     });
 

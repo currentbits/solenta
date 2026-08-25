@@ -35,6 +35,37 @@ function extractSessionId(obj) {
 }
 
 /**
+ * Terminal OpenCode errors are NDJSON events on stdout.
+ * @param {object} obj
+ * @returns {string | null}
+ */
+function extractTerminalError(obj) {
+  if (!obj || typeof obj !== "object") return null;
+  const type = String(obj.type || "");
+  if (type !== "error" && type !== "step_error" && type !== "step.error") {
+    return null;
+  }
+  const error =
+    obj.error && typeof obj.error === "object" ? obj.error : null;
+  const data =
+    error && error.data && typeof error.data === "object"
+      ? error.data
+      : null;
+  const code = String(
+    data?.code ?? error?.code ?? obj.code ?? error?.name ?? "",
+  ).trim();
+  const message = String(
+    data?.message ??
+      error?.message ??
+      obj.message ??
+      (typeof obj.error === "string" ? obj.error : ""),
+  ).trim();
+  if (!code) return message || null;
+  if (!message || message === code) return code;
+  return `${code}: ${message}`;
+}
+
+/**
  * Text from a text-type event: prefer part.text, fall back to any string field
  * named text on part.
  * @param {object} obj
@@ -313,6 +344,7 @@ function runOpencode(opts) {
 module.exports = {
   runOpencode,
   extractSessionId,
+  extractTerminalError,
   extractTextPart,
   extractToolEvent,
   truncate,

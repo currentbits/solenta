@@ -2067,6 +2067,28 @@ button.diffLineGutter:focus-visible {
   color: var(--amber);
 }
 
+.contextWarn {
+  display: grid;
+  gap: 8px;
+}
+
+.contextForkBtn {
+  width: 100%;
+  padding: 5px 9px;
+  border: 1px solid var(--amber-border);
+  border-radius: var(--radius-sm);
+  background: var(--amber-soft);
+  color: var(--amber);
+  font: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.contextForkBtn:hover {
+  background: var(--card-hover);
+}
+
 .message p {
   margin: 0 0 10px;
   color: var(--text-muted);

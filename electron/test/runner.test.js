@@ -68,6 +68,10 @@ function fakeAgentFailScript() {
   return "process.stderr.write('agent-stderr-line\\nmore-err');process.exit(3)";
 }
 
+function fakeAgentContextOverflowScript() {
+  return "process.stderr.write('context_length_exceeded\\nrequest\\x20had\\x20250000\\x20tokens');process.exit(1)";
+}
+
 function fakeAgentSlowScript() {
   return "setInterval(()=>{},500);setTimeout(()=>process.exit(0),60000)";
 }
@@ -1178,6 +1182,7 @@ describe("runner real agent mode", () => {
       runner.toWorkflowView(runner.getActiveWorkflow(thread.id)),
     );
     assert.equal(detail.thread.status, "failed");
+    assert.equal(detail.thread.lastErrorKind, null);
     assert.ok(
       detail.messages.some(
         (m) =>
@@ -1197,6 +1202,48 @@ describe("runner real agent mode", () => {
     const agent = detail.workflow.phases[0].agents[0];
     assert.equal(agent.status, "failed");
     assert.equal(detail.workflow.complete, true);
+  });
+
+  it("classifies context overflow and records one targeted recovery event", async () => {
+    process.env.CODER_AGENT_CMD =
+      `${process.execPath} -e ${fakeAgentContextOverflowScript()}`;
+    const thread = store.getThreads()[0];
+    const { runId } = await runner.startRun({
+      threadId: thread.id,
+      prompt: "overflow please",
+    });
+
+    await waitFor(() => store.getThread(thread.id).status === "failed");
+    const failed = store.getThread(thread.id);
+    assert.equal(failed.lastErrorKind, "context-overflow");
+    assert.match(failed.lastError, /^Context window is full\./);
+
+    const events = store
+      .getMessages(thread.id)
+      .filter((m) => m.role === "event" && m.runId === runId);
+    assert.equal(events.length, 1);
+    assert.match(events[0].text, /^Context window is full\./);
+    assert.match(events[0].text, /context_length_exceeded/);
+  });
+
+  it("replaces overflow metadata when a later direct runner failure is generic", async () => {
+    const thread = store.getThreads()[0];
+    store.updateThread(thread.id, {
+      status: "failed",
+      lastError: "Context window is full",
+      lastErrorKind: "context-overflow",
+      pendingWorktree: true,
+    });
+
+    await assert.rejects(
+      () => runner.startRun({ threadId: thread.id, prompt: "try again" }),
+      /worktreeBase is not configured/,
+    );
+
+    const failed = store.getThread(thread.id);
+    assert.equal(failed.status, "failed");
+    assert.match(failed.lastError, /worktreeBase is not configured/);
+    assert.equal(failed.lastErrorKind, null);
   });
 
   it("stopRun kills agent process and leaves idle + Run stopped", async () => {

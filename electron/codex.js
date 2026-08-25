@@ -186,6 +186,37 @@ function isSessionStartEvent(ev) {
 }
 
 /**
+ * Terminal Codex JSONL failures are written to stdout, not necessarily stderr.
+ * @param {object} ev
+ * @returns {string | null}
+ */
+function extractTerminalError(ev) {
+  if (!ev || typeof ev !== "object") return null;
+  const type = String(ev.type || "");
+  if (type !== "turn.failed" && type !== "turn_failed" && type !== "error") {
+    return null;
+  }
+  const error =
+    ev.error && typeof ev.error === "object" ? ev.error : null;
+  const data =
+    error && error.data && typeof error.data === "object"
+      ? error.data
+      : null;
+  const code = String(
+    error?.code ?? data?.code ?? ev.code ?? error?.name ?? "",
+  ).trim();
+  const message = String(
+    error?.message ??
+      data?.message ??
+      ev.message ??
+      (typeof ev.error === "string" ? ev.error : ""),
+  ).trim();
+  if (!code) return message || null;
+  if (!message || message === code) return code;
+  return `${code}: ${message}`;
+}
+
+/**
  * Pull agent message text from various codex shapes.
  * @param {object} ev
  * @returns {string | null}
@@ -512,6 +543,7 @@ module.exports = {
   runCodex,
   extractSessionId,
   isSessionStartEvent,
+  extractTerminalError,
   extractAgentMessageText,
   isAgentMessageEvent,
   extractCommandItem,

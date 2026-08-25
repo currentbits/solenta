@@ -521,6 +521,8 @@ function createThread(store, input) {
     prNumber: null,
     prUrl: null,
     status: "idle",
+    lastError: null,
+    lastErrorKind: null,
     createdAt: now,
     updatedAt: now,
     runStartedAt: null,

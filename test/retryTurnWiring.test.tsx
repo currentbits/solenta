@@ -98,6 +98,31 @@ function failedTarget(): { row: ThreadInfo; d: ThreadDetail } {
   return { row, d };
 }
 
+function overflowTarget(): { row: ThreadInfo; d: ThreadDetail } {
+  const row = thread({
+    id: "t-context-overflow",
+    title: "context overflow target",
+    status: "failed",
+    lastError: "Context window is full.",
+    lastErrorKind: "context-overflow",
+    updatedAt: NOW + 2500,
+  });
+  return {
+    row,
+    d: detail({
+      thread: row,
+      messages: [
+        msg({ id: "m-ou", role: "user", text: "large prompt" }),
+        msg({
+          id: "m-oe",
+          role: "event",
+          text: "Context window is full. Fork to fresh context or rewind the last turn.",
+        }),
+      ],
+    }),
+  };
+}
+
 function interruptTarget(): { row: ThreadInfo; d: ThreadDetail } {
   const row = thread({
     id: "t-interrupt-retry",
@@ -197,6 +222,36 @@ function retryButtons(m: Awaited<ReturnType<typeof mount>>): HTMLElement[] {
 }
 
 describe("App Retry turn wiring (round 48)", () => {
+  it("context overflow offers Fork to fresh context instead of retry", async () => {
+    const decoyRow = decoy();
+    const { row, d } = overflowTarget();
+    const fake = createFakeCoder({
+      projects: [project()],
+      threads: [decoyRow, row],
+      details: {
+        "t-decoy": detail({ thread: decoyRow }),
+        "t-context-overflow": d,
+      },
+    });
+    const m = await boot(fake);
+    await selectThread(m, "context overflow target");
+
+    assert.equal(retryButtons(m).length, 0);
+    const fork = m
+      .queryAll("button")
+      .find((button) => button.textContent?.trim() === "Fork to fresh context");
+    assert.ok(fork);
+
+    const runsBefore = fake.of("runs.start").length;
+    await m.click(fork);
+    await m.flush();
+    assert.equal(fake.of("runs.start").length, runsBefore);
+    const forks = fake.of("threads.fork");
+    assert.equal(forks.length, 1);
+    assert.deepEqual(forks[0].args[0], { threadId: "t-context-overflow" });
+    m.unmount();
+  });
+
   it("failed thread with transcript renders Retry turn; click sends LAST user text once", async () => {
     const decoyRow = decoy();
     const { row, d } = failedTarget();

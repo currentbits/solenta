@@ -933,6 +933,8 @@ function migrateThread(t) {
     stoppedAt: t.stoppedAt !== undefined ? t.stoppedAt : null,
     // Older stores have no lastError; null (not undefined) so the badge is stable.
     lastError: t.lastError !== undefined ? t.lastError : null,
+    lastErrorKind:
+      t.lastErrorKind === "context-overflow" ? "context-overflow" : null,
     archived: t.archived != null ? Boolean(t.archived) : false,
     // Older stores may lack PR fields; null (not undefined) so the badge is stable.
     prNumber: t.prNumber !== undefined ? t.prNumber : null,
@@ -1039,6 +1041,7 @@ function recoverInterruptedRuns(store, data) {
     t.status = "failed";
     t.runStartedAt = null;
     t.lastError = "Run error: app quit while the run was in flight";
+    t.lastErrorKind = null;
     t.updatedAt = Date.now();
     store._appendLazyMessage(t.id, {
       id: randomUUID(),
@@ -2825,7 +2828,13 @@ class Store {
         p.status !== "failed" &&
         p.status !== "quota-wait"
       ) {
-        p = { ...p, lastError: null };
+        p = { ...p, lastError: null, lastErrorKind: null };
+      } else if (
+        Object.prototype.hasOwnProperty.call(p, "lastError") &&
+        !Object.prototype.hasOwnProperty.call(p, "lastErrorKind")
+      ) {
+        // The semantic kind describes this exact error, never an older one.
+        p = { ...p, lastErrorKind: null };
       }
       if (touch) {
         return { ...t, ...p, updatedAt: Date.now() };

@@ -30,6 +30,12 @@ const MONTHS = {
 const QUOTA_RE =
   /usage[_\s-]?limit|hit your (?:session |weekly |daily )?(?:limit|cap)|rate[_ ]?limit|\b429\b|quota[_\s-]?(?:exceeded|exhausted)|exceeded your (?:current )?quota|out of credits|insufficient (?:quota|credits|balance)|balance (?:is )?exhausted|account quota|limit reached/i;
 
+const CONTEXT_OVERFLOW_COPY =
+  "Context window is full. Fork to fresh context or rewind the last turn.";
+
+const CONTEXT_OVERFLOW_RE =
+  /context[_\s-]?length[_\s-]?exceeded|prompt is too long|maximum context (?:length|window)|context window(?: is)? (?:completely )?full\b|context window.{0,80}(?:exceed|too (?:long|large))|exceeds?.{0,40}(?:the |this model'?s )?context window|(?:input|prompt|request).{0,80}too (?:long|large).{0,80}(?:model'?s? )?context window|ran out of room in the model'?s context window|input length and max_tokens exceed context limit/i;
+
 const OWN_BUDGET_RE =
   /daily budget|orchestration budget|crew auto-turn cap|spend cap/i;
 
@@ -42,6 +48,35 @@ function isQuotaLike(text) {
   if (!s.trim()) return false;
   if (OWN_BUDGET_RE.test(s)) return false;
   return QUOTA_RE.test(s);
+}
+
+/**
+ * High-confidence provider context overflow; deliberately excludes generic
+ * "limit reached", quota, and output-token wording.
+ * @param {unknown} text
+ */
+function isContextOverflow(text) {
+  const s = String(text ?? "").trim();
+  return Boolean(s && CONTEXT_OVERFLOW_RE.test(s));
+}
+
+/**
+ * Targeted recovery copy plus at most two provider-detail lines.
+ * @param {unknown} text
+ * @returns {{ kind: "context-overflow", text: string } | null}
+ */
+function classifyContextOverflow(text) {
+  const raw = String(text ?? "").trim();
+  if (!isContextOverflow(raw)) return null;
+  const detail = raw
+    .split(/\r?\n/)
+    .slice(0, 2)
+    .join("\n")
+    .slice(0, 500);
+  return {
+    kind: "context-overflow",
+    text: `${CONTEXT_OVERFLOW_COPY}\nProvider error: ${detail}`,
+  };
 }
 
 /**
@@ -346,6 +381,8 @@ function formatQuotaWaitClock(until, now = Date.now()) {
 
 module.exports = {
   isQuotaLike,
+  isContextOverflow,
+  classifyContextOverflow,
   parseQuotaError,
   quotaWaitEnabled,
   decideQuotaWait,

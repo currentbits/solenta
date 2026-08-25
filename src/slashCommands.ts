@@ -40,7 +40,7 @@ export interface SlashCommand {
 export const SLASH_COMMANDS: readonly SlashCommand[] = [
   {
     name: "/compact",
-    hint: "Summarize the thread to free context",
+    hint: "Fork to fresh context with recent history",
     kind: "run",
     action: "compact",
   },

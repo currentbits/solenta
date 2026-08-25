@@ -86,6 +86,19 @@ async function main() {
     return;
   }
 
+  if (scenario === "structured-overflow") {
+    emit({
+      type: "turn.failed",
+      error: {
+        code: "context_length_exceeded",
+        message:
+          "Codex ran out of room in the model's context window. Start a new conversation.",
+      },
+    });
+    process.exit(1);
+    return;
+  }
+
   if (scenario === "success" || scenario === "resume-turn") {
     emit({ type: "thread.started", thread_id: "codex-sess-001" });
     await delay(20);
@@ -366,6 +379,40 @@ describe("runner codex provider", () => {
             m.runId === runId,
         ),
     );
+  });
+
+  it("classifies stdout-only turn.failed overflow and publishes normalized failure", async () => {
+    process.env.CODER_FAKE_CODEX_SCENARIO = "structured-overflow";
+    const thread = store.getThreads()[0];
+    const { runId } = await runner.startRun({
+      threadId: thread.id,
+      prompt: "overflow",
+    });
+
+    await waitFor(() => store.getThread(thread.id).status === "failed");
+
+    const failed = store.getThread(thread.id);
+    assert.equal(failed.lastErrorKind, "context-overflow");
+    assert.equal(failed.quotaWaitUntil, null);
+    assert.match(failed.lastError, /^Context window is full\./);
+
+    const events = store
+      .getMessages(thread.id)
+      .filter((m) => m.role === "event" && m.runId === runId);
+    assert.equal(events.length, 1);
+    assert.match(events[0].text, /^Context window is full\./);
+    assert.match(events[0].text, /context_length_exceeded/);
+    assert.match(events[0].text, /ran out of room/);
+    assert.doesNotMatch(events[0].text, /Quota wait:/);
+
+    const published = pushes
+      .filter((p) => p.channel === "threads:changed")
+      .flatMap((p) => p.payload)
+      .filter((t) => t.id === thread.id && t.status === "failed")
+      .at(-1);
+    assert.ok(published);
+    assert.equal(published.lastErrorKind, "context-overflow");
+    assert.equal(published.lastError, failed.lastError);
   });
 
   it("adds -c mcp_servers.coder-memory.url override only when memory is healthy", async () => {

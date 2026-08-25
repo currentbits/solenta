@@ -77,6 +77,68 @@ describe("Store", () => {
     assert.equal(auto.lastError, null);
   });
 
+  it("normalizes lastErrorKind and rejects unknown persisted kinds", () => {
+    fs.writeFileSync(
+      filePath,
+      JSON.stringify({
+        projects: [],
+        threads: [
+          { id: "missing", lastError: null },
+          { id: "overflow", lastErrorKind: "context-overflow" },
+          { id: "unknown", lastErrorKind: "network-error" },
+        ],
+        messagesByThread: {},
+        workLogByThread: {},
+        usageByThread: {},
+      }),
+      "utf8",
+    );
+    const store = new Store(filePath);
+    assert.equal(store.getThread("missing").lastErrorKind, null);
+    assert.equal(store.getThread("overflow").lastErrorKind, "context-overflow");
+    assert.equal(store.getThread("unknown").lastErrorKind, null);
+  });
+
+  it("clears lastErrorKind whenever a non-failed status clears lastError", () => {
+    const store = new Store(filePath);
+    store.setThreads([
+      {
+        id: "t1",
+        status: "failed",
+        lastError: "Context window is full",
+        lastErrorKind: "context-overflow",
+      },
+    ]);
+    store.updateThread("t1", { status: "working" });
+    assert.equal(store.getThread("t1").lastError, null);
+    assert.equal(store.getThread("t1").lastErrorKind, null);
+  });
+
+  it("clears stale kind when lastError is replaced and preserves an explicit kind", () => {
+    const store = new Store(filePath);
+    store.setThreads([
+      {
+        id: "t1",
+        status: "failed",
+        lastError: "Context window is full",
+        lastErrorKind: "context-overflow",
+      },
+    ]);
+
+    store.updateThread("t1", {
+      status: "failed",
+      lastError: "Run error: connection refused",
+    });
+    assert.equal(store.getThread("t1").lastErrorKind, null);
+
+    store.updateThread("t1", {
+      status: "failed",
+      lastError: "Context window is full again",
+      lastErrorKind: "context-overflow",
+    });
+    assert.equal(store.getThread("t1").lastErrorKind, "context-overflow");
+  });
+
   it("updateThread clears sessionId when worktreePath changes (cwd-scoped sessions)", () => {
     const store = new Store(filePath);
     store.setThreads([
@@ -122,6 +184,7 @@ describe("Store", () => {
       prUrl: null,
       status: "idle",
       lastError: null,
+      lastErrorKind: null,
       createdAt: 1,
       updatedAt: 2,
       runStartedAt: null,
@@ -1157,6 +1220,8 @@ describe("Store", () => {
           sessionId: "s1",
           permissionMode: "default",
           worktreePath: null,
+          lastError: "Context window is full",
+          lastErrorKind: "context-overflow",
         },
       ],
       messagesByThread: {
@@ -1178,6 +1243,7 @@ describe("Store", () => {
     const t = store.getThread("t-work");
     assert.equal(t.status, "failed");
     assert.equal(t.runStartedAt, null);
+    assert.equal(t.lastErrorKind, null);
 
     const msgs = store.getMessages("t-work");
     assert.ok(msgs.length >= 2);

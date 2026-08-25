@@ -4,6 +4,8 @@ const { describe, it } = require("node:test");
 const assert = require("node:assert/strict");
 const {
   isQuotaLike,
+  isContextOverflow,
+  classifyContextOverflow,
   parseQuotaError,
   quotaWaitEnabled,
   decideQuotaWait,
@@ -35,6 +37,76 @@ describe("isQuotaLike", () => {
     assert.equal(isQuotaLike("Run error (exit 1): spawn claude ENOENT"), false);
     assert.equal(isQuotaLike(""), false);
     assert.equal(isQuotaLike(null), false);
+  });
+});
+
+describe("isContextOverflow", () => {
+  it("matches structured and provider overflow language", () => {
+    const positives = [
+      "context_length_exceeded",
+      "Prompt is too long",
+      "maximum context length exceeded",
+      "This model's maximum context length is 128000 tokens",
+      "Your input exceeds the context window of this model",
+      "request is too long for the model context window",
+      "context window is full",
+      "Context window full",
+      "Error: context window is full, please start a new conversation",
+    ];
+    for (const text of positives) {
+      assert.equal(isContextOverflow(text), true, text);
+    }
+  });
+
+  it("matches narrow current Codex and OpenCode overflow phrases", () => {
+    assert.equal(
+      isContextOverflow(
+        "Codex ran out of room in the model's context window. Start a new conversation.",
+      ),
+      true,
+    );
+    assert.equal(
+      isContextOverflow(
+        "input length and max_tokens exceed context limit: 131072 tokens",
+      ),
+      true,
+    );
+  });
+
+  it("rejects quota, output-token, budget, and generic size errors", () => {
+    const negatives = [
+      "You've hit your session limit · resets 3pm",
+      "rate_limit_error: 429 Too Many Requests",
+      "Daily budget of $1.00 reached",
+      "max_tokens must be less than 4096",
+      "output token limit reached",
+      "Request entity too large",
+      "Run error (exit 1): spawn claude ENOENT",
+      "The context window setting was changed; note it is not full yet.",
+      "context window usage: 40% full",
+      "Codex ran out of room in the model queue; quota resets at 3pm",
+      "Codex has room in the model's context window; output token limit reached",
+      "output length and max_tokens exceed context limit",
+      "input length and max_tokens exceed output token limit",
+      "",
+      null,
+    ];
+    for (const text of negatives) {
+      assert.equal(isContextOverflow(text), false, String(text));
+    }
+  });
+
+  it("normalizes overflow while retaining short provider detail", () => {
+    const parsed = classifyContextOverflow(
+      "Run error: context_length_exceeded\nrequest had 250000 tokens\nignored tail",
+    );
+    assert.deepEqual(parsed, {
+      kind: "context-overflow",
+      text:
+        "Context window is full. Fork to fresh context or rewind the last turn.\n" +
+        "Provider error: Run error: context_length_exceeded\nrequest had 250000 tokens",
+    });
+    assert.equal(classifyContextOverflow("Run error: connection refused"), null);
   });
 });
 
