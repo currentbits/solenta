@@ -139,6 +139,7 @@ function makeCtx(deps) {
     worktreeBase: deps.worktreeBase || "",
     userDataPath,
     memory: createMemoryProxy({ userDataPath }),
+    stayAwake: deps.stayAwake || null,
   };
 }
 
@@ -824,7 +825,25 @@ const IPC_HANDLERS = {
     if (patch && Object.prototype.hasOwnProperty.call(patch, "uiScale")) {
       applyZoom(null, next.uiScale, ctx.store);
     }
+    // stayAwake mode change (#364): re-derive the power blocker now, not on
+    // the next thread tick. evaluate() is idempotent.
+    if (ctx.stayAwake) {
+      ctx.stayAwake.evaluate();
+    }
     return redactSettings(next);
+  },
+  "stayAwake:status": async (ctx) => {
+    if (ctx.stayAwake) {
+      return ctx.stayAwake.getState();
+    }
+    // Web mode has no power APIs: report the configured mode, never blocking.
+    const settings = services.getSettings(ctx.store);
+    return {
+      mode: settings.stayAwake,
+      blocking: false,
+      onBattery: false,
+      anyWorking: false,
+    };
   },
   "mcp:list": async (ctx) => {
     const settings = services.getSettings(ctx.store);
@@ -1591,6 +1610,7 @@ function createHandlers(deps) {
  * @param {import('./store').Store} deps.store
  * @param {ReturnType<import('./runner').createRunner>} deps.runner
  * @param {(channel: string, payload: unknown) => void} [deps.broadcast]
+ * @param {ReturnType<import('./caffeinate').createStayAwake>} [deps.stayAwake]
  * @param {string} [deps.worktreeBase]
  * @param {string} [deps.userDataPath]
  */

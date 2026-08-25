@@ -1,0 +1,35 @@
+/* Stay-awake footer control (#364). Visual sibling of the Settings button
+   in Sidebar.module.css: same height, radius, muted color, hover lift. */
+.stayAwake {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 10px;
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  font-size: 13px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.stayAwake:hover {
+  background: var(--card-hover);
+  color: var(--text);
+}
+
+.stayAwake[data-stay-awake-blocking] {
+  color: var(--text);
+}
+
+.dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--border);
+  flex-shrink: 0;
+}
+
+.dotBlocking {
+  background: var(--success-fg);
+}

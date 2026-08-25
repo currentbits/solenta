@@ -8,6 +8,7 @@ const PUSH_CHANNELS = new Set([
   "thread:updated",
   "thread:select",
   "boot:ready",
+  "stayAwake:changed",
 ]);
 /* </ipc-push> */
 
@@ -74,6 +75,7 @@ const IPC_CHANNELS = Object.freeze([
   { ns: "settings", method: "get" },
   { ns: "settings", method: "set" },
   { ns: "settings", method: "testWebhook" },
+  { ns: "stayAwake", method: "status" },
   { ns: "mcp", method: "list" },
   { ns: "mcp", method: "save" },
   { ns: "mcp", method: "remove" },

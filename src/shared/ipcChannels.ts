@@ -23,6 +23,7 @@ export const PUSH_CHANNELS = [
   "thread:updated",
   "thread:select",
   "boot:ready",
+  "stayAwake:changed",
 ] as const;
 
 export type PushChannel = (typeof PUSH_CHANNELS)[number];
@@ -42,6 +43,7 @@ export const IPC_CHANNELS = [
   { ns: "settings", method: "get" },
   { ns: "settings", method: "set" },
   { ns: "settings", method: "testWebhook" },
+  { ns: "stayAwake", method: "status" },
   { ns: "mcp", method: "list" },
   { ns: "mcp", method: "save" },
   { ns: "mcp", method: "remove" },

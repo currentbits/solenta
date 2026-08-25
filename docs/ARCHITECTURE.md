@@ -719,6 +719,26 @@ or reorder, do not `spec_submit`. Also build-stage only.
 
 - Composer model pill: always shown. Empty `models` → Default + Custom… (inline
   input, Enter commits, Escape cancels). Non-empty → Default + list only.
+
+## UI motion convention
+
+Adopted from Linear's convention (issue #364). The rule for any new or touched
+animation:
+
+- **Animate only `transform`, `opacity`, and `background-color`.** Never
+  animate layout properties (`width`, `height`, `top/left`, `margin`,
+  `padding`) — they force reflow and drop frames.
+- **0ms in, ~150ms out.** Appearing is instant (the content was asked for,
+  don't make the user wait); disappearing eases over ~150ms so the eye can
+  follow where it went. Hover/state transitions that are not enter/exit use
+  the same ~150ms ease-out.
+- **Popovers, menus, and dialogs scale from their origin point** (the control
+  that opened them) via `transform: scale(...)` + `transform-origin`, never by
+  animating size or position.
+
+The sidebar list animation (`@formkit/auto-animate`, 150ms ease-out) already
+follows this; treat deviations elsewhere as bugs to fix when touched, not as a
+grand refactor.
 - setProvider validation lives in `electron/services.js` only. `src/devCoder.ts`
   assigns what the picker sends: it is a fixture, not a second contract.
 - Permission card (issue #509, `electron/permissionCommand.js`): a proposed

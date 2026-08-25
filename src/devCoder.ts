@@ -1550,6 +1550,7 @@ function buildDevCoder(): CoderApi {
   let feltEstimatePrompt = false;
   let uiScale = 1;
   let theme: AppSettings["theme"] = "dark";
+  let stayAwake: AppSettings["stayAwake"] = "agent";
   let quotaWaitAutoResume = true;
   let otel: OtelSettings = { endpoint: null, headers: {}, claudeMetrics: false };
   let webhook: WebhookSettings = {
@@ -2337,6 +2338,7 @@ function buildDevCoder(): CoderApi {
           feltEstimatePrompt,
           uiScale,
           theme,
+          stayAwake,
           quotaWaitAutoResume,
           agentProfiles: agentProfiles.map((p) => ({ ...p })),
           subagentPool: {
@@ -2429,6 +2431,13 @@ function buildDevCoder(): CoderApi {
           }
           theme = v;
         }
+        if (Object.prototype.hasOwnProperty.call(patch, "stayAwake")) {
+          const v = patch.stayAwake;
+          if (v !== "agent" && v !== "on" && v !== "off") {
+            throw new Error('stayAwake must be "agent", "on", or "off"');
+          }
+          stayAwake = v;
+        }
         if (Object.prototype.hasOwnProperty.call(patch, "quotaWaitAutoResume")) {
           if (typeof patch.quotaWaitAutoResume !== "boolean") {
             throw new Error("quotaWaitAutoResume must be a boolean");
@@ -2506,6 +2515,7 @@ function buildDevCoder(): CoderApi {
           feltEstimatePrompt,
           uiScale,
           theme,
+          stayAwake,
           quotaWaitAutoResume,
           agentProfiles: agentProfiles.map((p) => ({ ...p })),
           subagentPool: {
@@ -2521,6 +2531,20 @@ function buildDevCoder(): CoderApi {
         // shape the real handler returns so the Settings row stays exercisable.
         if (!webhook.url) return { ok: false, error: "Save an http(s) webhook URL first" };
         return { ok: true, status: 200 };
+      },
+    },
+    stayAwake: {
+      // ponytail: no real power blocker in the dev browser; mirror the shape
+      // main returns so the sidebar control stays exercisable.
+      async status() {
+        const anyWorking = threads.some((t) => t.status === "working");
+        return {
+          mode: stayAwake,
+          blocking:
+            stayAwake === "on" || (stayAwake === "agent" && anyWorking),
+          onBattery: false,
+          anyWorking,
+        };
       },
     },
     mcp: {

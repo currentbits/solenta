@@ -129,7 +129,7 @@ describe("FleetReport", () => {
     const cell = m.query('[data-fleet-provider="grok"] [data-cost-per-merged]');
     assert.equal(cell?.textContent, "—");
     assert.ok(!(cell?.textContent ?? "").includes("$0.00"));
-    assert.ok(m.text().includes("$0.4000"), "row cost still renders");
+    assert.ok(m.text().includes("$0.40"), "row cost still renders");
     m.unmount();
   });
 

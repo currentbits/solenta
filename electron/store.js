@@ -384,6 +384,7 @@ function normalizeSettings(raw) {
     feltEstimatePrompt: false,
     uiScale: UI_SCALE_DEFAULT,
     theme: "dark",
+    stayAwake: "agent",
     quotaWaitAutoResume: true,
     prDiffCapLines: DEFAULT_PR_DIFF_CAP_LINES,
     agentProfiles: [],
@@ -475,6 +476,13 @@ function normalizeSettings(raw) {
   const theme = /** @type {{ theme?: unknown }} */ (obj).theme;
   settings.theme =
     theme === "system" || theme === "light" || theme === "dark" ? theme : "dark";
+  // stayAwake (#364): absent/junk heals to "agent" — the safe default keeps
+  // the machine awake during runs without pinning it awake while idle.
+  const stayAwake = /** @type {{ stayAwake?: unknown }} */ (obj).stayAwake;
+  settings.stayAwake =
+    stayAwake === "on" || stayAwake === "off" || stayAwake === "agent"
+      ? stayAwake
+      : "agent";
   settings.quotaWaitAutoResume =
     /** @type {{ quotaWaitAutoResume?: unknown }} */ (obj)
       .quotaWaitAutoResume !== false;
@@ -2519,6 +2527,7 @@ class Store {
       feltEstimatePrompt: n.feltEstimatePrompt,
       uiScale: n.uiScale,
       theme: n.theme,
+      stayAwake: n.stayAwake,
       quotaWaitAutoResume: n.quotaWaitAutoResume,
       prDiffCapLines: n.prDiffCapLines,
       agentProfiles: n.agentProfiles,
@@ -2701,6 +2710,13 @@ class Store {
         throw new Error('theme must be "system", "light", or "dark"');
       }
       this.data.settings.theme = v;
+    }
+    if (Object.prototype.hasOwnProperty.call(patch, "stayAwake")) {
+      const v = patch.stayAwake;
+      if (v !== "agent" && v !== "on" && v !== "off") {
+        throw new Error('stayAwake must be "agent", "on", or "off"');
+      }
+      this.data.settings.stayAwake = v;
     }
     if (Object.prototype.hasOwnProperty.call(patch, "quotaWaitAutoResume")) {
       const v = patch.quotaWaitAutoResume;

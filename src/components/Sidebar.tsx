@@ -13,6 +13,8 @@ import type {
   ConflictForecast,
   ProjectInfo,
   ProviderInfo,
+  StayAwakeMode,
+  StayAwakeStatus,
   ThreadInfo,
   UpdateStatus,
 } from "../shared/ipc";
@@ -86,6 +88,7 @@ import {
   toggleIdInSet,
 } from "../sidebarSelection";
 import { KeyboardSheet } from "./KeyboardSheet";
+import { StayAwakeControl } from "./StayAwakeControl";
 import styles from "./Sidebar.module.css";
 
 const TICK_MS = 5000;
@@ -200,6 +203,13 @@ interface SidebarProps {
   onDismissProjectError?: () => void;
   /** Opens Settings. Pass a pane to land on it (worktree usage → Git). */
   onOpenSettings?: (pane?: SettingsPane) => void;
+  /**
+   * Stay-awake state from main (issue #364). When present, the footer shows
+   * the three-state control (agent/on/off); click cycles the mode.
+   */
+  stayAwake?: StayAwakeStatus | null;
+  /** Persist a stay-awake mode (settings.stayAwake). */
+  onSetStayAwakeMode?: (mode: StayAwakeMode) => void;
   /** Aggregated spend today (USD); null while loading. */
   spendTodayUsd?: number | null;
   /** Daily budget cap; null = no cap. */
@@ -1281,6 +1291,8 @@ export const Sidebar = memo(function Sidebar({
   projectError = null,
   onDismissProjectError,
   onOpenSettings,
+  stayAwake = null,
+  onSetStayAwakeMode,
   autoSettleAfterDays,
   autoSettleOnMerge,
   searchThreads,
@@ -2964,6 +2976,9 @@ export const Sidebar = memo(function Sidebar({
             </span>
             Settings
           </button>
+          {stayAwake && onSetStayAwakeMode && (
+            <StayAwakeControl state={stayAwake} onSetMode={onSetStayAwakeMode} />
+          )}
           {(updateState === "available" || updateState === "staged") && (
             <button
               type="button"

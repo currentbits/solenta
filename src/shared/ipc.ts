@@ -1959,6 +1959,27 @@ export interface AutomationWrite {
   enabled?: boolean;
 }
 
+/**
+ * Stay-awake mode (issue #364, item 5). See AppSettings.stayAwake.
+ */
+export type StayAwakeMode = "agent" | "on" | "off";
+
+/**
+ * Derived stay-awake runtime state, pushed on "stayAwake:changed" and
+ * returned by stayAwake.status(). `blocking` is the ground truth for "is
+ * this Mac currently being kept awake"; `onBattery` explains why a mode
+ * that would block is currently suspended.
+ */
+export interface StayAwakeStatus {
+  mode: StayAwakeMode;
+  /** powerSaveBlocker is held right now. */
+  blocking: boolean;
+  /** Machine is on battery power (blocker released regardless of mode). */
+  onBattery: boolean;
+  /** At least one thread status is "working" (drives "agent" mode). */
+  anyWorking: boolean;
+}
+
 export interface AppSettings {
   /** Hard daily spend cap across all providers; null = no cap. */
   dailyBudgetUsd: number | null;
@@ -2032,6 +2053,13 @@ export interface AppSettings {
    * upgrades of the previously-dark-only app do not flip overnight.
    */
   theme: "system" | "light" | "dark";
+  /**
+   * Stay-awake control (issue #364, item 5). "agent" (the default) holds a
+   * powerSaveBlocker only while a thread is working; "on" holds it always;
+   * "off" never blocks. On battery power the blocker is released regardless
+   * of mode. Absent/junk on disk heals to "agent".
+   */
+  stayAwake: StayAwakeMode;
   /**
    * Continue automatically when a provider usage limit resets (#462).
    * Default on; only an explicit false opts out (Claude's /config row).
@@ -2629,6 +2657,15 @@ export interface CoderApi {
      * toggles. Never rejects — a bad URL is an `ok: false` result.
      */
     testWebhook(): Promise<WebhookTestResult>;
+  };
+  /**
+   * Stay-awake state (issue #364). The mode itself lives in settings
+   * (settings.set patches `stayAwake`); this reports the derived runtime
+   * state — whether the power blocker is actually held right now. On the
+   * web bridge (no power APIs) blocking/onBattery are always false.
+   */
+  stayAwake: {
+    status(): Promise<StayAwakeStatus>;
   };
   /**
    * Dedicated MCP CRUD. Results are public redacted definitions only —
@@ -3638,6 +3675,8 @@ export interface CoderApi {
   on(channel: "thread:select", cb: (threadId: string) => void): () => void;
   /** Main-process store + IPC handlers are up; refetch boot lists (#618). */
   on(channel: "boot:ready", cb: () => void): () => void;
+  /** Stay-awake derived state flipped (mode, blocking, battery) (#364). */
+  on(channel: "stayAwake:changed", cb: (state: StayAwakeStatus) => void): () => void;
 }
 
 declare global {

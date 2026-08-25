@@ -62,6 +62,7 @@ import type {
   SkillPreviewImportInput,
   SkillTarget,
   SpaceInfo,
+  StayAwakeStatus,
   ThreadDetail,
   ThreadPatch,
   ThreadInfo,
@@ -106,6 +107,8 @@ export interface FakeCoder {
   emitThread(detail: ThreadPatch): void;
   /** Push boot:ready so useCoder refetches lists (#618). */
   emitBootReady(): void;
+  /** Push a stayAwake:changed event (#364). */
+  emitStayAwake(s: StayAwakeStatus): void;
   /** Subscriptions that have not been torn down. */
   liveSubscriptions(): number;
 }
@@ -272,6 +275,7 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
     updateChannel: null,
     notifications: true,
     theme: "dark",
+    stayAwake: "agent",
     quotaWaitAutoResume: true,
     prDiffCapLines: 400,
     onboardingSeen: true,
@@ -450,6 +454,7 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
   const threadSubs: Array<(t: ThreadInfo[]) => void> = [];
   const detailSubs: Array<(d: ThreadPatch) => void> = [];
   const bootReadySubs: Array<() => void> = [];
+  const stayAwakeSubs: Array<(s: StayAwakeStatus) => void> = [];
 
   /** Record the call, then either reject (if configured) or resolve. */
   function rec<T>(channel: string, args: unknown[], value: T): Promise<T> {
@@ -636,6 +641,16 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
           }
           next.theme = v;
         }
+        if (Object.prototype.hasOwnProperty.call(p, "stayAwake")) {
+          const v = p.stayAwake;
+          if (v !== "agent" && v !== "on" && v !== "off") {
+            calls.push({ channel: "settings.set", args: [patch] });
+            return Promise.reject(
+              new Error('stayAwake must be "agent", "on", or "off"'),
+            );
+          }
+          next.stayAwake = v;
+        }
         if (Object.prototype.hasOwnProperty.call(p, "quotaWaitAutoResume")) {
           const v = p.quotaWaitAutoResume;
           if (typeof v !== "boolean") {
@@ -681,6 +696,17 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
           [],
           opts.testWebhook ?? { ok: true, status: 200 },
         ),
+    },
+    stayAwake: {
+      // No real power blocker in tests: derive the honest shape from
+      // settings + thread fixtures (blocking false unless overridden).
+      status: () =>
+        rec("stayAwake.status", [], {
+          mode: settingsState.stayAwake,
+          blocking: false,
+          onBattery: false,
+          anyWorking: threads.some((t) => t.status === "working"),
+        }),
     },
     mcp: {
       list: () =>
@@ -2524,6 +2550,13 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
           if (i >= 0) bootReadySubs.splice(i, 1);
         };
       }
+      if (channel === "stayAwake:changed") {
+        stayAwakeSubs.push(cb as (s: StayAwakeStatus) => void);
+        return () => {
+          const i = stayAwakeSubs.indexOf(cb as (s: StayAwakeStatus) => void);
+          if (i >= 0) stayAwakeSubs.splice(i, 1);
+        };
+      }
       detailSubs.push(cb as (d: ThreadPatch) => void);
       return () => {
         const i = detailSubs.indexOf(cb as (d: ThreadPatch) => void);
@@ -2551,8 +2584,12 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
     emitThreads: (next) => threadSubs.forEach((cb) => cb(next)),
     emitThread: (d) => detailSubs.forEach((cb) => cb(d)),
     emitBootReady: () => bootReadySubs.forEach((cb) => cb()),
+    emitStayAwake: (s) => stayAwakeSubs.forEach((cb) => cb(s)),
     liveSubscriptions: () =>
-      threadSubs.length + detailSubs.length + bootReadySubs.length,
+      threadSubs.length +
+      detailSubs.length +
+      bootReadySubs.length +
+      stayAwakeSubs.length,
   };
 }
 

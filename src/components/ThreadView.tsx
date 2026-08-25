@@ -2952,6 +2952,10 @@ function DiffCommentBox({
   onSend: () => void;
   onCancel: () => void;
 }) {
+  // Escape with a non-empty draft arms a discard confirm first (same two-step
+  // pattern as the revert "Sure?" button); a second Escape discards. Typing
+  // disarms. Empty drafts still cancel immediately.
+  const [discardArmed, setDiscardArmed] = useState(false);
   return (
     <div className={styles.diffComment} data-diff-comment-box="">
       <textarea
@@ -2962,10 +2966,17 @@ function DiffCommentBox({
         autoFocus
         value={draft}
         disabled={busy}
-        onChange={(e) => onChange(e.target.value)}
+        onChange={(e) => {
+          setDiscardArmed(false);
+          onChange(e.target.value);
+        }}
         onKeyDown={(e) => {
           if (e.key === "Escape") {
             e.preventDefault();
+            if (draft.trim() !== "" && !discardArmed) {
+              setDiscardArmed(true);
+              return;
+            }
             onCancel();
             return;
           }
@@ -2978,6 +2989,15 @@ function DiffCommentBox({
       {error ? (
         <div className={styles.inlineError} role="alert">
           {error}
+        </div>
+      ) : null}
+      {discardArmed ? (
+        <div
+          className={styles.diffCommentHint}
+          role="status"
+          data-diff-comment-discard-hint=""
+        >
+          Press Escape again to discard the comment
         </div>
       ) : null}
       <div className={styles.diffCommentActions}>

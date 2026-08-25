@@ -6,8 +6,9 @@
 // support buys nothing — turn it off for the whole main process.
 process.noAsar = true;
 
-const { app, BrowserWindow, ipcMain, dialog, shell, Notification, nativeTheme, protocol, net } = require("electron");
+const { app, BrowserWindow, ipcMain, dialog, shell, Notification, nativeTheme, protocol, net, powerSaveBlocker, powerMonitor } = require("electron");
 const { windowBackgroundColor, nativeThemeSource } = require("./theme.js");
+const { createStayAwake } = require("./caffeinate.js");
 const path = require("node:path");
 const fs = require("node:fs");
 const { pathToFileURL } = require("node:url");
@@ -91,6 +92,9 @@ let memorySupervisor = null;
 
 /** @type {ReturnType<typeof createRunner> | null} */
 let runner = null;
+
+/** @type {ReturnType<typeof createStayAwake> | null} */
+let stayAwake = null;
 
 /** @type {ReturnType<typeof createOrchServer> | null} */
 let orchServer = null;
@@ -401,6 +405,14 @@ app.whenReady().then(async () => {
     },
   });
 
+  // createWindow ran while store was still null (#618 first-paint-first), so
+  // the window painted the "dark" default regardless of the saved preference.
+  // Re-apply now that the store knows the real theme: dark launches stay dark
+  // (no white flash), light/system-light no longer flash dark (#364 audit).
+  for (const w of BrowserWindow.getAllWindows()) {
+    applyNativeAndWindowTheme(w);
+  }
+
   // Follow the OS when settings.theme is "system".
   nativeTheme.on("updated", () => {
     for (const w of BrowserWindow.getAllWindows()) {
@@ -418,6 +430,18 @@ app.whenReady().then(async () => {
   for (const t of store.getThreads()) {
     lastStatus.set(t.id, threadNotifyState(t));
   }
+
+  // Stay-awake (#364): hold a power blocker while agents run (or always in
+  // "on" mode), never on battery. Re-evaluated on thread status transitions
+  // below, on settings:set (ipc.js), and on power source changes (module).
+  stayAwake = createStayAwake({
+    powerSaveBlocker,
+    powerMonitor,
+    getMode: () => store.getSettings().stayAwake,
+    isAnyWorking: () =>
+      store.getThreads().some((t) => t.status === "working"),
+    onChange: (state) => broadcast("stayAwake:changed", state),
+  });
 
   runner = createRunner({
     store,
@@ -454,6 +478,10 @@ app.whenReady().then(async () => {
           });
         }
         lastStatus.set(payload.thread.id, next);
+        // Working↔idle transitions drive "agent" stay-awake mode (#364).
+        if (prev !== next && stayAwake) {
+          stayAwake.evaluate();
+        }
       }
       broadcast(channel, payload);
     },
@@ -467,6 +495,7 @@ app.whenReady().then(async () => {
     store,
     runner,
     broadcast,
+    stayAwake,
     worktreeBase: path.join(userData, "worktrees"),
     userDataPath: userData,
   });

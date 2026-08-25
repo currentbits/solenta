@@ -393,6 +393,67 @@ describe("ChangesPanel inline comments (issue #162)", () => {
     assert.equal(spies.comments.length, 1, "Escape must not send");
   });
 
+  it("Escape with a draft arms a confirm instead of discarding (issue #364)", async () => {
+    const { m, spies } = mountPanel();
+    const view = await m;
+    await view.click(view.query('button[aria-label="Comment on line 2"]'));
+    const input = view.query('textarea[aria-label="Diff comment"]');
+    await view.type(input, "keep this");
+    await view.pressFocused("Escape");
+    assert.ok(
+      view.query("[data-diff-comment-box]"),
+      "first Escape keeps the box open",
+    );
+    assert.ok(
+      view.query("[data-diff-comment-discard-hint]"),
+      "discard hint appears",
+    );
+    assert.equal(
+      (view.query('textarea[aria-label="Diff comment"]') as HTMLTextAreaElement)
+        .value,
+      "keep this",
+      "draft survives the first Escape",
+    );
+    await view.pressFocused("Escape");
+    assert.equal(
+      view.query("[data-diff-comment-box]"),
+      null,
+      "second Escape discards",
+    );
+    assert.equal(spies.comments.length, 0, "Escape must not send");
+  });
+
+  it("typing disarms the Escape discard confirm", async () => {
+    const { m } = mountPanel();
+    const view = await m;
+    await view.click(view.query('button[aria-label="Comment on line 2"]'));
+    const input = view.query('textarea[aria-label="Diff comment"]');
+    await view.type(input, "keep this");
+    await view.pressFocused("Escape");
+    assert.ok(view.query("[data-diff-comment-discard-hint]"), "armed");
+    await view.type(input, "!");
+    assert.equal(
+      view.query("[data-diff-comment-discard-hint]"),
+      null,
+      "typing hides the hint",
+    );
+    await view.pressFocused("Escape");
+    assert.ok(
+      view.query("[data-diff-comment-box]"),
+      "Escape after typing re-arms instead of discarding",
+    );
+  });
+
+  it("Escape with a whitespace-only draft cancels immediately", async () => {
+    const { m } = mountPanel();
+    const view = await m;
+    await view.click(view.query('button[aria-label="Comment on line 2"]'));
+    const input = view.query('textarea[aria-label="Diff comment"]');
+    await view.type(input, "   ");
+    await view.pressFocused("Escape");
+    assert.equal(view.query("[data-diff-comment-box]"), null);
+  });
+
   it("hides comment controls on an archived thread", async () => {
     const { m } = mountPanel({ archived: true });
     const view = await m;

@@ -123,11 +123,12 @@ export function snapToHonouredPermissionMode(
 }
 
 /**
- * Cost display: four decimals under $1 ($0.0123), two decimals at/above ($12.34).
+ * Cost display: always cents. A real cost below one cent renders "<$0.01"
+ * so a nonzero spend never reads as "$0.00" (issue #364).
  */
 export function formatCostUsd(costUsd: number): string {
-  if (!Number.isFinite(costUsd)) return "$0.00";
-  if (Math.abs(costUsd) < 1) return `$${costUsd.toFixed(4)}`;
+  if (!Number.isFinite(costUsd) || costUsd === 0) return "$0.00";
+  if (Math.abs(costUsd) < 0.01) return "<$0.01";
   return `$${costUsd.toFixed(2)}`;
 }
 

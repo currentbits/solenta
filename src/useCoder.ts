@@ -61,6 +61,8 @@ import type {
   SkillTarget,
   SkillWrite,
   SpecArtifact,
+  StayAwakeMode,
+  StayAwakeStatus,
   ThreadDetail,
   ThreadInfo,
   ThreadSummaryInfo,
@@ -554,6 +556,10 @@ export interface UseCoderResult {
   settings: AppSettings | null;
   /** Patch settings; updates local state from the returned value. */
   saveSettings: (patch: Partial<AppSettings>) => Promise<AppSettings>;
+  /** Derived stay-awake state from main (issue #364); null until loaded. */
+  stayAwake: StayAwakeStatus | null;
+  /** Set the stay-awake mode (persisted via settings.stayAwake). */
+  setStayAwakeMode: (mode: StayAwakeMode) => Promise<AppSettings>;
   /** POST a test payload to the saved webhook URL (issue #167). */
   testWebhook: () => Promise<WebhookTestResult>;
   /** Re-fetch app.status() (e.g. after a run settles). */
@@ -660,6 +666,7 @@ export function useCoder(): UseCoderResult {
   const [error, setError] = useState<CoderError | null>(null);
   const [appStatus, setAppStatus] = useState<AppStatus | null>(null);
   const [settings, setSettings] = useState<AppSettings | null>(null);
+  const [stayAwake, setStayAwake] = useState<StayAwakeStatus | null>(null);
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus | null>(null);
   const selectedRef = useRef<string | null>(null);
   /** Bumped on every threads:changed push so a late initial list cannot clobber it. */
@@ -898,6 +905,11 @@ export function useCoder(): UseCoderResult {
             api.app.status().catch(() => null),
             api.settings.get().catch(() => null),
           ]);
+          // Best-effort like status/settings: a stale backend without the
+          // stayAwake channel must not blank the boot.
+          const awake = await api.stayAwake
+            .status()
+            .catch(() => null as StayAwakeStatus | null);
           if (cancelled) return;
           setProjects(p);
           setProviders(prov);
@@ -905,6 +917,7 @@ export function useCoder(): UseCoderResult {
           setAutomations(autos);
           if (status != null) setAppStatus(status);
           if (sett != null) setSettings(sett);
+          if (awake != null) setStayAwake(awake);
           for (const t of list) {
             prevStatusRef.current.set(t.id, t.status);
           }
@@ -990,6 +1003,12 @@ export function useCoder(): UseCoderResult {
     unsubBoot = api.on("boot:ready", () => {
       void loadBootLists();
     });
+
+    const unsubStayAwake = api.on("stayAwake:changed", (s) => {
+      if (s && typeof s === "object" && typeof s.blocking === "boolean") {
+        setStayAwake(s);
+      }
+    });
     void loadBootLists();
 
     // Shared 60s interval for the spend meter (same pattern as sidebar age tick).
@@ -1003,6 +1022,7 @@ export function useCoder(): UseCoderResult {
       unsubUpdated?.();
       unsubSelect?.();
       unsubBoot?.();
+      unsubStayAwake();
       window.clearInterval(statusHandle);
     };
   }, [api, applyThreads, refreshStatus, reloadDetail]);
@@ -2797,6 +2817,27 @@ export function useCoder(): UseCoderResult {
 
   const testWebhook = useCallback(() => api.settings.testWebhook(), [api]);
 
+  // Mode change persists through settings; main re-evaluates the blocker and
+  // pushes stayAwake:changed. The local mode mirrors the returned settings so
+  // the control flips even where no push arrives (web, fakes).
+  const setStayAwakeMode = useCallback(
+    async (mode: StayAwakeMode) => {
+      const next = await saveSettings({ stayAwake: mode });
+      setStayAwake((prev) =>
+        prev
+          ? { ...prev, mode: next.stayAwake }
+          : {
+              mode: next.stayAwake,
+              blocking: false,
+              onBattery: false,
+              anyWorking: false,
+            },
+      );
+      return next;
+    },
+    [saveSettings],
+  );
+
   const searchMemory = useCallback(
     async (input: { query: string; project?: string }) => {
       return api.memory.search(input);
@@ -3138,6 +3179,8 @@ export function useCoder(): UseCoderResult {
     appStatus,
     settings,
     saveSettings,
+    stayAwake,
+    setStayAwakeMode,
     testWebhook,
     refreshStatus,
     updateStatus,

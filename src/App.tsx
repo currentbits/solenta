@@ -246,6 +246,8 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     applyUpdate,
     settings,
     saveSettings,
+    stayAwake,
+    setStayAwakeMode,
     testWebhook,
     refreshProviders,
     projectById,
@@ -1182,6 +1184,8 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         projectError={error?.scope === "project" ? error.message : null}
         onDismissProjectError={clearError}
         onOpenSettings={openSettings}
+        stayAwake={stayAwake}
+        onSetStayAwakeMode={(mode) => void setStayAwakeMode(mode)}
         spendTodayUsd={appStatus?.spendTodayUsd ?? null}
         dailyBudgetUsd={settings?.dailyBudgetUsd ?? null}
         autoSettleAfterDays={

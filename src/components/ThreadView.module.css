@@ -1293,6 +1293,11 @@ button.diffLineGutter:focus-visible {
   color: var(--text-dim);
 }
 
+.diffCommentHint {
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
 .diffCommentActions {
   display: flex;
   justify-content: flex-end;
