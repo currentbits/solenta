@@ -120,7 +120,12 @@ export function PlanboardView({
         setStartNote(`#${issueNumber}: ${res.reason}`);
         return;
       }
-      if (res.warning) setStartNote(`#${issueNumber}: ${res.warning}`);
+      if (res.warning) {
+        setStartNote(`#${issueNumber}: ${res.warning}`);
+      } else {
+        // We stay on the board (#207), so say the start actually happened.
+        setStartNote(`#${issueNumber}: thread started`);
+      }
       // Card moved to In progress on GitHub; pull the board back in sync.
       void load();
     },

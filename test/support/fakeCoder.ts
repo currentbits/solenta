@@ -209,6 +209,10 @@ export interface FakeOptions {
   issueFetch?: FetchIssueResult;
   /** Override issues.create result (default: a successful fixture). */
   issueCreate?: CreateIssueResult;
+  /** Override issues.list result (default: an empty board). */
+  issueList?: ListIssuesResult;
+  /** Override issues.setPlanStatus result (default: ok). */
+  issueSetPlanStatus?: SetPlanStatusResult;
   /** Override attachments.saveImage result (default: { attachment: null }). */
   saveImage?: (input: unknown) => { attachment: AttachmentInfo | null };
   /** Override attachments.fromPaths result (default: { attachments: [] }). */
@@ -2367,6 +2371,18 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
             number: 1234,
             url: "https://github.com/dev/fixture/issues/1234",
           },
+        ),
+      list: (projectPath: string) =>
+        rec(
+          "issues.list",
+          [projectPath],
+          opts.issueList ?? { ok: true as const, issues: [] },
+        ),
+      setPlanStatus: (input: unknown) =>
+        rec(
+          "issues.setPlanStatus",
+          [input],
+          opts.issueSetPlanStatus ?? { ok: true as const },
         ),
     },
     servers: {
