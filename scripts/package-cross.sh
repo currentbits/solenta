@@ -145,6 +145,12 @@ mkdir -p "$PAYLOAD/core"
 cp -R core/dist "$PAYLOAD/core/dist"
 cp core/package.json "$PAYLOAD/core/package.json"
 
+# iOS simulator helper sources — electron/ios-simulator-protocol.js requires
+# ../native/ios-simulator-helper/protocol.json at module load on every
+# platform (main.js requires the chain unconditionally).
+mkdir -p "$PAYLOAD/native"
+cp -R native/ios-simulator-helper "$PAYLOAD/native/ios-simulator-helper"
+
 # App icon. Windows/Linux have no Info.plist, so electron/main.js sets the
 # window icon from these files at runtime; without them the Windows taskbar
 # falls back to the icon embedded in electron.exe (the stock Electron logo).
