@@ -9,10 +9,13 @@ import {
   reviewLoad,
 } from "../planboard";
 import type { PlanSort } from "../planboard";
+import { buildProfileRows } from "../modelPicker";
 import type {
+  AgentProfile,
   ListIssuesResult,
   ListPrsResult,
   ProjectInfo,
+  ProviderInfo,
   ThreadInfo,
 } from "../shared/ipc";
 import styles from "./PlanboardView.module.css";
@@ -46,7 +49,13 @@ export interface PlanboardViewProps {
     projectPath: string;
     ref: string;
     mode: ThreadStartMode;
+    /** Saved agent profile for an orchestrator lead (#714). Omitted = inherit. */
+    agentProfileId?: string;
   }) => Promise<{ ok: true; warning?: string } | { ok: false; reason: string }>;
+  /** Named agents listed in the orchestrator-agent field (#714). */
+  agentProfiles?: AgentProfile[];
+  /** Used to disable profiles whose CLI is missing. */
+  providers?: ProviderInfo[];
 }
 
 export function PlanboardView({
@@ -57,6 +66,8 @@ export function PlanboardView({
   onSelectThread,
   onStartTask,
   initialProjectId,
+  agentProfiles,
+  providers,
 }: PlanboardViewProps) {
   const [projectId, setProjectId] = useState<string | null>(initialProjectId ?? null);
   const [result, setResult] = useState<ListIssuesResult | null>(null);
@@ -68,6 +79,8 @@ export function PlanboardView({
   const [startNote, setStartNote] = useState<string | null>(null);
   /** Thread mode for Start task; "default" follows the app setting. */
   const [startMode, setStartMode] = useState<ThreadStartMode>("default");
+  /** Orchestrator lead agent; empty = inherit from the selected thread. */
+  const [agentProfileId, setAgentProfileId] = useState("");
   /** Column ordering; "updated" is the long-standing default. */
   const [sort, setSort] = useState<PlanSort>("updated");
   const loadGen = useRef(0);
@@ -104,16 +117,26 @@ export function PlanboardView({
     void load();
   }, [load]);
 
+  const orchAgentRows = useMemo(
+    () => buildProfileRows(agentProfiles ?? [], providers ?? []),
+    [agentProfiles, providers],
+  );
+
   const startTask = useCallback(
     async (issueNumber: number) => {
       if (!onStartTask || !project || starting != null) return;
       setStarting(issueNumber);
       setStartNote(null);
+      const orchProfile =
+        startMode === "orchestrator"
+          ? orchAgentRows.find((r) => r.id === agentProfileId && !r.disabled)
+          : undefined;
       const res = await onStartTask({
         projectId: project.id,
         projectPath: project.path,
         ref: String(issueNumber),
         mode: startMode,
+        ...(orchProfile ? { agentProfileId: orchProfile.id } : {}),
       });
       setStarting(null);
       if (!res.ok) {
@@ -129,7 +152,7 @@ export function PlanboardView({
       // Card moved to In progress on GitHub; pull the board back in sync.
       void load();
     },
-    [onStartTask, project, starting, load, startMode],
+    [onStartTask, project, starting, load, startMode, agentProfileId, orchAgentRows],
   );
 
   const columns = useMemo(
@@ -201,6 +224,24 @@ export function PlanboardView({
               <option value="plain">Start as: Plain</option>
               <option value="worktree">Start as: Worktree</option>
               <option value="orchestrator">Start as: Orchestrator</option>
+            </select>
+          ) : null}
+          {onStartTask && startMode === "orchestrator" ? (
+            <select
+              className={styles.startMode}
+              value={agentProfileId}
+              onChange={(e) => setAgentProfileId(e.target.value)}
+              data-plan-orch-agent=""
+              aria-label="Orchestrator agent"
+              title="Agent profile the orchestrator lead uses"
+            >
+              <option value="">Orchestrator: Default</option>
+              {orchAgentRows.map((row) => (
+                <option key={row.id} value={row.id} disabled={row.disabled}>
+                  Orchestrator: {row.name}
+                  {row.disabledReason ? ` (${row.disabledReason})` : ""}
+                </option>
+              ))}
             </select>
           ) : null}
           <select

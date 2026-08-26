@@ -16,12 +16,23 @@ import { useCoder } from "../src/useCoder";
 function Probe() {
   const {
     selectedThreadId,
+    setProvider,
     setReasoningEffort,
     setPermissionMode,
   } = useCoder();
   return (
     <div>
       <span data-selected="">{selectedThreadId ?? ""}</span>
+      <button
+        data-provider=""
+        onClick={() =>
+          void setProvider({
+            provider: "claude",
+            model: "sonnet",
+            threadId: "t-other",
+          })
+        }
+      />
       <button
         data-effort=""
         onClick={() => void setReasoningEffort("high", "t-other")}
@@ -44,7 +55,7 @@ async function boot(fake: FakeCoder) {
 }
 
 describe("setters target the passed thread id", () => {
-  it("setReasoningEffort and setPermissionMode hit the arg, not the selection", async () => {
+  it("setProvider, setReasoningEffort and setPermissionMode hit the arg, not the selection", async () => {
     const fake = createFakeCoder({
       threads: [
         thread({ id: "t-selected", title: "open" }),
@@ -57,6 +68,18 @@ describe("setters target the passed thread id", () => {
       "t-selected",
       "the open thread is the one useCoder auto-selected",
     );
+
+    await m.click(m.query("[data-provider]"));
+    const provider = fake.only("threads.setProvider").args[0] as {
+      threadId: string;
+      provider: string;
+      model: string;
+    };
+    assert.deepEqual(provider, {
+      threadId: "t-other",
+      provider: "claude",
+      model: "sonnet",
+    });
 
     await m.click(m.query("[data-effort]"));
     const effort = fake.only("threads.setReasoningEffort").args[0] as {

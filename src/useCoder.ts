@@ -291,10 +291,15 @@ export interface UseCoderResult {
   ) => Promise<void>;
   /** Dismiss the selected thread's persisted question card (issue #647). */
   clearQuestion: () => Promise<void>;
-  /** Set provider and/or model on the selected thread (selectedRef-guarded). */
+  /**
+   * Set provider and/or model. Defaults to the selected thread.
+   * Pass threadId when applying a profile to a thread that is not selected
+   * (planboard Start task, forks).
+   */
   setProvider: (input: {
     provider?: string;
     model?: string | null;
+    threadId?: string;
   }) => Promise<void>;
   /**
    * Set reasoning effort. Defaults to the selected thread.
@@ -1659,23 +1664,29 @@ export function useCoder(): UseCoderResult {
   }, [api, selectedThreadId]);
 
   const setProvider = useCallback(
-    async (input: { provider?: string; model?: string | null }) => {
-      if (!selectedThreadId) return;
-      const threadId = selectedThreadId;
+    async (input: {
+      provider?: string;
+      model?: string | null;
+      threadId?: string;
+    }) => {
+      const threadId = input.threadId ?? selectedThreadId;
+      if (!threadId) return;
       try {
         const thread = await api.threads.setProvider({
           threadId,
-          ...input,
+          ...(input.provider !== undefined ? { provider: input.provider } : {}),
+          ...(input.model !== undefined ? { model: input.model } : {}),
         });
-        if (selectedRef.current !== threadId) return;
         applyThreads(
           threadsRef.current.map((t) => (t.id === thread.id ? thread : t)),
         );
-        setDetail((prev) =>
-          prev && prev.thread.id === thread.id
-            ? { ...prev, thread }
-            : prev,
-        );
+        if (selectedRef.current === threadId) {
+          setDetail((prev) =>
+            prev && prev.thread.id === thread.id
+              ? { ...prev, thread }
+              : prev,
+          );
+        }
         setError(null);
       } catch (err) {
         setError({ scope: "run", message: errorMessage(err) });

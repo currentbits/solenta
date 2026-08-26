@@ -9,15 +9,55 @@ import { mount, inAct } from "./support/dom.ts";
 import { thread } from "./support/fakeCoder.ts";
 import { PlanboardView } from "../src/components/PlanboardView";
 import type {
+  AgentProfile,
   ListIssuesResult,
   ListPrsResult,
   ProjectInfo,
+  ProviderInfo,
 } from "../src/shared/ipc";
 
 const projects: ProjectInfo[] = [
   { id: "p1", slug: "acme/ledger", name: "ledger", path: "/tmp/ledger" },
   { id: "p2", slug: "acme/site", name: "site", path: "/tmp/site" },
 ];
+
+const CLAUDE: ProviderInfo = {
+  id: "claude",
+  name: "Claude Code",
+  available: true,
+  supportsResume: true,
+  models: ["claude-sonnet-4"],
+  modelInfo: [],
+  efforts: ["low", "medium", "high"],
+};
+
+const GROK_UNAVAILABLE: ProviderInfo = {
+  id: "grok",
+  name: "Grok",
+  available: false,
+  supportsResume: false,
+  models: ["grok-4"],
+  modelInfo: [],
+  efforts: [],
+};
+
+const SCOUT: AgentProfile = {
+  id: "p-scout",
+  name: "Cheap scout",
+  provider: "claude",
+  model: "claude-sonnet-4",
+  reasoningEffort: "low",
+  permissionMode: "plan",
+};
+
+const GROK_WORKER: AgentProfile = {
+  id: "p-grok",
+  name: "Grok worker",
+  provider: "grok",
+  model: "grok-4",
+  reasoningEffort: "high",
+  permissionMode: "acceptEdits",
+};
 
 const okResult: ListIssuesResult = {
   ok: true,
@@ -318,6 +358,93 @@ describe("PlanboardView", () => {
     assert.equal(calls.length, 1);
     assert.equal(calls[0].ref, "1");
     assert.equal(calls[0].mode, "orchestrator");
+    m.unmount();
+  });
+
+  it("hides the orchestrator-agent field until Start as is Orchestrator (#714)", async () => {
+    const m = await mount(
+      <PlanboardView
+        projects={projects}
+        listIssues={async () => okResult}
+        onStartTask={async () => ({ ok: true as const })}
+        agentProfiles={[SCOUT]}
+        providers={[CLAUDE]}
+      />,
+    );
+    assert.equal(m.query("[data-plan-orch-agent]"), null);
+    const mode = m.query("[data-plan-start-mode]") as HTMLSelectElement;
+    await inAct(() => {
+      mode.value = "orchestrator";
+      mode.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    const agent = m.query("[data-plan-orch-agent]") as HTMLSelectElement | null;
+    assert.ok(agent, "orchestrator agent field appears with the mode");
+    assert.equal(agent.value, "");
+    assert.ok(agent.textContent?.includes("Cheap scout"));
+    m.unmount();
+  });
+
+  it("Start task passes the chosen orchestrator agent profile (#714)", async () => {
+    const calls: Array<Record<string, unknown>> = [];
+    const m = await mount(
+      <PlanboardView
+        projects={projects}
+        listIssues={async () => okResult}
+        onStartTask={async (input) => {
+          calls.push(input);
+          return { ok: true as const };
+        }}
+        agentProfiles={[SCOUT, GROK_WORKER]}
+        providers={[CLAUDE, GROK_UNAVAILABLE]}
+      />,
+    );
+    const mode = m.query("[data-plan-start-mode]") as HTMLSelectElement;
+    await inAct(() => {
+      mode.value = "orchestrator";
+      mode.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    const agent = m.query("[data-plan-orch-agent]") as HTMLSelectElement;
+    const grok = agent.querySelector('option[value="p-grok"]') as HTMLOptionElement | null;
+    assert.ok(grok, "unavailable profile is listed");
+    assert.equal(grok.disabled, true, "unavailable profile is not selectable");
+
+    await inAct(() => {
+      agent.value = "p-scout";
+      agent.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    await inAct(() => {
+      (m.query("[data-plan-start='1']") as HTMLElement).click();
+    });
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].mode, "orchestrator");
+    assert.equal(calls[0].agentProfileId, "p-scout");
+    m.unmount();
+  });
+
+  it("Start task omits agentProfileId when the orchestrator agent is Default (#714)", async () => {
+    const calls: Array<Record<string, unknown>> = [];
+    const m = await mount(
+      <PlanboardView
+        projects={projects}
+        listIssues={async () => okResult}
+        onStartTask={async (input) => {
+          calls.push(input);
+          return { ok: true as const };
+        }}
+        agentProfiles={[SCOUT]}
+        providers={[CLAUDE]}
+      />,
+    );
+    const mode = m.query("[data-plan-start-mode]") as HTMLSelectElement;
+    await inAct(() => {
+      mode.value = "orchestrator";
+      mode.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    await inAct(() => {
+      (m.query("[data-plan-start='1']") as HTMLElement).click();
+    });
+    assert.equal(calls[0].mode, "orchestrator");
+    assert.equal(calls[0].agentProfileId, undefined);
     m.unmount();
   });
 });

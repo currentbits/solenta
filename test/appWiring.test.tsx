@@ -21,7 +21,7 @@ import {
   type FakeCoder,
 } from "./support/fakeCoder.ts";
 import App from "../src/App";
-import type { ProviderInfo } from "../src/shared/ipc";
+import type { AgentProfile, ProviderInfo } from "../src/shared/ipc";
 
 async function boot(fake: FakeCoder) {
   // window must exist before the fake is installed, and dom.ts creates it on
@@ -1071,6 +1071,106 @@ describe("App planboard wiring (#207)", () => {
         1,
         "the start must still kick off the run",
       );
+    } finally {
+      m.unmount();
+    }
+  });
+
+  it("applies the chosen orchestrator agent before the first run (#714)", async () => {
+    const scout: AgentProfile = {
+      id: "p-scout",
+      name: "Cheap scout",
+      provider: "claude",
+      model: "claude-sonnet-4",
+      reasoningEffort: "low",
+      permissionMode: "plan",
+    };
+    const fake = createFakeCoder({
+      projects: [project({ id: "p1", path: "/tmp/repo" })],
+      threads: [thread({ id: "t1", projectId: "p1" })],
+      settings: { agentProfiles: [scout] },
+      issueList: {
+        ok: true,
+        issues: [
+          {
+            number: 12,
+            title: "Fix login",
+            url: "https://github.com/owner/repo/issues/12",
+            state: "OPEN",
+            labels: ["plan:todo"],
+          },
+        ],
+      },
+    });
+    const m = await boot(fake);
+    try {
+      await m.flush();
+      const nav = m.query('[data-view-nav="planboard"]');
+      assert.ok(nav, "planboard nav button must exist");
+      await m.click(nav as HTMLElement);
+      await m.flush();
+
+      const mode = m.query("[data-plan-start-mode]") as HTMLSelectElement | null;
+      assert.ok(mode, "start-mode selector");
+      await inAct(() => {
+        mode.value = "orchestrator";
+        mode.dispatchEvent(new Event("change", { bubbles: true }));
+      });
+      const agent = m.query("[data-plan-orch-agent]") as HTMLSelectElement | null;
+      assert.ok(agent, "orchestrator agent field");
+      await inAct(() => {
+        agent.value = "p-scout";
+        agent.dispatchEvent(new Event("change", { bubbles: true }));
+      });
+
+      const start = m.query('[data-plan-start="12"]') as HTMLElement | null;
+      assert.ok(start, "the Todo card must offer Start task");
+      await m.click(start);
+      await m.flush();
+      await m.flush();
+
+      const create = fake.only("threads.create").args[0] as {
+        orchestrate?: boolean;
+      };
+      assert.equal(create.orchestrate, true);
+
+      const setProvider = fake.only("threads.setProvider").args[0] as {
+        threadId: string;
+        provider: string;
+        model: string | null;
+      };
+      assert.deepEqual(setProvider, {
+        threadId: "t-new",
+        provider: "claude",
+        model: "claude-sonnet-4",
+      });
+      const effort = fake.only("threads.setReasoningEffort").args[0] as {
+        threadId: string;
+        effort: string | null;
+      };
+      assert.deepEqual(effort, { threadId: "t-new", effort: "low" });
+      const perm = fake.only("threads.setPermissionMode").args[0] as {
+        threadId: string;
+        mode: string;
+      };
+      assert.deepEqual(perm, { threadId: "t-new", mode: "plan" });
+
+      const channels = fake.channels().filter((c) =>
+        [
+          "threads.create",
+          "threads.setProvider",
+          "threads.setReasoningEffort",
+          "threads.setPermissionMode",
+          "runs.start",
+        ].includes(c),
+      );
+      assert.deepEqual(channels, [
+        "threads.create",
+        "threads.setProvider",
+        "threads.setReasoningEffort",
+        "threads.setPermissionMode",
+        "runs.start",
+      ]);
     } finally {
       m.unmount();
     }

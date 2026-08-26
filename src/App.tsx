@@ -38,6 +38,10 @@ import {
   type RepeatDraft,
 } from "./repeatThread";
 import { sameTaskPeers, toComparePeer } from "./divergence";
+import {
+  providerPermissionModes,
+  snapToHonouredPermissionMode,
+} from "./format";
 import type {
   AgentProfile,
   ConflictForecast,
@@ -953,6 +957,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
       projectPath: string;
       ref: string;
       mode?: ThreadStartMode;
+      agentProfileId?: string;
     }) => {
       const fetched = await fetchIssue(input.projectPath, input.ref);
       if (!fetched.ok) return fetched;
@@ -984,6 +989,43 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
       if (!thread) {
         return { ok: false as const, reason: "Could not create thread" };
       }
+      if (input.agentProfileId) {
+        const profile = (settings?.agentProfiles ?? []).find(
+          (p) => p.id === input.agentProfileId,
+        );
+        if (!profile) {
+          return { ok: false as const, reason: "Unknown agent profile" };
+        }
+        const info = providers.find((p) => p.id === profile.provider);
+        if (!info || info.available === false) {
+          return {
+            ok: false as const,
+            reason: `${profile.name} is not installed`,
+          };
+        }
+        try {
+          // Same order as Composer.pickProfile: setProvider clears effort
+          // on a harness switch, then effort, then permission.
+          await setProvider({
+            threadId: thread.id,
+            provider: profile.provider,
+            model: profile.model,
+          });
+          await setReasoningEffort(profile.reasoningEffort, thread.id);
+          await setPermissionMode(
+            snapToHonouredPermissionMode(
+              providerPermissionModes(info),
+              profile.permissionMode,
+            ),
+            thread.id,
+          );
+        } catch (err) {
+          return {
+            ok: false as const,
+            reason: err instanceof Error ? err.message : String(err),
+          };
+        }
+      }
       const body = issue.body || "";
       const heading =
         issue.source === "linear"
@@ -1013,7 +1055,17 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         ? { ok: true as const }
         : { ok: true as const, warning: `plan:doing not set (${moved.reason})` };
     },
-    [fetchIssue, createThread, startRun, setIssuePlanStatus],
+    [
+      fetchIssue,
+      createThread,
+      startRun,
+      setIssuePlanStatus,
+      settings?.agentProfiles,
+      providers,
+      setProvider,
+      setReasoningEffort,
+      setPermissionMode,
+    ],
   );
 
   const handleCheckoutPr = useCallback(
@@ -1290,6 +1342,8 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
               // Stay on the board after a start (#207): the card moves to In
               // progress here, and the new thread is in the sidebar anyway.
               onStartTask={handleCreateThreadFromIssue}
+              agentProfiles={settings?.agentProfiles ?? EMPTY_AGENT_PROFILES}
+              providers={providers}
             />
           ) : view === "kanban" ? (
             <KanbanView
