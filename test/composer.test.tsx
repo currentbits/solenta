@@ -13,7 +13,7 @@ import { describe, it, afterEach } from "node:test";
 import { useState } from "react";
 import { mount, unmountAll, inAct } from "./support/dom.ts";
 import { Composer } from "../src/components/Composer";
-import { setLastReasoningEffort } from "../src/uiPrefs";
+import { setLastBusySendMode, setLastReasoningEffort } from "../src/uiPrefs";
 import type {
   AgentProfile,
   PermissionMode,
@@ -46,6 +46,7 @@ const CLAUDE_WITH_INFO: ProviderInfo = {
   ],
   efforts: ["low", "medium", "high", "xhigh", "max"],
   permissionModes: ["default", "acceptEdits", "plan", "bypassPermissions"],
+  supportsSteer: true,
 };
 
 const CODEX: ProviderInfo = {
@@ -135,6 +136,7 @@ const WORKFLOWS: WorkflowTemplateInfo[] = [
 
 interface Harness {
   sends: string[];
+  steers: string[];
   builds: { prompt: string; templateId: string }[];
   modes: PermissionMode[];
   providerSets: { provider?: string; model?: string | null }[];
@@ -155,6 +157,7 @@ interface Harness {
 function makeHarness(provider = "claude"): Harness {
   return {
     sends: [],
+    steers: [],
     builds: [],
     modes: [],
     providerSets: [],
@@ -243,6 +246,9 @@ function composer(
       onSend={(prompt) => {
         harness.sends.push(prompt);
       }}
+      onSteer={(prompt) => {
+        harness.steers.push(prompt);
+      }}
       onBuild={(prompt, templateId) => {
         harness.builds.push({ prompt, templateId });
       }}
@@ -251,7 +257,10 @@ function composer(
   );
 }
 
-afterEach(unmountAll);
+afterEach(() => {
+  unmountAll();
+  setLastBusySendMode("queue");
+});
 
 
 /**
@@ -1541,6 +1550,46 @@ describe("Composer while a run is active (busy)", () => {
       'button[aria-haspopup="dialog"][aria-label^="Model:"]',
     ) as HTMLButtonElement;
     assert.equal(model.disabled, true, "model cannot change mid-run");
+    m.unmount();
+  });
+});
+
+describe("Composer Queue vs Steer (issue #156)", () => {
+  it("shows Queue/Steer while busy on a steerable provider", async () => {
+    const h = makeHarness();
+    const m = await mount(composer(h, { busy: true }));
+    assert.ok(m.query("[data-busy-mode]"), "toggle must show while busy");
+    assert.ok(m.query('[data-busy-mode-option="queue"]'));
+    assert.ok(m.query('[data-busy-mode-option="steer"]'));
+    m.unmount();
+  });
+
+  it("hides Steer when the provider cannot inject", async () => {
+    const h = makeHarness("codex");
+    const m = await mount(composer(h, { busy: true, provider: "codex" }));
+    assert.equal(
+      m.query("[data-busy-mode]"),
+      null,
+      "Codex exec has no live stdin to steer",
+    );
+    m.unmount();
+  });
+
+  it("queues by default and steers when Steer is selected", async () => {
+    const h = makeHarness();
+    const m = await mount(composer(h, { busy: true }));
+    const ta = m.query("textarea") as HTMLTextAreaElement;
+    await m.type(ta, "go the other way");
+    await m.click(m.query('button[aria-label="Send"]'));
+    assert.deepEqual(h.sends, ["go the other way"]);
+    assert.deepEqual(h.steers, []);
+
+    await m.type(m.query("textarea") as HTMLTextAreaElement, "no, this way");
+    await m.click(m.query('[data-busy-mode-option="steer"]'));
+    const send = m.query('button[aria-label="Send"]') as HTMLButtonElement;
+    assert.ok(send.hasAttribute("data-steers"), "Send must flip to steer");
+    await m.click(send);
+    assert.deepEqual(h.steers, ["no, this way"]);
     m.unmount();
   });
 });

@@ -235,6 +235,15 @@ export interface UseCoderResult {
     attachments?: AttachmentInfo[],
   ) => Promise<void>;
   /**
+   * Inject guidance into the live turn (issue #156). Falls through to
+   * startRun when the thread is no longer working (race with settle).
+   */
+  steerRun: (
+    prompt: string,
+    threadId?: string,
+    attachments?: AttachmentInfo[],
+  ) => Promise<void>;
+  /**
    * Edit-and-resubmit (#254): rewind the transcript to just before
    * messageId, then start a run with the edited prompt. Rewind starts
    * nothing; this is rewind then the ordinary startRun path.
@@ -1449,6 +1458,75 @@ export function useCoder(): UseCoderResult {
       }
     },
     [api, selectedThreadId, applyThreads],
+  );
+
+  const steerRun = useCallback(
+    async (
+      prompt: string,
+      targetThreadId?: string,
+      attachments?: AttachmentInfo[],
+    ) => {
+      const threadId = targetThreadId ?? selectedThreadId;
+      if (!threadId) return;
+      const feedbackText = parseFeedbackCommand(prompt);
+      if (feedbackText) {
+        try {
+          await api.app.feedback({ text: feedbackText, threadId });
+          setError(null);
+        } catch (err) {
+          setError({ scope: "run", message: errorMessage(err) });
+          throw err;
+        }
+        return;
+      }
+      const btwQuestion = parseBtwCommand(prompt);
+      if (btwQuestion) {
+        try {
+          const updated = await api.threads.btw({
+            threadId,
+            question: btwQuestion,
+          });
+          applyThreads(
+            threadsRef.current.map((t) =>
+              t.id === updated.id ? updated : t,
+            ),
+          );
+          setDetail((prev) =>
+            prev && prev.thread.id === updated.id
+              ? { ...prev, thread: updated }
+              : prev,
+          );
+          setError(null);
+        } catch (err) {
+          setError({ scope: "run", message: errorMessage(err) });
+          throw err;
+        }
+        return;
+      }
+      // Race with settle: Steer clicked as the run lands becomes a new turn.
+      if (
+        threadsRef.current.find((t) => t.id === threadId)?.status !== "working"
+      ) {
+        await startRun(prompt, threadId, attachments);
+        return;
+      }
+      try {
+        await api.runs.steer({ threadId, prompt, attachments });
+        const d = await api.threads.get(threadId);
+        if (selectedRef.current !== threadId) return;
+        setDetail(d);
+        applyThreads(
+          threadsRef.current.map((t) =>
+            t.id === d.thread.id ? d.thread : t,
+          ),
+        );
+        setError(null);
+      } catch (err) {
+        setError({ scope: "run", message: errorMessage(err) });
+        throw err;
+      }
+    },
+    [api, selectedThreadId, applyThreads, startRun],
   );
 
   const rewindAndResubmit = useCallback(
@@ -3173,6 +3251,7 @@ export function useCoder(): UseCoderResult {
     createThread,
     forkThread,
     startRun,
+    steerRun,
     rewindAndResubmit,
     queued,
     cancelQueued,

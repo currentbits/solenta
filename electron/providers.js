@@ -52,6 +52,10 @@ const { execFileSync } = require("node:child_process");
  *   config.toml flip in kimi.js); absent means buildArgs emits the flag
  * @property {boolean} [supportsSearch] - CLI accepts `codex exec --search`
  *   (live web search). Absent/false hides the composer Search pill.
+ * @property {boolean} [supportsSteer] - live turn can take mid-run guidance
+ *   (issue #156). Claude: stream-json stdin user messages. Codex exec has
+ *   no such channel (`turn/steer` lives on app-server). Absent/false hides
+ *   Steer; the composer then only queues.
  * @property {Array<"default"|"acceptEdits"|"plan"|"bypassPermissions">} permissionModes
  *   Modes this adapter actually honours (changes argv / CLI behaviour).
  *   The composer only offers these; setPermissionMode rejects the rest.
@@ -160,6 +164,9 @@ const PROVIDERS = [
     binEnv: "CODER_CLAUDE_BIN",
     defaultBin: "claude",
     supportsResume: true,
+    // Interactive stream-json stdin: a second user line is guidance for the
+    // in-flight request, not a new `claude -p` process (issue #156).
+    supportsSteer: true,
     models: [
       "claude-fable-5",
       "claude-opus-5",
@@ -1251,6 +1258,7 @@ function listProviders(opts = {}) {
       modelInfo: (entry.modelInfo || []).map((m) => ({ ...m })),
       efforts: (entry.efforts || []).slice(),
       supportsSearch: entry.supportsSearch === true,
+      supportsSteer: entry.supportsSteer === true,
       permissionModes: honouredPermissionModes(entry),
     });
   }
@@ -1265,6 +1273,7 @@ function listProviders(opts = {}) {
       modelInfo: [],
       efforts: [],
       supportsSearch: false,
+      supportsSteer: false,
       permissionModes: honouredPermissionModes(SIMULATE_ENTRY),
     });
   }

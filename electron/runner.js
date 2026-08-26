@@ -2305,7 +2305,7 @@ function createRunner(opts) {
    * @param {string | null} [runId]
    * @param {object | null} [tool]
    * @param {{ kind: string, path: string, name: string }[] | null} [attachments]
-   * @param {{ fromThread?: { id: string, title?: string } | null }} [extra]
+   * @param {{ fromThread?: { id: string, title?: string } | null, steer?: boolean }} [extra]
    */
   function appendMessage(
     threadId,
@@ -2316,7 +2316,7 @@ function createRunner(opts) {
     attachments = null,
     extra = null,
   ) {
-    /** @type {{ id: string, role: string, text: string, createdAt: number, runId?: string, tool?: object, attachments?: object[], fromThread?: { id: string, title: string } }} */
+    /** @type {{ id: string, role: string, text: string, createdAt: number, runId?: string, tool?: object, attachments?: object[], fromThread?: { id: string, title: string }, steer?: boolean }} */
     const msg = {
       id: randomUUID(),
       role,
@@ -2333,6 +2333,7 @@ function createRunner(opts) {
           extra.fromThread.title != null ? String(extra.fromThread.title) : "",
       };
     }
+    if (extra && extra.steer === true) msg.steer = true;
     store.appendMessage(threadId, msg);
     // Every adapter mints its tool messages here, so this is the one place
     // that sees a tool call begin. Kimi/opencode also emit already-complete
@@ -6294,6 +6295,65 @@ function createRunner(opts) {
   }
 
   /**
+   * Inject guidance into the live turn (issue #156). Same run, same process:
+   * a user row on the current runId plus a stdin user message. Does not
+   * start a second run and does not wait for the current one to land.
+   *
+   * @param {{ threadId: string, prompt: string, attachments?: unknown }} input
+   * @returns {{ runId: string }}
+   */
+  function steerRun(input) {
+    const threadId = input && input.threadId != null ? String(input.threadId) : "";
+    const prompt = String((input && input.prompt) || "").trim();
+    if (!threadId) throw new Error("threadId is required");
+    if (!prompt) throw new Error("Prompt is empty");
+
+    const entry = active.get(threadId);
+    if (!entry || entry.stopping) {
+      throw new Error("No active run to steer");
+    }
+
+    const thread = store.getThread(threadId);
+    if (!thread) throw new Error(`Unknown thread: ${threadId}`);
+
+    const provider = resolveProvider(thread);
+    const providerEntry = getProvider(provider);
+    if (!providerEntry || providerEntry.supportsSteer !== true) {
+      const name =
+        (providerEntry && providerEntry.name) || provider || "This CLI";
+      throw new Error(
+        `${name} cannot steer a live turn — queue a follow-up instead`,
+      );
+    }
+
+    const handle = entry.handle;
+    if (!handle || typeof handle.send !== "function") {
+      throw new Error("This run cannot take live guidance");
+    }
+
+    const attachments = sanitizeAttachments(input.attachments);
+    const cliPrompt = prompt + attachmentPromptSection(attachments);
+    const sent = handle.send(cliPrompt);
+    if (!sent) {
+      throw new Error("Failed to deliver guidance to the running agent");
+    }
+
+    appendMessage(
+      threadId,
+      "user",
+      prompt,
+      entry.runId,
+      null,
+      attachments,
+      { steer: true },
+    );
+    store.save();
+    pushDetail(threadId, entry.workflow || null);
+    pushThreadsChanged();
+    return { runId: entry.runId };
+  }
+
+  /**
    * Orchestrated multi-phase Build workflow from a user-defined template.
    * @param {{ threadId: string, prompt: string, templateId?: string }} input
    * @returns {Promise<{ runId: string }>}
@@ -6695,6 +6755,7 @@ function createRunner(opts) {
 
   return {
     startRun,
+    steerRun,
     startBtw,
     cancelBtw,
     promoteBtw,

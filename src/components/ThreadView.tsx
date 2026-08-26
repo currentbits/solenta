@@ -394,6 +394,14 @@ interface ThreadViewProps {
     attachments?: AttachmentInfo[],
   ) => void | Promise<void>;
   /**
+   * Inject guidance into the live turn (issue #156). Absent hides Steer.
+   */
+  onSteerRun?: (
+    prompt: string,
+    threadId?: string,
+    attachments?: AttachmentInfo[],
+  ) => void | Promise<void>;
+  /**
    * Edit-and-resubmit (#254): rewind to just before messageId, then start
    * a run with the edited prompt. Same start-run path as Composer.
    */
@@ -1041,6 +1049,7 @@ const UserMessageBlock = memo(function UserMessageBlock({
     <article
       className={`${styles.message} ${styles.messageUser}${streamCls}`}
       data-stream-in={streamAttr}
+      data-steer={message.steer ? "" : undefined}
     >
       <div className={styles.userBubbleWrap}>
         <div className={styles.userBubbleCluster}>
@@ -1059,7 +1068,10 @@ const UserMessageBlock = memo(function UserMessageBlock({
               Edit
             </button>
           )}
-          <div className={styles.userBubble}>
+          <div className={styles.userBubble} data-steer={message.steer ? "" : undefined}>
+            {message.steer ? (
+              <span className={styles.steerChip}>Steered</span>
+            ) : null}
             {message.text}
             {message.attachments && message.attachments.length > 0 && (
               <TranscriptAttachments
@@ -3945,6 +3957,7 @@ export const ThreadView = memo(function ThreadView({
   hasProjects,
   onAddProject,
   onStartRun,
+  onSteerRun,
   onRewindAndResubmit,
   onStartWorkflow,
   onSaveWorkflow,
@@ -4553,6 +4566,12 @@ export const ThreadView = memo(function ThreadView({
     (prompt: string, messageAttachments?: AttachmentInfo[]) =>
       onStartRun(prompt, undefined, messageAttachments),
     [onStartRun],
+  );
+
+  const handleComposerSteer = useCallback(
+    (prompt: string, messageAttachments?: AttachmentInfo[]) =>
+      onSteerRun?.(prompt, undefined, messageAttachments),
+    [onSteerRun],
   );
 
   /**
@@ -6175,12 +6194,16 @@ export const ThreadView = memo(function ThreadView({
           isArchived
             ? "Unarchive to continue this thread"
             : isWorking
-              ? "Queue a follow-up, or /btw a side question…"
+              ? providers.find((p) => p.id === thread.provider)
+                  ?.supportsSteer === true && onSteerRun
+                ? "Queue a follow-up, steer the live turn, or /btw a side question…"
+                : "Queue a follow-up, or /btw a side question…"
               : thread.ask
                 ? "Ask about this repo…"
                 : undefined
         }
         onSend={handleComposerSend}
+        onSteer={onSteerRun ? handleComposerSteer : undefined}
         restoreDraft={restoreDraft}
         onBuild={onStartWorkflow}
         onBestOfN={onFork && !thread.ask ? runBestOfN : undefined}

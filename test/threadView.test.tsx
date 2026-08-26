@@ -97,6 +97,7 @@ function msg(over: Partial<ChatMessage> & Pick<ChatMessage, "role" | "text">): C
     tool: over.tool,
     fromThread: over.fromThread,
     attachments: over.attachments,
+    steer: over.steer,
   };
 }
 
@@ -375,6 +376,33 @@ describe("ThreadView message roles", () => {
       !asstSlice.includes("userBubble"),
       "assistant text must not share the user bubble class",
     );
+  });
+
+  it("marks a steered user row so it is not a new turn (issue #156)", () => {
+    const html = render({
+      detail: detail({
+        messages: [
+          msg({
+            id: "u1",
+            role: "user",
+            text: "do the thing",
+            createdAt: 10,
+            runId: "r1",
+          }),
+          msg({
+            id: "u2",
+            role: "user",
+            text: "no, list files instead",
+            createdAt: 20,
+            runId: "r1",
+            steer: true,
+          }),
+        ],
+      }),
+    });
+    assert.ok(html.includes("no, list files instead"));
+    assert.ok(html.includes("Steered"), "steered rows must say so");
+    assert.ok(html.includes("data-steer"), "steered rows must be queryable");
   });
 
   it("renders event messages as event cards, not as user bubbles", () => {

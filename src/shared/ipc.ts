@@ -1000,6 +1000,12 @@ export interface ChatMessage {
    * transcript renders it as a from-thread card with a link back.
    */
   fromThread?: { id: string; title: string };
+  /**
+   * Live-turn guidance (issue #156). Present when this user row was injected
+   * into an in-flight run rather than queued as the next turn. Same `runId`
+   * as the assistant still streaming.
+   */
+  steer?: boolean;
 }
 
 /** Cumulative session usage across turns of a thread. */
@@ -1892,6 +1898,12 @@ export interface ProviderInfo {
    * The composer hides the Search pill when this is missing or false.
    */
   supportsSearch?: boolean;
+  /**
+   * True when a running turn can take mid-run guidance (issue #156). The
+   * composer then offers Queue vs Steer while busy. Missing or false means
+   * mid-run sends only queue for when the run lands.
+   */
+  supportsSteer?: boolean;
   /**
    * Permission modes this adapter actually honours (issue #177). The composer
    * only offers these instead of silently ignoring a pick. Missing means the
@@ -3245,6 +3257,19 @@ export interface CoderApi {
      * results. The renderer sends the text unchanged either way.
      */
     start(input: {
+      threadId: string;
+      prompt: string;
+      attachments?: AttachmentInfo[];
+    }): Promise<{ runId: string }>;
+    /**
+     * Inject guidance into the live turn (issue #156) without starting a
+     * second run. Appends a user message on the current `runId` and writes
+     * it to the provider's stdin. Rejects when no run is active, the
+     * provider does not advertise `supportsSteer`, or the live process
+     * cannot take stdin. Race with a just-finished turn is a throw — the
+     * renderer may then `start` as a new turn.
+     */
+    steer(input: {
       threadId: string;
       prompt: string;
       attachments?: AttachmentInfo[];

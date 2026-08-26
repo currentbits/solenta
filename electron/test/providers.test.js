@@ -58,6 +58,7 @@ describe("providers registry", () => {
     const claude = getProvider("claude");
     assert.equal(claude.kind, "claude-stream");
     assert.equal(claude.supportsResume, true);
+    assert.equal(claude.supportsSteer, true);
     assert.ok(claude.models.includes("claude-opus-5"));
     assert.ok(claude.models.includes("claude-haiku-4-5"));
 
@@ -364,6 +365,31 @@ describe("providers registry", () => {
     const sim = withSim.find((p) => p.id === "simulate");
     assert.equal(sim.available, true);
     assert.equal(sim.supportsResume, false);
+  });
+
+  it("only Claude advertises supportsSteer (issue #156)", () => {
+    const list = listProviders({ which: () => null, includeSimulate: true });
+    for (const p of list) {
+      if (p.id === "claude") {
+        assert.equal(p.supportsSteer, true);
+      } else {
+        assert.equal(
+          p.supportsSteer,
+          false,
+          `${p.id} must not advertise supportsSteer`,
+        );
+      }
+    }
+    for (const entry of PROVIDERS) {
+      if (entry.id === "claude") {
+        assert.equal(entry.supportsSteer, true);
+      } else {
+        assert.ok(
+          !entry.supportsSteer,
+          `${entry.id} registry must not set supportsSteer`,
+        );
+      }
+    }
   });
 
   it("isBinAvailable with absolute path uses existsSync, not PATH", () => {

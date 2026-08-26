@@ -726,6 +726,49 @@
   margin-bottom: 4px;
 }
 
+.sendGroup {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.busyMode {
+  display: inline-flex;
+  align-items: stretch;
+  height: 28px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  overflow: hidden;
+}
+
+.busyModeBtn {
+  padding: 0 10px;
+  border: 0;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.busyModeBtn:hover {
+  color: var(--text);
+  background: var(--card-hover);
+}
+
+.busyModeBtn[aria-checked="true"] {
+  background: var(--blue-soft);
+  color: var(--info-fg-strong);
+}
+
+.busyModeBtn:focus-visible {
+  outline: none;
+  box-shadow:
+    0 0 0 2px var(--card),
+    0 0 0 4px var(--focus-ring-color);
+}
+
 .send {
   width: 32px;
   height: 32px;

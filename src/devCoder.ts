@@ -394,7 +394,10 @@ function devProvider(
 }
 
 const DEV_PROVIDERS: ProviderInfo[] = [
-  devProvider("claude", "Claude Code", ["claude-opus-5", "claude-sonnet-5"]),
+  {
+    ...devProvider("claude", "Claude Code", ["claude-opus-5", "claude-sonnet-5"]),
+    supportsSteer: true,
+  },
   {
     ...devProvider("codex", "Codex", ["gpt-5.3-codex", "gpt-5.3"]),
     supportsSearch: true,
@@ -4115,6 +4118,35 @@ function buildDevCoder(): CoderApi {
         emitDetail(detail);
         startRunTimer(input.threadId);
         return { runId };
+      },
+      async steer(input) {
+        const detail = details.get(input.threadId);
+        if (!detail) throw new Error(`Thread not found: ${input.threadId}`);
+        const run = runStates.get(input.threadId);
+        if (detail.thread.status !== "working" || !run) {
+          throw new Error("No active run to steer");
+        }
+        const t = now();
+        detail.messages.push({
+          id: id("msg"),
+          role: "user",
+          text: input.prompt,
+          createdAt: t,
+          runId: run.runId,
+          steer: true,
+          ...(input.attachments?.length
+            ? { attachments: input.attachments }
+            : {}),
+        });
+        let thread = {
+          ...detail.thread,
+          updatedAt: t,
+        };
+        detail.thread = thread;
+        details.set(input.threadId, detail);
+        syncThreadRow(thread);
+        emitDetail(detail);
+        return { runId: run.runId };
       },
       async startWorkflow(input) {
         const detail = details.get(input.threadId);

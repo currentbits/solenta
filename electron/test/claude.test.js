@@ -89,14 +89,15 @@ function emit(obj) {
 }
 
 // Record everything received on stdin (interactive mode delivers the prompt
-// and control responses there) for test assertions.
+// and control responses there) for test assertions. Always listen so the
+// steer scenario can wait for a second user line even without a dump file.
 let stdinRaw = "";
-if (process.env.CODER_FAKE_CLAUDE_STDIN_FILE) {
-  process.stdin.on("data", (c) => {
-    stdinRaw += c;
+process.stdin.on("data", (c) => {
+  stdinRaw += c;
+  if (process.env.CODER_FAKE_CLAUDE_STDIN_FILE) {
     fs.writeFileSync(process.env.CODER_FAKE_CLAUDE_STDIN_FILE, stdinRaw, "utf8");
-  });
-}
+  }
+});
 
 async function main() {
   if (scenario === "fail-exit") {
@@ -1056,6 +1057,63 @@ async function main() {
     return;
   }
 
+  if (scenario === "steer") {
+    emit({
+      type: "system",
+      subtype: "init",
+      session_id: "sess-steer",
+      model: "claude-test",
+    });
+    await delay(20);
+    emit({
+      type: "assistant",
+      message: { content: [{ type: "text", text: "working on it" }] },
+    });
+    const second = await new Promise((resolve, reject) => {
+      const deadline = setTimeout(
+        () => reject(new Error("steer stdin timed out")),
+        8000,
+      );
+      const check = () => {
+        const users = [];
+        for (const line of stdinRaw.split("\\n")) {
+          if (!line.trim()) continue;
+          try {
+            const obj = JSON.parse(line);
+            if (obj && obj.type === "user") users.push(obj);
+          } catch {
+            // incomplete / control line
+          }
+        }
+        if (users.length >= 2) {
+          clearTimeout(deadline);
+          resolve(users[1]);
+        }
+      };
+      process.stdin.on("data", check);
+      check();
+    });
+    const body =
+      second && second.message && second.message.content != null
+        ? String(second.message.content)
+        : "";
+    emit({
+      type: "assistant",
+      message: { content: [{ type: "text", text: "redirected: " + body }] },
+    });
+    emit({
+      type: "result",
+      subtype: "success",
+      result: "steered.",
+      usage: { input_tokens: 10, output_tokens: 5 },
+      total_cost_usd: 0,
+      num_turns: 1,
+      session_id: "sess-steer",
+    });
+    process.exit(0);
+    return;
+  }
+
   process.stderr.write("unknown scenario " + scenario + "\\n");
   process.exit(1);
 }
@@ -1390,6 +1448,74 @@ describe("runner claude provider", () => {
       delete process.env.CODER_FAKE_CLAUDE_CTRL_FILE;
       delete process.env.CODER_FAKE_CLAUDE_STDIN_FILE;
     }
+  });
+
+  it("steers a live turn over stdin without starting a second run (issue #156)", async () => {
+    process.env.CODER_FAKE_CLAUDE_SCENARIO = "steer";
+    const stdinFile = path.join(tmpDir, "steer-stdin.txt");
+    process.env.CODER_FAKE_CLAUDE_STDIN_FILE = stdinFile;
+    try {
+      const thread = store.getThreads()[0];
+      const { runId } = await runner.startRun({
+        threadId: thread.id,
+        prompt: "do the thing",
+      });
+      await waitFor(() =>
+        store
+          .getMessages(thread.id)
+          .some(
+            (m) => m.role === "assistant" && m.text.includes("working on it"),
+          ),
+      );
+      assert.equal(store.getThread(thread.id).status, "working");
+      const steered = runner.steerRun({
+        threadId: thread.id,
+        prompt: "stop and list files instead",
+      });
+      assert.equal(steered.runId, runId);
+      assert.equal(store.getThread(thread.id).status, "working");
+      const users = store
+        .getMessages(thread.id)
+        .filter((m) => m.role === "user");
+      assert.equal(users.length, 2);
+      assert.equal(users[0].text, "do the thing");
+      assert.equal(users[1].text, "stop and list files instead");
+      assert.equal(users[1].steer, true);
+      assert.equal(users[1].runId, runId);
+
+      await waitFor(() => store.getThread(thread.id).status === "done");
+
+      const stdinLines = fs
+        .readFileSync(stdinFile, "utf8")
+        .split("\n")
+        .filter(Boolean)
+        .map((l) => JSON.parse(l));
+      const userLines = stdinLines.filter((l) => l.type === "user");
+      assert.equal(userLines.length, 2);
+      assert.equal(
+        userLines[1].message.content,
+        "stop and list files instead",
+      );
+      const assistants = store
+        .getMessages(thread.id)
+        .filter((m) => m.role === "assistant");
+      assert.ok(
+        assistants.some((m) =>
+          /redirected: stop and list files instead/.test(m.text),
+        ),
+        "the live turn must absorb the steered text",
+      );
+    } finally {
+      delete process.env.CODER_FAKE_CLAUDE_STDIN_FILE;
+    }
+  });
+
+  it("rejects steer when no run is active (issue #156)", () => {
+    const thread = store.getThreads()[0];
+    assert.throws(
+      () => runner.steerRun({ threadId: thread.id, prompt: "nudge" }),
+      /No active run to steer/,
+    );
   });
 
   it("approving an edited command runs the edit, not the original (#509)", async () => {

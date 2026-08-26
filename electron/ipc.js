@@ -1086,6 +1086,9 @@ const IPC_HANDLERS = {
   "runs:start": async (ctx, input) => {
     return ctx.runner.startRun(input);
   },
+  "runs:steer": async (ctx, input) => {
+    return ctx.runner.steerRun(input);
+  },
   "runs:startWorkflow": async (ctx, input) => {
     return ctx.runner.startWorkflowRun(input);
   },

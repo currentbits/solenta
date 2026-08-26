@@ -262,6 +262,7 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
         models: [],
         modelInfo: [],
         efforts: [],
+        supportsSteer: true,
       },
     ] as ProviderInfo[]);
   const workflows = opts.workflows ?? [];
@@ -2134,6 +2135,36 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
     },
     runs: {
       start: (input: unknown) => rec("runs.start", [input], { runId: "r1" }),
+      steer: (input: unknown) => {
+        const i = input as {
+          threadId: string;
+          prompt: string;
+          attachments?: AttachmentInfo[];
+        };
+        const existing = threads.find((t) => t.id === i.threadId);
+        if (!existing || existing.status !== "working") {
+          calls.push({ channel: "runs.steer", args: [input] });
+          return Promise.reject(new Error("No active run to steer"));
+        }
+        const d = details[i.threadId];
+        if (d) {
+          d.messages = [
+            ...d.messages,
+            {
+              id: `steer-${calls.length}`,
+              role: "user",
+              text: i.prompt,
+              createdAt: Date.now(),
+              runId: "r1",
+              steer: true,
+              ...(i.attachments?.length
+                ? { attachments: i.attachments }
+                : {}),
+            },
+          ];
+        }
+        return rec("runs.steer", [input], { runId: "r-steer" });
+      },
       startWorkflow: (input: unknown) =>
         rec("runs.startWorkflow", [input], { runId: "r2" }),
       distill: (input: unknown) =>

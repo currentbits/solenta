@@ -86,6 +86,34 @@ export function getLastReasoningEffort(): ReasoningEffort | null {
   return lastEffort;
 }
 
+export type BusySendMode = "queue" | "steer";
+
+const BUSY_SEND_KEY = "coder.busySendMode";
+let lastBusySend: BusySendMode | undefined;
+
+/** Last Queue/Steer pick while a run is live (issue #156). Default Queue. */
+export function getLastBusySendMode(): BusySendMode {
+  if (lastBusySend === undefined) {
+    let raw: string | null = null;
+    try {
+      raw = window.localStorage.getItem(BUSY_SEND_KEY);
+    } catch {
+      raw = null;
+    }
+    lastBusySend = raw === "steer" ? "steer" : "queue";
+  }
+  return lastBusySend;
+}
+
+export function setLastBusySendMode(mode: BusySendMode): void {
+  lastBusySend = mode === "steer" ? "steer" : "queue";
+  try {
+    window.localStorage.setItem(BUSY_SEND_KEY, lastBusySend);
+  } catch {
+    // Private mode / quota: the preference just stops surviving a relaunch.
+  }
+}
+
 export function setLastReasoningEffort(effort: ReasoningEffort | null): void {
   lastEffort = effort;
   try {

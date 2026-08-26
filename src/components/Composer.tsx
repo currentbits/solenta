@@ -69,8 +69,11 @@ import { teachPermissionAllowed } from "../teach";
 import type { ThreadTeach } from "../shared/ipc";
 import { useFileDrop } from "../useFileDrop";
 import {
+  getLastBusySendMode,
   getLastReasoningEffort,
+  setLastBusySendMode,
   setLastReasoningEffort,
+  type BusySendMode,
 } from "../uiPrefs";
 import styles from "./Composer.module.css";
 
@@ -122,6 +125,11 @@ interface ComposerProps {
   busy?: boolean;
   /** Single session turn (send arrow + ⌘Enter). */
   onSend: (prompt: string, attachments?: AttachmentInfo[]) => void | Promise<void>;
+  /**
+   * Inject guidance into the live turn (issue #156). Absent hides Steer
+   * even when the provider advertises supportsSteer (tests / shells).
+   */
+  onSteer?: (prompt: string, attachments?: AttachmentInfo[]) => void | Promise<void>;
   /**
    * Text pushed back toward the draft from outside (a cancelled queued
    * follow-up, issue #364). Applied at most once, and only onto an EMPTY
@@ -335,6 +343,7 @@ export const Composer = memo(function Composer({
   disabled = false,
   busy = false,
   onSend,
+  onSteer,
   restoreDraft = null,
   onBuild,
   onBestOfN,
@@ -464,6 +473,7 @@ export const Composer = memo(function Composer({
     [threadId],
   );
   const [sending, setSending] = useState(false);
+  const [busyMode, setBusyMode] = useState<BusySendMode>(getLastBusySendMode);
   const [localError, setLocalError] = useState<string | null>(null);
   const [modeOpen, setModeOpen] = useState(false);
   const [modelOpen, setModelOpen] = useState(false);
@@ -699,6 +709,21 @@ export const Composer = memo(function Composer({
   const sessionLocked = Boolean(sessionId);
   const providerName = providerDisplayName(provider, providers);
   const currentProviderInfo = providers.find((p) => p.id === provider);
+  /**
+   * Live-turn guidance (issue #156). Hidden unless this CLI can inject into
+   * a running process AND the parent wired onSteer. Ask mode has no CLI
+   * stdin to write.
+   */
+  const canSteer =
+    busy &&
+    !ask &&
+    Boolean(onSteer) &&
+    currentProviderInfo?.supportsSteer === true;
+  const pickBusyMode = (mode: BusySendMode) => {
+    setBusyMode(mode);
+    setLastBusySendMode(mode);
+  };
+  const steerNow = canSteer && busyMode === "steer";
   const providerRows = buildProviderRows(
     providers,
     provider,
@@ -962,8 +987,9 @@ export const Composer = memo(function Composer({
     }
   };
 
-  const submitSend = () => {
+  const submitSend = (forceSteer = false) => {
     if (!canSend) return;
+    const steer = forceSteer ? canSteer : steerNow;
     void runAction(async (prompt) => {
       // Delegation command: "@provider task" forks onto that provider instead
       // of sending to this thread (parseDelegate returns null for @file
@@ -978,8 +1004,13 @@ export const Composer = memo(function Composer({
         await onDelegate(delegation.provider, delegation.task);
         return;
       }
-      await onSend(prompt, attachments.length ? attachments : undefined);
-    }, "Failed to start run");
+      const files = attachments.length ? attachments : undefined;
+      if (steer && onSteer) {
+        await onSteer(prompt, files);
+        return;
+      }
+      await onSend(prompt, files);
+    }, steer ? "Failed to steer run" : "Failed to start run");
   };
 
   const submitBtw = () => {
@@ -1108,6 +1139,11 @@ export const Composer = memo(function Composer({
     ) {
       e.preventDefault();
       submitBtw();
+      return;
+    }
+    if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === "Enter") {
+      e.preventDefault();
+      submitSend(canSteer);
       return;
     }
     if ((e.metaKey || e.ctrlKey || e.shiftKey) && e.key === "Enter") {
@@ -1491,7 +1527,11 @@ export const Composer = memo(function Composer({
           disabled={disabled || sending}
         />
         <div ref={hintsRef} className={styles.hints} data-kbd-hints="" hidden>
-          {`⌘Enter ${busy ? "queue" : "send"} · ⌥Enter side question${busy ? " · Esc stop" : ""}`}
+          {`⌘Enter ${
+            busy ? (steerNow ? "steer" : "queue") : "send"
+          } · ⌥Enter side question${
+            canSteer ? " · ⌘⇧Enter steer" : ""
+          }${busy ? " · Esc stop" : ""}`}
         </div>
         <div className={styles.controls}>
           <div className={styles.pills}>
@@ -2312,16 +2352,50 @@ export const Composer = memo(function Composer({
               </div>
             )}
           </div>
+          <div className={styles.sendGroup}>
+          {canSteer && (
+            <div
+              className={styles.busyMode}
+              role="radiogroup"
+              aria-label="Follow-up while this run is live"
+              data-busy-mode=""
+            >
+              <button
+                type="button"
+                className={styles.busyModeBtn}
+                role="radio"
+                aria-checked={busyMode === "queue"}
+                data-busy-mode-option="queue"
+                onClick={() => pickBusyMode("queue")}
+              >
+                Queue
+              </button>
+              <button
+                type="button"
+                className={styles.busyModeBtn}
+                role="radio"
+                aria-checked={busyMode === "steer"}
+                data-busy-mode-option="steer"
+                title="Inject this into the live turn instead of waiting for it to land"
+                onClick={() => pickBusyMode("steer")}
+              >
+                Steer
+              </button>
+            </div>
+          )}
           <button
             type="button"
             className={styles.send}
             aria-label="Send"
             disabled={!canSend}
-            data-queues={busy ? "" : undefined}
+            data-queues={busy && !steerNow ? "" : undefined}
+            data-steers={steerNow ? "" : undefined}
             title={
-              busy
-                ? "Queue for when this run lands (⌘Enter). ⌥Enter asks a side question."
-                : "Send (⌘Enter). ⌥Enter asks a side question."
+              steerNow
+                ? "Steer the live turn (⌘Enter). ⌘⇧Enter always steers. ⌥Enter asks a side question."
+                : busy
+                  ? "Queue for when this run lands (⌘Enter). ⌥Enter asks a side question."
+                  : "Send (⌘Enter). ⌥Enter asks a side question."
             }
             onClick={() => submitSend()}
           >
@@ -2339,6 +2413,7 @@ export const Composer = memo(function Composer({
               <path d="M8 13V3M4 7l4-4 4 4" />
             </svg>
           </button>
+          </div>
         </div>
         <div className={styles.meta}>
           {shortSess && (

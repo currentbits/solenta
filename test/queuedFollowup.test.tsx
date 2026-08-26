@@ -20,6 +20,7 @@ import {
 } from "./support/fakeCoder.ts";
 import App from "../src/App";
 import type { ThreadInfo } from "../src/shared/ipc";
+import { setLastBusySendMode } from "../src/uiPrefs";
 
 const NOW = Date.now();
 
@@ -51,6 +52,7 @@ function working(): ThreadInfo {
 }
 
 async function bootOnBusyThread() {
+  setLastBusySendMode("queue");
   const busy = working();
   const fake = createFakeCoder({
     projects: [project()],
@@ -89,6 +91,11 @@ describe("queued follow-up (issue #92 / #314)", () => {
       fake.of("runs.start").length,
       0,
       "a second run must not start while the first is working",
+    );
+    assert.equal(
+      fake.of("runs.steer").length,
+      0,
+      "default mid-run send must queue, not steer",
     );
     assert.ok(
       m.text().includes("then update the changelog"),
@@ -513,6 +520,40 @@ describe("queued follow-up (issue #92 / #314)", () => {
       ta.value,
       "half-typed draft",
       "an in-progress draft always wins",
+    );
+    m.unmount();
+  });
+
+  it("steers a mid-run send instead of queueing (issue #156)", async () => {
+    const { fake, m } = await bootOnBusyThread();
+
+    await m.type(m.query("textarea"), "go the other way");
+    const steer = m.query('[data-busy-mode-option="steer"]');
+    assert.ok(steer, "Steer must be offered on a live Claude turn");
+    await m.click(steer);
+    await m.click(m.query('button[aria-label="Send"]'));
+    await m.flush();
+
+    assert.equal(
+      fake.of("runs.start").length,
+      0,
+      "steer must not start a second run",
+    );
+    assert.equal(
+      fake.of("threads.setQueued").length,
+      0,
+      "steer must not queue",
+    );
+    const steers = fake.of("runs.steer");
+    assert.equal(steers.length, 1);
+    assert.equal(
+      (steers[0]!.args[0] as { prompt: string }).prompt,
+      "go the other way",
+    );
+    assert.equal(
+      m.query("[data-queued-prompt]"),
+      null,
+      "steered text is not the follow-up strip",
     );
     m.unmount();
   });

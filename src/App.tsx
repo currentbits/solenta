@@ -147,6 +147,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     createThread,
     forkThread,
     startRun,
+    steerRun,
     rewindAndResubmit,
     queued,
     cancelQueued,
@@ -1374,6 +1375,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         onAddProject={handleAddProject}
         onCreateThread={handleCreateThread}
         onStartRun={startRun}
+        onSteerRun={steerRun}
         onSetupWorktree={setupWorktree}
         onMergeWorktree={mergeWorktree}
         onRemoveWorktree={removeWorktree}
