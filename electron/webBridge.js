@@ -141,13 +141,21 @@ function attachWebBridge(httpServer, opts) {
       const channel = msg.channel;
       const args = Array.isArray(msg.args) ? msg.args : [];
       try {
+        if (typeof channel === "string" && channel.startsWith("simulator:")) {
+          sendJson(ws, {
+            kind: "reply",
+            id,
+            error: "iOS Simulator controls require the desktop app",
+          });
+          return;
+        }
         const fn = handlers[channel];
         if (typeof fn !== "function") {
           throw new Error(`No handler registered for '${channel}'`);
         }
         // Web has no solenta-media protocol; image handlers reply with
         // async data URLs instead of a custom-scheme src (issue #145).
-        const result = await fn({ ...ctx, serveDataUrls: true }, ...args);
+        const result = await fn({ ...ctx, serveDataUrls: true, transport: "web" }, ...args);
         sendJson(ws, { kind: "reply", id, result });
       } catch (err) {
         const error = err && err.message ? String(err.message) : String(err);
@@ -161,6 +169,13 @@ function attachWebBridge(httpServer, opts) {
   });
 
   function broadcast(channel, payload) {
+    if (
+      channel === "simulator:changed" ||
+      channel === "simulator:focus" ||
+      (typeof channel === "string" && channel.startsWith("simulator:"))
+    ) {
+      return;
+    }
     const frame = JSON.stringify({ kind: "push", channel, payload });
     for (const client of authed) {
       if (client.readyState !== WebSocket.OPEN) continue;

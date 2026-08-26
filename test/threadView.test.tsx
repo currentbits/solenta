@@ -26,6 +26,7 @@ import type {
   PendingPermissionInfo,
   ProjectInfo,
   ProviderInfo,
+  RunArtifactInfo,
   RunStatInfo,
   ThreadDetail,
   ThreadInfo,
@@ -118,6 +119,7 @@ function detail(over: Partial<ThreadDetail> = {}): ThreadDetail {
     workflow: over.workflow ?? null,
     usage: over.usage ?? null,
     pendingPermission: over.pendingPermission,
+    artifacts: over.artifacts,
   };
 }
 
@@ -593,6 +595,60 @@ describe("ThreadView timeline wiring", () => {
       html.includes("RUN_B_ONLY_STEP"),
       "latest run's steps must render in the open card",
     );
+  });
+
+  it("renders run artifact groups from buildTimeline with media cards", () => {
+    if (typeof window !== "undefined") {
+      (window as unknown as { coder: object }).coder = {};
+    }
+    const artifacts: RunArtifactInfo[] = [
+      {
+        id: "shot-1",
+        threadId: "t1",
+        runId: "run-1",
+        toolCallId: "tool-1",
+        source: "simulator",
+        kind: "image",
+        mimeType: "image/png",
+        name: "simulator-shot.png",
+        size: 900,
+        createdAt: "1970-01-01T00:00:00.030Z",
+      },
+      {
+        id: "clip-1",
+        threadId: "t1",
+        runId: "run-1",
+        toolCallId: "tool-1",
+        source: "simulator",
+        kind: "video",
+        mimeType: "video/mp4",
+        name: "simulator-clip.mp4",
+        size: 2_000_000,
+        createdAt: "1970-01-01T00:00:00.031Z",
+        durationMs: 12_000,
+      },
+    ];
+    const html = render({
+      detail: detail({
+        messages: [
+          msg({ id: "u1", role: "user", text: "PROMPT_BEFORE_ARTIFACTS", createdAt: 10 }),
+        ],
+        workLog: [
+          work({ id: "w1", runId: "run-1", label: "STEP_AFTER_ARTIFACTS", done: true, timestamp: 50 }),
+        ],
+        artifacts,
+      }),
+    });
+    assert.ok(html.includes("PROMPT_BEFORE_ARTIFACTS"));
+    assert.ok(html.includes('alt="simulator-shot.png"'));
+    assert.ok(html.includes('src="solenta-media://artifact/shot-1"'));
+    assert.ok(html.includes('<video'));
+    assert.ok(html.includes('src="solenta-media://artifact/clip-1"'));
+    assert.ok(html.includes("Simulator"));
+    const promptIdx = html.indexOf("PROMPT_BEFORE_ARTIFACTS");
+    const shotIdx = html.indexOf("simulator-shot.png");
+    const workIdx = html.indexOf("STEP_AFTER_ARTIFACTS");
+    assert.ok(promptIdx < shotIdx && shotIdx < workIdx, "artifacts sit after prompt, before work log on ties");
   });
 });
 

@@ -71,6 +71,9 @@ import type {
   ThreadSummaryInfo,
   CrewTaskView,
   RewindResult,
+  SimulatorCapabilitySnapshot,
+  SimulatorDeviceInfo,
+  SimulatorStatus,
   UsageReport,
   FleetEvidence,
   WorkLogItem,
@@ -230,6 +233,11 @@ export interface FakeOptions {
   testWebhook?: WebhookTestResult;
   /** Override fs.browse result (default: demo home directories). */
   browse?: (input: unknown) => FsBrowseResult;
+  /**
+   * Desktop simulator fake. Default `unsupported` (no live helper).
+   * `attached` is a deterministic owned session.
+   */
+  simulator?: "unsupported" | "attached";
 }
 
 /** Idle terminal session for the harness; no shell exists under jsdom. */
@@ -463,12 +471,106 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
   const detailSubs: Array<(d: ThreadPatch) => void> = [];
   const bootReadySubs: Array<() => void> = [];
   const stayAwakeSubs: Array<(s: StayAwakeStatus) => void> = [];
+  const simulatorSubs: Array<(s: SimulatorStatus) => void> = [];
+  const simulatorMode = opts.simulator ?? "unsupported";
+
+  const unsupportedSimulatorCaps: SimulatorCapabilitySnapshot = {
+    platform: "darwin",
+    supported: false,
+    developerDir: "",
+    xcode: { version: "0", build: "0" },
+    licenseAccepted: false,
+    runtimes: [],
+    capabilities: {
+      deviceLifecycle: false,
+      screenshot: false,
+      recording: false,
+      stream: false,
+      touch: false,
+      keyboard: false,
+      hardwareButtons: false,
+      accessibility: false,
+    },
+  };
+  const attachedDevices: SimulatorDeviceInfo[] = [
+    {
+      udid: "UDID-1",
+      name: "iPhone 16",
+      state: "Booted",
+      runtimeIdentifier: "com.apple.CoreSimulator.SimRuntime.iOS-18-0",
+      runtimeName: "iOS 18.0",
+    },
+  ];
+  const attachedCaps: SimulatorCapabilitySnapshot = {
+    platform: "darwin",
+    supported: true,
+    developerDir: "/Applications/Xcode.app/Contents/Developer",
+    xcode: { version: "26.0", build: "17A324" },
+    licenseAccepted: true,
+    runtimes: [
+      {
+        identifier: attachedDevices[0]!.runtimeIdentifier,
+        name: attachedDevices[0]!.runtimeName,
+        devices: [
+          {
+            udid: attachedDevices[0]!.udid,
+            name: attachedDevices[0]!.name,
+            state: attachedDevices[0]!.state,
+          },
+        ],
+      },
+    ],
+    capabilities: {
+      deviceLifecycle: true,
+      screenshot: true,
+      recording: true,
+      stream: true,
+      touch: true,
+      keyboard: true,
+      hardwareButtons: true,
+      accessibility: true,
+    },
+  };
+  const attachedStatus: SimulatorStatus = {
+    attached: true,
+    state: "active",
+    isOwner: true,
+    generation: 1,
+    deviceUdid: "UDID-1",
+    bootedBySolenta: true,
+    stream: "connected",
+    input: "connected",
+    accessibility: "connected",
+  };
+  const detachedStatus: SimulatorStatus = {
+    attached: false,
+    state: null,
+    isOwner: false,
+    generation: null,
+    deviceUdid: null,
+    bootedBySolenta: null,
+    stream: "disconnected",
+    input: "disconnected",
+    accessibility: "disconnected",
+  };
+  const simulatorUnsupported = () =>
+    Object.assign(new Error("iOS Simulator requires macOS"), {
+      code: "unsupported_platform",
+    });
 
   /** Record the call, then either reject (if configured) or resolve. */
   function rec<T>(channel: string, args: unknown[], value: T): Promise<T> {
     calls.push({ channel, args });
     const err = fail[channel];
     if (err) return Promise.reject(err);
+    return Promise.resolve(value);
+  }
+
+  function simMutate<T>(channel: string, args: unknown[], value: T): Promise<T> {
+    calls.push({ channel, args });
+    const err = fail[channel];
+    if (err) return Promise.reject(err);
+    if (simulatorMode !== "attached") return Promise.reject(simulatorUnsupported());
     return Promise.resolve(value);
   }
 
@@ -2451,6 +2553,103 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
       read: (input: unknown) => rec("terminal.read", [input], fakeTerminal()),
       close: (input: unknown) => rec("terminal.close", [input], fakeTerminal()),
     },
+    simulator: {
+      capabilities: (input: unknown) =>
+        rec(
+          "simulator.capabilities",
+          [input],
+          simulatorMode === "attached" ? attachedCaps : unsupportedSimulatorCaps,
+        ),
+      selectDeveloperDir: (input: unknown) =>
+        rec(
+          "simulator.selectDeveloperDir",
+          [input],
+          simulatorMode === "attached" ? attachedCaps : unsupportedSimulatorCaps,
+        ),
+      listDevices: (input: unknown) =>
+        rec(
+          "simulator.listDevices",
+          [input],
+          simulatorMode === "attached" ? attachedDevices : [],
+        ),
+      status: (input: unknown) =>
+        rec(
+          "simulator.status",
+          [input],
+          simulatorMode === "attached" ? attachedStatus : detachedStatus,
+        ),
+      attach: (input: unknown) => simMutate("simulator.attach", [input], {
+        generation: 1,
+        deviceUdid: "UDID-1",
+        bootedBySolenta: true,
+      }),
+      detach: (input: unknown) =>
+        rec("simulator.detach", [input], { detached: true as const }),
+      takeControl: (input: unknown) =>
+        simMutate("simulator.takeControl", [input], {
+          generation: 2,
+          deviceUdid: "UDID-1",
+          bootedBySolenta: true,
+        }),
+      streamInfo: (input: unknown) =>
+        simMutate("simulator.streamInfo", [input], {
+          url: "ws://127.0.0.1:9/sim",
+          token: "viewer",
+          generation: 1,
+          protocolVersion: 1 as const,
+          maxMessageBytes: 4194304 as const,
+        }),
+      retryStream: (input: unknown) =>
+        simMutate("simulator.retryStream", [input], {
+          url: "ws://127.0.0.1:9/sim",
+          token: "viewer",
+          generation: 1,
+          protocolVersion: 1 as const,
+          maxMessageBytes: 4194304 as const,
+        }),
+      sendInput: (input: unknown) =>
+        simMutate("simulator.sendInput", [input], { ok: true as const }),
+      accessibility: (input: unknown) =>
+        simMutate("simulator.accessibility", [input], {
+          tree: {
+            role: "Application",
+            label: "Fake",
+            identifier: null,
+            value: null,
+            enabled: true,
+            selected: false,
+            frame: { x: 0, y: 0, width: 390, height: 844 },
+            children: [],
+          },
+        }),
+      scrollTo: (input: unknown) =>
+        simMutate("simulator.scrollTo", [input], { ok: true as const }),
+      install: (input: unknown) =>
+        simMutate("simulator.install", [input], { bundleId: "com.example.app" }),
+      launch: (input: unknown) =>
+        simMutate("simulator.launch", [input], { pid: 1 }),
+      openUrl: (input: unknown) =>
+        simMutate("simulator.openUrl", [input], { opened: true as const }),
+      screenshot: (input: unknown) =>
+        simMutate("simulator.screenshot", [input], {
+          id: "art-sim",
+          threadId: "t1",
+          runId: null,
+          source: "simulator" as const,
+          kind: "image" as const,
+          mimeType: "image/png" as const,
+          name: "simulator.png",
+          size: 12,
+          createdAt: new Date(0).toISOString(),
+        }),
+      startRecording: (input: unknown) =>
+        simMutate("simulator.startRecording", [input], {
+          recordingId: "rec-1",
+          startedAt: 0,
+        }),
+      stopRecording: (input: unknown) =>
+        simMutate("simulator.stopRecording", [input], {}),
+    },
     preview: {
       bind: (input: unknown) =>
         rec("preview.bind", [input], {
@@ -2610,6 +2809,16 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
           if (i >= 0) stayAwakeSubs.splice(i, 1);
         };
       }
+      if (channel === "simulator:changed") {
+        simulatorSubs.push(cb as (s: SimulatorStatus) => void);
+        return () => {
+          const i = simulatorSubs.indexOf(cb as (s: SimulatorStatus) => void);
+          if (i >= 0) simulatorSubs.splice(i, 1);
+        };
+      }
+      if (channel === "simulator:focus") {
+        return () => {};
+      }
       detailSubs.push(cb as (d: ThreadPatch) => void);
       return () => {
         const i = detailSubs.indexOf(cb as (d: ThreadPatch) => void);
@@ -2642,7 +2851,8 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
       threadSubs.length +
       detailSubs.length +
       bootReadySubs.length +
-      stayAwakeSubs.length,
+      stayAwakeSubs.length +
+      simulatorSubs.length,
   };
 }
 

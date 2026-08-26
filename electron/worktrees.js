@@ -2526,6 +2526,7 @@ function abandonCheckout(opts) {
   }
   if (created) {
     try {
+      // Checkout-abandon rollback: thread never ran, so no artifacts to reclaim.
       require("./services.js").deleteThread(store, { threadId });
     } catch {
       /* best effort */

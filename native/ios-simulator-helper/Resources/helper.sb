@@ -1,0 +1,103 @@
+(version 1)
+(deny default)
+
+;; Process operations for this helper's own threads and codecs only.
+;; Child spawn and exec are not allowed.
+(allow process-info* (target self))
+(allow signal (target self))
+(allow sysctl-read)
+(allow file-read-metadata)
+
+;; Already-open inherited control pipes (FD 3/4) and stdio keep working
+;; because Seatbelt checks typically run at open. Explicit /dev access
+;; covers common runtime probes.
+(allow file-ioctl
+  (literal "/dev/dtracehelper")
+  (literal "/dev/null")
+)
+(allow file-read-data file-write-data
+  (literal "/dev/null")
+  (literal "/dev/zero")
+  (literal "/dev/random")
+  (literal "/dev/urandom")
+)
+
+;; System libraries, dyld, and frameworks required to keep the process alive.
+(allow file-read*
+  (subpath "/System")
+  (subpath "/usr/lib")
+  (subpath "/usr/share")
+  (subpath "/private/var/db/timezone")
+  (subpath "/Library/Preferences/Logging")
+  (literal "/dev/null")
+  (literal "/dev/zero")
+  (literal "/dev/random")
+  (literal "/dev/urandom")
+)
+(allow file-map-executable
+  (subpath "/System")
+  (subpath "/usr/lib")
+  (literal (param "HELPER_PATH"))
+  (subpath (param "DEVELOPER_DIR"))
+)
+
+;; Helper executable and selected Xcode / Simulator frameworks.
+(allow file-read*
+  (literal (param "HELPER_PATH"))
+  (subpath (param "DEVELOPER_DIR"))
+  (subpath "/Library/Developer/PrivateFrameworks")
+  (subpath "/Library/Developer/CoreSimulator")
+)
+
+;; App-owned cache/temp paths supplied by the parent.
+(allow file-read* file-write*
+  (subpath (param "CACHE_DIR"))
+  (subpath (param "TMPDIR"))
+)
+
+;; CoreSimulator unix-domain endpoints used by SimulatorKit.
+(allow file-read* file-write-data
+  (subpath "/private/tmp/com.apple.CoreSimulator")
+  (subpath "/tmp/com.apple.CoreSimulator")
+)
+
+;; Required CoreSimulator / SimulatorKit mach and XPC services, plus the
+;; handful of system services a Cocoa process needs to stay alive.
+(allow mach-lookup
+  (global-name-regex #"^com\.apple\.CoreSimulator")
+  (global-name-regex #"^com\.apple\.iphonesimulator")
+  (global-name-regex #"^com\.apple\.SimulatorKit")
+  (global-name "com.apple.system.logger")
+  (global-name "com.apple.logd")
+  (global-name "com.apple.diagnosticd")
+  (global-name "com.apple.system.notification_center")
+  (global-name "com.apple.distributed_notifications.2")
+  (global-name "com.apple.system.opendirectoryd.libinfo")
+  (global-name "com.apple.system.opendirectoryd.membership")
+  (global-name "com.apple.coreservices.launchservicesd")
+  (global-name "com.apple.lsd.mapdb")
+  (global-name "com.apple.cfprefsd.agent")
+  (global-name "com.apple.cfprefsd.daemon")
+  (global-name "com.apple.ocspd")
+  (global-name "com.apple.trustd")
+  (global-name "com.apple.trustd.agent")
+  (global-name "com.apple.SecurityServer")
+  (global-name "com.apple.tccd")
+)
+
+;; Loopback client only. Listening and non-loopback stay denied by default.
+(allow system-socket
+  (require-any
+    (socket-domain AF_INET)
+    (socket-domain AF_INET6)
+    (socket-domain AF_UNIX)
+    (socket-domain AF_SYSTEM)
+  )
+)
+(allow network-outbound
+  (remote ip "localhost:*")
+)
+(deny network-bind)
+(deny network-inbound)
+(deny process-exec)
+(deny process-fork)

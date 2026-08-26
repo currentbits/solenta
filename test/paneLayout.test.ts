@@ -32,17 +32,21 @@ describe("pane registry (issue #552)", () => {
       "diff",
       "terminal",
       "browser",
+      "simulator",
       "files",
       "tasks",
       "subagent",
     ]);
   });
 
-  it("ships chat, git, terminal, and browser", () => {
+  it("ships chat, git, terminal, browser, and simulator", () => {
     assert.equal(PANE_REGISTRY.chat.shipped, true);
     assert.equal(PANE_REGISTRY.diff.shipped, true);
     assert.equal(PANE_REGISTRY.browser.shipped, true);
     assert.equal(PANE_REGISTRY.terminal.shipped, true);
+    assert.equal(PANE_REGISTRY.simulator.shipped, true);
+    assert.equal(PANE_REGISTRY.simulator.title, "iOS Simulator");
+    assert.equal(PANE_REGISTRY.simulator.split, "horizontal");
   });
 });
 

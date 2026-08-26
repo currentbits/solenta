@@ -1,0 +1,8 @@
+{
+  "version": 1,
+  "maxControlBytes": 65536,
+  "maxVideoBytes": 4194304,
+  "dropViewerBytes": 8388608,
+  "recoverViewerBytes": 2097152,
+  "videoMagic": "SLV1"
+}

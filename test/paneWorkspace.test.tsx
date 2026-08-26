@@ -122,4 +122,29 @@ describe("PaneWorkspace (issue #552)", () => {
     assert.equal(leaves[1]!.getAttribute("data-pane-type"), "chat");
     m.unmount();
   });
+
+  it("hides the simulator pane on Web and lists it on desktop", async () => {
+    const split = openPane(defaultPaneLayout(), "simulator", "pane-1").layout;
+    const web = await mount(<Harness initial={split} />);
+    assert.ok(web.query("[data-simulator-web-hidden]"));
+    assert.equal(
+      web.query("[data-pane-body-type='simulator']"),
+      null,
+      "stale simulator leaf must not render the live body on Web",
+    );
+    web.unmount();
+
+    (window as unknown as { coder: object }).coder = {};
+    try {
+      const desktop = await mount(<Harness initial={split} />);
+      assert.equal(desktop.query("[data-simulator-web-hidden]"), null);
+      assert.equal(
+        desktop.query("[data-pane-body-type='simulator']")!.textContent,
+        "simulator",
+      );
+      desktop.unmount();
+    } finally {
+      delete (window as unknown as { coder?: unknown }).coder;
+    }
+  });
 });

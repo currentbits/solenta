@@ -576,6 +576,9 @@ function createRunner(opts) {
     searchMemory = null,
     bootstrapMemory = null,
     runAgentFn = runAgent,
+    // Null until main has finished simulator crash recovery, so it is resolved
+    // per call rather than captured.
+    getIosSimulator = () => null,
   } = opts;
 
   /**
@@ -1474,6 +1477,16 @@ function createRunner(opts) {
     // just landed is already out of `active`.
     if (crew.some((t) => t.status === "working" && active.has(t.id))) return;
     let changed = false;
+    const simReleaseOpts = {
+      getIosSimulator,
+      log: (msg) => {
+        try {
+          console.warn(msg);
+        } catch {
+          // never throw from logging
+        }
+      },
+    };
     for (const t of crew) {
       // "idle" is a terminal too: stopped runs and app-quit interrupts land
       // there (grok CLIs often end "cancelled" after finishing their work).
@@ -1483,6 +1496,9 @@ function createRunner(opts) {
       if (finished && !t.archived) {
         // Not real activity: no touch, same as threads:setArchived.
         store.updateThread(t.id, { archived: true });
+        void services.scheduleSimulatorRelease(simReleaseOpts, "releaseThread", {
+          threadId: t.id,
+        });
         changed = true;
       }
     }
@@ -1501,6 +1517,9 @@ function createRunner(opts) {
       }
       if (active.has(t.id) || t.worktreePath || t.pinnedAt) continue;
       services.purgeThread(store, t.id);
+      void services.scheduleSimulatorRelease(simReleaseOpts, "releaseThread", {
+        threadId: t.id,
+      });
       changed = true;
     }
     if (changed) {
@@ -1530,6 +1549,56 @@ function createRunner(opts) {
   }
 
   /**
+   * The run id this terminal belongs to. `active` is often already cleared by
+   * the time a terminal is announced (stopRun clears before notifying), so
+   * fall back to the caller's id and then to the last message this run wrote.
+   * @param {string} threadId
+   * @param {{ runId?: string | null }} extras
+   */
+  function resolveTerminalRunId(threadId, extras) {
+    let runId =
+      extras && extras.runId !== undefined
+        ? extras.runId
+        : active.get(threadId)
+          ? active.get(threadId).runId
+          : null;
+    if (runId == null) {
+      const msgs = store.getMessages(threadId) || [];
+      for (let i = msgs.length - 1; i >= 0; i--) {
+        if (msgs[i].runId) {
+          runId = msgs[i].runId;
+          break;
+        }
+      }
+    }
+    return runId;
+  }
+
+  /**
+   * Retire a simulator recording this run started. The service decides what
+   * matches and revokes it synchronously, so a manual recording or the next
+   * run's recording is never stopped by a terminal that is not theirs.
+   * @param {string} threadId
+   * @param {string} status
+   * @param {string | null} runId
+   */
+  function notifySimulatorRunTerminal(threadId, status, runId) {
+    try {
+      const simulator = getIosSimulator();
+      if (!simulator || typeof simulator.onRunTerminal !== "function") return;
+      void Promise.resolve(
+        simulator.onRunTerminal({
+          threadId: String(threadId),
+          runId: runId == null ? null : String(runId),
+          status,
+        }),
+      ).catch(() => {});
+    } catch {
+      // never affect the run path
+    }
+  }
+
+  /**
    * Fire-and-forget memory record for a real run terminal. Never throws.
    * Skips simulate-provider runs.
    *
@@ -1546,6 +1615,11 @@ function createRunner(opts) {
    * @param {string | null} [extras.runId] - when set, only that run's msgs
    */
   function notifyRunTerminal(threadId, status, text, extras = {}) {
+    // First, while the run identity is still recoverable: everything below
+    // (checkpointing, crew sweeps, the queued drain) can append messages and
+    // start the next turn.
+    const terminalRunId = resolveTerminalRunId(threadId, extras);
+    notifySimulatorRunTerminal(threadId, status, terminalRunId);
     // Plan-mode CLIs without ExitPlanMode: persist an approval card from
     // the last assistant text before anything drains the type-ahead queue
     // (issue #707). Done and CLI-cancelled both count; a failed turn does not.
@@ -1624,24 +1698,9 @@ function createRunner(opts) {
         },
       );
       // Session transcript: final assistant + tool messages once per terminal.
-      const runId =
-        extras.runId !== undefined
-          ? extras.runId
-          : active.get(threadId)
-            ? active.get(threadId).runId
-            : null;
-      // active is often already cleared before notifyRunTerminal; prefer
-      // extras.runId when callers pass it. Fall back to last assistant's runId.
-      let resolvedRunId = runId;
-      if (resolvedRunId == null) {
-        const msgs = store.getMessages(threadId) || [];
-        for (let i = msgs.length - 1; i >= 0; i--) {
-          if (msgs[i].runId) {
-            resolvedRunId = msgs[i].runId;
-            break;
-          }
-        }
-      }
+      // Re-resolved here rather than reusing the value taken on entry: the
+      // steps above may have appended this run's messages.
+      const resolvedRunId = resolveTerminalRunId(threadId, extras);
       recordSessionAtTerminal(threadId, resolvedRunId, thread);
       // One span close for every provider that signals done through here.
       if (resolvedRunId) {
@@ -5537,6 +5596,7 @@ function createRunner(opts) {
           `${workers[i].provider}: ${shortError(String((err && err.message) || err))}`,
         );
         try {
+          // Worker never started a run; no durable artifacts to reclaim.
           services.deleteThread(store, { threadId: workers[i].id });
         } catch {
           /* best effort */
@@ -6086,6 +6146,7 @@ function createRunner(opts) {
         // setup): drop the orphan and keep pendingFork so the next prompt
         // retries the fork, the same contract as a failed lazy worktree.
         try {
+          // Worker never started a run; no durable artifacts to reclaim.
           services.deleteThread(store, { threadId: worker.id });
         } catch {
           /* best effort */
@@ -6542,6 +6603,11 @@ function createRunner(opts) {
     return active.has(threadId);
   }
 
+  function activeRunId(threadId) {
+    const entry = active.get(String(threadId));
+    return entry && typeof entry.runId === "string" ? entry.runId : null;
+  }
+
   /**
    * True while the thread's current turn chain was delivered by the machine
    * (a worker-finished or peer notice) rather than started by a human. Read
@@ -6750,6 +6816,7 @@ function createRunner(opts) {
     refreshAllQuotaWaits,
     getActiveWorkflow,
     isRunning,
+    activeRunId,
     isAutoTurn,
     stopAll,
     flushTranscripts,

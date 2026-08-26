@@ -11,6 +11,7 @@ import {
 } from "../src/threadPatch.ts";
 import type {
   ChatMessage,
+  RunArtifactInfo,
   ThreadDetail,
   ThreadInfo,
   ThreadPatch,
@@ -86,6 +87,28 @@ describe("mergeThreadPatch", () => {
     const moved = { ...prev.thread, status: "done" } as ThreadDetail["thread"];
     const next = mergeThreadPatch(prev, { ...patch([msg("b")], 1), thread: moved });
     assert.equal(next?.thread, moved);
+  });
+
+  const artifact: RunArtifactInfo = {
+    id: "a1",
+    threadId: "t1",
+    runId: "r1",
+    source: "simulator",
+    kind: "image",
+    mimeType: "image/png",
+    name: "screen.png",
+    size: 12,
+    createdAt: "2026-08-25T12:00:00.000Z",
+  };
+
+  it("preserves artifact identity when metadata is unchanged", () => {
+    const artifacts: RunArtifactInfo[] = [artifact];
+    const prev = { ...detail([msg("a"), msg("b")]), artifacts };
+    const next = mergeThreadPatch(prev, {
+      ...patch([msg("c")], 1),
+      artifacts: [{ ...artifact }],
+    });
+    assert.equal(next?.artifacts, artifacts);
   });
 });
 

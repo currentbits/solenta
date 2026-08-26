@@ -20,6 +20,7 @@ import {
   type PaneSplit,
   type PaneType,
 } from "../paneLayout";
+import { isWebMode } from "../shared/wire";
 import styles from "./PaneWorkspace.module.css";
 
 const PANE_DRAG_MIME = "application/x-solenta-pane";
@@ -76,7 +77,9 @@ export function ViewsMenu({
       </button>
       {open && (
         <div className={styles.viewsMenu} role="menu">
-          {PANE_TYPES.map((type) => {
+          {PANE_TYPES.filter(
+            (type) => !(isWebMode() && type === "simulator"),
+          ).map((type) => {
             const openAlready = hasPaneType(layout, type);
             return (
               <button
@@ -378,7 +381,15 @@ function Leaf({
           </button>
         </header>
       )}
-      <div className={styles.leafBody}>{renderPane(leaf)}</div>
+      <div className={styles.leafBody}>
+        {isWebMode() && leaf.type === "simulator" ? (
+          <div data-simulator-web-hidden="">
+            iOS Simulator is available in the desktop app.
+          </div>
+        ) : (
+          renderPane(leaf)
+        )}
+      </div>
     </section>
   );
 }

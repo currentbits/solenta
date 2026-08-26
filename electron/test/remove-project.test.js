@@ -367,4 +367,104 @@ describe("removeProject", () => {
     await services.removeProject(store, { projectId: project.id });
     assert.equal(store.getProject(project.id), null);
   });
+
+  it("schedules one artifact cleanup only after saveNow makes project removal durable", async () => {
+    const repo = path.join(tmpDir, "repo-artifacts");
+    initRepo(repo);
+    const project = await services.addProject(store, repo);
+    const thread = services.createThread(store, {
+      projectId: project.id,
+      title: "Artifacts",
+    });
+    store.setRunArtifacts(thread.id, [
+      {
+        id: "a-rm-proj",
+        threadId: thread.id,
+        runId: "r1",
+        source: "simulator",
+        kind: "image",
+        mimeType: "image/png",
+        name: "screen.png",
+        size: 12,
+        createdAt: "2026-08-25T12:00:00.000Z",
+      },
+    ]);
+    store.saveNow();
+
+    let cleanupCalls = 0;
+    const events = [];
+    const origSaveNow = store.saveNow.bind(store);
+    store.saveNow = () => {
+      events.push("saveNow");
+      origSaveNow();
+    };
+    store.save = () => {
+      events.push("save");
+    };
+
+    await services.removeProject(
+      store,
+      { projectId: project.id },
+      {
+        cleanupRunArtifacts: async () => {
+          cleanupCalls += 1;
+          events.push("cleanup");
+          assert.equal(store.getProject(project.id), null);
+          assert.equal(store.getThread(thread.id), null);
+          const reloaded = new Store(storePath);
+          assert.equal(reloaded.getProject(project.id), null);
+          assert.equal(
+            reloaded.getThread(thread.id),
+            null,
+            "cleanup must run only after durable project removal hits disk",
+          );
+        },
+      },
+    );
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(cleanupCalls, 1);
+    assert.deepEqual(events, ["saveNow", "cleanup"]);
+  });
+
+  it("logs artifact cleanup failures without failing project removal", async () => {
+    const repo = path.join(tmpDir, "repo-artifacts-log");
+    initRepo(repo);
+    const project = await services.addProject(store, repo);
+    const thread = services.createThread(store, {
+      projectId: project.id,
+      title: "Artifacts",
+    });
+    store.setRunArtifacts(thread.id, [
+      {
+        id: "a-rm-log",
+        threadId: thread.id,
+        runId: "r1",
+        source: "simulator",
+        kind: "image",
+        mimeType: "image/png",
+        name: "screen.png",
+        size: 12,
+        createdAt: "2026-08-25T12:00:00.000Z",
+      },
+    ]);
+    store.saveNow();
+
+    const logs = [];
+    await services.removeProject(
+      store,
+      { projectId: project.id },
+      {
+        cleanupRunArtifacts: async () => {
+          throw new Error("cleanup boom");
+        },
+        log: (msg) => logs.push(msg),
+      },
+    );
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(store.getProject(project.id), null);
+    assert.equal(store.getThread(thread.id), null);
+    assert.ok(
+      logs.some((msg) => msg.includes("run-artifacts: cleanup failed: cleanup boom")),
+    );
+  });
 });

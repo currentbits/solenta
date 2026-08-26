@@ -35,6 +35,16 @@ const WIN32_FILES = [
   "electron/test/fork-handoff.test.js",
   "electron/test/grok.test.js",
   "electron/test/guardrails-runner.test.js",
+  // Simulator lifecycle: platform, process adapter, timers, and signals are
+  // all injected and the runner cases inject runAgentFn, so nothing here
+  // spawns an agent. Only git.exe is used, same as the entries above. #248
+  "electron/test/ios-simulator-lifecycle.test.js",
+  // Pure codec: no spawn. Plan 03 Task 1. #248
+  "electron/test/ios-simulator-protocol.test.js",
+  // Toolchain discovery/cache: execFile/spawn/fs/platform injected. Plan 03 Task 2. #248
+  "electron/test/ios-simulator-toolchain.test.js",
+  // Stream broker: injected ws / bufferedAmount / decode. Plan 03 Task 4. #248
+  "electron/test/ios-simulator-stream.test.js",
   "electron/test/kimi.test.js",
   "electron/test/kimi-effort.test.js",
   "electron/test/kimi-home.test.js",

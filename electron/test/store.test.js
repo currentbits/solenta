@@ -4,6 +4,7 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const { Store, MAX_MESSAGES_PER_THREAD, MESSAGE_OVERFLOW_SLACK, MAX_WORKLOG_ITEMS_PER_THREAD, WORKLOG_OVERFLOW_SLACK, SAVE_DEBOUNCE_MS, SAVE_DEBOUNCE_MAX_MS } = require("../store.js");
+const services = require("../services.js");
 
 describe("Store", () => {
   let tmpDir;
@@ -926,6 +927,19 @@ describe("Store", () => {
       costUsd: 0.01,
       turns: 1,
     });
+    store.setRunArtifacts("t1", [
+      {
+        id: "art1",
+        threadId: "t1",
+        runId: "r1",
+        source: "manual",
+        kind: "image",
+        mimeType: "image/png",
+        name: "x.png",
+        size: 1,
+        createdAt: "2026-08-25T12:00:00.000Z",
+      },
+    ]);
     store.setMessages("t2", [
       { id: "m2", role: "user", text: "stay", createdAt: 5 },
     ]);
@@ -2539,5 +2553,337 @@ describe("Store", () => {
       assert.deepEqual(envelope.messagesByThread, {});
       assert.ok(fs.readFileSync(`${filePath}.bak`, "utf8").includes(CANARY));
     });
+  });
+
+  it("persists run artifacts, retains archive evidence, and removes deleted threads", () => {
+    const store = new Store(filePath);
+    const thread = {
+      id: "t-artifacts",
+      projectId: "p1",
+      title: "Artifacts",
+      branch: null,
+      prNumber: null,
+      prUrl: null,
+      status: "idle",
+      lastError: null,
+      createdAt: 1,
+      updatedAt: 2,
+      runStartedAt: null,
+      stoppedAt: null,
+      archived: false,
+      settledOverride: null,
+      settledAt: null,
+      prState: null,
+      prMergeable: null,
+      quotaWaitUntil: null,
+      quotaWaitResumed: false,
+      quotaWaitAutoResume: null,
+      lastVisitedAt: null,
+      pinnedAt: null,
+      snoozedUntil: null,
+      snoozedAt: null,
+      provider: "claude",
+      model: null,
+      sessionId: null,
+      permissionMode: "default",
+      reasoningEffort: null,
+      webSearch: false,
+      worktreePath: null,
+      handoffFrom: null,
+      feltEstimate: null,
+      replayContext: false,
+      muted: false,
+      notes: "",
+      queued: null,
+      verifyCommand: null,
+      verify: null,
+      issueNumber: null,
+      postMergeVerify: null,
+      reviewAcceptedHunks: [],
+    };
+    store.setThreads([thread]);
+    const artifact = {
+      id: "a1",
+      threadId: thread.id,
+      runId: "r1",
+      source: "simulator",
+      kind: "image",
+      mimeType: "image/png",
+      name: "screen.png",
+      size: 12,
+      createdAt: "2026-08-25T12:00:00.000Z",
+    };
+    store.setRunArtifacts(thread.id, [artifact]);
+    store.saveNow();
+
+    const reopened = new Store(filePath);
+    assert.deepEqual(reopened.getRunArtifacts(thread.id), [artifact]);
+    assert.deepEqual(reopened.findRunArtifact("a1"), {
+      threadId: thread.id,
+      artifact,
+    });
+
+    services.setArchived(reopened, { threadId: thread.id, archived: true });
+    assert.equal(reopened.getRunArtifacts(thread.id).length, 1);
+    services.deleteThread(reopened, { threadId: thread.id });
+    assert.deepEqual(reopened.getRunArtifacts(thread.id), []);
+  });
+
+  it("schedules run-artifact cleanup only after saveNow makes deletion durable", async () => {
+    const store = new Store(filePath);
+    const thread = {
+      id: "t-delete-cleanup",
+      projectId: "p1",
+      title: "Delete cleanup",
+      branch: null,
+      prNumber: null,
+      prUrl: null,
+      status: "idle",
+      lastError: null,
+      createdAt: 1,
+      updatedAt: 2,
+      runStartedAt: null,
+      stoppedAt: null,
+      archived: false,
+      settledOverride: null,
+      settledAt: null,
+      prState: null,
+      prMergeable: null,
+      quotaWaitUntil: null,
+      quotaWaitResumed: false,
+      quotaWaitAutoResume: null,
+      lastVisitedAt: null,
+      pinnedAt: null,
+      snoozedUntil: null,
+      snoozedAt: null,
+      provider: "claude",
+      model: null,
+      sessionId: null,
+      permissionMode: "default",
+      reasoningEffort: null,
+      webSearch: false,
+      worktreePath: null,
+      handoffFrom: null,
+      feltEstimate: null,
+      replayContext: false,
+      muted: false,
+      notes: "",
+      queued: null,
+      verifyCommand: null,
+      verify: null,
+      issueNumber: null,
+      postMergeVerify: null,
+      reviewAcceptedHunks: [],
+    };
+    store.setThreads([thread]);
+    store.setRunArtifacts(thread.id, [
+      {
+        id: "a-delete",
+        threadId: thread.id,
+        runId: "r1",
+        source: "simulator",
+        kind: "image",
+        mimeType: "image/png",
+        name: "screen.png",
+        size: 12,
+        createdAt: "2026-08-25T12:00:00.000Z",
+      },
+    ]);
+    store.saveNow();
+
+    let cleanupCalls = 0;
+    const events = [];
+    const origSaveNow = store.saveNow.bind(store);
+    store.saveNow = () => {
+      events.push("saveNow");
+      origSaveNow();
+    };
+    // Debounced save() must not satisfy durability: cleanup runs on the next
+    // microtask, before a scheduled flush would land on disk.
+    store.save = () => {
+      events.push("save");
+    };
+
+    services.deleteThread(
+      store,
+      { threadId: thread.id },
+      {
+        cleanupRunArtifacts: async () => {
+          cleanupCalls += 1;
+          events.push("cleanup");
+          assert.equal(store.getThread(thread.id), null);
+          const reloaded = new Store(filePath);
+          assert.equal(
+            reloaded.getThread(thread.id),
+            null,
+            "cleanup must run only after durable deletion hits disk",
+          );
+        },
+      },
+    );
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(cleanupCalls, 1);
+    assert.deepEqual(events, ["saveNow", "cleanup"]);
+  });
+
+  it("archive keeps run-artifact metadata and does not schedule cleanup", async () => {
+    const store = new Store(filePath);
+    const thread = {
+      id: "t-archive-cleanup",
+      projectId: "p1",
+      title: "Archive cleanup",
+      branch: null,
+      prNumber: null,
+      prUrl: null,
+      status: "idle",
+      lastError: null,
+      createdAt: 1,
+      updatedAt: 2,
+      runStartedAt: null,
+      stoppedAt: null,
+      archived: false,
+      settledOverride: null,
+      settledAt: null,
+      prState: null,
+      prMergeable: null,
+      quotaWaitUntil: null,
+      quotaWaitResumed: false,
+      quotaWaitAutoResume: null,
+      lastVisitedAt: null,
+      pinnedAt: null,
+      snoozedUntil: null,
+      snoozedAt: null,
+      provider: "claude",
+      model: null,
+      sessionId: null,
+      permissionMode: "default",
+      reasoningEffort: null,
+      webSearch: false,
+      worktreePath: null,
+      handoffFrom: null,
+      feltEstimate: null,
+      replayContext: false,
+      muted: false,
+      notes: "",
+      queued: null,
+      verifyCommand: null,
+      verify: null,
+      issueNumber: null,
+      postMergeVerify: null,
+      reviewAcceptedHunks: [],
+    };
+    const artifact = {
+      id: "a-archive",
+      threadId: thread.id,
+      runId: "r1",
+      source: "simulator",
+      kind: "image",
+      mimeType: "image/png",
+      name: "screen.png",
+      size: 12,
+      createdAt: "2026-08-25T12:00:00.000Z",
+    };
+    store.setThreads([thread]);
+    store.setRunArtifacts(thread.id, [artifact]);
+    store.saveNow();
+
+    let cleanupCalls = 0;
+    services.setArchived(store, { threadId: thread.id, archived: true });
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(cleanupCalls, 0);
+    assert.deepEqual(store.getRunArtifacts(thread.id), [artifact]);
+
+    services.deleteThread(
+      store,
+      { threadId: thread.id },
+      {
+        cleanupRunArtifacts: async () => {
+          cleanupCalls += 1;
+        },
+      },
+    );
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(cleanupCalls, 1);
+  });
+
+  it("logs delete cleanup failures without failing thread deletion", async () => {
+    const store = new Store(filePath);
+    const thread = {
+      id: "t-delete-log",
+      projectId: "p1",
+      title: "Delete log",
+      branch: null,
+      prNumber: null,
+      prUrl: null,
+      status: "idle",
+      lastError: null,
+      createdAt: 1,
+      updatedAt: 2,
+      runStartedAt: null,
+      stoppedAt: null,
+      archived: false,
+      settledOverride: null,
+      settledAt: null,
+      prState: null,
+      prMergeable: null,
+      quotaWaitUntil: null,
+      quotaWaitResumed: false,
+      quotaWaitAutoResume: null,
+      lastVisitedAt: null,
+      pinnedAt: null,
+      snoozedUntil: null,
+      snoozedAt: null,
+      provider: "claude",
+      model: null,
+      sessionId: null,
+      permissionMode: "default",
+      reasoningEffort: null,
+      webSearch: false,
+      worktreePath: null,
+      handoffFrom: null,
+      feltEstimate: null,
+      replayContext: false,
+      muted: false,
+      notes: "",
+      queued: null,
+      verifyCommand: null,
+      verify: null,
+      issueNumber: null,
+      postMergeVerify: null,
+      reviewAcceptedHunks: [],
+    };
+    store.setThreads([thread]);
+    store.saveNow();
+
+    const logs = [];
+    services.deleteThread(
+      store,
+      { threadId: thread.id },
+      {
+        cleanupRunArtifacts: async () => {
+          throw new Error("cleanup boom");
+        },
+        log: (msg) => logs.push(msg),
+      },
+    );
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(store.getThread(thread.id), null);
+    assert.ok(
+      logs.some((msg) => msg.includes("run-artifacts: cleanup failed: cleanup boom")),
+    );
+  });
+});
+
+describe("main.js run-artifact cleanup wiring (#248)", () => {
+  it("invokes boot retention cleanup once", () => {
+    const main = fs.readFileSync(path.join(__dirname, "../main.js"), "utf8");
+    assert.match(main, /artifactCleanupTimer/);
+    assert.match(main, /artifactStore[\s\S]*?\.cleanup\(\)/);
+    const bootCleanup = main.slice(
+      main.indexOf("const artifactCleanupTimer"),
+      main.indexOf("artifactCleanupTimer.unref()"),
+    );
+    const cleanupCalls = (bootCleanup.match(/\.cleanup\(\)/g) || []).length;
+    assert.equal(cleanupCalls, 1);
   });
 });

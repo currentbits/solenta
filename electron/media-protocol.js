@@ -9,6 +9,8 @@
  */
 
 const path = require("node:path");
+const fs = require("node:fs");
+const { Readable } = require("node:stream");
 const { pathToFileURL } = require("node:url");
 const {
   resolveToolImagePath,
@@ -16,6 +18,7 @@ const {
   SAFE_ID_RE,
 } = require("./tool-images.js");
 const attachments = require("./attachments.js");
+const { resolveByteRange } = require("./artifact-range.js");
 
 const SCHEME = "solenta-media";
 
@@ -66,8 +69,19 @@ function localImageUrl(filePath) {
 }
 
 /**
+ * @param {unknown} id
+ * @returns {string | null}
+ */
+function artifactUrl(id) {
+  const value = String(id || "");
+  return SAFE_ID_RE.test(value)
+    ? `${SCHEME}://artifact/${encodeURIComponent(value)}`
+    : null;
+}
+
+/**
  * @param {unknown} url
- * @returns {{ kind: "tool", name: string } | { kind: "local", path: string } | null}
+ * @returns {{ kind: "tool", name: string } | { kind: "local", path: string } | { kind: "artifact", id: string } | null}
  */
 function parseMediaUrl(url) {
   let u;
@@ -98,6 +112,18 @@ function parseMediaUrl(url) {
     if (!p) return null;
     return { kind: "local", path: p };
   }
+  if (host === "artifact") {
+    const raw = u.pathname.replace(/^\/+/, "");
+    if (!raw) return null;
+    let id;
+    try {
+      id = decodeURIComponent(raw.split("/")[0]);
+    } catch {
+      return null;
+    }
+    if (!SAFE_ID_RE.test(id)) return null;
+    return { kind: "artifact", id };
+  }
   return null;
 }
 
@@ -121,12 +147,72 @@ async function resolveMediaUrl(url, userDataPath) {
 }
 
 /**
- * @param {{ protocol: { handle: Function }, net: { fetch: Function }, userDataPath: string }} opts
+ * @param {Record<string, string>} [extra]
+ */
+function artifactSecurityHeaders(extra = {}) {
+  return {
+    "Cache-Control": "private, no-store",
+    "Referrer-Policy": "no-referrer",
+    "X-Content-Type-Options": "nosniff",
+    ...extra,
+  };
+}
+
+/**
+ * @param {{ info: { mimeType: string }, path: string, size: number }} opened
+ * @param {Request} request
+ * @returns {Response}
+ */
+function artifactRangeResponse(opened, request) {
+  const rangeHeader =
+    request && request.headers && typeof request.headers.get === "function"
+      ? request.headers.get("range")
+      : null;
+  const range = resolveByteRange(rangeHeader, opened.size);
+  const baseHeaders = artifactSecurityHeaders({
+    "Content-Type": opened.info.mimeType,
+    "Accept-Ranges": "bytes",
+  });
+
+  if (range.status === 416) {
+    return new Response(null, {
+      status: 416,
+      headers: {
+        ...baseHeaders,
+        "Content-Length": "0",
+        "Content-Range": `bytes */${opened.size}`,
+      },
+    });
+  }
+
+  const headers = {
+    ...baseHeaders,
+    "Content-Length": String(range.length),
+  };
+  if (range.status === 206) {
+    headers["Content-Range"] = `bytes ${range.start}-${range.end}/${opened.size}`;
+  }
+
+  const method = request && request.method ? request.method.toUpperCase() : "GET";
+  if (method === "HEAD" || range.length === 0) {
+    return new Response(null, { status: range.status, headers });
+  }
+
+  const stream = fs.createReadStream(opened.path, {
+    start: range.start,
+    end: range.end,
+  });
+  return new Response(Readable.toWeb(stream), { status: range.status, headers });
+}
+
+/**
+ * @param {{ protocol: { handle: Function }, net: { fetch: Function }, userDataPath: string, getArtifactStore?: () => { open: Function } | null }} opts
  */
 function installHandler(opts) {
   const protocol = opts && opts.protocol;
   const net = opts && opts.net;
   const userDataPath = opts && opts.userDataPath;
+  const getArtifactStore = opts && opts.getArtifactStore;
   if (
     !protocol ||
     typeof protocol.handle !== "function" ||
@@ -137,6 +223,45 @@ function installHandler(opts) {
     return;
   }
   protocol.handle(SCHEME, async (request) => {
+    const parsed = parseMediaUrl(request && request.url);
+    if (parsed && parsed.kind === "artifact") {
+      const method =
+        request && request.method ? request.method.toUpperCase() : "GET";
+      if (method !== "GET" && method !== "HEAD") {
+        return new Response(null, {
+          status: 405,
+          headers: artifactSecurityHeaders(),
+        });
+      }
+
+      const store =
+        typeof getArtifactStore === "function" ? getArtifactStore() : null;
+      if (!store || typeof store.open !== "function") {
+        return new Response(null, {
+          status: 404,
+          headers: artifactSecurityHeaders(),
+        });
+      }
+
+      let opened;
+      try {
+        opened = await store.open({ id: parsed.id });
+      } catch {
+        return new Response(null, {
+          status: 500,
+          headers: artifactSecurityHeaders(),
+        });
+      }
+
+      if (!opened) {
+        return new Response(null, {
+          status: 404,
+          headers: artifactSecurityHeaders(),
+        });
+      }
+      return artifactRangeResponse(opened, request);
+    }
+
     const resolved = await resolveMediaUrl(request && request.url, userDataPath);
     if (!resolved) {
       return new Response("Not found", { status: 404 });
@@ -155,6 +280,9 @@ module.exports = {
   installHandler,
   toolImageUrl,
   localImageUrl,
+  artifactUrl,
   parseMediaUrl,
   resolveMediaUrl,
+  artifactRangeResponse,
+  artifactSecurityHeaders,
 };

@@ -8,7 +8,11 @@ import {
   buildTimeline,
   workLogDurationLabel,
 } from "../src/timeline.ts";
-import type { ChatMessage, WorkLogItem } from "../src/shared/ipc.ts";
+import type {
+  ChatMessage,
+  RunArtifactInfo,
+  WorkLogItem,
+} from "../src/shared/ipc.ts";
 
 function msg(
   partial: Partial<ChatMessage> & Pick<ChatMessage, "id" | "role" | "createdAt">,
@@ -137,6 +141,64 @@ describe("buildTimeline", () => {
       timeline.map((e) => (e.kind === "message" ? e.message.id : e.runId)),
       ["zzz-prompt", "aaa-event"],
     );
+  });
+
+  const image: RunArtifactInfo = {
+    id: "image",
+    threadId: "t1",
+    runId: "r1",
+    toolCallId: "t1",
+    source: "simulator",
+    kind: "image",
+    mimeType: "image/png",
+    name: "screen.png",
+    size: 100,
+    createdAt: "2026-08-25T12:00:00Z",
+  };
+
+  const video: RunArtifactInfo = {
+    id: "video",
+    threadId: "t1",
+    runId: "r1",
+    toolCallId: "t1",
+    source: "simulator",
+    kind: "video",
+    mimeType: "video/mp4",
+    name: "recording.mp4",
+    size: 1000,
+    createdAt: "2026-08-25T12:00:01Z",
+    durationMs: 65_000,
+    posterArtifactId: "image",
+  };
+
+  const manual: RunArtifactInfo = {
+    id: "manual",
+    threadId: "t1",
+    runId: null,
+    source: "manual",
+    kind: "image",
+    mimeType: "image/png",
+    name: "capture.png",
+    size: 50,
+    createdAt: "2026-08-25T12:00:02Z",
+  };
+
+  it("groups run artifacts by run and tool call, manual artifacts separately", () => {
+    const messages: ChatMessage[] = [
+      msg({ id: "u1", role: "user", text: "go", createdAt: 1000, runId: "r1" }),
+    ];
+    const workLog: WorkLogItem[] = [
+      wl({ id: "w1", runId: "r1", label: "Seed", done: true, timestamp: 2000 }),
+    ];
+    const entries = buildTimeline(messages, workLog, [
+      { ...image, runId: "r1", toolCallId: "t1", createdAt: "2026-08-25T12:00:00Z" },
+      { ...video, runId: "r1", toolCallId: "t1", createdAt: "2026-08-25T12:00:01Z" },
+      { ...manual, runId: null, createdAt: "2026-08-25T12:00:02Z" },
+    ]);
+    const groups = entries.filter((entry) => entry.kind === "artifacts");
+    assert.equal(groups.length, 2);
+    assert.deepEqual(groups[0]!.artifacts.map((a) => a.id), ["image", "video"]);
+    assert.equal(groups[1]!.runId, null);
   });
 
   it("treats role tool messages as ordinary timeline messages (carry runId)", () => {

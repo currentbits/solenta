@@ -131,6 +131,13 @@ function runRetention(ctx) {
 function makeCtx(deps) {
   const broadcast = deps.broadcast || defaultWindowBroadcast;
   const userDataPath = deps.userDataPath || "";
+  // Resolved per call, not captured: main builds the simulator service after
+  // registerIpc and only publishes it once crash recovery has settled, so a
+  // ctx made at boot must never freeze the null it saw then.
+  const getIosSimulator =
+    typeof deps.getIosSimulator === "function"
+      ? deps.getIosSimulator
+      : () => deps.iosSimulator || null;
   return {
     dialog: deps.dialog,
     store: deps.store,
@@ -140,7 +147,48 @@ function makeCtx(deps) {
     userDataPath,
     memory: createMemoryProxy({ userDataPath }),
     stayAwake: deps.stayAwake || null,
+    cleanupRunArtifacts: deps.cleanupRunArtifacts,
+    getIosSimulator,
+    log: deps.log,
+    transport: "desktop",
   };
+}
+
+function requireDesktop(ctx) {
+  if (!ctx || ctx.transport !== "desktop") {
+    const err = new Error("iOS Simulator controls require the desktop app");
+    err.code = "unsupported_platform";
+    throw err;
+  }
+}
+
+function requireSimulator(ctx) {
+  requireDesktop(ctx);
+  const sim = ctx.getIosSimulator && ctx.getIosSimulator();
+  if (!sim) {
+    const err = new Error("iOS Simulator controls require the desktop app");
+    err.code = "unsupported_platform";
+    throw err;
+  }
+  return sim;
+}
+
+function viewerStreamInfo(info) {
+  return {
+    url: info && info.url,
+    token: info && info.token,
+    generation: info && info.generation,
+    protocolVersion: 1,
+    maxMessageBytes: 4194304,
+  };
+}
+
+function activeRunIdFrom(ctx, threadId) {
+  if (!ctx || !ctx.runner || typeof ctx.runner.activeRunId !== "function") {
+    return null;
+  }
+  const runId = ctx.runner.activeRunId(threadId);
+  return typeof runId === "string" ? runId : null;
 }
 
 /**
@@ -331,6 +379,9 @@ const IPC_HANDLERS = {
   "projects:remove": async (ctx, input) => {
     await services.removeProject(ctx.store, input, {
       isRunning: (id) => ctx.runner.isRunning(id),
+      getIosSimulator: ctx.getIosSimulator,
+      cleanupRunArtifacts: ctx.cleanupRunArtifacts,
+      log: ctx.log,
     });
     ctx.broadcast("threads:changed", services.listThreads(ctx.store));
   },
@@ -436,6 +487,7 @@ const IPC_HANDLERS = {
         ctx.store.save();
       } catch (err) {
         // Atomic create, same as the worktree path below.
+        // Rollback of a thread created this invoke: no run yet, no artifacts.
         try {
           services.deleteThread(ctx.store, { threadId: thread.id });
         } catch {
@@ -473,6 +525,7 @@ const IPC_HANDLERS = {
         // Atomic create: never leave a thread behind when its worktree
         // intent failed validation. worktreePath is still null here, so
         // deleteThread's guard does not fire.
+        // Rollback of a thread created this invoke: no run yet, no artifacts.
         try {
           services.deleteThread(ctx.store, { threadId: thread.id });
         } catch {
@@ -493,6 +546,8 @@ const IPC_HANDLERS = {
   "threads:rewind": async (ctx, input) => {
     const result = await services.rewindThread(ctx.store, input, {
       isRunning: (id) => ctx.runner.isRunning(id),
+      cleanupRunArtifacts: ctx.cleanupRunArtifacts,
+      log: ctx.log,
     });
     ctx.broadcast("threads:changed", services.listThreads(ctx.store));
     return result;
@@ -517,8 +572,14 @@ const IPC_HANDLERS = {
     return updated;
   },
   "threads:setArchived": async (ctx, input) => {
-    const updated = services.setArchived(ctx.store, input);
-    if (updated && updated.archived) retireAgent(ctx, updated.id);
+    const updated = services.setArchived(ctx.store, input, {
+      getIosSimulator: ctx.getIosSimulator,
+      cleanupRunArtifacts: ctx.cleanupRunArtifacts,
+      log: ctx.log,
+    });
+    if (updated && updated.archived) {
+      retireAgent(ctx, updated.id);
+    }
     ctx.broadcast("threads:changed", services.listThreads(ctx.store));
     if (updated && updated.archived) await runRetention(ctx);
     return updated;
@@ -1085,6 +1146,9 @@ const IPC_HANDLERS = {
   "threads:delete": async (ctx, input) => {
     services.deleteThread(ctx.store, input, {
       isRunning: (id) => ctx.runner.isRunning(id),
+      getIosSimulator: ctx.getIosSimulator,
+      cleanupRunArtifacts: ctx.cleanupRunArtifacts,
+      log: ctx.log,
     });
     retireAgent(ctx, input.threadId);
     ctx.broadcast("threads:changed", services.listThreads(ctx.store));
@@ -1559,6 +1623,140 @@ const IPC_HANDLERS = {
     resolveDevServerRoot(ctx, input && input.threadId);
     return preview.type(input);
   },
+  "simulator:capabilities": async (ctx, input) => {
+    const sim = requireSimulator(ctx);
+    return sim.getCapabilities({ threadId: input && input.threadId });
+  },
+  "simulator:selectDeveloperDir": async (ctx, input) => {
+    const sim = requireSimulator(ctx);
+    return sim.selectDeveloperDirectory({
+      threadId: input && input.threadId,
+      developerDir: input && input.developerDir,
+    });
+  },
+  "simulator:listDevices": async (ctx, input) => {
+    const sim = requireSimulator(ctx);
+    return sim.listDevices({ threadId: input && input.threadId });
+  },
+  "simulator:status": async (ctx, input) => {
+    const sim = requireSimulator(ctx);
+    return sim.getStatus({ threadId: input && input.threadId });
+  },
+  "simulator:attach": async (ctx, input) => {
+    const sim = requireSimulator(ctx);
+    return sim.attach({
+      threadId: input && input.threadId,
+      deviceUdid: input && input.deviceUdid,
+    });
+  },
+  "simulator:detach": async (ctx, input) => {
+    const sim = requireSimulator(ctx);
+    return sim.detach({
+      threadId: input && input.threadId,
+      generation: input && input.generation,
+    });
+  },
+  "simulator:takeControl": async (ctx, input) => {
+    const sim = requireSimulator(ctx);
+    return sim.takeover({
+      threadId: input && input.threadId,
+      deviceUdid: input && input.deviceUdid,
+      confirmed: input && input.confirmed,
+    });
+  },
+  "simulator:streamInfo": async (ctx, input) => {
+    const sim = requireSimulator(ctx);
+    const info = await sim.streamInfo({
+      threadId: input && input.threadId,
+      generation: input && input.generation,
+    });
+    return viewerStreamInfo(info);
+  },
+  "simulator:retryStream": async (ctx, input) => {
+    const sim = requireSimulator(ctx);
+    const info = await sim.retryStream({
+      threadId: input && input.threadId,
+      generation: input && input.generation,
+    });
+    return viewerStreamInfo(info);
+  },
+  "simulator:sendInput": async (ctx, input) => {
+    const sim = requireSimulator(ctx);
+    return sim.sendInput({
+      threadId: input && input.threadId,
+      generation: input && input.generation,
+      input: input && input.input,
+    });
+  },
+  "simulator:accessibility": async (ctx, input) => {
+    const sim = requireSimulator(ctx);
+    return sim.accessibility({
+      threadId: input && input.threadId,
+      generation: input && input.generation,
+      maxDepth: input && input.maxDepth,
+    });
+  },
+  "simulator:scrollTo": async (ctx, input) => {
+    const sim = requireSimulator(ctx);
+    return sim.scrollTo({
+      threadId: input && input.threadId,
+      generation: input && input.generation,
+      x: input && input.x,
+      y: input && input.y,
+      dx: input && input.dx,
+      dy: input && input.dy,
+    });
+  },
+  "simulator:install": async (ctx, input) => {
+    const sim = requireSimulator(ctx);
+    return sim.install({
+      threadId: input && input.threadId,
+      generation: input && input.generation,
+      relativeAppPath: input && input.relativeAppPath,
+    });
+  },
+  "simulator:launch": async (ctx, input) => {
+    const sim = requireSimulator(ctx);
+    return sim.launch({
+      threadId: input && input.threadId,
+      generation: input && input.generation,
+      bundleId: input && input.bundleId,
+    });
+  },
+  "simulator:openUrl": async (ctx, input) => {
+    const sim = requireSimulator(ctx);
+    return sim.openUrl({
+      threadId: input && input.threadId,
+      generation: input && input.generation,
+      url: input && input.url,
+    });
+  },
+  "simulator:screenshot": async (ctx, input) => {
+    const sim = requireSimulator(ctx);
+    const threadId = input && input.threadId;
+    return sim.captureScreenshot({
+      threadId,
+      generation: input && input.generation,
+      runId: activeRunIdFrom(ctx, threadId),
+    });
+  },
+  "simulator:startRecording": async (ctx, input) => {
+    const sim = requireSimulator(ctx);
+    const threadId = input && input.threadId;
+    return sim.startRecording({
+      threadId,
+      generation: input && input.generation,
+      runId: activeRunIdFrom(ctx, threadId),
+    });
+  },
+  "simulator:stopRecording": async (ctx, input) => {
+    const sim = requireSimulator(ctx);
+    return sim.stopRecording({
+      threadId: input && input.threadId,
+      generation: input && input.generation,
+      recordingId: input && input.recordingId,
+    });
+  },
 };
 
 /**
@@ -1632,6 +1830,7 @@ function createHandlers(deps) {
 function registerIpc(deps) {
   const { ipcMain } = deps;
   const ctx = makeCtx(deps);
+  ctx.transport = "desktop";
   for (const [channel, fn] of Object.entries(IPC_HANDLERS)) {
     ipcMain.handle(channel, async (_event, ...args) => fn(ctx, ...args));
   }

@@ -1,0 +1,94 @@
+.group {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin: 12px 0;
+}
+
+.item {
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  background: var(--bg-elevated);
+  overflow: hidden;
+}
+
+.meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border-soft);
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.name {
+  font-weight: 600;
+  color: var(--text);
+  font-size: 13px;
+}
+
+.source,
+.run,
+.duration,
+.time {
+  color: var(--text-dim);
+}
+
+.mediaWrap {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px 12px;
+}
+
+.image,
+.video {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  border: 1px solid var(--border-soft);
+  border-radius: 6px;
+}
+
+.image {
+  margin: 10px 12px 12px;
+  cursor: zoom-in;
+}
+
+.download {
+  align-self: flex-start;
+  color: var(--accent);
+  font-size: 12px;
+  text-decoration: none;
+}
+
+.download:hover {
+  text-decoration: underline;
+}
+
+.unavailable {
+  margin: 10px 12px 12px;
+  padding: 16px 12px;
+  border: 1px dashed var(--border);
+  border-radius: 6px;
+  color: var(--text-dim);
+  font-size: 12px;
+  text-align: center;
+}
+
+.streamIn {
+  animation: streamIn 0.28s ease-out both;
+}
+
+@keyframes streamIn {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}

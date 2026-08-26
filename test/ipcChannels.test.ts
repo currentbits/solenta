@@ -24,8 +24,15 @@ describe("ipcChannels table", () => {
     }
   });
 
-  it("push channels match the wire allow-list", () => {
-    assert.deepEqual([...PUSH_CHANNELS], [...WIRE_PUSH_CHANNELS]);
+  it("wire push list is the desktop list minus simulator pushes", () => {
+    assert.deepEqual([...WIRE_PUSH_CHANNELS], [
+      "threads:changed",
+      "thread:updated",
+      "thread:select",
+      "boot:ready",
+    ]);
+    assert.ok((PUSH_CHANNELS as readonly string[]).includes("simulator:changed"));
+    assert.ok((PUSH_CHANNELS as readonly string[]).includes("simulator:focus"));
   });
 
   it("bindCoderApi invokes ns:method for every row", async () => {

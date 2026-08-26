@@ -15,6 +15,7 @@ import {
 } from "./PaneWorkspace";
 import { TerminalPane, type TerminalApi } from "./TerminalPane";
 import { BrowserPane } from "./BrowserPane";
+import { SimulatorPane } from "./SimulatorPane";
 import { useWorktreeChrome } from "./WorktreeControl";
 import {
   defaultPaneLayout,
@@ -47,6 +48,7 @@ import type {
   PermissionMode,
   CliSlashCommand,
   ProjectInfo,
+  SimulatorStatus,
   AgentProfile,
   ProviderInfo,
   ReasoningEffort,
@@ -91,6 +93,7 @@ import {
   type TimelineEntry,
   type WorkLogGroup,
 } from "../timeline";
+import { RunArtifacts } from "./RunArtifacts";
 import {
   clampWindowStart,
   ensureVisibleStart,
@@ -592,6 +595,9 @@ interface ThreadViewProps {
   onDropAttachmentFiles?: (files: File[]) => Promise<AttachmentInfo[]>;
   /** Embedded Browser pane (issue #155). Absent hides screenshot-to-composer. */
   preview?: CoderApi["preview"] | null;
+  /** Desktop-only iOS Simulator pane (#248). */
+  simulator?: CoderApi["simulator"] | null;
+  simulatorStatus?: SimulatorStatus | null;
   devServerStatus?: (threadId: string) => Promise<DevServerState>;
   listLocalServers?: (threadId: string) => Promise<LocalServerInfo[]>;
   /** Push the thread's current branch to origin. */
@@ -4012,6 +4018,8 @@ export const ThreadView = memo(function ThreadView({
   onLoadAttachmentImage,
   onDropAttachmentFiles,
   preview,
+  simulator,
+  simulatorStatus,
   devServerStatus,
   listLocalServers,
   onPush,
@@ -4186,7 +4194,11 @@ export const ThreadView = memo(function ThreadView({
 
   const timeline = useMemo(() => {
     if (!detail) return [];
-    return buildTimeline(detail.messages, detail.workLog);
+    return buildTimeline(
+      detail.messages,
+      detail.workLog,
+      detail.artifacts ?? [],
+    );
   }, [detail]);
 
   /**
@@ -4237,8 +4249,11 @@ export const ThreadView = memo(function ThreadView({
   const seenEntryKeys = useRef<Set<string>>(new Set());
   const seenEntryThread = useRef<string | null>(null);
   const prevTimelineStart = useRef(start);
-  const timelineKey = (entry: TimelineEntry) =>
-    entry.kind === "message" ? entry.message.id : `worklog-${entry.runId}`;
+  const timelineKey = (entry: TimelineEntry) => {
+    if (entry.kind === "message") return entry.message.id;
+    if (entry.kind === "artifacts") return `artifacts:${entry.key}`;
+    return `worklog-${entry.runId}`;
+  };
   if (threadId !== seenEntryThread.current) {
     seenEntryThread.current = threadId;
     seenEntryKeys.current = new Set(visibleTimeline.map(timelineKey));
@@ -5615,6 +5630,16 @@ export const ThreadView = memo(function ThreadView({
               />
             );
           }
+          if (leaf.type === "simulator") {
+            if (!simulator) return <PanePlaceholder type="simulator" />;
+            return (
+              <SimulatorPane
+                threadId={detail?.thread.id ?? ""}
+                api={simulator}
+                status={simulatorStatus}
+              />
+            );
+          }
           if (leaf.type === "diff") {
             return (
               <ChangesPanel
@@ -5854,6 +5879,18 @@ export const ThreadView = memo(function ThreadView({
                   </>
                 )}
               </Fragment>
+            );
+          }
+          if (entry.kind === "artifacts") {
+            const key = `artifacts:${entry.key}`;
+            return (
+              <RunArtifacts
+                key={key}
+                threadId={detail.thread.id}
+                group={entry}
+                allArtifacts={detail.artifacts ?? []}
+                animateIn={!seenEntryKeys.current.has(key)}
+              />
             );
           }
           return (

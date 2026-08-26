@@ -43,6 +43,39 @@ const PERMISSION_MODES = new Set([
   "bypassPermissions",
 ]);
 
+/**
+ * Best-effort orphan cleanup after durable lifecycle metadata changes.
+ * @param {{ cleanupRunArtifacts?: () => unknown, log?: (msg: string) => void } | null | undefined} ctx
+ */
+function scheduleArtifactCleanup(ctx) {
+  if (!ctx || typeof ctx.cleanupRunArtifacts !== "function") return;
+  Promise.resolve()
+    .then(() => ctx.cleanupRunArtifacts())
+    .catch((err) => ctx.log?.(`run-artifacts: cleanup failed: ${err.message}`));
+}
+
+/**
+ * Best-effort simulator ownership release after a durable archive/delete.
+ * Injected via opts.getIosSimulator (never require ios-simulator.js here).
+ * @param {{ getIosSimulator?: () => object | null, log?: (msg: string) => void } | null | undefined} opts
+ * @param {"releaseThread" | "releaseProject"} method
+ * @param {object} input
+ * @returns {Promise<void>}
+ */
+function scheduleSimulatorRelease(opts, method, input) {
+  const get =
+    opts && typeof opts.getIosSimulator === "function"
+      ? opts.getIosSimulator
+      : null;
+  const simulator = get ? get() : null;
+  if (!simulator || typeof simulator[method] !== "function") return Promise.resolve();
+  return Promise.resolve()
+    .then(() => simulator[method](input))
+    .catch(() => {
+      opts.log?.(`ios-simulator: ${method} cleanup failed`);
+    });
+}
+
 /** Network git (fetch/pull) is legitimately slower than execCommand's local default. */
 const GIT_NETWORK_TIMEOUT_MS = 60_000;
 
@@ -1314,8 +1347,9 @@ function listProvidersForApi(_store, opts) {
  * Archive or unarchive a thread. Does not bump updatedAt (not real activity).
  * @param {import('./store').Store} store
  * @param {{ threadId: string, archived: boolean }} input
+ * @param {{ getIosSimulator?: () => object | null, cleanupRunArtifacts?: () => unknown, log?: (msg: string) => void }} [opts]
  */
-function setArchived(store, input) {
+function setArchived(store, input, opts) {
   const { threadId, archived } = input;
   const thread = store.getThread(threadId);
   if (!thread) {
@@ -1327,6 +1361,7 @@ function setArchived(store, input) {
   store.save();
   if (Boolean(archived)) {
     void scheduleImagePruneFromStore(store);
+    void scheduleSimulatorRelease(opts, "releaseThread", { threadId });
   }
   return updated ? { ...updated } : { ...thread, archived: Boolean(archived) };
 }
@@ -3348,7 +3383,7 @@ function renameThread(store, input) {
  *
  * @param {import('./store').Store} store
  * @param {{ threadId: string, messageId: string, prompt: string, restoreFiles?: boolean }} input
- * @param {{ isRunning?: (threadId: string) => boolean }} [opts]
+ * @param {{ isRunning?: (threadId: string) => boolean, cleanupRunArtifacts?: () => unknown, log?: (msg: string) => void }} [opts]
  * @returns {Promise<{ thread: object, droppedMessages: number, restoredSha: string | null }>}
  */
 async function rewindThread(store, input, opts) {
@@ -3414,6 +3449,7 @@ async function rewindThread(store, input, opts) {
   // Worktree reset is already on disk. Debounced save() would leave a crash
   // in the 250ms window with files rewound and the old transcript resurrected.
   store.saveNow();
+  scheduleArtifactCleanup(opts);
   const next = updated || store.getThread(threadId) || thread;
   return { thread: { ...next }, droppedMessages, restoredSha };
 }
@@ -3442,7 +3478,7 @@ function purgeThread(store, threadId) {
  * worktree is still attached.
  * @param {import('./store').Store} store
  * @param {{ threadId: string }} input
- * @param {{ isRunning?: (threadId: string) => boolean }} [opts]
+ * @param {{ isRunning?: (threadId: string) => boolean, getIosSimulator?: () => object | null, cleanupRunArtifacts?: () => unknown, log?: (msg: string) => void }} [opts]
  */
 function deleteThread(store, input, opts) {
   const { threadId } = input;
@@ -3457,8 +3493,10 @@ function deleteThread(store, input, opts) {
     throw new Error(THREAD_STILL_HAS_WORKTREE);
   }
   purgeThread(store, threadId);
-  store.save();
+  store.saveNow();
   void scheduleImagePruneFromStore(store);
+  scheduleArtifactCleanup(opts);
+  void scheduleSimulatorRelease(opts, "releaseThread", { threadId });
 }
 
 /**
@@ -3474,9 +3512,13 @@ function deleteThread(store, input, opts) {
  * so BRANCHES ARE NEVER DELETED and a tree with uncommitted work fails the
  * non-force `worktree remove` and is left on disk for the GC panel instead of
  * being force-deleted under the user.
+ *
+ * After metadata is durable on disk, schedules one best-effort
+ * `opts.cleanupRunArtifacts()` pass (same contract as deleteThread). Cleanup
+ * rejection is logged via `opts.log` and never fails project removal.
  * @param {import('./store').Store} store
  * @param {{ projectId: string }} input
- * @param {{ isRunning?: (threadId: string) => boolean }} [opts]
+ * @param {{ isRunning?: (threadId: string) => boolean, getIosSimulator?: () => object | null, cleanupRunArtifacts?: () => unknown, log?: (msg: string) => void }} [opts]
  */
 async function removeProject(store, input, opts) {
   const projectId =
@@ -3522,8 +3564,10 @@ async function removeProject(store, input, opts) {
     purgeThread(store, thread.id);
   }
   store.setProjects(store.getProjects().filter((p) => p.id !== projectId));
-  store.save();
+  store.saveNow();
   void scheduleImagePruneFromStore(store);
+  scheduleArtifactCleanup(opts);
+  void scheduleSimulatorRelease(opts, "releaseProject", { projectId });
 }
 
 /**
@@ -3665,6 +3709,7 @@ function getThreadDetail(store, threadId, workflow = null, opts) {
     workLog: store.getWorkLog(threadId).slice(),
     workflow: workflow ?? null,
     usage: store.getUsage(threadId) ?? null,
+    artifacts: store.getRunArtifacts(threadId).slice(),
     // Live permission prompt (runner-ephemeral, never persisted).
     pendingPermission: (opts && opts.pendingPermission) || null,
   };
@@ -4607,6 +4652,7 @@ module.exports = {
   addProject,
   createProject,
   removeProject,
+  scheduleSimulatorRelease,
   updateProject,
   pickProjectIcon,
   resolveProjectIcon,

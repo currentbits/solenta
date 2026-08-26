@@ -241,6 +241,8 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     devServerStatus,
     terminal,
     preview,
+    simulator,
+    simulatorStatus,
     setVerifyCommand,
     runVerify,
     runCommand,
@@ -1467,6 +1469,8 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         onLoadAttachmentImage={loadAttachmentImage}
         onDropAttachmentFiles={dropAttachmentFiles}
         preview={preview}
+        simulator={simulator}
+        simulatorStatus={simulatorStatus}
         devServerStatus={devServerStatus}
         listLocalServers={listLocalServers}
         onPush={pushBranch}

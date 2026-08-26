@@ -285,6 +285,9 @@ async function loadOrCreateConfig(file) {
 function createToolHandlers(deps) {
   const { store, runner, forkThread, getProvider, broadcast, userDataPath } =
     deps;
+  const getIosSimulator =
+    typeof deps.getIosSimulator === "function" ? deps.getIosSimulator : null;
+  const log = typeof deps.log === "function" ? deps.log : undefined;
   const previewApi = deps.preview || require("./preview.js");
   const boundProjectId = deps.boundProjectId
     ? String(deps.boundProjectId)
@@ -932,10 +935,14 @@ function createToolHandlers(deps) {
     if (args.archived) {
       assertCrossThreadApproved(args, "Archiving another thread");
     }
-    const updated = setArchived(store, {
-      threadId: args.threadId,
-      archived: args.archived,
-    });
+    const updated = setArchived(
+      store,
+      {
+        threadId: args.threadId,
+        archived: args.archived,
+      },
+      { getIosSimulator, log },
+    );
     if (updated && updated.archived) retireAgent(updated.id);
     broadcastThreadsChanged();
     if (updated && updated.archived && userDataPath) {
@@ -1545,6 +1552,7 @@ function buildMcpServer(sdk, handlers) {
  * @param {(store: unknown, input: { threadId: string, provider?: string }) => { id: string }} [opts.forkThread] - inject for tests
  * @param {(id: string) => unknown} [opts.getProvider] - inject for tests
  * @param {(channel: string, payload: unknown) => void} [opts.broadcast] - same fan-out as IPC
+ * @param {() => object | null} [opts.getIosSimulator] - optional; resolves the simulator service after recover()
  */
 function createOrchServer(opts) {
   const {
@@ -1555,6 +1563,7 @@ function createOrchServer(opts) {
     broadcast,
     log = (msg) => console.warn(msg),
     env = process.env,
+    getIosSimulator = null,
   } = opts;
   // Lazy requires: only touched when a tool actually runs.
   const forkThread =
@@ -1601,6 +1610,8 @@ function createOrchServer(opts) {
       getProvider,
       broadcast,
       userDataPath,
+      getIosSimulator,
+      log,
     };
 
     server = http.createServer(async (req, res) => {

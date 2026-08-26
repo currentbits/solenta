@@ -81,4 +81,4 @@ function killTree(child, sigkillAfterMs) {
   return timer;
 }
 
-module.exports = { killTree, agentSpawnOptions };
+module.exports = { killTree, agentSpawnOptions, signalGroup };

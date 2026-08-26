@@ -1,5 +1,3 @@
-import { PUSH_CHANNELS } from "./ipcChannels";
-
 /**
  * Wire protocol for Solenta Web (Tier 3): the SAME CoderApi channel map that
  * preload.js exposes over Electron IPC, carried over one WebSocket.
@@ -8,10 +6,9 @@ import { PUSH_CHANNELS } from "./ipcChannels";
  * - Channel names are IDENTICAL to the IPC names ("projects:list",
  *   "threads:fork", ...). The server routes them to the same services the
  *   IPC handlers use — one behavior, two transports.
- * - Push channels are exactly preload's PUSH_CHANNELS ("threads:changed",
- *   "thread:updated", "thread:select", "boot:ready"); the server fans every broadcast out to every
- *   authenticated socket. No subscription protocol: pushes are cheap and
- *   the renderer already tolerates redundant ones.
+ * - Push channels are the Web-safe subset of preload's PUSH_CHANNELS
+ *   ("threads:changed", "thread:updated", "thread:select", "boot:ready").
+ *   Simulator pushes are desktop-only and must not ride this list.
  * - Auth: the FIRST client message must be {kind:"auth", token}. The token
  *   is generated (crypto-random) when serve mode starts, printed to stdout
  *   and persisted next to the store. Any other first message closes the
@@ -38,8 +35,13 @@ export type WireServerMessage =
   | { kind: "reply"; id: number; result?: unknown; error?: string }
   | { kind: "push"; channel: string; payload: unknown };
 
-/** Push channels from the IPC table — same set preload allows. */
-export const WIRE_PUSH_CHANNELS = PUSH_CHANNELS;
+/** Web-safe pushes. Desktop-only simulator channels are not in this list. */
+export const WIRE_PUSH_CHANNELS = [
+  "threads:changed",
+  "thread:updated",
+  "thread:select",
+  "boot:ready",
+] as const;
 
 /**
  * True when the renderer is served over HTTP (no Electron preload bridge).

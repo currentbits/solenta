@@ -49,11 +49,14 @@ const { migrateLegacyUserData } = require("./legacy-migration.js");
 const { configureDefaultSecrets } = require("./secrets.js");
 const { installCrashGuard } = require("./crash-guard.js");
 const { start: startLoopLag } = require("./looplag.js");
-const { installShutdown } = require("./shutdown.js");
+const { installShutdown, runAppCleanup } = require("./shutdown.js");
 const { installAppMenu } = require("./menu.js");
 const { bootFirstPaint } = require("./boot.js");
 const { applyZoom, clampUiScale } = require("./zoom.js");
 const mediaProtocol = require("./media-protocol.js");
+const { createRunArtifactStore } = require("./run-artifact-store.js");
+const { createIOSSimulatorService } = require("./ios-simulator.js");
+const { createIOSSimulatorStreamBroker } = require("./ios-simulator-stream.js");
 
 // Custom img protocol (issue #145): registerSchemesAsPrivileged MUST run
 // before app.ready or Electron ignores it.
@@ -119,6 +122,29 @@ let webServer = null;
 
 /** @type {InstanceType<typeof Store> | null} */
 let store = null;
+
+/** @type {ReturnType<typeof createRunArtifactStore> | null} */
+let artifactStore = null;
+
+/** @type {ReturnType<typeof createIOSSimulatorService> | null} */
+let iosSimulator = null;
+
+/** @type {ReturnType<typeof createIOSSimulatorStreamBroker> | null} */
+let iosSimulatorStream = null;
+
+/**
+ * Crash recovery has to finish before anything can attach: an attach that got
+ * in first would overwrite the very journal recovery still needs to read. The
+ * service is therefore constructed synchronously (app teardown must be able to
+ * reach it) but only published to IPC, the runner, and the window once recover()
+ * has settled — which can take a few seconds when a stale recorder ignores
+ * SIGINT, so boot never waits on it.
+ */
+let iosSimulatorRecovered = false;
+
+function currentIosSimulator() {
+  return iosSimulatorRecovered ? iosSimulator : null;
+}
 
 function currentUiScale() {
   return store ? store.getSettings().uiScale : 1;
@@ -314,7 +340,12 @@ app.whenReady().then(async () => {
   });
 
   const userData = app.getPath("userData");
-  mediaProtocol.installHandler({ protocol, net, userDataPath: userData });
+  mediaProtocol.installHandler({
+    protocol,
+    net,
+    userDataPath: userData,
+    getArtifactStore: () => artifactStore,
+  });
   // App root: packaged app path, or repo root in dev (parent of electron/).
   const appPath = app.isPackaged
     ? app.getAppPath()
@@ -426,6 +457,66 @@ app.whenReady().then(async () => {
     }
   });
 
+  artifactStore = createRunArtifactStore({
+    store,
+    userDataPath: userData,
+  });
+
+  // Same userDataPath as the artifact store: recovery only touches recording
+  // temp files inside that store's own staging root, and a mismatch would make
+  // it quarantine legitimate journals. Safe to construct off macOS and without
+  // Xcode — nothing probes the toolchain until a thread asks for a device.
+  try {
+    iosSimulator = createIOSSimulatorService({
+      store,
+      userDataPath: userData,
+      worktreeBase: path.join(userData, "worktrees"),
+      artifactStore,
+      broadcast,
+      logger: { warn: (msg) => console.warn(msg) },
+      getStreamBroker: () => iosSimulatorStream,
+    });
+    void iosSimulator
+      .recover()
+      .catch((err) =>
+        console.warn(
+          "ios-simulator: recovery failed:",
+          err && err.message ? err.message : err,
+        ),
+      )
+      .then(() => {
+        iosSimulatorRecovered = true;
+      });
+  } catch (err) {
+    // Never block app start on it; the rest of the app has no dependency here.
+    iosSimulator = null;
+    console.warn(
+      "ios-simulator: unavailable this session:",
+      err && err.message ? err.message : err,
+    );
+  }
+
+  // Loopback video broker for the native helper (#248). Failure must not
+  // block boot; Task 6 wires sessions into the device service.
+  try {
+    iosSimulatorStream = createIOSSimulatorStreamBroker({
+      log: (msg) => console.warn(msg),
+    });
+    void iosSimulatorStream.listen().catch((err) => {
+      console.warn(
+        "ios-simulator-stream: listen failed:",
+        err && err.message ? err.message : err,
+      );
+      iosSimulatorStream = null;
+    });
+  } catch (err) {
+    iosSimulatorStream = null;
+    console.warn(
+      "ios-simulator-stream: unavailable this session:",
+      err && err.message ? err.message : err,
+    );
+  }
+
   const lastStatus = new Map();
   for (const t of store.getThreads()) {
     lastStatus.set(t.id, threadNotifyState(t));
@@ -487,6 +578,7 @@ app.whenReady().then(async () => {
     },
     tickMs: 700,
     userDataPath: userData,
+    getIosSimulator: currentIosSimulator,
   });
 
   const registered = registerIpc({
@@ -498,6 +590,10 @@ app.whenReady().then(async () => {
     stayAwake,
     worktreeBase: path.join(userData, "worktrees"),
     userDataPath: userData,
+    cleanupRunArtifacts: () =>
+      artifactStore ? artifactStore.cleanup() : Promise.resolve(),
+    getIosSimulator: currentIosSimulator,
+    log: (msg) => console.warn(msg),
   });
   // Renderer may already have mounted against empty state; this is the
   // signal that invoke channels will answer (#618).
@@ -522,6 +618,7 @@ app.whenReady().then(async () => {
         staticDir: fs.existsSync(staticDir) ? staticDir : null,
         token,
         ctx: registered.ctx,
+        artifactStore,
         log: (msg) => console.warn(msg),
       });
     } catch (err) {
@@ -571,6 +668,19 @@ app.whenReady().then(async () => {
   }, 15_000);
   sweepTimer.unref();
 
+  const artifactCleanupTimer = setTimeout(() => {
+    if (!artifactStore) return;
+    void artifactStore
+      .cleanup()
+      .catch((err) =>
+        console.warn(
+          "run-artifacts: cleanup failed:",
+          err && err.message ? err.message : err,
+        ),
+      );
+  }, 15_000);
+  artifactCleanupTimer.unref();
+
   // Periodic retention (#641): grace-period crossings during a multi-day
   // uptime used to wait until the next launch or archive. Startup pass at
   // 15s (same delay as the orphan sweep); then every 6h. Cheap no-op when
@@ -599,7 +709,7 @@ app.whenReady().then(async () => {
     appPath,
     broadcast,
     log: (msg) => console.warn(msg),
-    broadcast,
+    getIosSimulator: currentIosSimulator,
   });
   try {
     await orchServer.start();
@@ -629,97 +739,119 @@ app.whenReady().then(async () => {
 
 installShutdown({
   app,
-  cleanup() {
-    if (webServer) {
-      try {
-        void webServer.close();
-      } catch {
-        // ignore
-      }
-      webServer = null;
-    }
-    // Stop active runs and drain session transcript queue before exit.
-    if (runner) {
-      try {
-        runner.stopAll();
-      } catch {
-        // ignore
-      }
-      try {
-        // Fire-and-forget flush; stopAll already kicked flush.
-        void runner.flushTranscripts();
-      } catch {
-        // ignore
-      }
-    }
-    if (prStateRefresher) {
-      try {
-        prStateRefresher.stop();
-      } catch {
-        // ignore
-      }
-      prStateRefresher = null;
-    }
-    if (retentionSweeper) {
-      try {
-        retentionSweeper.stop();
-      } catch {
-        // ignore
-      }
-      retentionSweeper = null;
-    }
-    if (automationScheduler) {
-      try {
-        automationScheduler.stop();
-      } catch {
-        // ignore
-      }
-      automationScheduler = null;
-    }
-    if (autoDispatch) {
-      try {
-        autoDispatch.stop();
-      } catch {
-        // ignore
-      }
-      autoDispatch = null;
-    }
-    if (postMergeScheduler) {
-      try {
-        postMergeScheduler.stop();
-      } catch {
-        // ignore
-      }
-      postMergeScheduler = null;
-    }
-    // Terminate only a memory-server child we spawned (adopted servers stay up).
-    if (memorySupervisor) {
-      try {
-        memorySupervisor.stop();
-      } catch {
-        // ignore
-      }
-    }
-    if (orchServer) {
-      try {
-        orchServer.stop();
-      } catch {
-        // ignore
-      }
-      orchServer = null;
-    }
-    try {
-      killAllDevServers();
-    } catch {
-      // ignore
-    }
-    try {
-      killAllTerminals();
-    } catch {
-      // ignore
-    }
-  },
+  cleanup: () =>
+    runAppCleanup({
+      log: (msg) => console.warn(msg),
+      // Stop active runs and drain session transcript queue before exit.
+      stopRuns() {
+        if (!runner) return;
+        try {
+          runner.stopAll();
+        } catch {
+          // ignore
+        }
+        try {
+          // Fire-and-forget flush; stopAll already kicked flush.
+          void runner.flushTranscripts();
+        } catch {
+          // ignore
+        }
+      },
+      // After the runs are down (nothing new can start a recording) and before
+      // the rest goes away: finalize the live recording and hand the device
+      // back. This is the one teardown step worth waiting for.
+      shutdownSimulator() {
+        return iosSimulator ? iosSimulator.shutdown() : undefined;
+      },
+      teardownServices,
+    }),
 });
+
+/** Servers, schedulers, and child processes: last, after runs and the device. */
+function teardownServices() {
+  if (webServer) {
+    try {
+      void webServer.close();
+    } catch {
+      // ignore
+    }
+    webServer = null;
+  }
+  if (prStateRefresher) {
+    try {
+      prStateRefresher.stop();
+    } catch {
+      // ignore
+    }
+    prStateRefresher = null;
+  }
+  if (retentionSweeper) {
+    try {
+      retentionSweeper.stop();
+    } catch {
+      // ignore
+    }
+    retentionSweeper = null;
+  }
+  if (automationScheduler) {
+    try {
+      automationScheduler.stop();
+    } catch {
+      // ignore
+    }
+    automationScheduler = null;
+  }
+  if (autoDispatch) {
+    try {
+      autoDispatch.stop();
+    } catch {
+      // ignore
+    }
+    autoDispatch = null;
+  }
+  if (postMergeScheduler) {
+    try {
+      postMergeScheduler.stop();
+    } catch {
+      // ignore
+    }
+    postMergeScheduler = null;
+  }
+  // Terminate only a memory-server child we spawned (adopted servers stay up).
+  if (memorySupervisor) {
+    try {
+      memorySupervisor.stop();
+    } catch {
+      // ignore
+    }
+  }
+  if (orchServer) {
+    try {
+      orchServer.stop();
+    } catch {
+      // ignore
+    }
+    orchServer = null;
+  }
+  if (iosSimulatorStream) {
+    try {
+      void iosSimulatorStream.close();
+    } catch {
+      // ignore
+    }
+    iosSimulatorStream = null;
+  }
+  try {
+    killAllDevServers();
+  } catch {
+    // ignore
+  }
+  try {
+    killAllTerminals();
+  } catch {
+    // ignore
+  }
+}
 
 app.on("window-all-closed", () => {
   // --serve-web keeps the process up after the last window so the HTTP+WS

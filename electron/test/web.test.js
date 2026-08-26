@@ -616,3 +616,125 @@ describe("heartbeat + backpressure (attachWebBridge)", () => {
     }
   });
 });
+
+describe("web bridge denies simulator invoke and push", () => {
+  const SIMULATOR_CHANNELS = [
+    "simulator:capabilities",
+    "simulator:selectDeveloperDir",
+    "simulator:listDevices",
+    "simulator:status",
+    "simulator:attach",
+    "simulator:detach",
+    "simulator:takeControl",
+    "simulator:streamInfo",
+    "simulator:retryStream",
+    "simulator:sendInput",
+    "simulator:accessibility",
+    "simulator:scrollTo",
+    "simulator:install",
+    "simulator:launch",
+    "simulator:openUrl",
+    "simulator:screenshot",
+    "simulator:startRecording",
+    "simulator:stopRecording",
+    "simulator:tap",
+  ];
+
+  async function listenDeniedBridge() {
+    const called = [];
+    const handlers = new Proxy(
+      {},
+      {
+        get(_target, prop) {
+          if (typeof prop !== "string") return undefined;
+          return async () => {
+            called.push(prop);
+            return { leaked: true, helperToken: "secret-helper" };
+          };
+        },
+      },
+    );
+    const httpServer = http.createServer();
+    await new Promise((resolve) => httpServer.listen(0, "127.0.0.1", resolve));
+    const bridge = attachWebBridge(httpServer, {
+      token: "secret-token",
+      ctx: { transport: "desktop", getIosSimulator: () => ({}) },
+      handlers,
+    });
+    const { port } = httpServer.address();
+    return {
+      httpServer,
+      bridge,
+      called,
+      url: `ws://127.0.0.1:${port}${WS_PATH}`,
+    };
+  }
+
+  async function shutdown(httpServer, bridge) {
+    await bridge.close();
+    await new Promise((resolve) => httpServer.close(resolve));
+  }
+
+  it("rejects every simulator:* invoke before handler lookup", async () => {
+    const { httpServer, bridge, called, url } = await listenDeniedBridge();
+    try {
+      const ws = await connect(url);
+      ws.send(JSON.stringify({ kind: "auth", token: "secret-token" }));
+      assert.deepEqual(await onceMessage(ws), { kind: "auth-ok" });
+      for (const [i, channel] of SIMULATOR_CHANNELS.entries()) {
+        ws.send(
+          JSON.stringify({
+            kind: "invoke",
+            id: i + 1,
+            channel,
+            args: [{ threadId: "t1", helperToken: "x" }],
+          }),
+        );
+        const reply = await onceMessage(ws);
+        assert.equal(reply.kind, "reply");
+        assert.equal(reply.id, i + 1);
+        assert.equal(reply.result, undefined);
+        assert.equal(reply.error, "iOS Simulator controls require the desktop app");
+        assert.equal(String(reply.error).includes("helperToken"), false);
+      }
+      assert.deepEqual(called, []);
+      ws.close();
+      await onceClose(ws);
+    } finally {
+      await shutdown(httpServer, bridge);
+    }
+  });
+
+  it("never broadcasts simulator:changed or simulator:focus to web clients", async () => {
+    const { httpServer, bridge, url } = await listenDeniedBridge();
+    try {
+      const ws = await connect(url);
+      ws.send(JSON.stringify({ kind: "auth", token: "secret-token" }));
+      assert.deepEqual(await onceMessage(ws), { kind: "auth-ok" });
+      let pushed = [];
+      ws.on("message", (data) => {
+        pushed.push(JSON.parse(String(data)));
+      });
+      bridge.broadcast("simulator:changed", {
+        attached: true,
+        helperToken: "secret-helper",
+        viewerToken: "secret-viewer",
+      });
+      bridge.broadcast("simulator:focus", { threadId: "t1" });
+      await new Promise((r) => setTimeout(r, 40));
+      assert.deepEqual(pushed, []);
+      const got = onceMessage(ws);
+      bridge.broadcast("threads:changed", [{ id: "t1" }]);
+      assert.deepEqual(await got, {
+        kind: "push",
+        channel: "threads:changed",
+        payload: [{ id: "t1" }],
+      });
+      ws.close();
+      await onceClose(ws);
+    } finally {
+      await shutdown(httpServer, bridge);
+    }
+  });
+});
+

@@ -62,6 +62,7 @@ import type {
   SkillPreviewImportInput,
   SkillTarget,
   SkillWrite,
+  SimulatorStatus,
   SpecArtifact,
   StayAwakeMode,
   StayAwakeStatus,
@@ -558,6 +559,9 @@ export interface UseCoderResult {
   };
   /** Embedded Browser pane guest (issue #155). Desktop-only. */
   preview: CoderApi["preview"];
+  /** Desktop-only iOS Simulator pane (#248). */
+  simulator: CoderApi["simulator"];
+  simulatorStatus: SimulatorStatus | null;
   /** Arm or clear the thread's verification command (issue #296). */
   setVerifyCommand: (threadId: string, command: string | null) => Promise<void>;
   /** Run the thread's verification command now. Rejects on an active run. */
@@ -701,6 +705,8 @@ export function useCoder(): UseCoderResult {
   const [settings, setSettings] = useState<AppSettings | null>(null);
   const [stayAwake, setStayAwake] = useState<StayAwakeStatus | null>(null);
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus | null>(null);
+  const [simulatorStatus, setSimulatorStatus] =
+    useState<SimulatorStatus | null>(null);
   const selectedRef = useRef<string | null>(
     bootSnapshot?.selectedThreadId ?? null,
   );
@@ -975,6 +981,7 @@ export function useCoder(): UseCoderResult {
     let unsubUpdated: (() => void) | undefined;
     let unsubSelect: (() => void) | undefined;
     let unsubBoot: (() => void) | undefined;
+    let unsubSimulator: (() => void) | undefined;
 
     const loadBootLists = () => {
       const loadGen = threadsListGen.current;
@@ -1102,6 +1109,13 @@ export function useCoder(): UseCoderResult {
         setStayAwake(s);
       }
     });
+    try {
+      unsubSimulator = api.on("simulator:changed", (next) => {
+        if (!cancelled) setSimulatorStatus(next);
+      });
+    } catch {
+      // Web/old preload: simulator pushes are desktop-only.
+    }
     void loadBootLists();
 
     // Shared 60s interval for the spend meter (same pattern as sidebar age tick).
@@ -1116,6 +1130,7 @@ export function useCoder(): UseCoderResult {
       unsubSelect?.();
       unsubBoot?.();
       unsubStayAwake();
+      unsubSimulator?.();
       window.clearInterval(statusHandle);
     };
   }, [api, applyThreads, refreshStatus, reloadDetail]);
@@ -3297,6 +3312,8 @@ export function useCoder(): UseCoderResult {
     devServerStatus,
     terminal,
     preview: api.preview,
+    simulator: api.simulator,
+    simulatorStatus,
     setVerifyCommand,
     runVerify,
     runCommand,

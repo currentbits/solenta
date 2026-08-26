@@ -5295,6 +5295,115 @@ function buildDevCoder(): CoderApi {
         return [];
       },
     },
+    simulator: {
+      async capabilities() {
+        return {
+          platform: "darwin",
+          supported: false,
+          developerDir: "",
+          xcode: { version: "0", build: "0" },
+          licenseAccepted: false,
+          runtimes: [],
+          capabilities: {
+            deviceLifecycle: false,
+            screenshot: false,
+            recording: false,
+            stream: false,
+            touch: false,
+            keyboard: false,
+            hardwareButtons: false,
+            accessibility: false,
+          },
+        };
+      },
+      async selectDeveloperDir() {
+        return this.capabilities({ threadId: "" });
+      },
+      async listDevices() {
+        return [];
+      },
+      async status() {
+        return {
+          attached: false,
+          state: null,
+          isOwner: false,
+          generation: null,
+          deviceUdid: null,
+          bootedBySolenta: null,
+          stream: "disconnected" as const,
+          input: "disconnected" as const,
+          accessibility: "disconnected" as const,
+        };
+      },
+      async attach() {
+        throw Object.assign(new Error("iOS Simulator requires macOS"), {
+          code: "unsupported_platform",
+        });
+      },
+      async detach() {
+        return { detached: true as const };
+      },
+      async takeControl() {
+        throw Object.assign(new Error("iOS Simulator requires macOS"), {
+          code: "unsupported_platform",
+        });
+      },
+      async streamInfo() {
+        throw Object.assign(new Error("iOS Simulator requires macOS"), {
+          code: "unsupported_platform",
+        });
+      },
+      async retryStream() {
+        throw Object.assign(new Error("iOS Simulator requires macOS"), {
+          code: "unsupported_platform",
+        });
+      },
+      async sendInput() {
+        throw Object.assign(new Error("iOS Simulator requires macOS"), {
+          code: "unsupported_platform",
+        });
+      },
+      async accessibility() {
+        throw Object.assign(new Error("iOS Simulator requires macOS"), {
+          code: "unsupported_platform",
+        });
+      },
+      async scrollTo() {
+        throw Object.assign(new Error("iOS Simulator requires macOS"), {
+          code: "unsupported_platform",
+        });
+      },
+      async install() {
+        throw Object.assign(new Error("iOS Simulator requires macOS"), {
+          code: "unsupported_platform",
+        });
+      },
+      async launch() {
+        throw Object.assign(new Error("iOS Simulator requires macOS"), {
+          code: "unsupported_platform",
+        });
+      },
+      async openUrl() {
+        throw Object.assign(new Error("iOS Simulator requires macOS"), {
+          code: "unsupported_platform",
+        });
+      },
+      async screenshot() {
+        throw Object.assign(new Error("iOS Simulator requires macOS"), {
+          code: "unsupported_platform",
+        });
+      },
+      async startRecording() {
+        throw Object.assign(new Error("iOS Simulator requires macOS"), {
+          code: "unsupported_platform",
+        });
+      },
+      async stopRecording() {
+        throw Object.assign(new Error("iOS Simulator requires macOS"), {
+          code: "unsupported_platform",
+        });
+      },
+    },
     preview: {
       async bind(_input: { threadId: string; webContentsId: number }): Promise<PreviewSnapshot> {
         return { url: "", title: "", canGoBack: false, canGoForward: false };

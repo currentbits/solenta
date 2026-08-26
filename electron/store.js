@@ -75,6 +75,7 @@ const EMPTY = {
   messagesByThread: {},
   workLogByThread: {},
   usageByThread: {},
+  runArtifactsByThread: {},
   workflowTemplates: [],
   spendByDay: {},
   usageByDay: {},
@@ -546,6 +547,27 @@ function normalizeWebhook(raw) {
   out.onFailed = obj.onFailed !== false;
   out.onWaiting = obj.onWaiting !== false;
   return out;
+}
+
+/**
+ * Normalize runArtifactsByThread: every thread id maps to an array of plain objects.
+ * @param {unknown} raw
+ * @returns {Record<string, object[]>}
+ */
+function normalizeRunArtifactsByThread(raw) {
+  /** @type {Record<string, object[]>} */
+  const map = {};
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return map;
+  for (const [threadId, artifacts] of Object.entries(raw)) {
+    if (!Array.isArray(artifacts)) {
+      map[threadId] = [];
+      continue;
+    }
+    map[threadId] = artifacts
+      .filter((item) => item && typeof item === "object" && !Array.isArray(item))
+      .map((item) => ({ ...item }));
+  }
+  return map;
 }
 
 /**
@@ -1762,6 +1784,7 @@ class Store {
         parsed.usageByThread && typeof parsed.usageByThread === "object"
           ? parsed.usageByThread
           : {},
+      runArtifactsByThread: normalizeRunArtifactsByThread(parsed.runArtifactsByThread),
       workflowTemplates: Array.isArray(parsed.workflowTemplates)
         ? parsed.workflowTemplates.map(migrateTemplateKimiModels)
         : [],
@@ -2225,6 +2248,31 @@ class Store {
     this.setWorkLog(threadId, list);
   }
 
+  getRunArtifacts(threadId) {
+    const value = this.data.runArtifactsByThread[String(threadId)];
+    return Array.isArray(value) ? value : [];
+  }
+
+  setRunArtifacts(threadId, artifacts) {
+    const id = String(threadId);
+    this.data.runArtifactsByThread[id] = Array.isArray(artifacts)
+      ? artifacts.map((artifact) => ({ ...artifact, threadId: id }))
+      : [];
+    this.markDirty();
+  }
+
+  findRunArtifact(id) {
+    const wanted = String(id || "");
+    for (const [threadId, artifacts] of Object.entries(
+      this.data.runArtifactsByThread,
+    )) {
+      if (!Array.isArray(artifacts)) continue;
+      const artifact = artifacts.find((item) => item && item.id === wanted);
+      if (artifact) return { threadId, artifact };
+    }
+    return null;
+  }
+
   /**
    * Drop messageId and every message after it, plus work-log items whose
    * runId is among the dropped runs. Usage / spend is left alone.
@@ -2250,6 +2298,19 @@ class Store {
         ),
       );
     }
+    const retainedRunIds = new Set();
+    for (const m of this.getMessages(threadId)) {
+      if (m && m.runId) retainedRunIds.add(m.runId);
+    }
+    for (const w of this.getWorkLog(threadId)) {
+      if (w && w.runId) retainedRunIds.add(w.runId);
+    }
+    this.setRunArtifacts(
+      threadId,
+      this.getRunArtifacts(threadId).filter(
+        (a) => !a || !a.runId || retainedRunIds.has(a.runId),
+      ),
+    );
     return dropped.length;
   }
 
@@ -3076,6 +3137,7 @@ function cloneEmpty() {
     messagesByThread: {},
     workLogByThread: {},
     usageByThread: {},
+    runArtifactsByThread: {},
     workflowTemplates: [],
     spendByDay: {},
     usageByDay: {},

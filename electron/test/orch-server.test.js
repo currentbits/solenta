@@ -129,7 +129,22 @@ function makeDeps() {
   const asked = [];
   const broadcasts = [];
   const inbounds = [];
+  const simulatorCalls = [];
+  /** @type {string[]} */
+  const logs = [];
   const store = makeFakeStore();
+  const simulator = {
+    async releaseThread(input) {
+      simulatorCalls.push(["releaseThread", input.threadId]);
+      if (simulator.releaseThreadError) throw simulator.releaseThreadError;
+      return Object.freeze({ released: true });
+    },
+    async releaseProject(input) {
+      simulatorCalls.push(["releaseProject", input.projectId]);
+      return Object.freeze({ released: true });
+    },
+    releaseThreadError: null,
+  };
   const deps = {
     store,
     runner: {
@@ -167,6 +182,11 @@ function makeDeps() {
     broadcast: (channel, payload) => {
       broadcasts.push({ channel, payload });
     },
+    getIosSimulator: () => simulator,
+    log: (msg) => logs.push(String(msg)),
+    simulator,
+    simulatorCalls,
+    logs,
     runs,
     forks,
     stopped,
@@ -701,6 +721,9 @@ describe("orch-server tool handlers", () => {
       deps.broadcasts[0].payload.find((t) => t.id === "t1").archived,
       true,
     );
+    // Fire-and-forget release is queued during setArchived; flush it.
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.deepEqual(deps.simulatorCalls, [["releaseThread", "t1"]]);
   });
 
   it("thread_archive still mutates when broadcast is omitted", async () => {
@@ -729,6 +752,26 @@ describe("orch-server tool handlers", () => {
     assert.equal(deps.store.getThread("t1").archived, false);
     assert.deepEqual(deps.retired, []);
     assert.equal(deps.broadcasts.length, 1);
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.deepEqual(deps.simulatorCalls, []);
+  });
+
+  it("thread_archive keeps archived:true when release throws", async () => {
+    const deps = makeDeps();
+    deps.simulator.releaseThreadError = new Error("release blew up");
+    const h = createToolHandlers(deps);
+    const out = await h.thread_archive({
+      threadId: "t1",
+      projectId: "p1",
+      archived: true,
+    });
+    assert.deepEqual(out, { threadId: "t1", archived: true });
+    assert.equal(deps.store.getThread("t1").archived, true);
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.deepEqual(deps.simulatorCalls, [["releaseThread", "t1"]]);
+    assert.equal(deps.logs.length, 1);
+    assert.match(deps.logs[0], /ios-simulator: releaseThread cleanup failed/);
+    assert.equal(deps.logs[0].includes("release blew up"), false);
   });
 
   it("thread_archive of a working thread matches IPC (retire, no extra policy)", async () => {

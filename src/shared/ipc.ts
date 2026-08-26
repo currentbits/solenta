@@ -3,7 +3,8 @@
 // Invoke channel names are `${namespace}:${method}` and live in
 // src/shared/ipcChannels.ts — preload and wireClient iterate that table
 // (issue #623). Push channels: "threads:changed", "thread:updated",
-// "thread:select", "boot:ready".
+// "thread:select", "boot:ready", plus desktop-only "simulator:changed"
+// and "simulator:focus".
 
 /**
  * Retired (#568). The IPC type stays so old callers still typecheck;
@@ -969,6 +970,24 @@ export interface ToolCallInfo {
   images?: string[];
 }
 
+/** App-owned evidence from simulator, verification, browser, or manual capture. */
+export interface RunArtifactInfo {
+  id: string;
+  threadId: string;
+  runId: string | null;
+  toolCallId?: string;
+  source: "simulator" | "verification" | "browser" | "manual";
+  kind: "image" | "video";
+  mimeType: "image/png" | "video/mp4";
+  name: string;
+  size: number;
+  createdAt: string;
+  width?: number;
+  height?: number;
+  durationMs?: number;
+  posterArtifactId?: string;
+}
+
 /**
  * A file, image, or folder the user attached to a chat message (composer chips).
  * `path` is absolute: agents run on this machine and read it with their
@@ -1432,6 +1451,8 @@ export interface ThreadDetail {
   usage: SessionUsage | null;
   /** Oldest unanswered permission prompt of the active run; absent/null when none. */
   pendingPermission?: PendingPermissionInfo | null;
+  /** Run-scoped evidence metadata; absent on old fixtures and wire clients. */
+  artifacts?: RunArtifactInfo[];
 }
 
 /**
@@ -1556,6 +1577,8 @@ export interface VerifyResult {
   at: number;
   /** 0 on the first check of a turn, +1 for each fix handed back. */
   attempt: number;
+  /** Evidence artifact ids produced by this verification run. */
+  artifactIds?: string[];
 }
 
 /**
@@ -2633,6 +2656,118 @@ export interface MemoryMaintenanceReport {
   trust: { agents: unknown[]; suspect: unknown[] };
 }
 
+export type SimulatorHardwareButton =
+  | "home"
+  | "lock"
+  | "volumeUp"
+  | "volumeDown"
+  | "action"
+  | "shake";
+
+export type SimulatorKey =
+  | "enter"
+  | "escape"
+  | "backspace"
+  | "tab"
+  | "space"
+  | "delete"
+  | "arrowUp"
+  | "arrowDown"
+  | "arrowLeft"
+  | "arrowRight"
+  | "home"
+  | "end"
+  | "pageUp"
+  | "pageDown";
+
+export type SimulatorInput =
+  | {
+      kind: "touch";
+      phase: "down" | "move" | "up";
+      pointerId: number;
+      x: number;
+      y: number;
+    }
+  | { kind: "text"; text: string }
+  | { kind: "key"; key: SimulatorKey; phase: "down" | "up" }
+  | { kind: "button"; button: SimulatorHardwareButton };
+
+export interface SimulatorStreamInfo {
+  url: string;
+  token: string;
+  generation: number;
+  protocolVersion: 1;
+  maxMessageBytes: 4194304;
+}
+
+export interface SimulatorHelperCapabilities {
+  stream: boolean;
+  touch: boolean;
+  keyboard: boolean;
+  hardwareButtons: boolean;
+  accessibility: boolean;
+}
+
+export interface SimulatorCapabilitySnapshot {
+  platform: string;
+  supported: boolean;
+  developerDir: string;
+  xcode: { version: string; build: string };
+  licenseAccepted: boolean;
+  runtimes: Array<{
+    identifier: string;
+    name: string;
+    devices: Array<{ udid: string; name: string; state: string }>;
+  }>;
+  capabilities: {
+    deviceLifecycle: boolean;
+    screenshot: boolean;
+    recording: boolean;
+  } & SimulatorHelperCapabilities;
+}
+
+export interface SimulatorDeviceInfo {
+  udid: string;
+  name: string;
+  state: string;
+  runtimeIdentifier: string;
+  runtimeName: string;
+}
+
+export interface SimulatorStatus {
+  attached: boolean;
+  state: "active" | "releasing" | null;
+  isOwner: boolean;
+  generation: number | null;
+  deviceUdid: string | null;
+  bootedBySolenta: boolean | null;
+  stream: "connected" | "disconnected";
+  input: "connected" | "disconnected";
+  accessibility: "connected" | "disconnected";
+}
+
+export interface SimulatorLeaseSnapshot {
+  generation: number;
+  deviceUdid: string;
+  bootedBySolenta: boolean;
+}
+
+export interface SimulatorAccessibilityNode {
+  role: string | null;
+  label: string | null;
+  identifier: string | null;
+  value: string | null;
+  enabled: boolean;
+  selected: boolean;
+  frame: { x: number; y: number; width: number; height: number };
+  children: SimulatorAccessibilityNode[];
+}
+
+export interface SimulatorRecordingStart {
+  recordingId: string;
+  startedAt: number;
+}
+
 /**
  * Renderer-facing API. Invoke method names are locked to
  * `src/shared/ipcChannels.ts` (IPC_CHANNEL_LOCK); keep JSDoc here.
@@ -3681,6 +3816,87 @@ export interface CoderApi {
     }): Promise<PreviewSnapshot>;
   };
   /**
+   * Desktop-only iOS Simulator pane (#248). Web invokes are denied before
+   * handler dispatch. `sendInput` is the renderer input path; tap/swipe/
+   * typeText/pressButton live on the main-process service for later MCP.
+   */
+  simulator: {
+    capabilities(input: { threadId: string }): Promise<SimulatorCapabilitySnapshot>;
+    selectDeveloperDir(input: {
+      threadId: string;
+      developerDir: string;
+    }): Promise<SimulatorCapabilitySnapshot>;
+    listDevices(input: { threadId: string }): Promise<SimulatorDeviceInfo[]>;
+    status(input: { threadId: string }): Promise<SimulatorStatus>;
+    attach(input: {
+      threadId: string;
+      deviceUdid: string;
+    }): Promise<SimulatorLeaseSnapshot>;
+    detach(input: {
+      threadId: string;
+      generation: number;
+    }): Promise<{ detached: true }>;
+    takeControl(input: {
+      threadId: string;
+      deviceUdid?: string;
+      confirmed: boolean;
+    }): Promise<SimulatorLeaseSnapshot>;
+    streamInfo(input: {
+      threadId: string;
+      generation: number;
+    }): Promise<SimulatorStreamInfo>;
+    retryStream(input: {
+      threadId: string;
+      generation: number;
+    }): Promise<SimulatorStreamInfo>;
+    sendInput(input: {
+      threadId: string;
+      generation: number;
+      input: SimulatorInput;
+    }): Promise<{ ok: true }>;
+    accessibility(input: {
+      threadId: string;
+      generation: number;
+      maxDepth?: number;
+    }): Promise<{ tree: SimulatorAccessibilityNode }>;
+    scrollTo(input: {
+      threadId: string;
+      generation: number;
+      x: number;
+      y: number;
+      dx?: number;
+      dy?: number;
+    }): Promise<{ ok: true }>;
+    install(input: {
+      threadId: string;
+      generation: number;
+      relativeAppPath: string;
+    }): Promise<{ bundleId: string }>;
+    launch(input: {
+      threadId: string;
+      generation: number;
+      bundleId: string;
+    }): Promise<{ pid: number | null }>;
+    openUrl(input: {
+      threadId: string;
+      generation: number;
+      url: string;
+    }): Promise<{ opened: true }>;
+    screenshot(input: {
+      threadId: string;
+      generation: number;
+    }): Promise<RunArtifactInfo>;
+    startRecording(input: {
+      threadId: string;
+      generation: number;
+    }): Promise<SimulatorRecordingStart>;
+    stopRecording(input: {
+      threadId: string;
+      generation: number;
+      recordingId?: string;
+    }): Promise<unknown>;
+  };
+  /**
    * Vibe Kanban import (#399). Preview/import read the local VK SQLite;
    * export writes a versioned JSON dump of projects, threads, and messages
    * (settings and tokens stay out). pickDataDir / export cancel as null.
@@ -3717,6 +3933,10 @@ export interface CoderApi {
   on(channel: "boot:ready", cb: () => void): () => void;
   /** Stay-awake derived state flipped (mode, blocking, battery) (#364). */
   on(channel: "stayAwake:changed", cb: (state: StayAwakeStatus) => void): () => void;
+  /** Desktop-only simulator lease/stream status. */
+  on(channel: "simulator:changed", cb: (status: SimulatorStatus) => void): () => void;
+  /** Desktop-only request to focus the Simulator pane. */
+  on(channel: "simulator:focus", cb: (payload: { threadId: string }) => void): () => void;
 }
 
 declare global {

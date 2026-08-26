@@ -40,6 +40,10 @@ function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
 }
 
+function flushScheduledCleanup() {
+  return new Promise((resolve) => setImmediate(resolve));
+}
+
 function waitFor(predicate, { timeoutMs = 15000, intervalMs = 20 } = {}) {
   return new Promise((resolve, reject) => {
     const start = Date.now();
@@ -140,6 +144,55 @@ describe("rewindThread (services)", () => {
     );
   });
 
+  it("truncates run-artifact metadata for dropped runs but keeps retained and manual", async () => {
+    const r1Artifact = {
+      id: "art-r1",
+      threadId: thread.id,
+      runId: "r1",
+      source: "simulator",
+      kind: "image",
+      mimeType: "image/png",
+      name: "r1.png",
+      size: 100,
+      createdAt: "2026-08-25T12:00:00.000Z",
+    };
+    const r2Artifact = {
+      id: "art-r2",
+      threadId: thread.id,
+      runId: "r2",
+      source: "verification",
+      kind: "image",
+      mimeType: "image/png",
+      name: "r2.png",
+      size: 200,
+      createdAt: "2026-08-25T12:00:01.000Z",
+    };
+    const manualArtifact = {
+      id: "art-manual",
+      threadId: thread.id,
+      runId: null,
+      source: "manual",
+      kind: "image",
+      mimeType: "image/png",
+      name: "manual.png",
+      size: 50,
+      createdAt: "2026-08-25T12:00:02.000Z",
+    };
+    store.setRunArtifacts(thread.id, [r1Artifact, r2Artifact, manualArtifact]);
+
+    await services.rewindThread(store, {
+      threadId: thread.id,
+      messageId: "u2",
+      prompt: "second, edited",
+    });
+
+    const remaining = store.getRunArtifacts(thread.id);
+    assert.deepEqual(
+      remaining.map((a) => a.id),
+      ["art-r1", "art-manual"],
+    );
+  });
+
   it("replayContext persists across reload", async () => {
     await services.rewindThread(store, {
       threadId: thread.id,
@@ -233,6 +286,110 @@ describe("rewindThread (services)", () => {
     assert.equal(result.restoredSha, null);
     assert.equal(result.droppedMessages, 4);
     assert.equal(result.thread.replayContext, true);
+  });
+
+  it("persists filtered run-artifact metadata before cleanup starts", async () => {
+    store.setRunArtifacts(thread.id, [
+      {
+        id: "art-r1",
+        threadId: thread.id,
+        runId: "r1",
+        source: "simulator",
+        kind: "image",
+        mimeType: "image/png",
+        name: "r1.png",
+        size: 100,
+        createdAt: "2026-08-25T12:00:00.000Z",
+      },
+      {
+        id: "art-r2",
+        threadId: thread.id,
+        runId: "r2",
+        source: "verification",
+        kind: "image",
+        mimeType: "image/png",
+        name: "r2.png",
+        size: 200,
+        createdAt: "2026-08-25T12:00:01.000Z",
+      },
+    ]);
+    const events = [];
+    const origSaveNow = store.saveNow.bind(store);
+    store.saveNow = () => {
+      events.push("save");
+      origSaveNow();
+    };
+
+    await services.rewindThread(
+      store,
+      {
+        threadId: thread.id,
+        messageId: "u2",
+        prompt: "second, edited",
+      },
+      {
+        cleanupRunArtifacts: async () => {
+          events.push("cleanup");
+          assert.deepEqual(
+            store.getRunArtifacts(thread.id).map((a) => a.id),
+            ["art-r1"],
+          );
+          const reloaded = new Store(path.join(tmpDir, "store.json"));
+          assert.deepEqual(
+            reloaded.getRunArtifacts(thread.id).map((a) => a.id),
+            ["art-r1"],
+          );
+        },
+      },
+    );
+    await flushScheduledCleanup();
+    assert.deepEqual(events, ["save", "cleanup"]);
+  });
+
+  it("does not schedule cleanup when rewind fails", async () => {
+    let cleanupCalls = 0;
+    await assert.rejects(
+      () =>
+        services.rewindThread(
+          store,
+          {
+            threadId: thread.id,
+            messageId: "a1",
+            prompt: "x",
+          },
+          {
+            cleanupRunArtifacts: async () => {
+              cleanupCalls += 1;
+            },
+          },
+        ),
+      /Not a user message: a1/,
+    );
+    await flushScheduledCleanup();
+    assert.equal(cleanupCalls, 0);
+  });
+
+  it("logs cleanup failures without failing rewind", async () => {
+    const logs = [];
+    const result = await services.rewindThread(
+      store,
+      {
+        threadId: thread.id,
+        messageId: "u2",
+        prompt: "second, edited",
+      },
+      {
+        cleanupRunArtifacts: async () => {
+          throw new Error("disk full");
+        },
+        log: (msg) => logs.push(msg),
+      },
+    );
+    await flushScheduledCleanup();
+    assert.equal(result.droppedMessages, 4);
+    assert.ok(
+      logs.some((msg) => msg.includes("run-artifacts: cleanup failed: disk full")),
+    );
   });
 });
 

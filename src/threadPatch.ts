@@ -145,6 +145,9 @@ export function mergeThreadPatch(
   )
     ? prev.pendingPermission
     : rest.pendingPermission;
+  const artifacts = sameJson(prev.artifacts, rest.artifacts)
+    ? prev.artifacts
+    : rest.artifacts;
   const messages = sameTail(prev.messages, messagesFrom, patch.messages)
     ? prev.messages
     : messagesFrom === 0
@@ -160,10 +163,20 @@ export function mergeThreadPatch(
     usage === prev.usage &&
     workflow === prev.workflow &&
     pendingPermission === prev.pendingPermission &&
+    artifacts === prev.artifacts &&
     messages === prev.messages &&
     workLog === prev.workLog
   ) {
     return prev;
   }
-  return { ...rest, thread, usage, workflow, pendingPermission, messages, workLog };
+  return {
+    ...rest,
+    thread,
+    usage,
+    workflow,
+    pendingPermission,
+    artifacts,
+    messages,
+    workLog,
+  };
 }

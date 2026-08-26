@@ -303,3 +303,232 @@ exit 1`,
     });
   });
 });
+
+const SIMULATOR_IPC_METHODS = [
+  "capabilities",
+  "selectDeveloperDir",
+  "listDevices",
+  "status",
+  "attach",
+  "detach",
+  "takeControl",
+  "streamInfo",
+  "retryStream",
+  "sendInput",
+  "accessibility",
+  "scrollTo",
+  "install",
+  "launch",
+  "openUrl",
+  "screenshot",
+  "startRecording",
+  "stopRecording",
+];
+
+const SIMULATOR_SERVICE_METHODS = {
+  capabilities: "getCapabilities",
+  selectDeveloperDir: "selectDeveloperDirectory",
+  listDevices: "listDevices",
+  status: "getStatus",
+  attach: "attach",
+  detach: "detach",
+  takeControl: "takeover",
+  streamInfo: "streamInfo",
+  retryStream: "retryStream",
+  sendInput: "sendInput",
+  accessibility: "accessibility",
+  scrollTo: "scrollTo",
+  install: "install",
+  launch: "launch",
+  openUrl: "openUrl",
+  screenshot: "captureScreenshot",
+  startRecording: "startRecording",
+  stopRecording: "stopRecording",
+};
+
+function makeFakeSimulatorService() {
+  const calls = [];
+  const service = {};
+  for (const [ipcMethod, serviceMethod] of Object.entries(
+    SIMULATOR_SERVICE_METHODS,
+  )) {
+    service[serviceMethod] = async (input) => {
+      calls.push({ ipcMethod, serviceMethod, input });
+      if (serviceMethod === "streamInfo") {
+        return {
+          url: "ws://127.0.0.1:9",
+          token: "viewer-only-token",
+          generation: 3,
+          protocolVersion: 1,
+          maxMessageBytes: 4194304,
+        };
+      }
+      if (serviceMethod === "listDevices") return [];
+      if (serviceMethod === "getCapabilities") {
+        return { platform: "darwin", supported: true, capabilities: {} };
+      }
+      if (serviceMethod === "getStatus") {
+        return { attached: false, generation: null };
+      }
+      if (serviceMethod === "attach") {
+        return { generation: 1, deviceUdid: "u", bootedBySolenta: false };
+      }
+      if (serviceMethod === "startRecording") {
+        return { recordingId: "rec-1", startedAt: 1 };
+      }
+      if (serviceMethod === "captureScreenshot") {
+        return { id: "art-1", runId: input && input.runId };
+      }
+      return { ok: true };
+    };
+  }
+  return { service, calls };
+}
+
+function assertNoSecretTokens(value, allowViewerToken = false) {
+  const json = JSON.stringify(value);
+  assert.equal(json.includes("helperToken"), false);
+  assert.equal(json.includes("viewerToken"), false);
+  if (!allowViewerToken) {
+    assert.equal(json.includes("viewer-only-token"), false);
+  }
+}
+
+describe("IPC seam: desktop-only simulator channels", () => {
+  it("registers every simulator channel and preload exposes each", async () => {
+    const { IPC_CHANNELS, ipcChannelName } = await import(
+      pathToFileURL(path.join(__dirname, "../../src/shared/ipcChannels.ts")).href
+    );
+    const table = IPC_CHANNELS.filter((row) => row.ns === "simulator").map(
+      ipcChannelName,
+    );
+    assert.deepEqual(
+      table,
+      SIMULATOR_IPC_METHODS.map((method) => `simulator:${method}`),
+    );
+    await withStubbedElectron(({ handlers, bridge }) => {
+      delete require.cache[require.resolve("../ipc.js")];
+      delete require.cache[require.resolve("../preload.js")];
+      const { registerIpc } = require("../ipc.js");
+      const { Store } = require("../store.js");
+      const s = new Store(path.join(os.tmpdir(), `coder-sim-seam-${Date.now()}.json`));
+      registerIpc({
+        ipcMain: require("electron").ipcMain,
+        dialog: {},
+        store: s,
+        runner: { start() {}, stop() {}, stopAll() {}, activeRunId() { return null; } },
+        broadcast() {},
+        worktreeBase: path.join(os.tmpdir(), "wt"),
+        userDataPath: os.tmpdir(),
+        getIosSimulator: () => makeFakeSimulatorService().service,
+      });
+      require("../preload.js");
+      const api = bridge.coder;
+      for (const method of SIMULATOR_IPC_METHODS) {
+        assert.equal(
+          typeof api.simulator?.[method],
+          "function",
+          `preload must expose simulator.${method}`,
+        );
+        assert.ok(
+          handlers.has(`simulator:${method}`),
+          `main must handle simulator:${method}`,
+        );
+      }
+      assert.equal(api.simulator.tap, undefined);
+      assert.equal(api.simulator.swipe, undefined);
+      assert.equal(api.simulator.typeText, undefined);
+      assert.equal(api.simulator.pressButton, undefined);
+    });
+  });
+
+  it("desktop handlers reach the service with transport desktop and no helper tokens", async () => {
+    await withStubbedElectron(async () => {
+      delete require.cache[require.resolve("../ipc.js")];
+      const { IPC_HANDLERS } = require("../ipc.js");
+      const { service, calls } = makeFakeSimulatorService();
+      const transports = [];
+      const ctx = {
+        transport: "desktop",
+        getIosSimulator: () => service,
+        runner: {
+          activeRunId(threadId) {
+            return threadId === "t-run" ? "run-active" : null;
+          },
+        },
+      };
+      const wrapped = new Proxy(ctx, {
+        get(target, prop, receiver) {
+          if (prop === "transport") transports.push(target.transport);
+          return Reflect.get(target, prop, receiver);
+        },
+      });
+
+      for (const method of SIMULATOR_IPC_METHODS) {
+        const channel = `simulator:${method}`;
+        assert.equal(typeof IPC_HANDLERS[channel], "function", channel);
+        const input = {
+          threadId: method === "screenshot" || method === "startRecording"
+            ? "t-run"
+            : "t1",
+          generation: 1,
+          runId: "from-renderer",
+          helperToken: "leaked-helper",
+          viewerToken: "leaked-viewer",
+        };
+        const result = await IPC_HANDLERS[channel](wrapped, input);
+        assertNoSecretTokens(result, method === "streamInfo");
+        if (method === "streamInfo") {
+          assert.equal(result.token, "viewer-only-token");
+          assert.equal(result.helperToken, undefined);
+          assert.equal(result.viewerToken, undefined);
+          assert.equal(result.protocolVersion, 1);
+          assert.equal(result.maxMessageBytes, 4194304);
+        }
+      }
+
+      assert.equal(calls.length, SIMULATOR_IPC_METHODS.length);
+      assert.ok(transports.every((value) => value === "desktop"));
+      assert.ok(transports.length >= SIMULATOR_IPC_METHODS.length);
+
+      const shot = calls.find((c) => c.serviceMethod === "captureScreenshot");
+      assert.equal(shot.input.runId, "run-active");
+      assert.equal(shot.input.helperToken, undefined);
+
+      const rec = calls.find((c) => c.serviceMethod === "startRecording");
+      assert.equal(rec.input.runId, "run-active");
+
+      const idle = makeFakeSimulatorService();
+      const idleCtx = {
+        transport: "desktop",
+        getIosSimulator: () => idle.service,
+        runner: { activeRunId() { return null; } },
+      };
+      await IPC_HANDLERS["simulator:screenshot"](idleCtx, {
+        threadId: "t1",
+        generation: 1,
+        runId: "from-renderer",
+      });
+      assert.equal(idle.calls[0].input.runId, null);
+
+      await assert.rejects(
+        IPC_HANDLERS["simulator:status"](
+          { ...ctx, transport: "web" },
+          { threadId: "t1" },
+        ),
+        (err) => {
+          assert.equal(err.code, "unsupported_platform");
+          assert.match(err.message, /desktop app/);
+          return true;
+        },
+      );
+      await assert.rejects(
+        IPC_HANDLERS["simulator:status"]({ getIosSimulator: () => service }, {
+          threadId: "t1",
+        }),
+        (err) => err.code === "unsupported_platform",
+      );
+    });
+  });
+});
+

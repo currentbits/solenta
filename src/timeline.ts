@@ -1,4 +1,4 @@
-import type { ChatMessage, WorkLogItem } from "./shared/ipc";
+import type { ChatMessage, RunArtifactInfo, WorkLogItem } from "./shared/ipc";
 
 export interface WorkLogGroup {
   kind: "worklog";
@@ -14,17 +14,43 @@ export interface MessageEntry {
   timestamp: number;
 }
 
-export type TimelineEntry = WorkLogGroup | MessageEntry;
+export interface ArtifactGroup {
+  kind: "artifacts";
+  key: string;
+  runId: string | null;
+  toolCallId?: string;
+  artifacts: RunArtifactInfo[];
+  timestamp: number;
+}
+
+export type TimelineEntry = WorkLogGroup | MessageEntry | ArtifactGroup;
+
+function artifactGroupKey(artifact: RunArtifactInfo): string {
+  return `${artifact.runId ?? "manual"}\0${artifact.toolCallId ?? ""}`;
+}
+
+function artifactTimestamp(createdAt: string): number {
+  const t = Date.parse(createdAt);
+  return Number.isFinite(t) ? t : 0;
+}
+
+function timelineKindOrder(kind: TimelineEntry["kind"]): number {
+  if (kind === "message") return 0;
+  if (kind === "artifacts") return 1;
+  return 2;
+}
 
 /**
  * Build a single chronological timeline: every ChatMessage plus one WorkLogGroup
- * per distinct runId (timestamp = earliest item in the group). Empty work-log
- * groups are never emitted. When timestamps tie, messages sort before work logs
- * so a user prompt that starts a run appears above that run's card.
+ * per distinct runId (timestamp = earliest item in the group) and artifact
+ * groups keyed by run/tool call. Empty work-log groups are never emitted.
+ * When timestamps tie, messages sort before artifact groups before work logs
+ * so a user prompt that starts a run appears above that run's evidence card.
  */
 export function buildTimeline(
   messages: ChatMessage[],
   workLog: WorkLogItem[],
+  artifacts: RunArtifactInfo[] = [],
 ): TimelineEntry[] {
   const byRun = new Map<string, WorkLogItem[]>();
   for (const item of workLog) {
@@ -40,6 +66,36 @@ export function buildTimeline(
       kind: "message",
       message,
       timestamp: message.createdAt,
+    });
+  }
+
+  const artifactGroups = new Map<string, RunArtifactInfo[]>();
+  for (const artifact of artifacts) {
+    const key = artifactGroupKey(artifact);
+    const list = artifactGroups.get(key);
+    if (list) list.push(artifact);
+    else artifactGroups.set(key, [artifact]);
+  }
+
+  for (const [key, groupArtifacts] of artifactGroups) {
+    const sorted = [...groupArtifacts].sort((a, b) => {
+      const at = artifactTimestamp(a.createdAt);
+      const bt = artifactTimestamp(b.createdAt);
+      if (at !== bt) return at - bt;
+      return a.id.localeCompare(b.id);
+    });
+    const earliest = sorted.reduce(
+      (min, a) => Math.min(min, artifactTimestamp(a.createdAt)),
+      Number.POSITIVE_INFINITY,
+    );
+    const first = sorted[0]!;
+    entries.push({
+      kind: "artifacts",
+      key,
+      runId: first.runId,
+      toolCallId: first.toolCallId,
+      artifacts: sorted,
+      timestamp: Number.isFinite(earliest) ? earliest : 0,
     });
   }
 
@@ -60,10 +116,8 @@ export function buildTimeline(
 
   entries.sort((a, b) => {
     if (a.timestamp !== b.timestamp) return a.timestamp - b.timestamp;
-    // Messages before work-log cards on ties (user prompt then its run card).
-    if (a.kind !== b.kind) return a.kind === "message" ? -1 : 1;
-    // Same-kind ties: return 0 so the stable sort keeps store/input order.
-    // Do not sort by randomUUID ids or runId strings.
+    const order = timelineKindOrder(a.kind) - timelineKindOrder(b.kind);
+    if (order !== 0) return order;
     return 0;
   });
 

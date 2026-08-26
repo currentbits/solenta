@@ -4,7 +4,7 @@ const { describe, it } = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const { spawn } = require("node:child_process");
-const { killTree, agentSpawnOptions } = require("../proc.js");
+const { killTree, agentSpawnOptions, signalGroup } = require("../proc.js");
 
 const posix = process.platform !== "win32";
 
@@ -81,6 +81,12 @@ describe("agentSpawnOptions", () => {
       platform: "linux",
     });
     assert.equal(withEnv.env, env);
+  });
+});
+
+describe("signalGroup", () => {
+  it("is exported for simulator recording finalization", () => {
+    assert.equal(typeof signalGroup, "function");
   });
 });
 
