@@ -174,12 +174,22 @@ describe("SKILL_DIRS / activeSkillTargets", () => {
       dirs.opencode,
       path.join(tmp, ".config", "opencode", "skills"),
     );
-    assert.equal(dirs.kimi, path.join(tmp, ".kimi", "skills"));
+    // kimi-cli reads $KIMI_CODE_HOME/skills (default ~/.kimi-code/skills),
+    // not ~/.kimi/skills (issue #695).
+    assert.equal(dirs.kimi, path.join(tmp, ".kimi-code", "skills"));
     assert.equal(dirs.cursor, path.join(tmp, ".cursor", "skills"));
     assert.equal(skillBaseDir("claude", env), dirs.claude);
     assert.equal(skillBaseDir("opencode", env), dirs.opencode);
     assert.equal(skillBaseDir("cursor", env), dirs.cursor);
     assert.throws(() => skillBaseDir("project", env), /target/i);
+  });
+
+  it("puts kimi skills under KIMI_CODE_HOME when that override is set", () => {
+    const isolated = path.join(tmp, "kimi-home");
+    const env = { HOME: tmp, KIMI_CODE_HOME: isolated };
+    assert.equal(SKILL_DIRS(env).kimi, path.join(isolated, "skills"));
+    fs.mkdirSync(isolated, { recursive: true });
+    assert.deepEqual(activeSkillTargets(env), ["kimi"]);
   });
 
   it("treats a target as active only when its CLI dir exists", () => {
@@ -282,6 +292,53 @@ describe("listSkills", () => {
       projectShared.bytes,
       skillBytes(path.join(tmp, ".claude", "skills"), "shared"),
     );
+  });
+
+  it("lists project skills from kimi/grok/agents dirs, not only .claude/skills", () => {
+    const env = { HOME: tmp };
+    const project = path.join(tmp, "proj");
+    writeSkill(
+      path.join(project, ".kimi-code", "skills"),
+      "kimi-native",
+      "---\ndescription: Kimi project skill\n---\n",
+    );
+    writeSkill(
+      path.join(project, ".kimi", "skills"),
+      "kimi-legacy",
+      "---\ndescription: Legacy kimi project skill\n---\n",
+    );
+    writeSkill(
+      path.join(project, ".grok", "skills"),
+      "grok-local",
+      "---\ndescription: Grok project skill\n---\n",
+    );
+    writeSkill(
+      path.join(project, ".agents", "skills"),
+      "agents-local",
+      "---\ndescription: Shared agents project skill\n---\n",
+    );
+    writeSkill(
+      path.join(project, ".claude", "skills"),
+      "kimi-native",
+      "---\ndescription: Claude copy of the same name\n---\n",
+    );
+
+    const list = listSkills(project, env);
+    const names = list.map((s) => s.name).sort();
+    assert.deepEqual(names, [
+      "agents-local",
+      "grok-local",
+      "kimi-legacy",
+      "kimi-native",
+    ]);
+    for (const row of list) {
+      assert.equal(row.source, "project");
+      assert.equal(row.provenance, "project");
+      assert.deepEqual(row.installedIn, []);
+      assert.deepEqual(row.missingFrom, []);
+    }
+    const native = list.find((s) => s.name === "kimi-native");
+    assert.equal(native.description, "Kimi project skill");
   });
 
   it("tolerates missing dirs and skips dirs without SKILL.md", () => {

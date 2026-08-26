@@ -16,7 +16,7 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const os = require("node:os");
-const { parseSkillMarkdown, SKILL_DIRS } = require("./skills.js");
+const { parseSkillMarkdown, SKILL_DIRS, PROJECT_SKILL_RELS } = require("./skills.js");
 
 /** Runner intercepts these; a same-named skill must not steal the send. */
 const ORCH_TOKENS = new Set(["handoff", "advisor", "committee"]);
@@ -312,10 +312,7 @@ function listInvocableCommands(opts = {}) {
 
   // Project first so a repo skill wins the bare `/name`.
   if (project) {
-    for (const rel of [
-      path.join(".claude", "skills"),
-      path.join(".grok", "skills"),
-    ]) {
+    for (const rel of PROJECT_SKILL_RELS) {
       for (const skill of scanSkillDir(path.join(project, rel))) {
         addSkill(`/${skill.name}`, skill);
       }

@@ -129,6 +129,29 @@ describe("materializeKimiHome", () => {
     assert.ok(fs.lstatSync(path.join(dest, "device_id")).isSymbolicLink());
   });
 
+  it("exposes the user's skills dir inside the overlay", () => {
+    const skillsSrc = path.join(source, "skills", "review-pr");
+    fs.mkdirSync(skillsSrc, { recursive: true });
+    fs.writeFileSync(
+      path.join(skillsSrc, "SKILL.md"),
+      "---\ndescription: Review a PR\n---\n",
+    );
+
+    materializeKimiHome({
+      dest,
+      sourceHome: source,
+      cwd: "/tmp/alpha-project",
+    });
+
+    const overlaySkills = path.join(dest, "skills");
+    assert.ok(fs.lstatSync(overlaySkills).isSymbolicLink());
+    assert.equal(fs.realpathSync(overlaySkills), fs.realpathSync(path.join(source, "skills")));
+    assert.equal(
+      fs.readFileSync(path.join(overlaySkills, "review-pr", "SKILL.md"), "utf8"),
+      "---\ndescription: Review a PR\n---\n",
+    );
+  });
+
   it("workspaceId is stable for the same path", () => {
     assert.equal(workspaceId("/tmp/alpha"), workspaceId("/tmp/alpha"));
     assert.notEqual(workspaceId("/tmp/alpha"), workspaceId("/tmp/beta"));

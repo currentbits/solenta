@@ -59,7 +59,7 @@ describe("listInvocableCommands", () => {
     );
   });
 
-  it("lists a project skill from .claude/skills and .grok/skills", () => {
+  it("lists a project skill from .claude, .grok, and .kimi-code skills dirs", () => {
     const project = path.join(tmp, "app");
     writeSkill(
       path.join(project, ".claude", "skills"),
@@ -71,12 +71,18 @@ describe("listInvocableCommands", () => {
       "ship",
       "---\ndescription: Ship the branch\n---\n\nBody.\n",
     );
+    writeSkill(
+      path.join(project, ".kimi-code", "skills"),
+      "kimi-review",
+      "---\ndescription: Kimi project review\n---\n\nBody.\n",
+    );
     const rows = listInvocableCommands({
       projectPath: project,
       env: envHome(),
     });
     assert.ok(byName(rows, "/repo-review"), "project .claude skill");
     assert.ok(byName(rows, "/ship"), "project .grok skill");
+    assert.ok(byName(rows, "/kimi-review"), "project .kimi-code skill");
   });
 
   it("lists grok bundled skills", () => {

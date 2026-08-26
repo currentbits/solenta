@@ -2692,7 +2692,8 @@ export interface CoderApi {
   /**
    * Agent skills on disk (SKILL.md files). A skill is installed once and
    * mirrored into every active provider skills dir; list merges those into
-   * one row per skill (plus read-only rows from <project>/.claude/skills).
+   * one row per skill (plus read-only rows from the project's provider
+   * skill dirs: .kimi-code/skills, .claude/skills, .grok/skills, …).
    * add/remove/sync only ever touch the user dirs, never the project.
    */
   skills: {

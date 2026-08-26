@@ -37,8 +37,10 @@ function kimiConfigPath(env = process.env) {
 
 /**
  * Auth/session files that a per-run home must share with the user's real
- * kimi home so `-S` resume and login still work. mcp.json, workspaces.json,
- * AGENTS.md and workspace-trust stay OUT — those are the contamination.
+ * kimi home so `-S` resume and login still work. `skills` too: kimi reads
+ * `$KIMI_CODE_HOME/skills`, so omitting it hides the user's library
+ * (issue #695). mcp.json, workspaces.json, AGENTS.md and workspace-trust
+ * stay OUT — those are the contamination.
  * @type {string[]}
  */
 const KIMI_HOME_LINKS = [
@@ -47,6 +49,7 @@ const KIMI_HOME_LINKS = [
   "sessions",
   "cache",
   "plugins",
+  "skills",
   "updates",
   "device_id",
   "session_index.jsonl",
@@ -88,8 +91,9 @@ function linkOrSkip(src, dst) {
  * `workspaces.json` mix every MCP server and every directory the CLI has
  * ever opened, so a Solenta kimi turn in project A can call another
  * project's tools and read its tree. Overlay: copy config.toml (effort
- * flip stays local), symlink credentials/sessions, write a fresh mcp.json
- * and a workspaces.json that contains ONLY this cwd. Never copy AGENTS.md.
+ * flip stays local), symlink credentials/sessions/skills, write a fresh
+ * mcp.json and a workspaces.json that contains ONLY this cwd. Never copy
+ * AGENTS.md.
  *
  * @param {object} opts
  * @param {string} opts.dest

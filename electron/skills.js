@@ -2,9 +2,10 @@
 
 /**
  * Agent skills on disk: SKILL.md files under every provider's user skills
- * dir, plus the selected project's .claude/skills. Listing merges user
- * copies into one row per name (project copies stay separate, read-only).
- * Writes, deletes, and sync only ever touch the user dirs.
+ * dir, plus the selected project's provider skill dirs (kimi, claude, grok,
+ * agents, …). Listing merges user copies into one row per name (project
+ * copies stay separate, read-only). Writes, deletes, and sync only ever
+ * touch the user dirs.
  */
 
 const fs = require("node:fs");
@@ -32,6 +33,22 @@ const SKILL_TARGETS = Object.freeze([
 ]);
 
 /**
+ * Project-root skill dirs scanned as read-only rows (Skills tab) and as
+ * slash-palette entries. First match wins on a colliding name. Kimi's
+ * current path is `.kimi-code/skills`; `.kimi/skills` is the older CLI.
+ * @type {readonly string[]}
+ */
+const PROJECT_SKILL_RELS = Object.freeze([
+  path.join(".kimi-code", "skills"),
+  path.join(".kimi", "skills"),
+  path.join(".claude", "skills"),
+  path.join(".grok", "skills"),
+  path.join(".agents", "skills"),
+  path.join(".codex", "skills"),
+  path.join(".cursor", "skills"),
+]);
+
+/**
  * @param {NodeJS.ProcessEnv} [env]
  * @returns {string}
  */
@@ -48,13 +65,17 @@ function homeDir(env = process.env) {
  */
 function SKILL_DIRS(env = process.env) {
   const home = homeDir(env);
+  const kimiHome =
+    env && typeof env.KIMI_CODE_HOME === "string" && env.KIMI_CODE_HOME.trim()
+      ? env.KIMI_CODE_HOME.trim()
+      : path.join(home, ".kimi-code");
   return {
     claude: path.join(home, ".claude", "skills"),
     agents: path.join(home, ".agents", "skills"),
     codex: path.join(home, ".codex", "skills"),
     grok: path.join(home, ".grok", "skills"),
     opencode: path.join(home, ".config", "opencode", "skills"),
-    kimi: path.join(home, ".kimi", "skills"),
+    kimi: path.join(kimiHome, "skills"),
     cursor: path.join(home, ".cursor", "skills"),
   };
 }
@@ -317,8 +338,9 @@ function resolveManagedProvenance(skillDir, userDataPath) {
 
 /**
  * List skills as one row per user-skill name (merged across targets) plus
- * separate read-only rows from <project>/.claude/skills. Never throws on
- * unreadable dirs. User rows first (by name), then project rows (by name).
+ * separate read-only rows from PROJECT_SKILL_RELS under the project.
+ * Never throws on unreadable dirs. User rows first (by name), then
+ * project rows (by name).
  *
  * @param {string | null | undefined} projectPath
  * @param {NodeJS.ProcessEnv} [env]
@@ -430,18 +452,21 @@ function listSkills(projectPath, env = process.env, userDataPath) {
   const projectRows = [];
   const project = typeof projectPath === "string" ? projectPath.trim() : "";
   if (project) {
-    for (const skill of scanSkillDir(
-      path.join(project, ".claude", "skills"),
-    )) {
-      projectRows.push({
-        name: skill.name,
-        description: skill.description,
-        source: "project",
-        installedIn: [],
-        missingFrom: [],
-        bytes: skill.bytes,
-        provenance: "project",
-      });
+    const seen = new Set();
+    for (const rel of PROJECT_SKILL_RELS) {
+      for (const skill of scanSkillDir(path.join(project, rel))) {
+        if (seen.has(skill.name)) continue;
+        seen.add(skill.name);
+        projectRows.push({
+          name: skill.name,
+          description: skill.description,
+          source: "project",
+          installedIn: [],
+          missingFrom: [],
+          bytes: skill.bytes,
+          provenance: "project",
+        });
+      }
     }
     projectRows.sort((a, b) => a.name.localeCompare(b.name));
   }
@@ -592,6 +617,7 @@ module.exports = {
   SKILL_NAME_RE,
   SKILL_DIRS,
   SKILL_TARGETS,
+  PROJECT_SKILL_RELS,
   parseSkillMarkdown,
   listSkills,
   addSkill,
