@@ -262,6 +262,8 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     updateMemory,
     removeMemory,
     storeMemory,
+    maintenanceMemory,
+    resolveMemory,
     lintAgentConfig,
     previewAgentConfig,
     writeAgentConfig,
@@ -1562,6 +1564,8 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         updateMemory={updateMemory}
         removeMemory={removeMemory}
         storeMemory={storeMemory}
+        maintenanceMemory={maintenanceMemory}
+        resolveMemory={resolveMemory}
         lintAgentConfig={lintAgentConfig}
         previewAgentConfig={previewAgentConfig}
         writeAgentConfig={writeAgentConfig}

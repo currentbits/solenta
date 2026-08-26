@@ -25,6 +25,8 @@ import type {
   McpServerDefinition,
   McpServerSaveInput,
   MemoryEntryInfo,
+  MemoryMaintenanceReport,
+  MemoryReviewResolution,
   AgentConfigDoctorReport,
   AgentConfigPreview,
   AgentConfigWriteResult,
@@ -168,6 +170,13 @@ interface AgentsPanelProps {
     body: string;
     project?: string;
   }) => Promise<{ id: string }>;
+  maintenanceMemory?: (input?: {
+    project?: string;
+  }) => Promise<MemoryMaintenanceReport>;
+  resolveMemory?: (input: {
+    id: number;
+    resolution: MemoryReviewResolution;
+  }) => Promise<{ ok: boolean; id: number; resolution: string }>;
   lintAgentConfig?: (input: {
     projectId: string;
   }) => Promise<AgentConfigDoctorReport>;
@@ -2682,6 +2691,8 @@ export const AgentsPanel = memo(function AgentsPanel({
   updateMemory,
   removeMemory,
   storeMemory,
+  maintenanceMemory,
+  resolveMemory,
   lintAgentConfig,
   previewAgentConfig,
   writeAgentConfig,
@@ -2845,6 +2856,8 @@ export const AgentsPanel = memo(function AgentsPanel({
           updateMemory={updateMemory}
           removeMemory={removeMemory}
           storeMemory={storeMemory}
+          maintenanceMemory={maintenanceMemory}
+          resolveMemory={resolveMemory}
           lintAgentConfig={lintAgentConfig}
           previewAgentConfig={previewAgentConfig}
           writeAgentConfig={writeAgentConfig}

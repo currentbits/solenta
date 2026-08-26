@@ -231,6 +231,11 @@ describe('memory core', () => {
     assert.ok(boot.conventions.length < 12, `conventions ${boot.conventions.length} should drop some`)
     assert.ok(boot.knowledge.length < 10, `knowledge ${boot.knowledge.length} should drop some`)
     assert.ok(tasks.length < 10, `tasks ${tasks.length} should drop some`)
+    assert.ok(boot.truncated, 'bootstrap must report per-section overflow')
+    assert.equal(boot.truncated.conventions, 12 - boot.conventions.length)
+    assert.equal(boot.truncated.knowledge, 10 - boot.knowledge.length)
+    assert.equal(boot.truncated.tasks, 10 - tasks.length)
+    assert.equal(typeof boot.truncated.strategies, 'number')
 
     // Budgets: estimate tokens of each section stay near limits
     const est = (rows) => Math.ceil(JSON.stringify(rows).length / 4)

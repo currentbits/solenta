@@ -40,6 +40,8 @@ import type {
   CheckoutPrResult,
   LocalServerInfo,
   MemoryEntryInfo,
+  MemoryMaintenanceReport,
+  MemoryReviewResolution,
   AgentConfigDoctorReport,
   AgentConfigPreview,
   AgentConfigWriteResult,
@@ -2417,6 +2419,23 @@ function buildDevCoder(): CoderApi {
         if (memoryEntries.length === before) {
           throw new Error(`no entry with id ${input.id}`);
         }
+      },
+      async maintenance(_input?: {
+        project?: string;
+      }): Promise<MemoryMaintenanceReport> {
+        return {
+          queue: { open: 0, oldestAgeDays: 0, items: [] },
+          nearDupes: [],
+          agingRuns: [],
+          fatConventions: [],
+          trust: { agents: [], suspect: [] },
+        };
+      },
+      async resolve(input: {
+        id: number;
+        resolution: MemoryReviewResolution;
+      }): Promise<{ ok: boolean; id: number; resolution: string }> {
+        return { ok: true, id: input.id, resolution: input.resolution };
       },
     },
     settings: {

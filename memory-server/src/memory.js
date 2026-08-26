@@ -70,6 +70,9 @@ const SECTION_BUDGETS = {
   tasks: 300,
 }
 
+/** Consecutive citation mismatches before verifyAndHeal tombstones (#710). */
+export const VERIFY_FAIL_LIMIT = 3
+
 /** Live = not superseded and not invalidated. Used on every read surface. */
 export /**
  * Project scope predicate. Memory is PROJECT-SCOPED: asking about project X
@@ -106,7 +109,7 @@ const HINT = 'call memory_get with this id for the full body'
 const PROTOCOL = [
   'MEMORY PREFLIGHT: call memory_bootstrap with project set to your working directory and treat its conventions as standing instructions.',
   'While working, store durable non-obvious findings (decisions, gotchas, conventions) with memory_store, citing evidence: file (path, line, excerpt), thread id, or commit sha.',
-  'When project is your working directory, bootstrap/search/get verify file citations against that tree and invalidate contradictions instead of injecting them.',
+  'When project is your working directory, bootstrap/search/get verify file citations against that tree and invalidate after repeated mismatches; a single dirty-worktree miss does not.',
   'Strategies are distilled "when doing X, do/don\'t Y" rules from past runs: follow them, and report a bad one with memory_feedback.',
   'Before finishing, record what a future agent must know.',
   'Search returns excerpts; use memory_get for the full body.',
@@ -174,6 +177,16 @@ export function applyTokenBudget(rows, budget, cost) {
     out.pop()
   }
   return out
+}
+
+/**
+ * Budget a section and count how many rows were dropped (issue #710).
+ * @returns {{ kept: T[], truncated: number }}
+ * @template T
+ */
+function budgetSection(rows, budget, cost) {
+  const kept = applyTokenBudget(rows, budget, cost)
+  return { kept, truncated: Math.max(0, rows.length - kept.length) }
 }
 
 export class Memory {
@@ -348,8 +361,39 @@ export class Memory {
   }
 
   /**
+   * Consecutive citation mismatches. Does not bump updated_at so a dirty
+   * worktree cannot reshuffle recency.
+   * @param {string} id
+   * @returns {number}
+   */
+  bumpVerifyFail(id) {
+    this.db
+      .prepare(
+        `UPDATE entries SET verify_fail_count = COALESCE(verify_fail_count, 0) + 1 WHERE id = ?`,
+      )
+      .run(id)
+    const row = this.db
+      .prepare(`SELECT verify_fail_count FROM entries WHERE id = ?`)
+      .get(id)
+    return Number(row?.verify_fail_count) || 0
+  }
+
+  /**
+   * @param {string} id
+   */
+  clearVerifyFail(id) {
+    this.db
+      .prepare(
+        `UPDATE entries SET verify_fail_count = 0 WHERE id = ? AND COALESCE(verify_fail_count, 0) != 0`,
+      )
+      .run(id)
+  }
+
+  /**
    * Just-in-time verify file citations against a live worktree.
-   * Heals drifted line numbers; invalidates on contradiction.
+   * Heals drifted line numbers. A single mismatch is fail-open (the verify
+   * root is often a mid-edit worktree); tombstone only after
+   * VERIFY_FAIL_LIMIT consecutive failures (issue #710).
    * Fail-open: a verify fault never hides a live entry.
    * @param {{ id: string, citations?: unknown }} row
    * @param {string|null} root
@@ -364,15 +408,29 @@ export class Memory {
     try {
       const result = verifyFileCitations(root, citations)
       if (!result.ok) {
+        let fails = 0
         try {
-          this.invalidateEntry(row.id, {
-            by: 'citation-verify',
-            reason: result.reason ?? 'citation contradicted by worktree',
-          })
+          fails = this.bumpVerifyFail(row.id)
         } catch (err) {
-          console.error('citation invalidate failed (non-fatal):', err)
+          console.error('citation fail-count bump failed (non-fatal):', err)
         }
-        return { action: 'drop', citations, verified: false, reason: result.reason }
+        if (fails >= VERIFY_FAIL_LIMIT) {
+          try {
+            this.invalidateEntry(row.id, {
+              by: 'citation-verify',
+              reason: result.reason ?? 'citation contradicted by worktree',
+            })
+          } catch (err) {
+            console.error('citation invalidate failed (non-fatal):', err)
+          }
+          return { action: 'drop', citations, verified: false, reason: result.reason }
+        }
+        return { action: 'inject', citations, verified: false, reason: result.reason }
+      }
+      try {
+        this.clearVerifyFail(row.id)
+      } catch (err) {
+        console.error('citation fail-count clear failed (non-fatal):', err)
       }
       if (result.healed) {
         try {
@@ -1249,12 +1307,13 @@ export class Memory {
       )
       .all(project, project)
 
+    const conventionsBudget = budgetSection(
+      conventionsRaw,
+      SECTION_BUDGETS.conventions,
+      (r) => ({ id: r.id, title: r.title, body: r.body, importance: r.importance, created_at: r.created_at }),
+    )
     const conventions = this.decorateEntries(
-      applyTokenBudget(
-        conventionsRaw,
-        SECTION_BUDGETS.conventions,
-        (r) => ({ id: r.id, title: r.title, body: r.body, importance: r.importance, created_at: r.created_at }),
-      ),
+      conventionsBudget.kept,
       root,
     ).map((r) => ({
       id: r.id,
@@ -1266,12 +1325,13 @@ export class Memory {
       ...(r.verified ? { verified: true } : {}),
     }))
 
+    const strategiesBudget = budgetSection(
+      strategiesRaw,
+      SECTION_BUDGETS.strategies,
+      (r) => ({ id: r.id, title: r.title, body: r.body, importance: r.importance, created_at: r.created_at }),
+    )
     const strategies = this.decorateEntries(
-      applyTokenBudget(
-        strategiesRaw,
-        SECTION_BUDGETS.strategies,
-        (r) => ({ id: r.id, title: r.title, body: r.body, importance: r.importance, created_at: r.created_at }),
-      ),
+      strategiesBudget.kept,
       root,
     ).map((r) => ({
       id: r.id,
@@ -1283,18 +1343,19 @@ export class Memory {
       ...(r.verified ? { verified: true } : {}),
     }))
 
+    const knowledgeBudget = budgetSection(
+      knowledgeRaw,
+      SECTION_BUDGETS.knowledge,
+      (r) => ({
+        id: r.id,
+        title: r.title,
+        excerpt: r.body.slice(0, 200),
+        importance: r.importance,
+        created_at: r.created_at,
+      }),
+    )
     const knowledge = this.decorateEntries(
-      applyTokenBudget(
-        knowledgeRaw,
-        SECTION_BUDGETS.knowledge,
-        (r) => ({
-          id: r.id,
-          title: r.title,
-          excerpt: r.body.slice(0, 200),
-          importance: r.importance,
-          created_at: r.created_at,
-        }),
-      ),
+      knowledgeBudget.kept,
       root,
     ).map((r) => ({
       id: r.id,
@@ -1306,21 +1367,22 @@ export class Memory {
       ...(r.verified ? { verified: true } : {}),
     }))
 
+    const tasksBudget = budgetSection(
+      tasksRaw,
+      SECTION_BUDGETS.tasks,
+      (r) => ({
+        id: r.id,
+        title: r.title,
+        body: r.body,
+        status: r.status,
+        agent: r.agent,
+        source: r.source,
+        project: r.project,
+        updated_at: r.updated_at,
+      }),
+    )
     const tasks = this.decorateEntries(
-      applyTokenBudget(
-        tasksRaw,
-        SECTION_BUDGETS.tasks,
-        (r) => ({
-          id: r.id,
-          title: r.title,
-          body: r.body,
-          status: r.status,
-          agent: r.agent,
-          source: r.source,
-          project: r.project,
-          updated_at: r.updated_at,
-        }),
-      ),
+      tasksBudget.kept,
       root,
     ).map((r) => ({
       id: r.id,
@@ -1347,6 +1409,12 @@ export class Memory {
       knowledge,
       tasks,
       protocol: [...PROTOCOL],
+      truncated: {
+        conventions: conventionsBudget.truncated,
+        strategies: strategiesBudget.truncated,
+        knowledge: knowledgeBudget.truncated,
+        tasks: tasksBudget.truncated,
+      },
     }
   }
 
@@ -1641,12 +1709,17 @@ export class Memory {
     const now = opts.now ?? Date.now()
     const agingCutoff = new Date(now - AGING_RUN_DAYS * 86_400_000).toISOString()
 
+    const queueScope = `AND (? IS NULL OR a.project = ? OR b.project = ?)`
     const queueStats = this.db
       .prepare(
-        `SELECT COUNT(*) AS open, MIN(created_at) AS oldest
-         FROM review_queue WHERE resolved_at IS NULL`,
+        `SELECT COUNT(*) AS open, MIN(q.created_at) AS oldest
+         FROM review_queue q
+         JOIN entries a ON a.id = q.entry_a
+         JOIN entries b ON b.id = q.entry_b
+         WHERE q.resolved_at IS NULL
+           ${queueScope}`,
       )
-      .get()
+      .get(project, project, project)
     const open = queueStats?.open ?? 0
     const oldestAgeDays = queueStats?.oldest
       ? Math.floor((now - Date.parse(queueStats.oldest)) / 86_400_000)
@@ -1661,10 +1734,11 @@ export class Memory {
          JOIN entries a ON a.id = q.entry_a
          JOIN entries b ON b.id = q.entry_b
          WHERE q.resolved_at IS NULL
+           ${queueScope}
          ORDER BY q.created_at ASC, q.id ASC
          LIMIT ?`,
       )
-      .all(MAINTENANCE_LIST_LIMIT)
+      .all(project, project, project, MAINTENANCE_LIST_LIMIT)
       .map((r) => ({
         id: r.id,
         kind: r.kind,

@@ -293,7 +293,7 @@ function spawnAgentClaude(opts) {
   const interactive = Boolean(entry && entry.id === "claude");
   let args = baseArgs;
   if (interactive) {
-    args = [...baseArgs, ...getClaudeMcpArgs()];
+    args = [...baseArgs, ...getClaudeMcpArgs({ projectPath: cwd })];
   }
 
   const handle = runClaude({
@@ -407,7 +407,7 @@ function spawnAgentCodex(opts) {
     sessionId: null,
     model: model || null,
   });
-  const codexMcpArgs = getCodexMcpArgs();
+  const codexMcpArgs = getCodexMcpArgs({ projectPath: cwd });
   if (codexMcpArgs.length > 0) {
     args.unshift(...codexMcpArgs);
   }

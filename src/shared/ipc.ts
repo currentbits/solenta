@@ -167,6 +167,8 @@ export interface AgentConfigPreviewFile {
 export interface AgentConfigPreview {
   projectId: string;
   files: AgentConfigPreviewFile[];
+  /** Home-directory path leaks in the generated markdown (issue #710). */
+  warnings?: string[];
 }
 
 export interface AgentConfigWriteResult {
@@ -2606,6 +2608,31 @@ export interface MemoryEntryInfo {
   citations?: MemoryCitation[];
 }
 
+export type MemoryReviewResolution = "update" | "invalidate" | "noop";
+
+/** One open review_queue pair (near-dup or contradiction). */
+export interface MemoryReviewItem {
+  id: number;
+  kind: string;
+  detail: string | null;
+  createdAt: string;
+  a: { id: string; title: string };
+  b: { id: string; title: string };
+}
+
+/** Read-only consolidation report from GET /api/maintenance. */
+export interface MemoryMaintenanceReport {
+  queue: {
+    open: number;
+    oldestAgeDays: number;
+    items: MemoryReviewItem[];
+  };
+  nearDupes: unknown[];
+  agingRuns: unknown[];
+  fatConventions: unknown[];
+  trust: { agents: unknown[]; suspect: unknown[] };
+}
+
 /**
  * Renderer-facing API. Invoke method names are locked to
  * `src/shared/ipcChannels.ts` (IPC_CHANNEL_LOCK); keep JSDoc here.
@@ -2650,6 +2677,13 @@ export interface CoderApi {
     update(input: { id: string; title: string; body: string }): Promise<{ id: string }>;
     /** Permanently removes an entry and its dependents (vectors, mentions, queue rows). */
     remove(input: { id: string }): Promise<void>;
+    /** Open review queue, near-dupes, aging runs, trust. */
+    maintenance(input?: { project?: string }): Promise<MemoryMaintenanceReport>;
+    /** Adjudicate one review_queue row. */
+    resolve(input: {
+      id: number;
+      resolution: MemoryReviewResolution;
+    }): Promise<{ ok: boolean; id: number; resolution: string }>;
   };
   settings: {
     get(): Promise<AppSettings>;

@@ -231,6 +231,63 @@ describe("selectSourceEntries / renderGeneratedMarkdown", () => {
     });
     assert.match(md, /Empty memory/);
   });
+
+  it("does not clip a strategy mid-clause", () => {
+    const long = "When X, do Y. ".repeat(80);
+    const md = doctor.renderGeneratedMarkdown({
+      name: "solenta",
+      entries: [
+        {
+          id: "s-long",
+          type: "strategy",
+          title: "Whole rule",
+          body: long,
+          importance: 4,
+        },
+      ],
+    });
+    assert.match(md, /When X, do Y/);
+    assert.doesNotMatch(md, /\n…\s*$/m);
+    assert.ok(md.includes(long.trim()), "strategy body must be whole");
+  });
+
+  it("hashes included entry ids so lint can see staleness", () => {
+    const md = doctor.renderGeneratedMarkdown({
+      name: "solenta",
+      entries: [
+        {
+          id: "c1",
+          type: "convention",
+          title: "Fail closed on worktrees",
+          body: "Never fall back to the checkout.",
+          importance: 5,
+          updated_at: "2026-08-01T00:00:00.000Z",
+        },
+      ],
+    });
+    assert.match(md, /generated-by: solenta-config-doctor source:[0-9a-f]{12}/);
+    assert.match(md, /solenta-config-source: c1@2026-08-01T00:00:00.000Z/);
+    const stale = doctor.staleSourceCount(
+      doctor.sourceManifest([
+        {
+          id: "c1",
+          type: "convention",
+          title: "Fail closed on worktrees",
+          updated_at: "2026-08-02T00:00:00.000Z",
+        },
+      ]),
+      md,
+    );
+    assert.equal(stale, 1);
+  });
+
+  it("flags a home-directory path as a leak", () => {
+    const leaks = doctor.leakPaths(
+      "See /Users/willem/other-repo/src/foo.ts and $HOME/secrets",
+    );
+    assert.ok(leaks.some((p) => p.startsWith("/Users/willem/")));
+    assert.ok(leaks.some((p) => p.startsWith("$HOME/")));
+  });
 });
 
 describe("write + preview", () => {
@@ -307,6 +364,57 @@ describe("write + preview", () => {
           { path: "AGENTS.md", content: "# x\n" },
         ]),
       /local checkout/,
+    );
+  });
+});
+
+describe("scoreAgentConfig leak + stale", () => {
+  it("warns on a home path and on a stale generated marker", () => {
+    const md = doctor.renderGeneratedMarkdown({
+      name: "solenta",
+      entries: [
+        {
+          id: "c1",
+          type: "convention",
+          title: "Fail closed on worktrees",
+          body: "See /Users/willem/other-repo/src/foo.ts for the old copy.",
+          importance: 5,
+          updated_at: "2026-08-01T00:00:00.000Z",
+        },
+      ],
+    });
+    const leakReport = doctor.scoreAgentConfig(md, {
+      memoryEntries: [
+        {
+          id: "c1",
+          type: "convention",
+          title: "Fail closed on worktrees",
+          updated_at: "2026-08-01T00:00:00.000Z",
+        },
+      ],
+    });
+    assert.ok(
+      leakReport.issues.some((i) => /leak/i.test(i.message)),
+      JSON.stringify(leakReport.issues),
+    );
+
+    const staleMd = md.replace(
+      /c1@2026-08-01T00:00:00.000Z/,
+      "c1@2026-08-01T00:00:00.000Z",
+    );
+    const staleReport = doctor.scoreAgentConfig(staleMd, {
+      memoryEntries: [
+        {
+          id: "c1",
+          type: "convention",
+          title: "Fail closed on worktrees",
+          updated_at: "2026-08-03T00:00:00.000Z",
+        },
+      ],
+    });
+    assert.ok(
+      staleReport.issues.some((i) => /changed since generation/i.test(i.message)),
+      JSON.stringify(staleReport.issues),
     );
   });
 });

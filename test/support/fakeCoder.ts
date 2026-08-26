@@ -46,6 +46,7 @@ import type {
   McpServerDefinition,
   McpServerSaveInput,
   MemoryEntryInfo,
+  MemoryMaintenanceReport,
   PrChecksResult,
   PrInfo,
   ProjectInfo,
@@ -531,6 +532,16 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
       store: (input: unknown) => rec("memory.store", [input], { id: "m-new" }),
       update: (input: unknown) => rec("memory.update", [input], { id: "m-upd" }),
       remove: (input: unknown) => rec("memory.remove", [input], undefined),
+      maintenance: (input: unknown) =>
+        rec("memory.maintenance", [input], {
+          queue: { open: 0, oldestAgeDays: 0, items: [] },
+          nearDupes: [],
+          agingRuns: [],
+          fatConventions: [],
+          trust: { agents: [], suspect: [] },
+        } as MemoryMaintenanceReport),
+      resolve: (input: unknown) =>
+        rec("memory.resolve", [input], { ok: true, id: 0, resolution: "noop" }),
     },
     settings: {
       get: () =>

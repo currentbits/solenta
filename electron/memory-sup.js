@@ -313,9 +313,18 @@ function resetMemorySupForTests() {
  * ['--mcp-config', path, '--allowedTools', ...] or [].
  * @returns {string[]}
  */
-function getClaudeMcpArgs() {
+function getClaudeMcpArgs(opts = {}) {
   const servers = activeServers();
   if (servers.length === 0 || !globalMcpConfigPath) return [];
+  const projectPath = opts.projectPath ? String(opts.projectPath) : "";
+  let configPath = globalMcpConfigPath;
+  if (projectPath && globalUserDataPath) {
+    try {
+      configPath = writeBoundMcpConfig(globalUserDataPath, projectPath);
+    } catch {
+      configPath = globalMcpConfigPath;
+    }
+  }
   // Both flags MUST use the single equals form: the claude CLI treats the
   // space-separated variants as variadic and swallows the trailing PROMPT as
   // another value, failing every real run with
@@ -330,7 +339,7 @@ function getClaudeMcpArgs() {
   // approved: `mcp__<name>__*` would pre-approve every tool it exposes now
   // and any it adds later, which is a silent code-execution channel for a
   // compromised remote server in every headless turn.
-  const args = [`--mcp-config=${globalMcpConfigPath}`];
+  const args = [`--mcp-config=${configPath}`];
   const ours = servers.filter((s) => !s.user);
   if (ours.length > 0) {
     args.push(
@@ -392,7 +401,8 @@ function tomlEscape(value) {
   return out;
 }
 
-function getCodexMcpArgs() {
+function getCodexMcpArgs(opts = {}) {
+  const projectPath = opts.projectPath ? String(opts.projectPath) : "";
   /** @type {string[]} */
   const args = [];
   for (const s of activeServers()) {
@@ -426,7 +436,10 @@ function getCodexMcpArgs() {
       );
       continue;
     }
-    args.push("-c", `mcp_servers.${s.name}.url="${tomlEscape(s.url)}"`);
+    args.push(
+      "-c",
+      `mcp_servers.${s.name}.url="${tomlEscape(boundCoderMemoryUrl(s.url, s.name, projectPath))}"`,
+    );
     if (s.token) {
       args.push(
         "-c",
@@ -551,6 +564,20 @@ function withQuery(url, query) {
     u.searchParams.set(k, String(v));
   }
   return u.toString();
+}
+
+/**
+ * Bind coder-memory to a live working directory so the server, not the
+ * model, owns project scope (issue #671 / #710). Other servers stay bare.
+ * @param {string} url
+ * @param {string} name
+ * @param {string} [projectPath]
+ */
+function boundCoderMemoryUrl(url, name, projectPath) {
+  if (name === "coder-memory" && projectPath) {
+    return withQuery(url, { project: projectPath });
+  }
+  return url;
 }
 
 /**
@@ -1115,7 +1142,7 @@ function ensureGrokMcpConfig(opts = {}) {
         "--transport",
         s.transport === "sse" ? "sse" : "http",
         s.name,
-        s.url,
+        boundCoderMemoryUrl(s.url, s.name, opts.projectPath),
       ];
       if (s.token) {
         args.push(
@@ -1305,13 +1332,12 @@ function resolveEntryPath(appPath, env = process.env) {
 }
 
 /**
- * Write mcp-coder-memory.json for the current set of active servers.
- * The file name is historical; it lists every server we inject into claude.
- * @param {string} userDataPath
+ * MCP servers document for Claude `--mcp-config`. The global file is
+ * unbound (concurrent runs share it). Per-run copies bind coder-memory
+ * with `?project=` so the server owns the scope (issue #710).
+ * @param {string} [projectPath]
  */
-function writeMcpConfig(userDataPath) {
-  globalUserDataPath = userDataPath;
-  const mcpPath = path.join(userDataPath, MCP_CONFIG_NAME);
+function mcpServersDoc(projectPath) {
   /** @type {Record<string, unknown>} */
   const mcpServers = {};
   for (const s of activeServers()) {
@@ -1335,7 +1361,7 @@ function writeMcpConfig(userDataPath) {
     }
     const entry = {
       type: s.transport === "sse" ? "sse" : "http",
-      url: s.url,
+      url: boundCoderMemoryUrl(s.url, s.name, projectPath),
       headers: { ...(s.headers && typeof s.headers === "object" ? s.headers : {}) },
     };
     if (s.token) {
@@ -1348,8 +1374,39 @@ function writeMcpConfig(userDataPath) {
     }
     mcpServers[s.name] = entry;
   }
-  writeSecretFile(mcpPath, JSON.stringify({ mcpServers }, null, 2));
+  return { mcpServers };
+}
+
+/**
+ * Write mcp-coder-memory.json for the current set of active servers.
+ * The file name is historical; it lists every server we inject into claude.
+ * Unbound on purpose: concurrent Claude runs share this file.
+ * @param {string} userDataPath
+ */
+function writeMcpConfig(userDataPath) {
+  globalUserDataPath = userDataPath;
+  const mcpPath = path.join(userDataPath, MCP_CONFIG_NAME);
+  writeSecretFile(mcpPath, JSON.stringify(mcpServersDoc(), null, 2));
   globalMcpConfigPath = mcpPath;
+  return mcpPath;
+}
+
+/**
+ * Per-project bound copy so two Claude runs on different repos cannot
+ * clobber each other's `?project=` (issue #710).
+ * @param {string} userDataPath
+ * @param {string} projectPath
+ */
+function writeBoundMcpConfig(userDataPath, projectPath) {
+  const key = crypto
+    .createHash("sha1")
+    .update(String(projectPath))
+    .digest("hex")
+    .slice(0, 12);
+  const dir = path.join(userDataPath, "mcp-bound");
+  fs.mkdirSync(dir, { recursive: true });
+  const mcpPath = path.join(dir, `${key}.json`);
+  writeSecretFile(mcpPath, JSON.stringify(mcpServersDoc(projectPath), null, 2));
   return mcpPath;
 }
 
@@ -1660,6 +1717,7 @@ module.exports = {
   ensureKimiMcpConfig,
   kimiMcpServersForRun,
   withQuery,
+  boundCoderMemoryUrl,
   ensureGrokMcpConfig,
   removeKimiMcpEntries,
   removeGrokMcpEntries,

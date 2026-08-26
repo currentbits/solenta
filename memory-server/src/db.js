@@ -261,7 +261,8 @@ export function createSchema(db) {
       superseded_by TEXT,
       importance    INTEGER NOT NULL DEFAULT 3,
       last_accessed_at TEXT,
-      access_count  INTEGER NOT NULL DEFAULT 0
+      access_count  INTEGER NOT NULL DEFAULT 0,
+      verify_fail_count INTEGER NOT NULL DEFAULT 0
     );
 
     CREATE VIRTUAL TABLE IF NOT EXISTS entries_fts USING fts5(
@@ -399,6 +400,8 @@ export function createSchema(db) {
   addColumnIfMissing(db, 'entries', 'invalidation_reason', 'TEXT')
   // Citations (#395): JSON array of {kind: file|thread|commit, ...} evidence.
   addColumnIfMissing(db, 'entries', 'citations', 'TEXT')
+  // Consecutive citation-verify mismatches (#710). Tombstone only after N.
+  addColumnIfMissing(db, 'entries', 'verify_fail_count', 'INTEGER NOT NULL DEFAULT 0')
 
   try {
     normalizeEntities(db)

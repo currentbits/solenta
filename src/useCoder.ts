@@ -35,6 +35,8 @@ import type {
   McpServerSaveInput,
   MemoryCitation,
   MemoryEntryInfo,
+  MemoryMaintenanceReport,
+  MemoryReviewResolution,
   AgentConfigDoctorReport,
   AgentConfigPreview,
   AgentConfigWriteResult,
@@ -616,6 +618,13 @@ export interface UseCoderResult {
     project?: string;
     citations?: MemoryCitation[];
   }) => Promise<{ id: string }>;
+  maintenanceMemory: (input?: {
+    project?: string;
+  }) => Promise<MemoryMaintenanceReport>;
+  resolveMemory: (input: {
+    id: number;
+    resolution: MemoryReviewResolution;
+  }) => Promise<{ ok: boolean; id: number; resolution: string }>;
   lintAgentConfig: (input: {
     projectId: string;
   }) => Promise<AgentConfigDoctorReport>;
@@ -3002,6 +3011,20 @@ export function useCoder(): UseCoderResult {
     [api],
   );
 
+  const maintenanceMemory = useCallback(
+    async (input?: { project?: string }) => {
+      return api.memory.maintenance(input);
+    },
+    [api],
+  );
+
+  const resolveMemory = useCallback(
+    async (input: { id: number; resolution: MemoryReviewResolution }) => {
+      return api.memory.resolve(input);
+    },
+    [api],
+  );
+
   const lintAgentConfig = useCallback(
     async (input: { projectId: string }) => {
       return api.projects.lintAgentConfig(input);
@@ -3296,6 +3319,8 @@ export function useCoder(): UseCoderResult {
     updateMemory,
     removeMemory,
     storeMemory,
+    maintenanceMemory,
+    resolveMemory,
     lintAgentConfig,
     previewAgentConfig,
     writeAgentConfig,

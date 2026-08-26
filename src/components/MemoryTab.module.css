@@ -593,3 +593,33 @@
   flex-wrap: wrap;
   gap: 6px;
 }
+
+.queueList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.queueItem {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.queuePair {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text);
+  line-height: 1.4;
+}
+
+.queueKind {
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-dim);
+  font-weight: 600;
+}

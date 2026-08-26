@@ -4467,7 +4467,14 @@ async function previewAgentConfig(store, input, deps) {
     memoryEntries,
     targets: input && input.targets,
   });
-  return { projectId: project.id, files };
+  const warnings = [];
+  for (const file of files) {
+    for (const leak of configDoctor.leakPaths(file.content)) {
+      const msg = `${file.path}: absolute home-directory path looks like a leak: ${leak}`;
+      if (!warnings.includes(msg)) warnings.push(msg);
+    }
+  }
+  return { projectId: project.id, files, warnings };
 }
 
 /**

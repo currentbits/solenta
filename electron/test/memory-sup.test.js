@@ -293,6 +293,27 @@ describe("memory-sup supervisor", () => {
         CODER_MCP_TOKEN_CODER_MEMORY: token,
       });
 
+      // Per-run ?project= bind (issue #710). The global file stays bare so
+      // concurrent runs cannot clobber each other.
+      const boundClaude = getClaudeMcpArgs({ projectPath: "/tmp/alpha-project" });
+      assert.ok(boundClaude[0].startsWith("--mcp-config="));
+      const boundPath = boundClaude[0].slice("--mcp-config=".length);
+      assert.notEqual(boundPath, mcpPath);
+      const boundDoc = JSON.parse(fs.readFileSync(boundPath, "utf8"));
+      assert.match(
+        boundDoc.mcpServers["coder-memory"].url,
+        /[?&]project=/,
+      );
+      assert.equal(
+        JSON.parse(fs.readFileSync(mcpPath, "utf8")).mcpServers["coder-memory"].url,
+        `http://127.0.0.1:${port}/mcp`,
+      );
+      const boundCodex = getCodexMcpArgs({ projectPath: "/tmp/alpha-project" });
+      assert.ok(
+        boundCodex.some((a) => /project=/.test(String(a))),
+        `expected bound codex url, got ${JSON.stringify(boundCodex)}`,
+      );
+
       // Adopted: stop must not try to kill a child we never owned.
       sup.stop();
       // Server still up after stop

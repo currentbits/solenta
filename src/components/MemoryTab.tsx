@@ -5,6 +5,9 @@ import type {
   AgentConfigWriteResult,
   MemoryCitation,
   MemoryEntryInfo,
+  MemoryMaintenanceReport,
+  MemoryReviewItem,
+  MemoryReviewResolution,
 } from "../shared/ipc";
 import { formatRelativeAge } from "../format";
 import styles from "./MemoryTab.module.css";
@@ -74,6 +77,13 @@ export interface MemoryTabProps {
     projectId: string;
     targets?: string[];
   }) => Promise<AgentConfigWriteResult>;
+  maintenanceMemory?: (input?: {
+    project?: string;
+  }) => Promise<MemoryMaintenanceReport>;
+  resolveMemory?: (input: {
+    id: number;
+    resolution: MemoryReviewResolution;
+  }) => Promise<{ ok: boolean; id: number; resolution: string }>;
 }
 
 function isNotRunningError(err: unknown): boolean {
@@ -265,6 +275,11 @@ function ConfigDoctorCard({
           {preview.files.map((f) => `--- ${f.path} ---\n${f.content}`).join("\n")}
         </pre>
       ) : null}
+      {preview && preview.warnings && preview.warnings.length > 0 ? (
+        <p className={styles.doctorGap} data-config-warnings="">
+          {preview.warnings.join(" · ")}
+        </p>
+      ) : null}
       {wrote ? (
         <p className={styles.doctorWrote} data-config-wrote="">
           Wrote {wrote.join(", ")}
@@ -300,6 +315,133 @@ function ConfigDoctorCard({
   );
 }
 
+function ReviewQueueCard({
+  projectSlug,
+  maintenanceMemory,
+  resolveMemory,
+}: {
+  projectSlug: string | null;
+  maintenanceMemory: (input?: {
+    project?: string;
+  }) => Promise<MemoryMaintenanceReport>;
+  resolveMemory?: (input: {
+    id: number;
+    resolution: MemoryReviewResolution;
+  }) => Promise<{ ok: boolean; id: number; resolution: string }>;
+}) {
+  const [report, setReport] = useState<MemoryMaintenanceReport | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [busyId, setBusyId] = useState<number | null>(null);
+  const mounted = useRef(true);
+
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
+
+  const load = useCallback(async () => {
+    setError(null);
+    try {
+      const next = await maintenanceMemory({
+        project: projectSlug || undefined,
+      });
+      if (!mounted.current) return;
+      setReport(next);
+    } catch (err) {
+      if (!mounted.current) return;
+      setError(errorMessage(err));
+      setReport(null);
+    }
+  }, [maintenanceMemory, projectSlug]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  const onResolve = async (id: number, resolution: MemoryReviewResolution) => {
+    if (!resolveMemory) return;
+    setBusyId(id);
+    setError(null);
+    try {
+      await resolveMemory({ id, resolution });
+      if (!mounted.current) return;
+      await load();
+    } catch (err) {
+      if (!mounted.current) return;
+      setError(errorMessage(err));
+    } finally {
+      if (mounted.current) setBusyId(null);
+    }
+  };
+
+  const items: MemoryReviewItem[] = report?.queue.items ?? [];
+  const open = report?.queue.open ?? 0;
+  if (!error && report && open === 0) return null;
+
+  return (
+    <section className={styles.doctor} data-review-queue="">
+      <div className={styles.doctorHead}>
+        <span className={styles.doctorLabel}>Review queue</span>
+        {report ? (
+          <span className={styles.doctorFileGrade}>
+            {open} open
+          </span>
+        ) : null}
+      </div>
+      {error ? (
+        <p className={styles.formError} role="alert">
+          {error}
+        </p>
+      ) : null}
+      {items.length > 0 ? (
+        <ul className={styles.queueList}>
+          {items.map((item) => (
+            <li key={item.id} className={styles.queueItem}>
+              <p className={styles.queuePair}>
+                <span className={styles.queueKind}>{item.kind.replace(/_/g, " ")}</span>
+                {" · "}
+                {item.a.title || item.a.id}
+                {" ↔ "}
+                {item.b.title || item.b.id}
+              </p>
+              {resolveMemory ? (
+                <div className={styles.doctorActions}>
+                  <button
+                    type="button"
+                    className={styles.retryBtn}
+                    disabled={busyId === item.id}
+                    onClick={() => void onResolve(item.id, "noop")}
+                  >
+                    Keep both
+                  </button>
+                  <button
+                    type="button"
+                    className={styles.retryBtn}
+                    disabled={busyId === item.id}
+                    onClick={() => void onResolve(item.id, "update")}
+                  >
+                    Mark reviewed
+                  </button>
+                  <button
+                    type="button"
+                    className={styles.dangerBtn}
+                    disabled={busyId === item.id}
+                    onClick={() => void onResolve(item.id, "invalidate")}
+                  >
+                    Invalidate older
+                  </button>
+                </div>
+              ) : null}
+            </li>
+          ))}
+        </ul>
+      ) : null}
+    </section>
+  );
+}
+
 export function MemoryTab({
   projectSlug,
   projectId,
@@ -312,6 +454,8 @@ export function MemoryTab({
   lintAgentConfig,
   previewAgentConfig,
   writeAgentConfig,
+  maintenanceMemory,
+  resolveMemory,
 }: MemoryTabProps) {
   const [entries, setEntries] = useState<MemoryEntryInfo[]>([]);
   const [query, setQuery] = useState("");
@@ -644,6 +788,13 @@ export function MemoryTab({
             lintAgentConfig={lintAgentConfig}
             previewAgentConfig={previewAgentConfig}
             writeAgentConfig={writeAgentConfig}
+          />
+        ) : null}
+        {maintenanceMemory ? (
+          <ReviewQueueCard
+            projectSlug={projectSlug}
+            maintenanceMemory={maintenanceMemory}
+            resolveMemory={resolveMemory}
           />
         ) : null}
       </div>

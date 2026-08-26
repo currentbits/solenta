@@ -617,3 +617,57 @@ describe("MemoryTab config doctor", () => {
     m.unmount();
   });
 });
+
+describe("MemoryTab review queue", () => {
+  it("is absent when no maintenance callback is wired", async () => {
+    const m = await mount(tab());
+    assert.equal(m.query("[data-review-queue]"), null);
+    m.unmount();
+  });
+
+  it("lists an open pair and resolves keep-both", async () => {
+    const resolved: Array<{ id: number; resolution: string }> = [];
+    const m = await mount(
+      <MemoryTab
+        projectSlug="coder"
+        searchMemory={async () => []}
+        recentMemory={async () => []}
+        getMemory={async (input) => entry({ id: input.id })}
+        updateMemory={async () => ({ id: "x" })}
+        removeMemory={async () => {}}
+        storeMemory={async () => ({ id: "x" })}
+        maintenanceMemory={async () => ({
+          queue: {
+            open: 1,
+            oldestAgeDays: 2,
+            items: [
+              {
+                id: 7,
+                kind: "near_dup",
+                detail: "overlap 0.5",
+                createdAt: "2026-08-01T00:00:00.000Z",
+                a: { id: "a1", title: "Swift tests need DEVELOPER_DIR" },
+                b: { id: "b1", title: "Swift tests need DEVELOPER_DIR set" },
+              },
+            ],
+          },
+          nearDupes: [],
+          agingRuns: [],
+          fatConventions: [],
+          trust: { agents: [], suspect: [] },
+        })}
+        resolveMemory={async (input) => {
+          resolved.push(input);
+          return { ok: true, id: input.id, resolution: input.resolution };
+        }}
+      />,
+    );
+    const card = m.query("[data-review-queue]");
+    assert.ok(card, "queue card must render");
+    assert.ok(card.textContent?.includes("1 open"));
+    assert.ok(card.textContent?.includes("Swift tests need DEVELOPER_DIR"));
+    await m.click(m.byText("Keep both"));
+    assert.deepEqual(resolved, [{ id: 7, resolution: "noop" }]);
+    m.unmount();
+  });
+});

@@ -95,6 +95,57 @@ function normalizeEntry(raw) {
 }
 
 /**
+ * @param {unknown} raw
+ * @returns {{ id: string, title: string }}
+ */
+function normalizePairSide(raw) {
+  const o = raw && typeof raw === "object" ? raw : {};
+  return {
+    id: typeof o.id === "string" ? o.id : String(o.id ?? ""),
+    title: typeof o.title === "string" ? o.title : "",
+  };
+}
+
+/**
+ * @param {unknown} raw
+ * @returns {import('../src/shared/ipc').MemoryMaintenanceReport}
+ */
+function normalizeMaintenance(raw) {
+  const o = raw && typeof raw === "object" ? raw : {};
+  const queue = o.queue && typeof o.queue === "object" ? o.queue : {};
+  const items = Array.isArray(queue.items) ? queue.items : [];
+  return {
+    queue: {
+      open: Number(queue.open) || 0,
+      oldestAgeDays: Number(queue.oldestAgeDays) || 0,
+      items: items.map((item) => {
+        const r = item && typeof item === "object" ? item : {};
+        return {
+          id: Number(r.id) || 0,
+          kind: typeof r.kind === "string" ? r.kind : "",
+          detail: typeof r.detail === "string" ? r.detail : null,
+          createdAt:
+            typeof r.createdAt === "string"
+              ? r.createdAt
+              : typeof r.created_at === "string"
+                ? r.created_at
+                : "",
+          a: normalizePairSide(r.a),
+          b: normalizePairSide(r.b),
+        };
+      }),
+    },
+    nearDupes: Array.isArray(o.nearDupes) ? o.nearDupes : [],
+    agingRuns: Array.isArray(o.agingRuns) ? o.agingRuns : [],
+    fatConventions: Array.isArray(o.fatConventions) ? o.fatConventions : [],
+    trust:
+      o.trust && typeof o.trust === "object"
+        ? o.trust
+        : { agents: [], suspect: [] },
+  };
+}
+
+/**
  * Issue one HTTP request to the memory server. Never throws synchronously.
  * @param {object} opts
  * @param {number} opts.port
@@ -350,6 +401,52 @@ function createMemoryProxy(opts) {
     async remove(input) {
       const id = encodeURIComponent(String(input && input.id != null ? input.id : ""));
       await request("DELETE", `/api/entry/${id}`);
+    },
+
+    /**
+     * One-call startup context (conventions, strategies, knowledge, tasks).
+     * @param {{ project?: string }} [input]
+     * @returns {Promise<object>}
+     */
+    async bootstrap(input) {
+      let pathWithQuery = "/api/bootstrap";
+      if (input && input.project != null && input.project !== "") {
+        pathWithQuery += `?project=${encodeURIComponent(String(input.project))}`;
+      }
+      const raw = await request("GET", pathWithQuery);
+      return raw && typeof raw === "object" ? raw : {};
+    },
+
+    /**
+     * Read-only consolidation report (open review queue, near-dupes, trust).
+     * @param {{ project?: string }} [input]
+     * @returns {Promise<import('../src/shared/ipc').MemoryMaintenanceReport>}
+     */
+    async maintenance(input) {
+      let pathWithQuery = "/api/maintenance";
+      if (input && input.project != null && input.project !== "") {
+        pathWithQuery += `?project=${encodeURIComponent(String(input.project))}`;
+      }
+      const raw = await request("GET", pathWithQuery);
+      return normalizeMaintenance(raw);
+    },
+
+    /**
+     * Resolve one open review_queue item.
+     * @param {{ id: number|string, resolution: "update"|"invalidate"|"noop" }} input
+     * @returns {Promise<{ ok: boolean, id: number, resolution: string }>}
+     */
+    async resolve(input) {
+      const id = encodeURIComponent(String(input && input.id != null ? input.id : ""));
+      const raw = await request("POST", `/api/review/${id}/resolve`, {
+        resolution: input && input.resolution,
+      });
+      const o = raw && typeof raw === "object" ? raw : {};
+      return {
+        ok: o.ok === true,
+        id: Number(o.id) || 0,
+        resolution: typeof o.resolution === "string" ? o.resolution : "",
+      };
     },
 
     /**

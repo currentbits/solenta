@@ -629,6 +629,45 @@ async function handleApi(req, res, url, memory) {
       sendJson(res, 200, result)
       return true
     }
+
+    if (req.method === 'GET' && url.pathname === '/api/bootstrap') {
+      const project = url.searchParams.get('project') ?? undefined
+      sendJson(res, 200, memory.bootstrap({ project }))
+      return true
+    }
+
+    if (req.method === 'GET' && url.pathname === '/api/maintenance') {
+      const project = url.searchParams.get('project') ?? undefined
+      sendJson(res, 200, memory.maintenance({ project }))
+      return true
+    }
+
+    if (req.method === 'POST' && url.pathname.startsWith('/api/review/') && url.pathname.endsWith('/resolve')) {
+      const idRaw = decodeURIComponent(
+        url.pathname.slice('/api/review/'.length, -'/resolve'.length),
+      )
+      if (!idRaw) {
+        sendJson(res, 400, { error: 'id required' })
+        return true
+      }
+      let body
+      try {
+        const raw = await readBody(req)
+        body = raw.length ? JSON.parse(raw.toString('utf8')) : {}
+      } catch {
+        sendJson(res, 400, { error: 'valid JSON required' })
+        return true
+      }
+      try {
+        sendJson(res, 200, memory.resolve({ id: idRaw, resolution: body.resolution }))
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err)
+        sendJson(res, /no review_queue row|already resolved/i.test(msg) ? 404 : 400, {
+          error: msg,
+        })
+      }
+      return true
+    }
   } catch (err) {
     sendJson(res, 400, { error: err instanceof Error ? err.message : String(err) })
     return true

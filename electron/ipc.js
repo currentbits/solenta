@@ -791,6 +791,12 @@ const IPC_HANDLERS = {
   "memory:remove": async (ctx, input) => {
     return ctx.memory.remove(input);
   },
+  "memory:maintenance": async (ctx, input) => {
+    return ctx.memory.maintenance(input || {});
+  },
+  "memory:resolve": async (ctx, input) => {
+    return ctx.memory.resolve(input);
+  },
   "settings:get": async (ctx) => {
     return redactSettings(services.getSettings(ctx.store));
   },

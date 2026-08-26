@@ -7,6 +7,9 @@ const assert = require("node:assert/strict");
 const {
   askNoteFor,
   formatMemoryHits,
+  formatBootstrapNote,
+  prefetchBootstrapNote,
+  MEMORY_BOOTSTRAP_NUDGE,
   formatThreadDigest,
   formatMatchingFiles,
   buildAskPrompt,
@@ -49,6 +52,70 @@ describe("formatMemoryHits", () => {
     assert.match(text, /^\[Memory\]/);
     assert.match(text, /Worktree fail-closed/);
     assert.match(text, /never fall back/);
+  });
+});
+
+describe("formatBootstrapNote", () => {
+  it("returns empty for nothing usable", () => {
+    assert.equal(formatBootstrapNote(null), "");
+    assert.equal(formatBootstrapNote({}), "");
+  });
+
+  it("lists conventions and reports truncated overflow", () => {
+    const text = formatBootstrapNote({
+      conventions: [{ title: "Fail closed", body: "never fall back" }],
+      strategies: [],
+      knowledge: [{ title: "Key is basename", excerpt: "not the slug" }],
+      tasks: [],
+      truncated: { conventions: 0, strategies: 0, knowledge: 3, tasks: 0 },
+    });
+    assert.match(text, /\[Memory bootstrap\]/);
+    assert.match(text, /Fail closed/);
+    assert.match(text, /truncated: 3 knowledge/);
+  });
+});
+
+describe("prefetchBootstrapNote", () => {
+  it("is silent on follow-up turns", async () => {
+    assert.equal(await prefetchBootstrapNote({ firstTurn: false }), "");
+  });
+
+  it("is silent without a userDataPath or bootstrap seam", async () => {
+    assert.equal(await prefetchBootstrapNote({ firstTurn: true }), "");
+  });
+
+  it("is silent when prefetch throws", async () => {
+    const note = await prefetchBootstrapNote({
+      firstTurn: true,
+      bootstrapMemory: async () => {
+        throw new Error("down");
+      },
+    });
+    assert.equal(note, "");
+  });
+
+  it("nudges when bootstrap returns an empty pack", async () => {
+    const note = await prefetchBootstrapNote({
+      firstTurn: true,
+      bootstrapMemory: async () => ({
+        conventions: [],
+        strategies: [],
+        knowledge: [],
+        tasks: [],
+      }),
+    });
+    assert.equal(note, MEMORY_BOOTSTRAP_NUDGE);
+  });
+
+  it("formats a successful prefetch", async () => {
+    const note = await prefetchBootstrapNote({
+      firstTurn: true,
+      bootstrapMemory: async () => ({
+        conventions: [{ title: "No em dash", body: "never" }],
+        truncated: { conventions: 0, strategies: 0, knowledge: 0, tasks: 0 },
+      }),
+    });
+    assert.match(note, /No em dash/);
   });
 });
 

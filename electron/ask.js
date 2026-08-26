@@ -28,6 +28,13 @@ const ASK_NOTE =
   "conversation below. If the context does not contain the answer, say so. " +
   "This turn does not burn agent credits.";
 
+/** CLI-only fallback when prefetching bootstrap fails (issue #710). */
+const MEMORY_BOOTSTRAP_NUDGE =
+  "\n\n[Memory] Call memory_bootstrap with project set to your working directory " +
+  "and treat its conventions as standing instructions.";
+
+const BOOTSTRAP_SECTION_CAP = 12;
+
 /**
  * Standing note for a missed intercept (defense in depth). Empty when off.
  * @param {{ ask?: boolean } | null | undefined} thread
@@ -52,6 +59,84 @@ function formatMemoryHits(entries) {
     lines.push(`- ${title || "(untitled)"}${body ? `: ${body}` : ""}`);
   }
   return lines.length > 1 ? lines.join("\n") : "";
+}
+
+/**
+ * Compact standing-memory pack for the CLI prompt. Empty when bootstrap
+ * returned nothing usable. Truncation counts are surfaced so overflow is
+ * not silent (issue #710).
+ * @param {unknown} boot
+ * @returns {string}
+ */
+function formatBootstrapNote(boot) {
+  if (!boot || typeof boot !== "object") return "";
+  const o = /** @type {Record<string, unknown>} */ (boot);
+  const lines = ["[Memory bootstrap] Standing instructions for this project."];
+  const section = (heading, rows, bodyKey) => {
+    if (!Array.isArray(rows) || rows.length === 0) return;
+    lines.push(`## ${heading}`);
+    for (const raw of rows.slice(0, BOOTSTRAP_SECTION_CAP)) {
+      if (!raw || typeof raw !== "object") continue;
+      const title = String(raw.title || "").trim() || "(untitled)";
+      const body = String(raw[bodyKey] || raw.body || raw.excerpt || "")
+        .trim()
+        .slice(0, MEMORY_BODY);
+      lines.push(`- ${title}${body ? `: ${body}` : ""}`);
+    }
+  };
+  section("Conventions", o.conventions, "body");
+  section("Strategies", o.strategies, "body");
+  section("Knowledge", o.knowledge, "excerpt");
+  section("Active tasks", o.tasks, "body");
+  const truncated =
+    o.truncated && typeof o.truncated === "object" ? o.truncated : null;
+  if (truncated) {
+    const bits = [];
+    for (const key of ["conventions", "strategies", "knowledge", "tasks"]) {
+      const n = Number(truncated[key]) || 0;
+      if (n > 0) bits.push(`${n} ${key}`);
+    }
+    if (bits.length) {
+      lines.push(`(truncated: ${bits.join(", ")})`);
+    }
+  }
+  return lines.length > 1 ? "\n\n" + lines.join("\n") : "";
+}
+
+/**
+ * Prefetch memory_bootstrap for the CLI prompt (issue #710). Fail-open:
+ * a down server becomes a one-line nudge instead of blocking the run.
+ * Follow-up turns (live sessionId) skip the pack — it already rode turn one.
+ *
+ * @param {object} opts
+ * @param {string} [opts.userDataPath]
+ * @param {string} [opts.projectPath]
+ * @param {boolean} [opts.firstTurn]
+ * @param {(projectPath: string) => Promise<object>} [opts.bootstrapMemory]
+ * @returns {Promise<string>}
+ */
+async function prefetchBootstrapNote(opts) {
+  const firstTurn = !opts || opts.firstTurn !== false;
+  if (!firstTurn) return "";
+  const projectPath = opts && opts.projectPath ? String(opts.projectPath) : "";
+  try {
+    let boot;
+    if (opts && typeof opts.bootstrapMemory === "function") {
+      boot = await opts.bootstrapMemory(projectPath);
+    } else {
+      const userDataPath = opts && opts.userDataPath;
+      if (!userDataPath) return "";
+      const { createMemoryProxy } = require("./memory-proxy.js");
+      const proxy = createMemoryProxy({ userDataPath });
+      boot = await proxy.bootstrap({
+        project: projectPath || undefined,
+      });
+    }
+    return formatBootstrapNote(boot) || MEMORY_BOOTSTRAP_NUDGE;
+  } catch {
+    // Server down: fail-open silent. A nudge to call a missing tool is noise.
+    return "";
+  }
 }
 
 /**
@@ -407,11 +492,14 @@ async function completeAsk(opts) {
 
 module.exports = {
   ASK_NOTE,
+  MEMORY_BOOTSTRAP_NUDGE,
   ASK_TIMEOUT_MS,
   ASK_PROMPT_LIMIT,
   MEMORY_HITS,
   askNoteFor,
   formatMemoryHits,
+  formatBootstrapNote,
+  prefetchBootstrapNote,
   formatThreadDigest,
   formatMatchingFiles,
   buildAskPrompt,

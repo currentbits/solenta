@@ -133,6 +133,73 @@ function startFakeServer(opts) {
         return;
       }
 
+      if (req.method === "GET" && pathname === "/api/bootstrap") {
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(
+          JSON.stringify({
+            conventions: [{ id: "c1", title: "No em dash", body: "never" }],
+            strategies: [],
+            knowledge: [],
+            tasks: [],
+            protocol: ["MEMORY PREFLIGHT"],
+            truncated: { conventions: 0, strategies: 0, knowledge: 0, tasks: 0 },
+          }),
+        );
+        return;
+      }
+
+      if (req.method === "GET" && pathname === "/api/maintenance") {
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(
+          JSON.stringify({
+            queue: {
+              open: 1,
+              oldestAgeDays: 2,
+              items: [
+                {
+                  id: 7,
+                  kind: "near_dup",
+                  detail: "overlap",
+                  created_at: "2026-08-01T00:00:00.000Z",
+                  a: { id: "a1", title: "Alpha" },
+                  b: { id: "b1", title: "Beta" },
+                },
+              ],
+            },
+            nearDupes: [],
+            agingRuns: [],
+            fatConventions: [],
+            trust: { agents: [], suspect: [] },
+          }),
+        );
+        return;
+      }
+
+      if (
+        req.method === "POST" &&
+        pathname.startsWith("/api/review/") &&
+        pathname.endsWith("/resolve")
+      ) {
+        const id = decodeURIComponent(
+          pathname.slice("/api/review/".length, -"/resolve".length),
+        );
+        let parsed = {};
+        try {
+          parsed = JSON.parse(body || "{}");
+        } catch {
+          parsed = {};
+        }
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(
+          JSON.stringify({
+            ok: true,
+            id: Number(id),
+            resolution: parsed.resolution,
+          }),
+        );
+        return;
+      }
+
       if (req.method === "POST" && pathname === "/api/store") {
         let parsed = {};
         try {
@@ -406,6 +473,47 @@ describe("memory-proxy", () => {
     for (const req of fake.requests) {
       assert.equal(req.headers.authorization, `Bearer ${TOKEN}`);
     }
+  });
+
+  it("bootstrap: forwards project and returns the pack", async () => {
+    /** @type {string[]} */
+    const seen = [];
+    fake = await startFakeServer({
+      port,
+      token: TOKEN,
+      handler(req) {
+        seen.push(req.url || "");
+        return null;
+      },
+    });
+    const boot = await proxy().bootstrap({ project: "/tmp/alpha" });
+    assert.equal(boot.conventions[0].title, "No em dash");
+    assert.equal(typeof boot.truncated.conventions, "number");
+    assert.ok(seen.at(-1).includes("project="));
+  });
+
+  it("maintenance + resolve: camelCase queue items and POST resolution", async () => {
+    let captured = null;
+    fake = await startFakeServer({
+      port,
+      token: TOKEN,
+      handler(req, body) {
+        if (req.method === "POST" && (req.url || "").includes("/resolve")) {
+          captured = { url: req.url, body: JSON.parse(body) };
+          return { status: 200, json: { ok: true, id: 7, resolution: "noop" } };
+        }
+        return null;
+      },
+    });
+    const p = proxy();
+    const report = await p.maintenance({ project: "coder" });
+    assert.equal(report.queue.open, 1);
+    assert.equal(report.queue.items[0].createdAt, "2026-08-01T00:00:00.000Z");
+    assert.equal(report.queue.items[0].a.title, "Alpha");
+    const res = await p.resolve({ id: 7, resolution: "noop" });
+    assert.equal(res.ok, true);
+    assert.equal(captured.body.resolution, "noop");
+    assert.match(captured.url, /\/api\/review\/7\/resolve/);
   });
 
   it("rejects with exact not-running message when status.running is false", async () => {

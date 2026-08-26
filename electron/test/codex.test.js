@@ -517,9 +517,10 @@ describe("runner codex provider", () => {
       argv = JSON.parse(fs.readFileSync(argvFile, "utf8"));
       const cIdx = argv.indexOf("-c");
       assert.ok(cIdx >= 0, `expected -c in ${JSON.stringify(argv)}`);
+      const cwd = t2.worktreePath || project.path;
       assert.equal(
         argv[cIdx + 1],
-        `mcp_servers.coder-memory.url="http://127.0.0.1:${freePort}/mcp"`,
+        `mcp_servers.coder-memory.url="http://127.0.0.1:${freePort}/mcp?project=${encodeURIComponent(cwd)}"`,
       );
       // Leading args before exec
       assert.ok(cIdx < argv.indexOf("exec"));
@@ -529,10 +530,10 @@ describe("runner codex provider", () => {
         !argv.some((a) => String(a).includes(token)),
         `token leaked into argv: ${JSON.stringify(argv)}`,
       );
-      assert.deepEqual(
-        JSON.parse(fs.readFileSync(argvFile + ".env.json", "utf8")),
-        { CODER_MCP_TOKEN_CODER_MEMORY: token },
+      const spawnedEnv = JSON.parse(
+        fs.readFileSync(argvFile + ".env.json", "utf8"),
       );
+      assert.equal(spawnedEnv.CODER_MCP_TOKEN_CODER_MEMORY, token);
       sup.stop();
     } finally {
       await new Promise((r) => server.close(r));

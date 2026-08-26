@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { Memory } from '../src/memory.js'
+import { Memory, VERIFY_FAIL_LIMIT } from '../src/memory.js'
 
 describe('memory citations + JIT verify (#395)', () => {
   let dir
@@ -126,7 +126,7 @@ describe('memory citations + JIT verify (#395)', () => {
     assert.equal(parsed[0].line, 1)
   })
 
-  it('invalidates and omits when the excerpt is gone', () => {
+  it('does not tombstone on a single excerpt mismatch (dirty worktree)', () => {
     const { id } = memory.store({
       type: 'convention',
       title: 'Old helper name',
@@ -135,13 +135,50 @@ describe('memory citations + JIT verify (#395)', () => {
       citations: [fileCite({ excerpt: 'export function vanishedHelper() {' })],
     })
     const boot = memory.bootstrap({ project: tree })
+    assert.ok(boot.conventions.some((c) => c.id === id), 'fail-open on first mismatch')
+    const live = memory.get(id)
+    assert.equal(live.invalidated, undefined)
+    const row = memory.db.prepare(`SELECT verify_fail_count FROM entries WHERE id = ?`).get(id)
+    assert.equal(row.verify_fail_count, 1)
+  })
+
+  it('tombstones after VERIFY_FAIL_LIMIT consecutive excerpt mismatches', () => {
+    const { id } = memory.store({
+      type: 'convention',
+      title: 'Old helper name',
+      body: 'call vanishedHelper on every request',
+      project: tree,
+      citations: [fileCite({ excerpt: 'export function vanishedHelper() {' })],
+    })
+    for (let i = 0; i < VERIFY_FAIL_LIMIT - 1; i++) {
+      memory.bootstrap({ project: tree })
+      assert.equal(memory.get(id).invalidated, undefined)
+    }
+    const boot = memory.bootstrap({ project: tree })
     assert.ok(!boot.conventions.some((c) => c.id === id))
     const stub = memory.get(id)
     assert.equal(stub.invalidated, true)
     assert.match(String(stub.invalidation_reason || ''), /stale|excerpt/i)
   })
 
-  it('invalidates and omits when the cited file is gone', () => {
+  it('resets the fail count when a later verify matches', () => {
+    const { id } = memory.store({
+      type: 'convention',
+      title: 'Use checkToken',
+      body: 'all routes go through checkToken',
+      project: tree,
+      citations: [fileCite({ excerpt: 'export function vanishedHelper() {' })],
+    })
+    memory.bootstrap({ project: tree })
+    memory.writeCitations(id, [fileCite()])
+    const boot = memory.bootstrap({ project: tree })
+    assert.ok(boot.conventions.some((c) => c.id === id))
+    const row = memory.db.prepare(`SELECT verify_fail_count, invalid_at FROM entries WHERE id = ?`).get(id)
+    assert.equal(row.verify_fail_count, 0)
+    assert.equal(row.invalid_at, null)
+  })
+
+  it('tombstones after VERIFY_FAIL_LIMIT when the cited file is gone', () => {
     const { id } = memory.store({
       type: 'knowledge',
       title: 'Deleted module',
@@ -149,6 +186,7 @@ describe('memory citations + JIT verify (#395)', () => {
       project: tree,
       citations: [fileCite({ path: 'src/gone.ts', excerpt: 'export const gone = 1' })],
     })
+    for (let i = 0; i < VERIFY_FAIL_LIMIT - 1; i++) memory.bootstrap({ project: tree })
     const boot = memory.bootstrap({ project: tree })
     assert.ok(!boot.knowledge.some((k) => k.id === id))
     assert.equal(memory.get(id).invalidated, true)
@@ -168,7 +206,7 @@ describe('memory citations + JIT verify (#395)', () => {
     assert.equal(live.invalid_at, null)
   })
 
-  it('search against a live worktree drops a contradicted hit and writes back', async () => {
+  it('search against a live worktree fail-opens until VERIFY_FAIL_LIMIT', async () => {
     const { id } = memory.store({
       type: 'knowledge',
       title: 'Stale search fact',
@@ -176,12 +214,17 @@ describe('memory citations + JIT verify (#395)', () => {
       project: tree,
       citations: [fileCite({ excerpt: 'export function vanishedHelper() {' })],
     })
+    const first = await memory.search({ query: 'uniquesearchcite', project: tree })
+    assert.ok(first.some((h) => h.id === id), 'first mismatch still injects')
+    for (let i = 0; i < VERIFY_FAIL_LIMIT - 1; i++) {
+      await memory.search({ query: 'uniquesearchcite', project: tree })
+    }
     const hits = await memory.search({ query: 'uniquesearchcite', project: tree })
     assert.ok(!hits.some((h) => h.id === id))
     assert.equal(memory.get(id).invalidated, true)
   })
 
-  it('get with a live project path verifies and can invalidate', () => {
+  it('get with a live project path tombstones after VERIFY_FAIL_LIMIT', () => {
     const { id } = memory.store({
       type: 'knowledge',
       title: 'Get-time stale',
@@ -189,6 +232,10 @@ describe('memory citations + JIT verify (#395)', () => {
       project: tree,
       citations: [fileCite({ excerpt: 'export function vanishedHelper() {' })],
     })
+    for (let i = 0; i < VERIFY_FAIL_LIMIT - 1; i++) {
+      const live = memory.get(id, { project: tree })
+      assert.equal(live.invalidated, undefined)
+    }
     const stub = memory.get(id, { project: tree })
     assert.equal(stub.invalidated, true)
   })

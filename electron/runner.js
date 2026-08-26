@@ -42,6 +42,7 @@ const {
   looksGrokConfigCorrupt,
   grokConfigCorruptMessage,
   kimiMcpServersForRun,
+  ensureGrokMcpConfig,
 } = require("./memory-sup.js");
 const opencodeParse = require("./opencode.js");
 const { runOpencode } = opencodeParse;
@@ -559,6 +560,7 @@ function tryReadCodeIndex(userDataPath, repoRoot) {
  * @param {() => { running: boolean, adopted: boolean, port: number | null }} [opts.getMemoryStatus]
  * @param {(opts: object) => Promise<{ text: string, source: string } | null>} [opts.askComplete] - Ask mode seam (issue #392)
  * @param {(query: string, projectPath: string) => Promise<object[]>} [opts.searchMemory] - Ask mode memory seam
+ * @param {(projectPath: string) => Promise<object>} [opts.bootstrapMemory] - Prefetch memory_bootstrap (issue #710)
  */
 function createRunner(opts) {
   const {
@@ -572,6 +574,7 @@ function createRunner(opts) {
     getMemoryStatus: getMemStatus = getMemoryStatus,
     askComplete = ask.completeAsk,
     searchMemory = null,
+    bootstrapMemory = null,
     runAgentFn = runAgent,
   } = opts;
 
@@ -2975,7 +2978,14 @@ function createRunner(opts) {
     const interactive = entryDef.id === "claude";
     if (interactive) {
       // No trailing prompt in interactive argv, so appending is safe.
-      args.push(...getClaudeMcpArgs());
+      args.push(...getClaudeMcpArgs({ projectPath: localCwd }));
+    }
+    if (entryDef.id === "grok") {
+      try {
+        ensureGrokMcpConfig({ projectPath: localCwd });
+      } catch {
+        // Boot-time registration is enough; a bind miss must not kill the run.
+      }
     }
     const spawn = resolveSpawn(project, binary, args, localCwd);
 
@@ -3624,7 +3634,7 @@ function createRunner(opts) {
       model: thread.model || null,
       permissionMode: thread.permissionMode || "default",
       reasoningEffort: thread.reasoningEffort || null,
-      mcp: interactive ? getClaudeMcpArgs() : [],
+      mcp: interactive ? getClaudeMcpArgs({ projectPath: localCwd }) : [],
       otelEnv: spawnEnv || null,
     });
 
@@ -3796,7 +3806,7 @@ function createRunner(opts) {
     });
     // Leading -c MCP override when memory server is healthy. The matching
     // bearer tokens ride the child's env, never argv (issue #125).
-    const codexMcpArgs = getCodexMcpArgs();
+    const codexMcpArgs = getCodexMcpArgs({ projectPath: localCwd });
     if (codexMcpArgs.length > 0) {
       args.unshift(...codexMcpArgs);
     }
@@ -5672,6 +5682,19 @@ function createRunner(opts) {
       } catch {
         memoryNote = "";
       }
+      try {
+        const bootNote = await ask.prefetchBootstrapNote({
+          userDataPath,
+          projectPath: repoRoot,
+          firstTurn: true,
+          bootstrapMemory,
+        });
+        if (bootNote) {
+          memoryNote = (memoryNote ? memoryNote + "\n" : "") + bootNote.trim();
+        }
+      } catch {
+        // Fail-open: search hits still go out.
+      }
 
       const pack = {
         question: String(prompt || ""),
@@ -5802,6 +5825,19 @@ function createRunner(opts) {
         memoryNote = ask.formatMemoryHits(hits);
       } catch {
         memoryNote = "";
+      }
+      try {
+        const bootNote = await ask.prefetchBootstrapNote({
+          userDataPath,
+          projectPath: repoRoot,
+          firstTurn: true,
+          bootstrapMemory,
+        });
+        if (bootNote) {
+          memoryNote = (memoryNote ? memoryNote + "\n" : "") + bootNote.trim();
+        }
+      } catch {
+        // Fail-open: search hits still go out.
       }
 
       const pack = {
@@ -6258,7 +6294,16 @@ function createRunner(opts) {
         userDataPath && repoRoot
           ? tryReadCodeIndex(userDataPath, repoRoot)
           : null,
-      );
+      ) +
+      (await ask.prefetchBootstrapNote({
+        userDataPath,
+        projectPath:
+          dispatchThread.worktreePath ||
+          (projectForGate && projectForGate.path) ||
+          "",
+        firstTurn: !dispatchThread.sessionId,
+        bootstrapMemory,
+      }));
 
     const name = workflowNameFromThreadId(threadId);
 

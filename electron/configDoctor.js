@@ -1,5 +1,7 @@
 "use strict";
 
+const crypto = require("node:crypto");
+
 /**
  * Agent-config doctor (#412).
  *
@@ -24,6 +26,11 @@ const AXIS_MAX = Object.freeze({
 });
 
 const GENERATED_MARKER = "<!-- generated-by: solenta-config-doctor -->";
+const GENERATED_MARKER_RE =
+  /<!-- generated-by: solenta-config-doctor(?: source:([0-9a-f]+))? -->/;
+const SOURCE_IDS_RE = /<!-- solenta-config-source: ([^\s]*) -->/;
+const HOME_PATH_RE =
+  /(?:^|[\s`'"(])(\/(?:Users|home)\/[^\s`'")]{2,}|\$HOME\/[^\s`'")]{2,}|~\/[^\s`'")]{2,})/g;
 
 const ROOT_FILE_NAMES = Object.freeze([
   "AGENTS.md",
@@ -540,6 +547,23 @@ function scoreAgentConfig(content, ctx) {
   }
 
   const memory = memoryCoverage(text, (ctx && ctx.memoryEntries) || []);
+  const manifest = sourceManifest((ctx && ctx.memoryEntries) || []);
+  const stale = staleSourceCount(manifest, text);
+  if (stale > 0) {
+    issues.push({
+      severity: "warn",
+      message: `${stale} memory ${stale === 1 ? "entry" : "entries"} changed since generation`,
+    });
+    recommendations.push("Regenerate AGENTS.md from shared memory so it matches the current store");
+  }
+  const leaks = leakPaths(text);
+  if (leaks.length > 0) {
+    issues.push({
+      severity: "warn",
+      message: `Absolute home-directory path looks like a leak: ${leaks[0]}`,
+    });
+    recommendations.push("Drop /Users, /home, $HOME, and ~ paths before writing a public repo");
+  }
   if (memory.considered > 0 && memory.missing.length > 0) {
     issues.push({
       severity: memory.covered === 0 ? "warn" : "info",
@@ -665,6 +689,78 @@ function clipBody(text, max) {
 }
 
 /**
+ * ids+updated_at of the entries that will be written, hashed so lint can
+ * detect staleness after a memory edit (issue #710).
+ * @param {object[]} entries
+ */
+function sourceManifest(entries) {
+  return selectSourceEntries(entries).map((e) => ({
+    id: String(e.id || ""),
+    updated: String(e.updated_at || e.updatedAt || ""),
+  }));
+}
+
+/**
+ * @param {Array<{ id: string, updated: string }>} manifest
+ */
+function sourceFingerprint(manifest) {
+  const payload = (manifest || [])
+    .map((e) => `${e.id}:${e.updated}`)
+    .sort()
+    .join("|");
+  return crypto.createHash("sha1").update(payload).digest("hex").slice(0, 12);
+}
+
+/**
+ * @param {Array<{ id: string, updated: string }>} manifest
+ * @param {string} content
+ * @returns {number} how many included entries changed since generation
+ */
+function staleSourceCount(manifest, content) {
+  const m = String(content || "").match(SOURCE_IDS_RE);
+  if (!m) {
+    const gen = String(content || "").match(GENERATED_MARKER_RE);
+    if (gen && gen[1] && gen[1] !== sourceFingerprint(manifest)) {
+      return manifest.length;
+    }
+    return 0;
+  }
+  const old = new Map();
+  for (const part of String(m[1] || "").split(",")) {
+    if (!part) continue;
+    const at = part.indexOf("@");
+    const id = at === -1 ? part : part.slice(0, at);
+    const updated = at === -1 ? "" : part.slice(at + 1);
+    old.set(id, updated);
+  }
+  const now = new Map((manifest || []).map((e) => [e.id, e.updated]));
+  let changed = 0;
+  for (const [id, updated] of now) {
+    if (!old.has(id) || old.get(id) !== updated) changed += 1;
+  }
+  for (const id of old.keys()) {
+    if (!now.has(id)) changed += 1;
+  }
+  return changed;
+}
+
+/**
+ * Absolute home-directory paths leaked into a public AGENTS.md.
+ * @param {string} content
+ * @returns {string[]}
+ */
+function leakPaths(content) {
+  const hits = [];
+  const re = new RegExp(HOME_PATH_RE.source, "g");
+  let m;
+  while ((m = re.exec(String(content || "")))) {
+    const p = String(m[1] || "").trim();
+    if (p && !hits.includes(p)) hits.push(p);
+  }
+  return hits;
+}
+
+/**
  * @param {{ name?: string, entries?: object[] }} input
  * @returns {string}
  */
@@ -675,22 +771,29 @@ function renderGeneratedMarkdown(input) {
   for (const entry of selected) {
     byType[entry.type].push(entry);
   }
+  const manifest = sourceManifest((input && input.entries) || []);
+  const fingerprint = sourceFingerprint(manifest);
+  const idsLine = manifest.map((e) => `${e.id}@${e.updated}`).join(",");
 
   const lines = [
     `# ${name}`,
     "",
     "Standing instructions generated from Solenta shared memory — conventions, strategies, and verified decisions. Prefer these over restating the tree.",
     "",
-    GENERATED_MARKER,
+    `<!-- generated-by: solenta-config-doctor source:${fingerprint} -->`,
+    idsLine ? `<!-- solenta-config-source: ${idsLine} -->` : "",
     "",
-  ];
+  ].filter((line, i, arr) => line !== "" || arr[i - 1] !== "");
 
   const section = (heading, rows) => {
     if (rows.length === 0) return;
     lines.push(`## ${heading}`, "");
     for (const row of rows) {
       const title = String(row.title || "").trim() || "(untitled)";
-      const body = clipBody(row.body || row.excerpt || "", ENTRY_BODY_CAP);
+      // Strategies are whole rules: a mid-clause clip is worse than absent.
+      const rawBody = String(row.body || row.excerpt || "");
+      const body =
+        row.type === "strategy" ? rawBody.trim() : clipBody(rawBody, ENTRY_BODY_CAP);
       lines.push(`### ${title}`, "");
       if (body) {
         lines.push(body, "");
@@ -822,4 +925,8 @@ module.exports = {
   previewGeneratedFiles,
   writeAgentConfigFiles,
   assertWriteableRel,
+  leakPaths,
+  sourceFingerprint,
+  sourceManifest,
+  staleSourceCount,
 };

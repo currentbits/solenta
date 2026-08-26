@@ -257,4 +257,77 @@ describe('REST convenience + new MCP tools', () => {
 
     await mcp.close()
   })
+
+  it('GET /api/bootstrap returns sections plus truncated counts', async () => {
+    const res = await fetch(`${baseURL}/api/bootstrap?project=coder`, {
+      headers: authHeaders(),
+    })
+    assert.equal(res.status, 200)
+    const boot = await res.json()
+    assert.ok(Array.isArray(boot.conventions))
+    assert.ok(Array.isArray(boot.strategies))
+    assert.ok(Array.isArray(boot.knowledge))
+    assert.ok(Array.isArray(boot.tasks))
+    assert.ok(Array.isArray(boot.protocol))
+    assert.equal(typeof boot.truncated.conventions, 'number')
+    assert.equal(typeof boot.truncated.strategies, 'number')
+    assert.equal(typeof boot.truncated.knowledge, 'number')
+    assert.equal(typeof boot.truncated.tasks, 'number')
+  })
+
+  it('GET /api/maintenance + POST /api/review/:id/resolve', async () => {
+    const a = await fetch(`${baseURL}/api/store`, {
+      method: 'POST',
+      headers: authHeaders({ 'content-type': 'application/json' }),
+      body: JSON.stringify({
+        type: 'knowledge',
+        title: 'REST review pair alpha unique',
+        body: 'REST review pair body about the same durable fact unique-rest-queue',
+        project: 'coder',
+      }),
+    })
+    assert.equal(a.status, 200)
+    const b = await fetch(`${baseURL}/api/store`, {
+      method: 'POST',
+      headers: authHeaders({ 'content-type': 'application/json' }),
+      body: JSON.stringify({
+        type: 'knowledge',
+        title: 'REST review pair beta unique',
+        body: 'REST review pair body about the same durable fact unique-rest-queue too',
+        project: 'coder',
+        force: true,
+      }),
+    })
+    assert.equal(b.status, 200)
+
+    const maint = await fetch(`${baseURL}/api/maintenance?project=coder`, {
+      headers: authHeaders(),
+    })
+    assert.equal(maint.status, 200)
+    const report = await maint.json()
+    assert.ok(report.queue.open >= 1)
+    const item = report.queue.items.find(
+      (row) => /unique-rest-queue/.test(String(row.detail || '')) ||
+        /REST review pair/.test(row.a?.title || '') ||
+        /REST review pair/.test(row.b?.title || ''),
+    )
+    assert.ok(item, `expected a queue item, got ${JSON.stringify(report.queue.items)}`)
+
+    const resolved = await fetch(`${baseURL}/api/review/${item.id}/resolve`, {
+      method: 'POST',
+      headers: authHeaders({ 'content-type': 'application/json' }),
+      body: JSON.stringify({ resolution: 'noop' }),
+    })
+    assert.equal(resolved.status, 200)
+    const body = await resolved.json()
+    assert.equal(body.ok, true)
+    assert.equal(body.resolution, 'noop')
+
+    const again = await fetch(`${baseURL}/api/review/${item.id}/resolve`, {
+      method: 'POST',
+      headers: authHeaders({ 'content-type': 'application/json' }),
+      body: JSON.stringify({ resolution: 'noop' }),
+    })
+    assert.equal(again.status, 404)
+  })
 })
