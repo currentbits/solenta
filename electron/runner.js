@@ -44,6 +44,7 @@ const {
   kimiMcpServersForRun,
   ensureGrokMcpConfig,
 } = require("./memory-sup.js");
+const { isMemoryConsolidateTool } = require("./memory-consolidate.js");
 const opencodeParse = require("./opencode.js");
 const { runOpencode } = opencodeParse;
 const { recordRunOutcome } = require("./memory-record.js");
@@ -3035,9 +3036,13 @@ function createRunner(opts) {
     // the control protocol. Other claude-stream providers (e.g. grok) keep
     // the argv prompt and their own MCP injection.
     const interactive = entryDef.id === "claude";
+    const mcpArgs = getClaudeMcpArgs({
+      projectPath: localCwd,
+      memoryOnly: thread.memoryConsolidate === true,
+    });
     if (interactive) {
       // No trailing prompt in interactive argv, so appending is safe.
-      args.push(...getClaudeMcpArgs({ projectPath: localCwd }));
+      args.push(...mcpArgs);
     }
     if (entryDef.id === "grok") {
       try {
@@ -3199,6 +3204,26 @@ function createRunner(opts) {
                 threadId,
                 "event",
                 `Guardrail blocked ${toolName}: ${rule}: ${reason}`,
+                e.runId,
+              );
+              store.save();
+              pushDetail(threadId, claudeState);
+              return;
+            }
+
+            if (
+              thread.memoryConsolidate === true &&
+              !isMemoryConsolidateTool(toolName)
+            ) {
+              handle.respond(requestId, {
+                behavior: "deny",
+                message:
+                  "Memory consolidation may only call coder-memory tools",
+              });
+              appendMessage(
+                threadId,
+                "event",
+                `Consolidation sandbox blocked ${toolName}`,
                 e.runId,
               );
               store.save();
@@ -3693,7 +3718,7 @@ function createRunner(opts) {
       model: thread.model || null,
       permissionMode: thread.permissionMode || "default",
       reasoningEffort: thread.reasoningEffort || null,
-      mcp: interactive ? getClaudeMcpArgs({ projectPath: localCwd }) : [],
+      mcp: interactive ? mcpArgs : [],
       otelEnv: spawnEnv || null,
     });
 
@@ -6180,7 +6205,11 @@ function createRunner(opts) {
     }
 
     // Budget gate is start-time only; never kills an in-flight run.
-    services.assertUnderDailyBudget(store);
+    // Sleep-time consolidation is a system job (issue #722) and must not
+    // stall behind a spent daily cap.
+    if (thread.memoryConsolidate !== true) {
+      services.assertUnderDailyBudget(store);
+    }
 
     const provider = resolveProvider(thread);
     const projectForGate = store.getProject(thread.projectId);
@@ -6194,12 +6223,19 @@ function createRunner(opts) {
     // worktree + branch at first run, so never-run threads leave nothing.
     // A missing folder rematerializes. Failure is recorded in-thread and
     // thrown — never a silent fallback to the project checkout (#511).
-    try {
-      materializePendingWorktree(threadId);
-    } catch (err) {
-      failWorktreeSetup(threadId, prompt, attachments, err, {
-        fromQuotaWait: input.fromQuotaWait,
-      });
+    // Consolidation is memory-tools-only: never mint a worktree.
+    if (thread.memoryConsolidate === true) {
+      if (thread.pendingWorktree) {
+        store.updateThread(threadId, { pendingWorktree: false });
+      }
+    } else {
+      try {
+        materializePendingWorktree(threadId);
+      } catch (err) {
+        failWorktreeSetup(threadId, prompt, attachments, err, {
+          fromQuotaWait: input.fromQuotaWait,
+        });
+      }
     }
 
     // Prefix is CLI-only and must see the retained tail BEFORE this turn's

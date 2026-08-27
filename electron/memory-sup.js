@@ -317,10 +317,15 @@ function getClaudeMcpArgs(opts = {}) {
   const servers = activeServers();
   if (servers.length === 0 || !globalMcpConfigPath) return [];
   const projectPath = opts.projectPath ? String(opts.projectPath) : "";
+  const memoryOnly = opts.memoryOnly === true;
   let configPath = globalMcpConfigPath;
-  if (projectPath && globalUserDataPath) {
+  if ((projectPath || memoryOnly) && globalUserDataPath) {
     try {
-      configPath = writeBoundMcpConfig(globalUserDataPath, projectPath);
+      configPath = writeBoundMcpConfig(
+        globalUserDataPath,
+        projectPath,
+        memoryOnly ? { memoryOnly: true } : {},
+      );
     } catch {
       configPath = globalMcpConfigPath;
     }
@@ -339,11 +344,18 @@ function getClaudeMcpArgs(opts = {}) {
   // approved: `mcp__<name>__*` would pre-approve every tool it exposes now
   // and any it adds later, which is a silent code-execution channel for a
   // compromised remote server in every headless turn.
+  //
+  // memoryOnly (issue #722 sleep-time consolidation): coder-memory only,
+  // written to a *-memory.json bound file so a concurrent normal Claude
+  // run cannot pick up the stripped document.
   const args = [`--mcp-config=${configPath}`];
   const ours = servers.filter((s) => !s.user);
-  if (ours.length > 0) {
+  const allowed = memoryOnly
+    ? ours.filter((s) => s.name === "coder-memory")
+    : ours;
+  if (allowed.length > 0) {
     args.push(
-      `--allowedTools=${ours.map((s) => `mcp__${s.name}__*`).join(" ")}`,
+      `--allowedTools=${allowed.map((s) => `mcp__${s.name}__*`).join(" ")}`,
     );
   }
   return args;
@@ -1337,10 +1349,12 @@ function resolveEntryPath(appPath, env = process.env) {
  * with `?project=` so the server owns the scope (issue #710).
  * @param {string} [projectPath]
  */
-function mcpServersDoc(projectPath) {
+function mcpServersDoc(projectPath, opts = {}) {
   /** @type {Record<string, unknown>} */
   const mcpServers = {};
+  const names = Array.isArray(opts.names) ? new Set(opts.names) : null;
   for (const s of activeServers()) {
+    if (names && !names.has(s.name)) continue;
     if (isStdioServer(s)) {
       const entry = {
         type: "stdio",
@@ -1397,7 +1411,7 @@ function writeMcpConfig(userDataPath) {
  * @param {string} userDataPath
  * @param {string} projectPath
  */
-function writeBoundMcpConfig(userDataPath, projectPath) {
+function writeBoundMcpConfig(userDataPath, projectPath, opts = {}) {
   const key = crypto
     .createHash("sha1")
     .update(String(projectPath))
@@ -1405,8 +1419,13 @@ function writeBoundMcpConfig(userDataPath, projectPath) {
     .slice(0, 12);
   const dir = path.join(userDataPath, "mcp-bound");
   fs.mkdirSync(dir, { recursive: true });
-  const mcpPath = path.join(dir, `${key}.json`);
-  writeSecretFile(mcpPath, JSON.stringify(mcpServersDoc(projectPath), null, 2));
+  const suffix = opts.memoryOnly === true ? "-memory" : "";
+  const mcpPath = path.join(dir, `${key}${suffix}.json`);
+  const docOpts = opts.memoryOnly === true ? { names: ["coder-memory"] } : {};
+  writeSecretFile(
+    mcpPath,
+    JSON.stringify(mcpServersDoc(projectPath, docOpts), null, 2),
+  );
   return mcpPath;
 }
 

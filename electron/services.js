@@ -531,12 +531,13 @@ function removeSpace(_store, _input) {
 
 /**
  * @param {import('./store').Store} store
- * @param {{ projectId: string, title: string, worktree?: boolean, automationId?: string | null, issueNumber?: number | null }} input
+ * @param {{ projectId: string, title: string, worktree?: boolean, automationId?: string | null, issueNumber?: number | null, memoryConsolidate?: boolean }} input
  * `worktree` is only consumed by the IPC layer (threads:create), which calls
  * setupWorktree after this returns; the service itself stays fs-free.
  * `automationId` tags threads minted by an automation so runAutomation can
  * retain only the last N (issue #134). Absent / falsy on hand-made threads.
  * `issueNumber` is the planboard issue this thread was started from (#420).
+ * `memoryConsolidate` tags the sleep-time memory pass (issue #722).
  */
 function createThread(store, input) {
   const project = store.getProject(input.projectId);
@@ -586,6 +587,9 @@ function createThread(store, input) {
     automationId: input.automationId || null,
     queued: null,
     ask: input.ask === true,
+    ...(input.memoryConsolidate === true
+      ? { memoryConsolidate: true }
+      : {}),
   };
 
   const threads = store.getThreads().slice();

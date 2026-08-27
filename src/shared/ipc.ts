@@ -69,6 +69,13 @@ export interface ProjectInfo {
    * Absent/empty = none. Cap 8.
    */
   quickActions?: ProjectQuickAction[];
+  /**
+   * Last sleep-time memory consolidation fire (issue #722). Absent = never run.
+   * Host-stamped; not a user-editable project field.
+   */
+  memoryConsolidateAt?: number | null;
+  /** Last consolidation startRun error, if any. Cleared on a successful fire. */
+  memoryConsolidateError?: string | null;
 }
 
 /** One named per-project shell command (issue #153). */
@@ -686,6 +693,11 @@ export interface ThreadInfo {
    * thread does not get a worktree.
    */
   ask?: boolean;
+  /**
+   * Sleep-time memory consolidation (issue #722): memory-tools-only pass.
+   * Absent/false = ordinary thread. Host-minted; never a worktree.
+   */
+  memoryConsolidate?: boolean;
   /**
    * Side questions (issue #471): `/btw` cards on this thread. Not a new
    * thread, not the live turn, not the follow-up queue. Newest-last.

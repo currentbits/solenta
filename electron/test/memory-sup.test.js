@@ -314,6 +314,33 @@ describe("memory-sup supervisor", () => {
         `expected bound codex url, got ${JSON.stringify(boundCodex)}`,
       );
 
+      // Sleep-time consolidation (issue #722): memory-only MCP config does
+      // not list coder-threads and does not pre-approve it.
+      const threadsPort = await freePort();
+      registerMcpServer({
+        name: "coder-threads",
+        port: threadsPort,
+        token: "threads-tok",
+        userDataPath: tmpDir,
+      });
+      const both = getClaudeMcpArgs();
+      assert.equal(
+        both[1],
+        "--allowedTools=mcp__coder-memory__* mcp__coder-threads__*",
+      );
+      const memOnly = getClaudeMcpArgs({
+        projectPath: tmpDir,
+        memoryOnly: true,
+      });
+      assert.equal(memOnly.length, 2);
+      assert.equal(memOnly[1], "--allowedTools=mcp__coder-memory__*");
+      const memOnlyPath = memOnly[0].slice("--mcp-config=".length);
+      assert.ok(memOnlyPath.endsWith("-memory.json"));
+      assert.notEqual(memOnlyPath, mcpPath);
+      const memOnlyDoc = JSON.parse(fs.readFileSync(memOnlyPath, "utf8"));
+      assert.ok(memOnlyDoc.mcpServers["coder-memory"]);
+      assert.equal(memOnlyDoc.mcpServers["coder-threads"], undefined);
+
       // Adopted: stop must not try to kill a child we never owned.
       sup.stop();
       // Server still up after stop

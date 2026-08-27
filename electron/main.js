@@ -38,6 +38,7 @@ const { killAll: killAllTerminals } = require("./terminal.js");
 const { startScheduler } = require("./automations.js");
 const { startAutoDispatch } = require("./autodispatch.js");
 const { startPostMergeScheduler } = require("./postmerge.js");
+const { startMemoryConsolidateScheduler } = require("./memory-consolidate.js");
 const { enrichProcessPath } = require("./pathEnv.js");
 const {
   parseServeWebArgs,
@@ -116,6 +117,9 @@ let autoDispatch = null;
 
 /** @type {ReturnType<typeof startPostMergeScheduler> | null} */
 let postMergeScheduler = null;
+
+/** @type {ReturnType<typeof startMemoryConsolidateScheduler> | null} */
+let memoryConsolidateScheduler = null;
 
 /** @type {Awaited<ReturnType<typeof startWebServer>> | null} */
 let webServer = null;
@@ -698,6 +702,12 @@ app.whenReady().then(async () => {
   automationScheduler = startScheduler({ store, runner, broadcast });
   autoDispatch = startAutoDispatch({ store, runner, broadcast });
   postMergeScheduler = startPostMergeScheduler({ store, runner, broadcast });
+  memoryConsolidateScheduler = startMemoryConsolidateScheduler({
+    store,
+    runner,
+    broadcast,
+    userDataPath: userData,
+  });
 
   // In-main orchestrator MCP server (coder-threads): lets any agent drive
   // other threads. Needs store + runner, so it starts after both exist.
@@ -816,6 +826,14 @@ function teardownServices() {
       // ignore
     }
     postMergeScheduler = null;
+  }
+  if (memoryConsolidateScheduler) {
+    try {
+      memoryConsolidateScheduler.stop();
+    } catch {
+      // ignore
+    }
+    memoryConsolidateScheduler = null;
   }
   // Terminate only a memory-server child we spawned (adopted servers stay up).
   if (memorySupervisor) {
