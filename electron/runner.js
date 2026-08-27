@@ -2440,6 +2440,20 @@ function createRunner(opts) {
   }
 
   /**
+   * Persist screenshot blobs the adapter harvested from a tool result.
+   * Claude does this inline in its tool_result handler; Cursor/Kimi stamp
+   * `tool.images` on the parsed event and land here.
+   * @param {string} threadId
+   * @param {{ mediaType: string, data: string }[] | undefined} blobs
+   * @returns {{ images: string[] } | {}}
+   */
+  function persistToolImages(threadId, blobs) {
+    if (!blobs || !blobs.length) return {};
+    const images = saveToolImages(userDataPath, blobs, threadId);
+    return images.length ? { images } : {};
+  }
+
+  /**
    * Quota-wait (#462): one timer per parked thread. Wake once; a second
    * quota error on the same prompt fails. Distinct from #286 / #294.
    * @type {Map<string, ReturnType<typeof setTimeout>>}
@@ -4692,6 +4706,7 @@ function createRunner(opts) {
                   output: tool.output,
                   isError: tool.isError,
                   done: true,
+                  ...persistToolImages(threadId, tool.images),
                 },
               });
               noteToolSpan(threadId, runId, tool.id, tool.name, tool.isError);
@@ -4705,6 +4720,7 @@ function createRunner(opts) {
               output: tool.output,
               isError: tool.isError,
               done: true,
+              ...persistToolImages(threadId, tool.images),
             };
             appendMessage(threadId, "tool", tool.name, runId, toolMeta);
             // Post-tool text starts a fresh message below the tool call.
@@ -5510,6 +5526,7 @@ function createRunner(opts) {
                   output: tool.output,
                   isError: tool.isError,
                   done: true,
+                  ...persistToolImages(threadId, tool.images),
                 },
               });
               noteToolSpan(threadId, runId, tool.id, tool.name, tool.isError);
@@ -5528,6 +5545,7 @@ function createRunner(opts) {
               output: tool.output,
               isError: tool.isError,
               done: true,
+              ...persistToolImages(threadId, tool.images),
             };
             appendMessage(threadId, "tool", summary, runId, toolMeta);
             noteCursorSubagent(

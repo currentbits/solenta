@@ -18,6 +18,10 @@ const {
 const { getProvider } = require("../providers.js");
 const { writeFakeBin } = require("./support/fakeBin.js");
 
+/** 1x1 transparent PNG, the "tool-image" scenario's payload. */
+const PNG_B64 =
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==";
+
 function git(cwd, args) {
   execFileSync("git", args, { cwd, stdio: "ignore" });
 }
@@ -160,6 +164,43 @@ async function main() {
     return;
   }
 
+  if (scenario === "tool-image") {
+    emit({ role: "assistant", content: "Looking at the page" });
+    await delay(20);
+    emit({
+      role: "assistant",
+      tool_calls: [
+        {
+          type: "function",
+          id: "tool-shot",
+          function: {
+            name: "preview",
+            arguments: "{\\"action\\":\\"screenshot\\"}",
+          },
+        },
+      ],
+    });
+    await delay(20);
+    emit({
+      role: "tool",
+      tool_call_id: "tool-shot",
+      content: [
+        { type: "text", text: "captured" },
+        { type: "image", data: "${PNG_B64}", mimeType: "image/png" },
+      ],
+    });
+    await delay(20);
+    emit({
+      role: "meta",
+      type: "session.resume_hint",
+      session_id: "session_img",
+      command: "kimi -r session_img",
+      content: "To resume this session: kimi -r session_img",
+    });
+    process.exit(0);
+    return;
+  }
+
   if (scenario === "continue-turn") {
     emit({ role: "assistant", content: "Continued reply" });
     emit({
@@ -270,6 +311,25 @@ describe("kimi extract helpers: REAL recorded stream lines", () => {
     assert.equal(events[0].phase, "end");
     assert.equal(events[0].id, "tool_aJv40ujcg7kk2L4DgXWOUutM");
     assert.match(String(events[0].output), /Wrote 6 bytes/);
+  });
+
+  it("harvests MCP image blocks from role tool content and keeps base64 out of output (#702)", () => {
+    const png =
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==";
+    const events = extractToolEvents({
+      role: "tool",
+      tool_call_id: "tool-shot",
+      content: [
+        { type: "text", text: "captured" },
+        { type: "image", data: png, mimeType: "image/png" },
+      ],
+    });
+    assert.equal(events.length, 1);
+    assert.equal(events[0].phase, "end");
+    assert.equal(events[0].images.length, 1);
+    assert.equal(events[0].images[0].data, png);
+    assert.ok(!String(events[0].output).includes(png));
+    assert.match(String(events[0].output), /\[image\]/);
   });
 
   it("session id comes from the meta resume hint only", () => {
@@ -478,6 +538,7 @@ describe("kimi runner integration", () => {
       core,
       pushFn: (ch, payload) => pushes.push({ ch, payload }),
       tickMs: 50,
+      userDataPath: tmpDir,
     });
   });
 
@@ -545,6 +606,23 @@ describe("kimi runner integration", () => {
     assert.equal(argv[argv.indexOf("-p") + 1], "do the thing");
     assert.ok(!argv.includes("-c"));
     assert.ok(!argv.includes("-S"));
+  });
+
+  it("saves screenshot tool results to disk and names them on the tool message (#702)", async () => {
+    process.env.CODER_FAKE_KIMI_SCENARIO = "tool-image";
+    const thread = store.getThreads()[0];
+    await runner.startRun({ threadId: thread.id, prompt: "screenshot it" });
+    await waitFor(() => store.getThread(thread.id).status === "done");
+
+    const tool = store.getMessages(thread.id).find((m) => m.role === "tool");
+    assert.ok(tool);
+    assert.equal(tool.tool.done, true);
+    assert.equal(tool.tool.name, "preview");
+    assert.equal(tool.tool.images.length, 1);
+    assert.ok(!JSON.stringify(tool).includes(PNG_B64));
+    assert.ok(!String(tool.tool.output || "").includes(PNG_B64));
+    const file = path.join(tmpDir, "tool-images", tool.tool.images[0]);
+    assert.equal(fs.readFileSync(file).toString("base64"), PNG_B64);
   });
 
   it("legacy type-based shapes still parse, with no session stamp", async () => {

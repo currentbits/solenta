@@ -5,6 +5,8 @@ const os = require("node:os");
 const path = require("node:path");
 const {
   extractImages,
+  redactImages,
+  harvestToolResult,
   saveToolImages,
   readToolImage,
   resolveToolImagePath,
@@ -41,6 +43,54 @@ describe("tool images", () => {
       extractImages([{ type: "image", source: { type: "url", url: "x" } }]),
       [],
     );
+  });
+
+  it("extracts MCP image blocks nested under Cursor result.success", () => {
+    const mcp = {
+      type: "image",
+      data: PNG_B64,
+      mimeType: "image/png",
+    };
+    assert.deepEqual(extractImages([mcp]), [
+      { mediaType: "image/png", data: PNG_B64 },
+    ]);
+    assert.deepEqual(
+      extractImages({
+        success: { content: [{ type: "text", text: "captured" }, mcp] },
+      }),
+      [{ mediaType: "image/png", data: PNG_B64 }],
+    );
+  });
+
+  it("parses a JSON string only when it actually carries an image block", () => {
+    const wrapped = JSON.stringify({
+      content: [{ type: "image", data: PNG_B64, mimeType: "image/png" }],
+    });
+    assert.deepEqual(extractImages(wrapped), [
+      { mediaType: "image/png", data: PNG_B64 },
+    ]);
+    assert.deepEqual(extractImages(JSON.stringify({ path: "probe.txt" })), []);
+    assert.deepEqual(extractImages("{not json"), []);
+  });
+
+  it("redacts image payloads so stringify cannot leak base64", () => {
+    const nested = {
+      success: {
+        content: [
+          { type: "text", text: "captured" },
+          { type: "image", data: PNG_B64, mimeType: "image/png" },
+        ],
+      },
+    };
+    const redacted = redactImages(nested);
+    const text = JSON.stringify(redacted);
+    assert.ok(!text.includes(PNG_B64));
+    assert.match(text, /\[image\]/);
+    assert.equal(nested.success.content[1].data, PNG_B64, "input is not mutated");
+
+    const harvested = harvestToolResult(IMAGE_RESULT);
+    assert.equal(harvested.images.length, 1);
+    assert.ok(!JSON.stringify(harvested.redacted).includes(PNG_B64));
   });
 
   it("keeps base64 out of the tool output text", () => {

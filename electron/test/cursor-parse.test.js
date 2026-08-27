@@ -331,6 +331,72 @@ describe("cursor extractToolEvents", () => {
     assert.equal(events[0].id, "call_abc");
   });
 
+  it("harvests MCP screenshot blocks from result.success and keeps base64 out of output (#702)", () => {
+    const png =
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==";
+    const events = extractToolEvents({
+      type: "tool_call",
+      subtype: "completed",
+      call_id: "shot_1",
+      tool_call: {
+        function: {
+          name: "preview",
+          arguments: '{"action":"screenshot"}',
+          result: {
+            success: {
+              content: [
+                { type: "text", text: "captured" },
+                { type: "image", data: png, mimeType: "image/png" },
+              ],
+            },
+          },
+        },
+      },
+    });
+    assert.equal(events.length, 1);
+    assert.equal(events[0].phase, "end");
+    assert.equal(events[0].name, "preview");
+    assert.equal(events[0].images.length, 1);
+    assert.equal(events[0].images[0].mediaType, "image/png");
+    assert.equal(events[0].images[0].data, png);
+    assert.ok(!String(events[0].output).includes(png));
+    assert.match(String(events[0].output), /captured/);
+    assert.match(String(events[0].output), /\[image\]/);
+  });
+
+  it("harvests Anthropic image blocks nested in readToolCall success.content", () => {
+    const png =
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==";
+    const events = extractToolEvents({
+      type: "tool_call",
+      subtype: "completed",
+      call_id: READ_ID,
+      tool_call: {
+        readToolCall: {
+          args: { path: "shot.png" },
+          result: {
+            success: {
+              content: [
+                { type: "text", text: "Read image" },
+                {
+                  type: "image",
+                  source: {
+                    type: "base64",
+                    media_type: "image/png",
+                    data: png,
+                  },
+                },
+              ],
+            },
+          },
+        },
+      },
+    });
+    assert.equal(events[0].images.length, 1);
+    assert.equal(events[0].images[0].data, png);
+    assert.ok(!String(events[0].output).includes(png));
+  });
+
   it("marks completed calls with result.error or result.failure as isError", () => {
     const err = extractToolEvents({
       type: "tool_call",

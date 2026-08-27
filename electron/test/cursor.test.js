@@ -11,6 +11,10 @@ const { createRunner } = require("../runner.js");
 const { getProvider, resolveBin } = require("../providers.js");
 const { writeFakeBin } = require("./support/fakeBin.js");
 
+/** 1x1 transparent PNG, the "tool-image" scenario's payload. */
+const PNG_B64 =
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==";
+
 function git(cwd, args) {
   execFileSync("git", args, { cwd, stdio: "ignore" });
 }
@@ -392,6 +396,67 @@ async function main() {
     return;
   }
 
+  if (scenario === "tool-image") {
+    emit({
+      type: "system",
+      subtype: "init",
+      apiKeySource: "login",
+      cwd: process.cwd(),
+      session_id: "cursor-sess-img",
+      model: "Composer",
+      permissionMode: "default",
+    });
+    await delay(20);
+    emit({
+      type: "tool_call",
+      subtype: "started",
+      call_id: "shot_1",
+      tool_call: {
+        function: {
+          name: "preview",
+          arguments: '{"action":"screenshot"}',
+        },
+      },
+      session_id: "cursor-sess-img",
+    });
+    await delay(20);
+    emit({
+      type: "tool_call",
+      subtype: "completed",
+      call_id: "shot_1",
+      tool_call: {
+        function: {
+          name: "preview",
+          arguments: '{"action":"screenshot"}',
+          result: {
+            success: {
+              content: [
+                { type: "text", text: "captured" },
+                {
+                  type: "image",
+                  data: "${PNG_B64}",
+                  mimeType: "image/png",
+                },
+              ],
+            },
+          },
+        },
+      },
+      session_id: "cursor-sess-img",
+    });
+    await delay(20);
+    emit({
+      type: "result",
+      subtype: "success",
+      is_error: false,
+      duration_ms: 40,
+      result: "looks good",
+      session_id: "cursor-sess-img",
+    });
+    process.exit(0);
+    return;
+  }
+
   process.stderr.write("unknown scenario\\n");
   process.exit(1);
 }
@@ -736,6 +801,28 @@ describe("cursor runner integration", () => {
     assert.equal(store.getThread(thread.id).sessionId, "cursor-sess-1");
     await runner.stopRun({ threadId: thread.id });
     assert.equal(store.getThread(thread.id).sessionId, "cursor-sess-1");
+  });
+
+  it("saves MCP screenshot tool results to disk and names them on the tool message (#702)", async () => {
+    process.env.CODER_FAKE_CURSOR_SCENARIO = "tool-image";
+    const thread = store.getThreads()[0];
+    await runner.startRun({ threadId: thread.id, prompt: "screenshot it" });
+    await waitFor(() => store.getThread(thread.id).status === "done");
+
+    const tool = store.getMessages(thread.id).find((m) => m.role === "tool");
+    assert.ok(tool);
+    assert.equal(tool.tool.done, true);
+    assert.equal(tool.tool.name, "preview");
+    assert.equal(tool.tool.images.length, 1);
+    assert.ok(!JSON.stringify(tool).includes(PNG_B64));
+    assert.ok(!String(tool.tool.output || "").includes(PNG_B64));
+    const file = path.join(tmpDir, "tool-images", tool.tool.images[0]);
+    assert.equal(fs.readFileSync(file).toString("base64"), PNG_B64);
+    const { readToolImage } = require("../tool-images.js");
+    assert.equal(
+      await readToolImage(tmpDir, tool.tool.images[0]),
+      `data:image/png;base64,${PNG_B64}`,
+    );
   });
 
   it("duplicate tool_call started with a packed call_id leaves one done card", async () => {

@@ -25,27 +25,150 @@ const MEDIA_BY_EXT = {
 };
 
 /**
- * Image blocks carried by a tool_result (Read of a PNG, an MCP screenshot).
+ * Strip a data-URL prefix so Buffer.from(..., "base64") gets raw payload.
+ * @param {string} data
+ * @returns {string}
+ */
+function normalizeB64(data) {
+  const s = String(data).replace(/\s+/g, "");
+  const m = /^data:image\/[a-zA-Z0-9.+-]+;base64,(.+)$/i.exec(s);
+  return m ? m[1] : s;
+}
+
+/**
+ * Anthropic `{ type:image, source:{ type:base64, data } }` or MCP
+ * `{ type:image, data, mimeType }` — the two shapes screenshot tools emit.
+ * @param {unknown} node
+ * @returns {{ mediaType: string, data: string } | null}
+ */
+function imageFromNode(node) {
+  if (!node || typeof node !== "object" || Array.isArray(node)) return null;
+  const b = /** @type {{ type?: unknown, data?: unknown, mimeType?: unknown, mediaType?: unknown, media_type?: unknown, source?: { type?: unknown, media_type?: unknown, data?: unknown } }} */ (
+    node
+  );
+  if (b.type !== "image") return null;
+  if (b.source && typeof b.source === "object") {
+    if (b.source.type !== "base64") return null;
+    if (typeof b.source.data !== "string" || !b.source.data) return null;
+    return {
+      mediaType: String(
+        b.source.media_type || b.mediaType || b.mimeType || "image/png",
+      ),
+      data: normalizeB64(b.source.data),
+    };
+  }
+  if (typeof b.data !== "string" || !b.data) return null;
+  return {
+    mediaType: String(b.mimeType || b.media_type || b.mediaType || "image/png"),
+    data: normalizeB64(b.data),
+  };
+}
+
+/**
+ * JSON that actually carries an image block. Cheap reject for ordinary
+ * tool output (file contents, shell stdout) so we do not parse megabytes
+ * looking for screenshots.
+ * @param {unknown} text
+ * @returns {unknown}
+ */
+function tryParseImageJson(text) {
+  if (typeof text !== "string") return undefined;
+  const t = text.trim();
+  if (!t || (t[0] !== "{" && t[0] !== "[")) return undefined;
+  if (!/"type"\s*:\s*"image"/.test(t)) return undefined;
+  try {
+    return JSON.parse(text);
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * @param {unknown} node
+ * @param {{ mediaType: string, data: string }[]} out
+ * @param {WeakSet<object>} seen
+ */
+function collectImages(node, out, seen) {
+  if (node == null) return;
+  if (typeof node === "string") {
+    const parsed = tryParseImageJson(node);
+    if (parsed !== undefined) collectImages(parsed, out, seen);
+    return;
+  }
+  if (typeof node !== "object") return;
+  if (seen.has(node)) return;
+  seen.add(node);
+  const img = imageFromNode(node);
+  if (img) {
+    out.push(img);
+    return;
+  }
+  if (Array.isArray(node)) {
+    for (const item of node) collectImages(item, out, seen);
+    return;
+  }
+  for (const v of Object.values(node)) collectImages(v, out, seen);
+}
+
+/**
+ * @param {unknown} node
+ * @param {WeakSet<object>} seen
+ * @returns {unknown}
+ */
+function rewriteImages(node, seen) {
+  if (node == null || typeof node !== "object") {
+    const parsed = tryParseImageJson(node);
+    return parsed !== undefined ? rewriteImages(parsed, seen) : node;
+  }
+  if (seen.has(node)) return node;
+  seen.add(node);
+  if (imageFromNode(node)) {
+    const b = /** @type {Record<string, unknown>} */ (node);
+    if (b.source && typeof b.source === "object") {
+      return { ...b, source: { .../** @type {object} */ (b.source), data: "[image]" } };
+    }
+    return { ...b, data: "[image]" };
+  }
+  if (Array.isArray(node)) return node.map((item) => rewriteImages(item, seen));
+  /** @type {Record<string, unknown>} */
+  const out = {};
+  for (const [k, v] of Object.entries(node)) out[k] = rewriteImages(v, seen);
+  return out;
+}
+
+/**
+ * Image blocks carried by a tool result (Read of a PNG, an MCP screenshot).
+ * Walks arrays, objects, and JSON strings so Cursor/Kimi payloads nested
+ * under `result.success` still yield files — not truncated base64 text.
  * @param {unknown} content
  * @returns {{ mediaType: string, data: string }[]}
  */
 function extractImages(content) {
-  if (!Array.isArray(content)) return [];
   const out = [];
-  for (const block of content) {
-    if (!block || typeof block !== "object") continue;
-    const b = /** @type {{ type?: string, source?: { type?: string, media_type?: string, data?: string } }} */ (
-      block
-    );
-    if (b.type !== "image" || !b.source) continue;
-    if (b.source.type !== "base64") continue;
-    if (typeof b.source.data !== "string" || !b.source.data) continue;
-    out.push({
-      mediaType: String(b.source.media_type || "image/png"),
-      data: b.source.data,
-    });
-  }
+  collectImages(content, out, new WeakSet());
   return out;
+}
+
+/**
+ * Deep copy with image payloads replaced by `"[image]"` so stringify +
+ * OUTPUT_TRUNCATE does not fill the tool card with base64.
+ * @param {unknown} value
+ * @returns {unknown}
+ */
+function redactImages(value) {
+  return rewriteImages(value, new WeakSet());
+}
+
+/**
+ * Pull screenshots out of a raw tool result and return a copy safe to
+ * store as `ToolCallInfo.output`.
+ * @param {unknown} value
+ * @returns {{ images: { mediaType: string, data: string }[], redacted: unknown }}
+ */
+function harvestToolResult(value) {
+  const images = extractImages(value);
+  if (!images.length) return { images, redacted: value };
+  return { images, redacted: redactImages(value) };
 }
 
 /**
@@ -150,6 +273,8 @@ async function toolImageExists(userDataPath, name) {
 
 module.exports = {
   extractImages,
+  redactImages,
+  harvestToolResult,
   saveToolImages,
   readToolImage,
   resolveToolImagePath,

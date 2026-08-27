@@ -6,6 +6,7 @@
 // prompt travels in argv (#442).
 const spawn = require("cross-spawn");
 const { killTree, agentSpawnOptions } = require("./proc.js");
+const { harvestToolResult } = require("./tool-images.js");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
@@ -409,8 +410,30 @@ function extractAssistantText(obj) {
 }
 
 /**
- * @typedef {{ id: string, name: string, input: string, output: string | null, phase: "start" | "end" | "single", isError: boolean }} ToolEvent
+ * @typedef {{ id: string, name: string, input: string, output: string | null, phase: "start" | "end" | "single", isError: boolean, images?: { mediaType: string, data: string }[] }} ToolEvent
  */
+
+/**
+ * Transcript text plus any screenshot blobs, harvested before truncate so
+ * base64 never occupies the 4000-char output window.
+ * @param {unknown} value
+ * @returns {{ output: string, images: { mediaType: string, data: string }[] }}
+ */
+function outputAndImages(value) {
+  const harvested = harvestToolResult(value);
+  const redacted = harvested.redacted;
+  let text = "";
+  if (typeof redacted === "string") {
+    text = redacted;
+  } else {
+    try {
+      text = JSON.stringify(redacted ?? "");
+    } catch {
+      text = String(redacted);
+    }
+  }
+  return { output: truncate(text, OUTPUT_TRUNCATE), images: harvested.images };
+}
 
 /**
  * All tool events carried by one stream line.
@@ -458,19 +481,17 @@ function extractToolEvents(obj) {
     return out;
   }
   if (obj.role === "tool") {
-    const content = obj.content;
+    const harvested = outputAndImages(obj.content);
     return [
       {
         id: String(obj.tool_call_id || obj.id || ""),
         // Results carry no name; the runner pairs by id to the start message.
         name: "tool",
         input: "",
-        output: truncate(
-          typeof content === "string" ? content : JSON.stringify(content ?? ""),
-          OUTPUT_TRUNCATE,
-        ),
+        output: harvested.output,
         phase: "end",
         isError: Boolean(obj.is_error || obj.error),
+        ...(harvested.images.length ? { images: harvested.images } : {}),
       },
     ];
   }
@@ -535,6 +556,8 @@ function extractToolEvent(obj) {
     obj.content != null ||
     (obj.tool && obj.tool.output != null);
   let output = null;
+  /** @type {{ mediaType: string, data: string }[]} */
+  let images = [];
   if (hasOutput) {
     const o =
       obj.output != null
@@ -544,16 +567,9 @@ function extractToolEvent(obj) {
           : obj.content != null
             ? obj.content
             : obj.tool.output;
-    output = truncate(
-      typeof o === "string" ? o : (() => {
-        try {
-          return JSON.stringify(o);
-        } catch {
-          return String(o);
-        }
-      })(),
-      OUTPUT_TRUNCATE,
-    );
+    const harvested = outputAndImages(o);
+    output = harvested.output;
+    images = harvested.images;
   }
 
   const isError = Boolean(obj.is_error || obj.isError || obj.error);
@@ -576,6 +592,7 @@ function extractToolEvent(obj) {
     output,
     phase,
     isError,
+    ...(images.length ? { images } : {}),
   };
 }
 

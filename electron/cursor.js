@@ -6,6 +6,7 @@
 // prompt travels in argv (#442).
 const spawn = require("cross-spawn");
 const { killTree, agentSpawnOptions } = require("./proc.js");
+const { harvestToolResult } = require("./tool-images.js");
 
 const SIGKILL_AFTER_MS = 3000;
 // Max stderr retained per child process (tail), for error reporting.
@@ -101,7 +102,7 @@ function normalizeCallId(id) {
 }
 
 /**
- * @typedef {{ id: string, name: string, input: string, output: string | null, phase: "start" | "end" | "single", isError: boolean }} ToolEvent
+ * @typedef {{ id: string, name: string, input: string, output: string | null, phase: "start" | "end" | "single", isError: boolean, images?: { mediaType: string, data: string }[] }} ToolEvent
  */
 
 /**
@@ -219,8 +220,12 @@ function extractToolEvents(obj) {
     }
   }
   let output = null;
+  /** @type {{ mediaType: string, data: string }[]} */
+  let images = [];
   if (outputRaw != null) {
-    output = truncate(asJson(outputRaw), OUTPUT_TRUNCATE);
+    const harvested = harvestToolResult(outputRaw);
+    images = harvested.images;
+    output = truncate(asJson(harvested.redacted), OUTPUT_TRUNCATE);
   }
 
   return [
@@ -231,6 +236,7 @@ function extractToolEvents(obj) {
       output,
       phase: "end",
       isError,
+      ...(images.length ? { images } : {}),
     },
   ];
 }
