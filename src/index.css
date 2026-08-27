@@ -3,8 +3,6 @@
   --bg: #0a0d13;
   --bg-elevated: #10151f;
   --panel: #10151f;
-  /* --card + 1px --border is for floating surfaces and the composer.
-     In-page grouping uses type, space, and hover (flatten daily-driver). */
   --card: #171d29;
   --card-hover: #1d2534;
   --border: #2a3242;
