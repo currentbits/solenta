@@ -33,21 +33,23 @@
   height: 28px;
   padding: 0 12px;
   border-radius: var(--radius-sm);
-  border: 1px solid transparent;
-  background: transparent;
+  border: 1px solid var(--border);
+  background: var(--card);
   color: var(--text-muted);
   font-size: 12px;
   font-weight: 550;
   cursor: pointer;
   transition:
     background 0.12s ease,
-    color 0.12s ease;
+    color 0.12s ease,
+    border-color 0.12s ease;
 }
 
 .refresh:hover:not(:disabled),
 .retry:hover:not(:disabled) {
   color: var(--text);
-  background: var(--overlay-hover);
+  background: var(--card-hover);
+  border-color: var(--border);
 }
 
 .list {
@@ -83,13 +85,16 @@
   gap: 4px;
   padding: 10px 12px;
   border-radius: var(--radius);
-  border: 1px solid transparent;
-  background: transparent;
-  transition: background 0.12s ease;
+  border: 1px solid var(--border-soft);
+  background: var(--bg-elevated);
+  transition:
+    background 0.12s ease,
+    border-color 0.12s ease;
 }
 
 .row:hover {
-  background: var(--overlay-hover);
+  background: var(--card);
+  border-color: var(--border);
 }
 
 .rowSelect {
@@ -155,7 +160,7 @@
   flex-shrink: 0;
   padding: 1px 6px;
   border-radius: var(--radius-pill);
-  border: 1px solid transparent;
+  border: 1px solid var(--border-soft);
   background: var(--amber-soft);
   color: var(--amber);
   font-size: 10px;
@@ -206,8 +211,8 @@
   height: 22px;
   padding: 0 8px;
   border-radius: var(--radius-sm);
-  border: 1px solid transparent;
-  background: transparent;
+  border: 1px solid var(--border);
+  background: var(--card);
   color: var(--text);
   font-size: 11px;
   font-weight: 550;
@@ -216,7 +221,8 @@
 
 .checkout:hover:not(:disabled) {
   color: var(--text);
-  background: var(--overlay-hover);
+  background: var(--card-hover);
+  border-color: var(--border);
 }
 
 .checkout:disabled {
@@ -263,7 +269,7 @@
   gap: 12px;
   padding: 10px 12px;
   border-radius: var(--radius);
-  border: 1px solid transparent;
+  border: 1px solid var(--danger-border);
   background: var(--diff-del-bg);
   color: var(--danger-fg);
   font-size: 12.5px;

@@ -58,14 +58,10 @@
   flex-wrap: wrap;
   gap: 8px;
   padding: 8px 10px;
-  border-radius: var(--radius-sm);
-  border: 1px solid transparent;
-  background: transparent;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: var(--card);
   color: var(--text);
-}
-
-.row:hover {
-  background: var(--overlay-hover);
 }
 
 .rowMain {
@@ -209,7 +205,10 @@
   display: flex;
   flex-direction: column;
   gap: 8px;
-  padding: 10px 0 12px;
+  padding: 10px 12px 12px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: var(--bg-elevated);
 }
 
 .formLabel {
@@ -321,7 +320,7 @@
   height: 26px;
   padding: 0 10px;
   border-radius: var(--radius-sm);
-  border: 1px solid transparent;
+  border: 1px solid var(--border);
   background: transparent;
   color: var(--text-muted);
   font-size: 12px;
@@ -422,7 +421,7 @@
   align-items: center;
   padding: 1px 6px;
   border-radius: var(--radius-pill);
-  border: 1px solid transparent;
+  border: 1px solid var(--border);
   background: var(--overlay-soft);
   color: var(--text-muted);
   font-size: 10px;
@@ -464,7 +463,10 @@
   display: flex;
   flex-direction: column;
   gap: 8px;
-  padding: 10px 0 12px;
+  padding: 10px 12px 12px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: var(--bg-elevated);
 }
 
 .previewSource {
@@ -559,7 +561,7 @@
   overflow-wrap: anywhere;
   word-break: break-word;
   color: var(--text);
-  background: var(--overlay-soft);
-  border: 1px solid transparent;
-  border-radius: var(--radius-sm);
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
 }

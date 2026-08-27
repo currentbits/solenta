@@ -37,9 +37,9 @@
 .segment {
   display: inline-flex;
   align-items: stretch;
-  border: 1px solid transparent;
+  border: 1px solid var(--border);
   border-radius: var(--radius-sm);
-  background: transparent;
+  background: var(--card);
   overflow: hidden;
 }
 
@@ -49,6 +49,7 @@
   height: 28px;
   padding: 0 10px;
   border: none;
+  border-right: 1px solid var(--border);
   background: transparent;
   color: var(--text-muted);
   font-size: 12px;
@@ -76,20 +77,22 @@
   height: 28px;
   padding: 0 12px;
   border-radius: var(--radius-sm);
-  border: 1px solid transparent;
-  background: transparent;
+  border: 1px solid var(--border);
+  background: var(--card);
   color: var(--text-muted);
   font-size: 12px;
   font-weight: 550;
   cursor: pointer;
   transition:
     background 0.12s ease,
-    color 0.12s ease;
+    color 0.12s ease,
+    border-color 0.12s ease;
 }
 
 .refresh:hover:not(:disabled) {
   color: var(--text);
-  background: var(--overlay-hover);
+  background: var(--card-hover);
+  border-color: var(--border);
 }
 
 .refresh:disabled {
@@ -147,7 +150,7 @@
 .notes {
   padding: 10px 12px;
   border-radius: var(--radius);
-  border: 1px solid transparent;
+  border: 1px solid var(--amber-border);
   background: var(--amber-soft);
   color: var(--text);
 }
@@ -255,8 +258,8 @@
 
 .badgeNone {
   color: var(--text-muted);
-  background: var(--overlay-soft);
-  border: 1px solid transparent;
+  background: var(--card);
+  border: 1px solid var(--border);
 }
 
 .prLink {

@@ -68,8 +68,8 @@
 .retry {
   padding: 5px 12px;
   border-radius: var(--radius-sm);
-  border: 1px solid transparent;
-  background: transparent;
+  border: 1px solid var(--border);
+  background: var(--card);
   color: var(--text);
   font-size: 12.5px;
   font-weight: 500;
@@ -78,7 +78,7 @@
 
 .refresh:hover:not(:disabled),
 .retry:hover {
-  background: var(--overlay-hover);
+  background: var(--card-hover);
 }
 
 .refresh:disabled {
@@ -101,7 +101,9 @@
   flex-direction: column;
   min-width: 0;
   min-height: 0;
-  background: transparent;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
   overflow: hidden;
 }
 
@@ -142,14 +144,15 @@
   gap: 6px;
   padding: 10px 12px;
   border-radius: var(--radius-sm);
-  border: 1px solid transparent;
-  background: transparent;
+  border: 1px solid var(--border-soft);
+  background: var(--card);
   text-decoration: none;
   color: inherit;
 }
 
 .card:hover {
-  background: var(--overlay-hover);
+  background: var(--card-hover);
+  border-color: var(--border);
 }
 
 .cardWrap {
@@ -163,7 +166,7 @@
   bottom: 8px;
   padding: 3px 8px;
   border-radius: var(--radius-sm);
-  border: 1px solid transparent;
+  border: 1px solid var(--border);
   background: var(--bg-elevated);
   color: var(--text);
   font-size: 11px;
@@ -296,8 +299,8 @@
   min-width: 0;
   padding: 10px 12px;
   border-radius: var(--radius-sm);
-  border: 1px solid transparent;
-  background: transparent;
+  border: 1px solid var(--border-soft);
+  background: var(--card);
 }
 
 .planTitle {

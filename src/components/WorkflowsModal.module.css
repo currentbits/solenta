@@ -111,8 +111,7 @@
   flex-shrink: 0;
   padding: 1px 6px;
   border-radius: var(--radius-pill);
-  border: 1px solid transparent;
-  background: var(--overlay-soft);
+  border: 1px solid var(--border);
   color: var(--text-dim);
   font-size: 10px;
   font-weight: 500;
@@ -134,8 +133,8 @@
   width: 100%;
   padding: 7px 10px;
   border-radius: 8px;
-  border: 1px solid transparent;
-  background: transparent;
+  border: 1px solid var(--border);
+  background: var(--overlay-soft);
   color: var(--text-muted);
   font-size: 12px;
   font-weight: 500;
@@ -153,7 +152,7 @@
 }
 
 .deleteBtn[data-confirm="true"] {
-  border-color: transparent;
+  border-color: var(--danger-border);
   background: var(--danger-soft);
   color: var(--danger-fg);
 }
@@ -224,9 +223,9 @@
 }
 
 .phaseCard {
-  border: 1px solid transparent;
+  border: 1px solid var(--border);
   border-radius: 10px;
-  background: transparent;
+  background: var(--card);
   padding: 12px;
   display: flex;
   flex-direction: column;
@@ -258,8 +257,8 @@
   display: grid;
   place-items: center;
   border-radius: 6px;
-  border: 1px solid transparent;
-  background: transparent;
+  border: 1px solid var(--border);
+  background: var(--overlay-soft);
   color: var(--text-muted);
   font-size: 12px;
   line-height: 1;
@@ -275,7 +274,7 @@
 }
 
 .iconBtnDanger:hover:not(:disabled) {
-  border-color: transparent;
+  border-color: var(--danger-border);
   color: var(--danger-fg);
   background: var(--danger-soft);
 }
@@ -335,8 +334,8 @@
 .btn {
   padding: 7px 12px;
   border-radius: 8px;
-  border: 1px solid transparent;
-  background: transparent;
+  border: 1px solid var(--border);
+  background: var(--overlay-soft);
   color: var(--text-muted);
   font-size: 12px;
   font-weight: 500;
@@ -348,7 +347,7 @@
 }
 
 .btnPrimary {
-  border-color: transparent;
+  border-color: var(--blue-border);
   background: var(--blue-soft);
   color: var(--info-fg-strong);
 }

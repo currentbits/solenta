@@ -134,14 +134,17 @@
   flex-direction: column;
   gap: 6px;
   padding: 12px;
-  border-radius: var(--radius-sm);
-  border: 1px solid transparent;
-  background: transparent;
-  transition: background 0.12s ease;
+  border-radius: var(--radius);
+  border: 1px solid var(--border-soft);
+  background: var(--bg-elevated);
+  transition:
+    background 0.12s ease,
+    border-color 0.12s ease;
 }
 
 .row:hover {
-  background: var(--overlay-hover);
+  background: var(--card);
+  border-color: var(--border);
 }
 
 .rowTop {
@@ -215,14 +218,15 @@
   height: 26px;
   padding: 0 10px;
   border-radius: var(--radius-sm);
-  border: 1px solid transparent;
-  background: transparent;
+  border: 1px solid var(--border);
+  background: var(--card);
   color: var(--text-muted);
   font-size: 12px;
   font-weight: 550;
   transition:
     background 0.12s ease,
-    color 0.12s ease;
+    color 0.12s ease,
+    border-color 0.12s ease;
 }
 
 .action:hover:not(:disabled) {
