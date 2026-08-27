@@ -104,3 +104,35 @@ describe("Environment / Agents sections", () => {
     assert.match(panel, /border-left:\s*1px solid var\(--border-soft\)/);
   });
 });
+
+describe("transcript", () => {
+  it("in-page cards are not tiles", () => {
+    const css = loadCss("src/components/ThreadView.module.css");
+    for (const name of ["card", "planCard", "specCard", "suggestedRow"]) {
+      // `.card` also appears in `.body > .card + .card`; check every body.
+      const bodies = allRuleBodies(css, name);
+      assert.ok(bodies.length > 0, `.${name} must exist`);
+      for (const body of bodies) {
+        assert.equal(hasTileBorder(body), false, `.${name} must drop 1px --border`);
+        if (name !== "specCard") {
+          assert.equal(hasCardFill(body), false, `.${name} must drop --card fill`);
+        }
+        assert.doesNotMatch(body, /box-shadow:/, `.${name} must drop shadow`);
+      }
+    }
+  });
+
+  it("user bubble keeps a wash and drops the outline", () => {
+    const css = loadCss("src/components/ThreadView.module.css");
+    const body = ruleBody(css, "userBubble");
+    assert.match(body, /background:\s*var\(--blue-soft\)/);
+    assert.doesNotMatch(body, /border:\s*1px solid var\(--blue-border\)/);
+  });
+
+  it("status strip is a wash, not a box", () => {
+    const css = loadCss("src/components/ThreadView.module.css");
+    const body = ruleBody(css, "statusStrip");
+    assert.match(body, /background:\s*var\(--blue-soft\)/);
+    assert.doesNotMatch(body, /border:\s*1px solid/);
+  });
+});
