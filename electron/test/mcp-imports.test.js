@@ -301,6 +301,45 @@ describe("pickImport / local preview", () => {
     assert.equal(result, null);
     assert.equal(fs.existsSync(importsRoot()), false);
   });
+
+  it("marks grok unsupported when a stdio server needs cwd (#705)", async () => {
+    const preview = await pickJson({
+      mcpServers: {
+        worker: {
+          command: "/usr/bin/mcp-server",
+          cwd: "/tmp/mcp-ok",
+        },
+        "no-cwd": {
+          command: "/usr/bin/mcp-server",
+        },
+        docs: {
+          type: "sse",
+          url: "https://sse.example.com/mcp",
+        },
+      },
+    });
+    const byName = Object.fromEntries(preview.servers.map((s) => [s.name, s]));
+
+    const grokWorker = byName.worker.providers.find((p) => p.id === "grok");
+    assert.equal(grokWorker.supported, false);
+    assert.match(grokWorker.note, /cwd/i);
+    assert.equal(
+      byName.worker.providers.find((p) => p.id === "claude").supported,
+      true,
+    );
+
+    const grokNoCwd = byName["no-cwd"].providers.find((p) => p.id === "grok");
+    assert.equal(grokNoCwd.supported, true);
+    assert.equal(grokNoCwd.note, undefined);
+
+    const codexSse = byName.docs.providers.find((p) => p.id === "codex");
+    assert.equal(codexSse.supported, false);
+    assert.match(codexSse.note, /sse/i);
+    assert.equal(
+      byName.docs.providers.find((p) => p.id === "grok").supported,
+      true,
+    );
+  });
 });
 
 describe("ZIP candidate discovery", () => {

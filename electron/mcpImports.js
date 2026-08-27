@@ -151,6 +151,19 @@ function providerSupport(stored) {
         note: "Codex does not support SSE",
       };
     }
+    // grok mcp add has no cwd flag; ensureGrokMcpConfig skips these jobs.
+    if (
+      p.id === "grok" &&
+      stored.transport === "stdio" &&
+      typeof stored.cwd === "string" &&
+      stored.cwd
+    ) {
+      return {
+        id: p.id,
+        supported: false,
+        note: "Grok cannot express stdio cwd",
+      };
+    }
     return { id: p.id, supported: true };
   });
 }

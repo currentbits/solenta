@@ -822,6 +822,58 @@ describe("SkillsTab MCP servers", () => {
     m.unmount();
   });
 
+  it("shows grok is unsupported for a stdio MCP server that needs cwd (#705)", async () => {
+    const m = await mount(
+      <Harness
+        onPreviewMcpImport={() => ({
+          previewId: "n".repeat(32),
+          source: { kind: "json", label: "JSON" },
+          warnings: [],
+          servers: [
+            {
+              name: "worker",
+              transport: "stdio",
+              command: "/usr/bin/mcp-server",
+              args: [],
+              cwd: "/tmp/mcp-ok",
+              envNames: [],
+              headerNames: [],
+              hasToken: false,
+              requiresTrust: true,
+              collision: false,
+              warnings: [],
+              providers: [
+                { id: "claude", supported: true },
+                { id: "kimi", supported: true },
+                { id: "codex", supported: true },
+                {
+                  id: "grok",
+                  supported: false,
+                  note: "Grok cannot express stdio cwd",
+                },
+              ],
+            },
+          ],
+        })}
+      />,
+    );
+    const disclosure = m
+      .queryAll("summary")
+      .find((s) => s.textContent?.includes("Import JSON"));
+    assert.ok(disclosure);
+    await m.click(disclosure ?? null);
+    await m.type(
+      m.query('textarea[aria-label="MCP JSON"]'),
+      '{"mcpServers":{"worker":{"command":"/usr/bin/mcp-server","cwd":"/tmp/mcp-ok"}}}',
+    );
+    await m.click(m.byText("Check JSON"));
+    const panel = m.query("[data-mcp-preview]");
+    assert.ok(panel);
+    assert.ok(panel?.textContent?.includes("worker"));
+    assert.match(panel?.textContent || "", /Grok cannot express stdio cwd/i);
+    m.unmount();
+  });
+
   it("shows a backend validation error instead of pretending success", async () => {
     const m = await mount(
       <Harness
