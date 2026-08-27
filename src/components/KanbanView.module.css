@@ -41,9 +41,7 @@
   flex-direction: column;
   min-width: 0;
   min-height: 0;
-  background: var(--bg-elevated);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
+  background: transparent;
   overflow: hidden;
 }
 
@@ -76,17 +74,6 @@
   display: flex;
   flex-direction: column;
   gap: 6px;
-}
-
-/* Thread cards on a board column read as cards, not flat rows. */
-.columnBody [data-thread-card] {
-  background: var(--card);
-  border-color: var(--border-soft);
-}
-
-.columnBody [data-thread-card]:hover {
-  background: var(--card-hover);
-  border-color: var(--border);
 }
 
 .empty {

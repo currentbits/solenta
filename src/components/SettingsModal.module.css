@@ -103,8 +103,8 @@
   place-items: center;
   flex-shrink: 0;
   border-radius: 6px;
-  border: 1px solid var(--border);
-  background: var(--card);
+  border: 1px solid transparent;
+  background: var(--overlay-soft);
   overflow: hidden;
 }
 
@@ -258,8 +258,8 @@
   justify-content: center;
   padding: 7px 12px;
   border-radius: var(--radius-sm);
-  border: 1px solid var(--border);
-  background: var(--card);
+  border: 1px solid transparent;
+  background: transparent;
   color: var(--text-muted);
   font-size: 12px;
   font-weight: 500;
@@ -273,7 +273,7 @@
 
 .btnPrimary {
   background: var(--blue-soft);
-  border-color: var(--blue-border);
+  border-color: transparent;
   color: var(--info-fg-strong);
 }
 
@@ -337,8 +337,8 @@
   gap: 8px;
   padding: 10px 12px;
   border-radius: 8px;
-  border: 1px solid var(--border);
-  background: var(--input-fill);
+  border: 1px solid transparent;
+  background: transparent;
   font-size: 12.5px;
   color: var(--text);
   line-height: 1.4;
@@ -450,8 +450,8 @@
   gap: 8px;
   padding: 8px 10px;
   border-radius: 8px;
-  border: 1px solid var(--border);
-  background: var(--input-fill);
+  border: 1px solid transparent;
+  background: transparent;
   font-size: 12.5px;
   color: var(--text);
 }
