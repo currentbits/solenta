@@ -85,3 +85,22 @@ describe("ghost chrome", () => {
     );
   });
 });
+
+describe("Environment / Agents sections", () => {
+  it("git/session/team/workflow blocks are not cards", () => {
+    const css = loadCss("src/components/AgentsPanel.module.css");
+    for (const name of ["gitCard", "sessionCard", "teamSection", "workflow"]) {
+      const body = ruleBody(css, name);
+      assert.ok(body, `.${name} must exist`);
+      assert.equal(hasTileBorder(body), false, `.${name} must drop 1px --border`);
+      assert.equal(hasCardFill(body), false, `.${name} must drop --card fill`);
+      assert.doesNotMatch(body, /box-shadow:/, `.${name} must drop shadow`);
+    }
+  });
+
+  it("right pane seam uses --border-soft", () => {
+    const css = loadCss("src/components/AgentsPanel.module.css");
+    const panel = ruleBody(css, "panel");
+    assert.match(panel, /border-left:\s*1px solid var\(--border-soft\)/);
+  });
+});
