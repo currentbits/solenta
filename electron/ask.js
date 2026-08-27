@@ -278,6 +278,7 @@ function retrievalFallback(opts) {
 /**
  * Print-mode argv: one shot, no session, no MCP. Claude is capped at one
  * turn so a missed "no tools" instruction cannot start a tool loop.
+ * Cursor uses `-p --mode ask` (read-only Q&A; `-p` is boolean).
  *
  * @param {string} providerId
  * @param {{ model?: string | null, prompt: string }} opts
@@ -314,6 +315,14 @@ function buildAskArgs(providerId, opts) {
       const args = [];
       if (model) args.push("-m", String(model));
       args.push("-p", String(prompt));
+      return args;
+    }
+    case "cursor": {
+      // `-p` is boolean (prompt last). `--mode ask` is the analog of Claude
+      // `--max-turns 1` (read-only Q&A). `--trust` skips the workspace prompt.
+      const args = ["-p", "--output-format", "text", "--trust", "--mode", "ask"];
+      if (model) args.push("--model", String(model));
+      args.push(String(prompt));
       return args;
     }
     default:

@@ -218,6 +218,29 @@ describe("buildAskArgs", () => {
   it("returns null for an unknown provider", () => {
     assert.equal(buildAskArgs("nope", { prompt: "q" }), null);
   });
+
+  it("cursor: -p is boolean, prompt last, read-only ask mode", () => {
+    assert.deepEqual(buildAskArgs("cursor", { prompt: "q", model: "composer-2.5" }), [
+      "-p",
+      "--output-format",
+      "text",
+      "--trust",
+      "--mode",
+      "ask",
+      "--model",
+      "composer-2.5",
+      "q",
+    ]);
+    assert.deepEqual(buildAskArgs("cursor", { prompt: "q" }), [
+      "-p",
+      "--output-format",
+      "text",
+      "--trust",
+      "--mode",
+      "ask",
+      "q",
+    ]);
+  });
 });
 
 describe("extractAskText", () => {
@@ -270,5 +293,32 @@ describe("completeAsk", () => {
       fmRun: async () => null,
     });
     assert.equal(out, null);
+  });
+
+  it("uses cursor print-mode instead of silently returning null (#701)", async () => {
+    let printedArgs = null;
+    const out = await completeAsk({
+      prompt: "where is createThread",
+      provider: "cursor",
+      model: "composer-2.5",
+      env: { ...process.env, CODER_CURSOR_BIN: process.execPath },
+      fmRun: async () => null,
+      runPrint: async (_bin, args) => {
+        printedArgs = args;
+        return "from cursor print";
+      },
+    });
+    assert.deepEqual(out, { text: "from cursor print", source: "print" });
+    assert.deepEqual(printedArgs, [
+      "-p",
+      "--output-format",
+      "text",
+      "--trust",
+      "--mode",
+      "ask",
+      "--model",
+      "composer-2.5",
+      "where is createThread",
+    ]);
   });
 });

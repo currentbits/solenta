@@ -61,6 +61,32 @@ describe("buildSuggestArgs", () => {
     );
   });
 
+  it("cursor: -p is boolean, prompt last, read-only ask mode", () => {
+    assert.deepEqual(buildSuggestArgs("cursor", { model: null, prompt: "P" }), [
+      "-p",
+      "--output-format",
+      "text",
+      "--trust",
+      "--mode",
+      "ask",
+      "P",
+    ]);
+    assert.deepEqual(
+      buildSuggestArgs("cursor", { model: "composer-2.5", prompt: "P" }),
+      [
+        "-p",
+        "--output-format",
+        "text",
+        "--trust",
+        "--mode",
+        "ask",
+        "--model",
+        "composer-2.5",
+        "P",
+      ],
+    );
+  });
+
   it("unknown providers have no print mode", () => {
     assert.equal(buildSuggestArgs("simulate", { model: null, prompt: "P" }), null);
   });
@@ -275,6 +301,42 @@ console.log("feat: from on-device fm");
     });
     assert.equal(result.message, "feat: from on-device fm");
     assert.equal(fs.existsSync(logPath), false);
+  });
+
+  it("cursor threads print-mode instead of throwing no print mode (#701)", async () => {
+    services.setProvider(store, { threadId: thread.id, provider: "cursor" });
+    fs.writeFileSync(path.join(repo, "a.txt"), "one\n");
+    const cursorLog = path.join(tmpDir, "fake-cursor-log.json");
+    const cursorBin = writeFakeBin(
+      path.join(tmpDir, "fake-cursor"),
+      `#!/usr/bin/env node
+const fs = require("fs");
+fs.writeFileSync(process.env.FAKE_CURSOR_LOG, JSON.stringify(process.argv.slice(2)));
+console.log("feat: cursor print subject");
+`,
+    );
+
+    const result = await suggestCommitMessage({
+      store,
+      threadId: thread.id,
+      env: {
+        ...process.env,
+        CODER_CURSOR_BIN: cursorBin,
+        FAKE_CURSOR_LOG: cursorLog,
+        CODER_FM_DISABLE: "1",
+      },
+    });
+    assert.equal(result.message, "feat: cursor print subject");
+
+    const argv = JSON.parse(fs.readFileSync(cursorLog, "utf8"));
+    assert.equal(argv[0], "-p");
+    assert.ok(argv.includes("--trust"));
+    assert.equal(argv[argv.indexOf("--mode") + 1], "ask");
+    assert.ok(!argv.includes("--force"));
+    assert.ok(!argv.includes("stream-json"));
+    const prompt = argv[argv.length - 1];
+    assert.match(prompt, /commit message/);
+    assert.match(prompt, /\?\? a\.txt/);
   });
 
   it("falls back to the provider when fm exits non-zero", async () => {

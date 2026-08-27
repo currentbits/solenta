@@ -60,6 +60,14 @@ function buildSuggestArgs(providerId, opts) {
       args.push("-p", String(prompt));
       return args;
     }
+    case "cursor": {
+      // `-p` is boolean (prompt positional last), unlike grok's `-p <prompt>`.
+      // `--mode ask` keeps print read-only; `--trust` skips the workspace prompt.
+      const args = ["-p", "--output-format", "text", "--trust", "--mode", "ask"];
+      if (model) args.push("--model", String(model));
+      args.push(String(prompt));
+      return args;
+    }
     default:
       return null;
   }
