@@ -192,7 +192,7 @@ export function buildServer(memory, opts = {}) {
     'memory_store',
     {
       description:
-        'Store a durable memory shared by all agents. Use for non-obvious facts: decisions, gotchas, conventions, task records. Cite evidence on learned facts: file (path, line, excerpt of the supporting code), thread, or commit. Near-duplicates (jaccard >= 0.7) are refused unless force: true; moderate overlap (>= 0.4) stores but enqueues a review pair.',
+        'Store a durable memory shared by all agents. Use for non-obvious facts: decisions, gotchas, conventions, task records. Cite evidence on learned facts: file (path, line, excerpt of the supporting code), thread, or commit. Near-duplicates (jaccard >= 0.7) are refused unless force: true; moderate overlap (>= 0.4) stores, enqueues a review pair, and returns nearDuplicate: {id, title, jaccard, excerpt}. On nearDuplicate: prefer memory_supersede of that id with a merged body when the new fact refines it; pass force: true only if genuinely distinct; do nothing if the existing entry already covers it.',
       inputSchema: {
         type: entryType,
         title: z.string().min(1),

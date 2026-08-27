@@ -149,6 +149,9 @@ describe('HTTP auth and health', () => {
       'session_record',
       'session_search',
     ])
+    const storeTool = tools.tools.find((t) => t.name === 'memory_store')
+    assert.match(storeTool.description, /nearDuplicate/)
+    assert.match(storeTool.description, /memory_supersede/)
 
     const stored = await mcp.callTool({
       name: 'memory_store',

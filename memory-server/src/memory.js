@@ -469,7 +469,7 @@ export class Memory {
 
   /**
    * @param {{ type: string, title: string, body: string, project?: string, agent?: string, source?: string, importance?: number, status?: string, force?: boolean, citations?: unknown }} input
-   * @returns {{ id: string }}
+   * @returns {{ id: string, nearDuplicate?: { id: string, title: string, jaccard: number, excerpt: string } }}
    */
   store(input) {
     if (!ENTRY_TYPES.has(input.type)) {
@@ -552,8 +552,15 @@ export class Memory {
       console.error('linkEntities failed (non-fatal):', err)
     }
 
+    const out = { id }
     if (nearDup && nearDup.overlap >= DEDUP_WARN) {
       queueReview(this.db, 'near_dup', id, nearDup.id, `jaccard=${nearDup.overlap}`)
+      out.nearDuplicate = {
+        id: nearDup.id,
+        title: nearDup.title,
+        jaccard: nearDup.overlap,
+        excerpt: nearDup.excerpt,
+      }
     }
 
     // Fire-and-forget embed; null embedding just skips the row. Safe to
@@ -562,7 +569,7 @@ export class Memory {
     // embedEntry also runs the semantic near-dup check once the vector lands.
     void this.embedEntry(id).catch(() => {})
 
-    return { id }
+    return out
   }
 
   /**
@@ -625,7 +632,7 @@ export class Memory {
 
   /**
    * Scan up to DEDUP_SCAN_CAP most recent live same-project-or-global entries for Jaccard overlap.
-   * @returns {{ id: string, title: string, overlap: number }|null}
+   * @returns {{ id: string, title: string, overlap: number, excerpt: string, project: string|null, sameScope: boolean }|null}
    */
   findNearDup(title, body, project) {
     const mine = contentTokens(`${title} ${body}`)
@@ -652,7 +659,14 @@ export class Memory {
         (sameScope && !best.sameScope) ||
         (sameScope === best.sameScope && overlap > best.overlap)
       ) {
-        best = { id: r.id, title: r.title, overlap, project: r.project, sameScope }
+        best = {
+          id: r.id,
+          title: r.title,
+          overlap,
+          project: r.project,
+          sameScope,
+          excerpt: excerptFromBody(r.body),
+        }
       }
     }
     return best

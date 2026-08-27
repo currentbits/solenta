@@ -86,10 +86,14 @@ describe('two-tier write-time dedup', () => {
     assert.equal(rows[0].kind, 'near_dup')
     assert.ok(new Set([rows[0].entry_a, rows[0].entry_b]).has(first.id))
     assert.ok(new Set([rows[0].entry_a, rows[0].entry_b]).has(forced.id))
+    assert.equal(forced.nearDuplicate.id, first.id)
+    assert.equal(forced.nearDuplicate.title, original.title)
+    assert.ok(forced.nearDuplicate.jaccard >= 0.7)
+    assert.match(forced.nearDuplicate.excerpt, /DEVELOPER_DIR/)
   })
 
-  it('warn band (>=0.4, <0.7) stores and enqueues near_dup', () => {
-    memory.store(original)
+  it('warn band (>=0.4, <0.7) stores, enqueues near_dup, and returns nearDuplicate', () => {
+    const first = memory.store(original)
     const related = memory.store({
       type: 'knowledge',
       title: 'Swift tests need Xcode developer setup',
@@ -101,6 +105,17 @@ describe('two-tier write-time dedup', () => {
     assert.equal(rows.length, 1)
     assert.equal(rows[0].kind, 'near_dup')
     assert.match(rows[0].detail ?? '', /jaccard=/)
+    assert.deepEqual(Object.keys(related.nearDuplicate).sort(), [
+      'excerpt',
+      'id',
+      'jaccard',
+      'title',
+    ])
+    assert.equal(related.nearDuplicate.id, first.id)
+    assert.equal(related.nearDuplicate.title, original.title)
+    assert.ok(related.nearDuplicate.jaccard >= 0.4)
+    assert.ok(related.nearDuplicate.jaccard < 0.7)
+    assert.match(related.nearDuplicate.excerpt, /DEVELOPER_DIR/)
   })
 
   it('partial unique index prevents re-enqueue of the same open pair', () => {
@@ -129,13 +144,14 @@ describe('two-tier write-time dedup', () => {
 
   it('distinct entries store without enqueue', () => {
     memory.store(original)
-    memory.store({
+    const other = memory.store({
       type: 'run',
       title: 'Deployed the website',
       body: 'pushed main to production hosting',
     })
     assert.equal(openRows().length, 0)
     assert.equal(memory.entryCount(), 2)
+    assert.equal(other.nearDuplicate, undefined)
   })
 })
 
