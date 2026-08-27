@@ -1,4 +1,28 @@
-# Issue 248 — iOS Simulator integration
+# Flatten daily-driver UI (#727)
+
+Plan: `docs/superpowers/plans/2026-08-27-flatten-daily-driver-ui.md`
+Spec: `docs/superpowers/specs/2026-08-27-flatten-daily-driver-ui-design.md`
+Branch: `coder/i-got-this-feedback-look-at-it-and-see-w-ef1bfc`
+Task 1 base: `a454a70d`
+
+Task 1: complete (commits a454a70d..622b9a5d, review clean)
+Minor for final triage: chrome hover still uses --card-hover not spec --overlay-hover; contract test does not lock .btn[data-active]; ruleBody remains first-match (ghost describe uses allRuleBodies).
+Task 2: complete (commits 622b9a5d..d978540c, review clean)
+Minor for final triage: contract tests do not lock chip/rail; leftover 1px on .gitBtn/.prState/.teamStatus/.serverCount/.syncBadge inside Environment.
+Task 3: complete (commits d978540c..5fc93018, review clean)
+Minor for final triage: .userEditTextarea:focus lost its border cue; transcript tests thinner than restyle; leftover boxed .inboundCard/.reviewBar/.emptyStarterChip/.notesPanel/.divergenceCard.
+Task 4: complete (commits 5fc93018..b8621410, review clean)
+Minor for final triage: .buildCaret still has a --blue-border split seam.
+
+Final whole-branch review (a454a70d..b8621410): ready to merge. No Critical/Important.
+Follow-up leftovers: Environment inner .gitBtn etc; .reviewBar/.inboundCard; .userEditTextarea focus cue; hover --overlay-hover; .buildCaret seam.
+Focused tests: 220 pass / 0 fail (flatten + thread/env/composer/header).
+Task 3: pending
+Task 4: pending
+
+---
+
+# Issue 248 — iOS Simulator integration (leftover from this worktree; not this plan)
 
 Plan sequence:
 1. `2026-08-25-ios-simulator-01-run-artifacts.md`
