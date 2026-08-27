@@ -326,6 +326,71 @@ const DEFAULT_AUTO_SETTLE_AFTER_DAYS = 3;
 const DEFAULT_PR_DIFF_CAP_LINES = 400;
 
 /**
+ * Settings.defaultProvider (issue #711). Absent/junk → null (createThread
+ * then uses "claude"). A non-empty string is kept; unknown ids are skipped
+ * at create time so this file does not depend on the provider registry.
+ * @param {unknown} raw
+ * @returns {string | null}
+ */
+function normalizeDefaultProvider(raw) {
+  if (typeof raw !== "string") return null;
+  const id = raw.trim();
+  return id || null;
+}
+
+/**
+ * Settings.defaultModel (issue #711). Absent/junk/empty → null (provider
+ * default). Custom ids are allowed; the CLI is the allowlist.
+ * @param {unknown} raw
+ * @returns {string | null}
+ */
+function normalizeDefaultModel(raw) {
+  if (raw == null) return null;
+  if (typeof raw !== "string") return null;
+  const id = raw.trim();
+  if (!id) return null;
+  return id.length > 100 ? id.slice(0, 100) : id;
+}
+
+/**
+ * Settings.quotaFailover (issue #711). Ordered provider ids to try after a
+ * quota-exhausted turn. Absent/junk → [] (no failover; park or fail as today).
+ * Duplicates and empty strings dropped. Unknown ids are skipped at use time.
+ * @param {unknown} raw
+ * @returns {string[]}
+ */
+function normalizeQuotaFailover(raw) {
+  if (!Array.isArray(raw)) return [];
+  const seen = new Set();
+  const out = [];
+  for (const item of raw) {
+    if (typeof item !== "string") continue;
+    const id = item.trim();
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    out.push(id);
+  }
+  return out;
+}
+
+/**
+ * Strict validation for settings:set. Throws on the first problem.
+ * @param {unknown} raw
+ * @returns {string[]}
+ */
+function validateQuotaFailover(raw) {
+  if (!Array.isArray(raw)) {
+    throw new Error("quotaFailover must be an array");
+  }
+  for (const item of raw) {
+    if (typeof item !== "string" || !item.trim()) {
+      throw new Error("quotaFailover entries must be non-empty strings");
+    }
+  }
+  return normalizeQuotaFailover(raw);
+}
+
+/**
  * Normalize settings from disk.
  *
  * autoSettleAfterDays tri-state at the store boundary:
@@ -355,6 +420,10 @@ const DEFAULT_PR_DIFF_CAP_LINES = 400;
  *
  * defaultOrchestrate: absent/junk → false (plain "New thread" is not an
  * orchestrator unless the user opts in).
+ *
+ * defaultProvider: absent/junk/empty → null (createThread uses "claude").
+ * defaultModel: absent/junk/empty → null (provider default).
+ * quotaFailover: absent/junk → [] (no cross-provider failover).
  *
  * onboardingSeen: absent/junk → false (first-run wizard still shows).
  * Only an explicit true marks the tour as finished or skipped.
@@ -399,6 +468,9 @@ function normalizeSettings(raw) {
     mcpServers: [],
     defaultWorktree: false,
     defaultOrchestrate: false,
+    defaultProvider: null,
+    defaultModel: null,
+    quotaFailover: [],
     onboardingSeen: false,
     updateChannel: null,
     notifications: true,
@@ -488,6 +560,15 @@ function normalizeSettings(raw) {
   settings.defaultOrchestrate =
     /** @type {{ defaultOrchestrate?: unknown }} */ (obj).defaultOrchestrate ===
     true;
+  settings.defaultProvider = normalizeDefaultProvider(
+    /** @type {{ defaultProvider?: unknown }} */ (obj).defaultProvider,
+  );
+  settings.defaultModel = normalizeDefaultModel(
+    /** @type {{ defaultModel?: unknown }} */ (obj).defaultModel,
+  );
+  settings.quotaFailover = normalizeQuotaFailover(
+    /** @type {{ quotaFailover?: unknown }} */ (obj).quotaFailover,
+  );
   settings.onboardingSeen =
     /** @type {{ onboardingSeen?: unknown }} */ (obj).onboardingSeen === true;
   const ch = /** @type {{ updateChannel?: unknown }} */ (obj).updateChannel;
@@ -1040,6 +1121,11 @@ function migrateThread(t) {
           ? false
           : null,
   };
+  const failoverTried = Array.isArray(t.quotaFailoverTried)
+    ? t.quotaFailoverTried.filter((id) => typeof id === "string" && id.trim())
+    : [];
+  if (failoverTried.length) next.quotaFailoverTried = failoverTried;
+  else delete next.quotaFailoverTried;
   if (t.memoryConsolidate === true) next.memoryConsolidate = true;
   else delete next.memoryConsolidate;
   // Side questions (issue #471). Running cards become errors on load:
@@ -2613,6 +2699,9 @@ class Store {
       mcpServers: n.mcpServers,
       defaultWorktree: n.defaultWorktree,
       defaultOrchestrate: n.defaultOrchestrate,
+      defaultProvider: n.defaultProvider,
+      defaultModel: n.defaultModel,
+      quotaFailover: n.quotaFailover,
       onboardingSeen: n.onboardingSeen,
       updateChannel: n.updateChannel,
       notifications: n.notifications,
@@ -2767,6 +2856,25 @@ class Store {
         throw new Error("defaultOrchestrate must be a boolean");
       }
       this.data.settings.defaultOrchestrate = v;
+    }
+    if (Object.prototype.hasOwnProperty.call(patch, "defaultProvider")) {
+      const v = patch.defaultProvider;
+      if (v !== null && typeof v !== "string") {
+        throw new Error("defaultProvider must be a string or null");
+      }
+      this.data.settings.defaultProvider = normalizeDefaultProvider(v);
+    }
+    if (Object.prototype.hasOwnProperty.call(patch, "defaultModel")) {
+      const v = patch.defaultModel;
+      if (v !== null && typeof v !== "string") {
+        throw new Error("defaultModel must be a string or null");
+      }
+      this.data.settings.defaultModel = normalizeDefaultModel(v);
+    }
+    if (Object.prototype.hasOwnProperty.call(patch, "quotaFailover")) {
+      this.data.settings.quotaFailover = validateQuotaFailover(
+        patch.quotaFailover,
+      );
     }
     if (Object.prototype.hasOwnProperty.call(patch, "onboardingSeen")) {
       const v = patch.onboardingSeen;

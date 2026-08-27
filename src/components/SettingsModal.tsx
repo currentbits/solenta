@@ -62,7 +62,7 @@ const PANE_META: Record<
     label: "Threads",
     hint: "How new threads start, and when quiet ones leave the attention list.",
     keywords:
-      "worktree isolate orchestrate delegate settle sidebar quota resume",
+      "worktree isolate orchestrate delegate settle sidebar quota resume default provider model failover",
   },
   spending: {
     label: "Spending",
@@ -1223,6 +1223,91 @@ export function SettingsModal({
               </p>
             </div>
             <div className={styles.field}>
+              <label className={styles.fieldLabel} htmlFor="default-provider">
+                Default provider
+              </label>
+              <select
+                id="default-provider"
+                className={styles.input}
+                data-default-provider=""
+                value={settings?.defaultProvider ?? ""}
+                disabled={saving || settings == null || providers.length === 0}
+                onChange={(e) => {
+                  const provider = e.target.value || null;
+                  setError(null);
+                  void onSaveSettings({
+                    defaultProvider: provider,
+                    defaultModel: null,
+                  }).catch((err) => {
+                    setError(
+                      err instanceof Error && err.message
+                        ? err.message
+                        : "Failed to save settings",
+                    );
+                  });
+                }}
+              >
+                <option value="">Claude Code (built-in)</option>
+                {providers.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name}
+                    {!p.available ? " (not installed)" : ""}
+                  </option>
+                ))}
+              </select>
+              <p className={styles.note}>
+                Used when a new thread cannot inherit from the selected one:
+                autodispatch, issue-created threads, and the first thread in a
+                project.
+              </p>
+              {(() => {
+                const providerId = settings?.defaultProvider || "";
+                const selected = providers.find((p) => p.id === providerId);
+                const modelInfo = selected?.modelInfo ?? [];
+                if (!providerId) return null;
+                const known = modelInfo.some((m) => m.id === settings?.defaultModel);
+                return (
+                  <>
+                    <label className={styles.fieldLabel} htmlFor="default-model">
+                      Default model
+                    </label>
+                    <select
+                      id="default-model"
+                      className={styles.input}
+                      data-default-model=""
+                      value={settings?.defaultModel ?? ""}
+                      disabled={saving || settings == null}
+                      onChange={(e) => {
+                        const value = e.target.value;
+                        setError(null);
+                        void onSaveSettings({
+                          defaultModel: value === "" ? null : value,
+                        }).catch((err) => {
+                          setError(
+                            err instanceof Error && err.message
+                              ? err.message
+                              : "Failed to save settings",
+                          );
+                        });
+                      }}
+                    >
+                      <option value="">Provider default</option>
+                      {modelInfo.map((m) => (
+                        <option key={m.id} value={m.id}>
+                          {m.label}
+                        </option>
+                      ))}
+                      {settings?.defaultModel && !known && (
+                        <option value={settings.defaultModel}>
+                          {settings.defaultModel}
+                        </option>
+                      )}
+                    </select>
+                  </>
+                );
+              })()}
+            </div>
+            <div className={styles.field}>
               <label className={styles.fieldRow}>
                 <input
                   type="checkbox"
@@ -1250,6 +1335,52 @@ export function SettingsModal({
                 from the daily budget cap above.
               </p>
             </div>
+            {providers.length > 0 && (
+              <div className={styles.field} data-quota-failover="">
+                <span className={styles.fieldLabel}>Quota failover</span>
+                {providers.map((p) => {
+                  const chain = settings?.quotaFailover ?? [];
+                  return (
+                    <label className={styles.fieldRow} key={p.id}>
+                      <input
+                        type="checkbox"
+                        data-quota-failover-id={p.id}
+                        checked={chain.includes(p.id)}
+                        disabled={saving || settings == null}
+                        onChange={(e) => {
+                          const checked = e.target.checked;
+                          const next = providers
+                            .map((row) => row.id)
+                            .filter((id) =>
+                              id === p.id ? checked : chain.includes(id),
+                            );
+                          setError(null);
+                          void onSaveSettings({ quotaFailover: next }).catch(
+                            (err) => {
+                              setError(
+                                err instanceof Error && err.message
+                                  ? err.message
+                                  : "Failed to save settings",
+                              );
+                            },
+                          );
+                        }}
+                      />
+                      <span>
+                        {p.name}
+                        {!p.available ? " (not installed)" : ""}
+                      </span>
+                    </label>
+                  );
+                })}
+                <p className={styles.note}>
+                  When a turn hits a usage limit or exhausted balance, try
+                  these providers in the order shown instead of parking or
+                  failing. The current provider is skipped. Empty = no
+                  failover.
+                </p>
+              </div>
+            )}
           </section>
           )}
 

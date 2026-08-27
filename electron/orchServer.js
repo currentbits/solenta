@@ -7,8 +7,11 @@ const path = require("node:path");
 const { createRequire } = require("node:module");
 
 const { registerMcpServer, unregisterMcpServer } = require("./memory-sup.js");
+const { startWithPoolFailover } = require("./subagentPool.js");
+const { getProvider, resolveBin, isBinAvailable } = require("./providers.js");
 const {
   forkWorkerThread,
+  setProvider,
   recordHypothesis,
   recordSuggestion,
   submitSpec,
@@ -406,7 +409,18 @@ function createToolHandlers(deps) {
     // orchWorker + lazy worktree live in services.forkWorkerThread, shared
     // with the runner's pendingFork dispatch.
     const fork = forkWorkerThread(store, input, forkThread);
-    await runner.startRun({ threadId: fork.id, prompt: args.prompt });
+    await startWithPoolFailover({
+      store,
+      worker: fork,
+      prompt: args.prompt,
+      startRun: (runInput) => runner.startRun(runInput),
+      setProvider,
+      isAvailable: (id) => {
+        const entry = getProvider(id);
+        if (!entry) return false;
+        return isBinAvailable(resolveBin(entry));
+      },
+    });
     return { threadId: fork.id };
   }
 

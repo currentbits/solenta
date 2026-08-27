@@ -3,9 +3,11 @@
 /**
  * Provider quota-wait (#462): parse a reset clock from a provider error.
  *
- * Distinct from Solenta's own budget cap (#286) and from model failover
- * (#294). A reset timestamp means the turn is waiting on a clock. Exhausted
- * balance with no clock is a hard fail — do not retry-storm.
+ * Distinct from Solenta's own budget cap (#286). Cross-provider quota
+ * failover (#711, formerly #294) lives in nextQuotaFailover: a configured
+ * chain switches provider instead of parking or hard-failing. A reset
+ * timestamp without a chain still means the turn is waiting on a clock.
+ * Exhausted balance with no clock and no chain is a hard fail.
  */
 
 const HOUR_MS = 60 * 60 * 1000;
@@ -342,6 +344,41 @@ function decideQuotaWait(opts) {
   return { until: Math.max(parsed.resetAt, now + 1000) };
 }
 
+/**
+ * Next provider in settings.quotaFailover after a quota-like error.
+ * Empty chain → null (caller parks or fails as before). Skips the current
+ * provider and anything already tried this turn.
+ *
+ * @param {object} opts
+ * @param {unknown} opts.text
+ * @param {{ provider?: string, quotaFailoverTried?: unknown } | null | undefined} opts.thread
+ * @param {{ quotaFailover?: unknown } | null | undefined} opts.settings
+ * @returns {{ provider: string, tried: string[] } | null}
+ */
+function nextQuotaFailover(opts) {
+  if (!isQuotaLike(opts && opts.text)) return null;
+  const settings = opts && opts.settings;
+  const chain = Array.isArray(settings && settings.quotaFailover)
+    ? settings.quotaFailover.filter((id) => typeof id === "string" && id.trim())
+    : [];
+  if (chain.length === 0) return null;
+  const thread = opts && opts.thread;
+  const current =
+    thread && typeof thread.provider === "string" ? thread.provider.trim() : "";
+  const tried = new Set(
+    Array.isArray(thread && thread.quotaFailoverTried)
+      ? thread.quotaFailoverTried.filter((id) => typeof id === "string" && id)
+      : [],
+  );
+  if (current) tried.add(current);
+  for (const raw of chain) {
+    const id = String(raw).trim();
+    if (!id || tried.has(id)) continue;
+    return { provider: id, tried: [...tried, id] };
+  }
+  return null;
+}
+
 function timeOfDayLabel(ms) {
   const d = new Date(ms);
   const hours = d.getHours();
@@ -386,6 +423,7 @@ module.exports = {
   parseQuotaError,
   quotaWaitEnabled,
   decideQuotaWait,
+  nextQuotaFailover,
   formatQuotaWaitClock,
   MAX_WAIT_MS,
 };

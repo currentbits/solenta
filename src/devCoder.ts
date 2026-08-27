@@ -1641,6 +1641,9 @@ function buildDevCoder(): CoderApi {
   let defaultWorktree = false;
   /** Default new threads as orchestrators (Settings toggle). */
   let defaultOrchestrate = false;
+  let defaultProvider: string | null = null;
+  let defaultModel: string | null = null;
+  let quotaFailover: string[] = [];
   /** First-run onboarding wizard finished or skipped. */
   let onboardingSeen = false;
   /** Update channel override; null follows the (absent) dev stamp. */
@@ -2452,6 +2455,9 @@ function buildDevCoder(): CoderApi {
           mcpServers,
           defaultWorktree,
           defaultOrchestrate,
+          defaultProvider,
+          defaultModel,
+          quotaFailover: quotaFailover.slice(),
           onboardingSeen,
           updateChannel,
           notifications,
@@ -2509,6 +2515,36 @@ function buildDevCoder(): CoderApi {
             throw new Error("defaultOrchestrate must be a boolean");
           }
           defaultOrchestrate = patch.defaultOrchestrate;
+        }
+        if (Object.prototype.hasOwnProperty.call(patch, "defaultProvider")) {
+          const v = patch.defaultProvider;
+          if (v !== null && typeof v !== "string") {
+            throw new Error("defaultProvider must be a string or null");
+          }
+          defaultProvider = v && v.trim() ? v.trim() : null;
+        }
+        if (Object.prototype.hasOwnProperty.call(patch, "defaultModel")) {
+          const v = patch.defaultModel;
+          if (v !== null && typeof v !== "string") {
+            throw new Error("defaultModel must be a string or null");
+          }
+          defaultModel = v && v.trim() ? v.trim() : null;
+        }
+        if (Object.prototype.hasOwnProperty.call(patch, "quotaFailover")) {
+          if (!Array.isArray(patch.quotaFailover)) {
+            throw new Error("quotaFailover must be an array");
+          }
+          const seen = new Set<string>();
+          quotaFailover = [];
+          for (const item of patch.quotaFailover) {
+            if (typeof item !== "string" || !item.trim()) {
+              throw new Error("quotaFailover entries must be non-empty strings");
+            }
+            const id = item.trim();
+            if (seen.has(id)) continue;
+            seen.add(id);
+            quotaFailover.push(id);
+          }
         }
         if (Object.prototype.hasOwnProperty.call(patch, "onboardingSeen")) {
           if (typeof patch.onboardingSeen !== "boolean") {
@@ -2656,6 +2692,9 @@ function buildDevCoder(): CoderApi {
           mcpServers: mcpServers.map(redactDevMcp) as AppSettings["mcpServers"],
           defaultWorktree,
           defaultOrchestrate,
+          defaultProvider,
+          defaultModel,
+          quotaFailover: quotaFailover.slice(),
           onboardingSeen,
           updateChannel,
           notifications,

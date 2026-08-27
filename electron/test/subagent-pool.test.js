@@ -17,6 +17,9 @@ const {
   formatPoolMenu,
   subagentPoolNoteFor,
   poolFromStore,
+  nextPoolEntry,
+  isProviderBinaryError,
+  startWithPoolFailover,
 } = require("../subagentPool");
 const {
   registerMcpServer,
@@ -291,6 +294,29 @@ describe("formatPoolMenu / subagentPoolNoteFor", () => {
     assert.doesNotMatch(menu, /pass a raw model id/i);
   });
 
+  it("hides entries whose provider is unavailable", () => {
+    const menu = formatPoolMenu(pool(), {
+      isAvailable: (id) => id !== "kimi",
+    });
+    assert.doesNotMatch(menu, /fast:/);
+    assert.match(menu, /strong:/);
+    assert.match(menu, /Omit pool to inherit/);
+  });
+
+  it("says so when every pool provider is missing", () => {
+    const menu = formatPoolMenu(pool(), { isAvailable: () => false });
+    assert.match(menu, /No pool providers are installed/);
+    assert.doesNotMatch(menu, /fast:/);
+  });
+
+  it("force pin falls back to listing remaining when the pin is missing", () => {
+    const menu = formatPoolMenu(pool({ force: true }), {
+      isAvailable: (id) => id !== "kimi",
+    });
+    assert.doesNotMatch(menu, /Pinned to "fast"/);
+    assert.match(menu, /strong:/);
+  });
+
   it("force menu says the pick is pinned", () => {
     const menu = formatPoolMenu(pool({ force: true }));
     assert.match(menu, /Pinned to "fast"/);
@@ -312,11 +338,101 @@ describe("formatPoolMenu / subagentPoolNoteFor", () => {
     try {
       const note = subagentPoolNoteFor(pool());
       assert.match(note, /^\[Worker pool\]/m);
-      assert.match(note, /fast:/);
     } finally {
       unregisterMcpServer("coder-threads");
     }
     assert.equal(subagentPoolNoteFor(pool()), "");
+  });
+});
+
+describe("nextPoolEntry / startWithPoolFailover", () => {
+  it("skips tried providers and unavailable binaries", () => {
+    assert.equal(
+      nextPoolEntry(pool(), { skipProviders: ["kimi"], isAvailable: () => true }).alias,
+      "strong",
+    );
+    assert.equal(
+      nextPoolEntry(pool(), {
+        skipProviders: [],
+        isAvailable: (id) => id === "claude",
+      }).alias,
+      "strong",
+    );
+    assert.equal(
+      nextPoolEntry(pool(), { skipProviders: ["kimi", "claude"] }),
+      null,
+    );
+  });
+
+  it("isProviderBinaryError matches the runner's missing-CLI copy", () => {
+    assert.equal(
+      isProviderBinaryError("Provider binary not found: grok. Install it or set CODER_GROK_BIN."),
+      true,
+    );
+    assert.equal(isProviderBinaryError("Daily budget of $1.00 reached"), false);
+  });
+
+  it("retries a missing-binary start on the next pool entry", async () => {
+    const calls = [];
+    const worker = { id: "w1", provider: "kimi", poolAlias: "fast" };
+    const store = {
+      getSettings: () => ({ subagentPool: pool() }),
+      getThread: () => worker,
+    };
+    const out = await startWithPoolFailover({
+      store,
+      worker,
+      prompt: "go",
+      startRun: async (input) => {
+        calls.push(input.threadId + ":" + worker.provider);
+        if (worker.provider === "kimi") {
+          throw new Error("Provider binary not found: kimi. Install it or set CODER_KIMI_BIN.");
+        }
+        return { runId: "r1" };
+      },
+      setProvider: (_store, input) => {
+        worker.provider = input.provider;
+        worker.poolAlias = "strong";
+      },
+      isAvailable: (id) => id === "claude",
+    });
+    assert.deepEqual(out, { runId: "r1" });
+    assert.deepEqual(calls, ["w1:kimi", "w1:claude"]);
+    assert.equal(worker.provider, "claude");
+  });
+
+  it("does not retry a non-pool worker or a non-binary error", async () => {
+    const worker = { id: "w1", provider: "kimi" };
+    await assert.rejects(
+      () =>
+        startWithPoolFailover({
+          store: { getSettings: () => ({ subagentPool: pool() }), getThread: () => worker },
+          worker,
+          prompt: "go",
+          startRun: async () => {
+            throw new Error("Provider binary not found: kimi.");
+          },
+          setProvider: () => {
+            throw new Error("should not switch");
+          },
+        }),
+      /Provider binary not found/,
+    );
+    await assert.rejects(
+      () =>
+        startWithPoolFailover({
+          store: { getSettings: () => ({ subagentPool: pool() }), getThread: () => worker },
+          worker: { ...worker, poolAlias: "fast" },
+          prompt: "go",
+          startRun: async () => {
+            throw new Error("Daily budget of $1.00 reached");
+          },
+          setProvider: () => {
+            throw new Error("should not switch");
+          },
+        }),
+      /Daily budget/,
+    );
   });
 });
 

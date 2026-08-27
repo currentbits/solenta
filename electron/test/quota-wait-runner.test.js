@@ -124,6 +124,32 @@ describe("runner quota-wait (#462)", () => {
     assert.equal(store.getThread(thread.id).quotaWaitUntil, null);
   });
 
+  it("failovers to the next provider on exhausted quota (#711)", async () => {
+    services.setSettings(store, { quotaFailover: ["grok"] });
+    process.env.CODER_AGENT_CMD = `${process.execPath} -e ${quotaScript(
+      "account quota or balance is exhausted. Please top up.",
+    )}`;
+    const thread = store.getThreads()[0];
+    assert.equal(thread.provider, "claude");
+    await runner.startRun({ threadId: thread.id, prompt: "keep going" });
+    await waitFor(() => {
+      const t = store.getThread(thread.id);
+      return t.provider === "grok" && t.status === "failed";
+    });
+    const after = store.getThread(thread.id);
+    assert.equal(after.provider, "grok");
+    assert.ok(
+      (store.getMessages(thread.id) || []).some((m) =>
+        String(m.text || "").startsWith("Quota failover:"),
+      ),
+    );
+    assert.ok(
+      Array.isArray(after.quotaFailoverTried) &&
+        after.quotaFailoverTried.includes("claude") &&
+        after.quotaFailoverTried.includes("grok"),
+    );
+  });
+
   it("does not park Solenta's own daily budget (#286)", async () => {
     process.env.CODER_AGENT_CMD = `${process.execPath} -e ${quotaScript(
       "Daily budget of $1.00 reached",

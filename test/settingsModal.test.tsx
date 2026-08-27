@@ -1144,6 +1144,104 @@ describe("SettingsModal Linear API key (issue #169)", () => {
   });
 });
 
+describe("SettingsModal default provider and quota failover (#711)", () => {
+  const CLAUDE: ProviderInfo = {
+    id: "claude",
+    name: "Claude Code",
+    available: true,
+    supportsResume: true,
+    models: ["claude-sonnet-5"],
+    modelInfo: [
+      {
+        id: "claude-sonnet-5",
+        label: "Sonnet",
+        description: "Balanced",
+        vendor: "Anthropic",
+      },
+    ],
+    efforts: [],
+  };
+  const GROK: ProviderInfo = {
+    id: "grok",
+    name: "Grok",
+    available: true,
+    supportsResume: true,
+    models: ["grok-4.6"],
+    modelInfo: [
+      {
+        id: "grok-4.6",
+        label: "Grok 4.6",
+        description: "xAI",
+        vendor: "xAI",
+      },
+    ],
+    efforts: [],
+  };
+
+  it("saves defaultProvider from the Threads pane", async () => {
+    const patches: Partial<AppSettings>[] = [];
+    const m = await mount(
+      modal({
+        initialPane: "threads",
+        providers: [CLAUDE, GROK],
+        settings: {
+          dailyBudgetUsd: null,
+          autoSettleAfterDays: 3,
+          defaultProvider: null,
+          defaultModel: null,
+          quotaFailover: [],
+        } as AppSettings,
+        onSaveSettings: async (patch) => {
+          patches.push(patch);
+          return {
+            dailyBudgetUsd: null,
+            autoSettleAfterDays: 3,
+            defaultProvider: patch.defaultProvider ?? null,
+            defaultModel: patch.defaultModel ?? null,
+            quotaFailover: patch.quotaFailover ?? [],
+          } as AppSettings;
+        },
+      }),
+    );
+    const select = m.query("[data-default-provider]") as HTMLSelectElement;
+    assert.ok(select, "default provider select");
+    await m.change(select, "grok");
+    assert.equal(patches.length, 1);
+    assert.equal(patches[0].defaultProvider, "grok");
+    assert.equal(patches[0].defaultModel, null);
+    m.unmount();
+  });
+
+  it("saves quotaFailover checkboxes in provider order", async () => {
+    const patches: Partial<AppSettings>[] = [];
+    const m = await mount(
+      modal({
+        initialPane: "threads",
+        providers: [CLAUDE, GROK],
+        settings: {
+          dailyBudgetUsd: null,
+          autoSettleAfterDays: 3,
+          quotaFailover: [],
+        } as AppSettings,
+        onSaveSettings: async (patch) => {
+          patches.push(patch);
+          return {
+            dailyBudgetUsd: null,
+            autoSettleAfterDays: 3,
+            quotaFailover: patch.quotaFailover ?? [],
+          } as AppSettings;
+        },
+      }),
+    );
+    const grok = m.query("[data-quota-failover-id='grok']") as HTMLInputElement;
+    assert.ok(grok, "grok failover checkbox");
+    await m.click(grok);
+    assert.equal(patches.length, 1);
+    assert.deepEqual(patches[0].quotaFailover, ["grok"]);
+    m.unmount();
+  });
+});
+
 describe("SettingsModal quota-wait auto-resume (#462)", () => {
   it("saves the continue-at-usage-limit toggle", async () => {
     const patches: Partial<AppSettings>[] = [];

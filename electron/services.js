@@ -530,13 +530,67 @@ function removeSpace(_store, _input) {
 }
 
 /**
+ * Provider for a newly created thread (issue #711). Explicit input wins,
+ * then settings.defaultProvider, then the historical "claude" default.
+ * Unknown ids fall through so a stale setting cannot mint an unrunnable thread.
+ * @param {{ provider?: unknown } | null | undefined} input
+ * @param {{ defaultProvider?: unknown } | null | undefined} settings
+ * @returns {string}
+ */
+function resolveNewThreadProvider(input, settings) {
+  const fromInput =
+    input && typeof input.provider === "string" ? input.provider.trim() : "";
+  if (fromInput && isKnownProviderId(fromInput)) return fromInput;
+  const fromSettings =
+    settings && typeof settings.defaultProvider === "string"
+      ? settings.defaultProvider.trim()
+      : "";
+  if (fromSettings && isKnownProviderId(fromSettings)) return fromSettings;
+  return "claude";
+}
+
+/**
+ * Model for a newly created thread. Explicit input.model wins (including
+ * null). Otherwise settings.defaultModel applies only when the provider
+ * also came from settings — an explicit provider should not inherit a
+ * model saved for a different CLI.
+ * @param {{ provider?: unknown, model?: unknown } | null | undefined} input
+ * @param {{ defaultProvider?: unknown, defaultModel?: unknown } | null | undefined} settings
+ * @param {string} provider
+ * @returns {string | null}
+ */
+function resolveNewThreadModel(input, settings, provider) {
+  const entry = getProvider(provider);
+  if (input && Object.prototype.hasOwnProperty.call(input, "model")) {
+    try {
+      return normalizeModelForProvider(entry, input.model);
+    } catch {
+      return null;
+    }
+  }
+  const explicitProvider =
+    input && typeof input.provider === "string" && input.provider.trim();
+  if (explicitProvider) return null;
+  const fromSettings =
+    settings && typeof settings.defaultModel === "string"
+      ? settings.defaultModel
+      : null;
+  try {
+    return normalizeModelForProvider(entry, fromSettings);
+  } catch {
+    return null;
+  }
+}
+
+/**
  * @param {import('./store').Store} store
- * @param {{ projectId: string, title: string, worktree?: boolean, automationId?: string | null, issueNumber?: number | null, memoryConsolidate?: boolean }} input
+ * @param {{ projectId: string, title: string, worktree?: boolean, automationId?: string | null, issueNumber?: number | null, provider?: string, model?: string | null, memoryConsolidate?: boolean }} input
  * `worktree` is only consumed by the IPC layer (threads:create), which calls
  * setupWorktree after this returns; the service itself stays fs-free.
  * `automationId` tags threads minted by an automation so runAutomation can
  * retain only the last N (issue #134). Absent / falsy on hand-made threads.
  * `issueNumber` is the planboard issue this thread was started from (#420).
+ * `provider`/`model` override settings.defaultProvider/defaultModel (#711).
  * `memoryConsolidate` tags the sleep-time memory pass (issue #722).
  */
 function createThread(store, input) {
@@ -544,6 +598,11 @@ function createThread(store, input) {
   if (!project) {
     throw new Error(`Unknown project: ${input.projectId}`);
   }
+
+  const settings =
+    typeof store.getSettings === "function" ? store.getSettings() : null;
+  const provider = resolveNewThreadProvider(input, settings);
+  const model = resolveNewThreadModel(input, settings, provider);
 
   const now = Date.now();
   const thread = {
@@ -576,8 +635,8 @@ function createThread(store, input) {
     verify: null,
     issueNumber: require("./postmerge.js").normalizeIssueNumber(input.issueNumber),
     postMergeVerify: null,
-    provider: "claude",
-    model: null,
+    provider,
+    model,
     sessionId: null,
     permissionMode: "default",
     reasoningEffort: null,
@@ -1221,6 +1280,9 @@ function forkWorkerThread(store, input, forkImpl = forkThread) {
   const fork = forkImpl(store, forkInput);
 
   const patch = { orchWorker: true };
+  if (resolved && resolved.fromPool && resolved.alias) {
+    patch.poolAlias = resolved.alias;
+  }
   const source = store.getThread(input.threadId);
   const projectId = fork.projectId ?? (source ? source.projectId : null);
   const project =

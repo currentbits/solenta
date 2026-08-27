@@ -397,6 +397,11 @@ export interface ThreadInfo {
    * settings.quotaWaitAutoResume (default on). false is the opt-out.
    */
   quotaWaitAutoResume?: boolean | null;
+  /**
+   * Provider ids already tried during quota failover this turn (#711).
+   * Cleared on a human turn. Absent on threads that have never failed over.
+   */
+  quotaFailoverTried?: string[];
   createdAt: number;
   /**
    * Last REAL activity: a message appended, a run status change, or a title
@@ -2063,6 +2068,21 @@ export interface AppSettings {
    * projects only; remote projects always get plain threads.
    */
   defaultOrchestrate: boolean;
+  /**
+   * Provider id for new threads that do not inherit from the selected
+   * thread (issue #711). Autodispatch and issue-created threads use this.
+   * null = Claude Code (the historical hardcoded default).
+   */
+  defaultProvider: string | null;
+  /**
+   * Model id paired with defaultProvider. null = that provider's default.
+   */
+  defaultModel: string | null;
+  /**
+   * Ordered provider ids to try after a quota-exhausted turn (issue #711).
+   * Empty = no failover: park on a reset clock, otherwise fail the turn.
+   */
+  quotaFailover: string[];
   /**
    * First-run onboarding wizard has been finished or skipped (#628).
    * Absent/undefined/false means it has not been seen yet. Store-persisted

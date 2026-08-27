@@ -77,8 +77,10 @@ const {
   classifyContextOverflow,
   decideQuotaWait,
   formatQuotaWaitClock,
+  nextQuotaFailover,
   quotaWaitEnabled,
 } = require("./quotaWait.js");
+const { startWithPoolFailover } = require("./subagentPool.js");
 const { normalizeQuestions } = require("./questions.js");
 
 const PUSH_THROTTLE_MS = 250;
@@ -456,6 +458,19 @@ function resolveProvider(thread) {
   if (p === "generic" || p === "simulate") return p;
   if (p && getProvider(p)) return p;
   return "claude";
+}
+
+/** Quota-wait resume and quota failover replay the same user turn. */
+function isReplayTurn(input) {
+  return Boolean(
+    input && (input.fromQuotaWait === true || input.fromQuotaFailover === true),
+  );
+}
+
+function providerBinAvailable(providerId) {
+  const entry = getProvider(providerId);
+  if (!entry || entry.kind === "simulate") return true;
+  return isBinAvailable(resolveBin(entry));
 }
 
 /**
@@ -1633,9 +1648,13 @@ function createRunner(opts) {
       afterSuccessfulTurn(threadId);
     } else if (status === "failed") {
       const parked = store.getThread(threadId);
-      if (parked && parked.status === "quota-wait") {
-        // Parked on a reset clock: not a failure. Skip orch wake-up, crew
-        // release, and the queued drain — those belong to a real terminal.
+      if (
+        parked &&
+        (parked.status === "quota-wait" || parked.quotaFailoverPending === true)
+      ) {
+        // Parked on a reset clock, or mid quota-failover retry: not a
+        // terminal failure. Skip orch wake-up, crew release, and the
+        // queued drain — those belong to a real terminal.
       } else {
         afterFailedTurn(threadId);
       }
@@ -1661,7 +1680,10 @@ function createRunner(opts) {
       if (provider === "simulate") return;
       if (
         (status === "failed" || status === "stopped") &&
-        !(status === "failed" && thread.status === "quota-wait")
+        !(
+          status === "failed" &&
+          (thread.status === "quota-wait" || thread.quotaFailoverPending === true)
+        )
       ) {
         const model =
           (store.getUsage(threadId) && store.getUsage(threadId).model) ||
@@ -1724,7 +1746,10 @@ function createRunner(opts) {
     // prompt on top of the gate. The verify settle path drains instead.
     // A parked quota-wait is not a terminal — don't drain onto it.
     const settled = store.getThread(threadId);
-    if (!settled || settled.status !== "quota-wait") {
+    if (
+      !settled ||
+      (settled.status !== "quota-wait" && settled.quotaFailoverPending !== true)
+    ) {
       maybeDrainQueued(threadId);
     }
   }
@@ -2451,6 +2476,10 @@ function createRunner(opts) {
     const overflow = classifyContextOverflow(errText);
     const text = overflow ? overflow.text : errText;
     const kind = overflow ? overflow.kind : null;
+    if (!overflow) {
+      const switched = tryQuotaFailover(threadId, errText, runId, extraPatch);
+      if (switched) return { parked: false, failover: true, text, kind: null };
+    }
     const park = overflow
       ? null
       : decideQuotaWait({
@@ -2492,7 +2521,129 @@ function createRunner(opts) {
       { touch: true },
     );
     appendMessage(threadId, "event", text, runId);
-    return { parked: false, text, kind };
+    return { parked: false, failover: false, text, kind };
+  }
+
+  /**
+   * Switch to the next available quotaFailover provider and schedule a
+   * same-prompt resume. Returns true when the switch landed.
+   */
+  function tryQuotaFailover(threadId, errText, runId, extraPatch) {
+    const thread = store.getThread(threadId);
+    if (!thread) return false;
+    const settings = store.getSettings();
+    let probe = thread;
+    let candidate = null;
+    for (let i = 0; i < 8; i++) {
+      candidate = nextQuotaFailover({
+        text: errText,
+        thread: probe,
+        settings,
+      });
+      if (!candidate) return false;
+      if (getProvider(candidate.provider)) break;
+      probe = { ...probe, quotaFailoverTried: candidate.tried };
+      candidate = null;
+    }
+    if (!candidate) return false;
+    const fromProvider = String(thread.provider || "provider");
+    // The run has already left `active`, but status is still "working"
+    // until this function patches it. setProvider refuses a live run.
+    store.updateThread(threadId, {
+      status: "idle",
+      runStartedAt: null,
+    });
+    try {
+      services.setProvider(store, {
+        threadId,
+        provider: candidate.provider,
+      });
+    } catch {
+      return false;
+    }
+    const switched = store.getThread(threadId);
+    if (!switched || switched.provider !== candidate.provider) return false;
+    store.updateThread(
+      threadId,
+      {
+        ...(extraPatch || {}),
+        status: "idle",
+        runStartedAt: null,
+        lastError: null,
+        lastErrorKind: null,
+        quotaWaitUntil: null,
+        quotaFailoverTried: candidate.tried,
+        quotaFailoverPending: true,
+      },
+      { touch: true },
+    );
+    appendMessage(threadId, "event", errText, runId);
+    appendMessage(
+      threadId,
+      "event",
+      `Quota failover: ${fromProvider} exhausted, switching to ${candidate.provider}.`,
+    );
+    scheduleFailoverResume(threadId);
+    return true;
+  }
+
+  function scheduleFailoverResume(threadId) {
+    cancelQuotaWake(threadId);
+    const timer = setTimeout(() => {
+      quotaTimers.delete(threadId);
+      void fireFailoverResume(threadId);
+    }, 50);
+    if (typeof timer.unref === "function") timer.unref();
+    quotaTimers.set(threadId, timer);
+  }
+
+  async function fireFailoverResume(threadId) {
+    const thread = store.getThread(threadId);
+    if (!thread || thread.quotaFailoverPending !== true) return;
+    if (active.has(threadId)) return;
+    const user = lastUserOnThread(threadId);
+    if (!user || !String(user.text || "").trim()) {
+      store.updateThread(
+        threadId,
+        {
+          status: "failed",
+          quotaFailoverPending: false,
+          lastError: shortError("Quota failover: nothing to resume"),
+        },
+        { touch: true },
+      );
+      store.save();
+      pushDetail(threadId);
+      pushThreadsChanged();
+      return;
+    }
+    try {
+      await startRun({
+        threadId,
+        prompt: user.text,
+        attachments: user.attachments,
+        fromQuotaFailover: true,
+      });
+    } catch (err) {
+      const reason = err && err.message ? String(err.message) : String(err);
+      store.updateThread(
+        threadId,
+        {
+          status: "failed",
+          quotaFailoverPending: false,
+          lastError: shortError(`Quota failover: resume failed: ${reason}`),
+        },
+        { touch: true },
+      );
+      appendMessage(
+        threadId,
+        "event",
+        `Quota failover: resume failed: ${reason}`,
+      );
+      store.save();
+      pushDetail(threadId);
+      pushThreadsChanged();
+    }
   }
 
   function scheduleQuotaWake(threadId, until) {
@@ -5457,7 +5608,7 @@ function createRunner(opts) {
    * @param {string} prompt
    * @param {{ kind: string, path: string, name: string }[] | undefined} attachments
    * @param {any} err
-   * @param {{ fromQuotaWait?: boolean }} [opts]
+   * @param {{ fromQuotaWait?: boolean, fromQuotaFailover?: boolean }} [opts]
    */
   function failWorktreeSetup(threadId, prompt, attachments, err, opts) {
     const errText = String((err && err.message) || err);
@@ -5469,7 +5620,7 @@ function createRunner(opts) {
       provider: live ? resolveProvider(live) : "claude",
       model: (live && live.model) || null,
     });
-    if (!(opts && opts.fromQuotaWait)) {
+    if (!isReplayTurn(opts)) {
       appendMessage(threadId, "user", prompt, runId, null, attachments);
     }
     appendMessage(threadId, "event", errText, runId);
@@ -5605,11 +5756,14 @@ function createRunner(opts) {
           peerIds: ids.filter((_, j) => j !== i),
         }) + where;
       try {
-        const run = await startRun({
-          threadId: workers[i].id,
+        const run = await startWithPoolFailover({
+          store,
+          worker: workers[i],
           prompt: workerPrompt,
-          attachments,
-          parentRunId: forkRunId,
+          extra: { attachments, parentRunId: forkRunId },
+          startRun,
+          setProvider: services.setProvider,
+          isAvailable: providerBinAvailable,
         });
         started = started || run;
       } catch (err) {
@@ -5693,7 +5847,7 @@ function createRunner(opts) {
       model: thread.model || null,
       parentRunId: input.parentRunId || null,
     });
-    if (!input.fromQuotaWait) {
+    if (!isReplayTurn(input)) {
       appendMessage(threadId, "user", prompt, runId, null, attachments);
     }
 
@@ -6068,7 +6222,7 @@ function createRunner(opts) {
 
     // Machine-delivered turns increment autoTurns in flushOrchNotices.
     // Anything else (user send, retry, verify fix) is a human in the loop.
-    if (!input.fromNotice && !input.fromQuotaWait) autoTurns.set(threadId, 0);
+    if (!input.fromNotice && !isReplayTurn(input)) autoTurns.set(threadId, 0);
     cancelQuotaWake(threadId);
 
     // Ask mode (issue #392): cheap no-tools Q&A. Intercept BEFORE orch
@@ -6110,7 +6264,7 @@ function createRunner(opts) {
     // Fold a held inbound (or leftover follow-up) into this turn so a
     // queue-only message sitting on an idle thread is actually read.
     // After intercepts: /btw, ask, and /handoff must not consume the queue.
-    if (!input.fromQueue && !input.fromNotice && !input.fromQuotaWait) {
+    if (!input.fromQueue && !input.fromNotice && !isReplayTurn(input)) {
       let taken = null;
       try {
         taken = services.takeQueued(store, { threadId });
@@ -6160,11 +6314,21 @@ function createRunner(opts) {
       });
       let started;
       try {
-        started = await startRun({
-          threadId: worker.id,
+        started = await startWithPoolFailover({
+          store,
+          worker,
           prompt,
-          attachments,
-          parentRunId: forkRunId,
+          extra: { attachments, parentRunId: forkRunId },
+          startRun,
+          setProvider: services.setProvider,
+          isAvailable: providerBinAvailable,
+          onFailover: (next, fromProvider) => {
+            appendMessage(
+              threadId,
+              "event",
+              `Pool failover: ${fromProvider || "provider"} unavailable, using ${next.alias} (${next.provider}).`,
+            );
+          },
         });
       } catch (err) {
         // The worker could not start (missing CLI, budget gate, worktree
@@ -6234,6 +6398,7 @@ function createRunner(opts) {
       } catch (err) {
         failWorktreeSetup(threadId, prompt, attachments, err, {
           fromQuotaWait: input.fromQuotaWait,
+          fromQuotaFailover: input.fromQuotaFailover,
         });
       }
     }
@@ -6260,7 +6425,7 @@ function createRunner(opts) {
     // exists yet. A quota-wait resume is the SAME turn: do not append again.
     // skipUserAppend: inbound card was already posted while the previous
     // turn was running (issue #551).
-    if (!input.fromQuotaWait && !skipUserAppend) {
+    if (!isReplayTurn(input) && !skipUserAppend) {
       appendMessage(
         threadId,
         "user",
@@ -6309,6 +6474,10 @@ function createRunner(opts) {
         stoppedAt: null,
         quotaWaitUntil: null,
         quotaWaitResumed: input.fromQuotaWait === true,
+        quotaFailoverPending: false,
+        quotaFailoverTried: isReplayTurn(input)
+          ? thread.quotaFailoverTried || []
+          : [],
         ...services.clearSettledOnActivity(thread),
       },
       { touch: true },

@@ -220,27 +220,38 @@ function resolveSubagentPool(pool, request) {
  * @param {SubagentPool | null | undefined} pool
  * @returns {string}
  */
-function formatPoolMenu(pool) {
+function formatPoolMenu(pool, opts) {
   if (!pool || !Array.isArray(pool.entries) || pool.entries.length === 0) {
     return "";
   }
+  const isAvailable =
+    opts && typeof opts.isAvailable === "function"
+      ? opts.isAvailable
+      : () => true;
+  const entries = pool.entries.filter((e) => isAvailable(e.provider));
+  if (entries.length === 0) {
+    return "[Worker pool] No pool providers are installed on this machine.";
+  }
+  const defaultAlias = entries.some((e) => e.alias === pool.defaultAlias)
+    ? pool.defaultAlias
+    : null;
+  const force = pool.force === true && defaultAlias != null;
   const line = (e) => {
     const model = e.model || "default";
     return `- ${e.alias}: ${e.description} (${e.provider} / ${model})`;
   };
-  const items = pool.entries.map(line).join("\n");
-  if (pool.force && pool.defaultAlias) {
-    const pinned = pool.entries.find((e) => e.alias === pool.defaultAlias);
+  const items = entries.map(line).join("\n");
+  if (force && defaultAlias) {
+    const pinned = entries.find((e) => e.alias === defaultAlias);
     const model = pinned && pinned.model ? pinned.model : "default";
     const provider = pinned ? pinned.provider : "?";
     return (
-      `[Worker pool] Pinned to "${pool.defaultAlias}" (${provider} / ${model}). ` +
+      `[Worker pool] Pinned to "${defaultAlias}" (${provider} / ${model}). ` +
       `thread_fork provider and pool arguments are ignored.`
     );
   }
-  const def = pool.defaultAlias;
-  const omit = def
-    ? `Omit pool to use "${def}".`
+  const omit = defaultAlias
+    ? `Omit pool to use "${defaultAlias}".`
     : "Omit pool to inherit this thread's provider.";
   return (
     `[Worker pool] Pass pool=<alias> on thread_fork to pick a worker model. ` +
@@ -261,8 +272,128 @@ function subagentPoolNoteFor(pool) {
   } catch {
     return "";
   }
-  const menu = formatPoolMenu(pool);
+  const menu = formatPoolMenu(pool, { isAvailable: providerBinAvailable });
   return menu ? `\n\n${menu}` : "";
+}
+
+/**
+ * @param {string} providerId
+ * @returns {boolean}
+ */
+function providerBinAvailable(providerId) {
+  try {
+    const {
+      getProvider,
+      resolveBin,
+      isBinAvailable,
+    } = require("./providers.js");
+    const entry = getProvider(providerId);
+    if (!entry) return false;
+    if (entry.kind === "simulate") return true;
+    return isBinAvailable(resolveBin(entry));
+  } catch {
+    return true;
+  }
+}
+
+/**
+ * @param {unknown} errText
+ * @returns {boolean}
+ */
+function isProviderBinaryError(errText) {
+  return /Provider binary not found/i.test(String(errText || ""));
+}
+
+/**
+ * Next pool entry after a failed start, skipping already-tried providers
+ * and (when given) unavailable binaries. Walks entries in pool order.
+ *
+ * @param {SubagentPool | null | undefined} pool
+ * @param {{ skipProviders?: Iterable<string>, isAvailable?: (provider: string) => boolean }} [opts]
+ * @returns {SubagentPoolEntry | null}
+ */
+function nextPoolEntry(pool, opts) {
+  const entries = pool && Array.isArray(pool.entries) ? pool.entries : [];
+  if (entries.length === 0) return null;
+  const skip = new Set();
+  if (opts && opts.skipProviders) {
+    for (const id of opts.skipProviders) {
+      if (id) skip.add(String(id));
+    }
+  }
+  const isAvailable =
+    opts && typeof opts.isAvailable === "function"
+      ? opts.isAvailable
+      : () => true;
+  for (const entry of entries) {
+    if (skip.has(entry.provider)) continue;
+    if (!isAvailable(entry.provider)) continue;
+    return entry;
+  }
+  return null;
+}
+
+/**
+ * Retry startRun on the same worker after a missing-binary failure,
+ * switching to the next available pool entry. Only retries when the
+ * worker was resolved from the pool (poolAlias / force).
+ *
+ * @param {{
+ *   store: any,
+ *   worker: { id: string, provider?: string, poolAlias?: string },
+ *   prompt: string,
+ *   extra?: object,
+ *   startRun: (input: object) => Promise<any>,
+ *   setProvider: (store: any, input: object) => any,
+ *   isAvailable?: (provider: string) => boolean,
+ *   onFailover?: (next: SubagentPoolEntry, fromProvider: string) => void,
+ * }} opts
+ */
+async function startWithPoolFailover(opts) {
+  const startRun = opts.startRun;
+  const extra = opts.extra && typeof opts.extra === "object" ? opts.extra : {};
+  const prompt = opts.prompt;
+  let worker = opts.worker;
+  const pool = poolFromStore(opts.store);
+  const fromPool = Boolean(
+    (worker && worker.poolAlias) || (pool && pool.force && pool.defaultAlias),
+  );
+  const tried = new Set();
+  let lastErr;
+  for (let i = 0; i < 8; i++) {
+    try {
+      return await startRun({
+        threadId: worker.id,
+        prompt,
+        ...extra,
+      });
+    } catch (err) {
+      lastErr = err;
+      const msg = err && err.message ? err.message : String(err);
+      if (!fromPool || !isProviderBinaryError(msg)) throw err;
+      const provider = String((worker && worker.provider) || "");
+      if (provider) tried.add(provider);
+      const next = nextPoolEntry(pool, {
+        skipProviders: tried,
+        isAvailable: opts.isAvailable,
+      });
+      if (!next) throw err;
+      opts.setProvider(opts.store, {
+        threadId: worker.id,
+        provider: next.provider,
+        model: next.model,
+      });
+      if (typeof opts.onFailover === "function") {
+        opts.onFailover(next, provider);
+      }
+      const live =
+        opts.store && typeof opts.store.getThread === "function"
+          ? opts.store.getThread(worker.id)
+          : null;
+      worker = live || { ...worker, provider: next.provider, poolAlias: next.alias };
+    }
+  }
+  throw lastErr;
 }
 
 /**
@@ -301,4 +432,7 @@ module.exports = {
   formatPoolMenu,
   subagentPoolNoteFor,
   poolFromStore,
+  nextPoolEntry,
+  isProviderBinaryError,
+  startWithPoolFailover,
 };
