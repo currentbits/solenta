@@ -162,6 +162,7 @@ import { useRunDurationEnabled } from "../uiPrefs";
 import { DROP_OVERLAY_MESSAGE } from "../dropFiles";
 import { Composer } from "./Composer";
 import { Markdown } from "./Markdown";
+import { sessionImagePathsFromMessages } from "../sessionImages";
 import { PathLinkProvider, PathText } from "./PathLinks";
 import {
   messageProvenance,
@@ -4165,15 +4166,24 @@ export const ThreadView = memo(function ThreadView({
     setFocusedId(hydrated.focusId);
   }
 
+  const sessionImages = useMemo(
+    () => sessionImagePathsFromMessages(detail?.messages ?? []),
+    [detail?.messages],
+  );
+
   const resolvePathMap = useCallback(
     async (paths: string[]) => {
-      if (!onResolvePaths) {
-        return Object.fromEntries(paths.map((p) => [p, null]));
+      const rows = onResolvePaths
+        ? await onResolvePaths(paths)
+        : paths.map((p) => ({ path: p, abs: null as string | null }));
+      const map: Record<string, string | null> = {};
+      for (const r of rows) map[r.path] = r.abs;
+      for (const p of paths) {
+        if (!map[p] && sessionImages[p]) map[p] = sessionImages[p];
       }
-      const rows = await onResolvePaths(paths);
-      return Object.fromEntries(rows.map((r) => [r.path, r.abs]));
+      return map;
     },
-    [onResolvePaths],
+    [onResolvePaths, sessionImages],
   );
 
   const handleOpenWorkspacePath = useCallback(
@@ -5181,6 +5191,8 @@ export const ThreadView = memo(function ThreadView({
       threadId={detail.thread.id}
       resolvePaths={resolvePathMap}
       openPath={handleOpenWorkspacePath}
+      loadImage={onLoadAttachmentImage}
+      sessionImages={sessionImages}
     >
     <main
       className={styles.main}

@@ -26,6 +26,13 @@ export interface PathLinkHandlers {
     | Record<string, string | null>
     | Promise<Record<string, string | null>>;
   openPath: (abs: string, opts?: PathLinkOpenOpts) => void;
+  /** Load a local image as an img src (solenta-media / data URL). */
+  loadImage?: (abs: string) => Promise<string | null>;
+  /**
+   * Grok image_gen files keyed as `images/N.jpg` → absolute session path.
+   * Overlay on worktree resolve so markdown images render.
+   */
+  sessionImages?: Record<string, string>;
 }
 
 export const PathLinkContext = createContext<PathLinkHandlers | null>(null);
@@ -34,6 +41,8 @@ export function PathLinkProvider({
   children,
   resolvePaths,
   openPath,
+  loadImage,
+  sessionImages,
   threadId,
 }: PathLinkHandlers & { children: ReactNode; threadId?: string }) {
   const cacheRef = useRef(new Map<string, string | null>());
@@ -41,6 +50,8 @@ export function PathLinkProvider({
   resolveRef.current = resolvePaths;
   const openRef = useRef(openPath);
   openRef.current = openPath;
+  const loadRef = useRef(loadImage);
+  loadRef.current = loadImage;
 
   useEffect(() => {
     cacheRef.current.clear();
@@ -72,8 +83,11 @@ export function PathLinkProvider({
         return finish();
       },
       openPath: (abs, opts) => openRef.current(abs, opts),
+      loadImage: (abs) =>
+        loadRef.current ? loadRef.current(abs) : Promise.resolve(null),
+      sessionImages,
     }),
-    [],
+    [sessionImages],
   );
 
   return (
@@ -81,7 +95,7 @@ export function PathLinkProvider({
   );
 }
 
-function useResolvedMap(paths: string[]): Record<string, string | null> {
+export function useResolvedMap(paths: string[]): Record<string, string | null> {
   const api = useContext(PathLinkContext);
   const key = paths.join("\0");
   const [asyncMap, setAsyncMap] = useState<Record<string, string | null>>(
@@ -106,7 +120,7 @@ function useResolvedMap(paths: string[]): Record<string, string | null> {
     return () => {
       live = false;
     };
-  }, [api, key, paths, syncMap]);
+  }, [api, key, syncMap, paths]);
 
   return syncMap ?? asyncMap;
 }

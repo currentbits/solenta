@@ -55,6 +55,16 @@
   text-decoration: none;
 }
 
+.image {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin: 8px 0;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius);
+  cursor: zoom-in;
+}
+
 .md a:hover {
   text-decoration: underline;
 }

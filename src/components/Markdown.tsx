@@ -1,17 +1,96 @@
 import {
   isValidElement,
   memo,
+  useContext,
   useEffect,
+  useMemo,
   useRef,
   useState,
   type ReactNode,
 } from "react";
-import ReactMarkdown from "react-markdown";
+import ReactMarkdown, { defaultUrlTransform } from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { linkifyNode } from "./PathLinks";
+import { isAbsolutePath } from "../pathLinks";
+import { linkifyNode, PathLinkContext, useResolvedMap } from "./PathLinks";
 import styles from "./Markdown.module.css";
 
 const COPIED_MS = 1500;
+
+/** Keep data/solenta-media/file; still drop javascript: via the default. */
+function markdownUrlTransform(url: string): string {
+  const u = String(url || "").trim();
+  if (
+    u.startsWith("data:") ||
+    u.startsWith("solenta-media:") ||
+    u.startsWith("file:")
+  ) {
+    return u;
+  }
+  return defaultUrlTransform(u);
+}
+
+/**
+ * Relative / file / absolute image srcs are workspace or Grok session files,
+ * not URLs on the renderer origin. Remote http(s)/data/solenta-media stay.
+ */
+function localPathFromImgSrc(src: string): string | null {
+  const s = src.trim();
+  if (!s) return null;
+  if (/^https?:\/\//i.test(s)) return null;
+  if (s.startsWith("data:") || s.startsWith("solenta-media:")) return null;
+  if (s.startsWith("file:")) {
+    try {
+      return decodeURIComponent(new URL(s).pathname);
+    } catch {
+      return null;
+    }
+  }
+  if (/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(s)) return null;
+  return s;
+}
+
+const NO_PATHS: string[] = [];
+
+function MarkdownImage({ src, alt }: { src?: string; alt?: string }) {
+  const api = useContext(PathLinkContext);
+  const local = src ? localPathFromImgSrc(src) : null;
+  const sessionAbs = local ? api?.sessionImages?.[local] : undefined;
+  const absDirect = local && isAbsolutePath(local) ? local : null;
+  const rel = local && !absDirect && !sessionAbs ? local : "";
+  const relPaths = useMemo(() => (rel ? [rel] : NO_PATHS), [rel]);
+  const resolved = useResolvedMap(relPaths);
+  const abs = sessionAbs ?? absDirect ?? (rel ? resolved[rel] : null) ?? null;
+  const remote = src && !local ? src : null;
+  const [loaded, setLoaded] = useState<string | null>(remote || null);
+
+  useEffect(() => {
+    if (remote) {
+      setLoaded(remote);
+      return;
+    }
+    if (!abs || !api?.loadImage) {
+      setLoaded(null);
+      return;
+    }
+    let live = true;
+    void api.loadImage(abs).then((url) => {
+      if (live) setLoaded(url);
+    });
+    return () => {
+      live = false;
+    };
+  }, [abs, api, remote]);
+
+  if (!loaded) return null;
+  return (
+    <img
+      className={styles.image}
+      src={loaded}
+      alt={alt ?? ""}
+      title={alt || undefined}
+    />
+  );
+}
 
 /** Pull raw text out of a code element's children (string | array | nested). */
 function flattenText(node: ReactNode): string {
@@ -125,6 +204,7 @@ export const Markdown = memo(function Markdown({ text }: { text: string }) {
     <div className={styles.md}>
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
+        urlTransform={markdownUrlTransform}
         components={{
           pre: (props) => <CodeBlock>{props.children}</CodeBlock>,
           code: (props) => (
@@ -148,6 +228,7 @@ export const Markdown = memo(function Markdown({ text }: { text: string }) {
               {props.children}
             </a>
           ),
+          img: (props) => <MarkdownImage src={props.src} alt={props.alt} />,
         }}
       >
         {shown}

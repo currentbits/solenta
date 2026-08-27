@@ -149,6 +149,7 @@ function view(props: {
   runStats?: (threadId: string) => Promise<RunStatInfo[]>;
   restoreCheckpoint?: (threadId: string, sha: string) => Promise<void>;
   onLoadImage?: (name: string) => Promise<string | null>;
+  onLoadAttachmentImage?: (path: string) => Promise<string | null>;
   onDropAttachmentFiles?: (files: File[]) => Promise<AttachmentInfo[]>;
   onResolvePaths?: (
     paths: string[],
@@ -206,6 +207,7 @@ function view(props: {
       onSuggestCommitMessage={async () => ({ message: "feat: x" })}
       onPush={async () => ({ remote: "origin", branch: "main" })}
       onLoadImage={props.onLoadImage}
+      onLoadAttachmentImage={props.onLoadAttachmentImage}
       onDropAttachmentFiles={props.onDropAttachmentFiles}
       onResolvePaths={props.onResolvePaths}
       onOpenWorkspacePath={props.onOpenWorkspacePath}
@@ -789,6 +791,63 @@ describe("ThreadView mounted interactions", () => {
       m.text().includes("TOOL_INPUT_SECRET_PAYLOAD"),
       `expanded tool body must show input, got: ${m.text().slice(0, 200)}`,
     );
+    m.unmount();
+  });
+
+  it("renders grok session images referenced as images/N.jpg in markdown", async () => {
+    const grokAbs = "/tmp/grok/images/15.jpg";
+    const asked: string[] = [];
+    const m = await mount(
+      view({
+        onLoadAttachmentImage: async (p) => {
+          asked.push(p);
+          return p === grokAbs ? "solenta-media://local/?p=15" : null;
+        },
+        onResolvePaths: async (paths) =>
+          paths.map((p) => ({ path: p, abs: null })),
+        detail: detail({
+          messages: [
+            msg({
+              role: "tool",
+              text: "image_gen: mockup",
+              createdAt: 1,
+              runId: "run-1",
+              tool: {
+                id: "c1",
+                name: "image_gen",
+                input: "{}",
+                output: JSON.stringify({
+                  type: "ImageGen",
+                  path: grokAbs,
+                  filename: "15.jpg",
+                  session_folder: "images",
+                }),
+                done: true,
+                isError: false,
+              },
+            }),
+            msg({
+              role: "assistant",
+              text: "**5k run** — time.\n\n![5k run](images/15.jpg)",
+              createdAt: 2,
+              runId: "run-1",
+            }),
+          ],
+          workLog: [],
+        }),
+      }),
+    );
+    await m.flush();
+    await m.flush();
+    await m.flush();
+    assert.deepEqual(asked, [grokAbs]);
+    const img = m.query("img");
+    assert.ok(
+      img,
+      `markdown grok image must render, got: ${m.html().slice(0, 400)}`,
+    );
+    assert.equal(img.getAttribute("src"), "solenta-media://local/?p=15");
+    assert.equal(img.getAttribute("alt"), "5k run");
     m.unmount();
   });
 

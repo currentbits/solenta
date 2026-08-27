@@ -100,7 +100,11 @@ describe("Markdown", () => {
 
 const EXISTING = new Set(["src/foo.ts", "images/1.jpg"]);
 
-function linked(text: string, opened: string[] = []) {
+function linked(
+  text: string,
+  opened: string[] = [],
+  loadImage?: (abs: string) => Promise<string | null>,
+) {
   return (
     <PathLinkProvider
       resolvePaths={(paths) =>
@@ -111,6 +115,7 @@ function linked(text: string, opened: string[] = []) {
       openPath={(abs, opts) => {
         opened.push(opts?.reveal ? `reveal:${abs}` : abs);
       }}
+      loadImage={loadImage}
     >
       <Markdown text={text} />
     </PathLinkProvider>
@@ -155,6 +160,93 @@ describe("Markdown path links", () => {
     const a = m.container.querySelector("a");
     assert.ok(a);
     assert.equal(a.getAttribute("href"), "https://example.com/src/foo.ts");
+  });
+});
+
+describe("Markdown images", () => {
+  it("keeps https srcs", async () => {
+    const m = await mount(
+      <Markdown text={"![shot](https://example.com/a.jpg)"} />,
+    );
+    await m.flush();
+    const img = m.container.querySelector("img");
+    assert.ok(img);
+    assert.equal(img.getAttribute("src"), "https://example.com/a.jpg");
+    assert.equal(img.getAttribute("alt"), "shot");
+  });
+
+  it("loads a workspace image when resolvePaths is async", async () => {
+    const asked: string[] = [];
+    const m = await mount(
+      <PathLinkProvider
+        resolvePaths={async (paths) =>
+          Object.fromEntries(
+            paths.map((p) => [p, EXISTING.has(p) ? `/wt/${p}` : null]),
+          )
+        }
+        openPath={() => {}}
+        loadImage={async (abs) => {
+          asked.push(abs);
+          return "solenta-media://local/?p=async";
+        }}
+      >
+        <Markdown text={"![chart](images/1.jpg)"} />
+      </PathLinkProvider>,
+    );
+    await m.flush();
+    await m.flush();
+    await m.flush();
+    assert.deepEqual(asked, ["/wt/images/1.jpg"]);
+    assert.equal(
+      m.container.querySelector("img")?.getAttribute("src"),
+      "solenta-media://local/?p=async",
+    );
+  });
+
+  it("loads a workspace-relative image through loadImage, not the relative src", async () => {
+    const asked: string[] = [];
+    const m = await mount(
+      linked("![5k run](images/1.jpg)", [], async (abs) => {
+        asked.push(abs);
+        return "solenta-media://local/?p=1";
+      }),
+    );
+    await m.flush();
+    await m.flush();
+    assert.deepEqual(asked, ["/wt/images/1.jpg"]);
+    const img = m.container.querySelector("img");
+    assert.ok(img, `workspace image must render, got: ${m.html().slice(0, 300)}`);
+    assert.equal(img.getAttribute("src"), "solenta-media://local/?p=1");
+    assert.equal(img.getAttribute("alt"), "5k run");
+  });
+
+  it("does not render a broken img for a missing local path", async () => {
+    const m = await mount(
+      linked("![missing](images/nope.jpg)", [], async () => null),
+    );
+    await m.flush();
+    await m.flush();
+    assert.equal(m.container.querySelector("img"), null);
+  });
+
+  it("allows data URLs that react-markdown would otherwise strip", async () => {
+    const data = "data:image/png;base64,AAAA";
+    const m = await mount(<Markdown text={`![x](${data})`} />);
+    await m.flush();
+    const img = m.container.querySelector("img");
+    assert.ok(img);
+    assert.equal(img.getAttribute("src"), data);
+  });
+
+  it("does not turn javascript: into an img src", async () => {
+    const m = await mount(
+      <Markdown text={'![x](javascript:alert(1))'} />,
+    );
+    await m.flush();
+    const img = m.container.querySelector("img");
+    if (img) {
+      assert.notEqual(img.getAttribute("src"), "javascript:alert(1)");
+    }
   });
 });
 
