@@ -3,7 +3,8 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { Memory, AUTO_RESOLVE_PREFIX } from '../src/memory.js'
+import { Memory, AUTO_RESOLVE_PREFIX, queueReview } from '../src/memory.js'
+import { runJanitor, STALE_QUEUE_DAYS, ANCIENT_RUN_DAYS } from '../src/janitor.js'
 
 describe('memory_resolve + maintenance + invalidation hides loser', () => {
   let dir
@@ -220,5 +221,124 @@ describe('memory_resolve + maintenance + invalidation hides loser', () => {
       boot.protocol.some((p) => /memory_maintenance/.test(p) && /memory_resolve/.test(p)),
       `protocol missing maintenance sentence: ${JSON.stringify(boot.protocol)}`,
     )
+  })
+
+  function daysAgo(n) {
+    return new Date(Date.now() - n * 86_400_000).toISOString()
+  }
+
+  function disjointPair(tag) {
+    const a = memory.store({
+      type: 'knowledge',
+      title: `resolve alpha ${tag}`,
+      body: `apple orchard harvest cider ${tag}`,
+      force: true,
+    })
+    const b = memory.store({
+      type: 'knowledge',
+      title: `resolve beta ${tag}`,
+      body: `river current salmon paddle ${tag}`,
+      force: true,
+    })
+    return { a, b }
+  }
+
+  it('janitor dead_pair: noop, both entries remain, autoResolved counts kept', () => {
+    const { a, b } = disjointPair('dead')
+    assert.equal(queueReview(memory.db, 'near_dup', a.id, b.id, 'jaccard=0.5'), true)
+    memory.invalidateEntry(a.id, { reason: 'gone' })
+    runJanitor(memory.db)
+    const q = memory.db.prepare(`SELECT * FROM review_queue ORDER BY id DESC LIMIT 1`).get()
+    assert.equal(q.resolution, 'noop')
+    assert.equal(q.detail, `${AUTO_RESOLVE_PREFIX}dead_pair`)
+    assert.ok(memory.db.prepare(`SELECT id FROM entries WHERE id = ?`).get(a.id))
+    assert.ok(memory.db.prepare(`SELECT id FROM entries WHERE id = ?`).get(b.id))
+    assert.equal(memory.get(a.id).invalidated, true)
+    assert.equal(memory.get(b.id).title.includes('beta'), true)
+    const report = memory.maintenance()
+    assert.equal(report.autoResolved.byRule.dead_pair, 1)
+    assert.equal(report.autoResolved.kept, 1)
+  })
+
+  it('janitor stale_row: noops rows older than 30 days, not younger', () => {
+    const oldP = disjointPair('stale-old')
+    const youngP = disjointPair('stale-young')
+    assert.equal(queueReview(memory.db, 'near_dup', oldP.a.id, oldP.b.id, 'jaccard=0.5'), true)
+    const oldId = memory.db.prepare(`SELECT id FROM review_queue ORDER BY id DESC LIMIT 1`).get().id
+    assert.equal(queueReview(memory.db, 'near_dup', youngP.a.id, youngP.b.id, 'jaccard=0.5'), true)
+    const youngId = memory.db.prepare(`SELECT id FROM review_queue ORDER BY id DESC LIMIT 1`).get()
+      .id
+    memory.db
+      .prepare(`UPDATE review_queue SET created_at = ? WHERE id = ?`)
+      .run(daysAgo(STALE_QUEUE_DAYS + 1), oldId)
+    memory.db
+      .prepare(`UPDATE review_queue SET created_at = ? WHERE id = ?`)
+      .run(daysAgo(STALE_QUEUE_DAYS - 1), youngId)
+    runJanitor(memory.db)
+    const old = memory.db.prepare(`SELECT * FROM review_queue WHERE id = ?`).get(oldId)
+    const young = memory.db.prepare(`SELECT * FROM review_queue WHERE id = ?`).get(youngId)
+    assert.equal(old.resolution, 'noop')
+    assert.equal(old.detail, `${AUTO_RESOLVE_PREFIX}stale_row`)
+    assert.equal(young.resolved_at, null)
+    assert.ok(memory.db.prepare(`SELECT id FROM entries WHERE id = ?`).get(oldP.a.id))
+    assert.ok(memory.db.prepare(`SELECT id FROM entries WHERE id = ?`).get(oldP.b.id))
+  })
+
+  it('janitor semantic_dup: tombstones older entry, hides it, does not delete', async () => {
+    const { a, b } = disjointPair('sem')
+    memory.db
+      .prepare(`UPDATE entries SET created_at = ? WHERE id = ?`)
+      .run('2020-01-01T00:00:00.000Z', a.id)
+    memory.db
+      .prepare(`UPDATE entries SET created_at = ? WHERE id = ?`)
+      .run('2021-01-01T00:00:00.000Z', b.id)
+    assert.equal(queueReview(memory.db, 'near_dup', a.id, b.id, 'cosine=0.97'), true)
+    runJanitor(memory.db)
+
+    const q = memory.db.prepare(`SELECT * FROM review_queue ORDER BY id DESC LIMIT 1`).get()
+    assert.equal(q.resolution, 'invalidate')
+    assert.equal(q.detail, `${AUTO_RESOLVE_PREFIX}semantic_dup cosine=0.97`)
+
+    const loser = memory.db.prepare(`SELECT * FROM entries WHERE id = ?`).get(a.id)
+    assert.ok(loser, 'loser row must still exist')
+    assert.ok(loser.invalid_at)
+    assert.equal(loser.invalidated_by, b.id)
+    assert.equal(memory.get(a.id).invalidated, true)
+
+    const hits = await memory.search({ query: 'apple orchard harvest cider sem' })
+    assert.ok(hits.every((h) => h.id !== a.id), 'invalidated entry must not appear in search')
+    assert.ok(memory.db.prepare(`SELECT id FROM entries WHERE id = ?`).get(b.id))
+
+    const report = memory.maintenance()
+    assert.equal(report.autoResolved.byRule.semantic_dup, 1)
+    assert.equal(report.autoResolved.invalidated, 1)
+  })
+
+  it('janitor ancient_run: tombstones runs older than 30 days, not younger, does not delete', () => {
+    const oldRun = memory.store({
+      type: 'run',
+      title: 'old resolve run unique',
+      body: 'ancient run body unique marker',
+    })
+    const youngRun = memory.store({
+      type: 'run',
+      title: 'young resolve run unique',
+      body: 'recent run body unique marker',
+    })
+    memory.db
+      .prepare(`UPDATE entries SET created_at = ? WHERE id = ?`)
+      .run(daysAgo(ANCIENT_RUN_DAYS + 1), oldRun.id)
+    memory.db
+      .prepare(`UPDATE entries SET created_at = ? WHERE id = ?`)
+      .run(daysAgo(ANCIENT_RUN_DAYS - 1), youngRun.id)
+    runJanitor(memory.db)
+
+    const old = memory.db.prepare(`SELECT * FROM entries WHERE id = ?`).get(oldRun.id)
+    assert.ok(old, 'run row must still exist')
+    assert.ok(old.invalid_at)
+    assert.equal(old.invalidation_reason, `${AUTO_RESOLVE_PREFIX}ancient_run`)
+    assert.equal(memory.get(oldRun.id).invalidated, true)
+    assert.equal(memory.db.prepare(`SELECT invalid_at FROM entries WHERE id = ?`).get(youngRun.id)
+      .invalid_at, null)
   })
 })

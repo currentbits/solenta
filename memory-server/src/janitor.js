@@ -1,8 +1,34 @@
-import { contentTokens, jaccard, queueReview, semanticNeighbors, SEMANTIC_RELATED } from './review.js'
+import {
+  contentTokens,
+  jaccard,
+  queueReview,
+  semanticNeighbors,
+  SEMANTIC_RELATED,
+  AUTO_RESOLVE_PREFIX,
+} from './review.js'
 import { blobToFloat } from './embedder.js'
 
 /** Default retention for raw session transcripts (days). */
 export const SESSION_RETENTION_DAYS = 30
+
+/** Open review_queue rows older than this are auto-resolved as noop. */
+export const STALE_QUEUE_DAYS = 30
+
+/**
+ * Live `run` entries older than this are auto-invalidated. Distill looks
+ * back DISTILL_RUN_DAYS (14); AGING_RUN_DAYS (7) is report-only. 30 keeps
+ * a margin so distillation still sees the recent window.
+ */
+export const ANCIENT_RUN_DAYS = 30
+
+/**
+ * Cosine at which a `near_dup` is the same fact, not merely related.
+ * Enqueue bar is SEMANTIC_DUP (0.9). Validated on the live store
+ * 2026-08-27 (#720): 0.93 false-merges sequential run notes; 0.95 has
+ * zero tagged hits; 0.97 adds no extra safety. Parses `cosine=` from
+ * detail — does not recompute vectors.
+ */
+export const SEMANTIC_DUP_AUTO = 0.95
 
 /** Max entries examined per contradiction scan pass. */
 export const QUEUE_SCAN_CAP = 500
@@ -174,6 +200,150 @@ export function scanContradictions(db) {
 }
 
 /**
+ * @param {unknown} detail
+ * @returns {number | null}
+ */
+function parseCosine(detail) {
+  const m = String(detail ?? '').match(/cosine=([0-9]*\.?[0-9]+)/)
+  if (!m) return null
+  const n = Number(m[1])
+  return Number.isFinite(n) ? n : null
+}
+
+/**
+ * @param {string} rule
+ * @param {string} [extra]
+ */
+function autoDetail(rule, extra) {
+  return extra ? `${AUTO_RESOLVE_PREFIX}${rule} ${extra}` : `${AUTO_RESOLVE_PREFIX}${rule}`
+}
+
+/**
+ * Tombstone a live entry. Returns false if it was already dead/missing.
+ * @param {import('node:sqlite').DatabaseSync} db
+ * @param {string} id
+ * @param {string|null} by
+ * @param {string} reason
+ * @param {string} nowIso
+ */
+function tombstoneEntry(db, id, by, reason, nowIso) {
+  const info = db
+    .prepare(
+      `UPDATE entries
+       SET invalid_at = ?, invalidated_by = ?, invalidation_reason = ?, updated_at = ?
+       WHERE id = ? AND superseded_by IS NULL AND invalid_at IS NULL`,
+    )
+    .run(nowIso, by, reason, nowIso, id)
+  return (info.changes ?? 0) > 0
+}
+
+/**
+ * Resolve one open queue row. No-op if it was already resolved this pass.
+ * @param {import('node:sqlite').DatabaseSync} db
+ * @param {number} id
+ * @param {'noop'|'invalidate'} resolution
+ * @param {string} detail
+ * @param {string} nowIso
+ */
+function resolveQueueRow(db, id, resolution, detail, nowIso) {
+  const info = db
+    .prepare(
+      `UPDATE review_queue
+       SET resolved_at = ?, resolution = ?, detail = ?
+       WHERE id = ? AND resolved_at IS NULL`,
+    )
+    .run(nowIso, resolution, detail, id)
+  return (info.changes ?? 0) > 0
+}
+
+/**
+ * Deterministic, LLM-free queue consumption + run expiry. Only tombstones,
+ * never deletes. Each queue resolution overwrites detail with `auto:<rule>`.
+ *
+ * Order: semantic dups (invalidate older of a live pair) → ancient runs
+ * (tombstone) → dead pairs (noop) → stale rows (noop). Dead last so a
+ * tombstone this pass clears leftover queue rows the same cycle.
+ *
+ * @param {import('node:sqlite').DatabaseSync} db
+ * @param {number} [now]
+ * @returns {{ deadPairs: number, staleRows: number, semanticDups: number, ancientRuns: number }}
+ */
+export function autoResolveQueue(db, now = Date.now()) {
+  const nowIso = new Date(now).toISOString()
+  const counts = { deadPairs: 0, staleRows: 0, semanticDups: 0, ancientRuns: 0 }
+
+  const nearDups = db
+    .prepare(
+      `SELECT q.id, q.detail, q.entry_a, q.entry_b,
+              a.created_at AS a_created, a.superseded_by AS a_sup, a.invalid_at AS a_inv,
+              b.created_at AS b_created, b.superseded_by AS b_sup, b.invalid_at AS b_inv
+       FROM review_queue q
+       JOIN entries a ON a.id = q.entry_a
+       JOIN entries b ON b.id = q.entry_b
+       WHERE q.resolved_at IS NULL AND q.kind = 'near_dup'`,
+    )
+    .all()
+  for (const row of nearDups) {
+    const score = parseCosine(row.detail)
+    if (score == null || score < SEMANTIC_DUP_AUTO) continue
+    const aDead = row.a_sup || row.a_inv
+    const bDead = row.b_sup || row.b_inv
+    if (aDead || bDead) continue
+    const aOlder = row.a_created <= row.b_created
+    const loser = aOlder ? row.entry_a : row.entry_b
+    const winner = aOlder ? row.entry_b : row.entry_a
+    const detail = autoDetail('semantic_dup', `cosine=${score}`)
+    if (!tombstoneEntry(db, loser, winner, detail, nowIso)) continue
+    if (resolveQueueRow(db, row.id, 'invalidate', detail, nowIso)) counts.semanticDups += 1
+  }
+
+  const runCutoff = new Date(now - ANCIENT_RUN_DAYS * 86_400_000).toISOString()
+  const ancient = db
+    .prepare(
+      `SELECT id FROM entries
+       WHERE type = 'run' AND superseded_by IS NULL AND invalid_at IS NULL
+         AND created_at < ?`,
+    )
+    .all(runCutoff)
+  for (const row of ancient) {
+    if (tombstoneEntry(db, row.id, 'janitor', autoDetail('ancient_run'), nowIso)) {
+      counts.ancientRuns += 1
+    }
+  }
+
+  const deadRows = db
+    .prepare(
+      `SELECT q.id
+       FROM review_queue q
+       LEFT JOIN entries a ON a.id = q.entry_a
+       LEFT JOIN entries b ON b.id = q.entry_b
+       WHERE q.resolved_at IS NULL
+         AND (a.id IS NULL OR b.id IS NULL
+              OR a.superseded_by IS NOT NULL OR a.invalid_at IS NOT NULL
+              OR b.superseded_by IS NOT NULL OR b.invalid_at IS NOT NULL)`,
+    )
+    .all()
+  const deadDetail = autoDetail('dead_pair')
+  for (const row of deadRows) {
+    if (resolveQueueRow(db, row.id, 'noop', deadDetail, nowIso)) counts.deadPairs += 1
+  }
+
+  const staleCutoff = new Date(now - STALE_QUEUE_DAYS * 86_400_000).toISOString()
+  const staleRows = db
+    .prepare(
+      `SELECT id FROM review_queue
+       WHERE resolved_at IS NULL AND created_at < ?`,
+    )
+    .all(staleCutoff)
+  const staleDetail = autoDetail('stale_row')
+  for (const row of staleRows) {
+    if (resolveQueueRow(db, row.id, 'noop', staleDetail, nowIso)) counts.staleRows += 1
+  }
+
+  return counts
+}
+
+/**
  * Maintenance: access-count evidence decay, orphan cleanup, session prune, health snapshot.
  * @param {import('node:sqlite').DatabaseSync} db
  * @returns {{ liveEntries: number, entityCount: number, edgeCount: number, sessionCount: number, prunedLastRun: number, queuedContradictions: number, lastRun: string }}
@@ -258,7 +428,10 @@ export function runJanitor(db) {
       }
     }
 
-    // (e) health snapshot
+    // (e) deterministic auto-resolution: dead/stale/certain queue rows + ancient runs
+    step('autoResolve', () => autoResolveQueue(db))
+
+    // (f) health snapshot
     const liveEntries =
       db
         .prepare(

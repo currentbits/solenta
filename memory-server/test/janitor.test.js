@@ -4,9 +4,18 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { Memory } from '../src/memory.js'
-import { runJanitor, scanContradictions, CONTRA_TOP, MAX_PAIRS_PER_ENTRY } from '../src/janitor.js'
+import {
+  runJanitor,
+  scanContradictions,
+  autoResolveQueue,
+  CONTRA_TOP,
+  MAX_PAIRS_PER_ENTRY,
+  STALE_QUEUE_DAYS,
+  ANCIENT_RUN_DAYS,
+  SEMANTIC_DUP_AUTO,
+} from '../src/janitor.js'
 import { floatToBlob, l2normalize, fakeEmbedder } from '../src/embedder.js'
-import { contentTokens, jaccard } from '../src/review.js'
+import { contentTokens, jaccard, queueReview, AUTO_RESOLVE_PREFIX } from '../src/review.js'
 
 describe('janitor', () => {
   let dir
@@ -514,5 +523,231 @@ describe('contradiction scan via semanticNeighbors (#310)', () => {
         [weakA.id, weakB.id].sort().join('+'),
       ].sort(),
     )
+  })
+})
+
+describe('janitor auto-resolve (#720)', () => {
+  let dir
+  let memory
+
+  beforeEach(() => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'coder-mem-jan-auto-'))
+    memory = new Memory(path.join(dir, 'memory.db'), { startJanitor: false })
+  })
+
+  afterEach(() => {
+    memory.close()
+    fs.rmSync(dir, { recursive: true, force: true })
+  })
+
+  function daysAgo(n) {
+    return new Date(Date.now() - n * 86_400_000).toISOString()
+  }
+
+  function storePair(suffix = '') {
+    const a = memory.store({
+      type: 'knowledge',
+      title: `alpha unique zebra ${suffix}`,
+      body: `distinct apple orchard harvest ${suffix}`,
+      force: true,
+    })
+    const b = memory.store({
+      type: 'knowledge',
+      title: `beta unique mango ${suffix}`,
+      body: `distinct river current salmon ${suffix}`,
+      force: true,
+    })
+    return { a, b }
+  }
+
+  function enqueue(kind, aId, bId, detail) {
+    assert.equal(queueReview(memory.db, kind, aId, bId, detail), true)
+    const [left, right] = aId < bId ? [aId, bId] : [bId, aId]
+    const q = memory.db
+      .prepare(
+        `SELECT * FROM review_queue
+         WHERE kind = ? AND entry_a = ? AND entry_b = ? AND resolved_at IS NULL`,
+      )
+      .get(kind, left, right)
+    assert.ok(q, 'expected open review_queue row for pair')
+    return q
+  }
+
+  function row(id) {
+    return memory.db.prepare(`SELECT * FROM review_queue WHERE id = ?`).get(id)
+  }
+
+  function entry(id) {
+    return memory.db.prepare(`SELECT * FROM entries WHERE id = ?`).get(id)
+  }
+
+  it('auto-noops dead pairs (superseded or invalidated) and names the rule', () => {
+    const { a, b } = storePair('dead')
+    const qid = enqueue('near_dup', a.id, b.id, 'jaccard=0.5').id
+    memory.invalidateEntry(a.id, { reason: 'test' })
+
+    const counts = autoResolveQueue(memory.db)
+    assert.equal(counts.deadPairs, 1)
+    const q = row(qid)
+    assert.ok(q.resolved_at)
+    assert.equal(q.resolution, 'noop')
+    assert.equal(q.detail, `${AUTO_RESOLVE_PREFIX}dead_pair`)
+    assert.equal(entry(a.id).id, a.id)
+    assert.ok(entry(a.id).invalid_at)
+    assert.equal(entry(b.id).invalid_at, null)
+  })
+
+  it('age-out noops open rows older than 30 days and leaves younger rows', () => {
+    const oldPair = storePair('stale-old')
+    const youngPair = storePair('stale-young')
+    const oldId = enqueue('near_dup', oldPair.a.id, oldPair.b.id, 'jaccard=0.5').id
+    const youngId = enqueue('near_dup', youngPair.a.id, youngPair.b.id, 'jaccard=0.5').id
+    memory.db
+      .prepare(`UPDATE review_queue SET created_at = ? WHERE id = ?`)
+      .run(daysAgo(STALE_QUEUE_DAYS + 1), oldId)
+    memory.db
+      .prepare(`UPDATE review_queue SET created_at = ? WHERE id = ?`)
+      .run(daysAgo(STALE_QUEUE_DAYS - 1), youngId)
+
+    const counts = autoResolveQueue(memory.db)
+    assert.equal(counts.staleRows, 1)
+    const old = row(oldId)
+    assert.ok(old.resolved_at)
+    assert.equal(old.resolution, 'noop')
+    assert.equal(old.detail, `${AUTO_RESOLVE_PREFIX}stale_row`)
+    const young = row(youngId)
+    assert.equal(young.resolved_at, null)
+    assert.equal(young.resolution, null)
+  })
+
+  it('auto-invalidates near_dup cosine >= 0.95 (older loser) and skips below the bar', () => {
+    const hot = storePair('dup-hot')
+    const cold = storePair('dup-cold')
+    memory.db
+      .prepare(`UPDATE entries SET created_at = ? WHERE id = ?`)
+      .run('2020-01-01T00:00:00.000Z', hot.a.id)
+    memory.db
+      .prepare(`UPDATE entries SET created_at = ? WHERE id = ?`)
+      .run('2021-01-01T00:00:00.000Z', hot.b.id)
+    const hotId = enqueue('near_dup', hot.a.id, hot.b.id, 'cosine=0.95').id
+    const coldId = enqueue(
+      'near_dup',
+      cold.a.id,
+      cold.b.id,
+      `cosine=${SEMANTIC_DUP_AUTO - 0.02}`,
+    ).id
+
+    const counts = autoResolveQueue(memory.db)
+    assert.equal(counts.semanticDups, 1)
+    const q = row(hotId)
+    assert.ok(q.resolved_at)
+    assert.equal(q.resolution, 'invalidate')
+    assert.equal(q.detail, `${AUTO_RESOLVE_PREFIX}semantic_dup cosine=0.95`)
+    assert.ok(entry(hot.a.id).invalid_at, 'older entry must be tombstoned')
+    assert.equal(entry(hot.a.id).invalidated_by, hot.b.id)
+    assert.equal(entry(hot.b.id).invalid_at, null)
+    assert.equal(row(coldId).resolved_at, null)
+    assert.equal(entry(cold.a.id).invalid_at, null)
+    assert.equal(entry(cold.b.id).invalid_at, null)
+  })
+
+  it('does not auto-invalidate a jaccard near_dup even at 0.99', () => {
+    const { a, b } = storePair('jac')
+    const qid = enqueue('near_dup', a.id, b.id, 'jaccard=0.99').id
+    const counts = autoResolveQueue(memory.db)
+    assert.equal(counts.semanticDups, 0)
+    assert.equal(row(qid).resolved_at, null)
+    assert.equal(entry(a.id).invalid_at, null)
+  })
+
+  it('does not auto-invalidate a contradiction even with cosine above the bar', () => {
+    const { a, b } = storePair('contra')
+    const qid = enqueue(
+      'contradiction',
+      a.id,
+      b.id,
+      'shared entities: Foo; cosine=0.99',
+    ).id
+    const counts = autoResolveQueue(memory.db)
+    assert.equal(counts.semanticDups, 0)
+    assert.equal(row(qid).resolved_at, null)
+    assert.equal(entry(a.id).invalid_at, null)
+    assert.equal(entry(b.id).invalid_at, null)
+  })
+
+  it('dead pair with high cosine noops, it does not invalidate', () => {
+    const { a, b } = storePair('dead-cos')
+    memory.db
+      .prepare(`UPDATE entries SET created_at = ? WHERE id = ?`)
+      .run('2020-01-01T00:00:00.000Z', a.id)
+    const qid = enqueue('near_dup', a.id, b.id, 'cosine=0.99').id
+    memory.invalidateEntry(a.id, { reason: 'already gone' })
+
+    const counts = autoResolveQueue(memory.db)
+    assert.equal(counts.semanticDups, 0)
+    assert.equal(counts.deadPairs, 1)
+    const q = row(qid)
+    assert.equal(q.resolution, 'noop')
+    assert.equal(q.detail, `${AUTO_RESOLVE_PREFIX}dead_pair`)
+    assert.equal(entry(b.id).invalid_at, null)
+  })
+
+  it('auto-expires live run entries older than 30 days and leaves younger runs', () => {
+    const oldRun = memory.store({
+      type: 'run',
+      title: 'old run note unique ancient',
+      body: 'ran something long ago ancientmarker',
+    })
+    const youngRun = memory.store({
+      type: 'run',
+      title: 'young run note unique recent',
+      body: 'ran something recently recentmarker',
+    })
+    memory.db
+      .prepare(`UPDATE entries SET created_at = ? WHERE id = ?`)
+      .run(daysAgo(ANCIENT_RUN_DAYS + 1), oldRun.id)
+    memory.db
+      .prepare(`UPDATE entries SET created_at = ? WHERE id = ?`)
+      .run(daysAgo(ANCIENT_RUN_DAYS - 1), youngRun.id)
+
+    const counts = autoResolveQueue(memory.db)
+    assert.equal(counts.ancientRuns, 1)
+    const old = entry(oldRun.id)
+    assert.ok(old.invalid_at)
+    assert.equal(old.invalidated_by, 'janitor')
+    assert.equal(old.invalidation_reason, `${AUTO_RESOLVE_PREFIX}ancient_run`)
+    assert.equal(entry(youngRun.id).invalid_at, null)
+  })
+
+  it('tombstones, never deletes', () => {
+    const { a, b } = storePair('keep')
+    memory.db
+      .prepare(`UPDATE entries SET created_at = ? WHERE id = ?`)
+      .run('2020-01-01T00:00:00.000Z', a.id)
+    enqueue('near_dup', a.id, b.id, 'cosine=0.97')
+    const run = memory.store({ type: 'run', title: 'ancient run keep', body: 'keep this row' })
+    memory.db
+      .prepare(`UPDATE entries SET created_at = ? WHERE id = ?`)
+      .run(daysAgo(ANCIENT_RUN_DAYS + 5), run.id)
+
+    runJanitor(memory.db)
+
+    assert.equal(entry(a.id)?.id, a.id)
+    assert.ok(entry(a.id).invalid_at)
+    assert.equal(entry(b.id)?.id, b.id)
+    assert.equal(entry(run.id)?.id, run.id)
+    assert.ok(entry(run.id).invalid_at)
+    assert.equal(memory.db.prepare(`SELECT COUNT(*) AS n FROM entries`).get().n, 3)
+  })
+
+  it('runJanitor applies auto-resolve inside the boot/interval pass', () => {
+    const { a, b } = storePair('boot')
+    enqueue('near_dup', a.id, b.id, 'jaccard=0.5')
+    memory.invalidateEntry(b.id, { reason: 'test' })
+    runJanitor(memory.db)
+    const q = memory.db.prepare(`SELECT * FROM review_queue ORDER BY id DESC LIMIT 1`).get()
+    assert.ok(q.resolved_at)
+    assert.equal(q.resolution, 'noop')
+    assert.equal(q.detail, `${AUTO_RESOLVE_PREFIX}dead_pair`)
   })
 })
