@@ -91,9 +91,9 @@
   height: 30px;
   padding: 2px;
   gap: 2px;
-  border: 1px solid var(--border);
+  border: 1px solid transparent;
+  background: transparent;
   border-radius: var(--radius-sm);
-  background: var(--bg-elevated);
 }
 
 .paneTab {
@@ -153,7 +153,7 @@
   height: 30px;
   padding: 0;
   border-radius: var(--radius-sm);
-  border: 1px solid var(--border);
+  border: 1px solid transparent;
   background: transparent;
   color: var(--text-muted);
   transition:
@@ -178,7 +178,7 @@
 
 .iconBtn[data-active="true"] {
   color: var(--info-fg-strong);
-  border-color: var(--blue-border);
+  border-color: transparent;
   background: var(--blue-soft);
 }
 
@@ -470,7 +470,7 @@ button.project:focus-visible {
   height: 30px;
   padding: 0;
   border-radius: var(--radius-sm);
-  border: 1px solid var(--border);
+  border: 1px solid transparent;
   background: transparent;
   color: var(--text-muted);
   transition:
@@ -595,7 +595,7 @@ button.project:focus-visible {
   height: 30px;
   padding: 0 12px;
   border-radius: var(--radius-sm);
-  border: 1px solid var(--border);
+  border: 1px solid transparent;
   background: transparent;
   color: var(--text-muted);
   font-size: 12px;
@@ -632,7 +632,7 @@ a.btn {
 
 .btn[data-active="true"] {
   color: var(--info-fg-strong);
-  border-color: var(--blue-border);
+  border-color: transparent;
   background: var(--blue-soft);
 }
 

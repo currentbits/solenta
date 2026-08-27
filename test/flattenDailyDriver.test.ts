@@ -1,0 +1,71 @@
+/**
+ * Daily-driver flatten: in-page grouping is type/space/hover, not card+border.
+ * Spec: docs/superpowers/specs/2026-08-27-flatten-daily-driver-ui-design.md
+ *
+ * Run: node --import=./test/support/disable-grok-mcp.mjs --import=./test/support/render.mjs --experimental-strip-types --test --test-timeout=20000 test/flattenDailyDriver.test.ts
+ */
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
+import { describe, it } from "node:test";
+import { fileURLToPath } from "node:url";
+
+const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
+
+export function loadCss(rel: string): string {
+  return fs
+    .readFileSync(path.join(ROOT, rel), "utf8")
+    .replace(/\/\*[\s\S]*?\*\//g, "");
+}
+
+export function ruleBody(css: string, className: string): string {
+  const re = new RegExp(`\\.${className}(?![\\w-])\\s*\\{`);
+  const match = re.exec(css);
+  if (!match) return "";
+  const brace = match.index + match[0].length - 1;
+  const end = css.indexOf("}", brace);
+  if (end < 0) return "";
+  return css.slice(brace + 1, end);
+}
+
+function hasTileBorder(body: string): boolean {
+  return /border:\s*1px solid var\(--border\)/.test(body);
+}
+
+function hasCardFill(body: string): boolean {
+  return /background:\s*var\(--card\)/.test(body);
+}
+
+describe("ghost chrome", () => {
+  it("icon, menu, Views, and pane-toggle buttons are not 1px tiles", () => {
+    const thread = loadCss("src/components/ThreadView.module.css");
+    const app = loadCss("src/App.module.css");
+    const agents = loadCss("src/components/AgentsPanel.module.css");
+
+    for (const [file, css, name] of [
+      ["ThreadView", thread, "iconBtn"],
+      ["ThreadView", thread, "menuBtn"],
+      ["ThreadView", thread, "paneTabs"],
+      ["ThreadView", thread, "btn"],
+      ["App", app, "agentsToggle"],
+      ["AgentsPanel", agents, "collapseBtn"],
+    ] as const) {
+      const body = ruleBody(css, name);
+      assert.ok(body, `${file} .${name} must exist`);
+      assert.equal(
+        hasTileBorder(body),
+        false,
+        `${file} .${name} must not use border: 1px solid var(--border)`,
+      );
+    }
+
+    const active =
+      /\.iconBtn\[data-active="true"\]\s*\{([^}]*)\}/.exec(thread)?.[1] ?? "";
+    assert.ok(active, ".iconBtn[data-active=true] must exist");
+    assert.doesNotMatch(
+      active,
+      /border-color:\s*var\(--blue-border\)/,
+      "selected chrome uses fill, not an outline",
+    );
+  });
+});
