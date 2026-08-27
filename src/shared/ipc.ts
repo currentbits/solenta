@@ -2643,6 +2643,14 @@ export interface MemoryReviewItem {
   b: { id: string; title: string };
 }
 
+/** Last-7-day auto-resolution counts from review_queue rows with `auto:` details. */
+export interface MemoryAutoResolved {
+  last7Days: number;
+  invalidated: number;
+  kept: number;
+  byRule: Record<string, number>;
+}
+
 /** Read-only consolidation report from GET /api/maintenance. */
 export interface MemoryMaintenanceReport {
   queue: {
@@ -2650,6 +2658,7 @@ export interface MemoryMaintenanceReport {
     oldestAgeDays: number;
     items: MemoryReviewItem[];
   };
+  autoResolved: MemoryAutoResolved;
   nearDupes: unknown[];
   agingRuns: unknown[];
   fatConventions: unknown[];

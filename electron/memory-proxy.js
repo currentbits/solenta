@@ -108,6 +108,27 @@ function normalizePairSide(raw) {
 
 /**
  * @param {unknown} raw
+ * @returns {import('../src/shared/ipc').MemoryAutoResolved}
+ */
+function normalizeAutoResolved(raw) {
+  const o = raw && typeof raw === "object" ? raw : {};
+  const src = o.byRule && typeof o.byRule === "object" ? o.byRule : {};
+  /** @type {Record<string, number>} */
+  const byRule = {};
+  for (const [key, value] of Object.entries(src)) {
+    const n = Number(value);
+    if (key && Number.isFinite(n) && n > 0) byRule[key] = n;
+  }
+  return {
+    last7Days: Number(o.last7Days) || 0,
+    invalidated: Number(o.invalidated) || 0,
+    kept: Number(o.kept) || 0,
+    byRule,
+  };
+}
+
+/**
+ * @param {unknown} raw
  * @returns {import('../src/shared/ipc').MemoryMaintenanceReport}
  */
 function normalizeMaintenance(raw) {
@@ -135,6 +156,7 @@ function normalizeMaintenance(raw) {
         };
       }),
     },
+    autoResolved: normalizeAutoResolved(o.autoResolved),
     nearDupes: Array.isArray(o.nearDupes) ? o.nearDupes : [],
     agingRuns: Array.isArray(o.agingRuns) ? o.agingRuns : [],
     fatConventions: Array.isArray(o.fatConventions) ? o.fatConventions : [],

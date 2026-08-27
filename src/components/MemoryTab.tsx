@@ -3,6 +3,7 @@ import type {
   AgentConfigDoctorReport,
   AgentConfigPreview,
   AgentConfigWriteResult,
+  MemoryAutoResolved,
   MemoryCitation,
   MemoryEntryInfo,
   MemoryMaintenanceReport,
@@ -115,6 +116,16 @@ function ageFromIso(iso: string, now = Date.now()): string {
 function errorMessage(err: unknown): string {
   if (err instanceof Error && err.message) return err.message;
   return String(err);
+}
+
+function autoResolvedActivity(auto: MemoryAutoResolved): string | null {
+  if (auto.last7Days <= 0) return null;
+  const head = `${auto.last7Days} pair${auto.last7Days === 1 ? "" : "s"} auto-resolved this week: ${auto.invalidated} invalidated, ${auto.kept} kept`;
+  const rules = Object.entries(auto.byRule)
+    .filter(([, n]) => n > 0)
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .map(([rule, n]) => `${rule.replace(/_/g, " ")} ${n}`);
+  return rules.length ? `${head} · ${rules.join(", ")}` : head;
 }
 
 function gradeClass(grade: AgentConfigDoctorReport["grade"]): string {
@@ -378,15 +389,18 @@ function ReviewQueueCard({
 
   const items: MemoryReviewItem[] = report?.queue.items ?? [];
   const open = report?.queue.open ?? 0;
-  if (!error && report && open === 0) return null;
+  const activity = report?.autoResolved
+    ? autoResolvedActivity(report.autoResolved)
+    : null;
+  if (!error && report && open === 0 && !activity) return null;
 
   return (
     <section className={styles.doctor} data-review-queue="">
       <div className={styles.doctorHead}>
         <span className={styles.doctorLabel}>Review queue</span>
-        {report ? (
+        {open > 0 ? (
           <span className={styles.doctorFileGrade}>
-            {open} open
+            {open} need{open === 1 ? "s" : ""} your call
           </span>
         ) : null}
       </div>
@@ -395,8 +409,13 @@ function ReviewQueueCard({
           {error}
         </p>
       ) : null}
+      {activity ? (
+        <p className={styles.doctorMeta} data-review-activity="">
+          {activity}
+        </p>
+      ) : null}
       {items.length > 0 ? (
-        <ul className={styles.queueList}>
+        <ul className={styles.queueList} data-needs-your-call="">
           {items.map((item) => (
             <li key={item.id} className={styles.queueItem}>
               <p className={styles.queuePair}>

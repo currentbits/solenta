@@ -2425,6 +2425,7 @@ function buildDevCoder(): CoderApi {
       }): Promise<MemoryMaintenanceReport> {
         return {
           queue: { open: 0, oldestAgeDays: 0, items: [] },
+          autoResolved: { last7Days: 0, invalidated: 0, kept: 0, byRule: {} },
           nearDupes: [],
           agingRuns: [],
           fatConventions: [],

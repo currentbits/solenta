@@ -166,6 +166,7 @@ function startFakeServer(opts) {
                 },
               ],
             },
+            autoResolved: { last7Days: 0, invalidated: 0, kept: 0, byRule: {} },
             nearDupes: [],
             agingRuns: [],
             fatConventions: [],
@@ -510,6 +511,8 @@ describe("memory-proxy", () => {
     assert.equal(report.queue.open, 1);
     assert.equal(report.queue.items[0].createdAt, "2026-08-01T00:00:00.000Z");
     assert.equal(report.queue.items[0].a.title, "Alpha");
+    assert.equal(report.autoResolved.last7Days, 0);
+    assert.deepEqual(report.autoResolved.byRule, {});
     const res = await p.resolve({ id: 7, resolution: "noop" });
     assert.equal(res.ok, true);
     assert.equal(captured.body.resolution, "noop");

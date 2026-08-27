@@ -343,7 +343,7 @@ export function buildServer(memory, opts = {}) {
     'memory_maintenance',
     {
       description:
-        'Read-only consolidation report: open review queue depth and oldest age, near-duplicate pairs, aging run notes (>7d), oversized conventions (>1500 chars). Each item includes a one-line instruction for resolving via normal tools. Makes no changes.',
+        'Read-only consolidation report: open review queue (ambiguous pairs that still need a call), last-7-day auto-resolution counts by rule, near-duplicate pairs, aging run notes (>7d), oversized conventions (>1500 chars). Each open item includes a one-line instruction for resolving via normal tools. Makes no changes.',
       inputSchema: {
         project: z.string().optional(),
       },

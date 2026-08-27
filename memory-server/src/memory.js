@@ -8,7 +8,15 @@ import {
   blobToFloat,
   EMBED_MAX_CHARS,
 } from './embedder.js'
-import { contentTokens, jaccard, queueReview, semanticNeighbors, SEMANTIC_DUP } from './review.js'
+import {
+  contentTokens,
+  jaccard,
+  queueReview,
+  semanticNeighbors,
+  SEMANTIC_DUP,
+  AUTO_RESOLVE_PREFIX,
+  autoResolveRule,
+} from './review.js'
 import { canonicalProject } from './project-key.js'
 import { agentTrust, TRUST_SUSPECT } from './trust.js'
 import { rejectInjectedMemory } from './guardrails-scan.js'
@@ -19,7 +27,7 @@ import {
   verifyFileCitations,
 } from './citations.js'
 
-export { contentTokens, jaccard, queueReview }
+export { contentTokens, jaccard, queueReview, AUTO_RESOLVE_PREFIX, autoResolveRule }
 
 const ENTRY_TYPES = new Set(['knowledge', 'task', 'convention', 'run', 'strategy'])
 const TASK_STATUSES = new Set(['active', 'done', 'abandoned'])
@@ -54,6 +62,7 @@ const AGING_RUN_DAYS = 7
 const DISTILL_RUN_DAYS = 14
 const FAT_CONVENTION_CHARS = 1500
 const MAINTENANCE_LIST_LIMIT = 20
+const AUTO_RESOLVE_DAYS = 7
 const DISTILL_NOTES_LIMIT = 5
 // Trust map is cheap to rebuild (one GROUP BY) and must not be per-row.
 // Feedback is the evidence that moves the number, so it drops the cache;
@@ -1835,6 +1844,32 @@ export class Memory {
     const agents = agentTrust(this.db)
     const suspect = agents.filter((a) => a.trust < TRUST_SUSPECT)
 
+    const weekAgo = new Date(now - AUTO_RESOLVE_DAYS * 86_400_000).toISOString()
+    const autoRows = this.db
+      .prepare(
+        `SELECT q.resolution, q.detail
+         FROM review_queue q
+         JOIN entries a ON a.id = q.entry_a
+         JOIN entries b ON b.id = q.entry_b
+         WHERE q.resolved_at IS NOT NULL
+           AND q.resolved_at >= ?
+           AND q.detail LIKE '${AUTO_RESOLVE_PREFIX}%'
+           ${queueScope}`,
+      )
+      .all(weekAgo, project, project, project)
+    const byRule = {}
+    let invalidated = 0
+    let kept = 0
+    let last7Days = 0
+    for (const r of autoRows) {
+      const rule = autoResolveRule(r.detail)
+      if (!rule) continue
+      last7Days += 1
+      byRule[rule] = (byRule[rule] || 0) + 1
+      if (r.resolution === 'invalidate') invalidated += 1
+      else kept += 1
+    }
+
     return {
       queue: {
         open,
@@ -1842,6 +1877,15 @@ export class Memory {
         items: openItems,
         instruction: 'Resolve open items with memory_resolve {id, resolution}.',
       },
+      autoResolved: {
+        last7Days,
+        invalidated,
+        kept,
+        byRule,
+      },
+      // nearDupes / agingRuns / fatConventions stay in the report for MCP
+      // agents and the consolidation pass. The Memory tab does not render
+      // them — no new manual UI for work automation already handles.
       nearDupes,
       agingRuns,
       fatConventions,

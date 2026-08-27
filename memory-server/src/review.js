@@ -17,6 +17,26 @@ export const SEMANTIC_DUP = 0.9
 export const SEMANTIC_RELATED = 0.6
 
 /**
+ * Prefix janitor auto-resolution writes into review_queue.detail
+ * (`auto:dead_pair`, `auto:semantic_dup cosine=0.97`). Lives here so janitor
+ * and maintenance can share it without a memory.js cycle.
+ */
+export const AUTO_RESOLVE_PREFIX = 'auto:'
+
+/**
+ * Rule name from an auto-resolution detail. Null for hand-resolved rows.
+ * @param {unknown} detail
+ * @returns {string | null}
+ */
+export function autoResolveRule(detail) {
+  if (typeof detail !== 'string' || !detail.startsWith(AUTO_RESOLVE_PREFIX)) return null
+  const rest = detail.slice(AUTO_RESOLVE_PREFIX.length)
+  const cut = rest.search(/[\s,;]/)
+  const rule = (cut === -1 ? rest : rest.slice(0, cut)).trim()
+  return /^[a-z][a-z0-9_]*$/.test(rule) ? rule : null
+}
+
+/**
  * Cosine neighbours of `vec` among live entries that already have a vector,
  * strongest first. Same-project only, matching every other scoped read.
  *

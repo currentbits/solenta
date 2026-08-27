@@ -17,6 +17,7 @@ import type {
   AgentConfigDoctorReport,
   AgentConfigPreview,
   MemoryEntryInfo,
+  MemoryMaintenanceReport,
 } from "../src/shared/ipc";
 
 const LONG_BODY =
@@ -618,6 +619,33 @@ describe("MemoryTab config doctor", () => {
   });
 });
 
+function emptyAutoResolved(): MemoryMaintenanceReport["autoResolved"] {
+  return { last7Days: 0, invalidated: 0, kept: 0, byRule: {} };
+}
+
+function maintenanceReport(
+  over: Partial<MemoryMaintenanceReport> = {},
+): MemoryMaintenanceReport {
+  return {
+    queue: { open: 0, oldestAgeDays: 0, items: [] },
+    autoResolved: emptyAutoResolved(),
+    nearDupes: [],
+    agingRuns: [],
+    fatConventions: [],
+    trust: { agents: [], suspect: [] },
+    ...over,
+  };
+}
+
+const QUEUE_ITEM = {
+  id: 7,
+  kind: "near_dup" as const,
+  detail: "overlap 0.5",
+  createdAt: "2026-08-01T00:00:00.000Z",
+  a: { id: "a1", title: "Swift tests need DEVELOPER_DIR" },
+  b: { id: "b1", title: "Swift tests need DEVELOPER_DIR set" },
+};
+
 describe("MemoryTab review queue", () => {
   it("is absent when no maintenance callback is wired", async () => {
     const m = await mount(tab());
@@ -625,7 +653,24 @@ describe("MemoryTab review queue", () => {
     m.unmount();
   });
 
-  it("lists an open pair and resolves keep-both", async () => {
+  it("hides the card when the queue is empty and nothing auto-resolved", async () => {
+    const m = await mount(
+      <MemoryTab
+        projectSlug="coder"
+        searchMemory={async () => []}
+        recentMemory={async () => []}
+        getMemory={async (input) => entry({ id: input.id })}
+        updateMemory={async () => ({ id: "x" })}
+        removeMemory={async () => {}}
+        storeMemory={async () => ({ id: "x" })}
+        maintenanceMemory={async () => maintenanceReport()}
+      />,
+    );
+    assert.equal(m.query("[data-review-queue]"), null);
+    m.unmount();
+  });
+
+  it("lists an open pair as needing a call and resolves keep-both", async () => {
     const resolved: Array<{ id: number; resolution: string }> = [];
     const m = await mount(
       <MemoryTab
@@ -636,26 +681,15 @@ describe("MemoryTab review queue", () => {
         updateMemory={async () => ({ id: "x" })}
         removeMemory={async () => {}}
         storeMemory={async () => ({ id: "x" })}
-        maintenanceMemory={async () => ({
-          queue: {
-            open: 1,
-            oldestAgeDays: 2,
-            items: [
-              {
-                id: 7,
-                kind: "near_dup",
-                detail: "overlap 0.5",
-                createdAt: "2026-08-01T00:00:00.000Z",
-                a: { id: "a1", title: "Swift tests need DEVELOPER_DIR" },
-                b: { id: "b1", title: "Swift tests need DEVELOPER_DIR set" },
-              },
-            ],
-          },
-          nearDupes: [],
-          agingRuns: [],
-          fatConventions: [],
-          trust: { agents: [], suspect: [] },
-        })}
+        maintenanceMemory={async () =>
+          maintenanceReport({
+            queue: {
+              open: 1,
+              oldestAgeDays: 2,
+              items: [QUEUE_ITEM],
+            },
+          })
+        }
         resolveMemory={async (input) => {
           resolved.push(input);
           return { ok: true, id: input.id, resolution: input.resolution };
@@ -664,10 +698,136 @@ describe("MemoryTab review queue", () => {
     );
     const card = m.query("[data-review-queue]");
     assert.ok(card, "queue card must render");
-    assert.ok(card.textContent?.includes("1 open"));
+    assert.ok(
+      card.textContent?.includes("1 needs your call"),
+      `expected needs-your-call badge, got: ${card.textContent}`,
+    );
+    assert.equal(card.textContent?.includes("1 open"), false);
+    assert.ok(m.query("[data-needs-your-call]"), "remaining pairs sit in the call list");
     assert.ok(card.textContent?.includes("Swift tests need DEVELOPER_DIR"));
+    assert.ok(m.byText("Keep both"));
+    assert.ok(m.byText("Mark reviewed"));
+    assert.ok(m.byText("Invalidate older"));
     await m.click(m.byText("Keep both"));
     assert.deepEqual(resolved, [{ id: 7, resolution: "noop" }]);
+    m.unmount();
+  });
+
+  it("renders the auto-resolution activity line and keeps the queue buttons", async () => {
+    const resolved: Array<{ id: number; resolution: string }> = [];
+    const m = await mount(
+      <MemoryTab
+        projectSlug="coder"
+        searchMemory={async () => []}
+        recentMemory={async () => []}
+        getMemory={async (input) => entry({ id: input.id })}
+        updateMemory={async () => ({ id: "x" })}
+        removeMemory={async () => {}}
+        storeMemory={async () => ({ id: "x" })}
+        maintenanceMemory={async () =>
+          maintenanceReport({
+            queue: {
+              open: 1,
+              oldestAgeDays: 2,
+              items: [QUEUE_ITEM],
+            },
+            autoResolved: {
+              last7Days: 3,
+              invalidated: 2,
+              kept: 1,
+              byRule: { semantic_dup: 2, dead_pair: 1 },
+            },
+          })
+        }
+        resolveMemory={async (input) => {
+          resolved.push(input);
+          return { ok: true, id: input.id, resolution: input.resolution };
+        }}
+      />,
+    );
+    const line = m.query("[data-review-activity]");
+    assert.ok(line, "activity line must render");
+    assert.equal(
+      line.textContent,
+      "3 pairs auto-resolved this week: 2 invalidated, 1 kept · semantic dup 2, dead pair 1",
+    );
+    const card = m.query("[data-review-queue]");
+    assert.ok(card?.textContent?.includes("1 needs your call"));
+    assert.ok(m.query("[data-needs-your-call]"));
+    await m.click(m.byText("Invalidate older"));
+    assert.deepEqual(resolved, [{ id: 7, resolution: "invalidate" }]);
+    m.unmount();
+  });
+
+  it("shows the activity line when the queue is empty", async () => {
+    const m = await mount(
+      <MemoryTab
+        projectSlug="coder"
+        searchMemory={async () => []}
+        recentMemory={async () => []}
+        getMemory={async (input) => entry({ id: input.id })}
+        updateMemory={async () => ({ id: "x" })}
+        removeMemory={async () => {}}
+        storeMemory={async () => ({ id: "x" })}
+        maintenanceMemory={async () =>
+          maintenanceReport({
+            autoResolved: {
+              last7Days: 1,
+              invalidated: 1,
+              kept: 0,
+              byRule: { semantic_dup: 1 },
+            },
+          })
+        }
+      />,
+    );
+    const card = m.query("[data-review-queue]");
+    assert.ok(card, "activity-only card must still render");
+    assert.equal(m.query("[data-needs-your-call]"), null);
+    assert.equal(
+      m.query("[data-review-activity]")?.textContent,
+      "1 pair auto-resolved this week: 1 invalidated, 0 kept · semantic dup 1",
+    );
+    assert.equal(card.textContent?.includes("needs your call"), false);
+    m.unmount();
+  });
+
+  it("does not render report-only nearDupes, agingRuns, or fatConventions", async () => {
+    const m = await mount(
+      <MemoryTab
+        projectSlug="coder"
+        searchMemory={async () => []}
+        recentMemory={async () => []}
+        getMemory={async (input) => entry({ id: input.id })}
+        updateMemory={async () => ({ id: "x" })}
+        removeMemory={async () => {}}
+        storeMemory={async () => ({ id: "x" })}
+        maintenanceMemory={async () =>
+          maintenanceReport({
+            queue: {
+              open: 1,
+              oldestAgeDays: 0,
+              items: [QUEUE_ITEM],
+            },
+            nearDupes: [
+              {
+                a: { id: "x", title: "Near dupe secret title" },
+                b: { id: "y", title: "y" },
+              },
+            ],
+            agingRuns: [{ id: "run-secret", title: "Aging run secret title" }],
+            fatConventions: [
+              { id: "fat-secret", title: "Fat convention secret title" },
+            ],
+          })
+        }
+      />,
+    );
+    const text = m.text();
+    assert.equal(text.includes("Near dupe secret title"), false);
+    assert.equal(text.includes("Aging run secret title"), false);
+    assert.equal(text.includes("Fat convention secret title"), false);
+    assert.ok(m.query("[data-needs-your-call]"));
     m.unmount();
   });
 });

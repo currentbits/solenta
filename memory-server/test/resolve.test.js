@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { Memory } from '../src/memory.js'
+import { Memory, AUTO_RESOLVE_PREFIX } from '../src/memory.js'
 
 describe('memory_resolve + maintenance + invalidation hides loser', () => {
   let dir
@@ -113,6 +113,11 @@ describe('memory_resolve + maintenance + invalidation hides loser', () => {
     assert.equal(typeof report.queue.oldestAgeDays, 'number')
     assert.ok(Array.isArray(report.queue.items))
     assert.match(report.queue.instruction, /memory_resolve/)
+    assert.ok(report.autoResolved)
+    assert.equal(report.autoResolved.last7Days, 0)
+    assert.equal(report.autoResolved.invalidated, 0)
+    assert.equal(report.autoResolved.kept, 0)
+    assert.deepEqual(report.autoResolved.byRule, {})
     assert.ok(Array.isArray(report.nearDupes))
     assert.ok(report.nearDupes.length >= 1)
     assert.match(report.nearDupes[0].instruction, /memory_supersede|supersede/i)
@@ -121,6 +126,92 @@ describe('memory_resolve + maintenance + invalidation hides loser', () => {
     assert.ok(Array.isArray(report.fatConventions))
     assert.ok(report.fatConventions.some((r) => r.chars > 1500))
     assert.match(report.fatConventions[0].instruction, /memory_supersede/)
+  })
+
+  function insertResolved({ resolution, detail, at, project }) {
+    const stamp = at ?? new Date().toISOString()
+    const a = memory.store({
+      type: 'knowledge',
+      title: `resolved a ${stamp} ${detail}`,
+      body: `unique resolved body a ${stamp} ${detail} extra words`,
+      project,
+      force: true,
+    })
+    const b = memory.store({
+      type: 'knowledge',
+      title: `resolved b ${stamp} ${detail}`,
+      body: `unique resolved body b ${stamp} ${detail} extra words`,
+      project,
+      force: true,
+    })
+    const [left, right] = a.id < b.id ? [a.id, b.id] : [b.id, a.id]
+    memory.db
+      .prepare(
+        `INSERT INTO review_queue (kind, entry_a, entry_b, detail, created_at, resolved_at, resolution)
+         VALUES ('near_dup', ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(left, right, detail, stamp, stamp, resolution)
+  }
+
+  it('maintenance autoResolved counts rule-named rows from the last 7 days', () => {
+    const now = Date.parse('2026-08-20T00:00:00.000Z')
+    insertResolved({
+      resolution: 'invalidate',
+      detail: `${AUTO_RESOLVE_PREFIX}semantic_dup cosine=0.97`,
+      at: '2026-08-18T00:00:00.000Z',
+    })
+    insertResolved({
+      resolution: 'invalidate',
+      detail: `${AUTO_RESOLVE_PREFIX}semantic_dup`,
+      at: '2026-08-19T00:00:00.000Z',
+    })
+    insertResolved({
+      resolution: 'noop',
+      detail: `${AUTO_RESOLVE_PREFIX}dead_pair`,
+      at: '2026-08-19T12:00:00.000Z',
+    })
+    insertResolved({
+      resolution: 'noop',
+      detail: `${AUTO_RESOLVE_PREFIX}stale_row`,
+      at: '2026-08-01T00:00:00.000Z',
+    })
+    insertResolved({
+      resolution: 'noop',
+      detail: 'jaccard=0.5',
+      at: '2026-08-19T00:00:00.000Z',
+    })
+
+    const report = memory.maintenance({ now })
+    assert.equal(report.autoResolved.last7Days, 3)
+    assert.equal(report.autoResolved.invalidated, 2)
+    assert.equal(report.autoResolved.kept, 1)
+    assert.equal(report.autoResolved.byRule.semantic_dup, 2)
+    assert.equal(report.autoResolved.byRule.dead_pair, 1)
+    assert.equal(report.autoResolved.byRule.stale_row, undefined)
+  })
+
+  it('maintenance autoResolved is project-scoped', () => {
+    const now = Date.parse('2026-08-20T00:00:00.000Z')
+    insertResolved({
+      resolution: 'noop',
+      detail: `${AUTO_RESOLVE_PREFIX}dead_pair`,
+      at: '2026-08-19T00:00:00.000Z',
+      project: 'alpha',
+    })
+    insertResolved({
+      resolution: 'invalidate',
+      detail: `${AUTO_RESOLVE_PREFIX}semantic_dup`,
+      at: '2026-08-19T00:00:00.000Z',
+      project: 'beta',
+    })
+    const a = memory.maintenance({ now, project: 'alpha' })
+    assert.equal(a.autoResolved.last7Days, 1)
+    assert.equal(a.autoResolved.kept, 1)
+    assert.equal(a.autoResolved.byRule.dead_pair, 1)
+    const b = memory.maintenance({ now, project: 'beta' })
+    assert.equal(b.autoResolved.last7Days, 1)
+    assert.equal(b.autoResolved.invalidated, 1)
+    assert.equal(b.autoResolved.byRule.semantic_dup, 1)
   })
 
   it('bootstrap protocol mentions memory_maintenance / memory_resolve', () => {
