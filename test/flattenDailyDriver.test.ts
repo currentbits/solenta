@@ -136,3 +136,22 @@ describe("transcript", () => {
     assert.doesNotMatch(body, /border:\s*1px solid/);
   });
 });
+
+describe("composer", () => {
+  it("stays an object but does not float on a drop shadow", () => {
+    const css = loadCss("src/components/Composer.module.css");
+    const card = ruleBody(css, "card");
+    assert.ok(card, "composer .card must exist");
+    assert.match(card, /background:\s*var\(--card\)/);
+    assert.match(card, /border:\s*1px solid var\(--border\)/);
+    assert.doesNotMatch(card, /box-shadow:/);
+  });
+
+  it("pills are ghost chrome", () => {
+    const css = loadCss("src/components/Composer.module.css");
+    const pill = ruleBody(css, "pill");
+    assert.equal(hasTileBorder(pill), false);
+    const accent = ruleBody(css, "pillAccent");
+    assert.doesNotMatch(accent, /border-color:\s*var\(--blue-border\)/);
+  });
+});
