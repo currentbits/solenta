@@ -211,6 +211,22 @@ function validateAgentProfiles(raw) {
   });
 }
 
+/**
+ * Keep a default-orchestrator id only when it names a profile in `profiles`.
+ * Empty/junk/unknown → null. Used on disk read (heal) and after a profiles
+ * patch (drop a dangling default).
+ * @param {unknown} raw
+ * @param {Array<{ id: string }>} profiles
+ * @returns {string | null}
+ */
+function matchingProfileId(raw, profiles) {
+  if (typeof raw !== "string") return null;
+  const id = raw.trim();
+  if (!id) return null;
+  const list = Array.isArray(profiles) ? profiles : [];
+  return list.some((p) => p.id === id) ? id : null;
+}
+
 const SPEND_RETENTION_DAYS = 90;
 
 // Longest a save() may sit in memory before it hits disk.
@@ -327,6 +343,10 @@ const DEFAULT_PR_DIFF_CAP_LINES = 400;
  * agentProfiles: absent/junk/non-array → []; entries are healed
  * entry-by-entry (normalizeAgentProfiles), never throwing on a corrupt store.
  *
+ * defaultOrchestratorProfileId: absent/junk/empty → null. A string is kept
+ * only when it matches a surviving agentProfiles id; unknown ids heal to
+ * null so deleting a profile cannot leave a dangling default.
+ *
  * subagentPool: absent/junk → { defaultAlias: null, force: false, entries: [] }.
  * Invalid entries are dropped (normalizeSubagentPool).
  *
@@ -389,6 +409,7 @@ function normalizeSettings(raw) {
     quotaWaitAutoResume: true,
     prDiffCapLines: DEFAULT_PR_DIFF_CAP_LINES,
     agentProfiles: [],
+    defaultOrchestratorProfileId: null,
     subagentPool: { defaultAlias: null, force: false, entries: [] },
     otel: { endpoint: null, headers: {}, claudeMetrics: false },
     linearApiKey: null,
@@ -453,6 +474,11 @@ function normalizeSettings(raw) {
   settings.mcpServers = normalizeMcpServers(obj.mcpServers);
   settings.agentProfiles = normalizeAgentProfiles(
     /** @type {{ agentProfiles?: unknown }} */ (obj).agentProfiles,
+  );
+  settings.defaultOrchestratorProfileId = matchingProfileId(
+    /** @type {{ defaultOrchestratorProfileId?: unknown }} */ (obj)
+      .defaultOrchestratorProfileId,
+    settings.agentProfiles,
   );
   settings.subagentPool = normalizeSubagentPool(
     /** @type {{ subagentPool?: unknown }} */ (obj).subagentPool,
@@ -2595,6 +2621,7 @@ class Store {
       quotaWaitAutoResume: n.quotaWaitAutoResume,
       prDiffCapLines: n.prDiffCapLines,
       agentProfiles: n.agentProfiles,
+      defaultOrchestratorProfileId: n.defaultOrchestratorProfileId,
       subagentPool: n.subagentPool,
       otel: n.otel,
       linearApiKey: n.linearApiKey,
@@ -2700,6 +2727,25 @@ class Store {
       this.data.settings.agentProfiles = validateAgentProfiles(
         patch.agentProfiles,
       );
+      this.data.settings.defaultOrchestratorProfileId = matchingProfileId(
+        this.data.settings.defaultOrchestratorProfileId,
+        this.data.settings.agentProfiles,
+      );
+    }
+    if (Object.prototype.hasOwnProperty.call(patch, "defaultOrchestratorProfileId")) {
+      const v = patch.defaultOrchestratorProfileId;
+      if (v !== null && typeof v !== "string") {
+        throw new Error(
+          "defaultOrchestratorProfileId must be a string or null",
+        );
+      }
+      const id = matchingProfileId(v, this.data.settings.agentProfiles);
+      if (v != null && String(v).trim() && id == null) {
+        throw new Error(
+          "defaultOrchestratorProfileId must match an agent profile or be null",
+        );
+      }
+      this.data.settings.defaultOrchestratorProfileId = id;
     }
     if (Object.prototype.hasOwnProperty.call(patch, "subagentPool")) {
       this.data.settings.subagentPool = validateSubagentPool(

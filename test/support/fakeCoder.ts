@@ -297,6 +297,8 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
     onboardingSeen: true,
     uiScale: 1,
     webhook: { url: null, onDone: true, onFailed: true, onWaiting: true },
+    agentProfiles: [],
+    defaultOrchestratorProfileId: null,
     ...(opts.settings ?? {}),
   };
   const ALL_SKILL_TARGETS: SkillTarget[] = [
@@ -794,6 +796,44 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
             );
           }
           next.prDiffCapLines = v;
+        }
+        if (Object.prototype.hasOwnProperty.call(p, "agentProfiles")) {
+          const v = p.agentProfiles;
+          if (!Array.isArray(v)) {
+            calls.push({ channel: "settings.set", args: [patch] });
+            return Promise.reject(new Error("agentProfiles must be an array"));
+          }
+          next.agentProfiles = v;
+          if (
+            next.defaultOrchestratorProfileId &&
+            !v.some((row) => row.id === next.defaultOrchestratorProfileId)
+          ) {
+            next.defaultOrchestratorProfileId = null;
+          }
+        }
+        if (
+          Object.prototype.hasOwnProperty.call(p, "defaultOrchestratorProfileId")
+        ) {
+          const v = p.defaultOrchestratorProfileId;
+          if (v !== null && typeof v !== "string") {
+            calls.push({ channel: "settings.set", args: [patch] });
+            return Promise.reject(
+              new Error("defaultOrchestratorProfileId must be a string or null"),
+            );
+          }
+          const id = v != null ? v.trim() : "";
+          if (
+            id &&
+            !(next.agentProfiles ?? []).some((row) => row.id === id)
+          ) {
+            calls.push({ channel: "settings.set", args: [patch] });
+            return Promise.reject(
+              new Error(
+                "defaultOrchestratorProfileId must match an agent profile or be null",
+              ),
+            );
+          }
+          next.defaultOrchestratorProfileId = id || null;
         }
         if (Object.prototype.hasOwnProperty.call(p, "uiScale")) {
           const v = p.uiScale;

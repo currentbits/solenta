@@ -1175,4 +1175,72 @@ describe("App planboard wiring (#207)", () => {
       m.unmount();
     }
   });
+
+  it("applies the settings default orchestrator agent when the picker is Default (#725)", async () => {
+    const scout: AgentProfile = {
+      id: "p-scout",
+      name: "Cheap scout",
+      provider: "claude",
+      model: "claude-sonnet-4",
+      reasoningEffort: "low",
+      permissionMode: "plan",
+    };
+    const fake = createFakeCoder({
+      projects: [project({ id: "p1", path: "/tmp/repo" })],
+      threads: [thread({ id: "t1", projectId: "p1" })],
+      settings: {
+        agentProfiles: [scout],
+        defaultOrchestratorProfileId: "p-scout",
+      },
+      issueList: {
+        ok: true,
+        issues: [
+          {
+            number: 12,
+            title: "Fix login",
+            url: "https://github.com/owner/repo/issues/12",
+            state: "OPEN",
+            labels: ["plan:todo"],
+          },
+        ],
+      },
+    });
+    const m = await boot(fake);
+    try {
+      await m.flush();
+      const nav = m.query('[data-view-nav="planboard"]');
+      assert.ok(nav, "planboard nav button must exist");
+      await m.click(nav as HTMLElement);
+      await m.flush();
+
+      const mode = m.query("[data-plan-start-mode]") as HTMLSelectElement | null;
+      assert.ok(mode, "start-mode selector");
+      await inAct(() => {
+        mode.value = "orchestrator";
+        mode.dispatchEvent(new Event("change", { bubbles: true }));
+      });
+      const agent = m.query("[data-plan-orch-agent]") as HTMLSelectElement | null;
+      assert.ok(agent, "orchestrator agent field");
+      assert.equal(agent.value, "", "Default stays selected");
+
+      const start = m.query('[data-plan-start="12"]') as HTMLElement | null;
+      assert.ok(start, "the Todo card must offer Start task");
+      await m.click(start);
+      await m.flush();
+      await m.flush();
+
+      const setProvider = fake.only("threads.setProvider").args[0] as {
+        threadId: string;
+        provider: string;
+        model: string | null;
+      };
+      assert.deepEqual(setProvider, {
+        threadId: "t-new",
+        provider: "claude",
+        model: "claude-sonnet-4",
+      });
+    } finally {
+      m.unmount();
+    }
+  });
 });

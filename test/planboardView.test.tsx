@@ -447,6 +447,67 @@ describe("PlanboardView", () => {
     assert.equal(calls[0].agentProfileId, undefined);
     m.unmount();
   });
+
+  it("Start task applies the settings default when Orchestrator: Default is selected (#725)", async () => {
+    const calls: Array<Record<string, unknown>> = [];
+    const m = await mount(
+      <PlanboardView
+        projects={projects}
+        listIssues={async () => okResult}
+        onStartTask={async (input) => {
+          calls.push(input);
+          return { ok: true as const };
+        }}
+        agentProfiles={[SCOUT, GROK_WORKER]}
+        defaultOrchestratorProfileId="p-scout"
+        providers={[CLAUDE, GROK_UNAVAILABLE]}
+      />,
+    );
+    const mode = m.query("[data-plan-start-mode]") as HTMLSelectElement;
+    await inAct(() => {
+      mode.value = "orchestrator";
+      mode.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    const agent = m.query("[data-plan-orch-agent]") as HTMLSelectElement;
+    assert.equal(agent.value, "");
+    assert.ok(
+      agent.textContent?.includes("Default (Cheap scout)"),
+      `default option names the settings profile, got: ${agent.textContent}`,
+    );
+    await inAct(() => {
+      (m.query("[data-plan-start='1']") as HTMLElement).click();
+    });
+    assert.equal(calls[0].mode, "orchestrator");
+    assert.equal(calls[0].agentProfileId, "p-scout");
+    m.unmount();
+  });
+
+  it("Start task does not apply an unavailable settings default (#725)", async () => {
+    const calls: Array<Record<string, unknown>> = [];
+    const m = await mount(
+      <PlanboardView
+        projects={projects}
+        listIssues={async () => okResult}
+        onStartTask={async (input) => {
+          calls.push(input);
+          return { ok: true as const };
+        }}
+        agentProfiles={[GROK_WORKER]}
+        defaultOrchestratorProfileId="p-grok"
+        providers={[GROK_UNAVAILABLE]}
+      />,
+    );
+    const mode = m.query("[data-plan-start-mode]") as HTMLSelectElement;
+    await inAct(() => {
+      mode.value = "orchestrator";
+      mode.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    await inAct(() => {
+      (m.query("[data-plan-start='1']") as HTMLElement).click();
+    });
+    assert.equal(calls[0].agentProfileId, undefined);
+    m.unmount();
+  });
 });
 
 describe("PlanboardView review-load meter (#402)", () => {

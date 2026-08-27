@@ -1436,3 +1436,102 @@ describe("SettingsModal agent profile permission modes (issue #177)", () => {
     m.unmount();
   });
 });
+
+describe("SettingsModal default orchestrator profile (#725)", () => {
+  const scout = {
+    id: "p-scout",
+    name: "Cheap scout",
+    provider: "kimi",
+    model: "kimi-code/kimi-for-coding-highspeed",
+    reasoningEffort: null,
+    permissionMode: "default" as const,
+  };
+
+  it("shows a disabled default field until a profile exists", async () => {
+    const m = await mount(
+      modal({ initialPane: "agents", providers: [KIMI] }),
+    );
+    const select = m.query(
+      "[data-orch-default-profile]",
+    ) as HTMLSelectElement | null;
+    assert.ok(select, "default orchestrator field");
+    assert.equal(select.disabled, true);
+    assert.ok(
+      m.text().includes("Add a profile above"),
+      `empty copy, got: ${m.text()}`,
+    );
+    m.unmount();
+  });
+
+  it("pins a saved profile as the default orchestrator", async () => {
+    const patches: Partial<AppSettings>[] = [];
+    const m = await mount(
+      modal({
+        initialPane: "agents",
+        providers: [KIMI],
+        settings: {
+          dailyBudgetUsd: null,
+          autoSettleAfterDays: 3,
+          agentProfiles: [scout],
+          defaultOrchestratorProfileId: null,
+        } as AppSettings,
+        onSaveSettings: async (patch) => {
+          patches.push(patch);
+          return {
+            dailyBudgetUsd: null,
+            autoSettleAfterDays: 3,
+            agentProfiles: [scout],
+            defaultOrchestratorProfileId:
+              patch.defaultOrchestratorProfileId ?? null,
+          } as AppSettings;
+        },
+      }),
+    );
+    const select = m.query(
+      "[data-orch-default-profile]",
+    ) as HTMLSelectElement | null;
+    assert.ok(select, "default orchestrator field");
+    assert.equal(select.value, "");
+    await m.change(select, "p-scout");
+    assert.equal(patches.length, 1);
+    assert.equal(patches[0].defaultOrchestratorProfileId, "p-scout");
+    m.unmount();
+  });
+
+  it("clears the default when its profile is deleted", async () => {
+    const patches: Partial<AppSettings>[] = [];
+    const m = await mount(
+      modal({
+        initialPane: "agents",
+        providers: [KIMI],
+        settings: {
+          dailyBudgetUsd: null,
+          autoSettleAfterDays: 3,
+          agentProfiles: [scout],
+          defaultOrchestratorProfileId: "p-scout",
+        } as AppSettings,
+        onSaveSettings: async (patch) => {
+          patches.push(patch);
+          return {
+            dailyBudgetUsd: null,
+            autoSettleAfterDays: 3,
+            agentProfiles: patch.agentProfiles ?? [scout],
+            defaultOrchestratorProfileId:
+              patch.defaultOrchestratorProfileId === undefined
+                ? "p-scout"
+                : patch.defaultOrchestratorProfileId,
+          } as AppSettings;
+        },
+      }),
+    );
+    const del = Array.from(m.queryAll("button")).find(
+      (b) => (b.textContent || "").trim() === "Delete",
+    );
+    assert.ok(del, "Delete");
+    await m.click(del);
+    assert.equal(patches.length, 1);
+    assert.deepEqual(patches[0].agentProfiles, []);
+    assert.equal(patches[0].defaultOrchestratorProfileId, null);
+    m.unmount();
+  });
+});

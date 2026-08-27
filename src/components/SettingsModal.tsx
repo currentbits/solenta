@@ -79,7 +79,7 @@ const PANE_META: Record<
     label: "Agents",
     hint: "Named profiles for the composer, and the worker pool.",
     keywords:
-      "profile provider model effort permission pool worker alias candidate",
+      "profile provider model effort permission pool worker alias candidate orchestrator default",
   },
   memory: {
     label: "Memory",
@@ -674,7 +674,12 @@ export function SettingsModal({
     setSaving(true);
     setError(null);
     try {
-      await onSaveSettings({ agentProfiles: next });
+      const patch: Partial<AppSettings> = { agentProfiles: next };
+      const currentDefault = settings?.defaultOrchestratorProfileId ?? null;
+      if (currentDefault && !next.some((p) => p.id === currentDefault)) {
+        patch.defaultOrchestratorProfileId = null;
+      }
+      await onSaveSettings(patch);
       return true;
     } catch (err) {
       const msg =
@@ -1343,7 +1348,8 @@ export function SettingsModal({
             <h3 className={styles.sectionLabel}>Agent profiles</h3>
             <p className={styles.note}>
               Named combinations of provider, model, effort, and permission
-              mode. Pick one from the composer.
+              mode. Pick one from the composer or the Planboard orchestrator
+              picker.
             </p>
             {(settings?.agentProfiles ?? []).length === 0 && draft == null && (
               <p className={styles.note}>No profiles yet.</p>
@@ -1445,6 +1451,46 @@ export function SettingsModal({
                 </button>
               </div>
             )}
+            <div className={styles.field}>
+              <label className={styles.fieldLabel} htmlFor="orch-default-profile">
+                Default orchestrator
+              </label>
+              <select
+                id="orch-default-profile"
+                className={styles.input}
+                data-orch-default-profile=""
+                value={settings?.defaultOrchestratorProfileId ?? ""}
+                disabled={
+                  saving ||
+                  settings == null ||
+                  (settings?.agentProfiles ?? []).length === 0
+                }
+                onChange={(e) => {
+                  setError(null);
+                  void onSaveSettings({
+                    defaultOrchestratorProfileId: e.target.value || null,
+                  }).catch((err) => {
+                    setError(
+                      err instanceof Error && err.message
+                        ? err.message
+                        : "Failed to save settings",
+                    );
+                  });
+                }}
+              >
+                <option value="">Inherit current thread</option>
+                {(settings?.agentProfiles ?? []).map((profile) => (
+                  <option key={profile.id} value={profile.id}>
+                    {profile.name}
+                  </option>
+                ))}
+              </select>
+              <p className={styles.note}>
+                {(settings?.agentProfiles ?? []).length === 0
+                  ? "Add a profile above, then pick which one Planboard Orchestrator: Default uses."
+                  : "The Planboard's Orchestrator: Default option uses this agent. Empty inherits the currently selected thread."}
+              </p>
+            </div>
           </section>
           )}
 

@@ -54,6 +54,11 @@ export interface PlanboardViewProps {
   }) => Promise<{ ok: true; warning?: string } | { ok: false; reason: string }>;
   /** Named agents listed in the orchestrator-agent field (#714). */
   agentProfiles?: AgentProfile[];
+  /**
+   * Settings default for Orchestrator: Default (#725). Omitted/null =
+   * inherit the currently selected thread.
+   */
+  defaultOrchestratorProfileId?: string | null;
   /** Used to disable profiles whose CLI is missing. */
   providers?: ProviderInfo[];
 }
@@ -67,6 +72,7 @@ export function PlanboardView({
   onStartTask,
   initialProjectId,
   agentProfiles,
+  defaultOrchestratorProfileId,
   providers,
 }: PlanboardViewProps) {
   const [projectId, setProjectId] = useState<string | null>(initialProjectId ?? null);
@@ -121,16 +127,22 @@ export function PlanboardView({
     () => buildProfileRows(agentProfiles ?? [], providers ?? []),
     [agentProfiles, providers],
   );
+  const defaultOrchRow = orchAgentRows.find(
+    (r) => r.id === (defaultOrchestratorProfileId ?? ""),
+  );
 
   const startTask = useCallback(
     async (issueNumber: number) => {
       if (!onStartTask || !project || starting != null) return;
       setStarting(issueNumber);
       setStartNote(null);
-      const orchProfile =
+      const resolvedOrchId =
         startMode === "orchestrator"
-          ? orchAgentRows.find((r) => r.id === agentProfileId && !r.disabled)
-          : undefined;
+          ? agentProfileId || defaultOrchestratorProfileId || ""
+          : "";
+      const orchProfile = orchAgentRows.find(
+        (r) => r.id === resolvedOrchId && !r.disabled,
+      );
       const res = await onStartTask({
         projectId: project.id,
         projectPath: project.path,
@@ -152,7 +164,16 @@ export function PlanboardView({
       // Card moved to In progress on GitHub; pull the board back in sync.
       void load();
     },
-    [onStartTask, project, starting, load, startMode, agentProfileId, orchAgentRows],
+    [
+      onStartTask,
+      project,
+      starting,
+      load,
+      startMode,
+      agentProfileId,
+      defaultOrchestratorProfileId,
+      orchAgentRows,
+    ],
   );
 
   const columns = useMemo(
@@ -233,9 +254,13 @@ export function PlanboardView({
               onChange={(e) => setAgentProfileId(e.target.value)}
               data-plan-orch-agent=""
               aria-label="Orchestrator agent"
-              title="Agent profile the orchestrator lead uses"
+              title="Agent profile the orchestrator lead uses. Default is set in Settings → Agents"
             >
-              <option value="">Orchestrator: Default</option>
+              <option value="">
+                {defaultOrchRow
+                  ? `Orchestrator: Default (${defaultOrchRow.name})`
+                  : "Orchestrator: Default"}
+              </option>
               {orchAgentRows.map((row) => (
                 <option key={row.id} value={row.id} disabled={row.disabled}>
                   Orchestrator: {row.name}

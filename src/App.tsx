@@ -1347,6 +1347,9 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
               // progress here, and the new thread is in the sidebar anyway.
               onStartTask={handleCreateThreadFromIssue}
               agentProfiles={settings?.agentProfiles ?? EMPTY_AGENT_PROFILES}
+              defaultOrchestratorProfileId={
+                settings?.defaultOrchestratorProfileId ?? null
+              }
               providers={providers}
             />
           ) : view === "kanban" ? (

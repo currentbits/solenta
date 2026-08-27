@@ -187,3 +187,101 @@ describe("setSettings agentProfiles validation", () => {
     ]);
   });
 });
+
+describe("defaultOrchestratorProfileId (#725)", () => {
+  let dir;
+  let filePath;
+
+  beforeEach(() => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), "coder-orch-default-"));
+    filePath = path.join(dir, "store.json");
+  });
+
+  afterEach(() => {
+    try {
+      fs.rmSync(dir, { recursive: true, force: true });
+    } catch {
+      // ignore
+    }
+  });
+
+  it("absent / junk / unknown id → null; matching id kept", () => {
+    assert.equal(normalizeSettings({}).defaultOrchestratorProfileId, null);
+    assert.equal(
+      normalizeSettings({ defaultOrchestratorProfileId: "scout" })
+        .defaultOrchestratorProfileId,
+      null,
+    );
+    assert.equal(
+      normalizeSettings({
+        agentProfiles: [validProfile()],
+        defaultOrchestratorProfileId: "nope",
+      }).defaultOrchestratorProfileId,
+      null,
+    );
+    assert.equal(
+      normalizeSettings({
+        agentProfiles: [validProfile()],
+        defaultOrchestratorProfileId: "  scout  ",
+      }).defaultOrchestratorProfileId,
+      "scout",
+    );
+    assert.equal(
+      normalizeSettings({
+        agentProfiles: [validProfile()],
+        defaultOrchestratorProfileId: 1,
+      }).defaultOrchestratorProfileId,
+      null,
+    );
+  });
+
+  it("round-trips a matching id and rejects an unknown one", () => {
+    const store = new Store(filePath);
+    services.setSettings(store, { agentProfiles: [validProfile()] });
+    assert.equal(store.getSettings().defaultOrchestratorProfileId, null);
+    assert.equal(
+      services.setSettings(store, { defaultOrchestratorProfileId: "scout" })
+        .defaultOrchestratorProfileId,
+      "scout",
+    );
+    assert.throws(
+      () =>
+        services.setSettings(store, { defaultOrchestratorProfileId: "nope" }),
+      /must match an agent profile or be null/,
+    );
+    assert.throws(
+      () => services.setSettings(store, { defaultOrchestratorProfileId: 1 }),
+      /must be a string or null/,
+    );
+    store.saveNow();
+    assert.equal(
+      new Store(filePath).getSettings().defaultOrchestratorProfileId,
+      "scout",
+    );
+  });
+
+  it("deleting the default profile clears the id", () => {
+    const store = new Store(filePath);
+    services.setSettings(store, {
+      agentProfiles: [validProfile(), validProfile({ id: "worker", name: "Deep" })],
+      defaultOrchestratorProfileId: "scout",
+    });
+    const next = services.setSettings(store, {
+      agentProfiles: [validProfile({ id: "worker", name: "Deep" })],
+    });
+    assert.equal(next.defaultOrchestratorProfileId, null);
+  });
+
+  it("null clears a saved default", () => {
+    const store = new Store(filePath);
+    services.setSettings(store, {
+      agentProfiles: [validProfile()],
+      defaultOrchestratorProfileId: "scout",
+    });
+    assert.equal(
+      services.setSettings(store, { defaultOrchestratorProfileId: null })
+        .defaultOrchestratorProfileId,
+      null,
+    );
+  });
+});

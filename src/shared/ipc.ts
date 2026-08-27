@@ -2113,6 +2113,12 @@ export interface AppSettings {
    */
   agentProfiles: AgentProfile[];
   /**
+   * Agent profile the Planboard's Orchestrator: Default option applies
+   * (issue #725). null = inherit the currently selected thread, which is
+   * what Default did before this field existed. Unknown ids heal to null.
+   */
+  defaultOrchestratorProfileId: string | null;
+  /**
    * Described worker-model pool (issue #467). Orchestration workers default
    * to `defaultAlias` (or inherit the lead when the pool is empty). The lead
    * picks per spawn by alias from the one-line descriptions, not a raw

@@ -1660,6 +1660,8 @@ function buildDevCoder(): CoderApi {
   };
   /** Saved agent profiles (Settings tab), in-memory. */
   let agentProfiles: AgentProfile[] = [];
+  /** Planboard Orchestrator: Default (#725). */
+  let defaultOrchestratorProfileId: string | null = null;
   /** Described worker-model pool (Settings), in-memory. */
   let subagentPool: SubagentPool = {
     defaultAlias: null,
@@ -2459,6 +2461,7 @@ function buildDevCoder(): CoderApi {
           stayAwake,
           quotaWaitAutoResume,
           agentProfiles: agentProfiles.map((p) => ({ ...p })),
+          defaultOrchestratorProfileId,
           subagentPool: {
             ...subagentPool,
             entries: subagentPool.entries.map((e) => ({ ...e })),
@@ -2567,6 +2570,32 @@ function buildDevCoder(): CoderApi {
             throw new Error("agentProfiles must be an array");
           }
           agentProfiles = patch.agentProfiles.map((p) => ({ ...p }));
+          if (
+            defaultOrchestratorProfileId &&
+            !agentProfiles.some((p) => p.id === defaultOrchestratorProfileId)
+          ) {
+            defaultOrchestratorProfileId = null;
+          }
+        }
+        if (
+          Object.prototype.hasOwnProperty.call(
+            patch,
+            "defaultOrchestratorProfileId",
+          )
+        ) {
+          const v = patch.defaultOrchestratorProfileId;
+          if (v !== null && typeof v !== "string") {
+            throw new Error(
+              "defaultOrchestratorProfileId must be a string or null",
+            );
+          }
+          const id = v != null ? v.trim() : "";
+          if (id && !agentProfiles.some((p) => p.id === id)) {
+            throw new Error(
+              "defaultOrchestratorProfileId must match an agent profile or be null",
+            );
+          }
+          defaultOrchestratorProfileId = id || null;
         }
         if (Object.prototype.hasOwnProperty.call(patch, "subagentPool")) {
           const v = patch.subagentPool;
@@ -2636,6 +2665,7 @@ function buildDevCoder(): CoderApi {
           stayAwake,
           quotaWaitAutoResume,
           agentProfiles: agentProfiles.map((p) => ({ ...p })),
+          defaultOrchestratorProfileId,
           subagentPool: {
             ...subagentPool,
             entries: subagentPool.entries.map((e) => ({ ...e })),
