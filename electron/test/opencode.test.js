@@ -16,6 +16,10 @@ const {
 const { getProvider, listProviders } = require("../providers.js");
 const { writeFakeBin } = require("./support/fakeBin.js");
 
+/** 1x1 transparent PNG, the "tool-image" scenario's payload. */
+const PNG_B64 =
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==";
+
 function git(cwd, args) {
   execFileSync("git", args, { cwd, stdio: "ignore" });
 }
@@ -173,6 +177,45 @@ async function main() {
     return;
   }
 
+  if (scenario === "tool-image") {
+    emit({
+      type: "step_start",
+      timestamp: Date.now(),
+      sessionID: "ses_opencode_img",
+    });
+    await delay(15);
+    emit({
+      type: "tool_call",
+      timestamp: Date.now(),
+      sessionID: "ses_opencode_img",
+      part: { id: "tool-shot", name: "preview", input: { action: "screenshot" } },
+    });
+    await delay(15);
+    emit({
+      type: "tool_result",
+      timestamp: Date.now(),
+      sessionID: "ses_opencode_img",
+      part: {
+        id: "tool-shot",
+        name: "preview",
+        output: {
+          content: [
+            { type: "text", text: "captured" },
+            { type: "image", data: "${PNG_B64}", mimeType: "image/png" },
+          ],
+        },
+      },
+    });
+    await delay(15);
+    emit({
+      type: "step_finish",
+      timestamp: Date.now(),
+      sessionID: "ses_opencode_img",
+    });
+    process.exit(0);
+    return;
+  }
+
   process.stderr.write("unknown scenario\\n");
   process.exit(1);
 }
@@ -220,6 +263,59 @@ describe("opencode extract helpers", () => {
     assert.ok(end);
     assert.equal(end.phase, "end");
     assert.equal(end.output, "ok");
+  });
+
+  it("harvests MCP image blocks from tool_result output and keeps base64 out of output (#726)", () => {
+    const end = extractToolEvent({
+      type: "tool_result",
+      part: {
+        id: "tool-shot",
+        name: "preview",
+        output: {
+          content: [
+            { type: "text", text: "captured" },
+            { type: "image", data: PNG_B64, mimeType: "image/png" },
+          ],
+        },
+      },
+    });
+    assert.ok(end);
+    assert.equal(end.phase, "end");
+    assert.equal(end.name, "preview");
+    assert.equal(end.images.length, 1);
+    assert.equal(end.images[0].mediaType, "image/png");
+    assert.equal(end.images[0].data, PNG_B64);
+    assert.ok(!String(end.output).includes(PNG_B64));
+    assert.match(String(end.output), /captured/);
+    assert.match(String(end.output), /\[image\]/);
+  });
+
+  it("harvests Anthropic image blocks nested in tool_result output (#726)", () => {
+    const end = extractToolEvent({
+      type: "tool_result",
+      part: {
+        id: "t-read",
+        name: "read",
+        output: {
+          content: [
+            { type: "text", text: "Read image" },
+            {
+              type: "image",
+              source: {
+                type: "base64",
+                media_type: "image/png",
+                data: PNG_B64,
+              },
+            },
+          ],
+        },
+      },
+    });
+    assert.ok(end);
+    assert.equal(end.images.length, 1);
+    assert.equal(end.images[0].data, PNG_B64);
+    assert.ok(!String(end.output).includes(PNG_B64));
+    assert.match(String(end.output), /\[image\]/);
   });
 });
 
@@ -304,6 +400,7 @@ describe("opencode runner integration", () => {
       core,
       pushFn: () => {},
       tickMs: 50,
+      userDataPath: tmpDir,
     });
   });
 
@@ -443,6 +540,23 @@ describe("opencode runner integration", () => {
     assert.match(events[0].text, /context_length_exceeded/);
     assert.match(events[0].text, /input length and max_tokens/);
     assert.doesNotMatch(events[0].text, /Quota wait:/);
+  });
+
+  it("saves screenshot tool results to disk and names them on the tool message (#726)", async () => {
+    process.env.CODER_FAKE_OPENCODE_SCENARIO = "tool-image";
+    const thread = store.getThreads()[0];
+    await runner.startRun({ threadId: thread.id, prompt: "screenshot it" });
+    await waitFor(() => store.getThread(thread.id).status === "done");
+
+    const tool = store.getMessages(thread.id).find((m) => m.role === "tool");
+    assert.ok(tool);
+    assert.equal(tool.tool.done, true);
+    assert.equal(tool.tool.name, "preview");
+    assert.equal(tool.tool.images.length, 1);
+    assert.ok(!JSON.stringify(tool).includes(PNG_B64));
+    assert.ok(!String(tool.tool.output || "").includes(PNG_B64));
+    const file = path.join(tmpDir, "tool-images", tool.tool.images[0]);
+    assert.equal(fs.readFileSync(file).toString("base64"), PNG_B64);
   });
 
   it("stop kills the running process and sets idle", async () => {

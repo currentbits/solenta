@@ -5106,6 +5106,7 @@ function createRunner(opts) {
                   output: tool.output,
                   isError: tool.isError,
                   done: true,
+                  ...persistToolImages(threadId, tool.images),
                 },
               });
               noteToolSpan(threadId, runId, tool.id, tool.name, tool.isError);
@@ -5118,6 +5119,7 @@ function createRunner(opts) {
               output: tool.output,
               isError: tool.isError,
               done: true,
+              ...persistToolImages(threadId, tool.images),
             };
             appendMessage(threadId, "tool", tool.name, runId, toolMeta);
             // Post-tool text starts a fresh message below the tool call.
