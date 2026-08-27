@@ -48,6 +48,7 @@ const WIN32_FILES = [
   "electron/test/kimi.test.js",
   "electron/test/kimi-effort.test.js",
   "electron/test/kimi-home.test.js",
+  "electron/test/grok-home.test.js",
   "electron/test/memory-record.test.js",
   "electron/test/opencode.test.js",
   "electron/test/otel-runner.test.js",

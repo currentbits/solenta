@@ -593,6 +593,26 @@ function boundCoderMemoryUrl(url, name, projectPath) {
 }
 
 /**
+ * Bind Solenta HTTP MCP URLs for a grok run. coder-memory gets `?project=`
+ * (working directory); coder-threads gets `?projectId=` so the server, not
+ * the model, owns the scope (issue #706). Other servers stay bare.
+ * @param {string} url
+ * @param {string} name
+ * @param {{ projectPath?: string, projectId?: string }} [opts]
+ */
+function boundSolentaMcpUrl(url, name, opts = {}) {
+  /** @type {Record<string, string>} */
+  const query = {};
+  if (name === "coder-memory" && opts.projectPath) {
+    query.project = String(opts.projectPath);
+  }
+  if (name === "coder-threads" && opts.projectId) {
+    query.projectId = String(opts.projectId);
+  }
+  return withQuery(url, query);
+}
+
+/**
  * Desired kimi mcp.json entry for one of our servers.
  * @param {string} url
  * @param {string} token
@@ -1099,6 +1119,12 @@ function forgetExternalMcp(names, opts = {}) {
  * register each server via `grok mcp add ...` (idempotent into
  * ~/.grok/config.toml). Never throws; log-and-continue on any failure.
  *
+ * Solenta-spawned grok turns do NOT use this path: they get a per-thread
+ * GROK_HOME overlay (#706) so MCP URLs are bound to that project and a
+ * boot-time stall cannot race the run. This function remains the fallback
+ * for ssh/WSL (overlay is local-host) and for the user's own `grok` CLI
+ * after markHealthy.
+ *
  * Fire-and-forget as a batch (10s timeout per CLI) so a stalling grok binary
  * cannot freeze the Electron main process at boot / adopt. Members of the
  * batch run one at a time on the shared grok mcp queue — concurrent grok
@@ -1112,6 +1138,8 @@ function forgetExternalMcp(names, opts = {}) {
  * @param {object} [opts]
  * @param {(msg: string) => void} [opts.log]
  * @param {NodeJS.ProcessEnv} [opts.env]
+ * @param {string} [opts.projectPath]
+ * @param {string} [opts.projectId]
  * @returns {boolean} true if the mcp add was kicked off; false if skipped
  */
 function ensureGrokMcpConfig(opts = {}) {
@@ -1154,7 +1182,7 @@ function ensureGrokMcpConfig(opts = {}) {
         "--transport",
         s.transport === "sse" ? "sse" : "http",
         s.name,
-        boundCoderMemoryUrl(s.url, s.name, opts.projectPath),
+        boundSolentaMcpUrl(s.url, s.name, opts),
       ];
       if (s.token) {
         args.push(
@@ -1737,6 +1765,7 @@ module.exports = {
   kimiMcpServersForRun,
   withQuery,
   boundCoderMemoryUrl,
+  boundSolentaMcpUrl,
   ensureGrokMcpConfig,
   removeKimiMcpEntries,
   removeGrokMcpEntries,

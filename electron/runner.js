@@ -16,6 +16,7 @@ const codexParse = require("./codex.js");
 const { runCodex } = codexParse;
 const kimiParse = require("./kimi.js");
 const { runKimi, materializeKimiHome } = kimiParse;
+const { materializeGrokHome } = require("./grok.js");
 const cursorParse = require("./cursor.js");
 const { runCursor } = cursorParse;
 const {
@@ -43,6 +44,7 @@ const {
   grokConfigCorruptMessage,
   kimiMcpServersForRun,
   ensureGrokMcpConfig,
+  whenGrokMcpIdle,
 } = require("./memory-sup.js");
 const { isMemoryConsolidateTool } = require("./memory-consolidate.js");
 const opencodeParse = require("./opencode.js");
@@ -3124,7 +3126,7 @@ function createRunner(opts) {
    * @param {string} runId
    * @param {import('./providers').ProviderEntry} [providerEntry]
    */
-  function startClaudeRun(threadId, prompt, runId, providerEntry) {
+  async function startClaudeRun(threadId, prompt, runId, providerEntry) {
     const thread = store.getThread(threadId);
     const project = store.getProject(thread.projectId);
     if (!project) {
@@ -3195,11 +3197,59 @@ function createRunner(opts) {
       // No trailing prompt in interactive argv, so appending is safe.
       args.push(...mcpArgs);
     }
+    /** @type {NodeJS.ProcessEnv | undefined} */
+    let grokHomeEnv;
     if (entryDef.id === "grok") {
-      try {
-        ensureGrokMcpConfig({ projectPath: localCwd });
-      } catch {
-        // Boot-time registration is enough; a bind miss must not kill the run.
+      // Isolated GROK_HOME so this turn cannot inherit other projects'
+      // MCP URLs or a user-global last-write-wins bind (issue #706).
+      // Skipped for ssh/WSL (the overlay lives on this host) and when
+      // userDataPath is unset (tests). Those paths fall back to
+      // `grok mcp add` with bound URLs, awaited so a stall cannot race
+      // this spawn.
+      if (userDataPath && !crossesBoundary(project)) {
+        try {
+          const os = require("node:os");
+          const dest = path.join(userDataPath, "grok-homes", threadId);
+          const sourceHome =
+            process.env.GROK_HOME || path.join(os.homedir(), ".grok");
+          materializeGrokHome({
+            dest,
+            sourceHome,
+            mcpServers: kimiMcpServersForRun({
+              projectId: thread.projectId,
+              projectPath: localCwd || project.path,
+            }),
+          });
+          grokHomeEnv = {
+            GROK_HOME: dest,
+            GROK_CLAUDE_MCPS_ENABLED: "false",
+            GROK_CURSOR_MCPS_ENABLED: "false",
+          };
+        } catch (err) {
+          completeWorkLogStep(threadId, startingId);
+          completeWorkLogStep(threadId, workingId);
+          const msg =
+            "Grok MCP overlay failed: " +
+            (err && err.message ? err.message : String(err));
+          const failure = markRunFailed(threadId, msg, runId);
+          appendDoneWorkLog(threadId, runId, "Run error");
+          store.save();
+          pushDetail(threadId, claudeState);
+          pushThreadsChanged();
+          notifyRunTerminal(threadId, "failed", failure.text);
+          return { runId };
+        }
+      } else {
+        try {
+          ensureGrokMcpConfig({
+            projectPath: localCwd,
+            projectId: thread.projectId,
+          });
+          await whenGrokMcpIdle();
+        } catch {
+          // Overlay is the Solenta-run path; a bind miss on ssh/WSL must
+          // not kill the run. Failures stay on the grok mcp queue logs.
+        }
       }
     }
     const spawn = resolveSpawn(project, binary, args, localCwd);
@@ -3856,7 +3906,9 @@ function createRunner(opts) {
     const claudeOtel = otel.claudeEnv();
     const otelEnv = Object.keys(claudeOtel).length > 0 ? claudeOtel : undefined;
     const grokMerged =
-      entryDef.id === "grok" ? mergeGrokSpawnEnv(otelEnv) : otelEnv;
+      entryDef.id === "grok"
+        ? mergeGrokSpawnEnv({ ...(otelEnv || {}), ...(grokHomeEnv || {}) })
+        : otelEnv;
     const spawnEnv =
       grokMerged && Object.keys(grokMerged).length > 0 ? grokMerged : undefined;
 
@@ -6591,7 +6643,7 @@ function createRunner(opts) {
 
     const entryDef = getProvider(provider) || getProvider("claude");
     if (entryDef.kind === "claude-stream") {
-      return startClaudeRun(threadId, dispatchPrompt, runId, entryDef);
+      return await startClaudeRun(threadId, dispatchPrompt, runId, entryDef);
     }
     if (entryDef.kind === "codex-json") {
       return startCodexRun(threadId, dispatchPrompt, runId, entryDef);
@@ -6605,7 +6657,7 @@ function createRunner(opts) {
     if (entryDef.kind === "cursor-stream") {
       return startCursorRun(threadId, dispatchPrompt, runId, entryDef);
     }
-    return startClaudeRun(
+    return await startClaudeRun(
       threadId,
       dispatchPrompt,
       runId,

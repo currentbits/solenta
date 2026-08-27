@@ -435,4 +435,31 @@ describe("createSafeCommandRunner", () => {
     assert.equal(calls[0].bin, "grok");
     assert.equal(calls[0].opts.shell, false);
   });
+
+  it("execs CODER_GROK_BIN instead of a PATH grok when the env override is set", async () => {
+    const prev = process.env.CODER_GROK_BIN;
+    process.env.CODER_GROK_BIN = "/opt/custom/grok-bin";
+    try {
+      const calls = [];
+      const runner = createSafeCommandRunner({
+        execFile(bin, args, opts, cb) {
+          calls.push({ bin, args, opts });
+          cb(null, "ok", "");
+        },
+      });
+      await runner("grok", ["plugin", "install", OWNER_REPO, "--trust"]);
+      assert.equal(calls.length, 1);
+      assert.equal(calls[0].bin, "/opt/custom/grok-bin");
+      assert.deepEqual(calls[0].args, [
+        "plugin",
+        "install",
+        OWNER_REPO,
+        "--trust",
+      ]);
+      assert.equal(calls[0].opts.shell, false);
+    } finally {
+      if (prev === undefined) delete process.env.CODER_GROK_BIN;
+      else process.env.CODER_GROK_BIN = prev;
+    }
+  });
 });

@@ -1054,6 +1054,43 @@ process.exit(0);
     }
   });
 
+  it("binds project and projectId on fallback grok mcp add URLs (#706)", async () => {
+    const port = await freePort();
+    const token = "grok-bind-tok";
+    const { sup, server } = await markHealthyViaAdopt(port, token);
+    try {
+      registerMcpServer({
+        name: "coder-threads",
+        port: 45999,
+        token: "orch-token",
+        userDataPath: tmpDir,
+        log: (m) => logs.push(m),
+        env: { ...process.env, CODER_GROK_MCP_DISABLE: "1" },
+      });
+      if (fs.existsSync(mcpArgvFile)) fs.unlinkSync(mcpArgvFile);
+      const ok = ensureGrokMcpConfig({
+        log: (m) => logs.push(m),
+        env: enableGrokMcpEnv(),
+        projectPath: "/tmp/alpha",
+        projectId: "proj-1",
+      });
+      assert.equal(ok, true);
+      await whenGrokMcpIdle();
+      const argv = JSON.parse(fs.readFileSync(mcpArgvFile, "utf8"));
+      // The fake overwrites one argv capture; either bound URL is the signal
+      // that fallback add is no longer the plain server URL.
+      const joined = JSON.stringify(argv);
+      assert.ok(
+        joined.includes("project=%2Ftmp%2Falpha") ||
+          joined.includes("projectId=proj-1"),
+        `expected bound URL in ${joined}`,
+      );
+    } finally {
+      sup.stop();
+      await new Promise((r) => server.close(r));
+    }
+  });
+
   it("no-ops when CODER_GROK_MCP_DISABLE=1 even if healthy and bin available", async () => {
     const port = await freePort();
     const token = "disable-tok";

@@ -5268,6 +5268,15 @@ async function scheduleRetention(opts) {
       err && err.message ? err.message : err,
     );
   }
+  try {
+    const { reclaimGrokHomes } = require("./grok.js");
+    reclaimGrokHomes(opts);
+  } catch (err) {
+    console.warn(
+      "grok-home retention:",
+      err && err.message ? err.message : err,
+    );
+  }
   return result;
 }
 

@@ -357,7 +357,9 @@ const PROVIDERS = [
      * token cannot be eaten by a following flag. Output format is
      * streaming-messages-json (NDJSON identical to claude stream-json).
      * Effort via --reasoning-effort <level> (alias --effort).
-     * No --verbose and no --mcp-config (memory uses ensureGrokMcpConfig).
+     * No --verbose and no --mcp-config (Solenta-spawned runs use a
+     * per-thread GROK_HOME overlay; ensureGrokMcpConfig is the ssh/WSL
+     * fallback into ~/.grok/config.toml).
      *
      * Permission modes: headless -p has NO prompt channel (no
      * --permission-prompt-tool / stream-json input like claude), so any mode

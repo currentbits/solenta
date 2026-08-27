@@ -301,6 +301,25 @@ async function activateSkillPlugins(opts) {
  * Production runner. Tests may inject `execFile`. Callers cannot enable a shell.
  * @param {{ execFile?: typeof execFile }} [deps]
  */
+/**
+ * Logical allowlist name (`grok` / `codex`) → resolved provider bin.
+ * Plugin plans always pass the short name; installs that only work via
+ * CODER_GROK_BIN / CODER_CODEX_BIN must still activate (issue #706).
+ * @param {string} bin
+ * @param {NodeJS.ProcessEnv} [env]
+ */
+function resolvePluginBin(bin, env = process.env) {
+  if (bin !== "grok" && bin !== "codex") return bin;
+  try {
+    const { getProvider, resolveBin } = require("./providers.js");
+    const entry = getProvider(bin);
+    const resolved = resolveBin(entry, env);
+    return resolved || bin;
+  } catch {
+    return bin;
+  }
+}
+
 function createSafeCommandRunner(deps) {
   const execFileImpl =
     deps && typeof deps.execFile === "function" ? deps.execFile : execFile;
@@ -313,7 +332,7 @@ function createSafeCommandRunner(deps) {
         return;
       }
       execFileImpl(
-        bin,
+        resolvePluginBin(bin),
         argv,
         {
           timeout: TIMEOUT_MS,
@@ -348,4 +367,5 @@ module.exports = {
   executePluginActions,
   activateSkillPlugins,
   createSafeCommandRunner,
+  resolvePluginBin,
 };
