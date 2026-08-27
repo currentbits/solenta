@@ -28,6 +28,20 @@ export function ruleBody(css: string, className: string): string {
   return css.slice(brace + 1, end);
 }
 
+/** Every `.{className} { ... }` body (including nested/media/compound selectors). */
+export function allRuleBodies(css: string, className: string): string[] {
+  const bodies: string[] = [];
+  const re = new RegExp(`\\.${className}(?![\\w-])\\s*\\{`, "g");
+  let match: RegExpExecArray | null;
+  while ((match = re.exec(css))) {
+    const brace = match.index + match[0].length - 1;
+    const end = css.indexOf("}", brace);
+    if (end < 0) break;
+    bodies.push(css.slice(brace + 1, end));
+  }
+  return bodies;
+}
+
 function hasTileBorder(body: string): boolean {
   return /border:\s*1px solid var\(--border\)/.test(body);
 }
@@ -50,13 +64,15 @@ describe("ghost chrome", () => {
       ["App", app, "agentsToggle"],
       ["AgentsPanel", agents, "collapseBtn"],
     ] as const) {
-      const body = ruleBody(css, name);
-      assert.ok(body, `${file} .${name} must exist`);
-      assert.equal(
-        hasTileBorder(body),
-        false,
-        `${file} .${name} must not use border: 1px solid var(--border)`,
-      );
+      const bodies = allRuleBodies(css, name);
+      assert.ok(bodies.length > 0, `${file} .${name} must exist`);
+      for (const body of bodies) {
+        assert.equal(
+          hasTileBorder(body),
+          false,
+          `${file} .${name} must not use border: 1px solid var(--border)`,
+        );
+      }
     }
 
     const active =
