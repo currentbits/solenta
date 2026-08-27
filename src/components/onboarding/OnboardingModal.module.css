@@ -43,7 +43,7 @@
 }
 
 .skip:hover {
-  background: var(--card);
+  background: var(--overlay-hover);
   color: var(--text);
 }
 
@@ -120,8 +120,8 @@
   justify-content: center;
   padding: 7px 12px;
   border-radius: var(--radius-sm);
-  border: 1px solid var(--border);
-  background: var(--card);
+  border: 1px solid transparent;
+  background: transparent;
   color: var(--text-muted);
   font-size: 12px;
   font-weight: 500;
@@ -130,12 +130,12 @@
 
 .btn:hover:not(:disabled) {
   color: var(--text);
-  background: var(--card-hover);
+  background: var(--overlay-hover);
 }
 
 .btnPrimary {
   background: var(--blue-soft);
-  border-color: var(--blue-border);
+  border-color: transparent;
   color: var(--info-fg-strong);
 }
 
@@ -167,8 +167,8 @@
   gap: 6px;
   padding: 8px 10px;
   border-radius: var(--radius-sm);
-  border: 1px solid var(--border);
-  background: var(--card);
+  border: 1px solid transparent;
+  background: transparent;
 }
 
 .cliRowMain {
@@ -349,8 +349,8 @@ fieldset.setupSection:disabled {
   min-width: 0;
   padding: 8px 10px;
   border-radius: var(--radius-sm);
-  border: 1px solid var(--border);
-  background: var(--card);
+  border: 1px solid transparent;
+  background: transparent;
 }
 
 .tourCardTitle {
