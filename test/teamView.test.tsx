@@ -167,6 +167,57 @@ describe("Agents team view", () => {
     m.unmount();
   });
 
+  it("SessionCard shows unmetered cost when tokens exist but USD does not (#703)", async () => {
+    const m = await mount(
+      <AgentsContent
+        workflow={null}
+        thread={thread({ provider: "cursor", model: "auto" })}
+        usage={{
+          model: "auto",
+          inputTokens: 11114,
+          outputTokens: 43,
+          costUsd: 0,
+          turns: 1,
+          contextTokens: 17653,
+        }}
+        providers={PROVIDERS}
+        rosterKey={rosterKey([thread({ provider: "cursor" })])}
+        listThreadSummaries={async () => [ORCHESTRATOR]}
+      />,
+    );
+    await m.flush();
+    const text = m.text();
+    assert.match(text, /11,114/);
+    assert.match(text, /43/);
+    assert.match(text, /unmetered/i);
+    assert.doesNotMatch(text, /\$0\.00/);
+    m.unmount();
+  });
+
+  it("SessionCard shows usage not reported for an all-zero turn (#703)", async () => {
+    const m = await mount(
+      <AgentsContent
+        workflow={null}
+        thread={thread({ provider: "cursor" })}
+        usage={{
+          model: null,
+          inputTokens: 0,
+          outputTokens: 0,
+          costUsd: 0,
+          turns: 1,
+        }}
+        providers={PROVIDERS}
+        rosterKey={rosterKey([thread({ provider: "cursor" })])}
+        listThreadSummaries={async () => [ORCHESTRATOR]}
+      />,
+    );
+    await m.flush();
+    const text = m.text();
+    assert.match(text, /usage not reported/i);
+    assert.doesNotMatch(text, /\$0\.00/);
+    m.unmount();
+  });
+
   it("plain thread: lists Agent-tool subagents with status (issue #21)", async () => {
     const m = await mount(
       content(

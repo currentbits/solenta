@@ -480,6 +480,71 @@ process.exit(0);
     assert.equal(usage.inputTokens, 10);
     assert.equal(usage.outputTokens, 4);
     assert.equal(usage.contextTokens, 14);
+    assert.equal(usage.costUsd, 0.02);
+    assert.equal(store.getSpendToday() > 0, true, "snake-case cost still bills spend");
+  });
+
+  it("cursor live camelCase cache fields fill contextTokens and do not invent USD (#703)", async () => {
+    process.env.CODER_CURSOR_BIN = writeScript(
+      tmpDir,
+      "fake-cursor-live.js",
+      `#!/usr/bin/env node
+"use strict";
+function emit(obj) { process.stdout.write(JSON.stringify(obj) + "\\n"); }
+emit({
+  type: "system",
+  subtype: "init",
+  session_id: "cursor-sess-live",
+  model: "Composer",
+  permissionMode: "default",
+});
+emit({ type: "assistant", message: { content: [{ type: "text", text: "ping" }] } });
+emit({
+  type: "result",
+  subtype: "success",
+  is_error: false,
+  result: "ping",
+  session_id: "cursor-sess-live",
+  usage: {
+    inputTokens: 11114,
+    outputTokens: 43,
+    cacheReadTokens: 6496,
+    cacheWriteTokens: 0,
+  },
+});
+process.exit(0);
+`,
+    );
+
+    const project = store.getProjects()[0];
+    const thread = services.createThread(store, {
+      projectId: project.id,
+      title: "Cursor live usage",
+    });
+    services.setProvider(store, { threadId: thread.id, provider: "cursor" });
+    const spentBefore = store.getSpendToday();
+    await runner.startRun({ threadId: thread.id, prompt: "go" });
+    await waitFor(() => store.getThread(thread.id).status === "done");
+
+    const usage = store.getUsage(thread.id);
+    assert.ok(usage);
+    assert.equal(usage.inputTokens, 11114);
+    assert.equal(usage.outputTokens, 43);
+    assert.equal(usage.contextTokens, 17653);
+    assert.equal(usage.costUsd, 0);
+    assert.equal(store.getSpendToday(), spentBefore, "no USD → no spend");
+
+    const days = store.getUsageByDay();
+    const dayCells = Object.values(days);
+    assert.ok(dayCells.length > 0);
+    const cursorCell = dayCells[0].cursor && Object.values(dayCells[0].cursor)[0];
+    assert.ok(cursorCell, "pulse row exists");
+    assert.equal(cursorCell.inputTokens, 11114);
+    assert.equal(cursorCell.outputTokens, 43);
+    assert.equal(cursorCell.cachedInputTokens, 6496);
+    assert.equal(cursorCell.cacheWriteTokens, 0);
+    assert.equal(cursorCell.costUsd, 0);
+    assert.equal(cursorCell.turns, 1);
   });
 
   it("kimi usage without a full-prompt measurement leaves contextTokens unset", async () => {

@@ -5200,6 +5200,10 @@ function createRunner(opts) {
     /** @type {Map<string, string>} */
     const toolMsgById = new Map();
     let sawUsage = false;
+    /** True when extractUsage returned a real result event, not the zero fallback. */
+    let usageReported = false;
+    /** True when that result carried a cost field. Cursor Ultra does not. */
+    let costReported = false;
     let lastPushAt = 0;
     /** @type {ReturnType<typeof setTimeout> | null} */
     let pushTimer = null;
@@ -5290,7 +5294,7 @@ function createRunner(opts) {
       }
     }
 
-    function applyUsage(usageInfo) {
+    function applyUsage(usageInfo, opts = {}) {
       if (!usageInfo) return;
       const prev = store.getUsage(threadId) || {
         model: null,
@@ -5299,9 +5303,12 @@ function createRunner(opts) {
         costUsd: 0,
         turns: 0,
       };
-      const costDelta = Number(usageInfo.costUsd) || 0;
+      const costPresent = usageInfo.costUsd != null;
+      const costDelta = costPresent ? Number(usageInfo.costUsd) || 0 : 0;
       const inDelta = Number(usageInfo.inputTokens) || 0;
       const outDelta = Number(usageInfo.outputTokens) || 0;
+      const cachedDelta = Number(usageInfo.cachedInputTokens) || 0;
+      const writeDelta = Number(usageInfo.cacheWriteTokens) || 0;
       runUsage.tokensIn += inDelta;
       runUsage.tokensOut += outDelta;
       runUsage.costUsd += costDelta;
@@ -5327,6 +5334,8 @@ function createRunner(opts) {
         model: prev.model || thread.model || null,
         costUsd: costDelta,
         inputTokens: inDelta,
+        cachedInputTokens: cachedDelta,
+        cacheWriteTokens: writeDelta,
         outputTokens: outDelta,
         threadId,
         projectId: thread.projectId,
@@ -5334,6 +5343,18 @@ function createRunner(opts) {
         title: thread.title,
       });
       sawUsage = true;
+      if (!opts.fallback) {
+        usageReported = true;
+        if (costPresent) costReported = true;
+      }
+    }
+
+    function terminalUsage() {
+      return {
+        tokensIn: usageReported ? runUsage.tokensIn : undefined,
+        tokensOut: usageReported ? runUsage.tokensOut : undefined,
+        costUsd: costReported ? runUsage.costUsd : undefined,
+      };
     }
 
     completeWorkLogStep(threadId, startingId);
@@ -5495,7 +5516,7 @@ function createRunner(opts) {
         }
 
         if (!sawUsage && code === 0) {
-          applyUsage({ inputTokens: 0, outputTokens: 0 });
+          applyUsage({ inputTokens: 0, outputTokens: 0 }, { fallback: true });
         }
 
         if (code === 0) {
@@ -5516,11 +5537,7 @@ function createRunner(opts) {
             threadId,
             "done",
             assistantText || lastAssistantText(threadId, runId),
-            {
-              tokensIn: runUsage.tokensIn,
-              tokensOut: runUsage.tokensOut,
-              costUsd: runUsage.costUsd,
-            },
+            terminalUsage(),
           );
           return;
         }
@@ -5531,11 +5548,7 @@ function createRunner(opts) {
         store.save();
         pushDetail(threadId, cursorState);
         pushThreadsChanged();
-        notifyRunTerminal(threadId, "failed", failure.text, {
-          tokensIn: runUsage.tokensIn,
-          tokensOut: runUsage.tokensOut,
-          costUsd: runUsage.costUsd,
-        });
+        notifyRunTerminal(threadId, "failed", failure.text, terminalUsage());
       },
       onError: (err) => {
         if (pushTimer) {
@@ -5557,11 +5570,7 @@ function createRunner(opts) {
         store.save();
         pushDetail(threadId, cursorState);
         pushThreadsChanged();
-        notifyRunTerminal(threadId, "failed", failure.text, {
-          tokensIn: runUsage.tokensIn,
-          tokensOut: runUsage.tokensOut,
-          costUsd: runUsage.costUsd,
-        });
+        notifyRunTerminal(threadId, "failed", failure.text, terminalUsage());
       },
     });
 

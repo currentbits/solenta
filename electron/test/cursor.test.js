@@ -136,7 +136,7 @@ async function main() {
     return;
   }
 
-  if (scenario === "success" || scenario === "resume-echo") {
+  if (scenario === "success" || scenario === "resume-echo" || scenario === "success-usage") {
     emit({
       type: "system",
       subtype: "init",
@@ -215,7 +215,7 @@ async function main() {
       session_id: "cursor-sess-1",
     });
     await delay(20);
-    emit({
+    const result = {
       type: "result",
       subtype: "success",
       is_error: false,
@@ -223,7 +223,16 @@ async function main() {
       duration_api_ms: 80,
       result: "Hello from cursor!Wrote probe.txt",
       session_id: "cursor-sess-1",
-    });
+    };
+    if (scenario === "success-usage") {
+      result.usage = {
+        inputTokens: 11114,
+        outputTokens: 43,
+        cacheReadTokens: 6496,
+        cacheWriteTokens: 0,
+      };
+    }
+    emit(result);
     process.exit(0);
     return;
   }
@@ -493,6 +502,134 @@ describe("cursor runner integration", () => {
     assert.equal(tools[0].tool.name, "Write");
     assert.equal(tools[0].tool.done, true);
     assert.match(String(tools[0].tool.input || ""), /probe\.txt/);
+  });
+
+  it("omitted result usage records an unreported turn and does not invent spend (#703)", async () => {
+    const thread = store.getThreads()[0];
+    const spentBefore = store.getSpendToday();
+    await runner.startRun({ threadId: thread.id, prompt: "do the thing" });
+    await waitFor(() => store.getThread(thread.id).status === "done");
+
+    const usage = store.getUsage(thread.id);
+    assert.ok(usage);
+    assert.equal(usage.turns, 1);
+    assert.equal(usage.inputTokens, 0);
+    assert.equal(usage.outputTokens, 0);
+    assert.equal(usage.costUsd, 0);
+    assert.equal(usage.contextTokens, undefined);
+    assert.equal(store.getSpendToday(), spentBefore);
+
+    const days = store.getUsageByDay();
+    const today = Object.values(days)[0];
+    const cell = today && today.cursor && Object.values(today.cursor)[0];
+    assert.ok(cell, "pulse keeps the turn so it can show unreported");
+    assert.equal(cell.turns, 1);
+    assert.equal(cell.inputTokens, 0);
+    assert.equal(cell.outputTokens, 0);
+    assert.equal(cell.costUsd, 0);
+  });
+
+  it("live camelCase result usage records tokens and cache, never USD spend (#703)", async () => {
+    process.env.CODER_FAKE_CURSOR_SCENARIO = "success-usage";
+    const thread = store.getThreads()[0];
+    const spentBefore = store.getSpendToday();
+    await runner.startRun({ threadId: thread.id, prompt: "do the thing" });
+    await waitFor(() => store.getThread(thread.id).status === "done");
+
+    const usage = store.getUsage(thread.id);
+    assert.ok(usage);
+    assert.equal(usage.inputTokens, 11114);
+    assert.equal(usage.outputTokens, 43);
+    assert.equal(usage.contextTokens, 17653);
+    assert.equal(usage.costUsd, 0);
+    assert.equal(store.getSpendToday(), spentBefore);
+
+    const days = store.getUsageByDay();
+    const today = Object.values(days)[0];
+    const cell = today && today.cursor && Object.values(today.cursor)[0];
+    assert.ok(cell);
+    assert.equal(cell.cachedInputTokens, 6496);
+    assert.equal(cell.cacheWriteTokens, 0);
+    assert.equal(cell.costUsd, 0);
+  });
+
+  async function runnerWithOtelFetch(calls) {
+    const prevFetch = globalThis.fetch;
+    globalThis.fetch = async (url, init) => {
+      calls.push({ url: String(url), body: JSON.parse(String(init.body)) });
+      return { ok: true, status: 200 };
+    };
+    services.setSettings(store, {
+      otel: {
+        endpoint: "http://127.0.0.1:4318",
+        headers: {},
+        claudeMetrics: false,
+      },
+    });
+    runner.stopAll();
+    const core = await loadCore();
+    runner = createRunner({
+      store,
+      core,
+      pushFn: (ch, payload) => pushes.push({ ch, payload }),
+      tickMs: 50,
+      userDataPath: tmpDir,
+    });
+    return prevFetch;
+  }
+
+  it("OTel omits usage and cost attrs when cursor reports neither (#703)", async () => {
+    const calls = [];
+    const prevFetch = await runnerWithOtelFetch(calls);
+    try {
+      const thread = store.getThreads()[0];
+      await runner.startRun({ threadId: thread.id, prompt: "do the thing" });
+      await waitFor(() => store.getThread(thread.id).status === "done");
+      await runner.flushTranscripts();
+      const spans = [];
+      for (const c of calls) {
+        for (const rs of c.body.resourceSpans || []) {
+          for (const ss of rs.scopeSpans || []) spans.push(...(ss.spans || []));
+        }
+      }
+      const run = spans.find((s) => String(s.name).includes("cursor"));
+      assert.ok(run, `no cursor span in ${spans.map((s) => s.name).join(", ")}`);
+      const keys = (run.attributes || []).map((a) => a.key);
+      assert.ok(!keys.includes("gen_ai.usage.input_tokens"));
+      assert.ok(!keys.includes("gen_ai.usage.output_tokens"));
+      assert.ok(!keys.includes("solenta.cost.usd"));
+    } finally {
+      globalThis.fetch = prevFetch;
+    }
+  });
+
+  it("OTel records live tokens and omits invented $0 cost (#703)", async () => {
+    process.env.CODER_FAKE_CURSOR_SCENARIO = "success-usage";
+    const calls = [];
+    const prevFetch = await runnerWithOtelFetch(calls);
+    try {
+      const thread = store.getThreads()[0];
+      await runner.startRun({ threadId: thread.id, prompt: "do the thing" });
+      await waitFor(() => store.getThread(thread.id).status === "done");
+      await runner.flushTranscripts();
+      const spans = [];
+      for (const c of calls) {
+        for (const rs of c.body.resourceSpans || []) {
+          for (const ss of rs.scopeSpans || []) spans.push(...(ss.spans || []));
+        }
+      }
+      const run = spans.find((s) => String(s.name).includes("cursor"));
+      assert.ok(run, `no cursor span in ${spans.map((s) => s.name).join(", ")}`);
+      const attr = (key) => {
+        const found = (run.attributes || []).find((a) => a.key === key);
+        return found ? Object.values(found.value)[0] : undefined;
+      };
+      assert.equal(attr("gen_ai.usage.input_tokens"), "11114");
+      assert.equal(attr("gen_ai.usage.output_tokens"), "43");
+      assert.equal(attr("solenta.cost.usd"), undefined);
+    } finally {
+      globalThis.fetch = prevFetch;
+    }
   });
 
   it("argv has print/stream-json flags, prompt last, no --worktree", async () => {

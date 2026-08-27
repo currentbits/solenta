@@ -303,6 +303,19 @@ function SessionCard({
       thread.model ?? usage?.model,
     ),
   });
+  const usageUnreported =
+    usage != null &&
+    usage.turns > 0 &&
+    usage.inputTokens === 0 &&
+    usage.outputTokens === 0 &&
+    usage.costUsd === 0 &&
+    !(Number(usage.contextTokens) > 0);
+  const costUnmetered =
+    usage != null &&
+    usage.costUsd === 0 &&
+    (usage.inputTokens > 0 ||
+      usage.outputTokens > 0 ||
+      Number(usage.contextTokens) > 0);
   return (
     <section className={styles.sessionCard}>
       <div className={styles.sessionHead}>
@@ -333,7 +346,9 @@ function SessionCard({
 
       <div className={styles.usageBlock}>
         <div className={styles.usageTitle}>Usage</div>
-        {usage ? (
+        {usageUnreported ? (
+          <p className={styles.usageEmpty}>usage not reported</p>
+        ) : usage ? (
           <dl className={styles.usageList}>
             <div className={styles.sessionRow}>
               <dt>Input tokens</dt>
@@ -349,7 +364,9 @@ function SessionCard({
             </div>
             <div className={styles.sessionRow}>
               <dt>Cost</dt>
-              <dd className={styles.cost}>{formatCostUsd(usage.costUsd)}</dd>
+              <dd className={styles.cost}>
+                {costUnmetered ? "unmetered" : formatCostUsd(usage.costUsd)}
+              </dd>
             </div>
             {ring && (
               <div className={styles.sessionRow}>

@@ -186,6 +186,46 @@ describe("UsageView", () => {
     m.unmount();
   });
 
+  it("renders a token-only cursor row as unmetered cost, never $0.00 (#703)", async () => {
+    const today = daysAgo(0);
+    const report: UsageReport = {
+      byDay: {
+        [today]: {
+          cursor: {
+            auto: entry({
+              inputTokens: 11114,
+              cachedInputTokens: 6496,
+              outputTokens: 43,
+              turns: 2,
+            }),
+          },
+        },
+      },
+      threadsByDay: {
+        [today]: {
+          "th-c": thread({
+            title: "Cursor ping",
+            provider: "cursor",
+            model: "auto",
+            inputTokens: 11114,
+            cachedInputTokens: 6496,
+            outputTokens: 43,
+            turns: 2,
+          }),
+        },
+      },
+    };
+    const m = await mount(<UsageView loadUsage={async () => report} />);
+    await m.flush();
+    const row = m.query('[data-usage-provider="cursor"]');
+    assert.ok(row, "cursor provider row");
+    const text = row.textContent ?? "";
+    assert.ok(text.includes("unmetered"), "explicit unmetered copy");
+    assert.ok(!text.includes("$0.00"), "must not look free");
+    assert.ok(row.getAttribute("data-usage-cost-unmetered") !== null);
+    m.unmount();
+  });
+
   it("renders an unreported provider as usage not reported, never $0.00", async () => {
     const m = await mount(<UsageView loadUsage={async () => richReport()} />);
     await m.flush();

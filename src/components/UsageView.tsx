@@ -184,9 +184,15 @@ export function UsageView({ loadUsage }: UsageViewProps) {
 
   const allUnreported =
     summary.providers.length > 0 && summary.providers.every((p) => p.unreported);
+  const costUnmeteredTotal =
+    metric === "cost" &&
+    summary.totals.costUsd === 0 &&
+    processedTokens(summary.totals) > 0;
   const totalLabel = allUnreported
     ? "usage not reported"
-    : formatMetric(metricValue(summary.totals, metric), metric);
+    : costUnmeteredTotal
+      ? "unmetered"
+      : formatMetric(metricValue(summary.totals, metric), metric);
 
   return (
     <main
@@ -260,13 +266,17 @@ export function UsageView({ loadUsage }: UsageViewProps) {
         <div className={styles.body}>
           <section className={styles.totals} data-usage-totals="">
             <p className={styles.totalValue}>{totalLabel}</p>
-            <p className={styles.caveat} data-usage-caveat="">
-              * if billed at full API rate
-            </p>
+            {allUnreported || costUnmeteredTotal ? null : (
+              <p className={styles.caveat} data-usage-caveat="">
+                * if billed at full API rate
+              </p>
+            )}
             <p className={styles.totalMeta}>
               {allUnreported ? null : (
                 <>
-                  {formatCostUsd(summary.totals.costUsd)}
+                  {costUnmeteredTotal
+                    ? "unmetered"
+                    : formatCostUsd(summary.totals.costUsd)}
                   {" · "}
                   {formatTokenSum(processedTokens(summary.totals))}
                   {" · "}
@@ -427,6 +437,8 @@ export function UsageView({ loadUsage }: UsageViewProps) {
                       <td>
                         {row.unreported ? (
                           <span className={styles.unreportedCell}>usage not reported</span>
+                        ) : row.costUnmetered ? (
+                          <span className={styles.unreportedCell}>unmetered</span>
                         ) : (
                           formatCostUsd(row.costUsd)
                         )}
@@ -487,6 +499,20 @@ function ProviderRow({
         <span className={styles.providerName}>{row.provider}</span>
         <span className={styles.unreportedMeta}>
           · {row.turns} turns · usage not reported
+        </span>
+      </div>
+    );
+  }
+  if (row.costUnmetered && metric === "cost") {
+    return (
+      <div
+        className={styles.providerRowUnreported}
+        data-usage-provider={row.provider}
+        data-usage-cost-unmetered=""
+      >
+        <span className={styles.providerName}>{row.provider}</span>
+        <span className={styles.unreportedMeta}>
+          · {row.turns} turns · unmetered
         </span>
       </div>
     );

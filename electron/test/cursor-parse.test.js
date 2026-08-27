@@ -393,7 +393,36 @@ describe("cursor extractUsage", () => {
           cache_creation_input_tokens: 20,
         },
       }),
-      { inputTokens: 10, outputTokens: 4, contextTokens: 134 },
+      {
+        inputTokens: 10,
+        outputTokens: 4,
+        cachedInputTokens: 100,
+        cacheWriteTokens: 20,
+        contextTokens: 134,
+      },
+    );
+  });
+
+  // Live cursor-agent 2026.08.11-e8db854: camelCase token buckets, no USD.
+  it("reads live camelCase usage including cache buckets and omits cost (issue #703)", () => {
+    assert.deepEqual(
+      extractUsage({
+        type: "result",
+        subtype: "success",
+        usage: {
+          inputTokens: 11114,
+          outputTokens: 43,
+          cacheReadTokens: 6496,
+          cacheWriteTokens: 0,
+        },
+      }),
+      {
+        inputTokens: 11114,
+        outputTokens: 43,
+        cachedInputTokens: 6496,
+        cacheWriteTokens: 0,
+        contextTokens: 17653,
+      },
     );
   });
 });

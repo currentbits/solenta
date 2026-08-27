@@ -39,6 +39,8 @@ export interface UsageProviderTotal extends UsageTotals {
   /** Fraction of range processed tokens. 0 when every token is 0. */
   tokenShare: number;
   unreported: boolean;
+  /** Tokens (or cache) present, but the provider never reported USD. */
+  costUnmetered: boolean;
   /**
    * Cache-volume multiplier: (inputTokens + cachedInputTokens) / inputTokens.
    *
@@ -59,6 +61,7 @@ export interface UsageModelTotal extends UsageTotals {
   costShare: number;
   tokenShare: number;
   unreported: boolean;
+  costUnmetered: boolean;
 }
 
 export interface UsageBreakdownRow extends UsageTotals {
@@ -68,6 +71,7 @@ export interface UsageBreakdownRow extends UsageTotals {
   costShare: number;
   tokenShare: number;
   unreported: boolean;
+  costUnmetered: boolean;
 }
 
 export interface UsageSummary {
@@ -99,6 +103,11 @@ export function isUnreported(row: UsageTotals): boolean {
     row.cacheWriteTokens === 0 &&
     row.outputTokens === 0
   );
+}
+
+/** Token counts exist, but the provider never emitted a USD cost (Cursor). */
+export function isCostUnmetered(row: UsageTotals): boolean {
+  return !isUnreported(row) && row.costUsd === 0 && processedTokens(row) > 0;
 }
 
 function localDayKey(d: Date): string {
@@ -199,6 +208,7 @@ function withShares(row: UsageTotals, totals: UsageTotals) {
     costShare: share(row.costUsd, totals.costUsd),
     tokenShare: share(processedTokens(row), processedTokens(totals)),
     unreported: isUnreported(row),
+    costUnmetered: isCostUnmetered(row),
   };
 }
 
@@ -281,6 +291,7 @@ export function summarizeUsage(
               costShare: 0,
               tokenShare: 0,
               unreported: false,
+              costUnmetered: false,
             };
             modelMap.set(modelKey, modelTotal);
           }

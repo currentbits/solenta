@@ -250,29 +250,40 @@ function extractSessionId(obj) {
 }
 
 /**
- * Last-turn prompt size for the context ring: input + output, plus
- * Anthropic-style cache buckets when the CLI reports them. Does not add
- * OpenAI cached_input_tokens — that value is often already inside input.
+ * @param {unknown} value
+ * @returns {number}
+ */
+function tokenNum(value) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : 0;
+}
+
+/**
+ * Last-turn prompt size for the context ring: input + output, plus cache
+ * buckets when the CLI reports them. Live cursor-agent (2026.08.11+) uses
+ * camelCase cacheReadTokens/cacheWriteTokens; older fixtures and Anthropic
+ * aliases stay snake_case. Does not add OpenAI cached_input_tokens — that
+ * value is often already inside input.
  * @param {Record<string, unknown>} usage
  * @returns {number | undefined}
  */
 function cursorPromptTokens(usage) {
   const total =
-    (Number(usage.input_tokens ?? usage.inputTokens ?? usage.prompt_tokens) ||
-      0) +
-    (Number(
+    tokenNum(usage.input_tokens ?? usage.inputTokens ?? usage.prompt_tokens) +
+    tokenNum(
       usage.output_tokens ?? usage.outputTokens ?? usage.completion_tokens,
-    ) || 0) +
-    (Number(usage.cache_read_input_tokens) || 0) +
-    (Number(usage.cache_creation_input_tokens) || 0);
+    ) +
+    tokenNum(usage.cache_read_input_tokens ?? usage.cacheReadTokens) +
+    tokenNum(usage.cache_creation_input_tokens ?? usage.cacheWriteTokens);
   return total > 0 ? total : undefined;
 }
 
 /**
  * Usage from a Cursor result event. Cursor often omits it; return null
- * when no token fields are present. Same names as kimi.
+ * when no token fields are present. Live CLI shape is camelCase token
+ * buckets and no USD (issue #703). Snake_case aliases stay for fixtures.
  * @param {object} obj
- * @returns {{ inputTokens: number, outputTokens: number, costUsd?: number, contextTokens?: number } | null}
+ * @returns {{ inputTokens: number, outputTokens: number, costUsd?: number, cachedInputTokens?: number, cacheWriteTokens?: number, contextTokens?: number } | null}
  */
 function extractUsage(obj) {
   if (!obj || typeof obj !== "object") return null;
@@ -293,30 +304,27 @@ function extractUsage(obj) {
 
   if (!usage) return null;
 
+  const cachedRaw = usage.cache_read_input_tokens ?? usage.cacheReadTokens;
+  const writeRaw = usage.cache_creation_input_tokens ?? usage.cacheWriteTokens;
+
   const hasField =
     usage.input_tokens != null ||
     usage.output_tokens != null ||
     usage.prompt_tokens != null ||
     usage.completion_tokens != null ||
     usage.inputTokens != null ||
-    usage.outputTokens != null;
+    usage.outputTokens != null ||
+    cachedRaw != null ||
+    writeRaw != null;
 
   if (!hasField) return null;
 
-  const inputTokens =
-    Number(
-      usage.input_tokens ??
-        usage.inputTokens ??
-        usage.prompt_tokens ??
-        0,
-    ) || 0;
-  const outputTokens =
-    Number(
-      usage.output_tokens ??
-        usage.outputTokens ??
-        usage.completion_tokens ??
-        0,
-    ) || 0;
+  const inputTokens = tokenNum(
+    usage.input_tokens ?? usage.inputTokens ?? usage.prompt_tokens,
+  );
+  const outputTokens = tokenNum(
+    usage.output_tokens ?? usage.outputTokens ?? usage.completion_tokens,
+  );
 
   const costRaw =
     usage.total_cost_usd ??
@@ -326,11 +334,13 @@ function extractUsage(obj) {
     obj.total_cost_usd ??
     obj.cost_usd ??
     obj.cost;
-  const costUsd = costRaw != null ? Number(costRaw) || 0 : 0;
+  const costUsd = costRaw != null ? tokenNum(costRaw) : 0;
 
-  /** @type {{ inputTokens: number, outputTokens: number, costUsd?: number, contextTokens?: number }} */
+  /** @type {{ inputTokens: number, outputTokens: number, costUsd?: number, cachedInputTokens?: number, cacheWriteTokens?: number, contextTokens?: number }} */
   const out = { inputTokens, outputTokens };
   if (costRaw != null) out.costUsd = costUsd;
+  if (cachedRaw != null) out.cachedInputTokens = tokenNum(cachedRaw);
+  if (writeRaw != null) out.cacheWriteTokens = tokenNum(writeRaw);
   const ctx = cursorPromptTokens(usage);
   if (ctx != null) out.contextTokens = ctx;
   return out;

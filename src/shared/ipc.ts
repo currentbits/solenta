@@ -1052,8 +1052,9 @@ export interface SessionUsage {
    * The numerator for the context ring. Under prompt caching plain input_tokens
    * is near zero, so anything that omits the cache fields reads as ~0% and then
    * jumps (issue #317). Claude still requires the cache keys. Grok and cursor
-   * sum the fields they do report (#704). Absent when the provider reports too
-   * little to measure it (kimi) — the ring hides rather than guess.
+   * sum the fields they do report (#704). Cursor live CLI uses camelCase
+   * cacheReadTokens/cacheWriteTokens (#703). Absent when the provider reports
+   * too little to measure it (kimi) — the ring hides rather than guess.
    */
   contextTokens?: number;
   /**

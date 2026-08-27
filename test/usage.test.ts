@@ -11,6 +11,7 @@ import type {
   UsageThreadEntry,
 } from "../src/shared/ipc.ts";
 import {
+  isCostUnmetered,
   isUnreported,
   processedTokens,
   summarizeUsage,
@@ -443,5 +444,36 @@ describe("summarizeUsage", () => {
     assert.equal(isUnreported(entry()), false);
     assert.equal(isUnreported(entry({ turns: 1 })), true);
     assert.equal(isUnreported(entry({ turns: 1, inputTokens: 1 })), false);
+  });
+
+  it("flags token-only rows as cost-unmetered, not free (#703)", () => {
+    const data: UsageByDay = {
+      "2026-08-17": {
+        cursor: {
+          auto: entry({
+            inputTokens: 11114,
+            cachedInputTokens: 6496,
+            outputTokens: 43,
+            turns: 1,
+          }),
+        },
+        claude: {
+          opus: entry({ costUsd: 2, inputTokens: 10, outputTokens: 2, turns: 1 }),
+        },
+      },
+    };
+    const summary = summarizeUsage(data, 7, TODAY);
+    const cursor = summary.providers.find((p) => p.provider === "cursor");
+    assert.ok(cursor);
+    assert.equal(cursor.unreported, false);
+    assert.equal(cursor.costUnmetered, true);
+    assert.equal(cursor.costUsd, 0);
+    assert.equal(processedTokens(cursor), 11114 + 6496 + 43);
+    const claude = summary.providers.find((p) => p.provider === "claude");
+    assert.ok(claude);
+    assert.equal(claude.costUnmetered, false);
+    assert.equal(isCostUnmetered(entry({ turns: 1, inputTokens: 10 })), true);
+    assert.equal(isCostUnmetered(entry({ turns: 1 })), false);
+    assert.equal(isCostUnmetered(entry({ turns: 1, costUsd: 0.02, inputTokens: 10 })), false);
   });
 });
