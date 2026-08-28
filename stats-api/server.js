@@ -610,7 +610,8 @@ function renderDashboard(stats, days) {
   const bars = stats.series
     .map((s) => {
       const h = Math.round((s.visitors / max) * 100);
-      return `<div class="bar"><span style="height:${h}%"></span><small>${s.pageviews}</small><em>${escapeHtml(s.day.slice(5))}</em></div>`;
+      const label = days === 1 ? String(s.hour).padStart(2, "0") : s.day.slice(5);
+      return `<div class="bar"><span style="height:${h}%"></span><small>${s.pageviews}</small><em>${escapeHtml(label)}</em></div>`;
     })
     .join("");
   const list = (items, key) =>
@@ -623,12 +624,27 @@ function renderDashboard(stats, days) {
       return `<li><span>${escapeHtml(label)}</span><b>${e.count}</b></li>`;
     })
     .join("");
-  const empty = stats.pageviews === 0 && stats.downloads === 0 && stats.githubStars === 0;
+  const funnels = stats.funnels
+    .map(
+      (f) =>
+        `<li><span>${escapeHtml(f.name)}</span><b>${f.converted} / ${f.entered} (${f.rate}%)</b></li>`,
+    )
+    .join("");
+  const empty =
+    stats.pageviews +
+      stats.downloads +
+      stats.githubStars +
+      stats.docs +
+      stats.changelog +
+      stats.githubRepo ===
+    0;
   const link = (n, label) =>
     `<a href="/?days=${n}"${n === days ? ' aria-current="page"' : ""}>${label}</a>`;
 
   return `<!doctype html>
-<html lang="en"><head><meta charset="utf-8"><title>Solenta stats</title>
+<html lang="en"><head><meta charset="utf-8">
+<meta http-equiv="refresh" content="30">
+<title>Solenta stats</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <style>
 :root { --paper:#f5f5f2; --ink:#191918; --muted:#5d5d58; --accent:#f2e51f; --border:rgba(25,25,24,.12); }
@@ -642,6 +658,7 @@ nav a[aria-current="page"] { box-shadow: inset 0 -3px 0 var(--accent); }
 .num { background:#fcfcfa; border:1px solid var(--border); border-radius:14px; padding:1rem; }
 .num b { display:block; font-size: 2rem; }
 .num span { color: var(--muted); }
+.live { color: var(--muted); }
 .chart { display:flex; align-items:flex-end; gap:4px; height:160px; margin: 2rem 0; }
 .bar { flex:1; display:flex; flex-direction:column; align-items:center; justify-content:flex-end; height:100%; }
 .bar span { display:block; width:100%; background:var(--ink); min-height:2px; }
@@ -656,7 +673,7 @@ button { font:inherit; background:none; border:0; cursor:pointer; text-decoratio
 <body>
 <header>
   <strong>Solenta stats</strong>
-  <nav>${link(1, "Today")}${link(7, "7 days")}${link(30, "30 days")}
+  <nav>${link(1, "Today")}${link(7, "7 days")}${link(30, "30 days")}${link(90, "90 days")}
   <form method="post" action="/logout"><button>Log out</button></form></nav>
 </header>
 <main class="wrap">
@@ -665,13 +682,21 @@ button { font:inherit; background:none; border:0; cursor:pointer; text-decoratio
     <div class="num"><b>${stats.pageviews}</b><span>Pageviews</span></div>
     <div class="num"><b>${stats.downloads}</b><span>Downloads</span></div>
     <div class="num"><b>${stats.githubStars}</b><span>GitHub stars</span></div>
+    <div class="num"><b>${stats.docs}</b><span>Docs</span></div>
+    <div class="num"><b>${stats.changelog}</b><span>Changelog</span></div>
+    <div class="num"><b>${stats.githubRepo}</b><span>GitHub Repo</span></div>
   </section>
+  <p class="live">Live: ${stats.live.visitors} visitors, ${stats.live.pageviews} pageviews</p>
   ${empty ? "<p>No events in this range.</p>" : `<div class="chart">${bars}</div>
   <div class="cols">
     <section><h2>Pages</h2>${list(stats.pages, "path")}</section>
     <section><h2>Referrers</h2>${list(stats.referrers, "host")}</section>
   </div>
-  <section><h2>Events</h2><ol>${ev}</ol></section>`}
+  <section><h2>Events</h2><ol>${ev}</ol></section>
+  <section><h2>Countries</h2>${list(stats.countries, "code")}</section>
+  <section><h2>Browsers</h2>${list(stats.browsers, "name")}</section>
+  <section><h2>Sources</h2>${list(stats.sources, "label")}</section>
+  <section><h2>Funnels</h2><ol>${funnels}</ol></section>`}
 </main>
 </body></html>`;
 }
@@ -680,15 +705,12 @@ async function handleHome(req, res) {
   if (!authorized(req)) return sendHtml(res, 200, loginForm());
   if (!db) return sendHtml(res, 503, "<p>Could not read stats.</p>");
   const days = clampDays(new URL(req.url, "http://x").searchParams.get("days"));
-  const since = new Date(nowFn());
-  since.setUTCDate(since.getUTCDate() - (days - 1));
-  since.setUTCHours(0, 0, 0, 0);
   try {
     const { rows } = await db.query(
       `SELECT ts, name, path, referrer, visitor, props
          FROM events WHERE ts >= $1
          ORDER BY ts ASC`,
-      [since.toISOString()],
+      [querySince(days, nowFn()).toISOString()],
     );
     return sendHtml(res, 200, renderDashboard(buildStats(rows, days, nowFn()), days));
   } catch (err) {
