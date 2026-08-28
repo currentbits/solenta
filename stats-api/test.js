@@ -5,7 +5,16 @@ const assert = require("node:assert");
 const { createHmac } = require("node:crypto");
 
 process.env.ADMIN_TOKEN = "secret-token";
-const { server, setDb, setNow, resetHits, RATE_MAX } = require("./server");
+const {
+  server,
+  setDb,
+  setNow,
+  resetHits,
+  RATE_MAX,
+  parseCountry,
+  parseBrowser,
+  parseUtms,
+} = require("./server");
 
 function fakeDb(opts = {}) {
   const salts = new Map(opts.salts || []);
@@ -95,7 +104,7 @@ test("POST /e stores a pageview and never writes IP or UA", async (t) => {
   assert.equal(insert.params[1], "/");
   assert.equal(insert.params[2], "www.producthunt.com");
   assert.match(insert.params[3], /^[0-9a-f]{16}$/);
-  assert.equal(insert.params[4], "{}");
+  assert.deepEqual(JSON.parse(insert.params[4]), { browser: "Other" });
   const blob = JSON.stringify(insert.params);
   assert.equal(blob.includes("203.0.113.10"), false);
   assert.equal(blob.includes("Mozilla/5.0"), false);
@@ -161,7 +170,9 @@ test("normalizes path, strips self-referrer, drops junk with 204", async (t) => 
     204,
   );
   assert.equal(db.events.at(-1).name, "Download");
-  assert.equal(db.events.at(-1).props, "{}");
+  const junkProps = JSON.parse(db.events.at(-1).props);
+  assert.equal(junkProps.platform, undefined);
+  assert.equal(junkProps.browser, "Other");
 });
 
 test("rate limit lets RATE_MAX through then drops", async (t) => {
@@ -255,7 +266,7 @@ test("POST /login sets the cookie; wrong password does not", async (t) => {
   assert.match(cookie, /SameSite=Strict/i);
 });
 
-const { buildStats } = require("./server");
+const { buildStats, clampDays, querySince } = require("./server");
 
 test("visitors sum daily distinct hashes, not range-wide distinct", () => {
   const day1 = "2026-08-01T10:00:00.000Z";
@@ -363,4 +374,261 @@ test("GET / is 503 with one sentence when the db throws", async (t) => {
   const html = await res.text();
   assert.match(html, /Could not read stats/);
   assert.equal(html.includes("at "), false);
+});
+
+test("parseCountry accepts ISO codes and drops XX", () => {
+  assert.equal(parseCountry("NL"), "NL");
+  assert.equal(parseCountry("us"), "US");
+  assert.equal(parseCountry("XX"), "");
+  assert.equal(parseCountry(""), "");
+  assert.equal(parseCountry(undefined), "");
+});
+
+test("parseBrowser classifies Edge before Chrome", () => {
+  assert.equal(parseBrowser("Mozilla/5.0 Edg/120.0"), "Edge");
+  assert.equal(parseBrowser("Mozilla/5.0 Chrome/120.0"), "Chrome");
+  assert.equal(parseBrowser("Mozilla/5.0 CriOS/120.0"), "Chrome");
+  assert.equal(parseBrowser("Mozilla/5.0 Firefox/120.0"), "Firefox");
+  assert.equal(parseBrowser("Mozilla/5.0 FxiOS/120.0"), "Firefox");
+  assert.equal(
+    parseBrowser("Mozilla/5.0 Version/17.0 Safari/605.1.15"),
+    "Safari",
+  );
+  assert.equal(parseBrowser("curl/8.0"), "Other");
+  assert.equal(parseBrowser(""), "");
+});
+
+test("parseUtms keeps three keys and drops the rest", () => {
+  const utm = parseUtms(
+    "https://solenta.app/?utm_source=ph&utm_medium=social&utm_campaign=launch&foo=1",
+  );
+  assert.deepEqual(utm, {
+    utm_source: "ph",
+    utm_medium: "social",
+    utm_campaign: "launch",
+  });
+  assert.equal(JSON.stringify(utm).includes("foo"), false);
+  assert.deepEqual(parseUtms("https://solenta.app/?utm_source=bad value"), {});
+});
+
+test("POST /e stores country browser utm and never IP or UA", async (t) => {
+  resetHits();
+  const port = await listen();
+  const db = fakeDb();
+  setDb(db);
+  t.after(() => {
+    server.close();
+    setDb(null);
+  });
+  const res = await post(
+    port,
+    {
+      n: "pageview",
+      u: "https://solenta.app/?utm_source=ph&utm_medium=social&foo=1",
+      r: "",
+    },
+    {
+      "cf-ipcountry": "NL",
+      "user-agent": "Mozilla/5.0 Edg/120.0",
+    },
+  );
+  assert.equal(res.status, 204);
+  const insert = db.calls.find((c) => /INSERT INTO events/i.test(c.sql));
+  const props = JSON.parse(insert.params[4]);
+  assert.equal(props.country, "NL");
+  assert.equal(props.browser, "Edge");
+  assert.equal(props.utm_source, "ph");
+  assert.equal(props.utm_medium, "social");
+  assert.equal(props.foo, undefined);
+  const blob = JSON.stringify(insert.params);
+  assert.equal(blob.includes("203.0.113.10"), false);
+  assert.equal(blob.includes("Mozilla/5.0"), false);
+  assert.equal(blob.includes("Edg/120"), false);
+});
+
+test("POST /e omits XX country and still inserts", async (t) => {
+  resetHits();
+  const port = await listen();
+  const db = fakeDb();
+  setDb(db);
+  t.after(() => {
+    server.close();
+    setDb(null);
+  });
+  assert.equal((await post(port, PAGE, { "cf-ipcountry": "XX" })).status, 204);
+  const props = JSON.parse(db.events[0].props);
+  assert.equal(props.country, undefined);
+});
+
+test("clampDays accepts 90 and rejects 2", () => {
+  assert.equal(clampDays("90"), 90);
+  assert.equal(clampDays("2"), 30);
+  assert.equal(clampDays("1"), 1);
+});
+
+test("buildStats hourly today, live, funnels, and extra totals", () => {
+  const now = Date.parse("2026-08-28T12:30:00.000Z");
+  const rows = [
+    {
+      ts: "2026-08-28T12:10:00.000Z",
+      name: "pageview",
+      path: "/",
+      referrer: "producthunt.com",
+      visitor: "aaa",
+      props: {
+        country: "NL",
+        browser: "Safari",
+        utm_source: "ph",
+        utm_medium: "social",
+        utm_campaign: "launch",
+      },
+    },
+    {
+      ts: "2026-08-28T12:11:00.000Z",
+      name: "pageview",
+      path: "/",
+      referrer: "",
+      visitor: "aaa",
+      props: { country: "NL", browser: "Safari" },
+    },
+    {
+      ts: "2026-08-28T12:12:00.000Z",
+      name: "Download",
+      path: "/",
+      referrer: "",
+      visitor: "aaa",
+      props: { platform: "mac", country: "NL", browser: "Safari" },
+    },
+    {
+      ts: "2026-08-28T12:13:00.000Z",
+      name: "Download",
+      path: "/",
+      referrer: "",
+      visitor: "aaa",
+      props: { platform: "mac" },
+    },
+    {
+      ts: "2026-08-28T11:00:00.000Z",
+      name: "Docs",
+      path: "/",
+      referrer: "",
+      visitor: "bbb",
+      props: { country: "DE", browser: "Chrome" },
+    },
+    {
+      ts: "2026-08-27T23:50:00.000Z",
+      name: "pageview",
+      path: "/",
+      referrer: "",
+      visitor: "ccc",
+      props: { country: "US", browser: "Firefox" },
+    },
+  ];
+  const stats = buildStats(rows, 1, now);
+  assert.equal(stats.days, 1);
+  assert.equal(stats.series.length, 24);
+  assert.equal(stats.series[0].hour, 0);
+  assert.equal(stats.series[12].pageviews, 2);
+  assert.equal(stats.series[12].visitors, 1);
+  assert.equal(stats.docs, 1);
+  assert.equal(stats.downloads, 2);
+  assert.equal(stats.visitors, 2, "aaa + bbb on 28th; ccc is yesterday");
+  assert.equal(stats.live.pageviews, 2);
+  assert.equal(stats.live.visitors, 1);
+  assert.equal(stats.countries[0].code, "NL");
+  assert.equal(stats.browsers[0].name, "Safari");
+  assert.equal(stats.sources[0].label, "ph / social / launch");
+  const homeDl = stats.funnels.find((f) => f.name === "Home to Download");
+  assert.equal(homeDl.entered, 1);
+  assert.equal(homeDl.converted, 1);
+  assert.equal(homeDl.rate, 100);
+});
+
+test("querySince includes the live window before midnight", () => {
+  const now = Date.parse("2026-08-28T00:10:00.000Z");
+  const since = querySince(1, now);
+  assert.ok(since.getTime() <= now - 30 * 60 * 1000);
+  assert.ok(since.getTime() < Date.parse("2026-08-28T00:00:00.000Z"));
+});
+
+test("GET / with bearer shows new sections and refresh", async (t) => {
+  const port = await listen();
+  setNow(() => Date.parse("2026-08-28T12:00:00.000Z"));
+  setDb(
+    fakeDb({
+      rows: [
+        {
+          ts: "2026-08-28T11:50:00.000Z",
+          name: "Docs",
+          path: "/",
+          referrer: "",
+          visitor: "abc",
+          props: { country: "NL", browser: "Safari" },
+        },
+      ],
+    }),
+  );
+  t.after(() => {
+    server.close();
+    setDb(null);
+    setNow(null);
+  });
+  const res = await fetch(`http://127.0.0.1:${port}/?days=7`, {
+    headers: { authorization: "Bearer secret-token" },
+  });
+  assert.equal(res.status, 200);
+  const html = await res.text();
+  assert.match(html, /Live:/);
+  assert.match(html, /Docs/);
+  assert.match(html, /Changelog/);
+  assert.match(html, /GitHub Repo/);
+  assert.match(html, /Countries/);
+  assert.match(html, /Browsers/);
+  assert.match(html, /Sources/);
+  assert.match(html, /Funnels/);
+  assert.match(html, /Home to Download/);
+  assert.match(html, /\?days=90/);
+  assert.match(html, /http-equiv="refresh"/);
+  assert.equal(html.includes("No events in this range."), false);
+  assert.equal(html.includes("<script"), false);
+  assert.equal(html.includes("\u2014"), false);
+});
+
+test("GET / with bearer shows All downloads instead of the empty sentence", async (t) => {
+  const port = await listen();
+  setNow(() => Date.parse("2026-08-28T12:00:00.000Z"));
+  setDb(
+    fakeDb({
+      rows: [
+        {
+          ts: "2026-08-28T11:50:00.000Z",
+          name: "All downloads",
+          path: "/",
+          referrer: "",
+          visitor: "abc",
+          props: {},
+        },
+      ],
+    }),
+  );
+  t.after(() => {
+    server.close();
+    setDb(null);
+    setNow(null);
+  });
+  const res = await fetch(`http://127.0.0.1:${port}/?days=7`, {
+    headers: { authorization: "Bearer secret-token" },
+  });
+  assert.equal(res.status, 200);
+  const html = await res.text();
+  assert.equal(html.includes("No events in this range."), false);
+  assert.match(html, /All downloads/);
+});
+
+test("login HTML does not auto-refresh", async (t) => {
+  const port = await listen();
+  t.after(() => server.close());
+  const html = await (await fetch(`http://127.0.0.1:${port}/`)).text();
+  assert.equal(html.includes("http-equiv=\"refresh\""), false);
+  assert.match(html, /name="password"/);
 });
