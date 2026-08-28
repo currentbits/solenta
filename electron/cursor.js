@@ -90,6 +90,26 @@ function extractAssistantText(obj) {
 }
 
 /**
+ * Cursor stream-json thinking events (issue #751). Print-mode docs claim
+ * these are suppressed; live `--stream-partial-output` still emits:
+ *   {"type":"thinking","subtype":"delta","text":"..."}
+ *   {"type":"thinking","subtype":"completed"}
+ * @param {object} obj
+ * @returns {{ text: string, done: boolean } | null}
+ */
+function extractThinking(obj) {
+  if (!obj || typeof obj !== "object") return null;
+  if (obj.type !== "thinking") return null;
+  const text =
+    typeof obj.text === "string"
+      ? obj.text
+      : typeof obj.thinking === "string"
+        ? obj.thinking
+        : "";
+  return { text, done: obj.subtype === "completed" };
+}
+
+/**
  * Cursor packs two ids into one newline-separated `call_id`
  * (`call_…\nfc_…`). Pairing and Map keys must use the first line only.
  * @param {unknown} id
@@ -489,6 +509,7 @@ function runCursor(opts) {
 module.exports = {
   runCursor,
   extractAssistantText,
+  extractThinking,
   extractToolEvents,
   extractSessionId,
   extractUsage,

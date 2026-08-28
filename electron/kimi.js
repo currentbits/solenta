@@ -373,7 +373,11 @@ function extractAssistantText(obj) {
         .map((b) =>
           typeof b === "string"
             ? b
-            : b && typeof b === "object" && typeof b.text === "string"
+            : b &&
+                typeof b === "object" &&
+                typeof b.text === "string" &&
+                b.type !== "thinking" &&
+                b.type !== "redacted_thinking"
               ? b.text
               : "",
         )
@@ -398,7 +402,11 @@ function extractAssistantText(obj) {
       const parts = [];
       for (const block of c) {
         if (!block || typeof block !== "object") continue;
-        if (block.type === "text" && typeof block.text === "string") {
+        if (
+          block.type === "text" &&
+          typeof block.text === "string" &&
+          block.type !== "thinking"
+        ) {
           parts.push(block.text);
         }
       }
@@ -410,10 +418,11 @@ function extractAssistantText(obj) {
 }
 
 /**
- * Reasoning text from a kimi stream-json line. Official 0.31.1 stream-json
- * omits thinking from JSONL; this still accepts API-shaped
- * reasoning_content / thinking blocks so a live Thinking card can appear
- * when the CLI (or a future version) emits them (issue #752).
+ * Reasoning text from a kimi stream-json line (issue #751 / #752).
+ * Official 0.31.1 stream-json omits thinking from JSONL; this still accepts
+ * API-shaped reasoning_content / thinking blocks so a live Thinking card
+ * can appear when the CLI (or a future version) emits them. Also accepts
+ * type/role thinking lines and deltas used by older or defensive shapes.
  * @param {object} obj
  * @returns {string | null}
  */
@@ -427,6 +436,12 @@ function extractThinking(obj) {
   }
   if (typeof obj.reasoning === "string" && obj.reasoning.trim()) {
     return obj.reasoning;
+  }
+  if (obj.type === "thinking" || obj.role === "thinking") {
+    if (typeof obj.text === "string" && obj.text) return obj.text;
+    if (typeof obj.thinking === "string" && obj.thinking) return obj.thinking;
+    if (typeof obj.delta === "string" && obj.delta) return obj.delta;
+    if (typeof obj.content === "string" && obj.content) return obj.content;
   }
   if (
     obj.role !== "tool" &&

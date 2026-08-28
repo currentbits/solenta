@@ -562,6 +562,7 @@ process.exit(0);
     assert.equal(argv[pIdx + 1], "hey grok");
     assert.ok(argv.includes("streaming-messages-json"));
     assert.ok(!argv.includes("--verbose"));
+    assert.ok(argv.includes("--include-partial-messages"));
     assert.ok(!argv.includes("--mcp-config"));
 
     const assistants = store

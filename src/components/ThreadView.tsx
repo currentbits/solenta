@@ -4569,7 +4569,7 @@ export const ThreadView = memo(function ThreadView({
       return null;
     }
     const last = detail.messages[detail.messages.length - 1];
-    return last?.role === "event" ? last.id : null;
+    return last?.role === "event" && !last.thinking ? last.id : null;
   }, [detail]);
   const retryTitle = useMemo(
     () => (retryUser ? retryButtonTitle(retryUser.text) : ""),

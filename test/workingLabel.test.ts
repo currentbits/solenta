@@ -20,9 +20,9 @@ describe("liveWorkingLabel", () => {
     assert.equal(
       liveWorkingLabel({
         thinking: true,
-        toolSummary: "Edit: src/foo.ts",
+        toolSummary: "Read: src/components/ThreadView.tsx",
       }),
-      "Edit: src/foo.ts",
+      "Read: src/components/ThreadView.tsx",
     );
   });
 

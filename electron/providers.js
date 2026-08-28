@@ -262,6 +262,7 @@ const PROVIDERS = [
         "--permission-prompt-tool",
         "stdio",
         "--verbose",
+        "--include-partial-messages",
         "--permission-mode",
         String(permissionMode || "default"),
       ];
@@ -427,7 +428,10 @@ const PROVIDERS = [
      * Effort via --reasoning-effort <level> (alias --effort).
      * No --verbose and no --mcp-config (Solenta-spawned runs use a
      * per-thread GROK_HOME overlay; ensureGrokMcpConfig is the ssh/WSL
-     * fallback into ~/.grok/config.toml).
+     * fallback into ~/.grok/config.toml). --include-partial-messages is
+     * required for live thinking/tool deltas (issue #751); without it
+     * grok only emits a complete assistant message after the model
+     * response, so the UI sits on "Agent working…".
      *
      * Permission modes: headless -p has NO prompt channel (no
      * --permission-prompt-tool / stream-json input like claude), so any mode
@@ -446,6 +450,7 @@ const PROVIDERS = [
       const args = [
         "--output-format",
         "streaming-messages-json",
+        "--include-partial-messages",
         "--permission-mode",
         headlessMode,
       ];
@@ -562,10 +567,11 @@ const PROVIDERS = [
     /**
      * Custom model ids allowed (format provider/model).
      * Resume via -s <sessionID>; model override via -m provider/model.
+     * `--thinking` so `type: "reasoning"` parts land on stdout (issue #751).
      * Prompt is the last argv element.
      */
     buildArgs({ prompt, sessionId, model, reasoningEffort, permissionMode }) {
-      const args = ["run", "--format", "json"];
+      const args = ["run", "--format", "json", "--thinking"];
       if (sessionId) {
         args.push("-s", String(sessionId));
       }

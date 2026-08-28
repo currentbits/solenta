@@ -109,6 +109,31 @@ function extractTextPart(obj) {
 }
 
 /**
+ * Reasoning/thinking part from `opencode run --format json --thinking`
+ * (issue #751). Emitted as type "reasoning" (and sometimes "thinking").
+ * @param {object} obj
+ * @returns {{ id: string | null, text: string } | null}
+ */
+function extractThinkingPart(obj) {
+  if (!obj || typeof obj !== "object") return null;
+  const type = String(obj.type || "");
+  if (type !== "reasoning" && type !== "thinking") return null;
+
+  const part = obj.part && typeof obj.part === "object" ? obj.part : null;
+  let text = null;
+  if (part && typeof part.text === "string") text = part.text;
+  else if (typeof obj.text === "string") text = obj.text;
+  if (text == null) return null;
+
+  const id =
+    (part && typeof part.id === "string" && part.id) ||
+    (part && part.id != null ? String(part.id) : null) ||
+    (typeof obj.id === "string" && obj.id) ||
+    (obj.id != null ? String(obj.id) : null);
+  return { id, text };
+}
+
+/**
  * Tool-ish events: type contains "tool" and a name is present.
  * @param {object} obj
  * @returns {{ id: string, name: string, input: string, output: string | null, phase: "start" | "end" | "single", isError: boolean, images?: { mediaType: string, data: string }[] } | null}
@@ -353,6 +378,7 @@ module.exports = {
   extractSessionId,
   extractTerminalError,
   extractTextPart,
+  extractThinkingPart,
   extractToolEvent,
   truncate,
   INPUT_TRUNCATE,

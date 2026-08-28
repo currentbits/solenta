@@ -88,6 +88,60 @@ const { normalizeQuestions } = require("./questions.js");
 const PUSH_THROTTLE_MS = 250;
 const THINKING_TRUNCATE = 8000;
 
+/**
+ * Unwrap a Messages-API partial (`stream_event` wrapper or bare
+ * content_block_* / message_*). Null when `ev` is a whole message.
+ * @param {object} ev
+ * @returns {object | null}
+ */
+function unwrapStreamEvent(ev) {
+  if (!ev || typeof ev !== "object") return null;
+  if (ev.type === "stream_event" && ev.event && typeof ev.event === "object") {
+    return ev.event;
+  }
+  if (
+    ev.type === "content_block_start" ||
+    ev.type === "content_block_delta" ||
+    ev.type === "content_block_stop" ||
+    ev.type === "message_start" ||
+    ev.type === "message_delta" ||
+    ev.type === "message_stop"
+  ) {
+    return ev;
+  }
+  return null;
+}
+
+/**
+ * Create or grow a thinking card (issue #751). Shared by claude-stream,
+ * cursor, kimi, and opencode so the transcript paints one Thinking row.
+ * @param {{ id: string | null, text: string }} state
+ * @param {string} chunk
+ * @param {boolean} [replace]
+ * @returns {boolean}
+ */
+function upsertThinkingCard(appendMessage, store, threadId, runId, state, chunk, replace) {
+  if (chunk == null) return false;
+  if (replace) state.text = String(chunk);
+  else state.text += String(chunk);
+  const body = truncate(state.text, THINKING_TRUNCATE);
+  if (!body) return false;
+  if (!state.id) {
+    state.id = appendMessage(
+      threadId,
+      "event",
+      body,
+      runId,
+      null,
+      null,
+      { thinking: true },
+    );
+  } else {
+    store.updateMessage(threadId, state.id, { text: body });
+  }
+  return true;
+}
+
 /** Plan markdown shown in the approval panel; long enough for a real plan. */
 const PLAN_TRUNCATE = 20000;
 
@@ -3191,6 +3245,261 @@ function createRunner(opts) {
       discardHeldPhantom();
     }
 
+    /** @type {string | null} */
+    let thinkingMsgId = null;
+    /** @type {string} */
+    let thinkingText = "";
+    let partialText = false;
+    let partialThinking = false;
+    /** @type {Map<number, { toolId: string, json: string, name: string }>} */
+    const partialTools = new Map();
+    /** @type {ReturnType<typeof setTimeout> | null} */
+    let partialPushTimer = null;
+
+    function schedulePartialPush() {
+      if (partialPushTimer) return;
+      partialPushTimer = setTimeout(() => {
+        partialPushTimer = null;
+        if (!guard()) return;
+        store.save();
+        pushDetail(threadId, claudeState);
+      }, PUSH_THROTTLE_MS);
+    }
+
+    function flushPartialPush() {
+      if (partialPushTimer) {
+        clearTimeout(partialPushTimer);
+        partialPushTimer = null;
+      }
+      store.save();
+      pushDetail(threadId, claudeState);
+    }
+
+    function upsertThinking() {
+      const text = truncate(thinkingText, THINKING_TRUNCATE);
+      const body = text || "Thinking…";
+      if (!thinkingMsgId) {
+        if (!thinkingText) return;
+        thinkingMsgId = appendMessage(
+          threadId,
+          "event",
+          body,
+          runId,
+          null,
+          null,
+          { thinking: true },
+        );
+        return;
+      }
+      store.updateMessage(threadId, thinkingMsgId, { text: body });
+    }
+
+    function formatToolInput(input) {
+      if (typeof input === "string") return truncate(input, INPUT_TRUNCATE);
+      try {
+        return truncate(JSON.stringify(input, null, 2), INPUT_TRUNCATE);
+      } catch {
+        return truncate(String(input), INPUT_TRUNCATE);
+      }
+    }
+
+    /**
+     * Create or update a tool card. Side effects (todos, questions, subagents)
+     * run only when the row is first created.
+     * @param {{ id?: unknown, name?: unknown, input?: unknown }} block
+     * @returns {string}
+     */
+    function ingestToolUse(block) {
+      const toolId = String(block.id || randomUUID());
+      const toolName = String(block.name || "tool");
+      const inputRaw = block.input != null ? block.input : {};
+      const inputObj =
+        inputRaw && typeof inputRaw === "object" && !Array.isArray(inputRaw)
+          ? inputRaw
+          : {};
+      const inputStr = formatToolInput(inputRaw);
+      const summary = toolSummary(
+        toolName,
+        inputRaw && typeof inputRaw === "object" ? inputRaw : {},
+      );
+      const existingId = toolMsgById.get(toolId);
+      if (existingId) {
+        const existing = store
+          .getMessages(threadId)
+          .find((m) => m.id === existingId);
+        if (existing && existing.tool) {
+          store.updateMessage(threadId, existingId, {
+            text: summary,
+            tool: { ...existing.tool, name: toolName, input: inputStr },
+          });
+        }
+        if (toolName === "TodoWrite") {
+          savePlanSteps(threadId, inputObj.todos);
+        }
+        if (toolName === "ask_user_question") {
+          try {
+            askUser({ threadId, questions: inputObj.questions });
+          } catch {
+            // Unanswerable shape: the tool card still shows what was asked.
+          }
+        }
+        return toolId;
+      }
+      markTurnContent();
+      const tool = {
+        id: toolId,
+        name: toolName,
+        input: inputStr,
+        output: null,
+        isError: false,
+        done: false,
+      };
+      const msgId = appendMessage(threadId, "tool", summary, runId, tool);
+      toolMsgById.set(toolId, msgId);
+      if (toolName === "TodoWrite") {
+        savePlanSteps(threadId, inputObj.todos);
+      }
+      if (toolName === "ask_user_question") {
+        try {
+          askUser({ threadId, questions: inputObj.questions });
+        } catch {
+          // Unanswerable shape: the tool card still shows what was asked.
+        }
+      }
+      if (toolName === "Agent" || toolName === "Task") {
+        addSubagentRow(threadId, {
+          id: toolId,
+          description:
+            typeof inputObj.description === "string" && inputObj.description
+              ? inputObj.description
+              : summary,
+          agentType:
+            typeof inputObj.subagent_type === "string"
+              ? inputObj.subagent_type
+              : null,
+          status: "running",
+        });
+      }
+      assistantMsgId = null;
+      assistantText = "";
+      return toolId;
+    }
+
+    function upsertAssistantText() {
+      if (!assistantText) return;
+      if (!assistantMsgId) {
+        assistantMsgId = appendMessage(
+          threadId,
+          "assistant",
+          assistantText,
+          runId,
+        );
+      } else {
+        store.updateMessage(threadId, assistantMsgId, { text: assistantText });
+      }
+    }
+
+    /**
+     * @param {object} p
+     * @returns {boolean} true when consumed as a partial
+     */
+    function applyPartial(p) {
+      if (!p || typeof p !== "object") return false;
+      const ptype = p.type;
+      if (ptype === "message_start") {
+        thinkingMsgId = null;
+        thinkingText = "";
+        assistantMsgId = null;
+        assistantText = "";
+        partialText = false;
+        partialThinking = false;
+        return true;
+      }
+      if (ptype === "content_block_start") {
+        const block = p.content_block && typeof p.content_block === "object"
+          ? p.content_block
+          : {};
+        const index = p.index;
+        if (block.type === "thinking" || block.type === "redacted_thinking") {
+          thinkingText =
+            typeof block.thinking === "string" ? block.thinking : "";
+          partialThinking = true;
+          if (thinkingText) upsertThinking();
+          flushPartialPush();
+        } else if (block.type === "tool_use") {
+          const toolId = ingestToolUse(block);
+          partialTools.set(Number(index), {
+            toolId,
+            json: "",
+            name: String(block.name || "tool"),
+          });
+          flushPartialPush();
+        } else if (block.type === "text") {
+          partialText = true;
+          if (typeof block.text === "string" && block.text) {
+            markTurnContent();
+            assistantText += block.text;
+            upsertAssistantText();
+          }
+          flushPartialPush();
+        }
+        return true;
+      }
+      if (ptype === "content_block_delta") {
+        const delta = p.delta && typeof p.delta === "object" ? p.delta : {};
+        const index = p.index;
+        if (delta.type === "thinking_delta" && typeof delta.thinking === "string") {
+          partialThinking = true;
+          thinkingText += delta.thinking;
+          upsertThinking();
+          markTurnContent();
+          schedulePartialPush();
+        } else if (delta.type === "text_delta" && typeof delta.text === "string") {
+          partialText = true;
+          if (delta.text) markTurnContent();
+          assistantText += delta.text;
+          upsertAssistantText();
+          schedulePartialPush();
+        } else if (
+          delta.type === "input_json_delta" &&
+          typeof delta.partial_json === "string"
+        ) {
+          const slot = partialTools.get(Number(index));
+          if (slot) {
+            slot.json += delta.partial_json;
+            let input = slot.json;
+            try {
+              input = JSON.parse(slot.json);
+            } catch {
+              // incomplete JSON: show the raw fragment
+            }
+            ingestToolUse({ id: slot.toolId, name: slot.name, input });
+            schedulePartialPush();
+          }
+        }
+        return true;
+      }
+      if (ptype === "content_block_stop") {
+        const slot = partialTools.get(Number(p.index));
+        if (slot && slot.json) {
+          let input = slot.json;
+          try {
+            input = JSON.parse(slot.json);
+          } catch {
+            // keep raw
+          }
+          ingestToolUse({ id: slot.toolId, name: slot.name, input });
+          partialTools.delete(Number(p.index));
+          flushPartialPush();
+        }
+        return true;
+      }
+      if (ptype === "message_delta" || ptype === "message_stop") {
+        return true;
+      }
+      return false;
+    }
+
     const localCwd = thread.worktreePath || project.path;
     const binary = resolveBin(entryDef);
     const args = entryDef.buildArgs({
@@ -3369,6 +3678,9 @@ function createRunner(opts) {
           return;
         }
 
+        const partial = unwrapStreamEvent(ev);
+        if (partial && applyPartial(partial)) return;
+
         if (type === "control_request") {
           const requestId = String(ev.request_id || "");
           const request = ev.request || {};
@@ -3499,95 +3811,36 @@ function createRunner(opts) {
         }
 
         if (type === "assistant" && ev.message && Array.isArray(ev.message.content)) {
+          // Complete assistant restates streamed partials: replace, don't append.
+          if (partialText) {
+            assistantText = "";
+            partialText = false;
+          }
+          if (partialThinking) {
+            thinkingText = "";
+            partialThinking = false;
+          } else {
+            thinkingMsgId = null;
+            thinkingText = "";
+          }
           for (const block of ev.message.content) {
             if (!block || typeof block !== "object") continue;
             if (block.type === "text" && typeof block.text === "string") {
               if (block.text) markTurnContent();
               assistantText += block.text;
-              if (!assistantMsgId) {
-                assistantMsgId = appendMessage(
-                  threadId,
-                  "assistant",
-                  assistantText,
-                  runId,
-                );
-              } else {
-                store.updateMessage(threadId, assistantMsgId, {
-                  text: assistantText,
-                });
-              }
-            } else if (block.type === "tool_use") {
+              upsertAssistantText();
+            } else if (
+              block.type === "thinking" ||
+              block.type === "redacted_thinking"
+            ) {
               markTurnContent();
-              const toolId = String(block.id || randomUUID());
-              const toolName = String(block.name || "tool");
-              const inputObj = block.input != null ? block.input : {};
-              let inputStr;
-              try {
-                inputStr = truncate(
-                  JSON.stringify(inputObj, null, 2),
-                  INPUT_TRUNCATE,
-                );
-              } catch {
-                inputStr = truncate(String(inputObj), INPUT_TRUNCATE);
-              }
-              const summary = toolSummary(toolName, inputObj);
-              const tool = {
-                id: toolId,
-                name: toolName,
-                input: inputStr,
-                output: null,
-                isError: false,
-                done: false,
-              };
-              const msgId = appendMessage(
-                threadId,
-                "tool",
-                summary,
-                runId,
-                tool,
-              );
-              toolMsgById.set(toolId, msgId);
-              // The agent's todo list IS its working plan: mirror it onto the
-              // thread so the Planboard shows live steps without the agent
-              // filing GitHub issues for them (issue #76).
-              if (toolName === "TodoWrite") {
-                savePlanSteps(threadId, inputObj.todos);
-              }
-              // grok's native question tool (issue #647). Headless grok has no
-              // permission channel, so the CLI answers this one itself ("No
-              // user is available...") and the turn runs on — the tool_use
-              // block in the stream is the only place the question ever
-              // surfaces. Claude never reaches here for its own questions:
-              // AskUserQuestion arrives as a blocking control_request first.
-              if (toolName === "ask_user_question") {
-                try {
-                  askUser({ threadId, questions: inputObj.questions });
-                } catch {
-                  // Unanswerable shape (no labelled options): the tool card
-                  // still shows what was asked. Never break the stream.
-                }
-              }
-              // "Task" is the Agent tool's name in older Claude Code CLIs.
-              if (toolName === "Agent" || toolName === "Task") {
-                addSubagentRow(threadId, {
-                  id: toolId,
-                  description:
-                    typeof inputObj.description === "string" &&
-                    inputObj.description
-                      ? inputObj.description
-                      : summary,
-                  agentType:
-                    typeof inputObj.subagent_type === "string"
-                      ? inputObj.subagent_type
-                      : null,
-                  status: "running",
-                });
-              }
-              // Post-tool text starts a fresh message so the final answer
-              // renders below the tool calls, not merged into the first
-              // (earlier-timestamped) bubble.
-              assistantMsgId = null;
-              assistantText = "";
+              thinkingText +=
+                block.type === "thinking" && typeof block.thinking === "string"
+                  ? block.thinking
+                  : "";
+              upsertThinking();
+            } else if (block.type === "tool_use") {
+              ingestToolUse(block);
             }
           }
           store.save();
@@ -3658,6 +3911,10 @@ function createRunner(opts) {
         }
 
         if (type === "result") {
+          if (partialPushTimer) {
+            clearTimeout(partialPushTimer);
+            partialPushTimer = null;
+          }
           if (isPhantomClaudeResult(ev, sawTurnContent)) {
             if (heldPhantom) return;
             heldPhantom = ev;
@@ -3837,6 +4094,10 @@ function createRunner(opts) {
     };
 
     const onExit = ({ code, stderr, gotResult }) => {
+        if (partialPushTimer) {
+          clearTimeout(partialPushTimer);
+          partialPushTimer = null;
+        }
         disarmAck();
         if (heldPhantom) {
           failEmptyPhantom(heldPhantom);
@@ -3892,6 +4153,10 @@ function createRunner(opts) {
     };
 
     const onError = (err) => {
+        if (partialPushTimer) {
+          clearTimeout(partialPushTimer);
+          partialPushTimer = null;
+        }
         disarmAck();
         const e = active.get(threadId);
         if (!e || e.stopping || e.runId !== runId) return;
@@ -4788,6 +5053,8 @@ function createRunner(opts) {
                 });
               }
             } else {
+              thinkingMsgId = null;
+              thinkingText = "";
               const toolMeta = {
                 id: tool.id,
                 name: tool.name,
@@ -5011,6 +5278,11 @@ function createRunner(opts) {
     let anonPartSeq = 0;
     /** @type {Map<string, string>} */
     const toolMsgById = new Map();
+    const thinking = { id: null, text: "" };
+    /** @type {string[]} */
+    const thinkingPartOrder = [];
+    /** @type {Map<string, string>} */
+    const thinkingPartById = new Map();
     /** @type {string | null} */
     let capturedSessionId = thread.sessionId || null;
     /** @type {string | null} */
@@ -5180,9 +5452,43 @@ function createRunner(opts) {
           throttledPush();
         }
 
+        const thinkPart = opencodeParse.extractThinkingPart(ev);
+        if (thinkPart) {
+          const partId =
+            thinkPart.id != null && thinkPart.id !== ""
+              ? thinkPart.id
+              : `__think_${anonPartSeq++}`;
+          if (!thinkingPartById.has(partId)) thinkingPartOrder.push(partId);
+          const prev = thinkingPartById.get(partId) || "";
+          if (
+            !prev ||
+            thinkPart.text.length >= prev.length ||
+            !prev.startsWith(thinkPart.text)
+          ) {
+            thinkingPartById.set(partId, thinkPart.text);
+          }
+          const full = thinkingPartOrder
+            .map((id) => thinkingPartById.get(id) || "")
+            .join("");
+          upsertThinkingCard(
+            appendMessage,
+            store,
+            threadId,
+            runId,
+            thinking,
+            full,
+            true,
+          );
+          throttledPush();
+        }
+
         const tool = opencodeParse.extractToolEvent(ev);
         if (tool) {
           if (tool.phase === "start") {
+            thinking.id = null;
+            thinking.text = "";
+            thinkingPartOrder.length = 0;
+            thinkingPartById.clear();
             const toolMeta = {
               id: tool.id,
               name: tool.name,
@@ -5404,6 +5710,7 @@ function createRunner(opts) {
     let assistantText = "";
     /** @type {Map<string, string>} */
     const toolMsgById = new Map();
+    const thinking = { id: null, text: "" };
     let sawUsage = false;
     /** True when extractUsage returned a real result event, not the zero fallback. */
     let usageReported = false;
@@ -5586,6 +5893,34 @@ function createRunner(opts) {
           }
         }
 
+        const think = cursorParse.extractThinking(ev);
+        if (think) {
+          if (think.done) {
+            if (think.text) {
+              upsertThinkingCard(
+                appendMessage,
+                store,
+                threadId,
+                runId,
+                thinking,
+                think.text,
+                true,
+              );
+            }
+          } else if (think.text) {
+            upsertThinkingCard(
+              appendMessage,
+              store,
+              threadId,
+              runId,
+              thinking,
+              think.text,
+              false,
+            );
+          }
+          throttledPush();
+        }
+
         const text = cursorParse.extractAssistantText(ev);
         if (text != null) {
           // Deltas carry timestamp_ms. A no-timestamp assistant line is
@@ -5606,6 +5941,8 @@ function createRunner(opts) {
           const args = cursorParse.parseToolArgs(tool.input);
           const summary = cursorToolCardSummary(tool.name, tool.input, args);
           if (tool.phase === "start") {
+            thinking.id = null;
+            thinking.text = "";
             if (toolMsgById.has(tool.id)) {
               throttledPush();
               continue;

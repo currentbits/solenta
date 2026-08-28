@@ -1235,6 +1235,7 @@ describe("runner claude provider", () => {
     assert.ok(argv.includes("--permission-prompt-tool"));
     assert.ok(argv.includes("stdio"));
     assert.ok(argv.includes("--verbose"));
+    assert.ok(argv.includes("--include-partial-messages"));
     assert.ok(argv.includes("--permission-mode"));
     assert.ok(argv.includes("default"));
     assert.ok(!argv.includes("do the thing"));

@@ -457,6 +457,60 @@ async function main() {
     return;
   }
 
+  if (scenario === "thinking-then-tool") {
+    emit({
+      type: "system",
+      subtype: "init",
+      session_id: "cursor-sess-1",
+      model: "Composer",
+    });
+    await delay(10);
+    emit({
+      type: "thinking",
+      subtype: "delta",
+      text: "I should read cursor.js first.",
+      session_id: "cursor-sess-1",
+    });
+    await delay(80);
+    emit({
+      type: "thinking",
+      subtype: "completed",
+      session_id: "cursor-sess-1",
+    });
+    emit({
+      type: "tool_call",
+      subtype: "started",
+      call_id: "call-read-1",
+      tool_call: {
+        readToolCall: { args: { path: "electron/cursor.js" } },
+      },
+      session_id: "cursor-sess-1",
+    });
+    await delay(15);
+    emit({
+      type: "tool_call",
+      subtype: "completed",
+      call_id: "call-read-1",
+      tool_call: {
+        readToolCall: {
+          args: { path: "electron/cursor.js" },
+          result: { success: { content: "exports", totalLines: 1 } },
+        },
+      },
+      session_id: "cursor-sess-1",
+    });
+    await delay(10);
+    emit({
+      type: "result",
+      subtype: "success",
+      is_error: false,
+      result: "Looked at cursor.js.",
+      session_id: "cursor-sess-1",
+    });
+    process.exit(0);
+    return;
+  }
+
   process.stderr.write("unknown scenario\\n");
   process.exit(1);
 }
@@ -1165,5 +1219,28 @@ describe("cursor runner integration", () => {
     assert.equal(store.getThread(thread.id).status, "working");
 
     await runner.stopRun({ threadId: thread.id });
+  });
+
+  it("surfaces thinking deltas before the first tool card (issue #751)", async () => {
+    process.env.CODER_FAKE_CURSOR_SCENARIO = "thinking-then-tool";
+    const thread = store.getThreads()[0];
+    await runner.startRun({ threadId: thread.id, prompt: "look around" });
+
+    await waitFor(() =>
+      store
+        .getMessages(thread.id)
+        .some((m) => m.thinking && /cursor\.js/.test(m.text)),
+    );
+    assert.equal(
+      store.getMessages(thread.id).filter((m) => m.role === "tool").length,
+      0,
+      "thinking must be visible before the later tool_call",
+    );
+
+    await waitFor(() => store.getThread(thread.id).status === "done");
+    const msgs = store.getMessages(thread.id);
+    assert.equal(msgs.filter((m) => m.thinking).length, 1);
+    assert.equal(msgs.filter((m) => m.role === "tool").length, 1);
+    assert.equal(msgs.find((m) => m.role === "tool").tool.name, "Read");
   });
 });

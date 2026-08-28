@@ -312,6 +312,113 @@ async function main() {
     return;
   }
 
+  // Issue #751: live thinking deltas arrive as stream_event before the
+  // complete assistant message. Delay so the runner test can observe the
+  // thinking card before the tool_use restatement.
+  if (scenario === "thinking-then-tool") {
+    emit({
+      type: "system",
+      subtype: "init",
+      session_id: "grok-sess-001",
+      model: "grok-4.6",
+    });
+    await delay(10);
+    emit({
+      type: "stream_event",
+      event: {
+        type: "content_block_start",
+        index: 0,
+        content_block: { type: "thinking", thinking: "" },
+      },
+    });
+    emit({
+      type: "stream_event",
+      event: {
+        type: "content_block_delta",
+        index: 0,
+        delta: {
+          type: "thinking_delta",
+          thinking: "I should read ThreadView first.",
+        },
+      },
+    });
+    await delay(200);
+    emit({
+      type: "stream_event",
+      event: { type: "content_block_stop", index: 0 },
+    });
+    emit({
+      type: "stream_event",
+      event: {
+        type: "content_block_start",
+        index: 1,
+        content_block: {
+          type: "tool_use",
+          id: "call-read-1",
+          name: "Read",
+          input: {},
+        },
+      },
+    });
+    emit({
+      type: "stream_event",
+      event: {
+        type: "content_block_delta",
+        index: 1,
+        delta: {
+          type: "input_json_delta",
+          partial_json: '{"file_path":"src/components/ThreadView.tsx"}',
+        },
+      },
+    });
+    emit({
+      type: "stream_event",
+      event: { type: "content_block_stop", index: 1 },
+    });
+    await delay(40);
+    emit({
+      type: "assistant",
+      message: {
+        content: [
+          { type: "thinking", thinking: "I should read ThreadView first." },
+          {
+            type: "tool_use",
+            id: "call-read-1",
+            name: "Read",
+            input: { file_path: "src/components/ThreadView.tsx" },
+          },
+        ],
+      },
+    });
+    await delay(15);
+    emit({
+      type: "user",
+      message: {
+        content: [
+          {
+            type: "tool_result",
+            tool_use_id: "call-read-1",
+            content: "export function ThreadView",
+            is_error: false,
+          },
+        ],
+      },
+    });
+    await delay(15);
+    emit({
+      type: "result",
+      subtype: "success",
+      is_error: false,
+      result: "Looked at ThreadView.",
+      usage: { input_tokens: 20, output_tokens: 10 },
+      total_cost_usd: 0.001,
+      num_turns: 1,
+      session_id: "grok-sess-001",
+    });
+    process.exit(0);
+    return;
+  }
+
   process.stderr.write("unknown scenario " + scenario + "\\n");
   process.exit(1);
 }
@@ -355,6 +462,7 @@ describe("grok provider registry", () => {
     assert.ok(!first.includes("default"));
     assert.ok(!first.includes("--resume"));
     assert.ok(!first.includes("--verbose"));
+    assert.ok(first.includes("--include-partial-messages"));
     assert.ok(!first.some((a) => String(a).startsWith("--mcp-config")));
     assert.ok(!first.includes("stream-json"));
 
@@ -487,6 +595,7 @@ describe("runner grok provider (claude-stream path)", () => {
     assert.ok(!argv.includes("auto"));
     assert.ok(!argv.includes("--resume"));
     assert.ok(!argv.includes("--verbose"));
+    assert.ok(argv.includes("--include-partial-messages"));
     assert.ok(!argv.some((a) => String(a).startsWith("--mcp-config")));
     assert.ok(!argv.includes("stream-json"));
 
@@ -505,6 +614,41 @@ describe("runner grok provider (claude-stream path)", () => {
     assert.equal(usage.costUsd, 0.02);
     assert.equal(usage.turns, 1);
     assert.equal(usage.contextTokens, 120);
+  });
+
+  it("surfaces thinking deltas and one tool card before the complete assistant restates them (#751)", async () => {
+    process.env.CODER_FAKE_GROK_SCENARIO = "thinking-then-tool";
+    const thread = store.getThreads()[0];
+
+    await runner.startRun({ threadId: thread.id, prompt: "look around" });
+
+    await waitFor(() =>
+      store
+        .getMessages(thread.id)
+        .some((m) => m.thinking && /ThreadView/.test(m.text)),
+    );
+    assert.equal(
+      store.getMessages(thread.id).filter((m) => m.role === "tool").length,
+      0,
+      "thinking must be visible before the later tool_use",
+    );
+
+    await waitFor(
+      () => store.getThread(thread.id).status === "done",
+      { timeoutMs: 15000 },
+    );
+
+    const msgs = store.getMessages(thread.id);
+    const thinking = msgs.filter((m) => m.thinking);
+    assert.equal(thinking.length, 1, "complete assistant must not duplicate thinking");
+    assert.match(thinking[0].text, /ThreadView/);
+    assert.equal(thinking[0].role, "event");
+
+    const tools = msgs.filter((m) => m.role === "tool");
+    assert.equal(tools.length, 1, "complete assistant must not duplicate the tool card");
+    assert.equal(tools[0].tool.name, "Read");
+    assert.equal(tools[0].tool.done, true);
+    assert.match(tools[0].text, /ThreadView/);
   });
 
   it("plan-mode grok turn leaves a plan approval card (#707)", async () => {

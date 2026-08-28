@@ -216,6 +216,36 @@ async function main() {
     return;
   }
 
+  // Issue #751: thinking content-block before the first tool card.
+  if (scenario === "thinking-block-then-tool") {
+    emit({
+      role: "assistant",
+      content: [{ type: "thinking", thinking: "I should read kimi.js first." }],
+    });
+    await delay(80);
+    emit({
+      role: "assistant",
+      tool_calls: [
+        {
+          type: "function",
+          id: "call-read-1",
+          function: {
+            name: "Read",
+            arguments: "{\\"file_path\\":\\"electron/kimi.js\\"}",
+          },
+        },
+      ],
+    });
+    await delay(15);
+    emit({
+      role: "tool",
+      tool_call_id: "call-read-1",
+      content: "module.exports",
+    });
+    process.exit(0);
+    return;
+  }
+
   // Issue #753: official stream-json drops thinking from JSONL; the
   // recorded print-mode stderr shape (kimi 0.31.1 PromptTranscriptWriter)
   // is a •  block. Tool progress and resume notices share stderr and
@@ -539,6 +569,28 @@ describe("kimi extract helpers", () => {
       "arr",
     );
     assert.equal(extractAssistantText({ type: "other", text: "x" }), null);
+  });
+
+  it("extracts thinking without treating it as assistant text (issue #751)", () => {
+    assert.equal(
+      extractThinking({ type: "thinking", text: "plan the edit" }),
+      "plan the edit",
+    );
+    assert.equal(
+      extractThinking({
+        role: "assistant",
+        content: [{ type: "thinking", thinking: "look at kimi.js" }],
+      }),
+      "look at kimi.js",
+    );
+    assert.equal(
+      extractAssistantText({
+        role: "assistant",
+        content: [{ type: "thinking", thinking: "look at kimi.js" }],
+      }),
+      null,
+    );
+    assert.equal(extractThinking({ role: "assistant", content: "Hello" }), null);
   });
 
   it("extracts tool events when type contains tool and name is set", () => {
@@ -1073,5 +1125,28 @@ describe("kimi runner integration", () => {
             m.runId === runId,
         ),
     );
+  });
+
+  it("surfaces thinking before the first tool card (issue #751)", async () => {
+    process.env.CODER_FAKE_KIMI_SCENARIO = "thinking-block-then-tool";
+    const thread = store.getThreads()[0];
+    await runner.startRun({ threadId: thread.id, prompt: "look around" });
+
+    await waitFor(() =>
+      store
+        .getMessages(thread.id)
+        .some((m) => m.thinking && /kimi\.js/.test(m.text)),
+    );
+    assert.equal(
+      store.getMessages(thread.id).filter((m) => m.role === "tool").length,
+      0,
+      "thinking must be visible before the later tool_calls",
+    );
+
+    await waitFor(() => store.getThread(thread.id).status === "done");
+    const msgs = store.getMessages(thread.id);
+    assert.equal(msgs.filter((m) => m.thinking).length, 1);
+    assert.equal(msgs.filter((m) => m.role === "tool").length, 1);
+    assert.equal(msgs.find((m) => m.role === "tool").tool.name, "Read");
   });
 });

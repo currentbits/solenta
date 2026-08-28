@@ -255,6 +255,7 @@ describe("providers registry", () => {
     assert.ok(grokArgs.includes("--always-approve"));
     assert.ok(!grokArgs.includes("auto"));
     assert.ok(!grokArgs.includes("--verbose"));
+    assert.ok(grokArgs.includes("--include-partial-messages"));
     assert.ok(!grokArgs.some((a) => String(a).startsWith("--mcp-config")));
 
     const grokResume = getProvider("grok").buildArgs({
@@ -275,6 +276,7 @@ describe("providers registry", () => {
       "run",
       "--format",
       "json",
+      "--thinking",
       "hello",
     ]);
     const resume = getProvider("opencode").buildArgs({

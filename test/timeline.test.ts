@@ -258,7 +258,7 @@ describe("workLogDurationLabel", () => {
     assert.equal(workLogDurationLabel([]), null);
   });
 
-  it("ticks an open run off `now` instead of freezing at 0s", () => {
+  it("ticks an open run off `now` instead of freezing at 0s (issue #751)", () => {
     const items = [
       wl({ id: "a", runId: "r", label: "Starting agent", timestamp: 1_000 }),
       wl({ id: "b", runId: "r", label: "Agent working", timestamp: 1_000 }),

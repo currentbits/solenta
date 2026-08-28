@@ -4,6 +4,7 @@ const { describe, it } = require("node:test");
 const assert = require("node:assert/strict");
 const {
   extractAssistantText,
+  extractThinking,
   extractToolEvents,
   extractSessionId,
   extractUsage,
@@ -263,6 +264,33 @@ describe("cursor extractAssistantText", () => {
       null,
       "result.result is the concatenated final answer, not an assistant delta",
     );
+  });
+});
+
+describe("cursor extractThinking (issue #751)", () => {
+  it("reads stream-json thinking deltas and the completed marker", () => {
+    assert.deepEqual(
+      extractThinking({
+        type: "thinking",
+        subtype: "delta",
+        text: "The user",
+        session_id: SESSION_ID,
+      }),
+      { text: "The user", done: false },
+    );
+    assert.deepEqual(
+      extractThinking({
+        type: "thinking",
+        subtype: "completed",
+        session_id: SESSION_ID,
+      }),
+      { text: "", done: true },
+    );
+  });
+
+  it("ignores assistant and tool_call lines", () => {
+    assert.equal(extractThinking(DOC_ASSISTANT_1), null);
+    assert.equal(extractThinking(DOC_READ_START), null);
   });
 });
 
