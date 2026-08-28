@@ -77,6 +77,32 @@ function adminToken() {
   return process.env.ADMIN_TOKEN || "";
 }
 
+function tokensEqual(offered) {
+  const token = adminToken();
+  if (!token) return false;
+  const a = Buffer.from(String(offered || ""));
+  const b = Buffer.from(token);
+  return a.length === b.length && timingSafeEqual(a, b);
+}
+
+function cookieToken(req) {
+  for (const part of String(req.headers.cookie || "").split(";")) {
+    const [k, ...rest] = part.trim().split("=");
+    if (k === COOKIE) return decodeURIComponent(rest.join("="));
+  }
+  return "";
+}
+
+function authorized(req) {
+  const header = String(req.headers.authorization || "");
+  const bearer = header.startsWith("Bearer ") ? header.slice(7) : "";
+  return tokensEqual(bearer) || tokensEqual(cookieToken(req));
+}
+
+function cookieHeader(value, maxAge) {
+  return `${COOKIE}=${encodeURIComponent(value)}; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=${maxAge}`;
+}
+
 function json(res, status, payload, extra = {}) {
   const body = JSON.stringify(payload);
   res.writeHead(status, {
@@ -265,11 +291,83 @@ async function handleEvent(req, res) {
   return noContent(req, res);
 }
 
+async function readRaw(req) {
+  return new Promise((resolve) => {
+    let size = 0;
+    const chunks = [];
+    req.on("data", (c) => {
+      size += c.length;
+      if (size > MAX_BODY_BYTES) {
+        req.pause();
+        resolve(TOO_LARGE);
+        return;
+      }
+      chunks.push(c);
+    });
+    req.on("end", () => resolve(Buffer.concat(chunks).toString("utf8")));
+    req.on("error", () => resolve(""));
+  });
+}
+
+function loginForm() {
+  return `<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Solenta stats</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+:root { --paper:#f5f5f2; --ink:#191918; --accent:#f2e51f; }
+html,body { background:var(--paper); color:var(--ink); font: 16px/1.4 system-ui, sans-serif; }
+main { max-width: 28rem; margin: 12vh auto; padding: 0 1.5rem; }
+label { display:block; margin-bottom:.5rem; }
+input, button { font: inherit; }
+input { width: 100%; padding: .5rem .6rem; }
+button { margin-top: 1rem; background: var(--accent); border: 0; padding: .5rem 1rem; cursor: pointer; }
+</style></head>
+<body><main>
+<form method="post" action="/login">
+<label>Password <input type="password" name="password" autofocus></label>
+<button type="submit">View stats</button>
+</form>
+</main></body></html>`;
+}
+
+function sendHtml(res, status, html, extra = {}) {
+  res.writeHead(status, {
+    "content-type": "text/html; charset=utf-8",
+    "content-length": Buffer.byteLength(html),
+    ...extra,
+  });
+  res.end(html);
+}
+
+async function handleLogin(req, res) {
+  const raw = await readRaw(req);
+  if (raw === TOO_LARGE) return sendHtml(res, 401, loginForm());
+  const params = new URLSearchParams(String(raw || ""));
+  if (!tokensEqual(params.get("password") || "")) {
+    return sendHtml(res, 401, loginForm());
+  }
+  res.writeHead(302, {
+    location: "/",
+    "set-cookie": cookieHeader(adminToken(), 2592000),
+  });
+  res.end();
+}
+
+function handleLogout(req, res) {
+  res.writeHead(302, {
+    location: "/",
+    "set-cookie": cookieHeader("", 0),
+  });
+  res.end();
+}
+
 const server = http.createServer(async (req, res) => {
   const path = String(req.url || "").split("?")[0];
   if (path === "/health") return json(res, 200, { ok: true });
   if (path === "/e" && req.method === "OPTIONS") return noContent(req, res);
   if (path === "/e" && req.method === "POST") return handleEvent(req, res);
+  if (path === "/login" && req.method === "POST") return handleLogin(req, res);
+  if (path === "/logout" && req.method === "POST") return handleLogout(req, res);
   res.writeHead(404);
   res.end();
 });
@@ -303,5 +401,6 @@ module.exports = {
   SCHEMA,
   COOKIE,
   adminToken,
+  authorized,
   timingSafeEqual,
 };

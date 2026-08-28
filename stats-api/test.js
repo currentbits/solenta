@@ -207,3 +207,49 @@ test("HMAC matches the spec encoding", () => {
   const { hashVisitor } = require("./server");
   assert.equal(hashVisitor(ip, ua, salt), expected);
 });
+
+const { authorized, COOKIE } = require("./server");
+
+function reqOf(headers) {
+  return { headers };
+}
+
+test("bearer and cookie auth reject near-misses; unset token denies", () => {
+  assert.equal(authorized(reqOf({ authorization: "Bearer secret-token" })), true);
+  assert.equal(authorized(reqOf({ cookie: `${COOKIE}=secret-token` })), true);
+  assert.equal(authorized(reqOf({ authorization: "Bearer secret-toke" })), false);
+  assert.equal(authorized(reqOf({ authorization: "Bearer secret-tokenX" })), false);
+  assert.equal(authorized(reqOf({ authorization: "secret-token" })), false);
+  assert.equal(authorized(reqOf({})), false);
+  const prev = process.env.ADMIN_TOKEN;
+  delete process.env.ADMIN_TOKEN;
+  assert.equal(authorized(reqOf({ authorization: "Bearer secret-token" })), false);
+  process.env.ADMIN_TOKEN = prev;
+});
+
+test("POST /login sets the cookie; wrong password does not", async (t) => {
+  const port = await listen();
+  t.after(() => server.close());
+  const bad = await fetch(`http://127.0.0.1:${port}/login`, {
+    method: "POST",
+    headers: { "content-type": "application/x-www-form-urlencoded" },
+    body: "password=nope",
+    redirect: "manual",
+  });
+  assert.equal(bad.status, 401);
+  assert.equal(bad.headers.get("set-cookie") == null, true);
+
+  const ok = await fetch(`http://127.0.0.1:${port}/login`, {
+    method: "POST",
+    headers: { "content-type": "application/x-www-form-urlencoded" },
+    body: "password=secret-token",
+    redirect: "manual",
+  });
+  assert.equal(ok.status, 302);
+  assert.equal(ok.headers.get("location"), "/");
+  const cookie = ok.headers.get("set-cookie") || "";
+  assert.match(cookie, new RegExp(`${COOKIE}=secret-token`));
+  assert.match(cookie, /HttpOnly/i);
+  assert.match(cookie, /Secure/i);
+  assert.match(cookie, /SameSite=Strict/i);
+});
