@@ -86,6 +86,7 @@ const { startWithPoolFailover } = require("./subagentPool.js");
 const { normalizeQuestions } = require("./questions.js");
 
 const PUSH_THROTTLE_MS = 250;
+const THINKING_TRUNCATE = 8000;
 
 /** Plan markdown shown in the approval panel; long enough for a real plan. */
 const PLAN_TRUNCATE = 20000;
@@ -2395,7 +2396,7 @@ function createRunner(opts) {
    * @param {string | null} [runId]
    * @param {object | null} [tool]
    * @param {{ kind: string, path: string, name: string }[] | null} [attachments]
-   * @param {{ fromThread?: { id: string, title?: string } | null }} [extra]
+   * @param {{ fromThread?: { id: string, title?: string } | null, thinking?: boolean }} [extra]
    */
   function appendMessage(
     threadId,
@@ -2406,7 +2407,7 @@ function createRunner(opts) {
     attachments = null,
     extra = null,
   ) {
-    /** @type {{ id: string, role: string, text: string, createdAt: number, runId?: string, tool?: object, attachments?: object[], fromThread?: { id: string, title: string } }} */
+    /** @type {{ id: string, role: string, text: string, createdAt: number, runId?: string, tool?: object, attachments?: object[], fromThread?: { id: string, title: string }, thinking?: boolean }} */
     const msg = {
       id: randomUUID(),
       role,
@@ -2416,6 +2417,7 @@ function createRunner(opts) {
     if (runId) msg.runId = runId;
     if (tool) msg.tool = tool;
     if (attachments && attachments.length) msg.attachments = attachments;
+    if (extra && extra.thinking) msg.thinking = true;
     if (extra && extra.fromThread && extra.fromThread.id) {
       msg.fromThread = {
         id: String(extra.fromThread.id),
@@ -4086,6 +4088,9 @@ function createRunner(opts) {
     /** command item id -> message id */
     /** @type {Map<string, string>} */
     const toolMsgById = new Map();
+    /** reasoning item id -> thinking message id */
+    /** @type {Map<string, string>} */
+    const thinkingMsgById = new Map();
     /** @type {string | null} */
     let capturedSessionId = thread.sessionId || null;
     let sawTerminalUsage = false;
@@ -4145,6 +4150,76 @@ function createRunner(opts) {
       } else {
         store.updateMessage(threadId, assistantMsgId, { text });
       }
+    }
+
+    function upsertThinking(id, text) {
+      const body = truncate(text || "", THINKING_TRUNCATE) || "Thinking…";
+      const existingId = thinkingMsgById.get(id);
+      if (existingId) {
+        store.updateMessage(threadId, existingId, { text: body });
+        return;
+      }
+      if (!text) return;
+      const msgId = appendMessage(
+        threadId,
+        "event",
+        body,
+        runId,
+        null,
+        null,
+        { thinking: true },
+      );
+      thinkingMsgById.set(id, msgId);
+    }
+
+    function ingestCodexTool(live) {
+      const id = live.id;
+      const name = live.name || "tool";
+      const summary = live.summary || name;
+      const input = truncate(live.input || "", INPUT_TRUNCATE);
+      const output =
+        live.output != null ? truncate(live.output, OUTPUT_TRUNCATE) : null;
+      const existingId = toolMsgById.get(id);
+      if (existingId) {
+        const existing = store
+          .getMessages(threadId)
+          .find((m) => m.id === existingId);
+        if (existing && existing.tool) {
+          store.updateMessage(threadId, existingId, {
+            text: summary,
+            tool: {
+              ...existing.tool,
+              name,
+              input: input || existing.tool.input,
+              output: output != null ? output : existing.tool.output,
+              isError: Boolean(live.isError),
+              done: Boolean(live.done),
+            },
+          });
+          if (live.done) {
+            noteToolSpan(
+              threadId,
+              runId,
+              existing.tool.id,
+              name,
+              Boolean(live.isError),
+            );
+          }
+        }
+        return;
+      }
+      const tool = {
+        id,
+        name,
+        input,
+        output,
+        isError: Boolean(live.isError),
+        done: Boolean(live.done),
+      };
+      const msgId = appendMessage(threadId, "tool", summary, runId, tool);
+      toolMsgById.set(id, msgId);
+      assistantMsgId = null;
+      assistantText = "";
     }
 
     function applyUsage(usageInfo) {
@@ -4340,6 +4415,20 @@ function createRunner(opts) {
           pushDetail(threadId, codexState);
         }
 
+        const live = codexParse.extractLiveItem(ev);
+        if (live) {
+          if (live.kind === "reasoning") {
+            upsertThinking(live.id, live.text);
+          } else {
+            ingestCodexTool(live);
+            if (live.kind === "todo_list" && live.todos) {
+              savePlanSteps(threadId, live.todos);
+            }
+          }
+          store.save();
+          pushDetail(threadId, codexState);
+        }
+
         // Usage
         const usageInfo = codexParse.extractUsage(ev);
         if (usageInfo) {
@@ -4474,6 +4563,10 @@ function createRunner(opts) {
     let assistantText = "";
     /** @type {Map<string, string>} */
     const toolMsgById = new Map();
+    /** @type {string | null} */
+    let thinkingMsgId = null;
+    /** @type {string} */
+    let thinkingText = "";
     let sawUsage = false;
     let lastPushAt = 0;
     /** @type {ReturnType<typeof setTimeout> | null} */
@@ -4530,6 +4623,24 @@ function createRunner(opts) {
       if (!guard()) return;
       store.save();
       pushDetail(threadId, kimiState);
+    }
+
+    function upsertKimiThinking() {
+      const body = truncate(thinkingText, THINKING_TRUNCATE) || "Thinking…";
+      if (!thinkingMsgId) {
+        if (!thinkingText) return;
+        thinkingMsgId = appendMessage(
+          threadId,
+          "event",
+          body,
+          runId,
+          null,
+          null,
+          { thinking: true },
+        );
+        return;
+      }
+      store.updateMessage(threadId, thinkingMsgId, { text: body });
     }
 
     function throttledPush() {
@@ -4642,8 +4753,15 @@ function createRunner(opts) {
           capturedKimiSessionId = sid;
         }
 
+        const thinking = kimiParse.extractThinking(ev);
+        if (thinking) {
+          thinkingText += thinking;
+          upsertKimiThinking();
+          throttledPush();
+        }
+
         const text = kimiParse.extractAssistantText(ev);
-        if (text != null) {
+        if (text) {
           assistantText += text;
           ensureAssistant(assistantText);
           throttledPush();
@@ -4651,28 +4769,45 @@ function createRunner(opts) {
 
         for (const tool of kimiParse.extractToolEvents(ev)) {
           if (tool.phase === "start") {
-            const toolMeta = {
-              id: tool.id,
-              name: tool.name,
-              input: tool.input,
-              output: null,
-              isError: false,
-              done: false,
-            };
             const summary = tool.input
               ? `${tool.name}: ${tool.input.length > 80 ? `${tool.input.slice(0, 80)}…` : tool.input}`
               : tool.name;
-            const msgId = appendMessage(
-              threadId,
-              "tool",
-              summary,
-              runId,
-              toolMeta,
-            );
-            toolMsgById.set(tool.id, msgId);
-            // Post-tool text starts a fresh message below the tool call.
-            assistantMsgId = null;
-            assistantText = "";
+            const existingId = toolMsgById.get(tool.id);
+            if (existingId) {
+              const existing = store
+                .getMessages(threadId)
+                .find((m) => m.id === existingId);
+              if (existing && existing.tool) {
+                store.updateMessage(threadId, existingId, {
+                  text: summary,
+                  tool: {
+                    ...existing.tool,
+                    name: tool.name,
+                    input: tool.input || existing.tool.input,
+                  },
+                });
+              }
+            } else {
+              const toolMeta = {
+                id: tool.id,
+                name: tool.name,
+                input: tool.input,
+                output: null,
+                isError: false,
+                done: false,
+              };
+              const msgId = appendMessage(
+                threadId,
+                "tool",
+                summary,
+                runId,
+                toolMeta,
+              );
+              toolMsgById.set(tool.id, msgId);
+              // Post-tool text starts a fresh message below the tool call.
+              assistantMsgId = null;
+              assistantText = "";
+            }
           } else if (tool.phase === "end") {
             let msgId = toolMsgById.get(tool.id);
             if (!msgId) {

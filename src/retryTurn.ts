@@ -61,7 +61,7 @@ export function retryAnchorEventId(
   if (status === "working") return null;
   if (!lastUserMessage(messages)) return null;
   const last = messages.length > 0 ? messages[messages.length - 1]! : null;
-  if (!last || last.role !== "event") return null;
+  if (!last || last.role !== "event" || last.thinking) return null;
   if (status === "failed" || isInterruptEvent(last.text)) {
     return last.id;
   }

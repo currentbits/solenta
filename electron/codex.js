@@ -370,6 +370,216 @@ function extractCommandItem(ev) {
 }
 
 /**
+ * item.started / item.updated / item.completed, or null when this event is
+ * not an item lifecycle line.
+ * @param {object} ev
+ * @returns {"started" | "updated" | "completed" | null}
+ */
+function itemEventPhase(ev) {
+  const type = String(ev.type || "");
+  const item = ev.item && typeof ev.item === "object" ? ev.item : null;
+  const status = item ? String(item.status || "") : "";
+  if (type === "item.started" || type === "item_started") return "started";
+  if (type === "item.completed" || type === "item_completed") return "completed";
+  if (type === "item.updated" || type === "item_updated") {
+    if (status === "completed" || status === "failed") return "completed";
+    return "updated";
+  }
+  return null;
+}
+
+function shortSummary(name, value) {
+  const v = String(value || "").trim();
+  if (!v) return name;
+  const short = v.length > 80 ? `${v.slice(0, 80)}…` : v;
+  return `${name}: ${short}`;
+}
+
+/**
+ * Codex item types the runner used to parse and discard (#171 / #752).
+ * command_execution stays on extractCommandItem so existing pairing is
+ * untouched.
+ *
+ * @param {object} ev
+ * @returns {{
+ *   id: string,
+ *   kind: "reasoning" | "file_change" | "mcp_tool_call" | "web_search" | "todo_list",
+ *   phase: "started" | "updated" | "completed",
+ *   text?: string,
+ *   name?: string,
+ *   summary?: string,
+ *   input?: string,
+ *   output?: string | null,
+ *   isError?: boolean,
+ *   done?: boolean,
+ *   changes?: object[],
+ *   server?: string,
+ *   tool?: string,
+ *   query?: string,
+ *   todos?: { content: string, status: string }[],
+ * } | null}
+ */
+function extractLiveItem(ev) {
+  if (!ev || typeof ev !== "object") return null;
+  const item = ev.item && typeof ev.item === "object" ? ev.item : null;
+  if (!item) return null;
+  const phase = itemEventPhase(ev);
+  if (!phase) return null;
+  const itemType = String(item.type || "");
+  const id = String(item.id || item.item_id || "");
+  const status = String(item.status || "");
+
+  if (itemType === "reasoning") {
+    const text = typeof item.text === "string" ? item.text : "";
+    if (!id && !text) return null;
+    return {
+      id: id || `reasoning-${text.slice(0, 32)}`,
+      kind: "reasoning",
+      phase,
+      text,
+    };
+  }
+
+  if (itemType === "file_change") {
+    const changes = Array.isArray(item.changes) ? item.changes : [];
+    const paths = changes
+      .map((c) =>
+        c && typeof c === "object" && typeof c.path === "string" ? c.path : "",
+      )
+      .filter(Boolean);
+    const first = paths[0] || "";
+    const summary = !first
+      ? "Edit"
+      : paths.length === 1
+        ? shortSummary("Edit", first)
+        : `${shortSummary("Edit", first)} +${paths.length - 1}`;
+    let input = "";
+    try {
+      input = JSON.stringify(changes);
+    } catch {
+      input = String(first);
+    }
+    return {
+      id: id || `file-change-${first.slice(0, 32)}`,
+      kind: "file_change",
+      phase,
+      name: "Edit",
+      summary,
+      input,
+      output: phase === "completed" ? status || "completed" : null,
+      isError: status === "failed",
+      done: phase === "completed",
+      changes,
+    };
+  }
+
+  if (itemType === "mcp_tool_call") {
+    const tool = String(item.tool || "mcp");
+    const server = String(item.server || "");
+    const name = server ? `${server}/${tool}` : tool;
+    let input = "";
+    if (item.arguments != null) {
+      try {
+        input =
+          typeof item.arguments === "string"
+            ? item.arguments
+            : JSON.stringify(item.arguments);
+      } catch {
+        input = String(item.arguments);
+      }
+    }
+    let output = null;
+    if (item.error && typeof item.error === "object" && item.error.message) {
+      output = String(item.error.message);
+    } else if (item.result != null) {
+      try {
+        output =
+          typeof item.result === "string"
+            ? item.result
+            : JSON.stringify(item.result);
+      } catch {
+        output = String(item.result);
+      }
+    }
+    return {
+      id: id || `mcp-${name}`,
+      kind: "mcp_tool_call",
+      phase,
+      name,
+      summary: shortSummary(name, input),
+      input,
+      output,
+      isError: status === "failed" || Boolean(item.error),
+      done: phase === "completed",
+      server,
+      tool,
+    };
+  }
+
+  if (itemType === "web_search") {
+    const query = String(item.query || "");
+    return {
+      id: id || `web-search-${query.slice(0, 32)}`,
+      kind: "web_search",
+      phase,
+      name: "WebSearch",
+      summary: shortSummary("WebSearch", query),
+      input: query,
+      output: phase === "completed" ? "done" : null,
+      isError: false,
+      done: phase === "completed",
+      query,
+    };
+  }
+
+  if (itemType === "todo_list") {
+    const raw = Array.isArray(item.items) ? item.items : [];
+    const todos = [];
+    for (const t of raw) {
+      if (!t || typeof t !== "object") continue;
+      const content =
+        typeof t.text === "string"
+          ? t.text
+          : typeof t.content === "string"
+            ? t.content
+            : "";
+      if (!content.trim()) continue;
+      const st = String(t.status || "");
+      todos.push({
+        content,
+        status:
+          t.completed === true || st === "completed"
+            ? "completed"
+            : st === "in_progress"
+              ? "in_progress"
+              : "pending",
+      });
+    }
+    const open = todos.find((t) => t.status !== "completed") || todos[0];
+    let input = "";
+    try {
+      input = JSON.stringify(raw);
+    } catch {
+      input = "";
+    }
+    return {
+      id: id || "todo-list",
+      kind: "todo_list",
+      phase,
+      name: "Todo",
+      summary: shortSummary("Todo", open ? open.content : ""),
+      input,
+      output: null,
+      isError: false,
+      done: phase === "completed",
+      todos,
+    };
+  }
+
+  return null;
+}
+
+/**
  * token_count.info from exec JSONL, app-server `msg`, or session `payload`.
  * @param {object} ev
  * @returns {object | null}
@@ -547,6 +757,7 @@ module.exports = {
   extractAgentMessageText,
   isAgentMessageEvent,
   extractCommandItem,
+  extractLiveItem,
   extractUsage,
   SIGKILL_AFTER_MS,
 };

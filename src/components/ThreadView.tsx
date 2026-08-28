@@ -145,6 +145,7 @@ import {
   ReviewItineraryView,
 } from "./ReviewItinerary";
 import { formatElapsed } from "../format";
+import { liveWorkingLabel } from "../workingLabel";
 import { useEscapeClose } from "../useEscapeClose";
 import {
   comparePeerLabel,
@@ -807,6 +808,75 @@ function ToolCallCard({
   );
 }
 
+function ThinkingCard({
+  message,
+  autoExpand,
+  animateIn,
+}: {
+  message: ChatMessage;
+  autoExpand: boolean;
+  animateIn?: boolean;
+}) {
+  const [manual, setManual] = useState<boolean | null>(null);
+  const [entered] = useState(Boolean(animateIn));
+  const open = manual ?? autoExpand;
+  const status: "running" | "done" = autoExpand ? "running" : "done";
+  const firstLine = message.text.split(/\r?\n/, 1)[0] ?? "";
+
+  return (
+    <section
+      className={`${styles.card} ${styles.toolCard}${entered ? ` ${styles.streamIn}` : ""}`}
+      data-thinking=""
+      data-stream-in={entered ? "" : undefined}
+    >
+      <div className={styles.toolHeader} onClick={() => setManual(!open)}>
+        <button
+          type="button"
+          className={styles.toolToggle}
+          onClick={(e) => {
+            e.stopPropagation();
+            setManual(!open);
+          }}
+          aria-expanded={open}
+        >
+          <span
+            className={styles.toolDot}
+            data-status={status}
+            aria-label={status}
+          />
+          <span className={styles.toolName}>Thinking</span>
+        </button>
+        {!open && (
+          <span className={styles.toolSummary}>
+            <PathText text={firstLine} />
+          </span>
+        )}
+        <span className={styles.chevron} data-open={open} aria-hidden="true">
+          <svg
+            width="9"
+            height="9"
+            viewBox="0 0 10 10"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.6"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
+            <path d="M3.5 2 6.5 5 3.5 8" />
+          </svg>
+        </span>
+      </div>
+      {open && (
+        <div className={styles.toolBody}>
+          <pre className={styles.toolPre}>
+            <PathText text={message.text} />
+          </pre>
+        </div>
+      )}
+    </section>
+  );
+}
+
 /**
  * Attachments on a user transcript message: image thumbnails load lazily as
  * img src (solenta-media:// on desktop, data URL on web); files/folders
@@ -1194,6 +1264,15 @@ const MessageBlock = memo(function MessageBlock({
 }) {
   // Latch at mount; see ToolCallCard for why.
   const [entered] = useState(Boolean(animateIn));
+  if (message.thinking) {
+    return (
+      <ThinkingCard
+        message={message}
+        autoExpand={autoExpandTool}
+        animateIn={entered}
+      />
+    );
+  }
   if (message.role === "tool") {
     return (
       <ToolCallCard
@@ -1984,16 +2063,25 @@ function WorkLogCard({
   group,
   defaultOpen,
   animateIn,
+  live,
 }: {
   group: WorkLogGroup;
   defaultOpen: boolean;
   /** Freshly appended at the live tail — play the stream-in entrance. */
   animateIn?: boolean;
+  /** Latest run is still working — tick duration off the wall clock. */
+  live?: boolean;
 }) {
   const [open, setOpen] = useState(defaultOpen);
   // Latch at mount; see ToolCallCard for why.
   const [entered] = useState(Boolean(animateIn));
-  const duration = workLogDurationLabel(group.items);
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!live) return;
+    const id = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(id);
+  }, [live]);
+  const duration = workLogDurationLabel(group.items, live ? now : undefined);
 
   return (
     <section
@@ -4351,6 +4439,37 @@ export const ThreadView = memo(function ThreadView({
   }, [detail, latestWorkLogRunId]);
 
   const isWorking = detail?.thread.status === "working";
+  const latestThinkingId = useMemo(() => {
+    if (!isWorking || !detail || !latestWorkLogRunId) return null;
+    let latest: ChatMessage | null = null;
+    for (const m of detail.messages) {
+      if (m.thinking && m.runId === latestWorkLogRunId) {
+        if (!latest || m.createdAt >= latest.createdAt) latest = m;
+      }
+    }
+    if (!latest) return null;
+    for (const m of detail.messages) {
+      if (m.runId !== latestWorkLogRunId) continue;
+      if (m.createdAt > latest.createdAt && !m.thinking) return null;
+    }
+    return latest.id;
+  }, [detail, isWorking, latestWorkLogRunId]);
+  const runningToolSummary = useMemo(() => {
+    if (!isWorking || !detail || !latestWorkLogRunId) return null;
+    let latest: ChatMessage | null = null;
+    for (const m of detail.messages) {
+      if (
+        m.role === "tool" &&
+        m.tool &&
+        !m.tool.done &&
+        m.runId === latestWorkLogRunId
+      ) {
+        if (!latest || m.createdAt >= latest.createdAt) latest = m;
+      }
+    }
+    return latest?.text ?? null;
+  }, [detail, isWorking, latestWorkLogRunId]);
+  const thinkingLive = Boolean(latestThinkingId);
   /**
    * The assistant message currently being written. While a tool runs the
    * last message is the tool call itself, so the caret correctly disappears.
@@ -4364,6 +4483,12 @@ export const ThreadView = memo(function ThreadView({
     isWorking && detail?.thread.stalledAt != null
       ? detail.thread.stalledAt
       : null;
+  const workingLabel = liveWorkingLabel({
+    stalledElapsed: stalledAt != null ? formatElapsed(stalledAt) : null,
+    workflowRunning: detail?.workflow ? runningAgents : null,
+    toolSummary: runningToolSummary,
+    thinking: thinkingLive,
+  });
   const isArchived = Boolean(detail?.thread.archived);
   const emptyMessages = detail != null && detail.messages.length === 0;
 
@@ -5824,7 +5949,8 @@ export const ThreadView = memo(function ThreadView({
                       message={entry.message}
                       autoExpandTool={
                         verboseTools ||
-                        entry.message.id === latestRunningToolId
+                        entry.message.id === latestRunningToolId ||
+                        entry.message.id === latestThinkingId
                       }
                       animateIn={!seenEntryKeys.current.has(entry.message.id)}
                       streaming={entry.message.id === streamingMessageId}
@@ -5915,6 +6041,7 @@ export const ThreadView = memo(function ThreadView({
               group={entry}
               defaultOpen={entry.runId === latestWorkLogRunId}
               animateIn={!seenEntryKeys.current.has(`worklog-${entry.runId}`)}
+              live={isWorking && entry.runId === latestWorkLogRunId}
             />
           );
         })}
@@ -6078,13 +6205,7 @@ export const ThreadView = memo(function ThreadView({
           >
             <div className={styles.statusLeft}>
               <span className={styles.statusDot} aria-hidden />
-              <span>
-                {stalledAt != null
-                  ? `No output for ${formatElapsed(stalledAt)} — the agent may be hung`
-                  : detail.workflow
-                    ? `${runningAgents} agent${runningAgents === 1 ? "" : "s"} working in the background`
-                    : "Agent working…"}
-              </span>
+              <span>{workingLabel}</span>
             </div>
             <button
               type="button"

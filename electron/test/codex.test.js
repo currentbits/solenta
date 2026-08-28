@@ -13,6 +13,7 @@ const {
   isSessionStartEvent,
   extractAgentMessageText,
   extractCommandItem,
+  extractLiveItem,
   extractUsage,
 } = require("../codex.js");
 const { writeFakeBin } = require("./support/fakeBin.js");
@@ -139,6 +140,63 @@ async function main() {
     return;
   }
 
+  // Issue #752: reasoning and file_change must be visible before the turn
+  // settles; item.completed of the same ids must not duplicate cards.
+  if (scenario === "thinking-then-tool") {
+    emit({ type: "thread.started", thread_id: "codex-sess-live" });
+    await delay(10);
+    emit({
+      type: "item.started",
+      item: {
+        id: "item-reason-1",
+        type: "reasoning",
+        text: "I should patch src/foo.ts first.",
+      },
+    });
+    await delay(200);
+    emit({
+      type: "item.completed",
+      item: {
+        id: "item-reason-1",
+        type: "reasoning",
+        text: "I should patch src/foo.ts first.",
+      },
+    });
+    emit({
+      type: "item.started",
+      item: {
+        id: "item-edit-1",
+        type: "file_change",
+        changes: [{ path: "src/foo.ts", kind: "update" }],
+        status: "in_progress",
+      },
+    });
+    await delay(80);
+    emit({
+      type: "item.completed",
+      item: {
+        id: "item-edit-1",
+        type: "file_change",
+        changes: [{ path: "src/foo.ts", kind: "update" }],
+        status: "completed",
+      },
+    });
+    emit({
+      type: "item.completed",
+      item: {
+        id: "item-msg-1",
+        type: "agent_message",
+        text: "Patched foo.ts.",
+      },
+    });
+    emit({
+      type: "turn.completed",
+      usage: { input_tokens: 20, output_tokens: 8 },
+    });
+    process.exit(0);
+    return;
+  }
+
   process.stderr.write("unknown scenario " + scenario + "\\n");
   process.exit(1);
 }
@@ -203,6 +261,75 @@ describe("codex event parse helpers", () => {
   it("ignores unknown event types", () => {
     assert.equal(extractAgentMessageText({ type: "mystery", foo: 1 }), null);
     assert.equal(extractCommandItem({ type: "mystery" }), null);
+    assert.equal(extractLiveItem({ type: "mystery" }), null);
+  });
+
+  it("extracts reasoning / file_change / mcp / web_search / todo_list as live items", () => {
+    const reason = extractLiveItem({
+      type: "item.started",
+      item: { id: "r1", type: "reasoning", text: "looking around" },
+    });
+    assert.equal(reason.kind, "reasoning");
+    assert.equal(reason.phase, "started");
+    assert.equal(reason.text, "looking around");
+
+    const edit = extractLiveItem({
+      type: "item.started",
+      item: {
+        id: "f1",
+        type: "file_change",
+        changes: [{ path: "src/foo.ts", kind: "update" }],
+      },
+    });
+    assert.equal(edit.kind, "file_change");
+    assert.equal(edit.phase, "started");
+    assert.equal(edit.changes[0].path, "src/foo.ts");
+
+    const mcp = extractLiveItem({
+      type: "item.started",
+      item: {
+        id: "m1",
+        type: "mcp_tool_call",
+        server: "github",
+        tool: "get_issue",
+        arguments: { number: 171 },
+        status: "in_progress",
+      },
+    });
+    assert.equal(mcp.kind, "mcp_tool_call");
+    assert.equal(mcp.tool, "get_issue");
+    assert.equal(mcp.server, "github");
+
+    const search = extractLiveItem({
+      type: "item.started",
+      item: { id: "s1", type: "web_search", query: "codex exec json" },
+    });
+    assert.equal(search.kind, "web_search");
+    assert.equal(search.query, "codex exec json");
+
+    const todos = extractLiveItem({
+      type: "item.updated",
+      item: {
+        id: "t1",
+        type: "todo_list",
+        items: [
+          { text: "patch foo", completed: false },
+          { text: "run tests", completed: true },
+        ],
+      },
+    });
+    assert.equal(todos.kind, "todo_list");
+    assert.equal(todos.phase, "updated");
+    assert.equal(todos.todos[1].status, "completed");
+
+    assert.equal(
+      extractLiveItem({
+        type: "item.started",
+        item: { id: "c1", type: "command_execution", command: "ls" },
+      }),
+      null,
+      "command_execution stays on extractCommandItem",
+    );
   });
 });
 
@@ -542,5 +669,48 @@ describe("runner codex provider", () => {
       else process.env.CODER_KIMI_MCP_PATH = prevKimiMcp;
       fs.rmSync(memDir, { recursive: true, force: true });
     }
+  });
+
+  it("surfaces reasoning before the first tool and does not duplicate on item.completed (#752)", async () => {
+    process.env.CODER_FAKE_CODEX_SCENARIO = "thinking-then-tool";
+    const thread = store.getThreads()[0];
+
+    await runner.startRun({ threadId: thread.id, prompt: "patch foo" });
+
+    await waitFor(() =>
+      store
+        .getMessages(thread.id)
+        .some((m) => m.thinking && /foo\.ts/.test(m.text)),
+    );
+    assert.equal(
+      store.getMessages(thread.id).filter((m) => m.role === "tool").length,
+      0,
+      "thinking must be visible before the later file_change",
+    );
+
+    await waitFor(
+      () => store.getThread(thread.id).status === "done",
+      { timeoutMs: 15000 },
+    );
+
+    const msgs = store.getMessages(thread.id);
+    const thinking = msgs.filter((m) => m.thinking);
+    assert.equal(
+      thinking.length,
+      1,
+      "item.completed must not duplicate the thinking card",
+    );
+    assert.match(thinking[0].text, /foo\.ts/);
+    assert.equal(thinking[0].role, "event");
+
+    const tools = msgs.filter((m) => m.role === "tool");
+    assert.equal(
+      tools.length,
+      1,
+      "item.completed must not duplicate the file_change card",
+    );
+    assert.equal(tools[0].tool.name, "Edit");
+    assert.equal(tools[0].tool.done, true);
+    assert.match(tools[0].text, /foo\.ts/);
   });
 });
