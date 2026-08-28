@@ -5,7 +5,16 @@ const assert = require("node:assert");
 const { createHmac } = require("node:crypto");
 
 process.env.ADMIN_TOKEN = "secret-token";
-const { server, setDb, setNow, resetHits, RATE_MAX } = require("./server");
+const {
+  server,
+  setDb,
+  setNow,
+  resetHits,
+  RATE_MAX,
+  parseCountry,
+  parseBrowser,
+  parseUtms,
+} = require("./server");
 
 function fakeDb(opts = {}) {
   const salts = new Map(opts.salts || []);
@@ -95,7 +104,7 @@ test("POST /e stores a pageview and never writes IP or UA", async (t) => {
   assert.equal(insert.params[1], "/");
   assert.equal(insert.params[2], "www.producthunt.com");
   assert.match(insert.params[3], /^[0-9a-f]{16}$/);
-  assert.equal(insert.params[4], "{}");
+  assert.deepEqual(JSON.parse(insert.params[4]), { browser: "Other" });
   const blob = JSON.stringify(insert.params);
   assert.equal(blob.includes("203.0.113.10"), false);
   assert.equal(blob.includes("Mozilla/5.0"), false);
@@ -161,7 +170,9 @@ test("normalizes path, strips self-referrer, drops junk with 204", async (t) => 
     204,
   );
   assert.equal(db.events.at(-1).name, "Download");
-  assert.equal(db.events.at(-1).props, "{}");
+  const junkProps = JSON.parse(db.events.at(-1).props);
+  assert.equal(junkProps.platform, undefined);
+  assert.equal(junkProps.browser, "Other");
 });
 
 test("rate limit lets RATE_MAX through then drops", async (t) => {
@@ -363,4 +374,88 @@ test("GET / is 503 with one sentence when the db throws", async (t) => {
   const html = await res.text();
   assert.match(html, /Could not read stats/);
   assert.equal(html.includes("at "), false);
+});
+
+test("parseCountry accepts ISO codes and drops XX", () => {
+  assert.equal(parseCountry("NL"), "NL");
+  assert.equal(parseCountry("us"), "US");
+  assert.equal(parseCountry("XX"), "");
+  assert.equal(parseCountry(""), "");
+  assert.equal(parseCountry(undefined), "");
+});
+
+test("parseBrowser classifies Edge before Chrome", () => {
+  assert.equal(parseBrowser("Mozilla/5.0 Edg/120.0"), "Edge");
+  assert.equal(parseBrowser("Mozilla/5.0 Chrome/120.0"), "Chrome");
+  assert.equal(parseBrowser("Mozilla/5.0 CriOS/120.0"), "Chrome");
+  assert.equal(parseBrowser("Mozilla/5.0 Firefox/120.0"), "Firefox");
+  assert.equal(parseBrowser("Mozilla/5.0 FxiOS/120.0"), "Firefox");
+  assert.equal(
+    parseBrowser("Mozilla/5.0 Version/17.0 Safari/605.1.15"),
+    "Safari",
+  );
+  assert.equal(parseBrowser("curl/8.0"), "Other");
+  assert.equal(parseBrowser(""), "");
+});
+
+test("parseUtms keeps three keys and drops the rest", () => {
+  const utm = parseUtms(
+    "https://solenta.app/?utm_source=ph&utm_medium=social&utm_campaign=launch&foo=1",
+  );
+  assert.deepEqual(utm, {
+    utm_source: "ph",
+    utm_medium: "social",
+    utm_campaign: "launch",
+  });
+  assert.equal(JSON.stringify(utm).includes("foo"), false);
+  assert.deepEqual(parseUtms("https://solenta.app/?utm_source=bad value"), {});
+});
+
+test("POST /e stores country browser utm and never IP or UA", async (t) => {
+  resetHits();
+  const port = await listen();
+  const db = fakeDb();
+  setDb(db);
+  t.after(() => {
+    server.close();
+    setDb(null);
+  });
+  const res = await post(
+    port,
+    {
+      n: "pageview",
+      u: "https://solenta.app/?utm_source=ph&utm_medium=social&foo=1",
+      r: "",
+    },
+    {
+      "cf-ipcountry": "NL",
+      "user-agent": "Mozilla/5.0 Edg/120.0",
+    },
+  );
+  assert.equal(res.status, 204);
+  const insert = db.calls.find((c) => /INSERT INTO events/i.test(c.sql));
+  const props = JSON.parse(insert.params[4]);
+  assert.equal(props.country, "NL");
+  assert.equal(props.browser, "Edge");
+  assert.equal(props.utm_source, "ph");
+  assert.equal(props.utm_medium, "social");
+  assert.equal(props.foo, undefined);
+  const blob = JSON.stringify(insert.params);
+  assert.equal(blob.includes("203.0.113.10"), false);
+  assert.equal(blob.includes("Mozilla/5.0"), false);
+  assert.equal(blob.includes("Edg/120"), false);
+});
+
+test("POST /e omits XX country and still inserts", async (t) => {
+  resetHits();
+  const port = await listen();
+  const db = fakeDb();
+  setDb(db);
+  t.after(() => {
+    server.close();
+    setDb(null);
+  });
+  assert.equal((await post(port, PAGE, { "cf-ipcountry": "XX" })).status, 204);
+  const props = JSON.parse(db.events[0].props);
+  assert.equal(props.country, undefined);
 });
