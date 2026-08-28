@@ -594,6 +594,37 @@ test("GET / with bearer shows new sections and refresh", async (t) => {
   assert.equal(html.includes("\u2014"), false);
 });
 
+test("GET / with bearer shows All downloads instead of the empty sentence", async (t) => {
+  const port = await listen();
+  setNow(() => Date.parse("2026-08-28T12:00:00.000Z"));
+  setDb(
+    fakeDb({
+      rows: [
+        {
+          ts: "2026-08-28T11:50:00.000Z",
+          name: "All downloads",
+          path: "/",
+          referrer: "",
+          visitor: "abc",
+          props: {},
+        },
+      ],
+    }),
+  );
+  t.after(() => {
+    server.close();
+    setDb(null);
+    setNow(null);
+  });
+  const res = await fetch(`http://127.0.0.1:${port}/?days=7`, {
+    headers: { authorization: "Bearer secret-token" },
+  });
+  assert.equal(res.status, 200);
+  const html = await res.text();
+  assert.equal(html.includes("No events in this range."), false);
+  assert.match(html, /All downloads/);
+});
+
 test("login HTML does not auto-refresh", async (t) => {
   const port = await listen();
   t.after(() => server.close());
