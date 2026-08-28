@@ -147,9 +147,12 @@ Grab an archive from the [latest release](https://github.com/currentbits/solenta
 
 Builds are stamped with a channel. **prod** follows the newest normal release;
 **nightly** follows the newest prerelease and never migrates itself onto prod.
-On macOS the app downloads and swaps itself in place. A window that reloads
-into a new renderer against an old preload hard-blocks until you Restart.
-Builds from a dev tree carry no stamp and never self-update.
+On macOS the app downloads and swaps itself in place. On Windows it
+downloads beside the portable folder and swaps after you Restart (the
+running exe locks those files). Linux still opens the release page. A
+window that reloads into a new renderer against an old preload hard-blocks
+until you Restart. Builds from a dev tree carry no stamp and never
+self-update.
 
 Nightly ships as **Solenta Nightly.app** (`com.willem.solenta.nightly`,
 `solenta-nightly` on linux/win) so it is tellable apart from a prod install at

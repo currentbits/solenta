@@ -18,10 +18,12 @@
 // The swapped-in bundle also means a plain quit+relaunch picks up the new
 // build even if the user never clicks "Restart".
 //
-// Linux is a portable tar.gz (solenta + resources/), same layout as the
-// Windows zip. downloadUpdate() extracts beside the live folder as
-// <install>.update; applyUpdate() starts a shell helper that waits for quit,
-// renames the live folder to .old, moves .update into place, and relaunches.
+// Windows is a portable zip (solenta.exe + resources/) and Linux is a
+// portable tar.gz (solenta + resources/). Those files are locked while the
+// process is running. downloadUpdate() extracts beside the live folder as
+// <install>.update; applyUpdate() starts a helper (cmd on win32, sh on
+// linux) that waits for quit, renames the live folder to .old, moves
+// .update into place, and relaunches.
 
 const crypto = require("node:crypto");
 const fs = require("node:fs");
@@ -60,8 +62,8 @@ function buildStamp(pkg) {
 
 /**
  * Installed tree of the running process, or null when this build must
- * not replace itself. macOS: the .app bundle. linux: the portable folder
- * that holds solenta (or solenta-nightly) next to resources/.
+ * not replace itself. macOS: the .app bundle. win32/linux: the portable
+ * folder that holds solenta(.exe) or solenta-nightly(.exe) next to resources/.
  */
 function bundlePath(execPath, platform) {
   const plat = platform || process.platform;
@@ -73,10 +75,14 @@ function bundlePath(execPath, platform) {
     if (!root.endsWith(".app") || root.includes("node_modules")) return null;
     return root;
   }
-  if (plat === "linux") {
+  if (plat === "win32" || plat === "linux") {
     const root = path.resolve(path.dirname(exe));
-    const name = path.basename(exe);
-    if (name !== "solenta" && name !== "solenta-nightly") return null;
+    const name = plat === "win32" ? path.basename(exe).toLowerCase() : path.basename(exe);
+    const ok =
+      plat === "win32"
+        ? name === "solenta.exe" || name === "solenta-nightly.exe"
+        : name === "solenta" || name === "solenta-nightly";
+    if (!ok) return null;
     if (root.includes("node_modules")) return null;
     if (!fs.existsSync(path.join(root, "resources"))) return null;
     return root;
@@ -137,7 +143,7 @@ let checking = null;
 let installing = null;
 /** @type {string | null} tag already swapped into place this boot */
 let stagedTag = null;
-/** @type {string | null} linux: extracted tree waiting for the quit helper */
+/** @type {string | null} win32/linux: extracted tree waiting for the quit helper */
 let stagedDir = null;
 /** @type {string | null} */
 let stagedInstall = null;
@@ -216,10 +222,11 @@ async function doCheck(deps, install) {
   }
 }
 
+const WIN_EXE = /^(solenta|solenta-nightly)\.exe$/i;
 const LINUX_BIN = /^(solenta|solenta-nightly)$/;
 
-/** Portable tree inside an extracted linux tar.gz, or null. */
-function findLinuxTree(dir, depth = 0) {
+/** Portable tree inside an extracted win32 zip or linux tar.gz, or null. */
+function findPortableTree(dir, nameRe, depth = 0) {
   if (depth > 3) return null;
   let names;
   try {
@@ -227,7 +234,7 @@ function findLinuxTree(dir, depth = 0) {
   } catch {
     return null;
   }
-  const exe = names.find((n) => LINUX_BIN.test(n));
+  const exe = names.find((n) => nameRe.test(n));
   if (exe && fs.existsSync(path.join(dir, "resources"))) {
     return { root: dir, exe };
   }
@@ -240,7 +247,7 @@ function findLinuxTree(dir, depth = 0) {
       continue;
     }
     if (st.isDirectory()) {
-      const hit = findLinuxTree(p, depth + 1);
+      const hit = findPortableTree(p, nameRe, depth + 1);
       if (hit) return hit;
     }
   }
@@ -258,7 +265,7 @@ function moveDir(src, dst) {
   }
 }
 
-/** Download the archive, check its digest, then swap (macOS) or stage (linux). */
+/** Download the archive, check its digest, then swap (macOS) or stage (win/linux). */
 async function stage(asset, bundle, tag, deps) {
   const doFetch = deps.fetch || fetch;
   const plat = deps.platform || process.platform;
@@ -283,9 +290,18 @@ async function stage(asset, bundle, tag, deps) {
     const got = hash.digest("hex");
     if (got !== want[1]) throw new Error(`digest mismatch: expected ${want[1]}, got ${got}`);
 
+    if (plat === "win32") {
+      await run("tar", ["-xf", archive, "-C", work]);
+      const payload = findPortableTree(work, WIN_EXE);
+      if (!payload) throw new Error("update zip contains no solenta.exe tree");
+      const dest = `${bundle}.update`;
+      moveDir(payload.root, dest);
+      return { dir: dest, exe: payload.exe };
+    }
+
     if (plat === "linux") {
       await run("tar", ["-xzf", archive, "-C", work]);
-      const payload = findLinuxTree(work);
+      const payload = findPortableTree(work, LINUX_BIN);
       if (!payload) throw new Error("update tar.gz contains no solenta tree");
       const dest = `${bundle}.update`;
       moveDir(payload.root, dest);
@@ -316,6 +332,50 @@ async function stage(asset, bundle, tag, deps) {
   } finally {
     fs.rmSync(work, { recursive: true, force: true });
   }
+}
+
+/**
+ * Helper that waits for the running pid, then swaps <install>.update into
+ * place. Written as cmd so it keeps running after this process exits.
+ */
+function launchWinApply(opts) {
+  const doSpawn = opts.spawn || spawn;
+  const bat = path.join(os.tmpdir(), `solenta-apply-${opts.pid}.cmd`);
+  const script = [
+    "@echo off",
+    "setlocal",
+    "set \"SRC=%~1\"",
+    "set \"DST=%~2\"",
+    "set \"EXE=%~3\"",
+    "set \"OLDPID=%~4\"",
+    ":wait",
+    "ping -n 2 127.0.0.1 >nul",
+    "tasklist /FI \"PID eq %OLDPID%\" | findstr /C:\"%OLDPID%\" >nul && goto wait",
+    "if exist \"%DST%.old\" rmdir /s /q \"%DST%.old\"",
+    "move \"%DST%\" \"%DST%.old\"",
+    "if errorlevel 1 goto fail",
+    "move \"%SRC%\" \"%DST%\"",
+    "if errorlevel 1 (",
+    "  move \"%DST%.old\" \"%DST%\"",
+    "  goto fail",
+    ")",
+    "start \"\" \"%DST%\\%EXE%\"",
+    "rmdir /s /q \"%DST%.old\"",
+    "del \"%~f0\"",
+    "exit /b 0",
+    ":fail",
+    "if exist \"%DST%\\%EXE%\" start \"\" \"%DST%\\%EXE%\"",
+    "del \"%~f0\"",
+    "exit /b 1",
+    "",
+  ].join("\r\n");
+  fs.writeFileSync(bat, script);
+  const child = doSpawn("cmd.exe", ["/c", bat, opts.src, opts.dst, opts.exe, String(opts.pid)], {
+    detached: true,
+    stdio: "ignore",
+    windowsHide: true,
+  });
+  if (child && typeof child.unref === "function") child.unref();
 }
 
 /**
@@ -360,23 +420,36 @@ function launchLinuxApply(opts) {
   if (child && typeof child.unref === "function") child.unref();
 }
 
-/** Relaunch into the (already swapped-in) new bundle. linux: helper + quit. */
+/** Relaunch into the (already swapped-in) new bundle. win32/linux: helper + quit. */
 function applyUpdate(deps = {}) {
   const platform = deps.platform || process.platform;
   const app = deps.app || require("electron").app;
   const dir = deps.stagedDir || stagedDir;
   const installRoot = deps.installRoot || stagedInstall;
   const exeName = deps.exeName || stagedExe;
-  if (platform === "linux" && dir && installRoot && exeName) {
-    launchLinuxApply({
-      src: dir,
-      dst: installRoot,
-      exe: exeName,
-      pid: deps.pid || process.pid,
-      spawn: deps.spawn,
-    });
-    app.quit();
-    return;
+  if (dir && installRoot && exeName) {
+    if (platform === "win32") {
+      launchWinApply({
+        src: dir,
+        dst: installRoot,
+        exe: exeName,
+        pid: deps.pid || process.pid,
+        spawn: deps.spawn,
+      });
+      app.quit();
+      return;
+    }
+    if (platform === "linux") {
+      launchLinuxApply({
+        src: dir,
+        dst: installRoot,
+        exe: exeName,
+        pid: deps.pid || process.pid,
+        spawn: deps.spawn,
+      });
+      app.quit();
+      return;
+    }
   }
   app.relaunch();
   app.quit();
