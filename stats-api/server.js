@@ -398,60 +398,154 @@ function handleLogout(req, res) {
   res.end();
 }
 
+const LIVE_MS = 30 * 60 * 1000;
+
 function clampDays(raw) {
   const n = Number(raw);
-  if (n === 1 || n === 7 || n === 30) return n;
+  if (n === 1 || n === 7 || n === 30 || n === 90) return n;
   return 30;
 }
 
-function buildStats(rows, days, nowMs) {
+function rangeStartMs(days, nowMs) {
   const end = new Date(nowMs);
-  const endDay = utcDay(nowMs);
+  return Date.UTC(end.getUTCFullYear(), end.getUTCMonth(), end.getUTCDate() - (days - 1));
+}
+
+function querySince(days, nowMs) {
+  const live = nowMs - LIVE_MS;
+  const start = rangeStartMs(days, nowMs);
+  return new Date(Math.min(start, live));
+}
+
+function inRange(tsMs, days, nowMs) {
+  return tsMs >= rangeStartMs(days, nowMs);
+}
+
+function hourKey(ms) {
+  const d = new Date(ms);
+  return `${utcDay(ms)}T${String(d.getUTCHours()).padStart(2, "0")}`;
+}
+
+function sourceLabel(props) {
+  const parts = [props.utm_source];
+  if (props.utm_medium) parts.push(props.utm_medium);
+  if (props.utm_campaign) parts.push(props.utm_campaign);
+  return parts.join(" / ");
+}
+
+function buildStats(rows, days, nowMs) {
+  const hourly = days === 1;
   const series = [];
-  const start = new Date(Date.UTC(end.getUTCFullYear(), end.getUTCMonth(), end.getUTCDate() - (days - 1)));
-  for (let i = 0; i < days; i++) {
-    const d = new Date(start.getTime());
-    d.setUTCDate(start.getUTCDate() + i);
-    const day = d.toISOString().slice(0, 10);
-    series.push({ day, visitors: 0, pageviews: 0, seen: new Set() });
+  if (hourly) {
+    const day = utcDay(nowMs);
+    for (let h = 0; h < 24; h++) {
+      series.push({
+        day,
+        hour: h,
+        visitors: 0,
+        pageviews: 0,
+        seen: new Set(),
+      });
+    }
+  } else {
+    const start = new Date(rangeStartMs(days, nowMs));
+    for (let i = 0; i < days; i++) {
+      const d = new Date(start.getTime());
+      d.setUTCDate(start.getUTCDate() + i);
+      series.push({
+        day: d.toISOString().slice(0, 10),
+        hour: null,
+        visitors: 0,
+        pageviews: 0,
+        seen: new Set(),
+      });
+    }
   }
-  const byDay = new Map(series.map((s) => [s.day, s]));
+  const bySlot = new Map(
+    series.map((s) => [hourly ? `${s.day}T${String(s.hour).padStart(2, "0")}` : s.day, s]),
+  );
   const pages = new Map();
   const referrers = new Map();
+  const countries = new Map();
+  const browsers = new Map();
+  const sources = new Map();
   const events = new Map();
+  const funnelDays = new Map();
   let pageviews = 0;
   let downloads = 0;
   let githubStars = 0;
+  let docs = 0;
+  let changelog = 0;
+  let githubRepo = 0;
+  const liveSeen = new Set();
+  let livePageviews = 0;
+  const daySeen = new Set();
 
   for (const row of rows) {
-    const day = utcDay(new Date(row.ts).getTime());
-    const slot = byDay.get(day);
-    const name = row.name;
+    const tsMs = new Date(row.ts).getTime();
     const props = row.props && typeof row.props === "object" ? row.props : {};
+    if (nowMs - tsMs <= LIVE_MS && tsMs <= nowMs) {
+      if (row.visitor) liveSeen.add(row.visitor);
+      if (row.name === "pageview") livePageviews += 1;
+    }
+    if (!inRange(tsMs, days, nowMs)) continue;
+    const day = utcDay(tsMs);
+    const slot = bySlot.get(hourly ? hourKey(tsMs) : day);
+    const name = row.name;
+    if (row.visitor && slot) slot.seen.add(row.visitor);
+    if (row.visitor) daySeen.add(`${day}\0${row.visitor}`);
+    if (props.country) countries.set(props.country, (countries.get(props.country) || 0) + 1);
+    if (props.browser) browsers.set(props.browser, (browsers.get(props.browser) || 0) + 1);
+    if (row.visitor) {
+      const fk = `${day}\0${row.visitor}`;
+      const f = funnelDays.get(fk) || { home: false, download: false, docs: false, star: false };
+      if (name === "pageview" && row.path === "/") f.home = true;
+      if (name === "Download") f.download = true;
+      if (name === "Docs") f.docs = true;
+      if (name === "GitHub Star") f.star = true;
+      funnelDays.set(fk, f);
+    }
     if (name === "pageview") {
       pageviews += 1;
-      if (slot) {
-        slot.pageviews += 1;
-        if (row.visitor) slot.seen.add(row.visitor);
-      }
+      if (slot) slot.pageviews += 1;
       pages.set(row.path, (pages.get(row.path) || 0) + 1);
       if (row.referrer) referrers.set(row.referrer, (referrers.get(row.referrer) || 0) + 1);
+      if (props.utm_source) {
+        const label = sourceLabel(props);
+        sources.set(label, (sources.get(label) || 0) + 1);
+      }
     } else if (NAMES.has(name)) {
-      if (slot && row.visitor) slot.seen.add(row.visitor);
       const platform = props.platform || null;
       const key = `${name}\0${platform || ""}`;
       events.set(key, (events.get(key) || 0) + 1);
       if (name === "Download") downloads += 1;
       if (name === "GitHub Star") githubStars += 1;
+      if (name === "Docs") docs += 1;
+      if (name === "Changelog") changelog += 1;
+      if (name === "GitHub Repo") githubRepo += 1;
     }
   }
 
   for (const s of series) s.visitors = s.seen.size;
-  const visitors = series.reduce((n, s) => n + s.visitors, 0);
+  const visitors = hourly
+    ? daySeen.size
+    : series.reduce((n, s) => n + s.visitors, 0);
   const top = (map) =>
     [...map.entries()]
       .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
       .slice(0, 20);
+  let entered = 0;
+  let toDl = 0;
+  let toDocs = 0;
+  let toStar = 0;
+  for (const f of funnelDays.values()) {
+    if (!f.home) continue;
+    entered += 1;
+    if (f.download) toDl += 1;
+    if (f.docs) toDocs += 1;
+    if (f.star) toStar += 1;
+  }
+  const rate = (n) => (entered === 0 ? 0 : Math.round((n / entered) * 100));
 
   return {
     days,
@@ -459,32 +553,42 @@ function buildStats(rows, days, nowMs) {
     pageviews,
     downloads,
     githubStars,
-    series: series.map(({ day, visitors: v, pageviews: p }) => ({
+    docs,
+    changelog,
+    githubRepo,
+    live: { visitors: liveSeen.size, pageviews: livePageviews },
+    series: series.map(({ day, hour, visitors: v, pageviews: p }) => ({
       day,
+      hour,
       visitors: v,
       pageviews: p,
     })),
     pages: top(pages).map(([path, count]) => ({ path, count })),
     referrers: top(referrers).map(([host, count]) => ({ host, count })),
+    countries: top(countries).map(([code, count]) => ({ code, count })),
+    browsers: top(browsers).map(([name, count]) => ({ name, count })),
+    sources: top(sources).map(([label, count]) => ({ label, count })),
     events: [...events.entries()].map(([key, count]) => {
       const [name, platform] = key.split("\0");
       return { name, platform: platform || null, count };
     }),
+    funnels: [
+      { name: "Home to Download", entered, converted: toDl, rate: rate(toDl) },
+      { name: "Home to Docs", entered, converted: toDocs, rate: rate(toDocs) },
+      { name: "Home to GitHub Star", entered, converted: toStar, rate: rate(toStar) },
+    ],
   };
 }
 
 async function handleStats(req, res, days) {
   if (!authorized(req)) return json(res, 401, { error: "unauthorized" });
   if (!db) return json(res, 503, { error: "no database" });
-  const since = new Date(nowFn());
-  since.setUTCDate(since.getUTCDate() - (days - 1));
-  since.setUTCHours(0, 0, 0, 0);
   try {
     const { rows } = await db.query(
       `SELECT ts, name, path, referrer, visitor, props
          FROM events WHERE ts >= $1
          ORDER BY ts ASC`,
-      [since.toISOString()],
+      [querySince(days, nowFn()).toISOString()],
     );
     return json(res, 200, buildStats(rows, days, nowFn()));
   } catch (err) {
@@ -641,6 +745,8 @@ module.exports = {
   authorized,
   timingSafeEqual,
   buildStats,
+  clampDays,
+  querySince,
   parseCountry,
   parseBrowser,
   parseUtms,

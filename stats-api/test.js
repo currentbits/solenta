@@ -266,7 +266,7 @@ test("POST /login sets the cookie; wrong password does not", async (t) => {
   assert.match(cookie, /SameSite=Strict/i);
 });
 
-const { buildStats } = require("./server");
+const { buildStats, clampDays, querySince } = require("./server");
 
 test("visitors sum daily distinct hashes, not range-wide distinct", () => {
   const day1 = "2026-08-01T10:00:00.000Z";
@@ -458,4 +458,95 @@ test("POST /e omits XX country and still inserts", async (t) => {
   assert.equal((await post(port, PAGE, { "cf-ipcountry": "XX" })).status, 204);
   const props = JSON.parse(db.events[0].props);
   assert.equal(props.country, undefined);
+});
+
+test("clampDays accepts 90 and rejects 2", () => {
+  assert.equal(clampDays("90"), 90);
+  assert.equal(clampDays("2"), 30);
+  assert.equal(clampDays("1"), 1);
+});
+
+test("buildStats hourly today, live, funnels, and extra totals", () => {
+  const now = Date.parse("2026-08-28T12:30:00.000Z");
+  const rows = [
+    {
+      ts: "2026-08-28T12:10:00.000Z",
+      name: "pageview",
+      path: "/",
+      referrer: "producthunt.com",
+      visitor: "aaa",
+      props: {
+        country: "NL",
+        browser: "Safari",
+        utm_source: "ph",
+        utm_medium: "social",
+        utm_campaign: "launch",
+      },
+    },
+    {
+      ts: "2026-08-28T12:11:00.000Z",
+      name: "pageview",
+      path: "/",
+      referrer: "",
+      visitor: "aaa",
+      props: { country: "NL", browser: "Safari" },
+    },
+    {
+      ts: "2026-08-28T12:12:00.000Z",
+      name: "Download",
+      path: "/",
+      referrer: "",
+      visitor: "aaa",
+      props: { platform: "mac", country: "NL", browser: "Safari" },
+    },
+    {
+      ts: "2026-08-28T12:13:00.000Z",
+      name: "Download",
+      path: "/",
+      referrer: "",
+      visitor: "aaa",
+      props: { platform: "mac" },
+    },
+    {
+      ts: "2026-08-28T11:00:00.000Z",
+      name: "Docs",
+      path: "/",
+      referrer: "",
+      visitor: "bbb",
+      props: { country: "DE", browser: "Chrome" },
+    },
+    {
+      ts: "2026-08-27T23:50:00.000Z",
+      name: "pageview",
+      path: "/",
+      referrer: "",
+      visitor: "ccc",
+      props: { country: "US", browser: "Firefox" },
+    },
+  ];
+  const stats = buildStats(rows, 1, now);
+  assert.equal(stats.days, 1);
+  assert.equal(stats.series.length, 24);
+  assert.equal(stats.series[0].hour, 0);
+  assert.equal(stats.series[12].pageviews, 2);
+  assert.equal(stats.series[12].visitors, 1);
+  assert.equal(stats.docs, 1);
+  assert.equal(stats.downloads, 2);
+  assert.equal(stats.visitors, 2, "aaa + bbb on 28th; ccc is yesterday");
+  assert.equal(stats.live.pageviews, 2);
+  assert.equal(stats.live.visitors, 1);
+  assert.equal(stats.countries[0].code, "NL");
+  assert.equal(stats.browsers[0].name, "Safari");
+  assert.equal(stats.sources[0].label, "ph / social / launch");
+  const homeDl = stats.funnels.find((f) => f.name === "Home to Download");
+  assert.equal(homeDl.entered, 1);
+  assert.equal(homeDl.converted, 1);
+  assert.equal(homeDl.rate, 100);
+});
+
+test("querySince includes the live window before midnight", () => {
+  const now = Date.parse("2026-08-28T00:10:00.000Z");
+  const since = querySince(1, now);
+  assert.ok(since.getTime() <= now - 30 * 60 * 1000);
+  assert.ok(since.getTime() < Date.parse("2026-08-28T00:00:00.000Z"));
 });
