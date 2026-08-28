@@ -210,7 +210,8 @@
 }
 
 .filterRow {
-  display: flex;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   align-items: center;
   gap: 2px;
   margin: 0 8px 6px;
@@ -218,7 +219,6 @@
 }
 
 .filterMenuHost {
-  flex: 1;
   min-width: 0;
   position: relative;
 }
@@ -226,6 +226,7 @@
 .filterTrigger {
   display: flex;
   align-items: center;
+  justify-content: center;
   gap: 4px;
   width: 100%;
   min-width: 0;
@@ -235,7 +236,7 @@
   color: var(--text-muted);
   font-size: 12px;
   font-weight: 500;
-  text-align: left;
+  text-align: center;
 }
 
 .filterTrigger:hover {
@@ -248,7 +249,7 @@
 }
 
 .filterTriggerLabel {
-  flex: 1;
+  flex: 0 1 auto;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -331,7 +332,8 @@
 }
 
 .viewNav {
-  display: flex;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   align-items: center;
   gap: 2px;
   margin: 0 8px 8px;
@@ -341,7 +343,8 @@
 .viewNavBtn {
   display: grid;
   place-items: center;
-  flex: 1;
+  width: 100%;
+  min-width: 0;
   height: 28px;
   border-radius: var(--radius-sm);
   color: var(--text-muted);

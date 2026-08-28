@@ -1037,6 +1037,42 @@ describe("Sidebar project scope", () => {
   });
 });
 
+describe("Sidebar filter columns (#746)", () => {
+  function cssBlock(className: string): string {
+    const css = fs
+      .readFileSync("src/components/Sidebar.module.css", "utf8")
+      .replace(/\/\*[\s\S]*?\*\//g, "");
+    return css.match(new RegExp(`\\.${className}(?![\\w-])\\s*\\{([^}]*)\\}`))?.[1] ?? "";
+  }
+
+  it("lays Status / Provider / Group and the view-nav icons on matching 3-col tracks", async () => {
+    await clearSidebarStorage();
+    const m = await mount(sidebar(THREADS, { projects: [p1, p2] }));
+    const filters = m.query("[data-filter-row]");
+    const nav = filters?.parentElement?.querySelector("nav[aria-label='Views']");
+    assert.ok(filters, "filter row");
+    assert.ok(nav, "view nav sits with the filter row");
+    assert.equal(filters!.children.length, 3, "three filter columns");
+    assert.equal(nav!.querySelectorAll("[data-view-nav]").length, 3, "three view-nav icons");
+    m.unmount();
+
+    const threeCol = /grid-template-columns:\s*repeat\(3,\s*minmax\(0,\s*1fr\)\)/;
+    assert.match(cssBlock("filterRow"), threeCol, "filter labels share three equal tracks");
+    assert.match(cssBlock("viewNav"), threeCol, "view-nav icons share the same three tracks");
+    assert.match(
+      cssBlock("filterTrigger"),
+      /justify-content:\s*center/,
+      "label+chevron sit on the column centerline above the icon",
+    );
+    assert.doesNotMatch(
+      cssBlock("filterTriggerLabel"),
+      /flex:\s*1/,
+      "growing the label shoved the chevron to the far edge and un-centered the column",
+    );
+    assert.match(cssBlock("viewNavBtn"), /place-items:\s*center/);
+  });
+});
+
 describe("Sidebar header create + issue form", () => {
   it("New thread targets the scoped project, else the open thread, else the first", async () => {
     await clearSidebarStorage();
