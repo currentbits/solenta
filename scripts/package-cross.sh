@@ -47,7 +47,7 @@ git diff --quiet 2>/dev/null || BUILD_SHA="${BUILD_SHA}+dirty"
 BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
 # Same channel/tag stamps as package-app.sh: no releaseTag -> the bundle
-# never auto-updates (win/linux builds only surface the release URL anyway).
+# never auto-updates.
 CHANNEL="prod"
 RELEASE_TAG=""
 TARGETS=()

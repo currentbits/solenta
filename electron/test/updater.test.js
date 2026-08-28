@@ -1,7 +1,12 @@
 "use strict";
 
-const { describe, it } = require("node:test");
+const { describe, it, afterEach } = require("node:test");
 const assert = require("node:assert/strict");
+const { execFileSync } = require("node:child_process");
+const crypto = require("node:crypto");
+const fs = require("node:fs");
+const os = require("node:os");
+const path = require("node:path");
 const { Readable } = require("node:stream");
 
 const updater = require("../updater.js");
@@ -331,5 +336,208 @@ describe("updater.bundlePath", () => {
       updater.bundlePath("/Applications/Solenta.app/Contents/MacOS/Solenta"),
       "/Applications/Solenta.app",
     );
+  });
+
+  it("linux: install root is the folder containing solenta + resources", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "solenta-upd-root-"));
+    try {
+      fs.mkdirSync(path.join(dir, "resources"));
+      const exe = path.join(dir, "solenta");
+      fs.writeFileSync(exe, "");
+      assert.equal(updater.bundlePath(exe, "linux"), dir);
+      const nightlyDir = path.join(dir, "nightly");
+      fs.mkdirSync(path.join(nightlyDir, "resources"), { recursive: true });
+      const nightly = path.join(nightlyDir, "solenta-nightly");
+      fs.writeFileSync(nightly, "");
+      assert.equal(updater.bundlePath(nightly, "linux"), nightlyDir);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("linux: rejects electron, node_modules, and a tree with no resources", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "solenta-upd-bad-"));
+    try {
+      fs.mkdirSync(path.join(dir, "resources"));
+      const electron = path.join(dir, "electron");
+      fs.writeFileSync(electron, "");
+      assert.equal(updater.bundlePath(electron, "linux"), null);
+
+      const nested = path.join(dir, "node_modules", "electron");
+      fs.mkdirSync(path.join(nested, "resources"), { recursive: true });
+      const nestedExe = path.join(nested, "solenta");
+      fs.writeFileSync(nestedExe, "");
+      assert.equal(updater.bundlePath(nestedExe, "linux"), null);
+
+      const bare = path.join(dir, "bare");
+      fs.mkdirSync(bare);
+      const bareExe = path.join(bare, "solenta");
+      fs.writeFileSync(bareExe, "");
+      assert.equal(updater.bundlePath(bareExe, "linux"), null);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+/** Portable linux tar.gz matching package-cross.sh: solenta/solenta + resources/. */
+function makeLinuxTar() {
+  const parent = fs.mkdtempSync(path.join(os.tmpdir(), "solenta-upd-tar-"));
+  const tree = path.join(parent, "solenta");
+  fs.mkdirSync(path.join(tree, "resources", "app"), { recursive: true });
+  fs.writeFileSync(path.join(tree, "solenta"), "new-bin");
+  fs.chmodSync(path.join(tree, "solenta"), 0o755);
+  fs.writeFileSync(path.join(tree, "resources", "app", "marker.txt"), "next");
+  const tar = path.join(parent, "update.tar.gz");
+  execFileSync("tar", ["-czf", tar, "solenta"], { cwd: parent });
+  const bytes = fs.readFileSync(tar);
+  return {
+    parent,
+    tar,
+    bytes,
+    digest: `sha256:${crypto.createHash("sha256").update(bytes).digest("hex")}`,
+  };
+}
+
+describe("updater.downloadUpdate linux portable", () => {
+  afterEach(() => {
+    if (typeof updater.resetStaged === "function") updater.resetStaged();
+  });
+
+  it("stages next to the live folder and leaves the running tree untouched", async () => {
+    const install = fs.mkdtempSync(path.join(os.tmpdir(), "solenta-upd-live-"));
+    const archive = makeLinuxTar();
+    try {
+      fs.mkdirSync(path.join(install, "resources", "app"), { recursive: true });
+      fs.writeFileSync(path.join(install, "solenta"), "old-bin");
+      fs.writeFileSync(path.join(install, "resources", "app", "marker.txt"), "current");
+
+      const res = await updater.downloadUpdate({
+        pkg: PROD_PKG,
+        platform: "linux",
+        arch: "x64",
+        bundlePath: install,
+        fetch: async (url) => {
+          if (String(url).includes("example.invalid")) {
+            return {
+              ok: true,
+              status: 200,
+              body: Readable.toWeb(Readable.from(archive.bytes)),
+            };
+          }
+          return {
+            ok: true,
+            status: 200,
+            json: async () => ({
+              tag_name: "v0.2.0",
+              html_url: "u",
+              assets: [
+                {
+                  name: "Solenta-v0.2.0-linux-x64.tar.gz",
+                  browser_download_url: "https://example.invalid/app.tar.gz",
+                  digest: archive.digest,
+                },
+              ],
+            }),
+          };
+        },
+      });
+
+      assert.equal(res.state, "staged");
+      assert.equal(
+        fs.readFileSync(path.join(install, "resources", "app", "marker.txt"), "utf8"),
+        "current",
+        "live install must stay put; extract beside it, swap after quit",
+      );
+      const staged = `${install}.update`;
+      assert.equal(
+        fs.readFileSync(path.join(staged, "resources", "app", "marker.txt"), "utf8"),
+        "next",
+      );
+      assert.equal(fs.readFileSync(path.join(staged, "solenta"), "utf8"), "new-bin");
+    } finally {
+      fs.rmSync(install, { recursive: true, force: true });
+      fs.rmSync(`${install}.update`, { recursive: true, force: true });
+      fs.rmSync(archive.parent, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses to stage a linux asset with no digest", async () => {
+    const install = fs.mkdtempSync(path.join(os.tmpdir(), "solenta-upd-nodigest-"));
+    try {
+      fs.mkdirSync(path.join(install, "resources"), { recursive: true });
+      const res = await updater.downloadUpdate({
+        pkg: PROD_PKG,
+        platform: "linux",
+        arch: "x64",
+        bundlePath: install,
+        fetch: async () => ({
+          ok: true,
+          status: 200,
+          json: async () => ({
+            tag_name: "v0.2.0",
+            html_url: "u",
+            assets: [
+              {
+                name: "Solenta-v0.2.0-linux-x64.tar.gz",
+                browser_download_url: "https://example.invalid/app.tar.gz",
+              },
+            ],
+          }),
+        }),
+      });
+      assert.equal(res.state, "available");
+      assert.match(res.error, /no sha256 digest/);
+      assert.equal(fs.existsSync(`${install}.update`), false);
+    } finally {
+      fs.rmSync(install, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("updater.applyUpdate linux", () => {
+  afterEach(() => {
+    if (typeof updater.resetStaged === "function") updater.resetStaged();
+  });
+
+  it("launches a shell helper and quits without relaunch", () => {
+    const calls = [];
+    updater.applyUpdate({
+      platform: "linux",
+      stagedDir: "/opt/Solenta.update",
+      installRoot: "/opt/Solenta",
+      exeName: "solenta",
+      pid: 4242,
+      spawn: (cmd, args, opts) => {
+        calls.push({ cmd, args, opts });
+        return { unref() {} };
+      },
+      app: {
+        relaunch: () => calls.push("relaunch"),
+        quit: () => calls.push("quit"),
+      },
+    });
+    const spawned = calls.find((c) => c && c.cmd);
+    assert.ok(spawned, "must spawn a helper");
+    assert.ok(/\/bin\/sh$/.test(spawned.cmd) || spawned.cmd === "sh", "must spawn a shell helper");
+    assert.ok(!/cmd\.exe/i.test(spawned.cmd), "linux must not use cmd.exe");
+    assert.ok(spawned.args.includes("/opt/Solenta.update"));
+    assert.ok(spawned.args.includes("/opt/Solenta"));
+    assert.ok(spawned.args.includes("solenta"));
+    assert.ok(spawned.args.includes("4242"));
+    assert.ok(!calls.includes("relaunch"), "relaunch would exec the still-old tree");
+    assert.ok(calls.includes("quit"));
+  });
+
+  it("macOS still relaunches the already-swapped bundle", () => {
+    const calls = [];
+    updater.applyUpdate({
+      platform: "darwin",
+      app: {
+        relaunch: () => calls.push("relaunch"),
+        quit: () => calls.push("quit"),
+      },
+    });
+    assert.deepEqual(calls, ["relaunch", "quit"]);
   });
 });
