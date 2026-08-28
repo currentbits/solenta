@@ -59,6 +59,28 @@
         Every notable change to Solenta, newest first.
       </p>
 
+      <h2 id="v0-14-0">0.14.0 <small>2026-08-28</small></h2>
+      <h3>Added</h3>
+      <ul>
+        <li><strong>iOS Simulator.</strong> On a Mac, the agent drives a shared simulator from the thread: boot a device, tap, type, screenshot and record, without leaving Solenta.</li>
+        <li><strong>Model routing.</strong> Pick a default model in Settings, and a burned quota fails over to the next model in the chain instead of stopping the turn.</li>
+        <li><strong>Current catalogs and effort ladders.</strong> Sol, ultra and ultracode land in the pickers, and the effort list follows the model you actually selected. Solenta warns when an installed CLI has drifted from what it ships.</li>
+        <li><strong>Planboard orchestrator.</strong> Choose which agent starts a planboard task, and set a default in Settings so you are not asked every time.</li>
+        <li><strong>Memory that closes the loop.</strong> Bootstrap is injected into the run, the review queue lives on the Memory tab, a janitor resolves the obvious rows, and a sleep-time pass consolidates in the background.</li>
+        <li><strong>Verbose tool cards.</strong> A toggle expands every tool card so you can read the input and output without clicking through each one.</li>
+      </ul>
+      <h3>Fixed</h3>
+      <ul>
+        <li>Live turns no longer stall on "Agent working". Codex and Kimi show the thinking card and the tool that is running.</li>
+        <li>Cursor and OpenCode screenshots render as images instead of truncated JSON.</li>
+        <li>Cursor can write a commit message and answer a side question without a print-mode hard error.</li>
+        <li>Images in the transcript render again instead of breaking the layout.</li>
+        <li>Grok stdio MCP servers that need a working directory actually register.</li>
+        <li>The packaged Mac build includes the iOS simulator helper.</li>
+        <li>Sidebar view-nav icons sit under the Status, Provider and Group columns.</li>
+        <li>Memory consolidation no longer dumps a pile of messages when the app starts.</li>
+      </ul>
+
       <h2 id="v0-13-0">0.13.0 <small>2026-08-25</small></h2>
       <h3>Added</h3>
       <ul>
