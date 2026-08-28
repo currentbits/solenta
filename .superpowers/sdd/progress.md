@@ -93,3 +93,35 @@ Minor review notes for final triage: protocol token is journalled but matching i
 Concern fix (turn 74+): native helper now implements `text` — `SHSendText` maps printable ASCII to HID usages and replays key down/up via `SHSendKey` (`SimulatorInputBridge.m`), `HelperSession.swift` dispatches `case "text"` with capability-then-payload guards, tests added in `BridgeCapabilityTests.swift`. `swift build` clean; XCTest still unrun (CLT-only host). VideoFrame-close concern verified already covered in `simulatorStream.ts` + `test/simulatorStream.test.ts`. `scrollTo` remains unimplemented in the helper. #248 stays open.
 
 Concern fix (fork thread 78776b8d): native helper now implements `scrollTo` — `SHSendScrollTo` replays a scroll as a bounded drag (touch down, ≤24 interpolated moves at 8 ms, touch up, best-effort up on mid-gesture failure) through the existing `SHSendTouch`/Indigo mouse path (`SimulatorInputBridge.m`, declared in `SimulatorPrivateBridge.h`); `HelperSession.swift` dispatches `case "scrollTo"` with the same capability(touch)-then-payload guard order as `sendTouch`, payload `{x, y, dx, dy}` matching `electron/ios-simulator.js` scrollTo(). Fail-closed coverage in `BridgeCapabilityTests.swift` (bridge-level and session-level capability_unavailable) plus an RPC-shape assertion in `electron/test/ios-simulator.test.js`. Fork worktree first merged `coder/ios-simulator-integration-macos-agent-dr-06a6a6` (45 commits, 6 additive IPC-surface conflicts, both sides kept). `swift build` clean (one pre-existing sandbox_free_error deprecation warning); `swift test` still unrunnable — no XCTest module on this CLT-only host; 225 service tests pass; `npm run typecheck` passes. #248 stays open.
+# First-party site analytics SDD
+Plan: docs/superpowers/plans/2026-08-28-first-party-site-analytics.md
+Spec: docs/superpowers/specs/2026-08-28-first-party-site-analytics-design.md
+Branch: coder/first-party-site-analytics
+Task 1 base: 0ef08831
+
+Task 1: complete (commits 0ef08831..1e015888, review clean)
+Minor for final triage: unused crypto imports in scaffold (plan-mandated); em dash in DATABASE_URL log (plan-mandated).
+
+Task 2: complete (commits 1e015888..b6b92f1d, review clean)
+
+Task 3: complete (commits b6b92f1d..b21a999b, review clean)
+Minor for final triage: readRaw duplicates readBody; POST /logout untested.
+
+Task 4: complete (commits b21a999b..59c4686d, review clean)
+Minor for final triage: HTTP /api/stats test pinned to wall-clock 2026-08-28; unused endDay; totals not slot-gated.
+
+Task 5: complete (commits 59c4686d..6d9f2599, review clean)
+Minor for final triage: dashboard tests only cover empty range.
+
+Task 6: complete (commits 6d9f2599..702894c2, review clean)
+Minor for final triage: tracker tests don't lock u/r/platform; sendBeacon false does not fall through to fetch.
+
+Task 7: complete (commits 702894c2..a5c10405 docs; live graft girder-stats 6327a08a). Review: docs in range; deploy verified live (stats.solenta.app/health 200, solenta.app serves stats.js, #747 closed with Download event).
+Planboard: #747 and #683 closed, labels plan:done.
+
+Final whole-branch review (0ef08831..a5c10405): ready with one Important — /api/stats HTTP test pinned to wall-clock 2026-08-28.
+Fix: a92a82d0 (setNow pin + reset). Re-review clean.
+Focused tests: stats-api 14/14, site-stats+site-downloads 14/14.
+
+Branch pollution (not this plan): d9fce226 and 42655679 are unrelated worktree merges after a5c10405.
+
