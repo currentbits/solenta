@@ -550,3 +550,54 @@ test("querySince includes the live window before midnight", () => {
   assert.ok(since.getTime() <= now - 30 * 60 * 1000);
   assert.ok(since.getTime() < Date.parse("2026-08-28T00:00:00.000Z"));
 });
+
+test("GET / with bearer shows new sections and refresh", async (t) => {
+  const port = await listen();
+  setNow(() => Date.parse("2026-08-28T12:00:00.000Z"));
+  setDb(
+    fakeDb({
+      rows: [
+        {
+          ts: "2026-08-28T11:50:00.000Z",
+          name: "Docs",
+          path: "/",
+          referrer: "",
+          visitor: "abc",
+          props: { country: "NL", browser: "Safari" },
+        },
+      ],
+    }),
+  );
+  t.after(() => {
+    server.close();
+    setDb(null);
+    setNow(null);
+  });
+  const res = await fetch(`http://127.0.0.1:${port}/?days=7`, {
+    headers: { authorization: "Bearer secret-token" },
+  });
+  assert.equal(res.status, 200);
+  const html = await res.text();
+  assert.match(html, /Live:/);
+  assert.match(html, /Docs/);
+  assert.match(html, /Changelog/);
+  assert.match(html, /GitHub Repo/);
+  assert.match(html, /Countries/);
+  assert.match(html, /Browsers/);
+  assert.match(html, /Sources/);
+  assert.match(html, /Funnels/);
+  assert.match(html, /Home to Download/);
+  assert.match(html, /\?days=90/);
+  assert.match(html, /http-equiv="refresh"/);
+  assert.equal(html.includes("No events in this range."), false);
+  assert.equal(html.includes("<script"), false);
+  assert.equal(html.includes("\u2014"), false);
+});
+
+test("login HTML does not auto-refresh", async (t) => {
+  const port = await listen();
+  t.after(() => server.close());
+  const html = await (await fetch(`http://127.0.0.1:${port}/`)).text();
+  assert.equal(html.includes("http-equiv=\"refresh\""), false);
+  assert.match(html, /name="password"/);
+});
