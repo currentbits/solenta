@@ -301,9 +301,11 @@ test("GET /api/stats needs auth and uses buildStats", async (t) => {
     ],
   });
   setDb(db);
+  setNow(() => Date.parse("2026-08-28T12:00:00.000Z"));
   t.after(() => {
     server.close();
     setDb(null);
+    setNow(null);
   });
   const url = `http://127.0.0.1:${port}/api/stats?days=1`;
   assert.equal((await fetch(url)).status, 401);
