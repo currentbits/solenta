@@ -29,10 +29,9 @@
   <script>document.documentElement.classList.add("js");</script>
   <link rel="stylesheet" href="style.css?v=10" />
   <script src="https://unpkg.com/@phosphor-icons/web@2.1.1" defer></script>
-  <!-- Plausible: no cookies, no personal data, so no consent banner. The
-       tagged-events build reads plausible-event-* classes off links, which
-       is why the download and GitHub links carry them. -->
-  <script defer data-domain="solenta.app" src="https://plausible.io/js/script.tagged-events.js"></script>
+  <!-- First-party stats: no cookies, no personal data, so no consent banner.
+       stats.js beacons pageviews and data-event clicks to stats.solenta.app. -->
+  <script src="stats.js" defer></script>
 </head>
 <body>
 
@@ -45,9 +44,9 @@
       Solenta
     </a>
     <div class="nav-links">
-      <a class="plausible-event-name=Docs" href="docs.html">Docs</a>
-      <a class="plausible-event-name=Changelog" href="changelog.html">Changelog</a>
-      <a class="plausible-event-name=GitHub+Repo" href="https://github.com/currentbits/solenta">GitHub</a>
+      <a data-event="Docs" href="docs.html">Docs</a>
+      <a data-event="Changelog" href="changelog.html">Changelog</a>
+      <a data-event="GitHub Repo" href="https://github.com/currentbits/solenta">GitHub</a>
       <a class="nav-cta" href="#install">
         Download
       </a>
@@ -66,23 +65,23 @@
       One shared memory across every agent, and a planboard that is your GitHub issues.
     </p>
     <div class="hero-ctas reveal">
-      <a class="btn btn-primary plausible-event-name=Download plausible-event-platform=unknown"
-         id="hero-dl" data-dl="auto"
+      <a class="btn btn-primary" data-event="Download"
+         id="hero-dl" data-platform="unknown" data-dl="auto"
          href="https://github.com/currentbits/solenta/releases/latest">
         Download Solenta
       </a>
-      <a class="btn btn-ghost plausible-event-name=GitHub+Star" href="https://github.com/currentbits/solenta">
+      <a class="btn btn-ghost" data-event="GitHub Star" href="https://github.com/currentbits/solenta">
         <img src="https://cdn.simpleicons.org/github/191918" width="16" height="16" alt="" />
         Star on GitHub
       </a>
     </div>
     <p class="hero-alt reveal">
       <span id="hero-alt-lead">Downloads for</span>
-      <a class="plausible-event-name=Download plausible-event-platform=mac"
+      <a data-event="Download" data-platform="mac"
          data-dl="mac" href="https://github.com/currentbits/solenta/releases/latest">macOS</a>
-      <a class="plausible-event-name=Download plausible-event-platform=win"
+      <a data-event="Download" data-platform="win"
          data-dl="win" href="https://github.com/currentbits/solenta/releases/latest">Windows</a>
-      <a class="plausible-event-name=Download plausible-event-platform=linux"
+      <a data-event="Download" data-platform="linux"
          data-dl="linux" href="https://github.com/currentbits/solenta/releases/latest">Linux</a>
       <a href="#install">install steps</a>
     </p>
@@ -443,7 +442,7 @@
           <span class="os-note">Apple Silicon</span>
           <span class="you-chip">Detected</span>
         </div>
-        <a class="btn btn-ghost btn-block plausible-event-name=Download plausible-event-platform=mac"
+        <a class="btn btn-ghost btn-block" data-event="Download" data-platform="mac"
            data-dl="mac" href="https://github.com/currentbits/solenta/releases/latest">
           Download for macOS
         </a>
@@ -459,7 +458,7 @@
           <span class="os-note">x64</span>
           <span class="you-chip">Detected</span>
         </div>
-        <a class="btn btn-ghost btn-block plausible-event-name=Download plausible-event-platform=win"
+        <a class="btn btn-ghost btn-block" data-event="Download" data-platform="win"
            data-dl="win" href="https://github.com/currentbits/solenta/releases/latest">
           Download for Windows
         </a>
@@ -476,7 +475,7 @@
           <span class="os-note">x64</span>
           <span class="you-chip">Detected</span>
         </div>
-        <a class="btn btn-ghost btn-block plausible-event-name=Download plausible-event-platform=linux"
+        <a class="btn btn-ghost btn-block" data-event="Download" data-platform="linux"
            data-dl="linux" href="https://github.com/currentbits/solenta/releases/latest">
           Download for Linux
         </a>
@@ -489,11 +488,11 @@
       </div>
     </div>
     <p class="install-all reveal">
-      <a class="plausible-event-name=All+downloads" href="https://github.com/currentbits/solenta/releases">All releases, including older versions</a>
+      <a data-event="All downloads" href="https://github.com/currentbits/solenta/releases">All releases, including older versions</a>
     </p>
     <div class="final-cta reveal">
-      <a class="btn btn-ghost btn-lg plausible-event-name=Docs" href="docs.html">Read the docs</a>
-      <a class="btn btn-ghost btn-lg plausible-event-name=GitHub+Star" href="https://github.com/currentbits/solenta">
+      <a class="btn btn-ghost btn-lg" data-event="Docs" href="docs.html">Read the docs</a>
+      <a class="btn btn-ghost btn-lg" data-event="GitHub Star" href="https://github.com/currentbits/solenta">
         <img src="https://cdn.simpleicons.org/github/191918" width="16" height="16" alt="" />
         Star on GitHub
       </a>
@@ -511,8 +510,8 @@
     <span class="spacer"></span>
     <a href="docs.html">Docs</a>
     <a href="changelog.html">Changelog</a>
-    <a class="plausible-event-name=GitHub+Repo" href="https://github.com/currentbits/solenta">GitHub</a>
-    <a class="plausible-event-name=All+downloads" href="https://github.com/currentbits/solenta/releases">Releases</a>
+    <a data-event="GitHub Repo" href="https://github.com/currentbits/solenta">GitHub</a>
+    <a data-event="All downloads" href="https://github.com/currentbits/solenta/releases">Releases</a>
     <a href="https://x.com/currentbitsNET">@currentbitsNET</a>
     <a href="https://verifieddr.com/website/solenta-app" target="_blank"><img src="https://verifieddr.com/badge/solenta-app.svg?style=minimal" alt="Verified DR - Verified Domain Rating for solenta.app" width="200" height="24" /></a>
     <a href="https://nicklaunches.com/products/solenta/?utm_source=solenta.app&utm_medium=badge&utm_campaign=featured" target="_blank" rel="noopener"><img src="https://nicklaunches.com/badges/featured.png" alt="Solenta on Nick Launches" width="244" height="56" /></a>

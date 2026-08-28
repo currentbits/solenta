@@ -670,6 +670,25 @@ leave a confirmation in the transcript. The error text the composer shows
 is the endpoint's own sentence when it has one, so a rate-limit reads as
 advice rather than as a status code.
 
+## Site analytics
+
+Issue #747. Replaces Plausible on solenta.app. The public site stays
+cookieless: `site/stats.js` beacons `{n,u,r,p?}` as text/plain to
+`POST https://stats.solenta.app/e`. The collector always answers 204.
+IP is used in memory to HMAC a daily visitor id and to rate-limit; it is
+never written. DNT and GPC drops the event.
+
+| Piece | Path |
+|-------|------|
+| Tracker | `site/stats.js` (index, docs, changelog) |
+| Endpoint | `stats-api/` , Girder app `solenta-stats` (stats.solenta.app) |
+| Dashboard | `GET /` cookie or bearer `ADMIN_TOKEN`; `GET /api/stats?days=1\|7\|30` |
+
+```
+curl -s -H "Authorization: Bearer $ADMIN_TOKEN" \
+  "https://stats.solenta.app/api/stats?days=7"
+```
+
 ## Spec mode
 
 Optional per-thread gate (issue #269): the agent writes `requirements.md`,

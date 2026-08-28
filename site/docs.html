@@ -28,7 +28,9 @@
   <link rel="icon" href="assets/icon.svg" type="image/svg+xml" />
   <script>document.documentElement.classList.add("js");</script>
   <link rel="stylesheet" href="style.css?v=9" />
-  <script defer data-domain="solenta.app" src="https://plausible.io/js/script.tagged-events.js"></script>
+  <!-- First-party stats: no cookies, no personal data, so no consent banner.
+       stats.js beacons pageviews and data-event clicks to stats.solenta.app. -->
+  <script src="stats.js" defer></script>
 </head>
 <body>
 

@@ -10,10 +10,12 @@ const services = require("../services.js");
 const { createRunner } = require("../runner.js");
 const {
   extractAssistantText,
+  extractThinking,
   extractToolEvent,
   extractToolEvents,
   extractSessionId,
   extractUsage,
+  createStderrThinkingParser,
 } = require("../kimi.js");
 const { getProvider } = require("../providers.js");
 const { writeFakeBin } = require("./support/fakeBin.js");
@@ -214,6 +216,131 @@ async function main() {
     return;
   }
 
+  // Issue #751: thinking content-block before the first tool card.
+  if (scenario === "thinking-block-then-tool") {
+    emit({
+      role: "assistant",
+      content: [{ type: "thinking", thinking: "I should read kimi.js first." }],
+    });
+    await delay(80);
+    emit({
+      role: "assistant",
+      tool_calls: [
+        {
+          type: "function",
+          id: "call-read-1",
+          function: {
+            name: "Read",
+            arguments: "{\\"file_path\\":\\"electron/kimi.js\\"}",
+          },
+        },
+      ],
+    });
+    await delay(15);
+    emit({
+      role: "tool",
+      tool_call_id: "call-read-1",
+      content: "module.exports",
+    });
+    process.exit(0);
+    return;
+  }
+
+  // Issue #753: official stream-json drops thinking from JSONL; the
+  // recorded print-mode stderr shape (kimi 0.31.1 PromptTranscriptWriter)
+  // is a •  block. Tool progress and resume notices share stderr and
+  // must not become a Thinking card.
+  if (scenario === "stderr-thinking-then-tool") {
+    process.stderr.write("• I should write probe.txt first.\\n");
+    await delay(200);
+    process.stderr.write("Wrote 6 bytes to probe.txt\\n");
+    process.stderr.write(
+      "To resume this session: kimi -r session_fake123\\n",
+    );
+    emit({
+      role: "assistant",
+      tool_calls: [
+        {
+          type: "function",
+          id: "tool-1",
+          function: {
+            name: "Write",
+            arguments: "{\\"path\\":\\"probe.txt\\",\\"content\\":\\"hello\\"}",
+          },
+        },
+      ],
+    });
+    await delay(20);
+    emit({
+      role: "tool",
+      tool_call_id: "tool-1",
+      content: "Wrote 6 bytes to probe.txt",
+    });
+    await delay(20);
+    emit({
+      role: "meta",
+      type: "session.resume_hint",
+      session_id: "session_fake123",
+      command: "kimi -r session_fake123",
+      content: "To resume this session: kimi -r session_fake123",
+    });
+    process.exit(0);
+    return;
+  }
+
+  // Issue #752: reasoning_content must be visible before the first tool,
+  // and a restated tool_calls line must not duplicate the card.
+  if (scenario === "thinking-then-tool") {
+    emit({
+      role: "assistant",
+      reasoning_content: "I should write probe.txt first.",
+    });
+    await delay(200);
+    emit({
+      role: "assistant",
+      tool_calls: [
+        {
+          type: "function",
+          id: "tool-1",
+          function: {
+            name: "Write",
+            arguments: "{\\"path\\":\\"probe.txt\\",\\"content\\":\\"hello\\"}",
+          },
+        },
+      ],
+    });
+    await delay(40);
+    emit({
+      role: "assistant",
+      tool_calls: [
+        {
+          type: "function",
+          id: "tool-1",
+          function: {
+            name: "Write",
+            arguments: "{\\"path\\":\\"probe.txt\\",\\"content\\":\\"hello\\"}",
+          },
+        },
+      ],
+    });
+    await delay(20);
+    emit({
+      role: "tool",
+      tool_call_id: "tool-1",
+      content: "Wrote 6 bytes to probe.txt",
+    });
+    await delay(20);
+    emit({
+      role: "meta",
+      type: "session.resume_hint",
+      session_id: "session_fake123",
+      command: "kimi -r session_fake123",
+      content: "To resume this session: kimi -r session_fake123",
+    });
+    process.exit(0);
+    return;
+  }
+
   process.stderr.write("unknown scenario\\n");
   process.exit(1);
 }
@@ -281,6 +408,74 @@ describe("kimi extract helpers: REAL recorded stream lines", () => {
       "a tool result's content is not assistant text",
     );
     assert.equal(extractAssistantText(REAL_CALL), null);
+  });
+
+  it("extracts thinking from reasoning_content and thinking blocks", () => {
+    assert.equal(extractThinking(REAL_TEXT), null);
+    assert.equal(extractThinking(REAL_CALL), null);
+    assert.equal(
+      extractThinking({
+        role: "assistant",
+        reasoning_content: "I should write probe.txt first.",
+      }),
+      "I should write probe.txt first.",
+    );
+    assert.equal(
+      extractThinking({
+        role: "assistant",
+        content: [
+          { type: "thinking", thinking: "plan the write" },
+          { type: "text", text: "ok" },
+        ],
+      }),
+      "plan the write",
+    );
+  });
+
+  // Recorded shapes: PromptTranscriptWriter (kimi 0.31.1 / docs) writes
+  // thinking to stderr as a •  block, wrap-indented by two spaces. Live
+  // 0.39 stream-json capture + official source: tool progress is raw
+  // text, resume is "To resume this session:", errors are "error: …".
+  const REAL_STDERR_THINK = "• I should write probe.txt first.";
+  const REAL_STDERR_WRAP = "  because the user asked for a file.";
+  const REAL_STDERR_PROGRESS = "Wrote 6 bytes to probe.txt";
+  const REAL_STDERR_RESUME =
+    "To resume this session: kimi -r session_cea263a5-1066-444e-84bc-4ce29d42fc6d";
+  const REAL_STDERR_ERROR =
+    "error: failed to run prompt: provider.auth_error: 403 You've reached your weekly (7-day) usage limit. Your quota will reset when the current 7-day window ends. To continue now, purchase extra usage or upgrade your plan: https://www.kimi.com/membership/subscription?tab=quota";
+  const REAL_STDERR_FRESH =
+    'No sessions to continue under "/tmp/kimi-stderr-sample"; starting a fresh session.';
+
+  it("lifts recorded stderr thinking and ignores progress, resume, and errors (#753)", () => {
+    const parse = createStderrThinkingParser();
+    assert.equal(
+      parse.push(REAL_STDERR_THINK),
+      "I should write probe.txt first.",
+    );
+    assert.equal(
+      parse.push(REAL_STDERR_WRAP),
+      "because the user asked for a file.",
+      "wrap indent is part of the same thinking block",
+    );
+    assert.equal(
+      parse.push(" later wrap on 0.39"),
+      "later wrap on 0.39",
+      "0.39 PromptTranscriptWriter indents wraps by one space",
+    );
+    assert.equal(parse.push(""), null, "blank line ends the block");
+    assert.equal(
+      parse.push(REAL_STDERR_PROGRESS),
+      null,
+      "tool progress is raw text, not thinking",
+    );
+    assert.equal(parse.push(REAL_STDERR_RESUME), null);
+    assert.equal(parse.push(REAL_STDERR_ERROR), null);
+    assert.equal(parse.push(REAL_STDERR_FRESH), null);
+    assert.equal(
+      parse.push("• a later thought"),
+      "a later thought",
+      "a new bullet starts another thinking slice",
+    );
   });
 
   it("tool_calls arrays yield one start event per call", () => {
@@ -374,6 +569,28 @@ describe("kimi extract helpers", () => {
       "arr",
     );
     assert.equal(extractAssistantText({ type: "other", text: "x" }), null);
+  });
+
+  it("extracts thinking without treating it as assistant text (issue #751)", () => {
+    assert.equal(
+      extractThinking({ type: "thinking", text: "plan the edit" }),
+      "plan the edit",
+    );
+    assert.equal(
+      extractThinking({
+        role: "assistant",
+        content: [{ type: "thinking", thinking: "look at kimi.js" }],
+      }),
+      "look at kimi.js",
+    );
+    assert.equal(
+      extractAssistantText({
+        role: "assistant",
+        content: [{ type: "thinking", thinking: "look at kimi.js" }],
+      }),
+      null,
+    );
+    assert.equal(extractThinking({ role: "assistant", content: "Hello" }), null);
   });
 
   it("extracts tool events when type contains tool and name is set", () => {
@@ -625,6 +842,86 @@ describe("kimi runner integration", () => {
     assert.equal(fs.readFileSync(file).toString("base64"), PNG_B64);
   });
 
+  it("surfaces a thinking card from stderr before the first tool_calls (#753)", async () => {
+    process.env.CODER_FAKE_KIMI_SCENARIO = "stderr-thinking-then-tool";
+    const thread = store.getThreads()[0];
+
+    await runner.startRun({ threadId: thread.id, prompt: "write probe" });
+
+    await waitFor(() =>
+      store
+        .getMessages(thread.id)
+        .some((m) => m.thinking && /probe\.txt/.test(m.text)),
+    );
+    assert.equal(
+      store.getMessages(thread.id).filter((m) => m.role === "tool").length,
+      0,
+      "stderr thinking must be visible before the later tool_calls",
+    );
+
+    await waitFor(
+      () => store.getThread(thread.id).status === "done",
+      { timeoutMs: 15000 },
+    );
+
+    const msgs = store.getMessages(thread.id);
+    const thinking = msgs.filter((m) => m.thinking);
+    assert.equal(thinking.length, 1, "one thinking card for the turn");
+    assert.match(thinking[0].text, /probe\.txt/);
+    assert.ok(
+      !/To resume this session/.test(thinking[0].text),
+      "resume notice must not land on the thinking card",
+    );
+    assert.ok(
+      !/Wrote 6 bytes/.test(thinking[0].text),
+      "tool-progress stderr must not land on the thinking card",
+    );
+    assert.equal(thinking[0].role, "event");
+
+    const tools = msgs.filter((m) => m.role === "tool");
+    assert.equal(tools.length, 1);
+    assert.equal(tools[0].tool.name, "Write");
+    assert.equal(tools[0].tool.done, true);
+  });
+
+  it("surfaces thinking before the first tool and does not duplicate restated tool_calls (#752)", async () => {
+    process.env.CODER_FAKE_KIMI_SCENARIO = "thinking-then-tool";
+    const thread = store.getThreads()[0];
+
+    await runner.startRun({ threadId: thread.id, prompt: "write probe" });
+
+    await waitFor(() =>
+      store
+        .getMessages(thread.id)
+        .some((m) => m.thinking && /probe\.txt/.test(m.text)),
+    );
+    assert.equal(
+      store.getMessages(thread.id).filter((m) => m.role === "tool").length,
+      0,
+      "thinking must be visible before the later tool_calls",
+    );
+
+    await waitFor(
+      () => store.getThread(thread.id).status === "done",
+      { timeoutMs: 15000 },
+    );
+
+    const msgs = store.getMessages(thread.id);
+    const thinking = msgs.filter((m) => m.thinking);
+    assert.equal(thinking.length, 1, "one thinking card for the turn");
+    assert.match(thinking[0].text, /probe\.txt/);
+    assert.equal(thinking[0].role, "event");
+
+    const tools = msgs.filter((m) => m.role === "tool");
+    assert.equal(
+      tools.length,
+      1,
+      "restated tool_calls must not duplicate the card",
+    );
+    assert.equal(tools[0].tool.name, "Write");
+    assert.equal(tools[0].tool.done, true);
+  });
+
   it("legacy type-based shapes still parse, with no session stamp", async () => {
     process.env.CODER_FAKE_KIMI_SCENARIO = "legacy-types";
     const thread = store.getThreads()[0];
@@ -828,5 +1125,28 @@ describe("kimi runner integration", () => {
             m.runId === runId,
         ),
     );
+  });
+
+  it("surfaces thinking before the first tool card (issue #751)", async () => {
+    process.env.CODER_FAKE_KIMI_SCENARIO = "thinking-block-then-tool";
+    const thread = store.getThreads()[0];
+    await runner.startRun({ threadId: thread.id, prompt: "look around" });
+
+    await waitFor(() =>
+      store
+        .getMessages(thread.id)
+        .some((m) => m.thinking && /kimi\.js/.test(m.text)),
+    );
+    assert.equal(
+      store.getMessages(thread.id).filter((m) => m.role === "tool").length,
+      0,
+      "thinking must be visible before the later tool_calls",
+    );
+
+    await waitFor(() => store.getThread(thread.id).status === "done");
+    const msgs = store.getMessages(thread.id);
+    assert.equal(msgs.filter((m) => m.thinking).length, 1);
+    assert.equal(msgs.filter((m) => m.role === "tool").length, 1);
+    assert.equal(msgs.find((m) => m.role === "tool").tool.name, "Read");
   });
 });

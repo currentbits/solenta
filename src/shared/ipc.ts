@@ -1038,6 +1038,12 @@ export interface ChatMessage {
    * transcript renders it as a from-thread card with a link back.
    */
   fromThread?: { id: string; title: string };
+  /**
+   * Streamed reasoning block (issue #751 / #752). Role stays "event" so
+   * last-assistant / retry / provenance ignore it; the transcript paints a
+   * Thinking card.
+   */
+  thinking?: boolean;
 }
 
 /** Cumulative session usage across turns of a thread. */

@@ -257,4 +257,13 @@ describe("workLogDurationLabel", () => {
   it("returns null for empty group", () => {
     assert.equal(workLogDurationLabel([]), null);
   });
+
+  it("ticks an open run off `now` instead of freezing at 0s (issue #751)", () => {
+    const items = [
+      wl({ id: "a", runId: "r", label: "Starting agent", timestamp: 1_000 }),
+      wl({ id: "b", runId: "r", label: "Agent working", timestamp: 1_000 }),
+    ];
+    assert.equal(workLogDurationLabel(items), "Worked for 0s");
+    assert.equal(workLogDurationLabel(items, 6_000), "Worked for 5s");
+  });
 });

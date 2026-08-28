@@ -23,6 +23,7 @@ function m(
     createdAt: over.createdAt ?? 1,
     runId: over.runId ?? null,
     tool: over.tool,
+    thinking: over.thinking,
   };
 }
 
@@ -121,6 +122,21 @@ describe("retryAnchorEventId", () => {
     assert.equal(
       retryAnchorEventId("failed", [
         m({ id: "u1", role: "user", text: "only user" }),
+      ]),
+      null,
+    );
+  });
+
+  it("is null when the last event is a thinking card, not an interrupt", () => {
+    assert.equal(
+      retryAnchorEventId("failed", [
+        m({ id: "u1", role: "user", text: "prompt" }),
+        m({
+          id: "e1",
+          role: "event",
+          text: "I should read ThreadView first.",
+          thinking: true,
+        }),
       ]),
       null,
     );

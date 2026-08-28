@@ -11,6 +11,7 @@ const { createRunner } = require("../runner.js");
 const {
   extractSessionId,
   extractTextPart,
+  extractThinkingPart,
   extractToolEvent,
 } = require("../opencode.js");
 const { getProvider, listProviders } = require("../providers.js");
@@ -216,6 +217,43 @@ async function main() {
     return;
   }
 
+  if (scenario === "thinking-then-tool") {
+    emit({
+      type: "step_start",
+      timestamp: Date.now(),
+      sessionID: "ses_opencode_001",
+    });
+    await delay(10);
+    emit({
+      type: "reasoning",
+      timestamp: Date.now(),
+      sessionID: "ses_opencode_001",
+      part: { id: "r1", type: "reasoning", text: "I should read opencode.js first." },
+    });
+    await delay(80);
+    emit({
+      type: "tool_call",
+      timestamp: Date.now(),
+      sessionID: "ses_opencode_001",
+      part: { id: "call-read-1", name: "Read", input: { file_path: "electron/opencode.js" } },
+    });
+    await delay(15);
+    emit({
+      type: "tool_result",
+      timestamp: Date.now(),
+      sessionID: "ses_opencode_001",
+      part: { id: "call-read-1", name: "Read", output: "exports" },
+    });
+    await delay(10);
+    emit({
+      type: "step_finish",
+      timestamp: Date.now(),
+      sessionID: "ses_opencode_001",
+    });
+    process.exit(0);
+    return;
+  }
+
   process.stderr.write("unknown scenario\\n");
   process.exit(1);
 }
@@ -244,6 +282,25 @@ describe("opencode extract helpers", () => {
       { id: "p1", text: "hi" },
     );
     assert.equal(extractTextPart({ type: "step_start", part: {} }), null);
+  });
+
+  it("extracts reasoning/thinking parts (issue #751)", () => {
+    assert.deepEqual(
+      extractThinkingPart({
+        type: "reasoning",
+        part: { id: "r1", type: "reasoning", text: "check the tests" },
+      }),
+      { id: "r1", text: "check the tests" },
+    );
+    assert.deepEqual(
+      extractThinkingPart({
+        type: "thinking",
+        part: { id: "t1", text: "also thinking" },
+      }),
+      { id: "t1", text: "also thinking" },
+    );
+    assert.equal(extractThinkingPart({ type: "text", part: { text: "no" } }), null);
+    assert.equal(extractTextPart({ type: "reasoning", part: { text: "x" } }), null);
   });
 
   it("extracts tool-ish events when type contains tool and name is set", () => {
@@ -572,5 +629,30 @@ describe("opencode runner integration", () => {
         .getMessages(thread.id)
         .some((m) => m.role === "event" && /stopped/i.test(m.text)),
     );
+  });
+
+  it("surfaces reasoning before the first tool card (issue #751)", async () => {
+    process.env.CODER_FAKE_OPENCODE_SCENARIO = "thinking-then-tool";
+    const thread = store.getThreads()[0];
+    await runner.startRun({ threadId: thread.id, prompt: "look around" });
+
+    await waitFor(() =>
+      store
+        .getMessages(thread.id)
+        .some((m) => m.thinking && /opencode\.js/.test(m.text)),
+    );
+    assert.equal(
+      store.getMessages(thread.id).filter((m) => m.role === "tool").length,
+      0,
+      "reasoning must be visible before the later tool_call",
+    );
+
+    await waitFor(() => store.getThread(thread.id).status === "done");
+    const msgs = store.getMessages(thread.id);
+    assert.equal(msgs.filter((m) => m.thinking).length, 1);
+    assert.equal(msgs.filter((m) => m.role === "tool").length, 1);
+    assert.equal(msgs.find((m) => m.role === "tool").tool.name, "Read");
+    const argv = JSON.parse(fs.readFileSync(argvFile, "utf8"));
+    assert.ok(argv.includes("--thinking"));
   });
 });

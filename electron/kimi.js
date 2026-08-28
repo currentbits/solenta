@@ -373,7 +373,11 @@ function extractAssistantText(obj) {
         .map((b) =>
           typeof b === "string"
             ? b
-            : b && typeof b === "object" && typeof b.text === "string"
+            : b &&
+                typeof b === "object" &&
+                typeof b.text === "string" &&
+                b.type !== "thinking" &&
+                b.type !== "redacted_thinking"
               ? b.text
               : "",
         )
@@ -398,7 +402,11 @@ function extractAssistantText(obj) {
       const parts = [];
       for (const block of c) {
         if (!block || typeof block !== "object") continue;
-        if (block.type === "text" && typeof block.text === "string") {
+        if (
+          block.type === "text" &&
+          typeof block.text === "string" &&
+          block.type !== "thinking"
+        ) {
           parts.push(block.text);
         }
       }
@@ -407,6 +415,103 @@ function extractAssistantText(obj) {
   }
 
   return null;
+}
+
+/**
+ * Reasoning text from a kimi stream-json line (issue #751 / #752).
+ * Official 0.31.1 stream-json omits thinking from JSONL; this still accepts
+ * API-shaped reasoning_content / thinking blocks so a live Thinking card
+ * can appear when the CLI (or a future version) emits them. Also accepts
+ * type/role thinking lines and deltas used by older or defensive shapes.
+ * @param {object} obj
+ * @returns {string | null}
+ */
+function extractThinking(obj) {
+  if (!obj || typeof obj !== "object") return null;
+  if (
+    typeof obj.reasoning_content === "string" &&
+    obj.reasoning_content.trim()
+  ) {
+    return obj.reasoning_content;
+  }
+  if (typeof obj.reasoning === "string" && obj.reasoning.trim()) {
+    return obj.reasoning;
+  }
+  if (obj.type === "thinking" || obj.role === "thinking") {
+    if (typeof obj.text === "string" && obj.text) return obj.text;
+    if (typeof obj.thinking === "string" && obj.thinking) return obj.thinking;
+    if (typeof obj.delta === "string" && obj.delta) return obj.delta;
+    if (typeof obj.content === "string" && obj.content) return obj.content;
+  }
+  if (
+    obj.role !== "tool" &&
+    typeof obj.thinking === "string" &&
+    obj.thinking.trim()
+  ) {
+    return obj.thinking;
+  }
+  const blocks = Array.isArray(obj.content)
+    ? obj.content
+    : obj.message && Array.isArray(obj.message.content)
+      ? obj.message.content
+      : null;
+  if (blocks) {
+    const parts = [];
+    for (const b of blocks) {
+      if (!b || typeof b !== "object") continue;
+      const t = String(b.type || "");
+      if (t !== "thinking" && t !== "reasoning" && t !== "redacted_thinking") {
+        continue;
+      }
+      if (typeof b.thinking === "string" && b.thinking) parts.push(b.thinking);
+      else if (typeof b.text === "string" && b.text) parts.push(b.text);
+      else if (typeof b.reasoning === "string" && b.reasoning) {
+        parts.push(b.reasoning);
+      }
+    }
+    if (parts.length > 0) return parts.join("");
+  }
+  if (obj.type === "thinking" || obj.type === "reasoning") {
+    if (typeof obj.text === "string" && obj.text.trim()) return obj.text;
+    if (typeof obj.content === "string" && obj.content.trim()) return obj.content;
+  }
+  return null;
+}
+
+/**
+ * Incremental parser for kimi print-mode stderr thinking.
+ *
+ * Recorded contract (kimi 0.31.1 PromptTranscriptWriter + docs):
+ * thinking is a `• ` block on stderr; wrap lines indent by two spaces
+ * (0.39 uses one). Tool progress, resume notices, and errors are raw
+ * lines with no bullet and must not become thinking (issue #753).
+ *
+ * Official stream-json still drops thinking (`writeThinkingDelta` is a
+ * no-op); this only fires when the CLI actually writes the recorded
+ * shape.
+ * @returns {{ push: (line: string) => string | null }}
+ */
+function createStderrThinkingParser() {
+  let inBlock = false;
+  return {
+    /**
+     * @param {string} line
+     * @returns {string | null}
+     */
+    push(line) {
+      const raw = String(line ?? "").replace(/\r$/, "");
+      if (raw.startsWith("• ")) {
+        inBlock = true;
+        const text = raw.slice(2);
+        return text.trim() ? text : null;
+      }
+      if (inBlock && /^ {1,2}\S/.test(raw)) {
+        return raw.replace(/^ {1,2}/, "");
+      }
+      inBlock = false;
+      return null;
+    },
+  };
 }
 
 /**
@@ -693,6 +798,8 @@ function runKimi(opts) {
   let stderrText = "";
   let fullStdout = "";
   let lineBuf = "";
+  let stderrLineBuf = "";
+  const stderrThink = createStderrThinkingParser();
   let finished = false;
   let killTimer = null;
   let killed = false;
@@ -709,13 +816,29 @@ function runKimi(opts) {
     }
     if (!obj || typeof obj !== "object") return;
     gotJson = true;
-    if (typeof onEvent === "function") {
-      try {
-        onEvent(obj);
-      } catch {
-        // defensive: never crash the parser
-      }
+    emitEvent(obj);
+  }
+
+  /**
+   * @param {object} obj
+   */
+  function emitEvent(obj) {
+    if (typeof onEvent !== "function") return;
+    try {
+      onEvent(obj);
+    } catch {
+      // defensive: never crash the parser
     }
+  }
+
+  /**
+   * @param {string} line
+   */
+  function emitStderrThinking(line) {
+    const thinking = stderrThink.push(line);
+    if (!thinking) return;
+    // Same shape startKimiRun already upserts from JSON reasoning_content.
+    emitEvent({ reasoning_content: thinking });
   }
 
   function finish(code) {
@@ -729,6 +852,10 @@ function runKimi(opts) {
     if (lineBuf.trim()) {
       handleLine(lineBuf);
       lineBuf = "";
+    }
+    if (stderrLineBuf.trim()) {
+      emitStderrThinking(stderrLineBuf);
+      stderrLineBuf = "";
     }
     if (typeof onExit === "function") {
       onExit({
@@ -787,9 +914,18 @@ function runKimi(opts) {
   });
 
   child.stderr.on("data", (chunk) => {
+    restoreEffort();
     // Tail-keep: stderr feeds error reporting, and a noisy CLI would
     // otherwise grow this buffer for the life of a long-lived process.
-    stderrText = (stderrText + chunk).slice(-STDERR_TAIL_CHARS);
+    const str = String(chunk);
+    stderrText = (stderrText + str).slice(-STDERR_TAIL_CHARS);
+    stderrLineBuf += str;
+    let nl;
+    while ((nl = stderrLineBuf.indexOf("\n")) >= 0) {
+      const line = stderrLineBuf.slice(0, nl);
+      stderrLineBuf = stderrLineBuf.slice(nl + 1);
+      emitStderrThinking(line);
+    }
   });
 
   child.on("error", (err) => {
@@ -835,6 +971,8 @@ module.exports = {
   reclaimKimiHomes,
   workspaceId,
   extractAssistantText,
+  extractThinking,
+  createStderrThinkingParser,
   extractToolEvent,
   extractToolEvents,
   extractSessionId,

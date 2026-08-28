@@ -99,6 +99,7 @@ function msg(over: Partial<ChatMessage> & Pick<ChatMessage, "role" | "text">): C
     tool: over.tool,
     fromThread: over.fromThread,
     attachments: over.attachments,
+    thinking: over.thinking,
   };
 }
 
@@ -2518,5 +2519,115 @@ describe("ThreadView stream-in animation", () => {
       !idle.includes("data-streaming-caret"),
       "no caret once the run is idle",
     );
+  });
+});
+
+describe("live turn activity (issue #751 / #752)", () => {
+  it("renders a thinking card instead of a system event row", () => {
+    const html = render({
+      detail: detail({
+        thread: thread({ status: "working", runStartedAt: 1 }),
+        messages: [
+          msg({ id: "u1", role: "user", text: "look around", createdAt: 10 }),
+          msg({
+            id: "th1",
+            role: "event",
+            thinking: true,
+            text: "I should read ThreadView first.",
+            createdAt: 20,
+            runId: "run-1",
+          }),
+        ],
+        workLog: [
+          work({
+            id: "w1",
+            runId: "run-1",
+            label: "Agent working",
+            timestamp: 20,
+          }),
+        ],
+      }),
+    });
+    assert.ok(html.includes("data-thinking"), "thinking card landmark");
+    assert.ok(html.includes("Thinking"), "thinking title");
+    assert.ok(
+      html.includes("I should read ThreadView first."),
+      "thinking body is visible while the turn is live",
+    );
+    assert.ok(
+      html.includes("Thinking…"),
+      "status strip names thinking, not a generic working label",
+    );
+    assert.ok(!html.includes("Agent working…"));
+  });
+
+  it("puts the running tool summary on the status strip", () => {
+    const html = render({
+      detail: detail({
+        thread: thread({ status: "working", runStartedAt: 1 }),
+        messages: [
+          msg({ id: "u1", role: "user", text: "go", createdAt: 10 }),
+          msg({
+            id: "t1",
+            role: "tool",
+            text: "Read: src/components/ThreadView.tsx",
+            createdAt: 20,
+            runId: "run-1",
+            tool: {
+              id: "tc1",
+              name: "Read",
+              input: '{"file_path":"src/components/ThreadView.tsx"}',
+              output: null,
+              done: false,
+              isError: false,
+            },
+          }),
+        ],
+        workLog: [
+          work({
+            id: "w1",
+            runId: "run-1",
+            label: "Agent working",
+            timestamp: 20,
+          }),
+        ],
+      }),
+    });
+    assert.ok(html.includes("Read: src/components/ThreadView.tsx"));
+    assert.ok(
+      !html.includes("Agent working…"),
+      "generic working copy must yield to the live tool",
+    );
+  });
+
+  it("ticks an in-progress work log off the wall clock, not 0s", () => {
+    const started = Date.now() - 125_000;
+    const html = render({
+      detail: detail({
+        thread: thread({ status: "working", runStartedAt: started }),
+        messages: [
+          msg({ id: "u1", role: "user", text: "go", createdAt: started }),
+        ],
+        workLog: [
+          work({
+            id: "w1",
+            runId: "run-1",
+            label: "Starting agent",
+            timestamp: started,
+          }),
+          work({
+            id: "w2",
+            runId: "run-1",
+            label: "Agent working",
+            timestamp: started,
+          }),
+        ],
+      }),
+    });
+    assert.ok(
+      !html.includes("Worked for 0s"),
+      "live duration must not freeze at 0s while the run is open",
+    );
+    assert.match(html, /Worked for 2m/);
   });
 });
