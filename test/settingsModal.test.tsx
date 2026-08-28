@@ -1212,6 +1212,40 @@ describe("SettingsModal default provider and quota failover (#711)", () => {
     m.unmount();
   });
 
+  it("lists one catalogNote row per diverging harness", async () => {
+    const note =
+      "Codex CLI lists gpt-5.6-sol; snapshot does not. Use Custom... for unlisted ids.";
+    const m = await mount(
+      modal({
+        initialPane: "threads",
+        providers: [
+          CLAUDE,
+          {
+            id: "codex",
+            name: "Codex",
+            available: true,
+            supportsResume: true,
+            models: ["gpt-5.5"],
+            modelInfo: [],
+            efforts: [],
+            catalogNote: note,
+          },
+        ],
+        settings: {
+          dailyBudgetUsd: null,
+          autoSettleAfterDays: 3,
+          defaultProvider: null,
+        } as AppSettings,
+      }),
+    );
+    const rows = m.queryAll("[data-catalog-doctor-row]");
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0].getAttribute("data-catalog-doctor-row"), "codex");
+    assert.equal(rows[0].textContent, note);
+    assert.equal(m.query("[data-catalog-doctor-row='claude']"), null);
+    m.unmount();
+  });
+
   it("saves quotaFailover checkboxes in provider order", async () => {
     const patches: Partial<AppSettings>[] = [];
     const m = await mount(

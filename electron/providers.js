@@ -2,7 +2,8 @@
 
 const fs = require("node:fs");
 const path = require("node:path");
-const { execFileSync } = require("node:child_process");
+const { execFile, execFileSync } = require("node:child_process");
+const catalogDivergence = require("./catalogDivergence.js");
 
 /**
  * Data-driven provider registry for agent CLIs.
@@ -1222,13 +1223,120 @@ function knownProviderIds() {
   return PROVIDERS.map((p) => p.id);
 }
 
+/** In-process live catalog from `opencode models` / `cursor-agent --list-models` / `grok models`. */
+const catalogCliCache = new Map();
+/** @type {Promise<void> | null} */
+let catalogCliProbe = null;
+const CATALOG_CLI_TIMEOUT_MS = 5_000;
+
+/**
+ * @param {string} bin
+ * @param {string[]} args
+ * @param {NodeJS.ProcessEnv} env
+ * @returns {Promise<string>}
+ */
+function defaultRunCatalogCli(bin, args, env) {
+  return new Promise((resolve, reject) => {
+    execFile(
+      bin,
+      args,
+      {
+        encoding: "utf8",
+        timeout: CATALOG_CLI_TIMEOUT_MS,
+        maxBuffer: 1024 * 1024,
+        env,
+        windowsHide: true,
+      },
+      (err, stdout) => {
+        if (err) reject(err);
+        else resolve(String(stdout || ""));
+      },
+    );
+  });
+}
+
+/** Test hook: forget CLI catalog probes. */
+function resetCatalogCliCache() {
+  catalogCliCache.clear();
+  catalogCliProbe = null;
+}
+
+function catalogCliProbeStarted() {
+  return catalogCliProbe != null;
+}
+
+/**
+ * Background local `models` / `--list-models` for harnesses without a cheap
+ * cache file. Missing bin or a failed spawn = no warning (never network).
+ *
+ * @param {object} [opts]
+ * @param {(bin: string) => string | null} [opts.which]
+ * @param {NodeJS.ProcessEnv} [opts.env]
+ * @param {string} [opts.home]
+ * @param {(bin: string, args: string[], env: NodeJS.ProcessEnv) => Promise<string>} [opts.runCli]
+ * @returns {Promise<void>}
+ */
+function probeCatalogCli(opts = {}) {
+  if (catalogCliProbe) return catalogCliProbe;
+  // The node:test runner must not exec the real `opencode models` /
+  // `cursor-agent --list-models` (1s+, may hang). Tests that want a listing
+  // inject `runCli`. Production IPC has no NODE_TEST_CONTEXT.
+  if (!opts.runCli && process.env.NODE_TEST_CONTEXT) {
+    catalogCliProbe = Promise.resolve();
+    return catalogCliProbe;
+  }
+  catalogCliProbe = probeCatalogCliNow(opts).catch(() => {});
+  return catalogCliProbe;
+}
+
+/**
+ * @param {object} opts
+ */
+async function probeCatalogCliNow(opts) {
+  const env = opts.env || process.env;
+  const whichFn = opts.which || defaultWhich;
+  const run = opts.runCli || defaultRunCatalogCli;
+
+  /** @type {Array<Promise<void>>} */
+  const jobs = [];
+  for (const id of ["opencode", "cursor", "grok"]) {
+    if (catalogCliCache.has(id)) continue;
+    if (id === "grok") {
+      const fromFile = catalogDivergence.readLiveIds("grok", {
+        env,
+        home: opts.home,
+      });
+      if (fromFile) continue;
+    }
+    const entry = getProvider(id);
+    const bin = resolveBin(entry, env);
+    if (!isBinAvailable(bin, whichFn, env)) continue;
+    const args = id === "cursor" ? ["--list-models"] : ["models"];
+    jobs.push(
+      run(bin, args, env)
+        .then((out) => {
+          catalogCliCache.set(id, catalogDivergence.parseCliCatalog(id, out));
+        })
+        .catch(() => {
+          catalogCliCache.set(id, null);
+        }),
+    );
+  }
+  await Promise.all(jobs);
+}
+
 /**
  * List providers for IPC (ProviderInfo[]). Availability is computed per call.
+ * Snapshot `models` stay the picker; a local catalog mismatch is a
+ * `catalogNote` (issue #745), never a merge.
  *
  * @param {object} [opts]
  * @param {(bin: string) => string | null} [opts.which] - inject for tests
  * @param {NodeJS.ProcessEnv} [opts.env]
  * @param {boolean} [opts.includeSimulate] - default: CODER_SIMULATE===1
+ * @param {string} [opts.home] - override homedir for catalog cache files
+ * @param {(filePath: string) => string | null} [opts.readFile]
+ * @param {Map<string, string[] | null>} [opts.cliCache]
  * @returns {import('../src/shared/ipc').ProviderInfo[]}
  */
 function listProviders(opts = {}) {
@@ -1271,6 +1379,13 @@ function listProviders(opts = {}) {
     });
   }
 
+  catalogDivergence.attachCatalogNotes(out, {
+    env,
+    home: opts.home,
+    readFile: opts.readFile,
+    cliCache: opts.cliCache || catalogCliCache,
+  });
+
   return out;
 }
 
@@ -1285,6 +1400,9 @@ module.exports = {
   defaultWhich,
   clearWhichCache,
   listProviders,
+  probeCatalogCli,
+  catalogCliProbeStarted,
+  resetCatalogCliCache,
   honouredPermissionModes,
   snapPermissionMode,
   codexSandboxFor,

@@ -746,6 +746,8 @@ export const Composer = memo(function Composer({
     vendor: detailRow.vendor,
     description: detailRow.description,
   };
+  const catalogNote = providers.find((p) => p.id === detail.providerId)
+    ?.catalogNote;
   // The effort pill is its own control on the thread's provider: it never
   // follows what the model picker is pointing at.
   const efforts = currentProviderInfo?.efforts ?? [];
@@ -1859,6 +1861,11 @@ export const Composer = memo(function Composer({
                       {detail.description ? (
                         <div className={styles.detailDesc}>
                           {detail.description}
+                        </div>
+                      ) : null}
+                      {catalogNote ? (
+                        <div className={styles.catalogNote} data-catalog-note="">
+                          {catalogNote}
                         </div>
                       ) : null}
                     </div>

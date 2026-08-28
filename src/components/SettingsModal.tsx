@@ -1306,6 +1306,21 @@ export function SettingsModal({
                   </>
                 );
               })()}
+              {providers.some((p) => p.catalogNote) ? (
+                <ul className={styles.doctorList} data-catalog-doctor="">
+                  {providers
+                    .filter((p) => p.catalogNote)
+                    .map((p) => (
+                      <li
+                        key={p.id}
+                        className={styles.doctorItem}
+                        data-catalog-doctor-row={p.id}
+                      >
+                        <p className={styles.note}>{p.catalogNote}</p>
+                      </li>
+                    ))}
+                </ul>
+              ) : null}
             </div>
             <div className={styles.field}>
               <label className={styles.fieldRow}>

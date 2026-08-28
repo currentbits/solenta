@@ -8,6 +8,8 @@ const {
   getProvider,
   knownProviderIds,
   listProviders,
+  probeCatalogCli,
+  catalogCliProbeStarted,
   honouredPermissionModes,
   snapPermissionMode,
 } = require("./providers.js");
@@ -1405,8 +1407,21 @@ function setProvider(store, input) {
 /**
  * @param {import('./store').Store} [_store]
  * @param {object} [opts] - forwarded to listProviders (which, env, …)
+ * @returns {Promise<import('../src/shared/ipc').ProviderInfo[]>}
  */
-function listProvidersForApi(_store, opts) {
+async function listProvidersForApi(_store, opts) {
+  const already = catalogCliProbeStarted();
+  // First callers (boot) must stay cheap: file caches only, kick CLI probes
+  // in the background. A later list (model picker open) awaits the inflight
+  // probe so OpenCode/Cursor notes can appear without a boot stall.
+  const probing = probeCatalogCli(opts);
+  if (already) {
+    try {
+      await probing;
+    } catch {
+      // Missing cache / failed local command = no warning.
+    }
+  }
   return listProviders(opts);
 }
 

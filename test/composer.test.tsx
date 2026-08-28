@@ -1105,6 +1105,25 @@ describe("Composer drill-down picker", () => {
     m.unmount();
   });
 
+  it("shows a catalogNote for the highlighted provider, not as a toast", async () => {
+    const h = makeHarness();
+    const note =
+      "Codex CLI lists gpt-5.6-sol; snapshot does not. Use Custom... for unlisted ids.";
+    const m = await mount(
+      composer(h, {
+        provider: "codex",
+        model: null,
+        providers: [{ ...CODEX, catalogNote: note }],
+      }),
+    );
+    assert.equal(m.query("[data-catalog-note]"), null);
+    await m.click(m.query('button[aria-label^="Model:"]'));
+    const shown = m.query("[data-catalog-note]");
+    assert.ok(shown, "picker must show the harness note");
+    assert.equal(shown.textContent, note);
+    m.unmount();
+  });
+
   it("the provider pane follows the highlight as you arrow", async () => {
     const h = makeHarness();
     const m = await mount(composer(h, { provider: "claude", model: null }));

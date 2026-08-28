@@ -1944,6 +1944,13 @@ export interface ProviderInfo {
    * full set (legacy fixtures); empty means none can be sent.
    */
   permissionModes?: PermissionMode[];
+  /**
+   * One-line warning when a local CLI catalog (cache file or `models`
+   * command) lists different ids than this snapshot. Absent when there is
+   * no cheap local catalog, or when the two match. Never rewritten into
+   * `models` (issue #745).
+   */
+  catalogNote?: string;
 }
 
 /** One phase of a user-defined workflow template. */

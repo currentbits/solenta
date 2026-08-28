@@ -53,6 +53,7 @@ const WIN32_FILES = [
   "electron/test/opencode.test.js",
   "electron/test/otel-runner.test.js",
   "electron/test/providers-set.test.js",
+  "electron/test/catalog-divergence.test.js",
   "electron/test/reasoning-effort.test.js",
   "electron/test/rewind.test.js",
   "electron/test/session-record.test.js",
