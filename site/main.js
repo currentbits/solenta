@@ -114,8 +114,8 @@
       const btn = document.getElementById("hero-dl");
       if (btn) {
         btn.textContent = `Download for ${OS_LABEL[os]}`;
-        btn.classList.remove("plausible-event-platform=unknown");
-        btn.classList.add(`plausible-event-platform=${os}`);
+        btn.removeAttribute("data-platform");
+        btn.setAttribute("data-platform", os);
       }
       const lead = document.getElementById("hero-alt-lead");
       if (lead) lead.textContent = "Also for";

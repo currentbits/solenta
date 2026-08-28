@@ -84,8 +84,8 @@ test("macOS gets a direct asset link and owns its install card", async () => {
   const hero = doc.getElementById("hero-dl");
   assert.equal(hero.textContent.trim(), "Download for macOS");
   assert.equal(hero.getAttribute("href"), `${DL}Solenta-${FALLBACK}-macos-arm64.zip`);
-  assert.ok(hero.classList.contains("plausible-event-platform=mac"));
-  assert.ok(!hero.classList.contains("plausible-event-platform=unknown"));
+  assert.equal(hero.getAttribute("data-platform"), "mac");
+  assert.notEqual(hero.getAttribute("data-platform"), "unknown");
 
   // The alternates line drops the platform you are already on.
   assert.ok(doc.querySelector('.hero-alt [data-dl="mac"]').hasAttribute("hidden"));
