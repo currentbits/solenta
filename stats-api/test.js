@@ -26,6 +26,7 @@ function fakeDb(opts = {}) {
         const salt = salts.get(params[0]);
         return { rows: salt ? [{ salt }] : [] };
       }
+      if (/^\s*SELECT/i.test(sql)) return { rows: opts.rows || [] };
       if (/INSERT INTO events/i.test(sql)) {
         events.push({
           name: params[0],
@@ -252,4 +253,63 @@ test("POST /login sets the cookie; wrong password does not", async (t) => {
   assert.match(cookie, /HttpOnly/i);
   assert.match(cookie, /Secure/i);
   assert.match(cookie, /SameSite=Strict/i);
+});
+
+const { buildStats } = require("./server");
+
+test("visitors sum daily distinct hashes, not range-wide distinct", () => {
+  const day1 = "2026-08-01T10:00:00.000Z";
+  const day2 = "2026-08-02T10:00:00.000Z";
+  const rows = [
+    { ts: day1, name: "pageview", path: "/", referrer: "producthunt.com", visitor: "aaa", props: {} },
+    { ts: day1, name: "pageview", path: "/", referrer: "", visitor: "aaa", props: {} },
+    { ts: day2, name: "pageview", path: "/docs.html", referrer: "", visitor: "aaa", props: {} },
+    { ts: day2, name: "Download", path: "/", referrer: "", visitor: "bbb", props: { platform: "mac" } },
+    { ts: day2, name: "GitHub Star", path: "/", referrer: "", visitor: "bbb", props: {} },
+  ];
+  const now = Date.parse("2026-08-02T12:00:00.000Z");
+  const stats = buildStats(rows, 2, now);
+  assert.equal(stats.days, 2);
+  assert.equal(stats.pageviews, 3);
+  assert.equal(stats.downloads, 1);
+  assert.equal(stats.githubStars, 1);
+  assert.equal(stats.visitors, 3, "two uniques on day1-2 split: day1 has 1, day2 has 2");
+  assert.equal(stats.series.length, 2);
+  assert.equal(stats.series[0].day, "2026-08-01");
+  assert.equal(stats.series[0].visitors, 1);
+  assert.equal(stats.series[0].pageviews, 2);
+  assert.equal(stats.series[1].visitors, 2);
+  assert.equal(stats.pages[0].path, "/");
+  assert.equal(stats.referrers[0].host, "producthunt.com");
+  const dl = stats.events.find((e) => e.name === "Download");
+  assert.equal(dl.platform, "mac");
+  assert.equal(dl.count, 1);
+});
+
+test("GET /api/stats needs auth and uses buildStats", async (t) => {
+  const port = await listen();
+  const db = fakeDb({
+    rows: [
+      {
+        ts: "2026-08-28T10:00:00.000Z",
+        name: "pageview",
+        path: "/",
+        referrer: "",
+        visitor: "abc",
+        props: {},
+      },
+    ],
+  });
+  setDb(db);
+  t.after(() => {
+    server.close();
+    setDb(null);
+  });
+  const url = `http://127.0.0.1:${port}/api/stats?days=1`;
+  assert.equal((await fetch(url)).status, 401);
+  const ok = await fetch(url, { headers: { authorization: "Bearer secret-token" } });
+  assert.equal(ok.status, 200);
+  const body = await ok.json();
+  assert.equal(body.pageviews, 1);
+  assert.equal(body.visitors, 1);
 });

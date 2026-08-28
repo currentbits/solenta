@@ -361,6 +361,101 @@ function handleLogout(req, res) {
   res.end();
 }
 
+function clampDays(raw) {
+  const n = Number(raw);
+  if (n === 1 || n === 7 || n === 30) return n;
+  return 30;
+}
+
+function buildStats(rows, days, nowMs) {
+  const end = new Date(nowMs);
+  const endDay = utcDay(nowMs);
+  const series = [];
+  const start = new Date(Date.UTC(end.getUTCFullYear(), end.getUTCMonth(), end.getUTCDate() - (days - 1)));
+  for (let i = 0; i < days; i++) {
+    const d = new Date(start.getTime());
+    d.setUTCDate(start.getUTCDate() + i);
+    const day = d.toISOString().slice(0, 10);
+    series.push({ day, visitors: 0, pageviews: 0, seen: new Set() });
+  }
+  const byDay = new Map(series.map((s) => [s.day, s]));
+  const pages = new Map();
+  const referrers = new Map();
+  const events = new Map();
+  let pageviews = 0;
+  let downloads = 0;
+  let githubStars = 0;
+
+  for (const row of rows) {
+    const day = utcDay(new Date(row.ts).getTime());
+    const slot = byDay.get(day);
+    const name = row.name;
+    const props = row.props && typeof row.props === "object" ? row.props : {};
+    if (name === "pageview") {
+      pageviews += 1;
+      if (slot) {
+        slot.pageviews += 1;
+        if (row.visitor) slot.seen.add(row.visitor);
+      }
+      pages.set(row.path, (pages.get(row.path) || 0) + 1);
+      if (row.referrer) referrers.set(row.referrer, (referrers.get(row.referrer) || 0) + 1);
+    } else if (NAMES.has(name)) {
+      if (slot && row.visitor) slot.seen.add(row.visitor);
+      const platform = props.platform || null;
+      const key = `${name}\0${platform || ""}`;
+      events.set(key, (events.get(key) || 0) + 1);
+      if (name === "Download") downloads += 1;
+      if (name === "GitHub Star") githubStars += 1;
+    }
+  }
+
+  for (const s of series) s.visitors = s.seen.size;
+  const visitors = series.reduce((n, s) => n + s.visitors, 0);
+  const top = (map) =>
+    [...map.entries()]
+      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+      .slice(0, 20);
+
+  return {
+    days,
+    visitors,
+    pageviews,
+    downloads,
+    githubStars,
+    series: series.map(({ day, visitors: v, pageviews: p }) => ({
+      day,
+      visitors: v,
+      pageviews: p,
+    })),
+    pages: top(pages).map(([path, count]) => ({ path, count })),
+    referrers: top(referrers).map(([host, count]) => ({ host, count })),
+    events: [...events.entries()].map(([key, count]) => {
+      const [name, platform] = key.split("\0");
+      return { name, platform: platform || null, count };
+    }),
+  };
+}
+
+async function handleStats(req, res, days) {
+  if (!authorized(req)) return json(res, 401, { error: "unauthorized" });
+  if (!db) return json(res, 503, { error: "no database" });
+  const since = new Date(nowFn());
+  since.setUTCDate(since.getUTCDate() - (days - 1));
+  since.setUTCHours(0, 0, 0, 0);
+  try {
+    const { rows } = await db.query(
+      `SELECT ts, name, path, referrer, visitor, props
+         FROM events WHERE ts >= $1
+         ORDER BY ts ASC`,
+      [since.toISOString()],
+    );
+    return json(res, 200, buildStats(rows, days, nowFn()));
+  } catch (err) {
+    console.error("stats failed", err);
+    return json(res, 503, { error: "Could not read stats" });
+  }
+}
+
 const server = http.createServer(async (req, res) => {
   const path = String(req.url || "").split("?")[0];
   if (path === "/health") return json(res, 200, { ok: true });
@@ -368,6 +463,10 @@ const server = http.createServer(async (req, res) => {
   if (path === "/e" && req.method === "POST") return handleEvent(req, res);
   if (path === "/login" && req.method === "POST") return handleLogin(req, res);
   if (path === "/logout" && req.method === "POST") return handleLogout(req, res);
+  if (path === "/api/stats" && req.method === "GET") {
+    const days = clampDays(new URL(req.url, "http://x").searchParams.get("days"));
+    return handleStats(req, res, days);
+  }
   res.writeHead(404);
   res.end();
 });
@@ -403,4 +502,5 @@ module.exports = {
   adminToken,
   authorized,
   timingSafeEqual,
+  buildStats,
 };
