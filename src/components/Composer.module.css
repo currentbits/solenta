@@ -776,12 +776,38 @@
    branch read as part of the input instead of dangling below it. */
 .meta {
   display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 6px;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
   margin-top: 10px;
   padding: 8px 2px 0;
   border-top: 1px solid var(--border-soft);
+}
+
+.metaChips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  flex: 1;
+}
+
+.verbose {
+  flex-shrink: 0;
+  cursor: pointer;
+  color: var(--text-muted);
+}
+
+.verbose:hover {
+  color: var(--text);
+  background: var(--card-hover);
+}
+
+.verbose[aria-pressed="true"] {
+  color: var(--info-fg-strong);
+  border-color: var(--blue-border);
+  background: var(--blue-soft);
 }
 
 .chip {

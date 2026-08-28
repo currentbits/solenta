@@ -16,6 +16,7 @@ import { fileURLToPath } from "node:url";
 import { useState } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { inAct, mount, unmountAll } from "./support/dom.ts";
+import { setVerboseToolCards } from "../src/uiPrefs";
 import { ThreadView } from "../src/components/ThreadView";
 import styles from "../src/components/ThreadView.module.css";
 import { TRANSCRIPT_WINDOW } from "../src/transcriptWindow";
@@ -250,7 +251,10 @@ function assertNoNestedInteractive(html: string): void {
   }
 }
 
-afterEach(unmountAll);
+afterEach(() => {
+  unmountAll();
+  setVerboseToolCards(false);
+});
 
 describe("ThreadView empty states", () => {
   it("asks for a project when none are registered", () => {
@@ -790,6 +794,132 @@ describe("ThreadView mounted interactions", () => {
     assert.ok(
       m.text().includes("TOOL_INPUT_SECRET_PAYLOAD"),
       `expanded tool body must show input, got: ${m.text().slice(0, 200)}`,
+    );
+    m.unmount();
+  });
+
+  it("expands every tool card from the composer Verbose toggle (issue #750)", async () => {
+    const m = await mount(
+      view({
+        detail: detail({
+          messages: [
+            msg({
+              id: "t1",
+              role: "tool",
+              text: "Bash: echo a",
+              createdAt: 1,
+              runId: "run-1",
+              tool: {
+                id: "tc1",
+                name: "Bash",
+                input: "TOOL_A_SECRET_INPUT",
+                output: "TOOL_A_SECRET_OUTPUT",
+                done: true,
+                isError: false,
+              },
+            }),
+            msg({
+              id: "t2",
+              role: "tool",
+              text: "Bash: echo b",
+              createdAt: 2,
+              runId: "run-1",
+              tool: {
+                id: "tc2",
+                name: "Bash",
+                input: "TOOL_B_SECRET_INPUT",
+                output: "TOOL_B_SECRET_OUTPUT",
+                done: true,
+                isError: false,
+              },
+            }),
+          ],
+          workLog: [],
+        }),
+      }),
+    );
+    const verbose = m.query("[data-verbose-tools]");
+    assert.ok(verbose, "verbose control is in the composer");
+    assert.equal(verbose.getAttribute("aria-pressed"), "false");
+    assert.ok(
+      !m.text().includes("TOOL_A_SECRET_INPUT"),
+      "tool A body hidden while Verbose is off",
+    );
+    assert.ok(
+      !m.text().includes("TOOL_B_SECRET_INPUT"),
+      "tool B body hidden while Verbose is off",
+    );
+
+    await m.click(verbose);
+    assert.equal(verbose.getAttribute("aria-pressed"), "true");
+    assert.ok(m.text().includes("TOOL_A_SECRET_INPUT"), "tool A input");
+    assert.ok(m.text().includes("TOOL_A_SECRET_OUTPUT"), "tool A output");
+    assert.ok(m.text().includes("TOOL_B_SECRET_INPUT"), "tool B input");
+    assert.ok(m.text().includes("TOOL_B_SECRET_OUTPUT"), "tool B output");
+
+    const toggles = m.queryAll("button.toolToggle");
+    assert.equal(toggles.length, 2, "one toggle per tool card");
+    await m.click(toggles[0]);
+    assert.ok(
+      !m.text().includes("TOOL_A_SECRET_INPUT"),
+      "click still collapses an individual card",
+    );
+    assert.ok(
+      m.text().includes("TOOL_B_SECRET_INPUT"),
+      "the other card stays open",
+    );
+    m.unmount();
+  });
+
+  it("keeps the latest tool of the current run expanded when Verbose is off", async () => {
+    const m = await mount(
+      view({
+        detail: detail({
+          messages: [
+            msg({
+              id: "t1",
+              role: "tool",
+              text: "Bash: echo a",
+              createdAt: 1,
+              runId: "run-1",
+              tool: {
+                id: "tc1",
+                name: "Bash",
+                input: "TOOL_OLD_SECRET_INPUT",
+                output: "ok",
+                done: true,
+                isError: false,
+              },
+            }),
+            msg({
+              id: "t2",
+              role: "tool",
+              text: "Bash: echo b",
+              createdAt: 2,
+              runId: "run-1",
+              tool: {
+                id: "tc2",
+                name: "Bash",
+                input: "TOOL_LATEST_SECRET_INPUT",
+                output: null,
+                done: false,
+                isError: false,
+              },
+            }),
+          ],
+          workLog: [work({ id: "w1", runId: "run-1", label: "Bash", done: false })],
+        }),
+      }),
+    );
+    const verbose = m.query("[data-verbose-tools]");
+    assert.equal(verbose?.getAttribute("aria-pressed"), "false");
+    assert.ok(
+      !m.text().includes("TOOL_OLD_SECRET_INPUT"),
+      "older tool stays collapsed",
+    );
+    assert.ok(
+      m.text().includes("TOOL_LATEST_SECRET_INPUT"),
+      "latest tool of the current run still auto-expands",
     );
     m.unmount();
   });

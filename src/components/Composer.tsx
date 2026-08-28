@@ -73,6 +73,8 @@ import { useFileDrop } from "../useFileDrop";
 import {
   getLastReasoningEffort,
   setLastReasoningEffort,
+  setVerboseToolCards,
+  useVerboseToolCards,
 } from "../uiPrefs";
 import styles from "./Composer.module.css";
 
@@ -359,6 +361,7 @@ export const Composer = memo(function Composer({
   dropHostRef,
   onFileDragChange,
 }: ComposerProps) {
+  const verboseTools = useVerboseToolCards();
   /**
    * Unsent drafts keyed by thread: one Composer instance serves every thread
    * (ThreadView swaps threadId), so a single string would carry text across a
@@ -2365,39 +2368,13 @@ export const Composer = memo(function Composer({
           </button>
         </div>
         <div className={styles.meta}>
-          {shortSess && (
-            <span className={`${styles.chip} ${styles.chipMono}`}>
-              {shortSess}
-            </span>
-          )}
-          <span className={styles.chip}>
-            <svg
-              className={styles.chipIcon}
-              width="12"
-              height="12"
-              viewBox="0 0 16 16"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1.5"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              aria-hidden="true"
-            >
-              {hasWorktree ? (
-                <>
-                  <circle cx="4.5" cy="3.5" r="1.5" />
-                  <circle cx="4.5" cy="12.5" r="1.5" />
-                  <circle cx="11.5" cy="5.5" r="1.5" />
-                  <path d="M4.5 5v6M11.5 7c0 2.2-2.8 2.3-4.6 3.4" />
-                </>
-              ) : (
-                <path d="M2.5 4A1.5 1.5 0 0 1 4 2.5h2.2a1.5 1.5 0 0 1 1.1.5l.8 1a1.5 1.5 0 0 0 1.1.5H12A1.5 1.5 0 0 1 13.5 6v5A1.5 1.5 0 0 1 12 12.5H4A1.5 1.5 0 0 1 2.5 11V4Z" />
-              )}
-            </svg>
-            {hasWorktree ? "Worktree" : "Project"}
-          </span>
-          {branch != null && branch !== "" && (
-            <span className={`${styles.chip} ${styles.chipMono}`}>
+          <div className={styles.metaChips}>
+            {shortSess && (
+              <span className={`${styles.chip} ${styles.chipMono}`}>
+                {shortSess}
+              </span>
+            )}
+            <span className={styles.chip}>
               <svg
                 className={styles.chipIcon}
                 width="12"
@@ -2410,14 +2387,57 @@ export const Composer = memo(function Composer({
                 strokeLinejoin="round"
                 aria-hidden="true"
               >
-                <circle cx="4.5" cy="3.5" r="1.5" />
-                <circle cx="4.5" cy="12.5" r="1.5" />
-                <circle cx="11.5" cy="5.5" r="1.5" />
-                <path d="M4.5 5v6M11.5 7c0 2.2-2.8 2.3-4.6 3.4" />
+                {hasWorktree ? (
+                  <>
+                    <circle cx="4.5" cy="3.5" r="1.5" />
+                    <circle cx="4.5" cy="12.5" r="1.5" />
+                    <circle cx="11.5" cy="5.5" r="1.5" />
+                    <path d="M4.5 5v6M11.5 7c0 2.2-2.8 2.3-4.6 3.4" />
+                  </>
+                ) : (
+                  <path d="M2.5 4A1.5 1.5 0 0 1 4 2.5h2.2a1.5 1.5 0 0 1 1.1.5l.8 1a1.5 1.5 0 0 0 1.1.5H12A1.5 1.5 0 0 1 13.5 6v5A1.5 1.5 0 0 1 12 12.5H4A1.5 1.5 0 0 1 2.5 11V4Z" />
+                )}
               </svg>
-              {branch}
+              {hasWorktree ? "Worktree" : "Project"}
             </span>
-          )}
+            {branch != null && branch !== "" && (
+              <span className={`${styles.chip} ${styles.chipMono}`}>
+                <svg
+                  className={styles.chipIcon}
+                  width="12"
+                  height="12"
+                  viewBox="0 0 16 16"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.5"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden="true"
+                >
+                  <circle cx="4.5" cy="3.5" r="1.5" />
+                  <circle cx="4.5" cy="12.5" r="1.5" />
+                  <circle cx="11.5" cy="5.5" r="1.5" />
+                  <path d="M4.5 5v6M11.5 7c0 2.2-2.8 2.3-4.6 3.4" />
+                </svg>
+                {branch}
+              </span>
+            )}
+          </div>
+          <button
+            type="button"
+            className={`${styles.chip} ${styles.verbose}`}
+            data-verbose-tools=""
+            aria-pressed={verboseTools}
+            aria-label="Verbose"
+            title={
+              verboseTools
+                ? "Verbose on. Every tool card shows its input and output."
+                : "Verbose off. Tool cards stay collapsed to a one-line summary."
+            }
+            onClick={() => setVerboseToolCards(!verboseTools)}
+          >
+            Verbose
+          </button>
         </div>
       </div>
 

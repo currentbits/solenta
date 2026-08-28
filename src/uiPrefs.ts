@@ -60,6 +60,15 @@ export const setRunDurationEnabled = runDuration.set;
 export const useRunDurationEnabled = runDuration.use;
 
 /**
+ * Expand every tool card in the open transcript (issue #750). Off by default;
+ * the latest running tool still auto-expands even when this is off.
+ */
+const verboseTools = makeFlagPref("coder.verboseTools", false);
+export const getVerboseToolCards = verboseTools.get;
+export const setVerboseToolCards = verboseTools.set;
+export const useVerboseToolCards = verboseTools.use;
+
+/**
  * The last reasoning level the user picked, remembered across harness switches.
  *
  * Effort lives on the thread, and setProvider (electron/services.js) has to

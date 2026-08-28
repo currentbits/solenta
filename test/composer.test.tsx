@@ -13,7 +13,7 @@ import { describe, it, afterEach } from "node:test";
 import { useState } from "react";
 import { mount, unmountAll, inAct } from "./support/dom.ts";
 import { Composer } from "../src/components/Composer";
-import { setLastReasoningEffort } from "../src/uiPrefs";
+import { setLastReasoningEffort, setVerboseToolCards } from "../src/uiPrefs";
 import type {
   AgentProfile,
   PermissionMode,
@@ -251,7 +251,10 @@ function composer(
   );
 }
 
-afterEach(unmountAll);
+afterEach(() => {
+  unmountAll();
+  setVerboseToolCards(false);
+});
 
 
 /**
@@ -1660,6 +1663,29 @@ describe("Composer value displays (null-safe)", () => {
       false,
       "a null branch must not invent a default chip",
     );
+    m.unmount();
+  });
+});
+
+describe("Composer verbose toggle (issue #750)", () => {
+  it("lives in the meta row under the send arrow, off by default", async () => {
+    const h = makeHarness();
+    const m = await mount(composer(h));
+    const send = m.query('button[aria-label="Send"]');
+    const verbose = m.query("[data-verbose-tools]");
+    assert.ok(send, "send arrow");
+    assert.ok(verbose, "verbose control");
+    assert.ok(
+      verbose.closest(".meta"),
+      "verbose sits in the composer meta footer (under the bar)",
+    );
+    assert.ok(
+      send.compareDocumentPosition(verbose) & Node.DOCUMENT_POSITION_FOLLOWING,
+      "verbose is under the send row, not beside the pills",
+    );
+    assert.equal(verbose.getAttribute("aria-pressed"), "false");
+    await m.click(verbose);
+    assert.equal(verbose.getAttribute("aria-pressed"), "true");
     m.unmount();
   });
 });

@@ -158,7 +158,7 @@ import {
   type ComparePeer,
   type DivergenceField,
 } from "../divergence";
-import { useRunDurationEnabled } from "../uiPrefs";
+import { useRunDurationEnabled, useVerboseToolCards } from "../uiPrefs";
 import { DROP_OVERLAY_MESSAGE } from "../dropFiles";
 import { Composer } from "./Composer";
 import { Markdown } from "./Markdown";
@@ -4282,6 +4282,7 @@ export const ThreadView = memo(function ThreadView({
 
   /** Run duration per runId, for assistant-message meta footers. Opt-in. */
   const showRunDuration = useRunDurationEnabled();
+  const verboseTools = useVerboseToolCards();
   const durationByRunId = useMemo(() => {
     const map = new Map<string, string>();
     if (!detail || !showRunDuration) return map;
@@ -5821,7 +5822,10 @@ export const ThreadView = memo(function ThreadView({
                   <>
                     <MessageBlock
                       message={entry.message}
-                      autoExpandTool={entry.message.id === latestRunningToolId}
+                      autoExpandTool={
+                        verboseTools ||
+                        entry.message.id === latestRunningToolId
+                      }
                       animateIn={!seenEntryKeys.current.has(entry.message.id)}
                       streaming={entry.message.id === streamingMessageId}
                       onLoadImage={onLoadImage}
