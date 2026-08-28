@@ -313,3 +313,52 @@ test("GET /api/stats needs auth and uses buildStats", async (t) => {
   assert.equal(body.pageviews, 1);
   assert.equal(body.visitors, 1);
 });
+
+test("GET / is a password form until authorized", async (t) => {
+  const port = await listen();
+  t.after(() => server.close());
+  const anon = await fetch(`http://127.0.0.1:${port}/`);
+  assert.equal(anon.status, 200);
+  const html = await anon.text();
+  assert.match(html, /name="password"/);
+  assert.equal(html.includes("chart.js"), false);
+  assert.equal(html.includes("\u2014"), false);
+});
+
+test("GET / with bearer renders totals and the empty sentence", async (t) => {
+  const port = await listen();
+  setDb(fakeDb({ rows: [] }));
+  t.after(() => {
+    server.close();
+    setDb(null);
+  });
+  const res = await fetch(`http://127.0.0.1:${port}/?days=7`, {
+    headers: { authorization: "Bearer secret-token" },
+  });
+  assert.equal(res.status, 200);
+  const html = await res.text();
+  assert.match(html, /Visitors/);
+  assert.match(html, /Pageviews/);
+  assert.match(html, /Downloads/);
+  assert.match(html, /GitHub stars/);
+  assert.match(html, /No events in this range\./);
+  assert.match(html, /\?days=1/);
+  assert.match(html, /\?days=30/);
+  assert.equal(html.includes("<script"), false);
+});
+
+test("GET / is 503 with one sentence when the db throws", async (t) => {
+  const port = await listen();
+  setDb(fakeDb({ throws: true }));
+  t.after(() => {
+    server.close();
+    setDb(null);
+  });
+  const res = await fetch(`http://127.0.0.1:${port}/`, {
+    headers: { authorization: "Bearer secret-token" },
+  });
+  assert.equal(res.status, 503);
+  const html = await res.text();
+  assert.match(html, /Could not read stats/);
+  assert.equal(html.includes("at "), false);
+});

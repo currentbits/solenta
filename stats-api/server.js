@@ -456,6 +456,106 @@ async function handleStats(req, res, days) {
   }
 }
 
+function escapeHtml(s) {
+  return String(s)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+function renderDashboard(stats, days) {
+  const max = Math.max(1, ...stats.series.map((s) => s.visitors));
+  const bars = stats.series
+    .map((s) => {
+      const h = Math.round((s.visitors / max) * 100);
+      return `<div class="bar"><span style="height:${h}%"></span><small>${s.pageviews}</small><em>${escapeHtml(s.day.slice(5))}</em></div>`;
+    })
+    .join("");
+  const list = (items, key) =>
+    items.length
+      ? `<ol>${items.map((it) => `<li><span>${escapeHtml(it[key])}</span><b>${it.count}</b></li>`).join("")}</ol>`
+      : "";
+  const ev = stats.events
+    .map((e) => {
+      const label = e.platform ? `${e.name} (${e.platform})` : e.name;
+      return `<li><span>${escapeHtml(label)}</span><b>${e.count}</b></li>`;
+    })
+    .join("");
+  const empty = stats.pageviews === 0 && stats.downloads === 0 && stats.githubStars === 0;
+  const link = (n, label) =>
+    `<a href="/?days=${n}"${n === days ? ' aria-current="page"' : ""}>${label}</a>`;
+
+  return `<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Solenta stats</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+:root { --paper:#f5f5f2; --ink:#191918; --muted:#5d5d58; --accent:#f2e51f; --border:rgba(25,25,24,.12); }
+html,body { margin:0; background:var(--paper); color:var(--ink); font: 16px/1.45 system-ui, sans-serif; }
+a { color: inherit; }
+header { display:flex; justify-content:space-between; align-items:center; padding:1.25rem 1.5rem; border-bottom:1px solid var(--border); }
+nav a { margin-left: .8rem; }
+nav a[aria-current="page"] { box-shadow: inset 0 -3px 0 var(--accent); }
+.wrap { max-width: 960px; margin: 0 auto; padding: 1.5rem; }
+.nums { display:grid; grid-template-columns: repeat(4, 1fr); gap: 1rem; }
+.num { background:#fcfcfa; border:1px solid var(--border); border-radius:14px; padding:1rem; }
+.num b { display:block; font-size: 2rem; }
+.num span { color: var(--muted); }
+.chart { display:flex; align-items:flex-end; gap:4px; height:160px; margin: 2rem 0; }
+.bar { flex:1; display:flex; flex-direction:column; align-items:center; justify-content:flex-end; height:100%; }
+.bar span { display:block; width:100%; background:var(--ink); min-height:2px; }
+.bar small, .bar em { font-size:10px; color:var(--muted); }
+.cols { display:grid; grid-template-columns: 1fr 1fr; gap: 2rem; }
+ol { list-style:none; padding:0; }
+li { display:flex; justify-content:space-between; padding:.35rem 0; border-bottom:1px solid var(--border); }
+form { display:inline; }
+button { font:inherit; background:none; border:0; cursor:pointer; text-decoration:underline; }
+@media (max-width: 700px) { .nums, .cols { grid-template-columns: 1fr 1fr; } }
+</style></head>
+<body>
+<header>
+  <strong>Solenta stats</strong>
+  <nav>${link(1, "Today")}${link(7, "7 days")}${link(30, "30 days")}
+  <form method="post" action="/logout"><button>Log out</button></form></nav>
+</header>
+<main class="wrap">
+  <section class="nums">
+    <div class="num"><b>${stats.visitors}</b><span>Visitors</span></div>
+    <div class="num"><b>${stats.pageviews}</b><span>Pageviews</span></div>
+    <div class="num"><b>${stats.downloads}</b><span>Downloads</span></div>
+    <div class="num"><b>${stats.githubStars}</b><span>GitHub stars</span></div>
+  </section>
+  ${empty ? "<p>No events in this range.</p>" : `<div class="chart">${bars}</div>
+  <div class="cols">
+    <section><h2>Pages</h2>${list(stats.pages, "path")}</section>
+    <section><h2>Referrers</h2>${list(stats.referrers, "host")}</section>
+  </div>
+  <section><h2>Events</h2><ol>${ev}</ol></section>`}
+</main>
+</body></html>`;
+}
+
+async function handleHome(req, res) {
+  if (!authorized(req)) return sendHtml(res, 200, loginForm());
+  if (!db) return sendHtml(res, 503, "<p>Could not read stats.</p>");
+  const days = clampDays(new URL(req.url, "http://x").searchParams.get("days"));
+  const since = new Date(nowFn());
+  since.setUTCDate(since.getUTCDate() - (days - 1));
+  since.setUTCHours(0, 0, 0, 0);
+  try {
+    const { rows } = await db.query(
+      `SELECT ts, name, path, referrer, visitor, props
+         FROM events WHERE ts >= $1
+         ORDER BY ts ASC`,
+      [since.toISOString()],
+    );
+    return sendHtml(res, 200, renderDashboard(buildStats(rows, days, nowFn()), days));
+  } catch (err) {
+    console.error("dashboard failed", err);
+    return sendHtml(res, 503, "<p>Could not read stats.</p>");
+  }
+}
+
 const server = http.createServer(async (req, res) => {
   const path = String(req.url || "").split("?")[0];
   if (path === "/health") return json(res, 200, { ok: true });
@@ -467,6 +567,7 @@ const server = http.createServer(async (req, res) => {
     const days = clampDays(new URL(req.url, "http://x").searchParams.get("days"));
     return handleStats(req, res, days);
   }
+  if (path === "/" && req.method === "GET") return handleHome(req, res);
   res.writeHead(404);
   res.end();
 });
