@@ -93,3 +93,13 @@ Minor review notes for final triage: protocol token is journalled but matching i
 Concern fix (turn 74+): native helper now implements `text` — `SHSendText` maps printable ASCII to HID usages and replays key down/up via `SHSendKey` (`SimulatorInputBridge.m`), `HelperSession.swift` dispatches `case "text"` with capability-then-payload guards, tests added in `BridgeCapabilityTests.swift`. `swift build` clean; XCTest still unrun (CLT-only host). VideoFrame-close concern verified already covered in `simulatorStream.ts` + `test/simulatorStream.test.ts`. `scrollTo` remains unimplemented in the helper. #248 stays open.
 
 Concern fix (fork thread 78776b8d): native helper now implements `scrollTo` — `SHSendScrollTo` replays a scroll as a bounded drag (touch down, ≤24 interpolated moves at 8 ms, touch up, best-effort up on mid-gesture failure) through the existing `SHSendTouch`/Indigo mouse path (`SimulatorInputBridge.m`, declared in `SimulatorPrivateBridge.h`); `HelperSession.swift` dispatches `case "scrollTo"` with the same capability(touch)-then-payload guard order as `sendTouch`, payload `{x, y, dx, dy}` matching `electron/ios-simulator.js` scrollTo(). Fail-closed coverage in `BridgeCapabilityTests.swift` (bridge-level and session-level capability_unavailable) plus an RPC-shape assertion in `electron/test/ios-simulator.test.js`. Fork worktree first merged `coder/ios-simulator-integration-macos-agent-dr-06a6a6` (45 commits, 6 additive IPC-surface conflicts, both sides kept). `swift build` clean (one pre-existing sandbox_free_error deprecation warning); `swift test` still unrunnable — no XCTest module on this CLT-only host; 225 service tests pass; `npm run typecheck` passes. #248 stays open.
+
+# Stats dashboard expand SDD (#757)
+Plan: docs/superpowers/plans/2026-08-28-stats-dashboard-expand.md
+Branch: coder/expand-site-stats-dashboard
+Task 1 base: b1447f03
+
+Task 1: complete (commits b1447f03..db122a20, review clean)
+Minor for final triage: ingest HTTP test does not lock pathname-only path; no 81-char UTM case.
+Task 2: complete (commits db122a20..b5303f55, review clean)
+Minor for final triage: inRange is lower-bound only; hourly test does not lock daySeen vs two-hour visitor.
