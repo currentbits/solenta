@@ -207,6 +207,39 @@ function parseReferrer(r) {
   }
 }
 
+function parseCountry(header) {
+  const raw = String(header || "").trim().toUpperCase();
+  if (!/^[A-Z]{2}$/.test(raw) || raw === "XX") return "";
+  return raw;
+}
+
+function parseBrowser(ua) {
+  const s = String(ua || "").toLowerCase();
+  if (!s) return "";
+  if (s.includes("edg/")) return "Edge";
+  if (s.includes("firefox/") || s.includes("fxios/")) return "Firefox";
+  if (s.includes("chrome/") || s.includes("crios/")) return "Chrome";
+  if (s.includes("safari/") && s.includes("version/")) return "Safari";
+  return "Other";
+}
+
+const UTM_SAFE = /^[a-zA-Z0-9._-]{1,80}$/;
+
+function parseUtms(u) {
+  if (typeof u !== "string") return {};
+  try {
+    const params = new URL(u).searchParams;
+    const out = {};
+    for (const key of ["utm_source", "utm_medium", "utm_campaign"]) {
+      const v = params.get(key) || "";
+      if (UTM_SAFE.test(v)) out[key] = v;
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
 const TOO_LARGE = Symbol("too-large");
 
 function readBody(req) {
@@ -269,10 +302,14 @@ async function handleEvent(req, res) {
     return noContent(req, res);
   }
   const referrer = parseReferrer(body.r);
-  let props = {};
+  let props = { ...parseUtms(body.u) };
+  const country = parseCountry(req.headers["cf-ipcountry"]);
+  if (country) props.country = country;
+  const browser = parseBrowser(ua);
+  if (browser) props.browser = browser;
   if (name !== "pageview" && body.p && typeof body.p === "object") {
     const platform = body.p.platform;
-    if (PLATFORMS.has(platform)) props = { platform };
+    if (PLATFORMS.has(platform)) props.platform = platform;
   }
   if (!db) {
     console.log("drop: db");
@@ -604,4 +641,7 @@ module.exports = {
   authorized,
   timingSafeEqual,
   buildStats,
+  parseCountry,
+  parseBrowser,
+  parseUtms,
 };
