@@ -17,13 +17,17 @@
 // Solenta.app.old, ditto the new one into place, delete .old on next boot.
 // The swapped-in bundle also means a plain quit+relaunch picks up the new
 // build even if the user never clicks "Restart".
-// ponytail: auto-install is macOS-only; win/linux get the release URL.
+//
+// Linux is a portable tar.gz (solenta + resources/), same layout as the
+// Windows zip. downloadUpdate() extracts beside the live folder as
+// <install>.update; applyUpdate() starts a shell helper that waits for quit,
+// renames the live folder to .old, moves .update into place, and relaunches.
 
 const crypto = require("node:crypto");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
-const { execFile } = require("node:child_process");
+const { execFile, spawn } = require("node:child_process");
 const { Readable } = require("node:stream");
 const { pipeline } = require("node:stream/promises");
 
@@ -54,14 +58,30 @@ function buildStamp(pkg) {
   }
 }
 
-/** .app bundle root of the running process, or null when not a bundle. */
-function bundlePath(execPath) {
-  if (process.platform !== "darwin") return null;
-  // Contents/MacOS/Solenta -> three levels up.
-  const root = path.resolve(execPath || process.execPath, "..", "..", "..");
-  // Refuse to swap a dev Electron.app out of node_modules.
-  if (!root.endsWith(".app") || root.includes("node_modules")) return null;
-  return root;
+/**
+ * Installed tree of the running process, or null when this build must
+ * not replace itself. macOS: the .app bundle. linux: the portable folder
+ * that holds solenta (or solenta-nightly) next to resources/.
+ */
+function bundlePath(execPath, platform) {
+  const plat = platform || process.platform;
+  const exe = execPath || process.execPath;
+  if (plat === "darwin") {
+    // Contents/MacOS/Solenta -> three levels up.
+    const root = path.resolve(exe, "..", "..", "..");
+    // Refuse to swap a dev Electron.app out of node_modules.
+    if (!root.endsWith(".app") || root.includes("node_modules")) return null;
+    return root;
+  }
+  if (plat === "linux") {
+    const root = path.resolve(path.dirname(exe));
+    const name = path.basename(exe);
+    if (name !== "solenta" && name !== "solenta-nightly") return null;
+    if (root.includes("node_modules")) return null;
+    if (!fs.existsSync(path.join(root, "resources"))) return null;
+    return root;
+  }
+  return null;
 }
 
 /** The release asset for this platform/arch, or null. */
@@ -117,6 +137,19 @@ let checking = null;
 let installing = null;
 /** @type {string | null} tag already swapped into place this boot */
 let stagedTag = null;
+/** @type {string | null} linux: extracted tree waiting for the quit helper */
+let stagedDir = null;
+/** @type {string | null} */
+let stagedInstall = null;
+/** @type {string | null} */
+let stagedExe = null;
+
+function resetStaged() {
+  stagedTag = null;
+  stagedDir = null;
+  stagedInstall = null;
+  stagedExe = null;
+}
 
 /**
  * Check the channel for a newer release. Never touches the installed bundle.
@@ -160,11 +193,19 @@ async function doCheck(deps, install) {
     status.url = latest.html_url ? String(latest.html_url) : null;
 
     const asset = pickAsset(latest, deps.platform, deps.arch);
-    const bundle = deps.bundlePath !== undefined ? deps.bundlePath : bundlePath();
+    const bundle =
+      deps.bundlePath !== undefined
+        ? deps.bundlePath
+        : bundlePath(deps.execPath, deps.platform);
     if (!install || !asset || !bundle) return { ...status, state: "available" };
 
-    await stage(asset, bundle, status.tag, deps);
+    const ready = await stage(asset, bundle, status.tag, deps);
     stagedTag = status.tag;
+    if (ready && ready.dir) {
+      stagedDir = ready.dir;
+      stagedInstall = bundle;
+      stagedExe = ready.exe;
+    }
     return { ...status, state: "staged" };
   } catch (err) {
     return {
@@ -175,9 +216,52 @@ async function doCheck(deps, install) {
   }
 }
 
-/** Download the zip, check its digest, swap the bundle (mv aside + ditto in). */
+const LINUX_BIN = /^(solenta|solenta-nightly)$/;
+
+/** Portable tree inside an extracted linux tar.gz, or null. */
+function findLinuxTree(dir, depth = 0) {
+  if (depth > 3) return null;
+  let names;
+  try {
+    names = fs.readdirSync(dir);
+  } catch {
+    return null;
+  }
+  const exe = names.find((n) => LINUX_BIN.test(n));
+  if (exe && fs.existsSync(path.join(dir, "resources"))) {
+    return { root: dir, exe };
+  }
+  for (const n of names) {
+    const p = path.join(dir, n);
+    let st;
+    try {
+      st = fs.statSync(p);
+    } catch {
+      continue;
+    }
+    if (st.isDirectory()) {
+      const hit = findLinuxTree(p, depth + 1);
+      if (hit) return hit;
+    }
+  }
+  return null;
+}
+
+function moveDir(src, dst) {
+  fs.rmSync(dst, { recursive: true, force: true });
+  try {
+    fs.renameSync(src, dst);
+  } catch (err) {
+    if (!err || err.code !== "EXDEV") throw err;
+    fs.cpSync(src, dst, { recursive: true });
+    fs.rmSync(src, { recursive: true, force: true });
+  }
+}
+
+/** Download the archive, check its digest, then swap (macOS) or stage (linux). */
 async function stage(asset, bundle, tag, deps) {
   const doFetch = deps.fetch || fetch;
+  const plat = deps.platform || process.platform;
   // GitHub stamps `digest` ("sha256:<hex>") on release assets server-side. The
   // artifact is unsigned, so this is the only integrity check there is: no
   // digest means no auto-install, and the user installs from the release page.
@@ -187,19 +271,29 @@ async function stage(asset, bundle, tag, deps) {
   fs.rmSync(work, { recursive: true, force: true });
   fs.mkdirSync(work, { recursive: true });
   try {
-    const zip = path.join(work, "update.zip");
+    const archive = path.join(work, plat === "linux" ? "update.tar.gz" : "update.zip");
     const res = await doFetch(asset.browser_download_url, {
       headers: { "User-Agent": HEADERS["User-Agent"] },
     });
     if (!res.ok || !res.body) throw new Error(`download: HTTP ${res.status}`);
-    await pipeline(Readable.fromWeb(res.body), fs.createWriteStream(zip));
+    await pipeline(Readable.fromWeb(res.body), fs.createWriteStream(archive));
 
     const hash = crypto.createHash("sha256");
-    await pipeline(fs.createReadStream(zip), hash);
+    await pipeline(fs.createReadStream(archive), hash);
     const got = hash.digest("hex");
     if (got !== want[1]) throw new Error(`digest mismatch: expected ${want[1]}, got ${got}`);
 
-    await run("ditto", ["-x", "-k", zip, work]);
+    if (plat === "linux") {
+      await run("tar", ["-xzf", archive, "-C", work]);
+      const payload = findLinuxTree(work);
+      if (!payload) throw new Error("update tar.gz contains no solenta tree");
+      const dest = `${bundle}.update`;
+      moveDir(payload.root, dest);
+      fs.chmodSync(path.join(dest, payload.exe), 0o755);
+      return { dir: dest, exe: payload.exe };
+    }
+
+    await run("ditto", ["-x", "-k", archive, work]);
     const newApp = fs
       .readdirSync(work)
       .map((n) => path.join(work, n))
@@ -218,21 +312,82 @@ async function stage(asset, bundle, tag, deps) {
       fs.renameSync(old, bundle);
       throw err;
     }
+    return null;
   } finally {
     fs.rmSync(work, { recursive: true, force: true });
   }
 }
 
-/** Relaunch into the (already swapped-in) new bundle. */
-function applyUpdate() {
-  const { app } = require("electron");
+/**
+ * Helper that waits for the running pid, then swaps <install>.update into
+ * place. Written as sh so it keeps running after this process exits.
+ */
+function launchLinuxApply(opts) {
+  const doSpawn = opts.spawn || spawn;
+  const sh = path.join(os.tmpdir(), `solenta-apply-${opts.pid}.sh`);
+  const script = [
+    "#!/bin/sh",
+    'SRC="$1"',
+    'DST="$2"',
+    'EXE="$3"',
+    'OLDPID="$4"',
+    'while kill -0 "$OLDPID" 2>/dev/null; do',
+    "  sleep 1",
+    "done",
+    'rm -rf "${DST}.old"',
+    'if ! mv "$DST" "${DST}.old"; then',
+    '  if [ -x "$DST/$EXE" ]; then nohup "$DST/$EXE" >/dev/null 2>&1 & fi',
+    '  rm -f "$0"',
+    "  exit 1",
+    "fi",
+    'if ! mv "$SRC" "$DST"; then',
+    '  mv "${DST}.old" "$DST"',
+    '  if [ -x "$DST/$EXE" ]; then nohup "$DST/$EXE" >/dev/null 2>&1 & fi',
+    '  rm -f "$0"',
+    "  exit 1",
+    "fi",
+    'nohup "$DST/$EXE" >/dev/null 2>&1 &',
+    'rm -rf "${DST}.old"',
+    'rm -f "$0"',
+    "exit 0",
+    "",
+  ].join("\n");
+  fs.writeFileSync(sh, script, { mode: 0o755 });
+  const child = doSpawn("/bin/sh", [sh, opts.src, opts.dst, opts.exe, String(opts.pid)], {
+    detached: true,
+    stdio: "ignore",
+  });
+  if (child && typeof child.unref === "function") child.unref();
+}
+
+/** Relaunch into the (already swapped-in) new bundle. linux: helper + quit. */
+function applyUpdate(deps = {}) {
+  const platform = deps.platform || process.platform;
+  const app = deps.app || require("electron").app;
+  const dir = deps.stagedDir || stagedDir;
+  const installRoot = deps.installRoot || stagedInstall;
+  const exeName = deps.exeName || stagedExe;
+  if (platform === "linux" && dir && installRoot && exeName) {
+    launchLinuxApply({
+      src: dir,
+      dst: installRoot,
+      exe: exeName,
+      pid: deps.pid || process.pid,
+      spawn: deps.spawn,
+    });
+    app.quit();
+    return;
+  }
   app.relaunch();
   app.quit();
 }
 
 /** Delete the previous bundle left aside by the last update. Boot-time. */
 function cleanupOldBundle(deps = {}) {
-  const bundle = deps.bundlePath !== undefined ? deps.bundlePath : bundlePath();
+  const bundle =
+    deps.bundlePath !== undefined
+      ? deps.bundlePath
+      : bundlePath(deps.execPath, deps.platform);
   if (!bundle) return;
   fs.rm(`${bundle}.old`, { recursive: true, force: true }, () => {});
 }
@@ -242,6 +397,7 @@ module.exports = {
   downloadUpdate,
   applyUpdate,
   cleanupOldBundle,
+  resetStaged,
   // seams for tests
   buildStamp,
   bundlePath,
