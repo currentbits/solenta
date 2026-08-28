@@ -804,10 +804,10 @@ function truncateThreadTitle(title) {
 }
 
 /**
- * Validate a model string for a provider entry.
- * Empty models list: any non-empty trimmed string up to 100 chars (custom ids).
- * Non-empty list: membership required.
- * Returns the normalized model string, or null when clearing.
+ * Normalize a model string. The provider's `models` list is a picker snapshot,
+ * not an allowlist: every provider accepts a custom id. Guards are trim,
+ * non-empty, and at most 100 characters. A bad id fails at the CLI.
+ * Returns the trimmed string, or null when clearing.
  *
  * @param {import('./providers').ProviderEntry | null} entry
  * @param {string | null | undefined} rawModel
@@ -1307,9 +1307,10 @@ function forkWorkerThread(store, input, forkImpl = forkThread) {
  * clears the session id (CLI sessions are not portable across harnesses), so
  * the next send starts a fresh session with the new CLI; the thread and its
  * transcript stay.
- * Model validation: when the provider's models list is non-empty the model must
- * come from it; when the list is empty any non-empty string is accepted and
- * passed to the CLI as-is (custom model ids, e.g. codex -m).
+ * Model validation: every provider accepts a custom id. The published `models`
+ * list is a picker snapshot, not an allowlist (`CUSTOM_MODEL_ID` / "accepts a
+ * custom model for every provider"). Guards are trim, non-empty, and at most
+ * 100 characters; a bad id fails at the CLI.
  *
  * @param {import('./store').Store} store
  * @param {{ threadId: string, provider?: string, model?: string | null }} input

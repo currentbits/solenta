@@ -1916,12 +1916,15 @@ export interface ProviderInfo {
   available: boolean;
   /** Whether follow-up turns resume a persistent session. */
   supportsResume: boolean;
-  /** Selectable model ids for the picker; empty = no model choice. */
+  /**
+   * Suggested model ids for the picker. A snapshot of the CLI catalogue,
+   * not an allowlist: setProvider accepts any non-empty id up to 100 chars
+   * (Custom... in the picker). Empty still shows Default + Custom.
+   */
   models: string[];
   /**
    * Describes each entry of `models`, in the same order. Empty when the
-   * provider offers no model choice. `models` stays the source of truth for
-   * validation so existing callers keep working.
+   * provider publishes no suggestions. Validation does not consult this list.
    */
   modelInfo: ModelInfo[];
   /**
@@ -3352,11 +3355,11 @@ export interface CoderApi {
      * session-bearing thread is allowed and clears sessionId (CLI sessions
      * are not portable; the next send starts fresh); it is rejected only
      * while a run is active. (Round 34 replaced the old hard lock.)
-     * Model validation: when the provider's models list is non-empty the
-     * model must come from it; when the list is EMPTY any non-empty string
-     * is accepted and passed to the CLI as-is (custom model ids, e.g codex
-     * -m). Model alone may still be changed between turns for providers
-     * whose sessions tolerate it.
+     * Model validation: the provider's models list is a picker snapshot, not
+     * an allowlist. Any non-empty string of at most 100 characters is accepted
+     * and passed to the CLI as-is (Custom... in the picker). A bad id fails
+     * at the CLI. Model alone may still be changed between turns for
+     * providers whose sessions tolerate it.
      */
     setProvider(input: { threadId: string; provider?: string; model?: string | null }): Promise<ThreadInfo>;
     /**
