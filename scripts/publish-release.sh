@@ -7,8 +7,8 @@
 # prod builds update from GET /releases/latest; nightly builds update from the
 # newest prerelease. Both compare the release tag against the releaseTag
 # stamped into the bundle by package-app.sh / package-cross.sh.
-# Assets: macos-arm64 (ditto+.app swap), linux-x64 (portable tar.gz swap),
-# win32-x64 (release URL, or portable zip swap when that path is present).
+# Assets: macos-arm64 (live swap), win32-x64 and linux-x64 (stage + helper
+# swap on Restart).
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"

@@ -2678,9 +2678,11 @@ export interface UpdateStatus {
    * disabled: build carries no channel/tag stamp (dev tree, local bundle).
    * none: already on the channel's latest release.
    * available: newer release exists and has not been installed — it never is
-   *   without a user click, and on non-macOS / no matching asset / a failed
+   *   without a user click, and on linux / no matching asset / a failed
    *   install it never is at all; `url` links the release page.
-   * staged: new bundle downloaded, verified and swapped in; restart to run it.
+   * staged: new tree downloaded and verified. macOS has already swapped it
+   *   in; win32 extracted it beside the live folder and Restart runs a
+   *   helper after quit. Either way, restart to run it.
    */
   state: "disabled" | "none" | "available" | "staged" | "error";
   channel: "prod" | "nightly" | null;

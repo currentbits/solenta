@@ -338,6 +338,23 @@ describe("updater.bundlePath", () => {
     );
   });
 
+  it("win32: install root is the folder containing solenta.exe + resources", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "solenta-upd-root-"));
+    try {
+      fs.mkdirSync(path.join(dir, "resources"));
+      const exe = path.join(dir, "solenta.exe");
+      fs.writeFileSync(exe, "");
+      assert.equal(updater.bundlePath(exe, "win32"), dir);
+      const nightlyDir = path.join(dir, "nightly");
+      fs.mkdirSync(path.join(nightlyDir, "resources"), { recursive: true });
+      const nightly = path.join(nightlyDir, "solenta-nightly.exe");
+      fs.writeFileSync(nightly, "");
+      assert.equal(updater.bundlePath(nightly, "win32"), nightlyDir);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("linux: install root is the folder containing solenta + resources", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "solenta-upd-root-"));
     try {
@@ -350,6 +367,30 @@ describe("updater.bundlePath", () => {
       const nightly = path.join(nightlyDir, "solenta-nightly");
       fs.writeFileSync(nightly, "");
       assert.equal(updater.bundlePath(nightly, "linux"), nightlyDir);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("win32: rejects electron.exe, node_modules, and a tree with no resources", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "solenta-upd-bad-"));
+    try {
+      fs.mkdirSync(path.join(dir, "resources"));
+      const electron = path.join(dir, "electron.exe");
+      fs.writeFileSync(electron, "");
+      assert.equal(updater.bundlePath(electron, "win32"), null);
+
+      const nested = path.join(dir, "node_modules", "electron");
+      fs.mkdirSync(path.join(nested, "resources"), { recursive: true });
+      const nestedExe = path.join(nested, "solenta.exe");
+      fs.writeFileSync(nestedExe, "");
+      assert.equal(updater.bundlePath(nestedExe, "win32"), null);
+
+      const bare = path.join(dir, "bare");
+      fs.mkdirSync(bare);
+      const bareExe = path.join(bare, "solenta.exe");
+      fs.writeFileSync(bareExe, "");
+      assert.equal(updater.bundlePath(bareExe, "win32"), null);
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }
@@ -380,6 +421,24 @@ describe("updater.bundlePath", () => {
   });
 });
 
+/** Portable win32 zip matching package-cross.sh: solenta/solenta.exe + resources/. */
+function makeWinZip() {
+  const parent = fs.mkdtempSync(path.join(os.tmpdir(), "solenta-upd-zip-"));
+  const tree = path.join(parent, "solenta");
+  fs.mkdirSync(path.join(tree, "resources", "app"), { recursive: true });
+  fs.writeFileSync(path.join(tree, "solenta.exe"), "new-exe");
+  fs.writeFileSync(path.join(tree, "resources", "app", "marker.txt"), "next");
+  const zip = path.join(parent, "update.zip");
+  execFileSync("tar", ["-a", "-c", "-f", zip, "solenta"], { cwd: parent });
+  const bytes = fs.readFileSync(zip);
+  return {
+    parent,
+    zip,
+    bytes,
+    digest: `sha256:${crypto.createHash("sha256").update(bytes).digest("hex")}`,
+  };
+}
+
 /** Portable linux tar.gz matching package-cross.sh: solenta/solenta + resources/. */
 function makeLinuxTar() {
   const parent = fs.mkdtempSync(path.join(os.tmpdir(), "solenta-upd-tar-"));
@@ -398,6 +457,70 @@ function makeLinuxTar() {
     digest: `sha256:${crypto.createHash("sha256").update(bytes).digest("hex")}`,
   };
 }
+
+describe("updater.downloadUpdate win32 portable", () => {
+  afterEach(() => {
+    if (typeof updater.resetStaged === "function") updater.resetStaged();
+  });
+
+  it("stages next to the live folder and leaves the running tree untouched", async () => {
+    const install = fs.mkdtempSync(path.join(os.tmpdir(), "solenta-upd-live-"));
+    const zip = makeWinZip();
+    try {
+      fs.mkdirSync(path.join(install, "resources", "app"), { recursive: true });
+      fs.writeFileSync(path.join(install, "solenta.exe"), "old-exe");
+      fs.writeFileSync(path.join(install, "resources", "app", "marker.txt"), "current");
+
+      const res = await updater.downloadUpdate({
+        pkg: PROD_PKG,
+        platform: "win32",
+        arch: "x64",
+        bundlePath: install,
+        fetch: async (url) => {
+          if (String(url).includes("example.invalid")) {
+            return {
+              ok: true,
+              status: 200,
+              body: Readable.toWeb(Readable.from(zip.bytes)),
+            };
+          }
+          return {
+            ok: true,
+            status: 200,
+            json: async () => ({
+              tag_name: "v0.2.0",
+              html_url: "u",
+              assets: [
+                {
+                  name: "Solenta-v0.2.0-win32-x64.zip",
+                  browser_download_url: "https://example.invalid/app.zip",
+                  digest: zip.digest,
+                },
+              ],
+            }),
+          };
+        },
+      });
+
+      assert.equal(res.state, "staged");
+      assert.equal(
+        fs.readFileSync(path.join(install, "resources", "app", "marker.txt"), "utf8"),
+        "current",
+        "live install must stay put; Electron locks those files on Windows",
+      );
+      const staged = `${install}.update`;
+      assert.equal(
+        fs.readFileSync(path.join(staged, "resources", "app", "marker.txt"), "utf8"),
+        "next",
+      );
+      assert.equal(fs.readFileSync(path.join(staged, "solenta.exe"), "utf8"), "new-exe");
+    } finally {
+      fs.rmSync(install, { recursive: true, force: true });
+      fs.rmSync(`${install}.update`, { recursive: true, force: true });
+      fs.rmSync(zip.parent, { recursive: true, force: true });
+    }
+  });
+});
 
 describe("updater.downloadUpdate linux portable", () => {
   afterEach(() => {
@@ -495,6 +618,51 @@ describe("updater.downloadUpdate linux portable", () => {
   });
 });
 
+describe("updater.applyUpdate win32", () => {
+  afterEach(() => {
+    if (typeof updater.resetStaged === "function") updater.resetStaged();
+  });
+
+  it("launches a helper and quits without relaunch", () => {
+    const calls = [];
+    updater.applyUpdate({
+      platform: "win32",
+      stagedDir: "C:\\Solenta.update",
+      installRoot: "C:\\Solenta",
+      exeName: "solenta.exe",
+      pid: 4242,
+      spawn: (cmd, args, opts) => {
+        calls.push({ cmd, args, opts });
+        return { unref() {} };
+      },
+      app: {
+        relaunch: () => calls.push("relaunch"),
+        quit: () => calls.push("quit"),
+      },
+    });
+    const spawned = calls.find((c) => c && c.cmd);
+    assert.ok(spawned && /cmd\.exe$/i.test(spawned.cmd), "must spawn a cmd helper");
+    assert.ok(spawned.args.includes("C:\\Solenta.update"));
+    assert.ok(spawned.args.includes("C:\\Solenta"));
+    assert.ok(spawned.args.includes("solenta.exe"));
+    assert.ok(spawned.args.includes("4242"));
+    assert.ok(!calls.includes("relaunch"), "relaunch would exec the still-old tree");
+    assert.ok(calls.includes("quit"));
+  });
+
+  it("macOS still relaunches the already-swapped bundle", () => {
+    const calls = [];
+    updater.applyUpdate({
+      platform: "darwin",
+      app: {
+        relaunch: () => calls.push("relaunch"),
+        quit: () => calls.push("quit"),
+      },
+    });
+    assert.deepEqual(calls, ["relaunch", "quit"]);
+  });
+});
+
 describe("updater.applyUpdate linux", () => {
   afterEach(() => {
     if (typeof updater.resetStaged === "function") updater.resetStaged();
@@ -527,17 +695,5 @@ describe("updater.applyUpdate linux", () => {
     assert.ok(spawned.args.includes("4242"));
     assert.ok(!calls.includes("relaunch"), "relaunch would exec the still-old tree");
     assert.ok(calls.includes("quit"));
-  });
-
-  it("macOS still relaunches the already-swapped bundle", () => {
-    const calls = [];
-    updater.applyUpdate({
-      platform: "darwin",
-      app: {
-        relaunch: () => calls.push("relaunch"),
-        quit: () => calls.push("quit"),
-      },
-    });
-    assert.deepEqual(calls, ["relaunch", "quit"]);
   });
 });
