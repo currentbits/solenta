@@ -4,9 +4,11 @@
  * Sleep-time memory consolidation (issue #722).
  *
  * Dual-gated per project (≥24h since last fire AND ≥N open review-queue
- * items), then a thread running a cheap worker with a self-contained
- * prompt. Same scheduler shape as automations/postmerge — not a
- * user-visible Automation.
+ * items), then a hidden thread running a cheap worker with a
+ * self-contained prompt. Same scheduler shape as automations/postmerge —
+ * not a user-visible Automation or sidebar row. A failed pass keeps
+ * lastRunAt so this session does not loop; the next app start clears it
+ * and retries.
  *
  * Sandbox is host-enforced: memory-only MCP config + Claude
  * `--allowedTools=mcp__coder-memory__*`, and non-memory permission
@@ -204,6 +206,49 @@ function hasWorkingPass(ctx, project) {
 }
 
 /**
+ * Latest consolidation thread for a project, or null.
+ *
+ * @param {object[]} threads
+ * @param {string} projectId
+ * @returns {object | null}
+ */
+function latestConsolidateThread(threads, projectId) {
+  let latest = null;
+  for (const t of threads) {
+    if (!t || t.projectId !== projectId || t.memoryConsolidate !== true) {
+      continue;
+    }
+    if (!latest || t.createdAt > latest.createdAt) latest = t;
+  }
+  return latest;
+}
+
+/**
+ * A failed pass must not burn the 24h gate across restarts. Clear
+ * lastRunAt when the previous fire recorded an error or left a failed
+ * thread. Same-session ticks still see lastRunAt and skip.
+ *
+ * @param {import("./store").Store} store
+ */
+function releaseFailedPasses(store) {
+  const threads = store.getThreads();
+  let changed = false;
+  const next = store.getProjects().map((p) => {
+    if (!p || !p.id || p.memoryConsolidateAt == null) return p;
+    const latest = latestConsolidateThread(threads, p.id);
+    const failed =
+      Boolean(p.memoryConsolidateError) ||
+      (latest != null && latest.status === "failed");
+    if (!failed) return p;
+    changed = true;
+    return { ...p, memoryConsolidateAt: null };
+  });
+  if (!changed) return;
+  store.setProjects(next);
+  store.save();
+}
+
+/**
  * @param {{
  *   store: import("./store").Store,
  *   runner: { startRun: Function },
@@ -341,6 +386,7 @@ async function fireConsolidate(ctx, project, now, opts) {
  * }} ctx
  */
 function startMemoryConsolidateScheduler(ctx) {
+  releaseFailedPasses(ctx.store);
   const intervalMs = ctx.intervalMs == null ? 60_000 : ctx.intervalMs;
   const nowFn = typeof ctx.now === "function" ? ctx.now : Date.now;
   let stopped = false;
@@ -404,6 +450,7 @@ module.exports = {
   buildConsolidatePrompt,
   resolveConsolidateProvider,
   pruneConsolidateThreads,
+  releaseFailedPasses,
   fireConsolidate,
   startMemoryConsolidateScheduler,
 };

@@ -366,22 +366,81 @@ function gitExecThrowAsync(project, cwd, args, opts) {
 }
 
 /**
- * Default branch currently checked out in the project path.
+ * When `--show-current` is empty, name the repo default branch.
+ * origin/HEAD first, then a local main/master ref. Empty string = none.
+ *
+ * @param {string} projectPath
+ * @returns {string}
+ */
+function fallbackDefaultBranchName(projectPath) {
+  const remote = gitTry(projectPath, [
+    "symbolic-ref",
+    "--quiet",
+    "refs/remotes/origin/HEAD",
+  ]);
+  if (remote.ok) {
+    const name = remote.stdout.trim().replace(/^refs\/remotes\/origin\//, "");
+    if (name && name !== "HEAD") return name;
+  }
+  for (const name of ["main", "master"]) {
+    const probe = gitTry(projectPath, [
+      "show-ref",
+      "--verify",
+      "--quiet",
+      `refs/heads/${name}`,
+    ]);
+    if (probe.ok) return name;
+  }
+  return "";
+}
+
+/**
+ * @param {string} projectPath
+ * @returns {Promise<string>}
+ */
+async function fallbackDefaultBranchNameAsync(projectPath) {
+  const remote = await gitTryAsync(projectPath, [
+    "symbolic-ref",
+    "--quiet",
+    "refs/remotes/origin/HEAD",
+  ]);
+  if (remote.ok) {
+    const name = remote.stdout.trim().replace(/^refs\/remotes\/origin\//, "");
+    if (name && name !== "HEAD") return name;
+  }
+  for (const name of ["main", "master"]) {
+    const probe = await gitTryAsync(projectPath, [
+      "show-ref",
+      "--verify",
+      "--quiet",
+      `refs/heads/${name}`,
+    ]);
+    if (probe.ok) return name;
+  }
+  return "";
+}
+
+/**
+ * Branch currently checked out in `projectPath`, or the repo default when
+ * that checkout is detached (main held in another worktree, a SHA review,
+ * jj). Merge still needs a real checkout of that name — see
+ * checkoutForMerge.
+ *
  * @param {string} projectPath
  * @returns {string}
  */
 function defaultBranch(projectPath) {
   const branch = gitOut(projectPath, ["branch", "--show-current"]);
-  if (!branch) {
-    const scm = detectScm(projectPath);
-    if (scm && scm.kind === "jj") {
-      throw new Error(JJ_DETACHED_HEAD_ERROR);
-    }
-    throw new Error(
-      "Project checkout is detached HEAD; check out a branch before merging",
-    );
+  if (branch) return branch;
+  const fallback = fallbackDefaultBranchName(projectPath);
+  if (fallback) return fallback;
+  const scm = detectScm(projectPath);
+  if (scm && scm.kind === "jj") {
+    throw new Error(JJ_DETACHED_HEAD_ERROR);
   }
-  return branch;
+  throw new Error(
+    "Project checkout is detached HEAD; check out a branch before merging",
+  );
 }
 
 /**
@@ -392,16 +451,67 @@ function defaultBranch(projectPath) {
  */
 async function defaultBranchAsync(projectPath) {
   const branch = await gitOutAsync(projectPath, ["branch", "--show-current"]);
-  if (!branch) {
-    const scm = detectScm(projectPath);
-    if (scm && scm.kind === "jj") {
-      throw new Error(JJ_DETACHED_HEAD_ERROR);
-    }
-    throw new Error(
-      "Project checkout is detached HEAD; check out a branch before merging",
-    );
+  if (branch) return branch;
+  const fallback = await fallbackDefaultBranchNameAsync(projectPath);
+  if (fallback) return fallback;
+  const scm = detectScm(projectPath);
+  if (scm && scm.kind === "jj") {
+    throw new Error(JJ_DETACHED_HEAD_ERROR);
   }
-  return branch;
+  throw new Error(
+    "Project checkout is detached HEAD; check out a branch before merging",
+  );
+}
+
+/**
+ * Worktree directory that currently has `branch` checked out, or null.
+ *
+ * @param {string} repoPath
+ * @param {string} branch
+ * @returns {string | null}
+ */
+function worktreePathForBranch(repoPath, branch) {
+  const listed = gitTry(repoPath, ["worktree", "list", "--porcelain"], {
+    raw: true,
+  });
+  if (!listed.ok) return null;
+  const want = `refs/heads/${branch}`;
+  let dir = null;
+  for (const line of String(listed.stdout || "").split("\n")) {
+    if (line.startsWith("worktree ")) {
+      dir = line.slice("worktree ".length);
+    } else if (line.startsWith("branch ") && dir) {
+      if (line.slice("branch ".length) === want) return dir;
+    } else if (line === "") {
+      dir = null;
+    }
+  }
+  return null;
+}
+
+/**
+ * Merge needs a working tree that is ON `branch`. When the preferred
+ * checkout is detached, follow the branch into the worktree that has it,
+ * or switch the preferred path onto the branch if it is free.
+ *
+ * @param {string} preferredPath
+ * @param {string} branch
+ * @returns {string}
+ */
+function checkoutForMerge(preferredPath, branch) {
+  const current = gitOut(preferredPath, ["branch", "--show-current"]);
+  if (current) return preferredPath;
+  const home = worktreePathForBranch(preferredPath, branch);
+  if (home && path.resolve(home) !== path.resolve(preferredPath)) {
+    return home;
+  }
+  const sw = gitTry(preferredPath, ["switch", "--", branch]);
+  if (sw.ok) return preferredPath;
+  throw new Error(
+    home
+      ? `Project checkout is detached HEAD; ${branch} is checked out in ${home}`
+      : `Project checkout is detached HEAD; check out ${branch} before merging`,
+  );
 }
 
 /**
@@ -764,15 +874,22 @@ function mergeWorktree(opts) {
 
   const wtPath = thread.worktreePath;
   const branch = thread.branch;
-  const target = intoPath || project.path;
-  if (path.resolve(target) === path.resolve(wtPath)) {
+  const requested = intoPath || project.path;
+  if (path.resolve(requested) === path.resolve(wtPath)) {
     throw new Error(`Cannot merge thread ${threadId} into its own worktree`);
   }
 
   // Blast-radius gate (issue #510) before auto-commit: a workflow file in
   // the working tree or the branch vs base is a privilege-escalation, not
   // a code edit. Human sign-off is ciWorkflowApproved === true.
-  const baseForGate = defaultBranch(target);
+  const baseForGate = defaultBranch(requested);
+  // Explicit intoPath (orchestrator → lead worktree) stays put even when
+  // detached. The Git-tab default follows main into the worktree that
+  // actually has it — the project checkout is often detached because a
+  // nightly/release worktree holds main.
+  const target = intoPath
+    ? requested
+    : checkoutForMerge(requested, baseForGate);
   gateCiWorkflowMerge(
     wtPath,
     baseForGate,

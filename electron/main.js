@@ -550,6 +550,7 @@ app.whenReady().then(async () => {
         if (
           isNotifyTransition(prev, next) &&
           !payload.thread.muted &&
+          payload.thread.memoryConsolidate !== true &&
           !isEffectivelySnoozed(payload.thread, Date.now())
         ) {
           const settings = store.getSettings();

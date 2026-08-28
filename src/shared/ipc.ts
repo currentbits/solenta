@@ -701,6 +701,7 @@ export interface ThreadInfo {
   /**
    * Sleep-time memory consolidation (issue #722): memory-tools-only pass.
    * Absent/false = ordinary thread. Host-minted; never a worktree.
+   * Hidden from the sidebar / search / agent summaries.
    */
   memoryConsolidate?: boolean;
   /**

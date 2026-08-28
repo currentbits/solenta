@@ -8,6 +8,7 @@ const { Store } = require("../store.js");
 const services = require("../services.js");
 const {
   setupWorktree,
+  defaultBranch,
   diff,
   commit,
   mergeWorktree,
@@ -441,6 +442,61 @@ describe("worktrees", () => {
     assert.equal(stored.worktreePath, null);
     assert.equal(stored.branch, null);
     assert.ok(broadcasts.some((b) => b.ch === "threads:changed"));
+  });
+
+  it("defaultBranch falls back to main when the project checkout is detached", () => {
+    const sha = git(repo, ["rev-parse", "HEAD"]);
+    git(repo, ["checkout", "--detach", sha]);
+    assert.equal(git(repo, ["branch", "--show-current"]), "");
+    assert.equal(defaultBranch(repo), "main");
+  });
+
+  it("mergeWorktree lands on main when the project checkout is detached", async () => {
+    const setup = setupWorktree({
+      store,
+      threadId: thread.id,
+      worktreeBase,
+      broadcast: () => {},
+    });
+    fs.writeFileSync(path.join(setup.worktreePath, "feature.txt"), "from worktree\n");
+    git(repo, ["checkout", "--detach", "HEAD"]);
+    assert.equal(git(repo, ["branch", "--show-current"]), "");
+
+    mergeWorktree({
+      store,
+      threadId: thread.id,
+      broadcast: () => {},
+    });
+
+    assert.equal(git(repo, ["branch", "--show-current"]), "main");
+    assert.ok(fs.existsSync(path.join(repo, "feature.txt")));
+    assert.match(git(repo, ["log", "main", "-1", "--oneline"]), /Merge worktree/i);
+  });
+
+  it("mergeWorktree follows main into another worktree when the project is detached", async () => {
+    const setup = setupWorktree({
+      store,
+      threadId: thread.id,
+      worktreeBase,
+      broadcast: () => {},
+    });
+    fs.writeFileSync(path.join(setup.worktreePath, "feature.txt"), "from worktree\n");
+    const nightly = path.join(tmpDir, "nightly");
+    git(repo, ["checkout", "--detach", "HEAD"]);
+    git(repo, ["worktree", "add", nightly, "main"]);
+    assert.equal(git(repo, ["branch", "--show-current"]), "");
+    assert.equal(git(nightly, ["branch", "--show-current"]), "main");
+
+    mergeWorktree({
+      store,
+      threadId: thread.id,
+      broadcast: () => {},
+    });
+
+    assert.ok(fs.existsSync(path.join(nightly, "feature.txt")));
+    assert.match(git(nightly, ["log", "-1", "--oneline"]), /Merge worktree/i);
+    assert.equal(git(nightly, ["branch", "--show-current"]), "main");
+    assert.ok(!fs.existsSync(setup.worktreePath));
   });
 
   it("mergeWorktree with paths commits only those files and refuses leftovers", async () => {

@@ -295,6 +295,143 @@ describe("consolidation scheduler", () => {
     assert.equal(thread.memoryConsolidate, true);
   });
 
+  it("hides consolidation threads from the sidebar list", async () => {
+    const visible = services.createThread(store, {
+      projectId: "p1",
+      title: "User thread",
+    });
+    await fireConsolidate(
+      {
+        store,
+        runner: { startRun: async () => ({ runId: "r" }) },
+        maintenance: async () => ({ queue: { open: 5 } }),
+        resolveProvider: () => ({ provider: "claude", model: null }),
+      },
+      store.getProjects()[0],
+      Date.now(),
+    );
+    const listed = services.listThreads(store);
+    assert.equal(listed.length, 1);
+    assert.equal(listed[0].id, visible.id);
+    assert.equal(
+      store.getThreads().some((t) => t.memoryConsolidate),
+      true,
+    );
+    assert.equal(
+      services.threadSummaries(store).some((t) => t.id === visible.id),
+      true,
+    );
+    assert.equal(
+      services
+        .threadSummaries(store)
+        .some((t) => store.getThread(t.id).memoryConsolidate),
+      false,
+    );
+    assert.equal(
+      services.searchThreads(store, { query: "Memory consolidation" }).length,
+      0,
+    );
+  });
+
+  it("does not re-fire in the same session after startRun fails", async () => {
+    const now = Date.now();
+    let calls = 0;
+    const handle = startMemoryConsolidateScheduler({
+      store,
+      runner: {
+        startRun: async () => {
+          calls += 1;
+          throw new Error("no claude");
+        },
+      },
+      intervalMs: 60 * 60 * 1000,
+      now: () => now,
+      maintenance: async () => ({ queue: { open: 9 } }),
+      resolveProvider: () => ({ provider: "claude", model: null }),
+    });
+    try {
+      await handle.tick();
+      await handle.tick();
+    } finally {
+      handle.stop();
+    }
+    assert.equal(calls, 1);
+    const project = store.getProjects()[0];
+    assert.ok(project.memoryConsolidateAt);
+    assert.match(String(project.memoryConsolidateError), /no claude/);
+  });
+
+  it("retries a failed pass on the next scheduler start", async () => {
+    const now = Date.now();
+    store.setProjects([
+      {
+        ...store.getProjects()[0],
+        memoryConsolidateAt: now - 60_000,
+        memoryConsolidateError: "no claude",
+      },
+    ]);
+    store.saveNow();
+    const started = [];
+    const handle = startMemoryConsolidateScheduler({
+      store,
+      runner: {
+        startRun: async (input) => {
+          started.push(input);
+          return { runId: "r2" };
+        },
+      },
+      intervalMs: 60 * 60 * 1000,
+      now: () => now,
+      maintenance: async () => ({ queue: { open: 9 } }),
+      resolveProvider: () => ({ provider: "claude", model: null }),
+    });
+    try {
+      await handle.tick();
+    } finally {
+      handle.stop();
+    }
+    assert.equal(started.length, 1);
+    assert.equal(store.getProjects()[0].memoryConsolidateError, null);
+  });
+
+  it("retries when the last consolidation thread failed without lastError", async () => {
+    const now = Date.now();
+    const prior = services.createThread(store, {
+      projectId: "p1",
+      title: TITLE,
+      memoryConsolidate: true,
+    });
+    store.updateThread(prior.id, { status: "failed" });
+    store.setProjects([
+      {
+        ...store.getProjects()[0],
+        memoryConsolidateAt: now - 60_000,
+        memoryConsolidateError: null,
+      },
+    ]);
+    store.saveNow();
+    const started = [];
+    const handle = startMemoryConsolidateScheduler({
+      store,
+      runner: {
+        startRun: async (input) => {
+          started.push(input);
+          return { runId: "r3" };
+        },
+      },
+      intervalMs: 60 * 60 * 1000,
+      now: () => now,
+      maintenance: async () => ({ queue: { open: 9 } }),
+      resolveProvider: () => ({ provider: "claude", model: null }),
+    });
+    try {
+      await handle.tick();
+    } finally {
+      handle.stop();
+    }
+    assert.equal(started.length, 1);
+  });
+
   it("does not mint a worktree (pendingWorktree stays off)", async () => {
     const thread = await fireConsolidate(
       {

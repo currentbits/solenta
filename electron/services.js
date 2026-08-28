@@ -3707,16 +3707,22 @@ function listThreads(store) {
   const prevRows = cache ? cache.rows : null;
   /** @type {Map<object, object>} */
   const rows = new Map();
-  const value = threads.map((t) => {
+  /** @type {object[]} */
+  const value = [];
+  for (const t of threads) {
+    // Sleep-time consolidation is a system job (issue #722): keep the
+    // runner thread, but never show it in the sidebar.
+    if (t && t.memoryConsolidate === true) continue;
     const prev = prevRows && prevRows.get(t);
     if (prev) {
       rows.set(t, prev);
-      return prev;
+      value.push(prev);
+      continue;
     }
     const decorated = decorateThread(store, t);
     rows.set(t, decorated);
-    return decorated;
-  });
+    value.push(decorated);
+  }
   listThreadsCache.set(store, { threads, projects, value, rows });
   return value;
 }
@@ -3728,26 +3734,29 @@ function listThreads(store) {
  * @param {import('./store').Store} store
  */
 function threadSummaries(store) {
-  return store.getThreads().map((t) => {
-    const last = store.getLastAssistantMessage(t.id);
-    return {
-      id: t.id,
-      title: t.title,
-      provider: t.provider,
-      status: t.status,
-      handoffFrom: t.handoffFrom ?? null,
-      runStartedAt: t.runStartedAt ?? null,
-      stoppedAt: t.stoppedAt ?? null,
-      awaitingInput: t.awaitingInput === true,
-      stalledAt: t.stalledAt ?? null,
-      lastActivity: last
-        ? {
-            text: String(last.text).split(/\r?\n/, 1)[0].trim(),
-            at: Number(last.createdAt) || t.updatedAt,
-          }
-        : null,
-    };
-  });
+  return store
+    .getThreads()
+    .filter((t) => !(t && t.memoryConsolidate === true))
+    .map((t) => {
+      const last = store.getLastAssistantMessage(t.id);
+      return {
+        id: t.id,
+        title: t.title,
+        provider: t.provider,
+        status: t.status,
+        handoffFrom: t.handoffFrom ?? null,
+        runStartedAt: t.runStartedAt ?? null,
+        stoppedAt: t.stoppedAt ?? null,
+        awaitingInput: t.awaitingInput === true,
+        stalledAt: t.stalledAt ?? null,
+        lastActivity: last
+          ? {
+              text: String(last.text).split(/\r?\n/, 1)[0].trim(),
+              at: Number(last.createdAt) || t.updatedAt,
+            }
+          : null,
+      };
+    });
 }
 
 /**
@@ -3758,7 +3767,9 @@ function threadSummaries(store) {
 function searchThreads(store, input) {
   const query =
     input && input.query != null ? String(input.query) : "";
-  return store.searchThreads(query);
+  return store
+    .searchThreads(query)
+    .filter((t) => !(t && t.memoryConsolidate === true));
 }
 
 /**
