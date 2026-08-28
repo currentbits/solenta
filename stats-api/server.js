@@ -637,7 +637,7 @@ function renderDashboard(stats, days) {
       stats.docs +
       stats.changelog +
       stats.githubRepo ===
-    0;
+      0 && stats.events.length === 0;
   const link = (n, label) =>
     `<a href="/?days=${n}"${n === days ? ' aria-current="page"' : ""}>${label}</a>`;
 
