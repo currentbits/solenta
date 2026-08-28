@@ -1,0 +1,14 @@
+{
+  "name": "solenta-stats-api",
+  "private": true,
+  "version": "1.0.0",
+  "description": "First-party site analytics for solenta.app (issue #747)",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node --test --test-concurrency=1 test.js"
+  },
+  "dependencies": {
+    "pg": "^8.13.1"
+  }
+}
