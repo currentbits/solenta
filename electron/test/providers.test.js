@@ -65,8 +65,11 @@ describe("providers registry", () => {
     assert.equal(codex.kind, "codex-json");
     assert.equal(codex.supportsResume, true);
     assert.ok(codex.models.includes("gpt-5.5"));
+    assert.ok(codex.models.includes("gpt-5.6-sol"));
     assert.ok(codex.models.includes("gpt-5.6-terra"));
-    assert.ok(codex.models.length >= 4);
+    assert.ok(codex.models.length >= 5);
+    const sol = codex.modelInfo.find((m) => m.id === "gpt-5.6-sol");
+    assert.equal(sol.recommended, true);
 
     const grok = getProvider("grok");
     assert.equal(grok.kind, "claude-stream");
@@ -76,7 +79,9 @@ describe("providers registry", () => {
     const opencode = getProvider("opencode");
     assert.equal(opencode.kind, "opencode-json");
     assert.equal(opencode.supportsResume, true);
-    assert.ok(opencode.models.includes("opencode/north-mini-code-free"));
+    assert.ok(opencode.models.includes("opencode/hy3-free"));
+    assert.ok(opencode.models.includes("opencode/nemotron-3.5-lightning-free"));
+    assert.ok(!opencode.models.includes("opencode/north-mini-code-free"));
     assert.ok(opencode.models.length >= 4);
     // opencode -m requires provider/model form
     for (const id of opencode.models) {

@@ -37,6 +37,8 @@ import {
   buildProfileRows,
   buildProviderRows,
   effortDisplayLabel,
+  effortHint,
+  effortsForModel,
   providerDetail,
   effortOptions,
   firstSelectableIndex,
@@ -748,9 +750,10 @@ export const Composer = memo(function Composer({
   };
   const catalogNote = providers.find((p) => p.id === detail.providerId)
     ?.catalogNote;
-  // The effort pill is its own control on the thread's provider: it never
-  // follows what the model picker is pointing at.
-  const efforts = currentProviderInfo?.efforts ?? [];
+  // The effort pill follows the selected model: a per-model list when the
+  // catalog publishes one, otherwise the provider list. It does not follow
+  // the highlighted picker row.
+  const efforts = effortsForModel(currentProviderInfo, model);
   const reasoningVisible = showReasoningControl(efforts);
   const effortUnavailable = currentProviderInfo?.available === false;
   const effortLabel = effortDisplayLabel(reasoningEffort);
@@ -1237,13 +1240,17 @@ export const Composer = memo(function Composer({
    * null effort on a harness that CAN honour it is a deliberate Default and
    * must stay one.
    */
-  const restoreEffortFor = async (nextProviderId: string) => {
-    if (nextProviderId === provider) return;
+  const restoreEffortFor = async (
+    nextProviderId: string,
+    nextModel: string | null,
+  ) => {
     if (reasoningEffort != null) return;
     const want = getLastReasoningEffort();
-    if (want == null || efforts.includes(want)) return;
+    if (want == null) return;
+    const currentList = effortsForModel(currentProviderInfo, model);
+    if (currentList.includes(want)) return;
     const next = providers.find((p) => p.id === nextProviderId);
-    if (!next?.efforts?.includes(want)) return;
+    if (!effortsForModel(next, nextModel).includes(want)) return;
     await onSetReasoningEffort(want);
   };
 
@@ -1263,7 +1270,7 @@ export const Composer = memo(function Composer({
       // Always send both so a cross-provider pick switches harness and model
       // in one setProvider call (no contract change).
       await onSetProvider({ provider: row.providerId, model: row.id });
-      await restoreEffortFor(row.providerId);
+      await restoreEffortFor(row.providerId, row.id);
     } catch (err) {
       const msg =
         err instanceof Error && err.message
@@ -1280,7 +1287,7 @@ export const Composer = memo(function Composer({
     closeModelPicker(true);
     try {
       await onSetProvider({ provider: customFor, model: id });
-      await restoreEffortFor(customFor);
+      await restoreEffortFor(customFor, id);
     } catch (err) {
       const msg =
         err instanceof Error && err.message
@@ -1939,7 +1946,9 @@ export const Composer = memo(function Composer({
                     role="listbox"
                     aria-label="Reasoning effort"
                   >
-                    {effortOptions(efforts).map((level) => (
+                    {effortOptions(efforts).map((level) => {
+                      const hint = effortHint(level);
+                      return (
                       <li
                         key={level ?? "default"}
                         role="option"
@@ -1949,13 +1958,21 @@ export const Composer = memo(function Composer({
                           type="button"
                           className={styles.modeOption}
                           data-active={level === reasoningEffort}
-                          aria-label={`Reasoning ${effortDisplayLabel(level)}`}
+                          aria-label={
+                            hint
+                              ? `Reasoning ${effortDisplayLabel(level)}: ${hint}`
+                              : `Reasoning ${effortDisplayLabel(level)}`
+                          }
                           onClick={() => void pickEffort(level)}
                         >
                           {effortDisplayLabel(level)}
+                          {hint ? (
+                            <span className={styles.optionHint}> {hint}</span>
+                          ) : null}
                         </button>
                       </li>
-                    ))}
+                      );
+                    })}
                   </ul>
                 )}
               </div>

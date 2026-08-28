@@ -1828,22 +1828,35 @@ export type SetPlanStatusResult =
  *
  * These are the levels the installed CLIs actually accept, verified against
  * them rather than copied from a design: `claude --effort` takes low, medium,
- * high, xhigh, max, and `grok --reasoning-effort` takes low, medium, high, xhigh.
- * A provider advertises its own subset through ProviderInfo.efforts.
+ * high, xhigh, max, plus the session-only `ultracode` token; Codex coding
+ * clients add `ultra` (parallel subagents) above `max`; grok takes low,
+ * medium, high, xhigh. A provider advertises its own subset through
+ * ProviderInfo.efforts, and a model may narrow that further via
+ * ModelInfo.efforts.
  *
  * Getting this wrong is silent: claude answers an unknown value with
  * "Warning: Unknown --effort value ... ignoring it" and runs at its default,
  * so a typo here costs the user the setting without an error.
  */
-export type ReasoningEffort = "low" | "medium" | "high" | "xhigh" | "max";
+export type ReasoningEffort =
+  | "low"
+  | "medium"
+  | "high"
+  | "xhigh"
+  | "max"
+  | "ultra"
+  | "ultracode";
 
-/** Ordered lowest to highest; the picker renders one segment per level. */
+/** Union of every CLI token we persist. The picker renders ProviderInfo /
+ * ModelInfo.efforts, not this full list. */
 export const REASONING_EFFORTS: ReasoningEffort[] = [
   "low",
   "medium",
   "high",
   "xhigh",
   "max",
+  "ultra",
+  "ultracode",
 ];
 
 /** A model the picker can offer, with the copy it needs to describe it. */
@@ -1863,6 +1876,12 @@ export interface ModelInfo {
    * The context ring hides itself when this is absent; never guessed.
    */
   contextTokens?: number;
+  /**
+   * When present (including `[]`), the effort pill and setReasoningEffort
+   * use this instead of ProviderInfo.efforts. Absent means "same as the
+   * provider list". Empty means this model is not effort-capable.
+   */
+  efforts?: ReasoningEffort[];
 }
 
 /**
@@ -1930,9 +1949,15 @@ export interface ProviderInfo {
   /**
    * Effort levels this provider actually honours, lowest to highest. Empty
    * when the CLI has no such flag, and the picker then hides the control
-   * rather than offering a setting that does nothing.
+   * rather than offering a setting that does nothing. A selected model's
+   * ModelInfo.efforts, when present, replaces this list.
    */
   efforts: ReasoningEffort[];
+  /**
+   * One-line note when a local CLI cache lists different ids than `models`.
+   * Absent when we did not probe, the cache is missing, or the lists match.
+   */
+  catalogNote?: string;
   /**
    * True when the CLI accepts a live web-search flag (`codex exec --search`).
    * The composer hides the Search pill when this is missing or false.

@@ -325,6 +325,28 @@ export function initialHighlightIndex(
 }
 
 /**
+ * Effort list for the selected model: ModelInfo.efforts when that field is
+ * present (including `[]`), otherwise ProviderInfo.efforts. Empty → hide
+ * the pill. Custom / Default (null id) use the provider list.
+ */
+export function effortsForModel(
+  provider: ProviderInfo | undefined | null,
+  modelId: string | null | undefined,
+): ReasoningEffort[] {
+  if (!provider) return [];
+  const providerEfforts = Array.isArray(provider.efforts)
+    ? provider.efforts.slice()
+    : [];
+  if (modelId == null || modelId === "") return providerEfforts;
+  const infos = provider.modelInfo;
+  const hit = Array.isArray(infos)
+    ? infos.find((m) => m.id === modelId)
+    : undefined;
+  if (hit && Array.isArray(hit.efforts)) return hit.efforts.slice();
+  return providerEfforts;
+}
+
+/**
  * True only when the provider advertises at least one effort level.
  * Empty list → hide the pill entirely (not a disabled stub).
  */
@@ -356,7 +378,25 @@ export const EFFORT_LABELS: Record<ReasoningEffort, string> = {
   high: "High",
   xhigh: "Extra high",
   max: "Max",
+  ultra: "Ultra",
+  ultracode: "Ultracode",
 };
+
+/**
+ * Secondary copy for tokens that are not just "more thinking". Absent for
+ * the ordinary ladder so the menu stays a list of levels.
+ */
+export const EFFORT_HINTS: Partial<Record<ReasoningEffort, string>> = {
+  ultra: "parallel subagents, not just more thinking",
+  ultracode: "xhigh plus workflow orchestration, this session",
+};
+
+export function effortHint(
+  level: ReasoningEffort | null | undefined,
+): string | null {
+  if (level == null) return null;
+  return EFFORT_HINTS[level] ?? null;
+}
 
 /**
  * Display label for a level. Null is "Auto", not "Default": the effort pill
@@ -513,6 +553,7 @@ export function providerDetail(
       : row.disabledReason
         ? ` ${row.disabledReason}`
         : "";
+  const catalog = info?.catalogNote ? ` ${info.catalogNote}` : "";
   return {
     providerId: row.id,
     label: row.name,
@@ -521,7 +562,7 @@ export function providerDetail(
       : row.current
         ? "current harness"
         : "harness",
-    description: `${models}${state}`,
+    description: `${models}${state}${catalog}`,
     efforts: Array.isArray(info?.efforts) ? info.efforts : [],
   };
 }

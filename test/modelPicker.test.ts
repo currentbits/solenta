@@ -13,6 +13,8 @@ import {
   clampHighlightIndex,
   detailModelRow,
   effortDisplayLabel,
+  effortHint,
+  effortsForModel,
   effortOptions,
   firstSelectableIndex,
   initialHighlightIndex,
@@ -350,6 +352,76 @@ describe("reasoning control", () => {
     assert.equal(effortDisplayLabel("max"), "Max");
     assert.equal(effortDisplayLabel("low"), "Low");
     assert.equal(effortDisplayLabel("medium"), "Medium");
+    assert.equal(effortDisplayLabel("ultra"), "Ultra");
+    assert.equal(effortDisplayLabel("ultracode"), "Ultracode");
+    assert.match(effortHint("ultra") || "", /subagent/i);
+    assert.match(effortHint("ultracode") || "", /workflow/i);
+    assert.equal(effortHint("high"), null);
   });
 
+});
+
+describe("effortsForModel", () => {
+  const grok: ProviderInfo = {
+    id: "grok",
+    name: "Grok",
+    available: true,
+    supportsResume: true,
+    models: ["grok-4.6", "grok-4.5"],
+    modelInfo: [
+      {
+        id: "grok-4.6",
+        label: "Grok 4.6",
+        description: "latest",
+        vendor: "xAI",
+        efforts: ["low", "medium", "high", "xhigh"],
+      },
+      {
+        id: "grok-4.5",
+        label: "Grok 4.5",
+        description: "previous",
+        vendor: "xAI",
+        efforts: ["low", "medium", "high"],
+      },
+    ],
+    efforts: ["low", "medium", "high", "xhigh"],
+  };
+
+  it("uses the model list when present, including empty", () => {
+    assert.deepEqual(effortsForModel(grok, "grok-4.6"), [
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+    ]);
+    assert.deepEqual(effortsForModel(grok, "grok-4.5"), [
+      "low",
+      "medium",
+      "high",
+    ]);
+    const haiku: ProviderInfo = {
+      ...grok,
+      id: "claude",
+      name: "Claude Code",
+      models: ["claude-haiku-4-5"],
+      modelInfo: [
+        {
+          id: "claude-haiku-4-5",
+          label: "Haiku",
+          description: "fast",
+          vendor: "Anthropic",
+          efforts: [],
+        },
+      ],
+      efforts: ["low", "medium", "high", "xhigh", "max", "ultracode"],
+    };
+    assert.deepEqual(effortsForModel(haiku, "claude-haiku-4-5"), []);
+    assert.equal(showReasoningControl(effortsForModel(haiku, "claude-haiku-4-5")), false);
+  });
+
+  it("falls back to the provider list for Default and unknown ids", () => {
+    assert.deepEqual(effortsForModel(grok, null), grok.efforts);
+    assert.deepEqual(effortsForModel(grok, "custom-id"), grok.efforts);
+    assert.deepEqual(effortsForModel(undefined, "x"), []);
+  });
 });

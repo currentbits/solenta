@@ -789,6 +789,60 @@ describe("Composer drill-down picker", () => {
     m.unmount();
   });
 
+  it("hides the pill when the selected model lists no efforts", async () => {
+    const claude: ProviderInfo = {
+      ...CLAUDE_WITH_INFO,
+      efforts: ["low", "medium", "high", "xhigh", "max", "ultracode"],
+      models: ["claude-opus-5", "claude-haiku-4-5"],
+      modelInfo: [
+        {
+          id: "claude-opus-5",
+          label: "Opus",
+          description: "hard work",
+          vendor: "Anthropic",
+          efforts: ["low", "medium", "high", "xhigh", "max", "ultracode"],
+        },
+        {
+          id: "claude-haiku-4-5",
+          label: "Haiku",
+          description: "fast",
+          vendor: "Anthropic",
+          efforts: [],
+        },
+      ],
+    };
+    const h = makeHarness();
+    const hidden = await mount(
+      composer(h, {
+        provider: "claude",
+        model: "claude-haiku-4-5",
+        providers: [claude],
+      }),
+    );
+    assert.equal(
+      hidden.query('button[aria-label^="Reasoning:"]'),
+      null,
+      "haiku is not effort-capable",
+    );
+    hidden.unmount();
+
+    const shown = await mount(
+      composer(h, {
+        provider: "claude",
+        model: "claude-opus-5",
+        providers: [claude],
+      }),
+    );
+    assert.ok(shown.query('button[aria-label^="Reasoning:"]'));
+    const menu = await openEffort(shown);
+    assert.ok(
+      Array.from(menu?.querySelectorAll("button") || []).some((b) =>
+        (b.getAttribute("aria-label") || "").includes("Ultracode"),
+      ),
+    );
+    shown.unmount();
+  });
+
   it("lists one row per level the thread's provider advertises", async () => {
     const h = makeHarness();
     const m = await mount(composer(h, { provider: "claude", model: null }));
@@ -1452,13 +1506,13 @@ describe("Composer permission mode", () => {
       name: "OpenCode",
       available: true,
       supportsResume: true,
-      models: ["opencode/north-mini-code-free"],
+      models: ["opencode/laguna-s-2.1-free"],
       modelInfo: [
         {
-          id: "opencode/north-mini-code-free",
-          label: "North Mini",
+          id: "opencode/laguna-s-2.1-free",
+          label: "Laguna S 2.1 Free",
           description: "free",
-          vendor: "Cohere",
+          vendor: "Poolside",
         },
       ],
       efforts: [],

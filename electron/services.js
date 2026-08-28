@@ -8,6 +8,7 @@ const {
   getProvider,
   knownProviderIds,
   listProviders,
+  honouredEfforts,
   probeCatalogCli,
   catalogCliProbeStarted,
   honouredPermissionModes,
@@ -729,8 +730,7 @@ function setReasoningEffort(store, input) {
 
   const level = String(effort);
   const entry = getProvider(thread.provider);
-  const allowed =
-    entry && Array.isArray(entry.efforts) ? entry.efforts : [];
+  const allowed = honouredEfforts(entry, thread.model);
   if (!allowed.includes(level)) {
     const providerName =
       (entry && entry.name) || thread.provider || "provider";
@@ -1373,11 +1373,13 @@ function setProvider(store, input) {
       patch.model = null;
     }
     // Effort is a preference, not a model detail, so it survives the switch
-    // when the new provider lists that level. It cannot survive onto a
-    // provider that does not list it: that level would never reach the CLI
+    // when the new provider/model lists that level. It cannot survive onto a
+    // model that does not list it: that level would never reach the CLI
     // while the picker kept displaying it (same rule as setReasoningEffort).
-    const nextEfforts =
-      nextEntry && Array.isArray(nextEntry.efforts) ? nextEntry.efforts : [];
+    const nextModel = Object.prototype.hasOwnProperty.call(patch, "model")
+      ? patch.model
+      : thread.model;
+    const nextEfforts = honouredEfforts(nextEntry, nextModel);
     patch.reasoningEffort = nextEfforts.includes(thread.reasoningEffort)
       ? thread.reasoningEffort
       : null;
@@ -1396,6 +1398,13 @@ function setProvider(store, input) {
     );
   } else if (modelProvided) {
     patch.model = normalizeModelForProvider(nextEntry, input.model);
+    const nextEfforts = honouredEfforts(nextEntry, patch.model);
+    if (
+      thread.reasoningEffort != null &&
+      !nextEfforts.includes(thread.reasoningEffort)
+    ) {
+      patch.reasoningEffort = null;
+    }
   }
 
   const updated = store.updateThread(threadId, patch);

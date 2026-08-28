@@ -326,7 +326,8 @@ describe("opencode provider registry", () => {
     assert.equal(entry.supportsResume, true);
     assert.ok(entry.models.length > 0, "opencode must list verified free models");
     assert.ok(entry.models.every((id) => id.includes("/")));
-    assert.ok(entry.models.includes("opencode/north-mini-code-free"));
+    assert.ok(entry.models.includes("opencode/hy3-free"));
+    assert.ok(!entry.models.includes("opencode/north-mini-code-free"));
 
     const list = listProviders({ which: () => null, includeSimulate: false });
     const info = list.find((p) => p.id === "opencode");

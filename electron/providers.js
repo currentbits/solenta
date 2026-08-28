@@ -9,21 +9,25 @@ const catalogDivergence = require("./catalogDivergence.js");
  * Data-driven provider registry for agent CLIs.
  *
  * Effort support (verified against installed CLIs / contract correction):
- * - claude: `--effort <level>` exactly low|medium|high|xhigh|max. Unknown values
- *   are a silent warning + default (not an error), so our boundary must reject.
+ * - claude: `--effort <level>` low|medium|high|xhigh|max, plus session-only
+ *   `ultracode` (2.1.203+: no unknown-value warning on 2.1.219). Unknown
+ *   values are a silent warning + default, so our boundary must reject.
+ *   Haiku 4.5 is not effort-capable (empty per-model list).
  * - grok: `--reasoning-effort` (alias `--effort`) errors on unknown; live CLI
- *   (1.0.3) accepts xhigh|high|medium|low. grok-4.6 is the default; grok-4.5
- *   remains listed. No max.
+ *   (1.0.5) grok-4.6 accepts xhigh|high|medium|low; grok-4.5 has no xhigh.
+ *   No max.
  * - codex: no dedicated flag; config override `-c model_reasoning_effort=<level>`.
- *   Live API rejects bogus with enum none|minimal|low|medium|high|xhigh|max;
- *   contract intersection (no none/minimal) is low|medium|high|xhigh|max.
- *   Live web search is `--search` (issue #174), gated by thread.webSearch.
+ *   Sol/Terra: low|medium|high|xhigh|max|ultra (ultra = parallel subagents).
+ *   Luna: through max, no ultra. This machine's gpt-5.5 / 5.4-mini cache:
+ *   low|medium|high|xhigh (no max, no ultra). Live web search is `--search`
+ *   (issue #174), gated by thread.webSearch.
  * - kimi: no effort flag, but [thinking].effort in config.toml (low/high/max
  *   on the k3 family) → efforts listed with effortVia "config"; kimi.js flips
- *   the config around the spawn.
- * - opencode: no effort flag in --help → empty efforts.
+ *   the config around the spawn. kimi-for-coding aliases have no support_efforts.
+ * - opencode: `run --variant <level>` from per-model variants. Provider-wide
+ *   efforts stay empty so a model with no variants hides the pill.
  * - cursor: effort is baked into the model id (e.g. gpt-5.3-codex-high);
- *   empty efforts. Live CLI 2026.07.09-a3815c0. defaultBin is cursor-agent
+ *   empty efforts. Live CLI 2026.08.25-3e8eec8. defaultBin is cursor-agent
  *   because grok also ships `agent` on PATH.
  *
  * Prompt is always the LAST argv element for every provider so an effort flag
@@ -39,6 +43,8 @@ const catalogDivergence = require("./catalogDivergence.js");
  * @property {number} [contextTokens] - context window size, ONLY where the
  *   vendor copy above states it; never guessed (the context ring hides itself
  *   without it)
+ * @property {string[]} [efforts] - when present (including `[]`), replaces
+ *   the provider-wide efforts list for this model
  *
  * @typedef {object} ProviderEntry
  * @property {string} id
@@ -48,7 +54,7 @@ const catalogDivergence = require("./catalogDivergence.js");
  * @property {boolean} supportsResume
  * @property {string[]} models
  * @property {ModelInfo[]} modelInfo
- * @property {Array<"low"|"medium"|"high"|"xhigh"|"max">} efforts
+ * @property {Array<"low"|"medium"|"high"|"xhigh"|"max"|"ultra"|"ultracode">} efforts
  * @property {"config"} [effortVia] - efforts applied outside argv (kimi:
  *   config.toml flip in kimi.js); absent means buildArgs emits the flag
  * @property {boolean} [supportsSearch] - CLI accepts `codex exec --search`
@@ -86,6 +92,42 @@ function maybeEmitEffort(allowed, reasoningEffort, emit) {
   const level = String(reasoningEffort);
   if (!Array.isArray(allowed) || !allowed.includes(level)) return;
   emit(level);
+}
+
+const CLAUDE_EFFORTS = ["low", "medium", "high", "xhigh", "max", "ultracode"];
+const CODEX_EFFORTS = ["low", "medium", "high", "xhigh", "max", "ultra"];
+const CODEX_SOL_TERRA_EFFORTS = [
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+  "max",
+  "ultra",
+];
+const CODEX_LUNA_EFFORTS = ["low", "medium", "high", "xhigh", "max"];
+const CODEX_55_EFFORTS = ["low", "medium", "high", "xhigh"];
+const GROK_46_EFFORTS = ["low", "medium", "high", "xhigh"];
+const GROK_45_EFFORTS = ["low", "medium", "high"];
+const KIMI_K3_EFFORTS = ["low", "high", "max"];
+const OPENCODE_LMH = ["low", "medium", "high"];
+const OPENCODE_DEEPSEEK_EFFORTS = ["low", "medium", "high", "max"];
+
+/**
+ * Effort list for the selected model. ModelInfo.efforts, when the field is
+ * present (including `[]`), wins; otherwise the provider-wide list. Custom
+ * ids and Default (null/empty) use the provider list.
+ * @param {ProviderEntry | null | undefined} entry
+ * @param {string | null | undefined} modelId
+ * @returns {string[]}
+ */
+function honouredEfforts(entry, modelId) {
+  const providerEfforts = Array.isArray(entry && entry.efforts)
+    ? entry.efforts.slice()
+    : [];
+  if (!entry || modelId == null || modelId === "") return providerEfforts;
+  const info = (entry.modelInfo || []).find((m) => m.id === modelId);
+  if (info && Array.isArray(info.efforts)) return info.efforts.slice();
+  return providerEfforts;
 }
 
 /**
@@ -174,6 +216,7 @@ const PROVIDERS = [
         description: "Fast everyday coding with strong defaults",
         vendor: "Anthropic",
         contextTokens: 1_000_000,
+        efforts: CLAUDE_EFFORTS.slice(),
       },
       {
         id: "claude-opus-5",
@@ -182,6 +225,7 @@ const PROVIDERS = [
         vendor: "Anthropic",
         recommended: true,
         contextTokens: 1_000_000,
+        efforts: CLAUDE_EFFORTS.slice(),
       },
       {
         id: "claude-sonnet-5",
@@ -189,6 +233,7 @@ const PROVIDERS = [
         description: "Balanced quality and speed",
         vendor: "Anthropic",
         contextTokens: 1_000_000,
+        efforts: CLAUDE_EFFORTS.slice(),
       },
       {
         id: "claude-haiku-4-5",
@@ -196,10 +241,12 @@ const PROVIDERS = [
         description: "Cheapest and fastest replies",
         vendor: "Anthropic",
         contextTokens: 200_000,
+        efforts: [],
       },
     ],
-    // claude --help / live warning: low, medium, high, xhigh, max
-    efforts: ["low", "medium", "high", "xhigh", "max"],
+    // claude --help lists low..max; 2.1.219 also accepts ultracode (no
+    // unknown-value warning). Haiku is not effort-capable.
+    efforts: CLAUDE_EFFORTS.slice(),
     permissionModes: ALL_PERMISSION_MODES.slice(),
     kind: "claude-stream",
     buildArgs({ sessionId, permissionMode, model, reasoningEffort }) {
@@ -227,7 +274,7 @@ const PROVIDERS = [
       // Takes exactly one value; kept away from other values so it cannot
       // swallow them (variadic flags have bitten this project twice).
       maybeEmitEffort(
-        ["low", "medium", "high", "xhigh", "max"],
+        honouredEfforts(getProvider("claude"), model),
         reasoningEffort,
         (level) => {
           args.push("--effort", level);
@@ -242,10 +289,12 @@ const PROVIDERS = [
     binEnv: "CODER_CODEX_BIN",
     defaultBin: "codex",
     supportsResume: true,
-    // From ~/.codex/models_cache.json (codex-cli 0.144.1, visibility=list only;
-    // codex-auto-review is visibility=hide and is omitted). Descriptions and
-    // display names copied from the cache; vendor is OpenAI (model maker).
+    // Snapshot of the GPT-5.6 family (OpenAI 2026-07-09 / 2026-08-21) plus
+    // gpt-5.5 / 5.4-mini from ~/.codex/models_cache.json visibility=list.
+    // Sol is the flagship (`gpt-5.6` alias); this machine's 0.142.4 cache
+    // does not list the 5.6 family yet. codex-auto-review is visibility=hide.
     models: [
+      "gpt-5.6-sol",
       "gpt-5.6-terra",
       "gpt-5.6-luna",
       "gpt-5.5",
@@ -253,16 +302,26 @@ const PROVIDERS = [
     ],
     modelInfo: [
       {
+        id: "gpt-5.6-sol",
+        label: "GPT-5.6-Sol",
+        description: "Flagship for complex agentic coding.",
+        vendor: "OpenAI",
+        recommended: true,
+        efforts: CODEX_SOL_TERRA_EFFORTS.slice(),
+      },
+      {
         id: "gpt-5.6-terra",
         label: "GPT-5.6-Terra",
         description: "Balanced agentic coding model for everyday work.",
         vendor: "OpenAI",
+        efforts: CODEX_SOL_TERRA_EFFORTS.slice(),
       },
       {
         id: "gpt-5.6-luna",
         label: "GPT-5.6-Luna",
         description: "Fast and affordable agentic coding model.",
         vendor: "OpenAI",
+        efforts: CODEX_LUNA_EFFORTS.slice(),
       },
       {
         id: "gpt-5.5",
@@ -270,7 +329,7 @@ const PROVIDERS = [
         description:
           "Frontier model for complex coding, research, and real-world work.",
         vendor: "OpenAI",
-        recommended: true,
+        efforts: CODEX_55_EFFORTS.slice(),
       },
       {
         id: "gpt-5.4-mini",
@@ -278,11 +337,13 @@ const PROVIDERS = [
         description:
           "Small, fast, and cost-efficient model for simpler coding tasks.",
         vendor: "OpenAI",
+        efforts: CODEX_55_EFFORTS.slice(),
       },
     ],
-    // No dedicated flag; -c model_reasoning_effort=. Live API enum
-    // none|minimal|low|medium|high|xhigh|max; contract has no none/minimal.
-    efforts: ["low", "medium", "high", "xhigh", "max"],
+    // Union of per-model lists (fallback for Default / custom ids).
+    // Sol/Terra add ultra (parallel subagents); Luna stops at max; 5.5 /
+    // 5.4-mini on this machine's cache stop at xhigh.
+    efforts: CODEX_EFFORTS.slice(),
     supportsSearch: true,
     // Issue #170: exec defaults to read-only unless we pass --sandbox.
     permissionModes: ALL_PERMISSION_MODES.slice(),
@@ -295,7 +356,6 @@ const PROVIDERS = [
       webSearch,
       permissionMode,
     }) {
-      const codexEfforts = ["low", "medium", "high", "xhigh", "max"];
       const args = sessionId
         ? [
             "exec",
@@ -308,10 +368,14 @@ const PROVIDERS = [
       if (model) {
         args.push("-m", String(model));
       }
-      maybeEmitEffort(codexEfforts, reasoningEffort, (level) => {
-        // Single-arg form for -c: one key=value token, never open-ended.
-        args.push("-c", `model_reasoning_effort=${level}`);
-      });
+      maybeEmitEffort(
+        honouredEfforts(getProvider("codex"), model),
+        reasoningEffort,
+        (level) => {
+          // Single-arg form for -c: one key=value token, never open-ended.
+          args.push("-c", `model_reasoning_effort=${level}`);
+        },
+      );
       if (webSearch === true) {
         args.push("--search");
       }
@@ -326,8 +390,9 @@ const PROVIDERS = [
     binEnv: "CODER_GROK_BIN",
     defaultBin: "grok",
     supportsResume: true,
-    // Live `grok models` (1.0.3) + ~/.grok/models_cache.json. Ids, labels,
-    // descriptions, and context_window copied from the cache; 4.6 is default.
+    // Live `grok models` (1.0.5) + ~/.grok/models_cache.json. Ids, labels,
+    // descriptions, context_window, and per-model reasoning_efforts copied
+    // from the cache; 4.6 is default.
     models: ["grok-4.6", "grok-4.5"],
     modelInfo: [
       {
@@ -337,6 +402,7 @@ const PROVIDERS = [
         vendor: "xAI",
         recommended: true,
         contextTokens: 500000,
+        efforts: GROK_46_EFFORTS.slice(),
       },
       {
         id: "grok-4.5",
@@ -344,10 +410,11 @@ const PROVIDERS = [
         description: "xAI coding agent with tool use",
         vendor: "xAI",
         contextTokens: 500000,
+        efforts: GROK_45_EFFORTS.slice(),
       },
     ],
     // Live CLI: unknown effort level 'bogus'; use one of: xhigh, high, medium, low
-    efforts: ["low", "medium", "high", "xhigh"],
+    efforts: GROK_46_EFFORTS.slice(),
     // Headless -p has no prompt channel, so default/acceptEdits cannot ask.
     // plan and bypassPermissions are real; asking modes remap in buildArgs
     // so a leftover stored "default" does not auto-cancel the run (#549).
@@ -390,7 +457,7 @@ const PROVIDERS = [
         args.push("--resume", String(sessionId));
       }
       maybeEmitEffort(
-        ["low", "medium", "high", "xhigh"],
+        honouredEfforts(getProvider("grok"), model),
         reasoningEffort,
         (level) => {
           args.push("--reasoning-effort", level);
@@ -407,19 +474,18 @@ const PROVIDERS = [
     binEnv: "CODER_OPENCODE_BIN",
     defaultBin: "opencode",
     supportsResume: true,
-    // Live `opencode models` (v1.17.12) lists these free Zen models. Labels and
-    // descriptions from `opencode models --verbose` / ~/.cache/opencode/models.json.
-    // Ids are provider/model as required by -m. Vendors are the model makers
-    // (from catalog descriptions / same model under other providers), not the CLI.
+    // Live `opencode models` (v1.17.12, 2026-08-28) free Zen list. Labels,
+    // descriptions, vendors, context, and variants from
+    // `opencode models --verbose` / ~/.cache/opencode/models.json.
+    // Ids are provider/model as required by -m. Vendors are the model makers.
     models: [
       "opencode/big-pickle",
       "opencode/deepseek-v4-flash-free",
+      "opencode/hy3-free",
       "opencode/laguna-s-2.1-free",
-      "opencode/ling-3.0-tiny-free",
-      "opencode/longcat-2.0-free",
       "opencode/mimo-v2.5-free",
       "opencode/nemotron-3-ultra-free",
-      "opencode/north-mini-code-free",
+      "opencode/nemotron-3.5-lightning-free",
     ],
     modelInfo: [
       {
@@ -428,6 +494,8 @@ const PROVIDERS = [
         description:
           "Reasoning model for deliberate analysis, multi-step problem solving, and tool use",
         vendor: "OpenCode",
+        contextTokens: 200000,
+        efforts: [],
       },
       {
         id: "opencode/deepseek-v4-flash-free",
@@ -435,6 +503,17 @@ const PROVIDERS = [
         description:
           "Official DeepSeek V4 Flash release with enhanced agentic capabilities and integrated DSpark speculative decoding",
         vendor: "DeepSeek",
+        contextTokens: 200000,
+        efforts: OPENCODE_DEEPSEEK_EFFORTS.slice(),
+      },
+      {
+        id: "opencode/hy3-free",
+        label: "Hy3 Free",
+        description:
+          "Tencent Hy reasoning model for coding, instruction following, and agent tasks",
+        vendor: "Tencent",
+        contextTokens: 190000,
+        efforts: OPENCODE_LMH.slice(),
       },
       {
         id: "opencode/laguna-s-2.1-free",
@@ -442,27 +521,17 @@ const PROVIDERS = [
         description:
           "Agentic coding model from Poolside in the XS size class for local deployment",
         vendor: "Poolside",
-      },
-      {
-        id: "opencode/ling-3.0-tiny-free",
-        label: "Ling-3.0-tiny Free",
-        description:
-          "Compact MoE model for responsive agents, instruction following, and multi-turn conversations",
-        vendor: "InclusionAI",
-      },
-      {
-        id: "opencode/longcat-2.0-free",
-        label: "LongCat-2.0 Free",
-        description:
-          "Meituan LongCat-2.0, a reasoning model with tool calling and a 1M-token context window",
-        vendor: "Meituan",
-        contextTokens: 1000000,
+        recommended: true,
+        contextTokens: 256000,
+        efforts: OPENCODE_LMH.slice(),
       },
       {
         id: "opencode/mimo-v2.5-free",
         label: "MiMo V2.5 Free",
         description: "MiMo omni model for text, image, video, audio, and agents",
         vendor: "Xiaomi",
+        contextTokens: 200000,
+        efforts: OPENCODE_LMH.slice(),
       },
       {
         id: "opencode/nemotron-3-ultra-free",
@@ -470,21 +539,21 @@ const PROVIDERS = [
         description:
           "Largest Nemotron 3 model for maximum open-weight reasoning and agent accuracy",
         vendor: "NVIDIA",
+        contextTokens: 1000000,
+        efforts: OPENCODE_LMH.slice(),
       },
       {
-        id: "opencode/north-mini-code-free",
-        label: "North Mini Code Free",
+        id: "opencode/nemotron-3.5-lightning-free",
+        label: "Nemotron 3.5 Lightning Free",
         description:
-          "Cohere coding model for practical software engineering and agentic edits",
-        vendor: "Cohere",
-        recommended: true,
+          "Fast NVIDIA Nemotron MoE for reliable agentic tasks across enterprise workloads",
+        vendor: "NVIDIA",
+        contextTokens: 262144,
+        efforts: OPENCODE_LMH.slice(),
       },
     ],
-    // opencode run --help DOES list --variant (provider-specific reasoning
-    // effort, e.g. high, max, minimal), but its accepted values vary per
-    // underlying model and are not enumerated anywhere. Left empty until they
-    // are verified: advertising a level the model rejects is the bug this
-    // feature exists to remove.
+    // Fallback for Default / custom: hide the pill. Per-model variants
+    // populate ModelInfo.efforts; buildArgs emits --variant from those.
     efforts: [],
     // `opencode run --auto` auto-approves non-denied permissions. No plan
     // flag. Accept-edits is the same lever as full access.
@@ -503,10 +572,13 @@ const PROVIDERS = [
       if (model) {
         args.push("-m", String(model));
       }
-      // Empty efforts: never emit an effort flag.
-      maybeEmitEffort([], reasoningEffort, () => {
-        args.push("--variant", "should-not-appear");
-      });
+      maybeEmitEffort(
+        honouredEfforts(getProvider("opencode"), model),
+        reasoningEffort,
+        (level) => {
+          args.push("--variant", level);
+        },
+      );
       if (opencodeAuto(permissionMode)) {
         args.push("--auto");
       }
@@ -538,6 +610,7 @@ const PROVIDERS = [
         vendor: "Moonshot",
         recommended: true,
         contextTokens: 1000000,
+        efforts: KIMI_K3_EFFORTS.slice(),
       },
       {
         id: "kimi-code/k3-256k",
@@ -545,25 +618,29 @@ const PROVIDERS = [
         description: "K3 with a 256k context window",
         vendor: "Moonshot",
         contextTokens: 256000,
+        efforts: KIMI_K3_EFFORTS.slice(),
       },
       {
         id: "kimi-code/kimi-for-coding",
         label: "K2.7 Coding",
         description: "Coding-tuned Kimi (K2.7)",
         vendor: "Moonshot",
+        efforts: [],
       },
       {
         id: "kimi-code/kimi-for-coding-highspeed",
         label: "K2.7 Coding Highspeed",
         description: "Faster coding-tuned Kimi (K2.7)",
         vendor: "Moonshot",
+        efforts: [],
       },
     ],
     // From per-model support_efforts in ~/.kimi-code/config.toml (k3 family).
-    // kimi has NO CLI effort flag (verified 0.31.1: --effort etc. all
-    // rejected); effortVia "config" means kimi.js flips [thinking].effort in
-    // config.toml around the spawn instead of emitting argv.
-    efforts: ["low", "high", "max"],
+    // kimi-for-coding aliases have no support_efforts. kimi has NO CLI
+    // effort flag (verified 0.31.1: --effort etc. all rejected); effortVia
+    // "config" means kimi.js flips [thinking].effort in config.toml around
+    // the spawn instead of emitting argv.
+    efforts: KIMI_K3_EFFORTS.slice(),
     effortVia: "config",
     // -p cannot combine with -y/--auto/--plan (verified live). Prompt mode
     // always runs tools unprompted, so the only honest label is full access.
@@ -1352,7 +1429,8 @@ function listProviders(opts = {}) {
 
   for (const entry of PROVIDERS) {
     const bin = resolveBin(entry, env);
-    out.push({
+    /** @type {import('../src/shared/ipc').ProviderInfo} */
+    const info = {
       id: entry.id,
       name: entry.name,
       available: isBinAvailable(bin, whichFn, env),
@@ -1362,7 +1440,8 @@ function listProviders(opts = {}) {
       efforts: (entry.efforts || []).slice(),
       supportsSearch: entry.supportsSearch === true,
       permissionModes: honouredPermissionModes(entry),
-    });
+    };
+    out.push(info);
   }
 
   if (includeSimulate) {
@@ -1400,6 +1479,7 @@ module.exports = {
   defaultWhich,
   clearWhichCache,
   listProviders,
+  honouredEfforts,
   probeCatalogCli,
   catalogCliProbeStarted,
   resetCatalogCliCache,

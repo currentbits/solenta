@@ -24,6 +24,7 @@ const {
   appendJsonArrayItem,
 } = require("./jsonEnvelope.js");
 const { clampUiScale, UI_SCALE_DEFAULT } = require("./zoom.js");
+const { getProvider, honouredEfforts } = require("./providers.js");
 const {
   normalizeSetupCommand,
   normalizeQuickActions,
@@ -109,7 +110,15 @@ function isHttpUrl(u) {
 }
 
 /** ReasoningEffort in src/shared/ipc.ts. Keep in lockstep. */
-const REASONING_EFFORTS = new Set(["low", "medium", "high", "xhigh", "max"]);
+const REASONING_EFFORTS = new Set([
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+  "max",
+  "ultra",
+  "ultracode",
+]);
 
 /** PermissionMode in src/shared/ipc.ts. Keep in lockstep. */
 const PERMISSION_MODES = new Set([
@@ -152,8 +161,20 @@ function parseAgentProfile(item, strict) {
   const effort = rec.reasoningEffort;
   if (effort !== null && !REASONING_EFFORTS.has(effort)) {
     return fail(
-      "agentProfiles entry reasoningEffort must be one of low, medium, high, xhigh, max, or null",
+      "agentProfiles entry reasoningEffort must be one of low, medium, high, xhigh, max, ultra, ultracode, or null",
     );
+  }
+  if (effort !== null) {
+    const providerEntry = getProvider(provider);
+    if (providerEntry) {
+      const modelId = typeof model === "string" ? model : null;
+      const allowed = honouredEfforts(providerEntry, modelId);
+      if (!allowed.includes(effort)) {
+        return fail(
+          `agentProfiles entry reasoningEffort "${effort}" is not honoured by ${providerEntry.name}`,
+        );
+      }
+    }
   }
   const permissionMode = rec.permissionMode;
   if (!PERMISSION_MODES.has(permissionMode)) {

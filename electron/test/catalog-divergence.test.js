@@ -318,7 +318,7 @@ describe("listProviders catalog notes", () => {
         path.join(home, ".codex", "models_cache.json"),
         JSON.stringify({
           models: [
-            { slug: "gpt-5.6-sol", visibility: "list" },
+            { slug: "live-only-model", visibility: "list" },
             { slug: snap[0], visibility: "list" },
           ],
         }),
@@ -331,7 +331,7 @@ describe("listProviders catalog notes", () => {
       });
       const codex = list.find((p) => p.id === "codex");
       assert.deepEqual(codex.models, snap);
-      assert.match(codex.catalogNote, /gpt-5\.6-sol/);
+      assert.match(codex.catalogNote, /live-only-model/);
       assert.match(codex.catalogNote, /Custom\.\.\./);
     } finally {
       fs.rmSync(home, { recursive: true, force: true });
@@ -354,7 +354,7 @@ describe("CLI catalog probes", () => {
         home,
         runCli: async (bin, args) => {
           calls.push({ bin, args });
-          if (bin === "opencode") return "opencode/hy3-free\nopencode/big-pickle\n";
+          if (bin === "opencode") return "opencode/live-only-free\nopencode/big-pickle\n";
           if (bin === "cursor-agent") return "auto - Auto\ncomposer-2.5 - Composer 2.5\n";
           throw new Error(`unexpected ${bin}`);
         },
@@ -379,9 +379,9 @@ describe("CLI catalog probes", () => {
         home,
       });
       const oc = list.find((p) => p.id === "opencode");
-      assert.match(oc.catalogNote, /hy3-free/);
+      assert.match(oc.catalogNote, /live-only-free/);
       assert.equal(
-        oc.models.includes("opencode/hy3-free"),
+        oc.models.includes("opencode/live-only-free"),
         false,
         "must not merge live ids into the picker",
       );
@@ -431,7 +431,7 @@ describe("CLI catalog probes", () => {
         includeSimulate: false,
         runCli: async () => {
           await gate;
-          return "opencode/hy3-free\n";
+          return "opencode/live-only-free\n";
         },
       });
       assert.equal(first instanceof Promise, true);
@@ -449,7 +449,7 @@ describe("CLI catalog probes", () => {
       const second = await secondP;
       assert.match(
         second.find((p) => p.id === "opencode").catalogNote,
-        /hy3-free/,
+        /live-only-free/,
       );
     } finally {
       finish();

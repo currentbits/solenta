@@ -8,6 +8,8 @@ import { formatUsd } from "../digest";
 import {
   CUSTOM_MODEL_ID,
   effortDisplayLabel,
+  effortHint,
+  effortsForModel,
   profileSummary,
 } from "../modelPicker";
 import type {
@@ -709,8 +711,13 @@ export function SettingsModal({
     const model = draft.customModel
       ? draft.model?.trim() || null
       : draft.model;
+    const allowed = effortsForModel(selected, model);
     const reasoningEffort =
-      selected && selected.efforts.length > 0 ? draft.reasoningEffort : null;
+      allowed.length > 0 &&
+      draft.reasoningEffort != null &&
+      allowed.includes(draft.reasoningEffort)
+        ? draft.reasoningEffort
+        : null;
     const nextProfile: AgentProfile = {
       id: draft.id ?? crypto.randomUUID(),
       name,
@@ -2283,7 +2290,7 @@ function ProfileForm({
 }) {
   const selected = providers.find((p) => p.id === draft.provider);
   const modelInfo = selected?.modelInfo ?? [];
-  const efforts = selected?.efforts ?? [];
+  const efforts = effortsForModel(selected, draft.model);
   const permissionModes = providerPermissionModes(selected);
   const modelValue = draft.customModel ? CUSTOM_MODEL_ID : (draft.model ?? "");
   const providerMissing =
@@ -2295,9 +2302,10 @@ function ProfileForm({
     const modelOk =
       draft.model != null &&
       (next?.modelInfo.some((m) => m.id === draft.model) ?? false);
+    const nextModel = modelOk ? draft.model : null;
     const effortOk =
       draft.reasoningEffort != null &&
-      (next?.efforts.includes(draft.reasoningEffort) ?? false);
+      effortsForModel(next, nextModel).includes(draft.reasoningEffort);
     onChange({
       ...draft,
       provider: nextId,
@@ -2369,10 +2377,17 @@ function ProfileForm({
               onChange({ ...draft, customModel: true });
               return;
             }
+            const nextModel = value === "" ? null : value;
+            const nextEfforts = effortsForModel(selected, nextModel);
             onChange({
               ...draft,
               customModel: false,
-              model: value === "" ? null : value,
+              model: nextModel,
+              reasoningEffort:
+                draft.reasoningEffort != null &&
+                nextEfforts.includes(draft.reasoningEffort)
+                  ? draft.reasoningEffort
+                  : null,
             });
           }}
         >
@@ -2424,11 +2439,16 @@ function ProfileForm({
             }
           >
             <option value="">Default</option>
-            {efforts.map((level) => (
+            {efforts.map((level) => {
+              const hint = effortHint(level);
+              return (
               <option key={level} value={level}>
-                {effortDisplayLabel(level)}
+                {hint
+                  ? `${effortDisplayLabel(level)} (${hint})`
+                  : effortDisplayLabel(level)}
               </option>
-            ))}
+              );
+            })}
           </select>
         </div>
       )}

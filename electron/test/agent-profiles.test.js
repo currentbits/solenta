@@ -171,8 +171,63 @@ describe("setSettings agentProfiles validation", () => {
     reject([validProfile({ model: undefined })], /model must be a string or null/);
     reject([validProfile({ reasoningEffort: "ultra" })], /reasoningEffort/);
     reject([validProfile({ reasoningEffort: "LOW" })], /reasoningEffort/);
+    reject(
+      [validProfile({ provider: "claude", model: "claude-haiku-4-5", reasoningEffort: "high" })],
+      /reasoningEffort/,
+    );
     reject([validProfile({ permissionMode: "yolo" })], /permissionMode/);
     reject([validProfile({ permissionMode: null })], /permissionMode/);
+  });
+
+  it("accepts ultra on Codex Sol and ultracode on Claude Opus", () => {
+    const store = new Store(filePath);
+    const list = [
+      validProfile({
+        id: "sol-ultra",
+        provider: "codex",
+        model: "gpt-5.6-sol",
+        reasoningEffort: "ultra",
+        permissionMode: "default",
+      }),
+      validProfile({
+        id: "opus-ultra",
+        provider: "claude",
+        model: "claude-opus-5",
+        reasoningEffort: "ultracode",
+        permissionMode: "default",
+      }),
+    ];
+    const next = services.setSettings(store, { agentProfiles: list });
+    assert.equal(next.agentProfiles[0].reasoningEffort, "ultra");
+    assert.equal(next.agentProfiles[1].reasoningEffort, "ultracode");
+    assert.throws(
+      () =>
+        services.setSettings(store, {
+          agentProfiles: [
+            validProfile({
+              provider: "codex",
+              model: "gpt-5.6-luna",
+              reasoningEffort: "ultra",
+              permissionMode: "default",
+            }),
+          ],
+        }),
+      /reasoningEffort/,
+    );
+    assert.throws(
+      () =>
+        services.setSettings(store, {
+          agentProfiles: [
+            validProfile({
+              provider: "grok",
+              model: "grok-4.6",
+              reasoningEffort: "ultra",
+              permissionMode: "plan",
+            }),
+          ],
+        }),
+      /reasoningEffort/,
+    );
   });
 
   it("a patch that omits agentProfiles leaves saved profiles untouched", () => {

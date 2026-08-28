@@ -16,6 +16,7 @@ const {
   PROVIDERS,
   getProvider,
   listProviders,
+  honouredEfforts,
 } = require("../providers.js");
 const { Store } = require("../store.js");
 const services = require("../services.js");
@@ -126,6 +127,7 @@ describe("reasoning effort: provider modelInfo + efforts", () => {
       "high",
       "xhigh",
       "max",
+      "ultracode",
     ]);
     assert.deepEqual(byId.codex.efforts, [
       "low",
@@ -133,6 +135,7 @@ describe("reasoning effort: provider modelInfo + efforts", () => {
       "high",
       "xhigh",
       "max",
+      "ultra",
     ]);
     assert.deepEqual(byId.grok.efforts, ["low", "medium", "high", "xhigh"]);
     assert.deepEqual(byId.opencode.efforts, []);
@@ -144,6 +147,58 @@ describe("reasoning effort: provider modelInfo + efforts", () => {
     assert.equal(getProvider("kimi").effortVia, "config");
     assert.deepEqual(byId.simulate.efforts, []);
     assert.deepEqual(byId.simulate.modelInfo, []);
+
+    const haiku = byId.claude.modelInfo.find((m) => m.id === "claude-haiku-4-5");
+    assert.deepEqual(haiku.efforts, []);
+    const opus = byId.claude.modelInfo.find((m) => m.id === "claude-opus-5");
+    assert.ok(opus.efforts.includes("ultracode"));
+    const grok45 = byId.grok.modelInfo.find((m) => m.id === "grok-4.5");
+    assert.deepEqual(grok45.efforts, ["low", "medium", "high"]);
+    const sol = byId.codex.modelInfo.find((m) => m.id === "gpt-5.6-sol");
+    assert.ok(sol.efforts.includes("ultra"));
+    const luna = byId.codex.modelInfo.find((m) => m.id === "gpt-5.6-luna");
+    assert.ok(!luna.efforts.includes("ultra"));
+    const pickle = byId.opencode.modelInfo.find(
+      (m) => m.id === "opencode/big-pickle",
+    );
+    assert.deepEqual(pickle.efforts, []);
+  });
+
+  it("honouredEfforts uses per-model lists when present, else the provider list", () => {
+    const claude = getProvider("claude");
+    assert.deepEqual(honouredEfforts(claude, null), claude.efforts);
+    assert.deepEqual(honouredEfforts(claude, "claude-haiku-4-5"), []);
+    assert.ok(
+      honouredEfforts(claude, "claude-opus-5").includes("ultracode"),
+    );
+    assert.deepEqual(
+      honouredEfforts(claude, "custom-not-in-catalog"),
+      claude.efforts,
+    );
+
+    const grok = getProvider("grok");
+    assert.deepEqual(honouredEfforts(grok, "grok-4.5"), [
+      "low",
+      "medium",
+      "high",
+    ]);
+    assert.ok(honouredEfforts(grok, "grok-4.6").includes("xhigh"));
+
+    const codex = getProvider("codex");
+    assert.ok(honouredEfforts(codex, "gpt-5.6-sol").includes("ultra"));
+    assert.ok(honouredEfforts(codex, "gpt-5.6-terra").includes("ultra"));
+    assert.equal(honouredEfforts(codex, "gpt-5.6-luna").includes("ultra"), false);
+    assert.equal(honouredEfforts(codex, "gpt-5.5").includes("max"), false);
+
+    const oc = getProvider("opencode");
+    assert.deepEqual(honouredEfforts(oc, null), []);
+    assert.deepEqual(honouredEfforts(oc, "opencode/big-pickle"), []);
+    assert.deepEqual(honouredEfforts(oc, "opencode/deepseek-v4-flash-free"), [
+      "low",
+      "medium",
+      "high",
+      "max",
+    ]);
   });
 
   it("registry efforts stay in lockstep with buildArgs allow-lists", () => {
@@ -289,7 +344,7 @@ describe("reasoning effort: buildArgs per provider", () => {
     });
   });
 
-  it("opencode: empty efforts never invents a flag; prompt last", () => {
+  it("opencode: empty provider efforts hide the flag; per-model variants emit --variant", () => {
     const entry = getProvider("opencode");
     assert.deepEqual(entry.efforts, []);
     const bare = entry.buildArgs({ prompt: PROMPT_OPENCODE });
@@ -304,6 +359,75 @@ describe("reasoning effort: buildArgs per provider", () => {
     assert.ok(!forced.includes("--variant"));
     assert.ok(!forced.includes("--effort"));
     assert.ok(!forced.includes("--reasoning-effort"));
+
+    const withVariant = entry.buildArgs({
+      prompt: PROMPT_OPENCODE,
+      model: "opencode/deepseek-v4-flash-free",
+      reasoningEffort: "max",
+    });
+    assertPromptLast(withVariant, PROMPT_OPENCODE, {
+      effortFlag: "--variant",
+      effortValue: "max",
+    });
+
+    const pickle = entry.buildArgs({
+      prompt: PROMPT_OPENCODE,
+      model: "opencode/big-pickle",
+      reasoningEffort: "high",
+    });
+    assertPromptLast(pickle, PROMPT_OPENCODE);
+    assert.ok(!pickle.includes("--variant"));
+  });
+
+  it("claude: ultracode on opus; never on haiku", () => {
+    const entry = getProvider("claude");
+    const opus = entry.buildArgs({
+      permissionMode: "default",
+      model: "claude-opus-5",
+      reasoningEffort: "ultracode",
+    });
+    const fi = opus.indexOf("--effort");
+    assert.ok(fi >= 0, JSON.stringify(opus));
+    assert.equal(opus[fi + 1], "ultracode");
+
+    const haiku = entry.buildArgs({
+      permissionMode: "default",
+      model: "claude-haiku-4-5",
+      reasoningEffort: "high",
+    });
+    assert.ok(!haiku.includes("--effort"), JSON.stringify(haiku));
+  });
+
+  it("codex: ultra on sol/terra only; max not on gpt-5.5", () => {
+    const entry = getProvider("codex");
+    const sol = entry.buildArgs({
+      prompt: PROMPT_CODEX,
+      model: "gpt-5.6-sol",
+      reasoningEffort: "ultra",
+    });
+    assertPromptLast(sol, PROMPT_CODEX);
+    assert.ok(sol.includes("model_reasoning_effort=ultra"), JSON.stringify(sol));
+
+    const terra = entry.buildArgs({
+      prompt: PROMPT_CODEX,
+      model: "gpt-5.6-terra",
+      reasoningEffort: "ultra",
+    });
+    assert.ok(terra.includes("model_reasoning_effort=ultra"));
+
+    const luna = entry.buildArgs({
+      prompt: PROMPT_CODEX,
+      model: "gpt-5.6-luna",
+      reasoningEffort: "ultra",
+    });
+    assert.ok(!luna.some((a) => String(a).includes("model_reasoning_effort=ultra")));
+
+    const gpt55 = entry.buildArgs({
+      prompt: PROMPT_CODEX,
+      model: "gpt-5.5",
+      reasoningEffort: "max",
+    });
+    assert.ok(!gpt55.some((a) => String(a).includes("model_reasoning_effort")));
   });
 
   it("kimi: effort never reaches argv even though efforts are listed", () => {
@@ -655,6 +779,126 @@ describe("reasoning effort: setReasoningEffort service", () => {
         }),
       /Kimi Code does not support reasoning effort "medium"/,
     );
+  });
+
+  it("rejects grok-4.5 xhigh and accepts it on grok-4.6", () => {
+    const thread = services.createThread(store, {
+      projectId: project.id,
+      title: "T",
+    });
+    services.setProvider(store, {
+      threadId: thread.id,
+      provider: "grok",
+      model: "grok-4.6",
+    });
+    const ok = services.setReasoningEffort(store, {
+      threadId: thread.id,
+      effort: "xhigh",
+    });
+    assert.equal(ok.reasoningEffort, "xhigh");
+    services.setProvider(store, {
+      threadId: thread.id,
+      provider: "grok",
+      model: "grok-4.5",
+    });
+    assert.equal(
+      store.getThread(thread.id).reasoningEffort,
+      null,
+      "xhigh must not survive onto grok-4.5",
+    );
+    assert.throws(
+      () =>
+        services.setReasoningEffort(store, {
+          threadId: thread.id,
+          effort: "xhigh",
+        }),
+      /Grok.*xhigh/,
+    );
+  });
+
+  it("rejects haiku effort and snaps it off when switching onto haiku", () => {
+    const thread = services.createThread(store, {
+      projectId: project.id,
+      title: "T",
+    });
+    services.setProvider(store, {
+      threadId: thread.id,
+      provider: "claude",
+      model: "claude-opus-5",
+    });
+    services.setReasoningEffort(store, {
+      threadId: thread.id,
+      effort: "ultracode",
+    });
+    assert.equal(store.getThread(thread.id).reasoningEffort, "ultracode");
+    services.setProvider(store, {
+      threadId: thread.id,
+      provider: "claude",
+      model: "claude-haiku-4-5",
+    });
+    assert.equal(store.getThread(thread.id).reasoningEffort, null);
+    assert.throws(
+      () =>
+        services.setReasoningEffort(store, {
+          threadId: thread.id,
+          effort: "high",
+        }),
+      /Claude Code.*high/,
+    );
+  });
+
+  it("accepts ultra on Codex Sol and rejects it on Luna", () => {
+    const thread = services.createThread(store, {
+      projectId: project.id,
+      title: "T",
+    });
+    services.setProvider(store, {
+      threadId: thread.id,
+      provider: "codex",
+      model: "gpt-5.6-sol",
+    });
+    const ok = services.setReasoningEffort(store, {
+      threadId: thread.id,
+      effort: "ultra",
+    });
+    assert.equal(ok.reasoningEffort, "ultra");
+    services.setProvider(store, {
+      threadId: thread.id,
+      provider: "codex",
+      model: "gpt-5.6-luna",
+    });
+    assert.equal(store.getThread(thread.id).reasoningEffort, null);
+    assert.throws(
+      () =>
+        services.setReasoningEffort(store, {
+          threadId: thread.id,
+          effort: "ultra",
+        }),
+      /Codex.*ultra/,
+    );
+  });
+
+  it("accepts OpenCode --variant levels only on models that list them", () => {
+    const thread = services.createThread(store, {
+      projectId: project.id,
+      title: "T",
+    });
+    services.setProvider(store, {
+      threadId: thread.id,
+      provider: "opencode",
+      model: "opencode/deepseek-v4-flash-free",
+    });
+    const ok = services.setReasoningEffort(store, {
+      threadId: thread.id,
+      effort: "max",
+    });
+    assert.equal(ok.reasoningEffort, "max");
+    services.setProvider(store, {
+      threadId: thread.id,
+      provider: "opencode",
+      model: "opencode/big-pickle",
+    });
+    assert.equal(store.getThread(thread.id).reasoningEffort, null);
   });
 
   it("does not bump updatedAt", () => {
