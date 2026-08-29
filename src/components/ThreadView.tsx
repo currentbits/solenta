@@ -635,6 +635,15 @@ interface ThreadViewProps {
     ciWorkflowApproved?: boolean;
   }) => Promise<unknown>;
   onRemoveWorktree?: (force?: boolean) => Promise<unknown>;
+  /** Local branches for the post-create stacked-base picker (#187). */
+  listBaseBranches?: (
+    projectId: string,
+  ) => Promise<{ defaultBranch: string; branches: string[] }>;
+  /** Change the recorded merge/PR base after create (#187). */
+  onSetBaseBranch?: (
+    threadId: string,
+    baseBranch: string | null,
+  ) => void | Promise<void>;
   /** Unmerged worktree files plus capped conflict-marker snippets. */
   conflictContext?: (threadId: string) => Promise<ConflictContext>;
   /** Open the thread worktree in the configured editor. */
@@ -3264,6 +3273,7 @@ function ChangesPanel({
   threadId,
   threadTitle,
   threadBranch,
+  threadBaseBranch,
   planText,
   openNonce,
   isWorking = false,
@@ -3282,6 +3292,8 @@ function ChangesPanel({
   threadId: string | null;
   threadTitle: string;
   threadBranch: string | null;
+  /** Recorded merge/PR base (#187). Null/absent = repo default. */
+  threadBaseBranch?: string | null;
   planText: string;
   openNonce: number;
   isWorking?: boolean;
@@ -3571,6 +3583,19 @@ function ChangesPanel({
           {threadBranch ? (
             <span className={styles.changesBranch} title={threadBranch}>
               {threadBranch}
+            </span>
+          ) : null}
+          {threadBranch ? (
+            <span
+              className={styles.changesBase}
+              data-stacked-base=""
+              title={
+                threadBaseBranch
+                  ? `Merge and PR land on ${threadBaseBranch}`
+                  : "Merge and PR land on the repo default"
+              }
+            >
+              → {threadBaseBranch || "repo default"}
             </span>
           ) : null}
         </div>
@@ -4138,6 +4163,8 @@ export const ThreadView = memo(function ThreadView({
   onSetupWorktree,
   onMergeWorktree,
   onRemoveWorktree,
+  listBaseBranches,
+  onSetBaseBranch,
   conflictContext,
   onOpenWorktree,
   onRunCommand,
@@ -4585,6 +4612,15 @@ export const ThreadView = memo(function ThreadView({
           void onOpenWorktree();
         }
       : null,
+    listBaseBranches:
+      listBaseBranches && project
+        ? () => listBaseBranches(project.id)
+        : undefined,
+    onSetBaseBranch:
+      onSetBaseBranch && detail?.thread
+        ? (baseBranch) =>
+            Promise.resolve(onSetBaseBranch(detail.thread.id, baseBranch))
+        : undefined,
   });
 
   /** Last user text + event card id that carries the Retry turn control. */
@@ -5825,6 +5861,7 @@ export const ThreadView = memo(function ThreadView({
                 threadId={detail?.thread.id ?? null}
                 threadTitle={detail?.thread.title ?? ""}
                 threadBranch={detail?.thread.branch ?? null}
+                threadBaseBranch={detail?.thread.baseBranch ?? null}
                 planText={planTextOf(detail)}
                 openNonce={changesNonce}
                 isWorking={isWorking}

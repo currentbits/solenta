@@ -595,7 +595,18 @@ function resolveNewThreadModel(input, settings, provider) {
  * `issueNumber` is the planboard issue this thread was started from (#420).
  * `provider`/`model` override settings.defaultProvider/defaultModel (#711).
  * `memoryConsolidate` tags the sleep-time memory pass (issue #722).
+ * `baseBranch` is the optional stacked merge/PR base (#187).
  */
+function normalizeBaseBranch(value) {
+  if (value == null) return null;
+  const name = String(value).trim();
+  if (!name) return null;
+  if (name === "HEAD" || name.includes("..") || /[\s~^:?*\[\\]/.test(name)) {
+    throw new Error(`Invalid base branch: ${name}`);
+  }
+  return name;
+}
+
 function createThread(store, input) {
   const project = store.getProject(input.projectId);
   if (!project) {
@@ -614,6 +625,7 @@ function createThread(store, input) {
     // Same title length convention as auto-rename from first prompt line.
     title: truncateThreadTitle(input.title || "New Thread"),
     branch: null,
+    baseBranch: normalizeBaseBranch(input.baseBranch),
     prNumber: null,
     prUrl: null,
     status: "idle",
@@ -1906,6 +1918,46 @@ function setNotes(store, input) {
   }
   const notes = String(input.notes ?? "").trim().slice(0, THREAD_NOTES_MAX);
   const patch = { notes };
+  const updated = store.updateThread(threadId, patch);
+  store.save();
+  return updated ? { ...updated } : { ...thread, ...patch };
+}
+
+/**
+ * Change the recorded merge/PR base after create (#187 / #775).
+ * Empty/null clears to the repo default. A non-empty name must be a
+ * local branch. Refused after the first pull request. A bound worktree
+ * is reset onto the new base when clean; a dirty tree is refused and
+ * the recorded base is left unchanged. Never bumps updatedAt.
+ *
+ * @param {import('./store').Store} store
+ * @param {{ threadId: string, baseBranch?: string | null }} input
+ */
+function setBaseBranch(store, input) {
+  const { threadId } = input;
+  const thread = store.getThread(threadId);
+  if (!thread) {
+    throw new Error(`Unknown thread: ${threadId}`);
+  }
+  if (thread.prNumber) {
+    throw new Error("Cannot change the merge base after the first pull request");
+  }
+  const name = normalizeBaseBranch(input.baseBranch);
+  const { listBranches, retargetWorktreeBase } = require("./worktrees.js");
+  if (name) {
+    const project = store.getProject(thread.projectId);
+    if (!project || !project.path) {
+      throw new Error(`Unknown base branch: ${name}`);
+    }
+    const listed = listBranches(project.path);
+    if (!listed.branches.includes(name)) {
+      throw new Error(`Unknown base branch: ${name}`);
+    }
+  }
+  if (thread.worktreePath) {
+    retargetWorktreeBase({ store, thread, baseName: name });
+  }
+  const patch = { baseBranch: name };
   const updated = store.updateThread(threadId, patch);
   store.save();
   return updated ? { ...updated } : { ...thread, ...patch };
@@ -4896,6 +4948,7 @@ module.exports = {
   setCrossThreadInbound,
   setQuotaWaitAutoResume,
   setNotes,
+  setBaseBranch,
   setFeltEstimate,
   setVerifyCommand,
   runVerifyNow,

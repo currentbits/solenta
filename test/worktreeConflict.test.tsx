@@ -72,6 +72,8 @@ function chrome(opts: {
   onMergeWorktree?: () => Promise<unknown>;
   onStartRun?: (prompt: string, threadId?: string) => Promise<void>;
   conflictContext?: (threadId: string) => Promise<ConflictResolveInput>;
+  listBaseBranches?: () => Promise<{ defaultBranch: string; branches: string[] }>;
+  onSetBaseBranch?: (baseBranch: string | null) => Promise<unknown>;
 }) {
   return (
     <WorktreeControl
@@ -83,6 +85,8 @@ function chrome(opts: {
       onRemoveWorktree={async () => {}}
       onStartRun={opts.onStartRun}
       conflictContext={opts.conflictContext}
+      listBaseBranches={opts.listBaseBranches}
+      onSetBaseBranch={opts.onSetBaseBranch}
     />
   );
 }
@@ -226,5 +230,86 @@ describe("worktree header control (#680)", () => {
       />,
     );
     assert.equal(m.query("[data-worktree-control]"), null);
+  });
+});
+
+describe("stacked base after create (#187)", () => {
+  it("shows the recorded base on the worktree control", async () => {
+    const m = await mount(chrome({ thread: thread({ baseBranch: "stacked-base" }) }));
+    const label = m.query("[data-stacked-base]");
+    assert.ok(label, "stacked-base label");
+    assert.equal((label!.textContent || "").trim(), "stacked-base");
+    m.unmount();
+  });
+
+  it("shows repo default when the base is unset", async () => {
+    const m = await mount(chrome({}));
+    const label = m.query("[data-stacked-base]");
+    assert.ok(label);
+    assert.equal((label!.textContent || "").trim(), "repo default");
+    m.unmount();
+  });
+
+  it("changes the recorded base from the worktree menu", async () => {
+    const picked: Array<string | null> = [];
+    const m = await mount(
+      chrome({
+        listBaseBranches: async () => ({
+          defaultBranch: "main",
+          branches: ["main", "stacked-base"],
+        }),
+        onSetBaseBranch: async (baseBranch) => {
+          picked.push(baseBranch);
+        },
+      }),
+    );
+    await m.click(m.query("[data-worktree-menu]"));
+    await m.click(m.query("[data-change-base]"));
+    await m.flush();
+    const option = m.query("[data-base-branch='stacked-base']");
+    assert.ok(option, "local branch listed");
+    await m.click(option);
+    await m.flush();
+    assert.deepEqual(picked, ["stacked-base"]);
+    m.unmount();
+  });
+
+  it("clears the recorded base back to the repo default", async () => {
+    const picked: Array<string | null> = [];
+    const m = await mount(
+      chrome({
+        thread: thread({ baseBranch: "stacked-base" }),
+        listBaseBranches: async () => ({
+          defaultBranch: "main",
+          branches: ["main", "stacked-base"],
+        }),
+        onSetBaseBranch: async (baseBranch) => {
+          picked.push(baseBranch);
+        },
+      }),
+    );
+    await m.click(m.query("[data-worktree-menu]"));
+    await m.click(m.query("[data-change-base]"));
+    await m.flush();
+    await m.click(m.query("[data-base-branch='']"));
+    await m.flush();
+    assert.deepEqual(picked, [null]);
+    m.unmount();
+  });
+
+  it("hides Change base after the first pull request", async () => {
+    const m = await mount(
+      chrome({
+        thread: thread({ prNumber: 42, prUrl: "https://example/p/42" }),
+        listBaseBranches: async () => ({
+          defaultBranch: "main",
+          branches: ["main", "stacked-base"],
+        }),
+        onSetBaseBranch: async () => {},
+      }),
+    );
+    await m.click(m.query("[data-worktree-menu]"));
+    assert.equal(m.query("[data-change-base]"), null);
+    m.unmount();
   });
 });

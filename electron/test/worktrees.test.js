@@ -499,6 +499,173 @@ describe("worktrees", () => {
     assert.ok(!fs.existsSync(setup.worktreePath));
   });
 
+  it("mergeWorktree without baseBranch lands on main when the checkout is on a feature (#187)", async () => {
+    const setup = setupWorktree({
+      store,
+      threadId: thread.id,
+      worktreeBase,
+      broadcast: () => {},
+    });
+    fs.writeFileSync(path.join(setup.worktreePath, "stacked.txt"), "from worker\n");
+    const featureHead = git(repo, ["rev-parse", "HEAD"]);
+    git(repo, ["checkout", "-b", "coder/feature-base"]);
+    assert.equal(git(repo, ["branch", "--show-current"]), "coder/feature-base");
+    assert.equal(store.getThread(thread.id).baseBranch, null);
+
+    mergeWorktree({
+      store,
+      threadId: thread.id,
+      broadcast: () => {},
+    });
+
+    assert.ok(fs.existsSync(path.join(repo, "stacked.txt")));
+    assert.equal(
+      git(repo, ["log", "main", "-1", "--format=%s"]),
+      git(repo, ["log", "-1", "--format=%s"]),
+    );
+    assert.match(git(repo, ["log", "main", "-1", "--oneline"]), /Merge worktree/i);
+    assert.equal(
+      git(repo, ["rev-parse", "coder/feature-base"]),
+      featureHead,
+      "feature branch HEAD must stay put",
+    );
+    assert.equal(git(repo, ["branch", "--show-current"]), "main");
+  });
+
+  it("mergeWorktree with baseBranch=feature lands there, not on main (#187)", async () => {
+    git(repo, ["checkout", "-b", "stacked-base"]);
+    fs.writeFileSync(path.join(repo, "schema.txt"), "schema\n");
+    git(repo, ["add", "schema.txt"]);
+    git(repo, ["commit", "-m", "schema"]);
+    const baseHead = git(repo, ["rev-parse", "HEAD"]);
+    git(repo, ["checkout", "main"]);
+    const mainHead = git(repo, ["rev-parse", "HEAD"]);
+
+    const stacked = services.createThread(store, {
+      projectId: project.id,
+      title: "API on schema",
+      baseBranch: "stacked-base",
+    });
+    assert.equal(store.getThread(stacked.id).baseBranch, "stacked-base");
+
+    const setup = setupWorktree({
+      store,
+      threadId: stacked.id,
+      worktreeBase,
+      broadcast: () => {},
+    });
+    assert.equal(
+      git(setup.worktreePath, ["rev-parse", "HEAD"]),
+      baseHead,
+      "worktree must start at the recorded base",
+    );
+    fs.writeFileSync(path.join(setup.worktreePath, "api.txt"), "api\n");
+
+    mergeWorktree({
+      store,
+      threadId: stacked.id,
+      broadcast: () => {},
+    });
+
+    assert.equal(git(repo, ["rev-parse", "main"]), mainHead, "main HEAD unchanged");
+    assert.equal(git(repo, ["branch", "--show-current"]), "stacked-base");
+    assert.equal(
+      fs.readFileSync(path.join(repo, "api.txt"), "utf8"),
+      "api\n",
+    );
+    assert.equal(
+      fs.readFileSync(path.join(repo, "schema.txt"), "utf8"),
+      "schema\n",
+    );
+    assert.match(
+      git(repo, ["log", "stacked-base", "-1", "--oneline"]),
+      /Merge worktree/i,
+    );
+  });
+
+  it("changing baseBranch after create retargets merge (#187)", async () => {
+    git(repo, ["checkout", "-b", "stacked-base"]);
+    fs.writeFileSync(path.join(repo, "schema.txt"), "schema\n");
+    git(repo, ["add", "schema.txt"]);
+    git(repo, ["commit", "-m", "schema"]);
+    const baseHead = git(repo, ["rev-parse", "HEAD"]);
+    git(repo, ["checkout", "main"]);
+    const mainHead = git(repo, ["rev-parse", "HEAD"]);
+
+    assert.equal(store.getThread(thread.id).baseBranch, null);
+    services.setBaseBranch(store, {
+      threadId: thread.id,
+      baseBranch: "stacked-base",
+    });
+    assert.equal(store.getThread(thread.id).baseBranch, "stacked-base");
+
+    const setup = setupWorktree({
+      store,
+      threadId: thread.id,
+      worktreeBase,
+      broadcast: () => {},
+    });
+    fs.writeFileSync(path.join(setup.worktreePath, "api.txt"), "api\n");
+
+    mergeWorktree({
+      store,
+      threadId: thread.id,
+      broadcast: () => {},
+    });
+
+    assert.equal(git(repo, ["rev-parse", "main"]), mainHead, "main HEAD unchanged");
+    assert.equal(git(repo, ["branch", "--show-current"]), "stacked-base");
+    assert.equal(fs.readFileSync(path.join(repo, "api.txt"), "utf8"), "api\n");
+    assert.notEqual(git(repo, ["rev-parse", "stacked-base"]), baseHead);
+    assert.match(
+      git(repo, ["log", "stacked-base", "-1", "--oneline"]),
+      /Merge worktree/i,
+    );
+  });
+
+  it("clearing baseBranch returns merge to the repo default (#187)", async () => {
+    git(repo, ["checkout", "-b", "stacked-base"]);
+    fs.writeFileSync(path.join(repo, "schema.txt"), "schema\n");
+    git(repo, ["add", "schema.txt"]);
+    git(repo, ["commit", "-m", "schema"]);
+    const stackedHead = git(repo, ["rev-parse", "HEAD"]);
+    git(repo, ["checkout", "main"]);
+
+    const stacked = services.createThread(store, {
+      projectId: project.id,
+      title: "Then clear",
+      baseBranch: "stacked-base",
+    });
+    services.setBaseBranch(store, {
+      threadId: stacked.id,
+      baseBranch: null,
+    });
+    assert.equal(store.getThread(stacked.id).baseBranch, null);
+
+    const setup = setupWorktree({
+      store,
+      threadId: stacked.id,
+      worktreeBase,
+      broadcast: () => {},
+    });
+    fs.writeFileSync(path.join(setup.worktreePath, "api.txt"), "api\n");
+
+    mergeWorktree({
+      store,
+      threadId: stacked.id,
+      broadcast: () => {},
+    });
+
+    assert.equal(
+      git(repo, ["rev-parse", "stacked-base"]),
+      stackedHead,
+      "cleared base must leave stacked-base put",
+    );
+    assert.equal(git(repo, ["branch", "--show-current"]), "main");
+    assert.ok(fs.existsSync(path.join(repo, "api.txt")));
+    assert.match(git(repo, ["log", "main", "-1", "--oneline"]), /Merge worktree/i);
+  });
+
   it("mergeWorktree with paths commits only those files and refuses leftovers", async () => {
     const setup = setupWorktree({
       store,
@@ -1364,6 +1531,128 @@ describe("worktrees", () => {
       assert.ok(createCall.includes("--title"));
       assert.ok(createCall.includes("Ship feature"));
       assert.ok(createCall.includes(setup.branch));
+      const baseIdx = createCall.indexOf("--base");
+      assert.equal(
+        createCall[baseIdx + 1],
+        "main",
+        "unset baseBranch still targets the repo default",
+      );
+    });
+
+    it("createPr with baseBranch=feature uses that --base (#187)", async () => {
+      git(repo, ["checkout", "-b", "stacked-base"]);
+      fs.writeFileSync(path.join(repo, "schema.txt"), "schema\n");
+      git(repo, ["add", "schema.txt"]);
+      git(repo, ["commit", "-m", "schema"]);
+      git(repo, ["checkout", "main"]);
+
+      const stacked = services.createThread(store, {
+        projectId: project.id,
+        title: "PR onto feature",
+        baseBranch: "stacked-base",
+      });
+      const { setup, statePath } = preparePrFixture({
+        store,
+        thread: stacked,
+        worktreeBase,
+        repo,
+        tmpDir,
+      });
+
+      const info = await createPr({
+        store,
+        threadId: stacked.id,
+        title: "API on schema",
+        broadcast: () => {},
+      });
+      assert.equal(info.created, true);
+
+      const state = JSON.parse(fs.readFileSync(statePath, "utf8"));
+      const createCall = state.calls.find(
+        (c) => c[0] === "pr" && c[1] === "create",
+      );
+      assert.ok(createCall, `expected pr create call: ${JSON.stringify(state.calls)}`);
+      const baseIdx = createCall.indexOf("--base");
+      assert.equal(createCall[baseIdx + 1], "stacked-base");
+      assert.equal(state.prs[setup.branch].base, "stacked-base");
+    });
+
+    it("changing baseBranch after create retargets createPr (#187)", async () => {
+      git(repo, ["checkout", "-b", "stacked-base"]);
+      fs.writeFileSync(path.join(repo, "schema.txt"), "schema\n");
+      git(repo, ["add", "schema.txt"]);
+      git(repo, ["commit", "-m", "schema"]);
+      git(repo, ["checkout", "main"]);
+
+      services.setBaseBranch(store, {
+        threadId: thread.id,
+        baseBranch: "stacked-base",
+      });
+      const { setup, statePath } = preparePrFixture({
+        store,
+        thread,
+        worktreeBase,
+        repo,
+        tmpDir,
+      });
+
+      const info = await createPr({
+        store,
+        threadId: thread.id,
+        title: "API on schema",
+        broadcast: () => {},
+      });
+      assert.equal(info.created, true);
+
+      const state = JSON.parse(fs.readFileSync(statePath, "utf8"));
+      const createCall = state.calls.find(
+        (c) => c[0] === "pr" && c[1] === "create",
+      );
+      assert.ok(createCall, `expected pr create call: ${JSON.stringify(state.calls)}`);
+      const baseIdx = createCall.indexOf("--base");
+      assert.equal(createCall[baseIdx + 1], "stacked-base");
+      assert.equal(state.prs[setup.branch].base, "stacked-base");
+    });
+
+    it("clearing baseBranch returns createPr to the repo default (#187)", async () => {
+      git(repo, ["checkout", "-b", "stacked-base"]);
+      fs.writeFileSync(path.join(repo, "schema.txt"), "schema\n");
+      git(repo, ["add", "schema.txt"]);
+      git(repo, ["commit", "-m", "schema"]);
+      git(repo, ["checkout", "main"]);
+
+      const stacked = services.createThread(store, {
+        projectId: project.id,
+        title: "Then clear PR",
+        baseBranch: "stacked-base",
+      });
+      services.setBaseBranch(store, {
+        threadId: stacked.id,
+        baseBranch: null,
+      });
+      const { setup, statePath } = preparePrFixture({
+        store,
+        thread: stacked,
+        worktreeBase,
+        repo,
+        tmpDir,
+      });
+
+      await createPr({
+        store,
+        threadId: stacked.id,
+        title: "Back to main",
+        broadcast: () => {},
+      });
+
+      const state = JSON.parse(fs.readFileSync(statePath, "utf8"));
+      const createCall = state.calls.find(
+        (c) => c[0] === "pr" && c[1] === "create",
+      );
+      assert.ok(createCall, `expected pr create call: ${JSON.stringify(state.calls)}`);
+      const baseIdx = createCall.indexOf("--base");
+      assert.equal(createCall[baseIdx + 1], "main");
+      assert.equal(state.prs[setup.branch].base, "main");
     });
 
     it("idempotency: second createPr returns same number with created:false", async () => {

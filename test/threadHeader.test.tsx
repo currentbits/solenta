@@ -468,6 +468,39 @@ describe("worktree in the thread topbar (#680)", () => {
     assert.ok(m.query("[data-thread-header]")!.contains(setup));
     m.unmount();
   });
+
+  it("shows the recorded stacked base on the header worktree control (#187)", async () => {
+    const m = await mount(
+      view({
+        detail: detail({ thread: thread({ baseBranch: "stacked-base" }) }),
+        onSetupWorktree: async () => {},
+        onMergeWorktree: async () => {},
+        onRemoveWorktree: async () => {},
+      }),
+    );
+    await m.flush();
+    const header = m.query("[data-thread-header]");
+    assert.ok(header, "thread header present");
+    const stacked = header!.querySelector("[data-stacked-base]");
+    assert.ok(stacked, "stacked-base label lives in the header");
+    assert.equal((stacked!.textContent || "").trim(), "stacked-base");
+    m.unmount();
+  });
+
+  it("shows repo default when the stacked base is unset (#187)", async () => {
+    const m = await mount(
+      view({
+        onSetupWorktree: async () => {},
+        onMergeWorktree: async () => {},
+        onRemoveWorktree: async () => {},
+      }),
+    );
+    await m.flush();
+    const stacked = m.query("[data-thread-header] [data-stacked-base]");
+    assert.ok(stacked, "unset threads still name the merge base");
+    assert.equal((stacked!.textContent || "").trim(), "repo default");
+    m.unmount();
+  });
 });
 
 describe("Views menu pane workspace (issue #552)", () => {

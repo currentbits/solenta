@@ -7,6 +7,7 @@ const path = require("node:path");
 const services = require("./services.js");
 const {
   setupWorktree,
+  listBranches,
   diff,
   commit,
   revertFile,
@@ -635,6 +636,11 @@ const IPC_HANDLERS = {
     ctx.broadcast("threads:changed", services.listThreads(ctx.store));
     return updated;
   },
+  "threads:setBaseBranch": async (ctx, input) => {
+    const updated = services.setBaseBranch(ctx.store, input);
+    ctx.broadcast("threads:changed", services.listThreads(ctx.store));
+    return updated;
+  },
   "threads:resolveSuggestion": async (ctx, input) => {
     const updated = services.resolveSuggestion(ctx.store, input);
     ctx.broadcast("threads:changed", services.listThreads(ctx.store));
@@ -1176,6 +1182,14 @@ const IPC_HANDLERS = {
       return { isRepo: false, branch: "", dirty: false };
     }
     return services.gitStatus(project);
+  },
+  "git:listBranches": async (ctx, input) => {
+    const projectId = input && input.projectId;
+    const project = projectId ? ctx.store.getProject(projectId) : null;
+    if (!project || !project.path) {
+      return { defaultBranch: "main", branches: [] };
+    }
+    return listBranches(project.path);
   },
   "git:setupWorktree": async (ctx, input) => {
     if (!ctx.worktreeBase) {
