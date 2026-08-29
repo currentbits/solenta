@@ -4495,12 +4495,17 @@ export const ThreadView = memo(function ThreadView({
 
   const visibleTimeline = start === 0 ? timeline : timeline.slice(start);
   const hiddenCount = start;
+  const transcriptView = useTranscriptViewMode();
+  const verboseTools = transcriptView === "verbose";
+  const summaryMode = transcriptView === "summary";
   const displayTimeline = useMemo(
     () =>
-      collapseTimeline(visibleTimeline, {
-        working: detail?.thread.status === "working",
-      }),
-    [visibleTimeline, detail?.thread.status],
+      summaryMode
+        ? visibleTimeline
+        : collapseTimeline(visibleTimeline, {
+            working: detail?.thread.status === "working",
+          }),
+    [visibleTimeline, detail?.thread.status, summaryMode],
   );
 
   /**
@@ -4546,9 +4551,6 @@ export const ThreadView = memo(function ThreadView({
 
   /** Run duration per runId, for assistant-message meta footers. Opt-in. */
   const showRunDuration = useRunDurationEnabled();
-  const transcriptView = useTranscriptViewMode();
-  const verboseTools = transcriptView === "verbose";
-  const summaryMode = transcriptView === "summary";
   const isWorking = detail?.thread.status === "working";
   const focusTurns = useMemo(() => {
     if (!detail || !summaryMode) return [];
