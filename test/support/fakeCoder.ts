@@ -291,6 +291,8 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
     updateChannel: null,
     notifications: true,
     theme: "dark",
+    agentsPanelDefault: "closed",
+    agentsPanelRememberLast: false,
     stayAwake: "agent",
     quotaWaitAutoResume: true,
     prDiffCapLines: 400,
@@ -763,6 +765,26 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
             );
           }
           next.theme = v;
+        }
+        if (Object.prototype.hasOwnProperty.call(p, "agentsPanelDefault")) {
+          const v = p.agentsPanelDefault;
+          if (v !== "closed" && v !== "open") {
+            calls.push({ channel: "settings.set", args: [patch] });
+            return Promise.reject(
+              new Error('agentsPanelDefault must be "closed" or "open"'),
+            );
+          }
+          next.agentsPanelDefault = v;
+        }
+        if (Object.prototype.hasOwnProperty.call(p, "agentsPanelRememberLast")) {
+          const v = p.agentsPanelRememberLast;
+          if (typeof v !== "boolean") {
+            calls.push({ channel: "settings.set", args: [patch] });
+            return Promise.reject(
+              new Error("agentsPanelRememberLast must be a boolean"),
+            );
+          }
+          next.agentsPanelRememberLast = v;
         }
         if (Object.prototype.hasOwnProperty.call(p, "stayAwake")) {
           const v = p.stayAwake;

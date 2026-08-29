@@ -2152,6 +2152,20 @@ export interface AppSettings {
    */
   theme: "system" | "light" | "dark";
   /**
+   * How the agents (right) sidebar starts (issue #767). "closed" hides it
+   * to a rail; "open" shows Pulse/Memory. Absent/junk heals to "closed".
+   * ⌘. still toggles for the session; this value is the next-launch default
+   * unless agentsPanelRememberLast is on and a last toggle exists.
+   */
+  agentsPanelDefault: "closed" | "open";
+  /**
+   * Persist the last ⌘./rail agents-panel toggle across launches (issue
+   * #769). Off by default so the Closed/Open default stays the launch
+   * source. Absent/junk heals to false. When on and no last state exists,
+   * agentsPanelDefault is the fallback.
+   */
+  agentsPanelRememberLast: boolean;
+  /**
    * Stay-awake control (issue #364, item 5). "agent" (the default) holds a
    * powerSaveBlocker only while a thread is working; "on" holds it always;
    * "off" never blocks. On battery power the blocker is released regardless
