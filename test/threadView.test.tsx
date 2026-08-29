@@ -1,5 +1,5 @@
 /**
- * ThreadView, the centre pane: messages, work-log cards, empty states.
+ * ThreadView, the centre pane: messages, tool groups, empty states.
  *
  * This file exists because ThreadView had ZERO render coverage. timeline.ts is
  * pure and well tested, but nothing proved the component calls buildTimeline or
@@ -226,6 +226,10 @@ function render(props: Parameters<typeof view>[0] = {}): string {
   return renderToStaticMarkup(view(props));
 }
 
+function toolGroupToggle(root: { query: (sel: string) => Element | null }): Element | null {
+  return root.query("[data-tool-group] button");
+}
+
 /** Interactive open/close tags must never nest (button or anchor inside same). */
 function assertNoNestedInteractive(html: string): void {
   const opens = [...html.matchAll(/<\/?button\b|<\/?a\b/g)];
@@ -386,7 +390,7 @@ describe("ThreadView message roles", () => {
     );
   });
 
-  it("renders event messages as event cards, not as user bubbles", () => {
+  it("renders event messages as event lines, not as cards or user bubbles", () => {
     const html = render({
       detail: detail({
         messages: [
@@ -395,15 +399,60 @@ describe("ThreadView message roles", () => {
       }),
     });
     assert.ok(html.includes("EVENT_STATUS_LINE"));
+    assert.ok(html.includes("eventLine"), "events use the event line class");
     assert.ok(html.includes("eventTitle"), "events use the event title class");
     const near = html.slice(
-      html.indexOf("EVENT_STATUS_LINE") - 60,
+      html.indexOf("EVENT_STATUS_LINE") - 80,
       html.indexOf("EVENT_STATUS_LINE") + 20,
     );
     assert.ok(!near.includes("userBubble"), "events must not look like user messages");
+    assert.ok(!near.includes("card"), "events must not use .card chrome");
   });
 
-  it("renders tool messages as tool cards with the tool name", () => {
+  it("collapses consecutive tools into one summary group", () => {
+    const html = render({
+      detail: detail({
+        messages: [
+          msg({
+            id: "t1",
+            role: "tool",
+            text: "Read: a.ts",
+            createdAt: 15,
+            runId: "run-1",
+            tool: {
+              id: "tc1",
+              name: "Read",
+              input: "a.ts",
+              output: "ok",
+              done: true,
+              isError: false,
+            },
+          }),
+          msg({
+            id: "t2",
+            role: "tool",
+            text: "Read: b.ts",
+            createdAt: 16,
+            runId: "run-1",
+            tool: {
+              id: "tc2",
+              name: "Read",
+              input: "b.ts",
+              output: "ok",
+              done: true,
+              isError: false,
+            },
+          }),
+        ],
+      }),
+    });
+    assert.ok(html.includes("Read 2 files"), "T3 summary sentence");
+    assert.ok(html.includes("data-tool-group"), "group landmark");
+    assert.ok(!html.includes("toolCard"), "collapsed group is not a tool tile");
+    assert.ok(!html.includes("a.ts"), "paths stay inside the collapsed group");
+  });
+
+  it("renders a single tool as a group, not a boxed tool card", () => {
     const html = render({
       detail: detail({
         messages: [
@@ -425,9 +474,9 @@ describe("ThreadView message roles", () => {
         ],
       }),
     });
-    assert.ok(html.includes("Bash"), "tool name must show");
-    assert.ok(html.includes("Bash: npm test"), "tool summary must show");
-    assert.ok(html.includes("toolCard") || html.includes("toolHeader"), "tool card chrome");
+    assert.ok(html.includes("Ran 1 command"), "group of one is still a group");
+    assert.ok(!html.includes("toolCard"), "no boxed tool card when collapsed");
+    assert.ok(!html.includes("Bash: npm test"), "tool summary hidden until expand");
   });
 
   it("renders a cross-thread inbound as a from-thread card, not a user bubble (issue #551)", () => {
@@ -486,8 +535,11 @@ describe("ThreadView message roles", () => {
       }),
     );
     await m.flush();
+    const group = toolGroupToggle(m);
+    assert.ok(group, "collapsed Read is a tool group");
+    await m.click(group);
     const link = m.container.querySelector("[data-path-link=\"src/foo.ts\"]");
-    assert.ok(link, "Read card path is clickable");
+    assert.ok(link, "Read card path is clickable after expand");
     await m.click(link);
     assert.deepEqual(opened, ["/tmp/wt/src/foo.ts"]);
   });
@@ -561,8 +613,7 @@ describe("ThreadView provenance tiers (issue #404)", () => {
 });
 
 describe("ThreadView timeline wiring", () => {
-  it("renders work-log steps from buildTimeline, not a raw dump of the array", () => {
-    // Two work-log items same run, one user message earlier: user then Work Log card.
+  it("does not render a Work Log card for work-log steps", () => {
     const html = render({
       detail: detail({
         messages: [
@@ -575,16 +626,12 @@ describe("ThreadView timeline wiring", () => {
       }),
     });
     assert.ok(html.includes("PROMPT_BEFORE_RUN"), "user prompt stays");
-    assert.ok(html.includes("Work Log"), "work log card title");
-    assert.ok(html.includes("STEP_READ_FILES"), "first step label");
-    assert.ok(html.includes("STEP_RUN_TESTS"), "second step label");
-    // Chronology: prompt text before the work-log steps (timeline order).
-    const p = html.indexOf("PROMPT_BEFORE_RUN");
-    const s = html.indexOf("STEP_READ_FILES");
-    assert.ok(p < s, "user prompt must precede its run's work log in markup");
+    assert.ok(!html.includes("Work Log"), "Work Log card is gone");
+    assert.ok(!html.includes("STEP_READ_FILES"), "step labels stay off the transcript");
+    assert.ok(!html.includes("STEP_RUN_TESTS"), "step labels stay off the transcript");
   });
 
-  it("keeps two runs as separate work-log cards", () => {
+  it("does not paint a Work Log card per run", () => {
     const html = render({
       detail: detail({
         messages: [],
@@ -594,14 +641,9 @@ describe("ThreadView timeline wiring", () => {
         ],
       }),
     });
-    // One "Work Log" header per group always (collapsed cards still title).
-    const titles = html.match(/Work Log/g) ?? [];
-    assert.equal(titles.length, 2, `expected 2 work-log cards, got ${titles.length}`);
-    // Only the latest run's card is open by default, so its steps show.
-    assert.ok(
-      html.includes("RUN_B_ONLY_STEP"),
-      "latest run's steps must render in the open card",
-    );
+    assert.equal(html.match(/Work Log/g), null);
+    assert.ok(!html.includes("RUN_A_ONLY_STEP"));
+    assert.ok(!html.includes("RUN_B_ONLY_STEP"));
   });
 
   it("renders run artifact groups from buildTimeline with media cards", () => {
@@ -654,8 +696,11 @@ describe("ThreadView timeline wiring", () => {
     assert.ok(html.includes("Simulator"));
     const promptIdx = html.indexOf("PROMPT_BEFORE_ARTIFACTS");
     const shotIdx = html.indexOf("simulator-shot.png");
-    const workIdx = html.indexOf("STEP_AFTER_ARTIFACTS");
-    assert.ok(promptIdx < shotIdx && shotIdx < workIdx, "artifacts sit after prompt, before work log on ties");
+    assert.ok(promptIdx < shotIdx, "artifacts sit after the prompt");
+    assert.ok(
+      !html.includes("STEP_AFTER_ARTIFACTS"),
+      "work-log steps stay off the transcript",
+    );
   });
 });
 
@@ -785,12 +830,19 @@ describe("ThreadView mounted interactions", () => {
       !m.text().includes("TOOL_INPUT_SECRET_PAYLOAD"),
       "collapsed tool body must hide input",
     );
+    const group = toolGroupToggle(m);
+    assert.ok(group, "collapsed tool is a group line");
+    await m.click(group);
+    assert.ok(
+      !m.text().includes("TOOL_INPUT_SECRET_PAYLOAD"),
+      "expanding the group still leaves the tool body closed",
+    );
     // Name/dot live on toolToggle so a path in the summary is not nested
     // inside the expand button.
     const header =
       m.query("button.toolToggle") ??
       m.byText("Bash");
-    assert.ok(header, "tool toggle is a button");
+    assert.ok(header, "tool toggle is a button after the group opens");
     await m.click(header);
     assert.ok(
       m.text().includes("TOOL_INPUT_SECRET_PAYLOAD"),
@@ -872,7 +924,7 @@ describe("ThreadView mounted interactions", () => {
     m.unmount();
   });
 
-  it("keeps the latest tool of the current run expanded when Verbose is off", async () => {
+  it("keeps the latest tool collapsed inside the group when Verbose is off", async () => {
     const m = await mount(
       view({
         detail: detail({
@@ -915,12 +967,16 @@ describe("ThreadView mounted interactions", () => {
     const verbose = m.query("[data-verbose-tools]");
     assert.equal(verbose?.getAttribute("aria-pressed"), "false");
     assert.ok(
+      m.text().includes("Ran 2 commands"),
+      "tools collapse to one sentence while Verbose is off",
+    );
+    assert.ok(
       !m.text().includes("TOOL_OLD_SECRET_INPUT"),
       "older tool stays collapsed",
     );
     assert.ok(
-      m.text().includes("TOOL_LATEST_SECRET_INPUT"),
-      "latest tool of the current run still auto-expands",
+      !m.text().includes("TOOL_LATEST_SECRET_INPUT"),
+      "latest tool stays inside the group until expand or Verbose",
     );
     m.unmount();
   });
@@ -1015,6 +1071,9 @@ describe("ThreadView mounted interactions", () => {
       }),
     );
     assert.equal(m.queryAll("img").length, 0, "collapsed card shows no image");
+    const shotGroup = toolGroupToggle(m);
+    assert.ok(shotGroup, "image tool is grouped");
+    await m.click(shotGroup);
     await m.click(m.query("button.toolToggle"));
     await m.flush();
     assert.deepEqual(asked, ["shot.png"]);
@@ -1052,6 +1111,9 @@ describe("ThreadView mounted interactions", () => {
         }),
       }),
     );
+    const lightboxGroup = toolGroupToggle(m);
+    assert.ok(lightboxGroup, "image tool is grouped");
+    await m.click(lightboxGroup);
     await m.click(m.query("button.toolToggle"));
     await m.flush();
     assert.equal(m.query("[data-image-lightbox]"), null, "closed by default");
@@ -2523,7 +2585,7 @@ describe("ThreadView stream-in animation", () => {
 });
 
 describe("live turn activity (issue #751 / #752)", () => {
-  it("renders a thinking card instead of a system event row", () => {
+  it("renders live thinking as a group line, not a system event row", () => {
     const html = render({
       detail: detail({
         thread: thread({ status: "working", runStartedAt: 1 }),
@@ -2548,12 +2610,13 @@ describe("live turn activity (issue #751 / #752)", () => {
         ],
       }),
     });
-    assert.ok(html.includes("data-thinking"), "thinking card landmark");
+    assert.ok(html.includes("data-thinking"), "thinking group landmark");
     assert.ok(html.includes("Thinking"), "thinking title");
     assert.ok(
-      html.includes("I should read ThreadView first."),
-      "thinking body is visible while the turn is live",
+      !html.includes("I should read ThreadView first."),
+      "thinking body stays collapsed on the live line",
     );
+    assert.ok(html.includes("data-tool-group"), "thinking-only live group");
     assert.ok(
       html.includes("Thinking…"),
       "status strip names thinking, not a generic working label",
@@ -2600,7 +2663,7 @@ describe("live turn activity (issue #751 / #752)", () => {
     );
   });
 
-  it("ticks an in-progress work log off the wall clock, not 0s", () => {
+  it("does not paint a live Work Log duration card", () => {
     const started = Date.now() - 125_000;
     const html = render({
       detail: detail({
@@ -2624,10 +2687,14 @@ describe("live turn activity (issue #751 / #752)", () => {
         ],
       }),
     });
+    assert.ok(!html.includes("Work Log"), "Work Log card is gone");
     assert.ok(
       !html.includes("Worked for 0s"),
-      "live duration must not freeze at 0s while the run is open",
+      "deleted card must not leave a frozen 0s duration",
     );
-    assert.match(html, /Worked for 2m/);
+    assert.ok(
+      !html.includes("Worked for 2m"),
+      "live duration lived on the Work Log card; completed runs keep it on the run header",
+    );
   });
 });

@@ -93,6 +93,12 @@ import {
   type TimelineEntry,
   type WorkLogGroup,
 } from "../timeline";
+import {
+  collapseTimeline,
+  liveGroupLabel,
+  summarizeToolGroup,
+  type ToolGroup,
+} from "../toolGroups";
 import { RunArtifacts } from "./RunArtifacts";
 import {
   clampWindowStart,
@@ -686,12 +692,15 @@ function ToolCallCard({
   autoExpand,
   animateIn,
   onLoadImage,
+  bare,
 }: {
   message: ChatMessage;
   autoExpand: boolean;
   /** Freshly appended at the live tail — play the stream-in entrance. */
   animateIn?: boolean;
   onLoadImage?: (name: string) => Promise<string | null>;
+  /** Inside an expanded tool group: disclosure only, no tile. */
+  bare?: boolean;
 }) {
   const tool = message.tool;
   const [manual, setManual] = useState<boolean | null>(null);
@@ -738,7 +747,7 @@ function ToolCallCard({
 
   return (
     <section
-      className={`${styles.card} ${styles.toolCard}${entered ? ` ${styles.streamIn}` : ""}`}
+      className={`${bare ? styles.toolBare : `${styles.card} ${styles.toolCard}`}${entered ? ` ${styles.streamIn}` : ""}`}
       data-stream-in={entered ? "" : undefined}
     >
       <div
@@ -812,10 +821,12 @@ function ThinkingCard({
   message,
   autoExpand,
   animateIn,
+  bare,
 }: {
   message: ChatMessage;
   autoExpand: boolean;
   animateIn?: boolean;
+  bare?: boolean;
 }) {
   const [manual, setManual] = useState<boolean | null>(null);
   const [entered] = useState(Boolean(animateIn));
@@ -825,7 +836,7 @@ function ThinkingCard({
 
   return (
     <section
-      className={`${styles.card} ${styles.toolCard}${entered ? ` ${styles.streamIn}` : ""}`}
+      className={`${bare ? styles.toolBare : `${styles.card} ${styles.toolCard}`}${entered ? ` ${styles.streamIn}` : ""}`}
       data-thinking=""
       data-stream-in={entered ? "" : undefined}
     >
@@ -873,6 +884,89 @@ function ThinkingCard({
           </pre>
         </div>
       )}
+    </section>
+  );
+}
+
+function ToolGroupRow({
+  group,
+  working,
+  expanded,
+  verbose,
+  animateIn,
+  onToggle,
+  onLoadImage,
+  latestRunningToolId,
+  latestThinkingId,
+}: {
+  group: ToolGroup;
+  working: boolean;
+  expanded: boolean;
+  verbose: boolean;
+  animateIn?: boolean;
+  onToggle: () => void;
+  onLoadImage?: (name: string) => Promise<string | null>;
+  latestRunningToolId: string | null;
+  latestThinkingId: string | null;
+}) {
+  const [entered] = useState(Boolean(animateIn));
+  const open = verbose || expanded;
+  const live = working ? liveGroupLabel(group.messages) : null;
+  const label = live ?? summarizeToolGroup(group.messages);
+  return (
+    <section
+      className={`${styles.toolGroup}${entered ? ` ${styles.streamIn}` : ""}`}
+      data-tool-group={group.id}
+      data-status={group.hasError ? "error" : undefined}
+      data-thinking={
+        !group.messages.some((m) => m.role === "tool") &&
+        group.messages.some((m) => m.thinking)
+          ? ""
+          : undefined
+      }
+      data-stream-in={entered ? "" : undefined}
+    >
+      <button
+        type="button"
+        className={styles.toolGroupToggle}
+        aria-expanded={open}
+        onClick={onToggle}
+      >
+        <span className={styles.chevron} data-open={open} aria-hidden="true">
+          <svg
+            width="9"
+            height="9"
+            viewBox="0 0 10 10"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.6"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
+            <path d="M3.5 2 6.5 5 3.5 8" />
+          </svg>
+        </span>
+        <span>{label}</span>
+      </button>
+      {open &&
+        group.messages.map((message) =>
+          message.thinking ? (
+            <ThinkingCard
+              key={message.id}
+              message={message}
+              autoExpand={verbose || message.id === latestThinkingId}
+              bare
+            />
+          ) : (
+            <ToolCallCard
+              key={message.id}
+              message={message}
+              autoExpand={verbose || message.id === latestRunningToolId}
+              onLoadImage={onLoadImage}
+              bare
+            />
+          ),
+        )}
     </section>
   );
 }
@@ -1302,7 +1396,7 @@ const MessageBlock = memo(function MessageBlock({
   if (message.role === "event") {
     return (
       <section
-        className={`${styles.card}${entered ? ` ${styles.streamIn}` : ""}`}
+        className={`${styles.eventLine}${entered ? ` ${styles.streamIn}` : ""}`}
         data-stream-in={entered ? "" : undefined}
       >
         <div className={styles.eventRow}>
@@ -2059,83 +2153,6 @@ function NextGitActionButton({
   );
 }
 
-function WorkLogCard({
-  group,
-  defaultOpen,
-  animateIn,
-  live,
-}: {
-  group: WorkLogGroup;
-  defaultOpen: boolean;
-  /** Freshly appended at the live tail — play the stream-in entrance. */
-  animateIn?: boolean;
-  /** Latest run is still working — tick duration off the wall clock. */
-  live?: boolean;
-}) {
-  const [open, setOpen] = useState(defaultOpen);
-  // Latch at mount; see ToolCallCard for why.
-  const [entered] = useState(Boolean(animateIn));
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    if (!live) return;
-    const id = window.setInterval(() => setNow(Date.now()), 1000);
-    return () => window.clearInterval(id);
-  }, [live]);
-  const duration = workLogDurationLabel(group.items, live ? now : undefined);
-
-  return (
-    <section
-      className={`${styles.card}${entered ? ` ${styles.streamIn}` : ""}`}
-      data-stream-in={entered ? "" : undefined}
-    >
-      <button
-        type="button"
-        className={styles.cardHeader}
-        onClick={() => setOpen((v) => !v)}
-        aria-expanded={open}
-      >
-        <span className={styles.chevron} data-open={open}>
-          <svg
-            width="9"
-            height="9"
-            viewBox="0 0 10 10"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="1.6"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            aria-hidden="true"
-          >
-            <path d="M3.5 2 6.5 5 3.5 8" />
-          </svg>
-        </span>
-        <span className={styles.cardTitle}>Work Log</span>
-      </button>
-      {open && (
-        <>
-          <ul className={styles.steps}>
-            {group.items.map((step: WorkLogItem) => (
-              <li key={step.id} className={styles.step}>
-                <span
-                  className={styles.checkbox}
-                  data-done={step.done}
-                  aria-hidden
-                >
-                  {step.done ? "✓" : ""}
-                </span>
-                <span className={styles.stepLabel}>{step.label}</span>
-              </li>
-            ))}
-          </ul>
-          {duration && (
-            <footer className={styles.workLogFooter}>{duration}</footer>
-          )}
-        </>
-      )}
-    </section>
-  );
-}
-
 /**
  * Answer text for a persisted question card (issue #647). The agent's turn is
  * already over, so this is an ordinary user message — and it repeats the
@@ -2520,7 +2537,7 @@ function PlanCard({ thread }: { thread: ThreadInfo }) {
   const [open, setOpen] = useState(steps.length === 0);
   const done = steps.filter((s) => s.status === "done").length;
   return (
-    <div className={styles.planCard} data-plan-card="">
+    <div className={styles.planCard} data-plan-card="" data-page-block="">
       <div className={styles.planCardHead}>
         <span className={styles.planCardTitle}>Plan</span>
         {steps.length > 0 && (
@@ -2646,7 +2663,7 @@ function SpecCard({
     ));
 
   return (
-    <div className={styles.specCard} data-spec-card="">
+    <div className={styles.specCard} data-spec-card="" data-page-block="">
       <div className={styles.specCardHead}>
         <span className={styles.specCardTitle}>Spec</span>
         <span className={styles.specStatus}>{spec.stage}</span>
@@ -2796,6 +2813,7 @@ function BtwSideCard({
     <div
       className={styles.specCard}
       data-btw-card=""
+      data-page-block=""
       data-btw-status={card.status}
     >
       <div className={styles.specCardHead}>
@@ -2857,7 +2875,7 @@ function AskCard({
 }) {
   if (!thread.ask) return null;
   return (
-    <div className={styles.specCard} data-ask-card="">
+    <div className={styles.specCard} data-ask-card="" data-page-block="">
       <div className={styles.specCardHead}>
         <span className={styles.specCardTitle}>Ask</span>
         <span className={styles.specStatus}>read-only</span>
@@ -2911,7 +2929,7 @@ function TeachCard({
   const n = teach.reviewsPassed;
   const reviewLabel = n === 1 ? "1 review passed" : `${n} reviews passed`;
   return (
-    <div className={styles.specCard} data-teach-card="">
+    <div className={styles.specCard} data-teach-card="" data-page-block="">
       <div className={styles.specCardHead}>
         <span className={styles.specCardTitle}>Teach</span>
         <span className={styles.specStatus}>{reviewLabel}</span>
@@ -2978,7 +2996,7 @@ function FeltEstimateCard({
   if (!onSetFeltEstimate) return null;
   if (thread.status !== "done" || thread.feltEstimate != null) return null;
   return (
-    <div className={styles.specCard} data-felt-card="">
+    <div className={styles.specCard} data-felt-card="" data-page-block="">
       <div className={styles.specCardHead}>
         <span className={styles.specCardTitle}>How much time did this save you?</span>
       </div>
@@ -4193,6 +4211,9 @@ export const ThreadView = memo(function ThreadView({
   const [collapsedRuns, setCollapsedRuns] = useState<ReadonlySet<string>>(
     () => new Set<string>(),
   );
+  const [expandedGroups, setExpandedGroups] = useState<ReadonlySet<string>>(
+    () => new Set<string>(),
+  );
   /** Bumps after a successful push so the sync pill refetches. */
   const [syncRefreshNonce, setSyncRefreshNonce] = useState(0);
   /** Brief inline confirmation after copying the thread id. */
@@ -4211,6 +4232,7 @@ export const ThreadView = memo(function ThreadView({
   useEffect(() => {
     setCommandRunningId(null);
     setCommandError(null);
+    setExpandedGroups(new Set());
   }, [threadId]);
 
   useEffect(() => {
@@ -4336,6 +4358,13 @@ export const ThreadView = memo(function ThreadView({
 
   const visibleTimeline = start === 0 ? timeline : timeline.slice(start);
   const hiddenCount = start;
+  const displayTimeline = useMemo(
+    () =>
+      collapseTimeline(visibleTimeline, {
+        working: detail?.thread.status === "working",
+      }),
+    [visibleTimeline, detail?.thread.status],
+  );
 
   /**
    * Stream-in gating: an entry plays its entrance animation only when it is
@@ -4354,7 +4383,12 @@ export const ThreadView = memo(function ThreadView({
   };
   if (threadId !== seenEntryThread.current) {
     seenEntryThread.current = threadId;
-    seenEntryKeys.current = new Set(visibleTimeline.map(timelineKey));
+    seenEntryKeys.current = new Set([
+      ...visibleTimeline.map(timelineKey),
+      ...displayTimeline
+        .filter((entry) => entry.kind === "group")
+        .map((entry) => `group:${entry.group.id}`),
+    ]);
   } else if (start < prevTimelineStart.current) {
     for (let i = start; i < prevTimelineStart.current; i++) {
       const entry = timeline[i];
@@ -4365,6 +4399,11 @@ export const ThreadView = memo(function ThreadView({
   useLayoutEffect(() => {
     for (const entry of visibleTimeline) {
       seenEntryKeys.current.add(timelineKey(entry));
+    }
+    for (const entry of displayTimeline) {
+      if (entry.kind === "group") {
+        seenEntryKeys.current.add(`group:${entry.group.id}`);
+      }
     }
   });
 
@@ -5913,7 +5952,50 @@ export const ThreadView = memo(function ThreadView({
           </div>
         )}
 
-        {visibleTimeline.map((entry) => {
+        {displayTimeline.map((entry) => {
+          if (entry.kind === "group") {
+            const runId = entry.group.runId;
+            const runCollapsed =
+              runId != null && isRunCollapsed(collapsedRuns, runId);
+            const runHeader = headerByMessageId.get(entry.group.messages[0]!.id);
+            if (runCollapsed && !runHeader) return null;
+            const groupKey = `group:${entry.group.id}`;
+            return (
+              <Fragment key={groupKey}>
+                {runHeader && (
+                  <RunHeaderRow
+                    header={runHeader}
+                    collapsed={runCollapsed}
+                    onToggle={() =>
+                      setCollapsedRuns((prev) =>
+                        toggleRunCollapsed(prev, runHeader.runId),
+                      )
+                    }
+                  />
+                )}
+                {!runCollapsed && (
+                  <ToolGroupRow
+                    group={entry.group}
+                    working={isWorking}
+                    expanded={expandedGroups.has(entry.group.id)}
+                    verbose={verboseTools}
+                    animateIn={!seenEntryKeys.current.has(groupKey)}
+                    onToggle={() =>
+                      setExpandedGroups((prev) => {
+                        const next = new Set(prev);
+                        if (next.has(entry.group.id)) next.delete(entry.group.id);
+                        else next.add(entry.group.id);
+                        return next;
+                      })
+                    }
+                    onLoadImage={onLoadImage}
+                    latestRunningToolId={latestRunningToolId}
+                    latestThinkingId={latestThinkingId}
+                  />
+                )}
+              </Fragment>
+            );
+          }
           if (entry.kind === "message") {
             const isOverflowSurface =
               entry.message.role === "event" &&
@@ -6035,15 +6117,7 @@ export const ThreadView = memo(function ThreadView({
               />
             );
           }
-          return (
-            <WorkLogCard
-              key={`worklog-${entry.runId}`}
-              group={entry}
-              defaultOpen={entry.runId === latestWorkLogRunId}
-              animateIn={!seenEntryKeys.current.has(`worklog-${entry.runId}`)}
-              live={isWorking && entry.runId === latestWorkLogRunId}
-            />
-          );
+          return null;
         })}
 
         <SuggestedWorkStrip
