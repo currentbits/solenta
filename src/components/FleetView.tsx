@@ -130,7 +130,12 @@ function ProviderRow({ row }: { row: FleetProviderRow }) {
     <tr data-fleet-provider={row.provider}>
       <th scope="row">{row.provider}</th>
       <td className={styles.num}>{row.threads}</td>
-      <td className={styles.num}>{formatCostUsd(row.costUsd)}</td>
+      <td
+        className={styles.num}
+        data-fleet-cost-unmetered={row.costUnmetered ? "" : undefined}
+      >
+        {row.costUnmetered ? "unmetered" : formatCostUsd(row.costUsd)}
+      </td>
       <td className={styles.num}>{formatRate(row.mergeRate)}</td>
       <td className={styles.num}>{formatRate(row.closeWithoutMergeRate)}</td>
       <td className={styles.num} data-cost-per-merged="">
@@ -157,7 +162,12 @@ function ThreadRow({ row }: { row: FleetThreadRow }) {
     <tr data-fleet-thread={row.threadId}>
       <th scope="row">{row.title}</th>
       <td>{row.provider}</td>
-      <td className={styles.num}>{formatCostUsd(row.costUsd)}</td>
+      <td
+        className={styles.num}
+        data-fleet-cost-unmetered={row.costUnmetered ? "" : undefined}
+      >
+        {row.costUnmetered ? "unmetered" : formatCostUsd(row.costUsd)}
+      </td>
       <td className={styles.num}>
         {formatSpan(row.activeMs)} / {formatSpan(row.wallClockMs)}
       </td>

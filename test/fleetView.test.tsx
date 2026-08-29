@@ -34,6 +34,7 @@ function threadRow(
     outcome: "merged",
     prNumber: 12,
     prUrl: "https://github.com/acme/nebula/pull/12",
+    costUnmetered: false,
     ...over,
   };
 }
@@ -130,6 +131,43 @@ describe("FleetReport", () => {
     assert.equal(cell?.textContent, "—");
     assert.ok(!(cell?.textContent ?? "").includes("$0.00"));
     assert.ok(m.text().includes("$0.40"), "row cost still renders");
+    m.unmount();
+  });
+
+  it("renders token-only kimi cost as unmetered, never $0.00 (#696)", async () => {
+    const m = await mount(
+      <FleetReport
+        summary={summary({
+          providers: [
+            {
+              ...emptyProviderRow("kimi"),
+              threads: 2,
+              tokens: 400,
+              costUsd: 0,
+              costUnmetered: true,
+            },
+          ],
+          threads: [
+            threadRow({
+              threadId: "k1",
+              title: "Kimi thread",
+              provider: "kimi",
+              costUsd: 0,
+              costUnmetered: true,
+            }),
+          ],
+        })}
+      />,
+    );
+    const provider = m.query('[data-fleet-provider="kimi"]');
+    assert.ok(provider, "kimi provider row");
+    assert.ok(provider.getAttribute("data-fleet-cost-unmetered") !== null || provider.textContent?.includes("unmetered"));
+    assert.ok((provider.textContent ?? "").includes("unmetered"));
+    assert.ok(!(provider.textContent ?? "").includes("$0.00"));
+    const thread = m.query('[data-fleet-thread="k1"]');
+    assert.ok(thread);
+    assert.ok((thread.textContent ?? "").includes("unmetered"));
+    assert.ok(!(thread.textContent ?? "").includes("$0.00"));
     m.unmount();
   });
 

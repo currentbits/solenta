@@ -322,6 +322,14 @@ describe("SettingsModal daily budget", () => {
     await m.click(m.byText("Save"));
     assert.equal(patches.length, 1, "save must call onSaveSettings once");
     assert.equal(patches[0].dailyBudgetUsd, 12.5);
+    assert.ok(
+      m.query("[data-budget-unmetered-note]"),
+      "spending must say kimi/cursor never count toward the cap",
+    );
+    assert.match(
+      m.query("[data-budget-unmetered-note]")?.textContent ?? "",
+      /Kimi and Cursor/,
+    );
     m.unmount();
   });
 

@@ -4834,11 +4834,20 @@ function createRunner(opts) {
     /** @type {string} */
     let thinkingText = "";
     let sawUsage = false;
+    let usageReported = false;
+    let costReported = false;
     let lastPushAt = 0;
     /** @type {ReturnType<typeof setTimeout> | null} */
     let pushTimer = null;
     /** Run-local usage for memory footers (not cumulative store totals). */
     const runUsage = { tokensIn: 0, tokensOut: 0, costUsd: 0 };
+    const runStartedMs = Date.now();
+    /**
+     * Stream usage.record lines are per-step. Accumulate and apply once so
+     * the Solenta turn counts as one turn (#696).
+     * @type {{ inputTokens: number, outputTokens: number, cachedInputTokens: number, cacheWriteTokens: number, contextTokens?: number, costUsd?: number } | null}
+     */
+    let pendingUsage = null;
     /**
      * Real session id from the stream's meta resume hint. Null when the
      * CLI emits none: we do not invent a per-cwd sentinel (issue #220).
@@ -4933,7 +4942,30 @@ function createRunner(opts) {
       }
     }
 
-    function applyUsage(usageInfo) {
+    function mergePendingUsage(info) {
+      if (!info) return;
+      if (!pendingUsage) {
+        pendingUsage = {
+          inputTokens: 0,
+          outputTokens: 0,
+          cachedInputTokens: 0,
+          cacheWriteTokens: 0,
+        };
+      }
+      pendingUsage.inputTokens += Number(info.inputTokens) || 0;
+      pendingUsage.outputTokens += Number(info.outputTokens) || 0;
+      pendingUsage.cachedInputTokens += Number(info.cachedInputTokens) || 0;
+      pendingUsage.cacheWriteTokens += Number(info.cacheWriteTokens) || 0;
+      if (info.contextTokens != null) {
+        pendingUsage.contextTokens = info.contextTokens;
+      }
+      if (info.costUsd != null) {
+        pendingUsage.costUsd =
+          (Number(pendingUsage.costUsd) || 0) + (Number(info.costUsd) || 0);
+      }
+    }
+
+    function applyUsage(usageInfo, opts = {}) {
       if (!usageInfo) return;
       const prev = store.getUsage(threadId) || {
         model: null,
@@ -4942,9 +4974,12 @@ function createRunner(opts) {
         costUsd: 0,
         turns: 0,
       };
-      const costDelta = Number(usageInfo.costUsd) || 0;
+      const costPresent = usageInfo.costUsd != null;
+      const costDelta = costPresent ? Number(usageInfo.costUsd) || 0 : 0;
       const inDelta = Number(usageInfo.inputTokens) || 0;
       const outDelta = Number(usageInfo.outputTokens) || 0;
+      const cachedDelta = Number(usageInfo.cachedInputTokens) || 0;
+      const writeDelta = Number(usageInfo.cacheWriteTokens) || 0;
       runUsage.tokensIn += inDelta;
       runUsage.tokensOut += outDelta;
       runUsage.costUsd += costDelta;
@@ -4955,9 +4990,14 @@ function createRunner(opts) {
         costUsd: prev.costUsd + costDelta,
         turns: prev.turns + 1,
       };
-      // Kimi reports billable in/out at best, never a full prompt. Leave
-      // contextTokens unset rather than write an undefendable number (#317).
-      assignContextUsage(nextUsage, prev, undefined, undefined);
+      // Moonshot four-bucket usage.record is a full prompt; billable in/out
+      // alone still leaves contextTokens unset (#317, #696).
+      assignContextUsage(
+        nextUsage,
+        prev,
+        usageInfo.contextTokens,
+        usageInfo.contextWindow,
+      );
       store.setUsage(threadId, nextUsage);
       if (costDelta > 0) {
         store.recordSpend(costDelta);
@@ -4967,6 +5007,8 @@ function createRunner(opts) {
         model: prev.model || thread.model || null,
         costUsd: costDelta,
         inputTokens: inDelta,
+        cachedInputTokens: cachedDelta,
+        cacheWriteTokens: writeDelta,
         outputTokens: outDelta,
         threadId,
         projectId: thread.projectId,
@@ -4974,6 +5016,43 @@ function createRunner(opts) {
         title: thread.title,
       });
       sawUsage = true;
+      if (!opts.fallback) {
+        usageReported = true;
+        if (costPresent) costReported = true;
+      }
+    }
+
+    function terminalUsage() {
+      return {
+        tokensIn: usageReported ? runUsage.tokensIn : undefined,
+        tokensOut: usageReported ? runUsage.tokensOut : undefined,
+        costUsd: costReported ? runUsage.costUsd : undefined,
+      };
+    }
+
+    function settleKimiUsage() {
+      if (pendingUsage) {
+        applyUsage(pendingUsage);
+        return;
+      }
+      const prior =
+        thread.sessionId && thread.sessionId !== "cwd"
+          ? thread.sessionId
+          : null;
+      const sessionId = capturedKimiSessionId || prior;
+      if (!sessionId) return;
+      const home =
+        (kimiEnv && kimiEnv.KIMI_CODE_HOME) ||
+        process.env.KIMI_CODE_HOME ||
+        path.join(require("node:os").homedir(), ".kimi-code");
+      try {
+        const harvested = kimiParse.harvestKimiSessionUsage(home, sessionId, {
+          sinceMs: prior ? runStartedMs : undefined,
+        });
+        if (harvested) applyUsage(harvested);
+      } catch {
+        // harvest is best-effort; the zero fallback still records the turn
+      }
     }
 
     completeWorkLogStep(threadId, startingId);
@@ -5135,7 +5214,7 @@ function createRunner(opts) {
 
         const usageInfo = kimiParse.extractUsage(ev);
         if (usageInfo) {
-          applyUsage(usageInfo);
+          mergePendingUsage(usageInfo);
           throttledPush();
         }
       },
@@ -5158,8 +5237,9 @@ function createRunner(opts) {
           ensureAssistant(assistantText);
         }
 
+        settleKimiUsage();
         if (!sawUsage && code === 0) {
-          applyUsage({ inputTokens: 0, outputTokens: 0 });
+          applyUsage({ inputTokens: 0, outputTokens: 0 }, { fallback: true });
         }
 
         if (code === 0) {
@@ -5186,11 +5266,7 @@ function createRunner(opts) {
             threadId,
             "done",
             assistantText || lastAssistantText(threadId, runId),
-            {
-              tokensIn: runUsage.tokensIn,
-              tokensOut: runUsage.tokensOut,
-              costUsd: runUsage.costUsd,
-            },
+            terminalUsage(),
           );
           return;
         }
@@ -5201,11 +5277,7 @@ function createRunner(opts) {
         store.save();
         pushDetail(threadId, kimiState);
         pushThreadsChanged();
-        notifyRunTerminal(threadId, "failed", failure.text, {
-          tokensIn: runUsage.tokensIn,
-          tokensOut: runUsage.tokensOut,
-          costUsd: runUsage.costUsd,
-        });
+        notifyRunTerminal(threadId, "failed", failure.text, terminalUsage());
       },
       onError: (err) => {
         if (pushTimer) {
@@ -5226,11 +5298,7 @@ function createRunner(opts) {
         store.save();
         pushDetail(threadId, kimiState);
         pushThreadsChanged();
-        notifyRunTerminal(threadId, "failed", failure.text, {
-          tokensIn: runUsage.tokensIn,
-          tokensOut: runUsage.tokensOut,
-          costUsd: runUsage.costUsd,
-        });
+        notifyRunTerminal(threadId, "failed", failure.text, terminalUsage());
       },
     });
 

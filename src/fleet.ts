@@ -51,6 +51,8 @@ export interface FleetProviderRow {
   reworkShare: number | null;
   /** Median open -> first review for this provider's PRs; null when none. */
   reviewLatencyMs: number | null;
+  /** Tokens exist but the provider never reported USD (kimi, cursor). */
+  costUnmetered: boolean;
 }
 
 export interface FleetThreadRow {
@@ -66,6 +68,8 @@ export interface FleetThreadRow {
   outcome: FleetOutcome;
   prNumber: number | null;
   prUrl: string | null;
+  /** Tokens exist but this thread never reported USD. */
+  costUnmetered: boolean;
 }
 
 /**
@@ -132,6 +136,7 @@ export function emptyProviderRow(provider: string): FleetProviderRow {
     durableShare: null,
     reworkShare: null,
     reviewLatencyMs: null,
+    costUnmetered: false,
   };
 }
 
@@ -275,6 +280,7 @@ function finishRow(row: FleetProviderRow, latencies: number[]): FleetProviderRow
   row.costPerMergedPrUsd = row.prsMerged > 0 ? row.costUsd / row.prsMerged : null;
   // Parallel runs can make activeMs > wallClockMs; do not clamp.
   row.activeShare = row.wallClockMs > 0 ? row.activeMs / row.wallClockMs : 0;
+  row.costUnmetered = row.costUsd === 0 && row.tokens > 0;
   if (row.linesAdded > 0) {
     row.durableShare = row.linesSurviving / row.linesAdded;
     row.reworkShare = 1 - row.durableShare;
@@ -426,6 +432,9 @@ export function summarizeFleet(
       outcome: chosen ? outcomeOf(chosen) : "none",
       prNumber: chosen ? chosen.number : null,
       prUrl: chosen ? chosen.url : null,
+      costUnmetered:
+        thread.costUsd === 0 &&
+        thread.inputTokens + thread.outputTokens > 0,
     };
   });
 
