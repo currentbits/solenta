@@ -314,6 +314,14 @@
         line attached, so a review note goes straight back into the run.
       </p>
       <p>
+        A worktree thread can start on a chosen local <strong>base branch</strong>,
+        shown in the header and the Git pane. Change the base before the first
+        PR and Solenta rebases this thread's commits onto the new branch; a
+        dirty tree or a rebase conflict is refused and the recorded base stays
+        put. After the first PR the control hides, because the pull request
+        already names the target.
+      </p>
+      <p>
         The header carries one <strong>next-action</strong> button that names
         the next git step (commit, push, open a PR, watch checks, or merge)
         instead of a row of always-visible controls. Create PR works on an
@@ -676,7 +684,7 @@
         directory. Checking is automatic; installing is not. Solenta
         downloads only when you click, verifies the archive against the
         sha256 digest GitHub stamps on the asset, and then swaps the bundle
-        in place (macOS; Windows and Linux open the release page). Builds
+        in place on macOS, Windows and Linux. Builds
         from a dev tree carry no channel stamp and never self-update.
       </p>
 

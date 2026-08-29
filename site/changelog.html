@@ -59,6 +59,23 @@
         Every notable change to Solenta, newest first.
       </p>
 
+      <h2 id="v0-17-0">0.17.0 <small>2026-08-29</small></h2>
+      <h3>Added</h3>
+      <ul>
+        <li><strong>Stacked worktrees.</strong> Pick a local base when you start a worktree thread, see it on the header and Git pane, and change it before the first PR. Changing the base rebases this thread's commits onto the new branch.</li>
+        <li><strong>Quiet transcript.</strong> Consecutive tools collapse to one line. Focus and Summary fold settled turns; Verbose still expands every group.</li>
+        <li><strong>Agents panel starts closed.</strong> Settings pin it open or closed, or remember the last toggle.</li>
+        <li><strong>Searchable model picker.</strong> Type to jump. OpenCode keeps the highlighted model in view.</li>
+        <li><strong>Composer power-ups.</strong> Reply as context, paste cards, and a prompt stash.</li>
+        <li><strong>Provider catch-up.</strong> Cursor runs get the same MCP tools as everyone else. Kimi shows live thinking and reports spend. OpenCode Zen carries a variant. Workflow phases work on kimi.</li>
+        <li><strong>Sidebar status pulse.</strong> Working, waiting, delegating and done threads pulse so you can see them without reading the row.</li>
+        <li><strong>Rebase conflicts in the Git pane.</strong> A conflict during a base change shows as a card, not a raw error.</li>
+      </ul>
+      <h3>Fixed</h3>
+      <ul>
+        <li>Ordinary merges no longer look like a CI inspect failure when the project has no local main, or the worktree directory was pruned.</li>
+      </ul>
+
       <h2 id="v0-16-0">0.16.0 <small>2026-08-28</small></h2>
       <h3>Added</h3>
       <ul>
