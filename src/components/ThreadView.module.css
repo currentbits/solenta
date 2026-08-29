@@ -817,6 +817,44 @@ a.btn {
   max-width: 100%;
 }
 
+/* Expanded group rows: same disclosure, no tile. */
+.toolBare {
+  padding: 0;
+  overflow: hidden;
+  max-width: 100%;
+}
+
+.toolGroup {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 13px;
+  color: var(--text-muted);
+  line-height: 1.45;
+}
+
+.toolGroup[data-status="error"] {
+  color: var(--danger);
+}
+
+.toolGroupToggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  padding: 2px 0;
+  border: none;
+  background: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+
+.toolGroupToggle:hover {
+  color: var(--text);
+}
+
 .toolHeader {
   display: flex;
   align-items: center;
@@ -1551,6 +1589,10 @@ button.diffLineGutter:focus-visible {
   font-size: 12px;
 }
 
+.eventLine {
+  padding: 4px 0;
+}
+
 .eventRow {
   display: flex;
   align-items: flex-start;
@@ -2154,7 +2196,6 @@ button.diffLineGutter:focus-visible {
   padding: 10px 14px;
   border-radius: 14px 14px 4px 14px;
   background: var(--blue-soft);
-  border: 1px solid var(--blue-border);
   color: var(--info-fg-strong);
   line-height: 1.55;
   font-size: 13.5px;
@@ -2467,16 +2508,17 @@ button.diffLineGutter:focus-visible {
   overflow: auto;
 }
 
-/* Plan overview card (issue #75) — quieter than the amber permission card:
-   it is standing context, not something to answer. */
+/* Plan overview (issue #75 / #768) — left-rule page block, not a tile. */
 .planCard {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  padding: 12px;
-  border-radius: var(--radius);
-  border: 1px solid var(--border-soft);
-  background: var(--card);
+  padding: 8px 0 8px 10px;
+  border: none;
+  border-left: 2px solid color-mix(in srgb, var(--text) 35%, transparent);
+  border-radius: 0;
+  background: none;
+  box-shadow: none;
   font-size: 12.5px;
 }
 
@@ -2866,15 +2908,17 @@ a.menuItem {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-/* Spec mode card (issue #269). Sibling of the plan card above. */
+/* Spec / Ask / Teach / Felt / side question — same left-rule as plan. */
 .specCard {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  padding: 12px;
-  border-radius: var(--radius);
-  border: 1px solid var(--border-soft);
-  background: var(--card);
+  padding: 8px 0 8px 10px;
+  border: none;
+  border-left: 2px solid color-mix(in srgb, var(--text) 35%, transparent);
+  border-radius: 0;
+  background: none;
+  box-shadow: none;
   font-size: 12.5px;
 }
 
