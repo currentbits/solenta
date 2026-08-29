@@ -1177,6 +1177,15 @@ const IPC_HANDLERS = {
   "runs:resumeQuotaWait": async (ctx, input) => {
     return ctx.runner.resumeQuotaWait(input);
   },
+  "git:listBranches": async (ctx, input) => {
+    const projectId =
+      input && typeof input === "object" ? input.projectId : input;
+    const project = ctx.store.getProject(projectId);
+    if (!project || !project.path) {
+      throw new Error(`Unknown project: ${projectId}`);
+    }
+    return listBranches(project.path);
+  },
   "git:status": async (ctx, projectId) => {
     const project = ctx.store.getProject(projectId);
     if (!project) {
