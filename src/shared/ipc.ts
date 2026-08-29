@@ -1061,7 +1061,8 @@ export interface SessionUsage {
    * jumps (issue #317). Claude still requires the cache keys. Grok and cursor
    * sum the fields they do report (#704). Cursor live CLI uses camelCase
    * cacheReadTokens/cacheWriteTokens (#703). Absent when the provider reports
-   * too little to measure it (kimi) — the ring hides rather than guess.
+   * too little to measure it. Kimi usage.record four-bucket fills it (#696);
+   * billable in/out alone still hides.
    */
   contextTokens?: number;
   /**
