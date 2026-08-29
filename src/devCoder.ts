@@ -3638,7 +3638,8 @@ function buildDevCoder(): CoderApi {
           pendingFork: input.ask !== true && input.orchestrate === true,
           ask: input.ask === true,
           issueNumber: input.issueNumber ?? null,
-          ...(input.teach === true
+          baseBranch: input.baseBranch?.trim() || null,
+          ...(input.teach === true)
             ? { teach: { autonomy: "hint" as const, reviewsPassed: 0 } }
             : {}),
         });
@@ -4847,6 +4848,9 @@ function buildDevCoder(): CoderApi {
       },
     },
     git: {
+      async listBranches() {
+        return { defaultBranch: "main", branches: ["main"] };
+      },
       async status(_projectId) {
         return {
           isRepo: true,

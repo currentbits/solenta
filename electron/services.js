@@ -585,9 +585,20 @@ function resolveNewThreadModel(input, settings, provider) {
   }
 }
 
+/** Sanitize ThreadInfo.baseBranch (#187). Empty/null clears to the repo default. */
+function normalizeBaseBranch(value) {
+  if (value == null) return null;
+  const name = String(value).trim();
+  if (!name) return null;
+  if (name === "HEAD" || name.includes("..") || /[\s~^:?*\[\\]/.test(name)) {
+    throw new Error(`Invalid base branch: ${name}`);
+  }
+  return name;
+}
+
 /**
  * @param {import('./store').Store} store
- * @param {{ projectId: string, title: string, worktree?: boolean, automationId?: string | null, issueNumber?: number | null, provider?: string, model?: string | null, memoryConsolidate?: boolean }} input
+ * @param {{ projectId: string, title: string, worktree?: boolean, automationId?: string | null, issueNumber?: number | null, provider?: string, model?: string | null, memoryConsolidate?: boolean, baseBranch?: string | null }} input
  * `worktree` is only consumed by the IPC layer (threads:create), which calls
  * setupWorktree after this returns; the service itself stays fs-free.
  * `automationId` tags threads minted by an automation so runAutomation can
