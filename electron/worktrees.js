@@ -536,8 +536,8 @@ function listBranches(projectPath) {
 /**
  * Branch currently checked out in `projectPath`, or the repo default when
  * that checkout is detached (main held in another worktree, a SHA review,
- * jj). Merge still needs a real checkout of that name — see
- * checkoutForMerge.
+ * jj). Used by setup / PR / conflict paths that want "where this checkout
+ * is." Git-tab Merge does not use this — see repoDefaultBranch.
  *
  * @param {string} projectPath
  * @returns {string}
@@ -603,9 +603,42 @@ function worktreePathForBranch(repoPath, branch) {
 }
 
 /**
- * Merge needs a working tree that is ON `branch`. When the preferred
- * checkout is detached, follow the branch into the worktree that has it,
- * or switch the preferred path onto the branch if it is free.
+ * Refuse Git-tab Merge when the local default is behind origin — that is
+ * the nightly/release worktree that holds a stale `main`. Ahead-only is
+ * fine (stacked local merges are not pushed). No origin ref: skip.
+ *
+ * @param {string} cwd
+ * @param {string} branch
+ */
+function assertDefaultNotBehindOrigin(cwd, branch) {
+  const originRef = `origin/${branch}`;
+  const hasOrigin = gitTry(cwd, ["rev-parse", "--verify", "--quiet", originRef]);
+  if (!hasOrigin.ok) return;
+  const counted = gitTry(cwd, [
+    "rev-list",
+    "--left-right",
+    "--count",
+    `${originRef}...${branch}`,
+  ]);
+  if (!counted.ok) return;
+  const line = String(counted.stdout || "").trim().split(/\r?\n/)[0] || "";
+  const m = line.match(/^(\d+)\s+(\d+)$/);
+  if (!m) return;
+  const behind = Number(m[1]);
+  const ahead = Number(m[2]);
+  if (behind > 0) {
+    throw new Error(
+      `Local ${branch} is ${behind} behind origin/${branch}` +
+        (ahead > 0 ? ` and ${ahead} ahead` : "") +
+        "; update it before merging so the work lands on the repo default.",
+    );
+  }
+}
+
+/**
+ * Merge needs a working tree that is ON `branch`. Follow that name into
+ * the worktree that has it, or switch the preferred path onto the branch
+ * if it is free. A different current branch is not a match (#770).
  *
  * @param {string} preferredPath
  * @param {string} branch
@@ -623,7 +656,7 @@ function checkoutForMerge(preferredPath, branch) {
   throw new Error(
     home
       ? `${branch} is checked out in ${home}`
-      : `Check out ${branch} before merging`,
+      : `Could not check out ${branch} to merge${current ? ` (currently on ${current})` : ""}`,
   );
 }
 
@@ -946,13 +979,16 @@ function autoResolveMergeArtifacts(cwd) {
 }
 
 /**
- * Squash-merge the thread worktree into the project default branch, then remove
- * the worktree and branch. Commits any uncommitted worktree changes first.
+ * Squash-merge the thread worktree into the repo default branch
+ * (origin/HEAD → main), then remove the worktree and branch. Commits any
+ * uncommitted worktree changes first.
  *
  * intoPath retargets the merge at another checkout of the SAME repo — an
  * orchestrator merging a worker wants the work on its own branch in its own
- * worktree, not on main behind the user's back (thread_merge). Default stays
- * the project checkout, which is what the Git tab does.
+ * worktree, not on main behind the user's back (thread_merge). Git-tab
+ * Merge (no intoPath) targets ThreadInfo.baseBranch if set, otherwise the
+ * repo default (origin/HEAD → main), not the project checkout's current
+ * branch (#187 / #770).
  *
  * @param {object} opts
  * @param {import('./store').Store} opts.store
@@ -1012,6 +1048,9 @@ function mergeWorktree(opts) {
     }
     baseForGate = mergeBaseName(thread, project.path);
     target = checkoutForMerge(requested, baseForGate);
+    if (!recordedBaseBranch(thread)) {
+      assertDefaultNotBehindOrigin(target, baseForGate);
+    }
   }
   gateCiWorkflowMerge(
     wtPath,
