@@ -1545,12 +1545,12 @@ function setupWorktree(opts) {
 }
 
 /**
- * Recreate a bound worktree's start-point on `baseName` (or the repo
- * default when null). Refuses a dirty tree so uncommitted work is never
- * discarded. Unique commits on the thread branch (`oldStart..HEAD`) are
- * rebased with `git rebase --onto <newBase> <oldStart>`; a conflict
- * aborts and names the conflicted paths (#776). A clean tree with no
- * unique commits is reset onto the new start-point. Callers must persist
+ * Retarget a bound worktree onto `baseName` (or the repo default when
+ * null). Refuses a dirty tree so uncommitted work is never discarded.
+ * Unique commits on the thread branch (`oldStart..HEAD`) are rebased
+ * with `git rebase --onto <newBase> <oldStart>`; a conflict aborts and
+ * names the conflicted paths (#776). A clean tree with no unique commits
+ * is reset onto the new start-point. Callers must persist
  * ThreadInfo.baseBranch only after this succeeds (#775).
  *
  * @param {object} opts

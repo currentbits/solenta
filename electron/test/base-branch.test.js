@@ -331,4 +331,98 @@ describe("setBaseBranch", () => {
       "cleared base must land the worktree on the repo default",
     );
   });
+
+  it("keeps a unique thread commit on top of the new base (#775)", () => {
+    git(repo, ["checkout", "stacked-base"]);
+    fs.writeFileSync(path.join(repo, "schema.txt"), "schema\n");
+    git(repo, ["add", "schema.txt"]);
+    git(repo, ["commit", "-m", "schema"]);
+    const stackedHead = git(repo, ["rev-parse", "HEAD"]);
+    git(repo, ["checkout", "main"]);
+
+    const setup = setupWorktree({
+      store,
+      threadId,
+      worktreeBase,
+      broadcast: () => {},
+    });
+    fs.writeFileSync(path.join(setup.worktreePath, "feature.txt"), "feature\n");
+    git(setup.worktreePath, ["add", "feature.txt"]);
+    git(setup.worktreePath, ["commit", "-m", "unique feature"]);
+    const uniqueHead = git(setup.worktreePath, ["rev-parse", "HEAD"]);
+
+    const updated = services.setBaseBranch(store, {
+      threadId,
+      baseBranch: "stacked-base",
+    });
+    assert.equal(updated.baseBranch, "stacked-base");
+
+    const head = git(setup.worktreePath, ["rev-parse", "HEAD"]);
+    assert.notEqual(
+      head,
+      stackedHead,
+      "HEAD must be the rebased tip, not the base tip",
+    );
+    assert.notEqual(head, uniqueHead, "rebase rewrites the unique commit");
+    assert.equal(
+      git(setup.worktreePath, ["rev-list", "--count", `${stackedHead}..HEAD`]),
+      "1",
+    );
+    assert.equal(
+      git(setup.worktreePath, ["log", "-1", "--format=%s"]),
+      "unique feature",
+    );
+    git(setup.worktreePath, [
+      "merge-base",
+      "--is-ancestor",
+      stackedHead,
+      "HEAD",
+    ]);
+    assert.ok(fs.existsSync(path.join(setup.worktreePath, "feature.txt")));
+    assert.ok(fs.existsSync(path.join(setup.worktreePath, "schema.txt")));
+  });
+
+  it("aborts a conflicting rebase and leaves the recorded base unchanged (#775)", () => {
+    git(repo, ["checkout", "stacked-base"]);
+    fs.writeFileSync(path.join(repo, "README.md"), "stacked\n");
+    git(repo, ["add", "README.md"]);
+    git(repo, ["commit", "-m", "stacked readme"]);
+    git(repo, ["checkout", "main"]);
+
+    const setup = setupWorktree({
+      store,
+      threadId,
+      worktreeBase,
+      broadcast: () => {},
+    });
+    fs.writeFileSync(path.join(setup.worktreePath, "README.md"), "feature\n");
+    git(setup.worktreePath, ["add", "README.md"]);
+    git(setup.worktreePath, ["commit", "-m", "feature readme"]);
+    const startHead = git(setup.worktreePath, ["rev-parse", "HEAD"]);
+
+    assert.throws(
+      () =>
+        services.setBaseBranch(store, {
+          threadId,
+          baseBranch: "stacked-base",
+        }),
+      /conflict|rebase/i,
+    );
+    assert.equal(store.getThread(threadId).baseBranch, null);
+    assert.equal(
+      git(setup.worktreePath, ["rev-parse", "HEAD"]),
+      startHead,
+      "conflict must not move HEAD",
+    );
+    assert.equal(
+      fs.readFileSync(path.join(setup.worktreePath, "README.md"), "utf8"),
+      "feature\n",
+    );
+    const gitDir = git(setup.worktreePath, ["rev-parse", "--git-dir"]);
+    assert.ok(
+      !fs.existsSync(path.join(gitDir, "rebase-merge")) &&
+        !fs.existsSync(path.join(gitDir, "rebase-apply")),
+      "conflict must abort the rebase, not leave it in progress",
+    );
+  });
 });
