@@ -874,6 +874,7 @@ function mergeWorktree(opts) {
 
   const wtPath = thread.worktreePath;
   const branch = thread.branch;
+  ensureWorktreePresent(project.path, wtPath, branch);
   const requested = intoPath || project.path;
   if (path.resolve(requested) === path.resolve(wtPath)) {
     throw new Error(`Cannot merge thread ${threadId} into its own worktree`);
@@ -1612,20 +1613,97 @@ async function diffOnce(project, cwd) {
 }
 
 /**
+ * Turn a short default-branch name (`main`) into a revision `git diff`
+ * can resolve. Detached checkouts often have no local `refs/heads/main`
+ * — only `origin/main` — and `main...HEAD` then fail-closes the #510
+ * gate (#760).
+ *
+ * @param {string} cwd
+ * @param {string} base
+ * @returns {string}
+ */
+function resolveDiffBase(cwd, base) {
+  const name = String(base || "").trim();
+  if (!name || name.includes("...")) return "";
+  /** @type {string[]} */
+  const candidates = [];
+  const seen = new Set();
+  const add = (ref) => {
+    if (ref && !seen.has(ref)) {
+      seen.add(ref);
+      candidates.push(ref);
+    }
+  };
+  add(name);
+  if (!name.startsWith("refs/") && !name.includes("://")) {
+    add(`refs/heads/${name}`);
+    add(`origin/${name}`);
+    add(`refs/remotes/origin/${name}`);
+  }
+  for (const ref of candidates) {
+    const probe = gitTry(cwd, ["rev-parse", "--verify", `${ref}^{commit}`]);
+    if (probe.ok && probe.stdout) return ref;
+  }
+  return "";
+}
+
+/**
+ * Re-bind a thread worktree that still has a branch but lost its
+ * directory (prune, retention, hand delete). `git worktree add <dir>
+ * <branch>` restores committed work. Throws a worktree error, not a
+ * CI inspect block, when restore is impossible (#760).
+ *
+ * @param {string} projectPath
+ * @param {string} wtPath
+ * @param {string} branch
+ */
+function ensureWorktreePresent(projectPath, wtPath, branch) {
+  if (wtPath && fs.existsSync(wtPath)) return;
+  gitTry(projectPath, ["worktree", "remove", "--force", wtPath]);
+  gitTry(projectPath, ["worktree", "prune"]);
+  if (wtPath) fs.mkdirSync(path.dirname(wtPath), { recursive: true });
+  const add = gitTry(projectPath, ["worktree", "add", wtPath, branch]);
+  if (!add.ok) {
+    throw new Error(
+      tailErr(
+        add.stderr || add.combined,
+        `Worktree is missing and could not be restored (${wtPath})`,
+      ),
+    );
+  }
+}
+
+/**
  * Paths changed on the branch vs `base` (three-dot) and optionally the
  * working tree. Fail-closed: a git failure returns ok:false so merge
  * cannot skip the #510 gate.
  *
  * @param {string} cwd
  * @param {{ base?: string | null, includeWorkingTree?: boolean }} opts
- * @returns {{ ok: boolean, paths: string[] }}
+ * @returns {{ ok: boolean, paths: string[], reason?: string }}
  */
 function listChangedPaths(cwd, opts) {
   const paths = new Set();
-  const base = opts && opts.base ? String(opts.base).trim() : "";
-  if (base) {
+  const baseName = opts && opts.base ? String(opts.base).trim() : "";
+  if (baseName) {
+    const base = resolveDiffBase(cwd, baseName);
+    if (!base) {
+      return {
+        ok: false,
+        paths: [],
+        reason: `unknown revision '${baseName}'`,
+      };
+    }
     const committed = gitTry(cwd, ["diff", "--name-only", `${base}...HEAD`]);
-    if (!committed.ok) return { ok: false, paths: [] };
+    if (!committed.ok) {
+      return {
+        ok: false,
+        paths: [],
+        reason: (committed.stderr || committed.combined || "")
+          .split("\n")[0]
+          .trim(),
+      };
+    }
     for (const line of String(committed.stdout || "").split("\n")) {
       const p = line.trim();
       if (p) paths.add(p);
@@ -1635,8 +1713,14 @@ function listChangedPaths(cwd, opts) {
     let dirty = "";
     try {
       dirty = gitOut(cwd, ["status", "--porcelain", "-uall"], { raw: true });
-    } catch {
-      return { ok: false, paths: [] };
+    } catch (err) {
+      return {
+        ok: false,
+        paths: [],
+        reason: String((err && err.message) || err)
+          .split("\n")[0]
+          .trim(),
+      };
     }
     for (const line of String(dirty || "").split("\n")) {
       if (!line) continue;
@@ -1668,7 +1752,7 @@ function gateCiWorkflowMerge(cwd, base, includeWorkingTree, approved) {
     includeWorkingTree,
   });
   if (!listed.ok) {
-    throw new Error(inspectFailedMessage());
+    throw new Error(inspectFailedMessage(listed.reason));
   }
   assertCiWorkflowSignOff(ciWorkflowFiles(listed.paths), approved === true);
 }

@@ -235,8 +235,9 @@ function assertCiWorkflowSignOff(files, approved) {
   throw err;
 }
 
-function inspectFailedMessage() {
-  return `${CI_WORKFLOW_BLOCK_PREFIX} Could not inspect the diff for CI workflow files; merge refused.`;
+function inspectFailedMessage(detail) {
+  const extra = detail ? ` ${String(detail).split("\n")[0]}` : "";
+  return `Could not inspect the diff for CI workflow files; merge refused.${extra}`;
 }
 
 module.exports = {
