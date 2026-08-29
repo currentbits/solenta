@@ -13,10 +13,13 @@ const {
   getCodexMcpEnv,
   ensureKimiMcpConfig,
   ensureGrokMcpConfig,
+  ensureCursorMcpConfig,
   removeGrokMcpEntries,
+  removeCursorMcpEntries,
   registerMcpServer,
   unregisterMcpServer,
   resolveKimiMcpPath,
+  resolveCursorMcpPath,
   resetMemorySupForTests,
   resolveNodeBinary,
   grokTomlLooksValid,
@@ -910,6 +913,164 @@ describe("ensureKimiMcpConfig", () => {
       false,
     );
     assert.ok(!fs.existsSync(process.env.CODER_KIMI_MCP_PATH));
+  });
+});
+
+describe("ensureCursorMcpConfig", () => {
+  let tmpDir;
+  let logs;
+  let prevEnv;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "coder-cursor-mcp-"));
+    logs = [];
+    prevEnv = {
+      CODER_CURSOR_MCP_PATH: process.env.CODER_CURSOR_MCP_PATH,
+      CODER_CURSOR_MCP_DISABLE: process.env.CODER_CURSOR_MCP_DISABLE,
+      CODER_CURSOR_BIN: process.env.CODER_CURSOR_BIN,
+      CODER_GROK_MCP_DISABLE: process.env.CODER_GROK_MCP_DISABLE,
+    };
+    process.env.CODER_CURSOR_MCP_PATH = path.join(tmpDir, "mcp.json");
+    delete process.env.CODER_CURSOR_MCP_DISABLE;
+    process.env.CODER_CURSOR_BIN = path.join(tmpDir, "no-cursor-agent");
+    process.env.CODER_GROK_MCP_DISABLE = "1";
+    resetMemorySupForTests();
+  });
+
+  afterEach(() => {
+    resetMemorySupForTests();
+    for (const [k, v] of Object.entries(prevEnv)) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("creates fresh mcp.json when missing", () => {
+    registerMcpServer({
+      name: "coder-threads",
+      port: 4321,
+      token: "cursor-tok",
+      userDataPath: tmpDir,
+    });
+    const mcpPath = process.env.CODER_CURSOR_MCP_PATH;
+    assert.ok(!fs.existsSync(mcpPath));
+    const ok = ensureCursorMcpConfig({
+      log: (m) => logs.push(m),
+      isCursorAvailable: () => true,
+    });
+    assert.equal(ok, true);
+    assert.ok(fs.existsSync(mcpPath));
+    const doc = JSON.parse(fs.readFileSync(mcpPath, "utf8"));
+    assert.deepEqual(doc.mcpServers["coder-threads"], {
+      type: "http",
+      url: "http://127.0.0.1:4321/mcp",
+      headers: { Authorization: "Bearer cursor-tok" },
+    });
+    assert.ok(!fs.existsSync(mcpPath + ".coder-backup"));
+    assert.equal(fs.statSync(mcpPath).mode & 0o777, 0o600);
+  });
+
+  it("merges into existing file preserving foreign keys and backs up once", () => {
+    const mcpPath = process.env.CODER_CURSOR_MCP_PATH;
+    fs.writeFileSync(
+      mcpPath,
+      JSON.stringify(
+        {
+          version: 1,
+          mcpServers: {
+            foreign: { type: "stdio", command: "echo" },
+          },
+        },
+        null,
+        2,
+      ) + "\n",
+      "utf8",
+    );
+    registerMcpServer({
+      name: "coder-threads",
+      port: 4321,
+      token: "merge-tok",
+      userDataPath: tmpDir,
+    });
+    assert.equal(
+      ensureCursorMcpConfig({
+        log: (m) => logs.push(m),
+        isCursorAvailable: () => true,
+      }),
+      true,
+    );
+    const doc = JSON.parse(fs.readFileSync(mcpPath, "utf8"));
+    assert.equal(doc.version, 1);
+    assert.deepEqual(doc.mcpServers.foreign, {
+      type: "stdio",
+      command: "echo",
+    });
+    assert.equal(
+      doc.mcpServers["coder-threads"].url,
+      "http://127.0.0.1:4321/mcp",
+    );
+    const backup = mcpPath + ".coder-backup";
+    assert.ok(fs.existsSync(backup));
+    const backupDoc = JSON.parse(fs.readFileSync(backup, "utf8"));
+    assert.ok(!backupDoc.mcpServers["coder-threads"]);
+    const backupBefore = fs.readFileSync(backup, "utf8");
+    assert.equal(
+      ensureCursorMcpConfig({
+        log: (m) => logs.push(m),
+        isCursorAvailable: () => true,
+      }),
+      true,
+    );
+    assert.equal(fs.readFileSync(backup, "utf8"), backupBefore);
+  });
+
+  it("no-ops when CODER_CURSOR_MCP_DISABLE=1", () => {
+    process.env.CODER_CURSOR_MCP_DISABLE = "1";
+    registerMcpServer({
+      name: "coder-threads",
+      port: 4321,
+      token: "tok",
+      userDataPath: tmpDir,
+    });
+    assert.equal(
+      ensureCursorMcpConfig({
+        log: (m) => logs.push(m),
+        isCursorAvailable: () => true,
+      }),
+      false,
+    );
+    assert.ok(!fs.existsSync(process.env.CODER_CURSOR_MCP_PATH));
+  });
+
+  it("removeCursorMcpEntries drops our keys and keeps foreign ones", () => {
+    const mcpPath = process.env.CODER_CURSOR_MCP_PATH;
+    fs.writeFileSync(
+      mcpPath,
+      JSON.stringify({
+        mcpServers: {
+          "coder-threads": { type: "http", url: "http://127.0.0.1:1/mcp" },
+          someone_else: { type: "stdio" },
+        },
+      }),
+      "utf8",
+    );
+    assert.equal(
+      removeCursorMcpEntries(["coder-threads"], {
+        log: (m) => logs.push(m),
+      }),
+      true,
+    );
+    const doc = JSON.parse(fs.readFileSync(mcpPath, "utf8"));
+    assert.equal(doc.mcpServers["coder-threads"], undefined);
+    assert.ok(doc.mcpServers.someone_else, "foreign entry must survive");
+  });
+
+  it("resolveCursorMcpPath prefers CODER_CURSOR_MCP_PATH", () => {
+    assert.equal(
+      resolveCursorMcpPath(process.env),
+      process.env.CODER_CURSOR_MCP_PATH,
+    );
   });
 });
 
