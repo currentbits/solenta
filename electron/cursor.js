@@ -7,6 +7,8 @@
 const spawn = require("cross-spawn");
 const { killTree, agentSpawnOptions } = require("./proc.js");
 const { harvestToolResult } = require("./tool-images.js");
+const fs = require("node:fs");
+const path = require("node:path");
 
 const SIGKILL_AFTER_MS = 3000;
 // Max stderr retained per child process (tail), for error reporting.
@@ -379,20 +381,214 @@ function extractUsage(obj) {
  * @param {string} [opts.binary]
  * @param {string[]} opts.args
  * @param {string} opts.cwd
+ * @param {NodeJS.ProcessEnv} [opts.env] - merged over process.env; used for
+ *   HOME overlays (#700)
  * @param {(ev: object) => void} opts.onEvent - raw parsed NDJSON object
  * @param {(info: { code: number | null, stderr: string, fullStdout: string, gotJson: boolean }) => void} opts.onExit
  * @param {(err: Error) => void} [opts.onError]
  * @returns {{ kill: () => void }}
  */
+function linkOrSkip(src, dst) {
+  if (!fs.existsSync(src) || fs.existsSync(dst)) return;
+  try {
+    fs.symlinkSync(src, dst);
+  } catch {
+    // Windows without symlink privilege: isolation still holds; resume/auth
+    // just will not share with the user's real home.
+  }
+}
+
+function writeSecretFile(file, data) {
+  fs.writeFileSync(file, data, { mode: 0o600, encoding: "utf8" });
+  try {
+    fs.chmodSync(file, 0o600);
+  } catch {
+    // ignore
+  }
+}
+
+/**
+ * Per-run HOME overlay (issue #700).
+ *
+ * cursor-agent has no `--mcp-config`. It reads `.cursor/mcp.json` from cwd
+ * or `$HOME/.cursor/mcp.json`. Writing the user-global file would leak
+ * bearer tokens into the Cursor IDE and last-write-wins across projects
+ * (#706). Overlay: symlink the rest of the real home (so git/ssh/auth
+ * keep working), synthesize `$HOME/.cursor` with our bound mcp.json, and
+ * symlink every other `~/.cursor` entry. Never copy the user's mcp.json.
+ *
+ * @param {object} opts
+ * @param {string} opts.dest new HOME
+ * @param {string} opts.sourceHome real homedir to symlink from
+ * @param {Record<string, unknown>} [opts.mcpServers]
+ * @returns {string} dest
+ */
+function materializeCursorHome(opts) {
+  const dest = String(opts.dest || "");
+  const sourceHome = String(opts.sourceHome || "");
+  if (!dest) throw new Error("materializeCursorHome: dest required");
+  fs.mkdirSync(dest, { recursive: true });
+
+  if (sourceHome && fs.existsSync(sourceHome)) {
+    let names = [];
+    try {
+      names = fs.readdirSync(sourceHome);
+    } catch {
+      names = [];
+    }
+    for (const name of names) {
+      if (!name || name === ".cursor" || name !== path.basename(name)) continue;
+      linkOrSkip(path.join(sourceHome, name), path.join(dest, name));
+    }
+  }
+
+  const destCursor = path.join(dest, ".cursor");
+  fs.mkdirSync(destCursor, { recursive: true });
+  const mcpPath = path.join(destCursor, "mcp.json");
+  writeSecretFile(
+    mcpPath,
+    JSON.stringify({ mcpServers: opts.mcpServers || {} }, null, 2) + "\n",
+  );
+
+  const sourceCursor = sourceHome ? path.join(sourceHome, ".cursor") : "";
+  if (sourceCursor && fs.existsSync(sourceCursor)) {
+    let names = [];
+    try {
+      names = fs.readdirSync(sourceCursor);
+    } catch {
+      names = [];
+    }
+    for (const name of names) {
+      if (!name || name === "mcp.json" || name !== path.basename(name)) continue;
+      linkOrSkip(path.join(sourceCursor, name), path.join(destCursor, name));
+    }
+  }
+  return dest;
+}
+
+/**
+ * True when the overlay must stay on disk: a cursor child may still be
+ * reading it. Matches worktree GC's live-thread skip.
+ * @param {object | null | undefined} store
+ * @param {string} threadId
+ */
+function isLiveCursorThread(store, threadId) {
+  if (!store || typeof store.getThread !== "function") return false;
+  const thread = store.getThread(threadId);
+  if (!thread) return false;
+  return thread.status === "working" || thread.status === "quota-wait";
+}
+
+/**
+ * Remove `target` without following symlinks. Unlink a symlink (even one
+ * pointing at a directory) instead of descending into the target — the
+ * overlay's home links go into the real $HOME / ~/.cursor.
+ * @param {string} target
+ */
+function rmWithoutFollowing(target) {
+  let st;
+  try {
+    st = fs.lstatSync(target);
+  } catch (err) {
+    if (err && err.code === "ENOENT") return;
+    throw err;
+  }
+  if (st.isSymbolicLink() || !st.isDirectory()) {
+    fs.unlinkSync(target);
+    return;
+  }
+  let entries = [];
+  try {
+    entries = fs.readdirSync(target, { withFileTypes: true });
+  } catch (err) {
+    if (err && err.code === "ENOENT") return;
+    throw err;
+  }
+  for (const ent of entries) {
+    const child = path.join(target, ent.name);
+    if (ent.isSymbolicLink() || !ent.isDirectory()) {
+      try {
+        fs.unlinkSync(child);
+      } catch {
+        // best-effort
+      }
+    } else {
+      rmWithoutFollowing(child);
+    }
+  }
+  fs.rmdirSync(target);
+}
+
+/**
+ * Reclaim stale cursor-homes overlays (#700).
+ *
+ * One dir per thread that has ever run cursor, under
+ * `<userDataPath>/cursor-homes/<threadId>/`. Called from scheduleRetention
+ * so boot / archive / merge / the 6h sweeper pick them up. Skips a thread
+ * that is currently working or in quota-wait.
+ *
+ * @param {object} opts
+ * @param {string} [opts.userDataPath]
+ * @param {{ getThread?: (id: string) => { status?: string } | null }} [opts.store]
+ * @returns {{ removed: string[], skipped: string[] }}
+ */
+function reclaimCursorHomes(opts) {
+  const userDataPath = String((opts && opts.userDataPath) || "");
+  if (!userDataPath) return { removed: [], skipped: [] };
+  const store = opts && opts.store;
+  if (!store || typeof store.getThread !== "function") {
+    return { removed: [], skipped: [] };
+  }
+  const base = path.join(userDataPath, "cursor-homes");
+  let baseStat;
+  try {
+    baseStat = fs.lstatSync(base);
+  } catch (err) {
+    if (err && err.code === "ENOENT") return { removed: [], skipped: [] };
+    throw err;
+  }
+  if (!baseStat.isDirectory() || baseStat.isSymbolicLink()) {
+    return { removed: [], skipped: [] };
+  }
+
+  const removed = [];
+  const skipped = [];
+  let names = [];
+  try {
+    names = fs.readdirSync(base);
+  } catch {
+    return { removed, skipped };
+  }
+  for (const name of names) {
+    if (!name || name !== path.basename(name)) continue;
+    const dest = path.join(base, name);
+    if (isLiveCursorThread(store, name)) {
+      skipped.push(dest);
+      continue;
+    }
+    try {
+      rmWithoutFollowing(dest);
+      removed.push(dest);
+    } catch {
+      // housekeeping; a busy overlay is retried on the next pass
+    }
+  }
+  return { removed, skipped };
+}
+
 function runCursor(opts) {
   const {
     binary = process.env.CODER_CURSOR_BIN || "cursor-agent",
     args = [],
     cwd,
+    env: envOverride,
     onEvent,
     onExit,
     onError,
   } = opts;
+  const childEnv = envOverride
+    ? { ...process.env, ...envOverride }
+    : undefined;
 
   let stderrText = "";
   let fullStdout = "";
@@ -450,6 +646,7 @@ function runCursor(opts) {
       args,
       agentSpawnOptions({
         cwd,
+        env: childEnv,
         stdio: ["ignore", "pipe", "pipe"],
       }),
     );
@@ -508,6 +705,8 @@ function runCursor(opts) {
 
 module.exports = {
   runCursor,
+  materializeCursorHome,
+  reclaimCursorHomes,
   extractAssistantText,
   extractThinking,
   extractToolEvents,

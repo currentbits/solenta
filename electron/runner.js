@@ -18,7 +18,7 @@ const kimiParse = require("./kimi.js");
 const { runKimi, materializeKimiHome } = kimiParse;
 const { materializeGrokHome } = require("./grok.js");
 const cursorParse = require("./cursor.js");
-const { runCursor } = cursorParse;
+const { runCursor, materializeCursorHome } = cursorParse;
 const {
   materializeCursorPinPlugin,
   cursorPinPluginDir,
@@ -44,6 +44,7 @@ const {
   grokConfigCorruptMessage,
   kimiMcpServersForRun,
   ensureGrokMcpConfig,
+  ensureCursorMcpConfig,
   whenGrokMcpIdle,
 } = require("./memory-sup.js");
 const { isMemoryConsolidateTool } = require("./memory-consolidate.js");
@@ -5747,6 +5748,49 @@ function createRunner(opts) {
         // Fail-open: a plugin write error must not block the Cursor turn.
       }
     }
+    // Isolated HOME so this turn receives bound Solenta MCP without
+    // writing the user's ~/.cursor/mcp.json (issue #700). Skipped for
+    // ssh/WSL (the overlay lives on this host) and when userDataPath
+    // is unset (tests that do not pass one). Those paths fall back to
+    // a merge of ~/.cursor/mcp.json.
+    /** @type {NodeJS.ProcessEnv | undefined} */
+    let cursorEnv;
+    if (userDataPath && !crossesBoundary(project)) {
+      try {
+        const os = require("node:os");
+        const dest = path.join(userDataPath, "cursor-homes", threadId);
+        const sourceHome = os.homedir();
+        materializeCursorHome({
+          dest,
+          sourceHome,
+          mcpServers: kimiMcpServersForRun({
+            projectId: thread.projectId,
+            projectPath: localCwd || project.path,
+          }),
+        });
+        cursorEnv = { HOME: dest };
+      } catch {
+        // Overlay is best-effort; a failed isolate must not block the turn.
+        try {
+          ensureCursorMcpConfig({
+            projectPath: localCwd || project.path,
+            projectId: thread.projectId,
+          });
+        } catch {
+          // ignore
+        }
+      }
+    } else {
+      try {
+        ensureCursorMcpConfig({
+          projectPath: localCwd || project.path,
+          projectId: thread.projectId,
+        });
+      } catch {
+        // Overlay is the Solenta-run path; a bind miss on ssh/WSL must
+        // not kill the run.
+      }
+    }
     const spawn = resolveSpawn(project, binary, args, localCwd);
 
     const entry = {
@@ -5875,6 +5919,7 @@ function createRunner(opts) {
       binary: spawn.binary,
       args: spawn.args,
       cwd: spawn.cwd,
+      env: cursorEnv,
       onEvent: (ev) => {
         // Cursor does not keep the CLI alive between turns, but a background
         // Task can finish via <task-notification> instead of tool_call/completed

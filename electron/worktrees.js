@@ -5478,6 +5478,15 @@ async function scheduleRetention(opts) {
       err && err.message ? err.message : err,
     );
   }
+  try {
+    const { reclaimCursorHomes } = require("./cursor.js");
+    reclaimCursorHomes(opts);
+  } catch (err) {
+    console.warn(
+      "cursor-home retention:",
+      err && err.message ? err.message : err,
+    );
+  }
   return result;
 }
 
