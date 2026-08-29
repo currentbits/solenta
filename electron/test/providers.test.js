@@ -81,8 +81,17 @@ describe("providers registry", () => {
     assert.equal(opencode.supportsResume, true);
     assert.ok(opencode.models.includes("opencode/hy3-free"));
     assert.ok(opencode.models.includes("opencode/nemotron-3.5-lightning-free"));
+    assert.ok(opencode.models.includes("opencode/ling-3.0-flash-fin-free"));
+    assert.ok(
+      opencode.models.includes("opencode/muse-spark-1.2-contributor-free"),
+    );
     assert.ok(!opencode.models.includes("opencode/north-mini-code-free"));
+    assert.ok(!opencode.models.includes("opencode/deepseek-v4-flash-free"));
+    assert.ok(!opencode.models.includes("opencode/laguna-s-2.1-free"));
     assert.ok(opencode.models.length >= 4);
+    const hy3 = opencode.modelInfo.find((m) => m.id === "opencode/hy3-free");
+    assert.equal(hy3.recommended, true);
+    assert.deepEqual(hy3.efforts, ["low", "medium", "high"]);
     // opencode -m requires provider/model form
     for (const id of opencode.models) {
       assert.ok(

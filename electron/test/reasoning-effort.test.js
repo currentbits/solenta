@@ -193,12 +193,15 @@ describe("reasoning effort: provider modelInfo + efforts", () => {
     const oc = getProvider("opencode");
     assert.deepEqual(honouredEfforts(oc, null), []);
     assert.deepEqual(honouredEfforts(oc, "opencode/big-pickle"), []);
-    assert.deepEqual(honouredEfforts(oc, "opencode/deepseek-v4-flash-free"), [
+    assert.deepEqual(honouredEfforts(oc, "opencode/hy3-free"), [
       "low",
       "medium",
       "high",
-      "max",
     ]);
+    assert.deepEqual(
+      honouredEfforts(oc, "opencode/muse-spark-1.2-contributor-free"),
+      ["low", "medium", "high", "xhigh"],
+    );
   });
 
   it("registry efforts stay in lockstep with buildArgs allow-lists", () => {
@@ -361,14 +364,36 @@ describe("reasoning effort: buildArgs per provider", () => {
     assert.ok(!forced.includes("--reasoning-effort"));
 
     const withVariant = entry.buildArgs({
-      prompt: PROMPT_OPENCODE,
-      model: "opencode/deepseek-v4-flash-free",
-      reasoningEffort: "max",
+      prompt: "ping",
+      model: "opencode/hy3-free",
+      reasoningEffort: "high",
     });
-    assertPromptLast(withVariant, PROMPT_OPENCODE, {
+    assert.deepEqual(withVariant, [
+      "run",
+      "--format",
+      "json",
+      "--thinking",
+      "-m",
+      "opencode/hy3-free",
+      "--variant",
+      "high",
+      "ping",
+    ]);
+    assertPromptLast(withVariant, "ping", {
       effortFlag: "--variant",
-      effortValue: "max",
+      effortValue: "high",
     });
+
+    const muse = entry.buildArgs({
+      prompt: PROMPT_OPENCODE,
+      model: "opencode/muse-spark-1.2-contributor-free",
+      reasoningEffort: "xhigh",
+    });
+    assertPromptLast(muse, PROMPT_OPENCODE, {
+      effortFlag: "--variant",
+      effortValue: "xhigh",
+    });
+    assert.ok(!muse.includes("none"));
 
     const pickle = entry.buildArgs({
       prompt: PROMPT_OPENCODE,
@@ -886,13 +911,13 @@ describe("reasoning effort: setReasoningEffort service", () => {
     services.setProvider(store, {
       threadId: thread.id,
       provider: "opencode",
-      model: "opencode/deepseek-v4-flash-free",
+      model: "opencode/hy3-free",
     });
     const ok = services.setReasoningEffort(store, {
       threadId: thread.id,
-      effort: "max",
+      effort: "high",
     });
-    assert.equal(ok.reasoningEffort, "max");
+    assert.equal(ok.reasoningEffort, "high");
     services.setProvider(store, {
       threadId: thread.id,
       provider: "opencode",
