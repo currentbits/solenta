@@ -58,7 +58,7 @@ const PANE_META: Record<
     label: "General",
     hint: "Notifications, the welcome tour, and this build.",
     keywords:
-      "notifications tour welcome update version build channel nightly prod felt estimate time saved webhook slack discord ntfy push phone",
+      "notifications tour welcome update version build channel nightly prod felt estimate time saved webhook slack discord ntfy push phone agents panel sidebar collapse remember last",
   },
   threads: {
     label: "Threads",
@@ -1883,6 +1883,63 @@ export function SettingsModal({
               </select>
               <p className={styles.note}>
                 System follows the OS. Light and Dark stay put.
+              </p>
+            </div>
+            <div className={styles.field}>
+              <label className={styles.fieldLabel} htmlFor="agents-panel-default">
+                Agents panel
+              </label>
+              <select
+                id="agents-panel-default"
+                className={styles.input}
+                data-agents-panel-default=""
+                value={settings?.agentsPanelDefault ?? "closed"}
+                disabled={saving || settings == null}
+                onChange={(e) => {
+                  const agentsPanelDefault = e.target.value as
+                    | "closed"
+                    | "open";
+                  setError(null);
+                  void onSaveSettings({ agentsPanelDefault }).catch((err) => {
+                    setError(
+                      err instanceof Error && err.message
+                        ? err.message
+                        : "Failed to save settings",
+                    );
+                  });
+                }}
+              >
+                <option value="closed">Closed</option>
+                <option value="open">Open</option>
+              </select>
+              <p className={styles.note}>
+                How the right sidebar starts. You can still open or hide it
+                from the rail or with ⌘ + .
+              </p>
+              <label className={styles.fieldRow}>
+                <input
+                  type="checkbox"
+                  data-agents-panel-remember-last=""
+                  checked={settings?.agentsPanelRememberLast ?? false}
+                  disabled={saving || settings == null}
+                  onChange={(e) => {
+                    setError(null);
+                    void onSaveSettings({
+                      agentsPanelRememberLast: e.target.checked,
+                    }).catch((err) => {
+                      setError(
+                        err instanceof Error && err.message
+                          ? err.message
+                          : "Failed to save settings",
+                      );
+                    });
+                  }}
+                />
+                <span>Remember last agents-panel state</span>
+              </label>
+              <p className={styles.note}>
+                Keep the last ⌘ + . or rail toggle across launches. Closed
+                or Open above is the fallback when there is no last state.
               </p>
             </div>
             <div className={styles.field}>

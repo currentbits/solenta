@@ -21,6 +21,7 @@ import {
 } from "./support/fakeCoder.ts";
 import App from "../src/App";
 import type { ProviderInfo, ThreadInfo } from "../src/shared/ipc";
+import { expandAgents } from "./support/expandAgents.ts";
 
 const NOW = Date.now();
 
@@ -58,7 +59,9 @@ async function boot(fake: FakeCoder) {
   const shell = await mount(<div />);
   installFakeCoder(fake);
   shell.unmount();
-  return mount(<App />);
+  const m = await mount(<App />);
+  await expandAgents(m);
+  return m;
 }
 
 function decoy(): ThreadInfo {

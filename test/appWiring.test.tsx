@@ -22,6 +22,7 @@ import {
 } from "./support/fakeCoder.ts";
 import App from "../src/App";
 import type { AgentProfile, ProviderInfo } from "../src/shared/ipc";
+import { expandAgents } from "./support/expandAgents.ts";
 
 async function boot(fake: FakeCoder) {
   // window must exist before the fake is installed, and dom.ts creates it on
@@ -356,6 +357,7 @@ describe("App memory wiring", () => {
       threads: [thread()],
     });
     const m = await boot(fake);
+    await expandAgents(m);
     const memoryTab = m
       .queryAll("button")
       .find((b) => (b.textContent || "").trim() === "Memory");
@@ -380,6 +382,7 @@ describe("App memory wiring", () => {
       threads: [thread({ id: "t1", projectId: "p1" })],
     });
     const m = await boot(fake);
+    await expandAgents(m);
     const target = m.query('button[aria-label="Select thread: first thread"]');
     assert.ok(target, "the thread card must be present");
     await m.click(target);
@@ -894,6 +897,11 @@ describe("App selection stamps lastVisitedAt (round 43 unread)", () => {
     }
   });
   async function openPulse(m: Awaited<ReturnType<typeof boot>>) {
+    const expand = m.query("[data-agents-expand]");
+    if (expand) {
+      await m.click(expand as HTMLElement);
+      await m.flush();
+    }
     const pulse = m.query('[data-panel-tab="pulse"]');
     assert.ok(pulse, "right sidebar must offer a Pulse tab");
     await m.click(pulse as HTMLElement);
@@ -958,6 +966,7 @@ describe("App selection stamps lastVisitedAt (round 43 unread)", () => {
     const fake = createFakeCoder();
     const m = await boot(fake);
     try {
+      await expandAgents(m);
       assert.equal(
         m.query('[data-view-nav="prs"]'),
         null,
