@@ -237,7 +237,13 @@ dispatch path never scans the repo.
 The standing note (`services.codeIndexNoteFor`) is appended to every
 dispatched prompt, never stored in the transcript. Empty when there is
 no index, `fileCount < MIN_FILES_FOR_NOTE` (20), or the disable env is
-set. Whole-note cap `CODEINDEX_NOTE_MAX` 3500 chars.
+set. Whole-note cap `CODEINDEX_NOTE_MAX` 3500 chars for the symbol list.
+A `[Code wiki]` block (issue #268, `electron/codewiki.js`) is prepended:
+modules grouped from the index, key dependencies from manifests, default
+branch SHA. Distinct from agent memory. `maybeRefreshIndex` skips the
+debounce when that SHA moves so a merge to main rebuilds the map.
+`memory_bootstrap` carries the same wiki (`PUT /api/wiki`, not an
+entry). The Memory tab renders it as a browsable tree (`projects:codeMap`).
 
 ## Store
 

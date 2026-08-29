@@ -124,6 +124,7 @@ const PROTOCOL = [
   'Search returns excerpts; use memory_get for the full body.',
   'If active tasks may conflict, inspect with memory_search before changing files.',
   'memory_maintenance reports queue items to resolve with memory_resolve.',
+  'A wiki section describes the code (modules, dependencies, architecture). It is regenerated when main moves — not a learning. Do not memory_store it.',
 ]
 
 export function estimateTokens(text) {
@@ -1431,6 +1432,7 @@ export class Memory {
       strategies,
       knowledge,
       tasks,
+      wiki: this.getWiki(rawProject),
       protocol: [...PROTOCOL],
       truncated: {
         conventions: conventionsBudget.truncated,
@@ -1438,6 +1440,52 @@ export class Memory {
         knowledge: knowledgeBudget.truncated,
         tasks: tasksBudget.truncated,
       },
+    }
+  }
+
+  /**
+   * Overwrite the regenerated codebase wiki for a project. Distinct from
+   * entries: agents must not memory_store this.
+   * @param {{ project?: string, wiki: object }} input
+   */
+  setWiki(input) {
+    const rawProject = cleanOptional(input && input.project)
+    const project = canonicalProject(rawProject)
+    if (!project) throw new Error('project is required')
+    const wiki = input && input.wiki
+    if (!wiki || typeof wiki !== 'object' || Array.isArray(wiki)) {
+      throw new Error('wiki object is required')
+    }
+    const payload = JSON.stringify(wiki)
+    const now = new Date().toISOString()
+    this.db
+      .prepare(
+        `INSERT INTO code_wiki (project, payload, updated_at)
+         VALUES (?, ?, ?)
+         ON CONFLICT(project) DO UPDATE SET payload = excluded.payload, updated_at = excluded.updated_at`,
+      )
+      .run(project, payload, now)
+    return { project, updated_at: now }
+  }
+
+  /**
+   * @param {string | null | undefined} rawProject
+   * @returns {object | null}
+   */
+  getWiki(rawProject) {
+    const project = canonicalProject(cleanOptional(rawProject))
+    if (!project) return null
+    const row = this.db
+      .prepare(`SELECT payload FROM code_wiki WHERE project = ?`)
+      .get(project)
+    if (!row || typeof row.payload !== 'string') return null
+    try {
+      const parsed = JSON.parse(row.payload)
+      return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+        ? parsed
+        : null
+    } catch {
+      return null
     }
   }
 

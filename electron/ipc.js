@@ -385,6 +385,11 @@ const IPC_HANDLERS = {
     });
     ctx.broadcast("threads:changed", services.listThreads(ctx.store));
   },
+  "projects:codeMap": async (ctx, input) => {
+    return services.readProjectCodeMap(ctx.store, input || {}, {
+      userDataPath: ctx.userDataPath,
+    });
+  },
   "projects:lintAgentConfig": async (ctx, input) => {
     return services.lintAgentConfig(ctx.store, input || {}, {
       memory: ctx.memory,

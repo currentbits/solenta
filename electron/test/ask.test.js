@@ -73,6 +73,30 @@ describe("formatBootstrapNote", () => {
     assert.match(text, /Fail closed/);
     assert.match(text, /truncated: 3 knowledge/);
   });
+
+  it("includes a regenerated code wiki when bootstrap carries one", () => {
+    const text = formatBootstrapNote({
+      wiki: {
+        updatedAt: 1,
+        fileCount: 2,
+        symbolCount: 2,
+        headSha: "abc1234",
+        defaultBranch: "main",
+        modules: [
+          {
+            name: "src",
+            fileCount: 2,
+            symbolCount: 2,
+            hot: [{ path: "src/App.tsx", symbols: ["App"], rank: 1 }],
+          },
+        ],
+        dependencies: ["react"],
+      },
+    });
+    assert.match(text, /\[Code wiki\]/);
+    assert.match(text, /src\/ — 2 files/);
+    assert.match(text, /Dependencies: react/);
+  });
 });
 
 describe("prefetchBootstrapNote", () => {

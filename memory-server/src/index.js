@@ -288,7 +288,7 @@ export function buildServer(memory, opts = {}) {
     'memory_bootstrap',
     {
       description:
-        'One-call startup context: conventions, distilled strategies, knowledge, and active tasks for a project, plus the usage protocol. Call at session start with project set to your working directory — file citations are verified against that tree and contradicted entries are invalidated instead of injected.',
+        'One-call startup context: conventions, distilled strategies, knowledge, active tasks, and a regenerated code wiki (modules/deps/architecture — not a learning) for a project, plus the usage protocol. Call at session start with project set to your working directory — file citations are verified against that tree and contradicted entries are invalidated instead of injected.',
       inputSchema: {
         project: z.string().optional(),
       },
@@ -633,6 +633,24 @@ async function handleApi(req, res, url, memory) {
     if (req.method === 'GET' && url.pathname === '/api/bootstrap') {
       const project = url.searchParams.get('project') ?? undefined
       sendJson(res, 200, memory.bootstrap({ project }))
+      return true
+    }
+
+    if (req.method === 'PUT' && url.pathname === '/api/wiki') {
+      let body
+      try {
+        const raw = await readBody(req)
+        body = raw.length ? JSON.parse(raw.toString('utf8')) : {}
+      } catch {
+        sendJson(res, 400, { error: 'valid JSON required' })
+        return true
+      }
+      try {
+        sendJson(res, 200, memory.setWiki(body))
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err)
+        sendJson(res, 400, { error: msg })
+      }
       return true
     }
 

@@ -45,6 +45,7 @@ import type {
   AgentConfigDoctorReport,
   AgentConfigPreview,
   AgentConfigWriteResult,
+  ProjectCodeMap,
   AgentProfile,
   McpCatalogEntry,
   McpImportPreview,
@@ -3388,6 +3389,38 @@ function buildDevCoder(): CoderApi {
         threads = threads.filter((t) => t.projectId !== projectId);
         projects = projects.filter((p) => p.id !== projectId);
         emitThreads();
+      },
+      async codeMap(input: { projectId: string }): Promise<ProjectCodeMap> {
+        const project = projects.find((p) => p.id === input.projectId);
+        if (!project) throw new Error(`Unknown project: ${input.projectId}`);
+        return {
+          projectId: project.id,
+          updatedAt: Date.now() - 5 * 60_000,
+          fileCount: 42,
+          symbolCount: 180,
+          headSha: "abc1234deadbeef",
+          defaultBranch: "main",
+          modules: [
+            {
+              name: "src",
+              fileCount: 20,
+              symbolCount: 90,
+              hot: [
+                { path: "src/App.tsx", symbols: ["App"], rank: 12 },
+                { path: "src/useCoder.ts", symbols: ["useCoder"], rank: 10 },
+              ],
+            },
+            {
+              name: "electron",
+              fileCount: 22,
+              symbolCount: 90,
+              hot: [
+                { path: "electron/runner.js", symbols: ["createRunner"], rank: 20 },
+              ],
+            },
+          ],
+          dependencies: ["react", "electron"],
+        };
       },
       async lintAgentConfig(input: {
         projectId: string;
