@@ -4500,6 +4500,9 @@ export const ThreadView = memo(function ThreadView({
   const summaryMode = transcriptView === "summary";
   const displayTimeline = useMemo(
     () =>
+      // Summary mode skips T3 grouping: collapseTimeline eats tool message
+      // rows and Focus folds key off those ids. Grouping stays in
+      // Normal/Verbose.
       summaryMode
         ? visibleTimeline
         : collapseTimeline(visibleTimeline, {

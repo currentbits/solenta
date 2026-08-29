@@ -603,14 +603,19 @@ function worktreePathForBranch(repoPath, branch) {
 }
 
 /**
- * Refuse Git-tab Merge when the local default is behind origin — that is
- * the nightly/release worktree that holds a stale `main`. Ahead-only is
- * fine (stacked local merges are not pushed). No origin ref: skip.
+ * Local default behind origin used to be a hard refusal (#770), but the
+ * squash-landing workflow (leftover worktrees land on origin via a squash
+ * from another checkout) leaves local `main` BOTH ahead (duplicate commits)
+ * and behind forever — the refusal fired on every merge and new worktrees
+ * kept forking from the stale base (#791). Sync instead of refusing:
+ * fast-forward when only behind, a proven-conflict-free --no-edit merge when
+ * diverged. A dirty checkout or a conflicting merge keeps the refusal, now
+ * naming the squash-land remedy. No origin ref: skip.
  *
- * @param {string} cwd
+ * @param {string} cwd - checkout that currently has `branch` checked out
  * @param {string} branch
  */
-function assertDefaultNotBehindOrigin(cwd, branch) {
+function syncDefaultWithOrigin(cwd, branch) {
   const originRef = `origin/${branch}`;
   const hasOrigin = gitTry(cwd, ["rev-parse", "--verify", "--quiet", originRef]);
   if (!hasOrigin.ok) return;
@@ -626,12 +631,38 @@ function assertDefaultNotBehindOrigin(cwd, branch) {
   if (!m) return;
   const behind = Number(m[1]);
   const ahead = Number(m[2]);
-  if (behind > 0) {
+  if (behind === 0) return;
+
+  const refuse = () => {
     throw new Error(
       `Local ${branch} is ${behind} behind origin/${branch}` +
         (ahead > 0 ? ` and ${ahead} ahead` : "") +
-        "; update it before merging so the work lands on the repo default.",
+        "; update it before merging so the work lands on the repo default." +
+        (ahead > 0
+          ? ` If those ${ahead} commits already landed upstream via a squash, back the branch up and reset it: git branch backup-diverged-${branch} ${branch} && git reset --hard origin/${branch}`
+          : ""),
     );
+  };
+
+  // Never move a checkout out from under uncommitted tracked work.
+  const dirty = gitOut(cwd, ["status", "--porcelain", "-uno"], {
+    raw: true,
+  }).trim();
+  if (dirty) refuse();
+
+  if (ahead === 0) {
+    if (!gitTry(cwd, ["merge", "--ff-only", originRef]).ok) refuse();
+    return;
+  }
+  // Diverged: merge origin in only when git proves the merge conflict-free
+  // (merge-tree --write-tree, git >= 2.38) — a local commit upstream never
+  // saw must never be auto-resolved away. Old git or conflicts: refuse.
+  if (!gitTry(cwd, ["merge-tree", "--write-tree", branch, originRef]).ok) {
+    refuse();
+  }
+  if (!gitTry(cwd, ["merge", "--no-edit", originRef]).ok) {
+    gitTry(cwd, ["merge", "--abort"]);
+    refuse();
   }
 }
 
@@ -1049,7 +1080,7 @@ function mergeWorktree(opts) {
     baseForGate = mergeBaseName(thread, project.path);
     target = checkoutForMerge(requested, baseForGate);
     if (!recordedBaseBranch(thread)) {
-      assertDefaultNotBehindOrigin(target, baseForGate);
+      syncDefaultWithOrigin(target, baseForGate);
     }
   }
   gateCiWorkflowMerge(
