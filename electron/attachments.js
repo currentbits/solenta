@@ -100,6 +100,24 @@ async function pickAttachments(dialog) {
  * @param {unknown} dataUrl
  * @returns {{ kind: "image", path: string, name: string } | null}
  */
+function savePng(userDataPath, threadId, buf) {
+  const tid = String(threadId || "");
+  if (!userDataPath || !/^[A-Za-z0-9_-]+$/.test(tid)) return null;
+  if (!Buffer.isBuffer(buf) || !buf.length || buf.length > MAX_IMAGE_BYTES) {
+    return null;
+  }
+  const dir = path.join(userDataPath, DIR_NAME, tid);
+  try {
+    fs.mkdirSync(dir, { recursive: true });
+    const name = `${Date.now()}-${randomUUID().slice(0, 8)}.png`;
+    const full = path.join(dir, name);
+    fs.writeFileSync(full, buf);
+    return { kind: "image", path: full, name };
+  } catch {
+    return null;
+  }
+}
+
 function saveImage(userDataPath, threadId, dataUrl) {
   const tid = String(threadId || "");
   // Thread ids are UUIDs; anything else is a caller trying to escape the
@@ -165,6 +183,7 @@ module.exports = {
   classifyPaths,
   pickAttachments,
   saveImage,
+  savePng,
   readImage,
   resolveImageFile,
   IMAGE_EXTS,

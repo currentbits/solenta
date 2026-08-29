@@ -7297,6 +7297,7 @@ function createRunner(opts) {
       appendDoneWorkLog,
       appendMessage,
       notifyRunTerminal,
+      userDataPath,
     });
   }
 

@@ -42,6 +42,7 @@ const {
   toolImageExists,
 } = require("./tool-images.js");
 const attachments = require("./attachments.js");
+const appsnap = require("./appsnap.js");
 const mediaProtocol = require("./media-protocol.js");
 const { syncUserMcpServers } = require("./memory-sup.js");
 const {
@@ -1292,6 +1293,21 @@ const IPC_HANDLERS = {
       return { dataUrl: await attachments.readImage(filePath) };
     }
     return { dataUrl: mediaProtocol.localImageUrl(resolved.path) };
+  },
+  "attachments:listWindows": async () => {
+    try {
+      return await appsnap.listWindows();
+    } catch {
+      return { windows: [] };
+    }
+  },
+  "attachments:captureWindow": async (ctx, input) => {
+    const threadId = input && input.threadId;
+    const sourceId = input && input.sourceId;
+    const png = await appsnap.captureWindowPng(sourceId);
+    return {
+      attachment: attachments.savePng(ctx.userDataPath, threadId, png),
+    };
   },
   "git:mergeWorktree": async (ctx, input) => {
     const merged = mergeWorktree({

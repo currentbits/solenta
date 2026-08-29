@@ -831,7 +831,7 @@ function conflictContext(opts) {
   }
   let baseBranch = null;
   try {
-    baseBranch = defaultBranch(project.path);
+    baseBranch = mergeBaseName(thread, project.path);
   } catch {
     baseBranch = null;
   }
@@ -2227,9 +2227,31 @@ async function lsFiles(cwd) {
 }
 
 /**
- * Files matchable by the composer's @-mention popup: tracked plus untracked
- * (gitignored excluded), filtered case-insensitively by substring. Paths that
- * START with the query rank above mid-string matches.
+ * Unique directory prefixes of repo-relative file paths, each with a trailing
+ * slash so the mention popup can insert `@src/` as a folder token.
+ *
+ * @param {string[]} files
+ * @returns {string[]}
+ */
+function directoriesFromFiles(files) {
+  const dirs = new Set();
+  for (const file of files) {
+    const parts = String(file).split("/");
+    let acc = "";
+    for (let i = 0; i < parts.length - 1; i++) {
+      acc = acc ? `${acc}/${parts[i]}` : parts[i];
+      dirs.add(`${acc}/`);
+    }
+  }
+  return [...dirs];
+}
+
+/**
+ * Files and folders matchable by the composer's @-mention popup: tracked plus
+ * untracked (gitignored excluded), plus directory prefixes derived from those
+ * paths (trailing slash). Filtered case-insensitively by substring. Paths that
+ * START with the query rank above mid-string matches; directories rank above
+ * files at the same prefix rank so `@src` offers the folder first.
  *
  * @param {object} opts
  * @param {import('./store').Store} opts.store
@@ -2242,14 +2264,18 @@ async function listFiles(opts) {
   const query = String(opts.query || "").toLowerCase();
   const { cwd } = threadGitCwd(store, threadId);
   const all = await lsFiles(cwd);
+  const entries = all.concat(directoriesFromFiles(all));
   // Copy when unfiltered: the sort below must not reorder the cached list.
   const matched = query
-    ? all.filter((p) => p.toLowerCase().includes(query))
-    : all.slice();
+    ? entries.filter((p) => p.toLowerCase().includes(query))
+    : entries.slice();
   matched.sort((a, b) => {
     const aPrefix = a.toLowerCase().startsWith(query) ? 0 : 1;
     const bPrefix = b.toLowerCase().startsWith(query) ? 0 : 1;
-    return aPrefix - bPrefix;
+    if (aPrefix !== bPrefix) return aPrefix - bPrefix;
+    const aDir = a.endsWith("/") ? 0 : 1;
+    const bDir = b.endsWith("/") ? 0 : 1;
+    return aDir - bDir;
   });
   return { files: matched.slice(0, LIST_FILES_RESULT) };
 }
@@ -5950,6 +5976,7 @@ module.exports = {
   commit,
   revertFile,
   listFiles,
+  directoriesFromFiles,
   listChangedPaths,
   mergeWorktree,
   conflictContext,

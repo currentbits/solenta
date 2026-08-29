@@ -746,6 +746,19 @@
   color: var(--text-dim);
 }
 
+.sendCluster {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.viewMenu {
+  left: auto;
+  right: 0;
+  min-width: 168px;
+}
+
 .send {
   width: 32px;
   height: 32px;
@@ -804,23 +817,6 @@
   gap: 6px;
   min-width: 0;
   flex: 1;
-}
-
-.verbose {
-  flex-shrink: 0;
-  cursor: pointer;
-  color: var(--text-muted);
-}
-
-.verbose:hover {
-  color: var(--text);
-  background: var(--card-hover);
-}
-
-.verbose[aria-pressed="true"] {
-  color: var(--info-fg-strong);
-  border-color: var(--blue-border);
-  background: var(--blue-soft);
 }
 
 .chip {
@@ -1094,4 +1090,100 @@
 .mentionRow[data-highlighted="true"] {
   background: var(--card-hover);
   color: var(--text);
+}
+
+.mentionRow[data-mention-kind="folder"] {
+  font-weight: 550;
+}
+
+.replyChip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+  padding: 6px 8px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-soft);
+  background: var(--card-hover);
+  font-size: 12px;
+}
+
+.replyChipLabel {
+  flex-shrink: 0;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.replyChipText {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-dim);
+}
+
+.pasteCardList {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.pasteCard {
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+  background: var(--card-hover);
+}
+
+.pasteCardHead {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.pasteCardToggle {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 6px 8px;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 550;
+  text-align: left;
+  cursor: pointer;
+}
+
+.pasteCardChars {
+  flex-shrink: 0;
+  font-weight: 400;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+.pasteCardBody {
+  margin: 0;
+  padding: 0 8px 8px;
+  max-height: 12lh;
+  overflow: auto;
+  font-family: var(--mono);
+  font-size: 11.5px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  color: var(--text-muted);
+}
+
+.overflow {
+  margin-top: 4px;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-dim);
+}
+
+.overflowWarn {
+  color: var(--danger-fg);
 }

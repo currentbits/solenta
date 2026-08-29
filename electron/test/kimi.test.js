@@ -248,15 +248,19 @@ async function main() {
   }
 
   // Issue #753: official stream-json drops thinking from JSONL; the
-  // recorded print-mode stderr shape (kimi 0.31.1 PromptTranscriptWriter)
-  // is a •  block. Tool progress and resume notices share stderr and
-  // must not become a Thinking card.
+  // documented print-mode stderr shape (PromptTranscriptWriter) is a
+  // •  block with wrap indent. Tool progress, resume notices, and the
+  // live 0.39.1 See-log line share stderr and must not become thinking.
   if (scenario === "stderr-thinking-then-tool") {
     process.stderr.write("• I should write probe.txt first.\\n");
+    process.stderr.write(" because the user asked for a file.\\n");
     await delay(200);
     process.stderr.write("Wrote 6 bytes to probe.txt\\n");
     process.stderr.write(
       "To resume this session: kimi -r session_fake123\\n",
+    );
+    process.stderr.write(
+      "See log: /tmp/kimi-753-sample/home/logs/kimi-code.log\\n",
     );
     emit({
       role: "assistant",
@@ -468,17 +472,23 @@ describe("kimi extract helpers: REAL recorded stream lines", () => {
     );
   });
 
-  // Recorded shapes: PromptTranscriptWriter (kimi 0.31.1 / docs) writes
-  // thinking to stderr as a •  block, wrap-indented by two spaces. Live
-  // 0.39 stream-json capture + official source: tool progress is raw
-  // text, resume is "To resume this session:", errors are "error: …".
+  // Thinking shape is PromptTranscriptWriter (print-mode / docs): a •
+  // block on stderr. Official 0.39.1 PromptBlockWriter wrap indent is
+  // one space (0.31.1 used two). Live 0.39.1 stream-json capture (isolated
+  // home, empty MCP) never emits that block: PromptJsonWriter.writeThinkingDelta
+  // is a no-op, so stdout is only system.version and stderr is the quota
+  // error + See log. Tool progress is raw text; text-mode resume is
+  // "To resume this session:" (stream-json resume is a stdout meta line).
   const REAL_STDERR_THINK = "• I should write probe.txt first.";
-  const REAL_STDERR_WRAP = "  because the user asked for a file.";
+  const REAL_STDERR_WRAP_V31 = "  because the user asked for a file.";
+  const REAL_STDERR_WRAP_V39 = " because the user asked for a file.";
   const REAL_STDERR_PROGRESS = "Wrote 6 bytes to probe.txt";
   const REAL_STDERR_RESUME =
     "To resume this session: kimi -r session_cea263a5-1066-444e-84bc-4ce29d42fc6d";
   const REAL_STDERR_ERROR =
     "error: failed to run prompt: provider.auth_error: 403 You've reached your weekly (7-day) usage limit. Your quota will reset when the current 7-day window ends. To continue now, purchase extra usage or upgrade your plan: https://www.kimi.com/membership/subscription?tab=quota";
+  const REAL_STDERR_SEE_LOG =
+    "See log: /tmp/kimi-753-sample-13090/home/logs/kimi-code.log";
   const REAL_STDERR_FRESH =
     'No sessions to continue under "/tmp/kimi-stderr-sample"; starting a fresh session.';
 
@@ -489,14 +499,14 @@ describe("kimi extract helpers: REAL recorded stream lines", () => {
       "I should write probe.txt first.",
     );
     assert.equal(
-      parse.push(REAL_STDERR_WRAP),
-      "because the user asked for a file.",
+      parse.push(REAL_STDERR_WRAP_V31),
+      "\nbecause the user asked for a file.",
       "wrap indent is part of the same thinking block",
     );
     assert.equal(
-      parse.push(" later wrap on 0.39"),
-      "later wrap on 0.39",
-      "0.39 PromptTranscriptWriter indents wraps by one space",
+      parse.push(REAL_STDERR_WRAP_V39),
+      "\nbecause the user asked for a file.",
+      "0.39 PromptBlockWriter indents wraps by one space",
     );
     assert.equal(parse.push(""), null, "blank line ends the block");
     assert.equal(
@@ -506,6 +516,7 @@ describe("kimi extract helpers: REAL recorded stream lines", () => {
     );
     assert.equal(parse.push(REAL_STDERR_RESUME), null);
     assert.equal(parse.push(REAL_STDERR_ERROR), null);
+    assert.equal(parse.push(REAL_STDERR_SEE_LOG), null);
     assert.equal(parse.push(REAL_STDERR_FRESH), null);
     assert.equal(
       parse.push("• a later thought"),
@@ -1035,6 +1046,11 @@ describe("kimi runner integration", () => {
     const thinking = msgs.filter((m) => m.thinking);
     assert.equal(thinking.length, 1, "one thinking card for the turn");
     assert.match(thinking[0].text, /probe\.txt/);
+    assert.match(
+      thinking[0].text,
+      /probe\.txt first\.\nbecause the user asked/,
+      "wrap continuation must not smash into the previous line",
+    );
     assert.ok(
       !/To resume this session/.test(thinking[0].text),
       "resume notice must not land on the thinking card",
@@ -1042,6 +1058,10 @@ describe("kimi runner integration", () => {
     assert.ok(
       !/Wrote 6 bytes/.test(thinking[0].text),
       "tool-progress stderr must not land on the thinking card",
+    );
+    assert.ok(
+      !/See log:/.test(thinking[0].text),
+      "live 0.39.1 See-log line must not become thinking",
     );
     assert.equal(thinking[0].role, "event");
 

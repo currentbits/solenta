@@ -45,3 +45,18 @@ export function applyMention(
     caret: start + inserted.length,
   };
 }
+
+/**
+ * Repo-relative folder token for an @-mention. Trailing slash marks a
+ * directory. Paths outside the project stay absolute.
+ */
+export function repoRelativeDir(projectPath: string, picked: string): string {
+  const root = projectPath.replace(/\\/g, "/").replace(/\/+$/, "");
+  const dir = picked.replace(/\\/g, "/").replace(/\/+$/, "");
+  if (!dir) return "./";
+  if (dir === root) return "./";
+  if (root && dir.startsWith(`${root}/`)) {
+    return `${dir.slice(root.length + 1)}/`;
+  }
+  return `${dir}/`;
+}

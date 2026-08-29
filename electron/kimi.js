@@ -481,14 +481,15 @@ function extractThinking(obj) {
 /**
  * Incremental parser for kimi print-mode stderr thinking.
  *
- * Recorded contract (kimi 0.31.1 PromptTranscriptWriter + docs):
- * thinking is a `• ` block on stderr; wrap lines indent by two spaces
- * (0.39 uses one). Tool progress, resume notices, and errors are raw
- * lines with no bullet and must not become thinking (issue #753).
+ * Recorded contract (PromptTranscriptWriter + docs): thinking is a `• `
+ * block on stderr. Official 0.39.1 PromptBlockWriter wrap-indents by one
+ * space (0.31.1 used two). Tool progress, resume notices, errors, and
+ * "See log:" are raw lines with no bullet and must not become thinking
+ * (issue #753).
  *
- * Official stream-json still drops thinking (`writeThinkingDelta` is a
- * no-op); this only fires when the CLI actually writes the recorded
- * shape.
+ * Live 0.39.1 `--output-format stream-json` still drops thinking
+ * (`PromptJsonWriter.writeThinkingDelta` is a no-op); this only fires
+ * when the CLI actually writes the recorded print-mode shape.
  * @returns {{ push: (line: string) => string | null }}
  */
 function createStderrThinkingParser() {
@@ -506,7 +507,8 @@ function createStderrThinkingParser() {
         return text.trim() ? text : null;
       }
       if (inBlock && /^ {1,2}\S/.test(raw)) {
-        return raw.replace(/^ {1,2}/, "");
+        // Leading newline so startKimiRun's += does not smash wraps.
+        return `\n${raw.replace(/^ {1,2}/, "")}`;
       }
       inBlock = false;
       return null;

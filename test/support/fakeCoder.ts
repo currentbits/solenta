@@ -224,6 +224,10 @@ export interface FakeOptions {
   saveImage?: (input: unknown) => { attachment: AttachmentInfo | null };
   /** Override attachments.fromPaths result (default: { attachments: [] }). */
   fromPaths?: (input: unknown) => { attachments: AttachmentInfo[] };
+  /** Override attachments.listWindows (default: none). */
+  snapWindows?: Array<{ id: string; name: string }>;
+  /** Override attachments.captureWindow. */
+  captureWindow?: (input: unknown) => { attachment: AttachmentInfo | null };
   /** Electron-only path resolver for dropped Files. */
   droppedFilePath?: (file: File) => string;
   /** Override runs.distill result. */
@@ -1616,6 +1620,11 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
             ? { teach: { autonomy: "hint" as const, reviewsPassed: 0 } }
             : {}),
           ...(wantAsk ? { ask: true } : {}),
+          ...(typeof input === "object" &&
+          input !== null &&
+          typeof (input as { baseBranch?: unknown }).baseBranch === "string"
+            ? { baseBranch: (input as { baseBranch: string }).baseBranch }
+            : {}),
         });
         threads = [t, ...threads.filter((x) => x.id !== t.id)];
         return rec("threads.create", [input], t);
@@ -2379,6 +2388,11 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
         rec("runs.resumeQuotaWait", [input], { runId: "r-quota" }),
     },
     git: {
+      listBranches: (input: unknown) =>
+        rec("git.listBranches", [input], {
+          defaultBranch: "main",
+          branches: ["main"],
+        }),
       status: (projectId: string) =>
         rec("git.status", [projectId], {
           isRepo: true,
@@ -2892,6 +2906,16 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
         ),
       readImage: (input: unknown) =>
         rec("attachments.readImage", [input], { dataUrl: null }),
+      listWindows: () =>
+        rec("attachments.listWindows", [], {
+          windows: opts.snapWindows ?? [],
+        }),
+      captureWindow: (input: unknown) =>
+        rec(
+          "attachments.captureWindow",
+          [input],
+          opts.captureWindow?.(input) ?? { attachment: null },
+        ),
       ...(opts.droppedFilePath
         ? { droppedFilePath: opts.droppedFilePath }
         : {}),

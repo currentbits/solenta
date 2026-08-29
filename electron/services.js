@@ -587,7 +587,7 @@ function resolveNewThreadModel(input, settings, provider) {
 
 /**
  * @param {import('./store').Store} store
- * @param {{ projectId: string, title: string, worktree?: boolean, automationId?: string | null, issueNumber?: number | null, provider?: string, model?: string | null, memoryConsolidate?: boolean }} input
+ * @param {{ projectId: string, title: string, worktree?: boolean, automationId?: string | null, issueNumber?: number | null, provider?: string, model?: string | null, memoryConsolidate?: boolean, baseBranch?: string | null }} input
  * `worktree` is only consumed by the IPC layer (threads:create), which calls
  * setupWorktree after this returns; the service itself stays fs-free.
  * `automationId` tags threads minted by an automation so runAutomation can

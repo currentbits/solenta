@@ -1736,8 +1736,63 @@ button.diffLineGutter:focus-visible {
   font-size: 11px;
   color: var(--text-dim);
   display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
   gap: 6px;
   user-select: none;
+}
+
+.msgActions {
+  display: inline-flex;
+  gap: 8px;
+  margin-left: 4px;
+}
+
+.msgAction {
+  border: none;
+  background: transparent;
+  padding: 0;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 550;
+  cursor: pointer;
+}
+
+.msgAction:hover {
+  color: var(--text);
+}
+
+.snapList {
+  list-style: none;
+  margin: 10px 0 0;
+  padding: 0;
+  max-height: 240px;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.snapRow {
+  width: 100%;
+  text-align: left;
+  padding: 7px 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-soft);
+  background: var(--card);
+  color: var(--text);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.snapRow:hover:not(:disabled) {
+  background: var(--card-hover);
+  border-color: var(--blue-border);
+}
+
+.snapRow:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 /* Provenance tier strip under an assistant message (issue #404). */
@@ -2860,6 +2915,41 @@ button.diffLineGutter:focus-visible {
   50% {
     opacity: 0.45;
   }
+}
+
+/* Per-turn Focus summary (issue #461). Same quiet chrome as run headers. */
+.focusTurn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  margin: 2px auto;
+  padding: 2px;
+  border: none;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 12px;
+  font-weight: 550;
+  text-align: left;
+  user-select: none;
+}
+
+.focusTurn:hover {
+  color: var(--text-muted);
+}
+
+.focusTurnLabel {
+  min-width: 0;
+}
+
+.focusTurnSpin {
+  width: 10px;
+  height: 10px;
+  border: 1.5px solid var(--spinner-track);
+  border-top-color: var(--text-muted);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  flex-shrink: 0;
 }
 
 /* "Worked for 2m 5s" collapsible header above a completed run. */

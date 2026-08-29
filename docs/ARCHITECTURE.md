@@ -688,11 +688,19 @@ never written. DNT and GPC drops the event.
 |-------|------|
 | Tracker | `site/stats.js` (index, docs, changelog) |
 | Endpoint | `stats-api/` , Girder app `solenta-stats` (stats.solenta.app) |
-| Dashboard | `GET /` cookie or bearer `ADMIN_TOKEN`; `GET /api/stats?days=1\|7\|30` |
+| Dashboard | `GET /` cookie or bearer `ADMIN_TOKEN`; `GET /api/stats?days=1\|7\|30\|90` |
+
+`props` may include `platform`, `country` (ISO from `CF-IPCountry`),
+`browser` (Chrome / Safari / Firefox / Edge / Other), and
+`utm_source` / `utm_medium` / `utm_campaign`. IP and raw User-Agent
+are still never stored. Dashboard ranges are 1 / 7 / 30 / 90 days.
+`GET /` meta-refreshes every 30 seconds and shows a Live strip
+(last 30 minutes) plus three fixed same-day funnels (Home to
+Download, Docs, GitHub Star).
 
 ```
 curl -s -H "Authorization: Bearer $ADMIN_TOKEN" \
-  "https://stats.solenta.app/api/stats?days=7"
+  "https://stats.solenta.app/api/stats?days=1|7|30|90"
 ```
 
 ## Spec mode

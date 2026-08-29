@@ -207,6 +207,39 @@ function parseReferrer(r) {
   }
 }
 
+function parseCountry(header) {
+  const raw = String(header || "").trim().toUpperCase();
+  if (!/^[A-Z]{2}$/.test(raw) || raw === "XX") return "";
+  return raw;
+}
+
+function parseBrowser(ua) {
+  const s = String(ua || "").toLowerCase();
+  if (!s) return "";
+  if (s.includes("edg/")) return "Edge";
+  if (s.includes("firefox/") || s.includes("fxios/")) return "Firefox";
+  if (s.includes("chrome/") || s.includes("crios/")) return "Chrome";
+  if (s.includes("safari/") && s.includes("version/")) return "Safari";
+  return "Other";
+}
+
+const UTM_SAFE = /^[a-zA-Z0-9._-]{1,80}$/;
+
+function parseUtms(u) {
+  if (typeof u !== "string") return {};
+  try {
+    const params = new URL(u).searchParams;
+    const out = {};
+    for (const key of ["utm_source", "utm_medium", "utm_campaign"]) {
+      const v = params.get(key) || "";
+      if (UTM_SAFE.test(v)) out[key] = v;
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
 const TOO_LARGE = Symbol("too-large");
 
 function readBody(req) {
@@ -269,10 +302,14 @@ async function handleEvent(req, res) {
     return noContent(req, res);
   }
   const referrer = parseReferrer(body.r);
-  let props = {};
+  let props = { ...parseUtms(body.u) };
+  const country = parseCountry(req.headers["cf-ipcountry"]);
+  if (country) props.country = country;
+  const browser = parseBrowser(ua);
+  if (browser) props.browser = browser;
   if (name !== "pageview" && body.p && typeof body.p === "object") {
     const platform = body.p.platform;
-    if (PLATFORMS.has(platform)) props = { platform };
+    if (PLATFORMS.has(platform)) props.platform = platform;
   }
   if (!db) {
     console.log("drop: db");
@@ -361,60 +398,154 @@ function handleLogout(req, res) {
   res.end();
 }
 
+const LIVE_MS = 30 * 60 * 1000;
+
 function clampDays(raw) {
   const n = Number(raw);
-  if (n === 1 || n === 7 || n === 30) return n;
+  if (n === 1 || n === 7 || n === 30 || n === 90) return n;
   return 30;
 }
 
-function buildStats(rows, days, nowMs) {
+function rangeStartMs(days, nowMs) {
   const end = new Date(nowMs);
-  const endDay = utcDay(nowMs);
+  return Date.UTC(end.getUTCFullYear(), end.getUTCMonth(), end.getUTCDate() - (days - 1));
+}
+
+function querySince(days, nowMs) {
+  const live = nowMs - LIVE_MS;
+  const start = rangeStartMs(days, nowMs);
+  return new Date(Math.min(start, live));
+}
+
+function inRange(tsMs, days, nowMs) {
+  return tsMs >= rangeStartMs(days, nowMs);
+}
+
+function hourKey(ms) {
+  const d = new Date(ms);
+  return `${utcDay(ms)}T${String(d.getUTCHours()).padStart(2, "0")}`;
+}
+
+function sourceLabel(props) {
+  const parts = [props.utm_source];
+  if (props.utm_medium) parts.push(props.utm_medium);
+  if (props.utm_campaign) parts.push(props.utm_campaign);
+  return parts.join(" / ");
+}
+
+function buildStats(rows, days, nowMs) {
+  const hourly = days === 1;
   const series = [];
-  const start = new Date(Date.UTC(end.getUTCFullYear(), end.getUTCMonth(), end.getUTCDate() - (days - 1)));
-  for (let i = 0; i < days; i++) {
-    const d = new Date(start.getTime());
-    d.setUTCDate(start.getUTCDate() + i);
-    const day = d.toISOString().slice(0, 10);
-    series.push({ day, visitors: 0, pageviews: 0, seen: new Set() });
+  if (hourly) {
+    const day = utcDay(nowMs);
+    for (let h = 0; h < 24; h++) {
+      series.push({
+        day,
+        hour: h,
+        visitors: 0,
+        pageviews: 0,
+        seen: new Set(),
+      });
+    }
+  } else {
+    const start = new Date(rangeStartMs(days, nowMs));
+    for (let i = 0; i < days; i++) {
+      const d = new Date(start.getTime());
+      d.setUTCDate(start.getUTCDate() + i);
+      series.push({
+        day: d.toISOString().slice(0, 10),
+        hour: null,
+        visitors: 0,
+        pageviews: 0,
+        seen: new Set(),
+      });
+    }
   }
-  const byDay = new Map(series.map((s) => [s.day, s]));
+  const bySlot = new Map(
+    series.map((s) => [hourly ? `${s.day}T${String(s.hour).padStart(2, "0")}` : s.day, s]),
+  );
   const pages = new Map();
   const referrers = new Map();
+  const countries = new Map();
+  const browsers = new Map();
+  const sources = new Map();
   const events = new Map();
+  const funnelDays = new Map();
   let pageviews = 0;
   let downloads = 0;
   let githubStars = 0;
+  let docs = 0;
+  let changelog = 0;
+  let githubRepo = 0;
+  const liveSeen = new Set();
+  let livePageviews = 0;
+  const daySeen = new Set();
 
   for (const row of rows) {
-    const day = utcDay(new Date(row.ts).getTime());
-    const slot = byDay.get(day);
-    const name = row.name;
+    const tsMs = new Date(row.ts).getTime();
     const props = row.props && typeof row.props === "object" ? row.props : {};
+    if (nowMs - tsMs <= LIVE_MS && tsMs <= nowMs) {
+      if (row.visitor) liveSeen.add(row.visitor);
+      if (row.name === "pageview") livePageviews += 1;
+    }
+    if (!inRange(tsMs, days, nowMs)) continue;
+    const day = utcDay(tsMs);
+    const slot = bySlot.get(hourly ? hourKey(tsMs) : day);
+    const name = row.name;
+    if (row.visitor && slot) slot.seen.add(row.visitor);
+    if (row.visitor) daySeen.add(`${day}\0${row.visitor}`);
+    if (props.country) countries.set(props.country, (countries.get(props.country) || 0) + 1);
+    if (props.browser) browsers.set(props.browser, (browsers.get(props.browser) || 0) + 1);
+    if (row.visitor) {
+      const fk = `${day}\0${row.visitor}`;
+      const f = funnelDays.get(fk) || { home: false, download: false, docs: false, star: false };
+      if (name === "pageview" && row.path === "/") f.home = true;
+      if (name === "Download") f.download = true;
+      if (name === "Docs") f.docs = true;
+      if (name === "GitHub Star") f.star = true;
+      funnelDays.set(fk, f);
+    }
     if (name === "pageview") {
       pageviews += 1;
-      if (slot) {
-        slot.pageviews += 1;
-        if (row.visitor) slot.seen.add(row.visitor);
-      }
+      if (slot) slot.pageviews += 1;
       pages.set(row.path, (pages.get(row.path) || 0) + 1);
       if (row.referrer) referrers.set(row.referrer, (referrers.get(row.referrer) || 0) + 1);
+      if (props.utm_source) {
+        const label = sourceLabel(props);
+        sources.set(label, (sources.get(label) || 0) + 1);
+      }
     } else if (NAMES.has(name)) {
-      if (slot && row.visitor) slot.seen.add(row.visitor);
       const platform = props.platform || null;
       const key = `${name}\0${platform || ""}`;
       events.set(key, (events.get(key) || 0) + 1);
       if (name === "Download") downloads += 1;
       if (name === "GitHub Star") githubStars += 1;
+      if (name === "Docs") docs += 1;
+      if (name === "Changelog") changelog += 1;
+      if (name === "GitHub Repo") githubRepo += 1;
     }
   }
 
   for (const s of series) s.visitors = s.seen.size;
-  const visitors = series.reduce((n, s) => n + s.visitors, 0);
+  const visitors = hourly
+    ? daySeen.size
+    : series.reduce((n, s) => n + s.visitors, 0);
   const top = (map) =>
     [...map.entries()]
       .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
       .slice(0, 20);
+  let entered = 0;
+  let toDl = 0;
+  let toDocs = 0;
+  let toStar = 0;
+  for (const f of funnelDays.values()) {
+    if (!f.home) continue;
+    entered += 1;
+    if (f.download) toDl += 1;
+    if (f.docs) toDocs += 1;
+    if (f.star) toStar += 1;
+  }
+  const rate = (n) => (entered === 0 ? 0 : Math.round((n / entered) * 100));
 
   return {
     days,
@@ -422,32 +553,42 @@ function buildStats(rows, days, nowMs) {
     pageviews,
     downloads,
     githubStars,
-    series: series.map(({ day, visitors: v, pageviews: p }) => ({
+    docs,
+    changelog,
+    githubRepo,
+    live: { visitors: liveSeen.size, pageviews: livePageviews },
+    series: series.map(({ day, hour, visitors: v, pageviews: p }) => ({
       day,
+      hour,
       visitors: v,
       pageviews: p,
     })),
     pages: top(pages).map(([path, count]) => ({ path, count })),
     referrers: top(referrers).map(([host, count]) => ({ host, count })),
+    countries: top(countries).map(([code, count]) => ({ code, count })),
+    browsers: top(browsers).map(([name, count]) => ({ name, count })),
+    sources: top(sources).map(([label, count]) => ({ label, count })),
     events: [...events.entries()].map(([key, count]) => {
       const [name, platform] = key.split("\0");
       return { name, platform: platform || null, count };
     }),
+    funnels: [
+      { name: "Home to Download", entered, converted: toDl, rate: rate(toDl) },
+      { name: "Home to Docs", entered, converted: toDocs, rate: rate(toDocs) },
+      { name: "Home to GitHub Star", entered, converted: toStar, rate: rate(toStar) },
+    ],
   };
 }
 
 async function handleStats(req, res, days) {
   if (!authorized(req)) return json(res, 401, { error: "unauthorized" });
   if (!db) return json(res, 503, { error: "no database" });
-  const since = new Date(nowFn());
-  since.setUTCDate(since.getUTCDate() - (days - 1));
-  since.setUTCHours(0, 0, 0, 0);
   try {
     const { rows } = await db.query(
       `SELECT ts, name, path, referrer, visitor, props
          FROM events WHERE ts >= $1
          ORDER BY ts ASC`,
-      [since.toISOString()],
+      [querySince(days, nowFn()).toISOString()],
     );
     return json(res, 200, buildStats(rows, days, nowFn()));
   } catch (err) {
@@ -469,7 +610,8 @@ function renderDashboard(stats, days) {
   const bars = stats.series
     .map((s) => {
       const h = Math.round((s.visitors / max) * 100);
-      return `<div class="bar"><span style="height:${h}%"></span><small>${s.pageviews}</small><em>${escapeHtml(s.day.slice(5))}</em></div>`;
+      const label = days === 1 ? String(s.hour).padStart(2, "0") : s.day.slice(5);
+      return `<div class="bar"><span style="height:${h}%"></span><small>${s.pageviews}</small><em>${escapeHtml(label)}</em></div>`;
     })
     .join("");
   const list = (items, key) =>
@@ -482,12 +624,27 @@ function renderDashboard(stats, days) {
       return `<li><span>${escapeHtml(label)}</span><b>${e.count}</b></li>`;
     })
     .join("");
-  const empty = stats.pageviews === 0 && stats.downloads === 0 && stats.githubStars === 0;
+  const funnels = stats.funnels
+    .map(
+      (f) =>
+        `<li><span>${escapeHtml(f.name)}</span><b>${f.converted} / ${f.entered} (${f.rate}%)</b></li>`,
+    )
+    .join("");
+  const empty =
+    stats.pageviews +
+      stats.downloads +
+      stats.githubStars +
+      stats.docs +
+      stats.changelog +
+      stats.githubRepo ===
+      0 && stats.events.length === 0;
   const link = (n, label) =>
     `<a href="/?days=${n}"${n === days ? ' aria-current="page"' : ""}>${label}</a>`;
 
   return `<!doctype html>
-<html lang="en"><head><meta charset="utf-8"><title>Solenta stats</title>
+<html lang="en"><head><meta charset="utf-8">
+<meta http-equiv="refresh" content="30">
+<title>Solenta stats</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <style>
 :root { --paper:#f5f5f2; --ink:#191918; --muted:#5d5d58; --accent:#f2e51f; --border:rgba(25,25,24,.12); }
@@ -501,6 +658,7 @@ nav a[aria-current="page"] { box-shadow: inset 0 -3px 0 var(--accent); }
 .num { background:#fcfcfa; border:1px solid var(--border); border-radius:14px; padding:1rem; }
 .num b { display:block; font-size: 2rem; }
 .num span { color: var(--muted); }
+.live { color: var(--muted); }
 .chart { display:flex; align-items:flex-end; gap:4px; height:160px; margin: 2rem 0; }
 .bar { flex:1; display:flex; flex-direction:column; align-items:center; justify-content:flex-end; height:100%; }
 .bar span { display:block; width:100%; background:var(--ink); min-height:2px; }
@@ -515,7 +673,7 @@ button { font:inherit; background:none; border:0; cursor:pointer; text-decoratio
 <body>
 <header>
   <strong>Solenta stats</strong>
-  <nav>${link(1, "Today")}${link(7, "7 days")}${link(30, "30 days")}
+  <nav>${link(1, "Today")}${link(7, "7 days")}${link(30, "30 days")}${link(90, "90 days")}
   <form method="post" action="/logout"><button>Log out</button></form></nav>
 </header>
 <main class="wrap">
@@ -524,13 +682,21 @@ button { font:inherit; background:none; border:0; cursor:pointer; text-decoratio
     <div class="num"><b>${stats.pageviews}</b><span>Pageviews</span></div>
     <div class="num"><b>${stats.downloads}</b><span>Downloads</span></div>
     <div class="num"><b>${stats.githubStars}</b><span>GitHub stars</span></div>
+    <div class="num"><b>${stats.docs}</b><span>Docs</span></div>
+    <div class="num"><b>${stats.changelog}</b><span>Changelog</span></div>
+    <div class="num"><b>${stats.githubRepo}</b><span>GitHub Repo</span></div>
   </section>
+  <p class="live">Live: ${stats.live.visitors} visitors, ${stats.live.pageviews} pageviews</p>
   ${empty ? "<p>No events in this range.</p>" : `<div class="chart">${bars}</div>
   <div class="cols">
     <section><h2>Pages</h2>${list(stats.pages, "path")}</section>
     <section><h2>Referrers</h2>${list(stats.referrers, "host")}</section>
   </div>
-  <section><h2>Events</h2><ol>${ev}</ol></section>`}
+  <section><h2>Events</h2><ol>${ev}</ol></section>
+  <section><h2>Countries</h2>${list(stats.countries, "code")}</section>
+  <section><h2>Browsers</h2>${list(stats.browsers, "name")}</section>
+  <section><h2>Sources</h2>${list(stats.sources, "label")}</section>
+  <section><h2>Funnels</h2><ol>${funnels}</ol></section>`}
 </main>
 </body></html>`;
 }
@@ -539,15 +705,12 @@ async function handleHome(req, res) {
   if (!authorized(req)) return sendHtml(res, 200, loginForm());
   if (!db) return sendHtml(res, 503, "<p>Could not read stats.</p>");
   const days = clampDays(new URL(req.url, "http://x").searchParams.get("days"));
-  const since = new Date(nowFn());
-  since.setUTCDate(since.getUTCDate() - (days - 1));
-  since.setUTCHours(0, 0, 0, 0);
   try {
     const { rows } = await db.query(
       `SELECT ts, name, path, referrer, visitor, props
          FROM events WHERE ts >= $1
          ORDER BY ts ASC`,
-      [since.toISOString()],
+      [querySince(days, nowFn()).toISOString()],
     );
     return sendHtml(res, 200, renderDashboard(buildStats(rows, days, nowFn()), days));
   } catch (err) {
@@ -604,4 +767,9 @@ module.exports = {
   authorized,
   timingSafeEqual,
   buildStats,
+  clampDays,
+  querySince,
+  parseCountry,
+  parseBrowser,
+  parseUtms,
 };

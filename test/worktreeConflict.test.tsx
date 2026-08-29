@@ -7,7 +7,10 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { useState } from "react";
 import { inAct, mount } from "./support/dom.ts";
-import { WorktreeControl } from "../src/components/WorktreeControl";
+import {
+  classifyGitError,
+  WorktreeControl,
+} from "../src/components/WorktreeControl";
 import type { AgentStatus, ProjectInfo, ThreadInfo } from "../src/shared/ipc";
 import type { ConflictResolveInput } from "../src/conflictResolve.ts";
 
@@ -310,6 +313,95 @@ describe("stacked base after create (#187)", () => {
     );
     await m.click(m.query("[data-worktree-menu]"));
     assert.equal(m.query("[data-change-base]"), null);
+    m.unmount();
+  });
+});
+
+const REBASE_CONFLICT_MSG =
+  "WORKTREE_REBASE_CONFLICT: cannot rebase onto stacked-base\n  README.md";
+
+describe("rebase conflict card (#777)", () => {
+  it("classifies WORKTREE_REBASE_CONFLICT as rebase-conflict and keeps MERGE_CONFLICT / WORKTREE_DIRTY", () => {
+    const rebase = classifyGitError(REBASE_CONFLICT_MSG);
+    assert.equal(rebase.kind, "rebase-conflict");
+    assert.match(rebase.text, /README\.md/);
+    assert.ok(!rebase.text.includes("WORKTREE_REBASE_CONFLICT"));
+
+    assert.deepEqual(classifyGitError(`MERGE_CONFLICT:${CONFLICT_BODY}`), {
+      kind: "conflict",
+      text: CONFLICT_BODY,
+    });
+    assert.deepEqual(
+      classifyGitError(
+        "WORKTREE_DIRTY: cannot change the merge base while the worktree has uncommitted changes",
+      ),
+      {
+        kind: "dirty",
+        text: "cannot change the merge base while the worktree has uncommitted changes",
+      },
+    );
+  });
+
+  it("surfaces rebase-conflict paths from pickBase in the conflict card, not cardError", async () => {
+    const m = await mount(
+      chrome({
+        onStartRun: async () => {},
+        listBaseBranches: async () => ({
+          defaultBranch: "main",
+          branches: ["main", "stacked-base"],
+        }),
+        onSetBaseBranch: async () => {
+          throw new Error(REBASE_CONFLICT_MSG);
+        },
+      }),
+    );
+    await m.click(m.query("[data-worktree-menu]"));
+    await m.click(m.query("[data-change-base]"));
+    await m.flush();
+    await m.click(m.query("[data-base-branch='stacked-base']"));
+    await m.flush();
+
+    const banner = m.query("[data-worktree-banner='conflict']");
+    assert.ok(banner, "conflict card");
+    assert.match(banner!.textContent || "", /README\.md/);
+    assert.ok(
+      !(banner!.textContent || "").includes("WORKTREE_REBASE_CONFLICT"),
+      "marker prefix stripped",
+    );
+    assert.equal(m.query("[data-worktree-banner='error']"), null);
+    assert.equal(
+      m.query("[data-conflict-resolve]"),
+      null,
+      "rebase already aborted; no let-the-agent-resolve",
+    );
+    assert.ok(
+      !m.text().includes("Merge again"),
+      "rebase already aborted; no merge retry",
+    );
+    m.unmount();
+  });
+
+  it("keeps WORKTREE_DIRTY on the dirty banner, not the conflict card", async () => {
+    const m = await mount(
+      <WorktreeControl
+        thread={thread()}
+        project={project}
+        isWorking={false}
+        onSetupWorktree={async () => {}}
+        onMergeWorktree={async () => {}}
+        onRemoveWorktree={async () => {
+          throw new Error("WORKTREE_DIRTY: uncommitted changes\n  README.md");
+        }}
+      />,
+    );
+    await m.click(m.query("[data-worktree-menu]"));
+    await m.click(m.query("[data-worktree-delete]"));
+    await m.flush();
+    const dirty = m.query("[data-worktree-banner='dirty']");
+    assert.ok(dirty, "dirty banner");
+    assert.match(dirty!.textContent || "", /README\.md/);
+    assert.equal(m.query("[data-worktree-banner='conflict']"), null);
+    assert.equal(m.query("[data-worktree-banner='error']"), null);
     m.unmount();
   });
 });

@@ -57,6 +57,26 @@ import {
 } from "../modelPicker";
 import { useEscapeClose } from "../useEscapeClose";
 import { applyMention, getMentionQuery, type MentionQuery } from "../mention";
+import { ArchiveToast } from "./ArchiveToast";
+import type { ReplyTarget } from "../replyContext";
+import { excerptReply, wrapReplyContext } from "../replyContext";
+import {
+  composePastePrompt,
+  formatOverflow,
+  makePasteCard,
+  overflowWarn,
+  pasteCardLabel,
+  payloadChars,
+  shouldCollapsePaste,
+  type PasteCard,
+} from "../pasteCards";
+import {
+  popStash,
+  pushStash,
+  stashIsEmpty,
+  undoStash,
+  type StashEntry,
+} from "../promptStash";
 import { parseDelegate } from "../delegate";
 import { asBtwPrompt } from "../btw";
 import { buildBestOfNEntries, providerVendor } from "../bestOfN";
@@ -73,10 +93,19 @@ import { teachPermissionAllowed } from "../teach";
 import type { ThreadTeach } from "../shared/ipc";
 import { useFileDrop } from "../useFileDrop";
 import {
+  cycleTranscriptViewMode,
+  TRANSCRIPT_VIEW_HINTS,
+  TRANSCRIPT_VIEW_LABELS,
+  TRANSCRIPT_VIEW_MODES,
+  type TranscriptViewMode,
+} from "../focusView";
+import {
   getLastReasoningEffort,
+  getPasteCardsEnabled,
+  getTranscriptViewMode,
   setLastReasoningEffort,
-  setVerboseToolCards,
-  useVerboseToolCards,
+  setTranscriptViewMode,
+  useTranscriptViewMode,
 } from "../uiPrefs";
 import styles from "./Composer.module.css";
 
@@ -158,6 +187,14 @@ interface ComposerProps {
    * mock shells without a repo behind them).
    */
   onListFiles?: (query: string) => Promise<string[]>;
+  /**
+   * Native folder picker for the mention popup's "Browse folder" row.
+   * Returns a repo-relative token (trailing slash) or null if cancelled.
+   */
+  onPickMentionFolder?: () => Promise<string | null>;
+  /** Quote one agent message as bounded context on the next send. */
+  replyTo?: ReplyTarget | null;
+  onClearReply?: () => void;
   /**
    * File/image/folder picker for attachments. Absent hides the attach button
    * (tests / shells that do not wire one).
@@ -351,6 +388,9 @@ export const Composer = memo(function Composer({
   error = null,
   onDismissError,
   onListFiles,
+  onPickMentionFolder,
+  replyTo = null,
+  onClearReply,
   onPickAttachments,
   onSaveAttachmentImage,
   onLoadAttachmentImage,
@@ -363,7 +403,8 @@ export const Composer = memo(function Composer({
   dropHostRef,
   onFileDragChange,
 }: ComposerProps) {
-  const verboseTools = useVerboseToolCards();
+  const transcriptView = useTranscriptViewMode();
+  const [viewOpen, setViewOpen] = useState(false);
   /**
    * Unsent drafts keyed by thread: one Composer instance serves every thread
    * (ThreadView swaps threadId), so a single string would carry text across a
@@ -376,6 +417,18 @@ export const Composer = memo(function Composer({
    */
   const draftsRef = useRef<Record<string, string>>({});
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const overflowRef = useRef<HTMLDivElement>(null);
+  const pasteCardsRef = useRef<PasteCard[]>([]);
+  const syncOverflow = useCallback((draft: string) => {
+    const el = overflowRef.current;
+    if (!el) return;
+    const cards = pasteCardsRef.current;
+    const used = payloadChars(draft, cards);
+    const show = used >= 8_000 || cards.length > 0;
+    el.hidden = !show;
+    el.textContent = show ? formatOverflow(used) : "";
+    el.classList.toggle(styles.overflowWarn, overflowWarn(used));
+  }, []);
   const [hasPrompt, setHasPrompt] = useState(false);
   const syncHasPrompt = useCallback((text: string) => {
     const next = text.trim().length > 0;
@@ -385,8 +438,9 @@ export const Composer = memo(function Composer({
     (text: string) => {
       draftsRef.current[threadId] = text;
       syncHasPrompt(text);
+      syncOverflow(text);
     },
-    [threadId, syncHasPrompt],
+    [threadId, syncHasPrompt, syncOverflow],
   );
   const writeDraft = useCallback(
     (text: string, caret?: number) => {
@@ -400,8 +454,9 @@ export const Composer = memo(function Composer({
         }
       }
       syncHasPrompt(text);
+      syncOverflow(text);
     },
-    [threadId, syncHasPrompt],
+    [threadId, syncHasPrompt, syncOverflow],
   );
   const readDraft = useCallback(
     () => textareaRef.current?.value ?? draftsRef.current[threadId] ?? "",
@@ -470,6 +525,44 @@ export const Composer = memo(function Composer({
       ),
     [threadId],
   );
+  const [pasteCardsByThread, setPasteCardsByThread] = useState<
+    Record<string, PasteCard[]>
+  >({});
+  const [expandedCardIds, setExpandedCardIds] = useState<
+    Record<string, boolean>
+  >({});
+  const pasteCards = pasteCardsByThread[threadId] ?? [];
+  pasteCardsRef.current = pasteCards;
+  useEffect(() => {
+    syncOverflow(readDraft());
+  }, [pasteCards, threadId, syncOverflow, readDraft]);
+  const addPasteCard = useCallback(
+    (card: PasteCard) => {
+      setPasteCardsByThread((prev) => ({
+        ...prev,
+        [threadId]: [...(prev[threadId] ?? []), card],
+      }));
+    },
+    [threadId],
+  );
+  const removePasteCard = useCallback(
+    (id: string) =>
+      setPasteCardsByThread((prev) => ({
+        ...prev,
+        [threadId]: (prev[threadId] ?? []).filter((c) => c.id !== id),
+      })),
+    [threadId],
+  );
+  const clearPasteCards = useCallback(
+    () =>
+      setPasteCardsByThread((prev) =>
+        (prev[threadId] ?? []).length ? { ...prev, [threadId]: [] } : prev,
+      ),
+    [threadId],
+  );
+  const [stashToast, setStashToast] = useState<"stashed" | "restored" | null>(
+    null,
+  );
   const [sending, setSending] = useState(false);
   const [localError, setLocalError] = useState<string | null>(null);
   const [modeOpen, setModeOpen] = useState(false);
@@ -515,7 +608,9 @@ export const Composer = memo(function Composer({
   const mentionTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   /** Stale-response guard: only the latest lookup may paint the popup. */
   const mentionSeq = useRef(0);
-  const mentionOpen = mention != null && mentionFiles.length > 0;
+  const mentionOpen =
+    mention != null &&
+    (mentionFiles.length > 0 || Boolean(onPickMentionFolder));
 
   /** `/` command popup: `command` null means closed. */
   const [command, setCommand] = useState<string | null>(null);
@@ -664,6 +759,21 @@ export const Composer = memo(function Composer({
     [mention, closeMention, writeDraft],
   );
 
+  const browseMentionFolder = useCallback(() => {
+    if (!onPickMentionFolder || disabled) return;
+    void onPickMentionFolder()
+      .then((path) => {
+        if (path) acceptMention(path);
+      })
+      .catch((err) => {
+        const msg =
+          err instanceof Error && err.message
+            ? err.message
+            : "Failed to pick folder";
+        setLocalError(msg);
+      });
+  }, [onPickMentionFolder, disabled, acceptMention]);
+
   /**
    * Focus the input when a thread is opened (mount, or ThreadView swapping
    * threadId on the same instance) and the composer can accept text, so the
@@ -696,7 +806,8 @@ export const Composer = memo(function Composer({
       ? DEFAULT_TEMPLATE_ID
       : (workflows[0]?.id ?? DEFAULT_TEMPLATE_ID);
 
-  const canSend = !disabled && !sending && hasPrompt;
+  const canSend =
+    !disabled && !sending && (hasPrompt || pasteCards.length > 0);
   /**
    * Everything that cannot be queued (workflow start, model, permission mode)
    * waits for the run to land; only the prompt and Send stay live while busy.
@@ -924,7 +1035,12 @@ export const Composer = memo(function Composer({
   }, []);
 
   const anyMenuOpen =
-    modeOpen || modelOpen || effortOpen || buildMenuOpen || bestOfNOpen;
+    modeOpen ||
+    modelOpen ||
+    effortOpen ||
+    buildMenuOpen ||
+    bestOfNOpen ||
+    viewOpen;
   const closeAllMenus = useCallback(() => {
     setModeOpen(false);
     setEffortOpen(false);
@@ -935,6 +1051,7 @@ export const Composer = memo(function Composer({
     }
     setBuildMenuOpen(false);
     setBestOfNOpen(false);
+    setViewOpen(false);
   }, [modelOpen, closeModelPicker]);
   useEscapeClose(anyMenuOpen, closeAllMenus);
 
@@ -970,18 +1087,61 @@ export const Composer = memo(function Composer({
     return () => document.removeEventListener("keydown", onKey);
   }, [disabled, busy, popupOpen, onStopRun, onSlashAction]);
 
+  useEffect(() => {
+    const onKey = (e: globalThis.KeyboardEvent) => {
+      if (e.defaultPrevented || e.repeat) return;
+      const key = e.key.toLowerCase();
+      if (
+        e.ctrlKey &&
+        e.altKey &&
+        !e.metaKey &&
+        !e.shiftKey &&
+        key === "f"
+      ) {
+        e.preventDefault();
+        setTranscriptViewMode(
+          getTranscriptViewMode() === "summary" ? "normal" : "summary",
+        );
+        return;
+      }
+      if (
+        e.ctrlKey &&
+        !e.metaKey &&
+        !e.altKey &&
+        !e.shiftKey &&
+        key === "o"
+      ) {
+        e.preventDefault();
+        setTranscriptViewMode(cycleTranscriptViewMode(getTranscriptViewMode()));
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
+  const composeOutgoing = useCallback(
+    (draft: string) => {
+      let body = composePastePrompt(draft.trim(), pasteCards);
+      if (replyTo) body = wrapReplyContext(replyTo.text, body, replyTo.messageId);
+      return body;
+    },
+    [pasteCards, replyTo],
+  );
+
   const runAction = async (
     action: (prompt: string) => void | Promise<void>,
     failLabel: string,
   ) => {
-    const prompt = readDraft().trim();
-    if (!prompt || disabled || sending) return;
+    const prompt = composeOutgoing(readDraft());
+    if (!prompt.trim() || disabled || sending) return;
     setSending(true);
     setLocalError(null);
     try {
       await action(prompt);
       writeDraft("");
       clearAttachments();
+      clearPasteCards();
+      onClearReply?.();
       closeMention();
       closeCommand();
     } catch (err) {
@@ -1061,7 +1221,60 @@ export const Composer = memo(function Composer({
     setBuildMenuOpen(false);
   };
 
+  const applyStashEntry = (entry: StashEntry) => {
+    writeDraft(entry.text, entry.text.length);
+    clearPasteCards();
+    clearAttachments();
+    if (entry.attachments.length) addAttachments(entry.attachments);
+    if (entry.model !== undefined && entry.model !== model) {
+      void onSetProvider({ model: entry.model });
+    }
+    if (
+      entry.reasoningEffort !== undefined &&
+      entry.reasoningEffort !== reasoningEffort
+    ) {
+      void onSetReasoningEffort(entry.reasoningEffort);
+    }
+  };
+
+  const stashCurrent = () => {
+    const text = composeOutgoing(readDraft());
+    const entry = {
+      text,
+      attachments,
+      model,
+      reasoningEffort,
+    };
+    if (stashIsEmpty(entry) || disabled || sending) return;
+    pushStash(provider, entry);
+    writeDraft("");
+    clearAttachments();
+    clearPasteCards();
+    onClearReply?.();
+    setStashToast("stashed");
+  };
+
+  const restoreStash = () => {
+    const entry = popStash(provider);
+    if (!entry) return;
+    applyStashEntry(entry);
+    setStashToast("restored");
+  };
+
+  const undoLastStash = () => {
+    const entry = undoStash(provider);
+    setStashToast(null);
+    if (!entry) return;
+    applyStashEntry(entry);
+  };
+
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
+    if ((e.metaKey || e.ctrlKey) && !e.altKey && (e.key === "s" || e.key === "S")) {
+      e.preventDefault();
+      if (e.shiftKey) restoreStash();
+      else stashCurrent();
+      return;
+    }
     if (mentionOpen) {
       if (e.key === "ArrowDown") {
         e.preventDefault();
@@ -1165,29 +1378,35 @@ export const Composer = memo(function Composer({
       });
   };
 
-  /** Clipboard images become saved attachments; text pastes untouched. */
+  /** Clipboard images become saved attachments; large text pastes become cards. */
   const onPaste = (e: ClipboardEvent<HTMLTextAreaElement>) => {
-    if (!onSaveAttachmentImage || disabled || sending) return;
+    if (disabled || sending) return;
     const items = Array.from(e.clipboardData?.items ?? []).filter(
       (item) => item.kind === "file" && item.type.startsWith("image/"),
     );
-    if (items.length === 0) return;
-    e.preventDefault();
-    for (const item of items) {
-      const blob = item.getAsFile();
-      if (!blob) continue;
-      const reader = new FileReader();
-      reader.onload = () => {
-        const dataUrl = typeof reader.result === "string" ? reader.result : "";
-        if (!dataUrl) return;
-        onSaveAttachmentImage(dataUrl)
-          .then((attachment) => {
-            if (attachment) addAttachments([attachment]);
-          })
-          .catch(() => {});
-      };
-      reader.readAsDataURL(blob);
+    if (items.length > 0 && onSaveAttachmentImage) {
+      e.preventDefault();
+      for (const item of items) {
+        const blob = item.getAsFile();
+        if (!blob) continue;
+        const reader = new FileReader();
+        reader.onload = () => {
+          const dataUrl = typeof reader.result === "string" ? reader.result : "";
+          if (!dataUrl) return;
+          onSaveAttachmentImage(dataUrl)
+            .then((attachment) => {
+              if (attachment) addAttachments([attachment]);
+            })
+            .catch(() => {});
+        };
+        reader.readAsDataURL(blob);
+      }
+      return;
     }
+    const text = e.clipboardData?.getData("text/plain") ?? "";
+    if (!text || !getPasteCardsEnabled() || !shouldCollapsePaste(text)) return;
+    e.preventDefault();
+    addPasteCard(makePasteCard(text));
   };
 
   const acceptDroppedFiles = useCallback(
@@ -1479,7 +1698,7 @@ export const Composer = memo(function Composer({
           <ul
             className={styles.mentionList}
             role="listbox"
-            aria-label="Mention a file"
+            aria-label="Mention a file or folder"
           >
             {mentionFiles.map((f, i) => (
               <li key={f} role="option" aria-selected={i === mentionIndex}>
@@ -1498,6 +1717,7 @@ export const Composer = memo(function Composer({
                     }
                   }}
                   data-highlighted={i === mentionIndex ? "true" : undefined}
+                  data-mention-kind={f.endsWith("/") ? "folder" : "file"}
                   onMouseEnter={() => setMentionIndex(i)}
                   onClick={() => acceptMention(f)}
                 >
@@ -1505,6 +1725,18 @@ export const Composer = memo(function Composer({
                 </button>
               </li>
             ))}
+            {onPickMentionFolder && (
+              <li role="option" aria-selected={false}>
+                <button
+                  type="button"
+                  className={styles.mentionRow}
+                  data-mention-browse=""
+                  onClick={browseMentionFolder}
+                >
+                  Browse folder…
+                </button>
+              </li>
+            )}
           </ul>
         )}
         {commandOpen && (
@@ -1541,6 +1773,69 @@ export const Composer = memo(function Composer({
               </li>
             ))}
           </ul>
+        )}
+        {replyTo && (
+          <div className={styles.replyChip} data-reply-chip="">
+            <span className={styles.replyChipLabel}>Reply</span>
+            <span className={styles.replyChipText}>
+              {excerptReply(replyTo.text)}
+            </span>
+            <button
+              type="button"
+              className={styles.attachmentRemove}
+              aria-label="Cancel reply"
+              title="Cancel reply"
+              onClick={() => onClearReply?.()}
+            >
+              ×
+            </button>
+          </div>
+        )}
+        {pasteCards.length > 0 && (
+          <div className={styles.pasteCardList} aria-label="Pasted context">
+            {pasteCards.map((card) => {
+              const open = Boolean(expandedCardIds[card.id]);
+              return (
+                <div
+                  key={card.id}
+                  className={styles.pasteCard}
+                  data-paste-card={card.id}
+                  data-compressed={card.compressed ? "" : undefined}
+                >
+                  <div className={styles.pasteCardHead}>
+                    <button
+                      type="button"
+                      className={styles.pasteCardToggle}
+                      aria-expanded={open}
+                      onClick={() =>
+                        setExpandedCardIds((prev) => ({
+                          ...prev,
+                          [card.id]: !prev[card.id],
+                        }))
+                      }
+                    >
+                      <span>{pasteCardLabel(card)}</span>
+                      <span className={styles.pasteCardChars}>
+                        {card.chars.toLocaleString("en-US")} chars
+                      </span>
+                    </button>
+                    <button
+                      type="button"
+                      className={styles.attachmentRemove}
+                      aria-label="Remove paste"
+                      title="Remove paste"
+                      onClick={() => removePasteCard(card.id)}
+                    >
+                      ×
+                    </button>
+                  </div>
+                  {open && (
+                    <pre className={styles.pasteCardBody}>{card.text}</pre>
+                  )}
+                </div>
+              );
+            })}
+          </div>
         )}
         {attachments.length > 0 && (
           <div className={styles.attachmentRow} aria-label="Attachments">
@@ -1581,8 +1876,14 @@ export const Composer = memo(function Composer({
           onPaste={onPaste}
           disabled={disabled || sending}
         />
+        <div
+          ref={overflowRef}
+          className={styles.overflow}
+          data-paste-overflow=""
+          hidden
+        />
         <div ref={hintsRef} className={styles.hints} data-kbd-hints="" hidden>
-          {`⌘Enter ${busy ? "queue" : "send"} · ⌥Enter side question${busy ? " · Esc stop" : ""}`}
+          {`⌘Enter ${busy ? "queue" : "send"} · ⌥Enter side question · ⌘S stash${busy ? " · Esc stop" : ""}`}
         </div>
         <div className={styles.controls}>
           <div className={styles.pills}>
@@ -2435,6 +2736,78 @@ export const Composer = memo(function Composer({
               </div>
             )}
           </div>
+          <div className={styles.sendCluster}>
+          <div className={styles.modeWrap} data-transcript-view="">
+            <button
+              type="button"
+              className={`${styles.pill}${
+                transcriptView !== "normal" ? ` ${styles.pillAccent}` : ""
+              }`}
+              data-transcript-view-trigger=""
+              data-transcript-view-mode={transcriptView}
+              aria-haspopup="listbox"
+              aria-expanded={viewOpen}
+              aria-label={`Transcript view: ${TRANSCRIPT_VIEW_LABELS[transcriptView]}`}
+              title={`${TRANSCRIPT_VIEW_HINTS[transcriptView]}. Ctrl+O cycles.`}
+              onClick={() => {
+                setViewOpen((v) => !v);
+                setModeOpen(false);
+                setModelOpen(false);
+                setEffortOpen(false);
+                setBuildMenuOpen(false);
+                setBestOfNOpen(false);
+              }}
+            >
+              {TRANSCRIPT_VIEW_LABELS[transcriptView]}
+              <span className={styles.caret}>
+                <svg
+                  width="10"
+                  height="10"
+                  viewBox="0 0 10 10"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.5"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden="true"
+                >
+                  <path d="M2.5 3.5 5 6l2.5-2.5" />
+                </svg>
+              </span>
+            </button>
+            {viewOpen && (
+              <ul
+                className={`${styles.modeMenu} ${styles.viewMenu}`}
+                role="listbox"
+                aria-label="Transcript view"
+              >
+                {TRANSCRIPT_VIEW_MODES.map((mode: TranscriptViewMode) => (
+                  <li
+                    key={mode}
+                    role="option"
+                    aria-selected={mode === transcriptView}
+                  >
+                    <button
+                      type="button"
+                      className={styles.modeOption}
+                      data-transcript-view-option={mode}
+                      data-active={mode === transcriptView}
+                      title={TRANSCRIPT_VIEW_HINTS[mode]}
+                      onClick={() => {
+                        setTranscriptViewMode(mode);
+                        setViewOpen(false);
+                      }}
+                    >
+                      <span className={styles.checkSlot}>
+                        {mode === transcriptView ? "✓" : ""}
+                      </span>
+                      {TRANSCRIPT_VIEW_LABELS[mode]}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
           <button
             type="button"
             className={styles.send}
@@ -2462,6 +2835,7 @@ export const Composer = memo(function Composer({
               <path d="M8 13V3M4 7l4-4 4 4" />
             </svg>
           </button>
+          </div>
         </div>
         <div className={styles.meta}>
           <div className={styles.metaChips}>
@@ -2519,23 +2893,16 @@ export const Composer = memo(function Composer({
               </span>
             )}
           </div>
-          <button
-            type="button"
-            className={`${styles.chip} ${styles.verbose}`}
-            data-verbose-tools=""
-            aria-pressed={verboseTools}
-            aria-label="Verbose"
-            title={
-              verboseTools
-                ? "Verbose on. Every tool card shows its input and output."
-                : "Verbose off. Tool cards stay collapsed to a one-line summary."
-            }
-            onClick={() => setVerboseToolCards(!verboseTools)}
-          >
-            Verbose
-          </button>
         </div>
       </div>
+
+      {stashToast === "stashed" && (
+        <ArchiveToast
+          message="Stashed"
+          onUndo={undoLastStash}
+          onDismiss={() => setStashToast(null)}
+        />
+      )}
 
       <WorkflowsModal
         open={manageOpen}

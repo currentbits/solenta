@@ -457,6 +457,12 @@ export interface UseCoderResult {
   suggestCommitMessage: () => Promise<{ message: string }>;
   /** File paths for the composer @-mention popup. */
   listFiles: (query: string) => Promise<string[]>;
+  /** Native folder picker for @-mention browse. */
+  pickDirectory: () => Promise<string | null>;
+  /** AppSnap window list. */
+  listSnapWindows: () => Promise<Array<{ id: string; name: string }>>;
+  /** AppSnap capture into the selected thread. */
+  captureSnapWindow: (sourceId: string) => Promise<AttachmentInfo | null>;
   /** Resolve transcript path tokens against the selected thread worktree. */
   resolvePaths: (
     paths: string[],
@@ -2555,6 +2561,35 @@ export function useCoder(): UseCoderResult {
     [api, selectedThreadId],
   );
 
+  const pickDirectory = useCallback(async () => {
+    try {
+      return await api.projects.pickDirectory();
+    } catch {
+      return null;
+    }
+  }, [api]);
+
+  const listSnapWindows = useCallback(async () => {
+    try {
+      const result = await api.attachments.listWindows();
+      return result.windows;
+    } catch {
+      return [];
+    }
+  }, [api]);
+
+  const captureSnapWindow = useCallback(
+    async (sourceId: string) => {
+      if (!selectedThreadId) return null;
+      const result = await api.attachments.captureWindow({
+        threadId: selectedThreadId,
+        sourceId,
+      });
+      return result.attachment;
+    },
+    [api, selectedThreadId],
+  );
+
   const pickAttachments = useCallback(async () => {
     if (isWebMode()) {
       if (!selectedThreadId) return [];
@@ -3321,6 +3356,9 @@ export function useCoder(): UseCoderResult {
     revertFile,
     suggestCommitMessage,
     listFiles,
+    pickDirectory,
+    listSnapWindows,
+    captureSnapWindow,
     resolvePaths,
     openWorkspacePath,
     loadToolImage,

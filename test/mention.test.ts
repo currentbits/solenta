@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { applyMention, getMentionQuery } from "../src/mention.ts";
+import { applyMention, getMentionQuery, repoRelativeDir } from "../src/mention.ts";
 
 describe("getMentionQuery", () => {
   it("a bare @ at the caret opens with an empty query", () => {
@@ -55,5 +55,11 @@ describe("applyMention", () => {
     const out = applyMention("@re", 3, 0, "README.md");
     assert.equal(out.text, "@README.md ");
     assert.equal(out.caret, 11);
+  });
+});
+
+describe("repoRelativeDir", () => {
+  it("adds a trailing slash for a project-internal folder", () => {
+    assert.equal(repoRelativeDir("/tmp/repo", "/tmp/repo/src/components"), "src/components/");
   });
 });
