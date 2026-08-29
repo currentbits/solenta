@@ -1927,8 +1927,9 @@ function setNotes(store, input) {
  * Change the recorded merge/PR base after create (#187 / #775).
  * Empty/null clears to the repo default. A non-empty name must be a
  * local branch. Refused after the first pull request. A bound worktree
- * is reset onto the new base when clean; a dirty tree is refused and
- * the recorded base is left unchanged. Never bumps updatedAt.
+ * rebases unique thread commits onto the new base when clean, or
+ * resets when there are none; dirty trees and rebase conflicts are
+ * refused and the recorded base is left unchanged. Never bumps updatedAt.
  *
  * @param {import('./store').Store} store
  * @param {{ threadId: string, baseBranch?: string | null }} input

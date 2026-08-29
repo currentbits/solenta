@@ -1547,8 +1547,11 @@ function setupWorktree(opts) {
 /**
  * Recreate a bound worktree's start-point on `baseName` (or the repo
  * default when null). Refuses a dirty tree so uncommitted work is never
- * reset away. Callers must persist ThreadInfo.baseBranch only after this
- * succeeds (#775).
+ * discarded. Unique commits on the thread branch (`oldStart..HEAD`) are
+ * rebased with `git rebase --onto <newBase> <oldStart>`; a conflict
+ * aborts and names the conflicted paths (#776). A clean tree with no
+ * unique commits is reset onto the new start-point. Callers must persist
+ * ThreadInfo.baseBranch only after this succeeds (#775).
  *
  * @param {object} opts
  * @param {import('./store').Store} opts.store
@@ -1576,7 +1579,55 @@ function retargetWorktreeBase(opts) {
 
   const startName = baseName || repoDefaultBranch(project.path);
   const start = resolveStartPoint(project.path, startName);
-  gitOut(wtPath, ["reset", "--hard", start]);
+  const oldStartName =
+    recordedBaseBranch(thread) || repoDefaultBranch(project.path);
+  const oldStart = resolveStartPoint(project.path, oldStartName);
+  const oldSha = gitOut(project.path, [
+    "rev-parse",
+    "--verify",
+    `${oldStart}^{commit}`,
+  ]);
+  const newSha = gitOut(project.path, [
+    "rev-parse",
+    "--verify",
+    `${start}^{commit}`,
+  ]);
+  if (oldSha === newSha) return;
+
+  const uniqueCount = gitOut(wtPath, [
+    "rev-list",
+    "--count",
+    `${oldStart}..HEAD`,
+  ]);
+  if (uniqueCount && uniqueCount !== "0") {
+    const before = gitOut(wtPath, ["rev-parse", "HEAD"]);
+    const replay = gitTry(wtPath, ["rebase", "--onto", start, oldStart], {
+      env: { GIT_EDITOR: "true", GIT_TERMINAL_PROMPT: "0" },
+    });
+    if (!replay.ok) {
+      const files = unmergedFiles(wtPath);
+      if (!files.length) {
+        for (const m of String(replay.combined || "").matchAll(
+          /Merge conflict in (.+)/g,
+        )) {
+          const p = m[1].trim();
+          if (p && !files.includes(p)) files.push(p);
+        }
+      }
+      const aborted = gitTry(wtPath, ["rebase", "--abort"]);
+      if (!aborted.ok) {
+        gitTry(wtPath, ["reset", "--hard", before]);
+      }
+      const listed = files.length
+        ? `\n${files.map((f) => `  ${f}`).join("\n")}`
+        : "";
+      throw new Error(
+        `WORKTREE_REBASE_CONFLICT: cannot rebase onto ${startName}${listed}`,
+      );
+    }
+  } else {
+    gitOut(wtPath, ["reset", "--hard", start]);
+  }
   invalidateGitReads(wtPath);
 }
 
