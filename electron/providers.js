@@ -110,7 +110,7 @@ const GROK_46_EFFORTS = ["low", "medium", "high", "xhigh"];
 const GROK_45_EFFORTS = ["low", "medium", "high"];
 const KIMI_K3_EFFORTS = ["low", "high", "max"];
 const OPENCODE_LMH = ["low", "medium", "high"];
-const OPENCODE_DEEPSEEK_EFFORTS = ["low", "medium", "high", "max"];
+const OPENCODE_LMHX = ["low", "medium", "high", "xhigh"];
 
 /**
  * Effort list for the selected model. ModelInfo.efforts, when the field is
@@ -479,16 +479,18 @@ const PROVIDERS = [
     binEnv: "CODER_OPENCODE_BIN",
     defaultBin: "opencode",
     supportsResume: true,
-    // Live `opencode models` (v1.17.12, 2026-08-28) free Zen list. Labels,
-    // descriptions, vendors, context, and variants from
-    // `opencode models --verbose` / ~/.cache/opencode/models.json.
-    // Ids are provider/model as required by -m. Vendors are the model makers.
+    // Live `opencode models` (v1.17.12, 2026-08-29) free Zen list. Labels
+    // and `limit.context` from `opencode models --verbose`; descriptions
+    // from ~/.cache/opencode/models.json (verbose omits them). Vendors are
+    // the model makers when the description names one; otherwise OpenCode.
+    // Efforts = variant keys ∩ ReasoningEffort; empty variants hide the pill.
+    // Ids are provider/model as required by -m.
     models: [
       "opencode/big-pickle",
-      "opencode/deepseek-v4-flash-free",
       "opencode/hy3-free",
-      "opencode/laguna-s-2.1-free",
+      "opencode/ling-3.0-flash-fin-free",
       "opencode/mimo-v2.5-free",
+      "opencode/muse-spark-1.2-contributor-free",
       "opencode/nemotron-3-ultra-free",
       "opencode/nemotron-3.5-lightning-free",
     ],
@@ -503,31 +505,22 @@ const PROVIDERS = [
         efforts: [],
       },
       {
-        id: "opencode/deepseek-v4-flash-free",
-        label: "DeepSeek V4 Flash Free",
-        description:
-          "Official DeepSeek V4 Flash release with enhanced agentic capabilities and integrated DSpark speculative decoding",
-        vendor: "DeepSeek",
-        contextTokens: 200000,
-        efforts: OPENCODE_DEEPSEEK_EFFORTS.slice(),
-      },
-      {
         id: "opencode/hy3-free",
         label: "Hy3 Free",
         description:
           "Tencent Hy reasoning model for coding, instruction following, and agent tasks",
         vendor: "Tencent",
+        recommended: true,
         contextTokens: 190000,
         efforts: OPENCODE_LMH.slice(),
       },
       {
-        id: "opencode/laguna-s-2.1-free",
-        label: "Laguna S 2.1 Free",
+        id: "opencode/ling-3.0-flash-fin-free",
+        label: "Ling 3.0 Flash Fin Free",
         description:
-          "Agentic coding model from Poolside in the XS size class for local deployment",
-        vendor: "Poolside",
-        recommended: true,
-        contextTokens: 256000,
+          "Finance-enhanced model for financial research, multi-step investment workflows, and long-horizon planning and execution",
+        vendor: "InclusionAI",
+        contextTokens: 262144,
         efforts: OPENCODE_LMH.slice(),
       },
       {
@@ -537,6 +530,16 @@ const PROVIDERS = [
         vendor: "Xiaomi",
         contextTokens: 200000,
         efforts: OPENCODE_LMH.slice(),
+      },
+      {
+        id: "opencode/muse-spark-1.2-contributor-free",
+        label: "Muse Spark 1.2 Free",
+        description:
+          "Muse Spark 1.2 is a coding-focused update to Muse Spark 1.1 with improvements in code generation, complex debugging, codebase understanding, and end-to-end developer workflows.",
+        vendor: "OpenCode",
+        contextTokens: 1048576,
+        // Verbose variants also list `none` (not in ReasoningEffort).
+        efforts: OPENCODE_LMHX.slice(),
       },
       {
         id: "opencode/nemotron-3-ultra-free",
