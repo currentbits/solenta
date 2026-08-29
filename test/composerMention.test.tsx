@@ -143,38 +143,48 @@ describe("Composer @-mention popup", () => {
     assert.equal(m.container.querySelector('[aria-label="Mention a file"]'), null);
   });
 
-  it("keeps the highlighted mention scrolled into view", async () => {
-    // Same 240px overflow box as the slash palette: arrowing past the last
-    // visible row must scroll the highlight, not walk off-screen.
+  it("scrolls the mention list without moving ancestor scrollports (#762)", async () => {
+    // Same 240px overflow box as the slash palette. scrollIntoView would
+    // walk up to .chatSlot and lift the composer.
     const files = Array.from({ length: 16 }, (_, i) => `src/file-${i}.ts`);
     const m = await mountComposer(async () => files);
     const el = textarea(m);
     await m.type(el, "@");
     await caretToEnd(m);
     await waitForPopup();
-    assert.ok(
-      m.container.querySelector('[role="listbox"][aria-label="Mention a file"]'),
-      "popup open after @",
-    );
+    const list = m.container.querySelector(
+      '[role="listbox"][aria-label="Mention a file"]',
+    ) as HTMLElement | null;
+    assert.ok(list, "popup open after @");
 
-    const seen: Element[] = [];
+    Object.defineProperty(list, "clientHeight", {
+      configurable: true,
+      value: 240,
+    });
+    list.querySelectorAll<HTMLElement>("button").forEach((row, i) => {
+      Object.defineProperty(row, "offsetTop", {
+        configurable: true,
+        value: i * 40,
+      });
+      Object.defineProperty(row, "offsetHeight", {
+        configurable: true,
+        value: 40,
+      });
+    });
+
+    let intoView = 0;
     const proto = (m.query('[data-highlighted="true"]') as HTMLElement)
       .constructor.prototype as { scrollIntoView: () => void };
     const original = proto.scrollIntoView;
-    proto.scrollIntoView = function patched(this: Element) {
-      seen.push(this);
+    proto.scrollIntoView = function patched() {
+      intoView += 1;
     };
     try {
-      await m.press(el, "ArrowDown");
-      await m.press(el, "ArrowDown");
+      for (let i = 0; i < 8; i++) await m.press(el, "ArrowDown");
     } finally {
       proto.scrollIntoView = original;
     }
-    const highlighted = m.query('[data-highlighted="true"]');
-    assert.ok(highlighted, "a mention stays highlighted after ArrowDown");
-    assert.ok(
-      seen.includes(highlighted),
-      "the highlighted mention must be scrolled into view as it moves",
-    );
+    assert.equal(intoView, 0, "scrollIntoView scrolls chatSlot");
+    assert.ok(list.scrollTop > 0, "the mention list itself must scroll");
   });
 });
