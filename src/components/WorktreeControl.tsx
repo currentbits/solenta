@@ -43,8 +43,8 @@ export interface WorktreeChrome {
   banner: ReactNode;
 }
 
-function classifyGitError(msg: string): {
-  kind: "dirty" | "conflict" | "ci" | "error";
+export function classifyGitError(msg: string): {
+  kind: "dirty" | "conflict" | "rebase-conflict" | "ci" | "error";
   text: string;
 } {
   const after = (marker: string) => {
@@ -55,6 +55,8 @@ function classifyGitError(msg: string): {
   if (dirty) return { kind: "dirty", text: dirty };
   const conflict = after("MERGE_CONFLICT:");
   if (conflict) return { kind: "conflict", text: conflict };
+  const rebaseConflict = after("WORKTREE_REBASE_CONFLICT:");
+  if (rebaseConflict) return { kind: "rebase-conflict", text: rebaseConflict };
   const ci = after("CI_WORKFLOW:");
   if (ci) return { kind: "ci", text: ci };
   return { kind: "error", text: msg };
@@ -118,6 +120,7 @@ export function useWorktreeChrome(
   } | null>(null);
   const [dirtyMessage, setDirtyMessage] = useState<string | null>(null);
   const [conflictMessage, setConflictMessage] = useState<string | null>(null);
+  const [conflictKind, setConflictKind] = useState<"merge" | "rebase">("merge");
   const [ciWorkflowMessage, setCiWorkflowMessage] = useState<string | null>(
     null,
   );
@@ -139,6 +142,7 @@ export function useWorktreeChrome(
   useEffect(() => {
     setDirtyMessage(null);
     setConflictMessage(null);
+    setConflictKind("merge");
     setCiWorkflowMessage(null);
     setCardError(null);
     setGitAction(null);
@@ -191,6 +195,8 @@ export function useWorktreeChrome(
     if (!onSetBaseBranch || busy) return;
     setMenuOpen(false);
     setBasePicker(null);
+    setCardError(null);
+    setConflictMessage(null);
     try {
       await onSetBaseBranch(name);
     } catch (err) {
@@ -198,7 +204,18 @@ export function useWorktreeChrome(
         err instanceof Error && err.message
           ? err.message
           : "Could not change base";
-      setCardError(msg);
+      const classified = classifyGitError(msg);
+      if (
+        classified.kind === "rebase-conflict" ||
+        classified.kind === "conflict"
+      ) {
+        setConflictKind(
+          classified.kind === "rebase-conflict" ? "rebase" : "merge",
+        );
+        setConflictMessage(classified.text);
+      } else {
+        setCardError(classified.text);
+      }
     }
   };
 
@@ -221,6 +238,10 @@ export function useWorktreeChrome(
       const classified = classifyGitError(msg);
       if (classified.kind === "dirty") setDirtyMessage(classified.text);
       else if (classified.kind === "conflict") {
+        setConflictKind("merge");
+        setConflictMessage(classified.text);
+      } else if (classified.kind === "rebase-conflict") {
+        setConflictKind("rebase");
         setConflictMessage(classified.text);
       } else if (classified.kind === "ci") {
         setCiWorkflowMessage(classified.text);
@@ -588,7 +609,7 @@ export function useWorktreeChrome(
         >
           <pre className={styles.bannerText}>{conflictMessage}</pre>
           <BannerActions>
-            {onStartRun && (
+            {conflictKind === "merge" && onStartRun && (
               <button
                 type="button"
                 className={`${styles.bannerBtn} ${styles.bannerBtnPrimary}`}
@@ -615,30 +636,37 @@ export function useWorktreeChrome(
                 Open worktree
               </button>
             )}
+            {conflictKind === "merge" && (
+              <button
+                type="button"
+                className={
+                  onStartRun
+                    ? styles.bannerBtn
+                    : `${styles.bannerBtn} ${styles.bannerBtnPrimary}`
+                }
+                onClick={() => void runAction("merge", () => onMergeWorktree())}
+                disabled={busy}
+              >
+                {mergePending ? (
+                  <>
+                    <Spinner />
+                    Merging…
+                  </>
+                ) : (
+                  "Merge again"
+                )}
+              </button>
+            )}
             <button
               type="button"
               className={
-                onStartRun
-                  ? styles.bannerBtn
-                  : `${styles.bannerBtn} ${styles.bannerBtnPrimary}`
+                conflictKind === "rebase"
+                  ? `${styles.bannerBtn} ${styles.bannerBtnPrimary}`
+                  : styles.bannerBtn
               }
-              onClick={() => void runAction("merge", () => onMergeWorktree())}
-              disabled={busy}
-            >
-              {mergePending ? (
-                <>
-                  <Spinner />
-                  Merging…
-                </>
-              ) : (
-                "Merge again"
-              )}
-            </button>
-            <button
-              type="button"
-              className={styles.bannerBtn}
               onClick={() => {
                 setConflictMessage(null);
+                setConflictKind("merge");
                 setPendingMergeRetry(false);
                 sawWorkingRef.current = false;
               }}
