@@ -831,7 +831,7 @@ function conflictContext(opts) {
   }
   let baseBranch = null;
   try {
-    baseBranch = defaultBranch(project.path);
+    baseBranch = mergeBaseName(thread, project.path);
   } catch {
     baseBranch = null;
   }

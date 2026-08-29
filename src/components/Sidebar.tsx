@@ -1373,6 +1373,7 @@ export const Sidebar = memo(function Sidebar({
     createMenuOpen || scopeMenuOpen || filterMenu != null,
     () => {
       setCreateMenuOpen(false);
+      setBasePicker(null);
       setScopeMenuOpen(false);
       setFilterMenu(null);
     },

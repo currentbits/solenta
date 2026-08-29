@@ -740,6 +740,11 @@
   background: transparent;
 }
 
+.menuItemNested {
+  padding-left: 20px;
+  color: var(--text-dim);
+}
+
 .cardTitle {
   font-size: 13px;
   font-weight: 500;

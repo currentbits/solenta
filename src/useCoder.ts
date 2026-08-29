@@ -225,6 +225,9 @@ export interface UseCoderResult {
       baseBranch?: string | null;
     },
   ) => Promise<ThreadInfo | null>;
+  listBaseBranches: (
+    projectId: string,
+  ) => Promise<{ defaultBranch: string; branches: string[] }>;
   /**
    * Fork / hand off a thread (threads.fork). Selects the new thread the same
    * way createThread does. Plain fork: no provider override. Hand-off: pass
@@ -3231,6 +3234,11 @@ export function useCoder(): UseCoderResult {
     [api],
   );
 
+  const listBaseBranches = useCallback(
+    (projectId: string) => api.git.listBranches({ projectId }),
+    [api],
+  );
+
   /** Load another thread's transcript without marking it visited (#393). */
   const peekThread = useCallback(
     (id: string) => api.threads.peek(id),
@@ -3257,6 +3265,7 @@ export function useCoder(): UseCoderResult {
     createProject,
     updateProject,
     createThread,
+    listBaseBranches,
     forkThread,
     startRun,
     rewindAndResubmit,

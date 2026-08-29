@@ -1616,6 +1616,11 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
             ? { teach: { autonomy: "hint" as const, reviewsPassed: 0 } }
             : {}),
           ...(wantAsk ? { ask: true } : {}),
+          ...(typeof input === "object" &&
+          input !== null &&
+          typeof (input as { baseBranch?: unknown }).baseBranch === "string"
+            ? { baseBranch: (input as { baseBranch: string }).baseBranch }
+            : {}),
         });
         threads = [t, ...threads.filter((x) => x.id !== t.id)];
         return rec("threads.create", [input], t);
@@ -2379,6 +2384,11 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
         rec("runs.resumeQuotaWait", [input], { runId: "r-quota" }),
     },
     git: {
+      listBranches: (input: unknown) =>
+        rec("git.listBranches", [input], {
+          defaultBranch: "main",
+          branches: ["main"],
+        }),
       status: (projectId: string) =>
         rec("git.status", [projectId], {
           isRepo: true,
