@@ -1335,6 +1335,115 @@ describe("Composer drill-down picker", () => {
   });
 });
 
+describe("Composer model list search", () => {
+  it("is absent on the provider screen and present after drilling in", async () => {
+    const h = makeHarness();
+    const m = await mount(composer(h, { provider: "claude", model: null }));
+    await m.click(m.query('button[aria-label^="Model:"]'));
+    assert.equal(
+      m.query('input[aria-label="Search models"]'),
+      null,
+      "the provider screen must not grow a search field",
+    );
+    assert.ok(await openProvider(m, "Claude Code"));
+    assert.ok(
+      m.query('input[aria-label="Search models"]'),
+      "the model list is where search belongs",
+    );
+    m.unmount();
+  });
+
+  it("filters the list to matching models and keeps Custom", async () => {
+    const h = makeHarness();
+    const m = await mount(composer(h, { provider: "claude", model: null }));
+    assert.ok(await openProvider(m, "Claude Code"));
+    await m.type(m.query('input[aria-label="Search models"]'), "opus");
+    const labels = m
+      .queryAll('[class*="modelRow"]')
+      .map((el) => (el.textContent || "").replace(/\s+/g, " ").trim());
+    assert.ok(
+      labels.some((t) => t.includes("Opus 4")),
+      `Opus must remain, got ${labels.join(" | ")}`,
+    );
+    assert.equal(
+      labels.some((t) => t.includes("Sonnet 4")),
+      false,
+      "a non-matching model must leave the list",
+    );
+    assert.ok(
+      labels.some((t) => t.includes("Custom")),
+      "Custom stays so an unknown id is still reachable",
+    );
+    m.unmount();
+  });
+
+  it("selecting a filtered row reports that model", async () => {
+    const h = makeHarness();
+    const m = await mount(composer(h, { provider: "claude", model: null }));
+    assert.ok(await openProvider(m, "Claude Code"));
+    await m.type(m.query('input[aria-label="Search models"]'), "opus");
+    const row = m
+      .queryAll('[class*="modelRow"]')
+      .find((el) => (el.textContent || "").includes("Opus 4"));
+    assert.ok(row, "the filtered Opus row must be clickable");
+    await m.click(row);
+    assert.deepEqual(h.providerSets, [
+      { provider: "claude", model: "claude-opus-4" },
+    ]);
+    m.unmount();
+  });
+
+  it("Escape clears the query first, then backs out to providers", async () => {
+    const h = makeHarness();
+    const m = await mount(composer(h, { provider: "claude", model: null }));
+    assert.ok(await openProvider(m, "Claude Code"));
+    const search = m.query(
+      'input[aria-label="Search models"]',
+    ) as HTMLInputElement;
+    await m.type(search, "opus");
+    await m.press(search, "Escape");
+    assert.equal(
+      (m.query('input[aria-label="Search models"]') as HTMLInputElement).value,
+      "",
+      "first Escape must clear the filter, not leave the provider",
+    );
+    assert.ok(
+      m.query('[role="listbox"][aria-label="Model"]'),
+      "the model list must still be open",
+    );
+    await m.press(m.query('input[aria-label="Search models"]'), "Escape");
+    assert.ok(
+      m.query('[role="listbox"][aria-label="Provider"]'),
+      "second Escape must step back to providers",
+    );
+    m.unmount();
+  });
+
+  it("forgets the query when leaving or re-entering a provider", async () => {
+    const h = makeHarness();
+    const m = await mount(composer(h, { provider: "claude", model: null }));
+    assert.ok(await openProvider(m, "Claude Code"));
+    await m.type(m.query('input[aria-label="Search models"]'), "opus");
+    await m.click(m.query('[aria-label="Back to providers"]'));
+    assert.equal(
+      m.query('input[aria-label="Search models"]'),
+      null,
+      "leaving the model list must drop the field",
+    );
+    assert.ok(await openProvider(m, "Claude Code"));
+    const search = m.query(
+      'input[aria-label="Search models"]',
+    ) as HTMLInputElement | null;
+    assert.ok(search, "re-entering must show search again");
+    assert.equal(search.value, "", "and the previous query must be gone");
+    assert.ok(
+      (m.text() || "").includes("Sonnet 4"),
+      "the full list must be back",
+    );
+    m.unmount();
+  });
+});
+
 describe("Composer permission mode", () => {
   it("shows the current mode and reports a change", async () => {
     const h = makeHarness();

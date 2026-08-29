@@ -970,6 +970,34 @@
   color: var(--text);
 }
 
+/* Filter for one provider's models. Lives only on the drilled-in level:
+   the provider screen is already short. */
+.modelSearch {
+  flex-shrink: 0;
+  width: 100%;
+  box-sizing: border-box;
+  margin: 0 2px 6px;
+  padding: 5px 8px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--overlay-soft);
+  color: var(--text);
+  font-size: 12px;
+  outline: none;
+}
+
+.modelSearch:focus {
+  border-color: var(--blue-border);
+}
+
+.modelSearch::placeholder {
+  color: var(--text-dim);
+}
+
+.modelSearch::-webkit-search-cancel-button {
+  -webkit-appearance: none;
+}
+
 .modelRowChevron {
   margin-left: auto;
   color: var(--text-dim);

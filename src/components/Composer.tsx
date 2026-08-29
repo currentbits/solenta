@@ -33,6 +33,7 @@ import {
   buildUnifiedModelRows,
   clampHighlightIndex,
   detailModelRow,
+  filterModelRows,
   CUSTOM_MODEL_ID,
   buildProfileRows,
   buildProviderRows,
@@ -486,6 +487,8 @@ export const Composer = memo(function Composer({
   const [customDraft, setCustomDraft] = useState("");
   /** Index of the row under keyboard/hover focus in the model list. */
   const [highlightIndex, setHighlightIndex] = useState(0);
+  /** Type-in filter for the drilled-in model list. Empty on the provider screen. */
+  const [modelQuery, setModelQuery] = useState("");
   const [buildMenuOpen, setBuildMenuOpen] = useState(false);
   const [bestOfNOpen, setBestOfNOpen] = useState(false);
   const [bestIds, setBestIds] = useState<string[]>([]);
@@ -499,6 +502,7 @@ export const Composer = memo(function Composer({
   const modelTriggerRef = useRef<HTMLButtonElement>(null);
   const effortWrapRef = useRef<HTMLDivElement>(null);
   const modelListRef = useRef<HTMLUListElement>(null);
+  const modelSearchRef = useRef<HTMLInputElement>(null);
   const providerListRef = useRef<HTMLUListElement>(null);
   const buildWrapRef = useRef<HTMLDivElement>(null);
   const bestOfNWrapRef = useRef<HTMLDivElement>(null);
@@ -718,9 +722,12 @@ export const Composer = memo(function Composer({
     : undefined;
   // Second level shows exactly one provider's models; the flat list is kept for
   // the case where the drill target vanished (provider list changed under us).
-  const modelRows = drillInfo
+  const catalogRows = drillInfo
     ? buildModelRows(drillInfo)
     : buildUnifiedModelRows(providers, provider, sessionLocked, providerName);
+  const modelRows = drillProvider
+    ? filterModelRows(catalogRows, modelQuery)
+    : catalogRows;
   const triggerLabel = modelTriggerLabel(model, currentProviderInfo);
   const hi = clampHighlightIndex(modelRows, highlightIndex);
   const detailRow = detailModelRow(modelRows, provider, model, hi);
@@ -813,6 +820,7 @@ export const Composer = memo(function Composer({
     // Same reason as customFor: reset on OPEN so every close path is covered,
     // including ones added later.
     setDrillProvider(null);
+    setModelQuery("");
     setProviderIndex(
       profileRows.length + initialProviderIndex(providerRows, provider),
     );
@@ -832,7 +840,11 @@ export const Composer = memo(function Composer({
   useEffect(() => {
     if (!modelOpen) return;
     const t = window.setTimeout(() => {
-      (drillProvider ? modelListRef : providerListRef).current?.focus();
+      if (drillProvider) {
+        (modelSearchRef.current ?? modelListRef.current)?.focus();
+      } else {
+        providerListRef.current?.focus();
+      }
     }, 0);
     return () => window.clearTimeout(t);
   }, [modelOpen, drillProvider]);
@@ -854,8 +866,18 @@ export const Composer = memo(function Composer({
     setGlider(hl ? { top: hl.offsetTop, height: hl.offsetHeight } : null);
   }, [modelOpen, drillProvider, providerIndex, hi, modelRows.length]);
 
+  // A new query is a new list: land on the selected model if it still
+  // matches, otherwise the first selectable hit.
+  useEffect(() => {
+    if (!modelOpen || !drillProvider) return;
+    setHighlightIndex(initialHighlightIndex(modelRows, provider, model));
+    // modelRows is rebuilt each render; only the query edge needs a reseed.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [modelQuery]);
+
   /** Enter a provider's models, seeding the highlight on its selected row. */
   const enterProvider = (id: string) => {
+    setModelQuery("");
     setDrillProvider(id);
     // Seed on the selected model, not on row 0. The comment used to claim this
     // while the code sent every drill-in to Default, so the detail pane and the
@@ -1341,6 +1363,7 @@ export const Composer = memo(function Composer({
       profileRows.length +
       initialProviderIndex(providerRows, drillProvider ?? provider);
     setDrillProvider(null);
+    setModelQuery("");
     setProviderIndex(at);
     setCustomFor(null);
     // Deliberately NOT re-seeding highlightIndex: the provider level reads
@@ -1350,36 +1373,85 @@ export const Composer = memo(function Composer({
   };
 
   const onModelListKeyDown = (e: KeyboardEvent<HTMLUListElement>) => {
-    if (drillProvider && (e.key === "ArrowLeft" || e.key === "Escape")) {
+    if (handleModelNavKey(e, false)) return;
+    // A printable key while the list is focused is a search, not a dead key.
+    if (
+      drillProvider &&
+      e.key.length === 1 &&
+      !e.metaKey &&
+      !e.ctrlKey &&
+      !e.altKey
+    ) {
+      e.preventDefault();
+      setModelQuery((q) => q + e.key);
+      modelSearchRef.current?.focus();
+    }
+  };
+
+  const onModelSearchKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
+    handleModelNavKey(e, true);
+  };
+
+  /**
+   * Shared by the model list and its search field so arrows, Enter, and
+   * Escape stay on whichever of the two actually has focus.
+   * Returns true when the key was handled (search can then skip type-ahead).
+   */
+  function handleModelNavKey(
+    e: KeyboardEvent<HTMLInputElement | HTMLUListElement>,
+    fromSearch: boolean,
+  ): boolean {
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      setHighlightIndex((i) => stepHighlightIndex(modelRows, i, 1));
+      return true;
+    }
+    if (e.key === "ArrowUp") {
+      e.preventDefault();
+      setHighlightIndex((i) => stepHighlightIndex(modelRows, i, -1));
+      return true;
+    }
+    if (e.key === "Enter") {
+      e.preventDefault();
+      const row = modelRows[clampHighlightIndex(modelRows, highlightIndex)];
+      if (row && !row.disabled) void pickRow(row);
+      return true;
+    }
+    if (e.key === "Home") {
+      e.preventDefault();
+      setHighlightIndex(firstSelectableIndex(modelRows));
+      return true;
+    }
+    if (e.key === "End") {
+      e.preventDefault();
+      setHighlightIndex(lastSelectableIndex(modelRows));
+      return true;
+    }
+    if (e.key === "Escape") {
       e.preventDefault();
       // Stop this reaching the popover's own Escape handler, or backing out of
       // a provider closes the whole picker instead of stepping up one level.
       e.stopPropagation();
-      leaveProvider();
-      return;
+      if (fromSearch && modelQuery.trim()) {
+        setModelQuery("");
+        return true;
+      }
+      if (drillProvider) {
+        leaveProvider();
+        return true;
+      }
+      closeModelPicker(true);
+      return true;
     }
-    if (e.key === "ArrowDown") {
-      e.preventDefault();
-      setHighlightIndex((i) => stepHighlightIndex(modelRows, i, 1));
-    } else if (e.key === "ArrowUp") {
-      e.preventDefault();
-      setHighlightIndex((i) => stepHighlightIndex(modelRows, i, -1));
-    } else if (e.key === "Enter") {
-      e.preventDefault();
-      const row = modelRows[clampHighlightIndex(modelRows, highlightIndex)];
-      if (row && !row.disabled) void pickRow(row);
-    } else if (e.key === "Escape") {
+    if (fromSearch) return false;
+    if (drillProvider && e.key === "ArrowLeft") {
       e.preventDefault();
       e.stopPropagation();
-      closeModelPicker(true);
-    } else if (e.key === "Home") {
-      e.preventDefault();
-      setHighlightIndex(firstSelectableIndex(modelRows));
-    } else if (e.key === "End") {
-      e.preventDefault();
-      setHighlightIndex(lastSelectableIndex(modelRows));
+      leaveProvider();
+      return true;
     }
-  };
+    return false;
+  }
 
   return (
     <div className={styles.composer} ref={composerRef}>
@@ -1628,6 +1700,20 @@ export const Composer = memo(function Composer({
                     ) : (
                       <div className={styles.modelPaneHeader}>MODEL</div>
                     )}
+                    {drillProvider && !customFor ? (
+                      <input
+                        ref={modelSearchRef}
+                        className={styles.modelSearch}
+                        type="search"
+                        value={modelQuery}
+                        placeholder="Search models"
+                        aria-label="Search models"
+                        autoComplete="off"
+                        spellCheck={false}
+                        onChange={(e) => setModelQuery(e.target.value)}
+                        onKeyDown={onModelSearchKeyDown}
+                      />
+                    ) : null}
                     {!drillProvider ? (
                       <ul
                         className={`${styles.modelList} ${styles.levelEnterLeft}`}
