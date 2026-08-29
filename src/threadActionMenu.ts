@@ -19,6 +19,7 @@ export type ThreadActionMenuId =
   | "fork"
   | `handoff:${string}`
   | "rename"
+  | "tags"
   | "mute"
   | "unmute";
 
@@ -33,6 +34,7 @@ export function buildThreadActionMenuItems(input: {
   showPin?: boolean;
   showFork: boolean;
   showRename: boolean;
+  showTags?: boolean;
   showMute: boolean;
   showSettle: boolean;
 }): ContextMenuItem[] {
@@ -93,6 +95,15 @@ export function buildThreadActionMenuItems(input: {
       label: "Rename",
       separatorBefore: items.length > 0,
       attrs: { "data-rename-thread": thread.id },
+    });
+  }
+
+  if (input.showTags) {
+    items.push({
+      id: "tags",
+      label: "Edit tags",
+      separatorBefore: !input.showRename && items.length > 0,
+      attrs: { "data-edit-tags": thread.id },
     });
   }
 
