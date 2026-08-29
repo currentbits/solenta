@@ -69,6 +69,15 @@ export const setVerboseToolCards = verboseTools.set;
 export const useVerboseToolCards = verboseTools.use;
 
 /**
+ * Collapse large pastes into labeled cards (issue #381). On by default;
+ * Environment can turn it off so a paste lands in the textarea as text.
+ */
+const pasteCards = makeFlagPref("coder.pasteCards", true);
+export const getPasteCardsEnabled = pasteCards.get;
+export const setPasteCardsEnabled = pasteCards.set;
+export const usePasteCardsEnabled = pasteCards.use;
+
+/**
  * The last reasoning level the user picked, remembered across harness switches.
  *
  * Effort lives on the thread, and setProvider (electron/services.js) has to

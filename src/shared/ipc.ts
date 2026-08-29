@@ -3847,8 +3847,9 @@ export interface CoderApi {
   files: {
     /**
      * Repo-relative paths for the composer's @-mention popup: tracked plus
-     * untracked (gitignored excluded), substring-filtered, top 20. Uses the
-     * thread's worktree when bound, else the project checkout.
+     * untracked (gitignored excluded), plus directory prefixes (trailing
+     * slash), substring-filtered, top 20. Uses the thread's worktree when
+     * bound, else the project checkout.
      */
     list(input: { threadId: string; query?: string }): Promise<{ files: string[] }>;
     /**
@@ -3905,6 +3906,19 @@ export interface CoderApi {
      * image, or too large.
      */
     readImage(input: { path: string }): Promise<{ dataUrl: string | null }>;
+    /**
+     * On-screen windows AppSnap can capture (issue #381). Empty when the
+     * host cannot list sources (web, missing screen-recording permission).
+     */
+    listWindows(): Promise<{ windows: Array<{ id: string; name: string }> }>;
+    /**
+     * Capture one window into userData/attachments/<threadId> and return
+     * the image chip. null when the window disappeared or write failed.
+     */
+    captureWindow(input: {
+      threadId: string;
+      sourceId: string;
+    }): Promise<{ attachment: AttachmentInfo | null }>;
     /**
      * Electron-only (preload, webUtils.getPathForFile): absolute path of a
      * drag-dropped File, including Finder directories. Absent on web/dev

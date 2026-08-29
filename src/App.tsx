@@ -217,6 +217,9 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     revertFile,
     suggestCommitMessage,
     listFiles,
+    pickDirectory,
+    listSnapWindows,
+    captureSnapWindow,
     resolvePaths,
     openWorkspacePath,
     loadToolImage,
@@ -1508,6 +1511,9 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         onRevertFile={revertFile}
         onSuggestCommitMessage={suggestCommitMessage}
         onListFiles={listFiles}
+        onPickDirectory={pickDirectory}
+        onListSnapWindows={listSnapWindows}
+        onCaptureSnapWindow={captureSnapWindow}
         onListCliCommands={listCliCommands}
         onResolvePaths={resolvePaths}
         onOpenWorkspacePath={openWorkspacePath}
