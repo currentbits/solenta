@@ -925,7 +925,6 @@ a.btn {
 }
 
 .toolBody {
-  border-top: 1px solid var(--border-soft);
   padding: 0;
   max-width: 100%;
   overflow: hidden;
@@ -1199,7 +1198,6 @@ a.btn {
 
 .patchScroll {
   min-height: 0;
-  border: 1px solid var(--border-soft);
   border-radius: var(--radius-sm);
   background: var(--input-fill);
   padding: 8px 10px;
@@ -1519,10 +1517,9 @@ button.diffLineGutter:focus-visible {
 
 .card {
   background: var(--card);
-  border: 1px solid var(--border);
+  border: 1px solid var(--border-soft);
   border-radius: var(--radius);
   padding: 12px 14px;
-  box-shadow: var(--shadow-sm);
 }
 
 .cardHeader {
@@ -1844,10 +1841,8 @@ button.diffLineGutter:focus-visible {
   margin: -6px auto 4px;
   padding: 7px 8px 7px 12px;
   border-radius: var(--radius);
-  border: 1px solid var(--border);
   border-left: 2px solid var(--blue-border);
   background: var(--card);
-  box-shadow: var(--shadow-sm);
   font-size: 12px;
   color: var(--text-muted);
 }
@@ -1905,7 +1900,6 @@ button.diffLineGutter:focus-visible {
   gap: 12px;
   padding: 7px 8px 7px 12px;
   border-radius: var(--radius);
-  border: 1px solid var(--border);
   background: transparent;
   font-size: 12px;
   color: var(--text-muted);
@@ -2228,7 +2222,6 @@ button.diffLineGutter:focus-visible {
   padding: 10px 14px;
   border-radius: 4px 14px 14px 14px;
   background: var(--card);
-  border: 1px solid var(--border-soft);
 }
 
 .inboundFrom {
@@ -2797,7 +2790,6 @@ button.diffLineGutter:focus-visible {
   padding: 10px 12px;
   border-radius: var(--radius);
   background: var(--blue-soft);
-  border: 1px solid var(--blue-border);
   color: var(--info-fg-strong);
   font-size: 12.5px;
   font-weight: 500;
@@ -2805,7 +2797,6 @@ button.diffLineGutter:focus-visible {
 
 .statusStripStalled {
   background: var(--amber-soft);
-  border-color: var(--amber-border);
   color: var(--warning-fg);
 }
 
@@ -2817,7 +2808,6 @@ button.diffLineGutter:focus-visible {
 
 .statusStripQuotaWait {
   background: var(--amber-soft);
-  border-color: var(--amber-border);
   color: var(--warning-fg);
 }
 
@@ -2837,7 +2827,6 @@ button.diffLineGutter:focus-visible {
   padding: 10px 12px;
   border-radius: var(--radius);
   background: var(--card);
-  border: 1px solid var(--border);
   color: var(--text-muted);
   font-size: 12.5px;
 }

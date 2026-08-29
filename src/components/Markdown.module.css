@@ -114,7 +114,6 @@
 
 .codeBlock {
   margin: 10px 0;
-  border: 1px solid var(--border);
   border-radius: var(--radius);
   background: var(--bg-elevated);
   overflow: hidden;

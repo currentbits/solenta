@@ -4,7 +4,7 @@
   flex-direction: column;
   height: 100%;
   background: var(--bg-elevated);
-  border-left: 1px solid var(--border);
+  border-left: 1px solid var(--border-soft);
   min-width: 0;
 }
 
@@ -15,7 +15,7 @@
   height: 100%;
   padding-top: 14px;
   background: var(--bg-elevated);
-  border-left: 1px solid var(--border);
+  border-left: 1px solid var(--border-soft);
 }
 
 .collapseBtn {
@@ -166,7 +166,6 @@
 /* Real provider session card (when workflow is null) */
 .sessionCard {
   background: var(--card);
-  border: 1px solid var(--border);
   border-radius: var(--radius);
   padding: 14px;
   display: flex;
@@ -222,7 +221,6 @@
 
 .teamSection {
   background: var(--card);
-  border: 1px solid var(--border);
   border-radius: var(--radius);
   padding: 14px;
   display: flex;
@@ -424,7 +422,6 @@
 
 .workflow {
   background: var(--card);
-  border: 1px solid var(--border);
   border-radius: var(--radius);
   padding: 12px;
 }
@@ -695,13 +692,11 @@
 
 .gitCard {
   background: var(--card);
-  border: 1px solid var(--border);
   border-radius: var(--radius);
   padding: 14px;
   display: flex;
   flex-direction: column;
   gap: 12px;
-  box-shadow: var(--shadow-sm);
 }
 
 .gitCardLabel {
