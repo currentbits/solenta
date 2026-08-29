@@ -67,6 +67,7 @@ import {
 } from "../slashCommands";
 import { WorkflowsModal } from "./WorkflowsModal";
 import { DROP_OVERLAY_MESSAGE, DROP_REJECT_MESSAGE } from "../dropFiles";
+import { scrollChildIntoNearestView } from "../scrollNearest";
 import { teachPermissionAllowed } from "../teach";
 import type { ThreadTeach } from "../shared/ipc";
 import { useFileDrop } from "../useFileDrop";
@@ -1418,7 +1419,10 @@ export const Composer = memo(function Composer({
                   // looks frozen. Matches the model picker.
                   ref={(el) => {
                     if (i === mentionIndex && el) {
-                      el.scrollIntoView({ block: "nearest" });
+                      scrollChildIntoNearestView(
+                        el.closest<HTMLElement>('[role="listbox"]'),
+                        el,
+                      );
                     }
                   }}
                   data-highlighted={i === mentionIndex ? "true" : undefined}
@@ -1447,7 +1451,10 @@ export const Composer = memo(function Composer({
                   // and the palette looks frozen. Matches the model picker.
                   ref={(el) => {
                     if (i === commandIndex && el) {
-                      el.scrollIntoView({ block: "nearest" });
+                      scrollChildIntoNearestView(
+                        el.closest<HTMLElement>('[role="listbox"]'),
+                        el,
+                      );
                     }
                   }}
                   data-highlighted={i === commandIndex ? "true" : undefined}
@@ -1821,12 +1828,15 @@ export const Composer = memo(function Composer({
                               className={styles.modelRow}
                               // The list scrolls (26 rows in a 240px box) and
                               // opens focused, so arrow keys are the first
-                              // affordance. Without this the highlight walks
-                              // off-screen past the sixth row and the list
-                              // looks frozen while the detail pane changes.
+                              // affordance. Scroll the list only: scrollIntoView
+                              // walks up to .chatSlot and lifts the composer
+                              // (#762).
                               ref={(el) => {
                                 if (highlighted && el) {
-                                  el.scrollIntoView({ block: "nearest" });
+                                  scrollChildIntoNearestView(
+                                    modelListRef.current,
+                                    el,
+                                  );
                                 }
                               }}
                               data-selected={selected ? "true" : undefined}

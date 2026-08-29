@@ -2031,28 +2031,76 @@ describe("Composer custom model", () => {
     m.unmount();
   });
 
-  it("keeps the highlighted row scrolled into view", async () => {
-    // 26 rows in a 240px box that opens focused: without this the highlight
-    // walks off-screen past row six while the list looks frozen.
-    const h = makeHarness();
-    const m = await mount(composer(h, { provider: "claude", model: null }));
-    const list = (await openProvider(m, "Claude Code")) as HTMLElement;
-    const seen: Element[] = [];
+  it("scrolls the OpenCode list without moving ancestor scrollports (#762)", async () => {
+    // OpenCode descriptions vary in length. scrollIntoView({block:nearest})
+    // walks up to .chatSlot { overflow:hidden } and lifts the composer,
+    // leaving a gap under the picker. Scroll only the 240px list.
+    const models = Array.from({ length: 12 }, (_, i) => `opencode/model-${i}`);
+    const OPENCODE: ProviderInfo = {
+      id: "opencode",
+      name: "OpenCode",
+      available: true,
+      supportsResume: true,
+      models,
+      modelInfo: models.map((id, i) => ({
+        id,
+        label: `OpenCode model ${i}`,
+        description:
+          i % 2 === 0
+            ? "Short"
+            : "Long description that used to grow the bottom-anchored popover and jump the menu",
+        vendor: "OpenCode",
+      })),
+      efforts: [],
+      permissionModes: ["default", "bypassPermissions"],
+    };
+    const h = makeHarness("opencode");
+    const m = await mount(
+      composer(h, {
+        provider: "opencode",
+        model: null,
+        providers: [OPENCODE],
+      }),
+    );
+    const list = (await openProvider(m, "OpenCode")) as HTMLElement;
+    assert.ok(list, "OpenCode model list must open");
+
+    Object.defineProperty(list, "clientHeight", {
+      configurable: true,
+      value: 240,
+    });
+    const rows = list.querySelectorAll<HTMLElement>("button");
+    rows.forEach((row, i) => {
+      Object.defineProperty(row, "offsetTop", {
+        configurable: true,
+        value: i * 40,
+      });
+      Object.defineProperty(row, "offsetHeight", {
+        configurable: true,
+        value: 40,
+      });
+    });
+
+    let intoView = 0;
     const proto = (m.query('[data-highlighted="true"]') as HTMLElement)
       .constructor.prototype as { scrollIntoView: () => void };
     const original = proto.scrollIntoView;
-    proto.scrollIntoView = function patched(this: Element) {
-      seen.push(this);
+    proto.scrollIntoView = function patched() {
+      intoView += 1;
     };
     try {
-      await m.press(list, "ArrowDown");
-      await m.press(list, "ArrowDown");
+      for (let i = 0; i < 8; i++) await m.press(list, "ArrowDown");
     } finally {
       proto.scrollIntoView = original;
     }
+    assert.equal(
+      intoView,
+      0,
+      "scrollIntoView scrolls chatSlot and lifts the composer",
+    );
     assert.ok(
-      seen.length > 0,
-      "the highlighted row must be scrolled into view as it moves",
+      list.scrollTop > 0,
+      "the 240px list itself must bring the highlight into view",
     );
     m.unmount();
   });

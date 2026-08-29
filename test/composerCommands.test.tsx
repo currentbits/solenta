@@ -270,33 +270,44 @@ describe("Composer / command popup", () => {
     assert.equal(m.byText("/handoff"), null);
   });
 
-  it("keeps the highlighted command scrolled into view", async () => {
-    // 16 rows in a 240px box: without this the highlight walks off-screen
-    // past the last visible row while the list looks frozen.
+  it("scrolls the command list without moving ancestor scrollports (#762)", async () => {
+    // 16 rows in a 240px box. scrollIntoView would walk up to .chatSlot
+    // and lift the composer.
     const m = await mountComposer();
     const el = textarea(m);
     await m.type(el, "/");
     await caretToEnd(m);
-    assert.ok(commandList(m), "popup open after /");
+    const list = commandList(m) as HTMLElement | null;
+    assert.ok(list, "popup open after /");
 
-    const seen: Element[] = [];
+    Object.defineProperty(list, "clientHeight", {
+      configurable: true,
+      value: 240,
+    });
+    list.querySelectorAll<HTMLElement>("button").forEach((row, i) => {
+      Object.defineProperty(row, "offsetTop", {
+        configurable: true,
+        value: i * 40,
+      });
+      Object.defineProperty(row, "offsetHeight", {
+        configurable: true,
+        value: 40,
+      });
+    });
+
+    let intoView = 0;
     const proto = (m.query('[data-highlighted="true"]') as HTMLElement)
       .constructor.prototype as { scrollIntoView: () => void };
     const original = proto.scrollIntoView;
-    proto.scrollIntoView = function patched(this: Element) {
-      seen.push(this);
+    proto.scrollIntoView = function patched() {
+      intoView += 1;
     };
     try {
-      await m.press(el, "ArrowDown");
-      await m.press(el, "ArrowDown");
+      for (let i = 0; i < 8; i++) await m.press(el, "ArrowDown");
     } finally {
       proto.scrollIntoView = original;
     }
-    const highlighted = m.query('[data-highlighted="true"]');
-    assert.ok(highlighted, "a command stays highlighted after ArrowDown");
-    assert.ok(
-      seen.includes(highlighted),
-      "the highlighted command must be scrolled into view as it moves",
-    );
+    assert.equal(intoView, 0, "scrollIntoView scrolls chatSlot");
+    assert.ok(list.scrollTop > 0, "the command list itself must scroll");
   });
 });
