@@ -161,7 +161,7 @@ describe("permission modes: buildArgs per provider", () => {
   it("opencode: --auto only for full access (and leftover acceptEdits)", () => {
     const entry = getProvider("opencode");
     const def = entry.buildArgs({ prompt: "hello", permissionMode: "default" });
-    assert.deepEqual(def, ["run", "--format", "json", "hello"]);
+    assert.deepEqual(def, ["run", "--format", "json", "--thinking", "hello"]);
     assert.ok(!def.includes("--auto"));
 
     const bypass = entry.buildArgs({

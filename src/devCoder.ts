@@ -4861,15 +4861,15 @@ function buildDevCoder(): CoderApi {
       },
     },
     git: {
+      async listBranches() {
+        return { defaultBranch: "main", branches: ["main"] };
+      },
       async status(_projectId) {
         return {
           isRepo: true,
           branch: "main",
           dirty: false,
         };
-      },
-      async listBranches(_input) {
-        return { defaultBranch: "main", branches: ["main"] };
       },
       async push(input) {
         const detail = details.get(input.threadId);
