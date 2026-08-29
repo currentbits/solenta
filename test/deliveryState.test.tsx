@@ -152,7 +152,9 @@ describe("stalled badge (issue #314)", () => {
     assert.ok(waiting, "Waiting label must render instead");
     assert.match(waiting!.textContent || "", /^Waiting/);
     assert.match(waiting!.getAttribute("title") || "", /Waiting for input/);
-    assert.equal(m.query("[data-status-dot]"), null);
+    const pulse = m.query("[data-status-dot]");
+    assert.ok(pulse, "waiting keeps a title-adjacent pulse");
+    assert.equal(pulse!.getAttribute("data-status-dot"), "waiting");
     m.unmount();
   });
 });

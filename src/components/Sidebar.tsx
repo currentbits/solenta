@@ -421,8 +421,9 @@ function baseStatusDot(
 }
 
 /**
- * Card status slot: colored TEXT (no dot, no pill). Precedence matches
- * statusDotFor; unread done is the extra idle case the spec adds.
+ * Card status slot: colored TEXT. Precedence matches statusDotFor; unread
+ * done is the extra idle case the spec adds. Live / unread-done also get a
+ * title-adjacent pulse via statusPulseFor.
  */
 export function statusLabelFor(
   thread: ThreadInfo,
@@ -531,6 +532,28 @@ export function statusLabelFor(
       flags: {},
     };
   }
+  return null;
+}
+
+export type StatusPulseTone = "working" | "waiting" | "delegating" | "done";
+
+/**
+ * Title-adjacent pulse (#763). Live / unread-done states only — failed,
+ * stalled, quota, queued, and woke stay text-only so the motion means
+ * "this thread is in flight or just finished."
+ */
+export function statusPulseFor(
+  thread: ThreadInfo,
+  now: number,
+  wait: WaitState | null,
+  active: boolean,
+): StatusPulseTone | null {
+  const label = statusLabelFor(thread, now, wait, active);
+  if (!label) return null;
+  if (label.tone === "working") return "working";
+  if (label.tone === "delegating") return "delegating";
+  if (label.tone === "done") return "done";
+  if (label.tone === "attention" && label.text === "Waiting") return "waiting";
   return null;
 }
 
@@ -650,6 +673,7 @@ export const ThreadCard = memo(function ThreadCard({
   const settleLabel = isSettled ? "Keep thread active" : "Settle thread";
   const showUnread = !active && isUnread(thread);
   const label = statusLabelFor(thread, now, wait, active);
+  const pulse = statusPulseFor(thread, now, wait ?? null, active);
   const pinned = isPinned(thread);
   const recede = working && !active && !multiSelected;
   const subagentLines = wait ? subagentNames(wait) : [];
@@ -941,6 +965,14 @@ export const ThreadCard = memo(function ThreadCard({
           </span>
         </div>
         <div className={styles.cardLine2}>
+          {pulse && (
+            <span
+              className={styles.statusPulse}
+              data-status-dot={pulse}
+              data-tone={pulse}
+              aria-hidden
+            />
+          )}
           {showUnread && <span className={styles.srOnly}>unread</span>}
           {renaming ? (
             <input
