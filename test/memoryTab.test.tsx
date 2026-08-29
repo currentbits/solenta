@@ -18,6 +18,7 @@ import type {
   AgentConfigPreview,
   MemoryEntryInfo,
   MemoryMaintenanceReport,
+  ProjectCodeMap,
 } from "../src/shared/ipc";
 
 const LONG_BODY =
@@ -828,6 +829,81 @@ describe("MemoryTab review queue", () => {
     assert.equal(text.includes("Aging run secret title"), false);
     assert.equal(text.includes("Fat convention secret title"), false);
     assert.ok(m.query("[data-needs-your-call]"));
+    m.unmount();
+  });
+});
+
+describe("MemoryTab code map", () => {
+  const wiki: ProjectCodeMap = {
+    projectId: "p1",
+    updatedAt: Date.now() - 5 * 60_000,
+    fileCount: 2,
+    symbolCount: 3,
+    headSha: "abc1234ffff",
+    defaultBranch: "main",
+    modules: [
+      {
+        name: "src",
+        fileCount: 2,
+        symbolCount: 3,
+        hot: [{ path: "src/App.tsx", symbols: ["App", "useNarrow"], rank: 4 }],
+      },
+    ],
+    dependencies: ["react"],
+  };
+
+  it("renders the wiki and expands a module", async () => {
+    const calls: unknown[] = [];
+    const m = await mount(
+      <MemoryTab
+        projectSlug="coder"
+        projectId="p1"
+        searchMemory={async () => []}
+        recentMemory={async () => []}
+        getMemory={async (input) => entry({ id: input.id })}
+        updateMemory={async () => ({ id: "x" })}
+        removeMemory={async () => {}}
+        storeMemory={async () => ({ id: "x" })}
+        loadCodeMap={async (input) => {
+          calls.push(input);
+          return wiki;
+        }}
+      />,
+    );
+    await m.flush();
+    assert.deepEqual(calls, [{ projectId: "p1" }]);
+    assert.ok(m.query("[data-code-map]"));
+    assert.match(m.text(), /Code map/);
+    assert.match(m.text(), /not agent memory/);
+    assert.match(m.text(), /2 files/);
+    assert.match(m.text(), /react/);
+    assert.equal(m.text().includes("src/App.tsx"), false);
+    await m.click(m.byText("src/"));
+    assert.match(m.text(), /src\/App\.tsx/);
+    assert.match(m.text(), /App, useNarrow/);
+    m.unmount();
+  });
+
+  it("still shows the map when the memory server is down", async () => {
+    const m = await mount(
+      <MemoryTab
+        projectSlug="coder"
+        projectId="p1"
+        searchMemory={async () => []}
+        recentMemory={async () => {
+          throw new Error("Memory server is not running.");
+        }}
+        getMemory={async (input) => entry({ id: input.id })}
+        updateMemory={async () => ({ id: "x" })}
+        removeMemory={async () => {}}
+        storeMemory={async () => ({ id: "x" })}
+        loadCodeMap={async () => wiki}
+      />,
+    );
+    await m.flush();
+    assert.ok(m.query("[data-code-map]"));
+    assert.match(m.text(), /Memory server is not running/);
+    assert.match(m.text(), /src\//);
     m.unmount();
   });
 });

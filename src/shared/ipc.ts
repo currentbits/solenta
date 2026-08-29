@@ -1962,11 +1962,6 @@ export interface ProviderInfo {
    */
   efforts: ReasoningEffort[];
   /**
-   * One-line note when a local CLI cache lists different ids than `models`.
-   * Absent when we did not probe, the cache is missing, or the lists match.
-   */
-  catalogNote?: string;
-  /**
    * True when the CLI accepts a live web-search flag (`codex exec --search`).
    * The composer hides the Search pill when this is missing or false.
    */
@@ -2700,6 +2695,36 @@ export type MemoryCitation =
   | { kind: "thread"; id: string }
   | { kind: "commit"; sha: string };
 
+/** Hottest file inside a wiki module (issue #268). */
+export interface ProjectCodeMapHotFile {
+  path: string;
+  symbols: string[];
+  rank: number;
+}
+
+/** One top-level (or packages/*) module in the regenerated repo wiki. */
+export interface ProjectCodeMapModule {
+  name: string;
+  fileCount: number;
+  symbolCount: number;
+  hot: ProjectCodeMapHotFile[];
+}
+
+/**
+ * Regenerated per-project code wiki (issue #268). Describes the repo, not
+ * agent learnings. Built from the shared code index + manifests.
+ */
+export interface ProjectCodeMap {
+  projectId: string;
+  updatedAt: number;
+  fileCount: number;
+  symbolCount: number;
+  headSha: string;
+  defaultBranch: string;
+  modules: ProjectCodeMapModule[];
+  dependencies: string[];
+}
+
 /** A shared-memory entry as surfaced to the UI (excerpt form unless fetched). */
 export interface MemoryEntryInfo {
   id: string;
@@ -3043,6 +3068,8 @@ export interface CoderApi {
      * prompt.
      */
     remove(input: { projectId: string }): Promise<void>;
+    /** Regenerated repo wiki for the Memory-tab map (issue #268). */
+    codeMap(input: { projectId: string }): Promise<ProjectCodeMap>;
     /** Six-axis lint of AGENTS.md / CLAUDE.md vs shared memory (#412). */
     lintAgentConfig(input: { projectId: string }): Promise<AgentConfigDoctorReport>;
     /** Preview generated agent-instruction files (does not write). */

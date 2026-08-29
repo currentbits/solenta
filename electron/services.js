@@ -3264,6 +3264,13 @@ function codeIndexNoteFor(index) {
   const { MIN_FILES_FOR_NOTE } = require("./codeindex.js");
   if (index.fileCount < MIN_FILES_FOR_NOTE) return "";
 
+  const { formatWikiNote, wikiFromIndex, parseDependencies } = require("./codewiki.js");
+  const wiki = wikiFromIndex(index, {
+    dependencies: index.repoRoot ? parseDependencies(index.repoRoot) : [],
+    headSha: index.headSha,
+  });
+  const wikiNote = formatWikiNote(wiki);
+
   const age = ageOf(index.updatedAt);
   const header =
     `\n\n[Code map] Shared symbol index of this repo: ${index.fileCount} files, ` +
@@ -3288,7 +3295,7 @@ function codeIndexNoteFor(index) {
     parts.push(line);
   }
   parts.push(steering);
-  return parts.join("\n");
+  return wikiNote + parts.join("\n");
 }
 
 /**
@@ -4578,6 +4585,42 @@ async function loadConfigSourceEntries(memory, projectPath, opts) {
  * @param {{ projectId: string }} input
  * @param {{ memory?: object }} [deps]
  */
+/**
+ * Browsable wiki for the Memory tab (issue #268). Builds the index on first
+ * open when none exists so the map is an onboarding deliverable, not a
+ * side-effect of the next agent turn.
+ *
+ * @param {import('./store').Store} store
+ * @param {{ projectId: string }} input
+ * @param {{ userDataPath?: string }} [deps]
+ * @returns {Promise<import('../src/shared/ipc').ProjectCodeMap>}
+ */
+async function readProjectCodeMap(store, input, deps) {
+  const { project, root } = requireLocalProject(store, input);
+  const userDataPath = deps && deps.userDataPath ? String(deps.userDataPath) : "";
+  const empty = {
+    projectId: project.id,
+    updatedAt: 0,
+    fileCount: 0,
+    symbolCount: 0,
+    headSha: "",
+    defaultBranch: "",
+    modules: [],
+    dependencies: [],
+  };
+  if (!userDataPath || process.env.CODER_CODEINDEX_DISABLE === "1") return empty;
+
+  const { readIndex, refreshIndex } = require("./codeindex.js");
+  const { buildWiki, publishWiki } = require("./codewiki.js");
+  let index = readIndex(userDataPath, root);
+  if (!index) {
+    index = await refreshIndex({ userDataPath, repoRoot: root });
+  }
+  const wiki = await buildWiki(index, root);
+  void publishWiki({ userDataPath, repoRoot: root, index });
+  return { projectId: project.id, ...wiki };
+}
+
 async function lintAgentConfig(store, input, deps) {
   const { project, root } = requireLocalProject(store, input);
   const files = configDoctor.discoverAgentConfigFiles(root);
@@ -4826,6 +4869,7 @@ module.exports = {
   recordTeachReview,
   requestTeachReview,
   codeIndexNoteFor,
+  readProjectCodeMap,
   specStagePrompt,
   startSpec,
   stopSpec,

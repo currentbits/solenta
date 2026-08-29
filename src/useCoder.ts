@@ -40,6 +40,7 @@ import type {
   AgentConfigDoctorReport,
   AgentConfigPreview,
   AgentConfigWriteResult,
+  ProjectCodeMap,
   PermissionDecision,
   PermissionMode,
   PlanStatus,
@@ -629,6 +630,7 @@ export interface UseCoderResult {
     id: number;
     resolution: MemoryReviewResolution;
   }) => Promise<{ ok: boolean; id: number; resolution: string }>;
+  loadCodeMap: (input: { projectId: string }) => Promise<ProjectCodeMap>;
   lintAgentConfig: (input: {
     projectId: string;
   }) => Promise<AgentConfigDoctorReport>;
@@ -3040,6 +3042,13 @@ export function useCoder(): UseCoderResult {
     [api],
   );
 
+  const loadCodeMap = useCallback(
+    async (input: { projectId: string }) => {
+      return api.projects.codeMap(input);
+    },
+    [api],
+  );
+
   const lintAgentConfig = useCallback(
     async (input: { projectId: string }) => {
       return api.projects.lintAgentConfig(input);
@@ -3338,6 +3347,7 @@ export function useCoder(): UseCoderResult {
     storeMemory,
     maintenanceMemory,
     resolveMemory,
+    loadCodeMap,
     lintAgentConfig,
     previewAgentConfig,
     writeAgentConfig,

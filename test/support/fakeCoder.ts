@@ -1431,6 +1431,24 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
           return v;
         });
       },
+      codeMap: (input: { projectId: string }) =>
+        rec("projects.codeMap", [input], {
+          projectId: input.projectId,
+          updatedAt: Date.now() - 5 * 60_000,
+          fileCount: 2,
+          symbolCount: 4,
+          headSha: "abc1234",
+          defaultBranch: "main",
+          modules: [
+            {
+              name: "src",
+              fileCount: 2,
+              symbolCount: 4,
+              hot: [{ path: "src/App.tsx", symbols: ["App"], rank: 3 }],
+            },
+          ],
+          dependencies: ["react"],
+        }),
       lintAgentConfig: (input: { projectId: string }) =>
         rec("projects.lintAgentConfig", [input], {
           projectId: input.projectId,

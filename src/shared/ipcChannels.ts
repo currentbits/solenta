@@ -86,6 +86,7 @@ export const IPC_CHANNELS = [
   { ns: "projects", method: "addViaDialog" },
   { ns: "projects", method: "pickDirectory" },
   { ns: "projects", method: "remove" },
+  { ns: "projects", method: "codeMap" },
   { ns: "projects", method: "lintAgentConfig" },
   { ns: "projects", method: "previewAgentConfig" },
   { ns: "projects", method: "writeAgentConfig" },
