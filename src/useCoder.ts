@@ -155,7 +155,11 @@ function resolveApi(): CoderApi {
 
 function errorMessage(err: unknown): string {
   const raw = err instanceof Error && err.message ? err.message : String(err);
-  for (const marker of ["MERGE_CONFLICT:", "WORKTREE_DIRTY:"]) {
+  for (const marker of [
+    "MERGE_CONFLICT:",
+    "WORKTREE_DIRTY:",
+    "WORKTREE_REBASE_CONFLICT:",
+  ]) {
     const at = raw.indexOf(marker);
     if (at !== -1) return raw.slice(at + marker.length).trim();
   }
@@ -218,6 +222,7 @@ export interface UseCoderResult {
       teach?: boolean;
       ask?: boolean;
       issueNumber?: number | null;
+      baseBranch?: string | null;
     },
   ) => Promise<ThreadInfo | null>;
   /**
@@ -353,6 +358,8 @@ export interface UseCoderResult {
   renameThread: (threadId: string, title: string) => Promise<void>;
   /** Save scratch notes on a thread (header editor, issue #194). */
   setNotes: (threadId: string, notes: string) => Promise<void>;
+  /** Change the recorded merge/PR base after create (#187). */
+  setBaseBranch: (threadId: string, baseBranch: string | null) => Promise<void>;
   /**
    * Resolve a suggested-work chip (issue #550). Updates the thread from the
    * returned ThreadInfo. status is never "open" — chips do not reopen.
@@ -421,6 +428,10 @@ export interface UseCoderResult {
    */
   removeProject: (projectId: string) => Promise<void>;
   setupWorktree: () => Promise<ThreadInfo | null>;
+  /** Local branches for the stacked-thread base picker (#187). */
+  listBaseBranches: (
+    projectId: string,
+  ) => Promise<{ defaultBranch: string; branches: string[] }>;
   mergeWorktree: (opts?: {
     ciWorkflowApproved?: boolean;
   }) => Promise<ThreadInfo | null>;
@@ -1280,6 +1291,7 @@ export function useCoder(): UseCoderResult {
         teach?: boolean;
         ask?: boolean;
         issueNumber?: number | null;
+        baseBranch?: string | null;
       },
     ) => {
       const pid = projectId ?? selectedProjectId;
@@ -1314,6 +1326,7 @@ export function useCoder(): UseCoderResult {
           ...(opts?.teach ? { teach: true } : {}),
           ...(ask ? { ask: true } : {}),
           ...(opts?.issueNumber != null ? { issueNumber: opts.issueNumber } : {}),
+          ...(opts?.baseBranch ? { baseBranch: opts.baseBranch } : {}),
         });
       } catch (err) {
         setError({ scope: "run", message: errorMessage(err) });
@@ -1992,6 +2005,25 @@ export function useCoder(): UseCoderResult {
     [api, applyThreads],
   );
 
+  const setBaseBranch = useCallback(
+    async (threadId: string, baseBranch: string | null) => {
+      try {
+        const thread = await api.threads.setBaseBranch({ threadId, baseBranch });
+        applyThreads(
+          threadsRef.current.map((t) => (t.id === thread.id ? thread : t)),
+        );
+        setDetail((prev) =>
+          prev && prev.thread.id === thread.id ? { ...prev, thread } : prev,
+        );
+        setError(null);
+      } catch (err) {
+        setError({ scope: "run", message: errorMessage(err) });
+        throw err;
+      }
+    },
+    [api, applyThreads],
+  );
+
   const resolveSuggestion = useCallback(
     async (
       threadId: string,
@@ -2338,6 +2370,13 @@ export function useCoder(): UseCoderResult {
       );
     },
     [applyThreads],
+  );
+
+  const listBaseBranches = useCallback(
+    async (projectId: string) => {
+      return api.git.listBranches({ projectId });
+    },
+    [api],
   );
 
   const setupWorktree = useCallback(async () => {
@@ -3251,6 +3290,7 @@ export function useCoder(): UseCoderResult {
     resumeQuotaWait,
     renameThread,
     setNotes,
+    setBaseBranch,
     resolveSuggestion,
     setFeltEstimate,
     startSpec,
@@ -3269,6 +3309,7 @@ export function useCoder(): UseCoderResult {
     deleteThread,
     removeProject,
     setupWorktree,
+    listBaseBranches,
     mergeWorktree,
     conflictContext,
     removeWorktree,

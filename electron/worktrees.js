@@ -421,10 +421,123 @@ async function fallbackDefaultBranchNameAsync(projectPath) {
 }
 
 /**
+ * Repo default branch name (`origin/HEAD` → local main/master). Used by
+ * Git-tab Merge and createPr when the thread has no recorded base (#187).
+ *
+ * @param {string} projectPath
+ * @returns {string}
+ */
+function repoDefaultBranch(projectPath) {
+  const name = fallbackDefaultBranchName(projectPath);
+  if (name) return name;
+  throw new Error("Could not resolve the repository default branch");
+}
+
+/**
+ * @param {string} projectPath
+ * @returns {Promise<string>}
+ */
+async function repoDefaultBranchAsync(projectPath) {
+  const name = await fallbackDefaultBranchNameAsync(projectPath);
+  if (name) return name;
+  throw new Error("Could not resolve the repository default branch");
+}
+
+/**
+ * Recorded stacked base, or null when the thread should use the repo default.
+ *
+ * @param {{ baseBranch?: string | null } | null | undefined} thread
+ * @returns {string | null}
+ */
+function recordedBaseBranch(thread) {
+  if (!thread || typeof thread.baseBranch !== "string") return null;
+  const name = thread.baseBranch.trim();
+  return name || null;
+}
+
+/**
+ * Merge/PR/setup start-point: recorded base, else repo default.
+ *
+ * @param {{ baseBranch?: string | null } | null | undefined} thread
+ * @param {string} projectPath
+ * @returns {string}
+ */
+function mergeBaseName(thread, projectPath) {
+  return recordedBaseBranch(thread) || repoDefaultBranch(projectPath);
+}
+
+/**
+ * A revision `git` can resolve for `name` (local branch, then origin/).
+ *
+ * @param {string} repoPath
+ * @param {string} name
+ * @returns {string}
+ */
+function resolveStartPoint(repoPath, name) {
+  const want = String(name || "").trim();
+  if (!want) {
+    throw new Error("Could not resolve the repository default branch");
+  }
+  const candidates = [
+    want,
+    `refs/heads/${want}`,
+    `origin/${want}`,
+    `refs/remotes/origin/${want}`,
+  ];
+  for (const ref of candidates) {
+    const probe = gitTry(repoPath, ["rev-parse", "--verify", `${ref}^{commit}`]);
+    if (probe.ok && probe.stdout) return ref;
+  }
+  throw new Error(`Unknown base branch: ${want}`);
+}
+
+/**
+ * Colocated jj detaches git HEAD on every command. Git-tab Merge must
+ * not silently switch that checkout onto main (#521 / #770).
+ *
+ * @param {string} projectPath
+ */
+function refuseJjDetached(projectPath) {
+  const current = gitOut(projectPath, ["branch", "--show-current"]);
+  if (current) return;
+  const scm = detectScm(projectPath);
+  if (scm && scm.kind === "jj") {
+    throw new Error(JJ_DETACHED_HEAD_ERROR);
+  }
+}
+
+/**
+ * Local branch names for the create-thread picker. Repo default first.
+ *
+ * @param {string} projectPath
+ * @returns {{ defaultBranch: string, branches: string[] }}
+ */
+function listBranches(projectPath) {
+  const defaultName = fallbackDefaultBranchName(projectPath) || "";
+  const raw = gitOut(projectPath, [
+    "for-each-ref",
+    "--format=%(refname:short)",
+    "refs/heads",
+  ]);
+  const branches = splitLines(raw)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .sort((a, b) => {
+      if (a === defaultName) return -1;
+      if (b === defaultName) return 1;
+      return a.localeCompare(b);
+    });
+  return {
+    defaultBranch: defaultName || branches[0] || "main",
+    branches,
+  };
+}
+
+/**
  * Branch currently checked out in `projectPath`, or the repo default when
  * that checkout is detached (main held in another worktree, a SHA review,
- * jj). Merge still needs a real checkout of that name — see
- * checkoutForMerge.
+ * jj). Used by setup / PR / conflict paths that want "where this checkout
+ * is." Git-tab Merge does not use this — see repoDefaultBranch.
  *
  * @param {string} projectPath
  * @returns {string}
@@ -490,9 +603,42 @@ function worktreePathForBranch(repoPath, branch) {
 }
 
 /**
- * Merge needs a working tree that is ON `branch`. When the preferred
- * checkout is detached, follow the branch into the worktree that has it,
- * or switch the preferred path onto the branch if it is free.
+ * Refuse Git-tab Merge when the local default is behind origin — that is
+ * the nightly/release worktree that holds a stale `main`. Ahead-only is
+ * fine (stacked local merges are not pushed). No origin ref: skip.
+ *
+ * @param {string} cwd
+ * @param {string} branch
+ */
+function assertDefaultNotBehindOrigin(cwd, branch) {
+  const originRef = `origin/${branch}`;
+  const hasOrigin = gitTry(cwd, ["rev-parse", "--verify", "--quiet", originRef]);
+  if (!hasOrigin.ok) return;
+  const counted = gitTry(cwd, [
+    "rev-list",
+    "--left-right",
+    "--count",
+    `${originRef}...${branch}`,
+  ]);
+  if (!counted.ok) return;
+  const line = String(counted.stdout || "").trim().split(/\r?\n/)[0] || "";
+  const m = line.match(/^(\d+)\s+(\d+)$/);
+  if (!m) return;
+  const behind = Number(m[1]);
+  const ahead = Number(m[2]);
+  if (behind > 0) {
+    throw new Error(
+      `Local ${branch} is ${behind} behind origin/${branch}` +
+        (ahead > 0 ? ` and ${ahead} ahead` : "") +
+        "; update it before merging so the work lands on the repo default.",
+    );
+  }
+}
+
+/**
+ * Merge needs a working tree that is ON `branch`. Follow that name into
+ * the worktree that has it, or switch the preferred path onto the branch
+ * if it is free. A different current branch is not a match (#770).
  *
  * @param {string} preferredPath
  * @param {string} branch
@@ -500,7 +646,7 @@ function worktreePathForBranch(repoPath, branch) {
  */
 function checkoutForMerge(preferredPath, branch) {
   const current = gitOut(preferredPath, ["branch", "--show-current"]);
-  if (current) return preferredPath;
+  if (current === branch) return preferredPath;
   const home = worktreePathForBranch(preferredPath, branch);
   if (home && path.resolve(home) !== path.resolve(preferredPath)) {
     return home;
@@ -509,8 +655,8 @@ function checkoutForMerge(preferredPath, branch) {
   if (sw.ok) return preferredPath;
   throw new Error(
     home
-      ? `Project checkout is detached HEAD; ${branch} is checked out in ${home}`
-      : `Project checkout is detached HEAD; check out ${branch} before merging`,
+      ? `${branch} is checked out in ${home}`
+      : `Could not check out ${branch} to merge${current ? ` (currently on ${current})` : ""}`,
   );
 }
 
@@ -833,13 +979,16 @@ function autoResolveMergeArtifacts(cwd) {
 }
 
 /**
- * Squash-merge the thread worktree into the project default branch, then remove
- * the worktree and branch. Commits any uncommitted worktree changes first.
+ * Squash-merge the thread worktree into the repo default branch
+ * (origin/HEAD → main), then remove the worktree and branch. Commits any
+ * uncommitted worktree changes first.
  *
  * intoPath retargets the merge at another checkout of the SAME repo — an
  * orchestrator merging a worker wants the work on its own branch in its own
- * worktree, not on main behind the user's back (thread_merge). Default stays
- * the project checkout, which is what the Git tab does.
+ * worktree, not on main behind the user's back (thread_merge). Git-tab
+ * Merge (no intoPath) targets ThreadInfo.baseBranch if set, otherwise the
+ * repo default (origin/HEAD → main), not the project checkout's current
+ * branch (#187 / #770).
  *
  * @param {object} opts
  * @param {import('./store').Store} opts.store
@@ -883,14 +1032,26 @@ function mergeWorktree(opts) {
   // Blast-radius gate (issue #510) before auto-commit: a workflow file in
   // the working tree or the branch vs base is a privilege-escalation, not
   // a code edit. Human sign-off is ciWorkflowApproved === true.
-  const baseForGate = defaultBranch(requested);
-  // Explicit intoPath (orchestrator → lead worktree) stays put even when
-  // detached. The Git-tab default follows main into the worktree that
-  // actually has it — the project checkout is often detached because a
-  // nightly/release worktree holds main.
-  const target = intoPath
-    ? requested
-    : checkoutForMerge(requested, baseForGate);
+  //
+  // Target: intoPath stays the lead checkout's current branch. Otherwise
+  // honor ThreadInfo.baseBranch, falling back to the repo default
+  // (origin/HEAD → main) — not whatever the project checkout happens to
+  // have checked out (#187 / #770).
+  let baseForGate;
+  let target;
+  if (intoPath) {
+    baseForGate = defaultBranch(requested);
+    target = requested;
+  } else {
+    if (!recordedBaseBranch(thread)) {
+      refuseJjDetached(project.path);
+    }
+    baseForGate = mergeBaseName(thread, project.path);
+    target = checkoutForMerge(requested, baseForGate);
+    if (!recordedBaseBranch(thread)) {
+      assertDefaultNotBehindOrigin(target, baseForGate);
+    }
+  }
   gateCiWorkflowMerge(
     wtPath,
     baseForGate,
@@ -1344,7 +1505,11 @@ function setupWorktree(opts) {
   }
 
   try {
-    gitOut(project.path, ["worktree", "add", "-b", branch, addPath]);
+    const start = resolveStartPoint(
+      project.path,
+      mergeBaseName(thread, project.path),
+    );
+    gitOut(project.path, ["worktree", "add", "-b", branch, addPath, start]);
   } catch (err) {
     // Verbatim git stderr (#511). Never first-line-only: the lock/disk/
     // submodule reason is almost always on a later line.
@@ -1377,6 +1542,93 @@ function setupWorktree(opts) {
   }
 
   return updated ? { ...updated } : { ...thread, worktreePath: dir, branch };
+}
+
+/**
+ * Retarget a bound worktree onto `baseName` (or the repo default when
+ * null). Refuses a dirty tree so uncommitted work is never discarded.
+ * Unique commits on the thread branch (`oldStart..HEAD`) are rebased
+ * with `git rebase --onto <newBase> <oldStart>`; a conflict aborts and
+ * names the conflicted paths (#776). A clean tree with no unique commits
+ * is reset onto the new start-point. Callers must persist
+ * ThreadInfo.baseBranch only after this succeeds (#775).
+ *
+ * @param {object} opts
+ * @param {import('./store').Store} opts.store
+ * @param {object} opts.thread
+ * @param {string | null} opts.baseName
+ */
+function retargetWorktreeBase(opts) {
+  const { store, thread, baseName } = opts;
+  const wtPath = thread && thread.worktreePath;
+  if (!wtPath) return;
+
+  const project = store.getProject(thread.projectId);
+  if (!project || !project.path) {
+    throw new Error(`Unknown project for thread: ${thread.id}`);
+  }
+
+  const porcelain = gitOut(wtPath, ["status", "--porcelain", "-uall"], {
+    raw: true,
+  });
+  if (String(porcelain || "").trim()) {
+    throw new Error(
+      "WORKTREE_DIRTY: cannot change the merge base while the worktree has uncommitted changes",
+    );
+  }
+
+  const startName = baseName || repoDefaultBranch(project.path);
+  const start = resolveStartPoint(project.path, startName);
+  const oldStartName =
+    recordedBaseBranch(thread) || repoDefaultBranch(project.path);
+  const oldStart = resolveStartPoint(project.path, oldStartName);
+  const oldSha = gitOut(project.path, [
+    "rev-parse",
+    "--verify",
+    `${oldStart}^{commit}`,
+  ]);
+  const newSha = gitOut(project.path, [
+    "rev-parse",
+    "--verify",
+    `${start}^{commit}`,
+  ]);
+  if (oldSha === newSha) return;
+
+  const uniqueCount = gitOut(wtPath, [
+    "rev-list",
+    "--count",
+    `${oldStart}..HEAD`,
+  ]);
+  if (uniqueCount && uniqueCount !== "0") {
+    const before = gitOut(wtPath, ["rev-parse", "HEAD"]);
+    const replay = gitTry(wtPath, ["rebase", "--onto", start, oldStart], {
+      env: { GIT_EDITOR: "true", GIT_TERMINAL_PROMPT: "0" },
+    });
+    if (!replay.ok) {
+      const files = unmergedFiles(wtPath);
+      if (!files.length) {
+        for (const m of String(replay.combined || "").matchAll(
+          /Merge conflict in (.+)/g,
+        )) {
+          const p = m[1].trim();
+          if (p && !files.includes(p)) files.push(p);
+        }
+      }
+      const aborted = gitTry(wtPath, ["rebase", "--abort"]);
+      if (!aborted.ok) {
+        gitTry(wtPath, ["reset", "--hard", before]);
+      }
+      const listed = files.length
+        ? `\n${files.map((f) => `  ${f}`).join("\n")}`
+        : "";
+      throw new Error(
+        `WORKTREE_REBASE_CONFLICT: cannot rebase onto ${startName}${listed}`,
+      );
+    }
+  } else {
+    gitOut(wtPath, ["reset", "--hard", start]);
+  }
+  invalidateGitReads(wtPath);
 }
 
 /**
@@ -3932,7 +4184,7 @@ async function diffStatVsBase(cwd, baseBranch, branch) {
 async function createPr(opts) {
   const { store, threadId, title, body, draft, broadcast } = opts;
 
-  const { project, cwd, branch, originUrl } = await resolveThreadGit(
+  const { thread, project, cwd, branch, originUrl } = await resolveThreadGit(
     store,
     threadId,
   );
@@ -3943,7 +4195,8 @@ async function createPr(opts) {
     );
   }
 
-  const baseBranch = await defaultBranchAsync(project.path);
+  const baseBranch =
+    recordedBaseBranch(thread) || (await repoDefaultBranchAsync(project.path));
   const ahead = gitTry(cwd, ["log", `${baseBranch}..${branch}`, "--oneline"]);
   if (!ahead.ok) {
     throw new Error(
@@ -5685,6 +5938,10 @@ function clearMissingWorktree(opts) {
 module.exports = {
   assertNoOutboundSecrets,
   setupWorktree,
+  retargetWorktreeBase,
+  listBranches,
+  recordedBaseBranch,
+  repoDefaultBranch,
   clearMissingWorktree,
   prepareThreadWorktree,
   gitFailureText,

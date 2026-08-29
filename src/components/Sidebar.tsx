@@ -182,8 +182,12 @@ interface SidebarProps {
   /** Global + uses selected project; per-group New thread passes that projectId. */
   onCreateThread: (
     projectId?: string,
-    opts?: { worktree?: boolean; orchestrate?: boolean; teach?: boolean; ask?: boolean; issueNumber?: number | null },
+    opts?: { worktree?: boolean; orchestrate?: boolean; teach?: boolean; ask?: boolean; issueNumber?: number | null; baseBranch?: string | null },
   ) => void;
+  /** Local branches for the stacked-thread base picker (#187). */
+  listBaseBranches?: (
+    projectId: string,
+  ) => Promise<{ defaultBranch: string; branches: string[] }>;
   /**
    * Mirrors SettingsInfo.defaultWorktree. The caret lists worktree,
    * orchestrator, plain, teach, and ask; this only documents the setting the
@@ -1317,6 +1321,7 @@ export const Sidebar = memo(function Sidebar({
   activeThreadId,
   onSelectThread,
   onCreateThread,
+  listBaseBranches,
   onAddProject,
   onRemoveProject,
   onEditProject,
@@ -1349,6 +1354,10 @@ export const Sidebar = memo(function Sidebar({
   const [now, setNow] = useState(() => Date.now());
   const [updating, setUpdating] = useState(false);
   const [createMenuOpen, setCreateMenuOpen] = useState(false);
+  const [basePicker, setBasePicker] = useState<{
+    defaultBranch: string;
+    branches: string[];
+  } | null>(null);
   const [scopeMenuOpen, setScopeMenuOpen] = useState(false);
   const [filterMenu, setFilterMenu] = useState<FilterMenu | null>(null);
   const [statusFilter, setStatusFilter] = useState<StatusFilter | null>(() =>
@@ -2133,6 +2142,7 @@ export const Sidebar = memo(function Sidebar({
                 onClick={() => {
                   setScopeMenuOpen(false);
                   setFilterMenu(null);
+                  setBasePicker(null);
                   setCreateMenuOpen((open) => !open);
                 }}
               >
@@ -2156,11 +2166,54 @@ export const Sidebar = memo(function Sidebar({
                         title="New thread in an isolated git worktree + branch"
                         onClick={() => {
                           setCreateMenuOpen(false);
+                          setBasePicker(null);
                           onCreateThread(createProjectId, { worktree: true });
                         }}
                       >
                         New worktree thread
                       </button>
+                      {listBaseBranches && createProjectId && (
+                        <>
+                          <button
+                            type="button"
+                            className={styles.menuItem}
+                            role="menuitem"
+                            data-create-base-branch=""
+                            title="New worktree thread stacked on a branch other than the repo default"
+                            onClick={() => {
+                              const pid = createProjectId;
+                              void listBaseBranches(pid).then((listed) => {
+                                setBasePicker(listed);
+                              });
+                            }}
+                          >
+                            On another base…
+                          </button>
+                          {basePicker &&
+                            basePicker.branches
+                              .filter((name) => name !== basePicker.defaultBranch)
+                              .map((name) => (
+                                <button
+                                  key={name}
+                                  type="button"
+                                  className={`${styles.menuItem} ${styles.menuItemNested}`}
+                                  role="menuitem"
+                                  data-base-branch={name}
+                                  title={`Stack this thread on ${name}`}
+                                  onClick={() => {
+                                    setCreateMenuOpen(false);
+                                    setBasePicker(null);
+                                    onCreateThread(createProjectId, {
+                                      worktree: true,
+                                      baseBranch: name,
+                                    });
+                                  }}
+                                >
+                                  {name}
+                                </button>
+                              ))}
+                        </>
+                      )}
                       <button
                         type="button"
                         className={styles.menuItem}

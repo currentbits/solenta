@@ -144,6 +144,7 @@ export function thread(over: Partial<ThreadInfo> = {}): ThreadInfo {
     projectId: "p1",
     title: "first thread",
     branch: null,
+    baseBranch: null,
     prNumber: null,
     prUrl: null,
     status: "idle",
@@ -1589,6 +1590,12 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
           typeof (input as { issueNumber?: unknown }).issueNumber === "number"
             ? (input as { issueNumber: number }).issueNumber
             : null;
+        const baseBranch =
+          typeof input === "object" &&
+          input !== null &&
+          typeof (input as { baseBranch?: unknown }).baseBranch === "string"
+            ? (input as { baseBranch: string }).baseBranch
+            : null;
         // Match production createThread: a brand-new thread is visited at birth.
         const t = thread({
           id: "t-new",
@@ -1596,6 +1603,7 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
           updatedAt: createdAt,
           lastVisitedAt: createdAt,
           issueNumber,
+          baseBranch,
           // Mirror the threads:create worktree flag (electron ipc.js): the
           // thread starts on the placeholder branch in its own worktree.
           ...(wantWorktree
@@ -2002,6 +2010,25 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
         threads = threads.map((t) => (t.id === i.threadId ? next : t));
         return Promise.resolve(next);
       },
+      setBaseBranch: (input: unknown) => {
+        const i = input as { threadId: string; baseBranch?: string | null };
+        calls.push({ channel: "threads.setBaseBranch", args: [input] });
+        const existing = threads.find((t) => t.id === i.threadId);
+        if (!existing) {
+          return Promise.reject(new Error(`Unknown thread: ${i.threadId}`));
+        }
+        if (existing.prNumber) {
+          return Promise.reject(
+            new Error("Cannot change the merge base after the first pull request"),
+          );
+        }
+        const next: ThreadInfo = {
+          ...existing,
+          baseBranch: i.baseBranch ? String(i.baseBranch).trim() || null : null,
+        };
+        threads = threads.map((t) => (t.id === i.threadId ? next : t));
+        return Promise.resolve(next);
+      },
       resolveSuggestion: (input: unknown) => {
         const i = input as {
           threadId: string;
@@ -2358,6 +2385,11 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
           branch: "main",
           dirty: false,
         } as GitStatus),
+      listBranches: (input: unknown) =>
+        rec("git.listBranches", [input], {
+          defaultBranch: "main",
+          branches: ["main"],
+        }),
       setupWorktree: (input: unknown) => rec("git.setupWorktree", [input], thread()),
       diff: (input: unknown) =>
         rec("git.diff", [input], {

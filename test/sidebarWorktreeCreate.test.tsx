@@ -70,7 +70,10 @@ const thread: ThreadInfo = {
 
 function mountSidebar(
   projects: ProjectInfo[],
-  onCreateThread: (projectId?: string, opts?: { worktree?: boolean }) => void,
+  onCreateThread: (
+    projectId?: string,
+    opts?: { worktree?: boolean; baseBranch?: string },
+  ) => void,
   defaultWorktree = false,
 ) {
   return mount(
@@ -176,5 +179,56 @@ describe("Sidebar worktree thread creation", () => {
       m.query("[data-create-plain-thread]"),
       "plain-thread item is always listed",
     );
+  });
+
+  it("base-branch picker creates a worktree thread on the chosen branch (#187)", async () => {
+    const calls: Array<
+      [string | undefined, { worktree?: boolean; baseBranch?: string } | undefined]
+    > = [];
+    const m = await mount(
+      <Sidebar
+        appName="Solenta"
+        searchPlaceholder="Search threads..."
+        projectsHeader="All projects"
+        projects={[project]}
+        threads={[thread]}
+        providers={providers}
+        activeThreadId={null}
+        onSelectThread={() => {}}
+        onCreateThread={(pid, opts) => {
+          calls.push([pid, opts]);
+        }}
+        listBaseBranches={async () => ({
+          defaultBranch: "main",
+          branches: ["main", "stacked-base"],
+        })}
+        onAddProject={() => {}}
+        searchThreads={async () => []}
+      />,
+    );
+
+    await m.click(m.query("[data-new-thread-caret]")!);
+    const openPicker = m.query("[data-create-base-branch]");
+    assert.ok(openPicker, "menu offers a base-branch picker");
+    await m.click(openPicker);
+    await m.flush();
+    const choice = m.query('[data-base-branch="stacked-base"]');
+    assert.ok(choice, "picker lists the stacked base");
+    await m.click(choice);
+    assert.deepEqual(calls, [
+      ["p1", { worktree: true, baseBranch: "stacked-base" }],
+    ]);
+  });
+
+  it("default worktree item still omits baseBranch (#187)", async () => {
+    const calls: Array<
+      [string | undefined, { worktree?: boolean; baseBranch?: string } | undefined]
+    > = [];
+    const m = await mountSidebar([project], (pid, opts) => {
+      calls.push([pid, opts]);
+    });
+    await m.click(m.query("[data-new-thread-caret]")!);
+    await m.click(m.query("[data-create-worktree-thread]")!);
+    assert.deepEqual(calls, [["p1", { worktree: true }]]);
   });
 });

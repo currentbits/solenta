@@ -158,6 +158,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     createProject,
     updateProject,
     createThread,
+    listBaseBranches,
     forkThread,
     startRun,
     rewindAndResubmit,
@@ -186,6 +187,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     resumeQuotaWait,
     renameThread,
     setNotes,
+    setBaseBranch,
     resolveSuggestion,
     setFeltEstimate,
     startSpec,
@@ -451,7 +453,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
   const clearReveal = useCallback(() => setRevealThreadId(null), []);
 
   const handleCreateThread = useCallback(
-    (projectId?: string, opts?: { worktree?: boolean; orchestrate?: boolean; teach?: boolean; ask?: boolean; issueNumber?: number | null }) => {
+    (projectId?: string, opts?: { worktree?: boolean; orchestrate?: boolean; teach?: boolean; ask?: boolean; issueNumber?: number | null; baseBranch?: string | null }) => {
       void createThread("New Thread", projectId, opts).then((t) => {
         if (t) setRevealThreadId(t.id);
       });
@@ -1288,6 +1290,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         onOpenPlanboard={openPlanboard}
         onOpenActivity={openActivity}
         onCreateThread={handleCreateThread}
+        listBaseBranches={listBaseBranches}
         defaultWorktree={settings?.defaultWorktree ?? false}
         revealThreadId={revealThreadId}
         onRevealHandled={clearReveal}
@@ -1424,6 +1427,8 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         onSetupWorktree={setupWorktree}
         onMergeWorktree={mergeWorktree}
         onRemoveWorktree={removeWorktree}
+        listBaseBranches={listBaseBranches}
+        onSetBaseBranch={setBaseBranch}
         conflictContext={conflictContext}
         onOpenWorktree={openInEditor}
         onRewindAndResubmit={rewindAndResubmit}

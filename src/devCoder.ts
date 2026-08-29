@@ -2001,6 +2001,7 @@ function buildDevCoder(): CoderApi {
       id: id("thread"),
       projectId: "",
       branch: null,
+      baseBranch: null,
       prNumber: null,
       prUrl: null,
       status: "idle",
@@ -3626,6 +3627,7 @@ function buildDevCoder(): CoderApi {
         const t = newThread({
           projectId: input.projectId,
           title: input.title || "New Thread",
+          baseBranch: input.baseBranch?.trim() || null,
           // Lazy worktree: only the intent is recorded, the fake worktree
           // materializes at first run. An orchestrator holds neither — its
           // worker does.
@@ -3813,6 +3815,16 @@ function buildDevCoder(): CoderApi {
       async setNotes(input: { threadId: string; notes: string }) {
         return patchThread(input.threadId, {
           notes: String(input.notes ?? "").trim().slice(0, 2000),
+        });
+      },
+      async setBaseBranch(input: {
+        threadId: string;
+        baseBranch?: string | null;
+      }) {
+        return patchThread(input.threadId, {
+          baseBranch: input.baseBranch
+            ? String(input.baseBranch).trim() || null
+            : null,
         });
       },
       async resolveSuggestion(input: {
@@ -4841,6 +4853,9 @@ function buildDevCoder(): CoderApi {
           branch: "main",
           dirty: false,
         };
+      },
+      async listBranches(_input) {
+        return { defaultBranch: "main", branches: ["main"] };
       },
       async push(input) {
         const detail = details.get(input.threadId);

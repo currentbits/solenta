@@ -373,6 +373,13 @@ export interface ThreadInfo {
   projectId: string;
   title: string;
   branch: string | null;
+  /**
+   * Recorded merge/PR base (#187). Null/absent = repo default
+   * (`origin/HEAD` → `main`). Set at thread create or via
+   * `threads.setBaseBranch` so stacked threads (schema → API → UI)
+   * land on that branch instead of main. Locked after the first PR.
+   */
+  baseBranch?: string | null;
   prNumber: number | null;
   /** Set alongside prNumber so the badge can link out without calling gh. */
   prUrl: string | null;
@@ -3155,6 +3162,11 @@ export interface CoderApi {
       ask?: boolean;
       /** Planboard issue this thread was started from (issue #420). */
       issueNumber?: number | null;
+      /**
+       * Optional merge/PR base (#187). Omitted/empty = repo default.
+       * Honoured by setupWorktree, mergeWorktree (no intoPath), and createPr.
+       */
+      baseBranch?: string | null;
     }): Promise<ThreadInfo>;
     get(id: string): Promise<ThreadDetail>;
     /**
@@ -3264,6 +3276,15 @@ export interface CoderApi {
      * THREAD_NOTES_MAX, empty string clears. Never bumps updatedAt.
      */
     setNotes(input: { threadId: string; notes: string }): Promise<ThreadInfo>;
+    /**
+     * Change the recorded merge/PR base after create (#187). Empty/null
+     * clears to the repo default. Must be a local branch. Refused after
+     * the first pull request. Never bumps updatedAt.
+     */
+    setBaseBranch(input: {
+      threadId: string;
+      baseBranch?: string | null;
+    }): Promise<ThreadInfo>;
     /**
      * Record the one-tap felt estimate for a finished thread (issue #401).
      * savedMs is a non-negative duration (clamped to FELT_ESTIMATE_MAX_MS);
@@ -3579,6 +3600,13 @@ export interface CoderApi {
   };
   git: {
     status(projectId: string): Promise<GitStatus>;
+    /**
+     * Local branch names for the base-branch picker (#187), repo default first.
+     */
+    listBranches(input: { projectId: string }): Promise<{
+      defaultBranch: string;
+      branches: string[];
+    }>;
     // See PrInfo below for the shape createPr/prStatus return.
     /** Creates a git worktree + branch for the thread; later runs execute in it. */
     setupWorktree(input: { threadId: string }): Promise<ThreadInfo>;
@@ -3622,10 +3650,12 @@ export interface CoderApi {
      */
     suggestCommitMessage(input: { threadId: string }): Promise<{ message: string }>;
     /**
-     * Squash-merges the thread's worktree branch into the project's default
-     * branch (committing any uncommitted worktree changes first), then removes
-     * the worktree and branch. Rejects with a descriptive Error on conflicts
-     * or a dirty project checkout; nothing is force-removed on failure.
+     * Squash-merges the thread's worktree branch into the recorded base
+     * (`ThreadInfo.baseBranch`) or the repo default (`origin/HEAD` → `main`)
+     * when unset. Commits any uncommitted worktree changes first, then
+     * removes the worktree and branch. Rejects with a descriptive Error on
+     * conflicts or a dirty project checkout; nothing is force-removed on
+     * failure.
      * Pass `paths` to auto-commit only those files; leftover dirty files
      * refuse the merge so the worktree is not deleted with uncommitted work.
      */
@@ -3658,8 +3688,9 @@ export interface CoderApi {
      */
     push(input: { threadId: string }): Promise<{ remote: string; branch: string }>;
     /**
-     * Pushes the thread's branch, then opens a GitHub PR against the project's
-     * default branch via the gh CLI, and records prNumber/prUrl on the thread.
+     * Pushes the thread's branch, then opens a GitHub PR against the
+     * recorded base (`ThreadInfo.baseBranch`) or the repo default via the
+     * gh CLI, and records prNumber/prUrl on the thread.
      *
      * Idempotent: when a PR already exists for the branch it is returned as-is
      * (created: false) rather than erroring. Rejects with a plain-language
