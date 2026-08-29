@@ -1653,6 +1653,8 @@ function buildDevCoder(): CoderApi {
   let feltEstimatePrompt = false;
   let uiScale = 1;
   let theme: AppSettings["theme"] = "dark";
+  let agentsPanelDefault: AppSettings["agentsPanelDefault"] = "closed";
+  let agentsPanelRememberLast = false;
   let stayAwake: AppSettings["stayAwake"] = "agent";
   let quotaWaitAutoResume = true;
   let otel: OtelSettings = { endpoint: null, headers: {}, claudeMetrics: false };
@@ -2465,6 +2467,8 @@ function buildDevCoder(): CoderApi {
           feltEstimatePrompt,
           uiScale,
           theme,
+          agentsPanelDefault,
+          agentsPanelRememberLast,
           stayAwake,
           quotaWaitAutoResume,
           agentProfiles: agentProfiles.map((p) => ({ ...p })),
@@ -2589,6 +2593,19 @@ function buildDevCoder(): CoderApi {
           }
           theme = v;
         }
+        if (Object.prototype.hasOwnProperty.call(patch, "agentsPanelDefault")) {
+          const v = patch.agentsPanelDefault;
+          if (v !== "closed" && v !== "open") {
+            throw new Error('agentsPanelDefault must be "closed" or "open"');
+          }
+          agentsPanelDefault = v;
+        }
+        if (Object.prototype.hasOwnProperty.call(patch, "agentsPanelRememberLast")) {
+          if (typeof patch.agentsPanelRememberLast !== "boolean") {
+            throw new Error("agentsPanelRememberLast must be a boolean");
+          }
+          agentsPanelRememberLast = patch.agentsPanelRememberLast;
+        }
         if (Object.prototype.hasOwnProperty.call(patch, "stayAwake")) {
           const v = patch.stayAwake;
           if (v !== "agent" && v !== "on" && v !== "off") {
@@ -2702,6 +2719,8 @@ function buildDevCoder(): CoderApi {
           feltEstimatePrompt,
           uiScale,
           theme,
+          agentsPanelDefault,
+          agentsPanelRememberLast,
           stayAwake,
           quotaWaitAutoResume,
           agentProfiles: agentProfiles.map((p) => ({ ...p })),

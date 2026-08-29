@@ -20,6 +20,7 @@ import {
 } from "./support/fakeCoder.ts";
 import App from "../src/App";
 import type { CheckpointInfo, ThreadInfo } from "../src/shared/ipc";
+import { expandAgents } from "./support/expandAgents.ts";
 
 const NOW = Date.now();
 
@@ -27,22 +28,7 @@ async function boot(fake: FakeCoder) {
   const shell = await mount(<div />);
   installFakeCoder(fake);
   shell.unmount();
-  // The agents rail auto-collapses when a workspace pane opens (#147) and
-  // that choice persists, so clear it or the previous test decides this one.
-  window.localStorage.removeItem("coder.agents.collapsed");
   return mount(<App />);
-}
-
-/**
- * Re-open the agents rail. Opening the Git pane collapses it, so anything
- * that reads the Environment tab AFTER a restore has to ask for it back.
- */
-async function expandAgents(m: Awaited<ReturnType<typeof mount>>) {
-  const expand = m.query("[data-agents-expand]");
-  if (expand) {
-    await m.click(expand as HTMLElement);
-    await m.flush();
-  }
 }
 
 function decoy(): ThreadInfo {

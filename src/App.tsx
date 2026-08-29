@@ -91,23 +91,36 @@ function useNarrow(): boolean {
   return useSyncExternalStore(subscribeNarrow, getNarrow, () => false);
 }
 
-const AGENTS_COLLAPSED_KEY = "coder.agents.collapsed";
+const AGENTS_LAST_KEY = "coder.agents.collapsed";
 
-function loadAgentsCollapsed(): boolean {
+function loadLastAgentsCollapsed(): boolean | null {
   try {
-    const raw = window.localStorage.getItem(AGENTS_COLLAPSED_KEY);
-    return raw === "1" || raw === "true";
+    const raw = window.localStorage.getItem(AGENTS_LAST_KEY);
+    if (raw === "1" || raw === "true") return true;
+    if (raw === "0" || raw === "false") return false;
+    return null;
   } catch {
-    return false;
+    return null;
   }
 }
 
-function saveAgentsCollapsed(value: boolean): void {
+function saveLastAgentsCollapsed(value: boolean): void {
   try {
-    window.localStorage.setItem(AGENTS_COLLAPSED_KEY, value ? "1" : "0");
+    window.localStorage.setItem(AGENTS_LAST_KEY, value ? "1" : "0");
   } catch {
-    // Quota/private mode: UI state just stops persisting.
+    // Quota/private mode: last state just stops persisting.
   }
+}
+
+function agentsPanelStartsCollapsed(
+  defaultState: "closed" | "open" | null | undefined,
+  rememberLast?: boolean | null,
+): boolean {
+  if (rememberLast) {
+    const last = loadLastAgentsCollapsed();
+    if (last !== null) return last;
+  }
+  return defaultState !== "open";
 }
 
 function dialogOpen(): boolean {
@@ -344,7 +357,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
   const [drawer, setDrawer] = useState<DrawerId | null>(null);
   const [forecast, setForecast] = useState<ConflictForecast>(EMPTY_FORECAST);
   const narrow = useNarrow();
-  const [agentsCollapsed, setAgentsCollapsed] = useState(loadAgentsCollapsed);
+  const [agentsCollapsed, setAgentsCollapsed] = useState(true);
   const sidebarPaneRef = useRef<HTMLDivElement>(null);
   const agentsPaneRef = useRef<HTMLDivElement>(null);
   const threadsBtnRef = useRef<HTMLButtonElement>(null);
@@ -352,6 +365,9 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
   const agentsExpandRef = useRef<HTMLButtonElement>(null);
   const lastDrawerRef = useRef<DrawerId | null>(null);
   const collapseSourceRef = useRef<"user" | null>(null);
+  const rememberLastRef = useRef(false);
+  const appliedPanelDefaultRef = useRef<"closed" | "open" | null>(null);
+  rememberLastRef.current = settings?.agentsPanelRememberLast === true;
   const hideAgentsRail = agentsCollapsed && !narrow;
 
   const handleSelectThread = useCallback(
@@ -807,14 +823,33 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     return () => window.removeEventListener("keydown", onKey);
   }, [drawer]);
 
+  const persistLastIfRemembering = useCallback((collapsed: boolean) => {
+    if (rememberLastRef.current) saveLastAgentsCollapsed(collapsed);
+  }, []);
+
   useEffect(() => {
-    saveAgentsCollapsed(agentsCollapsed);
-  }, [agentsCollapsed]);
+    if (!settings) return;
+    const def = settings.agentsPanelDefault === "open" ? "open" : "closed";
+    if (appliedPanelDefaultRef.current === null) {
+      appliedPanelDefaultRef.current = def;
+      setAgentsCollapsed(
+        agentsPanelStartsCollapsed(def, settings.agentsPanelRememberLast),
+      );
+      return;
+    }
+    if (appliedPanelDefaultRef.current !== def) {
+      appliedPanelDefaultRef.current = def;
+      const collapsed = def !== "open";
+      setAgentsCollapsed(collapsed);
+      persistLastIfRemembering(collapsed);
+    }
+  }, [settings, persistLastIfRemembering]);
 
   const collapseAgents = useCallback(() => {
     collapseSourceRef.current = "user";
     setAgentsCollapsed(true);
-  }, []);
+    persistLastIfRemembering(true);
+  }, [persistLastIfRemembering]);
 
   // A second workspace pane (Git, Terminal, Browser, …) takes the rail's
   // width. Not flagged as a "user" collapse: focus stays where it was, and
@@ -838,11 +873,15 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         return;
       }
       collapseSourceRef.current = "user";
-      setAgentsCollapsed((c) => !c);
+      setAgentsCollapsed((c) => {
+        const next = !c;
+        persistLastIfRemembering(next);
+        return next;
+      });
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [narrow]);
+  }, [narrow, persistLastIfRemembering]);
 
   // ponytail: restore to the trigger, not a focus trap. Tab can leave the pane.
   useEffect(() => {
@@ -1520,7 +1559,11 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
                 aria-controls="pane-agents"
                 title="Show agents panel (⌘.)"
                 aria-label="Show agents panel"
-                onClick={() => setAgentsCollapsed(false)}
+                onClick={() => {
+                  collapseSourceRef.current = "user";
+                  setAgentsCollapsed(false);
+                  persistLastIfRemembering(false);
+                }}
               >
                 <svg
                   width="14"

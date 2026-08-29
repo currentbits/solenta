@@ -1498,6 +1498,86 @@ describe("SettingsModal Appearance (#651)", () => {
     assert.equal(select.value, "dark");
     m.unmount();
   });
+
+  it("puts the agents-panel default on General and saves the pick (#767)", async () => {
+    const patches: Partial<AppSettings>[] = [];
+    const m = await mount(
+      modal({
+        settings: {
+          dailyBudgetUsd: null,
+          autoSettleAfterDays: 3,
+          agentsPanelDefault: "closed",
+        } as AppSettings,
+        onSaveSettings: async (patch) => {
+          patches.push(patch);
+          return {
+            dailyBudgetUsd: null,
+            autoSettleAfterDays: 3,
+            agentsPanelDefault: "open",
+          } as AppSettings;
+        },
+      }),
+    );
+    const select = m.query("[data-agents-panel-default]") as HTMLSelectElement;
+    assert.ok(select, "agents panel select must render on General");
+    assert.equal(select.value, "closed");
+    await m.change(select, "open");
+    assert.deepEqual(patches, [{ agentsPanelDefault: "open" }]);
+    m.unmount();
+  });
+
+  it("defaults the agents panel control to closed when the setting is absent", async () => {
+    const m = await mount(
+      modal({ settings: { dailyBudgetUsd: 5, autoSettleAfterDays: 3 } }),
+    );
+    const select = m.query("[data-agents-panel-default]") as HTMLSelectElement;
+    assert.ok(select, "agents panel select must render");
+    assert.equal(select.value, "closed");
+    m.unmount();
+  });
+
+  it("puts Remember last agents-panel state on General and saves (#769)", async () => {
+    const patches: Partial<AppSettings>[] = [];
+    const m = await mount(
+      modal({
+        settings: {
+          dailyBudgetUsd: null,
+          autoSettleAfterDays: 3,
+          agentsPanelDefault: "closed",
+          agentsPanelRememberLast: false,
+        } as AppSettings,
+        onSaveSettings: async (patch) => {
+          patches.push(patch);
+          return {
+            dailyBudgetUsd: null,
+            autoSettleAfterDays: 3,
+            agentsPanelDefault: "closed",
+            agentsPanelRememberLast: true,
+          } as AppSettings;
+        },
+      }),
+    );
+    const checkbox = m.query(
+      "[data-agents-panel-remember-last]",
+    ) as HTMLInputElement;
+    assert.ok(checkbox, "remember-last checkbox must render on General");
+    assert.equal(checkbox.checked, false);
+    await m.click(checkbox);
+    assert.deepEqual(patches, [{ agentsPanelRememberLast: true }]);
+    m.unmount();
+  });
+
+  it("defaults Remember last to off when the setting is absent", async () => {
+    const m = await mount(
+      modal({ settings: { dailyBudgetUsd: 5, autoSettleAfterDays: 3 } }),
+    );
+    const checkbox = m.query(
+      "[data-agents-panel-remember-last]",
+    ) as HTMLInputElement;
+    assert.ok(checkbox, "remember-last checkbox must render");
+    assert.equal(checkbox.checked, false);
+    m.unmount();
+  });
 });
 
 describe("SettingsModal agent profile permission modes (issue #177)", () => {
