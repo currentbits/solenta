@@ -160,6 +160,7 @@ export function thread(over: Partial<ThreadInfo> = {}): ThreadInfo {
     handoffFrom: null,
     muted: false,
     notes: "",
+    tags: [],
     queued: null,
     pinnedAt: null,
     snoozedUntil: null,
@@ -1811,6 +1812,30 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
           threads = [next, ...threads];
         }
         return Promise.resolve(next);
+      },
+      /**
+       * Honest tags (issue #789). Same normalization as services.setTags:
+       * trim, lowercase, dedupe, caps. Rejects an unknown thread.
+       */
+      setTags: (input: unknown) => {
+        const i = input as { threadId: string; tags: string[] };
+        const existing = threads.find((t) => t.id === i.threadId);
+        if (!existing) {
+          calls.push({ channel: "threads.setTags", args: [input] });
+          return Promise.reject(new Error(`Unknown thread: ${i.threadId}`));
+        }
+        const seen = new Set<string>();
+        const clean: string[] = [];
+        for (const raw of i.tags ?? []) {
+          const tag = String(raw ?? "").trim().toLowerCase().slice(0, 24);
+          if (!tag || seen.has(tag)) continue;
+          seen.add(tag);
+          clean.push(tag);
+          if (clean.length >= 12) break;
+        }
+        const next: ThreadInfo = { ...existing, tags: clean };
+        threads = threads.map((t) => (t.id === i.threadId ? next : t));
+        return rec("threads.setTags", [input], next);
       },
       setQuotaWaitAutoResume: (input: unknown) => {
         const i = input as { threadId: string; enabled: boolean | null };

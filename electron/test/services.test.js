@@ -516,6 +516,38 @@ describe("services", () => {
     );
   });
 
+  it("setTags normalizes (trim/lowercase/dedupe/cap) and never bumps updatedAt (#789)", async () => {
+    const thread = await makeThread("tags-normalize");
+    store.updateThread(thread.id, { updatedAt: 1_700_000_000_000 });
+
+    const updated = services.setTags(store, {
+      threadId: thread.id,
+      tags: [" Work ", "work", "BUG", "", "a-very-long-tag-name-over-24-chars"],
+    });
+    assert.deepEqual(updated.tags, [
+      "work",
+      "bug",
+      "a-very-long-tag-name-ove",
+    ]);
+    assert.equal(updated.updatedAt, 1_700_000_000_000);
+    assert.deepEqual(store.getThread(thread.id).tags, updated.tags);
+
+    const cleared = services.setTags(store, { threadId: thread.id, tags: [] });
+    assert.deepEqual(cleared.tags, []);
+  });
+
+  it("setTags rejects a non-array and an unknown thread", async () => {
+    const thread = await makeThread("tags-reject");
+    assert.throws(
+      () => services.setTags(store, { threadId: thread.id, tags: "work" }),
+      /tags must be an array/,
+    );
+    assert.throws(
+      () => services.setTags(store, { threadId: "missing", tags: [] }),
+      /Unknown thread: missing/,
+    );
+  });
+
   it("setQueued appends on a second call, clears on prompt null, does not bump updatedAt", async () => {
     const thread = await makeThread("queued-append");
     store.updateThread(thread.id, { updatedAt: 1_700_000_000_000 });

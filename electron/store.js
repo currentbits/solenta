@@ -1137,6 +1137,10 @@ function migrateThread(t) {
     muted: t.muted === true,
     // Per-thread user scratch pad (issue #194): absent → empty.
     notes: typeof t.notes === "string" ? t.notes : "",
+    // User-defined tags (issue #789): absent/invalid → none.
+    tags: Array.isArray(t.tags)
+      ? t.tags.filter((x) => typeof x === "string" && x.trim() !== "")
+      : [],
     // One-tap felt estimate (issue #401): absent/invalid → never answered.
     feltEstimate: normalizeFeltEstimate(t.feltEstimate),
     // Type-ahead queue (issue #137): absent → nothing waiting.

@@ -344,6 +344,8 @@ export interface UseCoderResult {
    * Snooze until an epoch ms, or clear with null. Does not require selection.
    */
   setSnoozed: (threadId: string, until: number | null) => Promise<void>;
+  /** Replace a thread's user-defined tags. Does not require selection. */
+  setTags: (threadId: string, tags: string[]) => Promise<void>;
   setMuted: (threadId: string, muted: boolean) => Promise<void>;
   setCrossThreadInbound: (
     threadId: string,
@@ -1892,6 +1894,26 @@ export function useCoder(): UseCoderResult {
     [api, applyThreads],
   );
 
+  const setTags = useCallback(
+    async (threadId: string, tags: string[]) => {
+      try {
+        const thread = await api.threads.setTags({ threadId, tags });
+        applyThreads(
+          threadsRef.current.map((t) => (t.id === thread.id ? thread : t)),
+        );
+        setDetail((prev) =>
+          prev && prev.thread.id === thread.id
+            ? { ...prev, thread }
+            : prev,
+        );
+        setError(null);
+      } catch (err) {
+        setError({ scope: "run", message: errorMessage(err) });
+      }
+    },
+    [api, applyThreads],
+  );
+
   const setMuted = useCallback(
     async (threadId: string, muted: boolean) => {
       try {
@@ -3320,6 +3342,7 @@ export function useCoder(): UseCoderResult {
     setSettled,
     setPinned,
     setSnoozed,
+    setTags,
     setMuted,
     setCrossThreadInbound,
     setQuotaWaitAutoResume,

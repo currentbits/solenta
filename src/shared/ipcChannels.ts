@@ -109,6 +109,7 @@ export const IPC_CHANNELS = [
   { ns: "threads", method: "setPinned" },
   { ns: "threads", method: "setQueued" },
   { ns: "threads", method: "setSnoozed" },
+  { ns: "threads", method: "setTags" },
   { ns: "threads", method: "setMuted" },
   { ns: "threads", method: "setCrossThreadInbound" },
   { ns: "threads", method: "setQuotaWaitAutoResume" },

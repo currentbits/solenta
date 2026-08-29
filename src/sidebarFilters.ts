@@ -15,6 +15,7 @@ import { isDelegating, type WaitState } from "./waiting";
 export const STATUS_FILTER_KEY = "sidebar:statusFilter";
 export const PROVIDER_FILTER_KEY = "sidebar:providerFilter";
 export const GROUP_BY_KEY = "sidebar:groupBy";
+export const TAG_FILTER_KEY = "sidebar:tagFilter";
 
 export type StatusFilter =
   | "running"
@@ -23,7 +24,7 @@ export type StatusFilter =
   | "idle"
   | "archived";
 
-export type GroupBy = "none" | "project" | "status";
+export type GroupBy = "none" | "project" | "status" | "tag";
 
 export interface StatusFilterOption {
   id: StatusFilter;
@@ -50,6 +51,7 @@ export const GROUP_BY_OPTIONS: readonly GroupByOption[] = [
   { id: "none", label: "Default" },
   { id: "project", label: "Project" },
   { id: "status", label: "Status" },
+  { id: "tag", label: "Tag" },
 ];
 
 const STATUS_IDS = new Set<string>(STATUS_FILTERS.map((s) => s.id));
@@ -75,6 +77,8 @@ export interface ThreadFilter {
   providers: readonly string[];
   /** Null = all projects. */
   projectId: string | null;
+  /** Null = all tags. A thread matches when it carries this tag. */
+  tag: string | null;
 }
 
 export function threadMatchesFilter(
@@ -89,6 +93,9 @@ export function threadMatchesFilter(
     return false;
   }
   if (filter.projectId != null && thread.projectId !== filter.projectId) {
+    return false;
+  }
+  if (filter.tag != null && !(thread.tags ?? []).includes(filter.tag)) {
     return false;
   }
   return true;
@@ -221,6 +228,53 @@ export function groupThreadsByProject(
   );
 }
 
+export interface TagGroup {
+  /** Tag name, or "" for the trailing Untagged group. */
+  id: string;
+  label: string;
+  threads: ThreadInfo[];
+}
+
+/** Every tag present on the given threads, alphabetically. */
+export function allTags(threads: readonly ThreadInfo[]): string[] {
+  const seen = new Set<string>();
+  for (const t of threads) {
+    for (const tag of t.tags ?? []) seen.add(tag);
+  }
+  return [...seen].sort((a, b) => a.localeCompare(b));
+}
+
+/**
+ * Group attention threads by tag (issue #789). A thread with several tags
+ * appears under EACH of them (Linear-style); untagged threads form a
+ * trailing "Untagged" group. Groups sort alphabetically, threads inside a
+ * group pin-first then createdAt desc — same as a status group.
+ */
+export function groupThreadsByTag(threads: readonly ThreadInfo[]): TagGroup[] {
+  const byTag = new Map<string, ThreadInfo[]>();
+  const untagged: ThreadInfo[] = [];
+  for (const thread of threads) {
+    const tags = thread.tags ?? [];
+    if (tags.length === 0) {
+      untagged.push(thread);
+      continue;
+    }
+    for (const tag of tags) {
+      const list = byTag.get(tag) ?? [];
+      list.push(thread);
+      byTag.set(tag, list);
+    }
+  }
+  const out: TagGroup[] = [];
+  for (const tag of [...byTag.keys()].sort((a, b) => a.localeCompare(b))) {
+    out.push({ id: tag, label: tag, threads: sortAttentionThreads(byTag.get(tag)!) });
+  }
+  if (untagged.length > 0) {
+    out.push({ id: "", label: "Untagged", threads: sortAttentionThreads(untagged) });
+  }
+  return out;
+}
+
 export function statusFilterLabel(id: StatusFilter | null): string {
   if (id == null) return "Status";
   return STATUS_FILTERS.find((s) => s.id === id)?.short ?? "Status";
@@ -229,6 +283,10 @@ export function statusFilterLabel(id: StatusFilter | null): string {
 export function groupByLabel(id: GroupBy): string {
   if (id === "none") return "Group";
   return GROUP_BY_OPTIONS.find((g) => g.id === id)?.label ?? "Group";
+}
+
+export function tagFilterLabel(id: string | null): string {
+  return id == null ? "Tag" : id;
 }
 
 export function providerFilterLabel(

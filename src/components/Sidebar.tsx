@@ -38,16 +38,20 @@ import {
   PROVIDER_FILTER_KEY,
   STATUS_FILTER_KEY,
   STATUS_FILTERS,
+  TAG_FILTER_KEY,
+  allTags,
   filterThreads,
   groupByLabel,
   groupThreadsByProject,
   groupThreadsByStatus,
+  groupThreadsByTag,
   parseGroupBy,
   parseProviderFilter,
   parseStatusFilter,
   providerFilterLabel,
   serializeProviderFilter,
   statusFilterLabel,
+  tagFilterLabel,
   type GroupBy,
   type StatusFilter,
 } from "../sidebarFilters";
@@ -97,7 +101,7 @@ const MIN_SEARCH_LEN = 2;
 const SCOPE_KEY = "sidebar:projectScope";
 const SNOOZED_OPEN_KEY = "sidebar:snoozedOpen";
 const SETTLED_OPEN_KEY = "sidebar:settledOpen";
-type FilterMenu = "status" | "provider" | "group";
+type FilterMenu = "status" | "provider" | "group" | "tag";
 
 /**
  * t3 list animation: rows glide on lifecycle transitions instead of the
@@ -244,6 +248,8 @@ interface SidebarProps {
   ) => void | Promise<void>;
   onSetPinned?: (threadId: string, pinned: boolean) => void | Promise<void>;
   onSetSnoozed?: (threadId: string, until: number | null) => void | Promise<void>;
+  /** Replace a thread's user-defined tags (chip editor on the card). */
+  onSetTags?: (threadId: string, tags: string[]) => void | Promise<void>;
   /** Mute/unmute desktop notifications for one thread. */
   onSetMuted?: (threadId: string, muted: boolean) => void | Promise<void>;
   /** Rename a thread from the row menu. */
@@ -630,6 +636,7 @@ export const ThreadCard = memo(function ThreadCard({
   onSetSettled,
   onSetPinned,
   onSetSnoozed,
+  onSetTags,
   onSetMuted,
   onRenameThread,
   onFork,
@@ -658,6 +665,7 @@ export const ThreadCard = memo(function ThreadCard({
   ) => void | Promise<void>;
   onSetPinned?: (threadId: string, pinned: boolean) => void | Promise<void>;
   onSetSnoozed?: (threadId: string, until: number | null) => void | Promise<void>;
+  onSetTags?: (threadId: string, tags: string[]) => void | Promise<void>;
   onSetMuted?: (threadId: string, muted: boolean) => void | Promise<void>;
   onRenameThread?: (threadId: string, title: string) => void | Promise<void>;
   onFork?: (
@@ -697,6 +705,8 @@ export const ThreadCard = memo(function ThreadCard({
   const [renaming, setRenaming] = useState(false);
   const [renameDraft, setRenameDraft] = useState("");
   const renamingRef = useRef(false);
+  const [editingTags, setEditingTags] = useState(false);
+  const [tagDraft, setTagDraft] = useState("");
   const forecastPairs = pairsForThread(conflictForecast, thread.id);
   const providerId = thread.provider || "";
   const hasLine3 =
@@ -721,6 +731,32 @@ export const ThreadCard = memo(function ThreadCard({
     void onRenameThread?.(thread.id, next);
   };
 
+  const startTagEdit = () => {
+    setTagDraft("");
+    setEditingTags(true);
+    onToggleSnoozeMenu?.(null);
+  };
+
+  // Server/fakes normalize (trim, lowercase, dedupe, caps) — pass raw.
+  const addTag = (raw: string) => {
+    const next = raw.trim();
+    if (!next) return;
+    void onSetTags?.(thread.id, [...(thread.tags ?? []), next]);
+  };
+
+  const removeTag = (tag: string) => {
+    void onSetTags?.(
+      thread.id,
+      (thread.tags ?? []).filter((t) => t !== tag),
+    );
+  };
+
+  const finishTagEdit = (cancel: boolean) => {
+    setEditingTags(false);
+    if (cancel) return;
+    addTag(tagDraft);
+  };
+
   const applyMenuId = (
     id: string,
     presets: ReturnType<typeof resolveSnoozePresets>,
@@ -737,12 +773,13 @@ export const ThreadCard = memo(function ThreadCard({
     else if (id.startsWith("handoff:")) {
       void onFork?.(thread.id, { provider: id.slice("handoff:".length) });
     } else if (id === "rename") startRename();
+    else if (id === "tags") startTagEdit();
     else if (id === "mute") void onSetMuted?.(thread.id, true);
     else if (id === "unmute") void onSetMuted?.(thread.id, false);
   };
 
   const openThreadMenu = async (position: { x: number; y: number }) => {
-    if (menuBusy.current || renaming) return;
+    if (menuBusy.current || renaming || editingTags) return;
     const presets = resolveSnoozePresets(Date.now());
     const items = buildThreadActionMenuItems({
       thread,
@@ -754,6 +791,7 @@ export const ThreadCard = memo(function ThreadCard({
       showPin: Boolean(onSetPinned),
       showFork: Boolean(onFork),
       showRename: Boolean(onRenameThread),
+      showTags: Boolean(onSetTags),
       showMute: Boolean(onSetMuted),
       showSettle: Boolean(onSetSettled),
     });
@@ -772,7 +810,7 @@ export const ThreadCard = memo(function ThreadCard({
   };
 
   const hasActions = Boolean(
-    onSetSettled || onSetPinned || onSetSnoozed || onFork || onRenameThread || onSetMuted,
+    onSetSettled || onSetPinned || onSetSnoozed || onSetTags || onFork || onRenameThread || onSetMuted,
   );
 
   // Card is a non-interactive shell. Stretch select + hover actions are
@@ -792,7 +830,7 @@ export const ThreadCard = memo(function ThreadCard({
       data-recede={recede ? "true" : undefined}
       data-actions-open={actionsOpen ? "true" : undefined}
       onContextMenu={(e) => {
-        if (renaming) return;
+        if (renaming || editingTags) return;
         if ((e.target as HTMLElement).closest("input, a, textarea")) return;
         e.preventDefault();
         e.stopPropagation();
@@ -936,7 +974,7 @@ export const ThreadCard = memo(function ThreadCard({
                     </Icon>
                   </button>
                 )}
-                {(onSetSnoozed || onFork || onRenameThread || onSetMuted || onSetSettled || onSetPinned) && (
+                {(onSetSnoozed || onFork || onRenameThread || onSetMuted || onSetSettled || onSetPinned || onSetTags) && (
                   <button
                     type="button"
                     className={styles.iconBtn}
@@ -1011,6 +1049,68 @@ export const ThreadCard = memo(function ThreadCard({
             <span className={styles.inMessagesTag}>in messages</span>
           )}
         </div>
+        {editingTags ? (
+          <div className={styles.tagEditor} data-tag-editor={thread.id}>
+            {(thread.tags ?? []).map((tag) => (
+              <span key={tag} className={styles.tagChip} data-tag-chip={tag}>
+                {tag}
+                <button
+                  type="button"
+                  className={styles.tagChipRemove}
+                  aria-label={`Remove tag ${tag}`}
+                  data-tag-remove={tag}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    removeTag(tag);
+                  }}
+                >
+                  ×
+                </button>
+              </span>
+            ))}
+            <input
+              className={styles.tagInput}
+              data-tag-input={thread.id}
+              value={tagDraft}
+              maxLength={24}
+              placeholder="Add tag"
+              aria-label="Add tag"
+              autoFocus
+              onChange={(e) => setTagDraft(e.target.value)}
+              onClick={(e) => e.stopPropagation()}
+              onMouseDown={(e) => e.stopPropagation()}
+              onDoubleClick={(e) => e.stopPropagation()}
+              onBlur={() => finishTagEdit(false)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  addTag(tagDraft);
+                  setTagDraft("");
+                } else if (e.key === "Escape") {
+                  e.preventDefault();
+                  finishTagEdit(true);
+                } else if (
+                  e.key === "Backspace" &&
+                  tagDraft === "" &&
+                  (thread.tags ?? []).length > 0
+                ) {
+                  e.preventDefault();
+                  removeTag((thread.tags ?? []).at(-1)!);
+                }
+              }}
+            />
+          </div>
+        ) : (
+          (thread.tags ?? []).length > 0 && (
+            <div className={styles.tagRow} data-tag-row={thread.id}>
+              {(thread.tags ?? []).map((tag) => (
+                <span key={tag} className={styles.tagChip} data-tag-chip={tag}>
+                  {tag}
+                </span>
+              ))}
+            </div>
+          )
+        )}
         {hasLine3 && (
           <div className={styles.cardLine3}>
             {thread.branch ? (
@@ -1336,6 +1436,7 @@ export const Sidebar = memo(function Sidebar({
   onSetSettled,
   onSetPinned,
   onSetSnoozed,
+  onSetTags,
   onSetMuted,
   onRenameThread,
   onSetArchived,
@@ -1365,6 +1466,9 @@ export const Sidebar = memo(function Sidebar({
   );
   const [providerFilter, setProviderFilter] = useState<string[]>(() =>
     parseProviderFilter(loadStored(PROVIDER_FILTER_KEY)),
+  );
+  const [tagFilter, setTagFilter] = useState<string | null>(() =>
+    loadStored(TAG_FILTER_KEY),
   );
   const [groupBy, setGroupBy] = useState<GroupBy>(() =>
     parseGroupBy(loadStored(GROUP_BY_KEY)),
@@ -1524,6 +1628,7 @@ export const Sidebar = memo(function Sidebar({
         status: statusFilter,
         providers: providerFilter,
         projectId: projectScope,
+        tag: tagFilter,
       },
       {
         waits: waitStates,
@@ -1537,6 +1642,7 @@ export const Sidebar = memo(function Sidebar({
     liveById,
     statusFilter,
     providerFilter,
+    tagFilter,
     projectScope,
     waitStates,
     activeThreadId,
@@ -1550,6 +1656,16 @@ export const Sidebar = memo(function Sidebar({
       saveStored(SCOPE_KEY, null);
     }
   }, [projectScope, projectById]);
+
+  const knownTags = useMemo(() => allTags(threads), [threads]);
+
+  // Drop a stale tag filter when no thread carries the tag anymore.
+  useEffect(() => {
+    if (tagFilter != null && !knownTags.includes(tagFilter)) {
+      setTagFilter(null);
+      saveStored(TAG_FILTER_KEY, null);
+    }
+  }, [tagFilter, knownTags]);
 
   useEffect(() => {
     setSettledVisibleCount(SETTLED_TAIL_INITIAL_COUNT);
@@ -1578,6 +1694,10 @@ export const Sidebar = memo(function Sidebar({
         : [],
     [groupBy, attentionThreads, waitStates],
   );
+  const tagGroups = useMemo(
+    () => (groupBy === "tag" ? groupThreadsByTag(attentionThreads) : []),
+    [groupBy, attentionThreads],
+  );
   const groupedAttention = useMemo(() => {
     if (groupBy === "project") {
       return projectGroups.flatMap((g) => g.threads);
@@ -1585,8 +1705,21 @@ export const Sidebar = memo(function Sidebar({
     if (groupBy === "status") {
       return statusGroups.flatMap((g) => g.threads);
     }
+    if (groupBy === "tag") {
+      // A multi-tag thread renders under each tag; nav visits it once.
+      const seen = new Set<string>();
+      const out: ThreadInfo[] = [];
+      for (const g of tagGroups) {
+        for (const t of g.threads) {
+          if (seen.has(t.id)) continue;
+          seen.add(t.id);
+          out.push(t);
+        }
+      }
+      return out;
+    }
     return null;
-  }, [groupBy, projectGroups, statusGroups]);
+  }, [groupBy, projectGroups, statusGroups, tagGroups]);
 
   useEffect(() => {
     if (!revealThreadId) return;
@@ -1639,7 +1772,8 @@ export const Sidebar = memo(function Sidebar({
     [flat.settled, flat.archived],
   );
 
-  const filtersOn = statusFilter != null || providerFilter.length > 0;
+  const filtersOn =
+    statusFilter != null || providerFilter.length > 0 || tagFilter != null;
   const snoozedExpanded = snoozedOpen || filtersOn;
   const settledExpanded = settledOpen || filtersOn;
 
@@ -1884,6 +2018,12 @@ export const Sidebar = memo(function Sidebar({
     setFilterMenu(null);
   };
 
+  const applyTagFilter = (tag: string | null) => {
+    setTagFilter(tag);
+    saveStored(TAG_FILTER_KEY, tag);
+    setFilterMenu(null);
+  };
+
   const toggleProviderFilter = (id: string) => {
     setProviderFilter((prev) => {
       const next = prev.includes(id)
@@ -1940,6 +2080,7 @@ export const Sidebar = memo(function Sidebar({
         onSetSettled={onSetSettled}
         onSetPinned={onSetPinned}
         onSetSnoozed={onSetSnoozed}
+        onSetTags={onSetTags}
         onSetMuted={onSetMuted}
         onRenameThread={onRenameThread}
         onFork={onFork}
@@ -2551,6 +2692,72 @@ export const Sidebar = memo(function Sidebar({
             </div>
           )}
         </span>
+        {(knownTags.length > 0 || tagFilter != null) && (
+          <span className={styles.filterMenuHost}>
+            <button
+              type="button"
+              className={styles.filterTrigger}
+              data-tag-filter-trigger=""
+              data-active={tagFilter != null ? "true" : undefined}
+              aria-haspopup="menu"
+              aria-expanded={filterMenu === "tag"}
+              aria-label="Filter threads by tag"
+              onClick={() => toggleFilterMenu("tag")}
+            >
+              <span className={styles.filterTriggerLabel}>
+                {tagFilterLabel(tagFilter)}
+              </span>
+              <Icon size={12}>
+                <path d="m6 9 6 6 6-6" />
+              </Icon>
+            </button>
+            {filterMenu === "tag" && (
+              <div
+                className={`${styles.menu} ${styles.menuLeft} ${styles.filterMenu}`}
+                role="menu"
+                data-tag-filter-menu=""
+              >
+                <button
+                  type="button"
+                  className={styles.menuItem}
+                  role="menuitem"
+                  data-tag-filter="all"
+                  data-selected={tagFilter == null ? "true" : undefined}
+                  onClick={() => applyTagFilter(null)}
+                >
+                  All tags
+                  {tagFilter == null && (
+                    <span className={styles.filterCheck}>
+                      <Icon size={12}>
+                        <path d="M5 12.5 9 16.5 19 7.5" />
+                      </Icon>
+                    </span>
+                  )}
+                </button>
+                {knownTags.map((tag) => (
+                  <button
+                    key={tag}
+                    type="button"
+                    className={styles.menuItem}
+                    role="menuitem"
+                    data-tag-filter={tag}
+                    data-selected={tagFilter === tag ? "true" : undefined}
+                    onClick={() => applyTagFilter(tag)}
+                  >
+                    {tag}
+                    {tagFilter === tag && (
+                      <span className={styles.filterCheck}>
+                        <Icon size={12}>
+                          <path d="M5 12.5 9 16.5 19 7.5" />
+                        </Icon>
+                      </span>
+                    )}
+                  </button>
+                ))}
+              </div>
+            )}
+          </span>
+        )}
         <span className={styles.filterMenuHost}>
           <button
             type="button"
@@ -2765,7 +2972,23 @@ export const Sidebar = memo(function Sidebar({
                         {g.threads.map((thread) => renderCard(thread))}
                       </div>
                     ))
-                  : (
+                  : groupBy === "tag"
+                    ? tagGroups.map((g) => (
+                        <div
+                          key={g.id || "untagged"}
+                          className={styles.filterGroup}
+                          data-filter-group={g.id || "untagged"}
+                        >
+                          <div className={styles.filterGroupHeader}>
+                            <span className={styles.filterGroupTitle}>{g.label}</span>
+                            <span className={styles.filterGroupCount}>
+                              {g.threads.length}
+                            </span>
+                          </div>
+                          {g.threads.map((thread) => renderCard(thread))}
+                        </div>
+                      ))
+                    : (
                     <>
                       {flat.pinned.map((thread) => renderCard(thread))}
                       {flat.pinned.length > 0 && (
