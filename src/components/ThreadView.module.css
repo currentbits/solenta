@@ -14,6 +14,9 @@
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  /* overflow:hidden is still a scrollport. scrollIntoView on the model
+     picker used to increment this and lift the composer (#762). */
+  overflow-anchor: none;
 }
 
 .dropOverlay {

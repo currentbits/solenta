@@ -3,6 +3,7 @@ import type {
   AgentConfigDoctorReport,
   AgentConfigPreview,
   AgentConfigWriteResult,
+  ProjectCodeMap,
   MemoryAutoResolved,
   MemoryCitation,
   MemoryEntryInfo,
@@ -67,6 +68,7 @@ export interface MemoryTabProps {
     body: string;
     project?: string;
   }) => Promise<{ id: string }>;
+  loadCodeMap?: (input: { projectId: string }) => Promise<ProjectCodeMap>;
   lintAgentConfig?: (input: {
     projectId: string;
   }) => Promise<AgentConfigDoctorReport>;
@@ -132,6 +134,116 @@ function gradeClass(grade: AgentConfigDoctorReport["grade"]): string {
   if (grade === "A" || grade === "B") return styles.gradeGood;
   if (grade === "C") return styles.gradeMid;
   return styles.gradeBad;
+}
+
+function CodeMapCard({
+  projectId,
+  loadCodeMap,
+}: {
+  projectId: string;
+  loadCodeMap: (input: { projectId: string }) => Promise<ProjectCodeMap>;
+}) {
+  const [map, setMap] = useState<ProjectCodeMap | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [open, setOpen] = useState<string | null>(null);
+  const mounted = useRef(true);
+
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    setError(null);
+    void loadCodeMap({ projectId })
+      .then((next) => {
+        if (!cancelled && mounted.current) setMap(next);
+      })
+      .catch((err: unknown) => {
+        if (!cancelled && mounted.current) {
+          setError(errorMessage(err));
+          setMap(null);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [loadCodeMap, projectId]);
+
+  const sha = map?.headSha ? map.headSha.slice(0, 7) : "";
+  const loc = [map?.defaultBranch, sha && `@ ${sha}`].filter(Boolean).join(" ");
+  const age = map?.updatedAt ? ageFromIso(new Date(map.updatedAt).toISOString()) : "";
+
+  return (
+    <section className={styles.map} data-code-map="">
+      <div className={styles.doctorHead}>
+        <span className={styles.doctorLabel}>Code map</span>
+        {map && map.fileCount > 0 ? (
+          <span className={styles.mapMeta}>
+            {map.fileCount} files · {map.symbolCount} symbols
+          </span>
+        ) : null}
+      </div>
+      <p className={styles.mapHint}>
+        Regenerated wiki of the repo, not agent memory.
+        {loc ? ` ${loc}` : ""}
+        {age ? ` · ${age}` : ""}
+      </p>
+      {error ? (
+        <p className={styles.formError} role="alert">
+          {error}
+        </p>
+      ) : null}
+      {map && map.modules.length === 0 && !error ? (
+        <p className={styles.mapEmpty}>No index yet. It builds from the checkout.</p>
+      ) : null}
+      {map && map.modules.length > 0 ? (
+        <ul className={styles.mapModules}>
+          {map.modules.map((mod) => {
+            const expanded = open === mod.name;
+            return (
+              <li key={mod.name}>
+                <button
+                  type="button"
+                  className={styles.mapModule}
+                  aria-expanded={expanded}
+                  onClick={() => setOpen(expanded ? null : mod.name)}
+                >
+                  <span className={styles.mapModuleName}>{mod.name}/</span>
+                  <span className={styles.mapModuleCount}>
+                    {mod.fileCount} file{mod.fileCount === 1 ? "" : "s"}
+                  </span>
+                </button>
+                {expanded ? (
+                  <ul className={styles.mapHot}>
+                    {mod.hot.map((file) => (
+                      <li key={file.path}>
+                        <span className={styles.mapFile}>{file.path}</span>
+                        {file.symbols.length > 0 ? (
+                          <span className={styles.mapSymbols}>
+                            {file.symbols.join(", ")}
+                          </span>
+                        ) : null}
+                      </li>
+                    ))}
+                  </ul>
+                ) : null}
+              </li>
+            );
+          })}
+        </ul>
+      ) : null}
+      {map && map.dependencies.length > 0 ? (
+        <p className={styles.mapDeps}>
+          <span className={styles.mapDepsLabel}>Dependencies</span>
+          {map.dependencies.join(", ")}
+        </p>
+      ) : null}
+    </section>
+  );
 }
 
 function ConfigDoctorCard({
@@ -470,6 +582,7 @@ export function MemoryTab({
   updateMemory,
   removeMemory,
   storeMemory,
+  loadCodeMap,
   lintAgentConfig,
   previewAgentConfig,
   writeAgentConfig,
@@ -769,20 +882,28 @@ export function MemoryTab({
     }
   };
 
+  const mapCard =
+    loadCodeMap && projectId ? (
+      <CodeMapCard projectId={projectId} loadCodeMap={loadCodeMap} />
+    ) : null;
+
   if (serverDown) {
     return (
-      <div className={styles.downWrap}>
-        <p className={styles.downMessage}>{MEMORY_NOT_RUNNING}</p>
-        <button
-          type="button"
-          className={styles.retryBtn}
-          onClick={() => {
-            setServerDown(false);
-            reloadCurrent();
-          }}
-        >
-          Retry
-        </button>
+      <div className={styles.root}>
+        {mapCard ? <div className={styles.searchRow}>{mapCard}</div> : null}
+        <div className={styles.downWrap}>
+          <p className={styles.downMessage}>{MEMORY_NOT_RUNNING}</p>
+          <button
+            type="button"
+            className={styles.retryBtn}
+            onClick={() => {
+              setServerDown(false);
+              reloadCurrent();
+            }}
+          >
+            Retry
+          </button>
+        </div>
       </div>
     );
   }
@@ -801,6 +922,7 @@ export function MemoryTab({
         <span className={styles.filterLabel} title="Memory is scoped to this project">
           {projectSlug ? projectSlug.split("/").filter(Boolean).pop() : "all projects"}
         </span>
+        {mapCard}
         {lintAgentConfig && projectId ? (
           <ConfigDoctorCard
             projectId={projectId}

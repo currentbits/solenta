@@ -12,6 +12,7 @@ import {
   buildUnifiedModelRows,
   clampHighlightIndex,
   detailModelRow,
+  filterModelRows,
   effortDisplayLabel,
   effortHint,
   effortsForModel,
@@ -423,5 +424,58 @@ describe("effortsForModel", () => {
     assert.deepEqual(effortsForModel(grok, null), grok.efforts);
     assert.deepEqual(effortsForModel(grok, "custom-id"), grok.efforts);
     assert.deepEqual(effortsForModel(undefined, "x"), []);
+  });
+});
+
+describe("filterModelRows", () => {
+  const rows = buildModelRows(provider());
+
+  it("returns every row when the query is empty or whitespace", () => {
+    assert.deepEqual(filterModelRows(rows, ""), rows);
+    assert.deepEqual(filterModelRows(rows, "   "), rows);
+  });
+
+  it("matches label, raw id, vendor, and description", () => {
+    assert.deepEqual(
+      filterModelRows(rows, "sonnet").map((r) => r.id),
+      ["claude-sonnet-5", CUSTOM_MODEL_ID],
+    );
+    assert.deepEqual(
+      filterModelRows(rows, "claude-opus-5").map((r) => r.id),
+      ["claude-opus-5", CUSTOM_MODEL_ID],
+    );
+    assert.deepEqual(
+      filterModelRows(rows, "anthropic").map((r) => r.id),
+      ["claude-opus-5", "claude-sonnet-5", CUSTOM_MODEL_ID],
+    );
+    assert.deepEqual(
+      filterModelRows(rows, "everyday").map((r) => r.id),
+      ["claude-sonnet-5", CUSTOM_MODEL_ID],
+    );
+  });
+
+  it("is case-insensitive and ignores surrounding spaces", () => {
+    assert.deepEqual(
+      filterModelRows(rows, "  OPUS  ").map((r) => r.label),
+      ["Opus 5", "Custom..."],
+    );
+  });
+
+  it("keeps Custom at the end even when it does not match", () => {
+    const filtered = filterModelRows(rows, "sonnet");
+    assert.equal(filtered[filtered.length - 1]!.id, CUSTOM_MODEL_ID);
+    assert.equal(
+      filtered.filter((r) => r.id === CUSTOM_MODEL_ID).length,
+      1,
+      "Custom must appear once",
+    );
+  });
+
+  it("does not stitch fields together to invent a match", () => {
+    // vendor "Anthropic" + label "Default" must not match "thropic default".
+    assert.deepEqual(
+      filterModelRows(rows, "thropic default").map((r) => r.id),
+      [CUSTOM_MODEL_ID],
+    );
   });
 });

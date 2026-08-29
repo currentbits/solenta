@@ -330,4 +330,22 @@ describe('REST convenience + new MCP tools', () => {
     })
     assert.equal(again.status, 404)
   })
+
+  it('PUT /api/wiki then GET /api/bootstrap includes wiki', async () => {
+    const put = await fetch(`${baseURL}/api/wiki`, {
+      method: 'PUT',
+      headers: authHeaders({ 'content-type': 'application/json' }),
+      body: JSON.stringify({
+        project: 'solenta',
+        wiki: { modules: [{ name: 'src', fileCount: 1, symbolCount: 1, hot: [] }] },
+      }),
+    })
+    assert.equal(put.status, 200)
+    const boot = await fetch(`${baseURL}/api/bootstrap?project=solenta`, {
+      headers: authHeaders(),
+    })
+    assert.equal(boot.status, 200)
+    const body = await boot.json()
+    assert.equal(body.wiki.modules[0].name, 'src')
+  })
 })

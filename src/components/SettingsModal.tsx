@@ -69,7 +69,7 @@ const PANE_META: Record<
   spending: {
     label: "Spending",
     hint: "Caps that stop a runaway day or a runaway crew.",
-    keywords: "budget daily orchestration spend usd cap money cost",
+    keywords: "budget daily orchestration spend usd cap money cost unmetered kimi cursor",
   },
   git: {
     label: "Git",
@@ -944,6 +944,10 @@ export function SettingsModal({
                   {saving ? "Saving…" : "Save"}
                 </button>
               </div>
+              <p className={styles.note} data-budget-unmetered-note="">
+                Kimi and Cursor report no USD, so their turns never count toward
+                this cap.
+              </p>
             </div>
             <div className={styles.field}>
               <label className={styles.fieldLabel} htmlFor="orch-budget">

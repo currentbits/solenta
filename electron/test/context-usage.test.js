@@ -576,4 +576,40 @@ process.exit(0);
     assert.equal(usage.contextTokens, undefined);
     assert.equal(usage.contextWindow, undefined);
   });
+
+  it("kimi usage.record four-bucket fills contextTokens and does not invent USD (#696)", async () => {
+    process.env.CODER_KIMI_BIN = writeScript(
+      tmpDir,
+      "fake-kimi-record",
+      `#!/usr/bin/env node
+"use strict";
+function emit(obj) { process.stdout.write(JSON.stringify(obj) + "\\n"); }
+emit({ role: "assistant", content: "hi from kimi" });
+emit({
+  type: "usage.record",
+  model: "kimi-code/k3",
+  usage: { inputOther: 100, output: 20, inputCacheRead: 50, inputCacheCreation: 10 },
+});
+process.exit(0);
+`,
+    );
+
+    const project = store.getProjects()[0];
+    const thread = services.createThread(store, {
+      projectId: project.id,
+      title: "Kimi measurable",
+    });
+    services.setProvider(store, { threadId: thread.id, provider: "kimi" });
+    const spentBefore = store.getSpendToday();
+    await runner.startRun({ threadId: thread.id, prompt: "go" });
+    await waitFor(() => store.getThread(thread.id).status === "done");
+
+    const usage = store.getUsage(thread.id);
+    assert.ok(usage);
+    assert.equal(usage.inputTokens, 100);
+    assert.equal(usage.outputTokens, 20);
+    assert.equal(usage.contextTokens, 180);
+    assert.equal(usage.costUsd, 0);
+    assert.equal(store.getSpendToday(), spentBefore);
+  });
 });

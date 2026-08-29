@@ -1335,6 +1335,115 @@ describe("Composer drill-down picker", () => {
   });
 });
 
+describe("Composer model list search", () => {
+  it("is absent on the provider screen and present after drilling in", async () => {
+    const h = makeHarness();
+    const m = await mount(composer(h, { provider: "claude", model: null }));
+    await m.click(m.query('button[aria-label^="Model:"]'));
+    assert.equal(
+      m.query('input[aria-label="Search models"]'),
+      null,
+      "the provider screen must not grow a search field",
+    );
+    assert.ok(await openProvider(m, "Claude Code"));
+    assert.ok(
+      m.query('input[aria-label="Search models"]'),
+      "the model list is where search belongs",
+    );
+    m.unmount();
+  });
+
+  it("filters the list to matching models and keeps Custom", async () => {
+    const h = makeHarness();
+    const m = await mount(composer(h, { provider: "claude", model: null }));
+    assert.ok(await openProvider(m, "Claude Code"));
+    await m.type(m.query('input[aria-label="Search models"]'), "opus");
+    const labels = m
+      .queryAll('[class*="modelRow"]')
+      .map((el) => (el.textContent || "").replace(/\s+/g, " ").trim());
+    assert.ok(
+      labels.some((t) => t.includes("Opus 4")),
+      `Opus must remain, got ${labels.join(" | ")}`,
+    );
+    assert.equal(
+      labels.some((t) => t.includes("Sonnet 4")),
+      false,
+      "a non-matching model must leave the list",
+    );
+    assert.ok(
+      labels.some((t) => t.includes("Custom")),
+      "Custom stays so an unknown id is still reachable",
+    );
+    m.unmount();
+  });
+
+  it("selecting a filtered row reports that model", async () => {
+    const h = makeHarness();
+    const m = await mount(composer(h, { provider: "claude", model: null }));
+    assert.ok(await openProvider(m, "Claude Code"));
+    await m.type(m.query('input[aria-label="Search models"]'), "opus");
+    const row = m
+      .queryAll('[class*="modelRow"]')
+      .find((el) => (el.textContent || "").includes("Opus 4"));
+    assert.ok(row, "the filtered Opus row must be clickable");
+    await m.click(row);
+    assert.deepEqual(h.providerSets, [
+      { provider: "claude", model: "claude-opus-4" },
+    ]);
+    m.unmount();
+  });
+
+  it("Escape clears the query first, then backs out to providers", async () => {
+    const h = makeHarness();
+    const m = await mount(composer(h, { provider: "claude", model: null }));
+    assert.ok(await openProvider(m, "Claude Code"));
+    const search = m.query(
+      'input[aria-label="Search models"]',
+    ) as HTMLInputElement;
+    await m.type(search, "opus");
+    await m.press(search, "Escape");
+    assert.equal(
+      (m.query('input[aria-label="Search models"]') as HTMLInputElement).value,
+      "",
+      "first Escape must clear the filter, not leave the provider",
+    );
+    assert.ok(
+      m.query('[role="listbox"][aria-label="Model"]'),
+      "the model list must still be open",
+    );
+    await m.press(m.query('input[aria-label="Search models"]'), "Escape");
+    assert.ok(
+      m.query('[role="listbox"][aria-label="Provider"]'),
+      "second Escape must step back to providers",
+    );
+    m.unmount();
+  });
+
+  it("forgets the query when leaving or re-entering a provider", async () => {
+    const h = makeHarness();
+    const m = await mount(composer(h, { provider: "claude", model: null }));
+    assert.ok(await openProvider(m, "Claude Code"));
+    await m.type(m.query('input[aria-label="Search models"]'), "opus");
+    await m.click(m.query('[aria-label="Back to providers"]'));
+    assert.equal(
+      m.query('input[aria-label="Search models"]'),
+      null,
+      "leaving the model list must drop the field",
+    );
+    assert.ok(await openProvider(m, "Claude Code"));
+    const search = m.query(
+      'input[aria-label="Search models"]',
+    ) as HTMLInputElement | null;
+    assert.ok(search, "re-entering must show search again");
+    assert.equal(search.value, "", "and the previous query must be gone");
+    assert.ok(
+      (m.text() || "").includes("Sonnet 4"),
+      "the full list must be back",
+    );
+    m.unmount();
+  });
+});
+
 describe("Composer permission mode", () => {
   it("shows the current mode and reports a change", async () => {
     const h = makeHarness();
@@ -2031,28 +2140,76 @@ describe("Composer custom model", () => {
     m.unmount();
   });
 
-  it("keeps the highlighted row scrolled into view", async () => {
-    // 26 rows in a 240px box that opens focused: without this the highlight
-    // walks off-screen past row six while the list looks frozen.
-    const h = makeHarness();
-    const m = await mount(composer(h, { provider: "claude", model: null }));
-    const list = (await openProvider(m, "Claude Code")) as HTMLElement;
-    const seen: Element[] = [];
+  it("scrolls the OpenCode list without moving ancestor scrollports (#762)", async () => {
+    // OpenCode descriptions vary in length. scrollIntoView({block:nearest})
+    // walks up to .chatSlot { overflow:hidden } and lifts the composer,
+    // leaving a gap under the picker. Scroll only the 240px list.
+    const models = Array.from({ length: 12 }, (_, i) => `opencode/model-${i}`);
+    const OPENCODE: ProviderInfo = {
+      id: "opencode",
+      name: "OpenCode",
+      available: true,
+      supportsResume: true,
+      models,
+      modelInfo: models.map((id, i) => ({
+        id,
+        label: `OpenCode model ${i}`,
+        description:
+          i % 2 === 0
+            ? "Short"
+            : "Long description that used to grow the bottom-anchored popover and jump the menu",
+        vendor: "OpenCode",
+      })),
+      efforts: [],
+      permissionModes: ["default", "bypassPermissions"],
+    };
+    const h = makeHarness("opencode");
+    const m = await mount(
+      composer(h, {
+        provider: "opencode",
+        model: null,
+        providers: [OPENCODE],
+      }),
+    );
+    const list = (await openProvider(m, "OpenCode")) as HTMLElement;
+    assert.ok(list, "OpenCode model list must open");
+
+    Object.defineProperty(list, "clientHeight", {
+      configurable: true,
+      value: 240,
+    });
+    const rows = list.querySelectorAll<HTMLElement>("button");
+    rows.forEach((row, i) => {
+      Object.defineProperty(row, "offsetTop", {
+        configurable: true,
+        value: i * 40,
+      });
+      Object.defineProperty(row, "offsetHeight", {
+        configurable: true,
+        value: 40,
+      });
+    });
+
+    let intoView = 0;
     const proto = (m.query('[data-highlighted="true"]') as HTMLElement)
       .constructor.prototype as { scrollIntoView: () => void };
     const original = proto.scrollIntoView;
-    proto.scrollIntoView = function patched(this: Element) {
-      seen.push(this);
+    proto.scrollIntoView = function patched() {
+      intoView += 1;
     };
     try {
-      await m.press(list, "ArrowDown");
-      await m.press(list, "ArrowDown");
+      for (let i = 0; i < 8; i++) await m.press(list, "ArrowDown");
     } finally {
       proto.scrollIntoView = original;
     }
+    assert.equal(
+      intoView,
+      0,
+      "scrollIntoView scrolls chatSlot and lifts the composer",
+    );
     assert.ok(
-      seen.length > 0,
-      "the highlighted row must be scrolled into view as it moves",
+      list.scrollTop > 0,
+      "the 240px list itself must bring the highlight into view",
     );
     m.unmount();
   });
