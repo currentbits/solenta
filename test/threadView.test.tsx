@@ -16,7 +16,7 @@ import { fileURLToPath } from "node:url";
 import { useState } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { inAct, mount, unmountAll } from "./support/dom.ts";
-import { setVerboseToolCards } from "../src/uiPrefs";
+import { setTranscriptViewMode, setVerboseToolCards } from "../src/uiPrefs";
 import { ThreadView } from "../src/components/ThreadView";
 import styles from "../src/components/ThreadView.module.css";
 import { TRANSCRIPT_WINDOW } from "../src/transcriptWindow";
@@ -267,6 +267,7 @@ function assertNoNestedInteractive(html: string): void {
 
 afterEach(() => {
   unmountAll();
+  setTranscriptViewMode("normal");
   setVerboseToolCards(false);
 });
 
@@ -900,9 +901,9 @@ describe("ThreadView mounted interactions", () => {
         }),
       }),
     );
-    const verbose = m.query("[data-verbose-tools]");
-    assert.ok(verbose, "verbose control is in the composer");
-    assert.equal(verbose.getAttribute("aria-pressed"), "false");
+    const trigger = m.query("[data-transcript-view-trigger]");
+    assert.ok(trigger, "transcript view control is in the composer");
+    assert.equal(trigger.getAttribute("data-transcript-view-mode"), "normal");
     assert.ok(
       !m.text().includes("TOOL_A_SECRET_INPUT"),
       "tool A body hidden while Verbose is off",
@@ -912,8 +913,9 @@ describe("ThreadView mounted interactions", () => {
       "tool B body hidden while Verbose is off",
     );
 
-    await m.click(verbose);
-    assert.equal(verbose.getAttribute("aria-pressed"), "true");
+    await m.click(trigger);
+    await m.click(m.query("[data-transcript-view-option='verbose']"));
+    assert.equal(trigger.getAttribute("data-transcript-view-mode"), "verbose");
     assert.ok(m.text().includes("TOOL_A_SECRET_INPUT"), "tool A input");
     assert.ok(m.text().includes("TOOL_A_SECRET_OUTPUT"), "tool A output");
     assert.ok(m.text().includes("TOOL_B_SECRET_INPUT"), "tool B input");
@@ -973,8 +975,8 @@ describe("ThreadView mounted interactions", () => {
         }),
       }),
     );
-    const verbose = m.query("[data-verbose-tools]");
-    assert.equal(verbose?.getAttribute("aria-pressed"), "false");
+    const trigger = m.query("[data-transcript-view-trigger]");
+    assert.equal(trigger?.getAttribute("data-transcript-view-mode"), "normal");
     assert.ok(
       m.text().includes("Ran 2 commands"),
       "tools collapse to one sentence while Verbose is off",
@@ -2772,5 +2774,190 @@ describe("ThreadView reply-as-context and wait-what (#381)", () => {
     const chip = m.query("[data-reply-chip]");
     assert.ok(chip, "reply chip appears");
     assert.match(chip.textContent ?? "", /Prompt stash is not a draft/);
+  });
+});
+
+describe("ThreadView Focus / Summary mode (issue #461)", () => {
+  const settledTools = () =>
+    detail({
+      messages: [
+        msg({ id: "u1", role: "user", text: "fix the pane", createdAt: 1 }),
+        msg({
+          id: "t1",
+          role: "tool",
+          text: "Read: foo.ts",
+          createdAt: 2,
+          runId: "run-1",
+          tool: {
+            id: "tc1",
+            name: "Read",
+            input: "FOCUS_SECRET_READ",
+            output: "export {}",
+            done: true,
+            isError: false,
+          },
+        }),
+        msg({
+          id: "t2",
+          role: "tool",
+          text: "Bash: npm test",
+          createdAt: 3,
+          runId: "run-1",
+          tool: {
+            id: "tc2",
+            name: "Bash",
+            input: "FOCUS_SECRET_BASH",
+            output: "ok",
+            done: true,
+            isError: false,
+          },
+        }),
+        msg({
+          id: "a1",
+          role: "assistant",
+          text: "ASSISTANT_FINAL_REPLY",
+          createdAt: 4,
+          runId: "run-1",
+        }),
+      ],
+      workLog: [
+        work({
+          id: "w1",
+          runId: "run-1",
+          label: "WORKLOG_SHOULD_HIDE",
+          done: true,
+          timestamp: 2,
+        }),
+      ],
+      thread: thread({ status: "idle" }),
+    });
+
+  it("hides settled tool cards and the Work Log behind one per-turn summary", async () => {
+    setTranscriptViewMode("summary");
+    const m = await mount(view({ detail: settledTools() }));
+    const row = m.query("[data-focus-turn='u1']");
+    assert.ok(row, "one focus row for the turn");
+    assert.match(row.textContent || "", /Read 1 file/);
+    assert.match(row.textContent || "", /Ran 1 command/);
+    assert.equal(row.getAttribute("aria-expanded"), "false");
+    assert.ok(
+      m.text().includes("ASSISTANT_FINAL_REPLY"),
+      "assistant reply stays visible",
+    );
+    assert.ok(
+      m.text().includes("fix the pane"),
+      "user prompt stays visible",
+    );
+    assert.ok(
+      !m.text().includes("FOCUS_SECRET_READ"),
+      "tool input stays hidden",
+    );
+    assert.ok(
+      m.queryAll("button.toolToggle").length === 0,
+      "tool cards are not mounted",
+    );
+    assert.ok(
+      !m.text().includes("WORKLOG_SHOULD_HIDE"),
+      "Work Log is hidden with the tools",
+    );
+    m.unmount();
+  });
+
+  it("expands in place to restore today's tool cards", async () => {
+    setTranscriptViewMode("summary");
+    const m = await mount(view({ detail: settledTools() }));
+    await m.click(m.query("[data-focus-turn='u1']"));
+    const row = m.query("[data-focus-turn='u1']");
+    assert.equal(row?.getAttribute("aria-expanded"), "true");
+    assert.equal(m.queryAll("button.toolToggle").length, 2);
+    assert.ok(m.text().includes("Read: foo.ts"));
+    assert.ok(m.text().includes("Bash: npm test"));
+    m.unmount();
+  });
+
+  it("leaves the live turn's tool cards open", async () => {
+    setTranscriptViewMode("summary");
+    const m = await mount(
+      view({
+        detail: detail({
+          thread: thread({ status: "working", runStartedAt: 1 }),
+          messages: [
+            msg({ id: "u1", role: "user", text: "go", createdAt: 1 }),
+            msg({
+              id: "t1",
+              role: "tool",
+              text: "Bash: npm test",
+              createdAt: 2,
+              runId: "run-1",
+              tool: {
+                id: "tc1",
+                name: "Bash",
+                input: "LIVE_TOOL_INPUT",
+                output: null,
+                done: false,
+                isError: false,
+              },
+            }),
+          ],
+          workLog: [work({ id: "w1", runId: "run-1", label: "Bash", done: false })],
+        }),
+      }),
+    );
+    assert.ok(
+      m.query("button.toolToggle"),
+      "live tool card stays mounted",
+    );
+    assert.ok(m.text().includes("LIVE_TOOL_INPUT"));
+    assert.equal(
+      m.query("[data-focus-turn]"),
+      null,
+      "live turn does not collapse behind a summary",
+    );
+    m.unmount();
+  });
+
+  it("names a settled thinking-only fold Thought for Ns", async () => {
+    setTranscriptViewMode("summary");
+    const m = await mount(
+      view({
+        detail: detail({
+          thread: thread({ status: "idle" }),
+          messages: [
+            msg({ id: "u1", role: "user", text: "think", createdAt: 1_000 }),
+            msg({
+              id: "th1",
+              role: "event",
+              text: "THINKING_SECRET_BODY",
+              thinking: true,
+              createdAt: 2_000,
+              runId: "run-1",
+            }),
+            msg({
+              id: "th2",
+              role: "event",
+              text: "still going",
+              thinking: true,
+              createdAt: 6_000,
+              runId: "run-1",
+            }),
+            msg({
+              id: "a1",
+              role: "assistant",
+              text: "ok",
+              createdAt: 7_000,
+              runId: "run-1",
+            }),
+          ],
+        }),
+      }),
+    );
+    const row = m.query("[data-focus-turn='u1']");
+    assert.ok(row, "thinking-only fold");
+    assert.match(row.textContent || "", /Thought for 4s/);
+    assert.ok(
+      !m.text().includes("THINKING_SECRET_BODY"),
+      "thinking body stays hidden",
+    );
+    m.unmount();
   });
 });

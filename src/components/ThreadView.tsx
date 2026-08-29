@@ -165,7 +165,12 @@ import {
   type ComparePeer,
   type DivergenceField,
 } from "../divergence";
-import { useRunDurationEnabled, useVerboseToolCards } from "../uiPrefs";
+import {
+  latestTurnKey,
+  mapFocusTurns,
+  type FocusTurnSummary,
+} from "../focusView";
+import { useRunDurationEnabled, useTranscriptViewMode } from "../uiPrefs";
 import { DROP_OVERLAY_MESSAGE } from "../dropFiles";
 import { Composer } from "./Composer";
 import { repoRelativeDir } from "../mention";
@@ -1621,6 +1626,48 @@ function SuggestedWorkStrip({
         );
       })}
     </div>
+  );
+}
+
+/** One-line Focus fold for a settled turn's tool/thinking rows (#461). */
+function FocusTurnRow({
+  turn,
+  collapsed,
+  onToggle,
+}: {
+  turn: FocusTurnSummary;
+  collapsed: boolean;
+  onToggle: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      className={styles.focusTurn}
+      data-focus-turn={turn.key}
+      aria-expanded={!collapsed}
+      title={collapsed ? "Show tool activity" : "Hide tool activity"}
+      onClick={onToggle}
+    >
+      {turn.live && (
+        <span className={styles.focusTurnSpin} aria-hidden="true" />
+      )}
+      <span className={styles.chevron} data-open={!collapsed}>
+        <svg
+          width="9"
+          height="9"
+          viewBox="0 0 10 10"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.6"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          aria-hidden="true"
+        >
+          <path d="M3.5 2 6.5 5 3.5 8" />
+        </svg>
+      </span>
+      <span className={styles.focusTurnLabel}>{turn.label}</span>
+    </button>
   );
 }
 
@@ -4285,6 +4332,11 @@ export const ThreadView = memo(function ThreadView({
   const [collapsedRuns, setCollapsedRuns] = useState<ReadonlySet<string>>(
     () => new Set<string>(),
   );
+  /** Settled Focus turns the user opened; live turns stay open without this. */
+  const [expandedFocusTurns, setExpandedFocusTurns] = useState<
+    ReadonlySet<string>
+  >(() => new Set<string>());
+  const [focusThreadId, setFocusThreadId] = useState<string | null>(null);
   const [expandedGroups, setExpandedGroups] = useState<ReadonlySet<string>>(
     () => new Set<string>(),
   );
@@ -4302,6 +4354,10 @@ export const ThreadView = memo(function ThreadView({
   const [cliCommands, setCliCommands] = useState<SlashCommand[]>([]);
   const copyFlashTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const threadId = detail?.thread.id ?? null;
+  if (threadId !== focusThreadId) {
+    setFocusThreadId(threadId);
+    setExpandedFocusTurns(new Set());
+  }
 
   useEffect(() => {
     setCommandRunningId(null);
@@ -4490,7 +4546,30 @@ export const ThreadView = memo(function ThreadView({
 
   /** Run duration per runId, for assistant-message meta footers. Opt-in. */
   const showRunDuration = useRunDurationEnabled();
-  const verboseTools = useVerboseToolCards();
+  const transcriptView = useTranscriptViewMode();
+  const verboseTools = transcriptView === "verbose";
+  const summaryMode = transcriptView === "summary";
+  const isWorking = detail?.thread.status === "working";
+  const focusTurns = useMemo(() => {
+    if (!detail || !summaryMode) return [];
+    return mapFocusTurns(detail.messages, {
+      liveTurnKey: isWorking ? latestTurnKey(detail.messages) : null,
+    });
+  }, [detail, summaryMode, isWorking]);
+  const hiddenFocusActivity = useMemo(() => {
+    const hidden = new Set<string>();
+    if (!summaryMode) return hidden;
+    for (const turn of focusTurns) {
+      if (turn.live || expandedFocusTurns.has(turn.key)) continue;
+      for (const id of turn.activityIds) hidden.add(id);
+    }
+    return hidden;
+  }, [summaryMode, focusTurns, expandedFocusTurns]);
+  const focusTurnByFirstId = useMemo(() => {
+    const map = new Map<string, FocusTurnSummary>();
+    for (const turn of focusTurns) map.set(turn.firstActivityId, turn);
+    return map;
+  }, [focusTurns]);
   const durationByRunId = useMemo(() => {
     const map = new Map<string, string>();
     if (!detail || !showRunDuration) return map;
@@ -4558,7 +4637,6 @@ export const ThreadView = memo(function ThreadView({
     return latest?.id ?? null;
   }, [detail, latestWorkLogRunId]);
 
-  const isWorking = detail?.thread.status === "working";
   const latestThinkingId = useMemo(() => {
     if (!isWorking || !detail || !latestWorkLogRunId) return null;
     let latest: ChatMessage | null = null;
@@ -6192,6 +6270,9 @@ export const ThreadView = memo(function ThreadView({
             const runCollapsed =
               runId != null && isRunCollapsed(collapsedRuns, runId);
             if (runCollapsed && !runHeader) return null;
+            const focusTurn = focusTurnByFirstId.get(entry.message.id);
+            const focusHidden = hiddenFocusActivity.has(entry.message.id);
+            if (focusHidden && !focusTurn) return null;
             return (
               <Fragment key={entry.message.id}>
                 {runHeader && (
@@ -6205,7 +6286,21 @@ export const ThreadView = memo(function ThreadView({
                     }
                   />
                 )}
-                {!runCollapsed && (
+                {focusTurn && !focusTurn.live && (
+                  <FocusTurnRow
+                    turn={focusTurn}
+                    collapsed={focusHidden}
+                    onToggle={() =>
+                      setExpandedFocusTurns((prev) => {
+                        const next = new Set(prev);
+                        if (next.has(focusTurn.key)) next.delete(focusTurn.key);
+                        else next.add(focusTurn.key);
+                        return next;
+                      })
+                    }
+                  />
+                )}
+                {!runCollapsed && !focusHidden && (
                   <>
                     <MessageBlock
                       message={entry.message}
