@@ -578,6 +578,44 @@
   opacity: 0.75;
 }
 
+.statusPulse {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  animation: statusPulse 1.4s ease-in-out infinite;
+}
+
+.statusPulse[data-tone="working"] {
+  background: var(--blue);
+  box-shadow: 0 0 0 3px var(--blue-soft);
+}
+
+.statusPulse[data-tone="waiting"] {
+  background: var(--amber);
+  box-shadow: 0 0 0 3px var(--amber-soft);
+}
+
+.statusPulse[data-tone="delegating"] {
+  background: var(--violet);
+  box-shadow: 0 0 0 3px var(--violet-soft);
+}
+
+.statusPulse[data-tone="done"] {
+  background: var(--green);
+  box-shadow: 0 0 0 3px var(--green-soft);
+}
+
+@keyframes statusPulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.45;
+  }
+}
+
 .age {
   font-size: 11px;
   color: var(--text-dim);
@@ -1418,7 +1456,8 @@
   .slimAge,
   .slimAction,
   .shelfChevron,
-  .reveal {
+  .reveal,
+  .statusPulse {
     transition: none;
     animation: none;
   }
