@@ -13,7 +13,11 @@ import { describe, it, afterEach } from "node:test";
 import { useState } from "react";
 import { mount, unmountAll, inAct } from "./support/dom.ts";
 import { Composer } from "../src/components/Composer";
-import { setLastReasoningEffort, setVerboseToolCards } from "../src/uiPrefs";
+import {
+  setLastReasoningEffort,
+  setTranscriptViewMode,
+  setVerboseToolCards,
+} from "../src/uiPrefs";
 import type {
   AgentProfile,
   PermissionMode,
@@ -253,6 +257,7 @@ function composer(
 
 afterEach(() => {
   unmountAll();
+  setTranscriptViewMode("normal");
   setVerboseToolCards(false);
 });
 
@@ -1776,25 +1781,72 @@ describe("Composer value displays (null-safe)", () => {
   });
 });
 
-describe("Composer verbose toggle (issue #750)", () => {
-  it("lives in the meta row under the send arrow, off by default", async () => {
+describe("Composer transcript view (issue #461)", () => {
+  it("lives next to the send arrow and defaults to Normal", async () => {
     const h = makeHarness();
     const m = await mount(composer(h));
     const send = m.query('button[aria-label="Send"]');
-    const verbose = m.query("[data-verbose-tools]");
+    const trigger = m.query("[data-transcript-view-trigger]");
     assert.ok(send, "send arrow");
-    assert.ok(verbose, "verbose control");
+    assert.ok(trigger, "transcript view control");
     assert.ok(
-      verbose.closest(".meta"),
-      "verbose sits in the composer meta footer (under the bar)",
+      !trigger.closest(".meta"),
+      "view control sits on the send row, not in the footer chips",
     );
     assert.ok(
-      send.compareDocumentPosition(verbose) & Node.DOCUMENT_POSITION_FOLLOWING,
-      "verbose is under the send row, not beside the pills",
+      send.compareDocumentPosition(trigger) & Node.DOCUMENT_POSITION_PRECEDING,
+      "view control is immediately before send",
     );
-    assert.equal(verbose.getAttribute("aria-pressed"), "false");
-    await m.click(verbose);
-    assert.equal(verbose.getAttribute("aria-pressed"), "true");
+    assert.equal(trigger.getAttribute("data-transcript-view-mode"), "normal");
+    assert.match(trigger.getAttribute("aria-label") || "", /Normal/);
+    m.unmount();
+  });
+
+  it("opens a Summary / Normal / Verbose menu", async () => {
+    const h = makeHarness();
+    const m = await mount(composer(h));
+    const trigger = m.query("[data-transcript-view-trigger]");
+    assert.ok(trigger);
+    await m.click(trigger);
+    assert.ok(m.query("[data-transcript-view-option='summary']"));
+    assert.ok(m.query("[data-transcript-view-option='normal']"));
+    assert.ok(m.query("[data-transcript-view-option='verbose']"));
+    await m.click(m.query("[data-transcript-view-option='summary']"));
+    assert.equal(trigger.getAttribute("data-transcript-view-mode"), "summary");
+    m.unmount();
+  });
+
+  it("cycles modes with Ctrl+O and toggles Summary with Ctrl+Alt+F", async () => {
+    const h = makeHarness();
+    const m = await mount(composer(h));
+    const trigger = m.query("[data-transcript-view-trigger]");
+    assert.ok(trigger);
+    assert.equal(trigger.getAttribute("data-transcript-view-mode"), "normal");
+    await inAct(() => {
+      window.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: "o",
+          ctrlKey: true,
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+    });
+    await m.flush();
+    assert.equal(trigger.getAttribute("data-transcript-view-mode"), "verbose");
+    await inAct(() => {
+      window.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: "f",
+          ctrlKey: true,
+          altKey: true,
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+    });
+    await m.flush();
+    assert.equal(trigger.getAttribute("data-transcript-view-mode"), "summary");
     m.unmount();
   });
 });

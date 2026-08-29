@@ -746,6 +746,19 @@
   color: var(--text-dim);
 }
 
+.sendCluster {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.viewMenu {
+  left: auto;
+  right: 0;
+  min-width: 168px;
+}
+
 .send {
   width: 32px;
   height: 32px;
@@ -804,23 +817,6 @@
   gap: 6px;
   min-width: 0;
   flex: 1;
-}
-
-.verbose {
-  flex-shrink: 0;
-  cursor: pointer;
-  color: var(--text-muted);
-}
-
-.verbose:hover {
-  color: var(--text);
-  background: var(--card-hover);
-}
-
-.verbose[aria-pressed="true"] {
-  color: var(--info-fg-strong);
-  border-color: var(--blue-border);
-  background: var(--blue-soft);
 }
 
 .chip {

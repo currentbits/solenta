@@ -2917,6 +2917,41 @@ button.diffLineGutter:focus-visible {
   }
 }
 
+/* Per-turn Focus summary (issue #461). Same quiet chrome as run headers. */
+.focusTurn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  margin: 2px auto;
+  padding: 2px;
+  border: none;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 12px;
+  font-weight: 550;
+  text-align: left;
+  user-select: none;
+}
+
+.focusTurn:hover {
+  color: var(--text-muted);
+}
+
+.focusTurnLabel {
+  min-width: 0;
+}
+
+.focusTurnSpin {
+  width: 10px;
+  height: 10px;
+  border: 1.5px solid var(--spinner-track);
+  border-top-color: var(--text-muted);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  flex-shrink: 0;
+}
+
 /* "Worked for 2m 5s" collapsible header above a completed run. */
 .runHeader {
   display: flex;

@@ -93,11 +93,19 @@ import { teachPermissionAllowed } from "../teach";
 import type { ThreadTeach } from "../shared/ipc";
 import { useFileDrop } from "../useFileDrop";
 import {
+  cycleTranscriptViewMode,
+  TRANSCRIPT_VIEW_HINTS,
+  TRANSCRIPT_VIEW_LABELS,
+  TRANSCRIPT_VIEW_MODES,
+  type TranscriptViewMode,
+} from "../focusView";
+import {
   getLastReasoningEffort,
   getPasteCardsEnabled,
+  getTranscriptViewMode,
   setLastReasoningEffort,
-  setVerboseToolCards,
-  useVerboseToolCards,
+  setTranscriptViewMode,
+  useTranscriptViewMode,
 } from "../uiPrefs";
 import styles from "./Composer.module.css";
 
@@ -395,7 +403,8 @@ export const Composer = memo(function Composer({
   dropHostRef,
   onFileDragChange,
 }: ComposerProps) {
-  const verboseTools = useVerboseToolCards();
+  const transcriptView = useTranscriptViewMode();
+  const [viewOpen, setViewOpen] = useState(false);
   /**
    * Unsent drafts keyed by thread: one Composer instance serves every thread
    * (ThreadView swaps threadId), so a single string would carry text across a
@@ -1026,7 +1035,12 @@ export const Composer = memo(function Composer({
   }, []);
 
   const anyMenuOpen =
-    modeOpen || modelOpen || effortOpen || buildMenuOpen || bestOfNOpen;
+    modeOpen ||
+    modelOpen ||
+    effortOpen ||
+    buildMenuOpen ||
+    bestOfNOpen ||
+    viewOpen;
   const closeAllMenus = useCallback(() => {
     setModeOpen(false);
     setEffortOpen(false);
@@ -1037,6 +1051,7 @@ export const Composer = memo(function Composer({
     }
     setBuildMenuOpen(false);
     setBestOfNOpen(false);
+    setViewOpen(false);
   }, [modelOpen, closeModelPicker]);
   useEscapeClose(anyMenuOpen, closeAllMenus);
 
@@ -1071,6 +1086,38 @@ export const Composer = memo(function Composer({
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
   }, [disabled, busy, popupOpen, onStopRun, onSlashAction]);
+
+  useEffect(() => {
+    const onKey = (e: globalThis.KeyboardEvent) => {
+      if (e.defaultPrevented || e.repeat) return;
+      const key = e.key.toLowerCase();
+      if (
+        e.ctrlKey &&
+        e.altKey &&
+        !e.metaKey &&
+        !e.shiftKey &&
+        key === "f"
+      ) {
+        e.preventDefault();
+        setTranscriptViewMode(
+          getTranscriptViewMode() === "summary" ? "normal" : "summary",
+        );
+        return;
+      }
+      if (
+        e.ctrlKey &&
+        !e.metaKey &&
+        !e.altKey &&
+        !e.shiftKey &&
+        key === "o"
+      ) {
+        e.preventDefault();
+        setTranscriptViewMode(cycleTranscriptViewMode(getTranscriptViewMode()));
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
 
   const composeOutgoing = useCallback(
     (draft: string) => {
@@ -2689,6 +2736,78 @@ export const Composer = memo(function Composer({
               </div>
             )}
           </div>
+          <div className={styles.sendCluster}>
+          <div className={styles.modeWrap} data-transcript-view="">
+            <button
+              type="button"
+              className={`${styles.pill}${
+                transcriptView !== "normal" ? ` ${styles.pillAccent}` : ""
+              }`}
+              data-transcript-view-trigger=""
+              data-transcript-view-mode={transcriptView}
+              aria-haspopup="listbox"
+              aria-expanded={viewOpen}
+              aria-label={`Transcript view: ${TRANSCRIPT_VIEW_LABELS[transcriptView]}`}
+              title={`${TRANSCRIPT_VIEW_HINTS[transcriptView]}. Ctrl+O cycles.`}
+              onClick={() => {
+                setViewOpen((v) => !v);
+                setModeOpen(false);
+                setModelOpen(false);
+                setEffortOpen(false);
+                setBuildMenuOpen(false);
+                setBestOfNOpen(false);
+              }}
+            >
+              {TRANSCRIPT_VIEW_LABELS[transcriptView]}
+              <span className={styles.caret}>
+                <svg
+                  width="10"
+                  height="10"
+                  viewBox="0 0 10 10"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.5"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden="true"
+                >
+                  <path d="M2.5 3.5 5 6l2.5-2.5" />
+                </svg>
+              </span>
+            </button>
+            {viewOpen && (
+              <ul
+                className={`${styles.modeMenu} ${styles.viewMenu}`}
+                role="listbox"
+                aria-label="Transcript view"
+              >
+                {TRANSCRIPT_VIEW_MODES.map((mode: TranscriptViewMode) => (
+                  <li
+                    key={mode}
+                    role="option"
+                    aria-selected={mode === transcriptView}
+                  >
+                    <button
+                      type="button"
+                      className={styles.modeOption}
+                      data-transcript-view-option={mode}
+                      data-active={mode === transcriptView}
+                      title={TRANSCRIPT_VIEW_HINTS[mode]}
+                      onClick={() => {
+                        setTranscriptViewMode(mode);
+                        setViewOpen(false);
+                      }}
+                    >
+                      <span className={styles.checkSlot}>
+                        {mode === transcriptView ? "✓" : ""}
+                      </span>
+                      {TRANSCRIPT_VIEW_LABELS[mode]}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
           <button
             type="button"
             className={styles.send}
@@ -2716,6 +2835,7 @@ export const Composer = memo(function Composer({
               <path d="M8 13V3M4 7l4-4 4 4" />
             </svg>
           </button>
+          </div>
         </div>
         <div className={styles.meta}>
           <div className={styles.metaChips}>
@@ -2773,21 +2893,6 @@ export const Composer = memo(function Composer({
               </span>
             )}
           </div>
-          <button
-            type="button"
-            className={`${styles.chip} ${styles.verbose}`}
-            data-verbose-tools=""
-            aria-pressed={verboseTools}
-            aria-label="Verbose"
-            title={
-              verboseTools
-                ? "Verbose on. Every tool card shows its input and output."
-                : "Verbose off. Tool cards stay collapsed to a one-line summary."
-            }
-            onClick={() => setVerboseToolCards(!verboseTools)}
-          >
-            Verbose
-          </button>
         </div>
       </div>
 

@@ -1,4 +1,8 @@
 import { useSyncExternalStore } from "react";
+import {
+  TRANSCRIPT_VIEW_MODES,
+  type TranscriptViewMode,
+} from "./focusView";
 import { REASONING_EFFORTS, type ReasoningEffort } from "./shared/ipc";
 
 /**
@@ -60,13 +64,78 @@ export const setRunDurationEnabled = runDuration.set;
 export const useRunDurationEnabled = runDuration.use;
 
 /**
- * Expand every tool card in the open transcript (issue #750). Off by default;
- * the latest running tool still auto-expands even when this is off.
+ * Transcript density (issue #461). Default is Normal: today's collapsed
+ * tool cards. Summary hides settled-turn tools behind one line. Verbose
+ * is the old #750 switch. `coder.verboseTools=on` still migrates to Verbose.
  */
-const verboseTools = makeFlagPref("coder.verboseTools", false);
-export const getVerboseToolCards = verboseTools.get;
-export const setVerboseToolCards = verboseTools.set;
-export const useVerboseToolCards = verboseTools.use;
+const TRANSCRIPT_VIEW_KEY = "coder.transcriptView";
+const VERBOSE_TOOLS_KEY = "coder.verboseTools";
+let transcriptView: TranscriptViewMode | null = null;
+const transcriptViewListeners = new Set<() => void>();
+
+function parseTranscriptView(raw: string | null): TranscriptViewMode | null {
+  return TRANSCRIPT_VIEW_MODES.includes(raw as TranscriptViewMode)
+    ? (raw as TranscriptViewMode)
+    : null;
+}
+
+export function getTranscriptViewMode(): TranscriptViewMode {
+  if (transcriptView != null) return transcriptView;
+  try {
+    const stored = parseTranscriptView(
+      window.localStorage.getItem(TRANSCRIPT_VIEW_KEY),
+    );
+    if (stored) {
+      transcriptView = stored;
+      return stored;
+    }
+    if (window.localStorage.getItem(VERBOSE_TOOLS_KEY) === "on") {
+      transcriptView = "verbose";
+      return "verbose";
+    }
+  } catch {
+    // Private mode / quota: fall through to the default.
+  }
+  transcriptView = "normal";
+  return "normal";
+}
+
+export function setTranscriptViewMode(mode: TranscriptViewMode): void {
+  transcriptView = mode;
+  try {
+    window.localStorage.setItem(TRANSCRIPT_VIEW_KEY, mode);
+    window.localStorage.setItem(
+      VERBOSE_TOOLS_KEY,
+      mode === "verbose" ? "on" : "off",
+    );
+  } catch {
+    // Private mode / quota: the toggle just stops persisting.
+  }
+  for (const listener of transcriptViewListeners) listener();
+}
+
+export function useTranscriptViewMode(): TranscriptViewMode {
+  return useSyncExternalStore(
+    (onChange) => {
+      transcriptViewListeners.add(onChange);
+      return () => transcriptViewListeners.delete(onChange);
+    },
+    getTranscriptViewMode,
+    () => "normal",
+  );
+}
+
+export function getVerboseToolCards(): boolean {
+  return getTranscriptViewMode() === "verbose";
+}
+
+export function setVerboseToolCards(on: boolean): void {
+  setTranscriptViewMode(on ? "verbose" : "normal");
+}
+
+export function useVerboseToolCards(): boolean {
+  return useTranscriptViewMode() === "verbose";
+}
 
 /**
  * Collapse large pastes into labeled cards (issue #381). On by default;
