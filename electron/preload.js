@@ -224,6 +224,8 @@ const IPC_CHANNELS = Object.freeze([
   { ns: "attachments", method: "fromPaths" },
   { ns: "attachments", method: "saveImage" },
   { ns: "attachments", method: "readImage" },
+  { ns: "attachments", method: "listWindows" },
+  { ns: "attachments", method: "captureWindow" },
   { ns: "servers", method: "list" },
   { ns: "shell", method: "reveal" },
   { ns: "shell", method: "openPath" },

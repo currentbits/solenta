@@ -168,6 +168,10 @@ import {
 import { useRunDurationEnabled, useVerboseToolCards } from "../uiPrefs";
 import { DROP_OVERLAY_MESSAGE } from "../dropFiles";
 import { Composer } from "./Composer";
+import { repoRelativeDir } from "../mention";
+import { createDoubleOptionTracker } from "../appsnapHotkey";
+import type { ReplyTarget } from "../replyContext";
+import { waitWhatPrompt } from "../waitWhat";
 import { Markdown } from "./Markdown";
 import { sessionImagePathsFromMessages } from "../sessionImages";
 import { PathLinkProvider, PathText } from "./PathLinks";
@@ -578,6 +582,14 @@ interface ThreadViewProps {
   onSuggestCommitMessage: () => Promise<{ message: string }>;
   /** File lookup for the composer @-mention popup. */
   onListFiles?: (query: string) => Promise<string[]>;
+  /** Native folder picker; returns an absolute path or null. */
+  onPickDirectory?: () => Promise<string | null>;
+  /** AppSnap: on-screen windows the user can capture. */
+  onListSnapWindows?: () => Promise<Array<{ id: string; name: string }>>;
+  /** AppSnap: capture one window into an attachment for this thread. */
+  onCaptureSnapWindow?: (
+    sourceId: string,
+  ) => Promise<AttachmentInfo | null>;
   /** CLI skills and custom commands for the composer `/` palette (#606). */
   onListCliCommands?: (input?: {
     projectPath?: string;
@@ -1341,6 +1353,8 @@ const MessageBlock = memo(function MessageBlock({
   onLoadImage,
   onLoadAttachmentImage,
   onSelectThread,
+  onReply,
+  onWaitWhat,
 }: {
   message: ChatMessage;
   autoExpandTool: boolean;
@@ -1364,6 +1378,8 @@ const MessageBlock = memo(function MessageBlock({
   /** Provenance tiers for assistant messages; null hides the strip. */
   provenance?: MessageProvenance | null;
   onSelectThread?: (id: string) => void;
+  onReply?: (message: ChatMessage) => void;
+  onWaitWhat?: (message: ChatMessage) => void;
 }) {
   // Latch at mount; see ToolCallCard for why.
   const [entered] = useState(Boolean(animateIn));
@@ -1445,7 +1461,35 @@ const MessageBlock = memo(function MessageBlock({
         />
       )}
       {provenance && <ProvenanceStrip prov={provenance} text={message.text} />}
-      <footer className={styles.msgMeta}>{metaLine}</footer>
+      <footer className={styles.msgMeta}>
+        <span>{metaLine}</span>
+        {!streaming && message.text.trim() && (onReply || onWaitWhat) && (
+          <span className={styles.msgActions}>
+            {onReply && (
+              <button
+                type="button"
+                className={styles.msgAction}
+                data-msg-reply=""
+                title="Quote this message as context for the next send"
+                onClick={() => onReply(message)}
+              >
+                Reply
+              </button>
+            )}
+            {onWaitWhat && (
+              <button
+                type="button"
+                className={styles.msgAction}
+                data-msg-wait-what=""
+                title="Re-explain this message in plain English"
+                onClick={() => onWaitWhat(message)}
+              >
+                Wait, what?
+              </button>
+            )}
+          </span>
+        )}
+      </footer>
     </article>
   );
 });
@@ -4141,6 +4185,9 @@ export const ThreadView = memo(function ThreadView({
   onRevertFile,
   onSuggestCommitMessage,
   onListFiles,
+  onPickDirectory,
+  onListSnapWindows,
+  onCaptureSnapWindow,
   onListCliCommands,
   onResolvePaths,
   onOpenWorkspacePath,
@@ -4289,6 +4336,13 @@ export const ThreadView = memo(function ThreadView({
   const [incomingAttachments, setIncomingAttachments] = useState<
     AttachmentInfo[]
   >([]);
+  const [replyTo, setReplyTo] = useState<ReplyTarget | null>(null);
+  const [snapOpen, setSnapOpen] = useState(false);
+  const [snapWindows, setSnapWindows] = useState<
+    Array<{ id: string; name: string }>
+  >([]);
+  const [snapError, setSnapError] = useState<string | null>(null);
+  const [snapBusy, setSnapBusy] = useState(false);
   const [layoutThreadId, setLayoutThreadId] = useState<string | null>(threadId);
   const [layout, setLayout] = useState<LayoutNode>(() =>
     hydratePaneLayout(threadId, { openDiff: changesOpen }).layout,
@@ -4780,6 +4834,95 @@ export const ThreadView = memo(function ThreadView({
       onStartRun(prompt, undefined, messageAttachments),
     [onStartRun],
   );
+
+  const handleReply = useCallback((message: ChatMessage) => {
+    setReplyTo({ messageId: message.id, text: message.text });
+  }, []);
+
+  const handleWaitWhat = useCallback(
+    (message: ChatMessage) => {
+      void onStartRun(waitWhatPrompt(message.text));
+    },
+    [onStartRun],
+  );
+
+  const pickMentionFolder = useCallback(async () => {
+    if (!onPickDirectory) return null;
+    const dir = await onPickDirectory();
+    if (!dir) return null;
+    return repoRelativeDir(project?.path ?? "", dir);
+  }, [onPickDirectory, project?.path]);
+
+  const openAppSnap = useCallback(async () => {
+    if (!onListSnapWindows) return;
+    setSnapError(null);
+    setSnapOpen(true);
+    try {
+      const windows = await onListSnapWindows();
+      setSnapWindows(windows);
+      if (windows.length === 0) {
+        setSnapError("No windows to capture. Grant screen recording if asked.");
+      }
+    } catch (err) {
+      setSnapWindows([]);
+      setSnapError(
+        err instanceof Error && err.message
+          ? err.message
+          : "Failed to list windows",
+      );
+    }
+  }, [onListSnapWindows]);
+
+  const captureAppSnap = useCallback(
+    async (sourceId: string) => {
+      if (!onCaptureSnapWindow) return;
+      setSnapBusy(true);
+      setSnapError(null);
+      try {
+        const att = await onCaptureSnapWindow(sourceId);
+        if (att) {
+          setIncomingAttachments([att]);
+          setSnapOpen(false);
+        } else {
+          setSnapError("Could not capture that window");
+        }
+      } catch (err) {
+        setSnapError(
+          err instanceof Error && err.message
+            ? err.message
+            : "Failed to capture the window",
+        );
+      } finally {
+        setSnapBusy(false);
+      }
+    },
+    [onCaptureSnapWindow],
+  );
+
+  useEffect(() => {
+    if (!onListSnapWindows || isArchived) return;
+    const tracker = createDoubleOptionTracker();
+    const onKey = (e: KeyboardEvent) => {
+      if (
+        tracker.note(e.key, e.type as "keydown" | "keyup", {
+          meta: e.metaKey,
+          ctrl: e.ctrlKey,
+          shift: e.shiftKey,
+        })
+      ) {
+        e.preventDefault();
+        void openAppSnap();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    window.addEventListener("keyup", onKey);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      window.removeEventListener("keyup", onKey);
+    };
+  }, [onListSnapWindows, isArchived, openAppSnap]);
+
+  useEscapeClose(snapOpen && !snapBusy, () => setSnapOpen(false));
 
   /**
    * Fork one thread per selected provider or profile, then start the same
@@ -6123,6 +6266,16 @@ export const ThreadView = memo(function ThreadView({
                       provenance={
                         provenanceById.get(entry.message.id) ?? null
                       }
+                      onReply={
+                        entry.message.role === "assistant"
+                          ? handleReply
+                          : undefined
+                      }
+                      onWaitWhat={
+                        entry.message.role === "assistant"
+                          ? handleWaitWhat
+                          : undefined
+                      }
                     />
                     {bar && (
                       <ReviewBarStrip
@@ -6474,6 +6627,11 @@ export const ThreadView = memo(function ThreadView({
         error={runError}
         onDismissError={onDismissRunError}
         onListFiles={onListFiles}
+        onPickMentionFolder={
+          onPickDirectory ? pickMentionFolder : undefined
+        }
+        replyTo={replyTo}
+        onClearReply={() => setReplyTo(null)}
         onPickAttachments={onPickAttachments}
         onSaveAttachmentImage={onSaveAttachmentImage}
         onLoadAttachmentImage={onLoadAttachmentImage}
@@ -6490,6 +6648,61 @@ export const ThreadView = memo(function ThreadView({
           );
         }}
       />
+
+      {snapOpen && (
+        <div
+          className={styles.confirmOverlay}
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="appsnap-title"
+          data-appsnap=""
+          onClick={() => {
+            if (!snapBusy) setSnapOpen(false);
+          }}
+        >
+          <div
+            className={styles.confirmDialog}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2 id="appsnap-title" className={styles.confirmTitle}>
+              Capture a window
+            </h2>
+            <p className={styles.confirmBody}>
+              Double-Option again to refresh. Esc cancels.
+            </p>
+            {snapError && (
+              <p className={styles.reviewError} role="alert">
+                {snapError}
+              </p>
+            )}
+            <ul className={styles.snapList}>
+              {snapWindows.map((win) => (
+                <li key={win.id}>
+                  <button
+                    type="button"
+                    className={styles.snapRow}
+                    data-appsnap-window={win.id}
+                    disabled={snapBusy}
+                    onClick={() => void captureAppSnap(win.id)}
+                  >
+                    {win.name}
+                  </button>
+                </li>
+              ))}
+            </ul>
+            <div className={styles.confirmActions}>
+              <button
+                type="button"
+                className={styles.confirmCancel}
+                disabled={snapBusy}
+                onClick={() => setSnapOpen(false)}
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {lightbox && (
         <ImageLightbox

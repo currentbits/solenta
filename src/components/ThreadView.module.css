@@ -1736,8 +1736,63 @@ button.diffLineGutter:focus-visible {
   font-size: 11px;
   color: var(--text-dim);
   display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
   gap: 6px;
   user-select: none;
+}
+
+.msgActions {
+  display: inline-flex;
+  gap: 8px;
+  margin-left: 4px;
+}
+
+.msgAction {
+  border: none;
+  background: transparent;
+  padding: 0;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 550;
+  cursor: pointer;
+}
+
+.msgAction:hover {
+  color: var(--text);
+}
+
+.snapList {
+  list-style: none;
+  margin: 10px 0 0;
+  padding: 0;
+  max-height: 240px;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.snapRow {
+  width: 100%;
+  text-align: left;
+  padding: 7px 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-soft);
+  background: var(--card);
+  color: var(--text);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.snapRow:hover:not(:disabled) {
+  background: var(--card-hover);
+  border-color: var(--blue-border);
+}
+
+.snapRow:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 /* Provenance tier strip under an assistant message (issue #404). */

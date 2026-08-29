@@ -87,7 +87,7 @@ describe("Composer @-mention popup", () => {
     await caretToEnd(m);
     await waitForPopup();
 
-    const list = m.container.querySelector('[role="listbox"][aria-label="Mention a file"]');
+    const list = m.container.querySelector('[role="listbox"][aria-label="Mention a file or folder"]');
     assert.ok(list, "popup open after @");
     assert.deepEqual(queries, [""]);
 
@@ -96,7 +96,7 @@ describe("Composer @-mention popup", () => {
     await m.press(el, "Enter");
     assert.equal(textarea(m).value, "check @src/main.tsx ");
     assert.equal(
-      m.container.querySelector('[aria-label="Mention a file"]'),
+      m.container.querySelector('[aria-label="Mention a file or folder"]'),
       null,
       "popup closed after accept",
     );
@@ -123,9 +123,9 @@ describe("Composer @-mention popup", () => {
     await m.type(el, "@");
     await caretToEnd(m);
     await waitForPopup();
-    assert.ok(m.container.querySelector('[aria-label="Mention a file"]'));
+    assert.ok(m.container.querySelector('[aria-label="Mention a file or folder"]'));
     await m.press(el, "Escape");
-    assert.equal(m.container.querySelector('[aria-label="Mention a file"]'), null);
+    assert.equal(m.container.querySelector('[aria-label="Mention a file or folder"]'), null);
     assert.equal(textarea(m).value, "@");
   });
 
@@ -140,7 +140,7 @@ describe("Composer @-mention popup", () => {
     await caretToEnd(m);
     await waitForPopup();
     assert.equal(calls, 0);
-    assert.equal(m.container.querySelector('[aria-label="Mention a file"]'), null);
+    assert.equal(m.container.querySelector('[aria-label="Mention a file or folder"]'), null);
   });
 
   it("scrolls the mention list without moving ancestor scrollports (#762)", async () => {
@@ -153,7 +153,7 @@ describe("Composer @-mention popup", () => {
     await caretToEnd(m);
     await waitForPopup();
     const list = m.container.querySelector(
-      '[role="listbox"][aria-label="Mention a file"]',
+      '[role="listbox"][aria-label="Mention a file or folder"]',
     ) as HTMLElement | null;
     assert.ok(list, "popup open after @");
 

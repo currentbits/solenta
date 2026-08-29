@@ -5711,6 +5711,12 @@ function buildDevCoder(): CoderApi {
       async readImage(_input: { path: string }) {
         return { dataUrl: null };
       },
+      async listWindows() {
+        return { windows: [] };
+      },
+      async captureWindow(_input: { threadId: string; sourceId: string }) {
+        return { attachment: null };
+      },
     },
     shell: {
       async reveal(_input: { threadId: string; path: string }) {

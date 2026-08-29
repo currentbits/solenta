@@ -171,6 +171,13 @@ function view(props: {
   onDismissSuggestion?: (s: WorkSuggestion) => void | Promise<void>;
   revealMessageId?: string | null;
   onSelectThread?: (id: string) => void;
+  onStartRun?: (
+    prompt: string,
+    threadId?: string,
+    attachments?: AttachmentInfo[],
+  ) => void | Promise<void>;
+  onPickDirectory?: () => Promise<string | null>;
+  onListSnapWindows?: () => Promise<Array<{ id: string; name: string }>>;
 }) {
   return (
     <ThreadView
@@ -182,7 +189,7 @@ function view(props: {
       workflows={workflows}
       hasProjects={props.hasProjects ?? true}
       onAddProject={() => {}}
-      onStartRun={() => {}}
+      onStartRun={props.onStartRun ?? (() => {})}
       onStartWorkflow={() => {}}
       onSaveWorkflow={noopSave}
       onRemoveWorkflow={noopAsync}
@@ -218,6 +225,8 @@ function view(props: {
       onDismissSuggestion={props.onDismissSuggestion}
       revealMessageId={props.revealMessageId}
       onSelectThread={props.onSelectThread}
+      onPickDirectory={props.onPickDirectory}
+      onListSnapWindows={props.onListSnapWindows}
     />
   );
 }
@@ -2696,5 +2705,72 @@ describe("live turn activity (issue #751 / #752)", () => {
       !html.includes("Worked for 2m"),
       "live duration lived on the Work Log card; completed runs keep it on the run header",
     );
+  });
+});
+
+describe("ThreadView reply-as-context and wait-what (#381)", () => {
+  it("offers Reply and Wait, what? on assistant messages", () => {
+    const html = render({
+      detail: detail({
+        messages: [
+          msg({ id: "u1", role: "user", text: "explain the stash", createdAt: 10 }),
+          msg({
+            id: "a1",
+            role: "assistant",
+            text: "Stash is a per-provider stack.",
+            createdAt: 20,
+          }),
+        ],
+      }),
+    });
+    assert.ok(html.includes("data-msg-reply"), "Reply on the assistant row");
+    assert.ok(html.includes("data-msg-wait-what"), "wait-what on the assistant row");
+    assert.ok(html.includes("Wait, what?"));
+  });
+
+  it("wait-what sends a re-explain prompt for that message", async () => {
+    const sent: string[] = [];
+    const m = await mount(
+      view({
+        onStartRun: (prompt) => {
+          sent.push(prompt);
+        },
+        detail: detail({
+          messages: [
+            msg({
+              id: "a1",
+              role: "assistant",
+              text: "Use forkWorkerThread with the pool alias.",
+              createdAt: 20,
+            }),
+          ],
+        }),
+      }),
+    );
+    await m.click(m.query("[data-msg-wait-what]"));
+    assert.equal(sent.length, 1);
+    assert.match(sent[0], /plain English/);
+    assert.match(sent[0], /forkWorkerThread/);
+  });
+
+  it("Reply quotes the message above the composer", async () => {
+    const m = await mount(
+      view({
+        detail: detail({
+          messages: [
+            msg({
+              id: "a1",
+              role: "assistant",
+              text: "Prompt stash is not a draft.",
+              createdAt: 20,
+            }),
+          ],
+        }),
+      }),
+    );
+    await m.click(m.query("[data-msg-reply]"));
+    const chip = m.query("[data-reply-chip]");
+    assert.ok(chip, "reply chip appears");
+    assert.match(chip.textContent ?? "", /Prompt stash is not a draft/);
   });
 });

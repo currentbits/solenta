@@ -62,6 +62,15 @@ describe("worktrees listFiles", () => {
     assert.ok(!files.includes("ignored.txt"));
   });
 
+  it("offers directory prefixes with a trailing slash", async () => {
+    const { files } = await listFiles({ store, threadId: thread.id, query: "src" });
+    assert.ok(files.includes("src/"), "folder token for the src directory");
+    assert.ok(
+      files.indexOf("src/") < files.indexOf("src/App.tsx"),
+      "folder ranks above files that share the prefix",
+    );
+  });
+
   it("filters case-insensitively by substring", async () => {
     const { files } = await listFiles({ store, threadId: thread.id, query: "APP" });
     assert.deepEqual(files, ["src/App.tsx"]);

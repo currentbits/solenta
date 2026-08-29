@@ -78,6 +78,8 @@ import {
   useDivergenceCardEnabled,
   setRunDurationEnabled,
   useRunDurationEnabled,
+  setPasteCardsEnabled,
+  usePasteCardsEnabled,
 } from "../uiPrefs";
 import styles from "./AgentsPanel.module.css";
 
@@ -454,6 +456,7 @@ function ChangesCard({
 function DisplayPrefsCard() {
   const divergence = useDivergenceCardEnabled();
   const runDuration = useRunDurationEnabled();
+  const pasteCards = usePasteCardsEnabled();
   return (
     <section className={styles.gitCard} data-display-prefs="">
       <div className={styles.gitCardLabel}>
@@ -480,6 +483,14 @@ function DisplayPrefsCard() {
           onChange={(e) => setRunDurationEnabled(e.target.checked)}
         />
         Show time spent at the end of a run
+      </label>
+      <label className={styles.checkboxLabel}>
+        <input
+          type="checkbox"
+          checked={pasteCards}
+          onChange={(e) => setPasteCardsEnabled(e.target.checked)}
+        />
+        Collapse large pastes into cards
       </label>
     </section>
   );

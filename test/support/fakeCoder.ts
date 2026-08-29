@@ -224,6 +224,10 @@ export interface FakeOptions {
   saveImage?: (input: unknown) => { attachment: AttachmentInfo | null };
   /** Override attachments.fromPaths result (default: { attachments: [] }). */
   fromPaths?: (input: unknown) => { attachments: AttachmentInfo[] };
+  /** Override attachments.listWindows (default: none). */
+  snapWindows?: Array<{ id: string; name: string }>;
+  /** Override attachments.captureWindow. */
+  captureWindow?: (input: unknown) => { attachment: AttachmentInfo | null };
   /** Electron-only path resolver for dropped Files. */
   droppedFilePath?: (file: File) => string;
   /** Override runs.distill result. */
@@ -2902,6 +2906,16 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
         ),
       readImage: (input: unknown) =>
         rec("attachments.readImage", [input], { dataUrl: null }),
+      listWindows: () =>
+        rec("attachments.listWindows", [], {
+          windows: opts.snapWindows ?? [],
+        }),
+      captureWindow: (input: unknown) =>
+        rec(
+          "attachments.captureWindow",
+          [input],
+          opts.captureWindow?.(input) ?? { attachment: null },
+        ),
       ...(opts.droppedFilePath
         ? { droppedFilePath: opts.droppedFilePath }
         : {}),
