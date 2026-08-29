@@ -499,6 +499,147 @@ describe("worktrees", () => {
     assert.ok(!fs.existsSync(setup.worktreePath));
   });
 
+  it("defaultBranch still returns the current checkout branch (#770)", () => {
+    git(repo, ["checkout", "-b", "coder/feature-on-checkout"]);
+    assert.equal(defaultBranch(repo), "coder/feature-on-checkout");
+  });
+
+  it("mergeWorktree without intoPath lands on main when the project checkout is on a feature branch (#770)", async () => {
+    const setup = setupWorktree({
+      store,
+      threadId: thread.id,
+      worktreeBase,
+      broadcast: () => {},
+    });
+    fs.writeFileSync(
+      path.join(setup.worktreePath, "unique-770.txt"),
+      "from worktree\n",
+    );
+    git(repo, ["checkout", "-b", "coder/feature-on-checkout"]);
+    const featureHead = git(repo, ["rev-parse", "HEAD"]);
+    assert.equal(git(repo, ["branch", "--show-current"]), "coder/feature-on-checkout");
+
+    mergeWorktree({
+      store,
+      threadId: thread.id,
+      broadcast: () => {},
+    });
+
+    assert.equal(
+      git(repo, ["rev-parse", "coder/feature-on-checkout"]),
+      featureHead,
+      "feature branch HEAD must stay put",
+    );
+    assert.equal(git(repo, ["show", "main:unique-770.txt"]), "from worktree");
+    assert.match(git(repo, ["log", "main", "-1", "--oneline"]), /Merge worktree/i);
+    assert.doesNotMatch(
+      git(repo, ["log", "coder/feature-on-checkout", "-1", "--oneline"]),
+      /Merge worktree/i,
+    );
+  });
+
+  it("mergeWorktree refuses when the worktree holding main is behind origin/main (#770)", async () => {
+    const setup = setupWorktree({
+      store,
+      threadId: thread.id,
+      worktreeBase,
+      broadcast: () => {},
+    });
+    fs.writeFileSync(path.join(setup.worktreePath, "unique-770.txt"), "wt\n");
+
+    const bare = path.join(tmpDir, "origin.git");
+    git(tmpDir, ["init", "--bare", bare]);
+    git(repo, ["remote", "add", "origin", bare]);
+    git(repo, ["push", "-u", "origin", "main"]);
+    git(repo, ["symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main"]);
+
+    fs.writeFileSync(path.join(repo, "stale.txt"), "on origin only\n");
+    git(repo, ["add", "stale.txt"]);
+    git(repo, ["commit", "-m", "origin moves ahead"]);
+    git(repo, ["push", "origin", "main"]);
+    git(repo, ["reset", "--hard", "HEAD~1"]);
+
+    git(repo, ["checkout", "-b", "coder/feature-on-checkout"]);
+    const nightly = path.join(tmpDir, "nightly");
+    git(repo, ["worktree", "add", nightly, "main"]);
+    assert.equal(git(nightly, ["branch", "--show-current"]), "main");
+
+    assert.throws(
+      () =>
+        mergeWorktree({
+          store,
+          threadId: thread.id,
+          broadcast: () => {},
+        }),
+      /behind origin\/main/i,
+    );
+    assert.ok(fs.existsSync(setup.worktreePath), "worktree stays on refuse");
+    assert.equal(
+      git(nightly, ["log", "main", "-1", "--format=%s"]),
+      "init",
+    );
+  });
+
+  it("mergeWorktree allows a local main that is ahead of origin/main (#770)", async () => {
+    const setup = setupWorktree({
+      store,
+      threadId: thread.id,
+      worktreeBase,
+      broadcast: () => {},
+    });
+    fs.writeFileSync(path.join(setup.worktreePath, "ahead.txt"), "from worktree\n");
+
+    const bare = path.join(tmpDir, "origin-ahead.git");
+    git(tmpDir, ["init", "--bare", bare]);
+    git(repo, ["remote", "add", "origin", bare]);
+    git(repo, ["push", "-u", "origin", "main"]);
+    git(repo, ["symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main"]);
+
+    fs.writeFileSync(path.join(repo, "local-only.txt"), "stacked locally\n");
+    git(repo, ["add", "local-only.txt"]);
+    git(repo, ["commit", "-m", "local main is ahead"]);
+    git(repo, ["checkout", "-b", "coder/feature-on-checkout"]);
+
+    mergeWorktree({
+      store,
+      threadId: thread.id,
+      broadcast: () => {},
+    });
+
+    assert.equal(git(repo, ["show", "main:ahead.txt"]), "from worktree");
+    assert.equal(git(repo, ["show", "main:local-only.txt"]), "stacked locally");
+    assert.match(git(repo, ["log", "main", "-1", "--oneline"]), /Merge worktree/i);
+  });
+
+  it("mergeWorktree with intoPath still lands on that checkout's branch (#770)", async () => {
+    const setup = setupWorktree({
+      store,
+      threadId: thread.id,
+      worktreeBase,
+      broadcast: () => {},
+    });
+    fs.writeFileSync(path.join(setup.worktreePath, "worker.txt"), "worker\n");
+    const lead = path.join(tmpDir, "lead");
+    git(repo, ["worktree", "add", "-b", "coder/lead", lead]);
+    const leadHead = git(lead, ["rev-parse", "HEAD"]);
+    const mainHead = git(repo, ["rev-parse", "main"]);
+
+    mergeWorktree({
+      store,
+      threadId: thread.id,
+      intoPath: lead,
+      broadcast: () => {},
+    });
+
+    assert.equal(
+      fs.readFileSync(path.join(lead, "worker.txt"), "utf8"),
+      "worker\n",
+    );
+    assert.equal(git(repo, ["rev-parse", "main"]), mainHead);
+    assert.notEqual(git(lead, ["rev-parse", "HEAD"]), leadHead);
+    assert.match(git(lead, ["log", "-1", "--oneline"]), /Merge worktree/i);
+  });
+
   it("mergeWorktree with paths commits only those files and refuses leftovers", async () => {
     const setup = setupWorktree({
       store,

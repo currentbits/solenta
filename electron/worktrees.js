@@ -423,8 +423,8 @@ async function fallbackDefaultBranchNameAsync(projectPath) {
 /**
  * Branch currently checked out in `projectPath`, or the repo default when
  * that checkout is detached (main held in another worktree, a SHA review,
- * jj). Merge still needs a real checkout of that name — see
- * checkoutForMerge.
+ * jj). Used by setup / PR / conflict paths that want "where this checkout
+ * is." Git-tab Merge does not use this — see repoDefaultBranch.
  *
  * @param {string} projectPath
  * @returns {string}
@@ -490,9 +490,55 @@ function worktreePathForBranch(repoPath, branch) {
 }
 
 /**
- * Merge needs a working tree that is ON `branch`. When the preferred
- * checkout is detached, follow the branch into the worktree that has it,
- * or switch the preferred path onto the branch if it is free.
+ * Repo default branch name: origin/HEAD, then local main/master. Does not
+ * follow whatever the project checkout happens to have checked out (#770).
+ *
+ * @param {string} projectPath
+ * @returns {string}
+ */
+function repoDefaultBranch(projectPath) {
+  const fallback = fallbackDefaultBranchName(projectPath);
+  if (fallback) return fallback;
+  return defaultBranch(projectPath);
+}
+
+/**
+ * Refuse Git-tab Merge when the local default is behind origin — that is
+ * the nightly/release worktree that holds a stale `main`. Ahead-only is
+ * fine (stacked local merges are not pushed). No origin ref: skip.
+ *
+ * @param {string} cwd
+ * @param {string} branch
+ */
+function assertDefaultNotBehindOrigin(cwd, branch) {
+  const originRef = `origin/${branch}`;
+  const hasOrigin = gitTry(cwd, ["rev-parse", "--verify", "--quiet", originRef]);
+  if (!hasOrigin.ok) return;
+  const counted = gitTry(cwd, [
+    "rev-list",
+    "--left-right",
+    "--count",
+    `${originRef}...${branch}`,
+  ]);
+  if (!counted.ok) return;
+  const line = String(counted.stdout || "").trim().split(/\r?\n/)[0] || "";
+  const m = line.match(/^(\d+)\s+(\d+)$/);
+  if (!m) return;
+  const behind = Number(m[1]);
+  const ahead = Number(m[2]);
+  if (behind > 0) {
+    throw new Error(
+      `Local ${branch} is ${behind} behind origin/${branch}` +
+        (ahead > 0 ? ` and ${ahead} ahead` : "") +
+        "; update it before merging so the work lands on the repo default.",
+    );
+  }
+}
+
+/**
+ * Merge needs a working tree that is ON `branch`. Follow that name into
+ * the worktree that has it, or switch the preferred path onto the branch
+ * if it is free. A different current branch is not a match (#770).
  *
  * @param {string} preferredPath
  * @param {string} branch
@@ -500,7 +546,7 @@ function worktreePathForBranch(repoPath, branch) {
  */
 function checkoutForMerge(preferredPath, branch) {
   const current = gitOut(preferredPath, ["branch", "--show-current"]);
-  if (current) return preferredPath;
+  if (current === branch) return preferredPath;
   const home = worktreePathForBranch(preferredPath, branch);
   if (home && path.resolve(home) !== path.resolve(preferredPath)) {
     return home;
@@ -509,8 +555,8 @@ function checkoutForMerge(preferredPath, branch) {
   if (sw.ok) return preferredPath;
   throw new Error(
     home
-      ? `Project checkout is detached HEAD; ${branch} is checked out in ${home}`
-      : `Project checkout is detached HEAD; check out ${branch} before merging`,
+      ? `${branch} is checked out in ${home}`
+      : `Could not check out ${branch} to merge${current ? ` (currently on ${current})` : ""}`,
   );
 }
 
@@ -833,13 +879,15 @@ function autoResolveMergeArtifacts(cwd) {
 }
 
 /**
- * Squash-merge the thread worktree into the project default branch, then remove
- * the worktree and branch. Commits any uncommitted worktree changes first.
+ * Squash-merge the thread worktree into the repo default branch
+ * (origin/HEAD → main), then remove the worktree and branch. Commits any
+ * uncommitted worktree changes first.
  *
  * intoPath retargets the merge at another checkout of the SAME repo — an
  * orchestrator merging a worker wants the work on its own branch in its own
- * worktree, not on main behind the user's back (thread_merge). Default stays
- * the project checkout, which is what the Git tab does.
+ * worktree, not on main behind the user's back (thread_merge). Git-tab
+ * Merge (no intoPath) targets the repo default, not the project checkout's
+ * current branch (#770).
  *
  * @param {object} opts
  * @param {import('./store').Store} opts.store
@@ -883,14 +931,30 @@ function mergeWorktree(opts) {
   // Blast-radius gate (issue #510) before auto-commit: a workflow file in
   // the working tree or the branch vs base is a privilege-escalation, not
   // a code edit. Human sign-off is ciWorkflowApproved === true.
-  const baseForGate = defaultBranch(requested);
-  // Explicit intoPath (orchestrator → lead worktree) stays put even when
-  // detached. The Git-tab default follows main into the worktree that
-  // actually has it — the project checkout is often detached because a
-  // nightly/release worktree holds main.
+  // Git-tab Merge (no intoPath) targets the repo default (origin/HEAD →
+  // main), not the project checkout's current branch (#770). If that
+  // branch lives in another worktree, follow it there. intoPath stays an
+  // explicit override (orchestrator → lead).
+  // jj detaches git HEAD on every command (#521): do not "fix" that by
+  // switching the colocated checkout onto main.
+  if (!intoPath) {
+    const onBranch = gitOut(requested, ["branch", "--show-current"]);
+    if (!onBranch) {
+      const scm = detectScm(requested);
+      if (scm && scm.kind === "jj") {
+        throw new Error(JJ_DETACHED_HEAD_ERROR);
+      }
+    }
+  }
+  const baseForGate = intoPath
+    ? defaultBranch(requested)
+    : repoDefaultBranch(requested);
   const target = intoPath
     ? requested
     : checkoutForMerge(requested, baseForGate);
+  if (!intoPath) {
+    assertDefaultNotBehindOrigin(target, baseForGate);
+  }
   gateCiWorkflowMerge(
     wtPath,
     baseForGate,
