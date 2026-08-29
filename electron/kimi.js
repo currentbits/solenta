@@ -702,10 +702,28 @@ function extractToolEvent(obj) {
 }
 
 /**
- * Usage-ish fields: input_tokens/output_tokens or prompt_tokens/completion_tokens
- * at top level or under usage. Cost when the provider reports it.
+ * @param {unknown} value
+ * @returns {number}
+ */
+function tokenNum(value) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : 0;
+}
+
+/**
+ * Usage from a stream line or a wire.jsonl record.
+ *
+ * Live `-p --output-format stream-json` (kimi 0.39) still emits no usage
+ * (assistant / tool / session.resume_hint only). The on-disk session wire
+ * does: `type: "usage.record"` with Moonshot TokenUsage
+ * `{ inputOther, output, inputCacheRead, inputCacheCreation }` and no USD
+ * (issue #696). Legacy `input_tokens` / `prompt_tokens` stay parseable so
+ * fixtures and older CLIs keep working. Billable in/out alone is not a
+ * full prompt (#317) — contextTokens is set only when the four-bucket
+ * Moonshot shape is present.
+ *
  * @param {object} obj
- * @returns {{ inputTokens: number, outputTokens: number, costUsd: number } | null}
+ * @returns {{ inputTokens: number, outputTokens: number, costUsd?: number, cachedInputTokens?: number, cacheWriteTokens?: number, contextTokens?: number } | null}
  */
 function extractUsage(obj) {
   if (!obj || typeof obj !== "object") return null;
@@ -725,7 +743,14 @@ function extractUsage(obj) {
 
   if (!usage) return null;
 
+  const moonshot =
+    obj.type === "usage.record" ||
+    usage.inputOther != null ||
+    usage.inputCacheRead != null ||
+    usage.inputCacheCreation != null;
+
   const hasField =
+    moonshot ||
     usage.input_tokens != null ||
     usage.output_tokens != null ||
     usage.prompt_tokens != null ||
@@ -735,20 +760,25 @@ function extractUsage(obj) {
 
   if (!hasField) return null;
 
-  const inputTokens =
-    Number(
+  const inputTokens = tokenNum(
+    usage.inputOther ??
       usage.input_tokens ??
-        usage.inputTokens ??
-        usage.prompt_tokens ??
-        0,
-    ) || 0;
-  const outputTokens =
-    Number(
-      usage.output_tokens ??
-        usage.outputTokens ??
-        usage.completion_tokens ??
-        0,
-    ) || 0;
+      usage.inputTokens ??
+      usage.prompt_tokens,
+  );
+  const outputTokens = tokenNum(
+    moonshot
+      ? usage.output
+      : (usage.output_tokens ?? usage.outputTokens ?? usage.completion_tokens),
+  );
+  const cachedRaw =
+    usage.inputCacheRead ??
+    usage.cache_read_input_tokens ??
+    usage.cachedInputTokens;
+  const writeRaw =
+    usage.inputCacheCreation ??
+    usage.cache_creation_input_tokens ??
+    usage.cacheWriteTokens;
 
   const costRaw =
     usage.total_cost_usd ??
@@ -756,13 +786,129 @@ function extractUsage(obj) {
     usage.costUsd ??
     obj.total_cost_usd ??
     obj.cost_usd;
-  const costUsd = costRaw != null ? Number(costRaw) || 0 : 0;
 
-  /** @type {{ inputTokens: number, outputTokens: number, costUsd?: number }} */
+  /** @type {{ inputTokens: number, outputTokens: number, costUsd?: number, cachedInputTokens?: number, cacheWriteTokens?: number, contextTokens?: number }} */
   const out = { inputTokens, outputTokens };
-  if (costRaw != null) {
-    out.costUsd = costUsd;
+  if (costRaw != null) out.costUsd = tokenNum(costRaw);
+  if (moonshot || cachedRaw != null) out.cachedInputTokens = tokenNum(cachedRaw);
+  if (moonshot || writeRaw != null) out.cacheWriteTokens = tokenNum(writeRaw);
+  if (moonshot) {
+    const ctx =
+      inputTokens + outputTokens + tokenNum(cachedRaw) + tokenNum(writeRaw);
+    if (ctx > 0) out.contextTokens = ctx;
   }
+  return out;
+}
+
+/**
+ * Session wire.jsonl paths for one kimi session id.
+ * Layout: `<home>/sessions/<wd>/<sessionId>/agents/<agent>/wire.jsonl`.
+ * @param {string} home
+ * @param {string} sessionId
+ * @returns {{ agent: string, path: string }[]}
+ */
+function findKimiSessionWires(home, sessionId) {
+  const id = String(sessionId || "");
+  const sessionsDir = path.join(String(home || ""), "sessions");
+  if (!id || !home) return [];
+  let wds;
+  try {
+    wds = fs.readdirSync(sessionsDir, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+  /** @type {{ agent: string, path: string }[]} */
+  const out = [];
+  for (const wd of wds) {
+    if (!wd.isDirectory() && !wd.isSymbolicLink()) continue;
+    const agentsDir = path.join(sessionsDir, wd.name, id, "agents");
+    let agents;
+    try {
+      agents = fs.readdirSync(agentsDir, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const agent of agents) {
+      if (!agent.isDirectory() && !agent.isSymbolicLink()) continue;
+      const wire = path.join(agentsDir, agent.name, "wire.jsonl");
+      try {
+        if (fs.statSync(wire).isFile()) {
+          out.push({ agent: agent.name, path: wire });
+        }
+      } catch {
+        // skip
+      }
+    }
+  }
+  return out;
+}
+
+/**
+ * Sum `usage.record` lines from a session's wire.jsonl files.
+ * Tokens from every agent; contextTokens from the last main-agent record
+ * so the ring tracks the user conversation, not a subagent.
+ *
+ * @param {string} home KIMI_CODE_HOME (overlay dest is fine; sessions is linked)
+ * @param {string} sessionId e.g. "session_abc"
+ * @param {{ sinceMs?: number }} [opts] drop records with time < sinceMs
+ * @returns {{ inputTokens: number, outputTokens: number, cachedInputTokens: number, cacheWriteTokens: number, contextTokens?: number } | null}
+ */
+function harvestKimiSessionUsage(home, sessionId, opts = {}) {
+  const sinceMs =
+    opts && opts.sinceMs != null ? Number(opts.sinceMs) : NaN;
+  const wires = findKimiSessionWires(home, sessionId);
+  let inputTokens = 0;
+  let outputTokens = 0;
+  let cachedInputTokens = 0;
+  let cacheWriteTokens = 0;
+  /** @type {number | undefined} */
+  let lastMainContext;
+  let saw = false;
+  for (const w of wires) {
+    let text;
+    try {
+      text = fs.readFileSync(w.path, "utf8");
+    } catch {
+      continue;
+    }
+    for (const line of text.split("\n")) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      let ev;
+      try {
+        ev = JSON.parse(trimmed);
+      } catch {
+        continue;
+      }
+      if (
+        Number.isFinite(sinceMs) &&
+        ev &&
+        typeof ev.time === "number" &&
+        ev.time < sinceMs
+      ) {
+        continue;
+      }
+      const u = extractUsage(ev);
+      if (!u) continue;
+      saw = true;
+      inputTokens += u.inputTokens || 0;
+      outputTokens += u.outputTokens || 0;
+      cachedInputTokens += u.cachedInputTokens || 0;
+      cacheWriteTokens += u.cacheWriteTokens || 0;
+      if (w.agent === "main" && u.contextTokens != null) {
+        lastMainContext = u.contextTokens;
+      }
+    }
+  }
+  if (!saw) return null;
+  /** @type {{ inputTokens: number, outputTokens: number, cachedInputTokens: number, cacheWriteTokens: number, contextTokens?: number }} */
+  const out = {
+    inputTokens,
+    outputTokens,
+    cachedInputTokens,
+    cacheWriteTokens,
+  };
+  if (lastMainContext != null) out.contextTokens = lastMainContext;
   return out;
 }
 
@@ -977,6 +1123,8 @@ module.exports = {
   extractToolEvents,
   extractSessionId,
   extractUsage,
+  harvestKimiSessionUsage,
+  findKimiSessionWires,
   truncate,
   INPUT_TRUNCATE,
   OUTPUT_TRUNCATE,

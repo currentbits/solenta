@@ -368,6 +368,14 @@ export function createSchema(db) {
     CREATE INDEX IF NOT EXISTS session_messages_project_idx
       ON session_messages(project, id);
 
+    -- Regenerated repo wiki (#268). Not an entry: it describes the code,
+    -- not a learning, and is overwritten wholesale when main moves.
+    CREATE TABLE IF NOT EXISTS code_wiki (
+      project    TEXT PRIMARY KEY,
+      payload    TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+
     CREATE VIRTUAL TABLE IF NOT EXISTS session_messages_fts USING fts5(
       content,
       content='session_messages',

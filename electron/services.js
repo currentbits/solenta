@@ -595,7 +595,18 @@ function resolveNewThreadModel(input, settings, provider) {
  * `issueNumber` is the planboard issue this thread was started from (#420).
  * `provider`/`model` override settings.defaultProvider/defaultModel (#711).
  * `memoryConsolidate` tags the sleep-time memory pass (issue #722).
+ * `baseBranch` is the optional stacked merge/PR base (#187).
  */
+function normalizeBaseBranch(value) {
+  if (value == null) return null;
+  const name = String(value).trim();
+  if (!name) return null;
+  if (name === "HEAD" || name.includes("..") || /[\s~^:?*\[\\]/.test(name)) {
+    throw new Error(`Invalid base branch: ${name}`);
+  }
+  return name;
+}
+
 function createThread(store, input) {
   const project = store.getProject(input.projectId);
   if (!project) {
@@ -614,6 +625,7 @@ function createThread(store, input) {
     // Same title length convention as auto-rename from first prompt line.
     title: truncateThreadTitle(input.title || "New Thread"),
     branch: null,
+    baseBranch: normalizeBaseBranch(input.baseBranch),
     prNumber: null,
     prUrl: null,
     status: "idle",
@@ -1906,6 +1918,47 @@ function setNotes(store, input) {
   }
   const notes = String(input.notes ?? "").trim().slice(0, THREAD_NOTES_MAX);
   const patch = { notes };
+  const updated = store.updateThread(threadId, patch);
+  store.save();
+  return updated ? { ...updated } : { ...thread, ...patch };
+}
+
+/**
+ * Change the recorded merge/PR base after create (#187 / #775).
+ * Empty/null clears to the repo default. A non-empty name must be a
+ * local branch. Refused after the first pull request. A bound worktree
+ * rebases unique thread commits onto the new base when clean, or
+ * resets when there are none; dirty trees and rebase conflicts are
+ * refused and the recorded base is left unchanged. Never bumps updatedAt.
+ *
+ * @param {import('./store').Store} store
+ * @param {{ threadId: string, baseBranch?: string | null }} input
+ */
+function setBaseBranch(store, input) {
+  const { threadId } = input;
+  const thread = store.getThread(threadId);
+  if (!thread) {
+    throw new Error(`Unknown thread: ${threadId}`);
+  }
+  if (thread.prNumber) {
+    throw new Error("Cannot change the merge base after the first pull request");
+  }
+  const name = normalizeBaseBranch(input.baseBranch);
+  const { listBranches, retargetWorktreeBase } = require("./worktrees.js");
+  if (name) {
+    const project = store.getProject(thread.projectId);
+    if (!project || !project.path) {
+      throw new Error(`Unknown base branch: ${name}`);
+    }
+    const listed = listBranches(project.path);
+    if (!listed.branches.includes(name)) {
+      throw new Error(`Unknown base branch: ${name}`);
+    }
+  }
+  if (thread.worktreePath) {
+    retargetWorktreeBase({ store, thread, baseName: name });
+  }
+  const patch = { baseBranch: name };
   const updated = store.updateThread(threadId, patch);
   store.save();
   return updated ? { ...updated } : { ...thread, ...patch };
@@ -3264,6 +3317,13 @@ function codeIndexNoteFor(index) {
   const { MIN_FILES_FOR_NOTE } = require("./codeindex.js");
   if (index.fileCount < MIN_FILES_FOR_NOTE) return "";
 
+  const { formatWikiNote, wikiFromIndex, parseDependencies } = require("./codewiki.js");
+  const wiki = wikiFromIndex(index, {
+    dependencies: index.repoRoot ? parseDependencies(index.repoRoot) : [],
+    headSha: index.headSha,
+  });
+  const wikiNote = formatWikiNote(wiki);
+
   const age = ageOf(index.updatedAt);
   const header =
     `\n\n[Code map] Shared symbol index of this repo: ${index.fileCount} files, ` +
@@ -3288,7 +3348,7 @@ function codeIndexNoteFor(index) {
     parts.push(line);
   }
   parts.push(steering);
-  return parts.join("\n");
+  return wikiNote + parts.join("\n");
 }
 
 /**
@@ -4578,6 +4638,42 @@ async function loadConfigSourceEntries(memory, projectPath, opts) {
  * @param {{ projectId: string }} input
  * @param {{ memory?: object }} [deps]
  */
+/**
+ * Browsable wiki for the Memory tab (issue #268). Builds the index on first
+ * open when none exists so the map is an onboarding deliverable, not a
+ * side-effect of the next agent turn.
+ *
+ * @param {import('./store').Store} store
+ * @param {{ projectId: string }} input
+ * @param {{ userDataPath?: string }} [deps]
+ * @returns {Promise<import('../src/shared/ipc').ProjectCodeMap>}
+ */
+async function readProjectCodeMap(store, input, deps) {
+  const { project, root } = requireLocalProject(store, input);
+  const userDataPath = deps && deps.userDataPath ? String(deps.userDataPath) : "";
+  const empty = {
+    projectId: project.id,
+    updatedAt: 0,
+    fileCount: 0,
+    symbolCount: 0,
+    headSha: "",
+    defaultBranch: "",
+    modules: [],
+    dependencies: [],
+  };
+  if (!userDataPath || process.env.CODER_CODEINDEX_DISABLE === "1") return empty;
+
+  const { readIndex, refreshIndex } = require("./codeindex.js");
+  const { buildWiki, publishWiki } = require("./codewiki.js");
+  let index = readIndex(userDataPath, root);
+  if (!index) {
+    index = await refreshIndex({ userDataPath, repoRoot: root });
+  }
+  const wiki = await buildWiki(index, root);
+  void publishWiki({ userDataPath, repoRoot: root, index });
+  return { projectId: project.id, ...wiki };
+}
+
 async function lintAgentConfig(store, input, deps) {
   const { project, root } = requireLocalProject(store, input);
   const files = configDoctor.discoverAgentConfigFiles(root);
@@ -4826,6 +4922,7 @@ module.exports = {
   recordTeachReview,
   requestTeachReview,
   codeIndexNoteFor,
+  readProjectCodeMap,
   specStagePrompt,
   startSpec,
   stopSpec,
@@ -4852,6 +4949,7 @@ module.exports = {
   setCrossThreadInbound,
   setQuotaWaitAutoResume,
   setNotes,
+  setBaseBranch,
   setFeltEstimate,
   setVerifyCommand,
   runVerifyNow,

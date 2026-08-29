@@ -15,11 +15,13 @@ const {
   mergeWorktree,
   mergePr,
   diff,
+  listChangedPaths,
 } = require("../worktrees.js");
 const {
   isCiWorkflowPath,
   CI_WORKFLOW_BLOCK_PREFIX,
   assertCiWorkflowSignOff,
+  inspectFailedMessage,
 } = require("../blastRadius.js");
 const { writeFakeBin } = require("./support/fakeBin.js");
 
@@ -104,6 +106,85 @@ describe("electron blastRadius matcher", () => {
       assertCiWorkflowSignOff([".github/workflows/ci.yml"], true),
     );
     assert.doesNotThrow(() => assertCiWorkflowSignOff([], false));
+  });
+
+  it("inspect-failed is not a sign-off-able CI_WORKFLOW block (#760)", () => {
+    const msg = inspectFailedMessage("unknown revision 'main'");
+    assert.equal(msg.startsWith(CI_WORKFLOW_BLOCK_PREFIX), false);
+    assert.match(msg, /unknown revision 'main'/);
+  });
+});
+
+describe("listChangedPaths base resolution (#760)", () => {
+  let tmp;
+
+  afterEach(() => {
+    if (tmp) fs.rmSync(tmp, { recursive: true, force: true });
+  });
+
+  it("lists vs origin/main when local main is gone", () => {
+    tmp = fs.mkdtempSync(path.join(os.tmpdir(), "coder-blast-base-"));
+    const repo = path.join(tmp, "repo");
+    const bare = path.join(tmp, "remote.git");
+    fs.mkdirSync(repo);
+    git(repo, ["init", "-q", "-b", "main"]);
+    git(repo, ["config", "user.email", "t@example.com"]);
+    git(repo, ["config", "user.name", "t"]);
+    fs.writeFileSync(path.join(repo, "a.txt"), "1\n");
+    git(repo, ["add", "."]);
+    git(repo, ["commit", "-qm", "init"]);
+    git(tmp, ["init", "-q", "--bare", "remote.git"]);
+    git(repo, ["remote", "add", "origin", bare]);
+    git(repo, ["push", "-q", "origin", "main"]);
+    git(repo, ["checkout", "--detach", "-q"]);
+    git(repo, ["branch", "-D", "main"]);
+
+    git(repo, ["switch", "-c", "coder/topic", "-q"]);
+    fs.writeFileSync(path.join(repo, "b.txt"), "2\n");
+    git(repo, ["add", "."]);
+    git(repo, ["commit", "-qm", "topic"]);
+
+    const listed = listChangedPaths(repo, { base: "main" });
+    assert.equal(listed.ok, true, "must resolve origin/main, not fail-closed");
+    assert.ok(listed.paths.includes("b.txt"));
+  });
+
+  it("mergeWorktree restores a missing worktree dir from the branch", async () => {
+    tmp = fs.mkdtempSync(path.join(os.tmpdir(), "coder-blast-missing-"));
+    const store = new Store(path.join(tmp, "store.json"));
+    const repo = path.join(tmp, "repo");
+    fs.mkdirSync(repo);
+    git(repo, ["init", "-q", "-b", "main"]);
+    git(repo, ["config", "user.email", "t@example.com"]);
+    git(repo, ["config", "user.name", "t"]);
+    fs.writeFileSync(path.join(repo, "a.txt"), "1\n");
+    git(repo, ["add", "."]);
+    git(repo, ["commit", "-qm", "init"]);
+    const project = await services.addProject(store, repo);
+    const thread = services.createThread(store, {
+      projectId: project.id,
+      title: "Missing wt",
+    });
+    const setup = setupWorktree({
+      store,
+      threadId: thread.id,
+      worktreeBase: path.join(tmp, "wt"),
+      broadcast: () => {},
+    });
+    fs.writeFileSync(path.join(setup.worktreePath, "b.txt"), "2\n");
+    git(setup.worktreePath, ["add", "."]);
+    git(setup.worktreePath, ["commit", "-qm", "topic"]);
+
+    fs.rmSync(setup.worktreePath, { recursive: true, force: true });
+    git(repo, ["worktree", "prune"]);
+
+    const merged = mergeWorktree({
+      store,
+      threadId: thread.id,
+      broadcast: () => {},
+    });
+    assert.equal(merged.worktreePath, null);
+    assert.equal(fs.readFileSync(path.join(repo, "b.txt"), "utf8"), "2\n");
   });
 });
 

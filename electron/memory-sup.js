@@ -202,6 +202,11 @@ function registerMcpServer(opts) {
   } catch {
     // ignore
   }
+  try {
+    ensureCursorMcpConfig({ log, env: opts.env });
+  } catch {
+    // ignore
+  }
   return true;
 }
 
@@ -868,6 +873,239 @@ function removeKimiMcpEntries(names, opts = {}) {
 }
 
 /**
+ * Resolve path to cursor's mcp.json (env override or ~/.cursor/mcp.json).
+ * @param {NodeJS.ProcessEnv} [env]
+ * @returns {string}
+ */
+function resolveCursorMcpPath(env = process.env) {
+  if (env.CODER_CURSOR_MCP_PATH) {
+    return String(env.CODER_CURSOR_MCP_PATH);
+  }
+  return path.join(osHomedir(), ".cursor", "mcp.json");
+}
+
+function cursorMcpDisabled(env = process.env) {
+  if (String(env.CODER_CURSOR_MCP_DISABLE || "") === "1") return true;
+  // node:test must never write the user's real ~/.cursor/mcp.json.
+  if (
+    !env.CODER_CURSOR_MCP_PATH &&
+    process.env.NODE_TEST_CONTEXT
+  ) {
+    return true;
+  }
+  return false;
+}
+
+/**
+ * When at least one MCP server is up and the cursor binary is available,
+ * MERGE our servers into ~/.cursor/mcp.json (never overwrite whole file).
+ * Backup once before first edit of an existing file. On parse failure of
+ * an existing file: log and leave it.
+ *
+ * Solenta-spawned local cursor turns do NOT use this path: they get a
+ * per-thread HOME overlay (#700) so MCP URLs are bound to that project
+ * and the user's IDE file is left alone. This function remains the
+ * fallback for ssh/WSL (overlay is local-host) and for the user's own
+ * `cursor-agent` CLI after markHealthy.
+ *
+ * Kill switch: CODER_CURSOR_MCP_DISABLE=1. Path override:
+ * CODER_CURSOR_MCP_PATH (tests). node:test without a path override is
+ * treated as disabled so a forgotten setup cannot rewrite ~/.cursor.
+ *
+ * @param {object} [opts]
+ * @param {(msg: string) => void} [opts.log]
+ * @param {NodeJS.ProcessEnv} [opts.env]
+ * @param {string} [opts.projectPath]
+ * @param {string} [opts.projectId]
+ * @param {(bin: string) => boolean} [opts.isCursorAvailable]
+ * @returns {boolean} true if file was written or already correct
+ */
+function ensureCursorMcpConfig(opts = {}) {
+  const log = opts.log || ((msg) => console.warn(msg));
+  const env = opts.env || process.env;
+  if (cursorMcpDisabled(env)) return false;
+
+  const servers = activeServers();
+  if (servers.length === 0) {
+    return false;
+  }
+
+  let cursorOk = false;
+  if (typeof opts.isCursorAvailable === "function") {
+    cursorOk = Boolean(opts.isCursorAvailable("cursor-agent"));
+  } else {
+    try {
+      const {
+        getProvider,
+        resolveBin,
+        isBinAvailable,
+      } = require("./providers.js");
+      const entry = getProvider("cursor");
+      if (entry) {
+        cursorOk = isBinAvailable(resolveBin(entry, env), undefined, env);
+      }
+    } catch (err) {
+      log(
+        "memory-server: cursor availability check failed: " +
+          (err && err.message ? err.message : String(err)),
+      );
+      return false;
+    }
+  }
+  if (!cursorOk) return false;
+
+  const mcpPath = resolveCursorMcpPath(env);
+  const desiredByName =
+    opts.projectPath || opts.projectId
+      ? kimiMcpServersForRun({
+          projectId: opts.projectId,
+          projectPath: opts.projectPath,
+        })
+      : (() => {
+          /** @type {Record<string, unknown>} */
+          const map = {};
+          for (const s of servers) {
+            map[s.name] = isStdioServer(s)
+              ? kimiStdioEntry(s)
+              : kimiHttpEntry(s.url, s.token, undefined, s.headers, s.transport);
+          }
+          return map;
+        })();
+
+  /** @type {Record<string, unknown>} */
+  let doc = {};
+  const existed = fs.existsSync(mcpPath);
+  if (existed) {
+    let raw;
+    try {
+      raw = fs.readFileSync(mcpPath, "utf8");
+    } catch (err) {
+      log(
+        "memory-server: cannot read cursor mcp.json; leaving untouched: " +
+          (err && err.message ? err.message : String(err)),
+      );
+      return false;
+    }
+    try {
+      doc = JSON.parse(raw);
+      if (!doc || typeof doc !== "object" || Array.isArray(doc)) {
+        log("memory-server: cursor mcp.json is not an object; leaving untouched");
+        return false;
+      }
+    } catch (err) {
+      log(
+        "memory-server: cursor mcp.json parse failed; leaving untouched: " +
+          (err && err.message ? err.message : String(err)),
+      );
+      return false;
+    }
+  }
+
+  if (!doc.mcpServers || typeof doc.mcpServers !== "object") {
+    doc.mcpServers = {};
+  }
+  const mcpServersMap = /** @type {Record<string, unknown>} */ (doc.mcpServers);
+  try {
+    const allMatch = Object.entries(desiredByName).every(
+      ([name, desired]) =>
+        mcpServersMap[name] &&
+        JSON.stringify(mcpServersMap[name]) === JSON.stringify(desired),
+    );
+    if (allMatch) {
+      return true;
+    }
+  } catch {
+    // fall through to write
+  }
+
+  if (existed) {
+    const backupPath = mcpPath + ".coder-backup";
+    if (!fs.existsSync(backupPath)) {
+      try {
+        fs.copyFileSync(mcpPath, backupPath);
+      } catch (err) {
+        log(
+          "memory-server: failed to backup cursor mcp.json: " +
+            (err && err.message ? err.message : String(err)),
+        );
+        return false;
+      }
+    }
+  }
+
+  for (const [name, desired] of Object.entries(desiredByName)) {
+    mcpServersMap[name] = desired;
+  }
+  try {
+    const dir = path.dirname(mcpPath);
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
+    writeSecretFile(mcpPath, JSON.stringify(doc, null, 2) + "\n");
+  } catch (err) {
+    log(
+      "memory-server: failed to write cursor mcp.json: " +
+        (err && err.message ? err.message : String(err)),
+    );
+    return false;
+  }
+  return true;
+}
+
+/**
+ * Drop our entries from cursor's mcp.json. Their bearer tokens must not
+ * outlive the server they authenticate against. Best-effort, never throws.
+ *
+ * @param {string[]} names
+ * @param {object} [opts]
+ * @param {(msg: string) => void} [opts.log]
+ * @param {NodeJS.ProcessEnv} [opts.env]
+ * @returns {boolean} true if the file was rewritten
+ */
+function removeCursorMcpEntries(names, opts = {}) {
+  const log = opts.log || ((msg) => console.warn(msg));
+  const env = opts.env || process.env;
+  if (!Array.isArray(names) || names.length === 0) return false;
+  if (cursorMcpDisabled(env)) return false;
+
+  const mcpPath = resolveCursorMcpPath(env);
+  if (!fs.existsSync(mcpPath)) return false;
+  /** @type {Record<string, unknown>} */
+  let doc;
+  try {
+    doc = JSON.parse(fs.readFileSync(mcpPath, "utf8"));
+  } catch (err) {
+    log(
+      "memory-server: cannot read cursor mcp.json for cleanup; leaving untouched: " +
+        (err && err.message ? err.message : String(err)),
+    );
+    return false;
+  }
+  if (!doc || typeof doc !== "object" || Array.isArray(doc)) return false;
+  const map = doc.mcpServers;
+  if (!map || typeof map !== "object") return false;
+
+  let changed = false;
+  for (const name of names) {
+    if (Object.prototype.hasOwnProperty.call(map, name)) {
+      delete map[name];
+      changed = true;
+    }
+  }
+  if (!changed) return false;
+  try {
+    writeSecretFile(mcpPath, JSON.stringify(doc, null, 2) + "\n");
+  } catch (err) {
+    log(
+      "memory-server: failed to clean cursor mcp.json: " +
+        (err && err.message ? err.message : String(err)),
+    );
+    return false;
+  }
+  return true;
+}
+
+/**
  * Resolve grok's user config (env override for tests; grok itself has none).
  * @param {NodeJS.ProcessEnv} [env]
  */
@@ -1093,7 +1331,8 @@ function removeGrokMcpEntries(names, opts = {}) {
 
 /**
  * Revoke persisted registrations for `names` from the providers that store
- * them in user-global config (kimi's mcp.json, grok's config.toml). Claude and
+ * them in user-global config (kimi's mcp.json, grok's config.toml,
+ * cursor's mcp.json). Claude and
  * codex read config we own per launch, so they need no cleanup.
  *
  * @param {string[]} names
@@ -1109,6 +1348,11 @@ function forgetExternalMcp(names, opts = {}) {
   }
   try {
     removeGrokMcpEntries(names, opts);
+  } catch {
+    // ignore
+  }
+  try {
+    removeCursorMcpEntries(names, opts);
   } catch {
     // ignore
   }
@@ -1484,6 +1728,12 @@ function markHealthy(opts) {
     log: opts.log,
     env: opts.env,
   });
+  // Merge into ~/.cursor/mcp.json when cursor-agent is installed.
+  // Solenta-spawned local turns use the HOME overlay instead (#700).
+  ensureCursorMcpConfig({
+    log: opts.log,
+    env: opts.env,
+  });
 }
 
 /**
@@ -1713,8 +1963,8 @@ function createMemorySupervisor(opts) {
    */
   function stop() {
     // Revoke the registrations that live in the user's home before we drop the
-    // servers: their tokens are useless once we exit, but kimi/grok would keep
-    // offering them to every session on the machine forever (issue #125). An
+    // servers: their tokens are useless once we exit, but kimi/grok/cursor would
+    // keep offering them to every session on the machine forever (issue #125). An
     // adopted server belongs to another instance, which is still serving it.
     if (!globalStatus.adopted) {
       forgetExternalMcp(
@@ -1767,14 +2017,17 @@ module.exports = {
   boundCoderMemoryUrl,
   boundSolentaMcpUrl,
   ensureGrokMcpConfig,
+  ensureCursorMcpConfig,
   removeKimiMcpEntries,
   removeGrokMcpEntries,
+  removeCursorMcpEntries,
   forgetExternalMcp,
   registerMcpServer,
   unregisterMcpServer,
   syncUserMcpServers,
   activeServers,
   resolveKimiMcpPath,
+  resolveCursorMcpPath,
   resolveGrokConfigPath,
   grokTomlLooksValid,
   looksGrokConfigCorrupt,

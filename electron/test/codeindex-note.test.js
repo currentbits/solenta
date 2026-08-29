@@ -84,7 +84,8 @@ describe("codeIndexNoteFor", () => {
       },
     });
     const note = codeIndexNoteFor(makeIndex({ files, fileCount: files.length }));
-    assert.match(note, /^(\n\n)?\[Code map\]/);
+    assert.match(note, /\[Code wiki\]/);
+    assert.match(note, /\[Code map\]/);
     assert.match(note, /electron\/runner\.js/);
     assert.match(note, /createRunner/);
     assert.match(note, /startRun/);
@@ -119,7 +120,13 @@ describe("codeIndexNoteFor", () => {
       makeIndex({ files, fileCount: files.length, symbolCount: files.length * 8 }),
     );
     assert.ok(note.length > 0);
-    assert.ok(note.length <= 3500, `note length ${note.length} exceeds 3500`);
+    const mapAt = note.indexOf("[Code map]");
+    assert.ok(mapAt >= 0);
+    const mapNote = note.slice(mapAt);
+    assert.ok(
+      mapNote.length <= 3500,
+      `code map length ${mapNote.length} exceeds 3500`,
+    );
     assert.match(note, /packages\/very\/long\/path\/to\/module-0\/src\/index\.ts/);
     assert.doesNotMatch(note, /module-399/);
   });
@@ -154,7 +161,8 @@ describe("codeIndexNoteFor", () => {
       first: { path: "electron/test/store.test.js", symbols: [], rank: 999 },
     });
     const note = codeIndexNoteFor(makeIndex({ files }));
-    assert.doesNotMatch(note, /store\.test\.js/);
-    assert.match(note, /src\/mod1\.js/);
+    const map = note.slice(note.indexOf("[Code map]"));
+    assert.doesNotMatch(map, /store\.test\.js/);
+    assert.match(map, /src\/mod1\.js/);
   });
 });

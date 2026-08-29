@@ -15,6 +15,7 @@ const {
   extractToolEvents,
   extractSessionId,
   extractUsage,
+  harvestKimiSessionUsage,
   createStderrThinkingParser,
 } = require("../kimi.js");
 const { getProvider } = require("../providers.js");
@@ -341,6 +342,41 @@ async function main() {
     return;
   }
 
+  if (scenario === "usage-record") {
+    emit({ role: "assistant", content: "ok" });
+    emit({
+      type: "usage.record",
+      model: "kimi-code/k3",
+      usage: {
+        inputOther: 100,
+        output: 20,
+        inputCacheRead: 50,
+        inputCacheCreation: 10,
+      },
+      usageScope: "turn",
+    });
+    emit({
+      type: "usage.record",
+      model: "kimi-code/k3",
+      usage: {
+        inputOther: 8,
+        output: 3,
+        inputCacheRead: 200,
+        inputCacheCreation: 0,
+      },
+      usageScope: "turn",
+    });
+    emit({
+      role: "meta",
+      type: "session.resume_hint",
+      session_id: "session_fake123",
+      command: "kimi -r session_fake123",
+      content: "To resume this session: kimi -r session_fake123",
+    });
+    process.exit(0);
+    return;
+  }
+
   process.stderr.write("unknown scenario\\n");
   process.exit(1);
 }
@@ -631,6 +667,137 @@ describe("kimi extract helpers", () => {
       { inputTokens: 3, outputTokens: 4 },
     );
     assert.equal(extractUsage({ type: "text", text: "hi" }), null);
+  });
+
+  it("parses usage.record Moonshot buckets and does not invent USD (#696)", () => {
+    const ev = {
+      type: "usage.record",
+      model: "kimi-code/k3",
+      usage: {
+        inputOther: 19830,
+        output: 8047,
+        inputCacheRead: 11264,
+        inputCacheCreation: 0,
+      },
+      usageScope: "turn",
+      time: 1785584169280,
+    };
+    const u = extractUsage(ev);
+    assert.deepEqual(u, {
+      inputTokens: 19830,
+      outputTokens: 8047,
+      cachedInputTokens: 11264,
+      cacheWriteTokens: 0,
+      contextTokens: 19830 + 8047 + 11264,
+    });
+    assert.equal(u.costUsd, undefined);
+  });
+
+  it("keeps contextTokens unset for billable in/out only (#317, #696)", () => {
+    const u = extractUsage({ type: "usage", input_tokens: 12, output_tokens: 8 });
+    assert.deepEqual(u, { inputTokens: 12, outputTokens: 8 });
+    assert.equal(u.contextTokens, undefined);
+    assert.equal(u.costUsd, undefined);
+  });
+
+  it("reads a real cost field when the CLI actually emits one", () => {
+    const u = extractUsage({
+      type: "usage.record",
+      usage: { inputOther: 10, output: 4, inputCacheRead: 0, inputCacheCreation: 0 },
+      total_cost_usd: 0.012,
+    });
+    assert.equal(u.costUsd, 0.012);
+    assert.equal(u.contextTokens, 14);
+  });
+});
+
+describe("harvestKimiSessionUsage (#696)", () => {
+  let tmpHome;
+
+  beforeEach(() => {
+    tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "kimi-wire-"));
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmpHome, { recursive: true, force: true });
+  });
+
+  function writeWire(sessionId, agent, lines) {
+    const dir = path.join(
+      tmpHome,
+      "sessions",
+      "wd_probe",
+      sessionId,
+      "agents",
+      agent,
+    );
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(
+      path.join(dir, "wire.jsonl"),
+      lines.map((o) => JSON.stringify(o)).join("\n") + "\n",
+    );
+  }
+
+  it("sums usage.record lines and takes the last main context fill", () => {
+    writeWire("session_abc", "main", [
+      {
+        type: "usage.record",
+        model: "kimi-code/k3",
+        usage: {
+          inputOther: 100,
+          output: 20,
+          inputCacheRead: 50,
+          inputCacheCreation: 10,
+        },
+        time: 1000,
+      },
+      {
+        type: "usage.record",
+        model: "kimi-code/k3",
+        usage: {
+          inputOther: 8,
+          output: 3,
+          inputCacheRead: 200,
+          inputCacheCreation: 0,
+        },
+        time: 2000,
+      },
+      { type: "turn.prompt", time: 1500 },
+    ]);
+    const u = harvestKimiSessionUsage(tmpHome, "session_abc");
+    assert.ok(u);
+    assert.equal(u.inputTokens, 108);
+    assert.equal(u.outputTokens, 23);
+    assert.equal(u.cachedInputTokens, 250);
+    assert.equal(u.cacheWriteTokens, 10);
+    assert.equal(u.contextTokens, 8 + 3 + 200);
+    assert.equal(u.costUsd, undefined);
+  });
+
+  it("drops records older than sinceMs so a resume does not re-bill", () => {
+    writeWire("session_abc", "main", [
+      {
+        type: "usage.record",
+        usage: { inputOther: 999, output: 1, inputCacheRead: 0, inputCacheCreation: 0 },
+        time: 1000,
+      },
+      {
+        type: "usage.record",
+        usage: { inputOther: 4, output: 2, inputCacheRead: 6, inputCacheCreation: 0 },
+        time: 5000,
+      },
+    ]);
+    const u = harvestKimiSessionUsage(tmpHome, "session_abc", { sinceMs: 4000 });
+    assert.equal(u.inputTokens, 4);
+    assert.equal(u.outputTokens, 2);
+    assert.equal(u.cachedInputTokens, 6);
+    assert.equal(u.contextTokens, 12);
+  });
+
+  it("returns null when the session has no usage.record lines", () => {
+    writeWire("session_abc", "main", [{ type: "turn.prompt", time: 1 }]);
+    assert.equal(harvestKimiSessionUsage(tmpHome, "session_abc"), null);
+    assert.equal(harvestKimiSessionUsage(tmpHome, "session_missing"), null);
   });
 });
 
@@ -1148,5 +1315,136 @@ describe("kimi runner integration", () => {
     assert.equal(msgs.filter((m) => m.thinking).length, 1);
     assert.equal(msgs.filter((m) => m.role === "tool").length, 1);
     assert.equal(msgs.find((m) => m.role === "tool").tool.name, "Read");
+  });
+
+  it("stream usage.record records tokens and cache, never USD spend (#696)", async () => {
+    process.env.CODER_FAKE_KIMI_SCENARIO = "usage-record";
+    const thread = store.getThreads()[0];
+    const spentBefore = store.getSpendToday();
+    await runner.startRun({ threadId: thread.id, prompt: "go" });
+    await waitFor(() => store.getThread(thread.id).status === "done");
+
+    const usage = store.getUsage(thread.id);
+    assert.ok(usage);
+    assert.equal(usage.inputTokens, 108);
+    assert.equal(usage.outputTokens, 23);
+    assert.equal(usage.contextTokens, 8 + 3 + 200);
+    assert.equal(usage.costUsd, 0);
+    assert.equal(usage.turns, 1);
+    assert.equal(store.getSpendToday(), spentBefore);
+
+    const days = store.getUsageByDay();
+    const today = Object.values(days)[0];
+    const cell = today && today.kimi && Object.values(today.kimi)[0];
+    assert.ok(cell);
+    assert.equal(cell.inputTokens, 108);
+    assert.equal(cell.cachedInputTokens, 250);
+    assert.equal(cell.cacheWriteTokens, 10);
+    assert.equal(cell.costUsd, 0);
+    assert.equal(cell.turns, 1);
+  });
+
+  it("harvests usage.record from the session wire when the stream is silent (#696)", async () => {
+    const srcHome = path.join(tmpDir, "kimi-src");
+    const wireDir = path.join(
+      srcHome,
+      "sessions",
+      "wd_probe",
+      "session_fake123",
+      "agents",
+      "main",
+    );
+    fs.mkdirSync(wireDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(wireDir, "wire.jsonl"),
+      `${JSON.stringify({
+        type: "usage.record",
+        model: "kimi-code/k3",
+        usage: {
+          inputOther: 431,
+          output: 340,
+          inputCacheRead: 214272,
+          inputCacheCreation: 0,
+        },
+        usageScope: "turn",
+        time: Date.now() + 60_000,
+      })}\n`,
+    );
+    const prevHome = process.env.KIMI_CODE_HOME;
+    process.env.KIMI_CODE_HOME = srcHome;
+    try {
+      const thread = store.getThreads()[0];
+      const spentBefore = store.getSpendToday();
+      await runner.startRun({ threadId: thread.id, prompt: "go" });
+      await waitFor(() => store.getThread(thread.id).status === "done");
+
+      const usage = store.getUsage(thread.id);
+      assert.ok(usage);
+      assert.equal(usage.inputTokens, 431);
+      assert.equal(usage.outputTokens, 340);
+      assert.equal(usage.contextTokens, 431 + 340 + 214272);
+      assert.equal(usage.costUsd, 0);
+      assert.equal(usage.turns, 1);
+      assert.equal(store.getSpendToday(), spentBefore);
+
+      const days = store.getUsageByDay();
+      const today = Object.values(days)[0];
+      const cell = today && today.kimi && Object.values(today.kimi)[0];
+      assert.ok(cell, "pulse keeps the turn");
+      assert.equal(cell.cachedInputTokens, 214272);
+      assert.equal(cell.costUsd, 0);
+    } finally {
+      if (prevHome === undefined) delete process.env.KIMI_CODE_HOME;
+      else process.env.KIMI_CODE_HOME = prevHome;
+    }
+  });
+
+  it("OTel records harvested tokens and omits invented $0 cost (#696)", async () => {
+    process.env.CODER_FAKE_KIMI_SCENARIO = "usage-record";
+    const calls = [];
+    const prevFetch = globalThis.fetch;
+    globalThis.fetch = async (url, init) => {
+      calls.push({ url: String(url), body: JSON.parse(String(init.body)) });
+      return { ok: true, status: 200 };
+    };
+    services.setSettings(store, {
+      otel: {
+        endpoint: "http://127.0.0.1:4318",
+        headers: {},
+        claudeMetrics: false,
+      },
+    });
+    runner.stopAll();
+    const core = await loadCore();
+    runner = createRunner({
+      store,
+      core,
+      pushFn: (ch, payload) => pushes.push({ ch, payload }),
+      tickMs: 50,
+      userDataPath: tmpDir,
+    });
+    try {
+      const thread = store.getThreads()[0];
+      await runner.startRun({ threadId: thread.id, prompt: "go" });
+      await waitFor(() => store.getThread(thread.id).status === "done");
+      await runner.flushTranscripts();
+      const spans = [];
+      for (const c of calls) {
+        for (const rs of c.body.resourceSpans || []) {
+          for (const ss of rs.scopeSpans || []) spans.push(...(ss.spans || []));
+        }
+      }
+      const run = spans.find((s) => String(s.name).includes("kimi"));
+      assert.ok(run, `no kimi span in ${spans.map((s) => s.name).join(", ")}`);
+      const attr = (key) => {
+        const found = (run.attributes || []).find((a) => a.key === key);
+        return found ? Object.values(found.value)[0] : undefined;
+      };
+      assert.equal(attr("gen_ai.usage.input_tokens"), "108");
+      assert.equal(attr("gen_ai.usage.output_tokens"), "23");
+      assert.equal(attr("solenta.cost.usd"), undefined);
+    } finally {
+      globalThis.fetch = prevFetch;
+    }
   });
 });

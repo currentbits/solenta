@@ -1,5 +1,6 @@
 /**
- * Wide-window Agents panel collapse (issue #645).
+ * Wide-window Agents panel collapse (issue #645), launch default (issue #767),
+ * and optional remember-last (issue #769).
  *
  * Run: node --import=./test/support/render.mjs --test test/agentsCollapse.test.tsx
  */
@@ -13,7 +14,7 @@ import {
 } from "./support/fakeCoder.ts";
 import App from "../src/App";
 
-const COLLAPSED_KEY = "coder.agents.collapsed";
+const LAST_KEY = "coder.agents.collapsed";
 
 async function boot(fake: FakeCoder) {
   const shell = await mount(<div />);
@@ -59,27 +60,40 @@ afterEach(() => {
   restoreMatchMedia?.();
   restoreMatchMedia = null;
   try {
-    window.localStorage?.removeItem(COLLAPSED_KEY);
+    window.localStorage?.removeItem(LAST_KEY);
   } catch {
     // jsdom not installed yet
   }
 });
 
 describe("wide agents panel collapse (#645)", () => {
-  it("hides the panel on click and restores it from the rail", async () => {
+  it("starts collapsed and restores from the rail", async () => {
     const m = await boot(createFakeCoder());
     try {
+      assert.equal(
+        m.query('[data-layout="app"]')?.getAttribute("data-agents-collapsed"),
+        "true",
+        "product default is a closed agents panel",
+      );
+      const expand = m.query("[data-agents-expand]");
+      assert.ok(expand, "collapsed rail must offer Show agents");
+      assert.equal(expand.tagName, "BUTTON");
+      assert.equal(expand.getAttribute("aria-expanded"), "false");
+      assert.ok(
+        !m.query('[data-panel-tab="pulse"]'),
+        "Agents tabs stay hidden while collapsed",
+      );
+
+      await m.click(expand);
       const collapse = m.query("[data-agents-collapse]");
       assert.ok(collapse, "wide layout must offer a Hide agents control");
-      assert.equal(collapse.tagName, "BUTTON");
       assert.equal(collapse.getAttribute("aria-expanded"), "true");
       assert.ok(
         m.query('[data-panel-tab="pulse"]'),
-        "Agents tabs must be visible while expanded",
+        "expand must bring the Agents tabs back",
       );
 
       await m.click(collapse);
-
       assert.ok(
         !m.query('[data-panel-tab="pulse"]'),
         "collapsing must hide the Agents tabs",
@@ -89,51 +103,34 @@ describe("wide agents panel collapse (#645)", () => {
         "true",
         "app root records the collapsed rail",
       );
-      const expand = m.query("[data-agents-expand]");
-      assert.ok(expand, "collapsed rail must offer Show agents");
-      assert.equal(expand.tagName, "BUTTON");
-      assert.equal(expand.getAttribute("aria-expanded"), "false");
-
-      await m.click(expand);
-      assert.ok(
-        m.query('[data-panel-tab="pulse"]'),
-        "expand must bring the Agents tabs back",
-      );
-      assert.ok(
-        !m.query("[data-agents-expand]"),
-        "expand control leaves once the panel is open",
-      );
+      assert.ok(m.query("[data-agents-expand]"));
     } finally {
       m.unmount();
     }
   });
 
-  it("persists collapsed across remount", async () => {
-    const fake = createFakeCoder();
+  it("settings default open remounts open", async () => {
+    const fake = createFakeCoder({
+      settings: { agentsPanelDefault: "open" },
+    });
     const first = await boot(fake);
     try {
-      const collapse = first.query("[data-agents-collapse]");
-      assert.ok(collapse);
-      await first.click(collapse);
-      assert.equal(window.localStorage.getItem(COLLAPSED_KEY), "1");
+      assert.ok(
+        first.query("[data-agents-collapse]"),
+        "open default must show Hide agents",
+      );
+      assert.ok(first.query('[data-panel-tab="pulse"]'));
     } finally {
       first.unmount();
     }
 
     const second = await boot(fake);
     try {
-      assert.equal(
-        second
-          .query('[data-layout="app"]')
-          ?.getAttribute("data-agents-collapsed"),
-        "true",
-        "a later mount must restore the stored collapse",
-      );
       assert.ok(
-        !second.query('[data-panel-tab="pulse"]'),
-        "restored collapse must not show Agents tabs",
+        second.query("[data-agents-collapse]"),
+        "a later mount must honor settings.agentsPanelDefault=open",
       );
-      assert.ok(second.query("[data-agents-expand]"));
+      assert.ok(second.query('[data-panel-tab="pulse"]'));
     } finally {
       second.unmount();
     }
@@ -149,16 +146,135 @@ describe("wide agents panel collapse (#645)", () => {
       });
       await inAct(() => dispatchModPeriod());
       await m.flush();
-      assert.equal(
-        m.query('[data-layout="app"]')?.getAttribute("data-agents-collapsed"),
-        "true",
-        "⌘. must collapse even from the composer",
+      assert.ok(
+        m.query('[data-panel-tab="pulse"]'),
+        "⌘. must expand the closed default even from the composer",
       );
       await inAct(() => dispatchModPeriod());
       await m.flush();
+      assert.equal(
+        m.query('[data-layout="app"]')?.getAttribute("data-agents-collapsed"),
+        "true",
+        "second ⌘. must collapse again",
+      );
+    } finally {
+      m.unmount();
+    }
+  });
+
+  it("Settings → Agents panel Open applies immediately", async () => {
+    const fake = createFakeCoder();
+    const m = await boot(fake);
+    try {
+      assert.ok(m.query("[data-agents-expand]"), "starts closed");
+      const settingsBtn = m.byText("Settings");
+      assert.ok(settingsBtn, "sidebar must offer Settings");
+      await m.click(settingsBtn);
+      await m.flush();
+      const select = m.query("[data-agents-panel-default]") as HTMLSelectElement;
+      assert.ok(select, "General pane must offer the agents-panel default");
+      await m.change(select, "open");
+      await m.flush();
       assert.ok(
-        m.query('[data-panel-tab="pulse"]'),
-        "second ⌘. must expand again",
+        m.query("[data-agents-collapse]"),
+        "saving Open must expand the panel now",
+      );
+      assert.ok(m.query('[data-panel-tab="pulse"]'));
+      assert.equal(
+        fake.api.settings && (await fake.api.settings.get()).agentsPanelDefault,
+        "open",
+      );
+    } finally {
+      m.unmount();
+    }
+  });
+
+  it("⌘. does not survive remount when remember-last is off", async () => {
+    const fake = createFakeCoder();
+    const first = await boot(fake);
+    try {
+      await inAct(() => dispatchModPeriod());
+      await first.flush();
+      assert.ok(
+        first.query("[data-agents-collapse]"),
+        "session toggle still opens the panel",
+      );
+    } finally {
+      first.unmount();
+    }
+
+    const second = await boot(fake);
+    try {
+      assert.ok(
+        second.query("[data-agents-expand]"),
+        "next launch must use Closed default, not the session toggle",
+      );
+    } finally {
+      second.unmount();
+    }
+  });
+
+  it("remember-last with no stored state uses the Closed/Open default", async () => {
+    const fake = createFakeCoder({
+      settings: {
+        agentsPanelDefault: "open",
+        agentsPanelRememberLast: true,
+      },
+    });
+    const m = await boot(fake);
+    try {
+      assert.ok(
+        m.query("[data-agents-collapse]"),
+        "no last state → Open default",
+      );
+      assert.ok(m.query('[data-panel-tab="pulse"]'));
+    } finally {
+      m.unmount();
+    }
+  });
+
+  it("remember-last persists the ⌘. toggle across remount", async () => {
+    const fake = createFakeCoder({
+      settings: {
+        agentsPanelDefault: "closed",
+        agentsPanelRememberLast: true,
+      },
+    });
+    const first = await boot(fake);
+    try {
+      assert.ok(first.query("[data-agents-expand]"), "starts from Closed");
+      await inAct(() => dispatchModPeriod());
+      await first.flush();
+      assert.ok(first.query("[data-agents-collapse]"), "⌘. opens it");
+    } finally {
+      first.unmount();
+    }
+
+    const second = await boot(fake);
+    try {
+      assert.ok(
+        second.query("[data-agents-collapse]"),
+        "remember-last must restore the open toggle on the next launch",
+      );
+      assert.ok(second.query('[data-panel-tab="pulse"]'));
+    } finally {
+      second.unmount();
+    }
+  });
+
+  it("remember-last ignores a leftover last state when the option is off", async () => {
+    window.localStorage.setItem(LAST_KEY, "0");
+    const fake = createFakeCoder({
+      settings: {
+        agentsPanelDefault: "closed",
+        agentsPanelRememberLast: false,
+      },
+    });
+    const m = await boot(fake);
+    try {
+      assert.ok(
+        m.query("[data-agents-expand]"),
+        "off + leftover open key must still launch closed",
       );
     } finally {
       m.unmount();

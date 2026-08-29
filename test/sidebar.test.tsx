@@ -1593,20 +1593,23 @@ describe("Sidebar status label + wait row", () => {
       ...over,
     });
 
-  it("status is a text label, not a dot", async () => {
+  it("status is a text label; live threads also get a title pulse", async () => {
     await clearSidebarStorage();
     const m = await mount(sidebar(THREADS, { projects: [p1, p2] }));
-    assert.equal(
-      m.query("[data-status-dot]"),
-      null,
-      "status dots are gone",
-    );
     const working = m.query('[data-thread-card="busy"] [data-status-label]');
     assert.ok(working);
     assert.match(working!.textContent || "", /^Working\b/);
+    const pulse = m.query('[data-thread-card="busy"] [data-status-dot]');
+    assert.ok(pulse, "working card keeps a title-adjacent pulse");
+    assert.equal(pulse!.getAttribute("data-status-dot"), "working");
     const failed = m.query('[data-thread-card="broken"] [data-status-label]');
     assert.ok(failed);
     assert.match(failed!.textContent || "", /^Failed$/);
+    assert.equal(
+      m.query('[data-thread-card="broken"] [data-status-dot]'),
+      null,
+      "failed stays text-only",
+    );
     m.unmount();
   });
 

@@ -327,6 +327,10 @@ describe("pickImport / local preview", () => {
       byName.worker.providers.find((p) => p.id === "claude").supported,
       true,
     );
+    assert.equal(
+      byName.worker.providers.find((p) => p.id === "cursor").supported,
+      true,
+    );
 
     const grokNoCwd = byName["no-cwd"].providers.find((p) => p.id === "grok");
     assert.equal(grokNoCwd.supported, true);

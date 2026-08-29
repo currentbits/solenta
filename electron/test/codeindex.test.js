@@ -229,6 +229,31 @@ describe("codeindex", () => {
     assert.equal(index.files[0].path, "a.js");
   });
 
+  it("maybeRefreshIndex skips the debounce when the default branch moves", async () => {
+    const repo = path.join(tmp, "main-move");
+    const userDataPath = path.join(tmp, "ud-main-move");
+    initRepo(repo);
+    git(repo, ["checkout", "-B", "main"]);
+    write(repo, "keep.js", "function keep() {}\n");
+    git(repo, ["add", "."]);
+    git(repo, ["commit", "-qm", "init"]);
+    const first = await maybeRefreshIndex({ userDataPath, repoRoot: repo });
+    assert.ok(first);
+    assert.ok(first.headSha);
+
+    write(repo, "skipped.js", "function skipped() {}\n");
+    git(repo, ["add", "."]);
+    // Not committed: default-branch SHA is unchanged, debounce must hold.
+    const held = await maybeRefreshIndex({ userDataPath, repoRoot: repo });
+    assert.equal(row(held, "skipped.js"), undefined);
+
+    git(repo, ["commit", "-qm", "move main"]);
+    const second = await maybeRefreshIndex({ userDataPath, repoRoot: repo });
+    assert.ok(second);
+    assert.notEqual(second.headSha, first.headSha);
+    assert.ok(row(second, "skipped.js"));
+  });
+
   it("refreshIndex returns null for a non-git directory and does not throw", async () => {
     const dir = path.join(tmp, "not-git");
     fs.mkdirSync(dir);

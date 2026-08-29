@@ -463,6 +463,12 @@ function validateQuotaFailover(raw) {
  * theme: absent/junk → "dark" (the app was dark-only; upgrades must not
  * flip to light because the OS is light). "system" | "light" | "dark".
  *
+ * agentsPanelDefault: absent/junk → "closed" (issue #767). The right
+ * sidebar starts collapsed unless the user picks "open".
+ *
+ * agentsPanelRememberLast: only an explicit true opts in (issue #769),
+ * so absent/junk keeps last ⌘./rail toggle ephemeral.
+ *
  * quotaWaitAutoResume: only an explicit false turns auto-resume off, so
  * absent/junk keeps Claude's default (continue when the usage limit resets).
  *
@@ -498,6 +504,8 @@ function normalizeSettings(raw) {
     feltEstimatePrompt: false,
     uiScale: UI_SCALE_DEFAULT,
     theme: "dark",
+    agentsPanelDefault: "closed",
+    agentsPanelRememberLast: false,
     stayAwake: "agent",
     quotaWaitAutoResume: true,
     prDiffCapLines: DEFAULT_PR_DIFF_CAP_LINES,
@@ -605,6 +613,20 @@ function normalizeSettings(raw) {
   const theme = /** @type {{ theme?: unknown }} */ (obj).theme;
   settings.theme =
     theme === "system" || theme === "light" || theme === "dark" ? theme : "dark";
+  // agentsPanelDefault (#767): absent/junk heals to "closed" so the right
+  // sidebar starts collapsed unless the user opted into open.
+  const agentsPanelDefault = /** @type {{ agentsPanelDefault?: unknown }} */ (
+    obj
+  ).agentsPanelDefault;
+  settings.agentsPanelDefault =
+    agentsPanelDefault === "open" || agentsPanelDefault === "closed"
+      ? agentsPanelDefault
+      : "closed";
+  // agentsPanelRememberLast (#769): only an explicit true opts in so the
+  // product default stays ephemeral session toggles + Closed/Open fallback.
+  settings.agentsPanelRememberLast =
+    /** @type {{ agentsPanelRememberLast?: unknown }} */ (obj)
+      .agentsPanelRememberLast === true;
   // stayAwake (#364): absent/junk heals to "agent" — the safe default keeps
   // the machine awake during runs without pinning it awake while idle.
   const stayAwake = /** @type {{ stayAwake?: unknown }} */ (obj).stayAwake;
@@ -2729,6 +2751,8 @@ class Store {
       feltEstimatePrompt: n.feltEstimatePrompt,
       uiScale: n.uiScale,
       theme: n.theme,
+      agentsPanelDefault: n.agentsPanelDefault,
+      agentsPanelRememberLast: n.agentsPanelRememberLast,
       stayAwake: n.stayAwake,
       quotaWaitAutoResume: n.quotaWaitAutoResume,
       prDiffCapLines: n.prDiffCapLines,
@@ -2951,6 +2975,20 @@ class Store {
         throw new Error('theme must be "system", "light", or "dark"');
       }
       this.data.settings.theme = v;
+    }
+    if (Object.prototype.hasOwnProperty.call(patch, "agentsPanelDefault")) {
+      const v = patch.agentsPanelDefault;
+      if (v !== "closed" && v !== "open") {
+        throw new Error('agentsPanelDefault must be "closed" or "open"');
+      }
+      this.data.settings.agentsPanelDefault = v;
+    }
+    if (Object.prototype.hasOwnProperty.call(patch, "agentsPanelRememberLast")) {
+      const v = patch.agentsPanelRememberLast;
+      if (typeof v !== "boolean") {
+        throw new Error("agentsPanelRememberLast must be a boolean");
+      }
+      this.data.settings.agentsPanelRememberLast = v;
     }
     if (Object.prototype.hasOwnProperty.call(patch, "stayAwake")) {
       const v = patch.stayAwake;

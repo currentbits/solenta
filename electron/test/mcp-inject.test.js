@@ -19,6 +19,7 @@ const {
   mergeGrokSpawnEnv,
   ensureKimiMcpConfig,
   ensureGrokMcpConfig,
+  ensureCursorMcpConfig,
   registerMcpServer,
   resetMemorySupForTests,
   syncUserMcpServers,
@@ -54,12 +55,16 @@ describe("syncUserMcpServers remote + stdio injection", () => {
     tmp = fs.mkdtempSync(path.join(os.tmpdir(), "coder-mcp-inject-"));
     prevEnv = {
       CODER_KIMI_MCP_PATH: process.env.CODER_KIMI_MCP_PATH,
+      CODER_CURSOR_MCP_PATH: process.env.CODER_CURSOR_MCP_PATH,
+      CODER_CURSOR_MCP_DISABLE: process.env.CODER_CURSOR_MCP_DISABLE,
       CODER_GROK_MCP_DISABLE: process.env.CODER_GROK_MCP_DISABLE,
       CODER_GROK_BIN: process.env.CODER_GROK_BIN,
       CODER_GROK_CONFIG_PATH: process.env.CODER_GROK_CONFIG_PATH,
       CODER_FAKE_GROK_MCP_ARGV_FILE: process.env.CODER_FAKE_GROK_MCP_ARGV_FILE,
     };
     process.env.CODER_KIMI_MCP_PATH = path.join(tmp, "kimi-mcp.json");
+    process.env.CODER_CURSOR_MCP_PATH = path.join(tmp, "cursor-mcp.json");
+    delete process.env.CODER_CURSOR_MCP_DISABLE;
     process.env.CODER_GROK_CONFIG_PATH = path.join(tmp, "grok-config.toml");
     process.env.CODER_GROK_MCP_DISABLE = "1";
     mcpArgvFile = path.join(tmp, "grok-argv.jsonl");
@@ -346,6 +351,32 @@ process.exit(0);
     assert.equal(ok, true);
     const doc = JSON.parse(
       fs.readFileSync(process.env.CODER_KIMI_MCP_PATH, "utf8"),
+    );
+    assert.deepEqual(doc.mcpServers["team-tools"], {
+      type: "http",
+      url: "https://tools.example.com/mcp",
+      headers: {
+        Authorization: "Bearer remote-tok",
+        "X-Api-Key": "hdr",
+      },
+    });
+    assert.deepEqual(doc.mcpServers["local-tools"], {
+      type: "stdio",
+      command: "/usr/bin/mcp-server",
+      args: ["--stdio", 'quoted"val'],
+      env: { GITHUB_TOKEN: "ghp-secret" },
+    });
+  });
+
+  it("writes Cursor HTTP as today plus an equivalent stdio entry", () => {
+    syncUserMcpServers(remoteAndStdio(), { userDataPath: tmp });
+    const ok = ensureCursorMcpConfig({
+      log: () => {},
+      isCursorAvailable: () => true,
+    });
+    assert.equal(ok, true);
+    const doc = JSON.parse(
+      fs.readFileSync(process.env.CODER_CURSOR_MCP_PATH, "utf8"),
     );
     assert.deepEqual(doc.mcpServers["team-tools"], {
       type: "http",

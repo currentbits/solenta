@@ -94,6 +94,24 @@ describe("threads:create with worktree", () => {
     });
     assert.equal(thread.worktreePath, null);
     assert.equal(thread.branch, null);
+    assert.equal(thread.baseBranch, null);
+  });
+
+  it("records baseBranch on create and leaves it unset when omitted (#187)", async () => {
+    const stacked = await IPC_HANDLERS["threads:create"](ctx, {
+      projectId: project.id,
+      title: "API",
+      worktree: true,
+      baseBranch: "stacked-base",
+    });
+    assert.equal(stacked.baseBranch, "stacked-base");
+    assert.equal(store.getThread(stacked.id).baseBranch, "stacked-base");
+
+    const plain = await IPC_HANDLERS["threads:create"](ctx, {
+      projectId: project.id,
+      title: "Plain",
+    });
+    assert.equal(plain.baseBranch, null);
   });
 
   it("rolls the thread back when worktreeBase is not configured", async () => {

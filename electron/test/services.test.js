@@ -235,6 +235,7 @@ describe("services", () => {
     assert.equal(thread.title, "New Thread");
     assert.equal(thread.status, "idle");
     assert.equal(thread.branch, null);
+    assert.equal(thread.baseBranch, null);
     assert.equal(thread.prNumber, null);
     assert.equal(thread.prUrl, null);
     assert.equal(thread.provider, "claude");
@@ -253,6 +254,34 @@ describe("services", () => {
     const listed = services.listThreads(store);
     assert.equal(listed.length, 1);
     assert.equal(listed[0].id, thread.id);
+  });
+
+  it("createThread records baseBranch (#187)", async () => {
+    const project = await services.addProject(
+      store,
+      (() => {
+        const repo = path.join(tmpDir, "base-repo");
+        fs.mkdirSync(repo);
+        git(repo, ["init"]);
+        return repo;
+      })(),
+    );
+    const stacked = services.createThread(store, {
+      projectId: project.id,
+      title: "API",
+      baseBranch: "stacked-base",
+    });
+    assert.equal(stacked.baseBranch, "stacked-base");
+    assert.equal(store.getThread(stacked.id).baseBranch, "stacked-base");
+    assert.throws(
+      () =>
+        services.createThread(store, {
+          projectId: project.id,
+          title: "Bad",
+          baseBranch: "not a branch",
+        }),
+      /Invalid base branch/,
+    );
   });
 
   it("setPermissionMode validates and updates", async () => {

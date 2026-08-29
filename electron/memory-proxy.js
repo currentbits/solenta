@@ -485,6 +485,23 @@ function createMemoryProxy(opts) {
      * }} input
      * @returns {Promise<unknown>}
      */
+    /**
+     * Overwrite the regenerated codebase wiki for a project.
+     * @param {{ project: string, wiki: object }} input
+     * @returns {Promise<{ project: string, updated_at?: string }>}
+     */
+    async putWiki(input) {
+      const raw = await request("PUT", "/api/wiki", {
+        project: input && input.project,
+        wiki: input && input.wiki,
+      });
+      const o = raw && typeof raw === "object" ? raw : {};
+      return {
+        project: typeof o.project === "string" ? o.project : "",
+        updated_at: typeof o.updated_at === "string" ? o.updated_at : "",
+      };
+    },
+
     async session(input) {
       const payload = {
         sessionId: input && input.sessionId,

@@ -263,4 +263,20 @@ describe('memory core', () => {
     const hits = await memory.search({ query: 'redis cache' })
     assert.equal(hits[0].id, warm.id)
   })
+
+  it('setWiki is distinct from entries and rides on bootstrap', () => {
+    const wiki = {
+      fileCount: 3,
+      symbolCount: 8,
+      modules: [{ name: 'src', fileCount: 3, symbolCount: 8, hot: [] }],
+      dependencies: ['react'],
+    }
+    const put = memory.setWiki({ project: 'solenta', wiki })
+    assert.equal(put.project, 'solenta')
+    const boot = memory.bootstrap({ project: 'solenta' })
+    assert.deepEqual(boot.wiki.modules, wiki.modules)
+    assert.match(boot.protocol.join('\n'), /regenerated when main moves/)
+    assert.equal(memory.bootstrap({ project: 'other' }).wiki, null)
+    assert.throws(() => memory.setWiki({ wiki }), /project is required/)
+  })
 })

@@ -373,6 +373,13 @@ export interface ThreadInfo {
   projectId: string;
   title: string;
   branch: string | null;
+  /**
+   * Recorded merge/PR base (#187). Null/absent = repo default
+   * (`origin/HEAD` → `main`). Set at thread create or via
+   * `threads.setBaseBranch` so stacked threads (schema → API → UI)
+   * land on that branch instead of main. Locked after the first PR.
+   */
+  baseBranch?: string | null;
   prNumber: number | null;
   /** Set alongside prNumber so the badge can link out without calling gh. */
   prUrl: string | null;
@@ -1061,7 +1068,8 @@ export interface SessionUsage {
    * jumps (issue #317). Claude still requires the cache keys. Grok and cursor
    * sum the fields they do report (#704). Cursor live CLI uses camelCase
    * cacheReadTokens/cacheWriteTokens (#703). Absent when the provider reports
-   * too little to measure it (kimi) — the ring hides rather than guess.
+   * too little to measure it. Kimi usage.record four-bucket fills it (#696);
+   * billable in/out alone still hides.
    */
   contextTokens?: number;
   /**
@@ -1961,11 +1969,6 @@ export interface ProviderInfo {
    */
   efforts: ReasoningEffort[];
   /**
-   * One-line note when a local CLI cache lists different ids than `models`.
-   * Absent when we did not probe, the cache is missing, or the lists match.
-   */
-  catalogNote?: string;
-  /**
    * True when the CLI accepts a live web-search flag (`codex exec --search`).
    * The composer hides the Search pill when this is missing or false.
    */
@@ -2155,6 +2158,20 @@ export interface AppSettings {
    * upgrades of the previously-dark-only app do not flip overnight.
    */
   theme: "system" | "light" | "dark";
+  /**
+   * How the agents (right) sidebar starts (issue #767). "closed" hides it
+   * to a rail; "open" shows Pulse/Memory. Absent/junk heals to "closed".
+   * ⌘. still toggles for the session; this value is the next-launch default
+   * unless agentsPanelRememberLast is on and a last toggle exists.
+   */
+  agentsPanelDefault: "closed" | "open";
+  /**
+   * Persist the last ⌘./rail agents-panel toggle across launches (issue
+   * #769). Off by default so the Closed/Open default stays the launch
+   * source. Absent/junk heals to false. When on and no last state exists,
+   * agentsPanelDefault is the fallback.
+   */
+  agentsPanelRememberLast: boolean;
   /**
    * Stay-awake control (issue #364, item 5). "agent" (the default) holds a
    * powerSaveBlocker only while a thread is working; "on" holds it always;
@@ -2699,6 +2716,36 @@ export type MemoryCitation =
   | { kind: "thread"; id: string }
   | { kind: "commit"; sha: string };
 
+/** Hottest file inside a wiki module (issue #268). */
+export interface ProjectCodeMapHotFile {
+  path: string;
+  symbols: string[];
+  rank: number;
+}
+
+/** One top-level (or packages/*) module in the regenerated repo wiki. */
+export interface ProjectCodeMapModule {
+  name: string;
+  fileCount: number;
+  symbolCount: number;
+  hot: ProjectCodeMapHotFile[];
+}
+
+/**
+ * Regenerated per-project code wiki (issue #268). Describes the repo, not
+ * agent learnings. Built from the shared code index + manifests.
+ */
+export interface ProjectCodeMap {
+  projectId: string;
+  updatedAt: number;
+  fileCount: number;
+  symbolCount: number;
+  headSha: string;
+  defaultBranch: string;
+  modules: ProjectCodeMapModule[];
+  dependencies: string[];
+}
+
 /** A shared-memory entry as surfaced to the UI (excerpt form unless fetched). */
 export interface MemoryEntryInfo {
   id: string;
@@ -3042,6 +3089,8 @@ export interface CoderApi {
      * prompt.
      */
     remove(input: { projectId: string }): Promise<void>;
+    /** Regenerated repo wiki for the Memory-tab map (issue #268). */
+    codeMap(input: { projectId: string }): Promise<ProjectCodeMap>;
     /** Six-axis lint of AGENTS.md / CLAUDE.md vs shared memory (#412). */
     lintAgentConfig(input: { projectId: string }): Promise<AgentConfigDoctorReport>;
     /** Preview generated agent-instruction files (does not write). */
@@ -3113,6 +3162,11 @@ export interface CoderApi {
       ask?: boolean;
       /** Planboard issue this thread was started from (issue #420). */
       issueNumber?: number | null;
+      /**
+       * Optional merge/PR base (#187). Omitted/empty = repo default.
+       * Honoured by setupWorktree, mergeWorktree (no intoPath), and createPr.
+       */
+      baseBranch?: string | null;
     }): Promise<ThreadInfo>;
     get(id: string): Promise<ThreadDetail>;
     /**
@@ -3222,6 +3276,15 @@ export interface CoderApi {
      * THREAD_NOTES_MAX, empty string clears. Never bumps updatedAt.
      */
     setNotes(input: { threadId: string; notes: string }): Promise<ThreadInfo>;
+    /**
+     * Change the recorded merge/PR base after create (#187). Empty/null
+     * clears to the repo default. Must be a local branch. Refused after
+     * the first pull request. Never bumps updatedAt.
+     */
+    setBaseBranch(input: {
+      threadId: string;
+      baseBranch?: string | null;
+    }): Promise<ThreadInfo>;
     /**
      * Record the one-tap felt estimate for a finished thread (issue #401).
      * savedMs is a non-negative duration (clamped to FELT_ESTIMATE_MAX_MS);
@@ -3537,6 +3600,13 @@ export interface CoderApi {
   };
   git: {
     status(projectId: string): Promise<GitStatus>;
+    /**
+     * Local branch names for the base-branch picker (#187), repo default first.
+     */
+    listBranches(input: { projectId: string }): Promise<{
+      defaultBranch: string;
+      branches: string[];
+    }>;
     // See PrInfo below for the shape createPr/prStatus return.
     /** Creates a git worktree + branch for the thread; later runs execute in it. */
     setupWorktree(input: { threadId: string }): Promise<ThreadInfo>;
@@ -3580,10 +3650,12 @@ export interface CoderApi {
      */
     suggestCommitMessage(input: { threadId: string }): Promise<{ message: string }>;
     /**
-     * Squash-merges the thread's worktree branch into the project's default
-     * branch (committing any uncommitted worktree changes first), then removes
-     * the worktree and branch. Rejects with a descriptive Error on conflicts
-     * or a dirty project checkout; nothing is force-removed on failure.
+     * Squash-merges the thread's worktree branch into the recorded base
+     * (`ThreadInfo.baseBranch`) or the repo default (`origin/HEAD` → `main`)
+     * when unset. Commits any uncommitted worktree changes first, then
+     * removes the worktree and branch. Rejects with a descriptive Error on
+     * conflicts or a dirty project checkout; nothing is force-removed on
+     * failure.
      * Pass `paths` to auto-commit only those files; leftover dirty files
      * refuse the merge so the worktree is not deleted with uncommitted work.
      */
@@ -3616,8 +3688,9 @@ export interface CoderApi {
      */
     push(input: { threadId: string }): Promise<{ remote: string; branch: string }>;
     /**
-     * Pushes the thread's branch, then opens a GitHub PR against the project's
-     * default branch via the gh CLI, and records prNumber/prUrl on the thread.
+     * Pushes the thread's branch, then opens a GitHub PR against the
+     * recorded base (`ThreadInfo.baseBranch`) or the repo default via the
+     * gh CLI, and records prNumber/prUrl on the thread.
      *
      * Idempotent: when a PR already exists for the branch it is returned as-is
      * (created: false) rather than erroring. Rejects with a plain-language

@@ -45,6 +45,7 @@ import type {
   AgentConfigDoctorReport,
   AgentConfigPreview,
   AgentConfigWriteResult,
+  ProjectCodeMap,
   AgentProfile,
   McpCatalogEntry,
   McpImportPreview,
@@ -1652,6 +1653,8 @@ function buildDevCoder(): CoderApi {
   let feltEstimatePrompt = false;
   let uiScale = 1;
   let theme: AppSettings["theme"] = "dark";
+  let agentsPanelDefault: AppSettings["agentsPanelDefault"] = "closed";
+  let agentsPanelRememberLast = false;
   let stayAwake: AppSettings["stayAwake"] = "agent";
   let quotaWaitAutoResume = true;
   let otel: OtelSettings = { endpoint: null, headers: {}, claudeMetrics: false };
@@ -1998,6 +2001,7 @@ function buildDevCoder(): CoderApi {
       id: id("thread"),
       projectId: "",
       branch: null,
+      baseBranch: null,
       prNumber: null,
       prUrl: null,
       status: "idle",
@@ -2464,6 +2468,8 @@ function buildDevCoder(): CoderApi {
           feltEstimatePrompt,
           uiScale,
           theme,
+          agentsPanelDefault,
+          agentsPanelRememberLast,
           stayAwake,
           quotaWaitAutoResume,
           agentProfiles: agentProfiles.map((p) => ({ ...p })),
@@ -2588,6 +2594,19 @@ function buildDevCoder(): CoderApi {
           }
           theme = v;
         }
+        if (Object.prototype.hasOwnProperty.call(patch, "agentsPanelDefault")) {
+          const v = patch.agentsPanelDefault;
+          if (v !== "closed" && v !== "open") {
+            throw new Error('agentsPanelDefault must be "closed" or "open"');
+          }
+          agentsPanelDefault = v;
+        }
+        if (Object.prototype.hasOwnProperty.call(patch, "agentsPanelRememberLast")) {
+          if (typeof patch.agentsPanelRememberLast !== "boolean") {
+            throw new Error("agentsPanelRememberLast must be a boolean");
+          }
+          agentsPanelRememberLast = patch.agentsPanelRememberLast;
+        }
         if (Object.prototype.hasOwnProperty.call(patch, "stayAwake")) {
           const v = patch.stayAwake;
           if (v !== "agent" && v !== "on" && v !== "off") {
@@ -2701,6 +2720,8 @@ function buildDevCoder(): CoderApi {
           feltEstimatePrompt,
           uiScale,
           theme,
+          agentsPanelDefault,
+          agentsPanelRememberLast,
           stayAwake,
           quotaWaitAutoResume,
           agentProfiles: agentProfiles.map((p) => ({ ...p })),
@@ -3389,6 +3410,38 @@ function buildDevCoder(): CoderApi {
         projects = projects.filter((p) => p.id !== projectId);
         emitThreads();
       },
+      async codeMap(input: { projectId: string }): Promise<ProjectCodeMap> {
+        const project = projects.find((p) => p.id === input.projectId);
+        if (!project) throw new Error(`Unknown project: ${input.projectId}`);
+        return {
+          projectId: project.id,
+          updatedAt: Date.now() - 5 * 60_000,
+          fileCount: 42,
+          symbolCount: 180,
+          headSha: "abc1234deadbeef",
+          defaultBranch: "main",
+          modules: [
+            {
+              name: "src",
+              fileCount: 20,
+              symbolCount: 90,
+              hot: [
+                { path: "src/App.tsx", symbols: ["App"], rank: 12 },
+                { path: "src/useCoder.ts", symbols: ["useCoder"], rank: 10 },
+              ],
+            },
+            {
+              name: "electron",
+              fileCount: 22,
+              symbolCount: 90,
+              hot: [
+                { path: "electron/runner.js", symbols: ["createRunner"], rank: 20 },
+              ],
+            },
+          ],
+          dependencies: ["react", "electron"],
+        };
+      },
       async lintAgentConfig(input: {
         projectId: string;
       }): Promise<AgentConfigDoctorReport> {
@@ -3574,6 +3627,7 @@ function buildDevCoder(): CoderApi {
         const t = newThread({
           projectId: input.projectId,
           title: input.title || "New Thread",
+          baseBranch: input.baseBranch?.trim() || null,
           // Lazy worktree: only the intent is recorded, the fake worktree
           // materializes at first run. An orchestrator holds neither — its
           // worker does.
@@ -3761,6 +3815,16 @@ function buildDevCoder(): CoderApi {
       async setNotes(input: { threadId: string; notes: string }) {
         return patchThread(input.threadId, {
           notes: String(input.notes ?? "").trim().slice(0, 2000),
+        });
+      },
+      async setBaseBranch(input: {
+        threadId: string;
+        baseBranch?: string | null;
+      }) {
+        return patchThread(input.threadId, {
+          baseBranch: input.baseBranch
+            ? String(input.baseBranch).trim() || null
+            : null,
         });
       },
       async resolveSuggestion(input: {
@@ -4789,6 +4853,9 @@ function buildDevCoder(): CoderApi {
           branch: "main",
           dirty: false,
         };
+      },
+      async listBranches(_input) {
+        return { defaultBranch: "main", branches: ["main"] };
       },
       async push(input) {
         const detail = details.get(input.threadId);

@@ -7,6 +7,7 @@ const path = require("node:path");
 const services = require("./services.js");
 const {
   setupWorktree,
+  listBranches,
   diff,
   commit,
   revertFile,
@@ -385,6 +386,11 @@ const IPC_HANDLERS = {
     });
     ctx.broadcast("threads:changed", services.listThreads(ctx.store));
   },
+  "projects:codeMap": async (ctx, input) => {
+    return services.readProjectCodeMap(ctx.store, input || {}, {
+      userDataPath: ctx.userDataPath,
+    });
+  },
   "projects:lintAgentConfig": async (ctx, input) => {
     return services.lintAgentConfig(ctx.store, input || {}, {
       memory: ctx.memory,
@@ -627,6 +633,11 @@ const IPC_HANDLERS = {
   },
   "threads:setNotes": async (ctx, input) => {
     const updated = services.setNotes(ctx.store, input);
+    ctx.broadcast("threads:changed", services.listThreads(ctx.store));
+    return updated;
+  },
+  "threads:setBaseBranch": async (ctx, input) => {
+    const updated = services.setBaseBranch(ctx.store, input);
     ctx.broadcast("threads:changed", services.listThreads(ctx.store));
     return updated;
   },
@@ -1171,6 +1182,14 @@ const IPC_HANDLERS = {
       return { isRepo: false, branch: "", dirty: false };
     }
     return services.gitStatus(project);
+  },
+  "git:listBranches": async (ctx, input) => {
+    const projectId = input && input.projectId;
+    const project = projectId ? ctx.store.getProject(projectId) : null;
+    if (!project || !project.path) {
+      return { defaultBranch: "main", branches: [] };
+    }
+    return listBranches(project.path);
   },
   "git:setupWorktree": async (ctx, input) => {
     if (!ctx.worktreeBase) {

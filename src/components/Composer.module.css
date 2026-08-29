@@ -431,15 +431,19 @@
   display: none;
 }
 
-/* Two-pane model picker floating above the composer */
+/* Two-pane model picker floating above the composer.
+   Height is pinned so OpenCode's longer, varying descriptions cannot
+   grow the bottom-anchored menu and jump the composer (#762). */
 .modelPopover {
   position: absolute;
   bottom: calc(100% + 8px);
   left: 0;
   z-index: 30;
   display: flex;
+  align-items: stretch;
   min-width: 420px;
   max-width: min(520px, 92vw);
+  height: min(280px, calc(100vh - 140px));
   margin: 0;
   padding: 0;
   border-radius: 12px;
@@ -525,17 +529,22 @@
 .modelPopoverLeft {
   flex: 1 1 48%;
   min-width: 0;
+  min-height: 0;
   padding: 10px 8px 10px 10px;
   border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
 }
 
 .modelPopoverRight {
   flex: 1 1 52%;
   min-width: 0;
+  min-height: 0;
   padding: 14px 14px 12px;
   display: flex;
   flex-direction: column;
   gap: 4px;
+  overflow: hidden;
 }
 
 /* Keyed remount per highlighted row: the fade marks the pane following the
@@ -546,6 +555,7 @@
   gap: 4px;
   flex: 1 1 auto;
   min-height: 0;
+  overflow-y: auto;
   animation: detailIn 120ms ease-out;
 }
 
@@ -593,8 +603,11 @@
   margin: 0;
   padding: 0;
   list-style: none;
+  flex: 1 1 auto;
+  min-height: 0;
   max-height: 240px;
   overflow-y: auto;
+  overflow-anchor: none;
   outline: none;
 }
 
@@ -955,6 +968,34 @@
 
 .modelBackHeader:hover {
   color: var(--text);
+}
+
+/* Filter for one provider's models. Lives only on the drilled-in level:
+   the provider screen is already short. */
+.modelSearch {
+  flex-shrink: 0;
+  width: 100%;
+  box-sizing: border-box;
+  margin: 0 2px 6px;
+  padding: 5px 8px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--overlay-soft);
+  color: var(--text);
+  font-size: 12px;
+  outline: none;
+}
+
+.modelSearch:focus {
+  border-color: var(--blue-border);
+}
+
+.modelSearch::placeholder {
+  color: var(--text-dim);
+}
+
+.modelSearch::-webkit-search-cancel-button {
+  -webkit-appearance: none;
 }
 
 .modelRowChevron {

@@ -34,6 +34,7 @@
  * @property {number} symbolCount
  * @property {number} lineCount
  * @property {IndexedFile[]} files - sorted by rank, descending
+ * @property {string} [headSha] - default-branch SHA when last refreshed (#268)
  */
 
 const crypto = require("node:crypto");
@@ -247,6 +248,9 @@ async function refreshIndex(opts) {
       lineCount += row.lines;
     }
 
+    const { defaultHead } = require("./codewiki.js");
+    const head = await defaultHead(repoRoot);
+
     /** @type {CodeIndex} */
     const index = {
       version: INDEX_VERSION,
@@ -256,6 +260,7 @@ async function refreshIndex(opts) {
       symbolCount,
       lineCount,
       files,
+      headSha: head.sha,
     };
 
     const dest = indexPathFor(userDataPath, repoRoot);
@@ -272,10 +277,11 @@ async function refreshIndex(opts) {
 /**
  * Fire-and-forget refresh for the dispatch path. Debounced per repo to
  * REFRESH_MIN_INTERVAL_MS, never throws, never blocks the caller, and does
- * nothing when CODER_CODEINDEX_DISABLE=1.
+ * nothing when CODER_CODEINDEX_DISABLE=1. A default-branch SHA change
+ * (issue #268) skips the debounce so a merge to main rebuilds the wiki.
  *
  * @param {{ userDataPath: string, repoRoot: string }} opts
- * @returns {void}
+ * @returns {Promise<import('./codeindex.js').CodeIndex | null> | void}
  */
 function maybeRefreshIndex(opts) {
   try {
@@ -287,14 +293,36 @@ function maybeRefreshIndex(opts) {
       slot = { at: 0, pending: null };
       refreshByRepo.set(key, slot);
     }
-    if (slot.pending) return;
-    if (Date.now() - slot.at < REFRESH_MIN_INTERVAL_MS) return;
-    slot.pending = refreshIndex(opts)
+    if (slot.pending) return slot.pending;
+    slot.pending = Promise.resolve()
+      .then(async () => {
+        const due = Date.now() - slot.at >= REFRESH_MIN_INTERVAL_MS;
+        if (!due) {
+          const prev = readIndex(opts.userDataPath, opts.repoRoot);
+          const { defaultHead } = require("./codewiki.js");
+          const head = await defaultHead(opts.repoRoot);
+          const moved = Boolean(
+            head.sha && prev && prev.headSha && head.sha !== prev.headSha,
+          );
+          if (!moved) return prev;
+        }
+        const index = await refreshIndex(opts);
+        if (index) {
+          const { publishWiki } = require("./codewiki.js");
+          await publishWiki({
+            userDataPath: opts.userDataPath,
+            repoRoot: opts.repoRoot,
+            index,
+          });
+        }
+        return index;
+      })
       .catch(() => null)
       .finally(() => {
         slot.at = Date.now();
         slot.pending = null;
       });
+    return slot.pending;
   } catch {
     // dispatch path: never throw
   }

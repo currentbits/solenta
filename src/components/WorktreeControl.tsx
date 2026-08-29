@@ -32,6 +32,10 @@ export interface WorktreeControlProps {
   onStartRun?: (prompt: string, threadId?: string) => void | Promise<void>;
   conflictContext?: (threadId: string) => Promise<ConflictContext>;
   onOpenWorktree?: (() => void) | null;
+  /** Local branches for the post-create stacked-base picker (#187). */
+  listBaseBranches?: () => Promise<{ defaultBranch: string; branches: string[] }>;
+  /** Persist a new merge/PR base, or null to clear to the repo default. */
+  onSetBaseBranch?: (baseBranch: string | null) => Promise<unknown>;
 }
 
 export interface WorktreeChrome {
@@ -103,9 +107,15 @@ export function useWorktreeChrome(
     onStartRun,
     conflictContext,
     onOpenWorktree,
+    listBaseBranches,
+    onSetBaseBranch,
   } = props;
 
   const [gitAction, setGitAction] = useState<GitAction>(null);
+  const [basePicker, setBasePicker] = useState<{
+    defaultBranch: string;
+    branches: string[];
+  } | null>(null);
   const [dirtyMessage, setDirtyMessage] = useState<string | null>(null);
   const [conflictMessage, setConflictMessage] = useState<string | null>(null);
   const [ciWorkflowMessage, setCiWorkflowMessage] = useState<string | null>(
@@ -135,6 +145,7 @@ export function useWorktreeChrome(
     setResolving(false);
     setPendingMergeRetry(false);
     setMenuOpen(false);
+    setBasePicker(null);
     setCopiedPath(false);
     sawWorkingRef.current = false;
   }, [thread?.id]);
@@ -150,13 +161,46 @@ export function useWorktreeChrome(
     const onDown = (e: MouseEvent) => {
       if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
         setMenuOpen(false);
+        setBasePicker(null);
       }
     };
     document.addEventListener("mousedown", onDown);
     return () => document.removeEventListener("mousedown", onDown);
   }, [menuOpen]);
 
-  useEscapeClose(menuOpen, () => setMenuOpen(false));
+  useEscapeClose(menuOpen, () => {
+    setMenuOpen(false);
+    setBasePicker(null);
+  });
+
+  const openBasePicker = async () => {
+    if (!listBaseBranches) return;
+    try {
+      const listed = await listBaseBranches();
+      setBasePicker(listed);
+    } catch (err) {
+      const msg =
+        err instanceof Error && err.message
+          ? err.message
+          : "Could not list branches";
+      setCardError(msg);
+    }
+  };
+
+  const pickBase = async (name: string | null) => {
+    if (!onSetBaseBranch || busy) return;
+    setMenuOpen(false);
+    setBasePicker(null);
+    try {
+      await onSetBaseBranch(name);
+    } catch (err) {
+      const msg =
+        err instanceof Error && err.message
+          ? err.message
+          : "Could not change base";
+      setCardError(msg);
+    }
+  };
 
   const runAction = async (
     action: Exclude<GitAction, null>,
@@ -287,11 +331,28 @@ export function useWorktreeChrome(
           aria-expanded={menuOpen}
           aria-label="Worktree actions"
           title={path ?? "Worktree"}
-          onClick={() => setMenuOpen((v) => !v)}
+          onClick={() => {
+            setMenuOpen((v) => !v);
+            setBasePicker(null);
+          }}
         >
           <BranchGlyph />
           <span className={styles.branch} title={branch ?? undefined}>
             {branch ?? "worktree"}
+          </span>
+          <span className={styles.baseSep} aria-hidden>
+            →
+          </span>
+          <span
+            className={styles.base}
+            data-stacked-base=""
+            title={
+              thread.baseBranch
+                ? `Merge and PR land on ${thread.baseBranch}`
+                : "Merge and PR land on the repo default"
+            }
+          >
+            {thread.baseBranch || "repo default"}
           </span>
           <svg
             className={styles.chevron}
@@ -334,6 +395,51 @@ export function useWorktreeChrome(
               >
                 {copiedPath ? "Copied path" : "Copy path"}
               </button>
+            )}
+            {onSetBaseBranch && !thread.prNumber && (
+              <>
+                <button
+                  type="button"
+                  className={styles.menuItem}
+                  role="menuitem"
+                  data-change-base=""
+                  disabled={busy || !listBaseBranches}
+                  onClick={() => {
+                    void openBasePicker();
+                  }}
+                >
+                  Change base…
+                </button>
+                {basePicker && (
+                  <>
+                    <button
+                      type="button"
+                      className={`${styles.menuItem} ${styles.menuItemNested}`}
+                      role="menuitem"
+                      data-base-branch=""
+                      disabled={busy}
+                      onClick={() => void pickBase(null)}
+                    >
+                      Repo default
+                    </button>
+                    {basePicker.branches
+                      .filter((name) => name !== basePicker.defaultBranch)
+                      .map((name) => (
+                        <button
+                          key={name}
+                          type="button"
+                          className={`${styles.menuItem} ${styles.menuItemNested}`}
+                          role="menuitem"
+                          data-base-branch={name}
+                          disabled={busy}
+                          onClick={() => void pickBase(name)}
+                        >
+                          {name}
+                        </button>
+                      ))}
+                  </>
+                )}
+              </>
             )}
             <button
               type="button"

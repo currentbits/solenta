@@ -88,6 +88,13 @@ function formatBootstrapNote(boot) {
   section("Strategies", o.strategies, "body");
   section("Knowledge", o.knowledge, "excerpt");
   section("Active tasks", o.tasks, "body");
+  if (o.wiki && typeof o.wiki === "object") {
+    const { formatWikiNote } = require("./codewiki.js");
+    const wikiNote = formatWikiNote(o.wiki);
+    if (wikiNote) {
+      lines.push(wikiNote.replace(/^\n+/, ""));
+    }
+  }
   const truncated =
     o.truncated && typeof o.truncated === "object" ? o.truncated : null;
   if (truncated) {

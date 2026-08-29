@@ -379,6 +379,35 @@ describe("summarizeFleet", () => {
     assert.equal(notesOnly.reviewTax, null);
   });
 
+  it("flags token-only kimi cost as unmetered, not free (#696)", () => {
+    const summary = summarizeFleet(
+      evidence({
+        threads: [
+          thread({
+            threadId: "k1",
+            provider: "kimi",
+            costUsd: 0,
+            inputTokens: 431,
+            outputTokens: 340,
+          }),
+          thread({ threadId: "c1", provider: "claude", costUsd: 2 }),
+        ],
+      }),
+      7,
+      NOW,
+    );
+    const kimi = summary.providers.find((p) => p.provider === "kimi");
+    const claude = summary.providers.find((p) => p.provider === "claude");
+    assert.ok(kimi);
+    assert.equal(kimi.costUnmetered, true);
+    assert.equal(kimi.costUsd, 0);
+    assert.ok(claude);
+    assert.equal(claude.costUnmetered, false);
+    const kThread = summary.threads.find((t) => t.threadId === "k1");
+    assert.ok(kThread);
+    assert.equal(kThread.costUnmetered, true);
+  });
+
   it("sorts providers by cost then name, and threads newest first", () => {
     const summary = summarizeFleet(
       evidence({

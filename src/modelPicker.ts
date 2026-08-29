@@ -91,6 +91,38 @@ function customRow(
   };
 }
 
+function rowMatchesQuery(row: ModelRow, query: string): boolean {
+  const fields = [row.label, row.id, row.vendor, row.description];
+  return fields.some((field) => field != null && field.toLowerCase().includes(query));
+}
+
+/**
+ * Filter one provider's model rows by a type-in query.
+ *
+ * Matches each of label, raw id, vendor, and description on its own
+ * (case-insensitive substring). Custom stays pinned at the end so a miss
+ * still has a path to name an id the catalogue does not know.
+ */
+export function filterModelRows(
+  rows: readonly ModelRow[],
+  query: string,
+): ModelRow[] {
+  const list = Array.isArray(rows) ? rows : [];
+  const q = query.trim().toLowerCase();
+  if (!q) return list.slice();
+
+  const custom: ModelRow[] = [];
+  const matched: ModelRow[] = [];
+  for (const row of list) {
+    if (row.id === CUSTOM_MODEL_ID) {
+      custom.push(row);
+      continue;
+    }
+    if (rowMatchesQuery(row, q)) matched.push(row);
+  }
+  return [...matched, ...custom];
+}
+
 export function buildModelRows(
   provider: ProviderInfo | undefined | null,
 ): ModelRow[] {

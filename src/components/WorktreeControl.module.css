@@ -19,7 +19,7 @@
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  max-width: 22ch;
+  max-width: 36ch;
   height: 100%;
   padding: 0 8px 0 8px;
   border: none;
@@ -56,6 +56,28 @@
   font-family: var(--mono);
   font-size: 11px;
   letter-spacing: -0.01em;
+}
+
+.baseSep {
+  flex-shrink: 0;
+  opacity: 0.45;
+  font-size: 10px;
+}
+
+.base {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: -0.01em;
+  opacity: 0.78;
+}
+
+.menuItemNested {
+  padding-left: 18px;
+  color: var(--text-muted);
 }
 
 .chevron {

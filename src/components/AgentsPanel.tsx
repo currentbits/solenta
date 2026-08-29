@@ -30,6 +30,7 @@ import type {
   AgentConfigDoctorReport,
   AgentConfigPreview,
   AgentConfigWriteResult,
+  ProjectCodeMap,
   PhaseView,
   ProjectInfo,
   ProviderInfo,
@@ -177,6 +178,7 @@ interface AgentsPanelProps {
     id: number;
     resolution: MemoryReviewResolution;
   }) => Promise<{ ok: boolean; id: number; resolution: string }>;
+  loadCodeMap?: (input: { projectId: string }) => Promise<ProjectCodeMap>;
   lintAgentConfig?: (input: {
     projectId: string;
   }) => Promise<AgentConfigDoctorReport>;
@@ -2710,6 +2712,7 @@ export const AgentsPanel = memo(function AgentsPanel({
   storeMemory,
   maintenanceMemory,
   resolveMemory,
+  loadCodeMap,
   lintAgentConfig,
   previewAgentConfig,
   writeAgentConfig,
@@ -2875,6 +2878,7 @@ export const AgentsPanel = memo(function AgentsPanel({
           storeMemory={storeMemory}
           maintenanceMemory={maintenanceMemory}
           resolveMemory={resolveMemory}
+          loadCodeMap={loadCodeMap}
           lintAgentConfig={lintAgentConfig}
           previewAgentConfig={previewAgentConfig}
           writeAgentConfig={writeAgentConfig}
