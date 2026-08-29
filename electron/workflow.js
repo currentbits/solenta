@@ -1,10 +1,13 @@
 "use strict";
 
 const { randomUUID } = require("node:crypto");
+const os = require("node:os");
+const path = require("node:path");
 const { runClaude } = require("./claude.js");
 const { runCodex, extractAgentMessageText, extractUsage } = require("./codex.js");
 const {
   runKimi,
+  materializeKimiHome,
   extractAssistantText: kimiExtractText,
   extractUsage: kimiExtractUsage,
 } = require("./kimi.js");
@@ -22,10 +25,12 @@ const {
   getClaudeMcpArgs,
   getCodexMcpArgs,
   getCodexMcpEnv,
+  kimiMcpServersForRun,
   mergeGrokSpawnEnv,
   looksGrokConfigCorrupt,
   grokConfigCorruptMessage,
 } = require("./memory-sup.js");
+const { wslTarget } = require("./wsl.js");
 const {
   runOpencode,
   extractTextPart: opencodeExtractText,
@@ -482,7 +487,20 @@ function spawnAgentCodex(opts) {
  * @returns {{ handle: { kill: () => void }, done: Promise<object> }}
  */
 function spawnAgentKimi(opts) {
-  const { prompt, cwd, model, binary, providerEntry, onText } = opts;
+  const {
+    prompt,
+    cwd,
+    model,
+    binary,
+    providerEntry,
+    onText,
+    reasoningEffort,
+    userDataPath,
+    threadId,
+    projectId,
+    overlayKey,
+    skipOverlay,
+  } = opts;
 
   let text = "";
   let usage = null;
@@ -507,12 +525,47 @@ function spawnAgentKimi(opts) {
     prompt,
     sessionId: null,
     model: model || null,
+    reasoningEffort: reasoningEffort || null,
   });
+
+  // Same overlay runner uses for normal kimi turns (#671 / #699): isolated
+  // KIMI_CODE_HOME so the phase cannot inherit foreign MCP, and so
+  // flipKimiEffort writes a local config.toml. Nested under threadId so
+  // parallel phase agents do not race one file and reclaim still keys off
+  // the thread. Skipped for ssh/WSL and when userDataPath is unset (tests).
+  /** @type {NodeJS.ProcessEnv | undefined} */
+  let kimiEnv;
+  if (userDataPath && threadId && !skipOverlay) {
+    try {
+      const destName = overlayKey
+        ? String(overlayKey).replace(/[^A-Za-z0-9._-]+/g, "-")
+        : "";
+      const dest = destName
+        ? path.join(userDataPath, "kimi-homes", threadId, destName)
+        : path.join(userDataPath, "kimi-homes", threadId);
+      const sourceHome =
+        process.env.KIMI_CODE_HOME || path.join(os.homedir(), ".kimi-code");
+      materializeKimiHome({
+        dest,
+        sourceHome,
+        cwd,
+        mcpServers: kimiMcpServersForRun({
+          projectId,
+          projectPath: cwd,
+        }),
+      });
+      kimiEnv = { KIMI_CODE_HOME: dest };
+    } catch {
+      // Overlay is best-effort; a failed isolate must not block the phase.
+    }
+  }
 
   const handle = runKimi({
     binary: binary || resolveBin(entry),
     args,
     cwd,
+    env: kimiEnv,
+    reasoningEffort: reasoningEffort || null,
     onEvent: (ev) => {
       gotJson = true;
       if (!ev || typeof ev !== "object") return;
@@ -775,6 +828,12 @@ function spawnPhaseAgent(opts) {
     permissionMode,
     model,
     onText,
+    reasoningEffort,
+    userDataPath,
+    threadId,
+    projectId,
+    overlayKey,
+    skipOverlay,
   } = opts;
 
   const entry = getProvider(providerId);
@@ -827,6 +886,12 @@ function spawnPhaseAgent(opts) {
       binary,
       providerEntry: entry,
       onText,
+      reasoningEffort,
+      userDataPath,
+      threadId,
+      projectId,
+      overlayKey,
+      skipOverlay,
     });
   }
   if (entry.kind === "opencode-json") {
@@ -922,6 +987,7 @@ function kickoffText(template) {
  * @param {(threadId: string, runId: string, label: string) => void} deps.appendDoneWorkLog
  * @param {(threadId: string, role: string, text: string, runId?: string | null, tool?: object | null) => string} deps.appendMessage
  * @param {(threadId: string, status: "done"|"failed"|"stopped", text?: string, extras?: object) => void} [deps.notifyRunTerminal]
+ * @param {string} [deps.userDataPath] - for kimi KIMI_CODE_HOME overlay (#699)
  * @returns {Promise<{ runId: string }>}
  */
 async function startWorkflowRun(deps) {
@@ -941,6 +1007,7 @@ async function startWorkflowRun(deps) {
     appendDoneWorkLog,
     appendMessage,
     notifyRunTerminal,
+    userDataPath = "",
   } = deps;
 
   if (active.has(threadId)) {
@@ -990,6 +1057,9 @@ async function startWorkflowRun(deps) {
   }
   const cwd = thread.worktreePath || project.path;
   const permissionMode = thread.permissionMode || "default";
+  const reasoningEffort = thread.reasoningEffort || null;
+  // Overlay lives on this host; ssh/WSL phases inherit the remote kimi home.
+  const skipKimiOverlay = Boolean(project.remoteHost || wslTarget(project));
   const seed = hashSeed(threadId, runId);
   const name =
     typeof core.nameForSeed === "function"
@@ -1233,6 +1303,12 @@ async function startWorkflowRun(deps) {
       cwd,
       permissionMode,
       model,
+      reasoningEffort,
+      userDataPath,
+      threadId,
+      projectId: thread.projectId,
+      overlayKey: agentId,
+      skipOverlay: skipKimiOverlay,
       onText: (t) => {
         if (!guard()) return;
         charCount = t.length;
