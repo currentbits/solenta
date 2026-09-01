@@ -388,7 +388,8 @@ function spawnAgentClaude(opts) {
  * @returns {{ handle: { kill: () => void }, done: Promise<object> }}
  */
 function spawnAgentCodex(opts) {
-  const { prompt, cwd, model, binary, providerEntry, onText } = opts;
+  const { prompt, cwd, model, binary, providerEntry, onText, permissionMode } =
+    opts;
 
   let text = "";
   let usage = null;
@@ -411,6 +412,7 @@ function spawnAgentCodex(opts) {
     prompt,
     sessionId: null,
     model: model || null,
+    permissionMode: permissionMode || "default",
   });
   const codexMcpArgs = getCodexMcpArgs({ projectPath: cwd });
   if (codexMcpArgs.length > 0) {
@@ -621,7 +623,8 @@ function spawnAgentKimi(opts) {
  * @returns {{ handle: { kill: () => void }, done: Promise<object> }}
  */
 function spawnAgentCursor(opts) {
-  const { prompt, cwd, model, binary, providerEntry, onText } = opts;
+  const { prompt, cwd, model, binary, providerEntry, onText, permissionMode } =
+    opts;
 
   let text = "";
   let usage = null;
@@ -646,6 +649,7 @@ function spawnAgentCursor(opts) {
     prompt,
     sessionId: null,
     model: model || null,
+    permissionMode: permissionMode || "default",
   });
 
   const handle = runCursor({
@@ -712,7 +716,8 @@ function spawnAgentCursor(opts) {
  * @returns {{ handle: { kill: () => void }, done: Promise<object> }}
  */
 function spawnAgentOpencode(opts) {
-  const { prompt, cwd, model, binary, providerEntry, onText } = opts;
+  const { prompt, cwd, model, binary, providerEntry, onText, permissionMode } =
+    opts;
 
   let text = "";
   /** @type {string[]} */
@@ -745,6 +750,7 @@ function spawnAgentOpencode(opts) {
     prompt,
     sessionId: null,
     model: model || null,
+    permissionMode: permissionMode || "default",
   });
 
   const handle = runOpencode({
@@ -876,6 +882,7 @@ function spawnPhaseAgent(opts) {
       binary,
       providerEntry: entry,
       onText,
+      permissionMode,
     });
   }
   if (entry.kind === "kimi-stream") {
@@ -902,6 +909,7 @@ function spawnPhaseAgent(opts) {
       binary,
       providerEntry: entry,
       onText,
+      permissionMode,
     });
   }
   if (entry.kind === "cursor-stream") {
@@ -912,6 +920,7 @@ function spawnPhaseAgent(opts) {
       binary,
       providerEntry: entry,
       onText,
+      permissionMode,
     });
   }
   // All known providers use structured kinds; plain-text path was removed.
