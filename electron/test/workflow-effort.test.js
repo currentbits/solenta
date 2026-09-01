@@ -3,6 +3,7 @@
 /**
  * Workflow phases for claude/codex/opencode/cursor must forward
  * thread.reasoningEffort into provider buildArgs (issue #785).
+ * Grok shares spawnAgentClaude, so it must emit --reasoning-effort too.
  * Kimi already does this (workflow-kimi.test.js) — do not change it.
  */
 
@@ -91,6 +92,7 @@ describe("workflow phases forward reasoningEffort (#785)", () => {
       CODER_CURSOR_BIN: process.env.CODER_CURSOR_BIN,
       CODER_GROK_BIN: process.env.CODER_GROK_BIN,
       CODER_FAKE_CLAUDE_ARGV_FILE: process.env.CODER_FAKE_CLAUDE_ARGV_FILE,
+      CODER_FAKE_GROK_ARGV_FILE: process.env.CODER_FAKE_GROK_ARGV_FILE,
       CODER_FAKE_CODEX_ARGV_FILE: process.env.CODER_FAKE_CODEX_ARGV_FILE,
       CODER_FAKE_OPENCODE_ARGV_FILE: process.env.CODER_FAKE_OPENCODE_ARGV_FILE,
       CODER_FAKE_CURSOR_ARGV_FILE: process.env.CODER_FAKE_CURSOR_ARGV_FILE,
@@ -121,6 +123,20 @@ emit({ type: "result", subtype: "success", usage: { input_tokens: 1, output_toke
     );
     process.env.CODER_CLAUDE_BIN = fake;
     process.env.CODER_FAKE_CLAUDE_ARGV_FILE = argvFile;
+    return argvFile;
+  }
+
+  function installGrok() {
+    const { fake, argvFile } = writeDumpingBin(
+      tmpDir,
+      "grok",
+      "CODER_FAKE_GROK_ARGV_FILE",
+      `emit({ type: "system", subtype: "init", session_id: "wf-effort-grok" });
+emit({ type: "assistant", message: { content: [{ type: "text", text: "ok" }] } });
+emit({ type: "result", subtype: "success", usage: { input_tokens: 1, output_tokens: 1 } });`,
+    );
+    process.env.CODER_GROK_BIN = fake;
+    process.env.CODER_FAKE_GROK_ARGV_FILE = argvFile;
     return argvFile;
   }
 
@@ -233,6 +249,24 @@ emit({ type: "assistant", timestamp_ms: 1, message: { content: [{ type: "text", 
     const result = await done;
     assert.equal(result.ok, true, result.stderr);
     assert.equal(effortAt(readArgv(argvFile), "--effort"), "xhigh");
+  });
+
+  it("spawnPhaseAgent passes --reasoning-effort into grok argv", async () => {
+    const argvFile = installGrok();
+    const projectDir = path.join(tmpDir, "proj");
+    fs.mkdirSync(projectDir);
+    const { done } = spawnPhaseAgent({
+      providerId: "grok",
+      prompt: "PROMPT_WF_EFFORT_GROK",
+      cwd: projectDir,
+      model: "grok-4.6",
+      reasoningEffort: "low",
+    });
+    const result = await done;
+    assert.equal(result.ok, true, result.stderr);
+    const argv = readArgv(argvFile);
+    assert.equal(effortAt(argv, "--reasoning-effort"), "low");
+    assert.equal(argv[argv.length - 1], "PROMPT_WF_EFFORT_GROK");
   });
 
   it("spawnPhaseAgent passes model_reasoning_effort into codex argv", async () => {
