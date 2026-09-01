@@ -19,8 +19,9 @@ const catalogDivergence = require("./catalogDivergence.js");
  * - codex: no dedicated flag; config override `-c model_reasoning_effort=<level>`.
  *   Sol/Terra: low|medium|high|xhigh|max|ultra (ultra = parallel subagents).
  *   Luna: through max, no ultra. This machine's gpt-5.5 / 5.4-mini cache:
- *   low|medium|high|xhigh (no max, no ultra). Live web search is `--search`
- *   (issue #174), gated by thread.webSearch.
+ *   low|medium|high|xhigh (no max, no ultra). Live web search is
+ *   `-c web_search=live` (issue #799; `--search` after exec is rejected),
+ *   gated by thread.webSearch (issue #174).
  * - kimi: no effort flag, but [thinking].effort in config.toml (low/high/max
  *   on the k3 family) → efforts listed with effortVia "config"; kimi.js flips
  *   the config around the spawn. kimi-for-coding aliases have no support_efforts.
@@ -57,7 +58,7 @@ const catalogDivergence = require("./catalogDivergence.js");
  * @property {Array<"low"|"medium"|"high"|"xhigh"|"max"|"ultra"|"ultracode">} efforts
  * @property {"config"} [effortVia] - efforts applied outside argv (kimi:
  *   config.toml flip in kimi.js); absent means buildArgs emits the flag
- * @property {boolean} [supportsSearch] - CLI accepts `codex exec --search`
+ * @property {boolean} [supportsSearch] - CLI accepts `-c web_search=live`
  *   (live web search). Absent/false hides the composer Search pill.
  * @property {Array<"default"|"acceptEdits"|"plan"|"bypassPermissions">} permissionModes
  *   Modes this adapter actually honours (changes argv / CLI behaviour).
@@ -377,8 +378,11 @@ const PROVIDERS = [
           args.push("-c", `model_reasoning_effort=${level}`);
         },
       );
+      // Issue #174 used `exec --search`. Codex 0.152.0 rejects that after
+      // `exec` / `exec resume` (issue #799). `-c web_search=live` is the
+      // exec-mode equivalent and is legal on both paths.
       if (webSearch === true) {
-        args.push("--search");
+        args.push("-c", "web_search=live");
       }
       // Fresh `exec` defaults to read-only without --sandbox (issue #170).
       // `exec resume` on Codex 0.152.0 rejects --sandbox (issue #795); the
