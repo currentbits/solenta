@@ -9,6 +9,24 @@
 # stamped into the bundle by package-app.sh / package-cross.sh.
 # Assets: macos-arm64 (live swap), win32-x64 and linux-x64 (stage + helper
 # swap on Restart).
+#
+# Operator checklist — one throwaway worktree, then remove it:
+#   git -C ~/code/coder fetch origin
+#   git -C ~/code/coder worktree add --detach ~/code/coder-release origin/main
+#   cp -Rc ~/code/coder/node_modules ~/code/coder-release/
+#   cp -Rc ~/code/coder/core/node_modules ~/code/coder-release/core/
+#   cp -Rc ~/code/coder/memory-server/node_modules ~/code/coder-release/memory-server/
+#   (cd ~/code/coder-release && bash scripts/publish-release.sh nightly)  # or prod
+#   git -C ~/code/coder worktree remove ~/code/coder-release
+#
+# Every nightly uses that ONE path. Do not add a second throwaway
+# (retired names: ~/code/coder-nightly-build, leftover after the Aug 29
+# 0758 nightly and removed 2026-09-01; ~/code/coder-nightly-cut). Later
+# nightlies already remove ~/code/coder-release; always do that after
+# publish so the next cut can reuse the same path. Never confuse it with
+# ~/code/coder-release-build (named leftover checkout, local main with
+# unmerged work) or any named feature-branch worktree — do not delete those.
+# Never run this from the main checkout at ~/code/coder.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
