@@ -72,6 +72,10 @@ function fakeAgentContextOverflowScript() {
   return "process.stderr.write('context_length_exceeded\\nrequest\\x20had\\x20250000\\x20tokens');process.exit(1)";
 }
 
+function fakeAgentCliUpgradeScript() {
+  return "process.stderr.write('The\\x20\\x27gpt-5.6-sol\\x27\\x20model\\x20requires\\x20a\\x20newer\\x20version\\x20of\\x20Codex.\\x20Please\\x20upgrade\\x20to\\x20the\\x20latest\\x20app\\x20or\\x20CLI\\x20and\\x20try\\x20again.');process.exit(1)";
+}
+
 function fakeAgentSlowScript() {
   return "setInterval(()=>{},500);setTimeout(()=>process.exit(0),60000)";
 }
@@ -1224,6 +1228,28 @@ describe("runner real agent mode", () => {
     assert.equal(events.length, 1);
     assert.match(events[0].text, /^Context window is full\./);
     assert.match(events[0].text, /context_length_exceeded/);
+  });
+
+  it("classifies Codex newer-version errors as cli-upgrade", async () => {
+    process.env.CODER_AGENT_CMD =
+      `${process.execPath} -e ${fakeAgentCliUpgradeScript()}`;
+    const thread = store.getThreads()[0];
+    const { runId } = await runner.startRun({
+      threadId: thread.id,
+      prompt: "upgrade please",
+    });
+
+    await waitFor(() => store.getThread(thread.id).status === "failed");
+    const failed = store.getThread(thread.id);
+    assert.equal(failed.lastErrorKind, "cli-upgrade");
+    assert.match(failed.lastError, /codex update/);
+
+    const events = store
+      .getMessages(thread.id)
+      .filter((m) => m.role === "event" && m.runId === runId);
+    assert.equal(events.length, 1);
+    assert.match(events[0].text, /codex update/);
+    assert.match(events[0].text, /gpt-5\.6-sol/);
   });
 
   it("replaces overflow metadata when a later direct runner failure is generic", async () => {

@@ -35,6 +35,12 @@ const QUOTA_RE =
 const CONTEXT_OVERFLOW_COPY =
   "Context window is full. Fork to fresh context or rewind the last turn.";
 
+const CLI_UPGRADE_COPY =
+  "This model needs a newer Codex. Run `codex update`, then send again.";
+
+const CLI_UPGRADE_RE =
+  /requires a newer version of Codex|upgrade to the latest (?:app or )?CLI/i;
+
 const CONTEXT_OVERFLOW_RE =
   /context[_\s-]?length[_\s-]?exceeded|prompt is too long|maximum context (?:length|window)|context window(?: is)? (?:completely )?full\b|context window.{0,80}(?:exceed|too (?:long|large))|exceeds?.{0,40}(?:the |this model'?s )?context window|(?:input|prompt|request).{0,80}too (?:long|large).{0,80}(?:model'?s? )?context window|ran out of room in the model'?s context window|input length and max_tokens exceed context limit/i;
 
@@ -78,6 +84,33 @@ function classifyContextOverflow(text) {
   return {
     kind: "context-overflow",
     text: `${CONTEXT_OVERFLOW_COPY}\nProvider error: ${detail}`,
+  };
+}
+
+/**
+ * Codex (and similar) rejected the model until the CLI is upgraded.
+ * @param {unknown} text
+ */
+function isCliUpgrade(text) {
+  const s = String(text ?? "").trim();
+  return Boolean(s && CLI_UPGRADE_RE.test(s));
+}
+
+/**
+ * @param {unknown} text
+ * @returns {{ kind: "cli-upgrade", text: string } | null}
+ */
+function classifyCliUpgrade(text) {
+  const raw = String(text ?? "").trim();
+  if (!isCliUpgrade(raw)) return null;
+  const detail = raw
+    .split(/\r?\n/)
+    .slice(0, 2)
+    .join("\n")
+    .slice(0, 500);
+  return {
+    kind: "cli-upgrade",
+    text: `${CLI_UPGRADE_COPY}\nProvider error: ${detail}`,
   };
 }
 
@@ -420,6 +453,8 @@ module.exports = {
   isQuotaLike,
   isContextOverflow,
   classifyContextOverflow,
+  isCliUpgrade,
+  classifyCliUpgrade,
   parseQuotaError,
   quotaWaitEnabled,
   decideQuotaWait,
