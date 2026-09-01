@@ -484,6 +484,10 @@ describe("runner codex provider", () => {
     assert.equal(argv[execIdx + 1], "resume");
     assert.equal(argv[execIdx + 2], "codex-sess-001");
     assert.ok(argv.includes("--json"));
+    assert.ok(
+      !argv.includes("--sandbox"),
+      "codex exec resume rejects --sandbox (issue #795)",
+    );
     assert.equal(argv[argv.length - 1], "second");
   });
 
