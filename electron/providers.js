@@ -380,7 +380,12 @@ const PROVIDERS = [
       if (webSearch === true) {
         args.push("--search");
       }
-      args.push("--sandbox", codexSandboxFor(permissionMode));
+      // Fresh `exec` defaults to read-only without --sandbox (issue #170).
+      // `exec resume` on Codex 0.152.0 rejects --sandbox (issue #795); the
+      // session keeps the sandbox from the first turn.
+      if (!sessionId) {
+        args.push("--sandbox", codexSandboxFor(permissionMode));
+      }
       args.push(String(prompt ?? ""));
       return args;
     },

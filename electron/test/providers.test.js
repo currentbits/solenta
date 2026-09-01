@@ -223,6 +223,11 @@ describe("providers registry", () => {
       "--skip-git-repo-check",
     ]);
     assert.equal(fresh[fresh.length - 1], "p1");
+    assert.equal(
+      fresh[fresh.indexOf("--sandbox") + 1],
+      "workspace-write",
+      "fresh exec still needs --sandbox (issue #170)",
+    );
 
     const withModel = getProvider("codex").buildArgs({
       prompt: "p2",
@@ -239,6 +244,10 @@ describe("providers registry", () => {
     assert.equal(resume[0], "exec");
     assert.equal(resume[1], "resume");
     assert.equal(resume[2], "sess-codex-9");
+    assert.ok(
+      !resume.includes("--sandbox"),
+      "codex exec resume rejects --sandbox (issue #795)",
+    );
     assert.ok(resume.includes("--json"));
     assert.ok(
       resume.includes("--skip-git-repo-check"),
