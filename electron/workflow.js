@@ -256,6 +256,7 @@ function spawnAgentClaude(opts) {
     binary,
     onText,
     providerEntry,
+    reasoningEffort,
   } = opts;
 
   let text = "";
@@ -282,6 +283,7 @@ function spawnAgentClaude(opts) {
         sessionId: null,
         permissionMode: permissionMode || "default",
         model: model || null,
+        reasoningEffort: reasoningEffort || null,
       })
     : [
         "-p",
@@ -395,6 +397,7 @@ function spawnAgentCodex(opts) {
     binary,
     providerEntry,
     onText,
+    reasoningEffort,
     webSearch,
     permissionMode,
   } = opts;
@@ -420,6 +423,7 @@ function spawnAgentCodex(opts) {
     prompt,
     sessionId: null,
     model: model || null,
+    reasoningEffort: reasoningEffort || null,
     webSearch: webSearch === true,
     permissionMode: permissionMode || "default",
   });
@@ -632,8 +636,16 @@ function spawnAgentKimi(opts) {
  * @returns {{ handle: { kill: () => void }, done: Promise<object> }}
  */
 function spawnAgentCursor(opts) {
-  const { prompt, cwd, model, binary, providerEntry, onText, permissionMode } =
-    opts;
+  const {
+    prompt,
+    cwd,
+    model,
+    binary,
+    providerEntry,
+    onText,
+    reasoningEffort,
+    permissionMode,
+  } = opts;
 
   let text = "";
   let usage = null;
@@ -658,6 +670,7 @@ function spawnAgentCursor(opts) {
     prompt,
     sessionId: null,
     model: model || null,
+    reasoningEffort: reasoningEffort || null,
     permissionMode: permissionMode || "default",
   });
 
@@ -725,8 +738,16 @@ function spawnAgentCursor(opts) {
  * @returns {{ handle: { kill: () => void }, done: Promise<object> }}
  */
 function spawnAgentOpencode(opts) {
-  const { prompt, cwd, model, binary, providerEntry, onText, permissionMode } =
-    opts;
+  const {
+    prompt,
+    cwd,
+    model,
+    binary,
+    providerEntry,
+    onText,
+    reasoningEffort,
+    permissionMode,
+  } = opts;
 
   let text = "";
   /** @type {string[]} */
@@ -759,6 +780,7 @@ function spawnAgentOpencode(opts) {
     prompt,
     sessionId: null,
     model: model || null,
+    reasoningEffort: reasoningEffort || null,
     permissionMode: permissionMode || "default",
   });
 
@@ -882,6 +904,7 @@ function spawnPhaseAgent(opts) {
       binary,
       providerEntry: entry,
       onText,
+      reasoningEffort,
     });
   }
   if (entry.kind === "codex-json") {
@@ -892,6 +915,7 @@ function spawnPhaseAgent(opts) {
       binary,
       providerEntry: entry,
       onText,
+      reasoningEffort,
       webSearch,
       permissionMode,
     });
@@ -920,6 +944,7 @@ function spawnPhaseAgent(opts) {
       binary,
       providerEntry: entry,
       onText,
+      reasoningEffort,
       permissionMode,
     });
   }
@@ -931,6 +956,7 @@ function spawnPhaseAgent(opts) {
       binary,
       providerEntry: entry,
       onText,
+      reasoningEffort,
       permissionMode,
     });
   }
