@@ -709,8 +709,8 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
   }, [retryQueued]);
 
   const handleEditQueued = useCallback(
-    (prompt: string) => {
-      editQueued(prompt);
+    (prompt: string, items?: string[]) => {
+      editQueued(prompt, undefined, items);
     },
     [editQueued],
   );
@@ -1461,6 +1461,9 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         }
         queuedPrompt={
           selectedThreadId ? (queued[selectedThreadId]?.prompt ?? null) : null
+        }
+        queuedItems={
+          selectedThreadId ? queued[selectedThreadId]?.items : undefined
         }
         queuedError={
           selectedThreadId ? (queued[selectedThreadId]?.error ?? null) : null

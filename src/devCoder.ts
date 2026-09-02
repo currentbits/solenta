@@ -3766,12 +3766,17 @@ function buildDevCoder(): CoderApi {
         prompt: string | null;
         attachments?: AttachmentInfo[];
         replace?: boolean;
+        items?: string[];
       }) {
         const detail = details.get(input.threadId);
         if (!detail) throw new Error(`Thread not found: ${input.threadId}`);
         let queued: ThreadInfo["queued"] = null;
         if (input.prompt !== null && input.replace === true) {
-          queued = { prompt: input.prompt };
+          const items =
+            input.items && input.items.length
+              ? input.items.map(String)
+              : [input.prompt];
+          queued = { prompt: items.join("\n\n"), items };
           if (input.attachments?.length) queued.attachments = input.attachments;
         } else if (input.prompt !== null) {
           const prev = detail.thread.queued;
@@ -3779,8 +3784,15 @@ function buildDevCoder(): CoderApi {
             ...(prev?.attachments ?? []),
             ...(input.attachments ?? []),
           ];
+          const prevItems = prev?.items
+            ? prev.items.map(String)
+            : prev?.prompt != null
+              ? prev.prompt.split("\n\n")
+              : [];
+          const items = [...prevItems, input.prompt];
           queued = {
-            prompt: prev ? `${prev.prompt}\n\n${input.prompt}` : input.prompt,
+            prompt: items.join("\n\n"),
+            items,
             attachments: files.length ? files : undefined,
           };
         }
@@ -4023,10 +4035,17 @@ function buildDevCoder(): CoderApi {
         if (!card) throw new Error(`Unknown side question: ${input.id}`);
         const remaining = (existing.btw ?? []).filter((c) => c.id !== input.id);
         const prev = existing.queued;
+        const prevItems = prev?.items
+          ? prev.items.map(String)
+          : prev?.prompt != null
+            ? prev.prompt.split("\n\n")
+            : [];
+        const items = [...prevItems, card.question];
         return patchThread(input.threadId, {
           btw: remaining.length ? remaining : undefined,
           queued: {
-            prompt: prev ? `${prev.prompt}\n\n${card.question}` : card.question,
+            prompt: items.join("\n\n"),
+            items,
             attachments: prev?.attachments,
           },
         });

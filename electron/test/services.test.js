@@ -559,6 +559,7 @@ describe("services", () => {
     });
     assert.deepEqual(first.queued, {
       prompt: "first thought",
+      items: ["first thought"],
       attachments: [{ kind: "folder", path: "/tmp/a", name: "a" }],
     });
     assert.equal(first.updatedAt, 1_700_000_000_000);
@@ -571,6 +572,7 @@ describe("services", () => {
     });
     assert.deepEqual(second.queued, {
       prompt: "first thought\n\nsecond thought",
+      items: ["first thought", "second thought"],
       attachments: [
         { kind: "folder", path: "/tmp/a", name: "a" },
         { kind: "image", path: "/tmp/b.png", name: "b.png" },
@@ -612,6 +614,7 @@ describe("services", () => {
     });
     assert.deepEqual(replaced.queued, {
       prompt: "rewritten",
+      items: ["rewritten"],
       attachments: [{ kind: "image", path: "/tmp/b.png", name: "b.png" }],
     });
     assert.equal(replaced.updatedAt, 1_700_000_000_000);
@@ -622,7 +625,7 @@ describe("services", () => {
       prompt: "text only",
       replace: true,
     });
-    assert.deepEqual(bare.queued, { prompt: "text only" });
+    assert.deepEqual(bare.queued, { prompt: "text only", items: ["text only"] });
     assert.equal(store.getThread(thread.id).updatedAt, 1_700_000_000_000);
   });
 
@@ -636,7 +639,57 @@ describe("services", () => {
       prompt: "retry this",
     });
     assert.equal(next.queued.prompt, "old\n\nretry this");
+    assert.deepEqual(next.queued.items, ["old", "retry this"]);
     assert.equal(next.queued.error, undefined);
+  });
+
+  it("setQueued persists items so a blank line stays one thought", async () => {
+    const thread = await makeThread("queued-items");
+    const first = services.setQueued(store, {
+      threadId: thread.id,
+      prompt: "para one\n\npara two",
+    });
+    assert.deepEqual(first.queued.items, ["para one\n\npara two"]);
+    assert.equal(first.queued.prompt, "para one\n\npara two");
+
+    const second = services.setQueued(store, {
+      threadId: thread.id,
+      prompt: "next thought",
+    });
+    assert.deepEqual(second.queued.items, [
+      "para one\n\npara two",
+      "next thought",
+    ]);
+    assert.equal(second.queued.prompt, "para one\n\npara two\n\nnext thought");
+
+    const replaced = services.setQueued(store, {
+      threadId: thread.id,
+      prompt: "edited\n\npara two\n\nnext thought",
+      items: ["edited\n\npara two", "next thought"],
+      replace: true,
+    });
+    assert.deepEqual(replaced.queued.items, [
+      "edited\n\npara two",
+      "next thought",
+    ]);
+    assert.equal(replaced.queued.prompt, "edited\n\npara two\n\nnext thought");
+  });
+
+  it("setQueued migrates a prompt-only row by splitting once", async () => {
+    const thread = await makeThread("queued-migrate");
+    store.updateThread(thread.id, {
+      queued: { prompt: "legacy one\n\nlegacy two" },
+    });
+    const next = services.setQueued(store, {
+      threadId: thread.id,
+      prompt: "new thought",
+    });
+    assert.deepEqual(next.queued.items, [
+      "legacy one",
+      "legacy two",
+      "new thought",
+    ]);
+    assert.equal(next.queued.prompt, "legacy one\n\nlegacy two\n\nnew thought");
   });
 
   it("takeQueued reads and clears without bumping updatedAt", async () => {
@@ -650,6 +703,7 @@ describe("services", () => {
     const taken = services.takeQueued(store, { threadId: thread.id });
     assert.deepEqual(taken, {
       prompt: "hold this",
+      items: ["hold this"],
       attachments: [{ kind: "folder", path: "/tmp/a", name: "a" }],
     });
     assert.equal(store.getThread(thread.id).queued, null);

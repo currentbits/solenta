@@ -516,6 +516,193 @@ describe("queued follow-up (issue #92 / #314)", () => {
     );
     m.unmount();
   });
+
+  async function queueTwoThoughts(m: Awaited<ReturnType<typeof bootOnBusyThread>>["m"]) {
+    await m.type(m.query("textarea"), "first thought");
+    await m.click(m.query('button[aria-label="Send"]'));
+    await m.flush();
+    await m.type(m.query("textarea"), "second thought");
+    await m.click(m.query('button[aria-label="Send"]'));
+    await m.flush();
+  }
+
+  it("edits one of two queued thoughts without changing the other (issue #780)", async () => {
+    const { fake, m } = await bootOnBusyThread();
+    await queueTwoThoughts(m);
+
+    const first = m.query('[data-queued-item="0"]');
+    const second = m.query('[data-queued-item="1"]');
+    assert.ok(first && second, "two appended thoughts must render as items");
+    const edit = first.querySelector("button[data-edit-queued]");
+    assert.ok(edit, "each queued item must be editable");
+    await m.click(edit);
+    const input = first.querySelector(
+      "textarea[data-edit-queued-input]",
+    ) as HTMLTextAreaElement | null;
+    assert.ok(input, "editing an item swaps its text for a textarea");
+    assert.equal(input!.value, "first thought");
+    await m.type(input!, "edited first");
+    await m.click(first.querySelector("button[data-save-queued-edit]"));
+    await m.flush();
+
+    const replaceCalls = fake
+      .of("threads.setQueued")
+      .filter((c) => (c.args[0] as { replace?: boolean }).replace === true);
+    assert.equal(replaceCalls.length, 1, "saving an item edit must replace");
+    assert.deepEqual(replaceCalls[0]!.args[0], {
+      threadId: "t-busy",
+      prompt: "edited first\n\nsecond thought",
+      attachments: undefined,
+      replace: true,
+      items: ["edited first", "second thought"],
+    });
+    const strip = m.query("[data-queued-prompt]");
+    assert.ok(strip);
+    assert.match(strip!.textContent || "", /edited first/);
+    assert.match(strip!.textContent || "", /second thought/);
+    assert.ok(
+      !/first thought/.test(strip!.textContent || ""),
+      "the other item must stay; the edited one must not keep the old text",
+    );
+    m.unmount();
+  });
+
+  it("removes one of two queued thoughts and keeps the other (issue #780)", async () => {
+    const { fake, m } = await bootOnBusyThread();
+    await queueTwoThoughts(m);
+
+    const first = m.query('[data-queued-item="0"]');
+    assert.ok(first, "two appended thoughts must render as items");
+    const remove = first.querySelector("button[data-remove-queued]");
+    assert.ok(remove, "each queued item must be removable");
+    await m.click(remove);
+    await m.flush();
+
+    const replaceCalls = fake
+      .of("threads.setQueued")
+      .filter((c) => (c.args[0] as { replace?: boolean }).replace === true);
+    assert.equal(replaceCalls.length, 1, "removing an item must replace the blob");
+    assert.deepEqual(replaceCalls[0]!.args[0], {
+      threadId: "t-busy",
+      prompt: "second thought",
+      attachments: undefined,
+      replace: true,
+      items: ["second thought"],
+    });
+    const strip = m.query("[data-queued-prompt]");
+    assert.ok(strip, "the remaining thought stays queued");
+    assert.match(strip!.textContent || "", /second thought/);
+    assert.ok(
+      !/first thought/.test(strip!.textContent || ""),
+      "the removed thought must leave the strip",
+    );
+    assert.equal(
+      fake.of("threads.setQueued").filter(
+        (c) => (c.args[0] as { prompt: string | null }).prompt === null,
+      ).length,
+      0,
+      "removing one of two must not clear the whole queue",
+    );
+    m.unmount();
+  });
+
+  it("reorders two queued thoughts (issue #780)", async () => {
+    const { fake, m } = await bootOnBusyThread();
+    await queueTwoThoughts(m);
+
+    const first = m.query('[data-queued-item="0"]');
+    assert.ok(first, "two appended thoughts must render as items");
+    const down = first.querySelector("button[data-move-queued-down]");
+    assert.ok(down, "a multi-item queue must offer reorder");
+    await m.click(down);
+    await m.flush();
+
+    const replaceCalls = fake
+      .of("threads.setQueued")
+      .filter((c) => (c.args[0] as { replace?: boolean }).replace === true);
+    assert.equal(replaceCalls.length, 1, "reorder must replace the blob");
+    assert.deepEqual(replaceCalls[0]!.args[0], {
+      threadId: "t-busy",
+      prompt: "second thought\n\nfirst thought",
+      attachments: undefined,
+      replace: true,
+      items: ["second thought", "first thought"],
+    });
+    const items = m.queryAll("[data-queued-item]");
+    assert.equal(items.length, 2);
+    assert.match(items[0]!.textContent || "", /second thought/);
+    assert.match(items[1]!.textContent || "", /first thought/);
+    m.unmount();
+  });
+
+  it("keeps a thought that contains a blank line as one item (issue #809)", async () => {
+    const { m } = await bootOnBusyThread();
+
+    await m.type(m.query("textarea"), "para one\n\npara two");
+    await m.click(m.query('button[aria-label="Send"]'));
+    await m.flush();
+    await m.type(m.query("textarea"), "second thought");
+    await m.click(m.query('button[aria-label="Send"]'));
+    await m.flush();
+
+    const items = m.queryAll("[data-queued-item]");
+    assert.equal(
+      items.length,
+      2,
+      "a blank line inside a thought must not split it into two items",
+    );
+    assert.match(items[0]!.textContent || "", /para one/);
+    assert.match(items[0]!.textContent || "", /para two/);
+    assert.match(items[1]!.textContent || "", /second thought/);
+
+    m.unmount();
+    const remounted = await mount(<App />);
+    await remounted.flush();
+    const card = remounted.query(
+      'button[aria-label^="Select thread: busy target thread"]',
+    );
+    assert.ok(card);
+    await remounted.click(card);
+    await remounted.flush();
+    const remountedItems = remounted.queryAll("[data-queued-item]");
+    assert.equal(
+      remountedItems.length,
+      2,
+      "persisted items[] must survive remount; splitting prompt would make three",
+    );
+    assert.match(remountedItems[0]!.textContent || "", /para one/);
+    assert.match(remountedItems[0]!.textContent || "", /para two/);
+    assert.match(remountedItems[1]!.textContent || "", /second thought/);
+    remounted.unmount();
+  });
+
+  it("migrates a prompt-only queue by splitting once (issue #809)", async () => {
+    const busy = working();
+    busy.queued = { prompt: "legacy one\n\nlegacy two" };
+    const fake = createFakeCoder({
+      projects: [project()],
+      threads: [decoy(), busy],
+      details: {
+        "t-decoy": detail({ thread: decoy() }),
+        "t-busy": detail({ thread: busy }),
+      },
+    });
+    const m = await boot(fake);
+    const card = m.query('button[aria-label^="Select thread: busy target thread"]');
+    assert.ok(card);
+    await m.click(card);
+    await m.flush();
+
+    const items = m.queryAll("[data-queued-item]");
+    assert.equal(
+      items.length,
+      2,
+      "a prompt-only row must split once into items",
+    );
+    assert.match(items[0]!.textContent || "", /legacy one/);
+    assert.match(items[1]!.textContent || "", /legacy two/);
+    m.unmount();
+  });
 });
 
 describe("side question /btw during a run (issue #471)", () => {
