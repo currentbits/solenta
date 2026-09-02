@@ -75,7 +75,8 @@ function envPairs(env) {
 
 /**
  * argv as the other side should see it. When env is set, prefix
- * `env KEY=value` so CODEX_HOME / OPENCODE_CONFIG_DIR survive ssh/WSL —
+ * `env KEY=value` so KIMI_CODE_HOME / GROK_HOME / CODEX_HOME /
+ * OPENCODE_CONFIG_DIR survive ssh/WSL —
  * process env on this host is not forwarded.
  * @param {string} bin
  * @param {string[]} argv

@@ -14,14 +14,18 @@ const {
 const {
   runKimi,
   materializeKimiHome,
+  deployKimiGuardrailOverlay,
   extractAssistantText: kimiExtractText,
   extractUsage: kimiExtractUsage,
+  extractToolEvents: kimiExtractTools,
   extractSessionId: kimiExtractSessionId,
 } = require("./kimi.js");
 const {
   runCursor,
   extractAssistantText: cursorExtractText,
   extractUsage: cursorExtractUsage,
+  extractToolEvents: cursorExtractTools,
+  parseToolArgs: cursorParseToolArgs,
   extractSessionId: cursorExtractSessionId,
 } = require("./cursor.js");
 const {
@@ -49,6 +53,7 @@ const {
 const {
   materializeCursorGuardrailPlugin,
   cursorGuardrailPluginDir,
+  deployCursorGuardrailPlugin,
 } = require("./cursor-guardrail.js");
 const {
   materializeCodexGuardrailHome,
@@ -103,7 +108,7 @@ function crossesBoundary(project) {
 
 /**
  * Wrap a phase spawn the way runner.resolveSpawn does, including
- * `env KEY=value` on the far side (#835 / #837).
+ * `env KEY=value` on the far side (#834 / #835 / #836 / #837).
  * @param {{ remoteHost?: string, remotePath?: string, path?: string } | null | undefined} project
  * @param {string} binary
  * @param {string[]} args
@@ -728,6 +733,7 @@ function spawnAgentKimi(opts) {
     projectId,
     overlayKey,
     skipOverlay,
+    project,
     sessionId,
   } = opts;
 
@@ -763,7 +769,8 @@ function spawnAgentKimi(opts) {
   // KIMI_CODE_HOME so the phase cannot inherit foreign MCP, and so
   // flipKimiEffort writes a local config.toml. Nested under threadId so
   // parallel phase agents do not race one file and reclaim still keys off
-  // the thread. Skipped for ssh/WSL and when userDataPath is unset (tests).
+  // the thread. Local only. ssh/WSL: deploy PreToolUse onto the far side
+  // and pass KIMI_CODE_HOME through wrapCommand (#834 / #836).
   /** @type {NodeJS.ProcessEnv | undefined} */
   let kimiEnv;
   if (userDataPath && threadId && !skipOverlay) {
@@ -789,12 +796,21 @@ function spawnAgentKimi(opts) {
     } catch {
       // Overlay is best-effort; a failed isolate must not block the phase.
     }
+  } else if (crossesBoundary(project) && guardrailsEnabled()) {
+    try {
+      const dest = deployKimiGuardrailOverlay({ project, threadId });
+      if (dest) kimiEnv = { KIMI_CODE_HOME: dest };
+    } catch {
+      // Deploy miss must not kill the phase; stream notice remains.
+    }
   }
 
+  const kimiBin = binary || resolveBin(entry);
+  const spawn = resolveWorkflowSpawn(project, kimiBin, args, cwd, kimiEnv);
   const handle = runKimi({
-    binary: binary || resolveBin(entry),
-    args,
-    cwd,
+    binary: spawn.binary,
+    args: spawn.args,
+    cwd: spawn.cwd,
     env: kimiEnv,
     reasoningEffort: reasoningEffort || null,
     onEvent: (ev) => {
@@ -814,6 +830,11 @@ function spawnAgentKimi(opts) {
           outputTokens: Number(u.outputTokens) || 0,
           costUsd: 0,
         };
+      }
+      for (const tool of kimiExtractTools(ev)) {
+        if (tool.phase === "start") {
+          notePhaseGuardrail(opts, tool.name, tool.input);
+        }
       }
     },
     onExit: ({ code, stderr, fullStdout: stdout, gotJson: parsed }) => {
@@ -867,6 +888,8 @@ function spawnAgentCursor(opts) {
     sessionId,
     userDataPath,
     skipOverlay,
+    project,
+    threadId,
   } = opts;
 
   let text = "";
@@ -898,6 +921,8 @@ function spawnAgentCursor(opts) {
     permissionMode: permissionMode || "default",
   });
 
+  /** @type {Record<string, string> | undefined} */
+  let cursorWrapEnv;
   if (!skipOverlay && args.length > 0) {
     try {
       const pluginDirs = [
@@ -918,12 +943,36 @@ function spawnAgentCursor(opts) {
     } catch {
       // best-effort
     }
+  } else if (
+    crossesBoundary(project) &&
+    args.length > 0 &&
+    guardrailsEnabled()
+  ) {
+    try {
+      const dest = deployCursorGuardrailPlugin({ project, threadId });
+      if (dest) {
+        insertBeforeLast(args, ["--plugin-dir", dest]);
+        cursorWrapEnv = {
+          SOLENTA_WORKTREE: (project && project.remotePath) || cwd,
+        };
+      }
+    } catch {
+      // Deploy miss must not kill the phase; stream notice remains.
+    }
   }
 
-  const handle = runCursor({
-    binary: binary || resolveBin(entry),
+  const cursorBin = binary || resolveBin(entry);
+  const spawn = resolveWorkflowSpawn(
+    project,
+    cursorBin,
     args,
     cwd,
+    cursorWrapEnv,
+  );
+  const handle = runCursor({
+    binary: spawn.binary,
+    args: spawn.args,
+    cwd: spawn.cwd,
     onEvent: (ev) => {
       gotJson = true;
       if (!ev || typeof ev !== "object") return;
@@ -946,6 +995,12 @@ function spawnAgentCursor(opts) {
           outputTokens: Number(u.outputTokens) || 0,
           costUsd: 0,
         };
+      }
+      for (const tool of cursorExtractTools(ev)) {
+        if (tool.phase === "start") {
+          const parsed = cursorParseToolArgs(tool.input);
+          notePhaseGuardrail(opts, tool.name, parsed || tool.input);
+        }
       }
     },
     onExit: ({ code, stderr, fullStdout: stdout, gotJson: parsed }) => {
@@ -1244,6 +1299,10 @@ function spawnPhaseAgent(opts) {
       overlayKey,
       skipOverlay,
       sessionId: realSessionId(sessionId),
+      project,
+      appendMessage,
+      runId,
+      worktreePath,
     });
   }
   if (entry.kind === "opencode-json") {
@@ -1279,6 +1338,11 @@ function spawnPhaseAgent(opts) {
       sessionId,
       userDataPath,
       skipOverlay,
+      project,
+      threadId,
+      appendMessage,
+      runId,
+      worktreePath,
     });
   }
   // All known providers use structured kinds; plain-text path was removed.
