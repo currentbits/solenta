@@ -31,6 +31,18 @@ const {
   grokConfigCorruptMessage,
 } = require("./memory-sup.js");
 const { wslTarget } = require("./wsl.js");
+const { guardrailsEnabled } = require("./guardrails.js");
+const { insertBeforeLast } = require("./guardrail-hook-core.js");
+const {
+  materializeCursorPinPlugin,
+  cursorPinPluginDir,
+} = require("./cursorPinTaskParent.js");
+const {
+  materializeCursorGuardrailPlugin,
+  cursorGuardrailPluginDir,
+} = require("./cursor-guardrail.js");
+const { materializeCodexGuardrailHome } = require("./codex-guardrail.js");
+const { materializeOpencodeGuardrailDir } = require("./opencode-guardrail.js");
 const {
   runOpencode,
   extractTextPart: opencodeExtractText,
@@ -454,6 +466,9 @@ function spawnAgentCodex(opts) {
     reasoningEffort,
     webSearch,
     permissionMode,
+    userDataPath,
+    threadId,
+    skipOverlay,
   } = opts;
 
   let text = "";
@@ -485,12 +500,31 @@ function spawnAgentCodex(opts) {
   if (codexMcpArgs.length > 0) {
     args.unshift(...codexMcpArgs);
   }
+  /** @type {Record<string, string>} */
+  const envExtra = { ...getCodexMcpEnv() };
+  if (userDataPath && threadId && !skipOverlay && guardrailsEnabled()) {
+    try {
+      const dest = path.join(userDataPath, "codex-homes", threadId);
+      const sourceHome =
+        process.env.CODEX_HOME || path.join(os.homedir(), ".codex");
+      materializeCodexGuardrailHome({ dest, sourceHome });
+      insertBeforeLast(args, [
+        "-c",
+        "features.hooks=true",
+        "--dangerously-bypass-hook-trust",
+      ]);
+      envExtra.CODEX_HOME = dest;
+      envExtra.SOLENTA_WORKTREE = cwd;
+    } catch {
+      // best-effort
+    }
+  }
 
   const handle = runCodex({
     binary: binary || resolveBin(entry),
     args,
     cwd,
-    envExtra: getCodexMcpEnv(),
+    envExtra,
     onEvent: (ev) => {
       if (!ev || typeof ev !== "object") return;
       const agentText = extractAgentMessageText(ev);
@@ -699,6 +733,8 @@ function spawnAgentCursor(opts) {
     onText,
     reasoningEffort,
     permissionMode,
+    userDataPath,
+    skipOverlay,
   } = opts;
 
   let text = "";
@@ -727,6 +763,28 @@ function spawnAgentCursor(opts) {
     reasoningEffort: reasoningEffort || null,
     permissionMode: permissionMode || "default",
   });
+
+  if (!skipOverlay && args.length > 0) {
+    try {
+      const pluginDirs = [
+        materializeCursorPinPlugin(cursorPinPluginDir(userDataPath)),
+      ];
+      if (guardrailsEnabled()) {
+        pluginDirs.push(
+          materializeCursorGuardrailPlugin(
+            cursorGuardrailPluginDir(userDataPath),
+          ),
+        );
+      }
+      const extras = [];
+      for (const dir of pluginDirs) {
+        extras.push("--plugin-dir", dir);
+      }
+      insertBeforeLast(args, extras);
+    } catch {
+      // best-effort
+    }
+  }
 
   const handle = runCursor({
     binary: binary || resolveBin(entry),
@@ -801,6 +859,8 @@ function spawnAgentOpencode(opts) {
     onText,
     reasoningEffort,
     permissionMode,
+    userDataPath,
+    skipOverlay,
   } = opts;
 
   let text = "";
@@ -838,10 +898,26 @@ function spawnAgentOpencode(opts) {
     permissionMode: permissionMode || "default",
   });
 
+  /** @type {NodeJS.ProcessEnv | undefined} */
+  let opencodeEnv;
+  if (userDataPath && !skipOverlay && guardrailsEnabled()) {
+    try {
+      const dest = path.join(userDataPath, "opencode-guardrails");
+      materializeOpencodeGuardrailDir(dest);
+      opencodeEnv = {
+        OPENCODE_CONFIG_DIR: dest,
+        SOLENTA_WORKTREE: cwd,
+      };
+    } catch {
+      // best-effort
+    }
+  }
+
   const handle = runOpencode({
     binary: binary || resolveBin(entry),
     args,
     cwd,
+    env: opencodeEnv,
     onEvent: (ev) => {
       gotJson = true;
       if (!ev || typeof ev !== "object") return;
@@ -972,6 +1048,9 @@ function spawnPhaseAgent(opts) {
       reasoningEffort,
       webSearch,
       permissionMode,
+      userDataPath,
+      threadId,
+      skipOverlay,
     });
   }
   if (entry.kind === "kimi-stream") {
@@ -1000,6 +1079,8 @@ function spawnPhaseAgent(opts) {
       onText,
       reasoningEffort,
       permissionMode,
+      userDataPath,
+      skipOverlay,
     });
   }
   if (entry.kind === "cursor-stream") {
@@ -1012,6 +1093,8 @@ function spawnPhaseAgent(opts) {
       onText,
       reasoningEffort,
       permissionMode,
+      userDataPath,
+      skipOverlay,
     });
   }
   // All known providers use structured kinds; plain-text path was removed.

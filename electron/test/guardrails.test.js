@@ -126,6 +126,29 @@ describe("guardrails: shell tiers", () => {
       "allow",
     );
   });
+
+  it("maps Cursor Shell, Codex apply_patch aliases, and OpenCode bash/read", () => {
+    assert.equal(
+      verdict("Shell", { command: "sudo rm /etc/hosts" }).decision,
+      "deny",
+    );
+    assert.equal(
+      verdict("bash", { command: "git push --force origin main" }).decision,
+      "deny",
+    );
+    assert.equal(
+      verdict("read", { filePath: ".env" }).decision,
+      "deny",
+    );
+    assert.equal(
+      verdict("Write", { path: "/tmp/elsewhere/x.ts" }).decision,
+      "ask",
+    );
+    assert.equal(
+      verdict("StrReplace", { path: ".claude/hooks/x.sh" }).decision,
+      "deny",
+    );
+  });
 });
 
 describe("guardrails: grok tool-name aliases (#812)", () => {

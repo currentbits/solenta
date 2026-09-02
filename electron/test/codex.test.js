@@ -65,8 +65,11 @@ if (process.env.CODER_FAKE_CODEX_ARGV_FILE) {
     process.env.CODER_FAKE_CODEX_ARGV_FILE + ".env.json",
     JSON.stringify(
       Object.fromEntries(
-        Object.entries(process.env).filter(([k]) =>
-          k.startsWith("CODER_MCP_TOKEN_"),
+        Object.entries(process.env).filter(
+          ([k]) =>
+            k.startsWith("CODER_MCP_TOKEN_") ||
+            k === "CODEX_HOME" ||
+            k === "SOLENTA_WORKTREE",
         ),
       ),
     ),
@@ -632,6 +635,36 @@ describe("runner codex provider", () => {
       last.includes("second"),
       `last argv token must contain the original prompt: ${JSON.stringify(argv)}`,
     );
+  });
+
+  it("isolates CODEX_HOME and bypasses hook trust for classifyTool (#813)", async () => {
+    runner.stopAll();
+    runner = createRunner({
+      store,
+      core,
+      pushFn: (channel, payload) => {
+        pushes.push({ channel, payload });
+      },
+      tickMs: 15,
+      userDataPath: tmpDir,
+    });
+    process.env.CODER_FAKE_CODEX_SCENARIO = "success";
+    const thread = store.getThreads()[0];
+    await runner.startRun({ threadId: thread.id, prompt: "guard me" });
+    await waitFor(() => store.getThread(thread.id).status === "done");
+
+    const argv = JSON.parse(fs.readFileSync(argvFile, "utf8"));
+    assert.ok(
+      argv.includes("--dangerously-bypass-hook-trust"),
+      JSON.stringify(argv),
+    );
+    assert.ok(argv.includes("features.hooks=true"), JSON.stringify(argv));
+    assert.match(String(argv[argv.length - 1]), /guard me/);
+
+    const dest = path.join(tmpDir, "codex-homes", thread.id);
+    assert.ok(fs.existsSync(path.join(dest, "hooks.json")));
+    const env = JSON.parse(fs.readFileSync(argvFile + ".env.json", "utf8"));
+    assert.equal(env.CODEX_HOME, dest);
   });
 
   it("nonzero exit without stream sets failed + stderr", async () => {

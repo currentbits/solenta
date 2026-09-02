@@ -847,6 +847,28 @@ describe("cursor runner integration", () => {
     );
   });
 
+  it("injects a second --plugin-dir for classifyTool guardrails (#813)", async () => {
+    const thread = store.getThreads()[0];
+    await runner.startRun({
+      threadId: thread.id,
+      prompt: "do the thing",
+    });
+    await waitFor(() => store.getThread(thread.id).status === "done");
+
+    const argv = JSON.parse(fs.readFileSync(argvFile, "utf8"));
+    const dirs = [];
+    for (let i = 0; i < argv.length; i++) {
+      if (argv[i] === "--plugin-dir") dirs.push(argv[i + 1]);
+    }
+    assert.equal(dirs.length, 2, `expected two --plugin-dir: ${JSON.stringify(argv)}`);
+    const guardDir = path.resolve(tmpDir, "cursor-guardrails");
+    assert.ok(dirs.includes(guardDir), `missing ${guardDir} in ${JSON.stringify(dirs)}`);
+    assert.ok(
+      fs.existsSync(path.join(guardDir, "scripts", "guardrail-hook.js")),
+    );
+    assert.equal(argv[argv.length - 1], "do the thing");
+  });
+
   it("second turn with sessionId emits --resume cursor-sess-1", async () => {
     const thread = store.getThreads()[0];
     await runner.startRun({ threadId: thread.id, prompt: "turn one" });

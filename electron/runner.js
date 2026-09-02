@@ -70,7 +70,14 @@ const {
 } = require("./verify.js");
 const { prepareVerifyRun } = require("./verifyEfficiency.js");
 const { maybeApplyFmTitle } = require("./fm-title.js");
-const { classifyTool } = require("./guardrails.js");
+const { classifyTool, guardrailsEnabled } = require("./guardrails.js");
+const { insertBeforeLast } = require("./guardrail-hook-core.js");
+const {
+  materializeCursorGuardrailPlugin,
+  cursorGuardrailPluginDir,
+} = require("./cursor-guardrail.js");
+const { materializeCodexGuardrailHome } = require("./codex-guardrail.js");
+const { materializeOpencodeGuardrailDir } = require("./opencode-guardrail.js");
 const { grokGuardrailNotice } = require("./grok-guardrail-hook.js");
 const {
   extractCommand,
@@ -4396,7 +4403,28 @@ function createRunner(opts) {
     if (codexMcpArgs.length > 0) {
       args.unshift(...codexMcpArgs);
     }
-    const codexMcpEnv = getCodexMcpEnv();
+    /** @type {Record<string, string>} */
+    const codexMcpEnv = { ...getCodexMcpEnv() };
+    // #813: isolated CODEX_HOME PreToolUse. Skip ssh/WSL and when
+    // userDataPath is unset. Ask is deny (Codex ask fail-opens).
+    if (userDataPath && !crossesBoundary(project) && guardrailsEnabled()) {
+      try {
+        const dest = path.join(userDataPath, "codex-homes", threadId);
+        const sourceHome =
+          process.env.CODEX_HOME ||
+          path.join(require("node:os").homedir(), ".codex");
+        materializeCodexGuardrailHome({ dest, sourceHome });
+        insertBeforeLast(args, [
+          "-c",
+          "features.hooks=true",
+          "--dangerously-bypass-hook-trust",
+        ]);
+        codexMcpEnv.CODEX_HOME = dest;
+        codexMcpEnv.SOLENTA_WORKTREE = localCwd;
+      } catch {
+        // Overlay is best-effort; a failed isolate must not block the turn.
+      }
+    }
     const spawn = resolveSpawn(project, binary, args, localCwd);
 
     const entry = {
@@ -5386,6 +5414,21 @@ function createRunner(opts) {
       reasoningEffort: thread.reasoningEffort || null,
       webSearch: thread.webSearch === true,
     });
+    /** @type {NodeJS.ProcessEnv | undefined} */
+    let opencodeEnv;
+    // #813: OPENCODE_CONFIG_DIR plugin. Skip ssh/WSL and unset userDataPath.
+    if (userDataPath && !crossesBoundary(project) && guardrailsEnabled()) {
+      try {
+        const dest = path.join(userDataPath, "opencode-guardrails");
+        materializeOpencodeGuardrailDir(dest);
+        opencodeEnv = {
+          OPENCODE_CONFIG_DIR: dest,
+          SOLENTA_WORKTREE: localCwd,
+        };
+      } catch {
+        // Overlay is best-effort; a failed isolate must not block the turn.
+      }
+    }
     const spawn = resolveSpawn(project, binary, args, localCwd);
 
     const entry = {
@@ -5493,6 +5536,7 @@ function createRunner(opts) {
       binary: spawn.binary,
       args: spawn.args,
       cwd: spawn.cwd,
+      env: opencodeEnv,
       onEvent: (ev) => {
         if (!guard()) return;
 
@@ -5817,15 +5861,25 @@ function createRunner(opts) {
       reasoningEffort: thread.reasoningEffort || null,
       webSearch: thread.webSearch === true,
     });
-    // #686: pin Task/Agent workers to the parent model. Prompt stays last.
-    // Skip remote/WSL: the plugin lives on this host, not the wrapped cwd.
+    // #686: pin Task/Agent workers to the parent model. #813: classifyTool
+    // preToolUse. Prompt stays last. Skip remote/WSL: plugins live here.
     if (!crossesBoundary(project) && args.length > 0) {
       try {
-        const pluginDir = materializeCursorPinPlugin(
-          cursorPinPluginDir(userDataPath),
-        );
-        const promptArg = args.pop();
-        args.push("--plugin-dir", pluginDir, promptArg);
+        const pluginDirs = [
+          materializeCursorPinPlugin(cursorPinPluginDir(userDataPath)),
+        ];
+        if (guardrailsEnabled()) {
+          pluginDirs.push(
+            materializeCursorGuardrailPlugin(
+              cursorGuardrailPluginDir(userDataPath),
+            ),
+          );
+        }
+        const extras = [];
+        for (const dir of pluginDirs) {
+          extras.push("--plugin-dir", dir);
+        }
+        insertBeforeLast(args, extras);
       } catch {
         // Fail-open: a plugin write error must not block the Cursor turn.
       }
@@ -5850,7 +5904,7 @@ function createRunner(opts) {
             projectPath: localCwd || project.path,
           }),
         });
-        cursorEnv = { HOME: dest };
+        cursorEnv = { HOME: dest, SOLENTA_WORKTREE: localCwd };
       } catch {
         // Overlay is best-effort; a failed isolate must not block the turn.
         try {

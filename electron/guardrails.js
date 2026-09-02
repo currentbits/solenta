@@ -246,6 +246,11 @@ const WRITE_TOOLS = new Set([
   "NotebookEdit",
   "str_replace_editor",
   "apply_patch",
+  "StrReplace",
+  "write",
+  "edit",
+  "strreplace",
+  "Delete",
   "search_replace",
 ]);
 const READ_TOOLS = new Set([
@@ -254,6 +259,8 @@ const READ_TOOLS = new Set([
   "view",
   "Glob",
   "Grep",
+  "read",
+  "glob",
   "read_file",
   "list_dir",
   "grep",
@@ -263,6 +270,9 @@ const SHELL_TOOLS = new Set([
   "BashOutput",
   "shell",
   "run_command",
+  "Shell",
+  "bash",
+  "exec_command",
   "run_terminal_command",
   "run_terminal_cmd",
 ]);
