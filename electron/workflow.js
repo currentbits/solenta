@@ -150,6 +150,9 @@ function buildWorkflowView({ runId, name, template }) {
         model,
         status: "pending",
         tokensUsed: 0,
+        // Per-slot CLI session. Must not be written to thread.sessionId
+        // (a later interactive turn would resume it).
+        sessionId: null,
       });
     }
     return {
