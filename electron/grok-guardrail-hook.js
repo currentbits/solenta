@@ -9,7 +9,8 @@
  * overlay registers this script as a config.toml `[[hooks.PreToolUse]]`
  * handler — official grok docs: PreToolUse still denies under
  * always-approve. ssh/WSL turns deploy the same overlay onto the other
- * side of wrapCommand (#821).
+ * side of wrapCommand (#821). Live grok 1.0.13 loads that overlay table
+ * as `source.type=configToml` (#826).
  *
  * stdout JSON `{ decision, reason }` is the grok contract. Exit 2 is a
  * backup deny. ask is treated as deny: a hook `ask` is auto-approved
@@ -24,6 +25,7 @@ const HOOK_MARK = "# solenta-guardrail-hook";
 /** Grok / Claude names → classifyTool's set (aliases plus native names). */
 const GROK_TOOL_ALIAS = {
   run_terminal_command: "Bash",
+  run_terminal_cmd: "Bash",
   search_replace: "Edit",
   read_file: "Read",
   list_dir: "Glob",
@@ -97,12 +99,18 @@ function tomlString(value) {
   return `"${String(value).replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
 }
 
+/**
+ * Live grok 1.0.13 shape (#826): matcher = "" plus an inline command hook.
+ * Do not write this into GROK_HOME_LINKS "hooks" — that symlink is the
+ * user's ~/.grok/hooks.
+ */
 function hookBlock(command, timeout) {
   const seconds = Number(timeout);
   const t = Number.isFinite(seconds) && seconds > 0 ? seconds : 15;
   return [
     HOOK_MARK,
     "[[hooks.PreToolUse]]",
+    'matcher = ""',
     "hooks = [",
     `  { type = "command", command = ${tomlString(command)}, timeout = ${t} },`,
     "]",
@@ -111,7 +119,7 @@ function hookBlock(command, timeout) {
 }
 
 const MARKED_BLOCK =
-  /(?:^|\n)# solenta-guardrail-hook\n\[\[hooks\.PreToolUse\]\]\nhooks = \[\n  \{ type = "command", command = "(?:\\.|[^"\\])*", timeout = \d+ \},\n\]\n?/;
+  /(?:^|\n)# solenta-guardrail-hook\n\[\[hooks\.PreToolUse\]\]\nmatcher = ""\nhooks = \[\n  \{ type = "command", command = "(?:\\.|[^"\\])*", timeout = \d+ \},\n\]\n?/;
 
 function injectGrokGuardrailHook(toml, command, timeout = 15) {
   const stripped = String(toml || "").replace(MARKED_BLOCK, "\n");

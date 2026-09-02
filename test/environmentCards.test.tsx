@@ -4,9 +4,13 @@
  * Run: npm run test:renderer
  */
 import assert from "node:assert/strict";
-import { describe, it } from "node:test";
+import { afterEach, describe, it } from "node:test";
 import { mount } from "./support/dom.ts";
 import { GitTab } from "../src/components/AgentsPanel";
+import {
+  getComposerVimEnabled,
+  setComposerVimEnabled,
+} from "../src/uiPrefs";
 import type {
   GitPullResult,
   GitRepoInfo,
@@ -505,6 +509,39 @@ describe("fork card", () => {
       (m.query("[data-thread-handoff]") as HTMLButtonElement).disabled,
       true,
     );
+    m.unmount();
+  });
+});
+
+describe("display prefs card (#779)", () => {
+  afterEach(() => {
+    setComposerVimEnabled(false);
+  });
+
+  it("offers vim motions off by default", async () => {
+    setComposerVimEnabled(false);
+    const m = await mount(tab({}));
+    await m.flush();
+    const card = m.query("[data-display-prefs]");
+    assert.ok(card, "Display card");
+    const box = card.querySelector(
+      "[data-composer-vim-pref]",
+    ) as HTMLInputElement | null;
+    assert.ok(box, "vim motions checkbox");
+    assert.equal(box.checked, false);
+    assert.equal(getComposerVimEnabled(), false);
+    assert.match(card.textContent || "", /Vim motions in the composer/);
+    m.unmount();
+  });
+
+  it("turns the pref on from the Display card", async () => {
+    setComposerVimEnabled(false);
+    const m = await mount(tab({}));
+    await m.flush();
+    const box = m.query("[data-composer-vim-pref]") as HTMLInputElement;
+    await m.click(box);
+    assert.equal(box.checked, true);
+    assert.equal(getComposerVimEnabled(), true);
     m.unmount();
   });
 });

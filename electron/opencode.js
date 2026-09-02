@@ -246,6 +246,7 @@ function extractToolEvent(obj) {
  * @param {string} [opts.binary]
  * @param {string[]} opts.args
  * @param {string} opts.cwd
+ * @param {NodeJS.ProcessEnv} [opts.env] - overlay env (OPENCODE_CONFIG_DIR)
  * @param {(ev: object) => void} opts.onEvent - raw parsed NDJSON object
  * @param {(info: { code: number | null, stderr: string, fullStdout: string, gotJson: boolean }) => void} opts.onExit
  * @param {(err: Error) => void} [opts.onError]
@@ -256,6 +257,7 @@ function runOpencode(opts) {
     binary = process.env.CODER_OPENCODE_BIN || "opencode",
     args = [],
     cwd,
+    env: envOverride,
     onEvent,
     onExit,
     onError,
@@ -318,6 +320,9 @@ function runOpencode(opts) {
       agentSpawnOptions({
         cwd,
         stdio: ["ignore", "pipe", "pipe"],
+        env: envOverride
+          ? { ...process.env, ...envOverride }
+          : undefined,
       }),
     );
   } catch (err) {

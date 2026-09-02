@@ -147,6 +147,15 @@ export const setPasteCardsEnabled = pasteCards.set;
 export const usePasteCardsEnabled = pasteCards.use;
 
 /**
+ * Vim-style motions in the composer textarea (issue #779). Off by default:
+ * the typing path must stay ordinary unless the user opts in.
+ */
+const composerVim = makeFlagPref("coder.composerVim", false);
+export const getComposerVimEnabled = composerVim.get;
+export const setComposerVimEnabled = composerVim.set;
+export const useComposerVimEnabled = composerVim.use;
+
+/**
  * The last reasoning level the user picked, remembered across harness switches.
  *
  * Effort lives on the thread, and setProvider (electron/services.js) has to

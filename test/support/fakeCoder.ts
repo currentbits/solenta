@@ -2406,6 +2406,8 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
       start: (input: unknown) => rec("runs.start", [input], { runId: "r1" }),
       startWorkflow: (input: unknown) =>
         rec("runs.startWorkflow", [input], { runId: "r2" }),
+      retryWorkflowAgent: (input: unknown) =>
+        rec("runs.retryWorkflowAgent", [input], { runId: "r-retry" }),
       distill: (input: unknown) =>
         rec(
           "runs.distill",

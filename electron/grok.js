@@ -176,6 +176,7 @@ function writeSecretFile(file, data) {
  * @param {Record<string, object>} [opts.mcpServers]
  * @param {false | { command?: string, timeout?: number }} [opts.guardrailHook]
  *   PreToolUse classifyTool hook (#812). false skips it (tests / kill switch).
+ *   The gate is overlay config.toml — never GROK_HOME_LINKS "hooks".
  * @returns {string} dest
  */
 function materializeGrokHome(opts) {
@@ -216,9 +217,12 @@ function materializeGrokHome(opts) {
   let toml = chunks.join("\n\n") + "\n";
 
   // #812: PreToolUse hook so classifyTool runs before grok `-p`
-  // --always-approve executes a tool. Overlay only — never write hooks
-  // into the user's real home. Skip when the caller opts out or the
-  // process-wide kill switch is off.
+  // --always-approve executes a tool. Overlay config.toml only — never
+  // write the gate through the GROK_HOME_LINKS "hooks" symlink (user
+  // ~/.grok/hooks). Skip when the caller opts out or the process-wide
+  // kill switch is off. Live 1.0.13 loads this table as
+  // source.type=configToml (#826). ssh/WSL uses deployGrokGuardrailOverlay
+  // (#821) instead of this local dest.
   if (opts.guardrailHook !== false && guardrailsEnabled()) {
     try {
       const spec =

@@ -153,6 +153,101 @@ enabled = ["ponytail"]
   });
 });
 
+/**
+ * #812 / #827: overlay inject writes the live 1.0.13 PreToolUse shape
+ * (config.toml [[hooks.PreToolUse]], source.type=configToml). The gate is
+ * never written through GROK_HOME_LINKS "hooks" (user ~/.grok/hooks).
+ */
+describe("materializeGrokHome PreToolUse inject (#812)", () => {
+  let source;
+  let dest;
+  let prevGuardrails;
+
+  beforeEach(() => {
+    prevGuardrails = process.env.CODER_GUARDRAILS;
+    delete process.env.CODER_GUARDRAILS;
+    source = fs.mkdtempSync(path.join(os.tmpdir(), "grok-src-"));
+    dest = fs.mkdtempSync(path.join(os.tmpdir(), "grok-dst-"));
+    fs.writeFileSync(
+      path.join(source, "config.toml"),
+      "[marketplace]\nauto_update = true\n",
+    );
+    fs.writeFileSync(path.join(source, "auth.json"), '{"token":"keep"}\n');
+  });
+
+  afterEach(() => {
+    fs.rmSync(source, { recursive: true, force: true });
+    fs.rmSync(dest, { recursive: true, force: true });
+    if (prevGuardrails === undefined) delete process.env.CODER_GUARDRAILS;
+    else process.env.CODER_GUARDRAILS = prevGuardrails;
+  });
+
+  it("writes live-proven config.toml PreToolUse and copies hook next to guardrails.js", () => {
+    materializeGrokHome({ dest, sourceHome: source });
+    const overlay = fs.readFileSync(path.join(dest, "config.toml"), "utf8");
+    assert.match(overlay, /auto_update = true/);
+    assert.match(
+      overlay,
+      /\[\[hooks\.PreToolUse\]\]\nmatcher = ""\nhooks = \[\n  \{ type = "command", command = ".+", timeout = \d+ \},\n\]/,
+    );
+    assert.match(overlay, /grok-guardrail-hook\.js/);
+    assert.equal(
+      overlay.includes("control_request"),
+      false,
+      "overlay must not invent a control_request path",
+    );
+
+    const hookDest = path.join(dest, "grok-guardrail-hook.js");
+    const policyDest = path.join(dest, "guardrails.js");
+    assert.equal(fs.existsSync(hookDest), true);
+    assert.equal(fs.existsSync(policyDest), true);
+    assert.equal(fs.lstatSync(hookDest).isSymbolicLink(), false);
+    assert.equal(fs.lstatSync(policyDest).isSymbolicLink(), false);
+    assert.equal(path.dirname(hookDest), path.dirname(policyDest));
+
+    const src = fs.readFileSync(path.join(source, "config.toml"), "utf8");
+    assert.equal(src.includes("[[hooks.PreToolUse]]"), false);
+  });
+
+  it("does not put the gate on the GROK_HOME_LINKS hooks/ symlink", () => {
+    const userHooks = path.join(source, "hooks");
+    fs.mkdirSync(userHooks);
+    fs.writeFileSync(path.join(userHooks, "agentmux.json"), "{}\n");
+
+    materializeGrokHome({ dest, sourceHome: source });
+
+    const destHooks = path.join(dest, "hooks");
+    assert.ok(
+      fs.lstatSync(destHooks).isSymbolicLink(),
+      "hooks/ stays the GROK_HOME_LINKS symlink to the user home",
+    );
+    assert.equal(fs.realpathSync(destHooks), fs.realpathSync(userHooks));
+    assert.equal(fs.existsSync(path.join(userHooks, "grok-guardrail-hook.js")), false);
+    assert.equal(fs.existsSync(path.join(destHooks, "grok-guardrail-hook.js")), false);
+
+    const hookDest = path.join(dest, "grok-guardrail-hook.js");
+    assert.equal(fs.existsSync(hookDest), true);
+    assert.equal(fs.lstatSync(hookDest).isSymbolicLink(), false);
+
+    const overlay = fs.readFileSync(path.join(dest, "config.toml"), "utf8");
+    assert.match(overlay, /\[\[hooks\.PreToolUse\]\]/);
+    assert.match(overlay, /grok-guardrail-hook\.js/);
+    assert.equal(
+      overlay.includes(`${destHooks}${path.sep}`),
+      false,
+      "command must not point at the hooks/ symlink",
+    );
+  });
+
+  it("skips the hook when CODER_GUARDRAILS=off", () => {
+    process.env.CODER_GUARDRAILS = "off";
+    materializeGrokHome({ dest, sourceHome: source });
+    const overlay = fs.readFileSync(path.join(dest, "config.toml"), "utf8");
+    assert.equal(overlay.includes("[[hooks.PreToolUse]]"), false);
+    assert.equal(fs.existsSync(path.join(dest, "grok-guardrail-hook.js")), false);
+  });
+});
+
 describe("kimiMcpServersForRun binds projectId for grok overlay", () => {
   let tmpDir;
   let prevEnv;

@@ -64,6 +64,14 @@ if (process.env.CODER_FAKE_OPENCODE_ARGV_FILE) {
     JSON.stringify(process.argv.slice(1)),
     "utf8",
   );
+  fs.writeFileSync(
+    process.env.CODER_FAKE_OPENCODE_ARGV_FILE + ".env.json",
+    JSON.stringify({
+      OPENCODE_CONFIG_DIR: process.env.OPENCODE_CONFIG_DIR || "",
+      SOLENTA_WORKTREE: process.env.SOLENTA_WORKTREE || "",
+    }),
+    "utf8",
+  );
 }
 
 const scenario = process.env.CODER_FAKE_OPENCODE_SCENARIO || "success";
@@ -522,6 +530,22 @@ describe("opencode runner integration", () => {
       `last argv token must contain the original prompt: ${JSON.stringify(argv)}`,
     );
     assert.ok(!argv.includes("-s"));
+  });
+
+  it("sets OPENCODE_CONFIG_DIR to the classifyTool plugin overlay (#813)", async () => {
+    const thread = store.getThreads()[0];
+    await runner.startRun({
+      threadId: thread.id,
+      prompt: "do the thing",
+    });
+    await waitFor(() => store.getThread(thread.id).status === "done");
+
+    const env = JSON.parse(fs.readFileSync(argvFile + ".env.json", "utf8"));
+    const dest = path.resolve(tmpDir, "opencode-guardrails");
+    assert.equal(env.OPENCODE_CONFIG_DIR, dest);
+    assert.ok(
+      fs.existsSync(path.join(dest, "plugins", "solenta-guardrail.js")),
+    );
   });
 
   it("second turn passes -s with captured sessionID", async () => {

@@ -159,6 +159,7 @@ function dummyRunner() {
     isRunning: () => false,
     startRun: async () => ({ runId: "r" }),
     startWorkflowRun: async () => ({ runId: "r" }),
+    retryWorkflowAgent: async () => ({ runId: "r-retry" }),
     stopRun: async () => {},
     getActiveWorkflow: () => null,
   };

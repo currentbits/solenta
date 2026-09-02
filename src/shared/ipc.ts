@@ -3606,6 +3606,12 @@ export interface CoderApi {
      */
     startWorkflow(input: { threadId: string; prompt: string; templateId?: string }): Promise<{ runId: string }>;
     /**
+     * Re-spawn one failed workflow phase agent after the run has ended
+     * (#825). Same slot / overlay; no persist/resume. Rejects while a run
+     * is active or when the agent is not failed.
+     */
+    retryWorkflowAgent(input: { threadId: string; agentId: string }): Promise<{ runId: string }>;
+    /**
      * #285: reads a finished thread's transcript and distills it into a
      * reusable workflow template draft. Nothing is saved — the caller shows
      * the draft for review and saves it through workflows.save.

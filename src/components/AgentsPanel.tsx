@@ -80,6 +80,8 @@ import {
   useRunDurationEnabled,
   setPasteCardsEnabled,
   usePasteCardsEnabled,
+  setComposerVimEnabled,
+  useComposerVimEnabled,
 } from "../uiPrefs";
 import styles from "./AgentsPanel.module.css";
 
@@ -457,6 +459,7 @@ function DisplayPrefsCard() {
   const divergence = useDivergenceCardEnabled();
   const runDuration = useRunDurationEnabled();
   const pasteCards = usePasteCardsEnabled();
+  const composerVim = useComposerVimEnabled();
   return (
     <section className={styles.gitCard} data-display-prefs="">
       <div className={styles.gitCardLabel}>
@@ -491,6 +494,15 @@ function DisplayPrefsCard() {
           onChange={(e) => setPasteCardsEnabled(e.target.checked)}
         />
         Collapse large pastes into cards
+      </label>
+      <label className={styles.checkboxLabel}>
+        <input
+          type="checkbox"
+          data-composer-vim-pref=""
+          checked={composerVim}
+          onChange={(e) => setComposerVimEnabled(e.target.checked)}
+        />
+        Vim motions in the composer
       </label>
     </section>
   );
