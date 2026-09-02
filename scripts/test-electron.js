@@ -50,6 +50,7 @@ const WIN32_FILES = [
   "electron/test/kimi-home.test.js",
   "electron/test/grok-home.test.js",
   "electron/test/grok-guardrail-hook.test.js",
+  "electron/test/grok-live-hook.test.js",
   "electron/test/cursor-home.test.js",
   "electron/test/memory-record.test.js",
   "electron/test/opencode.test.js",
