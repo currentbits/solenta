@@ -65,6 +65,7 @@ const WIN32_FILES = [
   "electron/test/session-record.test.js",
   "electron/test/secrets.test.js",
   "electron/test/updater.test.js", // win32 portable stage + helper (#755)
+  "electron/test/workflow-retry-agent.test.js",
 ];
 if (process.platform === "win32") {
   args.push(...WIN32_FILES);
