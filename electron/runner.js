@@ -71,6 +71,7 @@ const {
 const { prepareVerifyRun } = require("./verifyEfficiency.js");
 const { maybeApplyFmTitle } = require("./fm-title.js");
 const { classifyTool } = require("./guardrails.js");
+const { grokGuardrailNotice } = require("./grok-guardrail-hook.js");
 const {
   extractCommand,
   resolveEditedCommand,
@@ -3226,6 +3227,8 @@ function createRunner(opts) {
     /** tool_use id -> message id */
     /** @type {Map<string, string>} */
     const toolMsgById = new Map();
+    /** Tool ids we already posted a #812 Guardrail event for. */
+    const grokGuardrailNoticed = new Set();
     /** @type {string | null} */
     let capturedModel = null;
     /** @type {string | null} */
@@ -3357,6 +3360,17 @@ function createRunner(opts) {
       };
       const msgId = appendMessage(threadId, "tool", summary, runId, tool);
       toolMsgById.set(toolId, msgId);
+      if (entryDef.id === "grok" && !grokGuardrailNoticed.has(toolId)) {
+        const notice = grokGuardrailNotice({
+          toolName,
+          input: inputObj,
+          worktreePath: thread.worktreePath || project.path,
+        });
+        if (notice) {
+          grokGuardrailNoticed.add(toolId);
+          appendMessage(threadId, "event", notice, runId);
+        }
+      }
       if (toolName === "TodoWrite") {
         savePlanSteps(threadId, inputObj.todos);
       }
