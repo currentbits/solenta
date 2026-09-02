@@ -880,6 +880,22 @@ const PLANBOARD_NOTE =
   "keep it current instead of filing issues for individual steps.";
 
 /**
+ * Codex-only standing note (issue #800). gpt-5.6-sol invents a Solenta
+ * "enable automation / agentmux" toggle when Computer Use tools are
+ * missing. Official Computer Use is a ChatGPT / Codex Desktop plugin,
+ * not a CLI flag and not a Solenta setting. `codex features list`
+ * already reports computer_use=true; passing --enable is a no-op.
+ */
+const CODEX_COMPUTER_USE_NOTE =
+  "\n\n[Computer use] Solenta runs Codex via headless `codex exec` / " +
+  "`exec resume`. It has no Computer Use, desktop-control, or " +
+  '"enable automation" / agentmux setting. Official Computer Use is ' +
+  "installed from ChatGPT / Codex Desktop → Settings → Computer Use → " +
+  "Install (plugin + Screen Recording + Accessibility). If those tools " +
+  "are missing, say so and point at Desktop — do not invent a Solenta " +
+  "toggle. Full-access permission mode is not desktop control.";
+
+/**
  * PLANBOARD_NOTE when the project checkout has a GitHub origin, else "".
  * Keeps the note out of prompts where it isn't actionable.
  *
@@ -961,6 +977,18 @@ function suggestedWorkNoteFor() {
   return (
     "\n\n[Suggested work] When you notice work worth doing that is OUT OF SCOPE for the current task, call the coder-threads tool work_suggest (with your own threadId/projectId) — a short title plus a self-contained prompt for a fresh agent with none of your context. It renders as a chip the user can start as a new thread with one click. Never start or do that work yourself, never derail the current task for it, and suggest at most a few per run. Skip anything already suggested on this thread."
   );
+}
+
+/**
+ * Standing note appended to every Codex dispatch (CLI-only, never stored
+ * in the transcript) so the model does not invent a Solenta Computer Use
+ * toggle (issue #800). Silent for every other provider.
+ *
+ * @param {string | null | undefined} provider
+ * @returns {string}
+ */
+function codexComputerUseNoteFor(provider) {
+  return provider === "codex" ? CODEX_COMPUTER_USE_NOTE : "";
 }
 
 /**
@@ -4913,6 +4941,8 @@ module.exports = {
   planboardNoteFor,
   selfIdNoteFor,
   suggestedWorkNoteFor,
+  CODEX_COMPUTER_USE_NOTE,
+  codexComputerUseNoteFor,
   subagentPoolNoteFor: require("./subagentPool").subagentPoolNoteFor,
   resolveSubagentPool: require("./subagentPool").resolveSubagentPool,
   hypothesisNoteFor,

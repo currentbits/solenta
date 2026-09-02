@@ -494,9 +494,9 @@ emit({
         `runner must pass -c web_search=live, got ${JSON.stringify(argv)}`,
       );
       assert.equal(argv[argv.indexOf("web_search=live") - 1], "-c");
-      assert.equal(
-        argv[argv.length - 1],
-        prompt,
+      const last = argv[argv.length - 1];
+      assert.ok(
+        String(last).startsWith(prompt),
         `runner prompt must stay last after live search: ${JSON.stringify(argv)}`,
       );
     } finally {
