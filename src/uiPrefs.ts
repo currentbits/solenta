@@ -146,7 +146,10 @@ export const getPasteCardsEnabled = pasteCards.get;
 export const setPasteCardsEnabled = pasteCards.set;
 export const usePasteCardsEnabled = pasteCards.use;
 
-/** Opt-in vim motions in the composer textarea (issue #779). Off by default. */
+/**
+ * Vim-style motions in the composer textarea (issue #779). Off by default:
+ * the typing path must stay ordinary unless the user opts in.
+ */
 const composerVim = makeFlagPref("coder.composerVim", false);
 export const getComposerVimEnabled = composerVim.get;
 export const setComposerVimEnabled = composerVim.set;
