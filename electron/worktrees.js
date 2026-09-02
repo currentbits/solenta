@@ -693,6 +693,8 @@ function checkoutForMerge(preferredPath, branch) {
 
 /**
  * Clear thread worktree fields, remove worktree dir + branch, save, broadcast.
+ * A missing directory is already-removed: do not throw, still null
+ * worktreePath + branch (not pendingWorktree). Real git failures still throw.
  * @param {object} opts
  * @param {import('./store').Store} opts.store
  * @param {object} opts.thread
@@ -707,14 +709,20 @@ function cleanupWorktree(opts) {
   const branch = thread.branch;
 
   if (wtPath) {
-    const args = forceRemove
-      ? ["worktree", "remove", "--force", wtPath]
-      : ["worktree", "remove", wtPath];
-    const rem = gitTry(project.path, args);
-    if (!rem.ok) {
-      throw new Error(
-        `Failed to remove worktree: ${rem.combined.split("\n")[0]}`,
-      );
+    if (fs.existsSync(wtPath)) {
+      const args = forceRemove
+        ? ["worktree", "remove", "--force", wtPath]
+        : ["worktree", "remove", wtPath];
+      const rem = gitTry(project.path, args);
+      if (!rem.ok && fs.existsSync(wtPath)) {
+        throw new Error(
+          `Failed to remove worktree: ${rem.combined.split("\n")[0]}`,
+        );
+      }
+    } else {
+      // Already gone (orphan sweep, hand delete, leftover after #840).
+      // Prune the stale registration; still clear store fields below (#843).
+      gitTry(project.path, ["worktree", "prune"]);
     }
   }
 

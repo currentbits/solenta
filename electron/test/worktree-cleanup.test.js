@@ -27,6 +27,7 @@ const {
   sweepOrphanWorktrees,
   ensureWorktree,
   clearMissingWorktree,
+  removeWorktree,
 } = require("../worktrees.js");
 
 function git(cwd, args) {
@@ -327,6 +328,79 @@ describe("sweepOrphanWorktrees", () => {
     assert.deepEqual(result.removed, [orphan.worktreePath]);
     assert.ok(!fs.existsSync(orphan.worktreePath));
     assert.ok(fs.existsSync(fx.worktreePath));
+  });
+});
+
+describe("cleanupWorktree via removeWorktree (#843)", () => {
+  let fx;
+
+  beforeEach(async () => {
+    fx = await makeFixture();
+  });
+
+  afterEach(() => {
+    fs.rmSync(fx.tmpDir, { recursive: true, force: true });
+  });
+
+  it("nulls fields when the worktree directory is already gone", () => {
+    fs.rmSync(fx.worktreePath, { recursive: true, force: true });
+    git(fx.repo, ["worktree", "prune"]);
+
+    const updated = removeWorktree({
+      store: fx.store,
+      threadId: fx.threadId,
+      force: true,
+      broadcast: () => {},
+    });
+
+    const thread = fx.store.getThread(fx.threadId);
+    assert.equal(updated.worktreePath, null);
+    assert.equal(updated.branch, null);
+    assert.equal(thread.worktreePath, null);
+    assert.equal(thread.branch, null);
+    assert.equal(Boolean(thread.pendingWorktree), false);
+  });
+
+  it("still removes a present worktree and nulls the same fields", () => {
+    assert.ok(fs.existsSync(fx.worktreePath));
+
+    const updated = removeWorktree({
+      store: fx.store,
+      threadId: fx.threadId,
+      force: true,
+      broadcast: () => {},
+    });
+
+    assert.equal(updated.worktreePath, null);
+    assert.equal(updated.branch, null);
+    assert.ok(!fs.existsSync(fx.worktreePath));
+    const thread = fx.store.getThread(fx.threadId);
+    assert.equal(thread.worktreePath, null);
+    assert.equal(thread.branch, null);
+    assert.equal(Boolean(thread.pendingWorktree), false);
+    const branches = git(fx.repo, ["branch", "--list", fx.branch]);
+    assert.equal(branches, "");
+  });
+
+  it("still throws when git cannot remove a present worktree", () => {
+    // Point the store at the main checkout: git worktree remove refuses it.
+    fx.store.updateThread(fx.threadId, { worktreePath: fx.repo });
+    fx.store.saveNow();
+
+    assert.throws(
+      () =>
+        removeWorktree({
+          store: fx.store,
+          threadId: fx.threadId,
+          force: true,
+          broadcast: () => {},
+        }),
+      /Failed to remove worktree/,
+    );
+
+    const thread = fx.store.getThread(fx.threadId);
+    assert.equal(thread.worktreePath, fx.repo);
+    assert.equal(thread.branch, fx.branch);
   });
 });
 
