@@ -13,6 +13,12 @@
 
 const fs = require("node:fs");
 const path = require("node:path");
+const {
+  injectGrokGuardrailHook,
+  grokGuardrailHookCommand,
+} = require("./grok-guardrail-hook.js");
+const { guardrailsEnabled } = require("./guardrails.js");
+const { execCommand, posixQuote } = require("./ssh.js");
 
 /**
  * Auth/session/plugin files a per-run home must share with the user's real
@@ -168,6 +174,8 @@ function writeSecretFile(file, data) {
  * @param {string} opts.dest
  * @param {string} opts.sourceHome
  * @param {Record<string, object>} [opts.mcpServers]
+ * @param {false | { command?: string, timeout?: number }} [opts.guardrailHook]
+ *   PreToolUse classifyTool hook (#812). false skips it (tests / kill switch).
  * @returns {string} dest
  */
 function materializeGrokHome(opts) {
@@ -205,7 +213,109 @@ function materializeGrokHome(opts) {
   if (base.trim()) chunks.push(base.replace(/\s+$/, ""));
   chunks.push(compat.trimEnd());
   if (mcp.trim()) chunks.push(mcp.replace(/\s+$/, ""));
-  writeSecretFile(path.join(dest, "config.toml"), chunks.join("\n\n") + "\n");
+  let toml = chunks.join("\n\n") + "\n";
+
+  // #812: PreToolUse hook so classifyTool runs before grok `-p`
+  // --always-approve executes a tool. Overlay only — never write hooks
+  // into the user's real home. Skip when the caller opts out or the
+  // process-wide kill switch is off.
+  if (opts.guardrailHook !== false && guardrailsEnabled()) {
+    try {
+      const spec =
+        opts.guardrailHook && typeof opts.guardrailHook === "object"
+          ? opts.guardrailHook
+          : {};
+      const hookDest = path.join(dest, "grok-guardrail-hook.js");
+      const policyDest = path.join(dest, "guardrails.js");
+      fs.copyFileSync(
+        path.join(__dirname, "grok-guardrail-hook.js"),
+        hookDest,
+      );
+      fs.copyFileSync(path.join(__dirname, "guardrails.js"), policyDest);
+      const command =
+        spec.command || grokGuardrailHookCommand({ hookPath: hookDest });
+      const timeout = spec.timeout || 15;
+      toml = injectGrokGuardrailHook(toml, command, timeout);
+    } catch {
+      // A hook write failure must not block the turn; stream notice remains.
+    }
+  }
+
+  writeSecretFile(path.join(dest, "config.toml"), toml);
+  return dest;
+}
+
+function remoteGrokHomeDest(remoteHome, threadId) {
+  const home = String(remoteHome || "").replace(/\/+$/, "");
+  const id = path.posix.basename(String(threadId || ""));
+  if (!home || !id || id !== String(threadId || "")) return "";
+  return `${home}/.solenta/grok-homes/${id}`;
+}
+
+/**
+ * Write overlay files onto the other side of wrapCommand (ssh / WSL).
+ * One `sh -c` so a stall is one timeout, not one per file.
+ * @param {{ remoteHost?: string, path?: string } | null} project
+ * @param {string} dest
+ * @param {Record<string, string>} files
+ */
+function writeRemoteOverlay(project, dest, files) {
+  const parts = [`mkdir -p ${posixQuote(dest)}`];
+  for (const [name, body] of Object.entries(files || {})) {
+    if (!name || name !== path.posix.basename(name)) continue;
+    const b64 = Buffer.from(String(body), "utf8").toString("base64");
+    parts.push(
+      `printf '%s' ${posixQuote(b64)} | base64 -d > ${posixQuote(`${dest}/${name}`)}`,
+    );
+  }
+  // Real grok with GROK_HOME set looks for auth there, not ~/.grok.
+  parts.push(
+    `for f in auth.json agent_id sessions installed-plugins marketplace-cache plugins hooks bin bundled models_cache.json completions; do src="$HOME/.grok/$f"; dst=${posixQuote(dest)}/"$f"; if [ -e "$src" ] && [ ! -e "$dst" ]; then ln -s "$src" "$dst"; fi; done`,
+  );
+  execCommand(project, "sh", ["-c", parts.join(" && ")], { encoding: "utf8" });
+}
+
+/**
+ * Deploy the #812 PreToolUse overlay onto an ssh/WSL host (#821).
+ * Returns the remote GROK_HOME path, or null when skipped.
+ *
+ * The hook command uses remote `node`, not local Electron execPath.
+ *
+ * @param {object} opts
+ * @param {{ remoteHost?: string, path?: string } | null} opts.project
+ * @param {string} opts.threadId
+ * @returns {string | null}
+ */
+function deployGrokGuardrailOverlay(opts) {
+  const project = opts && opts.project;
+  const threadId = opts && opts.threadId;
+  if (!project || !threadId) return null;
+  if (!guardrailsEnabled()) return null;
+  const home = String(
+    execCommand(project, "sh", ["-c", 'printf %s "$HOME"'], {
+      encoding: "utf8",
+    }),
+  ).trim();
+  const dest = remoteGrokHomeDest(home, threadId);
+  if (!dest) throw new Error("remote GROK_HOME dest unusable");
+  const hookDest = `${dest}/grok-guardrail-hook.js`;
+  const command = grokGuardrailHookCommand({
+    nodePath: "node",
+    hookPath: hookDest,
+    posix: true,
+  });
+  const toml = injectGrokGuardrailHook("", command, 15);
+  writeRemoteOverlay(project, dest, {
+    "grok-guardrail-hook.js": fs.readFileSync(
+      path.join(__dirname, "grok-guardrail-hook.js"),
+      "utf8",
+    ),
+    "guardrails.js": fs.readFileSync(
+      path.join(__dirname, "guardrails.js"),
+      "utf8",
+    ),
+    "config.toml": toml,
+  });
   return dest;
 }
 
@@ -321,6 +431,8 @@ function reclaimGrokHomes(opts) {
 
 module.exports = {
   materializeGrokHome,
+  deployGrokGuardrailOverlay,
+  remoteGrokHomeDest,
   reclaimGrokHomes,
   stripGrokConfigForOverlay,
   grokMcpToml,

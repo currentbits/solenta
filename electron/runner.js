@@ -16,7 +16,7 @@ const codexParse = require("./codex.js");
 const { runCodex } = codexParse;
 const kimiParse = require("./kimi.js");
 const { runKimi, materializeKimiHome } = kimiParse;
-const { materializeGrokHome } = require("./grok.js");
+const { materializeGrokHome, deployGrokGuardrailOverlay } = require("./grok.js");
 const cursorParse = require("./cursor.js");
 const { runCursor, materializeCursorHome } = cursorParse;
 const {
@@ -70,7 +70,8 @@ const {
 } = require("./verify.js");
 const { prepareVerifyRun } = require("./verifyEfficiency.js");
 const { maybeApplyFmTitle } = require("./fm-title.js");
-const { classifyTool } = require("./guardrails.js");
+const { classifyTool, guardrailsEnabled } = require("./guardrails.js");
+const { grokGuardrailNotice } = require("./grok-guardrail-hook.js");
 const {
   extractCommand,
   resolveEditedCommand,
@@ -589,11 +590,11 @@ function cursorToolCardSummary(name, input, args) {
  * @param {string} localCwd
  * @returns {{ binary: string, args: string[], cwd: string }}
  */
-function resolveSpawn(project, binary, args, localCwd) {
+function resolveSpawn(project, binary, args, localCwd, env) {
   if (!crossesBoundary(project)) {
     return { binary, args, cwd: localCwd };
   }
-  const wrapped = wrapCommand(project, binary, args);
+  const wrapped = wrapCommand(project, binary, args, undefined, env);
   return { binary: wrapped.bin, args: wrapped.args, cwd: process.cwd() };
 }
 
@@ -3226,6 +3227,8 @@ function createRunner(opts) {
     /** tool_use id -> message id */
     /** @type {Map<string, string>} */
     const toolMsgById = new Map();
+    /** Tool ids we already posted a #812/#821 Guardrail event for. */
+    const grokGuardrailNoticed = new Set();
     /** @type {string | null} */
     let capturedModel = null;
     /** @type {string | null} */
@@ -3357,6 +3360,17 @@ function createRunner(opts) {
       };
       const msgId = appendMessage(threadId, "tool", summary, runId, tool);
       toolMsgById.set(toolId, msgId);
+      if (entryDef.id === "grok" && !grokGuardrailNoticed.has(toolId)) {
+        const notice = grokGuardrailNotice({
+          toolName,
+          input: inputObj,
+          worktreePath: thread.worktreePath || project.path,
+        });
+        if (notice) {
+          grokGuardrailNoticed.add(toolId);
+          appendMessage(threadId, "event", notice, runId);
+        }
+      }
       if (toolName === "TodoWrite") {
         savePlanSteps(threadId, inputObj.todos);
       }
@@ -3528,10 +3542,9 @@ function createRunner(opts) {
     if (entryDef.id === "grok") {
       // Isolated GROK_HOME so this turn cannot inherit other projects'
       // MCP URLs or a user-global last-write-wins bind (issue #706).
-      // Skipped for ssh/WSL (the overlay lives on this host) and when
-      // userDataPath is unset (tests). Those paths fall back to
-      // `grok mcp add` with bound URLs, awaited so a stall cannot race
-      // this spawn.
+      // Local: overlay on this host. ssh/WSL: deploy the same PreToolUse
+      // hook onto the other side and pass GROK_HOME through wrapCommand
+      // (#821). MCP bind still falls back to ensureGrokMcpConfig.
       if (userDataPath && !crossesBoundary(project)) {
         try {
           const os = require("node:os");
@@ -3566,6 +3579,14 @@ function createRunner(opts) {
           return { runId };
         }
       } else {
+        if (crossesBoundary(project) && guardrailsEnabled()) {
+          try {
+            const dest = deployGrokGuardrailOverlay({ project, threadId });
+            if (dest) grokHomeEnv = { GROK_HOME: dest };
+          } catch {
+            // Deploy miss must not kill the run; stream notice remains.
+          }
+        }
         try {
           ensureGrokMcpConfig({
             projectPath: localCwd,
@@ -3578,7 +3599,7 @@ function createRunner(opts) {
         }
       }
     }
-    const spawn = resolveSpawn(project, binary, args, localCwd);
+    const spawn = resolveSpawn(project, binary, args, localCwd, grokHomeEnv);
 
     const entry = {
       kind: "claude",
