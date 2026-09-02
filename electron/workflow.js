@@ -1584,8 +1584,8 @@ async function startWorkflowRun(deps) {
       return null;
     }
 
-    // One bounded retry on the same slot / overlay. The work-log line is
-    // in-progress for the second spawn only (#823).
+    // One bounded retry on the same slot / overlay (#815 / #819).
+    // The work-log line is in-progress for the second spawn only (#823).
     if (result && !result.ok) {
       absorbUsage(result);
       if (!guard()) {
