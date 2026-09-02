@@ -477,10 +477,18 @@ emit({
         argv.includes("--search"),
         `runner must pass --search into codex argv, got ${JSON.stringify(argv)}`,
       );
+      // startRun concatenates standing notes onto the CLI prompt (self-id,
+      // planboard, Computer Use, …). The raw sentinel stays inside the last
+      // argv token; it is no longer the entire token.
+      const last = argv[argv.length - 1];
       assert.equal(
-        argv[argv.length - 1],
-        prompt,
+        typeof last,
+        "string",
         `runner prompt must stay last after --search: ${JSON.stringify(argv)}`,
+      );
+      assert.ok(
+        last.includes(prompt),
+        `last argv token must contain the sentinel ${prompt}, got ${JSON.stringify(argv)}`,
       );
     } finally {
       if (runner) runner.stopAll();
