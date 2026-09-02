@@ -222,6 +222,8 @@ describe("retryAnchorEventId", () => {
   });
 
   it("still anchors when a leftover workflow id does not match the last run", () => {
+    // lastWorkflowByThread survives a later chat turn. That chat failure
+    // must keep Retry turn (runs.start), not hide because an old view exists.
     assert.equal(
       retryAnchorEventId(
         "failed",
