@@ -19,6 +19,9 @@ import type {
  * Click re-sends the LAST user message via the same onStartRun path as Composer,
  * unless the last event belongs to the current Build workflow: then the click
  * routes to runs.retryWorkflowAgent on the first failed slot (#830 / #825).
+ * Hide when that last run is this Build but no slot failed, so we do not
+ * start a chat turn. A leftover workflow after a later chat turn still
+ * shows Retry turn because run ids differ (#828).
  */
 
 const INTERRUPT_MARKER = "Run interrupted";

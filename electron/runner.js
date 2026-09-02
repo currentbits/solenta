@@ -77,8 +77,14 @@ const {
   cursorGuardrailPluginDir,
   deployCursorGuardrailPlugin,
 } = require("./cursor-guardrail.js");
-const { materializeCodexGuardrailHome } = require("./codex-guardrail.js");
-const { materializeOpencodeGuardrailDir } = require("./opencode-guardrail.js");
+const {
+  materializeCodexGuardrailHome,
+  deployCodexGuardrailOverlay,
+} = require("./codex-guardrail.js");
+const {
+  materializeOpencodeGuardrailDir,
+  deployOpencodeGuardrailOverlay,
+} = require("./opencode-guardrail.js");
 const { grokGuardrailNotice } = require("./grok-guardrail-hook.js");
 const {
   extractCommand,
@@ -596,6 +602,7 @@ function cursorToolCardSummary(name, input, args) {
  * @param {string} binary
  * @param {string[]} args
  * @param {string} localCwd
+ * @param {Record<string, string> | null | undefined} [env]  far-side `env KEY=value` via wrapCommand
  * @returns {{ binary: string, args: string[], cwd: string }}
  */
 function resolveSpawn(project, binary, args, localCwd, env) {
@@ -1808,6 +1815,19 @@ function createRunner(opts) {
       }
     } catch {
       // never affect the run path
+    }
+    // Remote #835 overlays are unused once this CLI exits. Reclaim before
+    // a queued drain re-spawns (that turn re-deploys). Never throw.
+    try {
+      if (!(extras && extras.skip)) {
+        const overlayThread = store.getThread(threadId);
+        if (overlayThread && overlayThread.provider !== "simulate") {
+          const { reclaimRemoteOverlays } = require("./remote-overlay.js");
+          reclaimRemoteOverlays({ store, threadId });
+        }
+      }
+    } catch {
+      // housekeeping
     }
     // Verify restamps status "working"; skip so we don't start the queued
     // prompt on top of the gate. The verify settle path drains instead.
@@ -4406,9 +4426,29 @@ function createRunner(opts) {
     }
     /** @type {Record<string, string>} */
     const codexMcpEnv = { ...getCodexMcpEnv() };
-    // #813: isolated CODEX_HOME PreToolUse. Skip ssh/WSL and when
-    // userDataPath is unset. Ask is deny (Codex ask fail-opens).
-    if (userDataPath && !crossesBoundary(project) && guardrailsEnabled()) {
+    // #813: isolated CODEX_HOME PreToolUse. Local overlay stays on this
+    // host. ssh/WSL deploys a remote overlay (#835) and prefixes
+    // wrapCommand with env CODEX_HOME= via boundaryArgv.
+    /** @type {Record<string, string> | undefined} */
+    let codexWrapEnv;
+    if (crossesBoundary(project) && guardrailsEnabled()) {
+      try {
+        const dest = deployCodexGuardrailOverlay({ project, threadId });
+        if (dest) {
+          insertBeforeLast(args, [
+            "-c",
+            "features.hooks=true",
+            "--dangerously-bypass-hook-trust",
+          ]);
+          codexWrapEnv = {
+            CODEX_HOME: dest,
+            SOLENTA_WORKTREE: project.remotePath || localCwd,
+          };
+        }
+      } catch {
+        // Deploy miss must not kill the run; stream notice remains.
+      }
+    } else if (userDataPath && !crossesBoundary(project) && guardrailsEnabled()) {
       try {
         const dest = path.join(userDataPath, "codex-homes", threadId);
         const sourceHome =
@@ -4426,7 +4466,7 @@ function createRunner(opts) {
         // Overlay is best-effort; a failed isolate must not block the turn.
       }
     }
-    const spawn = resolveSpawn(project, binary, args, localCwd);
+    const spawn = resolveSpawn(project, binary, args, localCwd, codexWrapEnv);
 
     const entry = {
       kind: "codex",
@@ -4671,6 +4711,12 @@ function createRunner(opts) {
               tool,
             );
             toolMsgById.set(cmd.id, msgId);
+            const notice = guardrailNotice(
+              "Bash",
+              { command: cmd.command },
+              thread.worktreePath || project.path,
+            );
+            if (notice) appendMessage(threadId, "event", notice, runId);
             // Post-tool text starts a fresh message below the tool call.
             assistantMsgId = null;
             assistantText = "";
@@ -5431,8 +5477,22 @@ function createRunner(opts) {
     });
     /** @type {NodeJS.ProcessEnv | undefined} */
     let opencodeEnv;
-    // #813: OPENCODE_CONFIG_DIR plugin. Skip ssh/WSL and unset userDataPath.
-    if (userDataPath && !crossesBoundary(project) && guardrailsEnabled()) {
+    // #813: OPENCODE_CONFIG_DIR plugin. Local overlay stays on this host.
+    // ssh/WSL deploys a remote overlay (#835) and prefixes wrapCommand
+    // with env OPENCODE_CONFIG_DIR= via boundaryArgv.
+    if (crossesBoundary(project) && guardrailsEnabled()) {
+      try {
+        const dest = deployOpencodeGuardrailOverlay({ project, threadId });
+        if (dest) {
+          opencodeEnv = {
+            OPENCODE_CONFIG_DIR: dest,
+            SOLENTA_WORKTREE: project.remotePath || localCwd,
+          };
+        }
+      } catch {
+        // Deploy miss must not kill the run; stream notice remains.
+      }
+    } else if (userDataPath && !crossesBoundary(project) && guardrailsEnabled()) {
       try {
         const dest = path.join(userDataPath, "opencode-guardrails");
         materializeOpencodeGuardrailDir(dest);
@@ -5444,7 +5504,7 @@ function createRunner(opts) {
         // Overlay is best-effort; a failed isolate must not block the turn.
       }
     }
-    const spawn = resolveSpawn(project, binary, args, localCwd);
+    const spawn = resolveSpawn(project, binary, args, localCwd, opencodeEnv);
 
     const entry = {
       kind: "opencode",
@@ -5650,6 +5710,12 @@ function createRunner(opts) {
               toolMeta,
             );
             toolMsgById.set(tool.id, msgId);
+            const notice = guardrailNotice(
+              tool.name,
+              tool.input,
+              thread.worktreePath || project.path,
+            );
+            if (notice) appendMessage(threadId, "event", notice, runId);
             // Post-tool text starts a fresh message below the tool call.
             // Clearing parts is safe: opencode completes text parts before tools.
             assistantMsgId = null;

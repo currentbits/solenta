@@ -145,7 +145,7 @@ function cursorGuardrailPluginFiles(dest) {
 }
 
 /**
- * Deploy the #813 classifyTool plugin onto an ssh/WSL host (#834).
+ * Deploy the #813 classifyTool plugin onto an ssh/WSL host (#834 / #836).
  * Returns the remote --plugin-dir path, or null when skipped.
  *
  * @param {object} opts

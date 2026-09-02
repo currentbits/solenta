@@ -12,6 +12,12 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const { copyGuardrailRuntime } = require("./guardrail-hook-core.js");
+const { guardrailsEnabled } = require("./guardrails.js");
+const {
+  remoteOverlayDest,
+  probeRemoteHome,
+  writeRemoteOverlay,
+} = require("./remote-overlay.js");
 
 /**
  * @param {string} destDir
@@ -30,6 +36,53 @@ function materializeOpencodeGuardrailDir(destDir) {
   return dest;
 }
 
+/**
+ * Plugin files for a dest on the far side of wrapCommand.
+ * @returns {Record<string, string>}
+ */
+function opencodeGuardrailPluginFiles() {
+  return {
+    "plugins/solenta-guardrail.js": fs.readFileSync(
+      path.join(__dirname, "opencode-guardrail-plugin.js"),
+      "utf8",
+    ),
+    "plugins/guardrails.js": fs.readFileSync(
+      path.join(__dirname, "guardrails.js"),
+      "utf8",
+    ),
+    "plugins/guardrail-hook-core.js": fs.readFileSync(
+      path.join(__dirname, "guardrail-hook-core.js"),
+      "utf8",
+    ),
+  };
+}
+
+/**
+ * Deploy the #813 classifyTool plugin onto an ssh/WSL host (#835).
+ * Returns the remote OPENCODE_CONFIG_DIR path, or null when skipped.
+ *
+ * @param {object} opts
+ * @param {{ remoteHost?: string, path?: string } | null} opts.project
+ * @param {string} opts.threadId
+ * @returns {string | null}
+ */
+function deployOpencodeGuardrailOverlay(opts) {
+  const project = opts && opts.project;
+  const threadId = opts && opts.threadId;
+  if (!project || !threadId) return null;
+  if (!guardrailsEnabled()) return null;
+  const dest = remoteOverlayDest(
+    probeRemoteHome(project),
+    threadId,
+    "opencode-guardrails",
+  );
+  if (!dest) throw new Error("remote OPENCODE_CONFIG_DIR dest unusable");
+  writeRemoteOverlay(project, dest, opencodeGuardrailPluginFiles());
+  return dest;
+}
+
 module.exports = {
   materializeOpencodeGuardrailDir,
+  opencodeGuardrailPluginFiles,
+  deployOpencodeGuardrailOverlay,
 };

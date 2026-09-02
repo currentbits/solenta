@@ -169,7 +169,7 @@ function materializeKimiHome(opts) {
 }
 
 /**
- * Deploy the PreToolUse overlay onto an ssh/WSL host (#834).
+ * Deploy the PreToolUse overlay onto an ssh/WSL host (#834 / #836).
  * Returns the remote KIMI_CODE_HOME path, or null when skipped.
  *
  * Official kimi docs: [[hooks]] event = "PreToolUse" in config.toml,

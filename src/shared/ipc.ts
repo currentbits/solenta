@@ -1389,6 +1389,11 @@ export interface AgentView {
   model: string;
   status: AgentStatus;
   tokensUsed: number;
+  /**
+   * CLI session for this workflow slot only (kimi `-S`, other providers'
+   * resume flags). Never the parent thread.sessionId.
+   */
+  sessionId?: string | null;
 }
 
 export interface PhaseView {

@@ -2887,6 +2887,29 @@ button.diffLineGutter:focus-visible {
   border-color: var(--blue-border);
 }
 
+.queuedStripMulti {
+  flex-direction: column;
+  align-items: stretch;
+}
+
+.queuedList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.queuedItem {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+
 .statusLeft {
   display: flex;
   align-items: center;

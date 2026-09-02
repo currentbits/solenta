@@ -51,6 +51,8 @@ const WIN32_FILES = [
   "electron/test/kimi.test.js",
   "electron/test/kimi-effort.test.js",
   "electron/test/kimi-home.test.js",
+  "electron/test/workflow-kimi-resume.test.js",
+  "electron/test/workflow-phase-resume.test.js",
   "electron/test/grok-home.test.js",
   "electron/test/grok-guardrail-hook.test.js",
   "electron/test/grok-live-hook.test.js", // skip unless GROK_LIVE=1; never CI (#826)
@@ -65,6 +67,10 @@ const WIN32_FILES = [
   "electron/test/session-record.test.js",
   "electron/test/secrets.test.js",
   "electron/test/updater.test.js", // win32 portable stage + helper (#755)
+  "electron/test/workflow-crash-resume.test.js", // store load only; no spawn (#824)
+  "electron/test/workflow-phase-retry.test.js",
+  "electron/test/workflow-retry-agent.test.js",
+  "electron/test/workflow-retry-note.test.js",
 ];
 if (process.platform === "win32") {
   args.push(...WIN32_FILES);
