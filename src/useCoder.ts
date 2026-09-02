@@ -273,6 +273,8 @@ export interface UseCoderResult {
    * runs.startWorkflow (backend validates phase providers).
    */
   startWorkflowRun: (prompt: string, templateId?: string) => Promise<void>;
+  /** Re-spawn one failed workflow phase agent (#825). */
+  retryWorkflowAgent: (agentId: string) => Promise<void>;
   /** Persist a workflow template; refreshes the list. Saving a builtin creates a copy. */
   saveWorkflow: (template: WorkflowSaveInput) => Promise<WorkflowTemplateInfo>;
   /** Remove a non-builtin template; refreshes the list. */
@@ -1590,6 +1592,29 @@ export function useCoder(): UseCoderResult {
           prompt,
           ...(templateId ? { templateId } : {}),
         });
+        const d = await api.threads.get(threadId);
+        if (selectedRef.current !== threadId) return;
+        setDetail(d);
+        applyThreads(
+          threadsRef.current.map((t) =>
+            t.id === d.thread.id ? d.thread : t,
+          ),
+        );
+        setError(null);
+      } catch (err) {
+        setError({ scope: "run", message: errorMessage(err) });
+        throw err;
+      }
+    },
+    [api, selectedThreadId, applyThreads],
+  );
+
+  const retryWorkflowAgent = useCallback(
+    async (agentId: string) => {
+      if (!selectedThreadId) return;
+      const threadId = selectedThreadId;
+      try {
+        await api.runs.retryWorkflowAgent({ threadId, agentId });
         const d = await api.threads.get(threadId);
         if (selectedRef.current !== threadId) return;
         setDetail(d);
@@ -3325,6 +3350,7 @@ export function useCoder(): UseCoderResult {
     retryQueued,
     editQueued,
     startWorkflowRun,
+    retryWorkflowAgent,
     saveWorkflow,
     removeWorkflow,
     refreshWorkflows,

@@ -4404,6 +4404,39 @@ function buildDevCoder(): CoderApi {
         startRunTimer(input.threadId);
         return { runId };
       },
+      async retryWorkflowAgent(input: { threadId: string; agentId: string }) {
+        const detail = details.get(input.threadId);
+        if (!detail) throw new Error(`Thread not found: ${input.threadId}`);
+        if (
+          detail.thread.status === "working" ||
+          runTimers.has(input.threadId)
+        ) {
+          throw new Error("A run is already active on this thread");
+        }
+        const wf = detail.workflow;
+        if (!wf) throw new Error("No workflow to retry");
+        let agent = null;
+        for (const phase of wf.phases) {
+          agent = phase.agents.find((a) => a.id === input.agentId) ?? null;
+          if (agent) break;
+        }
+        if (!agent || agent.status !== "failed") {
+          throw new Error("Workflow agent is not failed");
+        }
+        const t = now();
+        const runId = id("run");
+        agent.status = "settled";
+        detail.thread = {
+          ...detail.thread,
+          status: "done",
+          updatedAt: t,
+          runStartedAt: null,
+        };
+        details.set(input.threadId, detail);
+        syncThreadRow(detail.thread);
+        emitDetail(detail);
+        return { runId };
+      },
       async resumeQuotaWait(input: { threadId: string }) {
         const detail = details.get(input.threadId);
         if (!detail) throw new Error(`Thread not found: ${input.threadId}`);

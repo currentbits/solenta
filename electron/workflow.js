@@ -200,6 +200,60 @@ function findAgent(view, agentId) {
 }
 
 /**
+ * Parse `phaseIndex:phaseName:agentIndex` (phase names may contain ':').
+ * @param {string} agentId
+ * @returns {{ phaseIndex: number, phaseName: string, agentIndex: number } | null}
+ */
+function parseAgentId(agentId) {
+  const str = String(agentId || "");
+  const first = str.indexOf(":");
+  const last = str.lastIndexOf(":");
+  if (first < 0 || last <= first) return null;
+  const phaseIndex = Number(str.slice(0, first));
+  const agentIndex = Number(str.slice(last + 1));
+  const phaseName = str.slice(first + 1, last);
+  if (!Number.isInteger(phaseIndex) || !Number.isInteger(agentIndex)) {
+    return null;
+  }
+  return { phaseIndex, phaseName, agentIndex };
+}
+
+/**
+ * Prior-phase outputs for prompt chaining, from settled agent text.
+ * @param {object} view
+ * @param {number} beforePhaseIndex
+ */
+function collectPriorOutputs(view, beforePhaseIndex) {
+  /** @type {{ phaseName: string, agentIndex: number, text: string }[]} */
+  const out = [];
+  for (let i = 0; i < beforePhaseIndex; i++) {
+    const phase = view.phases[i];
+    if (!phase) continue;
+    phase.agents.forEach((agent, agentIndex) => {
+      out.push({
+        phaseName: phase.name,
+        agentIndex,
+        text: agent.status === "settled" ? String(agent.__text || "") : "",
+      });
+    });
+  }
+  return out;
+}
+
+/**
+ * @param {object} phase
+ */
+function phaseSpecFromView(phase) {
+  return {
+    name: phase.name,
+    provider: phase.__provider,
+    model: phase.__model,
+    instruction: phase.__instruction || "",
+    agentCount: phase.__agentCount || phase.agents.length,
+  };
+}
+
+/**
  * Build the per-agent prompt for a phase.
  * @param {object} opts
  * @param {string} opts.userPrompt
@@ -1034,12 +1088,13 @@ function kickoffText(template) {
  * @param {(threadId: string, role: string, text: string, runId?: string | null, tool?: object | null) => string} deps.appendMessage
  * @param {(threadId: string, status: "done"|"failed"|"stopped", text?: string, extras?: object) => void} [deps.notifyRunTerminal]
  * @param {string} [deps.userDataPath] - for kimi KIMI_CODE_HOME overlay (#699)
+ * @param {string} [deps.resumeFromAgentId] - #825 retry one failed slot
+ * @param {object | null} [deps.existingView] - last orchestrated view for retry
  * @returns {Promise<{ runId: string }>}
  */
 async function startWorkflowRun(deps) {
   const {
     threadId,
-    prompt,
     templateId,
     store,
     core,
@@ -1054,7 +1109,10 @@ async function startWorkflowRun(deps) {
     appendMessage,
     notifyRunTerminal,
     userDataPath = "",
+    resumeFromAgentId = null,
+    existingView = null,
   } = deps;
+  let prompt = deps.prompt;
 
   if (active.has(threadId)) {
     throw new Error("A run is already active on this thread");
@@ -1074,17 +1132,38 @@ async function startWorkflowRun(deps) {
     throw new Error(`Unknown project for thread: ${threadId}`);
   }
 
-  const resolvedTemplateId = templateId || "standard";
-  const template = store.getTemplate(resolvedTemplateId);
-  if (!template) {
-    throw new Error(`Unknown workflow template: ${resolvedTemplateId}`);
-  }
-  if (!Array.isArray(template.phases) || template.phases.length === 0) {
-    throw new Error(`Workflow template has no phases: ${resolvedTemplateId}`);
-  }
+  let template = null;
+  if (resumeFromAgentId) {
+    if (!existingView || !existingView.__orchestrated) {
+      throw new Error("No workflow to retry");
+    }
+    const retryAgent = findAgent(existingView, resumeFromAgentId);
+    if (!retryAgent || retryAgent.status !== "failed") {
+      throw new Error("Workflow agent is not failed");
+    }
+    if (!existingView.__prompt) {
+      throw new Error("Workflow prompt is missing");
+    }
+    prompt = existingView.__prompt;
+    assertTemplateProvidersAvailable({
+      phases: existingView.phases.map((p) => ({
+        name: p.name,
+        provider: p.__provider,
+      })),
+    });
+  } else {
+    const resolvedTemplateId = templateId || "standard";
+    template = store.getTemplate(resolvedTemplateId);
+    if (!template) {
+      throw new Error(`Unknown workflow template: ${resolvedTemplateId}`);
+    }
+    if (!Array.isArray(template.phases) || template.phases.length === 0) {
+      throw new Error(`Workflow template has no phases: ${resolvedTemplateId}`);
+    }
 
-  // Reject at start when any phase provider binary is unavailable.
-  assertTemplateProvidersAvailable(template);
+    // Reject at start when any phase provider binary is unavailable.
+    assertTemplateProvidersAvailable(template);
+  }
 
   const runId = randomUUID();
   // Same stale-worktree guard as startRun: a folder removed outside the
@@ -1107,41 +1186,61 @@ async function startWorkflowRun(deps) {
   const webSearch = thread.webSearch === true;
   // Overlay lives on this host; ssh/WSL phases inherit the remote kimi home.
   const skipKimiOverlay = Boolean(project.remoteHost || wslTarget(project));
-  const seed = hashSeed(threadId, runId);
-  const name =
-    typeof core.nameForSeed === "function"
-      ? core.nameForSeed(seed)
-      : `WF-${seed}`;
+  let view;
+  if (resumeFromAgentId) {
+    view = existingView;
+    store.updateThread(
+      threadId,
+      {
+        status: "working",
+        runStartedAt: Date.now(),
+        awaitingInput: false,
+        lastEventAt: null,
+        stalledAt: null,
+        stoppedAt: null,
+        ...services.clearSettledOnActivity(thread),
+      },
+      { touch: true },
+    );
+  } else {
+    const seed = hashSeed(threadId, runId);
+    const name =
+      typeof core.nameForSeed === "function"
+        ? core.nameForSeed(seed)
+        : `WF-${seed}`;
 
-  appendMessage(threadId, "user", prompt, runId);
+    appendMessage(threadId, "user", prompt, runId);
 
-  let title = thread.title;
-  if (title === "New Thread") {
-    const firstLine = String(prompt).split(/\r?\n/)[0].trim();
-    title = firstLine.slice(0, 60) || "New Thread";
+    let title = thread.title;
+    if (title === "New Thread") {
+      const firstLine = String(prompt).split(/\r?\n/)[0].trim();
+      title = firstLine.slice(0, 60) || "New Thread";
+    }
+
+    // Real activity clears a stale "settled" pin (same as startRun). An
+    // "active" pin survives. Without this, a workflow on a settled thread
+    // re-folds the moment the run finishes.
+    store.updateThread(
+      threadId,
+      {
+        status: "working",
+        title,
+        runStartedAt: Date.now(),
+        awaitingInput: false,
+        lastEventAt: null,
+        stalledAt: null,
+        stoppedAt: null,
+        ...services.clearSettledOnActivity(thread),
+      },
+      { touch: true },
+    );
+
+    view = buildWorkflowView({ runId, name, template });
+    view.__prompt = prompt;
+    view.__templateId = template.id;
+
+    appendMessage(threadId, "event", kickoffText(template), runId);
   }
-
-  // Real activity clears a stale "settled" pin (same as startRun). An
-  // "active" pin survives. Without this, a workflow on a settled thread
-  // re-folds the moment the run finishes.
-  store.updateThread(
-    threadId,
-    {
-      status: "working",
-      title,
-      runStartedAt: Date.now(),
-      awaitingInput: false,
-      lastEventAt: null,
-      stalledAt: null,
-      stoppedAt: null,
-      ...services.clearSettledOnActivity(thread),
-    },
-    { touch: true },
-  );
-
-  const view = buildWorkflowView({ runId, name, template });
-
-  appendMessage(threadId, "event", kickoffText(template), runId);
 
   /** @type {Map<string, string>} */
   const phaseItemIds = new Map();
@@ -1259,7 +1358,10 @@ async function startWorkflowRun(deps) {
   schedulePush(true);
 
   // Fire-and-forget orchestration; errors handled inside.
-  void runPhases().catch((err) => {
+  const started = resumeFromAgentId
+    ? runFromRetry(resumeFromAgentId)
+    : runPhases();
+  void started.catch((err) => {
     if (!guard()) return;
     failRun(
       "workflow",
@@ -1339,6 +1441,8 @@ async function startWorkflowRun(deps) {
     const agent = findAgent(view, agentId);
     if (!agent) return null;
 
+    agent.__attempted = true;
+    agent.__prompt = agentPrompt;
     agent.status = "running";
     agent.tokensUsed = 0;
     schedulePush(true);
@@ -1380,6 +1484,7 @@ async function startWorkflowRun(deps) {
 
     if (result.ok) {
       agent.status = "settled";
+      agent.__text = result.text || "";
       if (result.usage) {
         agent.tokensUsed =
           (result.usage.inputTokens || 0) + (result.usage.outputTokens || 0) ||
@@ -1423,21 +1528,209 @@ async function startWorkflowRun(deps) {
     return result;
   }
 
-  async function runPhases() {
+  function laterUnstarted(afterPhaseIndex) {
+    return view.phases.slice(afterPhaseIndex + 1).some((p) =>
+      p.agents.some((a) => !a.__attempted),
+    );
+  }
+
+  /**
+   * @param {object} phaseSpec
+   * @param {{ spec?: { agentIndex: number }, result?: { text?: string } }[]} successes
+   */
+  function finishSuccess(phaseSpec, successes) {
+    const phaseName = phaseSpec.name;
+    let answerText = "";
+    if (successes.length === 1) {
+      answerText = (successes[0].result && successes[0].result.text) || "";
+    } else {
+      answerText = successes
+        .map(
+          (s) =>
+            `## ${phaseName} agent ${s.spec.agentIndex + 1}\n${(s.result && s.result.text) || ""}`,
+        )
+        .join("\n\n");
+    }
+
+    if (!guard()) return;
+
+    appendMessage(threadId, "assistant", answerText, runId);
+
+    const prev = store.getUsage(threadId) || {
+      model: null,
+      inputTokens: 0,
+      outputTokens: 0,
+      costUsd: 0,
+      turns: 0,
+    };
+    store.setUsage(threadId, {
+      model: prev.model || thread.model || agentModelLabel(phaseSpec),
+      inputTokens: prev.inputTokens + aggInput,
+      outputTokens: prev.outputTokens + aggOutput,
+      costUsd: prev.costUsd + aggCost,
+      turns: prev.turns + 1,
+    });
+    store.recordUsage({
+      provider: thread.provider,
+      model: prev.model || thread.model || agentModelLabel(phaseSpec),
+      costUsd: aggCost,
+      inputTokens: aggInput,
+      cachedInputTokens: aggCached,
+      cacheWriteTokens: aggCacheWrite,
+      outputTokens: aggOutput,
+      threadId,
+      projectId: thread.projectId,
+      projectName: store.getProject(thread.projectId)?.name,
+      title: thread.title,
+    });
+
+    recomputeView(view);
+    store.updateThread(
+      threadId,
+      { status: "done", runStartedAt: null },
+      { touch: true },
+    );
+    store.save();
+    clearRun(threadId);
+    pushDetail(threadId, view);
+    pushThreadsChanged();
+    if (typeof notifyRunTerminal === "function") {
+      notifyRunTerminal(threadId, "done", answerText, {
+        tokensIn: aggInput,
+        tokensOut: aggOutput,
+        costUsd: aggCost,
+      });
+    }
+  }
+
+  function closeRetrySession() {
+    recomputeView(view);
+    const final = view.phases[view.phases.length - 1];
+    const alreadyFinished =
+      Boolean(final) &&
+      final.agents.some((a) => a.status === "settled" && a.__attempted);
+    store.updateThread(
+      threadId,
+      {
+        status: view.complete || alreadyFinished ? "done" : "failed",
+        runStartedAt: null,
+      },
+      { touch: true },
+    );
+    store.save();
+    clearRun(threadId);
+    pushDetail(threadId, view);
+    pushThreadsChanged();
+  }
+
+  async function runFromRetry(agentId) {
+    const loc = parseAgentId(agentId);
+    if (!loc || !view.phases[loc.phaseIndex]) {
+      throw new Error("Workflow agent is not failed");
+    }
+    const phaseView = view.phases[loc.phaseIndex];
+    const phaseSpec = phaseSpecFromView(phaseView);
+    const priorOutputs = collectPriorOutputs(view, loc.phaseIndex);
+    const agentPrompt = buildAgentPrompt({
+      userPrompt: prompt,
+      instruction: phaseSpec.instruction,
+      agentIndex: loc.agentIndex,
+      agentCount: phaseSpec.agentCount,
+      priorOutputs,
+    });
+
+    if (!guard()) return;
+    beginPhase(phaseSpec.name);
+    schedulePush(true);
+    const retryItemId = beginWorkLogStep(
+      threadId,
+      runId,
+      `${capitalize(phaseSpec.name)} agent ${loc.agentIndex + 1} retrying`,
+    );
+    schedulePush(true);
+    let result = null;
+    try {
+      result = await runOneAgent({
+        agentId,
+        agentPrompt,
+        providerId: phaseSpec.provider,
+        model: phaseSpec.model,
+        phaseName: phaseSpec.name,
+        agentIndex: loc.agentIndex,
+      });
+    } finally {
+      completeWorkLogStep(threadId, retryItemId);
+      schedulePush(true);
+    }
+    if (!guard()) return;
+    completePhase(phaseSpec.name);
+
+    const phaseHasSettled = phaseView.agents.some((a) => a.status === "settled");
+    if ((!result || !result.ok) && !phaseHasSettled) {
+      failRun(agentId, (result && result.stderr) || "retry failed");
+      return;
+    }
+
+    const isFinal = loc.phaseIndex === view.phases.length - 1;
+    if (isFinal && phaseHasSettled) {
+      const successes = phaseView.agents
+        .map((agent, agentIndex) => ({
+          spec: { agentIndex },
+          result: {
+            ok: agent.status === "settled",
+            text: agent.__text || "",
+          },
+        }))
+        .filter((s) => s.result.ok);
+      finishSuccess(phaseSpec, successes);
+      return;
+    }
+
+    if (phaseHasSettled && laterUnstarted(loc.phaseIndex)) {
+      for (const later of view.phases.slice(loc.phaseIndex + 1)) {
+        for (const agent of later.agents) {
+          if (agent.status === "failed" && !agent.__attempted) {
+            agent.status = "pending";
+          }
+        }
+      }
+      await runPhases(
+        loc.phaseIndex + 1,
+        collectPriorOutputs(view, loc.phaseIndex + 1),
+      );
+      return;
+    }
+
+    closeRetrySession();
+  }
+
+  /**
+   * @param {number} [fromIndex]
+   * @param {{ phaseName: string, agentIndex: number, text: string }[]} [seedOutputs]
+   */
+  async function runPhases(fromIndex = 0, seedOutputs = []) {
     /** @type {{ phaseName: string, agentIndex: number, text: string }[]} */
-    let priorOutputs = [];
+    let priorOutputs = seedOutputs.slice();
 
-    const phaseSpecs = template.phases;
-    const lastPhaseIndex = phaseSpecs.length - 1;
+    const lastPhaseIndex = view.phases.length - 1;
 
-    for (let phaseIndex = 0; phaseIndex < phaseSpecs.length; phaseIndex++) {
-      const phaseSpec = phaseSpecs[phaseIndex];
+    for (let phaseIndex = fromIndex; phaseIndex < view.phases.length; phaseIndex++) {
+      const phaseView = view.phases[phaseIndex];
+      const phaseSpec = phaseSpecFromView(phaseView);
       const phaseName = phaseSpec.name;
       const agentCount = Math.max(
         1,
         Math.min(4, Number(phaseSpec.agentCount) || 1),
       );
       const isFinal = phaseIndex === lastPhaseIndex;
+
+      if (fromIndex > 0) {
+        for (const agent of phaseView.agents) {
+          if (agent.status === "failed" && !agent.__attempted) {
+            agent.status = "pending";
+          }
+        }
+      }
 
       if (!guard()) return;
       beginPhase(phaseName);
@@ -1504,70 +1797,7 @@ async function startWorkflowRun(deps) {
       }
 
       if (isFinal) {
-        // Build assistant answer from successful final-phase agents.
-        let answerText = "";
-        if (successes.length === 1) {
-          answerText = successes[0].result.text || "";
-        } else {
-          answerText = successes
-            .map(
-              (s) =>
-                `## ${phaseName} agent ${s.spec.agentIndex + 1}\n${s.result.text || ""}`,
-            )
-            .join("\n\n");
-        }
-
-        if (!guard()) return;
-
-        appendMessage(threadId, "assistant", answerText, runId);
-
-        const prev = store.getUsage(threadId) || {
-          model: null,
-          inputTokens: 0,
-          outputTokens: 0,
-          costUsd: 0,
-          turns: 0,
-        };
-        store.setUsage(threadId, {
-          model: prev.model || thread.model || agentModelLabel(phaseSpec),
-          inputTokens: prev.inputTokens + aggInput,
-          outputTokens: prev.outputTokens + aggOutput,
-          costUsd: prev.costUsd + aggCost,
-          turns: prev.turns + 1,
-        });
-        store.recordUsage({
-          provider: thread.provider,
-          model: prev.model || thread.model || agentModelLabel(phaseSpec),
-          costUsd: aggCost,
-          inputTokens: aggInput,
-          cachedInputTokens: aggCached,
-          cacheWriteTokens: aggCacheWrite,
-          outputTokens: aggOutput,
-          threadId,
-          projectId: thread.projectId,
-          projectName: store.getProject(thread.projectId)?.name,
-          title: thread.title,
-        });
-        // spendByDay is updated per agent above; do not re-record aggCost here.
-
-        recomputeView(view);
-        store.updateThread(
-          threadId,
-          { status: "done", runStartedAt: null },
-          { touch: true },
-        );
-        store.save();
-        clearRun(threadId);
-        // Final push never dropped.
-        pushDetail(threadId, view);
-        pushThreadsChanged();
-        if (typeof notifyRunTerminal === "function") {
-          notifyRunTerminal(threadId, "done", answerText, {
-            tokensIn: aggInput,
-            tokensOut: aggOutput,
-            costUsd: aggCost,
-          });
-        }
+        finishSuccess(phaseSpec, successes);
         return;
       }
 
@@ -1595,6 +1825,19 @@ async function startWorkflowRun(deps) {
   }
 
   return { runId };
+}
+
+/**
+ * Re-spawn a failed phase agent after the run has ended (#825).
+ * @param {object} deps
+ */
+async function retryWorkflowAgent(deps) {
+  return startWorkflowRun({
+    ...deps,
+    prompt: deps.view && deps.view.__prompt,
+    resumeFromAgentId: deps.agentId,
+    existingView: deps.view,
+  });
 }
 
 /**
@@ -1633,6 +1876,7 @@ function stopWorkflowEntry(entry) {
 
 module.exports = {
   startWorkflowRun,
+  retryWorkflowAgent,
   stopWorkflowEntry,
   buildWorkflowView,
   recomputeView,

@@ -7317,6 +7317,37 @@ function createRunner(opts) {
   }
 
   /**
+   * Re-spawn a failed workflow phase agent after the run ended (#825).
+   * @param {{ threadId: string, agentId: string }} input
+   * @returns {Promise<{ runId: string }>}
+   */
+  async function retryWorkflowAgent(input) {
+    try {
+      materializePendingWorktree(input.threadId);
+    } catch (err) {
+      failWorktreeSetup(input.threadId, "", undefined, err);
+    }
+    return workflowEngine.retryWorkflowAgent({
+      threadId: input.threadId,
+      agentId: input.agentId,
+      view: lastWorkflowByThread.get(input.threadId) || null,
+      store,
+      core,
+      pushFn,
+      active,
+      clearRun,
+      pushDetail,
+      pushThreadsChanged,
+      beginWorkLogStep,
+      completeWorkLogStep,
+      appendDoneWorkLog,
+      appendMessage,
+      notifyRunTerminal,
+      userDataPath,
+    });
+  }
+
+  /**
    * Stop is sacred (issue #32): stopping an orchestrator takes its crew with
    * it. Depth-first, so a worker that is itself an orchestrator brings its own
    * crew down too. Every stopped worker lands as "stopped", which queues no
@@ -7697,6 +7728,7 @@ function createRunner(opts) {
     cancelBtw,
     promoteBtw,
     startWorkflowRun,
+    retryWorkflowAgent,
     stopRun,
     resumeQuotaWait,
     refreshQuotaWait,
