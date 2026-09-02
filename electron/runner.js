@@ -15,7 +15,7 @@ const {
 const codexParse = require("./codex.js");
 const { runCodex } = codexParse;
 const kimiParse = require("./kimi.js");
-const { runKimi, materializeKimiHome } = kimiParse;
+const { runKimi, materializeKimiHome, deployKimiGuardrailOverlay } = kimiParse;
 const { materializeGrokHome } = require("./grok.js");
 const cursorParse = require("./cursor.js");
 const { runCursor, materializeCursorHome } = cursorParse;
@@ -70,7 +70,22 @@ const {
 } = require("./verify.js");
 const { prepareVerifyRun } = require("./verifyEfficiency.js");
 const { maybeApplyFmTitle } = require("./fm-title.js");
-const { classifyTool } = require("./guardrails.js");
+const { classifyTool, guardrailsEnabled } = require("./guardrails.js");
+const { insertBeforeLast, guardrailNotice } = require("./guardrail-hook-core.js");
+const {
+  materializeCursorGuardrailPlugin,
+  cursorGuardrailPluginDir,
+  deployCursorGuardrailPlugin,
+} = require("./cursor-guardrail.js");
+const {
+  materializeCodexGuardrailHome,
+  deployCodexGuardrailOverlay,
+} = require("./codex-guardrail.js");
+const {
+  materializeOpencodeGuardrailDir,
+  deployOpencodeGuardrailOverlay,
+} = require("./opencode-guardrail.js");
+const { grokGuardrailNotice } = require("./grok-guardrail-hook.js");
 const {
   extractCommand,
   resolveEditedCommand,
@@ -587,13 +602,14 @@ function cursorToolCardSummary(name, input, args) {
  * @param {string} binary
  * @param {string[]} args
  * @param {string} localCwd
+ * @param {Record<string, string> | null | undefined} [env]  far-side `env KEY=value` via wrapCommand
  * @returns {{ binary: string, args: string[], cwd: string }}
  */
-function resolveSpawn(project, binary, args, localCwd) {
+function resolveSpawn(project, binary, args, localCwd, env) {
   if (!crossesBoundary(project)) {
     return { binary, args, cwd: localCwd };
   }
-  const wrapped = wrapCommand(project, binary, args);
+  const wrapped = wrapCommand(project, binary, args, undefined, env);
   return { binary: wrapped.bin, args: wrapped.args, cwd: process.cwd() };
 }
 
@@ -1799,6 +1815,19 @@ function createRunner(opts) {
       }
     } catch {
       // never affect the run path
+    }
+    // Remote #835 overlays are unused once this CLI exits. Reclaim before
+    // a queued drain re-spawns (that turn re-deploys). Never throw.
+    try {
+      if (!(extras && extras.skip)) {
+        const overlayThread = store.getThread(threadId);
+        if (overlayThread && overlayThread.provider !== "simulate") {
+          const { reclaimRemoteOverlays } = require("./remote-overlay.js");
+          reclaimRemoteOverlays({ store, threadId });
+        }
+      }
+    } catch {
+      // housekeeping
     }
     // Verify restamps status "working"; skip so we don't start the queued
     // prompt on top of the gate. The verify settle path drains instead.
@@ -3226,6 +3255,8 @@ function createRunner(opts) {
     /** tool_use id -> message id */
     /** @type {Map<string, string>} */
     const toolMsgById = new Map();
+    /** Tool ids we already posted a #812 Guardrail event for. */
+    const grokGuardrailNoticed = new Set();
     /** @type {string | null} */
     let capturedModel = null;
     /** @type {string | null} */
@@ -3357,6 +3388,17 @@ function createRunner(opts) {
       };
       const msgId = appendMessage(threadId, "tool", summary, runId, tool);
       toolMsgById.set(toolId, msgId);
+      if (entryDef.id === "grok" && !grokGuardrailNoticed.has(toolId)) {
+        const notice = grokGuardrailNotice({
+          toolName,
+          input: inputObj,
+          worktreePath: thread.worktreePath || project.path,
+        });
+        if (notice) {
+          grokGuardrailNoticed.add(toolId);
+          appendMessage(threadId, "event", notice, runId);
+        }
+      }
       if (toolName === "TodoWrite") {
         savePlanSteps(threadId, inputObj.todos);
       }
@@ -4382,8 +4424,49 @@ function createRunner(opts) {
     if (codexMcpArgs.length > 0) {
       args.unshift(...codexMcpArgs);
     }
-    const codexMcpEnv = getCodexMcpEnv();
-    const spawn = resolveSpawn(project, binary, args, localCwd);
+    /** @type {Record<string, string>} */
+    const codexMcpEnv = { ...getCodexMcpEnv() };
+    // #813: isolated CODEX_HOME PreToolUse. Local overlay stays on this
+    // host. ssh/WSL deploys a remote overlay (#835) and prefixes
+    // wrapCommand with env CODEX_HOME= via boundaryArgv.
+    /** @type {Record<string, string> | undefined} */
+    let codexWrapEnv;
+    if (crossesBoundary(project) && guardrailsEnabled()) {
+      try {
+        const dest = deployCodexGuardrailOverlay({ project, threadId });
+        if (dest) {
+          insertBeforeLast(args, [
+            "-c",
+            "features.hooks=true",
+            "--dangerously-bypass-hook-trust",
+          ]);
+          codexWrapEnv = {
+            CODEX_HOME: dest,
+            SOLENTA_WORKTREE: project.remotePath || localCwd,
+          };
+        }
+      } catch {
+        // Deploy miss must not kill the run; stream notice remains.
+      }
+    } else if (userDataPath && !crossesBoundary(project) && guardrailsEnabled()) {
+      try {
+        const dest = path.join(userDataPath, "codex-homes", threadId);
+        const sourceHome =
+          process.env.CODEX_HOME ||
+          path.join(require("node:os").homedir(), ".codex");
+        materializeCodexGuardrailHome({ dest, sourceHome });
+        insertBeforeLast(args, [
+          "-c",
+          "features.hooks=true",
+          "--dangerously-bypass-hook-trust",
+        ]);
+        codexMcpEnv.CODEX_HOME = dest;
+        codexMcpEnv.SOLENTA_WORKTREE = localCwd;
+      } catch {
+        // Overlay is best-effort; a failed isolate must not block the turn.
+      }
+    }
+    const spawn = resolveSpawn(project, binary, args, localCwd, codexWrapEnv);
 
     const entry = {
       kind: "codex",
@@ -4628,6 +4711,12 @@ function createRunner(opts) {
               tool,
             );
             toolMsgById.set(cmd.id, msgId);
+            const notice = guardrailNotice(
+              "Bash",
+              { command: cmd.command },
+              thread.worktreePath || project.path,
+            );
+            if (notice) appendMessage(threadId, "event", notice, runId);
             // Post-tool text starts a fresh message below the tool call.
             assistantMsgId = null;
             assistantText = "";
@@ -4865,7 +4954,6 @@ function createRunner(opts) {
       reasoningEffort: thread.reasoningEffort || null,
       webSearch: thread.webSearch === true,
     });
-    const spawn = resolveSpawn(project, binary, args, localCwd);
 
     const entry = {
       kind: "kimi",
@@ -5058,8 +5146,9 @@ function createRunner(opts) {
     completeWorkLogStep(threadId, startingId);
 
     // Isolated KIMI_CODE_HOME so this turn cannot inherit other projects'
-    // MCP servers or workspaces (issue #671). Skipped for ssh/WSL (the
-    // overlay lives on this host) and when userDataPath is unset (tests).
+    // MCP servers or workspaces (issue #671). Local: overlay on this host.
+    // ssh/WSL: deploy PreToolUse onto the far side and pass KIMI_CODE_HOME
+    // through wrapCommand (#834).
     /** @type {NodeJS.ProcessEnv | undefined} */
     let kimiEnv;
     if (userDataPath && !crossesBoundary(project)) {
@@ -5081,7 +5170,15 @@ function createRunner(opts) {
       } catch {
         // Overlay is best-effort; a failed isolate must not block the turn.
       }
+    } else if (crossesBoundary(project) && guardrailsEnabled()) {
+      try {
+        const dest = deployKimiGuardrailOverlay({ project, threadId });
+        if (dest) kimiEnv = { KIMI_CODE_HOME: dest };
+      } catch {
+        // Deploy miss must not kill the run; stream notice remains.
+      }
     }
+    const spawn = resolveSpawn(project, binary, args, localCwd, kimiEnv);
 
     const handle = runKimi({
       binary: spawn.binary,
@@ -5151,6 +5248,12 @@ function createRunner(opts) {
                 toolMeta,
               );
               toolMsgById.set(tool.id, msgId);
+              const notice = guardrailNotice(
+                tool.name,
+                tool.input,
+                thread.worktreePath || project.path,
+              );
+              if (notice) appendMessage(threadId, "event", notice, runId);
               // Post-tool text starts a fresh message below the tool call.
               assistantMsgId = null;
               assistantText = "";
@@ -5372,7 +5475,36 @@ function createRunner(opts) {
       reasoningEffort: thread.reasoningEffort || null,
       webSearch: thread.webSearch === true,
     });
-    const spawn = resolveSpawn(project, binary, args, localCwd);
+    /** @type {NodeJS.ProcessEnv | undefined} */
+    let opencodeEnv;
+    // #813: OPENCODE_CONFIG_DIR plugin. Local overlay stays on this host.
+    // ssh/WSL deploys a remote overlay (#835) and prefixes wrapCommand
+    // with env OPENCODE_CONFIG_DIR= via boundaryArgv.
+    if (crossesBoundary(project) && guardrailsEnabled()) {
+      try {
+        const dest = deployOpencodeGuardrailOverlay({ project, threadId });
+        if (dest) {
+          opencodeEnv = {
+            OPENCODE_CONFIG_DIR: dest,
+            SOLENTA_WORKTREE: project.remotePath || localCwd,
+          };
+        }
+      } catch {
+        // Deploy miss must not kill the run; stream notice remains.
+      }
+    } else if (userDataPath && !crossesBoundary(project) && guardrailsEnabled()) {
+      try {
+        const dest = path.join(userDataPath, "opencode-guardrails");
+        materializeOpencodeGuardrailDir(dest);
+        opencodeEnv = {
+          OPENCODE_CONFIG_DIR: dest,
+          SOLENTA_WORKTREE: localCwd,
+        };
+      } catch {
+        // Overlay is best-effort; a failed isolate must not block the turn.
+      }
+    }
+    const spawn = resolveSpawn(project, binary, args, localCwd, opencodeEnv);
 
     const entry = {
       kind: "opencode",
@@ -5479,6 +5611,7 @@ function createRunner(opts) {
       binary: spawn.binary,
       args: spawn.args,
       cwd: spawn.cwd,
+      env: opencodeEnv,
       onEvent: (ev) => {
         if (!guard()) return;
 
@@ -5577,6 +5710,12 @@ function createRunner(opts) {
               toolMeta,
             );
             toolMsgById.set(tool.id, msgId);
+            const notice = guardrailNotice(
+              tool.name,
+              tool.input,
+              thread.worktreePath || project.path,
+            );
+            if (notice) appendMessage(threadId, "event", notice, runId);
             // Post-tool text starts a fresh message below the tool call.
             // Clearing parts is safe: opencode completes text parts before tools.
             assistantMsgId = null;
@@ -5803,17 +5942,43 @@ function createRunner(opts) {
       reasoningEffort: thread.reasoningEffort || null,
       webSearch: thread.webSearch === true,
     });
-    // #686: pin Task/Agent workers to the parent model. Prompt stays last.
-    // Skip remote/WSL: the plugin lives on this host, not the wrapped cwd.
+    // #686: pin Task/Agent workers to the parent model. #813: classifyTool
+    // preToolUse. Prompt stays last. Local plugins live here. ssh/WSL:
+    // deploy the classifyTool plugin onto the far side and pass
+    // --plugin-dir through wrap (#834). Pin-task-parent stays local.
+    /** @type {Record<string, string> | undefined} */
+    let cursorWrapEnv;
     if (!crossesBoundary(project) && args.length > 0) {
       try {
-        const pluginDir = materializeCursorPinPlugin(
-          cursorPinPluginDir(userDataPath),
-        );
-        const promptArg = args.pop();
-        args.push("--plugin-dir", pluginDir, promptArg);
+        const pluginDirs = [
+          materializeCursorPinPlugin(cursorPinPluginDir(userDataPath)),
+        ];
+        if (guardrailsEnabled()) {
+          pluginDirs.push(
+            materializeCursorGuardrailPlugin(
+              cursorGuardrailPluginDir(userDataPath),
+            ),
+          );
+        }
+        const extras = [];
+        for (const dir of pluginDirs) {
+          extras.push("--plugin-dir", dir);
+        }
+        insertBeforeLast(args, extras);
       } catch {
         // Fail-open: a plugin write error must not block the Cursor turn.
+      }
+    } else if (crossesBoundary(project) && args.length > 0 && guardrailsEnabled()) {
+      try {
+        const dest = deployCursorGuardrailPlugin({ project, threadId });
+        if (dest) {
+          insertBeforeLast(args, ["--plugin-dir", dest]);
+          cursorWrapEnv = {
+            SOLENTA_WORKTREE: project.remotePath || localCwd,
+          };
+        }
+      } catch {
+        // Deploy miss must not kill the run; stream notice remains.
       }
     }
     // Isolated HOME so this turn receives bound Solenta MCP without
@@ -5836,7 +6001,7 @@ function createRunner(opts) {
             projectPath: localCwd || project.path,
           }),
         });
-        cursorEnv = { HOME: dest };
+        cursorEnv = { HOME: dest, SOLENTA_WORKTREE: localCwd };
       } catch {
         // Overlay is best-effort; a failed isolate must not block the turn.
         try {
@@ -5859,7 +6024,7 @@ function createRunner(opts) {
         // not kill the run.
       }
     }
-    const spawn = resolveSpawn(project, binary, args, localCwd);
+    const spawn = resolveSpawn(project, binary, args, localCwd, cursorWrapEnv);
 
     const entry = {
       kind: "cursor",
@@ -6076,6 +6241,12 @@ function createRunner(opts) {
               toolMeta,
             );
             toolMsgById.set(tool.id, msgId);
+            const notice = guardrailNotice(
+              tool.name,
+              args || tool.input,
+              thread.worktreePath || project.path,
+            );
+            if (notice) appendMessage(threadId, "event", notice, runId);
             noteCursorSubagent(threadId, tool, args, "running");
             // Post-tool text starts a fresh message below the tool call.
             assistantMsgId = null;
@@ -7303,6 +7474,37 @@ function createRunner(opts) {
   }
 
   /**
+   * Re-spawn a failed workflow phase agent after the run ended (#825).
+   * @param {{ threadId: string, agentId: string }} input
+   * @returns {Promise<{ runId: string }>}
+   */
+  async function retryWorkflowAgent(input) {
+    try {
+      materializePendingWorktree(input.threadId);
+    } catch (err) {
+      failWorktreeSetup(input.threadId, "", undefined, err);
+    }
+    return workflowEngine.retryWorkflowAgent({
+      threadId: input.threadId,
+      agentId: input.agentId,
+      view: lastWorkflowByThread.get(input.threadId) || null,
+      store,
+      core,
+      pushFn,
+      active,
+      clearRun,
+      pushDetail,
+      pushThreadsChanged,
+      beginWorkLogStep,
+      completeWorkLogStep,
+      appendDoneWorkLog,
+      appendMessage,
+      notifyRunTerminal,
+      userDataPath,
+    });
+  }
+
+  /**
    * Stop is sacred (issue #32): stopping an orchestrator takes its crew with
    * it. Depth-first, so a worker that is itself an orchestrator brings its own
    * crew down too. Every stopped worker lands as "stopped", which queues no
@@ -7683,6 +7885,7 @@ function createRunner(opts) {
     cancelBtw,
     promoteBtw,
     startWorkflowRun,
+    retryWorkflowAgent,
     stopRun,
     resumeQuotaWait,
     refreshQuotaWait,

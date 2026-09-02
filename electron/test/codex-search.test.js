@@ -499,6 +499,10 @@ emit({
         String(last).startsWith(prompt),
         `runner prompt must stay last after live search: ${JSON.stringify(argv)}`,
       );
+      assert.ok(
+        last.includes(prompt),
+        `last argv token must contain the sentinel ${prompt}, got ${JSON.stringify(argv)}`,
+      );
     } finally {
       if (runner) runner.stopAll();
       fs.rmSync(tmpDir, { recursive: true, force: true });

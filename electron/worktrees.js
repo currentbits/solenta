@@ -5751,7 +5751,8 @@ async function enforceRetention(opts) {
 /**
  * Run enforceRetention without throwing. Archive / merge call this so a
  * GC failure cannot fail the user-facing action (#559). Also reclaims
- * stale kimi-homes overlays on the same pass (#675).
+ * stale kimi-homes overlays on the same pass (#675). Also reclaims
+ * remote $HOME/.solenta overlay dirs for archived ssh/WSL threads (#838).
  *
  * @param {object} opts
  * @param {import('./store').Store} [opts.store]
@@ -5794,6 +5795,15 @@ async function scheduleRetention(opts) {
   } catch (err) {
     console.warn(
       "cursor-home retention:",
+      err && err.message ? err.message : err,
+    );
+  }
+  try {
+    const { reclaimRemoteOverlays } = require("./remote-overlay.js");
+    reclaimRemoteOverlays(opts);
+  } catch (err) {
+    console.warn(
+      "remote-overlay retention:",
       err && err.message ? err.message : err,
     );
   }

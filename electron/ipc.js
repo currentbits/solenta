@@ -1176,6 +1176,9 @@ const IPC_HANDLERS = {
   "runs:startWorkflow": async (ctx, input) => {
     return ctx.runner.startWorkflowRun(input);
   },
+  "runs:retryWorkflowAgent": async (ctx, input) => {
+    return ctx.runner.retryWorkflowAgent(input);
+  },
   "runs:stop": async (ctx, input) => {
     return ctx.runner.stopRun(input);
   },

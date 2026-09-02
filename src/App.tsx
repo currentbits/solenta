@@ -168,6 +168,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     editQueued,
     fetchIssue,
     startWorkflowRun,
+    retryWorkflowAgent,
     saveWorkflow,
     removeWorkflow,
     stopRun,
@@ -709,8 +710,8 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
   }, [retryQueued]);
 
   const handleEditQueued = useCallback(
-    (prompt: string) => {
-      editQueued(prompt);
+    (prompt: string, items?: string[]) => {
+      editQueued(prompt, undefined, items);
     },
     [editQueued],
   );
@@ -1445,6 +1446,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         onOpenWorktree={openInEditor}
         onRewindAndResubmit={rewindAndResubmit}
         onStartWorkflow={startWorkflowRun}
+        onRetryWorkflowAgent={retryWorkflowAgent}
         onSaveWorkflow={saveWorkflow}
         onRemoveWorkflow={removeWorkflow}
         onStopRun={stopRun}
@@ -1461,6 +1463,9 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         }
         queuedPrompt={
           selectedThreadId ? (queued[selectedThreadId]?.prompt ?? null) : null
+        }
+        queuedItems={
+          selectedThreadId ? queued[selectedThreadId]?.items : undefined
         }
         queuedError={
           selectedThreadId ? (queued[selectedThreadId]?.error ?? null) : null
@@ -1606,6 +1611,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         onCollapse={narrow ? undefined : collapseAgents}
         workflow={visibleDetail?.workflow ?? null}
         thread={visibleDetail?.thread ?? null}
+        onRetryAgent={retryWorkflowAgent}
         usage={visibleDetail?.usage ?? null}
         providers={providers}
         project={project}

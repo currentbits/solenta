@@ -246,9 +246,36 @@ const WRITE_TOOLS = new Set([
   "NotebookEdit",
   "str_replace_editor",
   "apply_patch",
+  "StrReplace",
+  "write",
+  "edit",
+  "strreplace",
+  "Delete",
+  "search_replace",
 ]);
-const READ_TOOLS = new Set(["Read", "NotebookRead", "view", "Glob", "Grep"]);
-const SHELL_TOOLS = new Set(["Bash", "BashOutput", "shell", "run_command"]);
+const READ_TOOLS = new Set([
+  "Read",
+  "NotebookRead",
+  "view",
+  "Glob",
+  "Grep",
+  "read",
+  "glob",
+  "read_file",
+  "list_dir",
+  "grep",
+]);
+const SHELL_TOOLS = new Set([
+  "Bash",
+  "BashOutput",
+  "shell",
+  "run_command",
+  "Shell",
+  "bash",
+  "exec_command",
+  "run_terminal_command",
+  "run_terminal_cmd",
+]);
 
 /** First string field that looks like a path. */
 function toolPath(input) {

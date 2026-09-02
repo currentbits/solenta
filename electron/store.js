@@ -1232,6 +1232,17 @@ function recoverInterruptedRuns(store, data) {
       text: "Run interrupted: the app crashed or was force-quit mid-run",
       createdAt: Date.now(),
     });
+    // Fail-closed work-log: a mid-retry (or any other) beginWorkLogStep
+    // can stay done:false forever if the process dies before
+    // completeWorkLogStep. Mutate data.workLogByThread in place —
+    // store.data is not assigned yet during _readFile (#824 / #182).
+    const items =
+      data.workLogByThread && data.workLogByThread[t.id];
+    if (Array.isArray(items)) {
+      for (const item of items) {
+        if (item && item.done === false) item.done = true;
+      }
+    }
     recovered = true;
   }
   return recovered;

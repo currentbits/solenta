@@ -80,6 +80,8 @@ import {
   useRunDurationEnabled,
   setPasteCardsEnabled,
   usePasteCardsEnabled,
+  setComposerVimEnabled,
+  useComposerVimEnabled,
 } from "../uiPrefs";
 import styles from "./AgentsPanel.module.css";
 
@@ -132,6 +134,8 @@ interface AgentsPanelProps {
   ) => Promise<{ rootThreadId: string; tasks: CrewTaskView[] }>;
   /** Select a thread (team row click). */
   onSelectThread?: (id: string) => void;
+  /** Re-spawn a failed workflow phase agent (#825). */
+  onRetryAgent?: (agentId: string) => void;
   /** Opens the Git pane (fresh load). */
   onViewChanges: () => void;
   /** Worktree checkpoints (newest-first). */
@@ -457,6 +461,7 @@ function DisplayPrefsCard() {
   const divergence = useDivergenceCardEnabled();
   const runDuration = useRunDurationEnabled();
   const pasteCards = usePasteCardsEnabled();
+  const composerVim = useComposerVimEnabled();
   return (
     <section className={styles.gitCard} data-display-prefs="">
       <div className={styles.gitCardLabel}>
@@ -491,6 +496,15 @@ function DisplayPrefsCard() {
           onChange={(e) => setPasteCardsEnabled(e.target.checked)}
         />
         Collapse large pastes into cards
+      </label>
+      <label className={styles.checkboxLabel}>
+        <input
+          type="checkbox"
+          data-composer-vim-pref=""
+          checked={composerVim}
+          onChange={(e) => setComposerVimEnabled(e.target.checked)}
+        />
+        Vim motions in the composer
       </label>
     </section>
   );
@@ -2120,6 +2134,7 @@ export function AgentsContent({
   listThreadSummaries,
   listCrewTasks,
   onSelectThread,
+  onRetryAgent,
 }: {
   workflow: WorkflowView | null;
   thread: ThreadInfo | null;
@@ -2131,10 +2146,11 @@ export function AgentsContent({
     threadId: string,
   ) => Promise<{ rootThreadId: string; tasks: CrewTaskView[] }>;
   onSelectThread?: (id: string) => void;
+  onRetryAgent?: (agentId: string) => void;
 }) {
   /**
    * Manual expand/collapse overrides. Absent key = not toggled by user,
-   * so active phases auto-expand and others stay collapsed.
+   * so active and failed phases auto-expand and others stay collapsed.
    */
   const [manual, setManual] = useState<Record<string, boolean>>({});
 
@@ -2315,7 +2331,7 @@ export function AgentsContent({
     if (Object.prototype.hasOwnProperty.call(manual, id)) {
       return manual[id]!;
     }
-    return status === "active";
+    return status === "active" || status === "failed";
   };
 
   const toggle = (id: string, currentlyOpen: boolean) => {
@@ -2529,6 +2545,18 @@ export function AgentsContent({
                               / {agent.model}
                             </span>
                           </span>
+                          {agent.status === "failed" &&
+                          thread?.status !== "working" ? (
+                            <button
+                              type="button"
+                              className={styles.retryBtn}
+                              data-retry-agent={agent.id}
+                              aria-label={`Retry ${agent.id}`}
+                              onClick={() => onRetryAgent?.(agent.id)}
+                            >
+                              Retry
+                            </button>
+                          ) : null}
                         </li>
                       );
                     })}
@@ -2699,6 +2727,7 @@ export const AgentsPanel = memo(function AgentsPanel({
   listThreadSummaries,
   listCrewTasks,
   onSelectThread,
+  onRetryAgent,
   onViewChanges,
   listCheckpoints,
   restoreCheckpoint,
@@ -2850,6 +2879,7 @@ export const AgentsPanel = memo(function AgentsPanel({
           listThreadSummaries={listThreadSummaries}
           listCrewTasks={listCrewTasks}
           onSelectThread={onSelectThread}
+          onRetryAgent={onRetryAgent}
         />
       ) : tab === "git" ? (
         <GitTab

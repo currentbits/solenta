@@ -585,6 +585,17 @@ function resolveNewThreadModel(input, settings, provider) {
   }
 }
 
+/** Sanitize ThreadInfo.baseBranch (#187). Empty/null clears to the repo default. */
+function normalizeBaseBranch(value) {
+  if (value == null) return null;
+  const name = String(value).trim();
+  if (!name) return null;
+  if (name === "HEAD" || name.includes("..") || /[\s~^:?*\[\\]/.test(name)) {
+    throw new Error(`Invalid base branch: ${name}`);
+  }
+  return name;
+}
+
 /**
  * @param {import('./store').Store} store
  * @param {{ projectId: string, title: string, worktree?: boolean, automationId?: string | null, issueNumber?: number | null, provider?: string, model?: string | null, memoryConsolidate?: boolean, baseBranch?: string | null }} input
@@ -1617,6 +1628,24 @@ function setPinned(store, input) {
  *   posted?: boolean,
  * }} input
  */
+/** Per-thought list for the queued blob (#809). prompt is always the join. */
+function queuedThoughts(prev, prompt, input) {
+  if (input.replace === true) {
+    const items =
+      Array.isArray(input.items) && input.items.length
+        ? input.items.map((s) => String(s))
+        : [prompt];
+    return { prompt: items.join("\n\n"), items };
+  }
+  const prevItems = Array.isArray(prev?.items)
+    ? prev.items.map((s) => String(s))
+    : prev?.prompt != null
+      ? String(prev.prompt).split("\n\n")
+      : [];
+  const items = [...prevItems, prompt];
+  return { prompt: items.join("\n\n"), items };
+}
+
 function setQueued(store, input) {
   const { threadId, prompt, attachments } = input;
   const thread = store.getThread(threadId);
@@ -1628,13 +1657,16 @@ function setQueued(store, input) {
     // Edit in place (issue #364): the user rewrote the blob, so it overwrites
     // prompt AND attachments, and drops any inbound/fromThread provenance —
     // the content is user-authored now. Still drops the delivery error.
-    queued = { prompt };
+    const thoughts = queuedThoughts(null, prompt, input);
+    queued = { prompt: thoughts.prompt, items: thoughts.items };
     if (attachments && attachments.length) queued.attachments = attachments;
   } else if (prompt !== null) {
     const prev = thread.queued;
     const files = [...(prev?.attachments ?? []), ...(attachments ?? [])];
+    const thoughts = queuedThoughts(prev, prompt, input);
     queued = {
-      prompt: prev ? `${prev.prompt}\n\n${prompt}` : prompt,
+      prompt: thoughts.prompt,
+      items: thoughts.items,
       attachments: files.length ? files : undefined,
       // A new/appended prompt drops any previous delivery error (#314).
     };

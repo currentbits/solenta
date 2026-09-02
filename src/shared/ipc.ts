@@ -539,6 +539,12 @@ export interface ThreadInfo {
    */
   queued: {
     prompt: string;
+    /**
+     * One string per mid-run thought (issue #809). `prompt` stays the
+     * joined drain text (`items.join("\\n\\n")`) so main's FIFO send is
+     * unchanged. Absent on old rows — split `prompt` once to migrate.
+     */
+    items?: string[];
     attachments?: AttachmentInfo[];
     /**
      * Why the last delivery attempt failed (issue #314). Set by the main
@@ -1383,6 +1389,11 @@ export interface AgentView {
   model: string;
   status: AgentStatus;
   tokensUsed: number;
+  /**
+   * CLI session for this workflow slot only (kimi `-S`, other providers'
+   * resume flags). Never the parent thread.sessionId.
+   */
+  sessionId?: string | null;
 }
 
 export interface PhaseView {
@@ -3241,14 +3252,17 @@ export interface CoderApi {
      * clears; a non-null prompt APPENDS to any existing queue so two mid-run
      * sends cannot race-replace each other across the async hop — unless
      * `replace` is true, which overwrites the whole blob (editing the queued
-     * message in place, issue #364). Never bumps updatedAt: queueing is not
-     * activity, same rule as setPinned.
+     * message in place, issue #364). `items` is the per-thought list (#809);
+     * `prompt` is always the joined drain text. Never bumps updatedAt:
+     * queueing is not activity, same rule as setPinned.
      */
     setQueued(input: {
       threadId: string;
       prompt: string | null;
       attachments?: AttachmentInfo[];
       replace?: boolean;
+      /** Source of truth for per-thought edit/remove/reorder (#809). */
+      items?: string[];
     }): Promise<ThreadInfo>;
     /**
      * Snooze until an epoch ms, or clear with null. Rejects a non-null
@@ -3596,6 +3610,12 @@ export interface CoderApi {
      * binary is unavailable (naming it).
      */
     startWorkflow(input: { threadId: string; prompt: string; templateId?: string }): Promise<{ runId: string }>;
+    /**
+     * Re-spawn one failed workflow phase agent after the run has ended
+     * (#825). Same slot / overlay; no persist/resume. Rejects while a run
+     * is active or when the agent is not failed.
+     */
+    retryWorkflowAgent(input: { threadId: string; agentId: string }): Promise<{ runId: string }>;
     /**
      * #285: reads a finished thread's transcript and distills it into a
      * reusable workflow template draft. Nothing is saved — the caller shows
