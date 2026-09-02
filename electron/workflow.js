@@ -1532,31 +1532,49 @@ async function startWorkflowRun(deps) {
     schedulePush(true);
 
     let charCount = 0;
-    const { handle, done } = spawnPhaseAgent({
-      providerId,
-      prompt: agentPrompt,
-      cwd,
-      permissionMode,
-      model,
-      reasoningEffort,
-      webSearch,
-      userDataPath,
-      threadId,
-      projectId: thread.projectId,
-      overlayKey: agentId,
-      skipOverlay: skipKimiOverlay,
-      onText: (t) => {
-        if (!guard()) return;
-        charCount = t.length;
-        agent.tokensUsed = Math.ceil(charCount / 4) || 1;
-        schedulePush(false);
-      },
-    });
 
-    liveHandles.set(agentId, handle);
+    async function spawnSlot() {
+      const { handle, done } = spawnPhaseAgent({
+        providerId,
+        prompt: agentPrompt,
+        cwd,
+        permissionMode,
+        model,
+        reasoningEffort,
+        webSearch,
+        userDataPath,
+        threadId,
+        projectId: thread.projectId,
+        overlayKey: agentId,
+        skipOverlay: skipKimiOverlay,
+        onText: (t) => {
+          if (!guard()) return;
+          charCount = t.length;
+          agent.tokensUsed = Math.ceil(charCount / 4) || 1;
+          schedulePush(false);
+        },
+      });
+      liveHandles.set(agentId, handle);
+      const slotResult = await done;
+      liveHandles.delete(agentId);
+      return slotResult;
+    }
 
-    const result = await done;
-    liveHandles.delete(agentId);
+    function absorbUsage(slotResult) {
+      if (!slotResult || !slotResult.usage) return;
+      aggInput += slotResult.usage.inputTokens || 0;
+      aggCached += slotResult.usage.cachedInputTokens || 0;
+      aggCacheWrite += slotResult.usage.cacheWriteTokens || 0;
+      aggOutput += slotResult.usage.outputTokens || 0;
+      const agentCost = Number(slotResult.usage.costUsd) || 0;
+      aggCost += agentCost;
+      syncRunUsage();
+      if (agentCost > 0) {
+        store.recordSpend(agentCost);
+      }
+    }
+
+    let result = await spawnSlot();
 
     if (!guard()) {
       // Stopped mid-flight: leave status as-is if stop already marked failed
@@ -1564,6 +1582,31 @@ async function startWorkflowRun(deps) {
       // Still emit dossier so the renderer has a card for the killed agent.
       appendDossier(phaseName, agentIndex, agentPrompt, result, true);
       return null;
+    }
+
+    // One bounded retry on the same slot / overlay. The work-log line is
+    // in-progress for the second spawn only (#823).
+    if (result && !result.ok) {
+      absorbUsage(result);
+      if (!guard()) {
+        if (agent.status === "running") agent.status = "failed";
+        appendDossier(phaseName, agentIndex, agentPrompt, result, true);
+        return null;
+      }
+      const retryItemId = beginWorkLogStep(
+        threadId,
+        runId,
+        `${capitalize(phaseName)} agent ${agentIndex + 1} retrying`,
+      );
+      schedulePush(true);
+      result = await spawnSlot();
+      completeWorkLogStep(threadId, retryItemId);
+      schedulePush(true);
+      if (!guard()) {
+        if (agent.status === "running") agent.status = "failed";
+        appendDossier(phaseName, agentIndex, agentPrompt, result, true);
+        return null;
+      }
     }
 
     if (result.ok) {

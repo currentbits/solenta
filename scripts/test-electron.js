@@ -67,6 +67,7 @@ const WIN32_FILES = [
   "electron/test/updater.test.js", // win32 portable stage + helper (#755)
   "electron/test/workflow-crash-resume.test.js", // store load only; no spawn (#824)
   "electron/test/workflow-retry-agent.test.js",
+  "electron/test/workflow-retry-note.test.js",
 ];
 if (process.platform === "win32") {
   args.push(...WIN32_FILES);
