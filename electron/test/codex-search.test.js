@@ -1,10 +1,6 @@
 /**
- * Issue #174: per-thread Codex live web search (`codex exec --search`).
- *
- * Covers listProviders.supportsSearch, buildArgs --search (fresh + resume,
- * prompt stays last), other providers never emit the flag, setWebSearch
- * accept/reject, setProvider clearing, store migration, the IPC seam, and
- * runner argv evidence.
+ * Issue #174 / #799: per-thread Codex live web search.
+ * Codex 0.152.0 rejects `--search` after `exec`; pass `-c web_search=live`.
  */
 const { describe, it, beforeEach, afterEach } = require("node:test");
 const assert = require("node:assert/strict");
@@ -91,7 +87,7 @@ describe("codex search: provider capability", () => {
 });
 
 describe("codex search: buildArgs", () => {
-  it("omits --search unless webSearch is true", () => {
+  it("omits live search unless webSearch is true", () => {
     const entry = getProvider("codex");
     for (const opts of [{}, { webSearch: false }, { webSearch: null }]) {
       const args = entry.buildArgs({ prompt: PROMPT, ...opts });
@@ -99,21 +95,26 @@ describe("codex search: buildArgs", () => {
         !args.includes("--search"),
         `must omit --search for ${JSON.stringify(opts)}: ${JSON.stringify(args)}`,
       );
+      assert.ok(
+        !args.includes("web_search=live"),
+        `must omit web_search=live for ${JSON.stringify(opts)}: ${JSON.stringify(args)}`,
+      );
       assertPromptLast(args, PROMPT);
     }
   });
 
-  it("fresh and resume both pass --search before the prompt", () => {
+  it("fresh and resume pass -c web_search=live, never --search (issue #799)", () => {
     const entry = getProvider("codex");
     const fresh = entry.buildArgs({ prompt: PROMPT, webSearch: true });
     assert.ok(
-      fresh.includes("--search"),
-      `fresh must pass --search: ${JSON.stringify(fresh)}`,
+      !fresh.includes("--search"),
+      `fresh must not pass --search after exec: ${JSON.stringify(fresh)}`,
     );
     assert.ok(
-      fresh.indexOf("--search") < fresh.length - 1,
-      "--search must sit before the trailing prompt",
+      fresh.includes("web_search=live"),
+      `fresh must pass -c web_search=live: ${JSON.stringify(fresh)}`,
     );
+    assert.equal(fresh[fresh.indexOf("web_search=live") - 1], "-c");
     assertPromptLast(fresh, PROMPT);
     assert.deepEqual(fresh.slice(0, 3), [
       "exec",
@@ -129,20 +130,27 @@ describe("codex search: buildArgs", () => {
     assert.equal(resume[0], "exec");
     assert.equal(resume[1], "resume");
     assert.ok(
-      resume.includes("--search"),
-      `resume must pass --search: ${JSON.stringify(resume)}`,
+      !resume.includes("--search"),
+      `resume must not pass --search: ${JSON.stringify(resume)}`,
     );
+    assert.ok(
+      resume.includes("web_search=live"),
+      `resume must pass -c web_search=live: ${JSON.stringify(resume)}`,
+    );
+    assert.equal(resume[resume.indexOf("web_search=live") - 1], "-c");
     assertPromptLast(resume, PROMPT);
   });
 
-  it("keeps --search when model and effort are also set", () => {
+  it("keeps live search when model and effort are also set", () => {
     const args = getProvider("codex").buildArgs({
       prompt: PROMPT,
       model: "gpt-5.5",
       reasoningEffort: "high",
       webSearch: true,
     });
-    assert.ok(args.includes("--search"));
+    assert.ok(!args.includes("--search"));
+    assert.ok(args.includes("web_search=live"));
+    assert.equal(args[args.indexOf("web_search=live") - 1], "-c");
     assert.ok(args.includes("model_reasoning_effort=high"));
     const mIdx = args.indexOf("-m");
     assert.ok(mIdx >= 0);
@@ -161,6 +169,10 @@ describe("codex search: buildArgs", () => {
       assert.ok(
         !args.includes("--search"),
         `${entry.id} must not emit --search: ${JSON.stringify(args)}`,
+      );
+      assert.ok(
+        !args.includes("web_search=live"),
+        `${entry.id} must not emit web_search=live: ${JSON.stringify(args)}`,
       );
     }
   });
@@ -404,7 +416,7 @@ describe("codex search: IPC seam + runner wiring", () => {
     }
   });
 
-  it("runner passes --search into codex argv when the thread has webSearch", async () => {
+  it("runner passes -c web_search=live into codex argv when the thread has webSearch", async () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "coder-search-run-"));
     const argvFile = path.join(tmpDir, "argv.json");
     const fakeCodex = writeFakeBin(
@@ -474,13 +486,18 @@ emit({
       assert.ok(fs.existsSync(argvFile), "fake codex must write argv file");
       const argv = JSON.parse(fs.readFileSync(argvFile, "utf8"));
       assert.ok(
-        argv.includes("--search"),
-        `runner must pass --search into codex argv, got ${JSON.stringify(argv)}`,
+        !argv.includes("--search"),
+        `runner must not pass --search after exec, got ${JSON.stringify(argv)}`,
       );
+      assert.ok(
+        argv.includes("web_search=live"),
+        `runner must pass -c web_search=live, got ${JSON.stringify(argv)}`,
+      );
+      assert.equal(argv[argv.indexOf("web_search=live") - 1], "-c");
       assert.equal(
         argv[argv.length - 1],
         prompt,
-        `runner prompt must stay last after --search: ${JSON.stringify(argv)}`,
+        `runner prompt must stay last after live search: ${JSON.stringify(argv)}`,
       );
     } finally {
       if (runner) runner.stopAll();
