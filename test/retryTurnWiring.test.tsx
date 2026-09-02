@@ -98,6 +98,31 @@ function failedTarget(): { row: ThreadInfo; d: ThreadDetail } {
   return { row, d };
 }
 
+function upgradeTarget(): { row: ThreadInfo; d: ThreadDetail } {
+  const row = thread({
+    id: "t-cli-upgrade",
+    title: "cli upgrade target",
+    status: "failed",
+    lastError: "This model needs a newer Codex. Run `codex update`, then send again.",
+    lastErrorKind: "cli-upgrade",
+    updatedAt: NOW + 2600,
+  });
+  return {
+    row,
+    d: detail({
+      thread: row,
+      messages: [
+        msg({ id: "m-uu", role: "user", text: "use sol" }),
+        msg({
+          id: "m-ue",
+          role: "event",
+          text: "This model needs a newer Codex. Run `codex update`, then send again.",
+        }),
+      ],
+    }),
+  };
+}
+
 function overflowTarget(): { row: ThreadInfo; d: ThreadDetail } {
   const row = thread({
     id: "t-context-overflow",
@@ -249,6 +274,45 @@ describe("App Retry turn wiring (round 48)", () => {
     const forks = fake.of("threads.fork");
     assert.equal(forks.length, 1);
     assert.deepEqual(forks[0].args[0], { threadId: "t-context-overflow" });
+    m.unmount();
+  });
+
+  it("cli-upgrade offers Upgrade Codex instead of retry and copies the command", async () => {
+    const writes: string[] = [];
+    const clipboard = {
+      writeText: async (text: string) => {
+        writes.push(text);
+      },
+    };
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: clipboard,
+    });
+
+    const decoyRow = decoy();
+    const { row, d } = upgradeTarget();
+    const fake = createFakeCoder({
+      projects: [project()],
+      threads: [decoyRow, row],
+      details: {
+        "t-decoy": detail({ thread: decoyRow }),
+        "t-cli-upgrade": d,
+      },
+    });
+    const m = await boot(fake);
+    await selectThread(m, "cli upgrade target");
+
+    assert.equal(retryButtons(m).length, 0);
+    const upgrade = m
+      .queryAll("button")
+      .find((button) => button.textContent?.trim() === "Upgrade Codex");
+    assert.ok(upgrade);
+
+    const runsBefore = fake.of("runs.start").length;
+    await m.click(upgrade);
+    await m.flush();
+    assert.equal(fake.of("runs.start").length, runsBefore);
+    assert.deepEqual(writes, ["codex update"]);
     m.unmount();
   });
 

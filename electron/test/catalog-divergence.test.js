@@ -310,7 +310,7 @@ describe("listProviders catalog notes", () => {
     }
   });
 
-  it("does not rewrite the snapshot when a cache diverges", () => {
+  it("does not merge live-only ids into the snapshot when a cache diverges", () => {
     const home = tmpHome();
     try {
       const snap = getProvider("codex").models.slice();
@@ -330,9 +330,60 @@ describe("listProviders catalog notes", () => {
         home,
       });
       const codex = list.find((p) => p.id === "codex");
-      assert.deepEqual(codex.models, snap);
+      assert.deepEqual(new Set(codex.models), new Set(snap));
+      assert.equal(codex.models.includes("live-only-model"), false);
       assert.match(codex.catalogNote, /live-only-model/);
       assert.match(codex.catalogNote, /Custom\.\.\./);
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it("moves recommended and live-supported snapshot ids first when Sol is cache-only", () => {
+    const home = tmpHome();
+    try {
+      write(
+        path.join(home, ".codex", "models_cache.json"),
+        JSON.stringify({
+          models: [
+            { slug: "gpt-5.5", visibility: "list" },
+            { slug: "gpt-5.4-mini", visibility: "list" },
+            { slug: "codex-auto-review", visibility: "hide" },
+          ],
+        }),
+      );
+      const list = listProviders({
+        which: () => null,
+        env: {},
+        includeSimulate: false,
+        home,
+      });
+      const codex = list.find((p) => p.id === "codex");
+      assert.deepEqual(codex.models.slice(0, 2), ["gpt-5.5", "gpt-5.4-mini"]);
+      assert.ok(codex.models.includes("gpt-5.6-sol"));
+      const rec = codex.modelInfo.filter((m) => m.recommended).map((m) => m.id);
+      assert.deepEqual(rec, ["gpt-5.5"]);
+      assert.match(codex.catalogNote, /gpt-5\.6-sol/);
+      assert.match(codex.catalogNote, /codex update/);
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps snapshot recommended when the live cache is missing", () => {
+    const home = tmpHome();
+    try {
+      const list = listProviders({
+        which: () => null,
+        env: {},
+        includeSimulate: false,
+        home,
+      });
+      const codex = list.find((p) => p.id === "codex");
+      const rec = codex.modelInfo.filter((m) => m.recommended).map((m) => m.id);
+      assert.deepEqual(rec, ["gpt-5.6-sol"]);
+      assert.equal(codex.models[0], "gpt-5.6-sol");
+      assert.equal(codex.catalogNote, undefined);
     } finally {
       fs.rmSync(home, { recursive: true, force: true });
     }

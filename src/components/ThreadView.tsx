@@ -4857,6 +4857,17 @@ export const ThreadView = memo(function ThreadView({
     const last = detail.messages[detail.messages.length - 1];
     return last?.role === "event" && !last.thinking ? last.id : null;
   }, [detail]);
+  const upgradeEventId = useMemo(() => {
+    if (
+      !detail ||
+      detail.thread.status !== "failed" ||
+      detail.thread.lastErrorKind !== "cli-upgrade"
+    ) {
+      return null;
+    }
+    const last = detail.messages[detail.messages.length - 1];
+    return last?.role === "event" && !last.thinking ? last.id : null;
+  }, [detail]);
   const retryTitle = useMemo(
     () => (retryUser ? retryButtonTitle(retryUser.text) : ""),
     [retryUser],
@@ -4876,6 +4887,10 @@ export const ThreadView = memo(function ThreadView({
     workflowRetryAgentId,
     onRetryWorkflowAgent,
   ]);
+
+  const handleUpgradeCli = useCallback(() => {
+    void navigator.clipboard?.writeText("codex update");
+  }, []);
 
   const handleRequestResubmit = useCallback(
     (messageId: string, prompt: string) => {
@@ -6349,8 +6364,14 @@ export const ThreadView = memo(function ThreadView({
               entry.message.role === "event" &&
               overflowEventId != null &&
               entry.message.id === overflowEventId;
+            const isUpgradeSurface =
+              !isOverflowSurface &&
+              entry.message.role === "event" &&
+              upgradeEventId != null &&
+              entry.message.id === upgradeEventId;
             const isRetrySurface =
               !isOverflowSurface &&
+              !isUpgradeSurface &&
               entry.message.role === "event" &&
               retryEventId != null &&
               entry.message.id === retryEventId;
@@ -6407,23 +6428,29 @@ export const ThreadView = memo(function ThreadView({
                       eventActionLabel={
                         isOverflowSurface
                           ? "Fork to fresh context"
-                          : isRetrySurface
-                            ? "Retry turn"
-                            : undefined
+                          : isUpgradeSurface
+                            ? "Upgrade Codex"
+                            : isRetrySurface
+                              ? "Retry turn"
+                              : undefined
                       }
                       eventActionTitle={
                         isOverflowSurface
                           ? "Fork this thread with recent history in a fresh context"
-                          : isRetrySurface
-                            ? retryTitle
-                            : undefined
+                          : isUpgradeSurface
+                            ? "Copy `codex update` to the clipboard"
+                            : isRetrySurface
+                              ? retryTitle
+                              : undefined
                       }
                       onEventAction={
                         isOverflowSurface
                           ? handleForkFresh
-                          : isRetrySurface
-                            ? handleRetry
-                            : undefined
+                          : isUpgradeSurface
+                            ? handleUpgradeCli
+                            : isRetrySurface
+                              ? handleRetry
+                              : undefined
                       }
                       canEdit={
                         Boolean(onRewindAndResubmit) &&

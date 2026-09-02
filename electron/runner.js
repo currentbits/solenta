@@ -93,6 +93,7 @@ const {
 } = require("./permissionCommand.js");
 const {
   classifyContextOverflow,
+  classifyCliUpgrade,
   decideQuotaWait,
   formatQuotaWaitClock,
   nextQuotaFailover,
@@ -2571,18 +2572,20 @@ function createRunner(opts) {
    *   parked: boolean,
    *   until?: number,
    *   text: string,
-   *   kind: "context-overflow" | null
+   *   kind: "context-overflow" | "cli-upgrade" | null
    * }}
    */
   function markRunFailed(threadId, errText, runId, extraPatch) {
     const overflow = classifyContextOverflow(errText);
-    const text = overflow ? overflow.text : errText;
-    const kind = overflow ? overflow.kind : null;
-    if (!overflow) {
+    const upgrade = overflow ? null : classifyCliUpgrade(errText);
+    const classified = overflow || upgrade;
+    const text = classified ? classified.text : errText;
+    const kind = classified ? classified.kind : null;
+    if (!classified) {
       const switched = tryQuotaFailover(threadId, errText, runId, extraPatch);
       if (switched) return { parked: false, failover: true, text, kind: null };
     }
-    const park = overflow
+    const park = classified
       ? null
       : decideQuotaWait({
           text: errText,

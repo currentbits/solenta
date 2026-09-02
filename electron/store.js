@@ -1106,7 +1106,9 @@ function migrateThread(t) {
     // Older stores have no lastError; null (not undefined) so the badge is stable.
     lastError: t.lastError !== undefined ? t.lastError : null,
     lastErrorKind:
-      t.lastErrorKind === "context-overflow" ? "context-overflow" : null,
+      t.lastErrorKind === "context-overflow" || t.lastErrorKind === "cli-upgrade"
+        ? t.lastErrorKind
+        : null,
     archived: t.archived != null ? Boolean(t.archived) : false,
     // Older stores may lack PR fields; null (not undefined) so the badge is stable.
     prNumber: t.prNumber !== undefined ? t.prNumber : null,

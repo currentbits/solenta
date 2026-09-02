@@ -86,6 +86,7 @@ describe("Store", () => {
         threads: [
           { id: "missing", lastError: null },
           { id: "overflow", lastErrorKind: "context-overflow" },
+          { id: "upgrade", lastErrorKind: "cli-upgrade" },
           { id: "unknown", lastErrorKind: "network-error" },
         ],
         messagesByThread: {},
@@ -97,6 +98,7 @@ describe("Store", () => {
     const store = new Store(filePath);
     assert.equal(store.getThread("missing").lastErrorKind, null);
     assert.equal(store.getThread("overflow").lastErrorKind, "context-overflow");
+    assert.equal(store.getThread("upgrade").lastErrorKind, "cli-upgrade");
     assert.equal(store.getThread("unknown").lastErrorKind, null);
   });
 

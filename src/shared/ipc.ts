@@ -387,7 +387,7 @@ export interface ThreadInfo {
   /** Short reason a run failed ("Run error: ..."), null otherwise. Set when status becomes "failed" or "quota-wait", cleared when a run starts. */
   lastError: string | null;
   /** Semantic kind for the current lastError; null for ordinary failures. */
-  lastErrorKind: "context-overflow" | null;
+  lastErrorKind: "context-overflow" | "cli-upgrade" | null;
   /**
    * Provider quota-wait (#462): epoch ms when the thread will auto-resume.
    * Only meaningful while status is "quota-wait". Distinct from snooze
