@@ -8,7 +8,9 @@
  * shares MCP URLs with every other project (and races boot-time
  * registration). Overlay: symlink auth/sessions/plugins, copy the rest of
  * config.toml with `[mcp_servers.*]` replaced by Solenta servers bound to
- * this project. Never follow those symlinks on reclaim.
+ * this project. Never follow those symlinks on reclaim. ssh/WSL dests
+ * live at `$HOME/.solenta/grok-homes/<threadId>` (#821) and are reclaimed
+ * from scheduleRetention without following those links (#833).
  */
 
 const fs = require("node:fs");
@@ -19,6 +21,7 @@ const {
 } = require("./grok-guardrail-hook.js");
 const { guardrailsEnabled } = require("./guardrails.js");
 const { execCommand, posixQuote } = require("./ssh.js");
+const { wslTarget } = require("./wsl.js");
 
 /**
  * Auth/session/plugin files a per-run home must share with the user's real
@@ -433,11 +436,127 @@ function reclaimGrokHomes(opts) {
   return { removed, skipped };
 }
 
+/**
+ * True when this project's commands must run through ssh or wsl.exe.
+ * Duplicates runner.crossesBoundary so grok.js does not require runner
+ * (runner already requires this module).
+ * @param {{ remoteHost?: string, path?: string } | null | undefined} project
+ */
+function projectCrossesBoundary(project) {
+  return Boolean(project && (project.remoteHost || wslTarget(project)));
+}
+
+/**
+ * Archived or explicitly settled grok thread that is not live.
+ * @param {object | null | undefined} store
+ * @param {object | null | undefined} thread
+ */
+function isReclaimableRemoteGrokThread(store, thread) {
+  if (!thread || typeof thread !== "object") return false;
+  if (thread.provider !== "grok") return false;
+  const id = String(thread.id || "");
+  if (!id || id !== path.posix.basename(id)) return false;
+  if (isLiveGrokThread(store, id)) return false;
+  return thread.archived === true || thread.settledOverride === "settled";
+}
+
+/**
+ * POSIX body that deletes `$HOME/.solenta/grok-homes/<id>` without
+ * following auth/session symlinks into ~/.grok. `find` without `-L`
+ * does not descend into a directory symlink. Never `rm -rf`.
+ * @param {string[]} threadIds
+ */
+function remoteGrokHomeReclaimScript(threadIds) {
+  const ids = [];
+  for (const raw of threadIds || []) {
+    const id = path.posix.basename(String(raw || ""));
+    if (!id || id !== String(raw || "")) continue;
+    ids.push(id);
+  }
+  if (!ids.length) return "";
+  const list = ids.map((id) => posixQuote(id)).join(" ");
+  return [
+    '[ -n "$HOME" ] || exit 0',
+    `for id in ${list}; do`,
+    '  dest="$HOME/.solenta/grok-homes/$id"',
+    '  case "$dest" in',
+    '    */.solenta/grok-homes/*) ;;',
+    "    *) continue ;;",
+    "  esac",
+    '  if [ -L "$dest" ]; then',
+    '    rm -f -- "$dest"',
+    "    continue",
+    "  fi",
+    '  if [ ! -d "$dest" ]; then',
+    "    continue",
+    "  fi",
+    '  find -P "$dest" \\( -type l -o -type f \\) -exec rm -f -- {} +',
+    '  find -P "$dest" -depth -type d -exec rmdir -- {} +',
+    "done",
+  ].join("\n");
+}
+
+/**
+ * Best-effort reclaim of remote #821 overlays (#833).
+ *
+ * One `sh -c` per crossing project via wrapCommand/execCommand. A dead
+ * host or missing dest is swallowed so local #706 reclaim still runs.
+ *
+ * @param {object} opts
+ * @param {{
+ *   getThreads?: () => Array<{ id?: string, projectId?: string, provider?: string, status?: string, archived?: boolean, settledOverride?: string | null }>,
+ *   getThread?: (id: string) => { status?: string } | null,
+ *   getProject?: (id: string) => { remoteHost?: string, path?: string } | null,
+ * }} [opts.store]
+ * @returns {{ removed: string[], skipped: string[] }}
+ */
+function reclaimRemoteGrokHomes(opts) {
+  const removed = [];
+  const skipped = [];
+  const store = opts && opts.store;
+  if (
+    !store ||
+    typeof store.getThreads !== "function" ||
+    typeof store.getProject !== "function"
+  ) {
+    return { removed, skipped };
+  }
+
+  /** @type {Map<string, { project: object, ids: string[] }>} */
+  const byKey = new Map();
+  for (const thread of store.getThreads() || []) {
+    if (!isReclaimableRemoteGrokThread(store, thread)) continue;
+    const project = store.getProject(thread.projectId);
+    if (!project || !projectCrossesBoundary(project)) continue;
+    const key = String(project.id || project.remoteHost || project.path || "");
+    let bucket = byKey.get(key);
+    if (!bucket) {
+      bucket = { project, ids: [] };
+      byKey.set(key, bucket);
+    }
+    bucket.ids.push(String(thread.id));
+  }
+
+  for (const { project, ids } of byKey.values()) {
+    const script = remoteGrokHomeReclaimScript(ids);
+    if (!script) continue;
+    try {
+      execCommand(project, "sh", ["-c", script], { encoding: "utf8" });
+      removed.push(...ids);
+    } catch {
+      // housekeeping; a busy or unreachable host is retried next pass
+    }
+  }
+  return { removed, skipped };
+}
+
 module.exports = {
   materializeGrokHome,
   deployGrokGuardrailOverlay,
   remoteGrokHomeDest,
   reclaimGrokHomes,
+  reclaimRemoteGrokHomes,
+  remoteGrokHomeReclaimScript,
   stripGrokConfigForOverlay,
   grokMcpToml,
   GROK_HOME_LINKS,

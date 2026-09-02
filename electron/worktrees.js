@@ -5789,6 +5789,15 @@ async function scheduleRetention(opts) {
     );
   }
   try {
+    const { reclaimRemoteGrokHomes } = require("./grok.js");
+    reclaimRemoteGrokHomes(opts);
+  } catch (err) {
+    console.warn(
+      "grok-home remote retention:",
+      err && err.message ? err.message : err,
+    );
+  }
+  try {
     const { reclaimCursorHomes } = require("./cursor.js");
     reclaimCursorHomes(opts);
   } catch (err) {
