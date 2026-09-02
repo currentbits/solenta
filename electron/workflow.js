@@ -9,6 +9,7 @@ const {
   extractAgentMessageText,
   extractUsage,
   extractSessionId: codexExtractSessionId,
+  extractCommandItem,
 } = require("./codex.js");
 const {
   runKimi,
@@ -38,8 +39,9 @@ const {
   grokConfigCorruptMessage,
 } = require("./memory-sup.js");
 const { wslTarget } = require("./wsl.js");
+const { wrapCommand } = require("./ssh.js");
 const { guardrailsEnabled } = require("./guardrails.js");
-const { insertBeforeLast } = require("./guardrail-hook-core.js");
+const { insertBeforeLast, guardrailNotice } = require("./guardrail-hook-core.js");
 const {
   materializeCursorPinPlugin,
   cursorPinPluginDir,
@@ -48,8 +50,14 @@ const {
   materializeCursorGuardrailPlugin,
   cursorGuardrailPluginDir,
 } = require("./cursor-guardrail.js");
-const { materializeCodexGuardrailHome } = require("./codex-guardrail.js");
-const { materializeOpencodeGuardrailDir } = require("./opencode-guardrail.js");
+const {
+  materializeCodexGuardrailHome,
+  deployCodexGuardrailOverlay,
+} = require("./codex-guardrail.js");
+const {
+  materializeOpencodeGuardrailDir,
+  deployOpencodeGuardrailOverlay,
+} = require("./opencode-guardrail.js");
 const {
   runOpencode,
   extractTextPart: opencodeExtractText,
@@ -82,6 +90,50 @@ function hashSeed(threadId, runId) {
 function capitalize(name) {
   if (!name) return name;
   return name.charAt(0).toUpperCase() + name.slice(1);
+}
+
+/**
+ * Same predicate runner.js uses. Duplicated here so workflow.js does not
+ * require runner.js (circular: runner already loads this module).
+ * @param {{ remoteHost?: string, path?: string } | null | undefined} project
+ */
+function crossesBoundary(project) {
+  return Boolean(project && (project.remoteHost || wslTarget(project)));
+}
+
+/**
+ * Wrap a phase spawn the way runner.resolveSpawn does, including
+ * `env KEY=value` on the far side (#835 / #837).
+ * @param {{ remoteHost?: string, remotePath?: string, path?: string } | null | undefined} project
+ * @param {string} binary
+ * @param {string[]} args
+ * @param {string} localCwd
+ * @param {Record<string, string> | null | undefined} [env]
+ */
+function resolveWorkflowSpawn(project, binary, args, localCwd, env) {
+  if (!crossesBoundary(project)) {
+    return { binary, args, cwd: localCwd };
+  }
+  const wrapped = wrapCommand(project, binary, args, undefined, env);
+  return { binary: wrapped.bin, args: wrapped.args, cwd: process.cwd() };
+}
+
+/**
+ * @param {object} opts
+ * @param {string} toolName
+ * @param {unknown} input
+ */
+function notePhaseGuardrail(opts, toolName, input) {
+  if (typeof opts.appendMessage !== "function" || !opts.threadId) return;
+  const project = opts.project;
+  const worktreePath =
+    opts.worktreePath ||
+    (project && (project.remotePath || project.path)) ||
+    opts.cwd;
+  const notice = guardrailNotice(toolName, input, worktreePath);
+  if (notice) {
+    opts.appendMessage(opts.threadId, "event", notice, opts.runId || null);
+  }
 }
 
 /**
@@ -509,6 +561,7 @@ function spawnAgentCodex(opts) {
     userDataPath,
     threadId,
     skipOverlay,
+    project,
   } = opts;
 
   let text = "";
@@ -544,6 +597,8 @@ function spawnAgentCodex(opts) {
   }
   /** @type {Record<string, string>} */
   const envExtra = { ...getCodexMcpEnv() };
+  /** @type {Record<string, string> | undefined} */
+  let wrapEnv;
   if (userDataPath && threadId && !skipOverlay && guardrailsEnabled()) {
     try {
       const dest = path.join(userDataPath, "codex-homes", threadId);
@@ -560,12 +615,33 @@ function spawnAgentCodex(opts) {
     } catch {
       // best-effort
     }
+  } else if (crossesBoundary(project) && guardrailsEnabled()) {
+    try {
+      const dest = deployCodexGuardrailOverlay({ project, threadId });
+      if (dest) {
+        insertBeforeLast(args, [
+          "-c",
+          "features.hooks=true",
+          "--dangerously-bypass-hook-trust",
+        ]);
+        wrapEnv = {
+          CODEX_HOME: dest,
+          SOLENTA_WORKTREE: (project && project.remotePath) || cwd,
+        };
+        envExtra.CODEX_HOME = dest;
+        envExtra.SOLENTA_WORKTREE = wrapEnv.SOLENTA_WORKTREE;
+      }
+    } catch {
+      // Deploy miss must not kill the phase; stream notice remains.
+    }
   }
 
+  const codexBin = binary || resolveBin(entry);
+  const spawn = resolveWorkflowSpawn(project, codexBin, args, cwd, wrapEnv);
   const handle = runCodex({
-    binary: binary || resolveBin(entry),
-    args,
-    cwd,
+    binary: spawn.binary,
+    args: spawn.args,
+    cwd: spawn.cwd,
     envExtra,
     onEvent: (ev) => {
       if (!ev || typeof ev !== "object") return;
@@ -601,6 +677,10 @@ function spawnAgentCodex(opts) {
           outputTokens: Number(u.outputTokens) || 0,
           costUsd: 0,
         };
+      }
+      const cmd = extractCommandItem(ev);
+      if (cmd && cmd.phase === "started") {
+        notePhaseGuardrail(opts, "Bash", { command: cmd.command });
       }
     },
     onExit: ({ code, stderr }) => {
@@ -919,6 +999,8 @@ function spawnAgentOpencode(opts) {
     sessionId,
     userDataPath,
     skipOverlay,
+    project,
+    threadId,
   } = opts;
 
   let text = "";
@@ -971,12 +1053,32 @@ function spawnAgentOpencode(opts) {
     } catch {
       // best-effort
     }
+  } else if (crossesBoundary(project) && guardrailsEnabled()) {
+    try {
+      const dest = deployOpencodeGuardrailOverlay({ project, threadId });
+      if (dest) {
+        opencodeEnv = {
+          OPENCODE_CONFIG_DIR: dest,
+          SOLENTA_WORKTREE: (project && project.remotePath) || cwd,
+        };
+      }
+    } catch {
+      // Deploy miss must not kill the phase; stream notice remains.
+    }
   }
 
-  const handle = runOpencode({
-    binary: binary || resolveBin(entry),
+  const opencodeBin = binary || resolveBin(entry);
+  const spawn = resolveWorkflowSpawn(
+    project,
+    opencodeBin,
     args,
     cwd,
+    opencodeEnv,
+  );
+  const handle = runOpencode({
+    binary: spawn.binary,
+    args: spawn.args,
+    cwd: spawn.cwd,
     env: opencodeEnv,
     onEvent: (ev) => {
       gotJson = true;
@@ -1003,7 +1105,10 @@ function spawnAgentOpencode(opts) {
       }
       const sid = realSessionId(opencodeExtractSessionId(ev));
       if (sid) capturedSessionId = sid;
-      opencodeExtractTool(ev);
+      const tool = opencodeExtractTool(ev);
+      if (tool && tool.phase === "start") {
+        notePhaseGuardrail(opts, tool.name, tool.input);
+      }
     },
     onExit: ({ code, stderr, fullStdout: stdout, gotJson: parsed }) => {
       fullStdout = stdout || "";
@@ -1063,6 +1168,10 @@ function spawnPhaseAgent(opts) {
     overlayKey,
     skipOverlay,
     sessionId,
+    project,
+    appendMessage,
+    runId,
+    worktreePath,
   } = opts;
 
   const entry = getProvider(providerId);
@@ -1114,6 +1223,10 @@ function spawnPhaseAgent(opts) {
       userDataPath,
       threadId,
       skipOverlay,
+      project,
+      appendMessage,
+      runId,
+      worktreePath,
     });
   }
   if (entry.kind === "kimi-stream") {
@@ -1146,6 +1259,11 @@ function spawnPhaseAgent(opts) {
       sessionId,
       userDataPath,
       skipOverlay,
+      project,
+      threadId,
+      appendMessage,
+      runId,
+      worktreePath,
     });
   }
   if (entry.kind === "cursor-stream") {
@@ -1614,6 +1732,10 @@ async function startWorkflowRun(deps) {
         overlayKey: agentId,
         skipOverlay: skipKimiOverlay,
         sessionId: agent.sessionId || null,
+        project,
+        appendMessage,
+        runId,
+        worktreePath: cwd,
         onText: (t) => {
           if (!guard()) return;
           charCount = t.length;

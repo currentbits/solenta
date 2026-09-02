@@ -156,6 +156,37 @@ function insertBeforeLast(args, extras) {
   return args;
 }
 
+/**
+ * Transcript line matching the Claude / grok Guardrail event.
+ * @param {string} toolName
+ * @param {unknown} input
+ * @param {string | null | undefined} worktreePath
+ * @returns {string | null}
+ */
+function guardrailNotice(toolName, input, worktreePath) {
+  let parsed = input;
+  if (typeof input === "string") {
+    try {
+      const o = JSON.parse(input);
+      parsed =
+        o && typeof o === "object" && !Array.isArray(o)
+          ? o
+          : { command: input };
+    } catch {
+      parsed = { command: input };
+    }
+  } else if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    parsed = {};
+  }
+  const rawName = String(toolName || "tool");
+  const out = decideGuardrail(
+    { tool_name: rawName, tool_input: parsed },
+    worktreePath,
+  );
+  if (out.decision !== "deny") return null;
+  return `Guardrail blocked ${rawName}: ${out.rule}: ${out.reason}`;
+}
+
 module.exports = {
   normalizeToolCall,
   decideGuardrail,
@@ -163,4 +194,5 @@ module.exports = {
   runStdinHook,
   copyGuardrailRuntime,
   insertBeforeLast,
+  guardrailNotice,
 };
