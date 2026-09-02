@@ -98,6 +98,31 @@ function failedTarget(): { row: ThreadInfo; d: ThreadDetail } {
   return { row, d };
 }
 
+function upgradeTarget(): { row: ThreadInfo; d: ThreadDetail } {
+  const row = thread({
+    id: "t-cli-upgrade",
+    title: "cli upgrade target",
+    status: "failed",
+    lastError: "This model needs a newer Codex. Run `codex update`, then send again.",
+    lastErrorKind: "cli-upgrade",
+    updatedAt: NOW + 2600,
+  });
+  return {
+    row,
+    d: detail({
+      thread: row,
+      messages: [
+        msg({ id: "m-uu", role: "user", text: "use sol" }),
+        msg({
+          id: "m-ue",
+          role: "event",
+          text: "This model needs a newer Codex. Run `codex update`, then send again.",
+        }),
+      ],
+    }),
+  };
+}
+
 function overflowTarget(): { row: ThreadInfo; d: ThreadDetail } {
   const row = thread({
     id: "t-context-overflow",
@@ -249,6 +274,45 @@ describe("App Retry turn wiring (round 48)", () => {
     const forks = fake.of("threads.fork");
     assert.equal(forks.length, 1);
     assert.deepEqual(forks[0].args[0], { threadId: "t-context-overflow" });
+    m.unmount();
+  });
+
+  it("cli-upgrade offers Upgrade Codex instead of retry and copies the command", async () => {
+    const writes: string[] = [];
+    const clipboard = {
+      writeText: async (text: string) => {
+        writes.push(text);
+      },
+    };
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: clipboard,
+    });
+
+    const decoyRow = decoy();
+    const { row, d } = upgradeTarget();
+    const fake = createFakeCoder({
+      projects: [project()],
+      threads: [decoyRow, row],
+      details: {
+        "t-decoy": detail({ thread: decoyRow }),
+        "t-cli-upgrade": d,
+      },
+    });
+    const m = await boot(fake);
+    await selectThread(m, "cli upgrade target");
+
+    assert.equal(retryButtons(m).length, 0);
+    const upgrade = m
+      .queryAll("button")
+      .find((button) => button.textContent?.trim() === "Upgrade Codex");
+    assert.ok(upgrade);
+
+    const runsBefore = fake.of("runs.start").length;
+    await m.click(upgrade);
+    await m.flush();
+    assert.equal(fake.of("runs.start").length, runsBefore);
+    assert.deepEqual(writes, ["codex update"]);
     m.unmount();
   });
 
@@ -445,6 +509,257 @@ describe("App Retry turn wiring (round 48)", () => {
       0,
       "after successful completion, stale interrupt must not keep Retry turn",
     );
+    m.unmount();
+  });
+
+  it("failed Build last-run Retry turn calls retryWorkflowAgent, not start or startWorkflow", async () => {
+    const decoyRow = decoy();
+    const wfId = "wf-run-failed";
+    const row = thread({
+      id: "t-wf-failed",
+      title: "failed workflow retry target",
+      status: "failed",
+      updatedAt: NOW + 1800,
+    });
+    const d = detail({
+      thread: row,
+      workflow: {
+        id: wfId,
+        name: "WF-test",
+        phases: [
+          {
+            name: "plan",
+            pipelined: false,
+            agents: [
+              {
+                id: "plan-1",
+                model: "grok",
+                status: "failed",
+                tokensUsed: 0,
+              },
+            ],
+          },
+        ],
+        settled: 0,
+        total: 1,
+        tokensTotal: 0,
+        complete: false,
+      },
+      messages: [
+        msg({
+          id: "m-wf-u",
+          role: "user",
+          text: "build the login form",
+          runId: wfId,
+        }),
+        msg({
+          id: "m-wf-kick",
+          role: "event",
+          text: "Kicked off 1 subagents\nplan 1",
+          runId: wfId,
+        }),
+        msg({
+          id: "m-wf-err",
+          role: "event",
+          text: "Run error (plan-1):\nbad spawn",
+          runId: wfId,
+        }),
+      ],
+    });
+    const fake = createFakeCoder({
+      projects: [project()],
+      threads: [decoyRow, row],
+      details: {
+        "t-decoy": detail({ thread: decoyRow }),
+        "t-wf-failed": d,
+      },
+    });
+    const m = await boot(fake);
+    await selectThread(m, "failed workflow retry target");
+
+    const btns = retryButtons(m);
+    assert.equal(
+      btns.length,
+      1,
+      "Retry turn must stay on a failed workflow last-run so it can route to the slot",
+    );
+    await m.click(btns[0]!);
+    await m.flush();
+
+    assert.equal(fake.of("runs.start").length, 0, "must not start a chat turn");
+    assert.equal(
+      fake.of("runs.startWorkflow").length,
+      0,
+      "must not restart the whole pipeline",
+    );
+    const retries = fake.of("runs.retryWorkflowAgent");
+    assert.equal(retries.length, 1, "click must hit runs.retryWorkflowAgent once");
+    assert.deepEqual(retries[0]!.args[0], {
+      threadId: "t-wf-failed",
+      agentId: "plan-1",
+    });
+    m.unmount();
+  });
+
+  it("several failed slots Retry turn picks the first in Agents-panel order", async () => {
+    const decoyRow = decoy();
+    const wfId = "wf-run-multi";
+    const row = thread({
+      id: "t-wf-multi",
+      title: "multi fail workflow retry",
+      status: "failed",
+      updatedAt: NOW + 1850,
+    });
+    const d = detail({
+      thread: row,
+      workflow: {
+        id: wfId,
+        name: "WF-multi",
+        phases: [
+          {
+            name: "plan",
+            pipelined: false,
+            agents: [
+              { id: "plan-1", model: "grok", status: "settled", tokensUsed: 4 },
+              { id: "plan-2", model: "grok", status: "failed", tokensUsed: 0 },
+            ],
+          },
+          {
+            name: "build",
+            pipelined: false,
+            agents: [
+              { id: "build-1", model: "grok", status: "failed", tokensUsed: 0 },
+            ],
+          },
+        ],
+        settled: 1,
+        total: 3,
+        tokensTotal: 4,
+        complete: false,
+      },
+      messages: [
+        msg({
+          id: "m-mu",
+          role: "user",
+          text: "build with two failed slots",
+          runId: wfId,
+        }),
+        msg({
+          id: "m-me",
+          role: "event",
+          text: "Run error (plan-2):\nbad spawn",
+          runId: wfId,
+        }),
+      ],
+    });
+    const fake = createFakeCoder({
+      projects: [project()],
+      threads: [decoyRow, row],
+      details: {
+        "t-decoy": detail({ thread: decoyRow }),
+        "t-wf-multi": d,
+      },
+    });
+    const m = await boot(fake);
+    await selectThread(m, "multi fail workflow retry");
+
+    const btns = retryButtons(m);
+    assert.equal(btns.length, 1);
+    await m.click(btns[0]!);
+    await m.flush();
+
+    const retries = fake.of("runs.retryWorkflowAgent");
+    assert.equal(retries.length, 1);
+    const arg = retries[0]!.args[0] as { agentId: string };
+    assert.equal(arg.agentId, "plan-2", "first failed slot in panel order");
+    assert.equal(fake.of("runs.start").length, 0);
+    assert.equal(fake.of("runs.startWorkflow").length, 0);
+    m.unmount();
+  });
+
+  it("leftover workflow plus a later failed chat turn still calls runs.start", async () => {
+    const decoyRow = decoy();
+    const row = thread({
+      id: "t-wf-then-chat",
+      title: "leftover workflow then chat fail",
+      status: "failed",
+      updatedAt: NOW + 1900,
+    });
+    const d = detail({
+      thread: row,
+      workflow: {
+        id: "wf-old",
+        name: "WF-old",
+        phases: [
+          {
+            name: "plan",
+            pipelined: false,
+            agents: [
+              { id: "plan-1", model: "grok", status: "settled", tokensUsed: 10 },
+            ],
+          },
+        ],
+        settled: 1,
+        total: 1,
+        tokensTotal: 10,
+        complete: true,
+      },
+      messages: [
+        msg({
+          id: "m-old-u",
+          role: "user",
+          text: "older build prompt",
+          runId: "wf-old",
+        }),
+        msg({
+          id: "m-old-kick",
+          role: "event",
+          text: "Kicked off 1 subagents\nplan 1",
+          runId: "wf-old",
+        }),
+        msg({
+          id: "m-chat-u",
+          role: "user",
+          text: "later chat after the build",
+          runId: "chat-2",
+        }),
+        msg({
+          id: "m-chat-err",
+          role: "event",
+          text: "Run error: exit 1",
+          runId: "chat-2",
+        }),
+      ],
+    });
+    const fake = createFakeCoder({
+      projects: [project()],
+      threads: [decoyRow, row],
+      details: {
+        "t-decoy": detail({ thread: decoyRow }),
+        "t-wf-then-chat": d,
+      },
+    });
+    const m = await boot(fake);
+    await selectThread(m, "leftover workflow then chat fail");
+
+    const btns = retryButtons(m);
+    assert.equal(
+      btns.length,
+      1,
+      "leftover workflow must not hide Retry turn for a later chat failure",
+    );
+    const before = fake.of("runs.start").length;
+    await m.click(btns[0]!);
+    await m.flush();
+    const starts = fake.of("runs.start");
+    assert.equal(starts.length, before + 1);
+    const arg = starts[starts.length - 1]!.args[0] as {
+      threadId: string;
+      prompt: string;
+    };
+    assert.equal(arg.threadId, "t-wf-then-chat");
+    assert.equal(arg.prompt, "later chat after the build");
+    assert.equal(fake.of("runs.retryWorkflowAgent").length, 0);
     m.unmount();
   });
 });

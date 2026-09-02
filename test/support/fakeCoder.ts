@@ -1757,6 +1757,7 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
           prompt: string | null;
           attachments?: AttachmentInfo[];
           replace?: boolean;
+          items?: string[];
         };
         const existing = threads.find((t) => t.id === i.threadId);
         if (!existing) {
@@ -1765,7 +1766,9 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
         }
         let queued: ThreadInfo["queued"] = null;
         if (i.prompt !== null && i.replace === true) {
-          queued = { prompt: i.prompt };
+          const items =
+            i.items && i.items.length ? i.items.map(String) : [i.prompt];
+          queued = { prompt: items.join("\n\n"), items };
           if (i.attachments?.length) queued.attachments = i.attachments;
         } else if (i.prompt !== null) {
           const prev = existing.queued;
@@ -1773,8 +1776,15 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
             ...(prev?.attachments ?? []),
             ...(i.attachments ?? []),
           ];
+          const prevItems = prev?.items
+            ? prev.items.map(String)
+            : prev?.prompt != null
+              ? prev.prompt.split("\n\n")
+              : [];
+          const items = [...prevItems, i.prompt];
           queued = {
-            prompt: prev ? `${prev.prompt}\n\n${i.prompt}` : i.prompt,
+            prompt: items.join("\n\n"),
+            items,
             attachments: files.length ? files : undefined,
           };
         }
@@ -2004,13 +2014,18 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
         }
         const remaining = (existing.btw ?? []).filter((c) => c.id !== i.id);
         const prev = existing.queued;
+        const prevItems = prev?.items
+          ? prev.items.map(String)
+          : prev?.prompt != null
+            ? prev.prompt.split("\n\n")
+            : [];
+        const items = [...prevItems, card.question];
         const next: ThreadInfo = {
           ...existing,
           btw: remaining.length ? remaining : undefined,
           queued: {
-            prompt: prev
-              ? `${prev.prompt}\n\n${card.question}`
-              : card.question,
+            prompt: items.join("\n\n"),
+            items,
             attachments: prev?.attachments,
           },
         };
@@ -2391,6 +2406,8 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
       start: (input: unknown) => rec("runs.start", [input], { runId: "r1" }),
       startWorkflow: (input: unknown) =>
         rec("runs.startWorkflow", [input], { runId: "r2" }),
+      retryWorkflowAgent: (input: unknown) =>
+        rec("runs.retryWorkflowAgent", [input], { runId: "r-retry" }),
       distill: (input: unknown) =>
         rec(
           "runs.distill",

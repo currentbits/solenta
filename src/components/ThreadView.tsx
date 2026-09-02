@@ -108,6 +108,8 @@ import {
   initialWindowStart,
 } from "../transcriptWindow";
 import {
+  failedWorkflowRetryAgentId,
+  isWorkflowLastRun,
   lastUserMessage,
   retryAnchorEventId,
   retryButtonTitle,
@@ -342,6 +344,25 @@ function ContextRingBadge({
   );
 }
 
+/** items[] when persisted (#809); else split prompt once (legacy rows). */
+function queuedThoughts(
+  prompt: string | null | undefined,
+  items?: string[] | null,
+): string[] {
+  if (items && items.length) return items;
+  if (prompt == null) return [];
+  return prompt.split("\n\n");
+}
+
+function swapQueuedItem(items: string[], index: number, delta: number): string[] {
+  const dest = index + delta;
+  if (dest < 0 || dest >= items.length) return items;
+  const next = items.slice();
+  const [item] = next.splice(index, 1);
+  next.splice(dest, 0, item!);
+  return next;
+}
+
 /**
  * Full-size viewer for an image clicked anywhere in the thread body. Clicking
  * the image toggles fit-to-window / native resolution (the overlay scrolls);
@@ -429,6 +450,8 @@ interface ThreadViewProps {
     prompt: string,
     templateId: string,
   ) => void | Promise<void>;
+  /** Re-spawn a failed workflow phase agent (#825 / #830). */
+  onRetryWorkflowAgent?: (agentId: string) => void | Promise<void>;
   onSaveWorkflow: (template: WorkflowSaveInput) => Promise<WorkflowTemplateInfo>;
   onRemoveWorkflow: (id: string) => Promise<void>;
   onStopRun: () => void | Promise<void>;
@@ -440,14 +463,16 @@ interface ThreadViewProps {
   ) => void | Promise<void>;
   /** Follow-up typed during the run, waiting for it to land (issue #92). */
   queuedPrompt?: string | null;
+  /** Per-thought list when persisted (#809); else the strip splits prompt once. */
+  queuedItems?: string[] | null;
   /** Last delivery failure; the prompt is still queued (issue #314). */
   queuedError?: string | null;
   /** Drop the queued follow-up. */
   onCancelQueued?: () => void;
   /** Re-send a queued prompt after a delivery failure. */
   onRetryQueued?: () => void;
-  /** Replace the queued follow-up's text (edit in the strip, issue #364). */
-  onEditQueued?: (prompt: string) => void;
+  /** Replace the queued follow-up's text (edit in the strip, issue #364 / #809). */
+  onEditQueued?: (prompt: string, items?: string[]) => void;
   /**
    * Text a cancelled queue pushed back toward the composer (issue #364).
    * Passed through to Composer, which applies it only onto an empty draft.
@@ -4177,12 +4202,14 @@ export const ThreadView = memo(function ThreadView({
   onStartRun,
   onRewindAndResubmit,
   onStartWorkflow,
+  onRetryWorkflowAgent,
   onSaveWorkflow,
   onRemoveWorkflow,
   onStopRun,
   onResumeQuotaWait,
   onSetQuotaWaitAutoResume,
   queuedPrompt = null,
+  queuedItems: queuedItemsProp = null,
   queuedError = null,
   onCancelQueued,
   onRetryQueued,
@@ -4299,13 +4326,13 @@ export const ThreadView = memo(function ThreadView({
   const [renaming, setRenaming] = useState(false);
   const [renameDraft, setRenameDraft] = useState("");
   const renamingRef = useRef(false);
-  /** Inline edit of the queued follow-up strip (issue #364). */
-  const [editingQueued, setEditingQueued] = useState(false);
+  /** Inline edit of a queued follow-up item (issue #364 / #780). */
+  const [editingQueued, setEditingQueued] = useState<number | null>(null);
   const [queuedEditDraft, setQueuedEditDraft] = useState("");
   // The edit is bound to the blob it was seeded from: a thread switch or a
   // drained/cancelled queue ends it.
   useEffect(() => {
-    setEditingQueued(false);
+    setEditingQueued(null);
   }, [detail?.thread.id, queuedPrompt == null]);
   const [notesOpen, setNotesOpen] = useState(false);
   const [notesDraft, setNotesDraft] = useState("");
@@ -4709,11 +4736,31 @@ export const ThreadView = memo(function ThreadView({
   const isArchived = Boolean(detail?.thread.archived);
   const emptyMessages = detail != null && detail.messages.length === 0;
 
+  const queuedItems = queuedThoughts(queuedPrompt, queuedItemsProp);
+
+  const writeQueuedItems = (items: string[]) => {
+    if (items.length === 0) {
+      onCancelQueued?.();
+      return;
+    }
+    const next = items.join("\n\n");
+    if (next !== queuedPrompt) onEditQueued?.(next, items);
+  };
+
   // Empty save means cancel: editing must never blank the queue (#364).
   const saveQueuedEdit = () => {
     const text = queuedEditDraft.trim();
-    setEditingQueued(false);
-    if (text && text !== queuedPrompt) onEditQueued?.(text);
+    const index = editingQueued;
+    setEditingQueued(null);
+    if (!text || queuedPrompt == null || index == null) return;
+    if (queuedItems.length <= 1) {
+      if (text !== queuedPrompt) onEditQueued?.(text);
+      return;
+    }
+    if (text === queuedItems[index]) return;
+    const next = queuedItems.slice();
+    next[index] = text;
+    writeQueuedItems(next);
   };
 
   /** Header context ring; null hides it (unknown window or no measured turn). */
@@ -4782,10 +4829,23 @@ export const ThreadView = memo(function ThreadView({
   const retryEventId = useMemo(
     () =>
       detail
-        ? retryAnchorEventId(detail.thread.status, detail.messages)
+        ? retryAnchorEventId(
+            detail.thread.status,
+            detail.messages,
+            detail.workflow,
+          )
         : null,
     [detail],
   );
+  const workflowRetryAgentId = useMemo(() => {
+    if (!detail || !isWorkflowLastRun(detail.messages, detail.workflow)) {
+      return null;
+    }
+    return failedWorkflowRetryAgentId(
+      detail.workflow,
+      detail.thread.status,
+    );
+  }, [detail]);
   const overflowEventId = useMemo(() => {
     if (
       !detail ||
@@ -4797,14 +4857,40 @@ export const ThreadView = memo(function ThreadView({
     const last = detail.messages[detail.messages.length - 1];
     return last?.role === "event" && !last.thinking ? last.id : null;
   }, [detail]);
+  const upgradeEventId = useMemo(() => {
+    if (
+      !detail ||
+      detail.thread.status !== "failed" ||
+      detail.thread.lastErrorKind !== "cli-upgrade"
+    ) {
+      return null;
+    }
+    const last = detail.messages[detail.messages.length - 1];
+    return last?.role === "event" && !last.thinking ? last.id : null;
+  }, [detail]);
   const retryTitle = useMemo(
     () => (retryUser ? retryButtonTitle(retryUser.text) : ""),
     [retryUser],
   );
   const handleRetry = useCallback(() => {
-    if (!retryUser || isWorking) return;
+    if (isWorking) return;
+    if (workflowRetryAgentId) {
+      if (onRetryWorkflowAgent) void onRetryWorkflowAgent(workflowRetryAgentId);
+      return;
+    }
+    if (!retryUser) return;
     void onStartRun(retryUser.text, undefined, retryUser.attachments);
-  }, [retryUser, isWorking, onStartRun]);
+  }, [
+    retryUser,
+    isWorking,
+    onStartRun,
+    workflowRetryAgentId,
+    onRetryWorkflowAgent,
+  ]);
+
+  const handleUpgradeCli = useCallback(() => {
+    void navigator.clipboard?.writeText("codex update");
+  }, []);
 
   const handleRequestResubmit = useCallback(
     (messageId: string, prompt: string) => {
@@ -6278,8 +6364,14 @@ export const ThreadView = memo(function ThreadView({
               entry.message.role === "event" &&
               overflowEventId != null &&
               entry.message.id === overflowEventId;
+            const isUpgradeSurface =
+              !isOverflowSurface &&
+              entry.message.role === "event" &&
+              upgradeEventId != null &&
+              entry.message.id === upgradeEventId;
             const isRetrySurface =
               !isOverflowSurface &&
+              !isUpgradeSurface &&
               entry.message.role === "event" &&
               retryEventId != null &&
               entry.message.id === retryEventId;
@@ -6336,23 +6428,29 @@ export const ThreadView = memo(function ThreadView({
                       eventActionLabel={
                         isOverflowSurface
                           ? "Fork to fresh context"
-                          : isRetrySurface
-                            ? "Retry turn"
-                            : undefined
+                          : isUpgradeSurface
+                            ? "Upgrade Codex"
+                            : isRetrySurface
+                              ? "Retry turn"
+                              : undefined
                       }
                       eventActionTitle={
                         isOverflowSurface
                           ? "Fork this thread with recent history in a fresh context"
-                          : isRetrySurface
-                            ? retryTitle
-                            : undefined
+                          : isUpgradeSurface
+                            ? "Copy `codex update` to the clipboard"
+                            : isRetrySurface
+                              ? retryTitle
+                              : undefined
                       }
                       onEventAction={
                         isOverflowSurface
                           ? handleForkFresh
-                          : isRetrySurface
-                            ? handleRetry
-                            : undefined
+                          : isUpgradeSurface
+                            ? handleUpgradeCli
+                            : isRetrySurface
+                              ? handleRetry
+                              : undefined
                       }
                       canEdit={
                         Boolean(onRewindAndResubmit) &&
@@ -6599,10 +6697,157 @@ export const ThreadView = memo(function ThreadView({
 
         {queuedPrompt != null && (
           <div
-            className={`${styles.queuedStrip} ${styles.streamIn}`}
+            className={`${styles.queuedStrip} ${styles.streamIn}${queuedItems.length > 1 ? ` ${styles.queuedStripMulti}` : ""}`}
             data-queued-prompt=""
           >
-            {editingQueued ? (
+            {queuedItems.length > 1 ? (
+              <>
+                <div className={styles.statusLeft}>
+                  <span className={styles.queuedLabel}>Queued</span>
+                  {queuedError ? (
+                    <span
+                      className={styles.permissionGuardrail}
+                      data-queued-error=""
+                    >
+                      {queuedError}
+                    </span>
+                  ) : null}
+                </div>
+                <ul className={styles.queuedList}>
+                  {queuedItems.map((item, i) => (
+                    <li
+                      key={i}
+                      className={styles.queuedItem}
+                      data-queued-item={String(i)}
+                    >
+                      {editingQueued === i ? (
+                        <>
+                          <textarea
+                            className={styles.queuedEdit}
+                            value={queuedEditDraft}
+                            rows={2}
+                            autoFocus
+                            data-edit-queued-input=""
+                            onChange={(e) => setQueuedEditDraft(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === "Escape") {
+                                e.preventDefault();
+                                setEditingQueued(null);
+                              }
+                              if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
+                                e.preventDefault();
+                                saveQueuedEdit();
+                              }
+                            }}
+                          />
+                          <div className={styles.statusLeft}>
+                            <button
+                              type="button"
+                              className={styles.retryBtn}
+                              onClick={saveQueuedEdit}
+                              data-save-queued-edit=""
+                            >
+                              Save
+                            </button>
+                            <button
+                              type="button"
+                              className={styles.stopBtn}
+                              onClick={() => setEditingQueued(null)}
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        </>
+                      ) : (
+                        <>
+                          <span className={styles.queuedText}>{item}</span>
+                          <div className={styles.statusLeft}>
+                            {i > 0 ? (
+                              <button
+                                type="button"
+                                className={styles.retryBtn}
+                                aria-label="Move queued follow-up up"
+                                onClick={() =>
+                                  writeQueuedItems(
+                                    swapQueuedItem(queuedItems, i, -1),
+                                  )
+                                }
+                                data-move-queued-up=""
+                              >
+                                Up
+                              </button>
+                            ) : null}
+                            {i < queuedItems.length - 1 ? (
+                              <button
+                                type="button"
+                                className={styles.retryBtn}
+                                aria-label="Move queued follow-up down"
+                                onClick={() =>
+                                  writeQueuedItems(
+                                    swapQueuedItem(queuedItems, i, 1),
+                                  )
+                                }
+                                data-move-queued-down=""
+                              >
+                                Down
+                              </button>
+                            ) : null}
+                            {onEditQueued ? (
+                              <button
+                                type="button"
+                                className={styles.retryBtn}
+                                onClick={() => {
+                                  setQueuedEditDraft(item);
+                                  setEditingQueued(i);
+                                }}
+                                data-edit-queued=""
+                              >
+                                Edit
+                              </button>
+                            ) : null}
+                            <button
+                              type="button"
+                              className={styles.stopBtn}
+                              onClick={() =>
+                                writeQueuedItems(
+                                  queuedItems.filter((_, j) => j !== i),
+                                )
+                              }
+                              data-remove-queued=""
+                            >
+                              Remove
+                            </button>
+                          </div>
+                        </>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+                <div className={styles.statusLeft}>
+                  {onRetryQueued ? (
+                    <button
+                      type="button"
+                      className={styles.retryBtn}
+                      onClick={onRetryQueued}
+                      disabled={isWorking}
+                      data-retry-queued=""
+                    >
+                      {queuedError ? "Retry" : "Send now"}
+                    </button>
+                  ) : null}
+                  {onCancelQueued && (
+                    <button
+                      type="button"
+                      className={styles.stopBtn}
+                      onClick={onCancelQueued}
+                      data-cancel-queued=""
+                    >
+                      Cancel
+                    </button>
+                  )}
+                </div>
+              </>
+            ) : editingQueued != null ? (
               <>
                 <span className={styles.queuedLabel}>Queued</span>
                 <textarea
@@ -6615,7 +6860,7 @@ export const ThreadView = memo(function ThreadView({
                   onKeyDown={(e) => {
                     if (e.key === "Escape") {
                       e.preventDefault();
-                      setEditingQueued(false);
+                      setEditingQueued(null);
                     }
                     if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
                       e.preventDefault();
@@ -6635,7 +6880,7 @@ export const ThreadView = memo(function ThreadView({
                   <button
                     type="button"
                     className={styles.stopBtn}
-                    onClick={() => setEditingQueued(false)}
+                    onClick={() => setEditingQueued(null)}
                   >
                     Cancel
                   </button>
@@ -6662,7 +6907,7 @@ export const ThreadView = memo(function ThreadView({
                       className={styles.retryBtn}
                       onClick={() => {
                         setQueuedEditDraft(queuedPrompt);
-                        setEditingQueued(true);
+                        setEditingQueued(0);
                       }}
                       data-edit-queued=""
                     >

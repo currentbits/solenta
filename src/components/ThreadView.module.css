@@ -2846,6 +2846,29 @@ button.diffLineGutter:focus-visible {
   font-weight: 400;
 }
 
+.queuedStripMulti {
+  flex-direction: column;
+  align-items: stretch;
+}
+
+.queuedList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.queuedItem {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+
 .queuedEdit {
   flex: 1;
   min-width: 0;
@@ -2862,6 +2885,29 @@ button.diffLineGutter:focus-visible {
 
 .queuedEdit:focus {
   border-color: var(--blue-border);
+}
+
+.queuedStripMulti {
+  flex-direction: column;
+  align-items: stretch;
+}
+
+.queuedList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.queuedItem {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
 }
 
 .statusLeft {

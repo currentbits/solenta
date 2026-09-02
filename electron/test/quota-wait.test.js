@@ -6,6 +6,7 @@ const {
   isQuotaLike,
   isContextOverflow,
   classifyContextOverflow,
+  classifyCliUpgrade,
   parseQuotaError,
   quotaWaitEnabled,
   decideQuotaWait,
@@ -107,6 +108,24 @@ describe("isContextOverflow", () => {
         "Provider error: Run error: context_length_exceeded\nrequest had 250000 tokens",
     });
     assert.equal(classifyContextOverflow("Run error: connection refused"), null);
+  });
+});
+
+describe("classifyCliUpgrade", () => {
+  it("matches the Codex newer-version 400 and keeps a short provider line", () => {
+    const parsed = classifyCliUpgrade(
+      `{"type":"error","status":400,"error":{"message":"The 'gpt-5.6-sol' model requires a newer version of Codex. Please upgrade to the latest app or CLI and try again."}}`,
+    );
+    assert.equal(parsed && parsed.kind, "cli-upgrade");
+    assert.match(parsed.text, /codex update/);
+    assert.match(parsed.text, /gpt-5\.6-sol/);
+  });
+
+  it("rejects overflow, quota, and ordinary spawn errors", () => {
+    assert.equal(classifyCliUpgrade("Context window is full"), null);
+    assert.equal(classifyCliUpgrade("You've hit your limit · resets 3pm"), null);
+    assert.equal(classifyCliUpgrade("Run error (exit 1): spawn codex ENOENT"), null);
+    assert.equal(classifyCliUpgrade(""), null);
   });
 });
 

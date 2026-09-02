@@ -1423,7 +1423,8 @@ async function probeCatalogCliNow(opts) {
 /**
  * List providers for IPC (ProviderInfo[]). Availability is computed per call.
  * Snapshot `models` stay the picker; a local catalog mismatch is a
- * `catalogNote` (issue #745), never a merge.
+ * `catalogNote` (issue #745), never a merge. Live-supported snapshot ids
+ * are sorted first and take `recommended` (#798).
  *
  * @param {object} [opts]
  * @param {(bin: string) => string | null} [opts.which] - inject for tests
@@ -1476,12 +1477,14 @@ function listProviders(opts = {}) {
     });
   }
 
-  catalogDivergence.attachCatalogNotes(out, {
+  const catalogOpts = {
     env,
     home: opts.home,
     readFile: opts.readFile,
     cliCache: opts.cliCache || catalogCliCache,
-  });
+  };
+  catalogDivergence.attachCatalogNotes(out, catalogOpts);
+  catalogDivergence.alignCatalogWithLive(out, catalogOpts);
 
   return out;
 }

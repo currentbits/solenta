@@ -766,7 +766,16 @@ describe("cursor runner integration", () => {
     assert.ok(argv.includes("--stream-partial-output"));
     assert.ok(argv.includes("--trust"));
     assert.ok(argv.includes("--force"));
-    assert.equal(argv[argv.length - 1], "do the thing");
+    const last = argv[argv.length - 1];
+    assert.equal(
+      typeof last,
+      "string",
+      `runner prompt must stay last: ${JSON.stringify(argv)}`,
+    );
+    assert.ok(
+      last.includes("do the thing"),
+      `last argv token must contain the original prompt: ${JSON.stringify(argv)}`,
+    );
     assert.ok(!argv.includes("--worktree"));
   });
 
@@ -784,7 +793,16 @@ describe("cursor runner integration", () => {
     const pluginDir = path.resolve(tmpDir, "cursor-pin-parent");
     assert.equal(argv[pIdx + 1], pluginDir);
     assert.ok(pIdx < argv.length - 1, "prompt must stay last");
-    assert.equal(argv[argv.length - 1], "do the thing");
+    const last = argv[argv.length - 1];
+    assert.equal(
+      typeof last,
+      "string",
+      `runner prompt must stay last after --plugin-dir: ${JSON.stringify(argv)}`,
+    );
+    assert.ok(
+      last.includes("do the thing"),
+      `last argv token must contain the original prompt: ${JSON.stringify(argv)}`,
+    );
     assert.ok(
       fs.existsSync(path.join(pluginDir, ".cursor-plugin", "plugin.json")),
       "plugin must be materialized under userDataPath",
@@ -817,6 +835,37 @@ describe("cursor runner integration", () => {
       argv[pIdx + 1],
       path.resolve(os.tmpdir(), "solenta-cursor-pin-parent"),
     );
+    const last = argv[argv.length - 1];
+    assert.equal(
+      typeof last,
+      "string",
+      `runner prompt must stay last after --plugin-dir fallback: ${JSON.stringify(argv)}`,
+    );
+    assert.ok(
+      last.includes("do the thing"),
+      `last argv token must contain the original prompt: ${JSON.stringify(argv)}`,
+    );
+  });
+
+  it("injects a second --plugin-dir for classifyTool guardrails (#813)", async () => {
+    const thread = store.getThreads()[0];
+    await runner.startRun({
+      threadId: thread.id,
+      prompt: "do the thing",
+    });
+    await waitFor(() => store.getThread(thread.id).status === "done");
+
+    const argv = JSON.parse(fs.readFileSync(argvFile, "utf8"));
+    const dirs = [];
+    for (let i = 0; i < argv.length; i++) {
+      if (argv[i] === "--plugin-dir") dirs.push(argv[i + 1]);
+    }
+    assert.equal(dirs.length, 2, `expected two --plugin-dir: ${JSON.stringify(argv)}`);
+    const guardDir = path.resolve(tmpDir, "cursor-guardrails");
+    assert.ok(dirs.includes(guardDir), `missing ${guardDir} in ${JSON.stringify(dirs)}`);
+    assert.ok(
+      fs.existsSync(path.join(guardDir, "scripts", "guardrail-hook.js")),
+    );
     assert.equal(argv[argv.length - 1], "do the thing");
   });
 
@@ -836,7 +885,16 @@ describe("cursor runner integration", () => {
     const rIdx = argv.indexOf("--resume");
     assert.ok(rIdx >= 0, `expected --resume in ${JSON.stringify(argv)}`);
     assert.equal(argv[rIdx + 1], "cursor-sess-1");
-    assert.equal(argv[argv.length - 1], "turn two");
+    const last = argv[argv.length - 1];
+    assert.equal(
+      typeof last,
+      "string",
+      `runner prompt must stay last after --resume: ${JSON.stringify(argv)}`,
+    );
+    assert.ok(
+      last.includes("turn two"),
+      `last argv token must contain the original prompt: ${JSON.stringify(argv)}`,
+    );
   });
 
   it("stores sessionId from system/init before the process exits (issue #691)", async () => {

@@ -58,6 +58,39 @@ function basenameBin(bin) {
 }
 
 /**
+ * Valid `env KEY=value` tokens for the far side of wrapCommand.
+ * @param {Record<string, string> | null | undefined} env
+ * @returns {string[]}
+ */
+function envPairs(env) {
+  if (!env || typeof env !== "object") return [];
+  const out = [];
+  for (const [k, v] of Object.entries(env)) {
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(k)) continue;
+    if (v == null) continue;
+    out.push(`${k}=${String(v)}`);
+  }
+  return out;
+}
+
+/**
+ * argv as the other side should see it. When env is set, prefix
+ * `env KEY=value` so KIMI_CODE_HOME / GROK_HOME / CODEX_HOME /
+ * OPENCODE_CONFIG_DIR survive ssh/WSL —
+ * process env on this host is not forwarded.
+ * @param {string} bin
+ * @param {string[]} argv
+ * @param {Record<string, string> | null | undefined} env
+ * @returns {string[]}
+ */
+function boundaryArgv(bin, argv, env) {
+  const rest = Array.isArray(argv) ? argv : [];
+  const pairs = envPairs(env);
+  if (!pairs.length) return [basenameBin(bin), ...rest];
+  return ["env", ...pairs, basenameBin(bin), ...rest];
+}
+
+/**
  * Build an ssh argv that cds into remotePath then runs argv on the host.
  *
  * BatchMode=yes + ConnectTimeout=10 fail a dead/unauthenticated host fast
@@ -97,22 +130,25 @@ function buildSshCommand(remoteHost, remotePath, argv) {
  * @param {string} bin
  * @param {string[]} argv
  * @param {NodeJS.Platform} [platform]  injected so win32 WSL wrapping is testable off Windows
+ * @param {Record<string, string> | null | undefined} [env]  forwarded as `env KEY=value` on the far side
  * @returns {{ bin: string, args: string[] }}
  */
-function wrapCommand(project, bin, argv, platform) {
+function wrapCommand(project, bin, argv, platform, env) {
   if (!project || !project.remoteHost) {
     const wsl = wslTarget(project, platform);
     if (!wsl) return { bin, args: Array.isArray(argv) ? argv : [] };
-    return buildWslCommand(wsl.distro, wsl.linuxPath, [
-      basenameBin(bin),
-      ...(Array.isArray(argv) ? argv : []),
-    ]);
+    return buildWslCommand(
+      wsl.distro,
+      wsl.linuxPath,
+      boundaryArgv(bin, argv, env),
+    );
   }
   const remotePath = project.remotePath || project.path || "";
-  return buildSshCommand(project.remoteHost, remotePath, [
-    basenameBin(bin),
-    ...(Array.isArray(argv) ? argv : []),
-  ]);
+  return buildSshCommand(
+    project.remoteHost,
+    remotePath,
+    boundaryArgv(bin, argv, env),
+  );
 }
 
 /**
@@ -175,4 +211,6 @@ module.exports = {
   setExecFileSync,
   setExecFile,
   SYNC_TIMEOUT_MS,
+  envPairs,
+  boundaryArgv,
 };

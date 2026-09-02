@@ -169,6 +169,7 @@ function errorMessage(err: unknown): string {
 /** A follow-up typed during a run, waiting for that run to land. */
 export interface QueuedMessage {
   prompt: string;
+  items?: string[];
   attachments?: AttachmentInfo[];
   /** Last delivery failure (issue #314); prompt is still queued. */
   error?: string | null;
@@ -260,8 +261,8 @@ export interface UseCoderResult {
   cancelQueued: (threadId?: string) => void;
   /** Re-send a queued prompt after a delivery failure (issue #314). */
   retryQueued: (threadId?: string) => void;
-  /** Replace a thread's queued follow-up text in place (issue #364). */
-  editQueued: (prompt: string, threadId?: string) => void;
+  /** Replace a thread's queued follow-up text in place (issue #364 / #809). */
+  editQueued: (prompt: string, threadId?: string, items?: string[]) => void;
   /** Fetch a GitHub or Linear issue for a project checkout. */
   fetchIssue: (
     projectPath: string,
@@ -272,6 +273,8 @@ export interface UseCoderResult {
    * runs.startWorkflow (backend validates phase providers).
    */
   startWorkflowRun: (prompt: string, templateId?: string) => Promise<void>;
+  /** Re-spawn a failed workflow phase agent after the run ended (#825 / #830). */
+  retryWorkflowAgent: (agentId: string) => Promise<void>;
   /** Persist a workflow template; refreshes the list. Saving a builtin creates a copy. */
   saveWorkflow: (template: WorkflowSaveInput) => Promise<WorkflowTemplateInfo>;
   /** Remove a non-builtin template; refreshes the list. */
@@ -888,7 +891,7 @@ export function useCoder(): UseCoderResult {
   );
 
   const editQueued = useCallback(
-    (prompt: string, threadId?: string) => {
+    (prompt: string, threadId?: string, items?: string[]) => {
       const id = threadId ?? selectedRef.current;
       if (!id) return;
       const held = threadsRef.current.find((t) => t.id === id);
@@ -899,6 +902,7 @@ export function useCoder(): UseCoderResult {
           prompt,
           attachments: held.queued.attachments,
           replace: true,
+          ...(items ? { items } : {}),
         })
         .then((updated) => {
           applyThreads(
@@ -1588,6 +1592,29 @@ export function useCoder(): UseCoderResult {
           prompt,
           ...(templateId ? { templateId } : {}),
         });
+        const d = await api.threads.get(threadId);
+        if (selectedRef.current !== threadId) return;
+        setDetail(d);
+        applyThreads(
+          threadsRef.current.map((t) =>
+            t.id === d.thread.id ? d.thread : t,
+          ),
+        );
+        setError(null);
+      } catch (err) {
+        setError({ scope: "run", message: errorMessage(err) });
+        throw err;
+      }
+    },
+    [api, selectedThreadId, applyThreads],
+  );
+
+  const retryWorkflowAgent = useCallback(
+    async (agentId: string) => {
+      if (!selectedThreadId) return;
+      const threadId = selectedThreadId;
+      try {
+        await api.runs.retryWorkflowAgent({ threadId, agentId });
         const d = await api.threads.get(threadId);
         if (selectedRef.current !== threadId) return;
         setDetail(d);
@@ -3323,6 +3350,7 @@ export function useCoder(): UseCoderResult {
     retryQueued,
     editQueued,
     startWorkflowRun,
+    retryWorkflowAgent,
     saveWorkflow,
     removeWorkflow,
     refreshWorkflows,

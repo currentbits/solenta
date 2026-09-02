@@ -4,17 +4,29 @@ const { randomUUID } = require("node:crypto");
 const os = require("node:os");
 const path = require("node:path");
 const { runClaude } = require("./claude.js");
-const { runCodex, extractAgentMessageText, extractUsage } = require("./codex.js");
+const {
+  runCodex,
+  extractAgentMessageText,
+  extractUsage,
+  extractSessionId: codexExtractSessionId,
+  extractCommandItem,
+} = require("./codex.js");
 const {
   runKimi,
   materializeKimiHome,
+  deployKimiGuardrailOverlay,
   extractAssistantText: kimiExtractText,
   extractUsage: kimiExtractUsage,
+  extractToolEvents: kimiExtractTools,
+  extractSessionId: kimiExtractSessionId,
 } = require("./kimi.js");
 const {
   runCursor,
   extractAssistantText: cursorExtractText,
   extractUsage: cursorExtractUsage,
+  extractToolEvents: cursorExtractTools,
+  parseToolArgs: cursorParseToolArgs,
+  extractSessionId: cursorExtractSessionId,
 } = require("./cursor.js");
 const {
   getProvider,
@@ -31,6 +43,26 @@ const {
   grokConfigCorruptMessage,
 } = require("./memory-sup.js");
 const { wslTarget } = require("./wsl.js");
+const { wrapCommand } = require("./ssh.js");
+const { guardrailsEnabled } = require("./guardrails.js");
+const { insertBeforeLast, guardrailNotice } = require("./guardrail-hook-core.js");
+const {
+  materializeCursorPinPlugin,
+  cursorPinPluginDir,
+} = require("./cursorPinTaskParent.js");
+const {
+  materializeCursorGuardrailPlugin,
+  cursorGuardrailPluginDir,
+  deployCursorGuardrailPlugin,
+} = require("./cursor-guardrail.js");
+const {
+  materializeCodexGuardrailHome,
+  deployCodexGuardrailOverlay,
+} = require("./codex-guardrail.js");
+const {
+  materializeOpencodeGuardrailDir,
+  deployOpencodeGuardrailOverlay,
+} = require("./opencode-guardrail.js");
 const {
   runOpencode,
   extractTextPart: opencodeExtractText,
@@ -66,6 +98,50 @@ function capitalize(name) {
 }
 
 /**
+ * Same predicate runner.js uses. Duplicated here so workflow.js does not
+ * require runner.js (circular: runner already loads this module).
+ * @param {{ remoteHost?: string, path?: string } | null | undefined} project
+ */
+function crossesBoundary(project) {
+  return Boolean(project && (project.remoteHost || wslTarget(project)));
+}
+
+/**
+ * Wrap a phase spawn the way runner.resolveSpawn does, including
+ * `env KEY=value` on the far side (#834 / #835 / #836 / #837).
+ * @param {{ remoteHost?: string, remotePath?: string, path?: string } | null | undefined} project
+ * @param {string} binary
+ * @param {string[]} args
+ * @param {string} localCwd
+ * @param {Record<string, string> | null | undefined} [env]
+ */
+function resolveWorkflowSpawn(project, binary, args, localCwd, env) {
+  if (!crossesBoundary(project)) {
+    return { binary, args, cwd: localCwd };
+  }
+  const wrapped = wrapCommand(project, binary, args, undefined, env);
+  return { binary: wrapped.bin, args: wrapped.args, cwd: process.cwd() };
+}
+
+/**
+ * @param {object} opts
+ * @param {string} toolName
+ * @param {unknown} input
+ */
+function notePhaseGuardrail(opts, toolName, input) {
+  if (typeof opts.appendMessage !== "function" || !opts.threadId) return;
+  const project = opts.project;
+  const worktreePath =
+    opts.worktreePath ||
+    (project && (project.remotePath || project.path)) ||
+    opts.cwd;
+  const notice = guardrailNotice(toolName, input, worktreePath);
+  if (notice) {
+    opts.appendMessage(opts.threadId, "event", notice, opts.runId || null);
+  }
+}
+
+/**
  * Truncate a string to max chars.
  * @param {unknown} s
  * @param {number} max
@@ -73,6 +149,29 @@ function capitalize(name) {
 function truncate(s, max) {
   const str = String(s ?? "");
   return str.length <= max ? str : str.slice(0, max);
+}
+
+/**
+ * Real CLI session id for a workflow agent slot. The leftover "cwd"
+ * sentinel is not a session (issue #220). Empty / non-strings are not.
+ * @param {unknown} id
+ * @returns {string | null}
+ */
+function realSessionId(id) {
+  return typeof id === "string" && id && id !== "cwd" ? id : null;
+}
+
+/**
+ * Claude / Grok stream session id (system init, then result).
+ * @param {object} ev
+ * @returns {string | null}
+ */
+function claudeStreamSessionId(ev) {
+  if (!ev || typeof ev !== "object") return null;
+  if (typeof ev.session_id !== "string" || !ev.session_id) return null;
+  if (ev.type === "system" && ev.subtype === "init") return ev.session_id;
+  if (ev.type === "result") return ev.session_id;
+  return null;
 }
 
 /**
@@ -109,6 +208,9 @@ function buildWorkflowView({ runId, name, template }) {
         model,
         status: "pending",
         tokensUsed: 0,
+        // Per-slot CLI session. Must not be written to thread.sessionId
+        // (a later interactive turn would resume it).
+        sessionId: null,
       });
     }
     return {
@@ -177,6 +279,7 @@ function toPublicView(view) {
         model: agent.model,
         status: agent.status,
         tokensUsed: agent.tokensUsed,
+        sessionId: agent.sessionId || null,
       })),
     })),
     settled: view.settled,
@@ -197,6 +300,60 @@ function findAgent(view, agentId) {
     }
   }
   return null;
+}
+
+/**
+ * Parse `phaseIndex:phaseName:agentIndex` (phase names may contain ':').
+ * @param {string} agentId
+ * @returns {{ phaseIndex: number, phaseName: string, agentIndex: number } | null}
+ */
+function parseAgentId(agentId) {
+  const str = String(agentId || "");
+  const first = str.indexOf(":");
+  const last = str.lastIndexOf(":");
+  if (first < 0 || last <= first) return null;
+  const phaseIndex = Number(str.slice(0, first));
+  const agentIndex = Number(str.slice(last + 1));
+  const phaseName = str.slice(first + 1, last);
+  if (!Number.isInteger(phaseIndex) || !Number.isInteger(agentIndex)) {
+    return null;
+  }
+  return { phaseIndex, phaseName, agentIndex };
+}
+
+/**
+ * Prior-phase outputs for prompt chaining, from settled agent text.
+ * @param {object} view
+ * @param {number} beforePhaseIndex
+ */
+function collectPriorOutputs(view, beforePhaseIndex) {
+  /** @type {{ phaseName: string, agentIndex: number, text: string }[]} */
+  const out = [];
+  for (let i = 0; i < beforePhaseIndex; i++) {
+    const phase = view.phases[i];
+    if (!phase) continue;
+    phase.agents.forEach((agent, agentIndex) => {
+      out.push({
+        phaseName: phase.name,
+        agentIndex,
+        text: agent.status === "settled" ? String(agent.__text || "") : "",
+      });
+    });
+  }
+  return out;
+}
+
+/**
+ * @param {object} phase
+ */
+function phaseSpecFromView(phase) {
+  return {
+    name: phase.name,
+    provider: phase.__provider,
+    model: phase.__model,
+    instruction: phase.__instruction || "",
+    agentCount: phase.__agentCount || phase.agents.length,
+  };
 }
 
 /**
@@ -240,10 +397,8 @@ function buildAgentPrompt(opts) {
 }
 
 /**
- * Spawn a one-shot claude-stream agent (no --resume).
- * Reuses the claude NDJSON parser for any provider with kind "claude-stream"
- * (claude, grok, ...). Arg builders stay per-provider; --mcp-config is
- * injected only for the claude provider id.
+ * Spawn a claude-stream agent (claude, grok, ...). Resume is `--resume <id>`
+ * when this slot already has a real session id.
  * @param {object} opts
  * @returns {{ handle: { kill: () => void }, done: Promise<object> }}
  */
@@ -257,12 +412,15 @@ function spawnAgentClaude(opts) {
     onText,
     providerEntry,
     reasoningEffort,
+    sessionId,
   } = opts;
 
   let text = "";
   let resultText = "";
   let usage = null;
   let finished = false;
+  /** @type {string | null} */
+  let capturedSessionId = null;
 
   /** @type {(value: object) => void} */
   let resolveDone;
@@ -273,14 +431,15 @@ function spawnAgentClaude(opts) {
   function finish(payload) {
     if (finished) return;
     finished = true;
-    resolveDone(payload);
+    resolveDone({ ...payload, sessionId: capturedSessionId });
   }
 
   const entry = providerEntry || getProvider("claude");
+  const resumeId = realSessionId(sessionId);
   const baseArgs = entry
     ? entry.buildArgs({
         prompt,
-        sessionId: null,
+        sessionId: resumeId,
         permissionMode: permissionMode || "default",
         model: model || null,
         reasoningEffort: reasoningEffort || null,
@@ -313,13 +472,15 @@ function spawnAgentClaude(opts) {
     prompt,
     cwd,
     permissionMode: permissionMode || "default",
-    sessionId: null,
+    sessionId: resumeId,
     model: model || null,
     interactive,
     envExtra:
       entry && entry.id === "grok" ? mergeGrokSpawnEnv(undefined) : undefined,
     onEvent: (ev) => {
       if (!ev || typeof ev !== "object") return;
+      const sid = realSessionId(claudeStreamSessionId(ev));
+      if (sid) capturedSessionId = sid;
       if (ev.type === "control_request") {
         // Workflow agents have no UI to answer prompts; auto-deny keeps the
         // pre-interactive headless behavior instead of hanging the agent.
@@ -385,7 +546,8 @@ function spawnAgentClaude(opts) {
 }
 
 /**
- * Spawn a one-shot Codex JSONL agent (no resume).
+ * Spawn a Codex JSONL agent. Resume is `exec resume <id>` when this slot
+ * already has a real session id (no `--sandbox` on resume, #795).
  * @param {object} opts
  * @returns {{ handle: { kill: () => void }, done: Promise<object> }}
  */
@@ -400,11 +562,18 @@ function spawnAgentCodex(opts) {
     reasoningEffort,
     webSearch,
     permissionMode,
+    sessionId,
+    userDataPath,
+    threadId,
+    skipOverlay,
+    project,
   } = opts;
 
   let text = "";
   let usage = null;
   let finished = false;
+  /** @type {string | null} */
+  let capturedSessionId = null;
 
   /** @type {(value: object) => void} */
   let resolveDone;
@@ -415,13 +584,13 @@ function spawnAgentCodex(opts) {
   function finish(payload) {
     if (finished) return;
     finished = true;
-    resolveDone(payload);
+    resolveDone({ ...payload, sessionId: capturedSessionId });
   }
 
   const entry = providerEntry || getProvider("codex");
   const args = entry.buildArgs({
     prompt,
-    sessionId: null,
+    sessionId: realSessionId(sessionId),
     model: model || null,
     reasoningEffort: reasoningEffort || null,
     webSearch: webSearch === true,
@@ -431,14 +600,58 @@ function spawnAgentCodex(opts) {
   if (codexMcpArgs.length > 0) {
     args.unshift(...codexMcpArgs);
   }
+  /** @type {Record<string, string>} */
+  const envExtra = { ...getCodexMcpEnv() };
+  /** @type {Record<string, string> | undefined} */
+  let wrapEnv;
+  if (userDataPath && threadId && !skipOverlay && guardrailsEnabled()) {
+    try {
+      const dest = path.join(userDataPath, "codex-homes", threadId);
+      const sourceHome =
+        process.env.CODEX_HOME || path.join(os.homedir(), ".codex");
+      materializeCodexGuardrailHome({ dest, sourceHome });
+      insertBeforeLast(args, [
+        "-c",
+        "features.hooks=true",
+        "--dangerously-bypass-hook-trust",
+      ]);
+      envExtra.CODEX_HOME = dest;
+      envExtra.SOLENTA_WORKTREE = cwd;
+    } catch {
+      // best-effort
+    }
+  } else if (crossesBoundary(project) && guardrailsEnabled()) {
+    try {
+      const dest = deployCodexGuardrailOverlay({ project, threadId });
+      if (dest) {
+        insertBeforeLast(args, [
+          "-c",
+          "features.hooks=true",
+          "--dangerously-bypass-hook-trust",
+        ]);
+        wrapEnv = {
+          CODEX_HOME: dest,
+          SOLENTA_WORKTREE: (project && project.remotePath) || cwd,
+        };
+        envExtra.CODEX_HOME = dest;
+        envExtra.SOLENTA_WORKTREE = wrapEnv.SOLENTA_WORKTREE;
+      }
+    } catch {
+      // Deploy miss must not kill the phase; stream notice remains.
+    }
+  }
 
+  const codexBin = binary || resolveBin(entry);
+  const spawn = resolveWorkflowSpawn(project, codexBin, args, cwd, wrapEnv);
   const handle = runCodex({
-    binary: binary || resolveBin(entry),
-    args,
-    cwd,
-    envExtra: getCodexMcpEnv(),
+    binary: spawn.binary,
+    args: spawn.args,
+    cwd: spawn.cwd,
+    envExtra,
     onEvent: (ev) => {
       if (!ev || typeof ev !== "object") return;
+      const sid = realSessionId(codexExtractSessionId(ev));
+      if (sid) capturedSessionId = sid;
       const agentText = extractAgentMessageText(ev);
       if (agentText != null) {
         const type = String(ev.type || "");
@@ -470,6 +683,10 @@ function spawnAgentCodex(opts) {
           costUsd: 0,
         };
       }
+      const cmd = extractCommandItem(ev);
+      if (cmd && cmd.phase === "started") {
+        notePhaseGuardrail(opts, "Bash", { command: cmd.command });
+      }
     },
     onExit: ({ code, stderr }) => {
       finish({
@@ -497,7 +714,8 @@ function spawnAgentCodex(opts) {
 }
 
 /**
- * Spawn a one-shot Kimi stream-json agent (no resume / no -c).
+ * Spawn a Kimi stream-json agent. Resume is `-S <id>` when this slot
+ * already has a real session id; never `-c` (issue #220 / #782).
  * @param {object} opts
  * @returns {{ handle: { kill: () => void }, done: Promise<object> }}
  */
@@ -515,6 +733,8 @@ function spawnAgentKimi(opts) {
     projectId,
     overlayKey,
     skipOverlay,
+    project,
+    sessionId,
   } = opts;
 
   let text = "";
@@ -522,6 +742,8 @@ function spawnAgentKimi(opts) {
   let finished = false;
   let fullStdout = "";
   let gotJson = false;
+  /** @type {string | null} */
+  let capturedSessionId = null;
 
   /** @type {(value: object) => void} */
   let resolveDone;
@@ -532,13 +754,13 @@ function spawnAgentKimi(opts) {
   function finish(payload) {
     if (finished) return;
     finished = true;
-    resolveDone(payload);
+    resolveDone({ ...payload, sessionId: capturedSessionId });
   }
 
   const entry = providerEntry || getProvider("kimi");
   const args = entry.buildArgs({
     prompt,
-    sessionId: null,
+    sessionId: realSessionId(sessionId),
     model: model || null,
     reasoningEffort: reasoningEffort || null,
   });
@@ -547,7 +769,8 @@ function spawnAgentKimi(opts) {
   // KIMI_CODE_HOME so the phase cannot inherit foreign MCP, and so
   // flipKimiEffort writes a local config.toml. Nested under threadId so
   // parallel phase agents do not race one file and reclaim still keys off
-  // the thread. Skipped for ssh/WSL and when userDataPath is unset (tests).
+  // the thread. Local only. ssh/WSL: deploy PreToolUse onto the far side
+  // and pass KIMI_CODE_HOME through wrapCommand (#834 / #836).
   /** @type {NodeJS.ProcessEnv | undefined} */
   let kimiEnv;
   if (userDataPath && threadId && !skipOverlay) {
@@ -573,17 +796,28 @@ function spawnAgentKimi(opts) {
     } catch {
       // Overlay is best-effort; a failed isolate must not block the phase.
     }
+  } else if (crossesBoundary(project) && guardrailsEnabled()) {
+    try {
+      const dest = deployKimiGuardrailOverlay({ project, threadId });
+      if (dest) kimiEnv = { KIMI_CODE_HOME: dest };
+    } catch {
+      // Deploy miss must not kill the phase; stream notice remains.
+    }
   }
 
+  const kimiBin = binary || resolveBin(entry);
+  const spawn = resolveWorkflowSpawn(project, kimiBin, args, cwd, kimiEnv);
   const handle = runKimi({
-    binary: binary || resolveBin(entry),
-    args,
-    cwd,
+    binary: spawn.binary,
+    args: spawn.args,
+    cwd: spawn.cwd,
     env: kimiEnv,
     reasoningEffort: reasoningEffort || null,
     onEvent: (ev) => {
       gotJson = true;
       if (!ev || typeof ev !== "object") return;
+      const sid = kimiExtractSessionId(ev);
+      if (sid) capturedSessionId = sid;
       const chunk = kimiExtractText(ev);
       if (chunk != null) {
         text += chunk;
@@ -596,6 +830,11 @@ function spawnAgentKimi(opts) {
           outputTokens: Number(u.outputTokens) || 0,
           costUsd: 0,
         };
+      }
+      for (const tool of kimiExtractTools(ev)) {
+        if (tool.phase === "start") {
+          notePhaseGuardrail(opts, tool.name, tool.input);
+        }
       }
     },
     onExit: ({ code, stderr, fullStdout: stdout, gotJson: parsed }) => {
@@ -631,7 +870,8 @@ function spawnAgentKimi(opts) {
 }
 
 /**
- * Spawn a one-shot Cursor stream-json agent (no resume).
+ * Spawn a Cursor stream-json agent. Resume is `--resume <id>` when this
+ * slot already has a real session id.
  * @param {object} opts
  * @returns {{ handle: { kill: () => void }, done: Promise<object> }}
  */
@@ -645,6 +885,11 @@ function spawnAgentCursor(opts) {
     onText,
     reasoningEffort,
     permissionMode,
+    sessionId,
+    userDataPath,
+    skipOverlay,
+    project,
+    threadId,
   } = opts;
 
   let text = "";
@@ -652,6 +897,8 @@ function spawnAgentCursor(opts) {
   let finished = false;
   let fullStdout = "";
   let gotJson = false;
+  /** @type {string | null} */
+  let capturedSessionId = null;
 
   /** @type {(value: object) => void} */
   let resolveDone;
@@ -662,25 +909,75 @@ function spawnAgentCursor(opts) {
   function finish(payload) {
     if (finished) return;
     finished = true;
-    resolveDone(payload);
+    resolveDone({ ...payload, sessionId: capturedSessionId });
   }
 
   const entry = providerEntry || getProvider("cursor");
   const args = entry.buildArgs({
     prompt,
-    sessionId: null,
+    sessionId: realSessionId(sessionId),
     model: model || null,
     reasoningEffort: reasoningEffort || null,
     permissionMode: permissionMode || "default",
   });
 
-  const handle = runCursor({
-    binary: binary || resolveBin(entry),
+  /** @type {Record<string, string> | undefined} */
+  let cursorWrapEnv;
+  if (!skipOverlay && args.length > 0) {
+    try {
+      const pluginDirs = [
+        materializeCursorPinPlugin(cursorPinPluginDir(userDataPath)),
+      ];
+      if (guardrailsEnabled()) {
+        pluginDirs.push(
+          materializeCursorGuardrailPlugin(
+            cursorGuardrailPluginDir(userDataPath),
+          ),
+        );
+      }
+      const extras = [];
+      for (const dir of pluginDirs) {
+        extras.push("--plugin-dir", dir);
+      }
+      insertBeforeLast(args, extras);
+    } catch {
+      // best-effort
+    }
+  } else if (
+    crossesBoundary(project) &&
+    args.length > 0 &&
+    guardrailsEnabled()
+  ) {
+    try {
+      const dest = deployCursorGuardrailPlugin({ project, threadId });
+      if (dest) {
+        insertBeforeLast(args, ["--plugin-dir", dest]);
+        cursorWrapEnv = {
+          SOLENTA_WORKTREE: (project && project.remotePath) || cwd,
+        };
+      }
+    } catch {
+      // Deploy miss must not kill the phase; stream notice remains.
+    }
+  }
+
+  const cursorBin = binary || resolveBin(entry);
+  const spawn = resolveWorkflowSpawn(
+    project,
+    cursorBin,
     args,
     cwd,
+    cursorWrapEnv,
+  );
+  const handle = runCursor({
+    binary: spawn.binary,
+    args: spawn.args,
+    cwd: spawn.cwd,
     onEvent: (ev) => {
       gotJson = true;
       if (!ev || typeof ev !== "object") return;
+      const sid = realSessionId(cursorExtractSessionId(ev));
+      if (sid) capturedSessionId = sid;
       const chunk = cursorExtractText(ev);
       if (chunk != null) {
         if (ev.timestamp_ms != null) {
@@ -699,6 +996,12 @@ function spawnAgentCursor(opts) {
           costUsd: 0,
         };
       }
+      for (const tool of cursorExtractTools(ev)) {
+        if (tool.phase === "start") {
+          const parsed = cursorParseToolArgs(tool.input);
+          notePhaseGuardrail(opts, tool.name, parsed || tool.input);
+        }
+      }
     },
     onExit: ({ code, stderr, fullStdout: stdout, gotJson: parsed }) => {
       fullStdout = stdout || "";
@@ -733,7 +1036,8 @@ function spawnAgentCursor(opts) {
 }
 
 /**
- * Spawn a one-shot OpenCode NDJSON agent (no resume).
+ * Spawn an OpenCode NDJSON agent. Resume is `-s <id>` when this slot
+ * already has a real session id.
  * @param {object} opts
  * @returns {{ handle: { kill: () => void }, done: Promise<object> }}
  */
@@ -747,6 +1051,11 @@ function spawnAgentOpencode(opts) {
     onText,
     reasoningEffort,
     permissionMode,
+    sessionId,
+    userDataPath,
+    skipOverlay,
+    project,
+    threadId,
   } = opts;
 
   let text = "";
@@ -758,6 +1067,8 @@ function spawnAgentOpencode(opts) {
   let finished = false;
   let fullStdout = "";
   let gotJson = false;
+  /** @type {string | null} */
+  let capturedSessionId = null;
 
   /** @type {(value: object) => void} */
   let resolveDone;
@@ -768,7 +1079,7 @@ function spawnAgentOpencode(opts) {
   function finish(payload) {
     if (finished) return;
     finished = true;
-    resolveDone(payload);
+    resolveDone({ ...payload, sessionId: capturedSessionId });
   }
 
   function rebuild() {
@@ -778,16 +1089,52 @@ function spawnAgentOpencode(opts) {
   const entry = providerEntry || getProvider("opencode");
   const args = entry.buildArgs({
     prompt,
-    sessionId: null,
+    sessionId: realSessionId(sessionId),
     model: model || null,
     reasoningEffort: reasoningEffort || null,
     permissionMode: permissionMode || "default",
   });
 
-  const handle = runOpencode({
-    binary: binary || resolveBin(entry),
+  /** @type {NodeJS.ProcessEnv | undefined} */
+  let opencodeEnv;
+  if (userDataPath && !skipOverlay && guardrailsEnabled()) {
+    try {
+      const dest = path.join(userDataPath, "opencode-guardrails");
+      materializeOpencodeGuardrailDir(dest);
+      opencodeEnv = {
+        OPENCODE_CONFIG_DIR: dest,
+        SOLENTA_WORKTREE: cwd,
+      };
+    } catch {
+      // best-effort
+    }
+  } else if (crossesBoundary(project) && guardrailsEnabled()) {
+    try {
+      const dest = deployOpencodeGuardrailOverlay({ project, threadId });
+      if (dest) {
+        opencodeEnv = {
+          OPENCODE_CONFIG_DIR: dest,
+          SOLENTA_WORKTREE: (project && project.remotePath) || cwd,
+        };
+      }
+    } catch {
+      // Deploy miss must not kill the phase; stream notice remains.
+    }
+  }
+
+  const opencodeBin = binary || resolveBin(entry);
+  const spawn = resolveWorkflowSpawn(
+    project,
+    opencodeBin,
     args,
     cwd,
+    opencodeEnv,
+  );
+  const handle = runOpencode({
+    binary: spawn.binary,
+    args: spawn.args,
+    cwd: spawn.cwd,
+    env: opencodeEnv,
     onEvent: (ev) => {
       gotJson = true;
       if (!ev || typeof ev !== "object") return;
@@ -811,9 +1158,12 @@ function spawnAgentOpencode(opts) {
         text = rebuild();
         if (typeof onText === "function") onText(text);
       }
-      // sessionID captured but workflow one-shots do not resume
-      opencodeExtractSessionId(ev);
-      opencodeExtractTool(ev);
+      const sid = realSessionId(opencodeExtractSessionId(ev));
+      if (sid) capturedSessionId = sid;
+      const tool = opencodeExtractTool(ev);
+      if (tool && tool.phase === "start") {
+        notePhaseGuardrail(opts, tool.name, tool.input);
+      }
     },
     onExit: ({ code, stderr, fullStdout: stdout, gotJson: parsed }) => {
       fullStdout = stdout || "";
@@ -872,6 +1222,11 @@ function spawnPhaseAgent(opts) {
     projectId,
     overlayKey,
     skipOverlay,
+    sessionId,
+    project,
+    appendMessage,
+    runId,
+    worktreePath,
   } = opts;
 
   const entry = getProvider(providerId);
@@ -905,6 +1260,7 @@ function spawnPhaseAgent(opts) {
       providerEntry: entry,
       onText,
       reasoningEffort,
+      sessionId,
     });
   }
   if (entry.kind === "codex-json") {
@@ -918,6 +1274,14 @@ function spawnPhaseAgent(opts) {
       reasoningEffort,
       webSearch,
       permissionMode,
+      sessionId,
+      userDataPath,
+      threadId,
+      skipOverlay,
+      project,
+      appendMessage,
+      runId,
+      worktreePath,
     });
   }
   if (entry.kind === "kimi-stream") {
@@ -934,6 +1298,11 @@ function spawnPhaseAgent(opts) {
       projectId,
       overlayKey,
       skipOverlay,
+      sessionId: realSessionId(sessionId),
+      project,
+      appendMessage,
+      runId,
+      worktreePath,
     });
   }
   if (entry.kind === "opencode-json") {
@@ -946,6 +1315,14 @@ function spawnPhaseAgent(opts) {
       onText,
       reasoningEffort,
       permissionMode,
+      sessionId,
+      userDataPath,
+      skipOverlay,
+      project,
+      threadId,
+      appendMessage,
+      runId,
+      worktreePath,
     });
   }
   if (entry.kind === "cursor-stream") {
@@ -958,6 +1335,14 @@ function spawnPhaseAgent(opts) {
       onText,
       reasoningEffort,
       permissionMode,
+      sessionId,
+      userDataPath,
+      skipOverlay,
+      project,
+      threadId,
+      appendMessage,
+      runId,
+      worktreePath,
     });
   }
   // All known providers use structured kinds; plain-text path was removed.
@@ -1034,12 +1419,13 @@ function kickoffText(template) {
  * @param {(threadId: string, role: string, text: string, runId?: string | null, tool?: object | null) => string} deps.appendMessage
  * @param {(threadId: string, status: "done"|"failed"|"stopped", text?: string, extras?: object) => void} [deps.notifyRunTerminal]
  * @param {string} [deps.userDataPath] - for kimi KIMI_CODE_HOME overlay (#699)
+ * @param {string} [deps.resumeFromAgentId] - #825 retry one failed slot
+ * @param {object | null} [deps.existingView] - last orchestrated view for retry
  * @returns {Promise<{ runId: string }>}
  */
 async function startWorkflowRun(deps) {
   const {
     threadId,
-    prompt,
     templateId,
     store,
     core,
@@ -1054,7 +1440,10 @@ async function startWorkflowRun(deps) {
     appendMessage,
     notifyRunTerminal,
     userDataPath = "",
+    resumeFromAgentId = null,
+    existingView = null,
   } = deps;
+  let prompt = deps.prompt;
 
   if (active.has(threadId)) {
     throw new Error("A run is already active on this thread");
@@ -1074,17 +1463,38 @@ async function startWorkflowRun(deps) {
     throw new Error(`Unknown project for thread: ${threadId}`);
   }
 
-  const resolvedTemplateId = templateId || "standard";
-  const template = store.getTemplate(resolvedTemplateId);
-  if (!template) {
-    throw new Error(`Unknown workflow template: ${resolvedTemplateId}`);
-  }
-  if (!Array.isArray(template.phases) || template.phases.length === 0) {
-    throw new Error(`Workflow template has no phases: ${resolvedTemplateId}`);
-  }
+  let template = null;
+  if (resumeFromAgentId) {
+    if (!existingView || !existingView.__orchestrated) {
+      throw new Error("No workflow to retry");
+    }
+    const retryAgent = findAgent(existingView, resumeFromAgentId);
+    if (!retryAgent || retryAgent.status !== "failed") {
+      throw new Error("Workflow agent is not failed");
+    }
+    if (!existingView.__prompt) {
+      throw new Error("Workflow prompt is missing");
+    }
+    prompt = existingView.__prompt;
+    assertTemplateProvidersAvailable({
+      phases: existingView.phases.map((p) => ({
+        name: p.name,
+        provider: p.__provider,
+      })),
+    });
+  } else {
+    const resolvedTemplateId = templateId || "standard";
+    template = store.getTemplate(resolvedTemplateId);
+    if (!template) {
+      throw new Error(`Unknown workflow template: ${resolvedTemplateId}`);
+    }
+    if (!Array.isArray(template.phases) || template.phases.length === 0) {
+      throw new Error(`Workflow template has no phases: ${resolvedTemplateId}`);
+    }
 
-  // Reject at start when any phase provider binary is unavailable.
-  assertTemplateProvidersAvailable(template);
+    // Reject at start when any phase provider binary is unavailable.
+    assertTemplateProvidersAvailable(template);
+  }
 
   const runId = randomUUID();
   // Same stale-worktree guard as startRun: a folder removed outside the
@@ -1107,41 +1517,62 @@ async function startWorkflowRun(deps) {
   const webSearch = thread.webSearch === true;
   // Overlay lives on this host; ssh/WSL phases inherit the remote kimi home.
   const skipKimiOverlay = Boolean(project.remoteHost || wslTarget(project));
-  const seed = hashSeed(threadId, runId);
-  const name =
-    typeof core.nameForSeed === "function"
-      ? core.nameForSeed(seed)
-      : `WF-${seed}`;
 
-  appendMessage(threadId, "user", prompt, runId);
+  let view;
+  if (resumeFromAgentId) {
+    view = existingView;
+    store.updateThread(
+      threadId,
+      {
+        status: "working",
+        runStartedAt: Date.now(),
+        awaitingInput: false,
+        lastEventAt: null,
+        stalledAt: null,
+        stoppedAt: null,
+        ...services.clearSettledOnActivity(thread),
+      },
+      { touch: true },
+    );
+  } else {
+    const seed = hashSeed(threadId, runId);
+    const name =
+      typeof core.nameForSeed === "function"
+        ? core.nameForSeed(seed)
+        : `WF-${seed}`;
 
-  let title = thread.title;
-  if (title === "New Thread") {
-    const firstLine = String(prompt).split(/\r?\n/)[0].trim();
-    title = firstLine.slice(0, 60) || "New Thread";
+    appendMessage(threadId, "user", prompt, runId);
+
+    let title = thread.title;
+    if (title === "New Thread") {
+      const firstLine = String(prompt).split(/\r?\n/)[0].trim();
+      title = firstLine.slice(0, 60) || "New Thread";
+    }
+
+    // Real activity clears a stale "settled" pin (same as startRun). An
+    // "active" pin survives. Without this, a workflow on a settled thread
+    // re-folds the moment the run finishes.
+    store.updateThread(
+      threadId,
+      {
+        status: "working",
+        title,
+        runStartedAt: Date.now(),
+        awaitingInput: false,
+        lastEventAt: null,
+        stalledAt: null,
+        stoppedAt: null,
+        ...services.clearSettledOnActivity(thread),
+      },
+      { touch: true },
+    );
+
+    view = buildWorkflowView({ runId, name, template });
+    view.__prompt = prompt;
+    view.__templateId = template.id;
+
+    appendMessage(threadId, "event", kickoffText(template), runId);
   }
-
-  // Real activity clears a stale "settled" pin (same as startRun). An
-  // "active" pin survives. Without this, a workflow on a settled thread
-  // re-folds the moment the run finishes.
-  store.updateThread(
-    threadId,
-    {
-      status: "working",
-      title,
-      runStartedAt: Date.now(),
-      awaitingInput: false,
-      lastEventAt: null,
-      stalledAt: null,
-      stoppedAt: null,
-      ...services.clearSettledOnActivity(thread),
-    },
-    { touch: true },
-  );
-
-  const view = buildWorkflowView({ runId, name, template });
-
-  appendMessage(threadId, "event", kickoffText(template), runId);
 
   /** @type {Map<string, string>} */
   const phaseItemIds = new Map();
@@ -1259,7 +1690,10 @@ async function startWorkflowRun(deps) {
   schedulePush(true);
 
   // Fire-and-forget orchestration; errors handled inside.
-  void runPhases().catch((err) => {
+  const started = resumeFromAgentId
+    ? runFromRetry(resumeFromAgentId)
+    : runPhases();
+  void started.catch((err) => {
     if (!guard()) return;
     failRun(
       "workflow",
@@ -1339,36 +1773,65 @@ async function startWorkflowRun(deps) {
     const agent = findAgent(view, agentId);
     if (!agent) return null;
 
+    agent.__attempted = true;
+    agent.__prompt = agentPrompt;
     agent.status = "running";
     agent.tokensUsed = 0;
     schedulePush(true);
 
     let charCount = 0;
-    const { handle, done } = spawnPhaseAgent({
-      providerId,
-      prompt: agentPrompt,
-      cwd,
-      permissionMode,
-      model,
-      reasoningEffort,
-      webSearch,
-      userDataPath,
-      threadId,
-      projectId: thread.projectId,
-      overlayKey: agentId,
-      skipOverlay: skipKimiOverlay,
-      onText: (t) => {
-        if (!guard()) return;
-        charCount = t.length;
-        agent.tokensUsed = Math.ceil(charCount / 4) || 1;
-        schedulePush(false);
-      },
-    });
 
-    liveHandles.set(agentId, handle);
+    async function spawnSlot() {
+      const { handle, done } = spawnPhaseAgent({
+        providerId,
+        prompt: agentPrompt,
+        cwd,
+        permissionMode,
+        model,
+        reasoningEffort,
+        webSearch,
+        userDataPath,
+        threadId,
+        projectId: thread.projectId,
+        overlayKey: agentId,
+        skipOverlay: skipKimiOverlay,
+        sessionId: agent.sessionId || null,
+        project,
+        appendMessage,
+        runId,
+        worktreePath: cwd,
+        onText: (t) => {
+          if (!guard()) return;
+          charCount = t.length;
+          agent.tokensUsed = Math.ceil(charCount / 4) || 1;
+          schedulePush(false);
+        },
+      });
+      liveHandles.set(agentId, handle);
+      const slotResult = await done;
+      liveHandles.delete(agentId);
+      // Persist on this workflow agent only. Never thread.sessionId.
+      // A hint-less turn keeps the prior real id. Never "cwd" (#220).
+      const captured = realSessionId(slotResult && slotResult.sessionId);
+      if (captured) agent.sessionId = captured;
+      return slotResult;
+    }
 
-    const result = await done;
-    liveHandles.delete(agentId);
+    function absorbUsage(slotResult) {
+      if (!slotResult || !slotResult.usage) return;
+      aggInput += slotResult.usage.inputTokens || 0;
+      aggCached += slotResult.usage.cachedInputTokens || 0;
+      aggCacheWrite += slotResult.usage.cacheWriteTokens || 0;
+      aggOutput += slotResult.usage.outputTokens || 0;
+      const agentCost = Number(slotResult.usage.costUsd) || 0;
+      aggCost += agentCost;
+      syncRunUsage();
+      if (agentCost > 0) {
+        store.recordSpend(agentCost);
+      }
+    }
+
+    let result = await spawnSlot();
 
     if (!guard()) {
       // Stopped mid-flight: leave status as-is if stop already marked failed
@@ -1378,8 +1841,34 @@ async function startWorkflowRun(deps) {
       return null;
     }
 
+    // One bounded retry on the same slot / overlay / sessionId (#815 / #819).
+    // The work-log line is in-progress for the second spawn only (#823).
+    if (result && !result.ok) {
+      absorbUsage(result);
+      if (!guard()) {
+        if (agent.status === "running") agent.status = "failed";
+        appendDossier(phaseName, agentIndex, agentPrompt, result, true);
+        return null;
+      }
+      const retryItemId = beginWorkLogStep(
+        threadId,
+        runId,
+        `${capitalize(phaseName)} agent ${agentIndex + 1} retrying`,
+      );
+      schedulePush(true);
+      result = await spawnSlot();
+      completeWorkLogStep(threadId, retryItemId);
+      schedulePush(true);
+      if (!guard()) {
+        if (agent.status === "running") agent.status = "failed";
+        appendDossier(phaseName, agentIndex, agentPrompt, result, true);
+        return null;
+      }
+    }
+
     if (result.ok) {
       agent.status = "settled";
+      agent.__text = result.text || "";
       if (result.usage) {
         agent.tokensUsed =
           (result.usage.inputTokens || 0) + (result.usage.outputTokens || 0) ||
@@ -1423,21 +1912,209 @@ async function startWorkflowRun(deps) {
     return result;
   }
 
-  async function runPhases() {
+  function laterUnstarted(afterPhaseIndex) {
+    return view.phases.slice(afterPhaseIndex + 1).some((p) =>
+      p.agents.some((a) => !a.__attempted),
+    );
+  }
+
+  /**
+   * @param {object} phaseSpec
+   * @param {{ spec?: { agentIndex: number }, result?: { text?: string } }[]} successes
+   */
+  function finishSuccess(phaseSpec, successes) {
+    const phaseName = phaseSpec.name;
+    let answerText = "";
+    if (successes.length === 1) {
+      answerText = (successes[0].result && successes[0].result.text) || "";
+    } else {
+      answerText = successes
+        .map(
+          (s) =>
+            `## ${phaseName} agent ${s.spec.agentIndex + 1}\n${(s.result && s.result.text) || ""}`,
+        )
+        .join("\n\n");
+    }
+
+    if (!guard()) return;
+
+    appendMessage(threadId, "assistant", answerText, runId);
+
+    const prev = store.getUsage(threadId) || {
+      model: null,
+      inputTokens: 0,
+      outputTokens: 0,
+      costUsd: 0,
+      turns: 0,
+    };
+    store.setUsage(threadId, {
+      model: prev.model || thread.model || agentModelLabel(phaseSpec),
+      inputTokens: prev.inputTokens + aggInput,
+      outputTokens: prev.outputTokens + aggOutput,
+      costUsd: prev.costUsd + aggCost,
+      turns: prev.turns + 1,
+    });
+    store.recordUsage({
+      provider: thread.provider,
+      model: prev.model || thread.model || agentModelLabel(phaseSpec),
+      costUsd: aggCost,
+      inputTokens: aggInput,
+      cachedInputTokens: aggCached,
+      cacheWriteTokens: aggCacheWrite,
+      outputTokens: aggOutput,
+      threadId,
+      projectId: thread.projectId,
+      projectName: store.getProject(thread.projectId)?.name,
+      title: thread.title,
+    });
+
+    recomputeView(view);
+    store.updateThread(
+      threadId,
+      { status: "done", runStartedAt: null },
+      { touch: true },
+    );
+    store.save();
+    clearRun(threadId);
+    pushDetail(threadId, view);
+    pushThreadsChanged();
+    if (typeof notifyRunTerminal === "function") {
+      notifyRunTerminal(threadId, "done", answerText, {
+        tokensIn: aggInput,
+        tokensOut: aggOutput,
+        costUsd: aggCost,
+      });
+    }
+  }
+
+  function closeRetrySession() {
+    recomputeView(view);
+    const final = view.phases[view.phases.length - 1];
+    const alreadyFinished =
+      Boolean(final) &&
+      final.agents.some((a) => a.status === "settled" && a.__attempted);
+    store.updateThread(
+      threadId,
+      {
+        status: view.complete || alreadyFinished ? "done" : "failed",
+        runStartedAt: null,
+      },
+      { touch: true },
+    );
+    store.save();
+    clearRun(threadId);
+    pushDetail(threadId, view);
+    pushThreadsChanged();
+  }
+
+  async function runFromRetry(agentId) {
+    const loc = parseAgentId(agentId);
+    if (!loc || !view.phases[loc.phaseIndex]) {
+      throw new Error("Workflow agent is not failed");
+    }
+    const phaseView = view.phases[loc.phaseIndex];
+    const phaseSpec = phaseSpecFromView(phaseView);
+    const priorOutputs = collectPriorOutputs(view, loc.phaseIndex);
+    const agentPrompt = buildAgentPrompt({
+      userPrompt: prompt,
+      instruction: phaseSpec.instruction,
+      agentIndex: loc.agentIndex,
+      agentCount: phaseSpec.agentCount,
+      priorOutputs,
+    });
+
+    if (!guard()) return;
+    beginPhase(phaseSpec.name);
+    schedulePush(true);
+    const retryItemId = beginWorkLogStep(
+      threadId,
+      runId,
+      `${capitalize(phaseSpec.name)} agent ${loc.agentIndex + 1} retrying`,
+    );
+    schedulePush(true);
+    let result = null;
+    try {
+      result = await runOneAgent({
+        agentId,
+        agentPrompt,
+        providerId: phaseSpec.provider,
+        model: phaseSpec.model,
+        phaseName: phaseSpec.name,
+        agentIndex: loc.agentIndex,
+      });
+    } finally {
+      completeWorkLogStep(threadId, retryItemId);
+      schedulePush(true);
+    }
+    if (!guard()) return;
+    completePhase(phaseSpec.name);
+
+    const phaseHasSettled = phaseView.agents.some((a) => a.status === "settled");
+    if ((!result || !result.ok) && !phaseHasSettled) {
+      failRun(agentId, (result && result.stderr) || "retry failed");
+      return;
+    }
+
+    const isFinal = loc.phaseIndex === view.phases.length - 1;
+    if (isFinal && phaseHasSettled) {
+      const successes = phaseView.agents
+        .map((agent, agentIndex) => ({
+          spec: { agentIndex },
+          result: {
+            ok: agent.status === "settled",
+            text: agent.__text || "",
+          },
+        }))
+        .filter((s) => s.result.ok);
+      finishSuccess(phaseSpec, successes);
+      return;
+    }
+
+    if (phaseHasSettled && laterUnstarted(loc.phaseIndex)) {
+      for (const later of view.phases.slice(loc.phaseIndex + 1)) {
+        for (const agent of later.agents) {
+          if (agent.status === "failed" && !agent.__attempted) {
+            agent.status = "pending";
+          }
+        }
+      }
+      await runPhases(
+        loc.phaseIndex + 1,
+        collectPriorOutputs(view, loc.phaseIndex + 1),
+      );
+      return;
+    }
+
+    closeRetrySession();
+  }
+
+  /**
+   * @param {number} [fromIndex]
+   * @param {{ phaseName: string, agentIndex: number, text: string }[]} [seedOutputs]
+   */
+  async function runPhases(fromIndex = 0, seedOutputs = []) {
     /** @type {{ phaseName: string, agentIndex: number, text: string }[]} */
-    let priorOutputs = [];
+    let priorOutputs = seedOutputs.slice();
 
-    const phaseSpecs = template.phases;
-    const lastPhaseIndex = phaseSpecs.length - 1;
+    const lastPhaseIndex = view.phases.length - 1;
 
-    for (let phaseIndex = 0; phaseIndex < phaseSpecs.length; phaseIndex++) {
-      const phaseSpec = phaseSpecs[phaseIndex];
+    for (let phaseIndex = fromIndex; phaseIndex < view.phases.length; phaseIndex++) {
+      const phaseView = view.phases[phaseIndex];
+      const phaseSpec = phaseSpecFromView(phaseView);
       const phaseName = phaseSpec.name;
       const agentCount = Math.max(
         1,
         Math.min(4, Number(phaseSpec.agentCount) || 1),
       );
       const isFinal = phaseIndex === lastPhaseIndex;
+
+      if (fromIndex > 0) {
+        for (const agent of phaseView.agents) {
+          if (agent.status === "failed" && !agent.__attempted) {
+            agent.status = "pending";
+          }
+        }
+      }
 
       if (!guard()) return;
       beginPhase(phaseName);
@@ -1504,70 +2181,7 @@ async function startWorkflowRun(deps) {
       }
 
       if (isFinal) {
-        // Build assistant answer from successful final-phase agents.
-        let answerText = "";
-        if (successes.length === 1) {
-          answerText = successes[0].result.text || "";
-        } else {
-          answerText = successes
-            .map(
-              (s) =>
-                `## ${phaseName} agent ${s.spec.agentIndex + 1}\n${s.result.text || ""}`,
-            )
-            .join("\n\n");
-        }
-
-        if (!guard()) return;
-
-        appendMessage(threadId, "assistant", answerText, runId);
-
-        const prev = store.getUsage(threadId) || {
-          model: null,
-          inputTokens: 0,
-          outputTokens: 0,
-          costUsd: 0,
-          turns: 0,
-        };
-        store.setUsage(threadId, {
-          model: prev.model || thread.model || agentModelLabel(phaseSpec),
-          inputTokens: prev.inputTokens + aggInput,
-          outputTokens: prev.outputTokens + aggOutput,
-          costUsd: prev.costUsd + aggCost,
-          turns: prev.turns + 1,
-        });
-        store.recordUsage({
-          provider: thread.provider,
-          model: prev.model || thread.model || agentModelLabel(phaseSpec),
-          costUsd: aggCost,
-          inputTokens: aggInput,
-          cachedInputTokens: aggCached,
-          cacheWriteTokens: aggCacheWrite,
-          outputTokens: aggOutput,
-          threadId,
-          projectId: thread.projectId,
-          projectName: store.getProject(thread.projectId)?.name,
-          title: thread.title,
-        });
-        // spendByDay is updated per agent above; do not re-record aggCost here.
-
-        recomputeView(view);
-        store.updateThread(
-          threadId,
-          { status: "done", runStartedAt: null },
-          { touch: true },
-        );
-        store.save();
-        clearRun(threadId);
-        // Final push never dropped.
-        pushDetail(threadId, view);
-        pushThreadsChanged();
-        if (typeof notifyRunTerminal === "function") {
-          notifyRunTerminal(threadId, "done", answerText, {
-            tokensIn: aggInput,
-            tokensOut: aggOutput,
-            costUsd: aggCost,
-          });
-        }
+        finishSuccess(phaseSpec, successes);
         return;
       }
 
@@ -1595,6 +2209,19 @@ async function startWorkflowRun(deps) {
   }
 
   return { runId };
+}
+
+/**
+ * Re-spawn a failed phase agent after the run has ended (#825).
+ * @param {object} deps
+ */
+async function retryWorkflowAgent(deps) {
+  return startWorkflowRun({
+    ...deps,
+    prompt: deps.view && deps.view.__prompt,
+    resumeFromAgentId: deps.agentId,
+    existingView: deps.view,
+  });
 }
 
 /**
@@ -1633,6 +2260,7 @@ function stopWorkflowEntry(entry) {
 
 module.exports = {
   startWorkflowRun,
+  retryWorkflowAgent,
   stopWorkflowEntry,
   buildWorkflowView,
   recomputeView,

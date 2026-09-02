@@ -320,13 +320,84 @@ function attachCatalogNotes(providers, opts = {}) {
     if (!live) continue;
     const diff = diffCatalog(p.models, live);
     if (!diff) continue;
-    const note = formatCatalogNote({
+    let note = formatCatalogNote({
       name: p.name || p.id,
       extraLive: diff.extraLive,
       extraSnapshot: diff.extraSnapshot,
     });
+    if (note && p.id === "codex" && diff.extraSnapshot.length > 0) {
+      note = `${note} Run \`codex update\` to use snapshot-only ids.`;
+    }
     if (note) p.catalogNote = note;
     else delete p.catalogNote;
+  }
+  return providers;
+}
+
+/**
+ * Prefer live-supported snapshot ids without merging live-only ones (#745).
+ * Missing live catalog = no change. Empty live list = no live match, keep
+ * snapshot recommended.
+ *
+ * @param {Array<{
+ *   id?: string,
+ *   models?: string[],
+ *   modelInfo?: Array<{ id: string, recommended?: boolean }>,
+ * }>} providers
+ * @param {{
+ *   env?: NodeJS.ProcessEnv,
+ *   home?: string,
+ *   readFile?: (filePath: string) => string | null,
+ *   cliCache?: Map<string, string[] | null>,
+ * }} [opts]
+ */
+function alignCatalogWithLive(providers, opts = {}) {
+  if (!Array.isArray(providers)) return providers;
+  for (const p of providers) {
+    if (!p || !p.id) continue;
+    const live = readLiveIds(p.id, opts);
+    if (!live) continue;
+    const liveSet = new Set(live);
+    const models = Array.isArray(p.models) ? p.models.map(String) : [];
+    if (models.length > 0) {
+      const inLive = [];
+      const rest = [];
+      const seen = new Set();
+      for (const id of models) {
+        if (seen.has(id)) continue;
+        seen.add(id);
+        if (liveSet.has(id)) inLive.push(id);
+        else rest.push(id);
+      }
+      p.models = inLive.concat(rest);
+    }
+    const infos = Array.isArray(p.modelInfo) ? p.modelInfo : [];
+    if (infos.length > 0) {
+      const byId = new Map(infos.map((m) => [m && m.id, m]));
+      const ordered = [];
+      const used = new Set();
+      for (const id of p.models || []) {
+        const row = byId.get(id);
+        if (row && !used.has(id)) {
+          ordered.push(row);
+          used.add(id);
+        }
+      }
+      for (const row of infos) {
+        if (row && row.id && !used.has(row.id)) {
+          ordered.push(row);
+          used.add(row.id);
+        }
+      }
+      const nextRec = ordered.find((m) => liveSet.has(m.id));
+      if (nextRec) {
+        for (const m of ordered) {
+          if (m.id === nextRec.id) m.recommended = true;
+          else delete m.recommended;
+        }
+      }
+      p.modelInfo = ordered;
+    }
   }
   return providers;
 }
@@ -345,5 +416,6 @@ module.exports = {
   parseCliCatalog,
   readLiveIds,
   attachCatalogNotes,
+  alignCatalogWithLive,
   resolveHomedir,
 };

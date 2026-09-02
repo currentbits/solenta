@@ -13,6 +13,11 @@
 
 const fs = require("node:fs");
 const path = require("node:path");
+const {
+  injectGrokGuardrailHook,
+  grokGuardrailHookCommand,
+} = require("./grok-guardrail-hook.js");
+const { guardrailsEnabled } = require("./guardrails.js");
 
 /**
  * Auth/session/plugin files a per-run home must share with the user's real
@@ -168,6 +173,9 @@ function writeSecretFile(file, data) {
  * @param {string} opts.dest
  * @param {string} opts.sourceHome
  * @param {Record<string, object>} [opts.mcpServers]
+ * @param {false | { command?: string, timeout?: number }} [opts.guardrailHook]
+ *   PreToolUse classifyTool hook (#812). false skips it (tests / kill switch).
+ *   The gate is overlay config.toml — never GROK_HOME_LINKS "hooks".
  * @returns {string} dest
  */
 function materializeGrokHome(opts) {
@@ -205,7 +213,37 @@ function materializeGrokHome(opts) {
   if (base.trim()) chunks.push(base.replace(/\s+$/, ""));
   chunks.push(compat.trimEnd());
   if (mcp.trim()) chunks.push(mcp.replace(/\s+$/, ""));
-  writeSecretFile(path.join(dest, "config.toml"), chunks.join("\n\n") + "\n");
+  let toml = chunks.join("\n\n") + "\n";
+
+  // #812: PreToolUse hook so classifyTool runs before grok `-p`
+  // --always-approve executes a tool. Overlay config.toml only — never
+  // write the gate through the GROK_HOME_LINKS "hooks" symlink (user
+  // ~/.grok/hooks). Skip when the caller opts out or the process-wide
+  // kill switch is off. Live 1.0.13 loads this table as
+  // source.type=configToml (#826).
+  if (opts.guardrailHook !== false && guardrailsEnabled()) {
+    try {
+      const spec =
+        opts.guardrailHook && typeof opts.guardrailHook === "object"
+          ? opts.guardrailHook
+          : {};
+      const hookDest = path.join(dest, "grok-guardrail-hook.js");
+      const policyDest = path.join(dest, "guardrails.js");
+      fs.copyFileSync(
+        path.join(__dirname, "grok-guardrail-hook.js"),
+        hookDest,
+      );
+      fs.copyFileSync(path.join(__dirname, "guardrails.js"), policyDest);
+      const command =
+        spec.command || grokGuardrailHookCommand({ hookPath: hookDest });
+      const timeout = spec.timeout || 15;
+      toml = injectGrokGuardrailHook(toml, command, timeout);
+    } catch {
+      // A hook write failure must not block the turn; stream notice remains.
+    }
+  }
+
+  writeSecretFile(path.join(dest, "config.toml"), toml);
   return dest;
 }
 

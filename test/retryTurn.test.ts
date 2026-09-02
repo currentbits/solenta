@@ -4,8 +4,9 @@
  */
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import type { ChatMessage } from "../src/shared/ipc";
+import type { ChatMessage, WorkflowView } from "../src/shared/ipc";
 import {
+  failedWorkflowRetryAgentId,
   isInterruptEvent,
   lastEventMessage,
   lastUserMessage,
@@ -151,6 +152,180 @@ describe("retryAnchorEventId", () => {
       ]),
       null,
     );
+  });
+
+  it("still anchors when the last event is this Build and a slot failed", () => {
+    const wfMsgs = [
+      m({
+        id: "u1",
+        role: "user",
+        text: "build the login form",
+        runId: "wf-run",
+      }),
+      m({
+        id: "e-kick",
+        role: "event",
+        text: "Kicked off 4 subagents\nplan 1",
+        runId: "wf-run",
+      }),
+      m({
+        id: "e1",
+        role: "event",
+        text: "Run error (plan-1):\nbad spawn",
+        runId: "wf-run",
+      }),
+    ];
+    const workflow = wfView({
+      id: "wf-run",
+      agents: [{ id: "plan-1", status: "failed" }],
+    });
+    assert.equal(retryAnchorEventId("failed", wfMsgs, workflow), "e1");
+    assert.equal(
+      retryAnchorEventId(
+        "idle",
+        [
+          m({ id: "u1", role: "user", text: "build it", runId: "wf-run" }),
+          m({
+            id: "e1",
+            role: "event",
+            text: "Run interrupted by app quit",
+            runId: "wf-run",
+          }),
+        ],
+        workflow,
+      ),
+      "e1",
+    );
+  });
+
+  it("is null when the last event is this Build but no slot failed", () => {
+    const workflow = wfView({
+      id: "wf-run",
+      agents: [{ id: "plan-1", status: "settled" }],
+    });
+    assert.equal(
+      retryAnchorEventId(
+        "failed",
+        [
+          m({ id: "u1", role: "user", text: "build it", runId: "wf-run" }),
+          m({
+            id: "e1",
+            role: "event",
+            text: "Run error: exit 1",
+            runId: "wf-run",
+          }),
+        ],
+        workflow,
+      ),
+      null,
+    );
+  });
+
+  it("still anchors when a leftover workflow id does not match the last run", () => {
+    // lastWorkflowByThread survives a later chat turn. That chat failure
+    // must keep Retry turn (runs.start), not hide because an old view exists.
+    assert.equal(
+      retryAnchorEventId(
+        "failed",
+        [
+          m({ id: "u1", role: "user", text: "older build", runId: "wf-run" }),
+          m({
+            id: "e-old",
+            role: "event",
+            text: "Kicked off 2 subagents",
+            runId: "wf-run",
+          }),
+          m({ id: "u2", role: "user", text: "later chat", runId: "chat-2" }),
+          m({
+            id: "e1",
+            role: "event",
+            text: "Run error: exit 1",
+            runId: "chat-2",
+          }),
+        ],
+        wfView({
+          id: "wf-run",
+          agents: [{ id: "plan-1", status: "settled" }],
+        }),
+      ),
+      "e1",
+    );
+  });
+});
+
+function wfView(over: {
+  id?: string;
+  agents?: Array<{
+    id: string;
+    status: WorkflowView["phases"][0]["agents"][0]["status"];
+  }>;
+  phases?: WorkflowView["phases"];
+}): WorkflowView {
+  const agents = (
+    over.agents ?? [{ id: "plan-1", status: "failed" as const }]
+  ).map((a) => ({
+    id: a.id,
+    model: "grok",
+    status: a.status,
+    tokensUsed: 0,
+  }));
+  return {
+    id: over.id ?? "wf-run",
+    name: "WF-test",
+    phases: over.phases ?? [{ name: "plan", pipelined: false, agents }],
+    settled: 0,
+    total: agents.length,
+    tokensTotal: 0,
+    complete: false,
+  };
+}
+
+describe("failedWorkflowRetryAgentId", () => {
+  it("returns the first failed agent in Agents-panel order", () => {
+    const workflow = wfView({
+      phases: [
+        {
+          name: "plan",
+          pipelined: false,
+          agents: [
+            { id: "plan-1", model: "grok", status: "settled", tokensUsed: 1 },
+            { id: "plan-2", model: "grok", status: "failed", tokensUsed: 0 },
+          ],
+        },
+        {
+          name: "build",
+          pipelined: false,
+          agents: [
+            { id: "build-1", model: "grok", status: "failed", tokensUsed: 0 },
+          ],
+        },
+      ],
+    });
+    assert.equal(failedWorkflowRetryAgentId(workflow, "failed"), "plan-2");
+  });
+
+  it("is null while the thread is working", () => {
+    assert.equal(
+      failedWorkflowRetryAgentId(
+        wfView({ agents: [{ id: "plan-1", status: "failed" }] }),
+        "working",
+      ),
+      null,
+    );
+  });
+
+  it("is null when no agent failed", () => {
+    assert.equal(
+      failedWorkflowRetryAgentId(
+        wfView({ agents: [{ id: "plan-1", status: "settled" }] }),
+        "failed",
+      ),
+      null,
+    );
+  });
+
+  it("is null without a workflow", () => {
+    assert.equal(failedWorkflowRetryAgentId(null, "failed"), null);
   });
 });
 
