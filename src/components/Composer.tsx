@@ -1913,6 +1913,7 @@ export const Composer = memo(function Composer({
           onKeyDown={onKeyDown}
           onPaste={onPaste}
           disabled={disabled || sending}
+          data-vim-mode={vimEnabled ? vimMode : undefined}
         />
         <div
           ref={overflowRef}
@@ -1921,7 +1922,7 @@ export const Composer = memo(function Composer({
           hidden
         />
         <div ref={hintsRef} className={styles.hints} data-kbd-hints="" hidden>
-          {`⌘Enter ${busy ? "queue" : "send"} · ⌥Enter side question · ⌘S stash${busy ? " · Esc stop" : ""}`}
+          {`⌘Enter ${busy ? "queue" : "send"} · ⌥Enter side question · ⌘S stash${busy ? " · Esc stop" : ""}${vimEnabled ? ` · VIM ${vimMode}` : ""}`}
         </div>
         <div className={styles.controls}>
           <div className={styles.pills}>
