@@ -15,6 +15,7 @@ const {
   materializeKimiHome,
   extractAssistantText: kimiExtractText,
   extractUsage: kimiExtractUsage,
+  extractSessionId: kimiExtractSessionId,
 } = require("./kimi.js");
 const {
   runCursor,
@@ -628,7 +629,8 @@ function spawnAgentCodex(opts) {
 }
 
 /**
- * Spawn a one-shot Kimi stream-json agent (no resume / no -c).
+ * Spawn a Kimi stream-json agent. Resume is `-S <id>` when this slot
+ * already has a real session id; never `-c` (issue #220 / #782).
  * @param {object} opts
  * @returns {{ handle: { kill: () => void }, done: Promise<object> }}
  */
@@ -646,6 +648,7 @@ function spawnAgentKimi(opts) {
     projectId,
     overlayKey,
     skipOverlay,
+    sessionId,
   } = opts;
 
   let text = "";
@@ -653,6 +656,8 @@ function spawnAgentKimi(opts) {
   let finished = false;
   let fullStdout = "";
   let gotJson = false;
+  /** @type {string | null} */
+  let capturedSessionId = null;
 
   /** @type {(value: object) => void} */
   let resolveDone;
@@ -663,13 +668,13 @@ function spawnAgentKimi(opts) {
   function finish(payload) {
     if (finished) return;
     finished = true;
-    resolveDone(payload);
+    resolveDone({ ...payload, sessionId: capturedSessionId });
   }
 
   const entry = providerEntry || getProvider("kimi");
   const args = entry.buildArgs({
     prompt,
-    sessionId: null,
+    sessionId: realSessionId(sessionId),
     model: model || null,
     reasoningEffort: reasoningEffort || null,
   });
@@ -715,6 +720,8 @@ function spawnAgentKimi(opts) {
     onEvent: (ev) => {
       gotJson = true;
       if (!ev || typeof ev !== "object") return;
+      const sid = kimiExtractSessionId(ev);
+      if (sid) capturedSessionId = sid;
       const chunk = kimiExtractText(ev);
       if (chunk != null) {
         text += chunk;
@@ -1123,6 +1130,7 @@ function spawnPhaseAgent(opts) {
       projectId,
       overlayKey,
       skipOverlay,
+      sessionId: realSessionId(sessionId),
     });
   }
   if (entry.kind === "opencode-json") {

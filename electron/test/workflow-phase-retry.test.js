@@ -4,8 +4,9 @@
  * Issue #815: a failed workflow agent gets one bounded retry on the same
  * slot. The second spawn must emit the provider resume flag when a real
  * session id was captured. A second failure still fails the phase. Never
- * write thread.sessionId. Never mint a sibling agent. Kimi flags stay
- * unchanged (no -S / -c); retry still reuses the same overlayKey.
+ * write thread.sessionId. Never mint a sibling agent. Kimi retry emits
+ * `-S` when a real session id was captured, never `-c`, and reuses the
+ * same overlayKey (issue #782).
  */
 
 const { describe, it, beforeEach, afterEach } = require("node:test");
@@ -568,7 +569,7 @@ emit({ type: "usage", input_tokens: 1, output_tokens: 1 });
     }
   });
 
-  it("retries kimi on the same overlay and never emits -S or -c", async () => {
+  it("retries kimi on the same overlay with -S and never -c or thread.sessionId (#782)", async () => {
     const hitsFile = installKimiRetry();
     const { store, runner, thread } = await startOnePhase({
       provider: "kimi",
@@ -581,8 +582,11 @@ emit({ type: "usage", input_tokens: 1, output_tokens: 1 });
       assert.equal(hits.length, 2, "kimi slot retries once");
       assert.ok(hits[0].home, "first spawn must have an overlay home");
       assert.equal(hits[1].home, hits[0].home, "same overlayKey / KIMI_CODE_HOME");
+      assert.ok(!hits[0].argv.includes("-S"), `fresh kimi must not -S: ${JSON.stringify(hits[0].argv)}`);
+      const sIdx = hits[1].argv.indexOf("-S");
+      assert.ok(sIdx >= 0, `retry must -S: ${JSON.stringify(hits[1].argv)}`);
+      assert.equal(hits[1].argv[sIdx + 1], "wf-retry-kimi");
       for (const hit of hits) {
-        assert.ok(!hit.argv.includes("-S"), `kimi must not -S, got ${JSON.stringify(hit.argv)}`);
         assert.ok(!hit.argv.includes("-c"), `kimi must not -c, got ${JSON.stringify(hit.argv)}`);
       }
     } finally {

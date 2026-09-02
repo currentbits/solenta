@@ -4,7 +4,7 @@
  * Workflow Claude / Codex / OpenCode / Cursor phases persist the stream
  * session on the workflow agent (not thread.sessionId) and emit that
  * provider's resume flag only when a later spawn of the same slot has a
- * real id. Never "cwd". Kimi stays a one-shot (issue #782 / #808).
+ * real id. Never "cwd". Kimi resumes with `-S` (issue #782 / #808).
  */
 
 const { describe, it, beforeEach, afterEach } = require("node:test");
@@ -311,21 +311,22 @@ describe("workflow phase session resume (#808)", () => {
     });
   }
 
-  it("kimi spawn stays a one-shot: no -S even when sessionId is passed", async () => {
+  it("kimi retry spawn with a real session id emits -S and never -c (#782)", async () => {
     const projectDir = path.join(tmpDir, "proj");
     fs.mkdirSync(projectDir);
     process.env.CODER_FAKE_WF_ARGV_FILE = bins.kimi.argvFile;
     const { done } = spawnPhaseAgent({
       providerId: "kimi",
-      prompt: "kimi one-shot",
+      prompt: "kimi resume",
       cwd: projectDir,
       model: null,
       sessionId: "session_wf_kimi",
     });
     const result = await done;
     assert.equal(result.ok, true, result.stderr);
+    assert.equal(result.sessionId, "session_wf_kimi");
     const argv = readArgv(bins.kimi.argvFile);
-    assertNoResumeFlag(argv, "-S");
+    assertResumeFlag(argv, "-S", "session_wf_kimi");
     assert.ok(!argv.includes("-c"), `-c must never be emitted: ${JSON.stringify(argv)}`);
   });
 
