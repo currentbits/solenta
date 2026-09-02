@@ -168,6 +168,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     editQueued,
     fetchIssue,
     startWorkflowRun,
+    retryWorkflowAgent,
     saveWorkflow,
     removeWorkflow,
     stopRun,
@@ -1445,6 +1446,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         onOpenWorktree={openInEditor}
         onRewindAndResubmit={rewindAndResubmit}
         onStartWorkflow={startWorkflowRun}
+        onRetryWorkflowAgent={retryWorkflowAgent}
         onSaveWorkflow={saveWorkflow}
         onRemoveWorkflow={removeWorkflow}
         onStopRun={stopRun}

@@ -273,7 +273,7 @@ export interface UseCoderResult {
    * runs.startWorkflow (backend validates phase providers).
    */
   startWorkflowRun: (prompt: string, templateId?: string) => Promise<void>;
-  /** Re-spawn one failed workflow phase agent (#825). */
+  /** Re-spawn a failed workflow phase agent (#825 / #830). */
   retryWorkflowAgent: (agentId: string) => Promise<void>;
   /** Persist a workflow template; refreshes the list. Saving a builtin creates a copy. */
   saveWorkflow: (template: WorkflowSaveInput) => Promise<WorkflowTemplateInfo>;

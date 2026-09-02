@@ -108,6 +108,8 @@ import {
   initialWindowStart,
 } from "../transcriptWindow";
 import {
+  failedWorkflowRetryAgentId,
+  isWorkflowLastRun,
   lastUserMessage,
   retryAnchorEventId,
   retryButtonTitle,
@@ -448,6 +450,8 @@ interface ThreadViewProps {
     prompt: string,
     templateId: string,
   ) => void | Promise<void>;
+  /** Re-spawn a failed workflow phase agent (#825 / #830). */
+  onRetryWorkflowAgent?: (agentId: string) => void | Promise<void>;
   onSaveWorkflow: (template: WorkflowSaveInput) => Promise<WorkflowTemplateInfo>;
   onRemoveWorkflow: (id: string) => Promise<void>;
   onStopRun: () => void | Promise<void>;
@@ -4198,6 +4202,7 @@ export const ThreadView = memo(function ThreadView({
   onStartRun,
   onRewindAndResubmit,
   onStartWorkflow,
+  onRetryWorkflowAgent,
   onSaveWorkflow,
   onRemoveWorkflow,
   onStopRun,
@@ -4824,10 +4829,23 @@ export const ThreadView = memo(function ThreadView({
   const retryEventId = useMemo(
     () =>
       detail
-        ? retryAnchorEventId(detail.thread.status, detail.messages)
+        ? retryAnchorEventId(
+            detail.thread.status,
+            detail.messages,
+            detail.workflow,
+          )
         : null,
     [detail],
   );
+  const workflowRetryAgentId = useMemo(() => {
+    if (!detail || !isWorkflowLastRun(detail.messages, detail.workflow)) {
+      return null;
+    }
+    return failedWorkflowRetryAgentId(
+      detail.workflow,
+      detail.thread.status,
+    );
+  }, [detail]);
   const overflowEventId = useMemo(() => {
     if (
       !detail ||
@@ -4844,9 +4862,20 @@ export const ThreadView = memo(function ThreadView({
     [retryUser],
   );
   const handleRetry = useCallback(() => {
-    if (!retryUser || isWorking) return;
+    if (isWorking) return;
+    if (workflowRetryAgentId) {
+      if (onRetryWorkflowAgent) void onRetryWorkflowAgent(workflowRetryAgentId);
+      return;
+    }
+    if (!retryUser) return;
     void onStartRun(retryUser.text, undefined, retryUser.attachments);
-  }, [retryUser, isWorking, onStartRun]);
+  }, [
+    retryUser,
+    isWorking,
+    onStartRun,
+    workflowRetryAgentId,
+    onRetryWorkflowAgent,
+  ]);
 
   const handleRequestResubmit = useCallback(
     (messageId: string, prompt: string) => {
