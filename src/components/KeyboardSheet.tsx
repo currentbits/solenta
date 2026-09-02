@@ -32,7 +32,7 @@ const VIM_ESCAPE: ShortcutRow = {
   action: "Leave insert · stop from normal · close menus",
 };
 
-/** Composer vim motions (#779 / #817 / #820). Shown only when coder.composerVim is on. */
+/** Composer vim motions (#779 / #817 / #820 / #822). Shown only when coder.composerVim is on. */
 const VIM_SHORTCUTS: readonly ShortcutRow[] = [
   { keys: "h / j / k / l", action: "Move left / down / up / right" },
   { keys: "0 / $", action: "Start / end of line" },
