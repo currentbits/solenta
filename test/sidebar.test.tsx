@@ -70,6 +70,7 @@ afterEach(() => {
       "sidebar:settledOpen",
       "sidebar:statusFilter",
       "sidebar:providerFilter",
+      "sidebar:tagFilter",
       "sidebar:groupBy",
       "coder.sidebar.collapsedGroups",
       "coder.sidebar.settledCollapsed",
@@ -100,6 +101,7 @@ function thread(over: Partial<ThreadInfo> & Pick<ThreadInfo, "id">): ThreadInfo 
     pinnedAt: null,
     snoozedUntil: null,
     snoozedAt: null,
+    tags: [],
     lastVisitedAt:
       over.lastVisitedAt !== undefined ? over.lastVisitedAt : updatedAt,
     prState: null,
@@ -141,6 +143,7 @@ function sidebar(
     }) => Promise<{ ok: boolean; reason?: string }>;
     onSetPinned?: (threadId: string, pinned: boolean) => void;
     onSetSnoozed?: (threadId: string, until: number | null) => void;
+    onSetTags?: (threadId: string, tags: string[]) => void;
     projectError?: string | null;
     providers?: ProviderInfo[];
     onSetMuted?: (threadId: string, muted: boolean) => void;
@@ -182,6 +185,7 @@ function sidebar(
       onSetArchived={over.onSetArchived}
       onSetPinned={over.onSetPinned}
       onSetSnoozed={over.onSetSnoozed}
+      onSetTags={over.onSetTags}
       onSetMuted={over.onSetMuted}
       onRenameThread={over.onRenameThread}
       onFork={over.onFork}
@@ -2673,6 +2677,114 @@ describe("Sidebar filters (#553)", () => {
     await m.flush();
     assert.equal(calls, afterSearch, "status filter does not re-scan messages");
     assert.deepEqual(cardTitles(m), ["broken"]);
+    m.unmount();
+  });
+});
+
+describe("Sidebar thread tags (#789)", () => {
+  const TAGGED = [
+    thread({
+      id: "tagged-work",
+      title: "tagged work",
+      status: "idle",
+      updatedAt: FRESH + 50,
+      projectId: "p1",
+      tags: ["work"],
+    }),
+    thread({
+      id: "tagged-both",
+      title: "tagged both",
+      status: "idle",
+      updatedAt: FRESH + 40,
+      projectId: "p1",
+      tags: ["work", "bug"],
+    }),
+    thread({
+      id: "plain",
+      title: "plain",
+      status: "idle",
+      updatedAt: FRESH + 30,
+      projectId: "p1",
+    }),
+  ];
+
+  it("renders tag chips on tagged cards only", async () => {
+    const m = await mount(sidebar(TAGGED, { projects: [p1] }));
+    assert.ok(m.query('[data-tag-row="tagged-work"]'));
+    assert.ok(m.query('[data-tag-chip="work"]'));
+    assert.ok(m.query('[data-tag-chip="bug"]'));
+    assert.equal(m.query('[data-tag-row="plain"]'), null);
+    m.unmount();
+  });
+
+  it("menu 'Edit tags' opens the chip editor; Enter adds, × removes", async () => {
+    const calls: { threadId: string; tags: string[] }[] = [];
+    const m = await mount(
+      sidebar(TAGGED, {
+        projects: [p1],
+        onSetTags: (threadId, tags) => {
+          calls.push({ threadId, tags });
+        },
+      }),
+    );
+    await m.click(m.query('[data-more-btn="tagged-both"]'));
+    const menu = portalMenu();
+    assert.ok(menu, "… menu must open");
+    const editItem = menu.querySelector("[data-edit-tags]");
+    assert.ok(editItem, "Edit tags item");
+    await m.click(editItem as HTMLElement);
+    await m.flush();
+    const input = m.query('[data-tag-input="tagged-both"]');
+    assert.ok(input, "tag editor opens");
+    await m.type(input, "urgent");
+    await inAct(async () => {
+      input.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "Enter", bubbles: true }),
+      );
+    });
+    await m.flush();
+    assert.deepEqual(calls.at(-1), {
+      threadId: "tagged-both",
+      tags: ["work", "bug", "urgent"],
+    });
+    await m.click(m.query('[data-tag-remove="work"]')!);
+    await m.flush();
+    assert.deepEqual(calls.at(-1), { threadId: "tagged-both", tags: ["bug"] });
+    m.unmount();
+  });
+
+  it("group by tag sections the active list, multi-tag threads appear twice", async () => {
+    await clearSidebarStorage();
+    const m = await mount(sidebar(TAGGED, { projects: [p1] }));
+    await m.click(m.query("[data-group-by-trigger]")!);
+    await m.flush();
+    await m.click(m.query('[data-group-by="tag"]')!);
+    await m.flush();
+    assert.ok(m.query('[data-filter-group="bug"]'));
+    assert.ok(m.query('[data-filter-group="work"]'));
+    assert.ok(m.query('[data-filter-group="untagged"]'));
+    m.unmount();
+  });
+
+  it("tag trigger hides until a tag exists; filter narrows the list", async () => {
+    await clearSidebarStorage();
+    const untagged = await mount(sidebar(THREADS, { projects: [p1] }));
+    assert.equal(
+      untagged.query("[data-tag-filter-trigger]"),
+      null,
+      "no tags anywhere → no tag filter trigger",
+    );
+    untagged.unmount();
+
+    const m = await mount(sidebar(TAGGED, { projects: [p1] }));
+    await m.click(m.query("[data-tag-filter-trigger]")!);
+    await m.flush();
+    await m.click(m.query('[data-tag-filter="work"]')!);
+    await m.flush();
+    const ids = cardTitles(m);
+    assert.ok(ids.includes("tagged-work"));
+    assert.ok(ids.includes("tagged-both"));
+    assert.ok(!ids.includes("plain"));
     m.unmount();
   });
 });

@@ -521,6 +521,12 @@ export interface ThreadInfo {
    */
   notes: string;
   /**
+   * User-defined categorization labels (issue #789). Lowercase, trimmed,
+   * deduped; empty array when unset. Never bumps updatedAt. Purely
+   * user-facing: the agent never reads them. Sidebar groups/filters on these.
+   */
+  tags: string[];
+  /**
    * One-tap estimate of time this thread saved the user (issue #401).
    * Null/absent = never asked or never answered; the transcript card asks
    * once a run completes. Never bumps updatedAt.
@@ -3251,6 +3257,12 @@ export interface CoderApi {
      * agent or the run lifecycle.
      */
     setSnoozed(input: { threadId: string; until: number | null }): Promise<ThreadInfo>;
+    /**
+     * Replace a thread's user-defined tags (issue #789). Tags are trimmed,
+     * lowercased, deduped, capped (see services.setTags). Never bumps
+     * updatedAt; categorization is bookkeeping.
+     */
+    setTags(input: { threadId: string; tags: string[] }): Promise<ThreadInfo>;
     /** Mute/unmute desktop notifications for one thread. Never bumps updatedAt. */
     setMuted(input: { threadId: string; muted: boolean }): Promise<ThreadInfo>;
     /**

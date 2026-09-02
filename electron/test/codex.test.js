@@ -197,6 +197,105 @@ async function main() {
     return;
   }
 
+  // Issue #171: remaining item types + official completed-only file_change
+  // / web_search (current exec --json never emits item.started for those).
+  if (scenario === "dropped-items") {
+    emit({ type: "thread.started", thread_id: "codex-sess-171" });
+    await delay(10);
+    emit({
+      type: "item.started",
+      item: {
+        id: "item-todo-1",
+        type: "todo_list",
+        items: [
+          { text: "Patch foo", completed: false },
+          { text: "Run tests", completed: false },
+        ],
+      },
+    });
+    await delay(10);
+    emit({
+      type: "item.updated",
+      item: {
+        id: "item-todo-1",
+        type: "todo_list",
+        items: [
+          { text: "Patch foo", completed: true },
+          { text: "Run tests", completed: false },
+        ],
+      },
+    });
+    emit({
+      type: "item.started",
+      item: {
+        id: "item-mcp-1",
+        type: "mcp_tool_call",
+        server: "github",
+        tool: "get_issue",
+        arguments: { number: 171 },
+        status: "in_progress",
+      },
+    });
+    await delay(20);
+    emit({
+      type: "item.completed",
+      item: {
+        id: "item-mcp-1",
+        type: "mcp_tool_call",
+        server: "github",
+        tool: "get_issue",
+        arguments: { number: 171 },
+        result: {
+          content: [{ type: "text", text: "open" }],
+          structured_content: null,
+        },
+        status: "completed",
+      },
+    });
+    emit({
+      type: "item.completed",
+      item: {
+        id: "item-edit-1",
+        type: "file_change",
+        changes: [{ path: "src/foo.ts", kind: "update" }],
+        status: "completed",
+      },
+    });
+    emit({
+      type: "item.completed",
+      item: {
+        id: "item-search-1",
+        type: "web_search",
+        query: "codex exec json",
+      },
+    });
+    emit({
+      type: "item.completed",
+      item: {
+        id: "item-todo-1",
+        type: "todo_list",
+        items: [
+          { text: "Patch foo", completed: true },
+          { text: "Run tests", completed: true },
+        ],
+      },
+    });
+    emit({
+      type: "item.completed",
+      item: {
+        id: "item-msg-1",
+        type: "agent_message",
+        text: "Done.",
+      },
+    });
+    emit({
+      type: "turn.completed",
+      usage: { input_tokens: 10, output_tokens: 4 },
+    });
+    process.exit(0);
+    return;
+  }
+
   process.stderr.write("unknown scenario " + scenario + "\\n");
   process.exit(1);
 }
@@ -330,6 +429,32 @@ describe("codex event parse helpers", () => {
       null,
       "command_execution stays on extractCommandItem",
     );
+  });
+
+  it("extracts official completed-only file_change and web_search (#171)", () => {
+    const edit = extractLiveItem({
+      type: "item.completed",
+      item: {
+        id: "f1",
+        type: "file_change",
+        changes: [{ path: "src/foo.ts", kind: "update" }],
+        status: "completed",
+      },
+    });
+    assert.equal(edit.kind, "file_change");
+    assert.equal(edit.phase, "completed");
+    assert.equal(edit.done, true);
+    assert.equal(edit.name, "Edit");
+
+    const search = extractLiveItem({
+      type: "item.completed",
+      item: { id: "s1", type: "web_search", query: "codex exec json" },
+    });
+    assert.equal(search.kind, "web_search");
+    assert.equal(search.phase, "completed");
+    assert.equal(search.done, true);
+    assert.equal(search.name, "WebSearch");
+    assert.equal(search.query, "codex exec json");
   });
 });
 
@@ -716,5 +841,53 @@ describe("runner codex provider", () => {
     assert.equal(tools[0].tool.name, "Edit");
     assert.equal(tools[0].tool.done, true);
     assert.match(tools[0].text, /foo\.ts/);
+  });
+
+  it("maps mcp / web_search / completed-only file_change onto tool cards and todo_list onto plan steps (#171)", async () => {
+    process.env.CODER_FAKE_CODEX_SCENARIO = "dropped-items";
+    const thread = store.getThreads()[0];
+
+    await runner.startRun({ threadId: thread.id, prompt: "do the work" });
+
+    let sawLivePlan = false;
+    await waitFor(() => {
+      const t = store.getThread(thread.id);
+      if ((t.planSteps || []).length > 0 && t.status !== "done") {
+        sawLivePlan = true;
+      }
+      return t.status === "done";
+    });
+    assert.equal(
+      sawLivePlan,
+      true,
+      "todo_list must feed planSteps before the turn settles",
+    );
+
+    // Official TodoItem is { text, completed } only — no in_progress — so
+    // incomplete steps stay "todo" until completed flips them to "done".
+    assert.deepEqual(store.getThread(thread.id).planSteps, [
+      { step: "Patch foo", status: "done" },
+      { step: "Run tests", status: "done" },
+    ]);
+
+    const tools = store.getMessages(thread.id).filter((m) => m.role === "tool");
+    const names = tools.map((m) => m.tool && m.tool.name);
+    assert.deepEqual(names, ["Todo", "github/get_issue", "Edit", "WebSearch"]);
+    assert.equal(
+      tools.length,
+      4,
+      "item.completed of the same ids must not duplicate cards",
+    );
+    assert.ok(tools.every((m) => m.tool && m.tool.done === true));
+
+    const mcp = tools.find((m) => m.tool.name === "github/get_issue");
+    assert.match(mcp.tool.input, /171/);
+    assert.match(String(mcp.tool.output), /open/);
+
+    const edit = tools.find((m) => m.tool.name === "Edit");
+    assert.match(edit.text, /foo\.ts/);
+
+    const search = tools.find((m) => m.tool.name === "WebSearch");
+    assert.match(search.text, /codex exec json/);
   });
 });

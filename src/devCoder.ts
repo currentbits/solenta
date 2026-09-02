@@ -759,6 +759,7 @@ function seedThreads(projects: ProjectInfo[]): ThreadInfo[] {
         card.id === "thread-4"
           ? "Merge after #42 lands - waiting on the API rename."
           : "",
+      tags: [],
       // One seeded verify command so the browser demo shows the #296 gate.
       verifyCommand: card.id === "thread-1" ? "npm test" : null,
       verify: null,
@@ -2029,6 +2030,7 @@ function buildDevCoder(): CoderApi {
       handoffFrom: null,
       muted: false,
       notes: "",
+      tags: [],
       queued: null,
       verifyCommand: null,
       verify: null,
@@ -3790,6 +3792,18 @@ function buildDevCoder(): CoderApi {
           snoozedAt: input.until == null ? null : now(),
         });
       },
+      async setTags(input: { threadId: string; tags: string[] }) {
+        const seen = new Set<string>();
+        const clean: string[] = [];
+        for (const raw of input.tags ?? []) {
+          const tag = String(raw ?? "").trim().toLowerCase().slice(0, 24);
+          if (!tag || seen.has(tag)) continue;
+          seen.add(tag);
+          clean.push(tag);
+          if (clean.length >= 12) break;
+        }
+        return patchThread(input.threadId, { tags: clean });
+      },
       async setMuted(input: { threadId: string; muted: boolean }) {
         return patchThread(input.threadId, { muted: input.muted });
       },
@@ -4847,15 +4861,15 @@ function buildDevCoder(): CoderApi {
       },
     },
     git: {
+      async listBranches() {
+        return { defaultBranch: "main", branches: ["main"] };
+      },
       async status(_projectId) {
         return {
           isRepo: true,
           branch: "main",
           dirty: false,
         };
-      },
-      async listBranches(_input) {
-        return { defaultBranch: "main", branches: ["main"] };
       },
       async push(input) {
         const detail = details.get(input.threadId);

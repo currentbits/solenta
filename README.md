@@ -223,7 +223,11 @@ npm run test:memory      # memory server (needs `npm ci --prefix memory-server`)
 
 `bash scripts/package-app.sh` builds `out/Solenta.app`; `scripts/publish-release.sh
 prod|nightly` builds every platform, notarizes the mac bundle and cuts the
-GitHub release.
+GitHub release. Cut both channels from one throwaway detached worktree at
+`~/code/coder-release` (never the main checkout at `~/code/coder`, never the
+named leftover `~/code/coder-release-build`). After publish, always
+`git worktree remove ~/code/coder-release`. The header of
+`scripts/publish-release.sh` is the operator checklist.
 
 Signing happens in `scripts/codesign-app.sh` (hardened runtime, entitlements in
 `scripts/entitlements.plist`) and reads credentials from the environment only:
