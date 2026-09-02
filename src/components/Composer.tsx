@@ -105,8 +105,14 @@ import {
   getTranscriptViewMode,
   setLastReasoningEffort,
   setTranscriptViewMode,
+  useComposerVimEnabled,
   useTranscriptViewMode,
 } from "../uiPrefs";
+import {
+  INITIAL_VIM,
+  applyComposerVim,
+  type VimState,
+} from "../composerVim";
 import styles from "./Composer.module.css";
 
 interface ComposerProps {
@@ -404,6 +410,13 @@ export const Composer = memo(function Composer({
   onFileDragChange,
 }: ComposerProps) {
   const transcriptView = useTranscriptViewMode();
+  const vimEnabled = useComposerVimEnabled();
+  const [vimMode, setVimMode] = useState(INITIAL_VIM.mode);
+  const vimStateRef = useRef<VimState>(INITIAL_VIM);
+  useEffect(() => {
+    vimStateRef.current = INITIAL_VIM;
+    setVimMode(INITIAL_VIM.mode);
+  }, [threadId, vimEnabled]);
   const [viewOpen, setViewOpen] = useState(false);
   /**
    * Unsent drafts keyed by thread: one Composer instance serves every thread
@@ -1357,7 +1370,32 @@ export const Composer = memo(function Composer({
     if ((e.metaKey || e.ctrlKey || e.shiftKey) && e.key === "Enter") {
       e.preventDefault();
       submitSend();
+      return;
     }
+    if (!vimEnabled) return;
+    const el = e.currentTarget;
+    const result = applyComposerVim(
+      vimStateRef.current,
+      { text: el.value, cursor: el.selectionStart ?? 0 },
+      {
+        key: e.key,
+        ctrlKey: e.ctrlKey,
+        metaKey: e.metaKey,
+        altKey: e.altKey,
+        shiftKey: e.shiftKey,
+      },
+    );
+    vimStateRef.current = result.state;
+    if (result.state.mode !== vimMode) setVimMode(result.state.mode);
+    if (!result.handled) return;
+    e.preventDefault();
+    if (result.buffer.text !== el.value) {
+      writeDraft(result.buffer.text, result.buffer.cursor);
+      refreshMention();
+      refreshCommand();
+      return;
+    }
+    el.setSelectionRange(result.buffer.cursor, result.buffer.cursor);
   };
 
   const dismiss = () => {
@@ -2513,6 +2551,20 @@ export const Composer = memo(function Composer({
                 </ul>
               )}
             </div>
+            )}
+
+            {vimEnabled && (
+              <span
+                className={`${styles.pill}${
+                  vimMode === "normal" ? ` ${styles.pillAccent}` : ""
+                }`}
+                data-vim-mode-chip={vimMode}
+                aria-label={
+                  vimMode === "insert" ? "Vim Insert" : "Vim Normal"
+                }
+              >
+                {vimMode === "insert" ? "Vim Insert" : "Vim Normal"}
+              </span>
             )}
 
             {!ask && (
