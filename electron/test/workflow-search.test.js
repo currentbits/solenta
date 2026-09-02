@@ -1,10 +1,11 @@
 "use strict";
 
 /**
- * Issue #792: workflow Codex phases must get thread.webSearch as
- * `codex exec --search`. startWorkflowRun already has the thread;
- * spawnPhaseAgent fans out to spawnAgentCodex; Codex buildArgs already
- * emits the flag. The spawn path used to drop webSearch entirely.
+ * Issue #792 / #799 / #814: workflow Codex phases must get thread.webSearch
+ * as `-c web_search=live`. Codex 0.152.0 rejects `--search` after `exec`.
+ * startWorkflowRun already has the thread; spawnPhaseAgent fans out to
+ * spawnAgentCodex; Codex buildArgs already emits the flag. The spawn path
+ * used to drop webSearch entirely.
  */
 
 const { describe, it, beforeEach, afterEach } = require("node:test");
@@ -115,7 +116,7 @@ describe("workflow Codex phases get thread.webSearch (#792)", () => {
     }
   });
 
-  it("spawnPhaseAgent emits --search from webSearch", async () => {
+  it("spawnPhaseAgent emits -c web_search=live from webSearch", async () => {
     const projectDir = path.join(tmpDir, "proj");
     fs.mkdirSync(projectDir);
     const prompt = "PROMPT_WF_SEARCH_spawn";
@@ -131,17 +132,22 @@ describe("workflow Codex phases get thread.webSearch (#792)", () => {
 
     const argv = readArgv(argvFile);
     assert.ok(
-      argv.includes("--search"),
-      `spawnPhaseAgent must pass --search into Codex argv, got ${JSON.stringify(argv)}`,
+      !argv.includes("--search"),
+      `spawnPhaseAgent must not pass --search after exec, got ${JSON.stringify(argv)}`,
     );
+    assert.ok(
+      argv.includes("web_search=live"),
+      `spawnPhaseAgent must pass -c web_search=live into Codex argv, got ${JSON.stringify(argv)}`,
+    );
+    assert.equal(argv[argv.indexOf("web_search=live") - 1], "-c");
     assert.equal(
       argv[argv.length - 1],
       prompt,
-      `prompt must stay last after --search: ${JSON.stringify(argv)}`,
+      `prompt must stay last after live search: ${JSON.stringify(argv)}`,
     );
   });
 
-  it("startWorkflowRun wires thread.webSearch into Codex --search", async () => {
+  it("startWorkflowRun wires thread.webSearch into Codex -c web_search=live", async () => {
     const projectDir = path.join(tmpDir, "proj");
     fs.mkdirSync(projectDir);
     git(projectDir, ["init"]);
@@ -195,9 +201,14 @@ describe("workflow Codex phases get thread.webSearch (#792)", () => {
 
       const argv = readArgv(argvFile);
       assert.ok(
-        argv.includes("--search"),
-        `startWorkflowRun must pass --search into Codex argv, got ${JSON.stringify(argv)}`,
+        !argv.includes("--search"),
+        `startWorkflowRun must not pass --search after exec, got ${JSON.stringify(argv)}`,
       );
+      assert.ok(
+        argv.includes("web_search=live"),
+        `startWorkflowRun must pass -c web_search=live into Codex argv, got ${JSON.stringify(argv)}`,
+      );
+      assert.equal(argv[argv.indexOf("web_search=live") - 1], "-c");
     } finally {
       runner.stopAll();
     }
