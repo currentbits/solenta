@@ -1808,6 +1808,19 @@ function createRunner(opts) {
     } catch {
       // never affect the run path
     }
+    // Remote #835 overlays are unused once this CLI exits. Reclaim before
+    // a queued drain re-spawns (that turn re-deploys). Never throw.
+    try {
+      if (!(extras && extras.skip)) {
+        const overlayThread = store.getThread(threadId);
+        if (overlayThread && overlayThread.provider !== "simulate") {
+          const { reclaimRemoteOverlays } = require("./remote-overlay.js");
+          reclaimRemoteOverlays({ store, threadId });
+        }
+      }
+    } catch {
+      // housekeeping
+    }
     // Verify restamps status "working"; skip so we don't start the queued
     // prompt on top of the gate. The verify settle path drains instead.
     // A parked quota-wait is not a terminal — don't drain onto it.
