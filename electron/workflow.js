@@ -388,7 +388,7 @@ function spawnAgentClaude(opts) {
  * @returns {{ handle: { kill: () => void }, done: Promise<object> }}
  */
 function spawnAgentCodex(opts) {
-  const { prompt, cwd, model, binary, providerEntry, onText } = opts;
+  const { prompt, cwd, model, binary, providerEntry, onText, webSearch } = opts;
 
   let text = "";
   let usage = null;
@@ -411,6 +411,7 @@ function spawnAgentCodex(opts) {
     prompt,
     sessionId: null,
     model: model || null,
+    webSearch: webSearch === true,
   });
   const codexMcpArgs = getCodexMcpArgs({ projectPath: cwd });
   if (codexMcpArgs.length > 0) {
@@ -829,6 +830,7 @@ function spawnPhaseAgent(opts) {
     model,
     onText,
     reasoningEffort,
+    webSearch,
     userDataPath,
     threadId,
     projectId,
@@ -876,6 +878,7 @@ function spawnPhaseAgent(opts) {
       binary,
       providerEntry: entry,
       onText,
+      webSearch,
     });
   }
   if (entry.kind === "kimi-stream") {
@@ -1058,6 +1061,7 @@ async function startWorkflowRun(deps) {
   const cwd = thread.worktreePath || project.path;
   const permissionMode = thread.permissionMode || "default";
   const reasoningEffort = thread.reasoningEffort || null;
+  const webSearch = thread.webSearch === true;
   // Overlay lives on this host; ssh/WSL phases inherit the remote kimi home.
   const skipKimiOverlay = Boolean(project.remoteHost || wslTarget(project));
   const seed = hashSeed(threadId, runId);
@@ -1304,6 +1308,7 @@ async function startWorkflowRun(deps) {
       permissionMode,
       model,
       reasoningEffort,
+      webSearch,
       userDataPath,
       threadId,
       projectId: thread.projectId,
