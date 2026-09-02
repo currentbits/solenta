@@ -50,7 +50,7 @@ const WIN32_FILES = [
   "electron/test/kimi-home.test.js",
   "electron/test/grok-home.test.js",
   "electron/test/grok-guardrail-hook.test.js",
-  "electron/test/grok-live-hook.test.js",
+  "electron/test/grok-live-hook.test.js", // skip unless GROK_LIVE=1; never CI (#826)
   "electron/test/cursor-home.test.js",
   "electron/test/memory-record.test.js",
   "electron/test/opencode.test.js",
