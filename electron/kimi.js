@@ -10,6 +10,17 @@ const { harvestToolResult } = require("./tool-images.js");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
+const { posixQuote } = require("./ssh.js");
+const { guardrailsEnabled } = require("./guardrails.js");
+const {
+  injectKimiGuardrailHook,
+  kimiGuardrailHookCommand,
+} = require("./kimi-guardrail-hook.js");
+const {
+  remoteOverlayDest,
+  probeRemoteHome,
+  writeRemoteOverlay,
+} = require("./remote-overlay.js");
 
 const SIGKILL_AFTER_MS = 3000;
 // Max stderr retained per child process (tail), for error reporting.
@@ -154,6 +165,60 @@ function materializeKimiHome(opts) {
   } catch {
     // ignore
   }
+  return dest;
+}
+
+/**
+ * Deploy the PreToolUse overlay onto an ssh/WSL host (#834).
+ * Returns the remote KIMI_CODE_HOME path, or null when skipped.
+ *
+ * Official kimi docs: [[hooks]] event = "PreToolUse" in config.toml,
+ * relocated by KIMI_CODE_HOME. Hook command uses remote `node`.
+ *
+ * @param {object} opts
+ * @param {{ remoteHost?: string, path?: string } | null} opts.project
+ * @param {string} opts.threadId
+ * @returns {string | null}
+ */
+function deployKimiGuardrailOverlay(opts) {
+  const project = opts && opts.project;
+  const threadId = opts && opts.threadId;
+  if (!project || !threadId) return null;
+  if (!guardrailsEnabled()) return null;
+  const dest = remoteOverlayDest(
+    probeRemoteHome(project),
+    threadId,
+    "kimi-homes",
+  );
+  if (!dest) throw new Error("remote KIMI_CODE_HOME dest unusable");
+  const hookDest = `${dest}/kimi-guardrail-hook.js`;
+  const command = kimiGuardrailHookCommand({
+    nodePath: "node",
+    hookPath: hookDest,
+  });
+  const toml = injectKimiGuardrailHook("", command, 15);
+  writeRemoteOverlay(
+    project,
+    dest,
+    {
+      "kimi-guardrail-hook.js": fs.readFileSync(
+        path.join(__dirname, "kimi-guardrail-hook.js"),
+        "utf8",
+      ),
+      "guardrails.js": fs.readFileSync(
+        path.join(__dirname, "guardrails.js"),
+        "utf8",
+      ),
+      "guardrail-hook-core.js": fs.readFileSync(
+        path.join(__dirname, "guardrail-hook-core.js"),
+        "utf8",
+      ),
+      "config.toml": toml,
+    },
+    [
+      `for f in credentials oauth sessions cache plugins updates device_id session_index.jsonl; do src="$HOME/.kimi-code/$f"; dst=${posixQuote(dest)}/"$f"; if [ -e "$src" ] && [ ! -e "$dst" ]; then ln -s "$src" "$dst"; fi; done`,
+    ],
+  );
   return dest;
 }
 
@@ -1116,6 +1181,7 @@ module.exports = {
   flipKimiEffort,
   kimiConfigPath,
   materializeKimiHome,
+  deployKimiGuardrailOverlay,
   reclaimKimiHomes,
   workspaceId,
   extractAssistantText,

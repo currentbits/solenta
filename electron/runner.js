@@ -15,7 +15,7 @@ const {
 const codexParse = require("./codex.js");
 const { runCodex } = codexParse;
 const kimiParse = require("./kimi.js");
-const { runKimi, materializeKimiHome } = kimiParse;
+const { runKimi, materializeKimiHome, deployKimiGuardrailOverlay } = kimiParse;
 const { materializeGrokHome } = require("./grok.js");
 const cursorParse = require("./cursor.js");
 const { runCursor, materializeCursorHome } = cursorParse;
@@ -71,10 +71,11 @@ const {
 const { prepareVerifyRun } = require("./verifyEfficiency.js");
 const { maybeApplyFmTitle } = require("./fm-title.js");
 const { classifyTool, guardrailsEnabled } = require("./guardrails.js");
-const { insertBeforeLast } = require("./guardrail-hook-core.js");
+const { insertBeforeLast, guardrailNotice } = require("./guardrail-hook-core.js");
 const {
   materializeCursorGuardrailPlugin,
   cursorGuardrailPluginDir,
+  deployCursorGuardrailPlugin,
 } = require("./cursor-guardrail.js");
 const { materializeCodexGuardrailHome } = require("./codex-guardrail.js");
 const { materializeOpencodeGuardrailDir } = require("./opencode-guardrail.js");
@@ -597,11 +598,11 @@ function cursorToolCardSummary(name, input, args) {
  * @param {string} localCwd
  * @returns {{ binary: string, args: string[], cwd: string }}
  */
-function resolveSpawn(project, binary, args, localCwd) {
+function resolveSpawn(project, binary, args, localCwd, env) {
   if (!crossesBoundary(project)) {
     return { binary, args, cwd: localCwd };
   }
-  const wrapped = wrapCommand(project, binary, args);
+  const wrapped = wrapCommand(project, binary, args, undefined, env);
   return { binary: wrapped.bin, args: wrapped.args, cwd: process.cwd() };
 }
 
@@ -4907,7 +4908,6 @@ function createRunner(opts) {
       reasoningEffort: thread.reasoningEffort || null,
       webSearch: thread.webSearch === true,
     });
-    const spawn = resolveSpawn(project, binary, args, localCwd);
 
     const entry = {
       kind: "kimi",
@@ -5100,8 +5100,9 @@ function createRunner(opts) {
     completeWorkLogStep(threadId, startingId);
 
     // Isolated KIMI_CODE_HOME so this turn cannot inherit other projects'
-    // MCP servers or workspaces (issue #671). Skipped for ssh/WSL (the
-    // overlay lives on this host) and when userDataPath is unset (tests).
+    // MCP servers or workspaces (issue #671). Local: overlay on this host.
+    // ssh/WSL: deploy PreToolUse onto the far side and pass KIMI_CODE_HOME
+    // through wrapCommand (#834).
     /** @type {NodeJS.ProcessEnv | undefined} */
     let kimiEnv;
     if (userDataPath && !crossesBoundary(project)) {
@@ -5123,7 +5124,15 @@ function createRunner(opts) {
       } catch {
         // Overlay is best-effort; a failed isolate must not block the turn.
       }
+    } else if (crossesBoundary(project) && guardrailsEnabled()) {
+      try {
+        const dest = deployKimiGuardrailOverlay({ project, threadId });
+        if (dest) kimiEnv = { KIMI_CODE_HOME: dest };
+      } catch {
+        // Deploy miss must not kill the run; stream notice remains.
+      }
     }
+    const spawn = resolveSpawn(project, binary, args, localCwd, kimiEnv);
 
     const handle = runKimi({
       binary: spawn.binary,
@@ -5193,6 +5202,12 @@ function createRunner(opts) {
                 toolMeta,
               );
               toolMsgById.set(tool.id, msgId);
+              const notice = guardrailNotice(
+                tool.name,
+                tool.input,
+                thread.worktreePath || project.path,
+              );
+              if (notice) appendMessage(threadId, "event", notice, runId);
               // Post-tool text starts a fresh message below the tool call.
               assistantMsgId = null;
               assistantText = "";
@@ -5862,7 +5877,11 @@ function createRunner(opts) {
       webSearch: thread.webSearch === true,
     });
     // #686: pin Task/Agent workers to the parent model. #813: classifyTool
-    // preToolUse. Prompt stays last. Skip remote/WSL: plugins live here.
+    // preToolUse. Prompt stays last. Local plugins live here. ssh/WSL:
+    // deploy the classifyTool plugin onto the far side and pass
+    // --plugin-dir through wrap (#834). Pin-task-parent stays local.
+    /** @type {Record<string, string> | undefined} */
+    let cursorWrapEnv;
     if (!crossesBoundary(project) && args.length > 0) {
       try {
         const pluginDirs = [
@@ -5882,6 +5901,18 @@ function createRunner(opts) {
         insertBeforeLast(args, extras);
       } catch {
         // Fail-open: a plugin write error must not block the Cursor turn.
+      }
+    } else if (crossesBoundary(project) && args.length > 0 && guardrailsEnabled()) {
+      try {
+        const dest = deployCursorGuardrailPlugin({ project, threadId });
+        if (dest) {
+          insertBeforeLast(args, ["--plugin-dir", dest]);
+          cursorWrapEnv = {
+            SOLENTA_WORKTREE: project.remotePath || localCwd,
+          };
+        }
+      } catch {
+        // Deploy miss must not kill the run; stream notice remains.
       }
     }
     // Isolated HOME so this turn receives bound Solenta MCP without
@@ -5927,7 +5958,7 @@ function createRunner(opts) {
         // not kill the run.
       }
     }
-    const spawn = resolveSpawn(project, binary, args, localCwd);
+    const spawn = resolveSpawn(project, binary, args, localCwd, cursorWrapEnv);
 
     const entry = {
       kind: "cursor",
@@ -6144,6 +6175,12 @@ function createRunner(opts) {
               toolMeta,
             );
             toolMsgById.set(tool.id, msgId);
+            const notice = guardrailNotice(
+              tool.name,
+              args || tool.input,
+              thread.worktreePath || project.path,
+            );
+            if (notice) appendMessage(threadId, "event", notice, runId);
             noteCursorSubagent(threadId, tool, args, "running");
             // Post-tool text starts a fresh message below the tool call.
             assistantMsgId = null;
