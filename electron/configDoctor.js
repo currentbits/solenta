@@ -685,7 +685,7 @@ function selectSourceEntries(entries) {
 function clipBody(text, max) {
   const s = String(text || "").trim();
   if (s.length <= max) return s;
-  return `${s.slice(0, max).trimEnd()}\n…`;
+  return `${s.slice(0, max).trimEnd()}\n… (truncated)`;
 }
 
 /**
@@ -790,10 +790,12 @@ function renderGeneratedMarkdown(input) {
     lines.push(`## ${heading}`, "");
     for (const row of rows) {
       const title = String(row.title || "").trim() || "(untitled)";
-      // Strategies are whole rules: a mid-clause clip is worse than absent.
+      // Standing rules stay whole: a mid-clause clip is worse than absent.
       const rawBody = String(row.body || row.excerpt || "");
       const body =
-        row.type === "strategy" ? rawBody.trim() : clipBody(rawBody, ENTRY_BODY_CAP);
+        row.type === "strategy" || row.type === "convention"
+          ? rawBody.trim()
+          : clipBody(rawBody, ENTRY_BODY_CAP);
       lines.push(`### ${title}`, "");
       if (body) {
         lines.push(body, "");

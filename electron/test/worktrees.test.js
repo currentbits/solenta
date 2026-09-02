@@ -666,23 +666,27 @@ describe("worktrees", () => {
     assert.match(git(repo, ["log", "main", "-1", "--oneline"]), /Merge worktree/i);
   });
 
-  it("mergeWorktree refuses when the worktree holding main is behind origin/main (#770)", async () => {
-    const setup = setupWorktree({
-      store,
-      threadId: thread.id,
-      worktreeBase,
-      broadcast: () => {},
-    });
-    fs.writeFileSync(path.join(setup.worktreePath, "unique-770.txt"), "wt\n");
-
+  /**
+   * #791 fixture: origin/main gains one commit the local main lacks. Returns
+   * the dir that holds `main` checked out (the project checkout sits on a
+   * feature branch, like the nightly/release worktree did in #770).
+   * @param {{ originFile?: string, originContent?: string }} [opts]
+   */
+  function mainBehindOrigin(opts = {}) {
+    const originFile = opts.originFile ?? "stale.txt";
+    const originContent = opts.originContent ?? "on origin only\n";
     const bare = path.join(tmpDir, "origin.git");
     git(tmpDir, ["init", "--bare", bare]);
     git(repo, ["remote", "add", "origin", bare]);
     git(repo, ["push", "-u", "origin", "main"]);
-    git(repo, ["symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main"]);
+    git(repo, [
+      "symbolic-ref",
+      "refs/remotes/origin/HEAD",
+      "refs/remotes/origin/main",
+    ]);
 
-    fs.writeFileSync(path.join(repo, "stale.txt"), "on origin only\n");
-    git(repo, ["add", "stale.txt"]);
+    fs.writeFileSync(path.join(repo, originFile), originContent);
+    git(repo, ["add", originFile]);
     git(repo, ["commit", "-m", "origin moves ahead"]);
     git(repo, ["push", "origin", "main"]);
     git(repo, ["reset", "--hard", "HEAD~1"]);
@@ -691,6 +695,131 @@ describe("worktrees", () => {
     const nightly = path.join(tmpDir, "nightly");
     git(repo, ["worktree", "add", nightly, "main"]);
     assert.equal(git(nightly, ["branch", "--show-current"]), "main");
+    return nightly;
+  }
+
+  it("mergeWorktree fast-forwards a behind-only main instead of refusing (#791)", async () => {
+    const setup = setupWorktree({
+      store,
+      threadId: thread.id,
+      worktreeBase,
+      broadcast: () => {},
+    });
+    fs.writeFileSync(path.join(setup.worktreePath, "unique-791.txt"), "wt\n");
+    const nightly = mainBehindOrigin();
+
+    mergeWorktree({
+      store,
+      threadId: thread.id,
+      broadcast: () => {},
+    });
+
+    assert.ok(fs.existsSync(path.join(nightly, "stale.txt")), "origin work");
+    assert.ok(
+      fs.existsSync(path.join(nightly, "unique-791.txt")),
+      "worktree work landed",
+    );
+    assert.match(
+      git(nightly, ["log", "main", "-1", "--format=%s"]),
+      /Merge worktree/i,
+    );
+    assert.match(
+      git(nightly, ["log", "main", "--format=%s"]),
+      /origin moves ahead/,
+      "fast-forward pulled origin's commit in",
+    );
+  });
+
+  it("mergeWorktree auto-merges a diverged main when the merge is clean (#791)", async () => {
+    const setup = setupWorktree({
+      store,
+      threadId: thread.id,
+      worktreeBase,
+      broadcast: () => {},
+    });
+    fs.writeFileSync(path.join(setup.worktreePath, "unique-791.txt"), "wt\n");
+    const nightly = mainBehindOrigin();
+    // Local main diverges: one commit upstream never saw, disjoint file.
+    fs.writeFileSync(path.join(nightly, "local-only.txt"), "local work\n");
+    git(nightly, ["add", "local-only.txt"]);
+    git(nightly, ["commit", "-m", "local main moves ahead"]);
+
+    mergeWorktree({
+      store,
+      threadId: thread.id,
+      broadcast: () => {},
+    });
+
+    assert.ok(fs.existsSync(path.join(nightly, "stale.txt")), "origin work");
+    assert.ok(
+      fs.existsSync(path.join(nightly, "local-only.txt")),
+      "local-only commit survives the sync",
+    );
+    assert.ok(
+      fs.existsSync(path.join(nightly, "unique-791.txt")),
+      "worktree work landed",
+    );
+    assert.match(
+      git(nightly, ["log", "main", "--format=%s"]),
+      /Merge remote-tracking branch 'origin\/main'/,
+      "sync merge commit",
+    );
+    assert.match(
+      git(nightly, ["log", "main", "-1", "--format=%s"]),
+      /Merge worktree/i,
+    );
+  });
+
+  it("mergeWorktree still refuses a diverged main when the merge would conflict (#791)", async () => {
+    const setup = setupWorktree({
+      store,
+      threadId: thread.id,
+      worktreeBase,
+      broadcast: () => {},
+    });
+    fs.writeFileSync(path.join(setup.worktreePath, "unique-791.txt"), "wt\n");
+    const nightly = mainBehindOrigin({
+      originFile: "README.md",
+      originContent: "origin rewrote it\n",
+    });
+    fs.writeFileSync(path.join(nightly, "README.md"), "local rewrote it\n");
+    git(nightly, ["add", "README.md"]);
+    git(nightly, ["commit", "-m", "local main moves ahead"]);
+    const mainHead = git(nightly, ["rev-parse", "main"]);
+
+    assert.throws(
+      () =>
+        mergeWorktree({
+          store,
+          threadId: thread.id,
+          broadcast: () => {},
+        }),
+      /behind origin\/main.*reset --hard/s,
+    );
+    assert.ok(fs.existsSync(setup.worktreePath), "worktree stays on refuse");
+    assert.equal(
+      git(nightly, ["rev-parse", "main"]),
+      mainHead,
+      "failed sync leaves main put",
+    );
+    assert.equal(
+      git(nightly, ["status", "--porcelain", "-uno"]),
+      "",
+      "failed sync leaves no merge state behind",
+    );
+  });
+
+  it("mergeWorktree refuses to sync a dirty checkout holding main (#791)", async () => {
+    const setup = setupWorktree({
+      store,
+      threadId: thread.id,
+      worktreeBase,
+      broadcast: () => {},
+    });
+    fs.writeFileSync(path.join(setup.worktreePath, "unique-791.txt"), "wt\n");
+    const nightly = mainBehindOrigin();
+    fs.writeFileSync(path.join(nightly, "README.md"), "uncommitted edit\n");
+    const mainHead = git(nightly, ["rev-parse", "main"]);
 
     assert.throws(
       () =>
@@ -702,9 +831,11 @@ describe("worktrees", () => {
       /behind origin\/main/i,
     );
     assert.ok(fs.existsSync(setup.worktreePath), "worktree stays on refuse");
+    assert.equal(git(nightly, ["rev-parse", "main"]), mainHead);
     assert.equal(
-      git(nightly, ["log", "main", "-1", "--format=%s"]),
-      "init",
+      fs.readFileSync(path.join(nightly, "README.md"), "utf8"),
+      "uncommitted edit\n",
+      "uncommitted work untouched",
     );
   });
 

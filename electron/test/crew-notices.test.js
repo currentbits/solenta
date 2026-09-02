@@ -152,8 +152,12 @@ describe("crew notices (issue #277)", () => {
       },
       clearIntervalFn: (id) => timers.delete(id),
     });
-    const driveUntil = (pred) => {
+    const driveUntil = async (pred) => {
       for (let i = 0; i < 4000 && !pred(); i++) {
+        // Yield first: startRun awaits (e.g. the bootstrap-note prefetch)
+        // before it registers its tick timer, and a synchronous pump would
+        // starve those continuations so the run never starts.
+        await new Promise((r) => setImmediate(r));
         for (const fn of [...timers.values()]) fn();
       }
       if (!pred()) throw new Error("driveUntil exhausted");
@@ -168,7 +172,7 @@ describe("crew notices (issue #277)", () => {
           line: `[peer from w ("t")] auto ${i + 1}`,
         });
         await Promise.resolve();
-        driveUntil(() => store.getThread(thread.id).status === "done");
+        await driveUntil(() => store.getThread(thread.id).status === "done");
         assert.equal(
           store.getThread(thread.id).status,
           "done",
@@ -190,7 +194,7 @@ describe("crew notices (issue #277)", () => {
       const usersBefore = userTexts(store, thread.id).length;
 
       await manual.startRun({ threadId: thread.id, prompt: "human turn" });
-      driveUntil(() => store.getThread(thread.id).status === "done");
+      await driveUntil(() => store.getThread(thread.id).status === "done");
       assert.equal(store.getThread(thread.id).status, "done");
 
       manual.deliverNotice({
@@ -198,7 +202,7 @@ describe("crew notices (issue #277)", () => {
         line: `[peer from w ("t")] after human`,
       });
       await Promise.resolve();
-      driveUntil(() =>
+      await driveUntil(() =>
         userTexts(store, thread.id).some((t) => t.includes("after human")),
       );
       assert.ok(

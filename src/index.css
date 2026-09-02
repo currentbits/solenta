@@ -5,8 +5,8 @@
   --panel: #10151f;
   --card: #171d29;
   --card-hover: #1d2534;
-  --border: #2a3242;
-  --border-soft: #202838;
+  --border: #232b3b;
+  --border-soft: #1b2230;
   --text: #e8ecf4;
   /* ~8.5:1 on --card (AAA at ≤12px). Was #8b95a8 ~5.6:1. */
   --text-muted: #b0b8c6;
@@ -76,9 +76,9 @@
   --bg: #f3f5f8;
   --bg-elevated: #ffffff;
   --panel: #ffffff;
-  --card: #ffffff;
+  --card: #fafbfd;
   --card-hover: #ebeef3;
-  --border: #cfd6e1;
+  --border: #dde2ea;
   --border-soft: #e2e7ee;
   --text: #12161e;
   /* ~7.5:1 on --card (AAA at ≤12px). */

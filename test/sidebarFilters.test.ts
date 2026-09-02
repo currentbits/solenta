@@ -5,16 +5,19 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
+  allTags,
   filterThreads,
   groupByLabel,
   groupThreadsByProject,
   groupThreadsByStatus,
+  groupThreadsByTag,
   parseGroupBy,
   parseProviderFilter,
   parseStatusFilter,
   providerFilterLabel,
   serializeProviderFilter,
   statusFilterLabel,
+  tagFilterLabel,
   threadMatchesFilter,
   threadStatusBucket,
 } from "../src/sidebarFilters.ts";
@@ -57,6 +60,7 @@ function thread(
     lastVisitedAt: updatedAt,
     muted: false,
     notes: "",
+    tags: [],
     prState: null,
     provider: "claude",
     model: null,
@@ -262,6 +266,87 @@ describe("groupThreadsByProject", () => {
       groups.map((g) => g.project?.id),
       ["p1"],
     );
+  });
+});
+
+describe("groupThreadsByTag (#789)", () => {
+  it("puts a multi-tag thread under each tag; untagged last", () => {
+    const groups = groupThreadsByTag([
+      thread({ id: "both", tags: ["work", "bug"] }),
+      thread({ id: "work-only", tags: ["work"] }),
+      thread({ id: "plain", tags: [] }),
+    ]);
+    assert.deepEqual(
+      groups.map((g) => [g.id, g.label, g.threads.map((t) => t.id)]),
+      [
+        ["bug", "bug", ["both"]],
+        ["work", "work", ["both", "work-only"]],
+        ["", "Untagged", ["plain"]],
+      ],
+    );
+  });
+
+  it("omits the Untagged group when every thread is tagged", () => {
+    const groups = groupThreadsByTag([thread({ id: "t", tags: ["x"] })]);
+    assert.deepEqual(
+      groups.map((g) => g.id),
+      ["x"],
+    );
+  });
+
+  it("allTags collects unique tags alphabetically", () => {
+    assert.deepEqual(
+      allTags([
+        thread({ id: "a", tags: ["zeta", "alpha"] }),
+        thread({ id: "b", tags: ["alpha"] }),
+        thread({ id: "c" }),
+      ]),
+      ["alpha", "zeta"],
+    );
+  });
+});
+
+describe("tag filter (#789)", () => {
+  it("matches only threads carrying the tag; null matches all", () => {
+    const tagged = thread({ id: "t", tags: ["work"] });
+    const plain = thread({ id: "p", tags: [] });
+    assert.equal(
+      threadMatchesFilter(tagged, { status: null, providers: [], projectId: null, tag: "work" }, null),
+      true,
+    );
+    assert.equal(
+      threadMatchesFilter(plain, { status: null, providers: [], projectId: null, tag: "work" }, null),
+      false,
+    );
+    assert.equal(
+      threadMatchesFilter(plain, { status: null, providers: [], projectId: null, tag: null }, null),
+      true,
+    );
+  });
+
+  it("filterThreads keeps the open thread even when it lacks the tag", () => {
+    const rows = [
+      thread({ id: "tagged", tags: ["work"] }),
+      thread({ id: "plain", tags: [] }),
+    ];
+    const out = filterThreads(
+      rows,
+      { status: null, providers: [], projectId: null, tag: "work" },
+      { keepIds: ["plain"] },
+    );
+    assert.deepEqual(
+      out.map((t) => t.id),
+      ["tagged", "plain"],
+    );
+  });
+
+  it("tagFilterLabel uses compact copy until a tag is on", () => {
+    assert.equal(tagFilterLabel(null), "Tag");
+    assert.equal(tagFilterLabel("work"), "work");
+  });
+
+  it("parseGroupBy accepts tag", () => {
+    assert.equal(parseGroupBy("tag"), "tag");
   });
 });
 

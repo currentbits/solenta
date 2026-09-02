@@ -646,6 +646,7 @@ function createThread(store, input) {
     snoozedUntil: null,
     snoozedAt: null,
     notes: "",
+    tags: [],
     verifyCommand: null,
     verify: null,
     issueNumber: require("./postmerge.js").normalizeIssueNumber(input.issueNumber),
@@ -1853,6 +1854,41 @@ function setSnoozed(store, input) {
     }
     patch = { snoozedUntil: t, snoozedAt: Date.now() };
   }
+  const updated = store.updateThread(threadId, patch);
+  store.save();
+  return updated ? { ...updated } : { ...thread, ...patch };
+}
+
+/**
+ * Replace a thread's user-defined tags (issue #789). Tags are trimmed,
+ * lowercased, deduped; capped at 12 tags / 24 chars each so the sidebar
+ * chips stay one line. Never bumps updatedAt: categorization is bookkeeping.
+ *
+ * @param {import('./store').Store} store
+ * @param {{ threadId: string, tags: unknown }} input
+ */
+function setTags(store, input) {
+  const { threadId, tags } = input;
+  const thread = store.getThread(threadId);
+  if (!thread) {
+    throw new Error(`Unknown thread: ${threadId}`);
+  }
+  if (!Array.isArray(tags)) {
+    throw new Error(`tags must be an array (got ${JSON.stringify(tags)})`);
+  }
+  const seen = new Set();
+  const clean = [];
+  for (const raw of tags) {
+    const tag = String(raw ?? "")
+      .trim()
+      .toLowerCase()
+      .slice(0, 24);
+    if (!tag || seen.has(tag)) continue;
+    seen.add(tag);
+    clean.push(tag);
+    if (clean.length >= 12) break;
+  }
+  const patch = { tags: clean };
   const updated = store.updateThread(threadId, patch);
   store.save();
   return updated ? { ...updated } : { ...thread, ...patch };
@@ -4968,6 +5004,7 @@ module.exports = {
   setArchived,
   setSettled,
   setPinned,
+  setTags,
   setQueued,
   takeQueued,
   addBtw,

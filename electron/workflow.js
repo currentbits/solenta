@@ -256,6 +256,7 @@ function spawnAgentClaude(opts) {
     binary,
     onText,
     providerEntry,
+    reasoningEffort,
   } = opts;
 
   let text = "";
@@ -282,6 +283,7 @@ function spawnAgentClaude(opts) {
         sessionId: null,
         permissionMode: permissionMode || "default",
         model: model || null,
+        reasoningEffort: reasoningEffort || null,
       })
     : [
         "-p",
@@ -388,7 +390,17 @@ function spawnAgentClaude(opts) {
  * @returns {{ handle: { kill: () => void }, done: Promise<object> }}
  */
 function spawnAgentCodex(opts) {
-  const { prompt, cwd, model, binary, providerEntry, onText, webSearch } = opts;
+  const {
+    prompt,
+    cwd,
+    model,
+    binary,
+    providerEntry,
+    onText,
+    reasoningEffort,
+    webSearch,
+    permissionMode,
+  } = opts;
 
   let text = "";
   let usage = null;
@@ -411,7 +423,9 @@ function spawnAgentCodex(opts) {
     prompt,
     sessionId: null,
     model: model || null,
+    reasoningEffort: reasoningEffort || null,
     webSearch: webSearch === true,
+    permissionMode: permissionMode || "default",
   });
   const codexMcpArgs = getCodexMcpArgs({ projectPath: cwd });
   if (codexMcpArgs.length > 0) {
@@ -622,7 +636,16 @@ function spawnAgentKimi(opts) {
  * @returns {{ handle: { kill: () => void }, done: Promise<object> }}
  */
 function spawnAgentCursor(opts) {
-  const { prompt, cwd, model, binary, providerEntry, onText } = opts;
+  const {
+    prompt,
+    cwd,
+    model,
+    binary,
+    providerEntry,
+    onText,
+    reasoningEffort,
+    permissionMode,
+  } = opts;
 
   let text = "";
   let usage = null;
@@ -647,6 +670,8 @@ function spawnAgentCursor(opts) {
     prompt,
     sessionId: null,
     model: model || null,
+    reasoningEffort: reasoningEffort || null,
+    permissionMode: permissionMode || "default",
   });
 
   const handle = runCursor({
@@ -713,7 +738,16 @@ function spawnAgentCursor(opts) {
  * @returns {{ handle: { kill: () => void }, done: Promise<object> }}
  */
 function spawnAgentOpencode(opts) {
-  const { prompt, cwd, model, binary, providerEntry, onText } = opts;
+  const {
+    prompt,
+    cwd,
+    model,
+    binary,
+    providerEntry,
+    onText,
+    reasoningEffort,
+    permissionMode,
+  } = opts;
 
   let text = "";
   /** @type {string[]} */
@@ -746,6 +780,8 @@ function spawnAgentOpencode(opts) {
     prompt,
     sessionId: null,
     model: model || null,
+    reasoningEffort: reasoningEffort || null,
+    permissionMode: permissionMode || "default",
   });
 
   const handle = runOpencode({
@@ -868,6 +904,7 @@ function spawnPhaseAgent(opts) {
       binary,
       providerEntry: entry,
       onText,
+      reasoningEffort,
     });
   }
   if (entry.kind === "codex-json") {
@@ -878,7 +915,9 @@ function spawnPhaseAgent(opts) {
       binary,
       providerEntry: entry,
       onText,
+      reasoningEffort,
       webSearch,
+      permissionMode,
     });
   }
   if (entry.kind === "kimi-stream") {
@@ -905,6 +944,8 @@ function spawnPhaseAgent(opts) {
       binary,
       providerEntry: entry,
       onText,
+      reasoningEffort,
+      permissionMode,
     });
   }
   if (entry.kind === "cursor-stream") {
@@ -915,6 +956,8 @@ function spawnPhaseAgent(opts) {
       binary,
       providerEntry: entry,
       onText,
+      reasoningEffort,
+      permissionMode,
     });
   }
   // All known providers use structured kinds; plain-text path was removed.

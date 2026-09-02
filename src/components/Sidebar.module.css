@@ -781,6 +781,65 @@
   color: var(--text-dim);
 }
 
+.tagRow,
+.tagEditor {
+  pointer-events: auto;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  margin-top: 1px;
+}
+
+.tagChip {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  font-size: 10px;
+  line-height: 1.4;
+  color: var(--text-muted);
+  background: var(--hover);
+  border-radius: 999px;
+  padding: 0 7px;
+  white-space: nowrap;
+}
+
+.tagChipRemove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 12px;
+  height: 12px;
+  margin-right: -3px;
+  border: none;
+  background: none;
+  color: var(--text-dim);
+  font-size: 11px;
+  line-height: 1;
+  cursor: pointer;
+  border-radius: 50%;
+}
+
+.tagChipRemove:hover {
+  color: var(--text);
+}
+
+.tagInput {
+  pointer-events: auto;
+  min-width: 56px;
+  width: 72px;
+  font-size: 11px;
+  color: var(--text);
+  background: transparent;
+  border: none;
+  outline: none;
+  padding: 1px 2px;
+}
+
+.tagInput::placeholder {
+  color: var(--text-dim);
+}
+
 .cardBranch {
   font-size: 11px;
   color: var(--text-muted);

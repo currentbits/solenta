@@ -181,6 +181,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     setSettled,
     setPinned,
     setSnoozed,
+    setTags,
     setMuted,
     setCrossThreadInbound,
     setQuotaWaitAutoResume,
@@ -487,6 +488,13 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
       void setSnoozed(threadId, until);
     },
     [setSnoozed],
+  );
+
+  const handleSetTags = useCallback(
+    (threadId: string, tags: string[]) => {
+      void setTags(threadId, tags);
+    },
+    [setTags],
   );
 
   const handleSetMuted = useCallback(
@@ -1318,6 +1326,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         onSetSettled={handleSetSettled}
         onSetPinned={handleSetPinned}
         onSetSnoozed={handleSetSnoozed}
+        onSetTags={handleSetTags}
         onSetMuted={handleSetMuted}
         onRenameThread={handleRenameThread}
         onSetArchived={handleRowArchived}

@@ -251,6 +251,44 @@ describe("selectSourceEntries / renderGeneratedMarkdown", () => {
     assert.ok(md.includes(long.trim()), "strategy body must be whole");
   });
 
+  it("does not clip a convention mid-clause", () => {
+    const long = "Standing rule step. ".repeat(80);
+    const md = doctor.renderGeneratedMarkdown({
+      name: "solenta",
+      entries: [
+        {
+          id: "c-long",
+          type: "convention",
+          title: "Whole standing rule",
+          body: long,
+          importance: 5,
+        },
+      ],
+    });
+    assert.match(md, /Standing rule step/);
+    assert.doesNotMatch(md, /\n…(?: \(truncated\))?\s*$/m);
+    assert.ok(md.includes(long.trim()), "convention body must be whole");
+  });
+
+  it("marks a clipped knowledge body as truncated", () => {
+    const long = "Fact about the system. ".repeat(80);
+    const md = doctor.renderGeneratedMarkdown({
+      name: "solenta",
+      entries: [
+        {
+          id: "k-long",
+          type: "knowledge",
+          title: "Long gotcha",
+          body: long,
+          importance: 4,
+        },
+      ],
+    });
+    assert.match(md, /Fact about the system/);
+    assert.match(md, /\(truncated\)/);
+    assert.ok(!md.includes(long.trim()), "knowledge body stays capped");
+  });
+
   it("hashes included entry ids so lint can see staleness", () => {
     const md = doctor.renderGeneratedMarkdown({
       name: "solenta",

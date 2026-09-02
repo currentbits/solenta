@@ -1,7 +1,7 @@
 "use strict";
 
 /**
- * Issue #792 / #799 / #814: workflow Codex phases must get thread.webSearch
+ * Issue #792 / #799 / #811 / #814: workflow Codex phases must get thread.webSearch
  * as `-c web_search=live`. Codex 0.152.0 rejects `--search` after `exec`.
  * startWorkflowRun already has the thread; spawnPhaseAgent fans out to
  * spawnAgentCodex; Codex buildArgs already emits the flag. The spawn path

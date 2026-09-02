@@ -97,6 +97,7 @@ import {
   collapseTimeline,
   liveGroupLabel,
   summarizeToolGroup,
+  type DisplayEntry,
   type ToolGroup,
 } from "../toolGroups";
 import { RunArtifacts } from "./RunArtifacts";
@@ -4498,15 +4499,32 @@ export const ThreadView = memo(function ThreadView({
   const transcriptView = useTranscriptViewMode();
   const verboseTools = transcriptView === "verbose";
   const summaryMode = transcriptView === "summary";
-  const displayTimeline = useMemo(
-    () =>
-      summaryMode
-        ? visibleTimeline
-        : collapseTimeline(visibleTimeline, {
-            working: detail?.thread.status === "working",
-          }),
-    [visibleTimeline, detail?.thread.status, summaryMode],
-  );
+  const isWorking = detail?.thread.status === "working";
+  const displayTimeline = useMemo(() => {
+    if (summaryMode) {
+      // Focus folds replace tool groups: keep groupable messages as plain
+      // message entries so the per-turn fold in the message branch can hide
+      // and re-expand them (#461). collapseTimeline would swallow them into
+      // ToolGroupRow, which has no focus handling.
+      const entries: DisplayEntry[] = [];
+      for (const entry of visibleTimeline) {
+        if (entry.kind === "worklog") continue;
+        entries.push(
+          entry.kind === "message"
+            ? {
+                kind: "message",
+                message: entry.message,
+                timestamp: entry.timestamp,
+              }
+            : entry,
+        );
+      }
+      return entries;
+    }
+    return collapseTimeline(visibleTimeline, {
+      working: detail?.thread.status === "working",
+    });
+  }, [visibleTimeline, detail?.thread.status, summaryMode]);
 
   /**
    * Stream-in gating: an entry plays its entrance animation only when it is
@@ -4551,7 +4569,6 @@ export const ThreadView = memo(function ThreadView({
 
   /** Run duration per runId, for assistant-message meta footers. Opt-in. */
   const showRunDuration = useRunDurationEnabled();
-  const isWorking = detail?.thread.status === "working";
   const focusTurns = useMemo(() => {
     if (!detail || !summaryMode) return [];
     return mapFocusTurns(detail.messages, {
