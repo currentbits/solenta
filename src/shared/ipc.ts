@@ -1389,6 +1389,8 @@ export interface AgentView {
   model: string;
   status: AgentStatus;
   tokensUsed: number;
+  /** CLI session for this workflow slot only; never thread.sessionId. */
+  sessionId?: string | null;
 }
 
 export interface PhaseView {

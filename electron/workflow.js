@@ -4,7 +4,12 @@ const { randomUUID } = require("node:crypto");
 const os = require("node:os");
 const path = require("node:path");
 const { runClaude } = require("./claude.js");
-const { runCodex, extractAgentMessageText, extractUsage } = require("./codex.js");
+const {
+  runCodex,
+  extractAgentMessageText,
+  extractUsage,
+  extractSessionId: codexExtractSessionId,
+} = require("./codex.js");
 const {
   runKimi,
   materializeKimiHome,
@@ -15,6 +20,7 @@ const {
   runCursor,
   extractAssistantText: cursorExtractText,
   extractUsage: cursorExtractUsage,
+  extractSessionId: cursorExtractSessionId,
 } = require("./cursor.js");
 const {
   getProvider,
@@ -85,6 +91,29 @@ function capitalize(name) {
 function truncate(s, max) {
   const str = String(s ?? "");
   return str.length <= max ? str : str.slice(0, max);
+}
+
+/**
+ * Real CLI session id for a workflow agent slot. The leftover "cwd"
+ * sentinel is not a session (issue #220). Empty / non-strings are not.
+ * @param {unknown} id
+ * @returns {string | null}
+ */
+function realSessionId(id) {
+  return typeof id === "string" && id && id !== "cwd" ? id : null;
+}
+
+/**
+ * Claude / Grok stream session id (system init, then result).
+ * @param {object} ev
+ * @returns {string | null}
+ */
+function claudeStreamSessionId(ev) {
+  if (!ev || typeof ev !== "object") return null;
+  if (typeof ev.session_id !== "string" || !ev.session_id) return null;
+  if (ev.type === "system" && ev.subtype === "init") return ev.session_id;
+  if (ev.type === "result") return ev.session_id;
+  return null;
 }
 
 /**
@@ -189,6 +218,7 @@ function toPublicView(view) {
         model: agent.model,
         status: agent.status,
         tokensUsed: agent.tokensUsed,
+        sessionId: agent.sessionId || null,
       })),
     })),
     settled: view.settled,
@@ -306,10 +336,8 @@ function buildAgentPrompt(opts) {
 }
 
 /**
- * Spawn a one-shot claude-stream agent (no --resume).
- * Reuses the claude NDJSON parser for any provider with kind "claude-stream"
- * (claude, grok, ...). Arg builders stay per-provider; --mcp-config is
- * injected only for the claude provider id.
+ * Spawn a claude-stream agent (claude, grok, ...). Resume is `--resume <id>`
+ * when this slot already has a real session id.
  * @param {object} opts
  * @returns {{ handle: { kill: () => void }, done: Promise<object> }}
  */
@@ -323,12 +351,15 @@ function spawnAgentClaude(opts) {
     onText,
     providerEntry,
     reasoningEffort,
+    sessionId,
   } = opts;
 
   let text = "";
   let resultText = "";
   let usage = null;
   let finished = false;
+  /** @type {string | null} */
+  let capturedSessionId = null;
 
   /** @type {(value: object) => void} */
   let resolveDone;
@@ -339,14 +370,15 @@ function spawnAgentClaude(opts) {
   function finish(payload) {
     if (finished) return;
     finished = true;
-    resolveDone(payload);
+    resolveDone({ ...payload, sessionId: capturedSessionId });
   }
 
   const entry = providerEntry || getProvider("claude");
+  const resumeId = realSessionId(sessionId);
   const baseArgs = entry
     ? entry.buildArgs({
         prompt,
-        sessionId: null,
+        sessionId: resumeId,
         permissionMode: permissionMode || "default",
         model: model || null,
         reasoningEffort: reasoningEffort || null,
@@ -379,13 +411,15 @@ function spawnAgentClaude(opts) {
     prompt,
     cwd,
     permissionMode: permissionMode || "default",
-    sessionId: null,
+    sessionId: resumeId,
     model: model || null,
     interactive,
     envExtra:
       entry && entry.id === "grok" ? mergeGrokSpawnEnv(undefined) : undefined,
     onEvent: (ev) => {
       if (!ev || typeof ev !== "object") return;
+      const sid = realSessionId(claudeStreamSessionId(ev));
+      if (sid) capturedSessionId = sid;
       if (ev.type === "control_request") {
         // Workflow agents have no UI to answer prompts; auto-deny keeps the
         // pre-interactive headless behavior instead of hanging the agent.
@@ -451,7 +485,8 @@ function spawnAgentClaude(opts) {
 }
 
 /**
- * Spawn a one-shot Codex JSONL agent (no resume).
+ * Spawn a Codex JSONL agent. Resume is `exec resume <id>` when this slot
+ * already has a real session id (no `--sandbox` on resume, #795).
  * @param {object} opts
  * @returns {{ handle: { kill: () => void }, done: Promise<object> }}
  */
@@ -466,6 +501,7 @@ function spawnAgentCodex(opts) {
     reasoningEffort,
     webSearch,
     permissionMode,
+    sessionId,
     userDataPath,
     threadId,
     skipOverlay,
@@ -474,6 +510,8 @@ function spawnAgentCodex(opts) {
   let text = "";
   let usage = null;
   let finished = false;
+  /** @type {string | null} */
+  let capturedSessionId = null;
 
   /** @type {(value: object) => void} */
   let resolveDone;
@@ -484,13 +522,13 @@ function spawnAgentCodex(opts) {
   function finish(payload) {
     if (finished) return;
     finished = true;
-    resolveDone(payload);
+    resolveDone({ ...payload, sessionId: capturedSessionId });
   }
 
   const entry = providerEntry || getProvider("codex");
   const args = entry.buildArgs({
     prompt,
-    sessionId: null,
+    sessionId: realSessionId(sessionId),
     model: model || null,
     reasoningEffort: reasoningEffort || null,
     webSearch: webSearch === true,
@@ -527,6 +565,8 @@ function spawnAgentCodex(opts) {
     envExtra,
     onEvent: (ev) => {
       if (!ev || typeof ev !== "object") return;
+      const sid = realSessionId(codexExtractSessionId(ev));
+      if (sid) capturedSessionId = sid;
       const agentText = extractAgentMessageText(ev);
       if (agentText != null) {
         const type = String(ev.type || "");
@@ -719,7 +759,8 @@ function spawnAgentKimi(opts) {
 }
 
 /**
- * Spawn a one-shot Cursor stream-json agent (no resume).
+ * Spawn a Cursor stream-json agent. Resume is `--resume <id>` when this
+ * slot already has a real session id.
  * @param {object} opts
  * @returns {{ handle: { kill: () => void }, done: Promise<object> }}
  */
@@ -733,6 +774,7 @@ function spawnAgentCursor(opts) {
     onText,
     reasoningEffort,
     permissionMode,
+    sessionId,
     userDataPath,
     skipOverlay,
   } = opts;
@@ -742,6 +784,8 @@ function spawnAgentCursor(opts) {
   let finished = false;
   let fullStdout = "";
   let gotJson = false;
+  /** @type {string | null} */
+  let capturedSessionId = null;
 
   /** @type {(value: object) => void} */
   let resolveDone;
@@ -752,13 +796,13 @@ function spawnAgentCursor(opts) {
   function finish(payload) {
     if (finished) return;
     finished = true;
-    resolveDone(payload);
+    resolveDone({ ...payload, sessionId: capturedSessionId });
   }
 
   const entry = providerEntry || getProvider("cursor");
   const args = entry.buildArgs({
     prompt,
-    sessionId: null,
+    sessionId: realSessionId(sessionId),
     model: model || null,
     reasoningEffort: reasoningEffort || null,
     permissionMode: permissionMode || "default",
@@ -793,6 +837,8 @@ function spawnAgentCursor(opts) {
     onEvent: (ev) => {
       gotJson = true;
       if (!ev || typeof ev !== "object") return;
+      const sid = realSessionId(cursorExtractSessionId(ev));
+      if (sid) capturedSessionId = sid;
       const chunk = cursorExtractText(ev);
       if (chunk != null) {
         if (ev.timestamp_ms != null) {
@@ -845,7 +891,8 @@ function spawnAgentCursor(opts) {
 }
 
 /**
- * Spawn a one-shot OpenCode NDJSON agent (no resume).
+ * Spawn an OpenCode NDJSON agent. Resume is `-s <id>` when this slot
+ * already has a real session id.
  * @param {object} opts
  * @returns {{ handle: { kill: () => void }, done: Promise<object> }}
  */
@@ -859,6 +906,7 @@ function spawnAgentOpencode(opts) {
     onText,
     reasoningEffort,
     permissionMode,
+    sessionId,
     userDataPath,
     skipOverlay,
   } = opts;
@@ -872,6 +920,8 @@ function spawnAgentOpencode(opts) {
   let finished = false;
   let fullStdout = "";
   let gotJson = false;
+  /** @type {string | null} */
+  let capturedSessionId = null;
 
   /** @type {(value: object) => void} */
   let resolveDone;
@@ -882,7 +932,7 @@ function spawnAgentOpencode(opts) {
   function finish(payload) {
     if (finished) return;
     finished = true;
-    resolveDone(payload);
+    resolveDone({ ...payload, sessionId: capturedSessionId });
   }
 
   function rebuild() {
@@ -892,7 +942,7 @@ function spawnAgentOpencode(opts) {
   const entry = providerEntry || getProvider("opencode");
   const args = entry.buildArgs({
     prompt,
-    sessionId: null,
+    sessionId: realSessionId(sessionId),
     model: model || null,
     reasoningEffort: reasoningEffort || null,
     permissionMode: permissionMode || "default",
@@ -941,8 +991,8 @@ function spawnAgentOpencode(opts) {
         text = rebuild();
         if (typeof onText === "function") onText(text);
       }
-      // sessionID captured but workflow one-shots do not resume
-      opencodeExtractSessionId(ev);
+      const sid = realSessionId(opencodeExtractSessionId(ev));
+      if (sid) capturedSessionId = sid;
       opencodeExtractTool(ev);
     },
     onExit: ({ code, stderr, fullStdout: stdout, gotJson: parsed }) => {
@@ -1002,6 +1052,7 @@ function spawnPhaseAgent(opts) {
     projectId,
     overlayKey,
     skipOverlay,
+    sessionId,
   } = opts;
 
   const entry = getProvider(providerId);
@@ -1035,6 +1086,7 @@ function spawnPhaseAgent(opts) {
       providerEntry: entry,
       onText,
       reasoningEffort,
+      sessionId,
     });
   }
   if (entry.kind === "codex-json") {
@@ -1048,6 +1100,7 @@ function spawnPhaseAgent(opts) {
       reasoningEffort,
       webSearch,
       permissionMode,
+      sessionId,
       userDataPath,
       threadId,
       skipOverlay,
@@ -1079,6 +1132,7 @@ function spawnPhaseAgent(opts) {
       onText,
       reasoningEffort,
       permissionMode,
+      sessionId,
       userDataPath,
       skipOverlay,
     });
@@ -1093,6 +1147,7 @@ function spawnPhaseAgent(opts) {
       onText,
       reasoningEffort,
       permissionMode,
+      sessionId,
       userDataPath,
       skipOverlay,
     });
@@ -1547,6 +1602,7 @@ async function startWorkflowRun(deps) {
         projectId: thread.projectId,
         overlayKey: agentId,
         skipOverlay: skipKimiOverlay,
+        sessionId: agent.sessionId || null,
         onText: (t) => {
           if (!guard()) return;
           charCount = t.length;
@@ -1557,6 +1613,10 @@ async function startWorkflowRun(deps) {
       liveHandles.set(agentId, handle);
       const slotResult = await done;
       liveHandles.delete(agentId);
+      // Persist on this workflow agent only. Never thread.sessionId.
+      // A hint-less turn keeps the prior real id. Never "cwd" (#220).
+      const captured = realSessionId(slotResult && slotResult.sessionId);
+      if (captured) agent.sessionId = captured;
       return slotResult;
     }
 
@@ -1584,7 +1644,7 @@ async function startWorkflowRun(deps) {
       return null;
     }
 
-    // One bounded retry on the same slot / overlay (#815 / #819).
+    // One bounded retry on the same slot / overlay / sessionId (#815 / #819).
     // The work-log line is in-progress for the second spawn only (#823).
     if (result && !result.ok) {
       absorbUsage(result);
