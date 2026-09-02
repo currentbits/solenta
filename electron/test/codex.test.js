@@ -582,7 +582,16 @@ describe("runner codex provider", () => {
     assert.ok(execIdx >= 0, `expected exec in ${JSON.stringify(argv)}`);
     assert.ok(argv.includes("--json"));
     assert.ok(argv.includes("--skip-git-repo-check"));
-    assert.equal(argv[argv.length - 1], "codex please");
+    const last = argv[argv.length - 1];
+    assert.equal(
+      typeof last,
+      "string",
+      `runner prompt must stay last: ${JSON.stringify(argv)}`,
+    );
+    assert.ok(
+      last.includes("codex please"),
+      `last argv token must contain the original prompt: ${JSON.stringify(argv)}`,
+    );
     assert.ok(!argv.includes("resume"));
   });
 
@@ -613,7 +622,16 @@ describe("runner codex provider", () => {
       !argv.includes("--sandbox"),
       "codex exec resume rejects --sandbox (issue #795)",
     );
-    assert.equal(argv[argv.length - 1], "second");
+    const last = argv[argv.length - 1];
+    assert.equal(
+      typeof last,
+      "string",
+      `runner prompt must stay last after resume: ${JSON.stringify(argv)}`,
+    );
+    assert.ok(
+      last.includes("second"),
+      `last argv token must contain the original prompt: ${JSON.stringify(argv)}`,
+    );
   });
 
   it("nonzero exit without stream sets failed + stderr", async () => {

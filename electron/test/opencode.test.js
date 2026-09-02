@@ -510,8 +510,17 @@ describe("opencode runner integration", () => {
     assert.ok(argv.includes("run"));
     assert.ok(argv.includes("--format"));
     assert.ok(argv.includes("json"));
-    // Prompt is always the last argv element (flags first).
-    assert.equal(argv[argv.length - 1], "do the thing");
+    // Prompt is always the last argv element (flags first); startRun may wrap it.
+    const last = argv[argv.length - 1];
+    assert.equal(
+      typeof last,
+      "string",
+      `runner prompt must stay last: ${JSON.stringify(argv)}`,
+    );
+    assert.ok(
+      last.includes("do the thing"),
+      `last argv token must contain the original prompt: ${JSON.stringify(argv)}`,
+    );
     assert.ok(!argv.includes("-s"));
   });
 
@@ -537,7 +546,16 @@ describe("opencode runner integration", () => {
     const argv = JSON.parse(fs.readFileSync(argvFile, "utf8"));
     assert.ok(argv.includes("-s"), `expected -s in ${JSON.stringify(argv)}`);
     assert.equal(argv[argv.indexOf("-s") + 1], "ses_opencode_001");
-    assert.equal(argv[argv.length - 1], "turn two");
+    const last = argv[argv.length - 1];
+    assert.equal(
+      typeof last,
+      "string",
+      `runner prompt must stay last after -s: ${JSON.stringify(argv)}`,
+    );
+    assert.ok(
+      last.includes("turn two"),
+      `last argv token must contain the original prompt: ${JSON.stringify(argv)}`,
+    );
   });
 
   it("plain-text fallback when stdout has no JSON lines", async () => {
