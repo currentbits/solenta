@@ -1269,6 +1269,7 @@ async function startWorkflowRun(deps) {
   const webSearch = thread.webSearch === true;
   // Overlay lives on this host; ssh/WSL phases inherit the remote kimi home.
   const skipKimiOverlay = Boolean(project.remoteHost || wslTarget(project));
+
   let view;
   if (resumeFromAgentId) {
     view = existingView;

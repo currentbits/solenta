@@ -1611,6 +1611,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         onCollapse={narrow ? undefined : collapseAgents}
         workflow={visibleDetail?.workflow ?? null}
         thread={visibleDetail?.thread ?? null}
+        onRetryAgent={retryWorkflowAgent}
         usage={visibleDetail?.usage ?? null}
         providers={providers}
         project={project}
