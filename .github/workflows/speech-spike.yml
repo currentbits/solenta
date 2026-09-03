@@ -1,43 +1,31 @@
-# Throwaway native Linux/Windows live-STT spike for #845.
-# Not product CI. Do not treat a merge of this file as a shipping feature.
-# macOS Metal already passed locally; this workflow spends no macos minutes.
+# Throwaway #845 live STT spike on native ubuntu-latest / windows-latest.
+# Not a product gate. Delete after Linux/Windows numbers are recorded.
 name: speech-spike
 
 on:
   push:
-    paths:
-      - ".github/workflows/speech-spike.yml"
-      - "spike/speech/**"
   pull_request:
-    paths:
-      - ".github/workflows/speech-spike.yml"
-      - "spike/speech/**"
   workflow_dispatch:
 
 permissions:
   contents: read
 
-concurrency:
-  group: speech-spike-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
-
 jobs:
-  live-cpu:
-    name: live-cpu (${{ matrix.os }})
+  cpu-live:
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest]
-    env:
-      SPIKE_CACHE: ${{ runner.temp }}/speech-spike
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 22
       - name: Make cache dir
+        env:
+          SPIKE_CACHE: ${{ runner.temp }}/speech-spike
         run: node -e "require('fs').mkdirSync(process.env.SPIKE_CACHE + '/gguf', {recursive:true})"
       - name: Cache GGUF
         uses: actions/cache@v4
@@ -45,4 +33,6 @@ jobs:
           path: ${{ runner.temp }}/speech-spike/gguf/nemotron-speech-streaming-en-0.6b.q8_0.gguf
           key: gguf-d9a01898d2a611c8764e23a1c2f45e70bbd5a425dc4de93692ac951dd603812d
       - name: Live CPU gates
+        env:
+          SPIKE_CACHE: ${{ runner.temp }}/speech-spike
         run: node spike/speech/ci-run.mjs
