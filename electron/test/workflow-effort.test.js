@@ -297,7 +297,7 @@ emit({ type: "assistant", timestamp_ms: 1, message: { content: [{ type: "text", 
       providerId: "opencode",
       prompt: "phase work",
       cwd: projectDir,
-      model: "opencode/hy3-free",
+      model: "opencode/ling-3.0-flash-fin-free",
       reasoningEffort: "high",
     });
     const result = await done;
@@ -365,7 +365,7 @@ emit({ type: "assistant", timestamp_ms: 1, message: { content: [{ type: "text", 
     const argvFile = installOpencode();
     await runOnePhaseWorkflow({
       provider: "opencode",
-      model: "opencode/hy3-free",
+      model: "opencode/ling-3.0-flash-fin-free",
       effort: "high",
     });
     assert.equal(effortAt(readArgv(argvFile), "--variant"), "high");

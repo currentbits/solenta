@@ -488,18 +488,18 @@ const PROVIDERS = [
     binEnv: "CODER_OPENCODE_BIN",
     defaultBin: "opencode",
     supportsResume: true,
-    // Live `opencode models` (v1.17.12, 2026-08-29) free Zen list. Labels
-    // and `limit.context` from `opencode models --verbose`; descriptions
-    // from ~/.cache/opencode/models.json (verbose omits them). Vendors are
-    // the model makers when the description names one; otherwise OpenCode.
-    // Efforts = variant keys ∩ ReasoningEffort; empty variants hide the pill.
-    // Ids are provider/model as required by -m.
+    // Live `opencode models` (v1.17.12, 2026-09-03, after --refresh) free
+    // Zen list. Labels and `limit.context` from `opencode models --verbose`;
+    // descriptions from ~/.cache/opencode/models.json (verbose omits them).
+    // Vendors are the model makers when the description names one; otherwise
+    // OpenCode. Efforts = variant keys ∩ ReasoningEffort; empty variants hide
+    // the pill. Ids are provider/model as required by -m.
     models: [
       "opencode/big-pickle",
-      "opencode/hy3-free",
       "opencode/ling-3.0-flash-fin-free",
       "opencode/mimo-v2.5-free",
       "opencode/muse-spark-1.2-contributor-free",
+      "opencode/muse-spark-1.3-contributor-free",
       "opencode/nemotron-3-ultra-free",
       "opencode/nemotron-3.5-lightning-free",
     ],
@@ -512,16 +512,6 @@ const PROVIDERS = [
         vendor: "OpenCode",
         contextTokens: 200000,
         efforts: [],
-      },
-      {
-        id: "opencode/hy3-free",
-        label: "Hy3 Free",
-        description:
-          "Tencent Hy reasoning model for coding, instruction following, and agent tasks",
-        vendor: "Tencent",
-        recommended: true,
-        contextTokens: 190000,
-        efforts: OPENCODE_LMH.slice(),
       },
       {
         id: "opencode/ling-3.0-flash-fin-free",
@@ -546,6 +536,17 @@ const PROVIDERS = [
         description:
           "Muse Spark 1.2 is a coding-focused update to Muse Spark 1.1 with improvements in code generation, complex debugging, codebase understanding, and end-to-end developer workflows.",
         vendor: "OpenCode",
+        contextTokens: 1048576,
+        // Verbose variants also list `none` (not in ReasoningEffort).
+        efforts: OPENCODE_LMHX.slice(),
+      },
+      {
+        id: "opencode/muse-spark-1.3-contributor-free",
+        label: "Muse Spark 1.3 Free",
+        description:
+          "Muse Spark 1.3 is a multimodal reasoning model from Meta for coding and agentic workflows.",
+        vendor: "Meta",
+        recommended: true,
         contextTokens: 1048576,
         // Verbose variants also list `none` (not in ReasoningEffort).
         efforts: OPENCODE_LMHX.slice(),
