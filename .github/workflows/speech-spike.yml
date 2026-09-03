@@ -3,6 +3,7 @@
 name: speech-spike
 
 on:
+  push:
   pull_request:
   workflow_dispatch:
 
