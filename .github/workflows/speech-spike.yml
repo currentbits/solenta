@@ -4,6 +4,10 @@
 name: speech-spike
 
 on:
+  push:
+    paths:
+      - ".github/workflows/speech-spike.yml"
+      - "spike/speech/**"
   pull_request:
     paths:
       - ".github/workflows/speech-spike.yml"
@@ -12,6 +16,10 @@ on:
 
 permissions:
   contents: read
+
+concurrency:
+  group: speech-spike-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   live-cpu:
@@ -29,15 +37,12 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+      - name: Make cache dir
+        run: node -e "require('fs').mkdirSync(process.env.SPIKE_CACHE + '/gguf', {recursive:true})"
       - name: Cache GGUF
         uses: actions/cache@v4
         with:
-          path: ${{ runner.temp }}/speech-spike/gguf
+          path: ${{ runner.temp }}/speech-spike/gguf/nemotron-speech-streaming-en-0.6b.q8_0.gguf
           key: gguf-d9a01898d2a611c8764e23a1c2f45e70bbd5a425dc4de93692ac951dd603812d
-      - name: Cache runtime archive
-        uses: actions/cache@v4
-        with:
-          path: ${{ runner.temp }}/speech-spike/runtime
-          key: nemo-speech-0.1.0-${{ runner.os }}-cpu-linux-0f74131d-win-5e4ea810
       - name: Live CPU gates
         run: node spike/speech/ci-run.mjs
