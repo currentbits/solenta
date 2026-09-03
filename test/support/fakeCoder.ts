@@ -247,6 +247,8 @@ export interface FakeOptions {
    * `attached` is a deterministic owned session.
    */
   simulator?: "unsupported" | "attached";
+  /** Override speech.status (default: missing / no model). */
+  speechStatus?: SpeechStatus;
 }
 
 /** Idle terminal session for the harness; no shell exists under jsdom. */
@@ -2634,11 +2636,15 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
     },
     speech: {
       status: () =>
-        rec("speech.status", [], {
-          state: "missing" as const,
-          runtimeReady: false,
-          modelReady: false,
-        }),
+        rec(
+          "speech.status",
+          [],
+          opts.speechStatus ?? {
+            state: "missing" as const,
+            runtimeReady: false,
+            modelReady: false,
+          },
+        ),
       download: () => rec("speech.download", [], undefined),
       start: () => rec("speech.start", [], { sessionId: "speech-session" }),
       write: (input: unknown) => rec("speech.write", [input], undefined),

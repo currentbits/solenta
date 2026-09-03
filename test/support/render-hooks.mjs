@@ -27,6 +27,13 @@ export async function resolve(specifier, context, next) {
   if (specifier.endsWith(".css")) {
     return { url: CSS_STUB, shortCircuit: true };
   }
+  if (specifier.includes("?url")) {
+    const dummy = JSON.stringify(specifier.replace(/\?url$/, ""));
+    return {
+      url: `data:text/javascript,export default ${dummy}`,
+      shortCircuit: true,
+    };
+  }
   // App code imports extensionless ("./Sidebar") the way the bundler allows.
   // Note: vite's resolve.extensions puts .js BEFORE .tsx, this tries .tsx
   // first. There is no foo.js beside a foo.tsx in src/ today; if one appears,

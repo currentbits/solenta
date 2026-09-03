@@ -4140,7 +4140,7 @@ export interface CoderApi {
   };
   /**
    * Desktop-only live dictation (#845). The main-process manager lives in
-   * electron/speech.js; Composer capture lands in a later PR.
+   * electron/speech.js; Composer owns capture and the provisional draft range.
    */
   speech: {
     /** Runtime/model availability and lifecycle. */

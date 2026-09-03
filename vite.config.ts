@@ -37,5 +37,11 @@ export default defineConfig({
   build: {
     outDir: "dist",
     emptyOutDir: true,
+    // AudioWorklet addModule is a script load; CSP script-src 'self'
+    // blocks data: URLs, so this file must stay a real same-origin asset.
+    assetsInlineLimit(filePath, content) {
+      if (String(filePath).includes("pcmWorklet")) return false;
+      return content.length < 4096;
+    },
   },
 });

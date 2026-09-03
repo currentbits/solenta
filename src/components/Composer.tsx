@@ -13,9 +13,11 @@ import {
 import type {
   AgentProfile,
   AttachmentInfo,
+  CoderApi,
   PermissionMode,
   ProviderInfo,
   ReasoningEffort,
+  SpeechStatus,
   WorkflowTemplateInfo,
 } from "../shared/ipc";
 import type { WorkflowSaveInput } from "../useCoder";
@@ -113,7 +115,57 @@ import {
   applyComposerVim,
   type VimState,
 } from "../composerVim";
+import {
+  applySpeechDelta,
+  applySpeechTranscript,
+  formatSpeechModelSize,
+} from "../speechDraft";
+import {
+  speechCaptureError,
+  startSpeechCapture,
+  type SpeechCapture,
+} from "../speechCapture";
 import styles from "./Composer.module.css";
+
+function coderSpeech(): CoderApi["speech"] | undefined {
+  if (typeof window === "undefined") return undefined;
+  return (window as unknown as { coder?: CoderApi }).coder?.speech;
+}
+
+function coderOn(): CoderApi["on"] | undefined {
+  if (typeof window === "undefined") return undefined;
+  return (window as unknown as { coder?: CoderApi }).coder?.on;
+}
+
+type SpeechSnapshot = {
+  threadId: string;
+  draft: string;
+  caret: number;
+  prefix: string;
+  suffix: string;
+  accumulated: string;
+  sessionId: string;
+};
+
+function speechMicLabel(
+  status: SpeechStatus | null,
+  dictating: boolean,
+): string {
+  if (dictating) return "Stop dictation";
+  if (status?.state === "downloading") {
+    const d = status.download;
+    if (d && d.bytesTotal > 0) {
+      const pct = Math.round((100 * d.bytesReceived) / d.bytesTotal);
+      return `Downloading speech model, ${pct}%`;
+    }
+    return "Downloading speech model";
+  }
+  if (!status || status.state === "missing") return "Download speech model";
+  if (status.state === "error" && !status.modelReady) {
+    return "Download speech model";
+  }
+  return "Start dictation";
+}
 
 interface ComposerProps {
   /** Selected thread id; used for per-thread last-used template. */
@@ -475,6 +527,213 @@ export const Composer = memo(function Composer({
     () => textareaRef.current?.value ?? draftsRef.current[threadId] ?? "",
     [threadId],
   );
+  const liveThreadIdRef = useRef(threadId);
+  liveThreadIdRef.current = threadId;
+  const [sending, setSending] = useState(false);
+  const [localError, setLocalError] = useState<string | null>(null);
+  const hasSpeech = Boolean(coderSpeech());
+  const [speech, setSpeech] = useState<SpeechStatus | null>(null);
+  const [speechConfirm, setSpeechConfirm] = useState(false);
+  const [dictating, setDictating] = useState(false);
+  const snapshotRef = useRef<SpeechSnapshot | null>(null);
+  const captureRef = useRef<SpeechCapture | null>(null);
+  const dictatingRef = useRef(false);
+  const writeDraftFor = useCallback(
+    (tid: string, text: string, caret?: number) => {
+      draftsRef.current[tid] = text;
+      if (liveThreadIdRef.current !== tid) return;
+      const el = textareaRef.current;
+      if (el) {
+        el.value = text;
+        if (caret != null) {
+          el.focus();
+          el.setSelectionRange(caret, caret);
+        }
+      }
+      syncHasPrompt(text);
+      syncOverflow(text);
+    },
+    [syncHasPrompt, syncOverflow],
+  );
+  const cancelDictation = useCallback(async () => {
+    if (!snapshotRef.current && !captureRef.current && !dictatingRef.current) {
+      return;
+    }
+    const snap = snapshotRef.current;
+    const capture = captureRef.current;
+    snapshotRef.current = null;
+    captureRef.current = null;
+    dictatingRef.current = false;
+    setDictating(false);
+    setSpeechConfirm(false);
+    capture?.close();
+    if (snap) writeDraftFor(snap.threadId, snap.draft, snap.caret);
+    const api = coderSpeech();
+    if (snap?.sessionId && api) {
+      try {
+        await api.cancel({ sessionId: snap.sessionId });
+      } catch {
+        // session already gone
+      }
+    }
+  }, [writeDraftFor]);
+  const cancelDictationRef = useRef(cancelDictation);
+  cancelDictationRef.current = cancelDictation;
+  const applySpeechStatus = useCallback(
+    (status: SpeechStatus) => {
+      setSpeech(status);
+      if (status.state === "downloading" || status.state === "ready") {
+        setSpeechConfirm(false);
+      }
+      const snap = snapshotRef.current;
+      if (!snap) return;
+      if (status.state === "error") {
+        void cancelDictationRef.current();
+        if (status.error) setLocalError(status.error);
+        return;
+      }
+      if (status.delta) {
+        const next = applySpeechDelta({
+          prefix: snap.prefix,
+          suffix: snap.suffix,
+          accumulated: snap.accumulated,
+          delta: status.delta,
+        });
+        snap.accumulated = next.accumulated;
+        writeDraftFor(snap.threadId, next.text, next.caret);
+      }
+      if (status.transcript !== undefined) {
+        const next = applySpeechTranscript({
+          prefix: snap.prefix,
+          suffix: snap.suffix,
+          original: snap.draft,
+          originalCaret: snap.caret,
+          transcript: status.transcript,
+        });
+        writeDraftFor(snap.threadId, next.text, next.caret);
+        snapshotRef.current = null;
+        dictatingRef.current = false;
+        setDictating(false);
+        captureRef.current?.close();
+        captureRef.current = null;
+      }
+    },
+    [writeDraftFor],
+  );
+  useEffect(() => {
+    const api = coderSpeech();
+    const on = coderOn();
+    if (!api || !on) return;
+    let live = true;
+    void api
+      .status()
+      .then((s) => {
+        if (live) setSpeech(s);
+      })
+      .catch(() => {});
+    const off = on("speech:changed", (s) => {
+      if (live) applySpeechStatus(s);
+    });
+    return () => {
+      live = false;
+      off();
+    };
+  }, [applySpeechStatus]);
+  useEffect(() => {
+    if (disabled) void cancelDictationRef.current();
+  }, [disabled]);
+  const startDictation = useCallback(async () => {
+    const api = coderSpeech();
+    if (!api || dictatingRef.current || disabled) return;
+    setSpeechConfirm(false);
+    const el = textareaRef.current;
+    const draft = readDraft();
+    const caret = el?.selectionStart ?? draft.length;
+    snapshotRef.current = {
+      threadId,
+      draft,
+      caret,
+      prefix: draft.slice(0, caret),
+      suffix: draft.slice(caret),
+      accumulated: "",
+      sessionId: "",
+    };
+    dictatingRef.current = true;
+    setDictating(true);
+    try {
+      const capture = await startSpeechCapture({
+        write: (pcm, seq) => {
+          const id = snapshotRef.current?.sessionId;
+          if (!id) return;
+          return api.write({ sessionId: id, pcm, seq });
+        },
+      });
+      if (!snapshotRef.current) {
+        capture.close();
+        return;
+      }
+      captureRef.current = capture;
+      const started = await api.start();
+      if (!snapshotRef.current) {
+        capture.close();
+        captureRef.current = null;
+        try {
+          await api.cancel({ sessionId: started.sessionId });
+        } catch {
+          // already cancelled
+        }
+        return;
+      }
+      snapshotRef.current.sessionId = started.sessionId;
+    } catch (err) {
+      captureRef.current?.close();
+      captureRef.current = null;
+      const snap = snapshotRef.current;
+      snapshotRef.current = null;
+      dictatingRef.current = false;
+      setDictating(false);
+      if (snap) writeDraftFor(snap.threadId, snap.draft, snap.caret);
+      setLocalError(speechCaptureError(err));
+    }
+  }, [disabled, readDraft, threadId, writeDraftFor]);
+  const stopDictation = useCallback(async () => {
+    const snap = snapshotRef.current;
+    const api = coderSpeech();
+    if (!snap || !api) return;
+    const capture = captureRef.current;
+    captureRef.current = null;
+    if (capture) await capture.flushAndStop();
+    try {
+      if (snap.sessionId) await api.stop({ sessionId: snap.sessionId });
+    } catch (err) {
+      await cancelDictation();
+      setLocalError(speechCaptureError(err));
+    }
+  }, [cancelDictation]);
+  const onMicClick = useCallback(() => {
+    if (disabled || sending) return;
+    if (dictatingRef.current) {
+      void stopDictation();
+      return;
+    }
+    const state = speech?.state ?? "missing";
+    if (state === "downloading") return;
+    if (state === "ready" || state === "recording") {
+      void startDictation();
+      return;
+    }
+    if (state === "missing" || (state === "error" && !speech?.modelReady)) {
+      setSpeechConfirm(true);
+    }
+  }, [disabled, sending, speech, startDictation, stopDictation]);
+  const confirmSpeechDownload = useCallback(() => {
+    const api = coderSpeech();
+    if (!api) return;
+    setSpeechConfirm(false);
+    void api.download().catch((err) => {
+      setLocalError(speechCaptureError(err));
+    });
+  }, []);
   /**
    * A cancelled queued follow-up lands here (issue #364): put its text back
    * into the draft, but only onto an empty one — an in-progress draft always
@@ -576,8 +835,6 @@ export const Composer = memo(function Composer({
   const [stashToast, setStashToast] = useState<"stashed" | "restored" | null>(
     null,
   );
-  const [sending, setSending] = useState(false);
-  const [localError, setLocalError] = useState<string | null>(null);
   const [modeOpen, setModeOpen] = useState(false);
   const [modelOpen, setModelOpen] = useState(false);
   const [effortOpen, setEffortOpen] = useState(false);
@@ -713,6 +970,9 @@ export const Composer = memo(function Composer({
     commandDismissed.current = false;
     lastEscAt.current = 0;
     syncHasPrompt(draftsRef.current[threadId] ?? "");
+    return () => {
+      void cancelDictationRef.current();
+    };
   }, [threadId, syncHasPrompt]);
 
   const closeMention = useCallback(() => {
@@ -1077,6 +1337,13 @@ export const Composer = memo(function Composer({
       // Mention / command / pill menus own Esc; do not stop or rewind.
       if (popupOpen) return;
       if (escapeConsumedByChrome(e.target, textareaRef.current)) return;
+
+      if (snapshotRef.current) {
+        e.preventDefault();
+        lastEscAt.current = 0;
+        void cancelDictationRef.current();
+        return;
+      }
 
       if (busy && onStopRun) {
         e.preventDefault();
@@ -1913,6 +2180,7 @@ export const Composer = memo(function Composer({
           onKeyDown={onKeyDown}
           onPaste={onPaste}
           disabled={disabled || sending}
+          readOnly={dictating}
           data-vim-mode={vimEnabled ? vimMode : undefined}
         />
         <div
@@ -1950,6 +2218,74 @@ export const Composer = memo(function Composer({
                   <path d="m12.5 7.5-4.95 4.95a3.5 3.5 0 0 1-4.95-4.95l5.3-5.3a2.33 2.33 0 0 1 3.3 3.3l-5.3 5.3a1.17 1.17 0 0 1-1.65-1.65l4.6-4.6" />
                 </svg>
               </button>
+            )}
+            {hasSpeech && speech && (
+              <>
+                <button
+                  type="button"
+                  className={`${styles.pill}${dictating ? ` ${styles.pillAccent}` : ""}`}
+                  data-speech-mic=""
+                  disabled={
+                    disabled ||
+                    sending ||
+                    speech.state === "downloading"
+                  }
+                  aria-disabled={
+                    disabled || sending || speech.state === "downloading"
+                      ? "true"
+                      : undefined
+                  }
+                  aria-label={speechMicLabel(speech, dictating)}
+                  aria-pressed={dictating ? "true" : "false"}
+                  title={speechMicLabel(speech, dictating)}
+                  onClick={onMicClick}
+                >
+                  <svg
+                    width="13"
+                    height="13"
+                    viewBox="0 0 16 16"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1.5"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    aria-hidden="true"
+                  >
+                    <path d="M8 2.5a2.2 2.2 0 0 0-2.2 2.2v3.1a2.2 2.2 0 1 0 4.4 0V4.7A2.2 2.2 0 0 0 8 2.5Z" />
+                    <path d="M4.2 8.2a3.8 3.8 0 0 0 7.6 0" />
+                    <path d="M8 12v1.8" />
+                  </svg>
+                  {speech.state === "downloading" && speech.download?.bytesTotal
+                    ? `${Math.round((100 * speech.download.bytesReceived) / speech.download.bytesTotal)}%`
+                    : null}
+                </button>
+                {speechConfirm && (
+                  <span
+                    className={styles.speechConfirm}
+                    data-speech-confirm=""
+                    role="group"
+                    aria-label="Download speech model"
+                  >
+                    <span>Download {formatSpeechModelSize()}?</span>
+                    <button
+                      type="button"
+                      className={styles.pill}
+                      aria-label="Confirm download"
+                      onClick={confirmSpeechDownload}
+                    >
+                      Download
+                    </button>
+                    <button
+                      type="button"
+                      className={styles.pill}
+                      aria-label="Cancel download"
+                      onClick={() => setSpeechConfirm(false)}
+                    >
+                      Cancel
+                    </button>
+                  </span>
+                )}
+              </>
             )}
             <div className={styles.modeWrap} ref={modelWrapRef}>
               <button
