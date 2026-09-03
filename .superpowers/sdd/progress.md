@@ -103,3 +103,13 @@ Task 1: complete (commits b1447f03..db122a20, review clean)
 Minor for final triage: ingest HTTP test does not lock pathname-only path; no 81-char UTM case.
 Task 2: complete (commits db122a20..b5303f55, review clean)
 Minor for final triage: inRange is lower-bound only; hourly test does not lock daySeen vs two-hour visitor.
+
+---
+
+# Muse Code provider SDD (#873)
+Plan: docs/superpowers/plans/2026-09-03-muse-code-provider.md
+Spec: docs/superpowers/specs/2026-09-03-muse-code-provider-design.md
+Branch: coder/i-want-you-to-research-meta-muse-spark-a-afffce
+Workspace: already isolated git worktree
+
+Task 1: blocked — muse not on PATH (checked ~/.local/bin, /opt/homebrew/bin, /usr/local/bin). Waiting for user install. Do not run Meta installer from an agent.
