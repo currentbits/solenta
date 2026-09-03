@@ -230,9 +230,87 @@ function reclaimMuseHomes(opts) {
   return { removed, skipped };
 }
 
+/**
+ * Resume handle from echo-hello.jsonl: obj.stream.id when
+ * obj.stream.kind === "session". Top-level obj.id restarts per session.
+ * @param {object} obj
+ * @returns {string | null}
+ */
+function extractSessionId(obj) {
+  if (!obj || typeof obj !== "object") return null;
+  const stream = obj.stream;
+  if (!stream || typeof stream !== "object") return null;
+  if (stream.kind !== "session") return null;
+  return typeof stream.id === "string" && stream.id ? stream.id : null;
+}
+
+/**
+ * Assistant text from echo-hello.jsonl: payload.text on
+ * run.output.delta and run.terminal.completed.
+ * @param {object} obj
+ * @returns {string | null}
+ */
+function extractAssistantText(obj) {
+  if (!obj || typeof obj !== "object") return null;
+  const type = obj.payload_type;
+  if (type !== "run.output.delta" && type !== "run.terminal.completed") {
+    return null;
+  }
+  const payload = obj.payload;
+  if (!payload || typeof payload !== "object") return null;
+  return typeof payload.text === "string" && payload.text ? payload.text : null;
+}
+
+/**
+ * echo-hello.jsonl / echo-tools.jsonl have no thinking payload.
+ * @param {object} obj
+ * @returns {string | null}
+ */
+function extractThinking(obj) {
+  if (!obj || typeof obj !== "object") return null;
+  return null;
+}
+
+/**
+ * echo-hello.jsonl / echo-tools.jsonl have no tool start/result.
+ * Unknown objects return null; do not invent a Spark tool shape.
+ * @param {object} obj
+ * @returns {{ phase: string, id: string, name: string, input?: unknown, output?: unknown } | null}
+ */
+function extractToolEvent(obj) {
+  if (!obj || typeof obj !== "object") return null;
+  return null;
+}
+
+/**
+ * echo-hello.jsonl / echo-tools.jsonl have no usage fields.
+ * @param {object} obj
+ * @returns {{ inputTokens: number, outputTokens: number, costUsd?: number } | null}
+ */
+function extractUsage(obj) {
+  if (!obj || typeof obj !== "object") return null;
+  return null;
+}
+
+/**
+ * Tool cards are stream-scoped because record ids restart per session.
+ * @param {string} streamId
+ * @param {string} recordId
+ * @returns {string}
+ */
+function toolCardKey(streamId, recordId) {
+  return `${streamId}:${recordId}`;
+}
+
 module.exports = {
   materializeMuseHome,
   museChildEnv,
   reclaimMuseHomes,
   toMuseMcpServers,
+  extractSessionId,
+  extractAssistantText,
+  extractThinking,
+  extractToolEvent,
+  extractUsage,
+  toolCardKey,
 };
