@@ -1,0 +1,14 @@
+{
+  "pace": "realtime",
+  "audioDurationSec": 30,
+  "firstPartialMs": 823,
+  "stopToFinalMs": 65,
+  "rtf": 1.0126333333333333,
+  "wallMs": 30379,
+  "deltaCount": 292,
+  "firstPartialText": "Space",
+  "finalText": "Spacecraft completed its orbital insertion burn over the Pacific ground control confirmed telemetry lock private English dictation should appear as partial words while speaking and a final transcript after stop. The spacecraft completed its orbital insertion burnover the Pacific ground control confirmed telemetry lock private English dictation should appear as partial words while speaking and a fi",
+  "errorEvent": null,
+  "chunkBytes": 3200,
+  "targetBytes": 960000
+}
