@@ -79,19 +79,24 @@ describe("providers registry", () => {
     const opencode = getProvider("opencode");
     assert.equal(opencode.kind, "opencode-json");
     assert.equal(opencode.supportsResume, true);
-    assert.ok(opencode.models.includes("opencode/hy3-free"));
     assert.ok(opencode.models.includes("opencode/nemotron-3.5-lightning-free"));
     assert.ok(opencode.models.includes("opencode/ling-3.0-flash-fin-free"));
     assert.ok(
       opencode.models.includes("opencode/muse-spark-1.2-contributor-free"),
     );
+    assert.ok(
+      opencode.models.includes("opencode/muse-spark-1.3-contributor-free"),
+    );
+    assert.ok(!opencode.models.includes("opencode/hy3-free"));
     assert.ok(!opencode.models.includes("opencode/north-mini-code-free"));
     assert.ok(!opencode.models.includes("opencode/deepseek-v4-flash-free"));
     assert.ok(!opencode.models.includes("opencode/laguna-s-2.1-free"));
     assert.ok(opencode.models.length >= 4);
-    const hy3 = opencode.modelInfo.find((m) => m.id === "opencode/hy3-free");
-    assert.equal(hy3.recommended, true);
-    assert.deepEqual(hy3.efforts, ["low", "medium", "high"]);
+    const spark13 = opencode.modelInfo.find(
+      (m) => m.id === "opencode/muse-spark-1.3-contributor-free",
+    );
+    assert.equal(spark13.recommended, true);
+    assert.deepEqual(spark13.efforts, ["low", "medium", "high", "xhigh"]);
     // opencode -m requires provider/model form
     for (const id of opencode.models) {
       assert.ok(
