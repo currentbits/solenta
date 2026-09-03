@@ -1,0 +1,32 @@
+{
+  "os": "linux",
+  "arch": "x64",
+  "bin": "/home/runner/work/_temp/solenta-speech-spike/linux-cpu/nemo-speech-0.1.0-linux-x86_64-cpu/bin/nemo-speech",
+  "port": 35989,
+  "ready": "{\"capabilities\":[\"asr\"],\"device\":\"cpu\",\"ready\":true}",
+  "live": {
+    "pace": "realtime",
+    "audioDurationSec": 6.1073125,
+    "firstPartialMs": 909,
+    "stopToFinalMs": 187,
+    "rtf": 1.0353162704544758,
+    "wallMs": 6323,
+    "deltaCount": 54,
+    "firstPartialText": "Quick",
+    "finalText": "Quick brown fox jumps over the lazy dog Solenta transcribes English speech privately on this machine.",
+    "errorEvent": null
+  },
+  "rtf": {
+    "pace": "max",
+    "audioDurationSec": 300,
+    "firstPartialMs": 508,
+    "stopToFinalMs": 162328,
+    "rtf": 0.5415066666666667,
+    "wallMs": 162452,
+    "deltaCount": 2992,
+    "finalText": "Quick brown fox jumps over the lazy dog Solenta transcribes English speech privately on this machine. The quick brown fox jumps over the lazy dog. Selena transcribes English speech privately on this m"
+  },
+  "peakRssBytes": 980885504,
+  "peakRssMiB": 935.4,
+  "failures": []
+}
