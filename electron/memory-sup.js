@@ -385,13 +385,6 @@ function headerEnvVar(serverName, headerName) {
 }
 
 /**
- * Codex argv extras when at least one MCP server is up, or [].
- * Values are TOML strings: mcp_servers.<name>.url="http://.../mcp" plus
- * mcp_servers.<name>.bearer_token_env_var="CODER_MCP_TOKEN_<NAME>"; pair with
- * getCodexMcpEnv() on the spawn or codex sees no credential.
- * @returns {string[]}
- */
-/**
  * Escape a string for a TOML basic string used in Codex `-c` values.
  * @param {unknown} value
  * @returns {string}
@@ -418,6 +411,27 @@ function tomlEscape(value) {
   return out;
 }
 
+function pushCodexFirstPartyApproval(args, s) {
+  if (s && s.user) return;
+  args.push(
+    "-c",
+    `mcp_servers.${s.name}.default_tools_approval_mode="approve"`,
+  );
+}
+
+/**
+ * Codex argv extras when at least one MCP server is up, or [].
+ * Values are TOML strings: mcp_servers.<name>.url="http://.../mcp" plus
+ * mcp_servers.<name>.bearer_token_env_var="CODER_MCP_TOKEN_<NAME>"; pair with
+ * getCodexMcpEnv() on the spawn or codex sees no credential.
+ *
+ * First-party servers also set default_tools_approval_mode="approve".
+ * `codex exec` pins approval_policy=never and otherwise rejects MCP tools
+ * with "MCP tool call requires approval, but approval policy is never"
+ * (issue #846). Same scope as Claude `--allowedTools=mcp__<name>__*`:
+ * only our servers, never a user-registered endpoint.
+ * @returns {string[]}
+ */
 function getCodexMcpArgs(opts = {}) {
   const projectPath = opts.projectPath ? String(opts.projectPath) : "";
   /** @type {string[]} */
@@ -445,6 +459,7 @@ function getCodexMcpArgs(opts = {}) {
       if (typeof s.cwd === "string" && s.cwd) {
         args.push("-c", `mcp_servers.${s.name}.cwd="${tomlEscape(s.cwd)}"`);
       }
+      pushCodexFirstPartyApproval(args, s);
       continue;
     }
     if (s.transport === "sse") {
@@ -481,6 +496,7 @@ function getCodexMcpArgs(opts = {}) {
           .join(", ")} }`,
       );
     }
+    pushCodexFirstPartyApproval(args, s);
   }
   return args;
 }

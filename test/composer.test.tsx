@@ -23,9 +23,15 @@ import type {
   PermissionMode,
   ProviderInfo,
   ReasoningEffort,
+  SpeechStatus,
   ThreadTeach,
   WorkflowTemplateInfo,
 } from "../src/shared/ipc";
+import {
+  createFakeCoder,
+  installFakeCoder,
+  type FakeCoder,
+} from "./support/fakeCoder.ts";
 
 const CLAUDE_WITH_INFO: ProviderInfo = {
   id: "claude",
@@ -255,10 +261,179 @@ function composer(
   );
 }
 
+const SPEECH_READY: SpeechStatus = {
+  state: "ready",
+  runtimeReady: true,
+  modelReady: true,
+};
+
+type SpeechMedia = {
+  order: string[];
+  getUserMediaCalls: number;
+  tracksStopped: number;
+  contextClosed: number;
+  nodesDisconnected: number;
+};
+
+let speechMedia: SpeechMedia | null = null;
+let speechMediaCleanup: (() => void) | null = null;
+
+function restoreSpeechMedia() {
+  speechMediaCleanup?.();
+  speechMediaCleanup = null;
+  speechMedia = null;
+}
+
+/** jsdom has no mic / AudioWorklet; Composer tests opt in through this. */
+function installSpeechMedia(): SpeechMedia {
+  restoreSpeechMedia();
+  const media: SpeechMedia = {
+    order: [],
+    getUserMediaCalls: 0,
+    tracksStopped: 0,
+    contextClosed: 0,
+    nodesDisconnected: 0,
+  };
+  const w = window as unknown as {
+    AudioContext?: unknown;
+    AudioWorkletNode?: unknown;
+  };
+  const prevCtx = w.AudioContext;
+  const prevNode = w.AudioWorkletNode;
+  const prevDevices = Object.getOwnPropertyDescriptor(
+    navigator,
+    "mediaDevices",
+  );
+
+  const stream = {
+    getTracks() {
+      return [
+        {
+          kind: "audio",
+          stop() {
+            media.tracksStopped += 1;
+          },
+        },
+      ];
+    },
+    getAudioTracks() {
+      return this.getTracks();
+    },
+  };
+
+  class FakeSource {
+    connect() {
+      return this;
+    }
+    disconnect() {
+      media.nodesDisconnected += 1;
+    }
+  }
+  class FakeGain {
+    gain = { value: 0 };
+    connect() {
+      return this;
+    }
+    disconnect() {
+      media.nodesDisconnected += 1;
+    }
+  }
+  class FakeWorkletNode {
+    port = {
+      onmessage: null as ((ev: { data: unknown }) => void) | null,
+      postMessage(msg: unknown) {
+        const data = msg as { type?: string };
+        if (data?.type === "flush") {
+          this.onmessage?.({ data: { type: "flushed" } });
+        }
+      },
+    };
+    connect() {
+      return this;
+    }
+    disconnect() {
+      media.nodesDisconnected += 1;
+    }
+  }
+  class FakeAudioContext {
+    sampleRate = 48000;
+    destination = {};
+    state = "running";
+    audioWorklet = { addModule: async () => undefined };
+    createMediaStreamSource() {
+      return new FakeSource();
+    }
+    createGain() {
+      return new FakeGain();
+    }
+    async close() {
+      media.contextClosed += 1;
+    }
+  }
+
+  w.AudioContext = FakeAudioContext;
+  w.AudioWorkletNode = FakeWorkletNode;
+  (globalThis as unknown as { AudioContext?: unknown }).AudioContext =
+    FakeAudioContext;
+  (globalThis as unknown as { AudioWorkletNode?: unknown }).AudioWorkletNode =
+    FakeWorkletNode;
+  Object.defineProperty(navigator, "mediaDevices", {
+    configurable: true,
+    value: {
+      getUserMedia: async () => {
+        media.getUserMediaCalls += 1;
+        media.order.push("mic");
+        return stream;
+      },
+    },
+  });
+
+  speechMedia = media;
+  speechMediaCleanup = () => {
+    w.AudioContext = prevCtx;
+    w.AudioWorkletNode = prevNode;
+    const g = globalThis as unknown as {
+      AudioContext?: unknown;
+      AudioWorkletNode?: unknown;
+    };
+    g.AudioContext = prevCtx;
+    g.AudioWorkletNode = prevNode;
+    if (prevDevices) {
+      Object.defineProperty(navigator, "mediaDevices", prevDevices);
+    } else {
+      delete (navigator as { mediaDevices?: unknown }).mediaDevices;
+    }
+  };
+  return media;
+}
+
+async function mountSpeechComposer(
+  fake: FakeCoder,
+  over: Parameters<typeof composer>[1] = {},
+) {
+  const shell = await mount(<div />);
+  installFakeCoder(fake);
+  const origStart = fake.api.speech.start.bind(fake.api.speech);
+  fake.api.speech.start = async () => {
+    speechMedia?.order.push("start");
+    return origStart();
+  };
+  shell.unmount();
+  const h = makeHarness();
+  const m = await mount(composer(h, over));
+  return { m, h };
+}
+
+function mic(m: Awaited<ReturnType<typeof mount>>) {
+  return m.query("[data-speech-mic]") as HTMLButtonElement | null;
+}
+
 afterEach(() => {
   unmountAll();
   setTranscriptViewMode("normal");
   setVerboseToolCards(false);
+  restoreSpeechMedia();
+  delete (window as { coder?: unknown }).coder;
 });
 
 
@@ -2451,5 +2626,307 @@ describe("Composer keyboard hints (issue #364)", () => {
     assert.match(hints!.textContent || "", /⌘Enter queue/);
     assert.match(hints!.textContent || "", /Esc stop/);
     m.unmount();
+  });
+});
+
+describe("Composer live dictation (#845)", () => {
+  it("hides the mic when window.coder.speech is missing", async () => {
+    const h = makeHarness();
+    const m = await mount(composer(h));
+    assert.equal(mic(m), null);
+    m.unmount();
+  });
+
+  it("shows a download control with accessible labels when the model is missing", async () => {
+    const fake = createFakeCoder();
+    const { m } = await mountSpeechComposer(fake);
+    const btn = mic(m);
+    assert.ok(btn, "mic pill");
+    assert.equal(btn.getAttribute("aria-label"), "Download speech model");
+    assert.equal(btn.getAttribute("aria-pressed"), "false");
+    m.unmount();
+  });
+
+  it("first click while missing asks for confirmation and does not open the mic", async () => {
+    const fake = createFakeCoder();
+    const media = installSpeechMedia();
+    const { m } = await mountSpeechComposer(fake);
+    await m.click(mic(m));
+    const confirm = m.query("[data-speech-confirm]");
+    assert.ok(confirm, "inline confirmation");
+    assert.match(confirm!.textContent || "", /700 MB/);
+    assert.match(confirm!.textContent || "", /699,872,960/);
+    assert.equal(media.getUserMediaCalls, 0, "confirmation must not open the mic");
+    assert.equal(fake.of("speech.download").length, 0);
+    assert.equal(fake.of("speech.start").length, 0);
+    m.unmount();
+  });
+
+  it("confirmation calls download and still does not open the mic", async () => {
+    const fake = createFakeCoder();
+    const media = installSpeechMedia();
+    const { m } = await mountSpeechComposer(fake);
+    await m.click(mic(m));
+    const go = m.query('[data-speech-confirm] button[aria-label="Confirm download"]');
+    assert.ok(go);
+    await m.click(go);
+    assert.equal(fake.of("speech.download").length, 1);
+    assert.equal(media.getUserMediaCalls, 0);
+    assert.equal(fake.of("speech.start").length, 0);
+    m.unmount();
+  });
+
+  it("shows download progress from speech:changed", async () => {
+    const fake = createFakeCoder();
+    installSpeechMedia();
+    const { m } = await mountSpeechComposer(fake);
+    await m.click(mic(m));
+    await m.click(
+      m.query('[data-speech-confirm] button[aria-label="Confirm download"]'),
+    );
+    await inAct(() => {
+      fake.emitSpeech({
+        state: "downloading",
+        runtimeReady: true,
+        modelReady: false,
+        download: { bytesReceived: 349936480, bytesTotal: 699872960 },
+      });
+    });
+    const btn = mic(m);
+    assert.ok(btn);
+    assert.match(btn.getAttribute("aria-label") || "", /Downloading speech model/);
+    assert.match(m.text(), /50%/);
+    m.unmount();
+  });
+
+  it("ready click captures audio then starts the session", async () => {
+    const fake = createFakeCoder({ speechStatus: SPEECH_READY });
+    const media = installSpeechMedia();
+    const { m } = await mountSpeechComposer(fake);
+    const btn = mic(m);
+    assert.ok(btn);
+    assert.equal(btn.getAttribute("aria-label"), "Start dictation");
+    await m.click(btn);
+    assert.deepEqual(media.order, ["mic", "start"]);
+    assert.equal(fake.of("speech.start").length, 1);
+    assert.equal(mic(m)?.getAttribute("aria-label"), "Stop dictation");
+    assert.equal(mic(m)?.getAttribute("aria-pressed"), "true");
+    const ta = m.query("textarea") as HTMLTextAreaElement;
+    assert.equal(ta.readOnly, true);
+    await m.click(mic(m));
+    assert.equal(fake.of("speech.stop").length, 1);
+    assert.equal(
+      (fake.only("speech.stop").args[0] as { sessionId: string }).sessionId,
+      "speech-session",
+    );
+    m.unmount();
+  });
+
+  it("concatenates incremental deltas and replaces the range on transcript", async () => {
+    const fake = createFakeCoder({ speechStatus: SPEECH_READY });
+    installSpeechMedia();
+    const { m } = await mountSpeechComposer(fake);
+    const ta = m.query("textarea") as HTMLTextAreaElement;
+    await m.type(ta, "Hello ");
+    await m.click(mic(m));
+    await inAct(() => {
+      fake.emitSpeech({
+        state: "recording",
+        runtimeReady: true,
+        modelReady: true,
+        sessionId: "speech-session",
+        delta: "Quick",
+      });
+    });
+    assert.equal(ta.value, "Hello Quick");
+    await inAct(() => {
+      fake.emitSpeech({
+        state: "recording",
+        runtimeReady: true,
+        modelReady: true,
+        sessionId: "speech-session",
+        delta: " brown",
+      });
+    });
+    assert.equal(ta.value, "Hello Quick brown", "delta is a suffix, not a snapshot");
+    await inAct(() => {
+      fake.emitSpeech({
+        state: "ready",
+        runtimeReady: true,
+        modelReady: true,
+        sessionId: "speech-session",
+        transcript: "Quick brown fox",
+      });
+    });
+    assert.equal(ta.value, "Hello Quick brown fox");
+    m.unmount();
+  });
+
+  it("empty final transcript restores the original draft", async () => {
+    const fake = createFakeCoder({ speechStatus: SPEECH_READY });
+    installSpeechMedia();
+    const { m } = await mountSpeechComposer(fake);
+    const ta = m.query("textarea") as HTMLTextAreaElement;
+    await m.type(ta, "keep me");
+    await m.click(mic(m));
+    await inAct(() => {
+      fake.emitSpeech({
+        state: "recording",
+        runtimeReady: true,
+        modelReady: true,
+        delta: " nope",
+      });
+    });
+    assert.equal(ta.value, "keep me nope");
+    await inAct(() => {
+      fake.emitSpeech({
+        state: "ready",
+        runtimeReady: true,
+        modelReady: true,
+        transcript: "",
+      });
+    });
+    assert.equal(ta.value, "keep me");
+    m.unmount();
+  });
+
+  it("Escape cancels, restores the original draft, and does not steal from a dialog", async () => {
+    const fake = createFakeCoder({ speechStatus: SPEECH_READY });
+    const media = installSpeechMedia();
+    const { m } = await mountSpeechComposer(fake);
+    const ta = m.query("textarea") as HTMLTextAreaElement;
+    await m.type(ta, "original");
+    await m.click(mic(m));
+    await inAct(() => {
+      fake.emitSpeech({
+        state: "recording",
+        runtimeReady: true,
+        modelReady: true,
+        delta: " spoken",
+      });
+    });
+    await inAct(() => {
+      document.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: "Escape",
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+    });
+    await m.flush();
+    assert.equal(fake.of("speech.cancel").length, 1);
+    assert.equal(ta.value, "original");
+    assert.equal(ta.readOnly, false);
+    assert.ok(media.tracksStopped >= 1);
+    assert.ok(media.contextClosed >= 1);
+
+    await m.click(mic(m));
+    const dialog = document.createElement("div");
+    dialog.setAttribute("role", "dialog");
+    dialog.setAttribute("aria-modal", "true");
+    document.body.appendChild(dialog);
+    const cancels = fake.of("speech.cancel").length;
+    await inAct(() => {
+      document.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: "Escape",
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+    });
+    await m.flush();
+    assert.equal(
+      fake.of("speech.cancel").length,
+      cancels,
+      "Escape must not steal from modal chrome",
+    );
+    dialog.remove();
+    m.unmount();
+  });
+
+  it("thread switch cancels and restores the snapshot on the original thread", async () => {
+    const fake = createFakeCoder({ speechStatus: SPEECH_READY });
+    const shell = await mount(<div />);
+    installFakeCoder(fake);
+    installSpeechMedia();
+    shell.unmount();
+    const h = makeHarness();
+    function Shell() {
+      const [tid, setTid] = useState("t1");
+      return (
+        <>
+          <button onClick={() => setTid((t) => (t === "t1" ? "t2" : "t1"))}>
+            swap-thread
+          </button>
+          {composer(h, { threadId: tid })}
+        </>
+      );
+    }
+    const m = await mount(<Shell />);
+    const ta = () => m.query("textarea") as HTMLTextAreaElement;
+    await m.type(ta(), "draft A");
+    await m.click(mic(m));
+    await inAct(() => {
+      fake.emitSpeech({
+        state: "recording",
+        runtimeReady: true,
+        modelReady: true,
+        delta: " spoken",
+      });
+    });
+    assert.equal(ta().value, "draft A spoken");
+    await m.click(m.byText("swap-thread"));
+    assert.equal(fake.of("speech.cancel").length, 1);
+    assert.equal(ta().value, "", "t2 starts empty");
+    await m.click(m.byText("swap-thread"));
+    assert.equal(ta().value, "draft A", "t1 restored without the partial");
+    m.unmount();
+  });
+
+  it("archiving cancels and restores the original draft", async () => {
+    const fake = createFakeCoder({ speechStatus: SPEECH_READY });
+    const shell = await mount(<div />);
+    installFakeCoder(fake);
+    installSpeechMedia();
+    shell.unmount();
+    const h = makeHarness();
+    function Shell() {
+      const [disabled, setDisabled] = useState(false);
+      return (
+        <>
+          <button onClick={() => setDisabled(true)}>archive</button>
+          {composer(h, { disabled })}
+        </>
+      );
+    }
+    const m = await mount(<Shell />);
+    const ta = m.query("textarea") as HTMLTextAreaElement;
+    await m.type(ta, "keep");
+    await m.click(mic(m));
+    await inAct(() => {
+      fake.emitSpeech({
+        state: "recording",
+        runtimeReady: true,
+        modelReady: true,
+        delta: " gone",
+      });
+    });
+    await m.click(m.byText("archive"));
+    assert.equal(fake.of("speech.cancel").length, 1);
+    assert.equal(ta.value, "keep");
+    m.unmount();
+  });
+
+  it("unmount cancels and closes capture", async () => {
+    const fake = createFakeCoder({ speechStatus: SPEECH_READY });
+    const media = installSpeechMedia();
+    const { m } = await mountSpeechComposer(fake);
+    await m.click(mic(m));
+    m.unmount();
+    assert.equal(fake.of("speech.cancel").length, 1);
+    assert.ok(media.tracksStopped >= 1);
+    assert.ok(media.contextClosed >= 1);
   });
 });

@@ -1546,9 +1546,13 @@ describe("orch-server provider injection", () => {
         "-c",
         'mcp_servers.coder-memory.bearer_token_env_var="CODER_MCP_TOKEN_CODER_MEMORY"',
         "-c",
+        'mcp_servers.coder-memory.default_tools_approval_mode="approve"',
+        "-c",
         `mcp_servers.coder-threads.url="http://127.0.0.1:${orchPort}/mcp"`,
         "-c",
         'mcp_servers.coder-threads.bearer_token_env_var="CODER_MCP_TOKEN_CODER_THREADS"',
+        "-c",
+        'mcp_servers.coder-threads.default_tools_approval_mode="approve"',
       ]);
       assert.deepEqual(getCodexMcpEnv(), {
         CODER_MCP_TOKEN_CODER_MEMORY: memToken,

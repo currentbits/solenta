@@ -74,6 +74,7 @@ import type {
   SimulatorCapabilitySnapshot,
   SimulatorDeviceInfo,
   SimulatorStatus,
+  SpeechStatus,
   UsageReport,
   FleetEvidence,
   WorkLogItem,
@@ -115,6 +116,8 @@ export interface FakeCoder {
   emitBootReady(): void;
   /** Push a stayAwake:changed event (#364). */
   emitStayAwake(s: StayAwakeStatus): void;
+  /** Push a speech:changed event (#845). */
+  emitSpeech(s: SpeechStatus): void;
   /** Subscriptions that have not been torn down. */
   liveSubscriptions(): number;
 }
@@ -244,6 +247,8 @@ export interface FakeOptions {
    * `attached` is a deterministic owned session.
    */
   simulator?: "unsupported" | "attached";
+  /** Override speech.status (default: missing / no model). */
+  speechStatus?: SpeechStatus;
 }
 
 /** Idle terminal session for the harness; no shell exists under jsdom. */
@@ -482,6 +487,7 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
   const bootReadySubs: Array<() => void> = [];
   const stayAwakeSubs: Array<(s: StayAwakeStatus) => void> = [];
   const simulatorSubs: Array<(s: SimulatorStatus) => void> = [];
+  const speechSubs: Array<(s: SpeechStatus) => void> = [];
   const simulatorMode = opts.simulator ?? "unsupported";
 
   const unsupportedSimulatorCaps: SimulatorCapabilitySnapshot = {
@@ -2628,6 +2634,23 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
         return rec("git.runStats", [input], derived);
       },
     },
+    speech: {
+      status: () =>
+        rec(
+          "speech.status",
+          [],
+          opts.speechStatus ?? {
+            state: "missing" as const,
+            runtimeReady: false,
+            modelReady: false,
+          },
+        ),
+      download: () => rec("speech.download", [], undefined),
+      start: () => rec("speech.start", [], { sessionId: "speech-session" }),
+      write: (input: unknown) => rec("speech.write", [input], undefined),
+      stop: (input: unknown) => rec("speech.stop", [input], undefined),
+      cancel: (input: unknown) => rec("speech.cancel", [input], undefined),
+    },
     vibeKanban: {
       preview: (input?: unknown) =>
         rec("vibeKanban.preview", [input], {
@@ -2998,6 +3021,13 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
       if (channel === "simulator:focus") {
         return () => {};
       }
+      if (channel === "speech:changed") {
+        speechSubs.push(cb as (s: SpeechStatus) => void);
+        return () => {
+          const i = speechSubs.indexOf(cb as (s: SpeechStatus) => void);
+          if (i >= 0) speechSubs.splice(i, 1);
+        };
+      }
       detailSubs.push(cb as (d: ThreadPatch) => void);
       return () => {
         const i = detailSubs.indexOf(cb as (d: ThreadPatch) => void);
@@ -3026,12 +3056,14 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
     emitThread: (d) => detailSubs.forEach((cb) => cb(d)),
     emitBootReady: () => bootReadySubs.forEach((cb) => cb()),
     emitStayAwake: (s) => stayAwakeSubs.forEach((cb) => cb(s)),
+    emitSpeech: (s) => speechSubs.forEach((cb) => cb(s)),
     liveSubscriptions: () =>
       threadSubs.length +
       detailSubs.length +
       bootReadySubs.length +
       stayAwakeSubs.length +
-      simulatorSubs.length,
+      simulatorSubs.length +
+      speechSubs.length,
   };
 }
 

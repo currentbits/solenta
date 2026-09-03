@@ -6,9 +6,14 @@
 // support buys nothing — turn it off for the whole main process.
 process.noAsar = true;
 
-const { app, BrowserWindow, ipcMain, dialog, shell, Notification, nativeTheme, protocol, net, powerSaveBlocker, powerMonitor } = require("electron");
+const { app, BrowserWindow, ipcMain, dialog, shell, Notification, nativeTheme, protocol, net, powerSaveBlocker, powerMonitor, session } = require("electron");
 const { windowBackgroundColor, nativeThemeSource } = require("./theme.js");
 const { createStayAwake } = require("./caffeinate.js");
+const {
+  createSpeechManager,
+  installSpeechMediaPermissions,
+  isSolentaMainFrame,
+} = require("./speech.js");
 const path = require("node:path");
 const fs = require("node:fs");
 const { pathToFileURL } = require("node:url");
@@ -99,6 +104,9 @@ let runner = null;
 
 /** @type {ReturnType<typeof createStayAwake> | null} */
 let stayAwake = null;
+
+/** @type {ReturnType<typeof createSpeechManager> | null} */
+let speech = null;
 
 /** @type {ReturnType<typeof createOrchServer> | null} */
 let orchServer = null;
@@ -344,6 +352,30 @@ app.whenReady().then(async () => {
   });
 
   const userData = app.getPath("userData");
+  try {
+    speech = createSpeechManager({
+      userDataPath: userData,
+      resourcesPath: process.resourcesPath,
+      platform: process.platform,
+      arch: process.arch,
+      onStatus: (status) => broadcast("speech:changed", status),
+    });
+    installSpeechMediaPermissions({
+      session: session.defaultSession,
+      speech,
+      isSolentaFrame: (wc, details) =>
+        isSolentaMainFrame(wc, details, {
+          isDev,
+          devServerUrl: process.env.VITE_DEV_SERVER_URL || "http://localhost:5173",
+        }),
+    });
+  } catch (err) {
+    speech = null;
+    console.warn(
+      "speech: unavailable this session:",
+      err && err.message ? err.message : err,
+    );
+  }
   mediaProtocol.installHandler({
     protocol,
     net,
@@ -593,6 +625,7 @@ app.whenReady().then(async () => {
     runner,
     broadcast,
     stayAwake,
+    speech,
     worktreeBase: path.join(userData, "worktrees"),
     userDataPath: userData,
     cleanupRunArtifacts: () =>
@@ -851,6 +884,14 @@ function teardownServices() {
       // ignore
     }
     orchServer = null;
+  }
+  if (speech) {
+    try {
+      void speech.teardown();
+    } catch {
+      // ignore
+    }
+    speech = null;
   }
   if (iosSimulatorStream) {
     try {

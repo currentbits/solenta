@@ -284,11 +284,15 @@ describe("memory-sup supervisor", () => {
       );
 
       const codexArgs = getCodexMcpArgs();
-      assert.equal(codexArgs.length, 4);
+      assert.equal(codexArgs.length, 6);
       assert.equal(codexArgs[0], "-c");
       assert.equal(
         codexArgs[1],
         `mcp_servers.coder-memory.url="http://127.0.0.1:${port}/mcp"`,
+      );
+      assert.equal(
+        codexArgs[5],
+        'mcp_servers.coder-memory.default_tools_approval_mode="approve"',
       );
       // The token rides the env, never argv (ps is world-readable).
       assert.ok(!codexArgs.some((a) => a.includes(token)));
@@ -673,10 +677,63 @@ describe("memory-sup supervisor", () => {
         `mcp_servers.coder-memory.url="http://127.0.0.1:${port}/mcp"`,
         "-c",
         'mcp_servers.coder-memory.bearer_token_env_var="CODER_MCP_TOKEN_CODER_MEMORY"',
+        "-c",
+        'mcp_servers.coder-memory.default_tools_approval_mode="approve"',
       ]);
       assert.deepEqual(getCodexMcpEnv(), {
         CODER_MCP_TOKEN_CODER_MEMORY: token,
       });
+      sup.stop();
+    } finally {
+      await new Promise((r) => server.close(r));
+    }
+  });
+
+  it("Codex first-party MCP servers auto-approve tools under exec never-policy (#846)", async () => {
+    const port = await freePort();
+    const token = "codex-approve-tok";
+    fs.writeFileSync(
+      path.join(tmpDir, "memory-server.json"),
+      JSON.stringify({
+        port,
+        token,
+        dbPath: path.join(tmpDir, "db"),
+      }),
+      "utf8",
+    );
+    const server = http.createServer(serveProvenHealth(token));
+    await new Promise((r) => server.listen(port, "127.0.0.1", r));
+    try {
+      const sup = createMemorySupervisor({
+        userDataPath: tmpDir,
+        appPath: tmpDir,
+        log: (m) => logs.push(m),
+      });
+      await sup.start();
+      registerMcpServer({
+        name: "coder-threads",
+        port: await freePort(),
+        token: "threads-tok",
+        userDataPath: tmpDir,
+      });
+      const pairs = [];
+      const args = getCodexMcpArgs();
+      for (let i = 0; i < args.length; i += 2) {
+        assert.equal(args[i], "-c");
+        pairs.push(args[i + 1]);
+      }
+      assert.ok(
+        pairs.includes(
+          'mcp_servers.coder-memory.default_tools_approval_mode="approve"',
+        ),
+        `expected coder-memory auto-approve, got ${JSON.stringify(pairs)}`,
+      );
+      assert.ok(
+        pairs.includes(
+          'mcp_servers.coder-threads.default_tools_approval_mode="approve"',
+        ),
+        `expected coder-threads auto-approve, got ${JSON.stringify(pairs)}`,
+      );
       sup.stop();
     } finally {
       await new Promise((r) => server.close(r));

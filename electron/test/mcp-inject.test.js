@@ -198,6 +198,14 @@ process.exit(0);
       `expected env_vars names, got ${JSON.stringify(pairs)}`,
     );
     assert.ok(
+      !pairs.some((p) =>
+        /mcp_servers\.(team-tools|local-tools)\.default_tools_approval_mode=/.test(
+          p,
+        ),
+      ),
+      `user MCP servers must not be blanket-approved (#846), got ${JSON.stringify(pairs)}`,
+    );
+    assert.ok(
       !pairs.some((p) => p.includes("ghp-secret")),
       "Codex argv must not carry stdio env values",
     );

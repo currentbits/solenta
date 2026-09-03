@@ -156,6 +156,15 @@
   color: var(--text-on-accent);
 }
 
+.speechConfirm {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
 .buildSplit {
   position: relative;
   display: inline-flex;
