@@ -5798,6 +5798,15 @@ async function scheduleRetention(opts) {
     );
   }
   try {
+    const { reclaimMuseHomes } = require("./muse.js");
+    reclaimMuseHomes(opts);
+  } catch (err) {
+    console.warn(
+      "muse-home retention:",
+      err && err.message ? err.message : err,
+    );
+  }
+  try {
     const { reclaimCursorHomes } = require("./cursor.js");
     reclaimCursorHomes(opts);
   } catch (err) {

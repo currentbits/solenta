@@ -415,6 +415,7 @@ const DEV_PROVIDERS: ProviderInfo[] = [
     ...devProvider("opencode", "OpenCode", ["opencode/grok-code"]),
     permissionModes: ["default", "bypassPermissions"],
   },
+  devProvider("muse", "Muse Code", ["muse-spark-1.3"]),
 ];
 
 /** Builtin Standard template (id "standard"). Seeded into every dev session. */
@@ -1686,6 +1687,7 @@ function buildDevCoder(): CoderApi {
     "opencode",
     "kimi",
     "cursor",
+    "muse",
   ];
 
   function skillMdBytes(name: string, description: string, body: string): number {

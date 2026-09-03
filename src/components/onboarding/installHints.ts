@@ -33,6 +33,9 @@ export const INSTALL_HINTS: Record<string, InstallHint> = {
     command: "curl https://cursor.com/install -fsS | bash",
     url: "https://cursor.com/cli",
   },
+  muse: {
+    url: "https://dev.meta.ai/docs/muse-code",
+  },
 };
 
 /** Fallback when we have no verified install command for this CLI. */

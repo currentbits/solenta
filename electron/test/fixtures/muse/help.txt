@@ -1,0 +1,186 @@
+muse — interactive terminal coding agent
+
+If no subcommand is given, options run the interactive TUI; pass a prompt to start
+a session, or use a command below.
+
+[1mUsage:[0m muse [OPTIONS] [PROMPT]
+       muse [OPTIONS] <COMMAND>
+
+[1mCommands:[0m
+  resume           Resume a previous session (--last or <session-uuid>)
+  exec             Run one prompt non-interactively (headless)
+  config           Validate enterprise configuration documents
+  export           Export a session transcript to a file
+  trace            Inspect a recorded session or run trace
+  skills           List, inspect, enable, or disable skills
+  sandbox          Check or set up the OS sandbox
+  schema           Export the MSP wire schema (JSON Schema or TypeScript)
+  serve            Serve an MSP session host over stdio
+  session-message  List or send cross-session messages
+  auth             Store provider API credentials
+  login            Log in to a provider
+  logout           Remove stored provider credentials
+  init             Scaffold agent config in this workspace
+
+[1mOptions:[0m
+  -h, --help
+          Print help
+  -V, --version
+          Print version
+      --agents <JSON>
+          Supply one ephemeral agent-definition overlay
+      --provider <MODE>
+          Startup provider: echo or meta (default: meta)
+      --preset <NAME>
+          Run a built-in preset: native-basic, miniswe
+      --model <MODEL>
+          Model id for non-echo providers
+      --reasoning-effort <EFFORT>
+          Meta reasoning effort: none|minimal|low|medium|high|xhigh|ultra
+          (default: high)
+      --base-url <URL>
+          Override the Meta provider base URL
+      --image <PATH>
+          Attach a local image file to the next submitted prompt
+      --workspace <PATH>
+          Register policy-gated workspace tools rooted at PATH
+  -w, --worktree [<MODE>]
+          Session Git worktree: off|create|existing; a bare -w means create
+          (default: off)
+      --worktree-base <REF>
+          Base ref for --worktree create (default: HEAD)
+      --worktree-existing <PATH>
+          Existing worktree path for --worktree existing
+      --parallel-tool-calls
+          Enable Meta API parallel tool calls
+      --no-parallel-tool-calls
+          Disable Meta API parallel tool calls
+      --subagent-worktree-isolation
+          Compatibility flag; capability defaults on. Only an affirmative
+          per-child request asks for isolation; omission stays shared. Requests
+          may reject when capability, provider, or Git prerequisites are
+          unavailable.
+      --approval-mode <MODE>
+          Tool approval mode: untrusted|on-request|never (default: on-request)
+      --permission-profile <ID>
+          Select a named permission profile for this session.
+      --approval-judge <off|on>
+          LLM approval judge for Prompt-bound calls (default: on)
+      --no-session-log
+          Do not persist session event logs to disk
+      --echo-delay-ms <MS>
+          Deterministic echo reply delay (echo provider only)
+
+[1mSafety (approval and the sandbox are ON by default):[0m
+      --yolo
+          Disable approval and sandboxing and trust this workspace for this run
+      --trust-workspace
+          Trust this workspace for this run (load its skills and rules); does
+          not save trust
+      --disable-approval
+          Disable tool approval prompts for this workspace run
+      --disable-sandbox
+          Disable shell filesystem/network sandboxing for this run
+      --sandbox-network <MODE>
+          Sandbox network mode: restricted|enabled|proxy-only (default:
+          proxy-only)
+      --disable-write
+          Disable non-shell workspace filesystem writes
+      --disable-shell
+          Disable workspace shell execution
+      --enable-shell-tool
+          Use the legacy shell tool instead of the managed platform shell
+
+Run `muse <command> --help` for command-specific options.
+
+muse exec — run one prompt non-interactively (headless)
+
+[1mUsage:[0m muse exec [OPTIONS] [PROMPT]
+
+[1mOptions:[0m
+      --json
+          Emit machine-readable JSONL events on stdout
+      --prompt-file <PATH>
+          Read the prompt from a file instead of an argument
+      --api-key-stdin
+          Read the provider API key from stdin
+      --provider <MODE>
+          Startup provider: echo or meta (default: meta)
+      --preset <NAME>
+          Run a built-in preset: native-basic, miniswe
+      --permission-profile <ID>
+          Select a named permission profile for this session.
+      --model <ID>
+          Model id for non-echo providers
+      --reasoning-effort <EFFORT>
+          Meta reasoning effort: none|minimal|low|medium|high|xhigh|ultra
+          (default: high)
+      --parallel-tool-calls
+          Enable Meta API parallel tool calls
+      --no-parallel-tool-calls
+          Disable Meta API parallel tool calls
+      --base-url <URL>
+          Override the provider base URL
+      --image <PATH>
+          Attach a local image file (repeatable)
+      --workspace <PATH>
+          Root policy-gated workspace tools at PATH
+  -w, --worktree [<MODE>]
+          Session git worktree: off|create|existing
+      --worktree-base <REF>
+          Base ref for --worktree create (default: HEAD)
+      --worktree-existing <PATH>
+          Existing worktree path for --worktree existing
+      --context-compaction-strategy <ID>
+          Context compaction strategy: summary-preserved-suffix/v1,
+          prefix-extension-summary/v1, prefix-extension-inventory-summary/v1
+      --context-compaction-soft-threshold <FRAC>
+          Soft compaction threshold
+      --context-compaction-hard-threshold <FRAC>
+          Hard compaction threshold
+      --max-model-steps <N>
+          Cap the number of model steps
+      --max-tool-output-bytes <N>
+          Cap tool output bytes fed back to the model
+      --session-id <UUID>
+          Use a specific session id
+      --allow-workspace-switch
+          Allow switching the workspace mid-run
+      --user-input-auto-resolve
+          Offer request_user_input and auto-cancel prompts (headless)
+      --subagent-worktree-isolation
+          Compatibility flag; capability defaults on. Only an affirmative
+          per-child request asks for isolation; omission stays shared. Requests
+          may reject when capability, provider, or Git prerequisites are
+          unavailable.
+      --disable-web-tools
+          Disable web tools for this run
+      --no-foreign-personal-context
+          Exclude foreign personal rules and skills from this run
+      --no-session-log
+          Do not persist session event logs to disk
+      --approval-mode <MODE>
+          Tool approval mode: untrusted|on-request|never (default: on-request)
+      --approval-judge <off|on>
+          LLM approval judge for Prompt-bound calls (default: on)
+  -h, --help
+          Print this help
+
+[1mSafety (approval and the sandbox are ON by default):[0m
+      --yolo
+          Disable approval and sandbox and trust this workspace (this run)
+      --trust-workspace
+          Load this workspace's skills and rules (this run)
+      --disable-approval
+          Disable tool approval prompts for this run
+      --disable-sandbox
+          Disable shell filesystem/network sandboxing for this run
+      --sandbox-network <MODE>
+          Sandbox network mode (default: proxy-only)
+      --disable-write
+          Disable non-shell workspace filesystem writes
+      --disable-shell
+          Disable workspace shell execution
+      --enable-shell-tool
+          Use the legacy shell tool instead of the managed platform shell
+

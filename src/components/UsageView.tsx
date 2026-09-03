@@ -34,6 +34,7 @@ const PROVIDER_COLORS: Record<string, string> = {
   kimi: "var(--amber)",
   codex: "var(--danger)",
   opencode: "var(--text-muted)",
+  muse: "var(--accent)",
 };
 
 function providerColor(id: string): string {

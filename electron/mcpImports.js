@@ -47,6 +47,7 @@ const MCP_PROVIDERS = [
   { id: "codex", label: "Codex" },
   { id: "grok", label: "Grok" },
   { id: "cursor", label: "Cursor" },
+  { id: "muse", label: "Muse Code" },
 ];
 
 function nowMs(now) {

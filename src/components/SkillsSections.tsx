@@ -20,6 +20,7 @@ const TARGET_LABEL: Record<SkillTarget, string> = {
   opencode: "OpenCode",
   kimi: "Kimi",
   cursor: "Cursor",
+  muse: "Muse Code",
 };
 
 /** SKILL.md bytes → a compact "~1.2k tokens" estimate (≈ 4 bytes/token). */

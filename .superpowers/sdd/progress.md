@@ -103,3 +103,13 @@ Task 1: complete (commits b1447f03..db122a20, review clean)
 Minor for final triage: ingest HTTP test does not lock pathname-only path; no 81-char UTM case.
 Task 2: complete (commits db122a20..b5303f55, review clean)
 Minor for final triage: inRange is lower-bound only; hourly test does not lock daySeen vs two-hour visitor.
+
+---
+
+# Muse Code provider SDD (#873)
+Plan: docs/superpowers/plans/2026-09-03-muse-code-provider.md
+Spec: docs/superpowers/specs/2026-09-03-muse-code-provider-design.md
+Branch: coder/i-want-you-to-research-meta-muse-spark-a-afffce
+Workspace: already isolated git worktree
+
+Task 1: complete (commit 93129436, DONE_WITH_CONCERNS). Muse 1.0.2 echo capture committed. Session id is stream.id. echo-tools has no tool events; META_API_KEY unset so no Spark capture. Stop before Task 6 tool-card tests; do not copy muse-codes.
