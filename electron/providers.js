@@ -63,7 +63,7 @@ const catalogDivergence = require("./catalogDivergence.js");
  * @property {Array<"default"|"acceptEdits"|"plan"|"bypassPermissions">} permissionModes
  *   Modes this adapter actually honours (changes argv / CLI behaviour).
  *   The composer only offers these; setPermissionMode rejects the rest.
- * @property {"claude-stream" | "codex-json" | "kimi-stream" | "opencode-json" | "cursor-stream" | "simulate"} kind
+ * @property {"claude-stream" | "codex-json" | "kimi-stream" | "opencode-json" | "cursor-stream" | "muse-json" | "simulate"} kind
  * @property {(opts: {
  *   prompt: string,
  *   sessionId?: string | null,
@@ -112,6 +112,7 @@ const GROK_45_EFFORTS = ["low", "medium", "high"];
 const KIMI_K3_EFFORTS = ["low", "high", "max"];
 const OPENCODE_LMH = ["low", "medium", "high"];
 const OPENCODE_LMHX = ["low", "medium", "high", "xhigh"];
+const MUSE_EFFORTS = ["low", "medium", "high", "xhigh", "ultra"];
 
 /**
  * Effort list for the selected model. ModelInfo.efforts, when the field is
@@ -488,18 +489,18 @@ const PROVIDERS = [
     binEnv: "CODER_OPENCODE_BIN",
     defaultBin: "opencode",
     supportsResume: true,
-    // Live `opencode models` (v1.17.12, 2026-08-29) free Zen list. Labels
-    // and `limit.context` from `opencode models --verbose`; descriptions
-    // from ~/.cache/opencode/models.json (verbose omits them). Vendors are
-    // the model makers when the description names one; otherwise OpenCode.
-    // Efforts = variant keys ∩ ReasoningEffort; empty variants hide the pill.
-    // Ids are provider/model as required by -m.
+    // Live `opencode models` (v1.17.12, 2026-09-03, after --refresh) free
+    // Zen list. Labels and `limit.context` from `opencode models --verbose`;
+    // descriptions from ~/.cache/opencode/models.json (verbose omits them).
+    // Vendors are the model makers when the description names one; otherwise
+    // OpenCode. Efforts = variant keys ∩ ReasoningEffort; empty variants hide
+    // the pill. Ids are provider/model as required by -m.
     models: [
       "opencode/big-pickle",
-      "opencode/hy3-free",
       "opencode/ling-3.0-flash-fin-free",
       "opencode/mimo-v2.5-free",
       "opencode/muse-spark-1.2-contributor-free",
+      "opencode/muse-spark-1.3-contributor-free",
       "opencode/nemotron-3-ultra-free",
       "opencode/nemotron-3.5-lightning-free",
     ],
@@ -512,16 +513,6 @@ const PROVIDERS = [
         vendor: "OpenCode",
         contextTokens: 200000,
         efforts: [],
-      },
-      {
-        id: "opencode/hy3-free",
-        label: "Hy3 Free",
-        description:
-          "Tencent Hy reasoning model for coding, instruction following, and agent tasks",
-        vendor: "Tencent",
-        recommended: true,
-        contextTokens: 190000,
-        efforts: OPENCODE_LMH.slice(),
       },
       {
         id: "opencode/ling-3.0-flash-fin-free",
@@ -546,6 +537,17 @@ const PROVIDERS = [
         description:
           "Muse Spark 1.2 is a coding-focused update to Muse Spark 1.1 with improvements in code generation, complex debugging, codebase understanding, and end-to-end developer workflows.",
         vendor: "OpenCode",
+        contextTokens: 1048576,
+        // Verbose variants also list `none` (not in ReasoningEffort).
+        efforts: OPENCODE_LMHX.slice(),
+      },
+      {
+        id: "opencode/muse-spark-1.3-contributor-free",
+        label: "Muse Spark 1.3 Free",
+        description:
+          "Muse Spark 1.3 is a multimodal reasoning model from Meta for coding and agentic workflows.",
+        vendor: "Meta",
+        recommended: true,
         contextTokens: 1048576,
         // Verbose variants also list `none` (not in ReasoningEffort).
         efforts: OPENCODE_LMHX.slice(),
@@ -1166,6 +1168,55 @@ const PROVIDERS = [
       maybeEmitEffort([], reasoningEffort, () => {
         args.push("--effort", "should-not-appear");
       });
+      args.push(String(prompt ?? ""));
+      return args;
+    },
+  },
+  {
+    id: "muse",
+    name: "Muse Code",
+    binEnv: "CODER_MUSE_BIN",
+    defaultBin: "muse",
+    supportsResume: true,
+    models: ["muse-spark-1.3", "muse-spark-1.2"],
+    modelInfo: [
+      {
+        id: "muse-spark-1.3",
+        label: "Muse Spark 1.3",
+        description: "Meta's coding model. Long-horizon agentic work.",
+        vendor: "Meta",
+        recommended: true,
+        contextTokens: 1_048_576,
+        efforts: MUSE_EFFORTS.slice(),
+      },
+      {
+        id: "muse-spark-1.2",
+        label: "Muse Spark 1.2",
+        description: "Previous Muse Spark coding checkpoint.",
+        vendor: "Meta",
+        contextTokens: 1_048_576,
+        efforts: MUSE_EFFORTS.slice(),
+      },
+    ],
+    efforts: MUSE_EFFORTS.slice(),
+    permissionModes: ["default", "bypassPermissions"],
+    kind: "muse-json",
+    buildArgs({ prompt, sessionId, permissionMode, model, reasoningEffort }) {
+      const args = ["exec", "--json", "--trust-workspace"];
+      const mode = String(permissionMode || "default");
+      if (mode === "bypassPermissions") args.push("--disable-approval");
+      else {
+        args.push("--approval-mode", "never");
+      }
+      if (sessionId) args.push("--session-id", String(sessionId));
+      if (model) args.push("--model", String(model));
+      maybeEmitEffort(
+        honouredEfforts(getProvider("muse"), model),
+        reasoningEffort,
+        (level) => {
+          args.push("--reasoning-effort", level);
+        },
+      );
       args.push(String(prompt ?? ""));
       return args;
     },

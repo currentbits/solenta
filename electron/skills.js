@@ -14,7 +14,7 @@ const os = require("node:os");
 const SKILL_NAME_RE = /^[a-z0-9-]+$/;
 const SKILL_MARKER_NAME = ".solenta-skill.json";
 
-/** @typedef {"claude" | "agents" | "codex" | "grok" | "opencode" | "kimi" | "cursor"} SkillTarget */
+/** @typedef {"claude" | "agents" | "codex" | "grok" | "opencode" | "kimi" | "cursor" | "muse"} SkillTarget */
 
 /**
  * Fan-out order and merge/source priority. Keep this list in lockstep with
@@ -29,6 +29,7 @@ const SKILL_TARGETS = Object.freeze([
   "opencode",
   "kimi",
   "cursor",
+  "muse",
 ]);
 
 /**
@@ -56,6 +57,11 @@ function SKILL_DIRS(env = process.env) {
     opencode: path.join(home, ".config", "opencode", "skills"),
     kimi: path.join(home, ".kimi", "skills"),
     cursor: path.join(home, ".cursor", "skills"),
+    muse: path.join(
+      env.XDG_CONFIG_HOME || path.join(home, ".config"),
+      "muse",
+      "skills",
+    ),
   };
 }
 

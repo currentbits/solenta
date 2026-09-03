@@ -193,13 +193,17 @@ describe("reasoning effort: provider modelInfo + efforts", () => {
     const oc = getProvider("opencode");
     assert.deepEqual(honouredEfforts(oc, null), []);
     assert.deepEqual(honouredEfforts(oc, "opencode/big-pickle"), []);
-    assert.deepEqual(honouredEfforts(oc, "opencode/hy3-free"), [
+    assert.deepEqual(honouredEfforts(oc, "opencode/ling-3.0-flash-fin-free"), [
       "low",
       "medium",
       "high",
     ]);
     assert.deepEqual(
       honouredEfforts(oc, "opencode/muse-spark-1.2-contributor-free"),
+      ["low", "medium", "high", "xhigh"],
+    );
+    assert.deepEqual(
+      honouredEfforts(oc, "opencode/muse-spark-1.3-contributor-free"),
       ["low", "medium", "high", "xhigh"],
     );
   });
@@ -365,7 +369,7 @@ describe("reasoning effort: buildArgs per provider", () => {
 
     const withVariant = entry.buildArgs({
       prompt: "ping",
-      model: "opencode/hy3-free",
+      model: "opencode/ling-3.0-flash-fin-free",
       reasoningEffort: "high",
     });
     assert.deepEqual(withVariant, [
@@ -374,7 +378,7 @@ describe("reasoning effort: buildArgs per provider", () => {
       "json",
       "--thinking",
       "-m",
-      "opencode/hy3-free",
+      "opencode/ling-3.0-flash-fin-free",
       "--variant",
       "high",
       "ping",
@@ -386,7 +390,7 @@ describe("reasoning effort: buildArgs per provider", () => {
 
     const muse = entry.buildArgs({
       prompt: PROMPT_OPENCODE,
-      model: "opencode/muse-spark-1.2-contributor-free",
+      model: "opencode/muse-spark-1.3-contributor-free",
       reasoningEffort: "xhigh",
     });
     assertPromptLast(muse, PROMPT_OPENCODE, {
@@ -394,6 +398,15 @@ describe("reasoning effort: buildArgs per provider", () => {
       effortValue: "xhigh",
     });
     assert.ok(!muse.includes("none"));
+    const muse12 = entry.buildArgs({
+      prompt: PROMPT_OPENCODE,
+      model: "opencode/muse-spark-1.2-contributor-free",
+      reasoningEffort: "xhigh",
+    });
+    assertPromptLast(muse12, PROMPT_OPENCODE, {
+      effortFlag: "--variant",
+      effortValue: "xhigh",
+    });
 
     const pickle = entry.buildArgs({
       prompt: PROMPT_OPENCODE,
@@ -911,7 +924,7 @@ describe("reasoning effort: setReasoningEffort service", () => {
     services.setProvider(store, {
       threadId: thread.id,
       provider: "opencode",
-      model: "opencode/hy3-free",
+      model: "opencode/ling-3.0-flash-fin-free",
     });
     const ok = services.setReasoningEffort(store, {
       threadId: thread.id,

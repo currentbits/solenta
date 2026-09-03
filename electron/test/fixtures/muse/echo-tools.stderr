@@ -1,0 +1,5 @@
+muse: workspace root: /private/var/folders/z1/xwnsjkhx70s9mnx9hmd3kyfh0000gn/T/muse-capture.8cIWG8 (cwd default)
+muse: workspace trust: trusted source=run-flag
+muse: Skills: 75 loaded · 1 warning · 44 details hidden
+muse:   canvas: invalid skill package: skill file at /Users/willem/.agents/skills/canvas/SKILL.md is malformed: SKILL.md frontmatter must include description
+muse:   Run `muse skills list --source all` for full diagnostics.

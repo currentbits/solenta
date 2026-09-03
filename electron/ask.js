@@ -332,6 +332,19 @@ function buildAskArgs(providerId, opts) {
       args.push(String(prompt));
       return args;
     }
+    case "muse": {
+      // One-shot print: never resume (--session-id omitted). Prompt last.
+      const args = [
+        "exec",
+        "--json",
+        "--trust-workspace",
+        "--approval-mode",
+        "never",
+      ];
+      if (model) args.push("--model", String(model));
+      args.push(String(prompt));
+      return args;
+    }
     default:
       return null;
   }
@@ -374,13 +387,45 @@ function extractCodexText(stdout) {
 }
 
 /**
+ * Muse exec --json JSONL → assistant text via extractAssistantText.
+ * Echo delta and terminal carry the same full payload.text; terminal is a
+ * snapshot (replace), matching startMuseRun — do not double-concatenate.
+ * @param {string} stdout
+ * @returns {string}
+ */
+function extractMuseText(stdout) {
+  const { extractAssistantText } = require("./muse.js");
+  let text = "";
+  for (const line of String(stdout || "").split("\n")) {
+    const t = line.trim();
+    if (!t.startsWith("{")) continue;
+    let ev;
+    try {
+      ev = JSON.parse(t);
+    } catch {
+      continue;
+    }
+    const piece = extractAssistantText(ev);
+    if (!piece) continue;
+    if (ev.payload_type === "run.terminal.completed") {
+      if (piece !== text) text = piece;
+    } else {
+      text += piece;
+    }
+  }
+  return text;
+}
+
+/**
  * @param {string} providerId
  * @param {string} stdout
  * @returns {string}
  */
 function extractAskText(providerId, stdout) {
-  const raw =
-    providerId === "codex" ? extractCodexText(stdout) : String(stdout || "");
+  let raw;
+  if (providerId === "codex") raw = extractCodexText(stdout);
+  else if (providerId === "muse") raw = extractMuseText(stdout);
+  else raw = String(stdout || "");
   return raw.trim();
 }
 
