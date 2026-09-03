@@ -30,6 +30,7 @@ const {
   listProviders,
   snapPermissionMode,
 } = require("./providers.js");
+const { codexWorkspaceWriteArgs } = require("./codexWorkspaceWrite.js");
 const orchcommands = require("./orchcommands.js");
 const cliCommands = require("./cliCommands.js");
 const ask = require("./ask.js");
@@ -4427,6 +4428,15 @@ function createRunner(opts) {
     if (codexMcpArgs.length > 0) {
       args.unshift(...codexMcpArgs);
     }
+    const planboardNote = services.planboardNoteFor(localCwd, {
+      provider: thread.provider,
+      permissionMode: thread.permissionMode || "default",
+    });
+    const codexSandboxArgs = codexWorkspaceWriteArgs({
+      permissionMode: thread.permissionMode || "default",
+      allowNetwork: planboardNote === services.PLANBOARD_NOTE,
+    });
+    if (codexSandboxArgs.length) args.unshift(...codexSandboxArgs);
     /** @type {Record<string, string>} */
     const codexMcpEnv = { ...getCodexMcpEnv() };
     // #813: isolated CODEX_HOME PreToolUse. Local overlay stays on this

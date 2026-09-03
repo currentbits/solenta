@@ -540,6 +540,58 @@ describe("runner codex provider", () => {
     else process.env.CODER_GROK_MCP_DISABLE = prevGrokMcpDisable;
     if (prevGrokBin === undefined) delete process.env.CODER_GROK_BIN;
     else process.env.CODER_GROK_BIN = prevGrokBin;
+    require("../codexWorkspaceWrite.js").resetCodexGhAuthOkForTests();
+  });
+
+  it("Planboard GitHub origin allowlists github hosts under workspace-write (#848)", async () => {
+    const { setCodexGhAuthOkForTests } = require("../codexWorkspaceWrite.js");
+    setCodexGhAuthOkForTests(true);
+    process.env.CODER_FAKE_CODEX_SCENARIO = "success";
+    const repo = store.getProjects()[0].path;
+    git(repo, ["remote", "add", "origin", "git@github.com:acme/demo.git"]);
+    const thread = store.getThreads()[0];
+    if (fs.existsSync(argvFile)) fs.unlinkSync(argvFile);
+    await runner.startRun({ threadId: thread.id, prompt: "plan me" });
+    await waitFor(() => store.getThread(thread.id).status === "done");
+    const argv = JSON.parse(fs.readFileSync(argvFile, "utf8"));
+    const domains = argv.find((a) =>
+      String(a).startsWith("features.network_proxy.domains="),
+    );
+    assert.ok(domains, `expected GitHub proxy allowlist, got ${JSON.stringify(argv)}`);
+    assert.ok(
+      argv.includes("features.network_proxy.enabled=true"),
+      JSON.stringify(argv),
+    );
+    for (const host of ["api.github.com", "github.com", "uploads.github.com"]) {
+      assert.ok(
+        domains.includes(`"${host}" = "allow"`) ||
+          domains.includes(`"${host}"="allow"`),
+        `missing ${host} in ${domains}`,
+      );
+    }
+    assert.ok(!domains.includes('"*"'), domains);
+    const prompt = String(argv[argv.length - 1]);
+    assert.match(prompt, /issue_create/);
+    assert.doesNotMatch(prompt, /using `gh`/);
+  });
+
+  it("omits GitHub proxy flags when sandbox gh cannot authenticate (#848)", async () => {
+    const { setCodexGhAuthOkForTests } = require("../codexWorkspaceWrite.js");
+    setCodexGhAuthOkForTests(false);
+    process.env.CODER_FAKE_CODEX_SCENARIO = "success";
+    const repo = store.getProjects()[0].path;
+    git(repo, ["remote", "add", "origin", "git@github.com:acme/demo.git"]);
+    const thread = store.getThreads()[0];
+    if (fs.existsSync(argvFile)) fs.unlinkSync(argvFile);
+    await runner.startRun({ threadId: thread.id, prompt: "plan me" });
+    await waitFor(() => store.getThread(thread.id).status === "done");
+    const argv = JSON.parse(fs.readFileSync(argvFile, "utf8"));
+    assert.ok(
+      !argv.some((a) => String(a).startsWith("features.network_proxy.domains=")),
+      `fail-closed: no GitHub proxy when gh cannot auth, got ${JSON.stringify(argv)}`,
+    );
+    const prompt = String(argv[argv.length - 1]);
+    assert.doesNotMatch(prompt, /using `gh`/);
   });
 
   it("full lifecycle: sessionId, assistant, tool Command, usage, done", async () => {

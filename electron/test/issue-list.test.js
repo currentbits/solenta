@@ -106,6 +106,12 @@ describe("planboardNoteFor", () => {
     git(gh, ["remote", "add", "origin", "git@github.com:acme/demo.git"]);
     assert.equal(planboardNoteFor(gh), PLANBOARD_NOTE);
     assert.match(PLANBOARD_NOTE, /plan:todo, plan:doing, plan:done/);
+    assert.match(PLANBOARD_NOTE, /issue_create/);
+    assert.doesNotMatch(PLANBOARD_NOTE, /using `gh`/);
+    assert.doesNotMatch(
+      PLANBOARD_NOTE,
+      /cannot see host GitHub credentials/,
+    );
   });
 
   it("maps a TodoWrite todo list onto plan steps", () => {
