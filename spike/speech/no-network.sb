@@ -1,0 +1,8 @@
+;; macOS sandbox-exec profile: allow local work, deny outbound network.
+;; Localhost is allowed so a sidecar already bound to 127.0.0.1 can be used;
+;; CLI file transcription does not need any sockets.
+(version 1)
+(allow default)
+(deny network*)
+(allow network-inbound (local ip "localhost:*"))
+(allow network-outbound (local ip "localhost:*"))

@@ -1,0 +1,14 @@
+{
+  "pace": "realtime",
+  "audioDurationSec": 6.1073125,
+  "firstPartialMs": 824,
+  "stopToFinalMs": 79,
+  "rtf": 1.022544695395888,
+  "wallMs": 6245,
+  "deltaCount": 54,
+  "firstPartialText": "Quick",
+  "finalText": "Quick brown fox jumps over the lazy dog Solenta transcribes English speech privately on this machine.",
+  "errorEvent": null,
+  "chunkBytes": 3200,
+  "targetBytes": 195434
+}
