@@ -165,6 +165,7 @@ describe("SKILL_DIRS / activeSkillTargets", () => {
       "opencode",
       "kimi",
       "cursor",
+      "muse",
     ]);
     assert.equal(dirs.claude, path.join(tmp, ".claude", "skills"));
     assert.equal(dirs.agents, path.join(tmp, ".agents", "skills"));
@@ -176,9 +177,11 @@ describe("SKILL_DIRS / activeSkillTargets", () => {
     );
     assert.equal(dirs.kimi, path.join(tmp, ".kimi", "skills"));
     assert.equal(dirs.cursor, path.join(tmp, ".cursor", "skills"));
+    assert.equal(dirs.muse, path.join(tmp, ".config", "muse", "skills"));
     assert.equal(skillBaseDir("claude", env), dirs.claude);
     assert.equal(skillBaseDir("opencode", env), dirs.opencode);
     assert.equal(skillBaseDir("cursor", env), dirs.cursor);
+    assert.equal(skillBaseDir("muse", env), dirs.muse);
     assert.throws(() => skillBaseDir("project", env), /target/i);
   });
 

@@ -2544,7 +2544,8 @@ export type SkillTarget =
   | "grok"
   | "opencode"
   | "kimi"
-  | "cursor";
+  | "cursor"
+  | "muse";
 
 /** Where a skill was found on disk; "project" is the read-only project dir. */
 export type SkillSource = SkillTarget | "project";

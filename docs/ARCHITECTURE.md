@@ -29,10 +29,12 @@ fixtures all the way down.
 
 **Kinds** (parsed / spawned in `electron/runner.js` + adapters):
 
-- `claude-stream`: `electron/claude.js` (stream-json tool events, session resume)
+- `claude-stream`: `electron/claude.js` (stream-json tool events, session resume); Grok also uses `claude-stream` via `electron/grok.js`
 - `codex-json`: `electron/codex.js`
 - `kimi-stream`: `electron/kimi.js` (cwd-scoped continue via sentinel session id)
-- `text`: generic stdout agent (`electron/agent.js`) for Grok / OpenCode
+- `opencode-json`: `electron/opencode.js`
+- `cursor-stream`: `electron/cursor.js`
+- `muse-json`: `electron/muse.js`
 - `simulate`: fakes single-turn runs only (`startSimulatedRun`); Build workflows reject it
 
 Empty `models` means free-form model ids (composer Custom… + CLI `-m` / `--model`).
