@@ -8,7 +8,7 @@
  *   IPC handlers use — one behavior, two transports.
  * - Push channels are the Web-safe subset of preload's PUSH_CHANNELS
  *   ("threads:changed", "thread:updated", "thread:select", "boot:ready").
- *   Simulator pushes are desktop-only and must not ride this list.
+ *   Simulator and speech pushes are desktop-only and must not ride this list.
  * - Auth: the FIRST client message must be {kind:"auth", token}. The token
  *   is generated (crypto-random) when serve mode starts, printed to stdout
  *   and persisted next to the store. Any other first message closes the
@@ -35,7 +35,7 @@ export type WireServerMessage =
   | { kind: "reply"; id: number; result?: unknown; error?: string }
   | { kind: "push"; channel: string; payload: unknown };
 
-/** Web-safe pushes. Desktop-only simulator channels are not in this list. */
+/** Web-safe pushes. Desktop-only simulator/speech channels are not in this list. */
 export const WIRE_PUSH_CHANNELS = [
   "threads:changed",
   "thread:updated",

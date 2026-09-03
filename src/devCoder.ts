@@ -82,6 +82,7 @@ import type {
   SkillWrite,
   SpaceInfo,
   SpecArtifact,
+  SpeechStatus,
   ThreadDetail,
   ThreadInfo,
   CrewTaskView,
@@ -497,6 +498,7 @@ type ListenerMap = {
   "threads:changed": Set<(threads: ThreadInfo[]) => void>;
   "thread:updated": Set<(detail: ThreadDetail) => void>;
   "boot:ready": Set<() => void>;
+  "speech:changed": Set<(status: SpeechStatus) => void>;
 };
 
 /** Browser-dev fixture for the Agents-tab crew list (issue #277). */
@@ -1963,6 +1965,7 @@ function buildDevCoder(): CoderApi {
     "threads:changed": new Set(),
     "thread:updated": new Set(),
     "boot:ready": new Set(),
+    "speech:changed": new Set(),
   };
 
   const emitThreads = () => {
@@ -5355,6 +5358,26 @@ function buildDevCoder(): CoderApi {
         return { ...thread };
       },
     },
+    speech: {
+      async status(): Promise<SpeechStatus> {
+        return { state: "missing", runtimeReady: false, modelReady: false };
+      },
+      async download() {
+        throw new Error("Speech is not implemented yet.");
+      },
+      async start() {
+        throw new Error("Speech is not implemented yet.");
+      },
+      async write() {
+        throw new Error("Speech is not implemented yet.");
+      },
+      async stop() {
+        throw new Error("Speech is not implemented yet.");
+      },
+      async cancel() {
+        throw new Error("Speech is not implemented yet.");
+      },
+    },
     vibeKanban: {
       async preview(): Promise<VibeKanbanPreview> {
         return {
@@ -5804,6 +5827,13 @@ function buildDevCoder(): CoderApi {
         listeners["boot:ready"].add(fn);
         return () => {
           listeners["boot:ready"].delete(fn);
+        };
+      }
+      if (channel === "speech:changed") {
+        const fn = cb as (status: SpeechStatus) => void;
+        listeners["speech:changed"].add(fn);
+        return () => {
+          listeners["speech:changed"].delete(fn);
         };
       }
       const fn = cb as (detail: ThreadDetail) => void;

@@ -175,6 +175,44 @@ function requireSimulator(ctx) {
   return sim;
 }
 
+/** Stub until electron/speech.js (PR 2). 100 ms @ 16 kHz mono PCM16. */
+const SPEECH_NOT_IMPLEMENTED = "Speech is not implemented yet.";
+const SPEECH_NO_SESSION = "No active speech session.";
+const SPEECH_STALE_SESSION = "Unknown speech session.";
+const SPEECH_BAD_PCM = "Invalid speech audio chunk.";
+const SPEECH_OVERSIZE = "Speech audio chunk is too large.";
+const SPEECH_MAX_PCM_BYTES = 3200;
+
+function speechStatusStub() {
+  return { state: "missing", runtimeReady: false, modelReady: false };
+}
+
+function speechPcmLength(pcm) {
+  if (pcm instanceof ArrayBuffer) return pcm.byteLength;
+  if (ArrayBuffer.isView(pcm)) return pcm.byteLength;
+  return -1;
+}
+
+function requireSpeechSession(input) {
+  const sessionId = input && input.sessionId;
+  if (typeof sessionId !== "string" || !sessionId) {
+    throw new Error(SPEECH_NO_SESSION);
+  }
+  // No live session in this stub; never apply a stale id to a later one.
+  throw new Error(SPEECH_STALE_SESSION);
+}
+
+function rejectSpeechWrite(input) {
+  const len = speechPcmLength(input && input.pcm);
+  if (len < 0 || len % 2 !== 0) {
+    throw new Error(SPEECH_BAD_PCM);
+  }
+  if (len > SPEECH_MAX_PCM_BYTES) {
+    throw new Error(SPEECH_OVERSIZE);
+  }
+  requireSpeechSession(input);
+}
+
 function viewerStreamInfo(info) {
   return {
     url: info && info.url,
@@ -1808,6 +1846,22 @@ const IPC_HANDLERS = {
       generation: input && input.generation,
       recordingId: input && input.recordingId,
     });
+  },
+  "speech:status": async () => speechStatusStub(),
+  "speech:download": async () => {
+    throw new Error(SPEECH_NOT_IMPLEMENTED);
+  },
+  "speech:start": async () => {
+    throw new Error(SPEECH_NOT_IMPLEMENTED);
+  },
+  "speech:write": async (_ctx, input) => {
+    rejectSpeechWrite(input);
+  },
+  "speech:stop": async (_ctx, input) => {
+    requireSpeechSession(input);
+  },
+  "speech:cancel": async (_ctx, input) => {
+    requireSpeechSession(input);
   },
 };
 

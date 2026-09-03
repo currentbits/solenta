@@ -11,6 +11,7 @@ const PUSH_CHANNELS = new Set([
   "stayAwake:changed",
   "simulator:changed",
   "simulator:focus",
+  "speech:changed",
 ]);
 /* </ipc-push> */
 
@@ -271,6 +272,12 @@ const IPC_CHANNELS = Object.freeze([
   { ns: "vibeKanban", method: "import" },
   { ns: "vibeKanban", method: "pickDataDir" },
   { ns: "vibeKanban", method: "export" },
+  { ns: "speech", method: "status" },
+  { ns: "speech", method: "download" },
+  { ns: "speech", method: "start" },
+  { ns: "speech", method: "write" },
+  { ns: "speech", method: "stop" },
+  { ns: "speech", method: "cancel" },
 ]);
 /* </ipc-channels> */
 
