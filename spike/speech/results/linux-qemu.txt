@@ -1,0 +1,3 @@
+uname=x86_64
+nemo-speech 0.1.0 printed
+doctor/serve: Illegal instruction (SIGILL) under docker --platform linux/amd64 on Apple Silicon even with QEMU_CPU=max

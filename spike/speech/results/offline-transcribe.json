@@ -1,0 +1,26 @@
+{
+  "file": "/Users/willem/Library/Caches/solenta-speech-spike/audio/phrase-16k.wav",
+  "text": "The quick brown fox jumps over the lazy dog Selena transcribes English speech privately on this machine.",
+  "confidence": 1,
+  "duration": 6.10731,
+  "languages": [],
+  "words": [
+    {"word": "The", "start": 0.08, "end": 0.16, "confidence": 1},
+    {"word": "quick", "start": 0.32, "end": 0.4, "confidence": 1},
+    {"word": "brown", "start": 0.64, "end": 0.72, "confidence": 1},
+    {"word": "fox", "start": 1.12, "end": 1.2, "confidence": 1},
+    {"word": "jumps", "start": 1.28, "end": 1.36, "confidence": 1},
+    {"word": "over", "start": 1.52, "end": 1.6, "confidence": 1},
+    {"word": "the", "start": 1.6, "end": 1.68, "confidence": 1},
+    {"word": "lazy", "start": 1.84, "end": 2.32, "confidence": 1},
+    {"word": "dog", "start": 2.32, "end": 2.4, "confidence": 1},
+    {"word": "Selena", "start": 3.36, "end": 3.68, "confidence": 1},
+    {"word": "transcribes", "start": 3.76, "end": 3.92, "confidence": 1},
+    {"word": "English", "start": 4.08, "end": 4.24, "confidence": 1},
+    {"word": "speech", "start": 4.48, "end": 4.56, "confidence": 1},
+    {"word": "privately", "start": 4.72, "end": 4.96, "confidence": 1},
+    {"word": "on", "start": 5.2, "end": 5.28, "confidence": 1},
+    {"word": "this", "start": 5.6, "end": 5.68, "confidence": 1},
+    {"word": "machine.", "start": 5.68, "end": 5.84, "confidence": 1}
+  ]
+}
