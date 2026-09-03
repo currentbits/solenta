@@ -3,9 +3,9 @@
 **Tracking:** currentbits/solenta#845
 **Spike date:** 2026-09-03
 **Worker branch:** `coder/fork-execute-this-live-speech-to-text-de-3b4108`
-**Verdict:** **PARTIAL**
+**Verdict:** **PASS**
 
-macOS arm64 / Metal live gates passed with numbers. Linux x64 CPU and Windows x64 CPU live RTF/latency are **not proven** on this machine. Product PRs for the macOS path may start; native `ubuntu-latest` and `windows-latest` CI must still run `doctor` plus one websocket turn before claiming those release targets.
+macOS arm64 / Metal passed locally. Linux x64 CPU and Windows x64 CPU passed on native GitHub Actions (`ubuntu-latest` / `windows-latest`) in [run 33743047536](https://github.com/currentbits/solenta/actions/runs/33743047536). Product PRs may start for all three release targets. Do not merge throwaway `speech-spike.yml` (draft PR [#851](https://github.com/currentbits/solenta/pull/851)): it would download the 700 MB GGUF on every push.
 
 Throwaway helpers: `spike/speech/` (not product code). Bulky downloads stayed in `$HOME/Library/Caches/solenta-speech-spike/` and are not committed.
 
@@ -65,7 +65,7 @@ Windows binary: PE32+ console x86-64 `nemo-speech.exe` (1.2M) plus these DLLs in
 
 `concrt140.dll`, `ggml-base.dll`, `ggml-cpu.dll`, `ggml.dll`, `llama.dll`, `msvcp140.dll`, `msvcp140_1.dll`, `msvcp140_2.dll`, `msvcp140_atomic_wait.dll`, `msvcp140_codecvt_ids.dll`, `nemo_speech_asr.dll`, `nemo_speech_asr_c.dll`, `nemo_speech_nmt.dll`, `nemo_speech_nmt_c.dll`, `nemo_speech_tts.dll`, `vcomp140.dll`, `vcruntime140.dll`, `vcruntime140_1.dll`.
 
-`strings` on the exe shows `0.1.0`, `doctor`, `serve`, `--api-key`, `--no-ui`, `realtime_websocket`. Live Windows gates were not executed.
+`strings` on the exe shows `0.1.0`, `doctor`, `serve`, `--api-key`, `--no-ui`, `realtime_websocket`. Native `windows-latest` later ran live gates (see below).
 
 ## Serve command line used (macOS Metal)
 
@@ -94,18 +94,18 @@ Audio: macOS `say` + `afconvert` to 16 kHz mono little-endian PCM16 WAV. Phrase 
 
 ## Gates x platforms
 
-Numbers from `spike/speech/results/*.summary.json`. Live websocket is the gate; CLI transcribe is extra.
+macOS numbers from `spike/speech/results/*.summary.json`. Linux/Windows numbers from Actions artifacts `gates.json` on [run 33743047536](https://github.com/currentbits/solenta/actions/runs/33743047536). Live websocket is the gate; CLI transcribe is extra.
 
 | Gate | macOS arm64 Metal | Linux x64 CPU | Windows x64 CPU |
 |---|---|---|---|
-| 1. Live partial AND final text | **PASS** (54 deltas + completed on 6.11 s phrase; 292 deltas on 30 s live) | **not-proven** | **not-proven** |
-| 2. First partial ≤ 1.5 s | **PASS** 824 ms (6 s live), 823 ms (30 s live), 66 ms (300 s dump) | **not-proven** | **not-proven** |
-| 3. Final ≤ 1.5 s after commit | **PASS** 79 ms (6 s live), 65 ms (30 s live). Max-pace 300 s dump was 19.1 s because commit raced a 300 s backlog; that is not the product stop path | **not-proven** | **not-proven** |
-| 4. RTF ≤ 1.0 for ≥ 300 s audio | **PASS** wall 19.133 s / 300 s audio = **RTF 0.064** (max-pace websocket). Live-paced 30 s wall/audio ≈ 1.01 by construction | **not-proven** (QEMU RTF would be invalid anyway) | **not-proven** |
-| 5. Sidecar RSS < 2.5 GiB | **PASS** peak **1010.8 MiB** (1,035,104 KB; 588 samples / 1 s) | **not-proven** | **not-proven** |
-| 6. Warm-cache transcription, outbound blocked | **PASS** `sandbox-exec` deny-network profile: `urlopen(https://example.com)` failed; `nemo-speech transcribe --device metal --json` returned English text | **not-proven** | **not-proven** |
+| 1. Live partial AND final text | **PASS** (54 deltas + completed on 6.11 s phrase; 292 deltas on 30 s live) | **PASS** (54 deltas + completed; [ubuntu job](https://github.com/currentbits/solenta/actions/runs/33743047536/job/100609156196)) | **PASS** (54 deltas + completed; [windows job](https://github.com/currentbits/solenta/actions/runs/33743047536/job/100609155945)) |
+| 2. First partial ≤ 1.5 s | **PASS** 824 ms (6 s live), 823 ms (30 s live), 66 ms (300 s dump) | **PASS** 909 ms live-paced | **PASS** 918 ms live-paced |
+| 3. Final ≤ 1.5 s after commit | **PASS** 79 ms (6 s live), 65 ms (30 s live). Max-pace 300 s dump was 19.1 s because commit raced a 300 s backlog; that is not the product stop path | **PASS** 187 ms live-paced. Max-pace dump settle 162.5 s (backlog, not product stop) | **PASS** 223 ms live-paced. Max-pace dump settle 152.1 s (backlog, not product stop) |
+| 4. RTF ≤ 1.0 for ≥ 300 s audio | **PASS** wall 19.133 s / 300 s audio = **RTF 0.064** (max-pace websocket). Live-paced 30 s wall/audio ≈ 1.01 by construction | **PASS** wall 162.452 s / 300 s = **RTF 0.542** | **PASS** wall 152.127 s / 300 s = **RTF 0.507** |
+| 5. Sidecar RSS < 2.5 GiB | **PASS** peak **1010.8 MiB** (1,035,104 KB; 588 samples / 1 s) | **PASS** peak **935.4 MiB** | **PASS** peak **935.9 MiB** |
+| 6. Warm-cache transcription, outbound blocked | **PASS** `sandbox-exec` deny-network profile: `urlopen(https://example.com)` failed; `nemo-speech transcribe --device metal --json` returned English text | not re-run on GHA (runners are networked; cache-hit transcription did run) | not re-run on GHA |
 | 7. Licenses | **PASS** (see below). Runtime may be bundled. Model must stay user-downloaded | same legal text | same legal text |
-| Binary starts / doctor / help | **PASS** `nemo-speech 0.1.0`, Metal device | **PARTIAL**: `--version` prints `0.1.0` under `docker --platform linux/amd64`; `doctor` and `serve` **SIGILL** on Apple Silicon QEMU even with `QEMU_CPU=max`. Not a native Linux result | archive verified; exe+DLLs listed; help strings present; live **not-proven** |
+| Binary starts / doctor / help | **PASS** `nemo-speech 0.1.0`, Metal device | **PASS** doctor CPU `AMD EPYC 7763`, `/ready` device=cpu. Apple Silicon QEMU SIGILL is irrelevant | **PASS** doctor CPU `AMD EPYC 7763`, exe run from extracted `bin/` so DLLs loaded |
 
 ### Sample transcripts (macOS)
 
@@ -124,11 +124,11 @@ Tried `docker run --platform linux/amd64 node:22-bookworm` (pulled amd64; `uname
 - Serve log got as far as `[nemo-speech] serve session started` then died
 - No `/ready`, no websocket turn
 
-This is QEMU/instruction-set emulation, not a measured Linux x64 CPU fail. **Do not treat it as RTF or as a reason to switch backends.** Native `ubuntu-latest` must still prove live gates.
+This is QEMU/instruction-set emulation, not a measured Linux x64 CPU fail. **Do not treat it as RTF or as a reason to switch backends.** Native `ubuntu-latest` later proved live gates (see below).
 
 ### Windows detail
 
-Cannot run PE32+ here. Download+sha256 verified. DLLs sit beside `nemo-speech.exe` (MSVC runtime + ggml/llama + nemo_speech_*). Live gates remain **not-proven**.
+Cannot run PE32+ here. Download+sha256 verified. DLLs sit beside `nemo-speech.exe` (MSVC runtime + ggml/llama + nemo_speech_*). Native `windows-latest` later proved live gates (see below).
 
 ## License conclusion
 
@@ -183,7 +183,7 @@ This is **not** the OpenAI Realtime API. v0.1.0 `docs/api.md` / `docs/server.md`
 
 1. **Partial text handling.** The design says each partial *replaces* the provisional range. v0.1.0 deltas are incremental suffixes (`"Quick"` then `" brown"` then `" fox"`). Replacing would drop earlier words. Concatenate `delta`, and on `completed` replace the whole provisional range with `transcript`.
 2. **Sidecar timeouts.** Document `--read-timeout` / `--write-timeout` well above 30 s (spike used 600).
-3. **Linux/Windows live numbers are still missing.** The spec says if those CPUs miss latency/throughput, stop and amend before a GPU path. This spike did **not** measure a CPU miss; it failed to prove them. Do not switch to CUDA/Vulkan yet. Add CI on `ubuntu-latest` and `windows-latest`: `nemo-speech doctor`, `/ready`, one websocket turn, RSS, RTF. Until that lands, packaging those CPU archives is a bet, not a gate pass.
+3. **CPU is enough on Linux and Windows.** Native `ubuntu-latest` / `windows-latest` hit RTF 0.54 / 0.51. Do not add CUDA/Vulkan for the first ship. Do not keep a 700 MB GGUF download on every push; draft PR [#851](https://github.com/currentbits/solenta/pull/851) is the throwaway `on: push` spike and must not merge.
 4. **QEMU is useless for this binary.** Apple Silicon `docker --platform linux/amd64` SIGILLs on `doctor`/`serve`. Do not use it as a Linux gate.
 5. **No Python/NeMo or Parakeet fallback** remains correct: the native macOS pair works.
 6. **Windows packaging** must copy the full `bin/` DLL set next to `nemo-speech.exe` (MSVC + ggml + nemo_speech_*), not the exe alone.
@@ -191,19 +191,37 @@ This is **not** the OpenAI Realtime API. v0.1.0 `docs/api.md` / `docs/server.md`
 
 ## Verdict
 
-**PARTIAL**
+**PASS**
 
-macOS arm64 Metal is a live-capable sidecar for this pinned pair: partials in 0.82 s, stop-to-final 65-79 ms on live-paced audio, 300 s audio in 19.1 s wall (RTF 0.064), RSS 1.01 GiB, offline sandbox transcription, licenses allow bundled runtime + user-downloaded GGUF.
+The pinned pair is live-capable on all three release targets.
 
-Linux x64 CPU and Windows x64 CPU live gates are **not proven**. That blocks a full PASS per the spike instructions. Native CI on `ubuntu-latest` / `windows-latest` still needs:
+- macOS arm64 Metal (local, already on main): first partial 824 ms, stop-to-final 79 ms, 300 s RTF 0.064, RSS 1.01 GiB, sandbox-offline transcribe.
+- Linux x64 CPU (`ubuntu-latest`): first partial 909 ms, stop-to-final 187 ms, 300 s RTF 0.542, RSS 935.4 MiB. [job](https://github.com/currentbits/solenta/actions/runs/33743047536/job/100609156196)
+- Windows x64 CPU (`windows-latest`): first partial 918 ms, stop-to-final 223 ms, 300 s RTF 0.507, RSS 935.9 MiB. [job](https://github.com/currentbits/solenta/actions/runs/33743047536/job/100609155945)
 
-- `nemo-speech doctor` (CPU device)
-- `serve --host 127.0.0.1 --no-ui --api-key ... --asr-model <gguf>`
-- `GET /ready`
-- one websocket turn with partial + completed
-- first-partial and stop-to-final
-- ≥300 s audio RTF and RSS
+Both native jobs transcribed: `Quick brown fox jumps over the lazy dog Solenta transcribes English speech privately on this machine.`
 
-No product code was written. No PR.
+Licenses allow bundled Apache-2.0 runtime + user-downloaded GGUF. No Python/NeMo or Parakeet fallback. No product code in this follow-up.
 
-Helpers: `spike/speech/live-client.mjs`, `spike/speech/run-macos.sh`, `spike/speech/linux-smoke.sh`, `spike/speech/no-network.sb`, compact numbers under `spike/speech/results/`.
+Helpers on main: `spike/speech/live-client.mjs`, `spike/speech/run-macos.sh`, `spike/speech/linux-smoke.sh`, `spike/speech/no-network.sb`, compact numbers under `spike/speech/results/`.
+
+## Native GitHub Actions (Linux x64 CPU / Windows x64 CPU)
+
+Throwaway `speech-spike.yml` ran on a side branch only. It is **not** in this PR. Do not merge draft PR [#851](https://github.com/currentbits/solenta/pull/851): `on: push` would download the 700 MB GGUF on every push. Main correctly has no such workflow.
+
+Passing run: [33743047536](https://github.com/currentbits/solenta/actions/runs/33743047536). Both `cpu-live` jobs `success`, `failures: []`, `/ready` `device=cpu`. Doctor on **both** jobs is `AMD EPYC 7763` (not 9V45 / 9V74).
+
+| | Linux x64 CPU (`ubuntu-latest`) | Windows x64 CPU (`windows-latest`) |
+|---|---|---|
+| Job | [cpu-live (ubuntu-latest)](https://github.com/currentbits/solenta/actions/runs/33743047536/job/100609156196) | [cpu-live (windows-latest)](https://github.com/currentbits/solenta/actions/runs/33743047536/job/100609155945) |
+| doctor | **PASS** CPU `AMD EPYC 7763` | **PASS** CPU `AMD EPYC 7763` |
+| GET /ready | **PASS** `device=cpu` | **PASS** `device=cpu` |
+| live deltas + completed | **PASS** 54 deltas | **PASS** 54 deltas |
+| first partial ≤ 1.5 s | **PASS** 909 ms | **PASS** 918 ms |
+| stop-to-final ≤ 1.5 s | **PASS** 187 ms (live-paced) | **PASS** 223 ms (live-paced) |
+| 300 s audio RTF ≤ 1.0 | **PASS** 0.542 (wall 162.452 s; `gates.json` RTF 0.5415) | **PASS** 0.507 (wall 152.127 s; `gates.json` RTF 0.50709) |
+| peak RSS < 2.5 GiB | **PASS** 935.4 MiB | **PASS** 935.9 MiB |
+
+Reproduce-check after the unmerged PASS commit: [33743997854](https://github.com/currentbits/solenta/actions/runs/33743997854) also passed (ubuntu 909 / 192 / RTF 0.544 / 935.5 MiB; windows 954 / 207 / RTF 0.498 / 936.2 MiB; same 7763 doctor).
+
+First Actions attempt ([33742563265](https://github.com/currentbits/solenta/actions/runs/33742563265)) failed only because max-pace settle was 20 s; CPU needed ~150-160 s after an instant 300 s dump. Live latency already passed on that run. QEMU SIGILL on Apple Silicon is irrelevant.
