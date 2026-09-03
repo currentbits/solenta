@@ -33,6 +33,8 @@ const {
   resolveBin,
   isBinAvailable,
 } = require("./providers.js");
+const { planboardNoteFor, PLANBOARD_NOTE } = require("./services.js");
+const { codexWorkspaceWriteArgs } = require("./codexWorkspaceWrite.js");
 const {
   getClaudeMcpArgs,
   getCodexMcpArgs,
@@ -600,6 +602,15 @@ function spawnAgentCodex(opts) {
   if (codexMcpArgs.length > 0) {
     args.unshift(...codexMcpArgs);
   }
+  const planboardNote = planboardNoteFor(cwd, {
+    provider: "codex",
+    permissionMode: permissionMode || "default",
+  });
+  const codexSandboxArgs = codexWorkspaceWriteArgs({
+    permissionMode: permissionMode || "default",
+    allowNetwork: planboardNote === PLANBOARD_NOTE,
+  });
+  if (codexSandboxArgs.length) args.unshift(...codexSandboxArgs);
   /** @type {Record<string, string>} */
   const envExtra = { ...getCodexMcpEnv() };
   /** @type {Record<string, string> | undefined} */

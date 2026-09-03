@@ -252,6 +252,7 @@ describe("workflow phases get thread.permissionMode (#793)", () => {
       if (v === undefined) delete process.env[k];
       else process.env[k] = v;
     }
+    require("../codexWorkspaceWrite.js").resetCodexGhAuthOkForTests();
   });
 
   it("spawnPhaseAgent Codex plan emits --sandbox read-only", async () => {
@@ -275,6 +276,96 @@ describe("workflow phases get thread.permissionMode (#793)", () => {
       `spawnPhaseAgent Codex plan must emit --sandbox read-only, got ${JSON.stringify(argv)}`,
     );
     assert.equal(argv[argv.length - 1], prompt);
+  });
+
+  it("spawnPhaseAgent Codex default allowlists GitHub hosts for Planboard (#848)", async () => {
+    const { setCodexGhAuthOkForTests } = require("../codexWorkspaceWrite.js");
+    setCodexGhAuthOkForTests(true);
+    const projectDir = path.join(tmpDir, "proj-gh");
+    fs.mkdirSync(projectDir);
+    git(projectDir, ["init", "-q"]);
+    git(projectDir, ["remote", "add", "origin", "git@github.com:acme/demo.git"]);
+    const prompt = "PROMPT_WF_PERM_codex_gh";
+    const { done } = spawnPhaseAgent({
+      providerId: "codex",
+      prompt,
+      cwd: projectDir,
+      model: null,
+      permissionMode: "default",
+    });
+    const result = await done;
+    assert.equal(result.ok, true, result.stderr);
+
+    const argv = readArgv(codexArgvFile);
+    const domains = argv.find((a) =>
+      String(a).startsWith("features.network_proxy.domains="),
+    );
+    assert.ok(
+      domains,
+      `expected GitHub proxy allowlist, got ${JSON.stringify(argv)}`,
+    );
+    assert.ok(argv.includes("features.network_proxy.enabled=true"), JSON.stringify(argv));
+    for (const host of ["api.github.com", "github.com", "uploads.github.com"]) {
+      assert.ok(
+        domains.includes(`"${host}" = "allow"`) ||
+          domains.includes(`"${host}"="allow"`),
+        `missing ${host} in ${domains}`,
+      );
+    }
+    assert.ok(!domains.includes('"*"'), domains);
+    assert.equal(argv[argv.length - 1], prompt);
+  });
+
+  it("spawnPhaseAgent Codex omits GitHub proxy when gh cannot authenticate (#848)", async () => {
+    const { setCodexGhAuthOkForTests } = require("../codexWorkspaceWrite.js");
+    setCodexGhAuthOkForTests(false);
+    const projectDir = path.join(tmpDir, "proj-gh-noauth");
+    fs.mkdirSync(projectDir);
+    git(projectDir, ["init", "-q"]);
+    git(projectDir, ["remote", "add", "origin", "git@github.com:acme/demo.git"]);
+    const prompt = "PROMPT_WF_PERM_codex_gh_noauth";
+    const { done } = spawnPhaseAgent({
+      providerId: "codex",
+      prompt,
+      cwd: projectDir,
+      model: null,
+      permissionMode: "default",
+    });
+    const result = await done;
+    assert.equal(result.ok, true, result.stderr);
+
+    const argv = readArgv(codexArgvFile);
+    assert.ok(
+      !argv.some((a) => String(a).startsWith("features.network_proxy.domains=")),
+      JSON.stringify(argv),
+    );
+    assert.equal(argv[argv.length - 1], prompt);
+  });
+
+  it("spawnPhaseAgent Codex plan omits GitHub proxy allowlist (#848)", async () => {
+    const { setCodexGhAuthOkForTests } = require("../codexWorkspaceWrite.js");
+    setCodexGhAuthOkForTests(true);
+    const projectDir = path.join(tmpDir, "proj-gh-plan");
+    fs.mkdirSync(projectDir);
+    git(projectDir, ["init", "-q"]);
+    git(projectDir, ["remote", "add", "origin", "git@github.com:acme/demo.git"]);
+    const prompt = "PROMPT_WF_PERM_codex_gh_plan";
+    const { done } = spawnPhaseAgent({
+      providerId: "codex",
+      prompt,
+      cwd: projectDir,
+      model: null,
+      permissionMode: "plan",
+    });
+    const result = await done;
+    assert.equal(result.ok, true, result.stderr);
+
+    const argv = readArgv(codexArgvFile);
+    assert.ok(
+      !argv.some((a) => String(a).startsWith("features.network_proxy.domains=")),
+      JSON.stringify(argv),
+    );
+    assert.equal(sandboxOf(argv), "read-only");
   });
 
   it("spawnPhaseAgent OpenCode bypassPermissions emits --auto", async () => {

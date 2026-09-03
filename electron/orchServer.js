@@ -26,6 +26,7 @@ const {
   setQueued,
   renameThread,
   listThreads,
+  planboardNoteFor,
 } = require("./services.js");
 const {
   decideCrossThreadSend,
@@ -111,7 +112,12 @@ const INSTRUCTIONS =
   "Worktrees of one repo share a git object store, so the durable way to hand " +
   "over a document (plan.md, contract.md) is to COMMIT it on your branch and " +
   "send the peer a `branch:path` ref in the task note or peer message. The peer " +
-  "reads it with `git show <branch>:<path>`. Chat history is not a hand-off.";
+  "reads it with `git show <branch>:<path>`. Chat history is not a hand-off. " +
+  "When this project's origin is GitHub, issue_list, issue_create, " +
+  "issue_set_plan, and issue_complete write Planboard issues on that origin " +
+  "(plan:todo, plan:doing, plan:done). They run on the host, not through " +
+  "sandboxed gh, and there is no repo argument: writes stay on this thread's " +
+  "origin. The tools are omitted when the origin is not GitHub.";
 
 function timingSafeEqualString(a, b) {
   const bufferA = Buffer.from(a);
@@ -1007,6 +1013,50 @@ function createToolHandlers(deps) {
     return { threadId: args.threadId, title: updated.title };
   }
 
+  /**
+   * Project checkout whose origin these Planboard writes hit. Never a
+   * caller-supplied repo: that would let a thread mint issues on some
+   * other GitHub remote (#849).
+   * @param {{ projectId?: string }} thread
+   */
+  function originPathOf(thread) {
+    const project = projectOf(thread);
+    return project && project.path ? String(project.path) : "";
+  }
+
+  async function issue_create(args) {
+    const thread = requireOwnThread(args);
+    const { createIssue } = require("./issues.js");
+    return createIssue(originPathOf(thread), {
+      title: args && args.title,
+      body: args && args.body,
+    });
+  }
+
+  async function issue_set_plan(args) {
+    const thread = requireOwnThread(args);
+    const { setPlanStatus } = require("./issues.js");
+    return setPlanStatus(
+      originPathOf(thread),
+      args && args.number,
+      args && args.status,
+    );
+  }
+
+  async function issue_complete(args) {
+    const thread = requireOwnThread(args);
+    const { completeIssue } = require("./issues.js");
+    return completeIssue(originPathOf(thread), args && args.number, {
+      comment: args && args.comment,
+    });
+  }
+
+  async function issue_list(args) {
+    const thread = requireOwnThread(args);
+    const { listIssues } = require("./issues.js");
+    return listIssues(originPathOf(thread));
+  }
+
   async function preview(args) {
     requireOwnThread(args);
     const action = String((args && args.action) || "");
@@ -1057,6 +1107,10 @@ function createToolHandlers(deps) {
     task_release,
     peer_send,
     preview,
+    issue_create,
+    issue_set_plan,
+    issue_complete,
+    issue_list,
   };
 }
 
@@ -1064,8 +1118,9 @@ function createToolHandlers(deps) {
  * Build the MCP server exposing the thread tools.
  * @param {{ McpServer: unknown, z: unknown }} sdk
  * @param {ReturnType<typeof createToolHandlers>} handlers
+ * @param {{ planboard?: boolean }} [opts] - GitHub-origin sessions only (#849)
  */
-function buildMcpServer(sdk, handlers) {
+function buildMcpServer(sdk, handlers, opts = {}) {
   const { McpServer, z } = sdk;
   const server = new McpServer(
     { name: SERVER_NAME, version: "0.1.0" },
@@ -1545,6 +1600,75 @@ function buildMcpServer(sdk, handlers) {
     async (args) => json(await handlers.peer_send(args)),
   );
 
+  if (opts.planboard) {
+    server.registerTool(
+      "issue_list",
+      {
+        description:
+          "List GitHub issues on THIS thread's project origin (Planboard). " +
+          "There is no repo argument: the bound origin is the only repo. " +
+          "projectId is YOUR OWN project id (stated at the end of your prompt); " +
+          "the thread must belong to it.",
+        inputSchema: {
+          threadId: z.string().min(1),
+          projectId: z.string().min(1),
+        },
+      },
+      async (args) => json(await handlers.issue_list(args)),
+    );
+    server.registerTool(
+      "issue_create",
+      {
+        description:
+          "Create a GitHub issue on THIS thread's project origin and label " +
+          "it plan:todo. There is no repo argument: writes stay on the bound " +
+          "origin. projectId is YOUR OWN project id (stated at the end of " +
+          "your prompt); the thread must belong to it.",
+        inputSchema: {
+          threadId: z.string().min(1),
+          projectId: z.string().min(1),
+          title: z.string().min(1),
+          body: z.string().optional(),
+        },
+      },
+      async (args) => json(await handlers.issue_create(args)),
+    );
+    server.registerTool(
+      "issue_set_plan",
+      {
+        description:
+          "Move a Planboard issue's plan:* label (todo, doing, or done) on " +
+          "THIS thread's project origin. There is no repo argument. " +
+          "projectId is YOUR OWN project id (stated at the end of your prompt); " +
+          "the thread must belong to it.",
+        inputSchema: {
+          threadId: z.string().min(1),
+          projectId: z.string().min(1),
+          number: z.number().int().positive(),
+          status: z.enum(["todo", "doing", "done"]),
+        },
+      },
+      async (args) => json(await handlers.issue_set_plan(args)),
+    );
+    server.registerTool(
+      "issue_complete",
+      {
+        description:
+          "Label a plan:doing issue plan:done and close it on THIS thread's " +
+          "project origin. Issues nobody started are left alone. There is no " +
+          "repo argument. projectId is YOUR OWN project id (stated at the " +
+          "end of your prompt); the thread must belong to it.",
+        inputSchema: {
+          threadId: z.string().min(1),
+          projectId: z.string().min(1),
+          number: z.number().int().positive(),
+          comment: z.string().optional(),
+        },
+      },
+      async (args) => json(await handlers.issue_complete(args)),
+    );
+  }
+
   return server;
 }
 
@@ -1663,7 +1787,15 @@ function createOrchServer(opts) {
           ...handlerDeps,
           boundProjectId: boundProjectId || null,
         });
-        const mcp = buildMcpServer(sdk, handlers);
+        const boundProject =
+          boundProjectId && typeof store.getProject === "function"
+            ? store.getProject(boundProjectId)
+            : null;
+        const mcp = buildMcpServer(sdk, handlers, {
+          planboard: Boolean(
+            boundProject && planboardNoteFor(boundProject.path),
+          ),
+        });
         const transport = new sdk.StreamableHTTPServerTransport({
           sessionIdGenerator: undefined,
         });
