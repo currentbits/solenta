@@ -80,6 +80,7 @@ const vibeKanban = require("./vibeKanban.js");
 const { browseFilesystem, expandUserPath } = require("./fsBrowse.js");
 const { discoverSourceControl } = require("./sourceControl.js");
 const { applyZoom } = require("./zoom.js");
+const { SPEECH_NOT_IMPLEMENTED } = require("./speech.js");
 
 /**
  * Default window fan-out (desktop transport). main.js replaces this with a
@@ -149,6 +150,7 @@ function makeCtx(deps) {
     userDataPath,
     memory: createMemoryProxy({ userDataPath }),
     stayAwake: deps.stayAwake || null,
+    speech: deps.speech || null,
     cleanupRunArtifacts: deps.cleanupRunArtifacts,
     getIosSimulator,
     log: deps.log,
@@ -173,6 +175,17 @@ function requireSimulator(ctx) {
     throw err;
   }
   return sim;
+}
+
+function speechStatusMissing() {
+  return { state: "missing", runtimeReady: false, modelReady: false };
+}
+
+function requireSpeech(ctx) {
+  if (!ctx || !ctx.speech) {
+    throw new Error(SPEECH_NOT_IMPLEMENTED);
+  }
+  return ctx.speech;
 }
 
 function viewerStreamInfo(info) {
@@ -1809,6 +1822,15 @@ const IPC_HANDLERS = {
       recordingId: input && input.recordingId,
     });
   },
+  "speech:status": async (ctx) => {
+    if (!ctx || !ctx.speech) return speechStatusMissing();
+    return ctx.speech.status();
+  },
+  "speech:download": async (ctx) => requireSpeech(ctx).download(),
+  "speech:start": async (ctx) => requireSpeech(ctx).start(),
+  "speech:write": async (ctx, input) => requireSpeech(ctx).write(input),
+  "speech:stop": async (ctx, input) => requireSpeech(ctx).stop(input),
+  "speech:cancel": async (ctx, input) => requireSpeech(ctx).cancel(input),
 };
 
 /**
@@ -1876,6 +1898,7 @@ function createHandlers(deps) {
  * @param {ReturnType<import('./runner').createRunner>} deps.runner
  * @param {(channel: string, payload: unknown) => void} [deps.broadcast]
  * @param {ReturnType<import('./caffeinate').createStayAwake>} [deps.stayAwake]
+ * @param {ReturnType<import('./speech').createSpeechManager>} [deps.speech]
  * @param {string} [deps.worktreeBase]
  * @param {string} [deps.userDataPath]
  */

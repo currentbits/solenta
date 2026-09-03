@@ -26,6 +26,7 @@ export const PUSH_CHANNELS = [
   "stayAwake:changed",
   "simulator:changed",
   "simulator:focus",
+  "speech:changed",
 ] as const;
 
 export type PushChannel = (typeof PUSH_CHANNELS)[number];
@@ -239,6 +240,12 @@ export const IPC_CHANNELS = [
   { ns: "vibeKanban", method: "import" },
   { ns: "vibeKanban", method: "pickDataDir" },
   { ns: "vibeKanban", method: "export" },
+  { ns: "speech", method: "status" },
+  { ns: "speech", method: "download" },
+  { ns: "speech", method: "start" },
+  { ns: "speech", method: "write" },
+  { ns: "speech", method: "stop" },
+  { ns: "speech", method: "cancel" },
 ] as const;
 
 export type IpcChannelRow = (typeof IPC_CHANNELS)[number];

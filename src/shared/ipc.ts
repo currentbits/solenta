@@ -2925,6 +2925,37 @@ export interface SimulatorRecordingStart {
 }
 
 /**
+ * Desktop-only speech lifecycle (#845). Returned by speech.status() and
+ * pushed on "speech:changed".
+ *
+ * NeMo realtime frames are incremental suffixes
+ * (`conversation.item.input_audio_transcription.delta`). Composer
+ * concatenates `delta` onto the provisional range and replaces the whole
+ * range only when `transcript` arrives.
+ */
+export type SpeechState =
+  | "missing"
+  | "downloading"
+  | "ready"
+  | "recording"
+  | "stopping"
+  | "error";
+
+export interface SpeechStatus {
+  state: SpeechState;
+  runtimeReady: boolean;
+  modelReady: boolean;
+  download?: { bytesReceived: number; bytesTotal: number };
+  /** Incremental suffix. Concatenate; do not replace the provisional range. */
+  delta?: string;
+  /** Completed transcript. Replaces the whole provisional range. */
+  transcript?: string;
+  /** One user-facing error string. */
+  error?: string;
+  sessionId?: string;
+}
+
+/**
  * Renderer-facing API. Invoke method names are locked to
  * `src/shared/ipcChannels.ts` (IPC_CHANNEL_LOCK); keep JSDoc here.
  */
@@ -4108,6 +4139,32 @@ export interface CoderApi {
     }): Promise<unknown>;
   };
   /**
+   * Desktop-only live dictation (#845). The main-process manager lives in
+   * electron/speech.js; Composer owns capture and the provisional draft range.
+   */
+  speech: {
+    /** Runtime/model availability and lifecycle. */
+    status(): Promise<SpeechStatus>;
+    /** User-approved model download; progress arrives on speech:changed. */
+    download(): Promise<void>;
+    /** One app-wide realtime session. Returns an opaque session id. */
+    start(): Promise<{ sessionId: string }>;
+    /**
+     * Bounded little-endian PCM16 for the active session (100 ms at 16 kHz
+     * mono = 3200 bytes). Rejects oversized, malformed, stale, out-of-order,
+     * or wrong-session writes.
+     */
+    write(input: {
+      sessionId: string;
+      pcm: ArrayBuffer | ArrayBufferView;
+      seq?: number;
+    }): Promise<void>;
+    /** Request the final transcript. Unknown or stale session ids reject. */
+    stop(input: { sessionId: string }): Promise<void>;
+    /** Discard the active transcript. Unknown or stale session ids reject. */
+    cancel(input: { sessionId: string }): Promise<void>;
+  };
+  /**
    * Vibe Kanban import (#399). Preview/import read the local VK SQLite;
    * export writes a versioned JSON dump of projects, threads, and messages
    * (settings and tokens stay out). pickDataDir / export cancel as null.
@@ -4148,6 +4205,11 @@ export interface CoderApi {
   on(channel: "simulator:changed", cb: (status: SimulatorStatus) => void): () => void;
   /** Desktop-only request to focus the Simulator pane. */
   on(channel: "simulator:focus", cb: (payload: { threadId: string }) => void): () => void;
+  /**
+   * Desktop-only speech lifecycle. `delta` is an incremental suffix
+   * (concatenate); `transcript` replaces the provisional range.
+   */
+  on(channel: "speech:changed", cb: (status: SpeechStatus) => void): () => void;
 }
 
 declare global {

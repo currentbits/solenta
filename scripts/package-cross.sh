@@ -208,6 +208,17 @@ for target in "${TARGETS[@]}"; do
   # ${arr[@]+...}: bash 3.2 (macOS) treats an empty array as unbound under set -u.
   (cd "$APP_DIR/memory-server" && npm ci --omit=dev --no-audit --no-fund --os="$os" --cpu="$cpu" ${LIBC_FLAG[@]+"${LIBC_FLAG[@]}"} --loglevel=error)
 
+  # NeMo-Speech.cpp CPU runtime at resources/speech/ (process.resourcesPath),
+  # not resources/app/runtime/speech. Windows DLLs sit in bin/ next to the exe;
+  # Linux shared objects stay in lib/ ($ORIGIN/../lib).
+  if [[ "$os" == "win32" ]]; then
+    node "$ROOT/scripts/bundle-speech-runtime.js" \
+      --target windows-x86_64-cpu --dest "$TOP/resources"
+  else
+    node "$ROOT/scripts/bundle-speech-runtime.js" \
+      --target linux-x86_64-cpu --dest "$TOP/resources"
+  fi
+
   # Prune: onnxruntime-web (browser WASM, unreachable from Node) and the
   # onnxruntime-node binaries for platforms this archive does not run on.
   MS_NM="$APP_DIR/memory-server/node_modules"
@@ -259,6 +270,31 @@ for target in "${TARGETS[@]}"; do
   [[ -d "$APP_DIR/node_modules/pend" ]] || {
     echo "ERROR: [$target] pend missing (yauzl transitive)" >&2; exit 1;
   }
+  SPEECH_LICENSE="$TOP/resources/speech/share/licenses/nemo-speech/LICENSE"
+  [[ -f "$SPEECH_LICENSE" ]] || {
+    echo "ERROR: [$target] speech LICENSE missing" >&2; exit 1;
+  }
+  if [[ "$os" == "win32" ]]; then
+    [[ -f "$TOP/resources/speech/bin/nemo-speech.exe" ]] || {
+      echo "ERROR: [$target] speech runtime missing" >&2; exit 1;
+    }
+    shopt -s nullglob
+    SPEECH_DLLS=("$TOP/resources/speech/bin/"*.dll)
+    shopt -u nullglob
+    [[ ${#SPEECH_DLLS[@]} -gt 0 ]] || {
+      echo "ERROR: [$target] speech DLLs missing" >&2; exit 1;
+    }
+  else
+    [[ -x "$TOP/resources/speech/bin/nemo-speech" ]] || {
+      echo "ERROR: [$target] speech runtime missing or not executable" >&2; exit 1;
+    }
+    shopt -s nullglob
+    SPEECH_SOS=("$TOP/resources/speech/lib/"*.so*)
+    shopt -u nullglob
+    [[ ${#SPEECH_SOS[@]} -gt 0 ]] || {
+      echo "ERROR: [$target] speech shared libraries missing" >&2; exit 1;
+    }
+  fi
 
   SIZE="$(du -sh "$ARCHIVE" | awk '{print $1}')"
   echo "[$target] packaged: $ARCHIVE ($SIZE)"
