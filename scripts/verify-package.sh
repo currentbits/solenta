@@ -45,6 +45,25 @@ if [[ ! -d "$APP_RES/node_modules/cross-spawn" || ! -f "$APP_RES/node_modules/cr
   exit 1
 fi
 
+# Speech runtime lives next to app/ under Contents/Resources, matching
+# process.resourcesPath/speech/bin/nemo-speech. codesign --verify --deep
+# below covers the nested Mach-O; this is the layout gate.
+SPEECH_BIN="$APP/Contents/Resources/speech/bin/nemo-speech"
+if [[ ! -x "$SPEECH_BIN" ]]; then
+  echo "ERROR: packaged app missing speech/bin/nemo-speech" >&2
+  exit 1
+fi
+if [[ ! -f "$APP/Contents/Resources/speech/share/licenses/nemo-speech/LICENSE" ]]; then
+  echo "ERROR: packaged app missing NeMo-Speech.cpp LICENSE" >&2
+  exit 1
+fi
+PLIST="$APP/Contents/Info.plist"
+MIC_DESC="$(/usr/libexec/PlistBuddy -c 'Print :NSMicrophoneUsageDescription' "$PLIST" 2>/dev/null || true)"
+if [[ -z "$MIC_DESC" ]]; then
+  echo "ERROR: Info.plist missing NSMicrophoneUsageDescription" >&2
+  exit 1
+fi
+
 # Resolve every third-party require() in electron/*.js against the packaged
 # tree. ws/cross-spawn dir checks above are historical; they missed yauzl,
 # which skillPackages.js requires at module load (mcpImports -> ipc -> main),

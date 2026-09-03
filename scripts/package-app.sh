@@ -240,6 +240,8 @@ if [[ -f "$PLIST" ]]; then
     || /usr/libexec/PlistBuddy -c "Add :CFBundleExecutable string ${APP_NAME}" "$PLIST"
   /usr/libexec/PlistBuddy -c "Set :CFBundleIconFile Solenta" "$PLIST" 2>/dev/null \
     || /usr/libexec/PlistBuddy -c "Add :CFBundleIconFile string Solenta" "$PLIST"
+  /usr/libexec/PlistBuddy -c "Set :NSMicrophoneUsageDescription Solenta uses the microphone to dictate into the composer." "$PLIST" 2>/dev/null \
+    || /usr/libexec/PlistBuddy -c "Add :NSMicrophoneUsageDescription string Solenta uses the microphone to dictate into the composer." "$PLIST"
 else
   echo "WARNING: Info.plist missing at $PLIST" >&2
 fi
@@ -252,6 +254,18 @@ if [[ ! -f assets/Solenta.icns ]]; then
 fi
 cp assets/Solenta.icns "$APP_BUNDLE/Contents/Resources/Solenta.icns"
 echo "icon: Contents/Resources/Solenta.icns"
+
+# NeMo-Speech.cpp Metal runtime. Dest is Contents/Resources (process.resourcesPath),
+# not Resources/app — electron/speech.js joins resourcesPath/speech/bin/nemo-speech.
+# Must land before codesign so the nested Mach-O is sealed with the bundle.
+node "$ROOT/scripts/bundle-speech-runtime.js" \
+  --target macos-aarch64-metal \
+  --dest "$APP_BUNDLE/Contents/Resources"
+SPEECH_BIN="$APP_BUNDLE/Contents/Resources/speech/bin/nemo-speech"
+if [[ ! -x "$SPEECH_BIN" ]]; then
+  echo "ERROR: speech runtime missing or not executable: $SPEECH_BIN" >&2
+  exit 1
+fi
 
 # ---------------------------------------------------------------------------
 # Code signing (Developer ID + hardened runtime)
