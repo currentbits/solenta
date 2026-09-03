@@ -112,4 +112,4 @@ Spec: docs/superpowers/specs/2026-09-03-muse-code-provider-design.md
 Branch: coder/i-want-you-to-research-meta-muse-spark-a-afffce
 Workspace: already isolated git worktree
 
-Task 1: blocked — muse not on PATH (checked ~/.local/bin, /opt/homebrew/bin, /usr/local/bin). Waiting for user install. Do not run Meta installer from an agent.
+Task 1: complete (commit 93129436, DONE_WITH_CONCERNS). Muse 1.0.2 echo capture committed. Session id is stream.id. echo-tools has no tool events; META_API_KEY unset so no Spark capture. Stop before Task 6 tool-card tests; do not copy muse-codes.
