@@ -1,0 +1,6 @@
+NeMo-Speech.cpp 0.1.0
+Features: asr diarization http integrated_vad model_pull punctuation realtime_websocket speech_translation translation tts
+Devices:
+  [0] cpu            AMD EPYC 9V74 80-Core Processor                 (16.0 GiB)
+Model downloads: C:\Windows\SYSTEM32\curl.exe
+
