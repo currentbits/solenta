@@ -87,6 +87,30 @@ describe("buildSuggestArgs", () => {
     );
   });
 
+  it("muse: exec --json --trust-workspace --approval-mode never, prompt last", () => {
+    assert.deepEqual(
+      buildSuggestArgs("muse", { prompt: "q", model: "muse-spark-1.3" }),
+      [
+        "exec",
+        "--json",
+        "--trust-workspace",
+        "--approval-mode",
+        "never",
+        "--model",
+        "muse-spark-1.3",
+        "q",
+      ],
+    );
+    assert.deepEqual(buildSuggestArgs("muse", { prompt: "q" }), [
+      "exec",
+      "--json",
+      "--trust-workspace",
+      "--approval-mode",
+      "never",
+      "q",
+    ]);
+  });
+
   it("unknown providers have no print mode", () => {
     assert.equal(buildSuggestArgs("simulate", { model: null, prompt: "P" }), null);
   });
@@ -151,6 +175,16 @@ describe("extractCodexMessage", () => {
 describe("extractSubject", () => {
   it("plain providers: first line of stdout", () => {
     assert.equal(extractSubject("claude", "feat: x\n\nExplanation"), "feat: x");
+  });
+
+  it("muse: extractAssistantText over a fixture line yields the subject text", () => {
+    const { extractAssistantText } = require("../muse.js");
+    const line = JSON.stringify({
+      payload_type: "run.output.delta",
+      payload: { text: "feat: muse subject" },
+    });
+    assert.equal(extractAssistantText(JSON.parse(line)), "feat: muse subject");
+    assert.equal(extractSubject("muse", line), "feat: muse subject");
   });
 });
 

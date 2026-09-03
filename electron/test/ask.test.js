@@ -265,6 +265,27 @@ describe("buildAskArgs", () => {
       "q",
     ]);
   });
+
+  it("muse: exec --json --trust-workspace --approval-mode never, prompt last", () => {
+    assert.deepEqual(buildAskArgs("muse", { prompt: "q", model: "muse-spark-1.3" }), [
+      "exec",
+      "--json",
+      "--trust-workspace",
+      "--approval-mode",
+      "never",
+      "--model",
+      "muse-spark-1.3",
+      "q",
+    ]);
+    assert.deepEqual(buildAskArgs("muse", { prompt: "q" }), [
+      "exec",
+      "--json",
+      "--trust-workspace",
+      "--approval-mode",
+      "never",
+      "q",
+    ]);
+  });
 });
 
 describe("extractAskText", () => {
@@ -278,6 +299,34 @@ describe("extractAskText", () => {
 
   it("passes other providers through", () => {
     assert.equal(extractAskText("claude", "  hello\n"), "hello");
+  });
+
+  it("muse: extractAssistantText over a fixture line yields the subject text", () => {
+    const fs = require("node:fs");
+    const path = require("node:path");
+    const { extractAssistantText } = require("../muse.js");
+    const fixture = fs.readFileSync(
+      path.join(__dirname, "fixtures", "muse", "echo-hello.jsonl"),
+      "utf8",
+    );
+    const deltaLine = fixture
+      .split("\n")
+      .map((l) => l.trim())
+      .find((l) => {
+        if (!l.startsWith("{")) return false;
+        try {
+          return JSON.parse(l).payload_type === "run.output.delta";
+        } catch {
+          return false;
+        }
+      });
+    assert.ok(deltaLine);
+    const expected = extractAssistantText(JSON.parse(deltaLine));
+    assert.match(expected, /hello/i);
+    assert.equal(extractAskText("muse", deltaLine), expected);
+    // Echo delta + terminal carry the same full payload.text; ask must not
+    // double-concatenate the fixture (same snapshot rule as startMuseRun).
+    assert.equal(extractAskText("muse", fixture), expected);
   });
 });
 
