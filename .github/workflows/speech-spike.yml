@@ -1,0 +1,43 @@
+# Throwaway native Linux/Windows live-STT spike for #845.
+# Not product CI. Do not treat a merge of this file as a shipping feature.
+# macOS Metal already passed locally; this workflow spends no macos minutes.
+name: speech-spike
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/speech-spike.yml"
+      - "spike/speech/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  live-cpu:
+    name: live-cpu (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    env:
+      SPIKE_CACHE: ${{ runner.temp }}/speech-spike
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Cache GGUF
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/speech-spike/gguf
+          key: gguf-d9a01898d2a611c8764e23a1c2f45e70bbd5a425dc4de93692ac951dd603812d
+      - name: Cache runtime archive
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/speech-spike/runtime
+          key: nemo-speech-0.1.0-${{ runner.os }}-cpu-linux-0f74131d-win-5e4ea810
+      - name: Live CPU gates
+        run: node spike/speech/ci-run.mjs
