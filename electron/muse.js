@@ -13,6 +13,7 @@
 
 const fs = require("node:fs");
 const path = require("node:path");
+const { injectMuseGuardrailHooks } = require("./muse-guardrail-hook.js");
 
 function linkOrSkip(src, dst) {
   if (!fs.existsSync(src) || fs.existsSync(dst)) return;
@@ -84,7 +85,12 @@ function materializeMuseHome(opts) {
     mcp_servers: toMuseMcpServers(opts.mcpServers),
   };
   if (opts.hookCommand) {
-    settings.managed_hooks_path = path.join(dest, "solenta-hooks.json");
+    const hooksPath = path.join(dest, "solenta-hooks.json");
+    settings.managed_hooks_path = hooksPath;
+    fs.writeFileSync(
+      hooksPath,
+      injectMuseGuardrailHooks("", opts.hookCommand, 15),
+    );
   }
   fs.writeFileSync(
     path.join(configDir, "settings.json"),

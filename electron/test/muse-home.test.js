@@ -88,20 +88,23 @@ describe("materializeMuseHome", () => {
     assert.equal(env.MUSE_HOME, undefined);
   });
 
-  it("stores hookCommand as managed_hooks_path without writing the hook file", () => {
+  it("writes solenta-hooks.json and points managed_hooks_path at it when hookCommand is set", () => {
     materializeMuseHome({
       dest,
       mcpServers: {},
       hookCommand: "node /tmp/muse-guardrail-hook.js",
     });
+    const hooksPath = path.join(dest, "solenta-hooks.json");
     const settings = JSON.parse(
       fs.readFileSync(path.join(dest, "config", "muse", "settings.json"), "utf8"),
     );
-    assert.equal(
-      settings.managed_hooks_path,
-      path.join(dest, "solenta-hooks.json"),
-    );
-    assert.equal(fs.existsSync(path.join(dest, "solenta-hooks.json")), false);
+    assert.equal(settings.managed_hooks_path, hooksPath);
+    assert.equal(fs.existsSync(hooksPath), true);
+    const hooks = JSON.parse(fs.readFileSync(hooksPath, "utf8"));
+    assert.ok(Array.isArray(hooks));
+    assert.equal(hooks[0].event, "PreToolUse");
+    assert.equal(hooks[0].command, "node /tmp/muse-guardrail-hook.js");
+    assert.equal(hooks[0].timeout, 15);
   });
 });
 
