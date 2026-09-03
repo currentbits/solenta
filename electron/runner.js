@@ -91,6 +91,7 @@ const {
   runMuse,
   materializeMuseHome,
   museChildEnv,
+  deployMuseGuardrailOverlay,
   extractSessionId,
   extractAssistantText,
   extractThinking,
@@ -6532,7 +6533,27 @@ function createRunner(opts) {
         throw err;
       }
     } else if (crossesBoundary(project)) {
-      throw new Error("Muse remote overlay failed");
+      try {
+        const dest = deployMuseGuardrailOverlay({ project, threadId });
+        if (!dest) throw new Error("Muse remote overlay failed");
+        museEnv = {
+          ...museChildEnv(dest),
+          SOLENTA_WORKTREE: project.remotePath || localCwd,
+        };
+      } catch (err) {
+        completeWorkLogStep(threadId, startingId);
+        completeWorkLogStep(threadId, workingId);
+        const msg =
+          "Muse remote overlay failed: " +
+          (err && err.message ? err.message : String(err));
+        const failure = markRunFailed(threadId, msg, runId);
+        appendDoneWorkLog(threadId, runId, "Run error");
+        notifyRunTerminal(threadId, "failed", failure.text);
+        pushDetail(threadId, museState);
+        store.save();
+        pushThreadsChanged();
+        throw err;
+      }
     } else {
       museEnv = { SOLENTA_WORKTREE: localCwd };
     }

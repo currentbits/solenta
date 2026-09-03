@@ -75,6 +75,7 @@ const {
   runMuse,
   materializeMuseHome,
   museChildEnv,
+  deployMuseGuardrailOverlay,
   extractAssistantText: museExtractText,
   extractUsage: museExtractUsage,
   extractToolEvent: museExtractTool,
@@ -952,16 +953,28 @@ function spawnAgentMuse(opts) {
   /** @type {NodeJS.ProcessEnv | undefined} */
   let museEnv;
   if (crossesBoundary(project)) {
-    finish({
-      ok: false,
-      text: "",
-      usage: null,
-      code: 1,
-      stderr: "Muse remote overlay failed",
-    });
-    return { handle: { kill() {} }, done };
-  }
-  if (userDataPath && threadId && !skipOverlay) {
+    try {
+      const dest = deployMuseGuardrailOverlay({ project, threadId });
+      if (!dest) throw new Error("Muse remote overlay failed");
+      museEnv = {
+        ...museChildEnv(dest),
+        SOLENTA_WORKTREE: (project && project.remotePath) || cwd,
+      };
+    } catch (err) {
+      const msg =
+        "Muse remote overlay failed: " +
+        (err && err.message ? err.message : String(err));
+      finish({
+        ok: false,
+        text: "",
+        usage: null,
+        code: 1,
+        stderr: msg,
+        error: err,
+      });
+      return { handle: { kill() {} }, done };
+    }
+  } else if (userDataPath && threadId && !skipOverlay) {
     try {
       const destName = overlayKey
         ? String(overlayKey).replace(/[^A-Za-z0-9._-]+/g, "-")

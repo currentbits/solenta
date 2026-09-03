@@ -15,7 +15,12 @@ const spawn = require("cross-spawn");
 const fs = require("node:fs");
 const path = require("node:path");
 const { killTree, agentSpawnOptions } = require("./proc.js");
-const { injectMuseGuardrailHooks } = require("./muse-guardrail-hook.js");
+const { posixQuote } = require("./ssh.js");
+const {
+  injectMuseGuardrailHooks,
+  museGuardrailHookCommand,
+} = require("./muse-guardrail-hook.js");
+const remoteOverlay = require("./remote-overlay.js");
 
 const SIGKILL_AFTER_MS = 3000;
 const STDERR_TAIL_CHARS = 64 * 1024;
@@ -122,6 +127,67 @@ function museChildEnv(dest) {
     XDG_CONFIG_HOME: path.join(dest, "config"),
     XDG_DATA_HOME: path.join(dest, "share"),
   };
+}
+
+/**
+ * Deploy the XDG overlay onto an ssh/WSL host (#873).
+ * Returns the remote dest path. Throws if dest is unusable.
+ *
+ * Far-side child env is XDG_CONFIG_HOME / XDG_DATA_HOME (no MUSE_HOME).
+ * Auth/sessions are symlinked from the remote user's XDG muse dirs.
+ *
+ * @param {object} opts
+ * @param {{ remoteHost?: string, path?: string } | null} opts.project
+ * @param {string} opts.threadId
+ * @returns {string | null}
+ */
+function deployMuseGuardrailOverlay(opts) {
+  const project = opts && opts.project;
+  const threadId = opts && opts.threadId;
+  if (!project || !threadId) return null;
+  const dest = remoteOverlay.remoteOverlayDest(
+    remoteOverlay.probeRemoteHome(project),
+    threadId,
+    "muse-homes",
+  );
+  if (!dest) throw new Error("remote muse overlay dest unusable");
+  const hookDest = `${dest}/muse-guardrail-hook.js`;
+  const command = museGuardrailHookCommand({
+    nodePath: "node",
+    hookPath: hookDest,
+    posix: true,
+  });
+  const hooksPath = `${dest}/solenta-hooks.json`;
+  const settings = {
+    schema_version: 1,
+    mcp_servers: {},
+    managed_hooks_path: hooksPath,
+  };
+  remoteOverlay.writeRemoteOverlay(
+    project,
+    dest,
+    {
+      "muse-guardrail-hook.js": fs.readFileSync(
+        path.join(__dirname, "muse-guardrail-hook.js"),
+        "utf8",
+      ),
+      "guardrails.js": fs.readFileSync(
+        path.join(__dirname, "guardrails.js"),
+        "utf8",
+      ),
+      "guardrail-hook-core.js": fs.readFileSync(
+        path.join(__dirname, "guardrail-hook-core.js"),
+        "utf8",
+      ),
+      "solenta-hooks.json": injectMuseGuardrailHooks("", command, 15),
+      "config/muse/settings.json": JSON.stringify(settings, null, 2) + "\n",
+    },
+    [
+      `if [ -n "$XDG_CONFIG_HOME" ]; then src="$XDG_CONFIG_HOME/muse/auth.json"; else src="$HOME/.config/muse/auth.json"; fi; dst=${posixQuote(`${dest}/config/muse/auth.json`)}; mkdir -p ${posixQuote(`${dest}/config/muse`)}; if [ -e "$src" ] && [ ! -e "$dst" ]; then ln -s "$src" "$dst"; fi`,
+      `if [ -n "$XDG_DATA_HOME" ]; then src="$XDG_DATA_HOME/muse/sessions"; else src="$HOME/.local/share/muse/sessions"; fi; dst=${posixQuote(`${dest}/share/muse/sessions`)}; mkdir -p ${posixQuote(`${dest}/share/muse`)}; if [ -e "$src" ] && [ ! -e "$dst" ]; then ln -s "$src" "$dst"; fi`,
+    ],
+  );
+  return dest;
 }
 
 /**
@@ -461,6 +527,7 @@ function runMuse(opts) {
 module.exports = {
   materializeMuseHome,
   museChildEnv,
+  deployMuseGuardrailOverlay,
   reclaimMuseHomes,
   toMuseMcpServers,
   extractSessionId,
