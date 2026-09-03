@@ -1,0 +1,54 @@
+# Throwaway #845 live STT spike on native ubuntu-latest / windows-latest.
+# Not a product gate. Delete after Linux/Windows numbers are recorded.
+#
+# Manual only. The job downloads a ~700 MB Nemotron GGUF. Do not add `push`
+# or `pull_request`: that would fetch the model on every main commit. A path
+# filter on spike/speech/** still fires on the merge that lands these files.
+name: speech-spike
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: write
+
+jobs:
+  cpu-live:
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Make cache dir
+        env:
+          SPIKE_CACHE: ${{ runner.temp }}/solenta-speech-spike
+        run: node -e "require('fs').mkdirSync(process.env.SPIKE_CACHE,{recursive:true})"
+      - name: Cache GGUF
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/solenta-speech-spike/nemotron-speech-streaming-en-0.6b.q8_0.gguf
+          key: gguf-d9a01898d2a611c8764e23a1c2f45e70bbd5a425dc4de93692ac951dd603812d
+      - name: Fetch runtime and GGUF
+        env:
+          SPIKE_CACHE: ${{ runner.temp }}/solenta-speech-spike
+          SPIKE_OUT: ${{ runner.temp }}/solenta-speech-out
+        run: node spike/speech/run-ci.mjs --fetch-only
+      - name: Live gates
+        env:
+          SPIKE_CACHE: ${{ runner.temp }}/solenta-speech-spike
+          SPIKE_OUT: ${{ runner.temp }}/solenta-speech-out
+        run: node spike/speech/run-ci.mjs
+      - name: Upload spike artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: speech-spike-${{ matrix.os }}
+          path: ${{ runner.temp }}/solenta-speech-out
+          if-no-files-found: warn

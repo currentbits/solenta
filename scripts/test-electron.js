@@ -65,6 +65,7 @@ const WIN32_FILES = [
   "electron/test/reasoning-effort.test.js",
   "electron/test/rewind.test.js",
   "electron/test/session-record.test.js",
+  "electron/test/speech-spike-workflow.test.js", // reads yaml; no spawn (#860)
   "electron/test/secrets.test.js",
   "electron/test/updater.test.js", // win32 portable stage + helper (#755)
   "electron/test/workflow-crash-resume.test.js", // store load only; no spawn (#824)
