@@ -380,12 +380,20 @@ async function runGates() {
 
   const live = runLive(["--pace", "realtime", "--settle-ms", "15000"], "live-realtime.json", 60_000);
   writeFileSync(path.join(outDir, "live-realtime.summary.json"), JSON.stringify(live, null, 2) + "\n");
-  const rtf = runLive(
-    ["--pace", "max", "--loop-seconds", "300", "--settle-ms", "20000"],
-    "live-rtf-300.json",
-    480_000,
-  );
-  writeFileSync(path.join(outDir, "live-rtf-300.summary.json"), JSON.stringify(rtf, null, 2) + "\n");
+  let rtf = null;
+  let rtfErr = null;
+  try {
+    // Max-pace dumps 300s of PCM immediately; CPU still needs wall-clock to
+    // finish decoding. Settle until completed, up to the RTF=1.0 budget.
+    rtf = runLive(
+      ["--pace", "max", "--loop-seconds", "300", "--settle-ms", "300000"],
+      "live-rtf-300.json",
+      360_000,
+    );
+    writeFileSync(path.join(outDir, "live-rtf-300.summary.json"), JSON.stringify(rtf, null, 2) + "\n");
+  } catch (e) {
+    rtfErr = e;
+  }
 
   killServe();
   process.removeAllListeners("exit");
@@ -414,10 +422,15 @@ async function runGates() {
   if (live.stopToFinalMs == null || live.stopToFinalMs > STOP_TO_FINAL_MAX_MS) {
     failures.push(`stopToFinalMs ${live.stopToFinalMs} > ${STOP_TO_FINAL_MAX_MS}`);
   }
-  if (!Number.isFinite(rtf.rtf) || rtf.rtf > RTF_MAX) {
-    failures.push(`rtf ${rtf.rtf} > ${RTF_MAX}`);
+  if (rtfErr) failures.push(`rtf run: ${rtfErr.message || rtfErr}`);
+  if (!rtf) {
+    failures.push("no rtf result");
+  } else {
+    if (!Number.isFinite(rtf.rtf) || rtf.rtf > RTF_MAX) {
+      failures.push(`rtf ${rtf.rtf} > ${RTF_MAX}`);
+    }
+    if (rtf.audioDurationSec < 300) failures.push(`rtf audioDurationSec ${rtf.audioDurationSec} < 300`);
   }
-  if (rtf.audioDurationSec < 300) failures.push(`rtf audioDurationSec ${rtf.audioDurationSec} < 300`);
   if (peakRss >= RSS_LIMIT_BYTES) {
     failures.push(`peak RSS ${peakRss} >= ${RSS_LIMIT_BYTES}`);
   }
@@ -429,7 +442,7 @@ async function runGates() {
     port,
     ready: readyBody,
     live,
-    rtf: {
+    rtf: rtf && {
       pace: rtf.pace,
       audioDurationSec: rtf.audioDurationSec,
       firstPartialMs: rtf.firstPartialMs,
