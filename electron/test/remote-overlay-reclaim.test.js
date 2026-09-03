@@ -2,7 +2,7 @@
 
 /**
  * Reclaim remote $HOME/.solenta/{codex-homes,opencode-guardrails,
- * cursor-guardrails,kimi-homes}/<threadId> overlays (#838).
+ * cursor-guardrails,kimi-homes,muse-homes}/<threadId> overlays (#838 / #873).
  *
  * #835 / #837 write those dirs via writeRemoteOverlay and never delete
  * them. After archive or run-end they must go, without touching the
@@ -29,6 +29,7 @@ const OVERLAY_KINDS = [
   "opencode-guardrails",
   "cursor-guardrails",
   "kimi-homes",
+  "muse-homes",
 ];
 
 const AUTH_BODY = "do-not-delete-codex-auth\n";

@@ -130,6 +130,21 @@ function museChildEnv(dest) {
 }
 
 /**
+ * Far-side XDG env for ssh/WSL. Always POSIX joins so a win32 host does
+ * not turn `/home/u/.solenta/muse-homes/tid` into `\\home\\u\\...`.
+ * @param {string} dest remote overlay dest
+ * @param {typeof path} [pathMod] injectable host path (win32 in tests)
+ * @returns {{ XDG_CONFIG_HOME: string, XDG_DATA_HOME: string }}
+ */
+function museRemoteChildEnv(dest, pathMod = path) {
+  const join = pathMod.posix.join.bind(pathMod.posix);
+  return {
+    XDG_CONFIG_HOME: join(dest, "config"),
+    XDG_DATA_HOME: join(dest, "share"),
+  };
+}
+
+/**
  * Deploy the XDG overlay onto an ssh/WSL host (#873).
  * Returns the remote dest path. Throws if dest is unusable.
  *
@@ -527,6 +542,7 @@ function runMuse(opts) {
 module.exports = {
   materializeMuseHome,
   museChildEnv,
+  museRemoteChildEnv,
   deployMuseGuardrailOverlay,
   reclaimMuseHomes,
   toMuseMcpServers,

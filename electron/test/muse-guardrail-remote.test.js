@@ -20,7 +20,7 @@ const remoteOverlay = require("../remote-overlay.js");
 const ssh = require("../ssh.js");
 const { resolveSpawn } = require("../runner.js");
 const { wrapCommand } = require("../ssh.js");
-const { deployMuseGuardrailOverlay } = require("../muse.js");
+const { deployMuseGuardrailOverlay, museRemoteChildEnv } = require("../muse.js");
 const { spawnPhaseAgent } = require("../workflow.js");
 const { Store } = require("../store.js");
 const services = require("../services.js");
@@ -120,6 +120,21 @@ describe("resolveSpawn muse XDG overlay across a boundary", () => {
       "--json",
       "hi",
     ]);
+  });
+});
+
+describe("muse remote child env POSIX XDG", () => {
+  it("uses forward-slash XDG paths that start with dest (would fail on win32 path.join)", () => {
+    const dest = "/home/u/.solenta/muse-homes/tid";
+    const env = museRemoteChildEnv(dest, path.win32);
+    assert.equal(env.XDG_CONFIG_HOME, dest + "/config");
+    assert.equal(env.XDG_DATA_HOME, dest + "/share");
+    assert.ok(env.XDG_CONFIG_HOME.startsWith(dest));
+    assert.ok(env.XDG_DATA_HOME.startsWith(dest));
+    assert.equal(env.XDG_CONFIG_HOME.includes("\\"), false);
+    assert.equal(env.XDG_DATA_HOME.includes("\\"), false);
+    assert.notEqual(env.XDG_CONFIG_HOME, path.win32.join(dest, "config"));
+    assert.notEqual(env.XDG_DATA_HOME, path.win32.join(dest, "share"));
   });
 });
 
@@ -315,13 +330,12 @@ describe("muse runner: overlay on a crossesBoundary turn", () => {
       });
       services.setProvider(store, { threadId: thread.id, provider: "muse" });
 
-      await runner.startRun({ threadId: thread.id, prompt: "hello" });
-      await waitFor(() => store.getThread(thread.id).status === "done");
-
       const dest = path.join(remoteHome, ".solenta", "muse-homes", thread.id);
-      const settings = JSON.parse(
-        fs.readFileSync(path.join(dest, "config", "muse", "settings.json"), "utf8"),
-      );
+      const settingsPath = path.join(dest, "config", "muse", "settings.json");
+      await runner.startRun({ threadId: thread.id, prompt: "hello" });
+      // Snapshot before run-end reclaim deletes muse-homes (#838 / #873).
+      await waitFor(() => fs.existsSync(settingsPath));
+      const settings = JSON.parse(fs.readFileSync(settingsPath, "utf8"));
       assert.equal(settings.schema_version, 1);
       assert.ok(
         fs.lstatSync(path.join(dest, "config", "muse", "auth.json")).isSymbolicLink(),
@@ -329,10 +343,13 @@ describe("muse runner: overlay on a crossesBoundary turn", () => {
       assert.ok(
         fs.lstatSync(path.join(dest, "share", "muse", "sessions")).isSymbolicLink(),
       );
+      await waitFor(() => store.getThread(thread.id).status === "done");
 
       const env = JSON.parse(fs.readFileSync(argvFile + ".env.json", "utf8"));
-      assert.equal(env.XDG_CONFIG_HOME, path.join(dest, "config"));
-      assert.equal(env.XDG_DATA_HOME, path.join(dest, "share"));
+      assert.equal(env.XDG_CONFIG_HOME, dest + "/config");
+      assert.equal(env.XDG_DATA_HOME, dest + "/share");
+      assert.ok(env.XDG_CONFIG_HOME.startsWith(dest));
+      assert.equal(env.XDG_CONFIG_HOME.includes("\\"), false);
     } finally {
       if (runner) runner.stopAll();
       fs.rmSync(tmpDir, { recursive: true, force: true });
@@ -471,9 +488,16 @@ describe("workflow muse remote overlay", () => {
       const env = JSON.parse(fs.readFileSync(argvFile + ".env.json", "utf8"));
       assert.match(
         env.XDG_CONFIG_HOME,
-        /\.solenta\/muse-homes\/tid-muse/,
+        /\.solenta\/muse-homes\/tid-muse\/config$/,
         `remote XDG_CONFIG_HOME missing: ${env.XDG_CONFIG_HOME}`,
       );
+      assert.match(
+        env.XDG_DATA_HOME,
+        /\.solenta\/muse-homes\/tid-muse\/share$/,
+        `remote XDG_DATA_HOME missing: ${env.XDG_DATA_HOME}`,
+      );
+      assert.equal(env.XDG_CONFIG_HOME.includes("\\"), false);
+      assert.equal(env.XDG_DATA_HOME.includes("\\"), false);
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
       for (const [k, v] of Object.entries(prev)) {

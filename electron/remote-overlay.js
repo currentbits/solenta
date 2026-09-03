@@ -12,12 +12,13 @@ const path = require("node:path");
 const { execCommand, posixQuote } = require("./ssh.js");
 const { wslTarget } = require("./wsl.js");
 
-/** Overlay buckets written by #835 / #836 / #837. */
+/** Overlay buckets written by #835 / #836 / #837 / #873. */
 const REMOTE_OVERLAY_KINDS = [
   "codex-homes",
   "opencode-guardrails",
   "cursor-guardrails",
   "kimi-homes",
+  "muse-homes",
 ];
 
 /**
@@ -147,7 +148,7 @@ function remoteOverlayReclaimScript(threadIds) {
     `  for kind in ${kinds}; do`,
     '    dest="$HOME/.solenta/$kind/$id"',
     '    case "$dest" in',
-    "      */.solenta/codex-homes/*|*/.solenta/opencode-guardrails/*|*/.solenta/cursor-guardrails/*|*/.solenta/kimi-homes/*) ;;",
+    "      */.solenta/codex-homes/*|*/.solenta/opencode-guardrails/*|*/.solenta/cursor-guardrails/*|*/.solenta/kimi-homes/*|*/.solenta/muse-homes/*) ;;",
     "      *) continue ;;",
     "    esac",
     '    if [ -L "$dest" ]; then',

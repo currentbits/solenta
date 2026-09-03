@@ -91,6 +91,7 @@ const {
   runMuse,
   materializeMuseHome,
   museChildEnv,
+  museRemoteChildEnv,
   deployMuseGuardrailOverlay,
   extractSessionId,
   extractAssistantText,
@@ -6537,7 +6538,7 @@ function createRunner(opts) {
         const dest = deployMuseGuardrailOverlay({ project, threadId });
         if (!dest) throw new Error("Muse remote overlay failed");
         museEnv = {
-          ...museChildEnv(dest),
+          ...museRemoteChildEnv(dest),
           SOLENTA_WORKTREE: project.remotePath || localCwd,
         };
       } catch (err) {
