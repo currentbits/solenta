@@ -4139,9 +4139,8 @@ export interface CoderApi {
     }): Promise<unknown>;
   };
   /**
-   * Desktop-only live dictation (#845). Sidecar and capture land in later
-   * PRs; this namespace exists so Composer and SpeechSink do not drift.
-   * Web handlers are the same stub.
+   * Desktop-only live dictation (#845). The main-process manager lives in
+   * electron/speech.js; Composer capture lands in a later PR.
    */
   speech: {
     /** Runtime/model availability and lifecycle. */

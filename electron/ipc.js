@@ -80,6 +80,7 @@ const vibeKanban = require("./vibeKanban.js");
 const { browseFilesystem, expandUserPath } = require("./fsBrowse.js");
 const { discoverSourceControl } = require("./sourceControl.js");
 const { applyZoom } = require("./zoom.js");
+const { SPEECH_NOT_IMPLEMENTED } = require("./speech.js");
 
 /**
  * Default window fan-out (desktop transport). main.js replaces this with a
@@ -149,6 +150,7 @@ function makeCtx(deps) {
     userDataPath,
     memory: createMemoryProxy({ userDataPath }),
     stayAwake: deps.stayAwake || null,
+    speech: deps.speech || null,
     cleanupRunArtifacts: deps.cleanupRunArtifacts,
     getIosSimulator,
     log: deps.log,
@@ -175,42 +177,15 @@ function requireSimulator(ctx) {
   return sim;
 }
 
-/** Stub until electron/speech.js (PR 2). 100 ms @ 16 kHz mono PCM16. */
-const SPEECH_NOT_IMPLEMENTED = "Speech is not implemented yet.";
-const SPEECH_NO_SESSION = "No active speech session.";
-const SPEECH_STALE_SESSION = "Unknown speech session.";
-const SPEECH_BAD_PCM = "Invalid speech audio chunk.";
-const SPEECH_OVERSIZE = "Speech audio chunk is too large.";
-const SPEECH_MAX_PCM_BYTES = 3200;
-
-function speechStatusStub() {
+function speechStatusMissing() {
   return { state: "missing", runtimeReady: false, modelReady: false };
 }
 
-function speechPcmLength(pcm) {
-  if (pcm instanceof ArrayBuffer) return pcm.byteLength;
-  if (ArrayBuffer.isView(pcm)) return pcm.byteLength;
-  return -1;
-}
-
-function requireSpeechSession(input) {
-  const sessionId = input && input.sessionId;
-  if (typeof sessionId !== "string" || !sessionId) {
-    throw new Error(SPEECH_NO_SESSION);
+function requireSpeech(ctx) {
+  if (!ctx || !ctx.speech) {
+    throw new Error(SPEECH_NOT_IMPLEMENTED);
   }
-  // No live session in this stub; never apply a stale id to a later one.
-  throw new Error(SPEECH_STALE_SESSION);
-}
-
-function rejectSpeechWrite(input) {
-  const len = speechPcmLength(input && input.pcm);
-  if (len < 0 || len % 2 !== 0) {
-    throw new Error(SPEECH_BAD_PCM);
-  }
-  if (len > SPEECH_MAX_PCM_BYTES) {
-    throw new Error(SPEECH_OVERSIZE);
-  }
-  requireSpeechSession(input);
+  return ctx.speech;
 }
 
 function viewerStreamInfo(info) {
@@ -1847,22 +1822,15 @@ const IPC_HANDLERS = {
       recordingId: input && input.recordingId,
     });
   },
-  "speech:status": async () => speechStatusStub(),
-  "speech:download": async () => {
-    throw new Error(SPEECH_NOT_IMPLEMENTED);
+  "speech:status": async (ctx) => {
+    if (!ctx || !ctx.speech) return speechStatusMissing();
+    return ctx.speech.status();
   },
-  "speech:start": async () => {
-    throw new Error(SPEECH_NOT_IMPLEMENTED);
-  },
-  "speech:write": async (_ctx, input) => {
-    rejectSpeechWrite(input);
-  },
-  "speech:stop": async (_ctx, input) => {
-    requireSpeechSession(input);
-  },
-  "speech:cancel": async (_ctx, input) => {
-    requireSpeechSession(input);
-  },
+  "speech:download": async (ctx) => requireSpeech(ctx).download(),
+  "speech:start": async (ctx) => requireSpeech(ctx).start(),
+  "speech:write": async (ctx, input) => requireSpeech(ctx).write(input),
+  "speech:stop": async (ctx, input) => requireSpeech(ctx).stop(input),
+  "speech:cancel": async (ctx, input) => requireSpeech(ctx).cancel(input),
 };
 
 /**
@@ -1930,6 +1898,7 @@ function createHandlers(deps) {
  * @param {ReturnType<import('./runner').createRunner>} deps.runner
  * @param {(channel: string, payload: unknown) => void} [deps.broadcast]
  * @param {ReturnType<import('./caffeinate').createStayAwake>} [deps.stayAwake]
+ * @param {ReturnType<import('./speech').createSpeechManager>} [deps.speech]
  * @param {string} [deps.worktreeBase]
  * @param {string} [deps.userDataPath]
  */
