@@ -19,6 +19,7 @@ const { values } = parseArgs({
     "loop-seconds": { type: "string", default: "0" },
     out: { type: "string" },
     "settle-ms": { type: "string", default: "15000" },
+    "hard-timeout-ms": { type: "string" },
   },
 });
 
@@ -127,10 +128,13 @@ await new Promise((resolve, reject) => {
     else resolve();
   };
 
-  const hardTimeoutMs =
-    settleMs +
-    15_000 +
-    (pace === "realtime" ? audioDurationSec * 1000 + 5_000 : Math.max(90_000, audioDurationSec * 1000));
+  const hardTimeoutMs = values["hard-timeout-ms"]
+    ? Number(values["hard-timeout-ms"])
+    : settleMs +
+      15_000 +
+      (pace === "realtime"
+        ? audioDurationSec * 1000 + 5_000
+        : Math.max(90_000, audioDurationSec * 1500));
   setTimeout(() => {
     if (!settled) finish(new Error(`timeout after ${hardTimeoutMs}ms`));
   }, hardTimeoutMs);

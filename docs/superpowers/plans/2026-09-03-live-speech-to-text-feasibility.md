@@ -204,6 +204,22 @@ Linux x64 CPU and Windows x64 CPU live gates are **not proven**. That blocks a f
 - first-partial and stop-to-final
 - ≥300 s audio RTF and RSS
 
-No product code was written. No PR.
+No product code was written. Draft PR: https://github.com/currentbits/solenta/pull/850
 
-Helpers: `spike/speech/live-client.mjs`, `spike/speech/run-macos.sh`, `spike/speech/linux-smoke.sh`, `spike/speech/no-network.sb`, compact numbers under `spike/speech/results/`.
+Helpers: `spike/speech/live-client.mjs`, `spike/speech/run-ci.mjs`, `spike/speech/run-macos.sh`, `spike/speech/linux-smoke.sh`, `spike/speech/no-network.sb`, fixture `spike/speech/fixtures/phrase-16k.wav`, compact numbers under `spike/speech/results/`.
+
+## Native GitHub Actions (Linux x64 CPU / Windows x64 CPU)
+
+Throwaway workflow: `.github/workflows/speech-spike.yml` (does not touch `test.yml`). Matrix is `ubuntu-latest` and `windows-latest` only. It caches the GGUF by sha256, verifies the pinned CPU archives, starts `serve` with `NEMO_SPEECH_HTTP_API_KEY` (not argv), then runs `spike/speech/run-ci.mjs` against `spike/speech/fixtures/phrase-16k.wav`.
+
+| | Linux x64 CPU (`ubuntu-latest`) | Windows x64 CPU (`windows-latest`) |
+|---|---|---|
+| Workflow | [speech-spike](https://github.com/currentbits/solenta/actions/workflows/speech-spike.yml) on PR [#850](https://github.com/currentbits/solenta/pull/850) | same |
+| doctor (CPU device) | pending native CI | pending native CI |
+| GET /ready | pending native CI | pending native CI |
+| first partial ≤ 1.5 s | pending native CI | pending native CI |
+| stop-to-final ≤ 1.5 s | pending native CI | pending native CI |
+| 300 s audio RTF ≤ 1.0 | pending native CI | pending native CI |
+| peak RSS < 2.5 GiB | pending native CI | pending native CI |
+
+QEMU SIGILL on Apple Silicon is irrelevant here. Fill this table from the `cpu-live` job logs / `gates.json` artifacts once the run finishes.
