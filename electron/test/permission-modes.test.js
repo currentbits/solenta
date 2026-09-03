@@ -48,6 +48,7 @@ describe("permission modes: registry + listProviders", () => {
       opencode: ["default", "bypassPermissions"],
       kimi: ["bypassPermissions"],
       cursor: ["plan", "bypassPermissions"],
+      muse: ["default", "bypassPermissions"],
     };
     for (const [id, modes] of Object.entries(expected)) {
       const entry = getProvider(id);
@@ -92,6 +93,10 @@ describe("permission modes: registry + listProviders", () => {
     assert.equal(snapPermissionMode(opencode, "bypassPermissions"), "bypassPermissions");
     assert.equal(snapPermissionMode(opencode, "acceptEdits"), "bypassPermissions");
     assert.equal(snapPermissionMode(opencode, "plan"), "default");
+
+    const muse = getProvider("muse");
+    assert.equal(snapPermissionMode(muse, "plan"), "default");
+    assert.equal(snapPermissionMode(muse, "acceptEdits"), "bypassPermissions");
 
     const cursor = getProvider("cursor");
     assert.equal(snapPermissionMode(cursor, "plan"), "plan");
@@ -203,6 +208,46 @@ describe("permission modes: buildArgs per provider", () => {
       assert.ok(args.includes("--force"), mode);
       assert.ok(!args.includes("--mode"), mode);
     }
+  });
+
+  it("muse: exec --json, trust-workspace, never vs disable-approval, prompt last", () => {
+    const entry = getProvider("muse");
+    const def = entry.buildArgs({ prompt: "HELLO", permissionMode: "default" });
+    assert.equal(def[0], "exec");
+    assert.ok(def.includes("--json"));
+    assert.ok(def.includes("--trust-workspace"));
+    assert.equal(def[def.indexOf("--approval-mode") + 1], "never");
+    assert.ok(!def.includes("--yolo"));
+    assert.ok(!def.includes("--worktree"));
+    assert.ok(!def.includes("--workspace"));
+    assert.equal(def[def.length - 1], "HELLO");
+
+    const bypass = entry.buildArgs({
+      prompt: "HELLO",
+      permissionMode: "bypassPermissions",
+    });
+    assert.ok(bypass.includes("--disable-approval"));
+    assert.ok(!bypass.includes("--yolo"));
+    assert.ok(!bypass.includes("never"));
+
+    const resume = entry.buildArgs({
+      prompt: "MORE",
+      sessionId: "11111111-1111-1111-1111-111111111111",
+      model: "muse-spark-1.3",
+      reasoningEffort: "high",
+      permissionMode: "default",
+    });
+    assert.equal(resume[resume.indexOf("--session-id") + 1], "11111111-1111-1111-1111-111111111111");
+    assert.equal(resume[resume.indexOf("--model") + 1], "muse-spark-1.3");
+    assert.equal(resume[resume.indexOf("--reasoning-effort") + 1], "high");
+    assert.equal(resume[resume.length - 1], "MORE");
+
+    const noNone = entry.buildArgs({
+      prompt: "p",
+      reasoningEffort: "none",
+      permissionMode: "default",
+    });
+    assert.ok(!noNone.includes("none"));
   });
 
   it("registry permissionModes stay in lockstep with PROVIDERS", () => {

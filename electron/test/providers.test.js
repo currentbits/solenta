@@ -44,7 +44,7 @@ describe("providers registry", () => {
     else process.env.CODER_OPENCODE_BIN = prevOpencode;
   });
 
-  it("registers claude, codex, grok, opencode, kimi, cursor with expected kinds and models", () => {
+  it("registers claude, codex, grok, opencode, kimi, cursor, muse with expected kinds and models", () => {
     const ids = PROVIDERS.map((p) => p.id);
     assert.deepEqual(ids, [
       "claude",
@@ -53,6 +53,7 @@ describe("providers registry", () => {
       "opencode",
       "kimi",
       "cursor",
+      "muse",
     ]);
 
     const claude = getProvider("claude");
@@ -119,6 +120,20 @@ describe("providers registry", () => {
     assert.ok(cursor.models.includes("composer-2.5"));
     assert.equal(cursor.models.length, 204);
     assert.equal(cursor.modelInfo[0].id, cursor.models[0]);
+
+    const muse = getProvider("muse");
+    assert.equal(muse.kind, "muse-json");
+    assert.equal(muse.name, "Muse Code");
+    assert.equal(muse.defaultBin, "muse");
+    assert.equal(muse.binEnv, "CODER_MUSE_BIN");
+    assert.equal(muse.supportsResume, true);
+    assert.deepEqual(muse.models, ["muse-spark-1.3", "muse-spark-1.2"]);
+    assert.deepEqual(muse.permissionModes, ["default", "bypassPermissions"]);
+    assert.deepEqual(muse.efforts, ["low", "medium", "high", "xhigh", "ultra"]);
+    const spark = muse.modelInfo.find((m) => m.id === "muse-spark-1.3");
+    assert.equal(spark.recommended, true);
+    assert.equal(spark.contextTokens, 1_048_576);
+    assert.equal(spark.vendor, "Meta");
   });
 
   it("every provider model has matching modelInfo in the same order with non-empty fields", () => {
@@ -362,13 +377,14 @@ describe("providers registry", () => {
   it("listProviders availability via injected which (PATH-less)", () => {
     const which = (bin) => (bin === "claude" || bin === "grok" ? bin : null);
     const list = listProviders({ which, env: {}, includeSimulate: false });
-    assert.equal(list.length, 6);
+    assert.equal(list.length, 7);
     assert.equal(list.find((p) => p.id === "claude").available, true);
     assert.equal(list.find((p) => p.id === "codex").available, false);
     assert.equal(list.find((p) => p.id === "grok").available, true);
     assert.equal(list.find((p) => p.id === "opencode").available, false);
     assert.equal(list.find((p) => p.id === "kimi").available, false);
     assert.equal(list.find((p) => p.id === "cursor").available, false);
+    assert.equal(list.find((p) => p.id === "muse").available, false);
     assert.ok(!list.some((p) => p.id === "simulate"));
   });
 

@@ -63,7 +63,7 @@ const catalogDivergence = require("./catalogDivergence.js");
  * @property {Array<"default"|"acceptEdits"|"plan"|"bypassPermissions">} permissionModes
  *   Modes this adapter actually honours (changes argv / CLI behaviour).
  *   The composer only offers these; setPermissionMode rejects the rest.
- * @property {"claude-stream" | "codex-json" | "kimi-stream" | "opencode-json" | "cursor-stream" | "simulate"} kind
+ * @property {"claude-stream" | "codex-json" | "kimi-stream" | "opencode-json" | "cursor-stream" | "muse-json" | "simulate"} kind
  * @property {(opts: {
  *   prompt: string,
  *   sessionId?: string | null,
@@ -112,6 +112,7 @@ const GROK_45_EFFORTS = ["low", "medium", "high"];
 const KIMI_K3_EFFORTS = ["low", "high", "max"];
 const OPENCODE_LMH = ["low", "medium", "high"];
 const OPENCODE_LMHX = ["low", "medium", "high", "xhigh"];
+const MUSE_EFFORTS = ["low", "medium", "high", "xhigh", "ultra"];
 
 /**
  * Effort list for the selected model. ModelInfo.efforts, when the field is
@@ -1166,6 +1167,55 @@ const PROVIDERS = [
       maybeEmitEffort([], reasoningEffort, () => {
         args.push("--effort", "should-not-appear");
       });
+      args.push(String(prompt ?? ""));
+      return args;
+    },
+  },
+  {
+    id: "muse",
+    name: "Muse Code",
+    binEnv: "CODER_MUSE_BIN",
+    defaultBin: "muse",
+    supportsResume: true,
+    models: ["muse-spark-1.3", "muse-spark-1.2"],
+    modelInfo: [
+      {
+        id: "muse-spark-1.3",
+        label: "Muse Spark 1.3",
+        description: "Meta's coding model. Long-horizon agentic work.",
+        vendor: "Meta",
+        recommended: true,
+        contextTokens: 1_048_576,
+        efforts: MUSE_EFFORTS.slice(),
+      },
+      {
+        id: "muse-spark-1.2",
+        label: "Muse Spark 1.2",
+        description: "Previous Muse Spark coding checkpoint.",
+        vendor: "Meta",
+        contextTokens: 1_048_576,
+        efforts: MUSE_EFFORTS.slice(),
+      },
+    ],
+    efforts: MUSE_EFFORTS.slice(),
+    permissionModes: ["default", "bypassPermissions"],
+    kind: "muse-json",
+    buildArgs({ prompt, sessionId, permissionMode, model, reasoningEffort }) {
+      const args = ["exec", "--json", "--trust-workspace"];
+      const mode = String(permissionMode || "default");
+      if (mode === "bypassPermissions") args.push("--disable-approval");
+      else {
+        args.push("--approval-mode", "never");
+      }
+      if (sessionId) args.push("--session-id", String(sessionId));
+      if (model) args.push("--model", String(model));
+      maybeEmitEffort(
+        honouredEfforts(getProvider("muse"), model),
+        reasoningEffort,
+        (level) => {
+          args.push("--reasoning-effort", level);
+        },
+      );
       args.push(String(prompt ?? ""));
       return args;
     },
