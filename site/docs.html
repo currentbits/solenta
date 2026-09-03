@@ -187,14 +187,21 @@
         <li><strong>Pulse</strong> is Automations, Usage, Fleet, Insights and the morning digest: the overflow that used to compete with threads on the left.</li>
       </ul>
       <p>
-        Planboard reads the board from labels, so agents can write to it with
-        nothing but <code>gh</code>: an issue labelled <code>plan:doing</code>
-        lands in In progress, <code>plan:done</code> or a closed issue in Done,
-        and any other open issue in Todo. Other labels show as badges on the
-        card. Agent sessions are told this convention, so &ldquo;keep the plan
+        Planboard reads the board from labels. Agents on a GitHub-origin
+        project write with the coder-threads tools
+        <code>issue_create</code>, <code>issue_list</code>,
+        <code>issue_set_plan</code>, and <code>issue_complete</code>
+        (omitted when the origin is not GitHub). Sandboxed
+        <code>gh</code> cannot see macOS keychain credentials, so those
+        tools run on the host instead. An issue labelled
+        <code>plan:doing</code> lands in In progress,
+        <code>plan:done</code> or a closed issue in Done, and any other
+        open issue in Todo. Other labels show as badges on the card.
+        Agent sessions are told this convention, so &ldquo;keep the plan
         on the board&rdquo; is enough to have multi-step work tracked as
-        issues. The view needs the GitHub CLI installed and authenticated, and
-        a project whose <code>origin</code> is on GitHub. The header also
+        issues. The view still needs the GitHub CLI installed and
+        authenticated in the host app, and a project whose
+        <code>origin</code> is on GitHub. The header also
         shows <strong>review load</strong>: how many open, non-draft PRs
         are waiting and their combined line count. Thresholds follow the
         400-line cap &mdash; four PRs or 1,200 lines is busy; seven or
@@ -449,8 +456,16 @@
           <tr><td>thread_merge</td><td>Squash-merges a worker's branch into the working tree and deletes its worktree.</td></tr>
           <tr><td>thread_pr</td><td>Pushes a worker's branch and opens a pull request, leaving the worktree in place.</td></tr>
           <tr><td>work_suggest</td><td>Offers out-of-scope work as a one-click chip on the current thread.</td></tr>
+          <tr><td>issue_list</td><td>Lists GitHub issues on this thread's project origin (Planboard).</td></tr>
+          <tr><td>issue_create</td><td>Creates a GitHub issue on this origin and labels it plan:todo.</td></tr>
+          <tr><td>issue_set_plan</td><td>Moves a Planboard issue's plan:todo / plan:doing / plan:done label.</td></tr>
+          <tr><td>issue_complete</td><td>Labels a plan:doing issue plan:done and closes it.</td></tr>
         </tbody>
       </table>
+      <p>
+        The four <code>issue_*</code> tools are omitted when the project's
+        origin is not GitHub.
+      </p>
       <p>
         Out-of-scope findings do not have to derail the current run.
         <code>work_suggest</code> lands a chip under the transcript:
