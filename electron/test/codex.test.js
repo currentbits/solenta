@@ -27,6 +27,47 @@ async function loadCore() {
   return import(pathToFileURL(corePath).href);
 }
 
+/**
+ * `codex exec` / `exec resume` own `-c`. MCP overrides before `exec` are
+ * dropped on resume, which re-denies first-party tools under never.
+ * @param {string[]} argv
+ * @param {{ url: string, resume?: false | string }} opts
+ */
+function assertCodexMcpOnExec(argv, opts) {
+  const execIdx = argv.indexOf("exec");
+  assert.ok(execIdx >= 0, `expected exec in ${JSON.stringify(argv)}`);
+  if (opts.resume) {
+    assert.equal(argv[execIdx + 1], "resume");
+    assert.equal(argv[execIdx + 2], opts.resume);
+  } else {
+    assert.notEqual(argv[execIdx + 1], "resume");
+  }
+  const before = argv.slice(0, execIdx);
+  for (let i = 0; i < before.length; i++) {
+    if (before[i] === "-c") {
+      assert.ok(
+        !String(before[i + 1] || "").startsWith("mcp_servers."),
+        `mcp -c must not sit before exec (resume drops it): ${JSON.stringify(argv)}`,
+      );
+    }
+  }
+  const after = argv.slice(execIdx, argv.length - 1);
+  const values = [];
+  for (let i = 0; i < after.length - 1; i++) {
+    if (after[i] === "-c") values.push(after[i + 1]);
+  }
+  assert.ok(
+    values.includes(opts.url),
+    `missing bound MCP url after exec: ${JSON.stringify(argv)}`,
+  );
+  assert.ok(
+    values.includes(
+      'mcp_servers.coder-memory.default_tools_approval_mode="approve"',
+    ),
+    `missing MCP auto-approve after exec: ${JSON.stringify(argv)}`,
+  );
+}
+
 function waitFor(predicate, { timeoutMs = 15000, intervalMs = 20 } = {}) {
   return new Promise((resolve, reject) => {
     const start = Date.now();
@@ -853,7 +894,6 @@ describe("runner codex provider", () => {
       await sup.start();
       assert.equal(sup.getStatus().running, true);
       const mcpArgs = getCodexMcpArgs();
-      assert.equal(mcpArgs.length, 4);
       assert.equal(mcpArgs[0], "-c");
       assert.equal(
         mcpArgs[1],
@@ -862,6 +902,12 @@ describe("runner codex provider", () => {
       assert.equal(
         mcpArgs[3],
         'mcp_servers.coder-memory.bearer_token_env_var="CODER_MCP_TOKEN_CODER_MEMORY"',
+      );
+      assert.ok(
+        mcpArgs.includes(
+          'mcp_servers.coder-memory.default_tools_approval_mode="approve"',
+        ),
+        `expected first-party auto-approve (#846), got ${JSON.stringify(mcpArgs)}`,
       );
 
       const project = store.getProjects()[0];
@@ -874,15 +920,12 @@ describe("runner codex provider", () => {
       await runner.startRun({ threadId: t2.id, prompt: "with-mem" });
       await waitFor(() => store.getThread(t2.id).status === "done");
       argv = JSON.parse(fs.readFileSync(argvFile, "utf8"));
-      const cIdx = argv.indexOf("-c");
-      assert.ok(cIdx >= 0, `expected -c in ${JSON.stringify(argv)}`);
       const cwd = t2.worktreePath || project.path;
-      assert.equal(
-        argv[cIdx + 1],
-        `mcp_servers.coder-memory.url="http://127.0.0.1:${freePort}/mcp?project=${encodeURIComponent(cwd)}"`,
-      );
-      // Leading args before exec
-      assert.ok(cIdx < argv.indexOf("exec"));
+      const boundUrl = `mcp_servers.coder-memory.url="http://127.0.0.1:${freePort}/mcp?project=${encodeURIComponent(cwd)}"`;
+      assertCodexMcpOnExec(argv, {
+        url: boundUrl,
+        resume: false,
+      });
       // The token reaches codex by env only: argv is visible to every local
       // process via `ps` for the whole run (issue #125).
       assert.ok(
@@ -893,6 +936,28 @@ describe("runner codex provider", () => {
         fs.readFileSync(argvFile + ".env.json", "utf8"),
       );
       assert.equal(spawnedEnv.CODER_MCP_TOKEN_CODER_MEMORY, token);
+
+      // Resume is the live miss: global `codex -c` before exec is dropped
+      // by `exec resume`, so thread_send dies under approval_policy=never.
+      const sessionId = store.getThread(t2.id).sessionId;
+      assert.ok(sessionId, "first turn must capture a session to resume");
+      const assistantsBefore = store
+        .getMessages(t2.id)
+        .filter((m) => m.role === "assistant").length;
+      fs.unlinkSync(argvFile);
+      await runner.startRun({ threadId: t2.id, prompt: "resume-mem" });
+      await waitFor(
+        () =>
+          store.getMessages(t2.id).filter((m) => m.role === "assistant")
+            .length > assistantsBefore,
+      );
+      await waitFor(() => store.getThread(t2.id).status === "done");
+      argv = JSON.parse(fs.readFileSync(argvFile, "utf8"));
+      assertCodexMcpOnExec(argv, { url: boundUrl, resume: sessionId });
+      assert.ok(
+        argv[argv.length - 1].includes("resume-mem"),
+        `prompt must stay last: ${JSON.stringify(argv)}`,
+      );
       sup.stop();
     } finally {
       await new Promise((r) => server.close(r));

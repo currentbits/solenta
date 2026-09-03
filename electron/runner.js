@@ -4422,21 +4422,24 @@ function createRunner(opts) {
       reasoningEffort: thread.reasoningEffort || null,
       webSearch: thread.webSearch === true,
     });
-    // Leading -c MCP override when memory server is healthy. The matching
-    // bearer tokens ride the child's env, never argv (issue #125).
-    const codexMcpArgs = getCodexMcpArgs({ projectPath: localCwd });
-    if (codexMcpArgs.length > 0) {
-      args.unshift(...codexMcpArgs);
-    }
+    // MCP / Planboard -c must be `codex exec` / `exec resume` options, not
+    // global `codex -c` before exec. Resume has its own -c parser; flags
+    // before `exec` are dropped, so approval_policy=never comes back and
+    // first-party MCP (thread_send, memory_*) dies with "requires approval,
+    // but approval policy is never" (#846 live miss on GPT resume).
+    // Bearer tokens ride the child's env, never argv (issue #125).
     const planboardNote = services.planboardNoteFor(localCwd, {
       provider: thread.provider,
       permissionMode: thread.permissionMode || "default",
     });
-    const codexSandboxArgs = codexWorkspaceWriteArgs({
-      permissionMode: thread.permissionMode || "default",
-      allowNetwork: planboardNote === services.PLANBOARD_NOTE,
-    });
-    if (codexSandboxArgs.length) args.unshift(...codexSandboxArgs);
+    const codexExecConfig = [
+      ...codexWorkspaceWriteArgs({
+        permissionMode: thread.permissionMode || "default",
+        allowNetwork: planboardNote === services.PLANBOARD_NOTE,
+      }),
+      ...getCodexMcpArgs({ projectPath: localCwd }),
+    ];
+    if (codexExecConfig.length) insertBeforeLast(args, codexExecConfig);
     /** @type {Record<string, string>} */
     const codexMcpEnv = { ...getCodexMcpEnv() };
     // #813: isolated CODEX_HOME PreToolUse. Local overlay stays on this

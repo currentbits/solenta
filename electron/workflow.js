@@ -598,19 +598,20 @@ function spawnAgentCodex(opts) {
     webSearch: webSearch === true,
     permissionMode: permissionMode || "default",
   });
-  const codexMcpArgs = getCodexMcpArgs({ projectPath: cwd });
-  if (codexMcpArgs.length > 0) {
-    args.unshift(...codexMcpArgs);
-  }
+  // Same as runner.js: -c must sit after `exec` / `exec resume`, or
+  // resume drops MCP auto-approve and thread_send dies under never.
   const planboardNote = planboardNoteFor(cwd, {
     provider: "codex",
     permissionMode: permissionMode || "default",
   });
-  const codexSandboxArgs = codexWorkspaceWriteArgs({
-    permissionMode: permissionMode || "default",
-    allowNetwork: planboardNote === PLANBOARD_NOTE,
-  });
-  if (codexSandboxArgs.length) args.unshift(...codexSandboxArgs);
+  const codexExecConfig = [
+    ...codexWorkspaceWriteArgs({
+      permissionMode: permissionMode || "default",
+      allowNetwork: planboardNote === PLANBOARD_NOTE,
+    }),
+    ...getCodexMcpArgs({ projectPath: cwd }),
+  ];
+  if (codexExecConfig.length) insertBeforeLast(args, codexExecConfig);
   /** @type {Record<string, string>} */
   const envExtra = { ...getCodexMcpEnv() };
   /** @type {Record<string, string> | undefined} */
