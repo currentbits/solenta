@@ -884,11 +884,13 @@ const HANDOFF_TOTAL_MAX = 12000;
 const PLANBOARD_NOTE =
   "\n\n[Planboard] This workspace tracks project plans as GitHub issues. " +
   "For multi-step work, record and maintain your plan/roadmap/issues as " +
-  "GitHub issues in this repo's origin using `gh`, with status labels " +
-  "plan:todo, plan:doing, plan:done (create the labels if missing, move " +
-  "them as you progress, close finished issues). Skip this for trivial " +
-  "tasks. Your own todo list is mirrored onto the board as live steps, so " +
-  "keep it current instead of filing issues for individual steps.";
+  "GitHub issues in this repo's origin using the coder-threads tools " +
+  "issue_create, issue_list, issue_set_plan, and issue_complete " +
+  "(status labels plan:todo, plan:doing, plan:done). Do not use `gh` " +
+  "for these writes: the sandbox cannot see host GitHub credentials. " +
+  "Skip this for trivial tasks. Your own todo list is mirrored onto the " +
+  "board as live steps, so keep it current instead of filing issues for " +
+  "individual steps.";
 
 /**
  * Codex-only standing note (issue #800). gpt-5.6-sol invents a Solenta
