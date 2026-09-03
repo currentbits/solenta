@@ -6531,7 +6531,7 @@ function createRunner(opts) {
         pushDetail(threadId, museState);
         store.save();
         pushThreadsChanged();
-        throw err;
+        return { runId };
       }
     } else if (crossesBoundary(project)) {
       try {
@@ -6553,7 +6553,7 @@ function createRunner(opts) {
         pushDetail(threadId, museState);
         store.save();
         pushThreadsChanged();
-        throw err;
+        return { runId };
       }
     } else {
       museEnv = { SOLENTA_WORKTREE: localCwd };

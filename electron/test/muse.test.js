@@ -249,11 +249,12 @@ describe("muse runner integration", () => {
     });
     const thread = store.getThreads()[0];
     try {
-      try {
-        await failRunner.startRun({ threadId: thread.id, prompt: "hello" });
-      } catch {
-        // overlay fail-closed may throw after markRunFailed
-      }
+      const result = await failRunner.startRun({
+        threadId: thread.id,
+        prompt: "hello",
+      });
+      assert.equal(typeof result.runId, "string");
+      assert.ok(result.runId, "overlay fail must return { runId }, not throw");
       await waitFor(() => store.getThread(thread.id).status === "failed");
       assert.equal(store.getThread(thread.id).status, "failed");
       assert.ok(

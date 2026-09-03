@@ -80,6 +80,66 @@ describe("materializeMuseHome", () => {
     assert.throws(() => materializeMuseHome({ dest: "" }), /dest required/);
   });
 
+  it("links source skills so SKILL.md is reachable via the overlay", () => {
+    const sourceConfigDir = path.join(sourceConfig, "muse");
+    const sourceDataDir = path.join(sourceData, "muse");
+    const skillDir = path.join(sourceConfigDir, "skills", "demo-skill");
+    fs.mkdirSync(skillDir, { recursive: true });
+    fs.mkdirSync(sourceDataDir, { recursive: true });
+    const skillBody = "# Demo skill\n";
+    fs.writeFileSync(path.join(skillDir, "SKILL.md"), skillBody);
+
+    materializeMuseHome({
+      dest,
+      sourceConfigDir,
+      sourceDataDir,
+      mcpServers: {},
+    });
+
+    const overlaySkills = path.join(dest, "config", "muse", "skills");
+    assert.ok(
+      fs.lstatSync(overlaySkills).isSymbolicLink(),
+      "overlay skills must be a symlink into the user's config",
+    );
+    assert.equal(
+      fs.readFileSync(
+        path.join(overlaySkills, "demo-skill", "SKILL.md"),
+        "utf8",
+      ),
+      skillBody,
+    );
+  });
+
+  it("creates a missing source sessions dir and links it as a symlink", () => {
+    const sourceConfigDir = path.join(sourceConfig, "muse");
+    const sourceDataDir = path.join(sourceData, "muse");
+    fs.mkdirSync(sourceConfigDir, { recursive: true });
+    fs.mkdirSync(sourceDataDir, { recursive: true });
+    assert.equal(fs.existsSync(path.join(sourceDataDir, "sessions")), false);
+
+    materializeMuseHome({
+      dest,
+      sourceConfigDir,
+      sourceDataDir,
+      mcpServers: {},
+    });
+
+    const overlaySessions = path.join(dest, "share", "muse", "sessions");
+    const srcSessions = path.join(sourceDataDir, "sessions");
+    assert.ok(
+      fs.existsSync(srcSessions),
+      "source sessions dir must be created so the symlink has a target",
+    );
+    assert.ok(
+      fs.lstatSync(overlaySessions).isSymbolicLink(),
+      "overlay sessions must be a symlink, not a real dir of new sessions",
+    );
+    assert.equal(
+      fs.realpathSync(overlaySessions),
+      fs.realpathSync(srcSessions),
+    );
+  });
+
   it("sets child XDG env without HOME or MUSE_HOME", () => {
     const env = museChildEnv(dest);
     assert.equal(env.XDG_CONFIG_HOME, path.join(dest, "config"));

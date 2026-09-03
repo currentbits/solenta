@@ -119,4 +119,43 @@ describe("muse-home reclaim (#873)", () => {
     assert.equal(fs.existsSync(sourceConfigDir), true);
     assert.equal(fs.existsSync(sourceDataDir), true);
   });
+
+  it("first-run overlay sessions is a symlink so reclaim does not delete live sessions", async () => {
+    const emptyConfig = path.join(tmpDir, "empty-cfg");
+    const emptyData = path.join(tmpDir, "empty-data");
+    fs.mkdirSync(emptyConfig);
+    fs.mkdirSync(emptyData);
+    const dest = overlayPath(tmpDir, "first-run");
+
+    materializeMuseHome({
+      dest,
+      sourceConfigDir: emptyConfig,
+      sourceDataDir: emptyData,
+      mcpServers: {},
+    });
+
+    const overlaySessions = path.join(dest, "share", "muse", "sessions");
+    assert.ok(
+      fs.lstatSync(overlaySessions).isSymbolicLink(),
+      "first-run overlay sessions must be a symlink, not a real dir",
+    );
+    fs.writeFileSync(path.join(overlaySessions, "new.json"), SESSION);
+
+    const store = {
+      getProjects: () => [],
+      getThread: () => ({ id: "first-run", status: "idle" }),
+    };
+    await scheduleRetention({
+      store,
+      worktreeBase: path.join(tmpDir, "worktrees"),
+      userDataPath: tmpDir,
+    });
+
+    assert.equal(fs.existsSync(dest), false, "idle overlay must be reclaimed");
+    assert.equal(
+      fs.readFileSync(path.join(emptyData, "sessions", "new.json"), "utf8"),
+      SESSION,
+      "first-run session files must survive reclaim through the symlink",
+    );
+  });
 });

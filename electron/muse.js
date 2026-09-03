@@ -5,7 +5,7 @@
  *
  * Muse stores MCP and hooks in user-global ~/.config/muse/settings.json, so
  * a Solenta muse turn in project A would inherit every other project's
- * servers. Overlay: symlink auth.json + sessions, write a fresh
+ * servers. Overlay: symlink auth.json + skills + sessions, write a fresh
  * settings.json with schema_version 1 and only Solenta MCP. Child env is
  * XDG_CONFIG_HOME + XDG_DATA_HOME (no first-party MUSE_HOME; do not rewrite
  * process-wide HOME). Never follow those symlinks on reclaim.
@@ -86,9 +86,14 @@ function materializeMuseHome(opts) {
   const srcData = String(opts.sourceDataDir || "");
   if (srcCfg) {
     linkOrSkip(path.join(srcCfg, "auth.json"), path.join(configDir, "auth.json"));
+    linkOrSkip(path.join(srcCfg, "skills"), path.join(configDir, "skills"));
   }
   if (srcData) {
-    linkOrSkip(path.join(srcData, "sessions"), path.join(dataDir, "sessions"));
+    const srcSessions = path.join(srcData, "sessions");
+    const dstSessions = path.join(dataDir, "sessions");
+    fs.mkdirSync(srcSessions, { recursive: true });
+    fs.mkdirSync(path.dirname(dstSessions), { recursive: true });
+    linkOrSkip(srcSessions, dstSessions);
   }
   const settings = {
     schema_version: 1,
