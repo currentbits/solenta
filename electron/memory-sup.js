@@ -428,8 +428,12 @@ function pushCodexFirstPartyApproval(args, s) {
  * First-party servers also set default_tools_approval_mode="approve".
  * `codex exec` pins approval_policy=never and otherwise rejects MCP tools
  * with "MCP tool call requires approval, but approval policy is never"
- * (issue #846). Same scope as Claude `--allowedTools=mcp__<name>__*`:
- * only our servers, never a user-registered endpoint.
+ * (issue #846). Callers must splice these AFTER `exec` / `exec resume`
+ * (insertBeforeLast), not as global `codex -c` before the subcommand:
+ * `codex exec resume` has its own -c parser and drops the globals, which
+ * is why GPT follow-up turns lost thread_send. Same scope as Claude
+ * `--allowedTools=mcp__<name>__*`: only our servers, never a user-registered
+ * endpoint.
  * @returns {string[]}
  */
 function getCodexMcpArgs(opts = {}) {
