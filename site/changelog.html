@@ -59,6 +59,25 @@
         Every notable change to Solenta, newest first.
       </p>
 
+      <h2 id="v0-18-0">0.18.0 <small>2026-09-04</small></h2>
+      <h3>Added</h3>
+      <ul>
+        <li><strong>Live dictation.</strong> A mic in the composer transcribes locally with NeMo-Speech.cpp, so you can speak a prompt instead of typing it.</li>
+        <li><strong>Muse Code.</strong> First-class provider, same shape as Cursor and Kimi: isolated overlay, resume, workflows, and SSH.</li>
+        <li><strong>Composer vim.</strong> Optional Insert and Normal chip, with the matching motions on the keyboard sheet.</li>
+        <li><strong>Sidebar filters and tags.</strong> Filter by status, provider, or tag, and group or edit tags from the list.</li>
+        <li><strong>Guardrails that stop.</strong> Deny-tier tools are blocked even when the CLI is in always-approve, including Grok, Cursor, Codex, and OpenCode.</li>
+        <li><strong>Workflow retry.</strong> A failed phase agent retries once on the same slot, and you can retry it yourself from the transcript.</li>
+        <li><strong>Planboard writes from the agent.</strong> Create, list, and move issues on the host so a sandboxed session can keep the board in sync without calling <code>gh</code>.</li>
+      </ul>
+      <h3>Fixed</h3>
+      <ul>
+        <li>Codex resume no longer passes <code>--sandbox</code> or the old <code>--search</code> flag. Web search is <code>-c web_search=live</code>, including inside workflow phases.</li>
+        <li>Codex is told Solenta has no Computer Use toggle, so it stops asking for one.</li>
+        <li>Git-tab Merge fast-forwards or merge-syncs a local default that is behind and ahead, instead of refusing.</li>
+        <li>A stapled Developer ID Mac build is no longer misclassified as unsigned by the package verifier.</li>
+      </ul>
+
       <h2 id="v0-17-0">0.17.0 <small>2026-08-29</small></h2>
       <h3>Added</h3>
       <ul>
