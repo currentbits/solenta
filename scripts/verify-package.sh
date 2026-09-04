@@ -11,7 +11,57 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
+# Three states, three verdicts:
+#   unsigned            -> warn, skip (a machine without the cert must still build)
+#   signed, not stapled -> seal must be intact; spctl is expected to reject and
+#                          is reported, not fatal (that is every local build)
+#   stapled             -> spctl MUST pass; this is what users download
+# -dvv, not -dv: the Authority chain only prints at the second -v.
+#
+# Capture the whole -dvv dump first. Do NOT pipe it to grep -q: grep -q
+# closes after the first `Authority=Developer ID Application` line,
+# codesign gets SIGPIPE (141), and pipefail then treats a Developer ID
+# stapled bundle as unsigned (nightly-202609032032-676c8e08 / issue #881).
+verify_macos_gatekeeper() {
+  local APP="$1"
+  local dump signed=0 stapled=0
+  dump="$(codesign -dvv "$APP" 2>&1)" || true
+  if grep -q "^Authority=Developer ID Application" <<<"$dump"; then
+    signed=1
+  fi
+  if grep -q "^Notarization Ticket=stapled" <<<"$dump"; then
+    stapled=1
+  elif xcrun stapler validate "$APP" >/dev/null 2>&1; then
+    stapled=1
+  fi
+
+  if [[ "$signed" -eq 0 && "$stapled" -eq 0 ]]; then
+    echo "verify: WARNING — bundle is UNSIGNED, Gatekeeper checks skipped"
+    return 0
+  fi
+
+  echo "verify: signature"
+  codesign --verify --deep --strict --verbose=2 "$APP"
+
+  # execute is what Gatekeeper uses when the user opens the app. A stapled
+  # nightly must not ship if this fails — do not swallow the status.
+  if [[ "$stapled" -eq 1 ]]; then
+    echo "  notarization ticket stapled"
+    spctl --assess --verbose --type execute "$APP"
+    echo "  spctl: accepted"
+  else
+    echo "  no stapled ticket (local build) — spctl is advisory here:"
+    spctl --assess --verbose --type execute "$APP" 2>&1 | sed 's/^/    /' || true
+  fi
+}
+
 APP="${1:-out/Solenta.app}"
+# Tests (electron/test/verify-gatekeeper.test.js) stub codesign/spctl on PATH
+# and must not boot the dummy bundle.
+if [[ "${SOLENTA_VERIFY_GATEKEEPER_ONLY:-}" == 1 ]]; then
+  verify_macos_gatekeeper "$APP"
+  exit $?
+fi
 # Binary is renamed Electron -> <bundle name> during packaging (app.isPackaged).
 BIN="$APP/Contents/MacOS/$(basename "${APP%.app}")"
 if [[ ! -f "$BIN" && -f "$APP/Contents/MacOS/Electron" ]]; then
@@ -112,26 +162,7 @@ rm -rf "$RESOLVE_CWD"
 # ---------------------------------------------------------------------------
 # Gatekeeper
 # ---------------------------------------------------------------------------
-# Three states, three verdicts:
-#   unsigned            -> warn, skip (a machine without the cert must still build)
-#   signed, not stapled -> seal must be intact; spctl is expected to reject and
-#                          is reported, not fatal (that is every local build)
-#   stapled             -> spctl MUST pass; this is what users download
-# -dvv, not -dv: the Authority chain only prints at the second -v.
-if codesign -dvv "$APP" 2>&1 | grep -q "^Authority=Developer ID Application"; then
-  echo "verify: signature"
-  codesign --verify --deep --strict --verbose=2 "$APP"
-  if xcrun stapler validate "$APP" >/dev/null 2>&1; then
-    echo "  notarization ticket stapled"
-    spctl -a -vvv -t install "$APP"
-    echo "  spctl: accepted"
-  else
-    echo "  no stapled ticket (local build) — spctl is advisory here:"
-    spctl -a -vvv -t install "$APP" 2>&1 | sed 's/^/    /' || true
-  fi
-else
-  echo "verify: WARNING — bundle is UNSIGNED, Gatekeeper checks skipped"
-fi
+verify_macos_gatekeeper "$APP"
 
 # Install cleanup before any probe so the temp dir cannot leak.
 TMP_USERDATA="$(mktemp -d "${TMPDIR:-/tmp}/solenta-pkg-verify.XXXXXX")"
