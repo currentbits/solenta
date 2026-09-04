@@ -85,7 +85,7 @@
         Solenta is a local-first desktop app: agents share a persistent local
         memory, so a later thread can pick up what an earlier one stored, and
         the Planboard is the project's GitHub issues. Each thread can run
-        Claude Code, Codex, Cursor, Kimi, Grok or OpenCode in its own git
+        Claude Code, Codex, Cursor, Kimi, Grok, OpenCode or Muse Code in its own git
         worktree.
         Everything below is in the current release.
       </p>
@@ -109,6 +109,7 @@
         <li><strong>Kimi</strong> (<code>kimi</code>)</li>
         <li><strong>Grok</strong> (<code>grok</code>)</li>
         <li><strong>OpenCode</strong> (<code>opencode</code>)</li>
+        <li><strong>Muse Code</strong> (<code>muse</code>)</li>
       </ul>
       <p>
         Add a project with the <strong>+</strong> button in the sidebar. The
@@ -244,7 +245,8 @@
         The sidebar is a flat list, not per-project groups. Each card
         carries its project slug and, when the repo has one, its favicon
         or app icon; a scope filter at the top of the list limits every
-        section to one repo. <strong>Pinned</strong> threads sit in their
+        section to one repo, and status, provider, and tag filters plus
+        group-by sit next to it. <strong>Pinned</strong> threads sit in their
         own block at the top (oldest pin first) and never auto-settle.
         Below that, active threads; then a <strong>Snoozed</strong> shelf
         (wake-soonest first) and a <strong>Settled</strong> shelf (newest
@@ -265,7 +267,9 @@
         and the underlying CLI's own skills and custom commands.
         <code>/btw</code> (or <kbd>⌥Enter</kbd> on a plain draft) asks a
         side question on the same thread without interrupting the live run.
-        A card, not a new thread, not the follow-up queue.
+        A card, not a new thread, not the follow-up queue. A mic on the
+        composer transcribes locally, and optional vim mode adds Insert and
+        Normal motions.
       </p>
       <p>
         A thread that fails keeps its <strong>failure reason</strong> and shows
@@ -385,7 +389,9 @@
         The <strong>Build</strong> button in the composer runs a multi-phase
         workflow template instead of a single prompt. Phases run in order
         (seed, analyze, verify, judge, synthesize), phases can fan out to
-        several agents, and each phase can use a different provider. The Agents
+        several agents, and each phase can use a different provider. A failed
+        phase agent retries once on the same slot; you can also retry it from
+        the transcript. The Agents
         panel shows every phase and worker settling in real time. You can write
         your own templates in the composer.
       </p>
@@ -490,7 +496,8 @@
         remembered later. What comes back is scanned for
         <strong>prompt injection</strong> and for <strong>secrets</strong>,
         because content a worker read from an issue, a page or a dependency is
-        untrusted input.
+        untrusted input. Deny-tier tools are blocked even when the CLI is in
+        always-approve, on Grok, Cursor, Codex, OpenCode, and Muse.
       </p>
       <p>
         Separately, a thread can carry a <strong>verify command</strong>. The
@@ -575,7 +582,7 @@
         Skills also <strong>fan out</strong>: install one once and Solenta
         copies it into every provider's skills directory it finds on your
         machine, so a skill you wrote for Claude Code is available to Codex,
-        Cursor, Grok, Kimi and OpenCode without five manual copies.
+        Cursor, Grok, Kimi, OpenCode and Muse without six manual copies.
       </p>
 
       <h2 id="automations">Automations</h2>
