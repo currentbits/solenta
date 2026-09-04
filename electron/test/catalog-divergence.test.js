@@ -162,6 +162,16 @@ model = "k3-256k"
     assert.equal(catalog.parseCursorListModels("Available models\n"), null);
   });
 
+  it("strips ANSI from colored cursor-agent --list-models lines", () => {
+    // 2026.09.02-c22c1a3 colors even when stdout is not a TTY.
+    assert.deepEqual(
+      catalog.parseCursorListModels(
+        "\x1b[36mauto\x1b[39m \x1b[2m- Auto\x1b[22m\x1b[2m (default)\x1b[22m",
+      ),
+      ["auto"],
+    );
+  });
+
   it("grok models command lists starred/dashed ids", () => {
     assert.deepEqual(
       catalog.parseGrokModelsOutput(
