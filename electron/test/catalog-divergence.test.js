@@ -339,7 +339,7 @@ describe("listProviders catalog notes", () => {
     }
   });
 
-  it("moves recommended and live-supported snapshot ids first when Sol is cache-only", () => {
+  it("moves recommended and live-supported snapshot ids first when Astra/Sol are cache-only", () => {
     const home = tmpHome();
     try {
       write(
@@ -360,9 +360,11 @@ describe("listProviders catalog notes", () => {
       });
       const codex = list.find((p) => p.id === "codex");
       assert.deepEqual(codex.models.slice(0, 2), ["gpt-5.5", "gpt-5.4-mini"]);
+      assert.ok(codex.models.includes("gpt-6-astra"));
       assert.ok(codex.models.includes("gpt-5.6-sol"));
       const rec = codex.modelInfo.filter((m) => m.recommended).map((m) => m.id);
       assert.deepEqual(rec, ["gpt-5.5"]);
+      assert.match(codex.catalogNote, /gpt-6-astra/);
       assert.match(codex.catalogNote, /gpt-5\.6-sol/);
       assert.match(codex.catalogNote, /codex update/);
     } finally {
@@ -381,8 +383,8 @@ describe("listProviders catalog notes", () => {
       });
       const codex = list.find((p) => p.id === "codex");
       const rec = codex.modelInfo.filter((m) => m.recommended).map((m) => m.id);
-      assert.deepEqual(rec, ["gpt-5.6-sol"]);
-      assert.equal(codex.models[0], "gpt-5.6-sol");
+      assert.deepEqual(rec, ["gpt-6-astra"]);
+      assert.equal(codex.models[0], "gpt-6-astra");
       assert.equal(codex.catalogNote, undefined);
     } finally {
       fs.rmSync(home, { recursive: true, force: true });

@@ -17,8 +17,8 @@ const catalogDivergence = require("./catalogDivergence.js");
  *   (1.0.5) grok-4.6 accepts xhigh|high|medium|low; grok-4.5 has no xhigh.
  *   No max.
  * - codex: no dedicated flag; config override `-c model_reasoning_effort=<level>`.
- *   Sol/Terra: low|medium|high|xhigh|max|ultra (ultra = parallel subagents).
- *   Luna: through max, no ultra. This machine's gpt-5.5 / 5.4-mini cache:
+ *   Astra/Sol/Terra: low|medium|high|xhigh|max|ultra (ultra = parallel
+ *   subagents). Luna: through max, no ultra. gpt-5.5 / 5.4-mini / spark:
  *   low|medium|high|xhigh (no max, no ultra). Live web search is
  *   `-c web_search=live` (issue #799; `--search` after exec is rejected),
  *   gated by thread.webSearch (issue #174).
@@ -97,6 +97,7 @@ function maybeEmitEffort(allowed, reasoningEffort, emit) {
 
 const CLAUDE_EFFORTS = ["low", "medium", "high", "xhigh", "max", "ultracode"];
 const CODEX_EFFORTS = ["low", "medium", "high", "xhigh", "max", "ultra"];
+/** Astra, Sol, Terra: full ladder including ultra (parallel subagents). */
 const CODEX_SOL_TERRA_EFFORTS = [
   "low",
   "medium",
@@ -292,24 +293,33 @@ const PROVIDERS = [
     binEnv: "CODER_CODEX_BIN",
     defaultBin: "codex",
     supportsResume: true,
-    // Snapshot of the GPT-5.6 family (OpenAI 2026-07-09 / 2026-08-21) plus
-    // gpt-5.5 / 5.4-mini from ~/.codex/models_cache.json visibility=list.
-    // Sol is the flagship (`gpt-5.6` alias); this machine's 0.142.4 cache
-    // does not list the 5.6 family yet. codex-auto-review is visibility=hide.
+    // Snapshot of ~/.codex/models_cache.json visibility=list (client 0.153.2,
+    // 2026-09-04). Astra is the flagship (priority 1); Sol is the 5.6
+    // workhorse. gpt-5.4 is retired (upgrade → terra) and omitted.
+    // gpt-reserve / codex-auto-review are visibility=hide.
     models: [
+      "gpt-6-astra",
       "gpt-5.6-sol",
       "gpt-5.6-terra",
       "gpt-5.6-luna",
       "gpt-5.5",
       "gpt-5.4-mini",
+      "gpt-5.3-codex-spark",
     ],
     modelInfo: [
       {
-        id: "gpt-5.6-sol",
-        label: "GPT-5.6-Sol",
-        description: "Flagship for complex agentic coding.",
+        id: "gpt-6-astra",
+        label: "GPT-6-Astra",
+        description: "Our most capable model for complex, demanding work.",
         vendor: "OpenAI",
         recommended: true,
+        efforts: CODEX_SOL_TERRA_EFFORTS.slice(),
+      },
+      {
+        id: "gpt-5.6-sol",
+        label: "GPT-5.6-Sol",
+        description: "Reliable agentic workhorse for everyday tasks.",
+        vendor: "OpenAI",
         efforts: CODEX_SOL_TERRA_EFFORTS.slice(),
       },
       {
@@ -330,7 +340,7 @@ const PROVIDERS = [
         id: "gpt-5.5",
         label: "GPT-5.5",
         description:
-          "Frontier model for complex coding, research, and real-world work.",
+          "Proven previous-generation model for coding and general work.",
         vendor: "OpenAI",
         efforts: CODEX_55_EFFORTS.slice(),
       },
@@ -342,10 +352,17 @@ const PROVIDERS = [
         vendor: "OpenAI",
         efforts: CODEX_55_EFFORTS.slice(),
       },
+      {
+        id: "gpt-5.3-codex-spark",
+        label: "GPT-5.3-Codex-Spark",
+        description: "Ultra-fast coding model.",
+        vendor: "OpenAI",
+        efforts: CODEX_55_EFFORTS.slice(),
+      },
     ],
     // Union of per-model lists (fallback for Default / custom ids).
-    // Sol/Terra add ultra (parallel subagents); Luna stops at max; 5.5 /
-    // 5.4-mini on this machine's cache stop at xhigh.
+    // Astra/Sol/Terra add ultra (parallel subagents); Luna stops at max;
+    // 5.5 / 5.4-mini / spark stop at xhigh.
     efforts: CODEX_EFFORTS.slice(),
     supportsSearch: true,
     // Issue #170: exec defaults to read-only unless we pass --sandbox.
