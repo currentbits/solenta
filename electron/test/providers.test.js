@@ -128,6 +128,19 @@ describe("providers registry", () => {
     assert.ok(!cursor.models.some((id) => id.startsWith("cursor-grok-4.5-")));
     assert.equal(cursor.models.length, 211);
     assert.equal(cursor.modelInfo[0].id, cursor.models[0]);
+    // Live cursor-agent 2026.09.02-c22c1a3 --list-models has no Astra /
+    // gpt-6-* rows. Effort is baked into Cursor ids; do not invent
+    // gpt-6-astra-high style slugs the CLI does not print (#886).
+    const inventedAstra = cursor.models.filter(
+      (id) => /astra/i.test(id) || id.startsWith("gpt-6"),
+    );
+    assert.deepEqual(inventedAstra, []);
+    assert.equal(
+      cursor.modelInfo.some(
+        (m) => /astra/i.test(m.id) || m.id.startsWith("gpt-6"),
+      ),
+      false,
+    );
 
     const muse = getProvider("muse");
     assert.equal(muse.kind, "muse-json");

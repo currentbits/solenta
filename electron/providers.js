@@ -708,7 +708,8 @@ const PROVIDERS = [
     // Live cursor-agent --list-models (2026.09.02-c22c1a3). Ids, labels,
     // descriptions, vendors, and contextTokens copied from the catalog;
     // auto is recommended. Effort is baked into the model id.
-    // Do not invent gpt-6-astra / gpt-6-* ids; this CLI does not list them.
+    // Do not invent gpt-6-astra / gpt-6-* ids; this CLI does not list them
+    // (Codex 0.153.2 does).
     models: [
       "auto",
       "gpt-5.3-codex-low",
