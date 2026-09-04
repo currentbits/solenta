@@ -154,10 +154,17 @@ describe("reasoning effort: provider modelInfo + efforts", () => {
     assert.ok(opus.efforts.includes("ultracode"));
     const grok45 = byId.grok.modelInfo.find((m) => m.id === "grok-4.5");
     assert.deepEqual(grok45.efforts, ["low", "medium", "high"]);
+    const astra = byId.codex.modelInfo.find((m) => m.id === "gpt-6-astra");
+    assert.ok(astra.efforts.includes("ultra"));
     const sol = byId.codex.modelInfo.find((m) => m.id === "gpt-5.6-sol");
     assert.ok(sol.efforts.includes("ultra"));
     const luna = byId.codex.modelInfo.find((m) => m.id === "gpt-5.6-luna");
     assert.ok(!luna.efforts.includes("ultra"));
+    const spark = byId.codex.modelInfo.find(
+      (m) => m.id === "gpt-5.3-codex-spark",
+    );
+    assert.ok(!spark.efforts.includes("ultra"));
+    assert.ok(!spark.efforts.includes("max"));
     const pickle = byId.opencode.modelInfo.find(
       (m) => m.id === "opencode/big-pickle",
     );
@@ -185,10 +192,22 @@ describe("reasoning effort: provider modelInfo + efforts", () => {
     assert.ok(honouredEfforts(grok, "grok-4.6").includes("xhigh"));
 
     const codex = getProvider("codex");
+    assert.deepEqual(honouredEfforts(codex, "gpt-6-astra"), [
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "max",
+      "ultra",
+    ]);
     assert.ok(honouredEfforts(codex, "gpt-5.6-sol").includes("ultra"));
     assert.ok(honouredEfforts(codex, "gpt-5.6-terra").includes("ultra"));
     assert.equal(honouredEfforts(codex, "gpt-5.6-luna").includes("ultra"), false);
     assert.equal(honouredEfforts(codex, "gpt-5.5").includes("max"), false);
+    assert.equal(
+      honouredEfforts(codex, "gpt-5.3-codex-spark").includes("ultra"),
+      false,
+    );
 
     const oc = getProvider("opencode");
     assert.deepEqual(honouredEfforts(oc, null), []);
@@ -436,8 +455,19 @@ describe("reasoning effort: buildArgs per provider", () => {
     assert.ok(!haiku.includes("--effort"), JSON.stringify(haiku));
   });
 
-  it("codex: ultra on sol/terra only; max not on gpt-5.5", () => {
+  it("codex: ultra on astra/sol/terra only; max not on gpt-5.5 or spark", () => {
     const entry = getProvider("codex");
+    const astra = entry.buildArgs({
+      prompt: PROMPT_CODEX,
+      model: "gpt-6-astra",
+      reasoningEffort: "ultra",
+    });
+    assertPromptLast(astra, PROMPT_CODEX);
+    assert.ok(
+      astra.includes("model_reasoning_effort=ultra"),
+      JSON.stringify(astra),
+    );
+
     const sol = entry.buildArgs({
       prompt: PROMPT_CODEX,
       model: "gpt-5.6-sol",
@@ -466,6 +496,13 @@ describe("reasoning effort: buildArgs per provider", () => {
       reasoningEffort: "max",
     });
     assert.ok(!gpt55.some((a) => String(a).includes("model_reasoning_effort")));
+
+    const spark = entry.buildArgs({
+      prompt: PROMPT_CODEX,
+      model: "gpt-5.3-codex-spark",
+      reasoningEffort: "ultra",
+    });
+    assert.ok(!spark.some((a) => String(a).includes("model_reasoning_effort")));
   });
 
   it("kimi: effort never reaches argv even though efforts are listed", () => {
@@ -885,11 +922,21 @@ describe("reasoning effort: setReasoningEffort service", () => {
     );
   });
 
-  it("accepts ultra on Codex Sol and rejects it on Luna", () => {
+  it("accepts ultra on Codex Astra/Sol and rejects it on Luna", () => {
     const thread = services.createThread(store, {
       projectId: project.id,
       title: "T",
     });
+    services.setProvider(store, {
+      threadId: thread.id,
+      provider: "codex",
+      model: "gpt-6-astra",
+    });
+    const astraOk = services.setReasoningEffort(store, {
+      threadId: thread.id,
+      effort: "ultra",
+    });
+    assert.equal(astraOk.reasoningEffort, "ultra");
     services.setProvider(store, {
       threadId: thread.id,
       provider: "codex",

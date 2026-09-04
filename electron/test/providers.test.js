@@ -66,11 +66,15 @@ describe("providers registry", () => {
     assert.equal(codex.kind, "codex-json");
     assert.equal(codex.supportsResume, true);
     assert.ok(codex.models.includes("gpt-5.5"));
+    assert.ok(codex.models.includes("gpt-6-astra"));
     assert.ok(codex.models.includes("gpt-5.6-sol"));
     assert.ok(codex.models.includes("gpt-5.6-terra"));
+    assert.ok(codex.models.includes("gpt-5.3-codex-spark"));
     assert.ok(codex.models.length >= 5);
+    const astra = codex.modelInfo.find((m) => m.id === "gpt-6-astra");
+    assert.equal(astra.recommended, true);
     const sol = codex.modelInfo.find((m) => m.id === "gpt-5.6-sol");
-    assert.equal(sol.recommended, true);
+    assert.equal(sol.recommended, undefined);
 
     const grok = getProvider("grok");
     assert.equal(grok.kind, "claude-stream");

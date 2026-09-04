@@ -179,9 +179,16 @@ describe("setSettings agentProfiles validation", () => {
     reject([validProfile({ permissionMode: null })], /permissionMode/);
   });
 
-  it("accepts ultra on Codex Sol and ultracode on Claude Opus", () => {
+  it("accepts ultra on Codex Astra/Sol and ultracode on Claude Opus", () => {
     const store = new Store(filePath);
     const list = [
+      validProfile({
+        id: "astra-ultra",
+        provider: "codex",
+        model: "gpt-6-astra",
+        reasoningEffort: "ultra",
+        permissionMode: "default",
+      }),
       validProfile({
         id: "sol-ultra",
         provider: "codex",
@@ -199,7 +206,8 @@ describe("setSettings agentProfiles validation", () => {
     ];
     const next = services.setSettings(store, { agentProfiles: list });
     assert.equal(next.agentProfiles[0].reasoningEffort, "ultra");
-    assert.equal(next.agentProfiles[1].reasoningEffort, "ultracode");
+    assert.equal(next.agentProfiles[1].reasoningEffort, "ultra");
+    assert.equal(next.agentProfiles[2].reasoningEffort, "ultracode");
     assert.throws(
       () =>
         services.setSettings(store, {
