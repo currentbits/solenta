@@ -64,7 +64,7 @@
   }
 
   // ---------------- downloads ----------------
-  // Release assets embed the version (Solenta-v0.18.0-macos-arm64.zip), so a
+  // Release assets embed the version (Solenta-v0.18.1-macos-arm64.zip), so a
   // direct asset link needs the current tag. Every [data-dl] link ships
   // pointing at the releases page, which is always correct; with JS we
   // narrow it to the exact file. FALLBACK_TAG is the last tag this page was
@@ -73,7 +73,7 @@
   // ponytail: runtime fetch, not build-time templating, because the site has
   // no build step at all (site/Dockerfile just COPYs the directory into nginx).
   const REPO = "https://github.com/currentbits/solenta";
-  const FALLBACK_TAG = "v0.18.0";
+  const FALLBACK_TAG = "v0.18.1";
   const ASSET = {
     mac: (t) => `Solenta-${t}-macos-arm64.zip`,
     win: (t) => `Solenta-${t}-win32-x64.zip`,
