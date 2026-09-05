@@ -38,6 +38,7 @@ export function ProviderMark({
     <span
       className={[styles.mark, className].filter(Boolean).join(" ")}
       data-provider-mark={providerId}
+      data-card-provider={providerId}
       title={decorative ? undefined : name}
       aria-label={decorative ? undefined : name}
       aria-hidden={decorative ? true : undefined}

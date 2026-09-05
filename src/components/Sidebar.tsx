@@ -1140,9 +1140,11 @@ export const ThreadCard = memo(function ThreadCard({
               titles={threadTitles}
             />
             {providerId ? (
-              <span className={styles.cardProvider} data-card-provider="">
-                {providerId}
-              </span>
+              <ProviderMark
+                providerId={providerId}
+                providers={providers}
+                className={styles.cardProvider}
+              />
             ) : null}
           </div>
         )}

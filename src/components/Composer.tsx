@@ -61,7 +61,6 @@ import { useEscapeClose } from "../useEscapeClose";
 import { ProviderMark } from "./ProviderMark";
 import { applyMention, getMentionQuery, type MentionQuery } from "../mention";
 import { ArchiveToast } from "./ArchiveToast";
-import { ProviderMark } from "./ProviderMark";
 import type { ReplyTarget } from "../replyContext";
 import { excerptReply, wrapReplyContext } from "../replyContext";
 import {
