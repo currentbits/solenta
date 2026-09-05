@@ -11,7 +11,7 @@ const { execFileSync } = require("node:child_process");
 const crypto = require("node:crypto");
 const { Store } = require("../store.js");
 const services = require("../services.js");
-const { createRunner } = require("../runner.js");
+const { createRunner, liveClaudeChildren } = require("../runner.js");
 const { getProvider } = require("../providers.js");
 const { writeFakeBin } = require("./support/fakeBin.js");
 
@@ -146,6 +146,29 @@ function emit(obj) {
 }
 
 async function main() {
+  if (scenario === "background-pipes") {
+    const path = require("node:path");
+    const dir = path.dirname(process.env.CODER_FAKE_GROK_ARGV_FILE);
+    const stop = path.join(dir, "stop-background");
+    const child = require("node:child_process").spawn(process.execPath, ["-e", \`
+      const fs = require("node:fs");
+      setInterval(() => {
+        if (fs.existsSync(\${JSON.stringify(stop)})) process.exit(0);
+      }, 20);
+      setTimeout(() => process.exit(0), 10000);
+    \`], { stdio: ["ignore", "inherit", "inherit"] });
+    child.unref();
+    emit({ type: "system", subtype: "init", session_id: "grok-background" });
+    emit({ type: "assistant", message: {
+      content: [{ type: "text", text: "Preview is up" }],
+    } });
+    // A reply is not a terminal result: managed jobs may still be running.
+    while (!fs.existsSync(path.join(dir, "finish-turn"))) await delay(20);
+    emit({ type: "result", subtype: "success", result: "Preview is up",
+      session_id: "grok-background", usage: { input_tokens: 1, output_tokens: 1 } });
+    process.exit(0); // Descendant keeps BOTH output pipes open.
+  }
+
   if (scenario === "fail-exit") {
     process.stderr.write("grok-stderr-boom\\n");
     process.exit(2);
@@ -596,6 +619,9 @@ describe("runner grok provider (claude-stream path)", () => {
     assert.ok(!argv.includes("--resume"));
     assert.ok(!argv.includes("--verbose"));
     assert.ok(argv.includes("--include-partial-messages"));
+    const rulesIdx = argv.indexOf("--rules");
+    assert.ok(rulesIdx >= 0, "Grok needs the headless preview lifecycle instructions");
+    assert.ok(argv[rulesIdx + 1].length > 0);
     assert.ok(!argv.some((a) => String(a).startsWith("--mcp-config")));
     assert.ok(!argv.includes("stream-json"));
 
@@ -614,6 +640,47 @@ describe("runner grok provider (claude-stream path)", () => {
     assert.equal(usage.costUsd, 0.02);
     assert.equal(usage.turns, 1);
     assert.equal(usage.contextTokens, 120);
+  });
+
+  it("holds follow-ups until result, then drains them while descendant stdio stays open", async () => {
+    process.env.CODER_FAKE_GROK_SCENARIO = "background-pipes";
+    const thread = store.getThreads()[0];
+    const stop = path.join(tmpDir, "stop-background");
+    let child;
+    let closed = false;
+    try {
+      await runner.startRun({ threadId: thread.id, prompt: "start preview" });
+      child = [...liveClaudeChildren].at(-1);
+      assert.ok(child);
+      child.once("close", () => { closed = true; });
+      await waitFor(() => store.getMessages(thread.id).some(
+        (m) => m.role === "assistant" && m.text === "Preview is up",
+      ));
+      process.env.CODER_FAKE_GROK_SCENARIO = "resume-turn";
+      runner.deliverNotice({ threadId: thread.id, line: "Inspect the preview" });
+      // A final-looking reply must not terminate an intentional running job.
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      assert.equal(store.getThread(thread.id).status, "working");
+      assert.equal(store.getUsage(thread.id)?.turns || 0, 0);
+
+      fs.writeFileSync(path.join(tmpDir, "finish-turn"), "");
+      await waitFor(() => store.getThread(thread.id).status === "done"
+        && store.getUsage(thread.id)?.turns === 2, { timeoutMs: 5000 });
+      await waitFor(() => child.exitCode === 0);
+      assert.equal(closed, false, "inherited pipes still prevent child close");
+      assert.ok(store.getMessages(thread.id).some(
+        (m) => m.role === "assistant" && m.text === "Second grok turn",
+      ));
+      assert.equal(store.getThread(thread.id).sessionId, "grok-sess-001");
+    } finally {
+      // Release only this test's sleeper, even on assertion failure.
+      fs.writeFileSync(stop, "");
+      fs.writeFileSync(path.join(tmpDir, "finish-turn"), "");
+      if (child) await waitFor(() => closed);
+    }
+    assert.equal(store.getThread(thread.id).status, "done",
+      "late close must not change the completed follow-up");
+    assert.equal(store.getUsage(thread.id).turns, 2);
   });
 
   it("surfaces thinking deltas and one tool card before the complete assistant restates them (#751)", async () => {
