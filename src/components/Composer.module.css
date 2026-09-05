@@ -1053,6 +1053,11 @@
   cursor: default;
 }
 
+.providerRowMark {
+  flex-shrink: 0;
+  color: inherit;
+}
+
 .providerRowText {
   display: flex;
   flex-direction: column;

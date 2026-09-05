@@ -58,6 +58,7 @@ import {
   type ProfileRow,
 } from "../modelPicker";
 import { useEscapeClose } from "../useEscapeClose";
+import { ProviderMark } from "./ProviderMark";
 import { applyMention, getMentionQuery, type MentionQuery } from "../mention";
 import { ArchiveToast } from "./ArchiveToast";
 import type { ReplyTarget } from "../replyContext";
@@ -2436,6 +2437,13 @@ export const Composer = memo(function Composer({
                               onMouseEnter={() => setProviderIndex(index)}
                               onClick={() => void pickProfile(row)}
                             >
+                              <ProviderMark
+                                providerId={row.provider}
+                                providers={providers}
+                                size={16}
+                                decorative
+                                className={styles.providerRowMark}
+                              />
                               <span className={styles.providerRowText}>
                                 <span className={styles.modelRowLabel}>
                                   {row.name}

@@ -2544,6 +2544,40 @@ describe("Composer agent profiles", () => {
     assert.deepEqual(h.providerSets, []);
     m.unmount();
   });
+
+  it("profile rows show a harness logo keyed on the profile's provider", async () => {
+    const h = makeHarness();
+    const m = await mount(composer(h, { agentProfiles: [scout, missing] }));
+    await m.click(m.query('button[aria-label^="Model:"]'));
+
+    const cheap = m.query('button[aria-label="Profile Cheap scout"]');
+    assert.ok(cheap, "scout row");
+    const mark = cheap!.querySelector('[data-provider-mark="claude"]');
+    assert.ok(mark, "mark uses the profile's provider id, not the profile id");
+    assert.ok(mark!.querySelector("svg"), "known harness is a logo");
+    assert.match(
+      cheap!.textContent || "",
+      /Cheap scout/,
+      "the profile name stays on the row",
+    );
+    assert.equal(
+      cheap!.getAttribute("aria-label"),
+      "Profile Cheap scout",
+      "the row keeps its accessible name",
+    );
+    assert.equal(
+      mark!.getAttribute("aria-hidden"),
+      "true",
+      "visible name is the accessible name; the mark is decorative",
+    );
+
+    const gone = m.query('button[aria-label="Profile Grok worker"]');
+    assert.ok(
+      gone?.querySelector('[data-provider-mark="grok"] svg'),
+      "uninstalled profile still shows its harness mark",
+    );
+    m.unmount();
+  });
 });
 
 describe("Composer web-search pill (issue #174)", () => {
