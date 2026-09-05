@@ -340,12 +340,9 @@ function SessionCard({
   return (
     <section className={styles.sessionCard}>
       <div className={styles.sessionHead}>
-        <div>
-          <div className={styles.sessionLabel}>
-            Session
-            {role && <span className={styles.roleChip}>{role}</span>}
-          </div>
-          <div className={styles.sessionProvider}>{providerName}</div>
+        <div className={styles.sessionLabel}>
+          Session
+          {role && <span className={styles.roleChip}>{role}</span>}
         </div>
         {sess && (
           <span className={styles.sessionId} title={thread.sessionId ?? undefined}>
@@ -353,8 +350,17 @@ function SessionCard({
           </span>
         )}
       </div>
+      <div className={styles.sessionTitle}>{thread.title}</div>
 
       <dl className={styles.sessionMeta}>
+        <div className={styles.sessionRow}>
+          <dt>Provider</dt>
+          <dd className={styles.sessionProvider}>{providerName}</dd>
+        </div>
+        <div className={styles.sessionRow}>
+          <dt>Status</dt>
+          <dd>{thread.status}</dd>
+        </div>
         <div className={styles.sessionRow}>
           <dt>Model</dt>
           <dd>{modelLabel}</dd>
@@ -366,7 +372,6 @@ function SessionCard({
       </dl>
 
       <div className={styles.usageBlock}>
-        <div className={styles.usageTitle}>Usage</div>
         {usageUnreported ? (
           <p className={styles.usageEmpty}>usage not reported</p>
         ) : usage ? (
@@ -2135,7 +2140,7 @@ export function GitTab({
     <>
       <div className={`${styles.scroll} ${styles.envScroll}`} data-env-tools="">
         <div className={styles.envToolbar}>
-          <p className={styles.envHint}>Drag to reorder</p>
+          <p className={styles.envHint}>Drag to reorder sections</p>
           <button
             type="button"
             className={styles.envReset}
@@ -2633,7 +2638,7 @@ export function AgentsContent({
         const id = groupKey(phase.name, index);
         return {
           id,
-          name: phase.name.toUpperCase(),
+          name: phase.name,
           status,
           activeCount,
           doneCount,
@@ -2653,17 +2658,19 @@ export function AgentsContent({
     setManual((prev) => ({ ...prev, [id]: !currentlyOpen }));
   };
 
+  const pane = `${styles.scroll} ${styles.inspector}`;
+
   if (!workflow) {
     if (!thread) {
       return (
-        <div className={styles.scroll}>
+        <div className={pane}>
           <p className={styles.placeholder}>No active session</p>
         </div>
       );
     }
     if (team?.kind === "orchestrator") {
       return (
-        <div className={styles.scroll}>
+        <div className={pane}>
           <SessionCard
             thread={thread}
             usage={usage}
@@ -2715,7 +2722,7 @@ export function AgentsContent({
     }
     if (team?.kind === "worker") {
       return (
-        <div className={styles.scroll}>
+        <div className={pane}>
           <SessionCard
             thread={thread}
             usage={usage}
@@ -2740,7 +2747,7 @@ export function AgentsContent({
       );
     }
     return (
-      <div className={styles.scroll}>
+      <div className={pane}>
         <SessionCard thread={thread} usage={usage} providers={providers} />
         <CrewTaskList tasks={crewTasks} ownerTitle={crewOwnerTitle} />
         {subagentSection}
@@ -2756,7 +2763,7 @@ export function AgentsContent({
 
   return (
     <>
-      <div className={styles.scroll}>
+      <div className={pane}>
         <section className={styles.workflow}>
           <div className={styles.workflowHead}>
             <div>
@@ -3005,8 +3012,8 @@ function PulseTab({
         >
           <span className={styles.pulseIcon} aria-hidden>
             <svg
-              width="15"
-              height="15"
+              width="16"
+              height="16"
               viewBox="0 0 16 16"
               fill="none"
               stroke="currentColor"
@@ -3020,6 +3027,20 @@ function PulseTab({
           <span className={styles.pulseCopy}>
             <span className={styles.pulseLabel}>{item.label}</span>
             <span className={styles.pulseHint}>{item.hint}</span>
+          </span>
+          <span className={styles.pulseChevron} aria-hidden>
+            <svg
+              width="12"
+              height="12"
+              viewBox="0 0 16 16"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <path d="M6.5 3.5 11 8 6.5 12.5" />
+            </svg>
           </span>
         </button>
       ))}
