@@ -1,5 +1,6 @@
 /**
- * Harness logos used next to provider names (filter chips, picker, Best of N).
+ * Harness logos used on thread cards and next to provider names
+ * (filter chips, picker, Best of N).
  *
  * Known ids render a currentColor SVG mark. Unknown ids fall back to the
  * first letter so a custom/future harness still has a glyph. decorative

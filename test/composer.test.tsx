@@ -779,6 +779,38 @@ describe("Composer drill-down picker", () => {
     m.unmount();
   });
 
+  it("provider rows show a harness logo next to the name", async () => {
+    const h = makeHarness();
+    const m = await mount(composer(h, { provider: "claude", model: null }));
+    await m.click(m.query('button[aria-label^="Model:"]'));
+    const claude = m.query('button[aria-label="Provider Claude Code"]');
+    assert.ok(claude, "claude provider row");
+    const mark = claude!.querySelector('[data-provider-mark="claude"]');
+    assert.ok(mark, "row reuses ProviderMark");
+    assert.ok(mark!.querySelector("svg"), "known harness is a logo");
+    assert.match(
+      claude!.textContent || "",
+      /Claude Code/,
+      "the display name stays on the row",
+    );
+    assert.equal(
+      claude!.getAttribute("aria-label"),
+      "Provider Claude Code",
+      "the row keeps its accessible name",
+    );
+    assert.equal(
+      mark!.getAttribute("aria-hidden"),
+      "true",
+      "visible name is the accessible name; the mark is decorative",
+    );
+    const grok = m.query('button[aria-label="Provider Grok"]');
+    assert.ok(
+      grok?.querySelector('[data-provider-mark="grok"] svg'),
+      "unavailable providers still get a logo",
+    );
+    m.unmount();
+  });
+
   it("entering a provider shows that provider's models only", async () => {
     const h = makeHarness();
     const m = await mount(composer(h, { provider: "claude", model: null }));

@@ -2605,6 +2605,33 @@ describe("Sidebar filters (#553)", () => {
     m.unmount();
   });
 
+  it("provider chips show a harness logo next to the name", async () => {
+    await clearSidebarStorage();
+    const m = await mount(
+      sidebar(filterThreadsList, {
+        projects: [p1, p2],
+        providers: moreProviders,
+      }),
+    );
+    await openProviderMenu(m);
+    const claude = m.query('[data-provider-filter="claude"]');
+    assert.ok(claude, "claude chip");
+    const mark = claude!.querySelector('[data-provider-mark="claude"]');
+    assert.ok(mark, "chip reuses ProviderMark, not the raw id");
+    assert.ok(mark!.querySelector("svg"), "known harness is a logo");
+    assert.match(
+      claude!.textContent || "",
+      /Claude/,
+      "the display name stays on the chip",
+    );
+    assert.equal(
+      mark!.getAttribute("aria-hidden"),
+      "true",
+      "visible name is the accessible name; the mark is decorative",
+    );
+    m.unmount();
+  });
+
   it("archived status expands the settled shelf", async () => {
     await clearSidebarStorage();
     const m = await mount(

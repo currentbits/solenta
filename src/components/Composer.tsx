@@ -2476,6 +2476,13 @@ export const Composer = memo(function Composer({
                               }
                               onClick={() => enterProvider(row.id)}
                             >
+                              <ProviderMark
+                                providerId={row.id}
+                                providers={providers}
+                                size={16}
+                                decorative
+                                className={styles.providerRowMark}
+                              />
                               <span className={styles.providerRowText}>
                                 <span className={styles.modelRowLabel}>
                                   {row.name}
