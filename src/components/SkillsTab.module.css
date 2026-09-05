@@ -120,9 +120,7 @@
 }
 
 @container (max-width: 320px) {
-  .rowSide,
-  .addActions,
-  .formRow {
+  .rowSide {
     flex-basis: 100%;
     justify-content: flex-start;
   }
@@ -253,9 +251,9 @@
 .input,
 .select,
 .textarea {
-  flex: 1 1 140px;
   min-width: 0;
   min-height: 32px;
+  width: 100%;
   box-sizing: border-box;
   padding: 6px 10px;
   border-radius: 6px;
@@ -264,6 +262,21 @@
   color: var(--text);
   font-size: 13px;
   outline: none;
+}
+
+.formRow > .input {
+  flex: 1 1 140px;
+  width: auto;
+}
+
+.formRow > .select {
+  flex: 0 1 auto;
+  width: auto;
+}
+
+.formRow > .textarea {
+  flex: 1 1 100%;
+  width: 100%;
 }
 
 .input::placeholder,
@@ -293,14 +306,12 @@
 }
 
 .select {
-  flex: 0 1 auto;
   max-width: 100%;
   font-size: 12px;
 }
 
 .textarea {
   width: 100%;
-  flex-basis: 100%;
   min-height: 64px;
   line-height: 1.4;
   resize: vertical;
