@@ -1846,9 +1846,19 @@ describe("Sidebar card anatomy + hover actions", () => {
     assert.ok(pr);
     assert.equal(pr!.tagName, "A");
     assert.match(pr!.textContent || "", /#12/);
-    assert.match(
-      (card!.querySelector("[data-card-provider]")?.textContent || "").trim(),
-      /claude/i,
+    const provider = card!.querySelector("[data-card-provider]");
+    assert.ok(provider);
+    assert.equal(provider!.getAttribute("data-card-provider"), "claude");
+    assert.equal(provider!.getAttribute("aria-label"), "Claude Code");
+    assert.equal(provider!.getAttribute("title"), "Claude Code");
+    assert.ok(
+      provider!.querySelector("svg"),
+      "provider shows as a logo, not the harness name",
+    );
+    assert.equal(
+      (provider!.textContent || "").trim(),
+      "",
+      "logo replaces the raw provider id text",
     );
     assert.equal(card!.querySelector("[data-pin-btn]"), null);
     assert.ok(m.query('[data-snooze-btn="meta"]'));
@@ -2602,6 +2612,33 @@ describe("Sidebar filters (#553)", () => {
     await m.flush();
     assert.ok(cardTitles(m).includes("codex-idle"));
     assert.ok(!cardTitles(m).includes("busy"));
+    m.unmount();
+  });
+
+  it("provider chips show a harness logo next to the name", async () => {
+    await clearSidebarStorage();
+    const m = await mount(
+      sidebar(filterThreadsList, {
+        projects: [p1, p2],
+        providers: moreProviders,
+      }),
+    );
+    await openProviderMenu(m);
+    const claude = m.query('[data-provider-filter="claude"]');
+    assert.ok(claude, "claude chip");
+    const mark = claude!.querySelector('[data-provider-mark="claude"]');
+    assert.ok(mark, "chip reuses ProviderMark, not the raw id");
+    assert.ok(mark!.querySelector("svg"), "known harness is a logo");
+    assert.match(
+      claude!.textContent || "",
+      /Claude/,
+      "the display name stays on the chip",
+    );
+    assert.equal(
+      mark!.getAttribute("aria-hidden"),
+      "true",
+      "visible name is the accessible name; the mark is decorative",
+    );
     m.unmount();
   });
 

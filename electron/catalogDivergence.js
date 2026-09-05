@@ -166,6 +166,21 @@ function parseOpencodeModels(text) {
 }
 
 /**
+ * CSI / OSC / C1. cursor-agent --list-models colors even when stdout is
+ * not a TTY (`\x1b[36mauto\x1b[39m \x1b[2m- Auto\x1b[22m...`).
+ */
+const ANSI_RE = new RegExp(
+  "\\u001B\\[[0-?]*[ -\\/]*[@-~]" +
+    "|\\u001B\\][\\s\\S]*?(?:\\u0007|\\u001B\\\\)" +
+    "|\\u001B[@-Z\\\\-_]",
+  "g",
+);
+
+function stripAnsi(text) {
+  return String(text || "").replace(ANSI_RE, "");
+}
+
+/**
  * `cursor-agent --list-models` prints `id - Label` after a header.
  *
  * @param {string} text
@@ -173,7 +188,7 @@ function parseOpencodeModels(text) {
  */
 function parseCursorListModels(text) {
   const ids = [];
-  for (const line of String(text || "").split(/\r?\n/)) {
+  for (const line of stripAnsi(text).split(/\r?\n/)) {
     const m = line.trim().match(/^(\S+) - /);
     if (m && m[1]) ids.push(m[1]);
   }

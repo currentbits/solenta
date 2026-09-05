@@ -127,8 +127,24 @@ describe("providers registry", () => {
     assert.equal(cursor.name, "Cursor");
     assert.ok(cursor.models.includes("auto"));
     assert.ok(cursor.models.includes("composer-2.5"));
-    assert.equal(cursor.models.length, 204);
+    assert.ok(cursor.models.includes("claude-fable-5-1-high"));
+    assert.ok(cursor.models.includes("gemini-3.8-flash-high"));
+    assert.ok(!cursor.models.some((id) => id.startsWith("cursor-grok-4.5-")));
+    assert.equal(cursor.models.length, 211);
     assert.equal(cursor.modelInfo[0].id, cursor.models[0]);
+    // Live cursor-agent 2026.09.02-c22c1a3 --list-models has no Astra /
+    // gpt-6-* rows. Effort is baked into Cursor ids; do not invent
+    // gpt-6-astra-high style slugs the CLI does not print (#886).
+    const inventedAstra = cursor.models.filter(
+      (id) => /astra/i.test(id) || id.startsWith("gpt-6"),
+    );
+    assert.deepEqual(inventedAstra, []);
+    assert.equal(
+      cursor.modelInfo.some(
+        (m) => /astra/i.test(m.id) || m.id.startsWith("gpt-6"),
+      ),
+      false,
+    );
 
     const muse = getProvider("muse");
     assert.equal(muse.kind, "muse-json");
@@ -205,6 +221,26 @@ describe("providers registry", () => {
         `${entry.id}: at most one recommended model`,
       );
     }
+  });
+
+  it("cursor snapshot does not invent Astra ids and copies live Fable 5.1 / Gemini 3.8 labels", () => {
+    const cursor = getProvider("cursor");
+    assert.ok(
+      !cursor.models.some(
+        (id) => /astra/i.test(id) || id.startsWith("gpt-6-") || id.includes("gpt-6-"),
+      ),
+      "cursor-agent 2026.09.02-c22c1a3 does not list Astra / gpt-6-*; do not invent them",
+    );
+    const fable = cursor.modelInfo.find((m) => m.id === "claude-fable-5-1-high");
+    assert.equal(fable.label, "Claude Fable 5.1 1M (NO ZDR)");
+    assert.equal(fable.description, fable.label);
+    assert.equal(fable.vendor, "Anthropic");
+    assert.equal(fable.contextTokens, 1000000);
+    const gemini = cursor.modelInfo.find((m) => m.id === "gemini-3.8-flash-high");
+    assert.equal(gemini.label, "Gemini 3.8 Flash High");
+    assert.equal(gemini.description, gemini.label);
+    assert.equal(gemini.vendor, "Google");
+    assert.equal(gemini.contextTokens, undefined);
   });
 
   it("buildArgs: claude matches stream-json flags and adds --model when set", () => {

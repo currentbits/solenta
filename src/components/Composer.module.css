@@ -255,6 +255,12 @@
   flex-shrink: 0;
 }
 
+.bestOfNRowMark {
+  flex-shrink: 0;
+  color: inherit;
+  margin-top: 1px;
+}
+
 .bestOfNRowText {
   display: flex;
   flex-direction: column;
@@ -1051,6 +1057,11 @@
 .providerRow:disabled {
   opacity: 0.45;
   cursor: default;
+}
+
+.providerRowMark {
+  flex-shrink: 0;
+  color: inherit;
 }
 
 .providerRowText {

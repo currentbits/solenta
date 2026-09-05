@@ -178,11 +178,11 @@ function CodeMapCard({
   const age = map?.updatedAt ? ageFromIso(new Date(map.updatedAt).toISOString()) : "";
 
   return (
-    <section className={styles.map} data-code-map="">
-      <div className={styles.doctorHead}>
-        <span className={styles.doctorLabel}>Code map</span>
+    <section className={styles.section} data-code-map="">
+      <div className={styles.sectionHead}>
+        <h2 className={styles.sectionTitle}>Code map</h2>
         {map && map.fileCount > 0 ? (
-          <span className={styles.mapMeta}>
+          <span className={styles.sectionMeta}>
             {map.fileCount} files · {map.symbolCount} symbols
           </span>
         ) : null}
@@ -238,7 +238,7 @@ function CodeMapCard({
       ) : null}
       {map && map.dependencies.length > 0 ? (
         <p className={styles.mapDeps}>
-          <span className={styles.mapDepsLabel}>Dependencies</span>
+          <span className={styles.sectionMeta}>Dependencies</span>
           {map.dependencies.join(", ")}
         </p>
       ) : null}
@@ -347,9 +347,9 @@ function ConfigDoctorCard({
   const considered = report?.memory.considered ?? 0;
 
   return (
-    <section className={styles.doctor} data-config-doctor="">
-      <div className={styles.doctorHead}>
-        <span className={styles.doctorLabel}>Config doctor</span>
+    <section className={styles.section} data-config-doctor="">
+      <div className={styles.sectionHead}>
+        <h2 className={styles.sectionTitle}>Config doctor</h2>
         {report ? (
           <span
             className={`${styles.grade} ${gradeClass(report.grade)}`}
@@ -507,11 +507,11 @@ function ReviewQueueCard({
   if (!error && report && open === 0 && !activity) return null;
 
   return (
-    <section className={styles.doctor} data-review-queue="">
-      <div className={styles.doctorHead}>
-        <span className={styles.doctorLabel}>Review queue</span>
+    <section className={styles.section} data-review-queue="">
+      <div className={styles.sectionHead}>
+        <h2 className={styles.sectionTitle}>Review queue</h2>
         {open > 0 ? (
-          <span className={styles.doctorFileGrade}>
+          <span className={styles.sectionMeta}>
             {open} need{open === 1 ? "s" : ""} your call
           </span>
         ) : null}
@@ -887,41 +887,54 @@ export function MemoryTab({
       <CodeMapCard projectId={projectId} loadCodeMap={loadCodeMap} />
     ) : null;
 
+  const toolbar = (
+    <div className={styles.searchRow}>
+      <input
+        type="search"
+        className={styles.searchInput}
+        placeholder="Search shared memory..."
+        value={query}
+        onChange={(e) => setQuery(e.target.value)}
+        aria-label="Search shared memory"
+      />
+      <span className={styles.filterLabel} title="Memory is scoped to this project">
+        {projectSlug ? projectSlug.split("/").filter(Boolean).pop() : "all projects"}
+      </span>
+    </div>
+  );
+
   if (serverDown) {
     return (
       <div className={styles.root}>
-        {mapCard ? <div className={styles.searchRow}>{mapCard}</div> : null}
-        <div className={styles.downWrap}>
-          <p className={styles.downMessage}>{MEMORY_NOT_RUNNING}</p>
-          <button
-            type="button"
-            className={styles.retryBtn}
-            onClick={() => {
-              setServerDown(false);
-              reloadCurrent();
-            }}
-          >
-            Retry
-          </button>
+        {toolbar}
+        <div className={styles.scroll} data-memory-scroll="">
+          {mapCard}
+          <div className={styles.downWrap}>
+            <p className={styles.downMessage}>{MEMORY_NOT_RUNNING}</p>
+            <button
+              type="button"
+              className={styles.retryBtn}
+              onClick={() => {
+                setServerDown(false);
+                reloadCurrent();
+              }}
+            >
+              Retry
+            </button>
+          </div>
         </div>
       </div>
     );
   }
 
+  const entryCountLabel = loading && entries.length === 0
+    ? "Loading"
+    : String(entries.length);
+
   return (
     <div className={styles.root}>
-      <div className={styles.searchRow}>
-        <input
-          type="search"
-          className={styles.searchInput}
-          placeholder="Search shared memory..."
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          aria-label="Search shared memory"
-        />
-        <span className={styles.filterLabel} title="Memory is scoped to this project">
-          {projectSlug ? projectSlug.split("/").filter(Boolean).pop() : "all projects"}
-        </span>
+      {toolbar}
+      <div className={styles.scroll} data-memory-scroll="">
         {mapCard}
         {lintAgentConfig && projectId ? (
           <ConfigDoctorCard
@@ -938,8 +951,12 @@ export function MemoryTab({
             resolveMemory={resolveMemory}
           />
         ) : null}
-      </div>
 
+      <section className={styles.section}>
+        <div className={styles.sectionHead}>
+          <h2 className={styles.sectionTitle}>Memories</h2>
+          <span className={styles.sectionMeta}>{entryCountLabel}</span>
+        </div>
       <div className={styles.list}>
         {listError && (
           <p className={styles.formError} role="alert">
@@ -1145,6 +1162,7 @@ export function MemoryTab({
           })
         )}
       </div>
+      </section>
 
       <form
         className={styles.form}
@@ -1153,7 +1171,7 @@ export function MemoryTab({
           void handleSave();
         }}
       >
-        <div className={styles.formLabel}>Remember something</div>
+        <h2 className={styles.sectionTitle}>Remember something</h2>
         <div className={styles.formRow}>
           <select
             className={styles.select}
@@ -1183,7 +1201,7 @@ export function MemoryTab({
           rows={3}
           aria-label="Memory body"
         />
-        <p className={styles.checkboxLabel}>
+        <p className={styles.formHint}>
           {projectSlug
             ? `Saved to ${projectSlug}`
             : "Saved without a project (select a thread to scope it)"}
@@ -1201,6 +1219,7 @@ export function MemoryTab({
           {saving ? "Saving…" : "Save"}
         </button>
       </form>
+      </div>
     </div>
   );
 }

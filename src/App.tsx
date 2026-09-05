@@ -7,6 +7,8 @@ import {
   useSyncExternalStore,
 } from "react";
 import { useCoder } from "./useCoder";
+import { isDevBuild } from "./coderApi";
+import { demoProviderLimits } from "./providerUsageDemo";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { Sidebar } from "./components/Sidebar";
 import { ThreadView } from "./components/ThreadView";
@@ -240,6 +242,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     createIssue,
     listActivity,
     listUsageByDay,
+    listProviderLimits,
     listDigest,
     markDigestSeen,
     listThreadSummaries,
@@ -343,7 +346,15 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
   );
   const [addPathOpen, setAddPathOpen] = useState(false);
   const [editProjectId, setEditProjectId] = useState<string | null>(null);
-  const [view, setView] = useState<AppView>("thread");
+  const [view, setView] = useState<AppView>(() => {
+    if (typeof window === "undefined") return "thread";
+    const requested = new URLSearchParams(window.location.search).get("view");
+    return requested === "usage" ? "usage" : "thread";
+  });
+  const quotaDemo =
+    isDevBuild() &&
+    typeof window !== "undefined" &&
+    !(window as unknown as { coder?: unknown }).coder;
   const [planboardProjectId, setPlanboardProjectId] = useState<string | null>(null);
   const [kanbanProjectId, setKanbanProjectId] = useState<string | null>(null);
   const [activityProjectId, setActivityProjectId] = useState<string | null>(null);
@@ -1351,7 +1362,15 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
               onSelectThread={handleSelectThread}
             />
           ) : view === "usage" ? (
-            <UsageView loadUsage={listUsageByDay} />
+            <UsageView
+              loadUsage={listUsageByDay}
+              loadProviderLimits={
+                quotaDemo
+                  ? async () => demoProviderLimits()
+                  : listProviderLimits
+              }
+              quotaDemo={quotaDemo}
+            />
           ) : view === "fleet" ? (
             <FleetView loadEvidence={loadFleetEvidence} />
           ) : view === "insights" ? (
@@ -1426,6 +1445,10 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
             />
           ) : (
             <ThreadView
+        loadProviderLimits={
+          quotaDemo ? async () => demoProviderLimits() : listProviderLimits
+        }
+        quotaDemo={quotaDemo}
         detail={visibleDetail}
         detailError={selectedThreadId ? detailError : null}
         onRetryDetail={retryDetail}

@@ -6,57 +6,18 @@
   background: var(--bg-elevated);
   border-left: 1px solid var(--border-soft);
   min-width: 0;
-}
-
-/* Collapsed state: a rail wide enough for the reopen chevron. */
-.rail {
-  display: flex;
-  justify-content: center;
-  height: 100%;
-  padding-top: 14px;
-  background: var(--bg-elevated);
-  border-left: 1px solid var(--border-soft);
-}
-
-.collapseBtn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-  width: 24px;
-  height: 24px;
-  align-self: center;
-  margin-right: 4px;
-  border-radius: var(--radius-sm);
-  color: var(--text-dim);
-  font-size: 15px;
-  line-height: 1;
-  cursor: pointer;
-}
-
-.rail .collapseBtn {
-  align-self: flex-start;
-}
-
-.collapseBtn:hover {
-  color: var(--text);
-  background: var(--card-hover);
-}
-
-.collapseBtn:focus-visible {
-  outline: none;
-  box-shadow: var(--focus-ring);
-  color: var(--text);
+  container-type: inline-size;
+  container-name: agents-panel;
 }
 
 .tabs {
   display: flex;
   align-items: stretch;
   gap: 0;
-  padding: 0 8px;
+  padding: 0 6px 0 8px;
   border-bottom: 1px solid var(--border);
   flex-shrink: 0;
-  height: 56px;
+  height: 40px;
 }
 
 .tabList {
@@ -78,19 +39,15 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 30px;
-  height: 30px;
+  width: 28px;
+  height: 28px;
   padding: 0;
-  margin-left: 4px;
+  margin-left: 2px;
   border-radius: var(--radius-sm);
   border: 1px solid var(--border);
   background: transparent;
   color: var(--text-muted);
   cursor: pointer;
-  transition:
-    background-color 0.12s ease,
-    color 0.12s ease,
-    transform 0.16s cubic-bezier(0.23, 1, 0.32, 1);
 }
 
 .collapseBtn:hover {
@@ -108,9 +65,6 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .collapseBtn {
-    transition: none;
-  }
   .collapseBtn:active {
     transform: none;
   }
@@ -119,16 +73,14 @@
 .tab {
   display: flex;
   align-items: center;
-  padding: 0 8px;
+  padding: 0 9px;
   margin-right: 0;
   flex-shrink: 0;
   color: var(--text-dim);
   font-weight: 600;
-  font-size: 13px;
+  font-size: 12.5px;
   border-bottom: 2px solid transparent;
-  transition:
-    color 0.12s ease,
-    border-color 0.12s ease;
+  white-space: nowrap;
 }
 
 .tab:hover:not([data-active="true"]) {
@@ -156,21 +108,239 @@
   gap: 14px;
 }
 
+/* Environment: a continuous tools list, not a stack of cards. */
+.envScroll {
+  gap: 0;
+  padding: 6px 12px 16px;
+}
+
+.envToolbar {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 0 4px;
+}
+
+.envHint {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.envReset {
+  flex-shrink: 0;
+  margin: 0;
+  padding: 2px 6px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 550;
+  cursor: pointer;
+}
+
+.envReset:hover:not(:disabled) {
+  color: var(--text);
+}
+
+.envReset:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.envReset:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.envList {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.envSection {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr);
+  column-gap: 8px;
+  align-items: start;
+  position: relative;
+  padding: 12px 0;
+  border-top: 1px solid var(--border-soft);
+}
+
+.envSection:not(:has([data-env-body] > *)) {
+  display: none;
+}
+
+.envSection:not(:has([data-env-body] > *)) .envGrip {
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.envSection[data-dragging="true"] {
+  opacity: 0.45;
+}
+
+.envSection[data-drop="before"]::before,
+.envSection[data-drop="after"]::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: var(--blue);
+  border-radius: 1px;
+  pointer-events: none;
+  z-index: 1;
+}
+
+.envSection[data-drop="before"]::before {
+  top: -1px;
+}
+
+.envSection[data-drop="after"]::after {
+  bottom: -1px;
+}
+
+.envGrip {
+  width: 16px;
+  height: 18px;
+  margin-top: 0;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-dim);
+  opacity: 0.55;
+  cursor: grab;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.envSection:hover .envGrip,
+.envGrip:hover,
+.envGrip:focus-visible {
+  opacity: 0.9;
+  color: var(--text-muted);
+}
+
+.envGrip:active {
+  cursor: grabbing;
+}
+
+.envGrip:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+  opacity: 1;
+}
+
+.envBody {
+  min-width: 0;
+}
+
+.envList .gitCard {
+  background: transparent;
+  border-radius: 0;
+  padding: 0;
+  gap: 8px;
+}
+
+.envList .gitCardLabel {
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0;
+  color: var(--text);
+  min-width: 0;
+}
+
+.envList .labelIcon {
+  color: var(--text-muted);
+}
+
+.envList .gitHint,
+.envList .checkboxLabel,
+.envList .recapActivity {
+  font-size: 12px;
+}
+
+.envList .repoLink {
+  padding: 0;
+  border-radius: 0;
+}
+
+.envList .repoLink:hover {
+  background: transparent;
+}
+
+.envList .serverLink {
+  padding: 4px 0;
+  border-radius: 0;
+}
+
+.envList .serverLink:hover {
+  background: transparent;
+}
+
+.envSrOnly {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .envGrip {
+    transition: none;
+  }
+}
+
 .placeholder {
   margin: 24px 8px;
   color: var(--text-dim);
-  font-size: 12.5px;
+  font-size: 12px;
   text-align: center;
 }
 
-/* Real provider session card (when workflow is null) */
+/* Agents tab: same continuous inspector as Environment. */
+.inspector {
+  gap: 0;
+  padding: 6px 14px 16px;
+}
+
+.inspector > section,
+.inspector > .groups {
+  padding: 12px 0;
+  border-top: 1px solid var(--border-soft);
+  min-width: 0;
+}
+
+.inspector > :first-child {
+  border-top: none;
+}
+
+.inspector .sessionCard,
+.inspector .teamSection,
+.inspector .workflow,
+.inspector .gitCard {
+  background: transparent;
+  border-radius: 0;
+}
+
+/* Real provider session (when workflow is null) */
 .sessionCard {
-  background: var(--card);
-  border-radius: var(--radius);
-  padding: 14px;
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 10px;
+  min-width: 0;
 }
 
 .sessionHead {
@@ -178,22 +348,34 @@
   align-items: flex-start;
   justify-content: space-between;
   gap: 10px;
+  min-width: 0;
 }
 
-.sessionLabel {
-  font-size: 10.5px;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--text-dim);
+.sessionLabel,
+.workflowLabel {
+  font-size: 13px;
   font-weight: 600;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--text);
   margin-bottom: 2px;
 }
 
-.sessionProvider {
-  font-size: 14px;
-  font-weight: 650;
+.sessionTitle {
+  font-size: 13px;
+  font-weight: 600;
   letter-spacing: -0.01em;
-  text-transform: capitalize;
+  color: var(--text);
+  line-height: 1.35;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.sessionProvider {
+  font-size: 12px;
+  font-weight: 550;
+  color: var(--text-muted);
+  min-width: 0;
 }
 
 .sessionId {
@@ -209,23 +391,21 @@
   display: inline-block;
   margin-left: 6px;
   padding: 1px 6px;
-  border-radius: 999px;
+  border-radius: var(--radius-sm);
   border: 1px solid var(--border);
-  font-size: 9.5px;
-  font-weight: 600;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
-  color: var(--text-dim);
+  font-size: 11px;
+  font-weight: 550;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--text-muted);
   vertical-align: 1px;
 }
 
 .teamSection {
-  background: var(--card);
-  border-radius: var(--radius);
-  padding: 14px;
   display: flex;
   flex-direction: column;
   gap: 8px;
+  min-width: 0;
 }
 
 .teamList {
@@ -239,35 +419,53 @@
 
 .doneToggle {
   align-self: flex-start;
-  padding: 4px 8px;
+  padding: 4px 0;
   border-radius: var(--radius-sm);
   border: none;
   background: transparent;
   color: var(--text-dim);
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 550;
   text-align: left;
+  cursor: pointer;
 }
 
 .doneToggle:hover {
-  color: var(--text-muted);
-  background: var(--bg);
+  color: var(--text);
+}
+
+.doneToggle:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
 }
 
 .teamRow {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: 6px 8px;
   width: 100%;
-  padding: 6px 8px;
-  border-radius: var(--radius-sm);
+  padding: 8px 0;
+  border-radius: 0;
   text-align: left;
   color: var(--text);
+  min-width: 0;
+  border-top: 1px solid var(--border-soft);
+}
+
+.teamList > li:first-child .teamRow,
+.teamList > .teamRow:first-child {
+  border-top: none;
+  padding-top: 2px;
 }
 
 .teamRow:hover {
-  background: var(--overlay-soft);
+  background: transparent;
+}
+
+.teamRow:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
 }
 
 .teamRow .roleChip {
@@ -282,8 +480,8 @@
 }
 
 .teamTitle {
-  font-size: 12px;
-  color: var(--text-muted);
+  font-size: 13px;
+  color: var(--text);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -292,12 +490,12 @@
 }
 
 .teamStatus {
-  font-size: 10px;
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
+  font-size: 11px;
+  font-weight: 550;
+  letter-spacing: 0;
+  text-transform: none;
   padding: 1px 6px;
-  border-radius: 999px;
+  border-radius: var(--radius-sm);
   border: 1px solid var(--border);
   color: var(--text-dim);
   flex-shrink: 0;
@@ -386,28 +584,22 @@
 .sessionRow dt {
   color: var(--text-dim);
   font-size: 12px;
+  flex-shrink: 0;
 }
 
 .sessionRow dd {
   margin: 0;
-  font-size: 12.5px;
+  font-size: 13px;
   color: var(--text);
   font-variant-numeric: tabular-nums;
   text-align: right;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .usageBlock {
   border-top: 1px solid var(--border-soft);
-  padding-top: 12px;
-}
-
-.usageTitle {
-  font-size: 10.5px;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--text-dim);
-  font-weight: 600;
-  margin-bottom: 8px;
+  padding-top: 10px;
 }
 
 .usageEmpty {
@@ -421,9 +613,10 @@
 }
 
 .workflow {
-  background: var(--card);
-  border-radius: var(--radius);
-  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
 }
 
 .workflowHead {
@@ -431,23 +624,15 @@
   align-items: flex-start;
   justify-content: space-between;
   gap: 12px;
-  margin-bottom: 12px;
-}
-
-.workflowLabel {
-  font-size: 10.5px;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--text-dim);
-  font-weight: 600;
-  margin-bottom: 2px;
+  min-width: 0;
 }
 
 .workflowName {
-  font-family: var(--mono);
   font-size: 13px;
-  font-weight: 650;
-  letter-spacing: 0.02em;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .settled {
@@ -574,14 +759,19 @@
   align-items: center;
   gap: 6px;
   width: 100%;
-  padding: 8px 8px;
-  border-radius: var(--radius-sm);
+  padding: 8px 0;
+  border-radius: 0;
   text-align: left;
   color: var(--text-muted);
+  min-width: 0;
+}
+
+.groupHeader:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
 }
 
 .groupHeader:hover {
-  background: var(--overlay-soft);
   color: var(--text);
 }
 
@@ -600,9 +790,9 @@
 }
 
 .groupName {
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.05em;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0;
   color: var(--text);
 }
 
@@ -615,22 +805,23 @@
 .agentList {
   list-style: none;
   margin: 0 0 4px;
-  padding: 0 4px 4px 22px;
+  padding: 0 0 4px 18px;
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 0;
 }
 
 .agentRow {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 6px 8px;
-  border-radius: var(--radius-sm);
+  padding: 6px 0;
+  border-radius: 0;
+  min-width: 0;
 }
 
 .agentRow:hover {
-  background: var(--card);
+  background: transparent;
 }
 
 .dot {
@@ -709,22 +900,20 @@
 /* ── Git tab ─────────────────────────────────────────────── */
 
 .gitCard {
-  background: var(--card);
-  border-radius: var(--radius);
-  padding: 14px;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 8px;
+  min-width: 0;
 }
 
 .gitCardLabel {
   display: flex;
   align-items: center;
   gap: 7px;
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 600;
-  letter-spacing: 0.01em;
-  color: var(--text-muted);
+  letter-spacing: 0;
+  color: var(--text);
 }
 
 .labelIcon {
@@ -736,7 +925,7 @@
 .gitHint {
   margin: 0;
   color: var(--text-dim);
-  font-size: 12.5px;
+  font-size: 12px;
   line-height: 1.45;
 }
 
@@ -791,6 +980,7 @@
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+  min-width: 0;
 }
 
 .gitBtn {
@@ -798,8 +988,8 @@
   align-items: center;
   justify-content: center;
   gap: 6px;
-  height: 30px;
-  padding: 0 12px;
+  height: 28px;
+  padding: 0 10px;
   border-radius: var(--radius-sm);
   border: 1px solid var(--border);
   background: transparent;
@@ -807,10 +997,6 @@
   font-size: 12px;
   font-weight: 550;
   white-space: nowrap;
-  transition:
-    background-color 0.12s ease,
-    color 0.12s ease,
-    border-color 0.12s ease;
 }
 
 .gitBtn:hover:not(:disabled) {
@@ -820,9 +1006,7 @@
 
 .gitBtn:focus-visible {
   outline: none;
-  box-shadow:
-    0 0 0 2px var(--card),
-    0 0 0 4px var(--focus-ring-color);
+  box-shadow: var(--focus-ring);
 }
 
 .gitBtn:disabled {
@@ -1284,7 +1468,7 @@
 
 .gitStatus {
   flex-shrink: 0;
-  padding: 10px 16px;
+  padding: 10px 14px;
   border-top: 1px solid var(--border);
   color: var(--text-muted);
   font-size: 12px;
@@ -1550,17 +1734,26 @@
 .repoLink {
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: 8px;
-  padding: 6px 8px;
-  border-radius: var(--radius-sm);
+  min-width: 0;
+  padding: 0;
   color: var(--text);
   text-decoration: none;
-  font-size: 12.5px;
+  font-size: 13px;
 }
 
 .repoLink:hover {
-  background: var(--card-hover);
+  color: var(--text);
+}
+
+.repoLink:hover .repoSlug {
+  text-decoration: underline;
+}
+
+.repoLink:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+  border-radius: var(--radius-sm);
 }
 
 .repoSlug {
@@ -1637,11 +1830,11 @@
 }
 
 .hypothesisGroupLabel {
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 600;
-  letter-spacing: 0.02em;
-  text-transform: uppercase;
-  color: var(--text-dim);
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--text-muted);
 }
 
 .hypothesisList {
@@ -1696,47 +1889,45 @@
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding: 10px 10px 16px;
+  padding: 6px 14px 16px;
   display: flex;
   flex-direction: column;
-  gap: 4px;
 }
 
 .pulseRow {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   gap: 10px;
   width: 100%;
-  padding: 10px 12px;
-  border-radius: var(--radius);
-  border: 1px solid transparent;
+  padding: 12px 0;
+  border-radius: 0;
+  border: none;
+  border-top: 1px solid var(--border-soft);
   background: transparent;
   color: var(--text);
   text-align: left;
   cursor: pointer;
-  transition:
-    background 0.12s ease,
-    color 0.12s ease;
+  min-width: 0;
+}
+
+.pulseList > .pulseRow:first-child {
+  border-top: none;
 }
 
 .pulseRow:hover {
-  background: var(--card);
+  background: var(--overlay-soft);
+  border-radius: var(--radius-sm);
 }
 
 .pulseRow[data-active="true"] {
-  background: var(--card);
-  box-shadow: inset 2px 0 0 0 var(--btn-primary-bg);
+  background: var(--overlay-soft);
+  border-radius: var(--radius-sm);
+  border-top-color: transparent;
 }
 
 .pulseRow:focus-visible {
   outline: none;
-  box-shadow: inset 0 0 0 2px var(--focus-ring-color);
-}
-
-.pulseRow[data-active="true"]:focus-visible {
-  box-shadow:
-    inset 2px 0 0 0 var(--btn-primary-bg),
-    inset 0 0 0 2px var(--focus-ring-color);
+  box-shadow: var(--focus-ring);
 }
 
 .pulseIcon {
@@ -1744,7 +1935,7 @@
   align-items: center;
   justify-content: center;
   width: 16px;
-  margin-top: 2px;
+  height: 16px;
   color: var(--text-dim);
   flex-shrink: 0;
 }
@@ -1759,12 +1950,13 @@
   flex-direction: column;
   gap: 2px;
   min-width: 0;
+  flex: 1;
 }
 
 .pulseLabel {
   font-size: 13px;
   font-weight: 600;
-  letter-spacing: -0.01em;
+  letter-spacing: 0;
 }
 
 .pulseHint {
@@ -1773,7 +1965,57 @@
   line-height: 1.35;
 }
 
+.pulseChevron {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  color: var(--text-dim);
+}
+
+.pulseRow[data-active="true"] .pulseChevron {
+  color: var(--text-muted);
+}
+
 .gitBtn[data-active="true"] {
   color: var(--text);
   border-color: var(--text-muted);
+  background: var(--overlay-soft);
+}
+
+@container agents-panel (max-width: 320px) {
+  .tabs {
+    height: 36px;
+    padding: 0 4px 0 6px;
+  }
+
+  .tab {
+    padding: 0 5px;
+    font-size: 12px;
+  }
+
+  .gitActions {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .gitBtn,
+  .devScriptSelect,
+  .verifyInput {
+    width: 100%;
+  }
+
+  .sessionRow {
+    flex-wrap: wrap;
+    gap: 2px 12px;
+  }
+
+  .sessionRow dd {
+    text-align: left;
+  }
+
+  .checkpointRow,
+  .teamRow {
+    align-items: flex-start;
+  }
 }

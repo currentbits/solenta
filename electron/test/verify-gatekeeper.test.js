@@ -43,16 +43,16 @@ function writeBin(dir, name, body) {
 
 const DEVELOPER_ID_DUMP = [
   "Executable=/tmp/Solenta Nightly.app/Contents/MacOS/Solenta Nightly",
-  "Identifier=com.willem.solenta.nightly",
+  "Identifier=com.example.solenta.nightly",
   "Format=app bundle with Mach-O thin (arm64)",
   "CodeDirectory v=20500 size=486 flags=0x10000(runtime) hashes=4+7 location=embedded",
   "Signature size=8983",
-  "Authority=Developer ID Application: Willem van Zoeren (VJ5P6CC9GU)",
+  "Authority=Developer ID Application: Example Developer (ABCD123456)",
   "Authority=Developer ID Certification Authority",
   "Authority=Apple Root CA",
   "Timestamp=3 Sep 2026 at 22:32:57",
   "Notarization Ticket=stapled",
-  "TeamIdentifier=VJ5P6CC9GU",
+  "TeamIdentifier=ABCD123456",
 ].join("\n");
 
 function runGatekeeper(opts) {

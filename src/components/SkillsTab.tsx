@@ -919,9 +919,11 @@ function McpServersSection({
               <span className={styles.rowName}>{s.name}</span>
               <span className={styles.rowDetail}>{s.blurb}</span>
             </div>
-            <span className={`${styles.badge} ${styles.badgeBuiltin}`}>
-              Built-in
-            </span>
+            <div className={styles.rowSide}>
+              <span className={`${styles.badge} ${styles.badgeBuiltin}`}>
+                Built-in
+              </span>
+            </div>
           </li>
         ))}
       </ul>

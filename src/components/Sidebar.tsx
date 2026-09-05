@@ -32,6 +32,7 @@ import {
 } from "../format";
 import { formatQuotaWaitLabel } from "../quotaWait";
 import { buildFlatSidebar } from "../sidebarGroups";
+import { ProviderMark } from "./ProviderMark";
 import {
   GROUP_BY_KEY,
   GROUP_BY_OPTIONS,
@@ -1139,9 +1140,11 @@ export const ThreadCard = memo(function ThreadCard({
               titles={threadTitles}
             />
             {providerId ? (
-              <span className={styles.cardProvider} data-card-provider="">
-                {providerId}
-              </span>
+              <ProviderMark
+                providerId={providerId}
+                providers={providers}
+                className={styles.cardProvider}
+              />
             ) : null}
           </div>
         )}
@@ -2684,6 +2687,12 @@ export const Sidebar = memo(function Sidebar({
                       aria-pressed={on}
                       onClick={() => toggleProviderFilter(p.id)}
                     >
+                      <ProviderMark
+                        providerId={p.id}
+                        providers={providers}
+                        size={12}
+                        decorative
+                      />
                       {p.name}
                     </button>
                   );

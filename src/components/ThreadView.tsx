@@ -131,6 +131,8 @@ import {
   type RunHeader,
 } from "../runHeader";
 import type { SlashAction, SlashCommand } from "../slashCommands";
+import { ProviderQuotaDialog } from "./ProviderQuota";
+import type { ProviderLimitsLoader } from "../providerUsage";
 import { buildBestOfNEntries } from "../bestOfN";
 import { createPrPrompt, isPrTooLargeMessage, splitPrPrompt } from "../prUi";
 import {
@@ -228,7 +230,7 @@ function SandboxBadge({
   );
 }
 
-/** Small context-fill ring + percent; hover/focus/`/usage` opens the breakdown. */
+/** Small context-fill ring + percent; hover/focus/`/context` opens the breakdown. */
 function ContextRingBadge({
   ring,
   segments,
@@ -733,6 +735,9 @@ interface ThreadViewProps {
   onPeekThread?: (id: string) => Promise<ThreadDetail>;
   /** Fired when the composer model picker opens (provider list refresh). */
   onModelPickerOpen?: () => void;
+  loadProviderLimits?: ProviderLimitsLoader;
+  /** Seeded demo quotas for browser preview. */
+  quotaDemo?: boolean;
   /** Create a new thread in the current project (`/new`, `/clear`). */
   onNewThread?: () => void;
   /** Settle the open thread (`/clear`). Does not delete. */
@@ -4303,6 +4308,8 @@ export const ThreadView = memo(function ThreadView({
   comparePeers = EMPTY_COMPARE_PEERS,
   onPeekThread,
   onModelPickerOpen,
+  loadProviderLimits,
+  quotaDemo = false,
 }: ThreadViewProps) {
   const bodyRef = useRef<HTMLDivElement>(null);
   const dropHostRef = useRef<HTMLElement>(null);
@@ -4354,8 +4361,10 @@ export const ThreadView = memo(function ThreadView({
   } | null>(null);
   const [rewindRestoreFiles, setRewindRestoreFiles] = useState(false);
   const [rewindPending, setRewindPending] = useState(false);
-  /** Header context breakdown; `/usage` pins this open. */
+  /** Header context breakdown; `/context` pins this open. */
   const [contextOpen, setContextOpen] = useState(false);
+  /** Provider account quotas; `/usage` opens this even with no ring. */
+  const [quotaOpen, setQuotaOpen] = useState(false);
   /** Runs collapsed by the user; everything else stays open. */
   const [collapsedRuns, setCollapsedRuns] = useState<ReadonlySet<string>>(
     () => new Set<string>(),
@@ -4391,6 +4400,8 @@ export const ThreadView = memo(function ThreadView({
     setCommandRunningId(null);
     setCommandError(null);
     setExpandedGroups(new Set());
+    setQuotaOpen(false);
+    setContextOpen(false);
   }, [threadId]);
 
   useEffect(() => {
@@ -4979,6 +4990,12 @@ export const ThreadView = memo(function ThreadView({
   const handleSlashAction = useCallback(
     (action: SlashAction) => {
       if (action === "usage") {
+        setContextOpen(false);
+        setQuotaOpen(true);
+        return;
+      }
+      if (action === "context") {
+        setQuotaOpen(false);
         if (ring) setContextOpen(true);
         return;
       }
@@ -6740,7 +6757,7 @@ export const ThreadView = memo(function ThreadView({
                               }
                             }}
                           />
-                          <div className={styles.statusLeft}>
+                          <div className={styles.queuedActions}>
                             <button
                               type="button"
                               className={styles.retryBtn}
@@ -6761,7 +6778,10 @@ export const ThreadView = memo(function ThreadView({
                       ) : (
                         <>
                           <span className={styles.queuedText}>{item}</span>
-                          <div className={styles.statusLeft}>
+                          <div
+                            className={styles.queuedActions}
+                            data-queued-actions=""
+                          >
                             {i > 0 ? (
                               <button
                                 type="button"
@@ -6868,7 +6888,7 @@ export const ThreadView = memo(function ThreadView({
                     }
                   }}
                 />
-                <div className={styles.statusLeft}>
+                <div className={styles.queuedActions}>
                   <button
                     type="button"
                     className={styles.retryBtn}
@@ -6888,7 +6908,7 @@ export const ThreadView = memo(function ThreadView({
               </>
             ) : (
               <>
-                <div className={styles.statusLeft}>
+                <div className={styles.queuedBody}>
                   <span className={styles.queuedLabel}>Queued</span>
                   <span className={styles.queuedText}>{queuedPrompt}</span>
                   {queuedError ? (
@@ -6900,7 +6920,10 @@ export const ThreadView = memo(function ThreadView({
                     </span>
                   ) : null}
                 </div>
-                <div className={styles.statusLeft}>
+                <div
+                  className={styles.queuedActions}
+                  data-queued-actions=""
+                >
                   {onEditQueued ? (
                     <button
                       type="button"
@@ -7070,6 +7093,15 @@ export const ThreadView = memo(function ThreadView({
           onClose={() => setLightbox(null)}
         />
       )}
+
+      <ProviderQuotaDialog
+        open={quotaOpen}
+        onClose={() => setQuotaOpen(false)}
+        loadLimits={loadProviderLimits}
+        activeProvider={detail?.thread.provider ?? null}
+        providers={providers}
+        demo={quotaDemo}
+      />
 
       {restoreError && (
         <p className={styles.reviewError} role="alert" data-review-undo-error="">

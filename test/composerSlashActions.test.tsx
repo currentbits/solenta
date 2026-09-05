@@ -1,7 +1,8 @@
 /**
- * `/` palette verbs that live on ThreadView (issue #472): usage opens the
- * context ring, fork/new/clear call the parent, rewind opens the last-turn
- * confirm. Composer-only verbs are covered in composerCommands.test.tsx.
+ * `/` palette verbs that live on ThreadView (issue #472): /context opens the
+ * context ring, /usage opens provider quotas, fork/new/clear call the parent,
+ * rewind opens the last-turn confirm. Composer-only verbs are covered in
+ * composerCommands.test.tsx.
  *
  * Run: node --import=./test/support/render.mjs --test test/composerSlashActions.test.tsx
  */
@@ -21,6 +22,7 @@ import type {
   ThreadDetail,
   WorkflowTemplateInfo,
 } from "../src/shared/ipc";
+import type { ProviderUsage } from "../src/providerUsage.ts";
 
 const providers: ProviderInfo[] = [
   {
@@ -76,6 +78,35 @@ function detail(over: Partial<ThreadDetail> = {}): ThreadDetail {
 const noopSave = async () =>
   ({ id: "wf", name: "standard", phases: [] }) as WorkflowTemplateInfo;
 
+const QUOTAS: ProviderUsage[] = [
+  {
+    provider: "claude",
+    status: "ok",
+    windows: [
+      {
+        label: "5 hours",
+        usedPercent: 37,
+        resetsAt: Date.now() + 60 * 60 * 1000,
+        windowSeconds: 5 * 60 * 60,
+      },
+      {
+        label: "Weekly",
+        usedPercent: 12,
+        resetsAt: Date.now() + 3 * 24 * 60 * 60 * 1000,
+        windowSeconds: 7 * 24 * 60 * 60,
+      },
+    ],
+    fetchedAt: Date.now(),
+  },
+  {
+    provider: "grok",
+    status: "unavailable",
+    windows: [],
+    fetchedAt: null,
+    message: "This CLI does not report account limits",
+  },
+];
+
 async function mountView(
   over: {
     detail?: ThreadDetail;
@@ -87,6 +118,7 @@ async function mountView(
       prompt: string,
     ) => void | Promise<void>;
     onViewChanges?: () => void;
+    loadProviderLimits?: () => Promise<ProviderUsage[]>;
   } = {},
 ) {
   return mount(
@@ -120,6 +152,7 @@ async function mountView(
       onFork={over.onFork}
       onNewThread={over.onNewThread}
       onSettleThread={over.onSettleThread}
+      loadProviderLimits={over.loadProviderLimits ?? (async () => QUOTAS)}
     />,
   );
 }
@@ -144,15 +177,92 @@ async function acceptSlash(m: Mounted, token: string): Promise<void> {
 afterEach(unmountAll);
 
 describe("ThreadView / palette actions", () => {
-  it("/usage pins the context breakdown open", async () => {
+  it("/context pins the context breakdown open", async () => {
     const m = await mountView();
     assert.equal(m.query("[data-context-popover]"), null);
-    await acceptSlash(m, "/usage");
+    await acceptSlash(m, "/context");
     assert.ok(
       m.query("[data-context-popover]"),
       "context breakdown opened",
     );
+    assert.equal(m.query("[data-provider-quota]"), null);
     assert.equal(textarea(m).value, "", "token cleared");
+  });
+
+  it("/usage opens provider quotas and does not open the context ring", async () => {
+    const m = await mountView();
+    await acceptSlash(m, "/usage");
+    assert.equal(m.query("[data-context-popover]"), null);
+    const dialog = m.query("[data-provider-quota]");
+    assert.ok(dialog, "quota dialog opened");
+    await m.flush();
+    const text = m.text();
+    assert.match(text, /37% used/);
+    assert.match(text, /12% used/);
+    assert.match(text, /5 hours/);
+    assert.match(text, /Weekly/);
+    assert.match(text, /unavailable/i);
+    assert.equal(
+      m.query('[data-provider-quota-row="grok"]')?.textContent?.includes("0%"),
+      false,
+      "unavailable grok is not 0%",
+    );
+    assert.equal(textarea(m).value, "", "token cleared");
+  });
+
+  it("/usage opens quotas even when the thread has no context ring", async () => {
+    const m = await mountView({
+      detail: detail({ usage: null, messages: [] }),
+    });
+    assert.equal(m.query("[data-context-ring]"), null);
+    await acceptSlash(m, "/usage");
+    assert.ok(m.query("[data-provider-quota]"), "quota dialog without a ring");
+    assert.equal(m.query("[data-context-popover]"), null);
+    await m.flush();
+    assert.match(m.text(), /37% used/);
+  });
+
+  it("/usage Escape closes the quota dialog", async () => {
+    const m = await mountView();
+    await acceptSlash(m, "/usage");
+    assert.ok(m.query("[data-provider-quota]"));
+    await inAct(() => {
+      document.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "Escape", bubbles: true }),
+      );
+    });
+    assert.equal(m.query("[data-provider-quota]"), null);
+  });
+
+  it("/usage moves focus out of the composer; Tab stays inside; Escape restores", async () => {
+    const m = await mountView();
+    const composer = textarea(m);
+    await acceptSlash(m, "/usage");
+    await m.flush();
+    const dialog = m.query("[data-provider-quota-dialog]") as HTMLElement | null;
+    assert.ok(dialog, "quota dialog");
+    assert.ok(
+      dialog.contains(document.activeElement),
+      "focus left the composer for the dialog",
+    );
+    assert.notEqual(document.activeElement, composer);
+
+    await m.pressFocused("Tab");
+    const first = document.activeElement as HTMLElement;
+    assert.ok(dialog.contains(first), "Tab stays inside");
+    assert.equal(first.tagName, "BUTTON");
+
+    await m.pressFocused("Tab");
+    const second = document.activeElement as HTMLElement;
+    assert.ok(dialog.contains(second), "second Tab stays inside");
+    assert.notEqual(second, first);
+
+    await m.pressFocused("Tab");
+    assert.equal(document.activeElement, first, "Tab wraps inside the dialog");
+
+    await m.pressFocused("Escape");
+    assert.equal(m.query("[data-provider-quota]"), null);
+    assert.equal(document.activeElement, composer, "Escape restores composer focus");
   });
 
   it("/compact forks to fresh context instead of opening usage", async () => {
@@ -173,7 +283,7 @@ describe("ThreadView / palette actions", () => {
       detail: warned,
       onFork: () => forks.push(1),
     });
-    await acceptSlash(m, "/usage");
+    await acceptSlash(m, "/context");
     const action = m.query("[data-context-fork]");
     assert.ok(action);
     await m.click(action as HTMLElement);
@@ -192,7 +302,7 @@ describe("ThreadView / palette actions", () => {
         focusAtFork = document.activeElement;
       },
     });
-    await acceptSlash(m, "/usage");
+    await acceptSlash(m, "/context");
     const ring = m.query("[data-context-ring]") as HTMLButtonElement | null;
     const action = m.query("[data-context-fork]") as HTMLButtonElement | null;
     assert.ok(ring);
@@ -217,7 +327,7 @@ describe("ThreadView / palette actions", () => {
       detail: detail({ usage: USAGE }),
       onFork: () => {},
     });
-    await acceptSlash(below, "/usage");
+    await acceptSlash(below, "/context");
     assert.equal(below.query("[data-context-fork]"), null);
     below.unmount();
 
@@ -226,7 +336,7 @@ describe("ThreadView / palette actions", () => {
         usage: { ...USAGE, contextTokens: 180_000 },
       }),
     });
-    await acceptSlash(noFork, "/usage");
+    await acceptSlash(noFork, "/context");
     assert.equal(noFork.query("[data-context-fork]"), null);
     noFork.unmount();
 
@@ -237,7 +347,7 @@ describe("ThreadView / palette actions", () => {
       }),
       onFork: () => {},
     });
-    await acceptSlash(working, "/usage");
+    await acceptSlash(working, "/context");
     assert.equal(working.query("[data-context-fork]"), null);
   });
 
