@@ -141,12 +141,7 @@ export function CuratedSkillsSection({
       aria-label="Curated skills"
       data-skill-section="curated"
     >
-      <div className={styles.sectionHead}>
-        <div className={styles.sectionLabel}>
-          Curated skills
-          <span className={styles.sectionCount}>{rows.length}</span>
-        </div>
-      </div>
+      <div className={styles.sectionLabel}>Curated skills</div>
       {error && (
         <p className={styles.formError} role="alert">
           {catalog.length === 0 ? "Catalog unavailable" : error}
@@ -268,10 +263,7 @@ export function AddedSkillsSection({
       data-skill-section="added"
     >
       <div className={styles.sectionHead}>
-        <div className={styles.sectionLabel}>
-          Added skills
-          <span className={styles.sectionCount}>{skills.length}</span>
-        </div>
+        <div className={styles.sectionLabel}>Added skills</div>
         <button
           type="button"
           className={styles.ghostBtn}
@@ -372,12 +364,7 @@ export function ProjectSkillsSection({ skills }: { skills: SkillInfo[] }) {
       aria-label="Project skills"
       data-skill-section="project"
     >
-      <div className={styles.sectionHead}>
-        <div className={styles.sectionLabel}>
-          Project skills
-          <span className={styles.sectionCount}>{skills.length}</span>
-        </div>
-      </div>
+      <div className={styles.sectionLabel}>Project skills</div>
       <ul className={styles.list}>
         {skills.map((skill) => {
           const key = `${skill.source}:${skill.name}`;
@@ -732,12 +719,7 @@ export function CuratedMcpsSection({
       aria-label="Curated MCP servers"
       data-mcp-section="curated"
     >
-      <div className={styles.sectionHead}>
-        <div className={styles.sectionLabel}>
-          Curated MCP servers
-          <span className={styles.sectionCount}>{catalog.length}</span>
-        </div>
-      </div>
+      <div className={styles.sectionLabel}>Curated MCP servers</div>
       {catalog.length === 0 ? (
         <p className={styles.empty}>No curated MCP servers</p>
       ) : (
@@ -794,12 +776,7 @@ export function AddedMcpsSection({
       aria-label="Added MCP servers"
       data-mcp-section="added"
     >
-      <div className={styles.sectionHead}>
-        <div className={styles.sectionLabel}>
-          Added MCP servers
-          <span className={styles.sectionCount}>{servers.length}</span>
-        </div>
-      </div>
+      <div className={styles.sectionLabel}>Added MCP servers</div>
       {servers.length === 0 ? (
         <p className={styles.empty}>No added MCP servers</p>
       ) : (
