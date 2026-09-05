@@ -194,6 +194,12 @@ import styles from "./ThreadView.module.css";
 
 const EMPTY_COMPARE_PEERS: ComparePeer[] = [];
 
+const EMPTY_STARTERS = [
+  "Fix the failing test",
+  "Add dark mode to the settings page",
+  "Explain how auth works in this repo",
+] as const;
+
 const PUSH_FLASH_MS = 3000;
 const COPY_FLASH_MS = 1500;
 
@@ -423,8 +429,15 @@ interface ThreadViewProps {
   revealMessageId?: string | null;
   /** threads.get failure for the selected thread; shown with a retry. */
   detailError?: string | null;
+  /** Selected thread's detail is in flight (uncached click, issue #83). */
+  detailLoading?: boolean;
   /** Re-fetch the selected thread's detail after a load failure. */
   onRetryDetail?: () => void;
+  /**
+   * Empty-state starter chip: create a thread and seed the composer draft
+   * with this prompt.
+   */
+  onStartStarter?: (prompt: string) => void;
   project: ProjectInfo | null;
   providers: ProviderInfo[];
   /** Saved agent profiles from settings; passed through to Composer. */
@@ -4197,7 +4210,9 @@ export const ThreadView = memo(function ThreadView({
   detail,
   revealMessageId = null,
   detailError = null,
+  detailLoading = false,
   onRetryDetail,
+  onStartStarter,
   project,
   providers,
   agentProfiles = [],
@@ -5594,6 +5609,32 @@ export const ThreadView = memo(function ThreadView({
         </main>
       );
     }
+    if (detailLoading) {
+      return (
+        <main className={styles.main}>
+          <div className={styles.empty} data-thread-loading="">
+            <div className={styles.emptyGlyph} aria-hidden="true">
+              <svg
+                width="22"
+                height="22"
+                viewBox="0 0 16 16"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.5"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <path d="M3 2.5h10A1.5 1.5 0 0 1 14.5 4v6A1.5 1.5 0 0 1 13 11.5H8l-3.5 2.8v-2.8H3A1.5 1.5 0 0 1 1.5 10V4A1.5 1.5 0 0 1 3 2.5Z" />
+              </svg>
+            </div>
+            <p className={styles.emptyTitle} aria-live="polite">
+              Loading thread…
+            </p>
+            <p className={styles.emptyHint}>Fetching the transcript.</p>
+          </div>
+        </main>
+      );
+    }
     return (
       <main className={styles.main}>
         <div className={styles.empty}>
@@ -5615,18 +5656,31 @@ export const ThreadView = memo(function ThreadView({
           <p className={styles.emptyHint}>
             Choose a thread from the sidebar, or create a new one.
           </p>
+          {onCreateThread && (
+            <button
+              type="button"
+              className={`${styles.btn} ${styles.btnPrimary}`}
+              data-empty-new-thread=""
+              onClick={() => onCreateThread(project?.id)}
+            >
+              New thread
+            </button>
+          )}
           <div className={styles.emptyStarters} data-empty-starters="">
             <p className={styles.emptyStartersLabel}>Try asking</p>
             <ul className={styles.emptyStarterList}>
-              <li className={styles.emptyStarterChip}>
-                Fix the failing test
-              </li>
-              <li className={styles.emptyStarterChip}>
-                Add dark mode to the settings page
-              </li>
-              <li className={styles.emptyStarterChip}>
-                Explain how auth works in this repo
-              </li>
+              {EMPTY_STARTERS.map((prompt) => (
+                <li key={prompt}>
+                  <button
+                    type="button"
+                    className={styles.emptyStarterChip}
+                    data-empty-starter=""
+                    onClick={() => onStartStarter?.(prompt)}
+                  >
+                    {prompt}
+                  </button>
+                </li>
+              ))}
             </ul>
           </div>
         </div>

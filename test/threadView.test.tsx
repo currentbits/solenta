@@ -143,7 +143,10 @@ const noopSave = async () =>
 function view(props: {
   detail?: ThreadDetail | null;
   detailError?: string | null;
+  detailLoading?: boolean;
   onRetryDetail?: () => void;
+  onCreateThread?: (projectId?: string) => void;
+  onStartStarter?: (prompt: string) => void;
   hasProjects?: boolean;
   project?: ProjectInfo | null;
   changesOpen?: boolean;
@@ -188,7 +191,10 @@ function view(props: {
     <ThreadView
       detail={props.detail === undefined ? detail() : props.detail}
       detailError={props.detailError}
+      detailLoading={props.detailLoading}
       onRetryDetail={props.onRetryDetail}
+      onCreateThread={props.onCreateThread}
+      onStartStarter={props.onStartStarter}
       project={props.project === undefined ? project : props.project}
       providers={providers}
       workflows={workflows}
@@ -296,6 +302,18 @@ describe("ThreadView empty states", () => {
     assert.ok(
       html.includes("Select a thread"),
       `expected no-thread state, got: ${html.slice(0, 200)}`,
+    );
+  });
+
+  it("shows Loading thread while a selected transcript is in flight", () => {
+    const html = render({ detail: null, detailLoading: true });
+    assert.ok(
+      html.includes("Loading thread"),
+      `expected loading state, got: ${html.slice(0, 200)}`,
+    );
+    assert.ok(
+      !html.includes("Select a thread"),
+      "a pending fetch must not look like no selection",
     );
   });
 

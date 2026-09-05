@@ -259,8 +259,12 @@ describe("App thread selection wiring", () => {
         "the previous thread's transcript must not render under the new selection",
       );
       assert.ok(
-        m.text().includes("Select a thread"),
-        "the gated view must fall back to the empty state while loading",
+        m.text().includes("Loading thread"),
+        "the gated view must show a loading pane while the new detail is in flight",
+      );
+      assert.ok(
+        !m.text().includes("Select a thread"),
+        "a pending fetch must not look like no selection",
       );
 
       // When the fetch resolves, the NEW thread's transcript appears.

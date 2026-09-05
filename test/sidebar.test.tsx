@@ -2716,6 +2716,48 @@ describe("Sidebar filters (#553)", () => {
     assert.deepEqual(cardTitles(m), ["broken"]);
     m.unmount();
   });
+
+  it("failed search shows an error and Retry instead of No threads match", async () => {
+    await clearSidebarStorage();
+    let calls = 0;
+    const m = await mount(
+      sidebar(THREADS, {
+        projects: [p1, p2],
+        searchThreads: async () => {
+          calls += 1;
+          if (calls === 1) throw new Error("index missing");
+          return THREADS.filter((t) => t.title.includes("work"));
+        },
+      }),
+    );
+    await m.type(searchInput(m), "work");
+    await inAct(async () => {
+      await new Promise((r) => setTimeout(r, 350));
+    });
+    await m.flush();
+    assert.ok(
+      m.query("[data-search-error]"),
+      "failed search must show the error pane",
+    );
+    assert.ok(
+      m.text().includes("Couldn’t search threads"),
+      "failed search must say it failed",
+    );
+    assert.ok(
+      m.text().includes("index missing"),
+      "the failure message must render",
+    );
+    assert.ok(
+      !m.text().includes("No threads match"),
+      "a failed search must not masquerade as an empty result",
+    );
+    await m.click(m.query("[data-search-retry]"));
+    await m.flush();
+    assert.equal(calls, 2, "Retry must re-run the same search");
+    assert.equal(m.query("[data-search-error]"), null);
+    assert.ok(cardTitles(m).includes("busy"));
+    m.unmount();
+  });
 });
 
 describe("Sidebar thread tags (#789)", () => {

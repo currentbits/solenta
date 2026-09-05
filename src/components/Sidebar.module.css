@@ -1208,6 +1208,46 @@
   font-size: 13px;
 }
 
+.searchError {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  margin: 12px 8px;
+  padding: 8px;
+  text-align: center;
+}
+
+.searchErrorTitle {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.searchErrorHint {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--text-dim);
+  max-width: 36ch;
+}
+
+.searchRetry {
+  margin-top: 2px;
+  padding: 4px 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--card);
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 550;
+}
+
+.searchRetry:hover {
+  background: var(--card-hover);
+}
+
 .searchHint {
   margin: 8px;
   font-size: 11px;

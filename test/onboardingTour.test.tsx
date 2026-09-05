@@ -51,7 +51,13 @@ const noopAsync = async () => {};
 const noopSave = async () =>
   ({ id: "wf", name: "standard", phases: [] }) as WorkflowTemplateInfo;
 
-function emptyView(over: { hasProjects?: boolean } = {}) {
+function emptyView(
+  over: {
+    hasProjects?: boolean;
+    onCreateThread?: (projectId?: string) => void;
+    onStartStarter?: (prompt: string) => void;
+  } = {},
+) {
   return (
     <ThreadView
       detail={null}
@@ -60,6 +66,8 @@ function emptyView(over: { hasProjects?: boolean } = {}) {
       workflows={[]}
       hasProjects={over.hasProjects ?? true}
       onAddProject={() => {}}
+      onCreateThread={over.onCreateThread}
+      onStartStarter={over.onStartStarter}
       onStartRun={() => {}}
       onStartWorkflow={() => {}}
       onSaveWorkflow={noopSave}
@@ -177,6 +185,30 @@ describe("ThreadView empty-state starters (#631)", () => {
       !m.query("[data-empty-starters]"),
       "no-projects empty state must not show starter prompts",
     );
+    m.unmount();
+  });
+
+  it("clicking a starter chip passes that prompt to onStartStarter", async () => {
+    const prompts: string[] = [];
+    const m = await mount(
+      emptyView({ onStartStarter: (prompt) => prompts.push(prompt) }),
+    );
+    const chip = m.query("[data-empty-starter]");
+    assert.ok(chip, "starter chips must be buttons");
+    await m.click(chip);
+    assert.deepEqual(prompts, ["Fix the failing test"]);
+    m.unmount();
+  });
+
+  it("New thread calls onCreateThread with the current project", async () => {
+    const calls: Array<string | undefined> = [];
+    const m = await mount(
+      emptyView({ onCreateThread: (projectId) => calls.push(projectId) }),
+    );
+    const btn = m.query("[data-empty-new-thread]");
+    assert.ok(btn, "empty state must offer New thread when onCreateThread is set");
+    await m.click(btn);
+    assert.deepEqual(calls, ["p1"]);
     m.unmount();
   });
 });

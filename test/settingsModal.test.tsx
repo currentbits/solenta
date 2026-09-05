@@ -1755,3 +1755,35 @@ describe("SettingsModal default orchestrator profile (#725)", () => {
     m.unmount();
   });
 });
+
+describe("SettingsModal keyboard focus (#916)", () => {
+  it("moves focus into the dialog and restores it on close", async () => {
+    const opener = document.createElement("button");
+    opener.textContent = "Open settings";
+    document.body.appendChild(opener);
+    opener.focus();
+    assert.equal(document.activeElement, opener, "precondition: opener focused");
+    try {
+      const m = await mount(modal());
+      const dialog = m.query("[data-settings]") as HTMLElement | null;
+      assert.ok(dialog, "settings dialog");
+      assert.ok(
+        dialog.contains(document.activeElement),
+        "opening Settings must move focus into the dialog",
+      );
+      await m.pressFocused("Tab");
+      assert.ok(
+        dialog.contains(document.activeElement),
+        "Tab must stay inside Settings",
+      );
+      m.unmount();
+      assert.equal(
+        document.activeElement,
+        opener,
+        "closing Settings must restore the opener",
+      );
+    } finally {
+      opener.remove();
+    }
+  });
+});

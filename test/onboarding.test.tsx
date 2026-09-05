@@ -134,4 +134,21 @@ describe("Onboarding wizard (#628)", () => {
     );
     m.unmount();
   });
+
+  it("moves keyboard focus into the wizard when it opens (#916)", async () => {
+    const fake = createFakeCoder({ settings: { onboardingSeen: false } });
+    const m = await boot(fake);
+    const dialog = m.query("[data-onboarding]") as HTMLElement | null;
+    assert.ok(dialog, "wizard must be open");
+    assert.ok(
+      dialog.contains(document.activeElement),
+      "opening onboarding must move focus into the dialog",
+    );
+    await m.pressFocused("Tab");
+    assert.ok(
+      dialog.contains(document.activeElement),
+      "Tab must stay inside the wizard",
+    );
+    m.unmount();
+  });
 });

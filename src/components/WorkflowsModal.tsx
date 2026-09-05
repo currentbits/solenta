@@ -7,6 +7,7 @@ import type {
 } from "../shared/ipc";
 import type { WorkflowSaveInput } from "../useCoder";
 import { useEscapeClose } from "../useEscapeClose";
+import { useModalFocus } from "../useModalFocus";
 import styles from "./WorkflowsModal.module.css";
 
 interface WorkflowsModalProps {
@@ -79,6 +80,7 @@ export function WorkflowsModal({
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [isNew, setIsNew] = useState(false);
   const wasOpen = useRef(false);
+  const dialogRef = useRef<HTMLDivElement>(null);
 
   // Reset selection only when the modal opens (not on every workflows refresh).
   useEffect(() => {
@@ -121,6 +123,7 @@ export function WorkflowsModal({
   // Shared Escape handler (same semantics as inline: close when open).
   // Composer disables its own Escape while this modal is open via manageOpen.
   useEscapeClose(open, onClose);
+  useModalFocus(open, dialogRef);
 
   const selected = useMemo(
     () => workflows.find((w) => w.id === selectedId) ?? null,
@@ -256,10 +259,12 @@ export function WorkflowsModal({
       }}
     >
       <div
+        ref={dialogRef}
         className={styles.modal}
         role="dialog"
         aria-modal="true"
         aria-label="Manage workflows"
+        tabIndex={-1}
         onMouseDown={(e) => e.stopPropagation()}
       >
         <header className={styles.header}>

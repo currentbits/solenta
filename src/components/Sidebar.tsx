@@ -1548,6 +1548,7 @@ export const Sidebar = memo(function Sidebar({
   }, [threads]);
   const [searchResults, setSearchResults] = useState<ThreadInfo[] | null>(null);
   const [searchLoading, setSearchLoading] = useState(false);
+  const [searchError, setSearchError] = useState<string | null>(null);
 
   const searchGen = useRef(0);
   const mountedRef = useRef(true);
@@ -1587,13 +1588,18 @@ export const Sidebar = memo(function Sidebar({
     async (q: string) => {
       const gen = ++searchGen.current;
       setSearchLoading(true);
+      setSearchError(null);
       try {
         const list = await searchThreads({ query: q });
         if (!mountedRef.current || searchGen.current !== gen) return;
         setSearchResults(list);
-      } catch {
+        setSearchError(null);
+      } catch (err) {
         if (!mountedRef.current || searchGen.current !== gen) return;
-        setSearchResults([]);
+        setSearchResults(null);
+        setSearchError(
+          err instanceof Error && err.message ? err.message : "Search failed",
+        );
       } finally {
         if (mountedRef.current && searchGen.current === gen) {
           setSearchLoading(false);
@@ -1609,6 +1615,7 @@ export const Sidebar = memo(function Sidebar({
       searchGen.current += 1;
       setSearchResults(null);
       setSearchLoading(false);
+      setSearchError(null);
       return;
     }
 
@@ -1759,10 +1766,12 @@ export const Sidebar = memo(function Sidebar({
     ? `New thread in ${createTargetProject.slug || createTargetProject.name}`
     : "New thread";
   const queryLower = trimmedQuery.toLowerCase();
-  const searchInFlight = searching && (searchLoading || searchResults == null);
+  const searchInFlight =
+    searching && !searchError && (searchLoading || searchResults == null);
   const searchEmpty =
     searching &&
     !searchInFlight &&
+    !searchError &&
     displayThreads.length === 0;
 
   const slugFor = (t: ThreadInfo) =>
@@ -2931,6 +2940,23 @@ export const Sidebar = memo(function Sidebar({
           <p className={styles.searchHint} aria-live="polite">
             Searching…
           </p>
+        )}
+
+        {projects.length > 0 && searchError && (
+          <div className={styles.searchError} data-search-error="">
+            <p className={styles.searchErrorTitle} role="alert">
+              Couldn’t search threads
+            </p>
+            <p className={styles.searchErrorHint}>{searchError}</p>
+            <button
+              type="button"
+              className={styles.searchRetry}
+              data-search-retry=""
+              onClick={() => void runSearch(trimmedQuery)}
+            >
+              Retry
+            </button>
+          </div>
         )}
 
         {projects.length > 0 && searchEmpty && (

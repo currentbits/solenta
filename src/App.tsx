@@ -481,6 +481,17 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     void createThread("New Thread");
   }, [createThread]);
 
+  const handleStartStarter = useCallback(
+    (prompt: string) => {
+      void createThread("New Thread").then((t) => {
+        if (!t) return;
+        setRevealThreadId(t.id);
+        setQueuedDraftRestore({ threadId: t.id, text: prompt });
+      });
+    },
+    [createThread],
+  );
+
   const handleSetSettled = useCallback(
     (threadId: string, override: "settled" | "active" | null) => {
       void setSettled(threadId, override);
@@ -1451,7 +1462,9 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         quotaDemo={quotaDemo}
         detail={visibleDetail}
         detailError={selectedThreadId ? detailError : null}
+        detailLoading={Boolean(selectedThreadId) && !visibleDetail && !detailError}
         onRetryDetail={retryDetail}
+        onStartStarter={handleStartStarter}
         project={project}
         providers={providers}
         agentProfiles={settings?.agentProfiles ?? EMPTY_AGENT_PROFILES}
