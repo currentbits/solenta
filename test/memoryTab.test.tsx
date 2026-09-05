@@ -907,3 +907,74 @@ describe("MemoryTab code map", () => {
     m.unmount();
   });
 });
+
+describe("MemoryTab inspector layout", () => {
+  it("keeps map, doctor, and review in the scrolling pane, not the search toolbar", async () => {
+    const m = await mount(
+      <MemoryTab
+        projectSlug="coder"
+        projectId="p1"
+        searchMemory={async () => []}
+        recentMemory={async () => [entry()]}
+        getMemory={async (input) => entry({ id: input.id })}
+        updateMemory={async () => ({ id: "x" })}
+        removeMemory={async () => {}}
+        storeMemory={async () => ({ id: "x" })}
+        loadCodeMap={async () => ({
+          projectId: "p1",
+          updatedAt: Date.now(),
+          fileCount: 1,
+          symbolCount: 1,
+          headSha: "abc1234",
+          defaultBranch: "main",
+          modules: [],
+          dependencies: [],
+        })}
+        lintAgentConfig={async () => SAMPLE_REPORT}
+        maintenanceMemory={async () =>
+          maintenanceReport({
+            queue: {
+              open: 1,
+              oldestAgeDays: 1,
+              items: [QUEUE_ITEM],
+            },
+          })
+        }
+      />,
+    );
+    await m.flush();
+    const toolbar = m.query('[class*="searchRow"]');
+    assert.ok(toolbar, "search toolbar must render");
+    assert.equal(
+      toolbar.querySelector("[data-code-map]"),
+      null,
+      "code map must not live in the non-scrolling toolbar",
+    );
+    assert.equal(
+      toolbar.querySelector("[data-config-doctor]"),
+      null,
+      "config doctor must not live in the non-scrolling toolbar",
+    );
+    assert.equal(
+      toolbar.querySelector("[data-review-queue]"),
+      null,
+      "review queue must not live in the non-scrolling toolbar",
+    );
+    const scroll = m.query("[data-memory-scroll]");
+    assert.ok(scroll, "one scrolling pane must exist");
+    assert.ok(scroll.querySelector("[data-code-map]"), "map scrolls with the list");
+    assert.ok(
+      scroll.querySelector("[data-config-doctor]"),
+      "doctor scrolls with the list",
+    );
+    assert.ok(
+      scroll.querySelector("[data-review-queue]"),
+      "review queue scrolls with the list",
+    );
+    assert.ok(
+      scroll.querySelector('input[placeholder="Title"]'),
+      "the remember form must stay reachable inside the scroll",
+    );
+    m.unmount();
+  });
+});
