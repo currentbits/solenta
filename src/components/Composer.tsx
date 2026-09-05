@@ -61,6 +61,7 @@ import { useEscapeClose } from "../useEscapeClose";
 import { ProviderMark } from "./ProviderMark";
 import { applyMention, getMentionQuery, type MentionQuery } from "../mention";
 import { ArchiveToast } from "./ArchiveToast";
+import { ProviderMark } from "./ProviderMark";
 import type { ReplyTarget } from "../replyContext";
 import { excerptReply, wrapReplyContext } from "../replyContext";
 import {
@@ -3076,6 +3077,13 @@ export const Composer = memo(function Composer({
                                 disabled={row.disabled}
                                 data-best-of-n-profile={row.id}
                                 onChange={() => toggleBestId(row.id)}
+                              />
+                              <ProviderMark
+                                providerId={row.provider}
+                                providers={providers}
+                                size={16}
+                                decorative
+                                className={styles.bestOfNRowMark}
                               />
                               <span className={styles.bestOfNRowText}>
                                 <span className={styles.modelRowLabel}>

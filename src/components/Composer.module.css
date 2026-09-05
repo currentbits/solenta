@@ -255,6 +255,12 @@
   flex-shrink: 0;
 }
 
+.bestOfNRowMark {
+  flex-shrink: 0;
+  color: inherit;
+  margin-top: 1px;
+}
+
 .bestOfNRowText {
   display: flex;
   flex-direction: column;
