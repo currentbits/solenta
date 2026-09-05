@@ -6757,7 +6757,7 @@ export const ThreadView = memo(function ThreadView({
                               }
                             }}
                           />
-                          <div className={styles.statusLeft}>
+                          <div className={styles.queuedActions}>
                             <button
                               type="button"
                               className={styles.retryBtn}
@@ -6778,7 +6778,7 @@ export const ThreadView = memo(function ThreadView({
                       ) : (
                         <>
                           <span className={styles.queuedText}>{item}</span>
-                          <div className={styles.statusLeft}>
+                          <div className={styles.queuedActions}>
                             {i > 0 ? (
                               <button
                                 type="button"
@@ -6885,7 +6885,7 @@ export const ThreadView = memo(function ThreadView({
                     }
                   }}
                 />
-                <div className={styles.statusLeft}>
+                <div className={styles.queuedActions}>
                   <button
                     type="button"
                     className={styles.retryBtn}
@@ -6917,7 +6917,7 @@ export const ThreadView = memo(function ThreadView({
                     </span>
                   ) : null}
                 </div>
-                <div className={styles.statusLeft}>
+                <div className={styles.queuedActions}>
                   {onEditQueued ? (
                     <button
                       type="button"

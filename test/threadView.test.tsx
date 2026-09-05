@@ -178,6 +178,11 @@ function view(props: {
   ) => void | Promise<void>;
   onPickDirectory?: () => Promise<string | null>;
   onListSnapWindows?: () => Promise<Array<{ id: string; name: string }>>;
+  queuedPrompt?: string | null;
+  queuedItems?: string[] | null;
+  onEditQueued?: (prompt: string, items?: string[]) => void;
+  onCancelQueued?: () => void;
+  onRetryQueued?: () => void;
 }) {
   return (
     <ThreadView
@@ -194,6 +199,11 @@ function view(props: {
       onSaveWorkflow={noopSave}
       onRemoveWorkflow={noopAsync}
       onStopRun={() => {}}
+      queuedPrompt={props.queuedPrompt}
+      queuedItems={props.queuedItems}
+      onEditQueued={props.onEditQueued}
+      onCancelQueued={props.onCancelQueued}
+      onRetryQueued={props.onRetryQueued}
       onSetPermissionMode={() => {}}
       onRespondPermission={() => {}}
       onSetProvider={() => {}}
@@ -2959,5 +2969,104 @@ describe("ThreadView Focus / Summary mode (issue #461)", () => {
       "thinking body stays hidden",
     );
     m.unmount();
+  });
+});
+
+describe("ThreadView queued follow-up wrap (issue #903)", () => {
+  const longQueued =
+    "Look at https://github.com/currentbits/solenta/issues/896 after the overflow fix. The second sentence is here so a one-line ellipsis cannot hide that this thought is distinct from the next queued note.";
+
+  function queuedCssRule(className: string): string {
+    const cssPath = path.join(
+      path.dirname(fileURLToPath(import.meta.url)),
+      "../src/components/ThreadView.module.css",
+    );
+    const clean = fs
+      .readFileSync(cssPath, "utf8")
+      .replace(/\/\*[\s\S]*?\*\//g, "");
+    const re = new RegExp(`\\.${className}(?![\\w-])\\s*\\{`);
+    const match = re.exec(clean);
+    if (!match) return "";
+    const brace = match.index + match[0].length - 1;
+    const end = clean.indexOf("}", brace);
+    if (end < 0) return "";
+    return clean.slice(brace + 1, end);
+  }
+
+  it("renders a long queued item's full text without ellipsis-only", async () => {
+    const m = await mount(
+      view({
+        queuedPrompt: `${longQueued}\n\nshort second thought`,
+        queuedItems: [longQueued, "short second thought"],
+        onEditQueued: () => {},
+        onCancelQueued: () => {},
+      }),
+    );
+
+    const item = m.query('[data-queued-item="0"]');
+    assert.ok(item, "the long follow-up must render as a queued card");
+    const text = item.querySelector(`.${styles.queuedText}`);
+    assert.ok(text, "queued text lives in .queuedText");
+    assert.equal(
+      text.textContent,
+      longQueued,
+      "the card must keep the whole thought, not an ellipsis-only clip",
+    );
+    assert.ok(
+      item.querySelector("button[data-edit-queued]"),
+      "Edit stays on the card",
+    );
+    assert.ok(
+      item.querySelector("button[data-move-queued-down]"),
+      "Down stays on the card",
+    );
+    assert.ok(
+      item.querySelector("button[data-remove-queued]"),
+      "Remove stays on the card",
+    );
+    assert.ok(
+      item.querySelector(`.${styles.queuedActions}`),
+      "Up/Down/Edit/Remove sit in .queuedActions, not shrinking with the text",
+    );
+    m.unmount();
+
+    const queuedText = queuedCssRule("queuedText");
+    assert.ok(queuedText, ".queuedText rule must exist");
+    assert.doesNotMatch(
+      queuedText,
+      /text-overflow\s*:\s*ellipsis/,
+      ".queuedText must not clip to an ellipsis",
+    );
+    assert.doesNotMatch(
+      queuedText,
+      /white-space\s*:\s*nowrap/,
+      ".queuedText must wrap instead of forcing one line",
+    );
+    assert.match(
+      queuedText,
+      /overflow-wrap\s*:\s*anywhere/,
+      ".queuedText must wrap long URLs and research notes",
+    );
+    assert.match(
+      queuedText,
+      /white-space\s*:\s*(normal|pre-wrap)/,
+      ".queuedText must wrap at spaces or keep newlines",
+    );
+
+    const queuedItem = queuedCssRule("queuedItem");
+    assert.ok(queuedItem, ".queuedItem rule must exist");
+    assert.match(
+      queuedItem,
+      /align-items\s*:\s*flex-start/,
+      "actions stay at the top of a wrapped card",
+    );
+
+    const queuedActions = queuedCssRule("queuedActions");
+    assert.ok(queuedActions, ".queuedActions rule must exist");
+    assert.match(
+      queuedActions,
+      /flex-shrink\s*:\s*0/,
+      "the action cluster must not shrink when the thought wraps",
+    );
   });
 });
