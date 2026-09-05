@@ -265,6 +265,45 @@ describe("Best of N popover", () => {
     m.unmount();
   });
 
+  it("provider rows show a harness logo next to the name", async () => {
+    const m = await mount(composer());
+    await openBestOfN(m);
+
+    const claude = m
+      .query('input[data-best-of-n-provider="claude"]')
+      ?.closest("label");
+    assert.ok(claude, "claude row");
+    const mark = claude!.querySelector('[data-provider-mark="claude"]');
+    assert.ok(mark, "row reuses ProviderMark");
+    assert.ok(mark!.querySelector("svg"), "known harness is a logo");
+    assert.match(
+      claude!.textContent || "",
+      /Claude Code/,
+      "the display name stays on the row",
+    );
+    assert.equal(
+      mark!.getAttribute("aria-hidden"),
+      "true",
+      "visible name is the accessible name; the mark is decorative",
+    );
+
+    const codex = m
+      .query('input[data-best-of-n-provider="codex"]')
+      ?.closest("label");
+    assert.ok(
+      codex?.querySelector('[data-provider-mark="codex"] svg'),
+      "every installed provider gets a logo",
+    );
+    const kimi = m
+      .query('input[data-best-of-n-provider="kimi"]')
+      ?.closest("label");
+    assert.ok(
+      kimi?.querySelector('[data-provider-mark="kimi"] svg'),
+      "kimi row also gets a logo",
+    );
+    m.unmount();
+  });
+
   it("lists saved profiles above providers; uninstalled ones stay disabled", async () => {
     const m = await mount(
       composer({ agentProfiles: [SCOUT, GROK_SCOUT] }),

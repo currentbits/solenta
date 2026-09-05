@@ -3109,6 +3109,13 @@ export const Composer = memo(function Composer({
                                 data-best-of-n-provider={p.id}
                                 onChange={() => toggleBestId(p.id)}
                               />
+                              <ProviderMark
+                                providerId={p.id}
+                                providers={providers}
+                                size={16}
+                                decorative
+                                className={styles.bestOfNRowMark}
+                              />
                               <span className={styles.bestOfNRowText}>
                                 <span className={styles.modelRowLabel}>
                                   {p.name}
