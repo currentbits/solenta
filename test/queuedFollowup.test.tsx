@@ -8,7 +8,10 @@
  * Run: npm run test:renderer
  */
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
 import { describe, it } from "node:test";
+import { fileURLToPath } from "node:url";
 import { inAct, mount } from "./support/dom.ts";
 import {
   createFakeCoder,
@@ -701,6 +704,71 @@ describe("queued follow-up (issue #92 / #314)", () => {
     );
     assert.match(items[0]!.textContent || "", /legacy one/);
     assert.match(items[1]!.textContent || "", /legacy two/);
+    m.unmount();
+  });
+
+  it("yields leftover row width to ellipsis so item actions stay in the card", () => {
+    // jsdom does not lay out flex, so the overflow bug is a CSS contract:
+    // long nowrap thoughts must shrink (flex:1; min-width:0) and the
+    // Up/Down/Edit/Remove cluster must not (flex-shrink:0). Using
+    // .statusLeft for the buttons fails this — it sets min-width:0.
+    const cssPath = path.join(
+      path.dirname(fileURLToPath(import.meta.url)),
+      "../src/components/ThreadView.module.css",
+    );
+    const clean = fs
+      .readFileSync(cssPath, "utf8")
+      .replace(/\/\*[\s\S]*?\*\//g, "");
+    const lastRuleBody = (className: string): string => {
+      const re = new RegExp(`\\.${className}(?![\\w-])\\s*\\{([^}]*)\\}`, "g");
+      let last = "";
+      let match: RegExpExecArray | null;
+      while ((match = re.exec(clean))) last = match[1];
+      return last;
+    };
+
+    const text = lastRuleBody("queuedText");
+    assert.ok(text, ".queuedText rule must exist");
+    assert.match(
+      text,
+      /flex\s*:\s*1/,
+      ".queuedText must take leftover space instead of a nowrap max-content basis",
+    );
+    assert.match(
+      text,
+      /min-width\s*:\s*0/,
+      ".queuedText must be allowed to shrink below the thought's intrinsic width",
+    );
+
+    const actions = lastRuleBody("queuedActions");
+    assert.ok(actions, ".queuedActions rule must exist");
+    assert.match(
+      actions,
+      /flex-shrink\s*:\s*0/,
+      "queued item actions must not shrink when the thought is a long URL",
+    );
+  });
+
+  it("puts each queued item's actions in the non-shrinking cluster", async () => {
+    const { m } = await bootOnBusyThread();
+    await queueTwoThoughts(m);
+
+    const first = m.query('[data-queued-item="0"]');
+    assert.ok(first, "two appended thoughts must render as items");
+    const actions = first.querySelector("[data-queued-actions]");
+    assert.ok(actions, "item actions must live in [data-queued-actions]");
+    assert.ok(
+      actions.querySelector("button[data-remove-queued]"),
+      "Remove must sit inside the action cluster, not as a free flex sibling of the thought",
+    );
+    assert.ok(
+      actions.querySelector("button[data-edit-queued]"),
+      "Edit must sit inside the action cluster",
+    );
+    assert.ok(
+      actions.querySelector("button[data-move-queued-down]"),
+      "Down must sit inside the action cluster",
+    );
     m.unmount();
   });
 });
