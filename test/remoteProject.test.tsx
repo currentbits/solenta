@@ -83,7 +83,7 @@ describe("Environment tab remote hint", () => {
       !html.includes("data-worktree-control"),
       "worktree header control is not on the Environment tab",
     );
-    assert.ok(!html.includes("Local Servers"), "LocalServersCard must be hidden");
+    assert.ok(!html.includes("Local servers"), "LocalServersCard must be hidden");
     assert.ok(!html.includes("Checkpoints"), "CheckpointsCard must be hidden");
     assert.ok(html.includes("Changes"), "ChangesCard must stay");
     assert.ok(html.includes("Open Git"), "diff action must stay");
@@ -92,7 +92,7 @@ describe("Environment tab remote hint", () => {
   it("keeps the full Environment cards on a local project", () => {
     const html = renderGit(localProject);
     assert.ok(!html.includes("data-remote-unavailable"));
-    assert.ok(html.includes("Local Servers"));
+    assert.ok(html.includes("Local servers"));
     assert.ok(html.includes("Changes"));
   });
 });
