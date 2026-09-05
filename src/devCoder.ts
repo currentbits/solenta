@@ -90,6 +90,7 @@ import type {
   UsageEntry,
   UsageReport,
   UsageThreadEntry,
+  ProviderUsage,
   WorkLogItem,
   WorkflowPhaseSpec,
   WorkflowTemplateInfo,
@@ -4664,6 +4665,77 @@ function buildDevCoder(): CoderApi {
             },
           },
         };
+      },
+      async providerLimits(): Promise<ProviderUsage[]> {
+        const t = now();
+        const window = (
+          label: string,
+          usedPercent: number,
+          windowSeconds: number,
+          resetsInMs: number,
+        ) => ({
+          label,
+          usedPercent,
+          resetsAt: t + resetsInMs,
+          windowSeconds,
+        });
+        return [
+          {
+            provider: "claude",
+            status: "ok",
+            fetchedAt: t,
+            windows: [
+              window("5-hour", 33, 5 * 3600, 2 * 3600 * 1000),
+              window("weekly", 12, 7 * 24 * 3600, 3 * 24 * 3600 * 1000),
+            ],
+          },
+          {
+            provider: "codex",
+            status: "ok",
+            fetchedAt: t,
+            windows: [
+              window("GPT-5.3-Codex-Spark 5-hour", 8, 5 * 3600, 4 * 3600 * 1000),
+              window("GPT-5.3-Codex-Spark weekly", 41, 7 * 24 * 3600, 5 * 24 * 3600 * 1000),
+              window("gpt-reserve weekly", 15, 7 * 24 * 3600, 5 * 24 * 3600 * 1000),
+            ],
+          },
+          {
+            provider: "kimi",
+            status: "ok",
+            fetchedAt: t,
+            windows: [
+              window("5-hour", 18, 5 * 3600, 90 * 60 * 1000),
+              window("weekly", 54, 7 * 24 * 3600, 2 * 24 * 3600 * 1000),
+            ],
+          },
+          {
+            provider: "grok",
+            status: "ok",
+            fetchedAt: t,
+            windows: [window("weekly", 36, 7 * 24 * 3600, 3 * 24 * 3600 * 1000)],
+          },
+          {
+            provider: "opencode",
+            status: "unavailable",
+            fetchedAt: null,
+            windows: [],
+            message: "OpenCode CLI reports local stats, not account quotas.",
+          },
+          {
+            provider: "cursor",
+            status: "unavailable",
+            fetchedAt: null,
+            windows: [],
+            message: "Cursor CLI has no documented usage or quota command.",
+          },
+          {
+            provider: "muse",
+            status: "unavailable",
+            fetchedAt: null,
+            windows: [],
+            message: "Muse CLI has no documented usage or quota command.",
+          },
+        ];
       },
     },
     fleet: {

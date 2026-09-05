@@ -312,4 +312,32 @@ describe("UsageView", () => {
     assert.equal(m.query('[data-usage-breakdown-empty="model"]'), null);
     m.unmount();
   });
+
+  it("can show provider quotas above local cost history without replacing it", async () => {
+    const m = await mount(
+      <UsageView
+        loadUsage={async () => ({ byDay: sampleData(), threadsByDay: {} })}
+        loadProviderLimits={async () => [
+          {
+            provider: "claude",
+            status: "ok",
+            windows: [
+              {
+                label: "5 hours",
+                usedPercent: 22,
+                resetsAt: Date.now() + 60 * 60 * 1000,
+                windowSeconds: 5 * 60 * 60,
+              },
+            ],
+            fetchedAt: Date.now(),
+          },
+        ]}
+      />,
+    );
+    await m.flush();
+    assert.match(m.text(), /22% used/);
+    assert.ok(m.query("[data-usage-totals]"), "local history still present");
+    assert.ok(m.text().includes("$2.50"), "local cost still present");
+    m.unmount();
+  });
 });

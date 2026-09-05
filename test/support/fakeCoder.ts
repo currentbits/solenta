@@ -76,6 +76,7 @@ import type {
   SimulatorStatus,
   SpeechStatus,
   UsageReport,
+  ProviderUsage,
   FleetEvidence,
   WorkLogItem,
   WorkflowTemplateInfo,
@@ -2398,6 +2399,7 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
     },
     usage: {
       byDay: () => rec("usage.byDay", [], { byDay: {}, threadsByDay: {} } as UsageReport),
+      providerLimits: () => rec("usage.providerLimits", [], [] as ProviderUsage[]),
     },
     fleet: {
       evidence: (input?: unknown) =>

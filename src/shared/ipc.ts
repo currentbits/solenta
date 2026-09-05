@@ -1247,6 +1247,33 @@ export interface UsageReport {
 }
 
 /**
+ * One provider-reported quota window (5-hour, weekly, …).
+ * usedPercent is a finite nonnegative number (overage may exceed 100).
+ * The UI bar is clamped; this field is not. `resetsAt` is epoch milliseconds.
+ * Missing windows are omitted; never synthesized as 0%.
+ */
+export interface ProviderUsageWindow {
+  label: string;
+  usedPercent: number;
+  resetsAt: number | null;
+  windowSeconds: number | null;
+}
+
+export type ProviderUsageStatus = "ok" | "unavailable" | "error";
+
+/**
+ * Account quotas for one provider CLI. Separate from the local byDay
+ * ledger: this is what the vendor reports, or an honest unavailable/error.
+ */
+export interface ProviderUsage {
+  provider: string;
+  status: ProviderUsageStatus;
+  windows: ProviderUsageWindow[];
+  fetchedAt: number | null;
+  message?: string;
+}
+
+/**
  * One pull request seen by the fleet collector (issue #375), agent-authored
  * or not. `threadId` is the join to a Solenta thread by head branch: null
  * means a human opened it, which is what makes the review-tax comparison
@@ -3582,6 +3609,11 @@ export interface CoderApi {
   usage: {
     /** Per-day usage ledger, by provider/model and by thread (90 days). */
     byDay(): Promise<UsageReport>;
+    /**
+     * Provider-reported account quotas (5-hour / weekly when the vendor
+     * exposes them). Separate from byDay; never inferred from local spend.
+     */
+    providerLimits(): Promise<ProviderUsage[]>;
   };
   insights: {
     /**

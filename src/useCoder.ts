@@ -88,6 +88,7 @@ import {
 } from "./threadPatch";
 import { parseBtwCommand } from "./btw";
 import { parseFeedbackCommand } from "./feedback";
+import type { ProviderUsage } from "./shared/ipc";
 import {
   loadBootSnapshot,
   loadCachedThreadDetail,
@@ -525,6 +526,7 @@ export interface UseCoderResult {
   listActivity: () => Promise<ActivityItem[]>;
   /** Per-day / provider / model usage ledger. */
   listUsageByDay: () => Promise<UsageReport>;
+  listProviderLimits: () => Promise<ProviderUsage[]>;
   /** Receipt for the last unattended window (issue #323). */
   listDigest: (input?: { sinceMs?: number }) => Promise<DigestResult>;
   /** Close the digest window so the next one starts now. */
@@ -2831,6 +2833,10 @@ export function useCoder(): UseCoderResult {
     return api.usage.byDay();
   }, [api]);
 
+  const listProviderLimits = useCallback(async () => {
+    return api.usage.providerLimits();
+  }, [api]);
+
   const listDigest = useCallback(async (input?: { sinceMs?: number }) => {
     return api.digest.list(input);
   }, [api]);
@@ -3430,6 +3436,7 @@ export function useCoder(): UseCoderResult {
     fetchIssue,
     listActivity,
     listUsageByDay,
+    listProviderLimits,
     listDigest,
     markDigestSeen,
     listThreadSummaries,

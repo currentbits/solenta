@@ -14,6 +14,7 @@ export type SlashAction =
   | "compact"
   | "rewind"
   | "usage"
+  | "context"
   | "model"
   | "effort"
   | "permissions"
@@ -34,8 +35,9 @@ export interface SlashCommand {
 }
 
 /**
- * Single palette, issue-table order. `/undo` and `/context` are aliases
- * listed as their own rows so muscle memory still finds them.
+ * Single palette, issue-table order. `/undo` is an alias of `/rewind`.
+ * `/usage` shows provider account quotas; `/context` opens the thread
+ * context ring. Both stay listed so muscle memory still finds them.
  */
 export const SLASH_COMMANDS: readonly SlashCommand[] = [
   {
@@ -64,7 +66,7 @@ export const SLASH_COMMANDS: readonly SlashCommand[] = [
   },
   {
     name: "/usage",
-    hint: "Open the context breakdown",
+    hint: "Show provider usage limits",
     kind: "run",
     action: "usage",
   },
@@ -72,7 +74,7 @@ export const SLASH_COMMANDS: readonly SlashCommand[] = [
     name: "/context",
     hint: "Open the context breakdown",
     kind: "run",
-    action: "usage",
+    action: "context",
   },
   {
     name: "/model",

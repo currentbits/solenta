@@ -176,6 +176,7 @@ const IPC_CHANNELS = Object.freeze([
   { ns: "threads", method: "delete" },
   { ns: "activity", method: "list" },
   { ns: "usage", method: "byDay" },
+  { ns: "usage", method: "providerLimits" },
   { ns: "insights", method: "failureModes" },
   { ns: "fleet", method: "evidence" },
   { ns: "digest", method: "list" },

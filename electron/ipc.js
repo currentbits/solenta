@@ -451,6 +451,10 @@ const IPC_HANDLERS = {
       threadsByDay: ctx.store.getUsageThreadsByDay(),
     };
   },
+  "usage:providerLimits": async () => {
+    const { fetchProviderLimits } = require("./providerUsage.js");
+    return fetchProviderLimits();
+  },
   "insights:failureModes": async (ctx) => {
     const { clusterFailureModes } = require("./failuremodes.js");
     return clusterFailureModes({

@@ -106,13 +106,17 @@ describe("matchSlashCommands", () => {
     }
   });
 
-  it("treats /undo as the rewind action and /context as usage", () => {
+  it("treats /undo as rewind, /context as context, /usage as usage", () => {
     assert.equal(
       SLASH_COMMANDS.find((c) => c.name === "/undo")?.action,
       "rewind",
     );
     assert.equal(
       SLASH_COMMANDS.find((c) => c.name === "/context")?.action,
+      "context",
+    );
+    assert.equal(
+      SLASH_COMMANDS.find((c) => c.name === "/usage")?.action,
       "usage",
     );
   });

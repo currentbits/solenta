@@ -11,12 +11,16 @@ import {
   type UsageRange,
   type UsageTotals,
 } from "../usage";
+import type { ProviderLimitsLoader } from "../providerUsage";
+import { ProviderQuotaSection } from "./ProviderQuota";
 import styles from "./UsageView.module.css";
 
 export type UsageMetric = "cost" | "tokens";
 
 export interface UsageViewProps {
   loadUsage: () => Promise<UsageReport>;
+  loadProviderLimits?: ProviderLimitsLoader;
+  quotaDemo?: boolean;
 }
 
 const EMPTY_REPORT: UsageReport = { byDay: {}, threadsByDay: {} };
@@ -89,7 +93,11 @@ function linePath(values: number[], max: number, w: number, h: number): string {
   return `M ${pts.join(" L ")}`;
 }
 
-export function UsageView({ loadUsage }: UsageViewProps) {
+export function UsageView({
+  loadUsage,
+  loadProviderLimits,
+  quotaDemo = false,
+}: UsageViewProps) {
   const [report, setReport] = useState<UsageReport>(EMPTY_REPORT);
   const [loading, setLoading] = useState(false);
   const [range, setRange] = useState<UsageRange>(7);
@@ -251,6 +259,12 @@ export function UsageView({ loadUsage }: UsageViewProps) {
           </button>
         </div>
       </header>
+
+      {loadProviderLimits ? (
+        <div className={styles.quotaBlock}>
+          <ProviderQuotaSection loadLimits={loadProviderLimits} demo={quotaDemo} />
+        </div>
+      ) : null}
 
       {loading && summary.providers.length === 0 && Object.keys(report.byDay).length === 0 ? (
         <p className={styles.hint} aria-live="polite">
