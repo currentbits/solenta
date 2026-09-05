@@ -141,7 +141,12 @@ export function CuratedSkillsSection({
       aria-label="Curated skills"
       data-skill-section="curated"
     >
-      <div className={styles.sectionLabel}>Curated skills</div>
+      <div className={styles.sectionHead}>
+        <div className={styles.sectionLabel}>
+          Curated skills
+          <span className={styles.sectionCount}>{rows.length}</span>
+        </div>
+      </div>
       {error && (
         <p className={styles.formError} role="alert">
           {catalog.length === 0 ? "Catalog unavailable" : error}
@@ -199,29 +204,31 @@ export function CuratedSkillsSection({
                     </span>
                   )}
                 </div>
-                {installed ? (
-                  <>
-                    <span className={`${styles.badge} ${styles.badgeBuiltin}`}>
-                      Installed
-                    </span>
-                    {matched && <CoverageMeter skill={matched} />}
-                    {matched && (
-                      <span className={styles.tokens} data-tokens>
-                        {formatSkillTokens(matched.bytes)}
+                <div className={styles.rowSide}>
+                  {installed ? (
+                    <>
+                      <span className={`${styles.badge} ${styles.badgeBuiltin}`}>
+                        Installed
                       </span>
-                    )}
-                  </>
-                ) : (
-                  <button
-                    type="button"
-                    className={styles.ghostBtn}
-                    disabled={busy}
-                    aria-label={`Install ${entry.name}`}
-                    onClick={() => onInstall(entry.id)}
-                  >
-                    Install
-                  </button>
-                )}
+                      {matched && <CoverageMeter skill={matched} />}
+                      {matched && (
+                        <span className={styles.tokens} data-tokens>
+                          {formatSkillTokens(matched.bytes)}
+                        </span>
+                      )}
+                    </>
+                  ) : (
+                    <button
+                      type="button"
+                      className={styles.ghostBtn}
+                      disabled={busy}
+                      aria-label={`Install ${entry.name}`}
+                      onClick={() => onInstall(entry.id)}
+                    >
+                      Install
+                    </button>
+                  )}
+                </div>
               </li>
             );
           })}
@@ -261,7 +268,10 @@ export function AddedSkillsSection({
       data-skill-section="added"
     >
       <div className={styles.sectionHead}>
-        <div className={styles.sectionLabel}>Added skills</div>
+        <div className={styles.sectionLabel}>
+          Added skills
+          <span className={styles.sectionCount}>{skills.length}</span>
+        </div>
         <button
           type="button"
           className={styles.ghostBtn}
@@ -300,49 +310,51 @@ export function AddedSkillsSection({
                     <span className={styles.rowDetail}>{skill.description}</span>
                   )}
                 </div>
-                <CoverageMeter skill={skill} />
-                <span className={styles.tokens} data-tokens>
-                  {formatSkillTokens(skill.bytes)}
-                </span>
-                {drifted && (
-                  <span className={styles.drift} data-drift>
-                    Drift
+                <div className={styles.rowSide}>
+                  <CoverageMeter skill={skill} />
+                  <span className={styles.tokens} data-tokens>
+                    {formatSkillTokens(skill.bytes)}
                   </span>
-                )}
-                {confirmRemove === key ? (
-                  <>
-                    <span id={hintId} className={styles.confirmHint}>
-                      Removes from all providers
+                  {drifted && (
+                    <span className={styles.drift} data-drift>
+                      Drift
                     </span>
-                    <button
-                      type="button"
-                      className={styles.dangerBtn}
-                      disabled={busy}
-                      aria-describedby={hintId}
-                      onClick={() => onConfirmRemove(skill)}
-                    >
-                      Confirm
-                    </button>
+                  )}
+                  {confirmRemove === key ? (
+                    <>
+                      <span id={hintId} className={styles.confirmHint}>
+                        Removes from all providers
+                      </span>
+                      <button
+                        type="button"
+                        className={styles.dangerBtn}
+                        disabled={busy}
+                        aria-describedby={hintId}
+                        onClick={() => onConfirmRemove(skill)}
+                      >
+                        Confirm
+                      </button>
+                      <button
+                        type="button"
+                        className={styles.ghostBtn}
+                        disabled={busy}
+                        onClick={() => onCancelRemove()}
+                      >
+                        Cancel
+                      </button>
+                    </>
+                  ) : (
                     <button
                       type="button"
                       className={styles.ghostBtn}
                       disabled={busy}
-                      onClick={() => onCancelRemove()}
+                      aria-label={`Remove ${skill.name}`}
+                      onClick={() => onAskRemove(key)}
                     >
-                      Cancel
+                      Remove
                     </button>
-                  </>
-                ) : (
-                  <button
-                    type="button"
-                    className={styles.ghostBtn}
-                    disabled={busy}
-                    aria-label={`Remove ${skill.name}`}
-                    onClick={() => onAskRemove(key)}
-                  >
-                    Remove
-                  </button>
-                )}
+                  )}
+                </div>
               </li>
             );
           })}
@@ -360,7 +372,12 @@ export function ProjectSkillsSection({ skills }: { skills: SkillInfo[] }) {
       aria-label="Project skills"
       data-skill-section="project"
     >
-      <div className={styles.sectionLabel}>Project skills</div>
+      <div className={styles.sectionHead}>
+        <div className={styles.sectionLabel}>
+          Project skills
+          <span className={styles.sectionCount}>{skills.length}</span>
+        </div>
+      </div>
       <ul className={styles.list}>
         {skills.map((skill) => {
           const key = `${skill.source}:${skill.name}`;
@@ -372,12 +389,14 @@ export function ProjectSkillsSection({ skills }: { skills: SkillInfo[] }) {
                   <span className={styles.rowDetail}>{skill.description}</span>
                 )}
               </div>
-              <span className={`${styles.badge} ${styles.badgeProject}`}>
-                Project
-              </span>
-              <span className={styles.tokens} data-tokens>
-                {formatSkillTokens(skill.bytes)}
-              </span>
+              <div className={styles.rowSide}>
+                <span className={`${styles.badge} ${styles.badgeProject}`}>
+                  Project
+                </span>
+                <span className={styles.tokens} data-tokens>
+                  {formatSkillTokens(skill.bytes)}
+                </span>
+              </div>
             </li>
           );
         })}
@@ -713,7 +732,12 @@ export function CuratedMcpsSection({
       aria-label="Curated MCP servers"
       data-mcp-section="curated"
     >
-      <div className={styles.sectionLabel}>Curated MCP servers</div>
+      <div className={styles.sectionHead}>
+        <div className={styles.sectionLabel}>
+          Curated MCP servers
+          <span className={styles.sectionCount}>{catalog.length}</span>
+        </div>
+      </div>
       {catalog.length === 0 ? (
         <p className={styles.empty}>No curated MCP servers</p>
       ) : (
@@ -726,21 +750,23 @@ export function CuratedMcpsSection({
                   <span className={styles.rowDetail}>{entry.description}</span>
                 )}
               </div>
-              {entry.installed ? (
-                <span className={`${styles.badge} ${styles.badgeBuiltin}`}>
-                  Installed
-                </span>
-              ) : (
-                <button
-                  type="button"
-                  className={styles.ghostBtn}
-                  disabled={busy}
-                  aria-label={`Install ${entry.name}`}
-                  onClick={() => onInstall(entry.id)}
-                >
-                  Install
-                </button>
-              )}
+              <div className={styles.rowSide}>
+                {entry.installed ? (
+                  <span className={`${styles.badge} ${styles.badgeBuiltin}`}>
+                    Installed
+                  </span>
+                ) : (
+                  <button
+                    type="button"
+                    className={styles.ghostBtn}
+                    disabled={busy}
+                    aria-label={`Install ${entry.name}`}
+                    onClick={() => onInstall(entry.id)}
+                  >
+                    Install
+                  </button>
+                )}
+              </div>
             </li>
           ))}
         </ul>
@@ -768,7 +794,12 @@ export function AddedMcpsSection({
       aria-label="Added MCP servers"
       data-mcp-section="added"
     >
-      <div className={styles.sectionLabel}>Added MCP servers</div>
+      <div className={styles.sectionHead}>
+        <div className={styles.sectionLabel}>
+          Added MCP servers
+          <span className={styles.sectionCount}>{servers.length}</span>
+        </div>
+      </div>
       {servers.length === 0 ? (
         <p className={styles.empty}>No added MCP servers</p>
       ) : (
@@ -793,41 +824,43 @@ export function AddedMcpsSection({
                     </span>
                   )}
                 </div>
-                <span className={`${styles.badge} ${styles.badgeBuiltin}`}>
-                  {mcpTransportLabel(s)}
-                </span>
-                {untrusted ? (
+                <div className={styles.rowSide}>
+                  <span className={`${styles.badge} ${styles.badgeBuiltin}`}>
+                    {mcpTransportLabel(s)}
+                  </span>
+                  {untrusted ? (
+                    <button
+                      type="button"
+                      className={styles.ghostBtn}
+                      disabled={busy}
+                      aria-label={`Trust ${s.name}`}
+                      onClick={() => onTrust(s)}
+                    >
+                      Trust
+                    </button>
+                  ) : (
+                    <label
+                      className={styles.toggle}
+                      title={s.enabled ? "Disable server" : "Enable server"}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={s.enabled}
+                        disabled={busy}
+                        aria-label={`Enable ${s.name}`}
+                        onChange={(e) => onToggle(s.name, e.target.checked)}
+                      />
+                    </label>
+                  )}
                   <button
                     type="button"
                     className={styles.ghostBtn}
                     disabled={busy}
-                    aria-label={`Trust ${s.name}`}
-                    onClick={() => onTrust(s)}
+                    onClick={() => onRemove(s.name)}
                   >
-                    Trust
+                    Remove
                   </button>
-                ) : (
-                  <label
-                    className={styles.toggle}
-                    title={s.enabled ? "Disable server" : "Enable server"}
-                  >
-                    <input
-                      type="checkbox"
-                      checked={s.enabled}
-                      disabled={busy}
-                      aria-label={`Enable ${s.name}`}
-                      onChange={(e) => onToggle(s.name, e.target.checked)}
-                    />
-                  </label>
-                )}
-                <button
-                  type="button"
-                  className={styles.ghostBtn}
-                  disabled={busy}
-                  onClick={() => onRemove(s.name)}
-                >
-                  Remove
-                </button>
+                </div>
               </li>
             );
           })}

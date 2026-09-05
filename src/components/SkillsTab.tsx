@@ -911,7 +911,12 @@ function McpServersSection({
   const added = mcpServers.filter((s) => s.provenance !== "curated");
   return (
     <section className={styles.section} aria-label="MCP servers">
-      <div className={styles.sectionLabel}>Built-in MCP servers</div>
+      <div className={styles.sectionHead}>
+        <div className={styles.sectionLabel}>
+          Built-in MCP servers
+          <span className={styles.sectionCount}>{BUILTIN_MCPS.length}</span>
+        </div>
+      </div>
       <ul className={styles.list}>
         {BUILTIN_MCPS.map((s) => (
           <li key={s.name} className={styles.row}>
@@ -919,9 +924,11 @@ function McpServersSection({
               <span className={styles.rowName}>{s.name}</span>
               <span className={styles.rowDetail}>{s.blurb}</span>
             </div>
-            <span className={`${styles.badge} ${styles.badgeBuiltin}`}>
-              Built-in
-            </span>
+            <div className={styles.rowSide}>
+              <span className={`${styles.badge} ${styles.badgeBuiltin}`}>
+                Built-in
+              </span>
+            </div>
           </li>
         ))}
       </ul>
