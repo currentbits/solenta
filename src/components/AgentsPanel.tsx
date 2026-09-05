@@ -5,6 +5,8 @@ import {
   useMemo,
   useRef,
   useState,
+  type DragEvent as ReactDragEvent,
+  type KeyboardEvent as ReactKeyboardEvent,
   type ReactNode,
 } from "react";
 import type {
@@ -83,6 +85,16 @@ import {
   setComposerVimEnabled,
   useComposerVimEnabled,
 } from "../uiPrefs";
+import {
+  ENV_SECTION_LABELS,
+  isDefaultEnvSectionOrder,
+  moveEnvSection,
+  moveEnvSectionAmong,
+  resetEnvSectionOrder,
+  setEnvSectionOrder,
+  useEnvSectionOrder,
+  type EnvSectionId,
+} from "../envSectionOrder";
 import styles from "./AgentsPanel.module.css";
 
 type PanelTab = "agents" | "git" | "memory" | "skills" | "pulse";
@@ -1174,7 +1186,7 @@ export function LocalServersCard({
           <rect x="3" y="9" width="10" height="4" rx="1" />
           <path d="M5.5 5h.01M5.5 11h.01" />
         </svg>
-        Local Servers
+        Local servers
         <span className={styles.serverCount} data-local-servers-count="">
           {servers.length}
         </span>
@@ -1502,6 +1514,167 @@ function RecapCard({
   );
 }
 
+const ENV_DRAG_MIME = "application/x-solenta-env-section";
+const ENV_REORDER_HELP_ID = "env-reorder-help";
+
+/** jsdom's DataTransfer is incomplete; keep the source id across the gesture. */
+let draggingEnvId: string | null = null;
+
+function isEnvDrag(dt: DataTransfer | null | undefined): boolean {
+  if (draggingEnvId) return true;
+  if (!dt) return false;
+  try {
+    return Array.from(dt.types).includes(ENV_DRAG_MIME);
+  } catch {
+    return false;
+  }
+}
+
+function dropEdgeFor(e: ReactDragEvent<HTMLElement>): "before" | "after" {
+  const rect = e.currentTarget.getBoundingClientRect();
+  if (!rect.height) return "before";
+  return e.clientY > rect.top + rect.height / 2 ? "after" : "before";
+}
+
+function visibleEnvSectionIds(
+  root: HTMLElement | null,
+  order: readonly string[],
+): string[] {
+  if (!root) return [...order];
+  return order.filter((id) => {
+    const section = root.querySelector(`[data-env-section="${id}"]`);
+    const body = section?.querySelector("[data-env-body]");
+    return Boolean(body && body.childElementCount > 0);
+  });
+}
+
+function EnvSection({
+  id,
+  label,
+  dropEdge,
+  dragging,
+  children,
+  onHighlight,
+  onDropped,
+  onKeyboardMove,
+  onDragHandleStart,
+  onDragHandleEnd,
+}: {
+  id: string;
+  label: string;
+  dropEdge: "before" | "after" | null;
+  dragging: boolean;
+  children: ReactNode;
+  onHighlight: (id: string | null, edge: "before" | "after" | null) => void;
+  onDropped: (fromId: string, targetId: string, edge: "before" | "after") => void;
+  onKeyboardMove: (id: string, dir: -1 | 1) => void;
+  onDragHandleStart: (id: string) => void;
+  onDragHandleEnd: () => void;
+}) {
+  if (children == null) return null;
+
+  const onDragOver = (e: ReactDragEvent<HTMLDivElement>) => {
+    if (!isEnvDrag(e.dataTransfer) || draggingEnvId === id) return;
+    e.preventDefault();
+    if (e.dataTransfer) e.dataTransfer.dropEffect = "move";
+    onHighlight(id, dropEdgeFor(e));
+  };
+
+  const onDragLeave = (e: ReactDragEvent<HTMLDivElement>) => {
+    const next = e.relatedTarget;
+    if (next instanceof Node && e.currentTarget.contains(next)) return;
+    onHighlight(null, null);
+  };
+
+  const onDrop = (e: ReactDragEvent<HTMLDivElement>) => {
+    if (!isEnvDrag(e.dataTransfer)) return;
+    e.preventDefault();
+    const fromId = draggingEnvId;
+    draggingEnvId = null;
+    onHighlight(null, null);
+    if (!fromId || fromId === id) return;
+    onDropped(fromId, id, dropEdgeFor(e));
+  };
+
+  const onHandleDragStart = (e: ReactDragEvent<HTMLButtonElement>) => {
+    draggingEnvId = id;
+    onDragHandleStart(id);
+    if (!e.dataTransfer) return;
+    e.dataTransfer.effectAllowed = "move";
+    try {
+      e.dataTransfer.setData(ENV_DRAG_MIME, id);
+    } catch {
+      // jsdom
+    }
+    const row = e.currentTarget.closest("[data-env-section]");
+    if (row instanceof HTMLElement) {
+      try {
+        e.dataTransfer.setDragImage(row, 16, 12);
+      } catch {
+        // jsdom / unsupported
+      }
+    }
+  };
+
+  const onHandleKeyDown = (e: ReactKeyboardEvent<HTMLButtonElement>) => {
+    if (!e.altKey) return;
+    if (e.key === "ArrowUp") {
+      e.preventDefault();
+      onKeyboardMove(id, -1);
+    } else if (e.key === "ArrowDown") {
+      e.preventDefault();
+      onKeyboardMove(id, 1);
+    }
+  };
+
+  return (
+    <div
+      className={styles.envSection}
+      data-env-section={id}
+      data-drop={dropEdge ?? undefined}
+      data-dragging={dragging ? "true" : undefined}
+      onDragOver={onDragOver}
+      onDragLeave={onDragLeave}
+      onDrop={onDrop}
+    >
+      <button
+        type="button"
+        className={styles.envGrip}
+        data-env-grip=""
+        draggable
+        aria-label={`Reorder ${label}`}
+        aria-describedby={ENV_REORDER_HELP_ID}
+        aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown"
+        title="Drag to reorder"
+        onDragStart={onHandleDragStart}
+        onDragEnd={() => {
+          draggingEnvId = null;
+          onDragHandleEnd();
+        }}
+        onKeyDown={onHandleKeyDown}
+      >
+        <svg
+          width="10"
+          height="16"
+          viewBox="0 0 10 16"
+          fill="currentColor"
+          aria-hidden="true"
+        >
+          <circle cx="3" cy="3" r="1.15" />
+          <circle cx="7" cy="3" r="1.15" />
+          <circle cx="3" cy="8" r="1.15" />
+          <circle cx="7" cy="8" r="1.15" />
+          <circle cx="3" cy="13" r="1.15" />
+          <circle cx="7" cy="13" r="1.15" />
+        </svg>
+      </button>
+      <div className={styles.envBody} data-env-body="">
+        {children}
+      </div>
+    </div>
+  );
+}
+
 /** Byte-equal to electron/worktrees.js restoreCheckpoint run-active guard. */
 const RESTORE_ACTIVE_TITLE =
   "Cannot restore a checkpoint while a run is active";
@@ -1674,6 +1847,14 @@ export function GitTab({
   const [now, setNow] = useState(() => Date.now());
   const [sync, setSync] = useState<GitSyncInfo | null>(null);
   const [syncing, setSyncing] = useState(false);
+  const order = useEnvSectionOrder();
+  const listRef = useRef<HTMLDivElement>(null);
+  const [dropHint, setDropHint] = useState<{
+    id: string;
+    edge: "before" | "after";
+  } | null>(null);
+  const [draggingId, setDraggingId] = useState<string | null>(null);
+  const [liveMsg, setLiveMsg] = useState("");
 
   const isWorking = thread?.status === "working";
 
@@ -1791,36 +1972,50 @@ export function GitTab({
     }
   };
 
-  return (
-    <>
-      <div className={styles.scroll}>
-        <ScmCard project={project} />
-        <RepositoryCard threadId={thread?.id ?? null} gitRepoInfo={gitRepoInfo} />
-        {onOpenPrs && (
-          <PullRequestsCard active={Boolean(prsActive)} onOpen={onOpenPrs} />
-        )}
+  const remote = Boolean(project?.remoteHost);
+  const defaultOrder = isDefaultEnvSectionOrder(order);
+
+  const sectionNodes = useMemo<Record<EnvSectionId, ReactNode>>(
+    () => ({
+      scm:
+        project?.scm?.kind === "jj" ? <ScmCard project={project} /> : null,
+      repository: (
+        <RepositoryCard
+          threadId={thread?.id ?? null}
+          gitRepoInfo={gitRepoInfo}
+        />
+      ),
+      pullRequests: onOpenPrs ? (
+        <PullRequestsCard active={Boolean(prsActive)} onOpen={onOpenPrs} />
+      ) : null,
+      recap: thread ? (
         <RecapCard thread={thread} listThreadSummaries={listThreadSummaries} />
-        {onFork && (
-          <ForkCard thread={thread} providers={providers} onFork={onFork} />
-        )}
+      ) : null,
+      fork: onFork ? (
+        <ForkCard thread={thread} providers={providers} onFork={onFork} />
+      ) : null,
+      changes: (
         <ChangesCard
           hasThread={Boolean(thread)}
           onViewChanges={onViewChanges}
         />
-        <DisplayPrefsCard />
-        {project?.remoteHost ? (
-          <section className={styles.gitCard} data-remote-unavailable="">
-            <div className={styles.gitCardLabel}>
-              <svg {...LABEL_ICON_PROPS} className={styles.labelIcon}>
-                <path d="M5 12.5h6a3 3 0 0 0 .6-5.9A4.2 4.2 0 0 0 3.6 8 2.6 2.6 0 0 0 5 12.5Z" />
-              </svg>
-              Remote
-            </div>
-            <p className={styles.gitHint}>Not available on remote projects</p>
-          </section>
-        ) : (
-          <>
+      ),
+      display: <DisplayPrefsCard />,
+      remote: remote ? (
+        <section className={styles.gitCard} data-remote-unavailable="">
+          <div className={styles.gitCardLabel}>
+            <svg {...LABEL_ICON_PROPS} className={styles.labelIcon}>
+              <path d="M5 12.5h6a3 3 0 0 0 .6-5.9A4.2 4.2 0 0 0 3.6 8 2.6 2.6 0 0 0 5 12.5Z" />
+            </svg>
+            Remote
+          </div>
+          <p className={styles.gitHint}>Not available on remote projects</p>
+        </section>
+      ) : null,
+      pull: remote ? null : (
         <PullCard threadId={thread?.id ?? null} gitPull={gitPull} />
+      ),
+      devServer: remote ? null : (
         <DevServerCard
           threadId={thread?.id ?? null}
           listDevScripts={listDevScripts}
@@ -1828,17 +2023,22 @@ export function GitTab({
           stopDevServer={stopDevServer}
           devServerStatus={devServerStatus}
         />
-        {setVerifyCommand && runVerify && (
+      ),
+      verify:
+        remote || !setVerifyCommand || !runVerify ? null : (
           <VerifyCard
             thread={thread}
             setVerifyCommand={setVerifyCommand}
             runVerify={runVerify}
           />
-        )}
+        ),
+      localServers: remote ? null : (
         <LocalServersCard
           threadId={thread?.id ?? null}
           listLocalServers={listLocalServers}
         />
+      ),
+      editor: remote ? null : (
         <EditorCard
           hasThread={Boolean(thread)}
           onReveal={() => {
@@ -1850,6 +2050,8 @@ export function GitTab({
             void openInEditor?.();
           }}
         />
+      ),
+      checkpoints: remote ? null : (
         <CheckpointsCard
           thread={thread}
           checkpoints={checkpoints}
@@ -1865,8 +2067,138 @@ export function GitTab({
           onDismissError={() => setCheckpointError(null)}
           now={now}
         />
-          </>
-        )}
+      ),
+    }),
+    [
+      checkpointError,
+      checkpoints,
+      checkpointsLoading,
+      gitPull,
+      gitRepoInfo,
+      isWorking,
+      listDevScripts,
+      listLocalServers,
+      listThreadSummaries,
+      now,
+      onFork,
+      onOpenPrs,
+      onViewChanges,
+      openInEditor,
+      project,
+      providers,
+      prsActive,
+      remote,
+      restorePending,
+      revealInFinder,
+      runVerify,
+      setVerifyCommand,
+      startDevServer,
+      stopDevServer,
+      thread,
+      devServerStatus,
+    ],
+  );
+
+  const highlight = useCallback(
+    (id: string | null, edge: "before" | "after" | null) => {
+      if (!id || !edge) {
+        setDropHint(null);
+        return;
+      }
+      setDropHint((prev) =>
+        prev?.id === id && prev.edge === edge ? prev : { id, edge },
+      );
+    },
+    [],
+  );
+
+  const applyOrder = useCallback((next: string[], message: string) => {
+    setEnvSectionOrder(next);
+    setLiveMsg(message);
+  }, []);
+
+  const onDropped = useCallback(
+    (fromId: string, targetId: string, edge: "before" | "after") => {
+      const next = moveEnvSection(order, fromId, targetId, edge);
+      const label = ENV_SECTION_LABELS[fromId as EnvSectionId] ?? fromId;
+      applyOrder(next, `${label} moved`);
+      setDraggingId(null);
+    },
+    [applyOrder, order],
+  );
+
+  const onKeyboardMove = useCallback(
+    (id: string, dir: -1 | 1) => {
+      const visible = visibleEnvSectionIds(listRef.current, order);
+      const next = moveEnvSectionAmong(order, visible, id, dir);
+      const label = ENV_SECTION_LABELS[id as EnvSectionId] ?? id;
+      if (!next) {
+        setLiveMsg(
+          dir < 0 ? `${label} is already at the top` : `${label} is already at the bottom`,
+        );
+        return;
+      }
+      applyOrder(next, dir < 0 ? `${label} moved up` : `${label} moved down`);
+      requestAnimationFrame(() => {
+        const handle = listRef.current?.querySelector(
+          `[data-env-section="${id}"] [data-env-grip]`,
+        );
+        if (handle instanceof HTMLElement) handle.focus();
+      });
+    },
+    [applyOrder, order],
+  );
+
+  return (
+    <>
+      <div className={`${styles.scroll} ${styles.envScroll}`} data-env-tools="">
+        <div className={styles.envToolbar}>
+          <p className={styles.envHint}>Drag to reorder</p>
+          <button
+            type="button"
+            className={styles.envReset}
+            data-env-reset=""
+            disabled={defaultOrder}
+            onClick={() => {
+              resetEnvSectionOrder();
+              setLiveMsg("Order reset to default");
+            }}
+          >
+            Reset order
+          </button>
+        </div>
+        <p className={styles.envSrOnly} id={ENV_REORDER_HELP_ID}>
+          Drag a section handle to reorder, or focus a handle and press
+          Alt+Arrow Up or Alt+Arrow Down.
+        </p>
+        <div className={styles.envList} data-env-list="" ref={listRef}>
+          {order.map((id) => (
+            <EnvSection
+              key={id}
+              id={id}
+              label={ENV_SECTION_LABELS[id as EnvSectionId] ?? id}
+              dropEdge={dropHint?.id === id ? dropHint.edge : null}
+              dragging={draggingId === id}
+              onHighlight={highlight}
+              onDropped={onDropped}
+              onKeyboardMove={onKeyboardMove}
+              onDragHandleStart={setDraggingId}
+              onDragHandleEnd={() => {
+                setDraggingId(null);
+                setDropHint(null);
+              }}
+            >
+              {sectionNodes[id as EnvSectionId] ?? null}
+            </EnvSection>
+          ))}
+        </div>
+        <div
+          className={styles.envSrOnly}
+          aria-live="polite"
+          data-env-live=""
+        >
+          {liveMsg}
+        </div>
       </div>
       <footer className={styles.gitStatus} data-git-status="">
         <span className={styles.gitStatusLine} title={statusLine}>
