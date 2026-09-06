@@ -106,11 +106,13 @@ describe("crew notices (issue #277)", () => {
     assert.equal(runner.deliverNotice({ threadId: thread.id, line }), undefined);
 
     await waitFor(() => userTexts(store, thread.id).length > 0);
-    const text = userTexts(store, thread.id)[0];
+    const users = (store.getMessages(thread.id) || []).filter((m) => m.role === "user");
+    const text = users[0].text;
     assert.match(text, /\[peer from w1 \("backend"\)\]/);
     assert.match(text, /contract\.md/);
     assert.match(text, /Continue orchestrating; thread_status has full details\./);
     assert.doesNotMatch(text, /\[orchestration\] \[peer/);
+    assert.equal(users[0].fromNotice, true);
     await waitFor(() => {
       const t = store.getThread(thread.id);
       return t && t.status === "done";
@@ -131,10 +133,12 @@ describe("crew notices (issue #277)", () => {
     await waitFor(() =>
       userTexts(store, thread.id).some((t) => t.includes("[peer from w2")),
     );
-    const users = userTexts(store, thread.id);
-    assert.equal(users[0], "busy working");
-    assert.match(users[1], /\[peer from w2 \("frontend"\)\] unblocked/);
-    assert.match(users[1], /Continue orchestrating/);
+    const users = (store.getMessages(thread.id) || []).filter((m) => m.role === "user");
+    assert.equal(users[0].text, "busy working");
+    assert.equal(users[0].fromNotice, undefined);
+    assert.match(users[1].text, /\[peer from w2 \("frontend"\)\] unblocked/);
+    assert.match(users[1].text, /Continue orchestrating/);
+    assert.equal(users[1].fromNotice, true);
   });
 
   it("refuses delivery at CREW_AUTO_TURN_CAP and a user turn resets the counter", async () => {
@@ -190,6 +194,7 @@ describe("crew notices (issue #277)", () => {
       assert.match(last.text, /\[peer from w \("t"\)\] one too many/);
       assert.match(last.text, /Not delivered: Crew auto-turn cap reached \(25/);
       assert.match(last.text, /A human turn resets it/);
+      assert.equal(last.fromNotice, true);
       assert.equal(store.getThread(thread.id).lastError.includes("auto-turn cap"), true);
       const usersBefore = userTexts(store, thread.id).length;
 
@@ -213,6 +218,42 @@ describe("crew notices (issue #277)", () => {
     } finally {
       manual.stopAll();
     }
+  });
+
+  it("Retry after raising the daily cap re-delivers the parked notice as fromNotice (#951 / #955)", async () => {
+    const thread = store.getThreads()[0];
+    await runner.startRun({ threadId: thread.id, prompt: "look at the app" });
+    await waitFor(() => store.getThread(thread.id).status === "done");
+
+    services.setSettings(store, { dailyBudgetUsd: 0.01 });
+    store.recordSpend(1);
+    store.saveNow();
+    runner.deliverNotice({
+      threadId: thread.id,
+      line: `[peer from w ("backend")] worker finished`,
+    });
+    await waitFor(() => store.getThread(thread.id).status === "failed");
+    const last = (store.getMessages(thread.id) || []).at(-1);
+    assert.equal(last.role, "event");
+    assert.equal(last.fromNotice, true);
+    assert.match(last.text, /Not delivered: Daily budget reached/);
+    const notice = String(last.text).split(/\n\nNot delivered:/)[0];
+    assert.match(notice, /worker finished/);
+
+    services.setSettings(store, { dailyBudgetUsd: null });
+    await runner.startRun({
+      threadId: thread.id,
+      prompt: notice,
+      fromNotice: true,
+    });
+    await waitFor(() =>
+      userTexts(store, thread.id).some((t) => t.includes("worker finished")),
+    );
+    const users = (store.getMessages(thread.id) || []).filter((m) => m.role === "user");
+    assert.equal(users[0].text, "look at the app");
+    assert.equal(users[0].fromNotice, undefined);
+    assert.match(users[users.length - 1].text, /\[peer from w \("backend"\)\] worker finished/);
+    assert.equal(users[users.length - 1].fromNotice, true);
   });
 
   it("a failed run releases the crew-task claim", async () => {

@@ -1083,6 +1083,60 @@ function normalizePendingPlan(value) {
   };
 }
 
+/**
+ * Frozen pre-#955 noticePrompt last line. Retry classifies by the
+ * persisted fromNotice flag (#955); this string is only the one-shot
+ * backfill heuristic for transcripts written before that flag existed
+ * (#957). Do not import this into src/retryTurn.ts.
+ */
+const LEGACY_NOTICE_FOOTER =
+  "Continue orchestrating; thread_status has full details.";
+const NOT_DELIVERED_SPLIT = /\n\nNot delivered:\s*/i;
+
+/**
+ * True when `text` matches a flushOrchNotices noticePrompt body: headed
+ * with `[` and ending with the historical footer. Verify-fix prompts
+ * start with `[verification failed]` and do not end with that footer.
+ * @param {unknown} text
+ * @returns {boolean}
+ */
+function isLegacyOrchNoticeText(text) {
+  if (typeof text !== "string" || !text) return false;
+  const suffix = "\n" + LEGACY_NOTICE_FOOTER;
+  if (!text.endsWith(suffix)) return false;
+  return text.includes("[");
+}
+
+/**
+ * Set fromNotice on stored user rows and undeliverable events that look
+ * like pre-flag flushOrchNotices output. Mutates in place. Skips
+ * already-flagged rows and verify-fix "Not delivered" events.
+ * @param {object[]} messages
+ * @returns {boolean} true when any row was updated
+ */
+function backfillFromNotice(messages) {
+  if (!Array.isArray(messages)) return false;
+  let changed = false;
+  for (const m of messages) {
+    if (!m || typeof m !== "object") continue;
+    if (m.fromNotice === true) continue;
+    if (m.role === "user" && isLegacyOrchNoticeText(m.text)) {
+      m.fromNotice = true;
+      changed = true;
+      continue;
+    }
+    if (m.role === "event" && typeof m.text === "string") {
+      const idx = m.text.search(NOT_DELIVERED_SPLIT);
+      if (idx < 0) continue;
+      if (isLegacyOrchNoticeText(m.text.slice(0, idx))) {
+        m.fromNotice = true;
+        changed = true;
+      }
+    }
+  }
+  return changed;
+}
+
 function migrateThread(t) {
   if (!t || typeof t !== "object") return t;
   const next = {
@@ -1435,6 +1489,13 @@ class Store {
     this._messagesHydrated = hydrated;
     this._messagesLazy = lazy;
     this._attachMessagesProxy(data);
+    for (const id of Object.keys(this._messagesHydrated)) {
+      const list = this._messagesHydrated[id];
+      if (Array.isArray(list) && backfillFromNotice(list)) {
+        this._markMessagesDirty(id);
+        this.markDirty();
+      }
+    }
   }
 
   /**
@@ -1886,6 +1947,13 @@ class Store {
       val = [];
     }
     if (!Array.isArray(val)) val = [];
+    if (backfillFromNotice(val)) {
+      this._markMessagesDirty(threadId);
+      this.markDirty();
+      // Constructor assigns this.data from _load(); save during load would
+      // stringify before that assignment. Persist now only when already live.
+      if (this.data) this.save();
+    }
     this._messagesHydrated[threadId] = val;
     this._messagesRaw.delete(threadId);
     return val;
@@ -2012,6 +2080,7 @@ class Store {
       data,
       useLazy && split ? split.lastAssistants : null,
     );
+    if (this._dirtyMessageIds.size > 0) this._recoveredOnLoad = true;
     return data;
   }
 
@@ -3399,6 +3468,7 @@ module.exports = {
   DEFAULT_WORKTREE_RETENTION,
   migrateProject,
   migrateThread,
+  backfillFromNotice,
   migrateAutomation,
   STANDARD_TEMPLATE,
   cloneStandardTemplate,

@@ -1064,6 +1064,14 @@ export interface ChatMessage {
    * Thinking card.
    */
   thinking?: boolean;
+  /**
+   * Machine-delivered orchestration notice (#951 / #955). Set on the user
+   * row startRun appends for a fromNotice turn, and on the undeliverable
+   * event when flushOrchNotices parks that notice. Retry reads this flag
+   * rather than matching noticePrompt footer text. Verify-fix
+   * "Not delivered" events stay unset so they remain human retries.
+   */
+  fromNotice?: boolean;
 }
 
 /** Cumulative session usage across turns of a thread. */
@@ -3662,6 +3670,12 @@ export interface CoderApi {
       threadId: string;
       prompt: string;
       attachments?: AttachmentInfo[];
+      /**
+       * Machine-delivered orchestration notice (#951 / #955). Retry of a
+       * failed or undeliverable fromNotice turn must pass this so the run
+       * does not reset the auto-turn cap or look like a new human prompt.
+       */
+      fromNotice?: boolean;
     }): Promise<{ runId: string }>;
     /**
      * Starts an orchestrated multi-phase workflow run (the Build action)

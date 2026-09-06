@@ -111,8 +111,9 @@ import {
   failedWorkflowRetryAgentId,
   isWorkflowLastRun,
   lastUserMessage,
+  retryActionTitle,
   retryAnchorEventId,
-  retryButtonTitle,
+  retryTarget,
 } from "../retryTurn";
 import {
   isEditableUserMessage,
@@ -436,6 +437,7 @@ interface ThreadViewProps {
     prompt: string,
     threadId?: string,
     attachments?: AttachmentInfo[],
+    opts?: { fromNotice?: boolean },
   ) => void | Promise<void>;
   /**
    * Edit-and-resubmit (#254): rewind to just before messageId, then start
@@ -4832,9 +4834,9 @@ export const ThreadView = memo(function ThreadView({
         : undefined,
   });
 
-  /** Last user text + event card id that carries the Retry turn control. */
-  const retryUser = useMemo(
-    () => (detail ? lastUserMessage(detail.messages) : null),
+  /** Prompt Retry turn will re-send, plus the event card that carries it. */
+  const retrySend = useMemo(
+    () => (detail ? retryTarget(detail.messages) : null),
     [detail],
   );
   const retryEventId = useMemo(
@@ -4894,8 +4896,8 @@ export const ThreadView = memo(function ThreadView({
     return last?.role === "event" && !last.thinking ? last.id : null;
   }, [detail]);
   const retryTitle = useMemo(
-    () => (retryUser ? retryButtonTitle(retryUser.text) : ""),
-    [retryUser],
+    () => (retrySend ? retryActionTitle(retrySend) : ""),
+    [retrySend],
   );
   const handleRetry = useCallback(() => {
     if (isWorking) return;
@@ -4903,10 +4905,15 @@ export const ThreadView = memo(function ThreadView({
       if (onRetryWorkflowAgent) void onRetryWorkflowAgent(workflowRetryAgentId);
       return;
     }
-    if (!retryUser) return;
-    void onStartRun(retryUser.text, undefined, retryUser.attachments);
+    if (!retrySend) return;
+    void onStartRun(
+      retrySend.text,
+      undefined,
+      retrySend.attachments,
+      retrySend.fromNotice ? { fromNotice: true } : undefined,
+    );
   }, [
-    retryUser,
+    retrySend,
     isWorking,
     onStartRun,
     workflowRetryAgentId,

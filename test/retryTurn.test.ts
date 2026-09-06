@@ -10,8 +10,10 @@ import {
   isInterruptEvent,
   lastEventMessage,
   lastUserMessage,
+  retryActionTitle,
   retryAnchorEventId,
   retryButtonTitle,
+  retryTarget,
 } from "../src/retryTurn";
 
 function m(
@@ -25,6 +27,8 @@ function m(
     runId: over.runId ?? null,
     tool: over.tool,
     thinking: over.thinking,
+    attachments: over.attachments,
+    fromNotice: over.fromNotice,
   };
 }
 
@@ -350,6 +354,159 @@ describe("retryButtonTitle", () => {
     const text = `${"a".repeat(59)}\u{1F680}extra`;
     const title = retryButtonTitle(text);
     assert.equal(title, `Retry: ${"a".repeat(59)}\u{1F680}…`);
+  });
+});
+
+/**
+ * Deliberately NOT the live noticePrompt footer. Tests that classify by
+ * this string would pass a footer-match Retry even after the runner copy
+ * changed; #955 requires the persisted fromNotice flag instead.
+ */
+const RENAMED_FOOTER = "Continue the crew; see thread_status for details.";
+const OLD_NOTICE_FOOTER =
+  "Continue orchestrating; thread_status has full details.";
+
+function renamedNotice(workerId = "w-1"): string {
+  return (
+    `[orchestration] Worker thread ${workerId} ("backend") finished with status done. Last reply: API is in contract.md\n` +
+    RENAMED_FOOTER
+  );
+}
+
+function oldFooterNotice(workerId = "w-old"): string {
+  return (
+    `[orchestration] Worker thread ${workerId} ("backend") finished with status done. Last reply: API is in contract.md\n` +
+    OLD_NOTICE_FOOTER
+  );
+}
+
+describe("retryTarget (#951 / #955 flag, not footer text)", () => {
+  it("fromNotice user row retries as a machine turn even when the footer was renamed", () => {
+    const notice = renamedNotice("w-lock");
+    const msgs = [
+      m({ id: "u1", role: "user", text: "look at the app" }),
+      m({ id: "a1", role: "assistant", text: "forked a worker" }),
+      m({ id: "u-notice", role: "user", text: notice, fromNotice: true }),
+      m({
+        id: "e1",
+        role: "event",
+        text: "Run error: exit 1\nthread-store already has an active writer",
+      }),
+    ];
+    const target = retryTarget(msgs);
+    assert.ok(target);
+    assert.equal(target.fromNotice, true);
+    assert.equal(target.text, notice);
+    assert.equal(retryActionTitle(target), "Retry: continue orchestrating");
+    assert.equal(retryAnchorEventId("failed", msgs), "e1");
+  });
+
+  it("does not treat a last user row as fromNotice just because it contains the old footer", () => {
+    const notice = oldFooterNotice();
+    const msgs = [
+      m({ id: "u1", role: "user", text: "look at the app" }),
+      m({ id: "u-notice", role: "user", text: notice }),
+      m({ id: "e1", role: "event", text: "Run error: exit 1" }),
+    ];
+    const target = retryTarget(msgs);
+    assert.ok(target);
+    assert.equal(target.fromNotice, false);
+    assert.equal(target.text, notice);
+    assert.equal(retryActionTitle(target), retryButtonTitle(notice));
+  });
+
+  it("undeliverable fromNotice event re-delivers the parked prompt even with a renamed footer", () => {
+    const notice = renamedNotice("w-budget");
+    const msgs = [
+      m({ id: "u1", role: "user", text: "look at the app" }),
+      m({ id: "a1", role: "assistant", text: "forked a worker" }),
+      m({
+        id: "e1",
+        role: "event",
+        text: `${notice}\n\nNot delivered: Daily budget reached ($1.00 of $1.00). Raise or clear the cap in Settings.`,
+        fromNotice: true,
+      }),
+    ];
+    const target = retryTarget(msgs);
+    assert.ok(target);
+    assert.equal(target.fromNotice, true);
+    assert.equal(target.text, notice);
+    assert.equal(retryActionTitle(target), "Retry: continue orchestrating");
+    assert.equal(lastUserMessage(msgs)?.text, "look at the app");
+    assert.equal(retryAnchorEventId("failed", msgs), "e1");
+  });
+
+  it("does not treat a Not delivered event as a notice without the fromNotice flag", () => {
+    const notice = oldFooterNotice();
+    const msgs = [
+      m({ id: "u1", role: "user", text: "look at the app" }),
+      m({
+        id: "e1",
+        role: "event",
+        text: `${notice}\n\nNot delivered: Daily budget reached`,
+      }),
+    ];
+    const target = retryTarget(msgs);
+    assert.ok(target);
+    assert.equal(target.fromNotice, false);
+    assert.equal(target.text, "look at the app");
+  });
+
+  it("does not treat a verify-fix Not delivered event as an orchestration notice", () => {
+    const fixPrompt = "Fix the failing verify command:\nnpm test";
+    const msgs = [
+      m({ id: "u1", role: "user", text: "implement login" }),
+      m({
+        id: "e1",
+        role: "event",
+        text: `${fixPrompt}\n\nNot delivered: Daily budget reached`,
+      }),
+    ];
+    const target = retryTarget(msgs);
+    assert.ok(target);
+    assert.equal(target.fromNotice, false);
+    assert.equal(target.text, "implement login");
+  });
+
+  it("a later human prompt still retries that human prompt", () => {
+    const msgs = [
+      m({ id: "u1", role: "user", text: "look at the app" }),
+      m({
+        id: "u-notice",
+        role: "user",
+        text: renamedNotice(),
+        fromNotice: true,
+      }),
+      m({ id: "a1", role: "assistant", text: "continued" }),
+      m({ id: "u2", role: "user", text: "now fix the sidebar chip" }),
+      m({ id: "e1", role: "event", text: "Run error: exit 1" }),
+    ];
+    const target = retryTarget(msgs);
+    assert.ok(target);
+    assert.equal(target.fromNotice, false);
+    assert.equal(target.text, "now fix the sidebar chip");
+    assert.equal(
+      retryActionTitle(target),
+      "Retry: now fix the sidebar chip",
+    );
+  });
+
+  it("anchors Retry on an undeliverable fromNotice event even with no user row", () => {
+    const notice = renamedNotice();
+    const msgs = [
+      m({
+        id: "e1",
+        role: "event",
+        text: `${notice}\n\nNot delivered: Crew auto-turn cap reached (25 consecutive machine-delivered turns). A human turn resets it.`,
+        fromNotice: true,
+      }),
+    ];
+    assert.equal(lastUserMessage(msgs), null);
+    assert.equal(retryAnchorEventId("failed", msgs), "e1");
+    const target = retryTarget(msgs);
+    assert.ok(target);
+    assert.equal(target.fromNotice, true);
+    assert.equal(target.text, notice);
   });
 });
 

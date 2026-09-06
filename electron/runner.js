@@ -1204,7 +1204,7 @@ function createRunner(opts) {
       // notification (issue #34). A quiet event alone reads as "still going".
       try {
         const reason = err && err.message ? String(err.message) : String(err);
-        appendMessage(threadId, "event", `${prompt}\n\nNot delivered: ${reason}`);
+        appendMessage(threadId, "event", `${prompt}\n\nNot delivered: ${reason}`, null, null, null, { fromNotice: true });
         // A run that raced in after the active guard above owns the status;
         // only an idle orchestrator is really stalled.
         if (!active.has(threadId)) {
@@ -2498,7 +2498,7 @@ function createRunner(opts) {
    * @param {string | null} [runId]
    * @param {object | null} [tool]
    * @param {{ kind: string, path: string, name: string }[] | null} [attachments]
-   * @param {{ fromThread?: { id: string, title?: string } | null, thinking?: boolean }} [extra]
+   * @param {{ fromThread?: { id: string, title?: string } | null, thinking?: boolean, fromNotice?: boolean }} [extra]
    */
   function appendMessage(
     threadId,
@@ -2509,7 +2509,7 @@ function createRunner(opts) {
     attachments = null,
     extra = null,
   ) {
-    /** @type {{ id: string, role: string, text: string, createdAt: number, runId?: string, tool?: object, attachments?: object[], fromThread?: { id: string, title: string }, thinking?: boolean }} */
+    /** @type {{ id: string, role: string, text: string, createdAt: number, runId?: string, tool?: object, attachments?: object[], fromThread?: { id: string, title: string }, thinking?: boolean, fromNotice?: boolean }} */
     const msg = {
       id: randomUUID(),
       role,
@@ -2520,6 +2520,7 @@ function createRunner(opts) {
     if (tool) msg.tool = tool;
     if (attachments && attachments.length) msg.attachments = attachments;
     if (extra && extra.thinking) msg.thinking = true;
+    if (extra && extra.fromNotice === true) msg.fromNotice = true;
     if (extra && extra.fromThread && extra.fromThread.id) {
       msg.fromThread = {
         id: String(extra.fromThread.id),
@@ -7743,7 +7744,10 @@ function createRunner(opts) {
         runId,
         null,
         attachments,
-        fromThread ? { fromThread } : null,
+        {
+          ...(fromThread ? { fromThread } : {}),
+          ...(input.fromNotice === true ? { fromNotice: true } : {}),
+        },
       );
     }
 
