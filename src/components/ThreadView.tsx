@@ -4879,6 +4879,20 @@ export const ThreadView = memo(function ThreadView({
     const last = detail.messages[detail.messages.length - 1];
     return last?.role === "event" && !last.thinking ? last.id : null;
   }, [detail]);
+  // Writer-lock (#953): hide Retry so it cannot resume the same locked
+  // session. No replacement button; wait, then send. /fork is the hatch
+  // (#554 eject-to-terminal is unimplemented).
+  const writerLockEventId = useMemo(() => {
+    if (
+      !detail ||
+      detail.thread.status !== "failed" ||
+      detail.thread.lastErrorKind !== "writer-lock"
+    ) {
+      return null;
+    }
+    const last = detail.messages[detail.messages.length - 1];
+    return last?.role === "event" && !last.thinking ? last.id : null;
+  }, [detail]);
   const retryTitle = useMemo(
     () => (retryUser ? retryButtonTitle(retryUser.text) : ""),
     [retryUser],
@@ -6386,9 +6400,16 @@ export const ThreadView = memo(function ThreadView({
               entry.message.role === "event" &&
               upgradeEventId != null &&
               entry.message.id === upgradeEventId;
+            const isWriterLockSurface =
+              !isOverflowSurface &&
+              !isUpgradeSurface &&
+              entry.message.role === "event" &&
+              writerLockEventId != null &&
+              entry.message.id === writerLockEventId;
             const isRetrySurface =
               !isOverflowSurface &&
               !isUpgradeSurface &&
+              !isWriterLockSurface &&
               entry.message.role === "event" &&
               retryEventId != null &&
               entry.message.id === retryEventId;

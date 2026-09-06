@@ -480,6 +480,20 @@ const PROVIDERS = [
         "--include-partial-messages",
         "--permission-mode",
         headlessMode,
+        // Grok 1.0.13 drains managed background tasks for up to 600s after
+        // end_turn, then kills them before emitting result. A preview meant
+        // to outlive this turn must not belong to that task manager.
+        "--rules",
+        "Solenta runs Grok in headless single-turn mode. For a dev server or " +
+          "preview the user wants left running after your reply, use Solenta's " +
+          "dev-server tools when available, otherwise launch a detached OS " +
+          "process within your normal tool permissions, with stdin closed and " +
+          "stdout/stderr redirected to a log. Use a bounded readiness check " +
+          "and report its PID and log. Do not use background:true or a monitor " +
+          "solely to keep that preview alive: Grok waits for managed tasks " +
+          "after your reply and later kills them, delaying queued follow-ups. " +
+          "Keep normal foreground/background command semantics for finite " +
+          "work and explicit requests to wait or monitor; do not detach those.",
       ];
       if (asking) args.push("--always-approve");
       if (model) {

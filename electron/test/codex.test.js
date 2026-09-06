@@ -131,6 +131,16 @@ async function main() {
     return;
   }
 
+  if (scenario === "writer-lock") {
+    process.stderr.write(
+      "2026-09-06T06:31:14.326054Z ERROR codex_core::session: failed to initialize thread persistence: thread-store conflict: thread 01a072f7-10e0-7fd2-b691-7d481327516f already has an active writer\\n" +
+        "2026-09-06T06:31:14.326548Z ERROR codex_core::session: Failed to create session: thread-store conflict: thread 01a072f7-10e0-7fd2-b691-7d481327516f already has an active writer\\n" +
+        "Error: thread/resume: thread/resume failed: thread 01a072f7-10e0-7fd2-b691-7d481327516f already has an active writer (code -32600)\\n",
+    );
+    process.exit(1);
+    return;
+  }
+
   if (scenario === "structured-overflow") {
     emit({
       type: "turn.failed",
@@ -768,6 +778,7 @@ describe("runner codex provider", () => {
       prompt: "boom",
     });
     await waitFor(() => store.getThread(thread.id).status === "failed");
+    assert.equal(store.getThread(thread.id).lastErrorKind, null);
     assert.ok(
       store
         .getMessages(thread.id)
@@ -779,6 +790,54 @@ describe("runner codex provider", () => {
             m.runId === runId,
         ),
     );
+  });
+
+  it("classifies writer-lock, keeps sessionId, and later resumes the same id (#953)", async () => {
+    process.env.CODER_FAKE_CODEX_SCENARIO = "writer-lock";
+    const thread = store.getThreads()[0];
+    store.updateThread(thread.id, { sessionId: "codex-sess-001" });
+
+    const { runId } = await runner.startRun({
+      threadId: thread.id,
+      prompt: "resume while locked",
+    });
+    await waitFor(() => store.getThread(thread.id).status === "failed");
+
+    const failed = store.getThread(thread.id);
+    assert.equal(failed.status, "failed");
+    assert.equal(failed.lastErrorKind, "writer-lock");
+    assert.equal(failed.sessionId, "codex-sess-001");
+    assert.match(failed.lastError, /^Codex session is locked by another process\./);
+
+    const events = store
+      .getMessages(thread.id)
+      .filter((m) => m.role === "event" && m.runId === runId);
+    assert.equal(events.length, 1);
+    assert.match(events[0].text, /^Codex session is locked by another process\./);
+    assert.match(events[0].text, /Provider error:/);
+    assert.match(events[0].text, /thread-store conflict/);
+    assert.doesNotMatch(events[0].text, /^ERROR codex_core::session/);
+    assert.doesNotMatch(events[0].text, /thread\/resume failed/);
+
+    process.env.CODER_FAKE_CODEX_SCENARIO = "resume-turn";
+    if (fs.existsSync(argvFile)) fs.unlinkSync(argvFile);
+
+    await runner.startRun({
+      threadId: thread.id,
+      prompt: "after lock released",
+    });
+    await waitFor(() => store.getThread(thread.id).status === "done");
+
+    const done = store.getThread(thread.id);
+    assert.equal(done.status, "done");
+    assert.equal(done.sessionId, "codex-sess-001");
+    assert.equal(done.lastErrorKind, null);
+
+    const argv = JSON.parse(fs.readFileSync(argvFile, "utf8"));
+    const execIdx = argv.indexOf("exec");
+    assert.ok(execIdx >= 0, `expected exec in ${JSON.stringify(argv)}`);
+    assert.equal(argv[execIdx + 1], "resume");
+    assert.equal(argv[execIdx + 2], "codex-sess-001");
   });
 
   it("classifies stdout-only turn.failed overflow and publishes normalized failure", async () => {

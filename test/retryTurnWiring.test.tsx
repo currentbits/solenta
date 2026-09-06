@@ -123,6 +123,35 @@ function upgradeTarget(): { row: ThreadInfo; d: ThreadDetail } {
   };
 }
 
+function writerLockTarget(): { row: ThreadInfo; d: ThreadDetail } {
+  const row = thread({
+    id: "t-writer-lock",
+    title: "writer lock target",
+    status: "failed",
+    lastError:
+      "Codex session is locked by another process. Quit Codex Desktop and any other codex using this thread, then send again. Retry will keep failing until that writer is gone. Do not delete sessions.",
+    lastErrorKind: "writer-lock",
+    sessionId: "codex-sess-001",
+    updatedAt: NOW + 2700,
+  });
+  return {
+    row,
+    d: detail({
+      thread: row,
+      messages: [
+        msg({ id: "m-wu", role: "user", text: "keep going on the locked thread" }),
+        msg({
+          id: "m-we",
+          role: "event",
+          text:
+            "Codex session is locked by another process. Quit Codex Desktop and any other codex using this thread, then send again. Retry will keep failing until that writer is gone. Do not delete sessions.\n" +
+            "Provider error: thread-store conflict: thread already has an active writer",
+        }),
+      ],
+    }),
+  };
+}
+
 function overflowTarget(): { row: ThreadInfo; d: ThreadDetail } {
   const row = thread({
     id: "t-context-overflow",
@@ -313,6 +342,33 @@ describe("App Retry turn wiring (round 48)", () => {
     await m.flush();
     assert.equal(fake.of("runs.start").length, runsBefore);
     assert.deepEqual(writes, ["codex update"]);
+    m.unmount();
+  });
+
+  it("writer-lock offers no Retry, Fork, or Upgrade Codex", async () => {
+    const decoyRow = decoy();
+    const { row, d } = writerLockTarget();
+    const fake = createFakeCoder({
+      projects: [project()],
+      threads: [decoyRow, row],
+      details: {
+        "t-decoy": detail({ thread: decoyRow }),
+        "t-writer-lock": d,
+      },
+    });
+    const m = await boot(fake);
+    await selectThread(m, "writer lock target");
+
+    assert.equal(retryButtons(m).length, 0);
+    const fork = m
+      .queryAll("button")
+      .find((button) => button.textContent?.trim() === "Fork to fresh context");
+    assert.equal(fork, undefined);
+    const upgrade = m
+      .queryAll("button")
+      .find((button) => button.textContent?.trim() === "Upgrade Codex");
+    assert.equal(upgrade, undefined);
+    assert.equal(fake.of("runs.start").length, 0);
     m.unmount();
   });
 

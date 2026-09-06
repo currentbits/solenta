@@ -87,6 +87,7 @@ describe("Store", () => {
           { id: "missing", lastError: null },
           { id: "overflow", lastErrorKind: "context-overflow" },
           { id: "upgrade", lastErrorKind: "cli-upgrade" },
+          { id: "writer-lock", lastErrorKind: "writer-lock" },
           { id: "unknown", lastErrorKind: "network-error" },
         ],
         messagesByThread: {},
@@ -99,6 +100,7 @@ describe("Store", () => {
     assert.equal(store.getThread("missing").lastErrorKind, null);
     assert.equal(store.getThread("overflow").lastErrorKind, "context-overflow");
     assert.equal(store.getThread("upgrade").lastErrorKind, "cli-upgrade");
+    assert.equal(store.getThread("writer-lock").lastErrorKind, "writer-lock");
     assert.equal(store.getThread("unknown").lastErrorKind, null);
   });
 

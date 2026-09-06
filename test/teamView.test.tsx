@@ -474,6 +474,13 @@ describe("Agents team view", () => {
     assert.match(m.text(), /Hypotheses/);
     assert.match(m.text(), /2 ruled out · 1 worked/);
     assert.doesNotMatch(m.text(), /inconclusive/);
+    assert.equal(
+      card.querySelector("[data-env-grip]"),
+      null,
+      "ledger is not a reorderable Environment section",
+    );
+    assert.equal(card.getAttribute("draggable"), null);
+    assert.equal(m.query("[data-env-list]"), null);
 
     const rows = m.queryAll("[data-hypothesis-status]");
     assert.equal(rows.length, 3);

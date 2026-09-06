@@ -109,6 +109,7 @@ const {
 const {
   classifyContextOverflow,
   classifyCliUpgrade,
+  classifyWriterLock,
   decideQuotaWait,
   formatQuotaWaitClock,
   nextQuotaFailover,
@@ -2588,13 +2589,14 @@ function createRunner(opts) {
    *   parked: boolean,
    *   until?: number,
    *   text: string,
-   *   kind: "context-overflow" | "cli-upgrade" | null
+   *   kind: "context-overflow" | "writer-lock" | "cli-upgrade" | null
    * }}
    */
   function markRunFailed(threadId, errText, runId, extraPatch) {
     const overflow = classifyContextOverflow(errText);
-    const upgrade = overflow ? null : classifyCliUpgrade(errText);
-    const classified = overflow || upgrade;
+    const writerLock = overflow ? null : classifyWriterLock(errText);
+    const upgrade = overflow || writerLock ? null : classifyCliUpgrade(errText);
+    const classified = overflow || writerLock || upgrade;
     const text = classified ? classified.text : errText;
     const kind = classified ? classified.kind : null;
     if (!classified) {
