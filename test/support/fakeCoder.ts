@@ -163,6 +163,7 @@ export function thread(over: Partial<ThreadInfo> = {}): ThreadInfo {
     // Round 49: null unless created by threads.fork.
     handoffFrom: null,
     muted: false,
+    ejected: false,
     notes: "",
     tags: [],
     queued: null,
@@ -1881,6 +1882,17 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
         const base =
           threads.find((t) => t.id === i.threadId) ?? thread({ id: i.threadId });
         const next: ThreadInfo = { ...base, muted: i.muted === true };
+        threads = threads.some((t) => t.id === i.threadId)
+          ? threads.map((t) => (t.id === i.threadId ? next : t))
+          : [next, ...threads];
+        return Promise.resolve(next);
+      },
+      setEjected: (input: unknown) => {
+        const i = input as { threadId: string; ejected: boolean };
+        calls.push({ channel: "threads.setEjected", args: [input] });
+        const base =
+          threads.find((t) => t.id === i.threadId) ?? thread({ id: i.threadId });
+        const next: ThreadInfo = { ...base, ejected: i.ejected === true };
         threads = threads.some((t) => t.id === i.threadId)
           ? threads.map((t) => (t.id === i.threadId ? next : t))
           : [next, ...threads];

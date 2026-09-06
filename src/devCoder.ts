@@ -758,6 +758,7 @@ function seedThreads(projects: ProjectInfo[]): ThreadInfo[] {
       worktreePath: null,
       handoffFrom: null,
       muted: false,
+      ejected: false,
       // One seeded scratch pad so the browser demo shows #194 once the UI lands.
       notes:
         card.id === "thread-4"
@@ -2035,6 +2036,7 @@ function buildDevCoder(): CoderApi {
       worktreePath: null,
       handoffFrom: null,
       muted: false,
+      ejected: false,
       notes: "",
       tags: [],
       queued: null,
@@ -3824,6 +3826,9 @@ function buildDevCoder(): CoderApi {
       },
       async setMuted(input: { threadId: string; muted: boolean }) {
         return patchThread(input.threadId, { muted: input.muted });
+      },
+      async setEjected(input: { threadId: string; ejected: boolean }) {
+        return patchThread(input.threadId, { ejected: input.ejected === true });
       },
       async setCrossThreadInbound(input: {
         threadId: string;

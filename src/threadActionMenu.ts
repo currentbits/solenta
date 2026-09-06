@@ -21,7 +21,9 @@ export type ThreadActionMenuId =
   | "rename"
   | "tags"
   | "mute"
-  | "unmute";
+  | "unmute"
+  | "eject"
+  | "reclaim";
 
 export function buildThreadActionMenuItems(input: {
   thread: ThreadInfo;
@@ -36,6 +38,8 @@ export function buildThreadActionMenuItems(input: {
   showRename: boolean;
   showTags?: boolean;
   showMute: boolean;
+  /** Eject the provider session so the raw CLI/Desktop can own it (#554). */
+  showEject?: boolean;
   showSettle: boolean;
 }): ContextMenuItem[] {
   const { thread } = input;
@@ -113,6 +117,15 @@ export function buildThreadActionMenuItems(input: {
       label: thread.muted ? "Unmute notifications" : "Mute notifications",
       separatorBefore: !input.showRename && items.length > 0,
       attrs: { "data-mute-toggle": thread.id },
+    });
+  }
+
+  if (input.showEject) {
+    items.push({
+      id: thread.ejected ? "reclaim" : "eject",
+      label: thread.ejected ? "Reclaim in Solenta" : "Eject to terminal",
+      separatorBefore: items.length > 0,
+      attrs: { "data-eject-toggle": thread.id },
     });
   }
 

@@ -1949,6 +1949,39 @@ function setMuted(store, input) {
 }
 
 /**
+ * Mark a thread ejected so Solenta will not resume its provider session
+ * (issue #554). The sessionId stays on the row for the raw CLI. Never
+ * bumps updatedAt: eject is ownership, not activity.
+ *
+ * Reclaim (`ejected: false`) re-reads the known provider session for
+ * this sessionId and appends turns that happened outside Solenta
+ * (#433 reader: Codex rollout, Claude ~/.claude/projects jsonl, Grok
+ * chat_history.jsonl).
+ *
+ * @param {import('./store').Store} store
+ * @param {{ threadId: string, ejected: boolean, home?: string }} input
+ */
+function setEjected(store, input) {
+  const { threadId, ejected } = input;
+  const thread = store.getThread(threadId);
+  if (!thread) {
+    throw new Error(`Unknown thread: ${threadId}`);
+  }
+  const patch = { ejected: ejected === true };
+  const updated = store.updateThread(threadId, patch);
+  const next = updated ? { ...updated } : { ...thread, ...patch };
+  if (ejected !== true) {
+    const { absorbSessionTurns } = require("./cli-sessions.js");
+    absorbSessionTurns(store, next, {
+      home: input && input.home,
+      cwd: specCwd(store, next),
+    });
+  }
+  store.save();
+  return store.getThread(threadId) || next;
+}
+
+/**
  * Per-thread inbound policy for cross-thread messages (issue #551).
  * accept (default, stored as absent) / queue-only / refuse.
  * Never bumps updatedAt.
@@ -5048,6 +5081,7 @@ module.exports = {
   promoteBtw,
   setSnoozed,
   setMuted,
+  setEjected,
   setCrossThreadInbound,
   setQuotaWaitAutoResume,
   setNotes,

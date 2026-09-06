@@ -352,6 +352,7 @@ export interface UseCoderResult {
   /** Replace a thread's user-defined tags. Does not require selection. */
   setTags: (threadId: string, tags: string[]) => Promise<void>;
   setMuted: (threadId: string, muted: boolean) => Promise<void>;
+  setEjected: (threadId: string, ejected: boolean) => Promise<void>;
   setCrossThreadInbound: (
     threadId: string,
     policy: "accept" | "queue-only" | "refuse",
@@ -1968,6 +1969,24 @@ export function useCoder(): UseCoderResult {
     [api, applyThreads],
   );
 
+  const setEjected = useCallback(
+    async (threadId: string, ejected: boolean) => {
+      try {
+        const thread = await api.threads.setEjected({ threadId, ejected });
+        applyThreads(
+          threadsRef.current.map((t) => (t.id === thread.id ? thread : t)),
+        );
+        setDetail((prev) =>
+          prev && prev.thread.id === thread.id ? { ...prev, thread } : prev,
+        );
+        setError(null);
+      } catch (err) {
+        setError({ scope: "run", message: errorMessage(err) });
+      }
+    },
+    [api, applyThreads],
+  );
+
   const setCrossThreadInbound = useCallback(
     async (
       threadId: string,
@@ -3385,6 +3404,7 @@ export function useCoder(): UseCoderResult {
     setSnoozed,
     setTags,
     setMuted,
+    setEjected,
     setCrossThreadInbound,
     setQuotaWaitAutoResume,
     resumeQuotaWait,

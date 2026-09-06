@@ -312,6 +312,9 @@ function looksSessionLost(text) {
   return /No conversation found/i.test(String(text || ""));
 }
 
+const CODEX_EJECTED_COPY =
+  "This Codex session was ejected. Solenta will not resume it. The worker notice is waiting.";
+
 /**
  * Map a claude-stream result event's errors[] (+ optional result/stderr) into
  * a user-facing terminal. Bare `cancelled` is a stop (same idea as stopRun),
@@ -1068,6 +1071,12 @@ function createRunner(opts) {
   const orchNotices = new Map();
 
   /**
+   * Threads that already got CODEX_EJECTED_COPY for a parked notice.
+   * @type {Set<string>}
+   */
+  const codexEjectedNotified = new Set();
+
+  /**
    * Consecutive machine-delivered turns per thread (issue #277). A notice
    * flush increments; a user-initiated startRun resets to 0. At
    * CREW_AUTO_TURN_CAP the next flush is refused through the same
@@ -1178,8 +1187,28 @@ function createRunner(opts) {
     const notes = orchNotices.get(threadId);
     if (!notes || notes.length === 0) return;
     if (active.has(threadId)) return;
+    const thread = store.getThread(threadId);
+    if (!thread) {
+      orchNotices.delete(threadId);
+      return;
+    }
+    // #554: do not auto-continue an ejected Codex session. Writer-lock
+    // parking (#950) is a separate skip; do not fold it in here.
+    if (resolveProvider(thread) === "codex" && thread.ejected === true) {
+      if (!codexEjectedNotified.has(threadId)) {
+        codexEjectedNotified.add(threadId);
+        try {
+          appendMessage(threadId, "event", CODEX_EJECTED_COPY);
+          store.save();
+          pushDetail(threadId, lastWorkflowByThread.get(threadId) || null);
+          pushThreadsChanged();
+        } catch {
+          // silent
+        }
+      }
+      return;
+    }
     orchNotices.delete(threadId);
-    if (!store.getThread(threadId)) return;
     const prompt = noticePrompt(notes);
     // Per-orchestration ceiling (issue #67) and consecutive auto-turn cap
     // (issue #277): refuse the wake-up here, not in startRun, so user-sent
@@ -4421,8 +4450,11 @@ function createRunner(opts) {
     /** reasoning item id -> thinking message id */
     /** @type {Map<string, string>} */
     const thinkingMsgById = new Map();
+    const resumeId =
+      thread.ejected === true ? null : thread.sessionId || null;
+    const startedFresh = thread.ejected === true;
     /** @type {string | null} */
-    let capturedSessionId = thread.sessionId || null;
+    let capturedSessionId = resumeId;
     let sawTerminalUsage = false;
     let finishedFromStream = false;
     /** @type {string | null} */
@@ -4434,7 +4466,7 @@ function createRunner(opts) {
     const binary = resolveBin(providerEntry);
     const args = providerEntry.buildArgs({
       prompt,
-      sessionId: thread.sessionId || null,
+      sessionId: resumeId,
       permissionMode: thread.permissionMode || "default",
       model: thread.model || null,
       reasoningEffort: thread.reasoningEffort || null,
@@ -4686,7 +4718,12 @@ function createRunner(opts) {
           const sid = codexParse.extractSessionId(ev);
           if (sid) {
             capturedSessionId = sid;
-            store.updateThread(threadId, { sessionId: sid });
+            store.updateThread(
+              threadId,
+              startedFresh
+                ? { sessionId: sid, ejected: false }
+                : { sessionId: sid },
+            );
             completeWorkLogStep(threadId, startingId);
             store.save();
             pushDetail(threadId, codexState);
@@ -4837,7 +4874,12 @@ function createRunner(opts) {
         completeWorkLogStep(threadId, e.workingId);
 
         if (capturedSessionId) {
-          store.updateThread(threadId, { sessionId: capturedSessionId });
+          store.updateThread(
+            threadId,
+            startedFresh
+              ? { sessionId: capturedSessionId, ejected: false }
+              : { sessionId: capturedSessionId },
+          );
         }
 
         // If we never saw usage, still count a turn with zero tokens when ok

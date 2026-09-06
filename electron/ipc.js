@@ -641,6 +641,18 @@ const IPC_HANDLERS = {
     ctx.broadcast("threads:changed", services.listThreads(ctx.store));
     return updated;
   },
+  "threads:setEjected": async (ctx, input) => {
+    const updated = services.setEjected(ctx.store, input);
+    ctx.broadcast("threads:changed", services.listThreads(ctx.store));
+    if (updated && input && input.ejected === false) {
+      try {
+        ctx.broadcast("thread:updated", threadDetailFor(ctx, input.threadId, false));
+      } catch {
+        // Thread gone between reclaim and the detail push.
+      }
+    }
+    return updated;
+  },
   "threads:setCrossThreadInbound": async (ctx, input) => {
     const updated = services.setCrossThreadInbound(ctx.store, input);
     ctx.broadcast("threads:changed", services.listThreads(ctx.store));

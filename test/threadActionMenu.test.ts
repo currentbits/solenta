@@ -65,6 +65,43 @@ describe("buildThreadActionMenuItems (T3 contract)", () => {
     assert.ok(items.some((i) => i.id === "handoff:grok"));
   });
 
+  it("offers Eject to terminal when showEject is on", () => {
+    const items = buildThreadActionMenuItems({
+      thread,
+      providers,
+      snoozePresets: presets,
+      isSettled: false,
+      canSettle: true,
+      showSnooze: false,
+      showFork: false,
+      showRename: false,
+      showMute: false,
+      showEject: true,
+      showSettle: false,
+    });
+    const eject = items.find((i) => i.id === "eject");
+    assert.ok(eject, "Eject to terminal");
+    assert.equal(eject?.label, "Eject to terminal");
+  });
+
+  it("already-ejected threads show Reclaim, not Eject", () => {
+    const items = buildThreadActionMenuItems({
+      thread: { ...thread, ejected: true } as ThreadInfo,
+      providers,
+      snoozePresets: presets,
+      isSettled: false,
+      canSettle: true,
+      showSnooze: false,
+      showFork: false,
+      showRename: false,
+      showMute: false,
+      showEject: true,
+      showSettle: false,
+    });
+    assert.ok(items.some((i) => i.id === "reclaim"));
+    assert.equal(items.some((i) => i.id === "eject"), false);
+  });
+
   it("already-snoozed threads show Wake, not a Snooze submenu", () => {
     const items = buildThreadActionMenuItems({
       thread: { ...thread, snoozedUntil: Date.now() + 1000 } as ThreadInfo,

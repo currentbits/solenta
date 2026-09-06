@@ -253,6 +253,8 @@ interface SidebarProps {
   onSetTags?: (threadId: string, tags: string[]) => void | Promise<void>;
   /** Mute/unmute desktop notifications for one thread. */
   onSetMuted?: (threadId: string, muted: boolean) => void | Promise<void>;
+  /** Eject/reclaim the provider session so the raw CLI can own it (#554). */
+  onSetEjected?: (threadId: string, ejected: boolean) => void | Promise<void>;
   /** Rename a thread from the row menu. */
   onRenameThread?: (threadId: string, title: string) => void | Promise<void>;
   /** Archive a thread (batch toolbar). */
@@ -639,6 +641,7 @@ export const ThreadCard = memo(function ThreadCard({
   onSetSnoozed,
   onSetTags,
   onSetMuted,
+  onSetEjected,
   onRenameThread,
   onFork,
   onToggleSnoozeMenu,
@@ -668,6 +671,7 @@ export const ThreadCard = memo(function ThreadCard({
   onSetSnoozed?: (threadId: string, until: number | null) => void | Promise<void>;
   onSetTags?: (threadId: string, tags: string[]) => void | Promise<void>;
   onSetMuted?: (threadId: string, muted: boolean) => void | Promise<void>;
+  onSetEjected?: (threadId: string, ejected: boolean) => void | Promise<void>;
   onRenameThread?: (threadId: string, title: string) => void | Promise<void>;
   onFork?: (
     threadId: string,
@@ -777,6 +781,8 @@ export const ThreadCard = memo(function ThreadCard({
     else if (id === "tags") startTagEdit();
     else if (id === "mute") void onSetMuted?.(thread.id, true);
     else if (id === "unmute") void onSetMuted?.(thread.id, false);
+    else if (id === "eject") void onSetEjected?.(thread.id, true);
+    else if (id === "reclaim") void onSetEjected?.(thread.id, false);
   };
 
   const openThreadMenu = async (position: { x: number; y: number }) => {
@@ -794,6 +800,7 @@ export const ThreadCard = memo(function ThreadCard({
       showRename: Boolean(onRenameThread),
       showTags: Boolean(onSetTags),
       showMute: Boolean(onSetMuted),
+      showEject: Boolean(onSetEjected),
       showSettle: Boolean(onSetSettled),
     });
     if (items.length === 0) return;
@@ -811,7 +818,7 @@ export const ThreadCard = memo(function ThreadCard({
   };
 
   const hasActions = Boolean(
-    onSetSettled || onSetPinned || onSetSnoozed || onSetTags || onFork || onRenameThread || onSetMuted,
+    onSetSettled || onSetPinned || onSetSnoozed || onSetTags || onFork || onRenameThread || onSetMuted || onSetEjected,
   );
 
   // Card is a non-interactive shell. Stretch select + hover actions are
@@ -975,7 +982,7 @@ export const ThreadCard = memo(function ThreadCard({
                     </Icon>
                   </button>
                 )}
-                {(onSetSnoozed || onFork || onRenameThread || onSetMuted || onSetSettled || onSetPinned || onSetTags) && (
+                {(onSetSnoozed || onFork || onRenameThread || onSetMuted || onSetEjected || onSetSettled || onSetPinned || onSetTags) && (
                   <button
                     type="button"
                     className={styles.iconBtn}
@@ -1441,6 +1448,7 @@ export const Sidebar = memo(function Sidebar({
   onSetSnoozed,
   onSetTags,
   onSetMuted,
+  onSetEjected,
   onRenameThread,
   onSetArchived,
   onClearSettled,
@@ -2085,6 +2093,7 @@ export const Sidebar = memo(function Sidebar({
         onSetSnoozed={onSetSnoozed}
         onSetTags={onSetTags}
         onSetMuted={onSetMuted}
+        onSetEjected={onSetEjected}
         onRenameThread={onRenameThread}
         onFork={onFork}
         nested={

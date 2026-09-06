@@ -515,6 +515,12 @@ export interface ThreadInfo {
    */
   muted: boolean;
   /**
+   * Ejected: the raw CLI/Desktop owns this provider session. Solenta must
+   * not `exec resume` the stored sessionId (issue #554). A user send may
+   * start a fresh session. Absent/false on ordinary threads.
+   */
+  ejected: boolean;
+  /**
    * Free-text user scratch pad (issue #194). Empty string when unset.
    * Never bumps updatedAt. Purely user-facing: the agent never reads it
    * (this is NOT agent memory).
@@ -3346,6 +3352,15 @@ export interface CoderApi {
     setTags(input: { threadId: string; tags: string[] }): Promise<ThreadInfo>;
     /** Mute/unmute desktop notifications for one thread. Never bumps updatedAt. */
     setMuted(input: { threadId: string; muted: boolean }): Promise<ThreadInfo>;
+    /**
+     * Eject or reclaim a thread's provider session (issue #554). Eject
+     * keeps sessionId but Solenta will not resume it. Reclaim re-reads
+     * the known provider session for that sessionId (Codex rollout,
+     * Claude projects jsonl, Grok chat_history) and appends turns that
+     * happened outside Solenta (same reader #433 import will use).
+     * The flag write itself never bumps updatedAt; appended turns do.
+     */
+    setEjected(input: { threadId: string; ejected: boolean }): Promise<ThreadInfo>;
     /**
      * Per-thread inbound policy for messages from other threads (issue #551).
      * accept / queue-only / refuse. Never bumps updatedAt.

@@ -1193,6 +1193,8 @@ function migrateThread(t) {
     replayContext: t.replayContext === true,
     // Per-thread desktop-notification mute (issue #87): absent → not muted.
     muted: t.muted === true,
+    // Eject-to-terminal (#554): Solenta must not resume this sessionId.
+    ejected: t.ejected === true,
     // Per-thread user scratch pad (issue #194): absent → empty.
     notes: typeof t.notes === "string" ? t.notes : "",
     // User-defined tags (issue #789): absent/invalid → none.
