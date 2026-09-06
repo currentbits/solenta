@@ -96,9 +96,9 @@ function defaultWindowBroadcast(channel, payload) {
 }
 
 /**
- * A thread the user pushed out of attention (settled, archived, deleted) has
- * no next turn: kill its kept-alive Claude CLI now instead of holding the
- * process for the 30-minute idle reaper (issue #48).
+ * A thread the user pushed out of attention (settled, archived, deleted,
+ * ejected) has no next turn: kill its kept-alive Claude CLI now instead of
+ * holding the process for the 30-minute idle reaper (issue #48, #979).
  *
  * @param {object} ctx
  * @param {string} threadId
@@ -681,6 +681,12 @@ const IPC_HANDLERS = {
   },
   "threads:setEjected": async (ctx, input) => {
     const updated = services.setEjected(ctx.store, input);
+    // #979: an idle Claude keep-alive still holds the session writer after
+    // the Solenta turn has ended (stopRun is a no-op then). Same retire as
+    // settle/archive/delete — this thread only, no crew cascade.
+    if (updated && input && input.ejected === true) {
+      retireAgent(ctx, input.threadId);
+    }
     ctx.broadcast("threads:changed", services.listThreads(ctx.store));
     if (updated && input && input.ejected === false) {
       try {
