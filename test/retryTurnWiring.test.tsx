@@ -282,6 +282,7 @@ function undeliverableNoticeTarget(): { row: ThreadInfo; d: ThreadDetail } {
         role: "event",
         text: `${notice}\n\nNot delivered: Daily budget reached ($1.00 of $1.00). Raise or clear the cap in Settings.`,
         createdAt: NOW,
+        fromNotice: true,
       }),
     ],
   });
@@ -318,6 +319,7 @@ function failedFromNoticeTarget(): { row: ThreadInfo; d: ThreadDetail } {
         role: "user",
         text: notice,
         createdAt: NOW - 1000,
+        fromNotice: true,
       }),
       msg({
         id: "m-err",
@@ -1055,7 +1057,7 @@ function renamedNotice(workerId = "w-1"): string {
   );
 }
 
-function undeliverableNoticeTarget(): { row: ThreadInfo; d: ThreadDetail } {
+function renamedUndeliverableNoticeTarget(): { row: ThreadInfo; d: ThreadDetail } {
   const row = thread({
     id: "t-undeliverable-notice",
     title: "undeliverable notice retry",
@@ -1091,7 +1093,7 @@ function undeliverableNoticeTarget(): { row: ThreadInfo; d: ThreadDetail } {
   return { row, d };
 }
 
-function failedFromNoticeTarget(): { row: ThreadInfo; d: ThreadDetail } {
+function renamedFailedFromNoticeTarget(): { row: ThreadInfo; d: ThreadDetail } {
   const row = thread({
     id: "t-failed-fromnotice",
     title: "failed fromNotice retry",
@@ -1134,7 +1136,7 @@ function failedFromNoticeTarget(): { row: ThreadInfo; d: ThreadDetail } {
   return { row, d };
 }
 
-function laterHumanAfterNoticeTarget(): { row: ThreadInfo; d: ThreadDetail } {
+function renamedLaterHumanAfterNoticeTarget(): { row: ThreadInfo; d: ThreadDetail } {
   const row = thread({
     id: "t-later-human",
     title: "later human after notice",
@@ -1170,7 +1172,7 @@ function laterHumanAfterNoticeTarget(): { row: ThreadInfo; d: ThreadDetail } {
 describe("App Retry turn fromNotice flag (#955)", () => {
   it("undeliverable notice Retry re-sends the parked prompt with fromNotice even if the footer was renamed", async () => {
     const decoyRow = decoy();
-    const { row, d } = undeliverableNoticeTarget();
+    const { row, d } = renamedUndeliverableNoticeTarget();
     const fake = createFakeCoder({
       projects: [project()],
       threads: [decoyRow, row],
@@ -1206,7 +1208,7 @@ describe("App Retry turn fromNotice flag (#955)", () => {
 
   it("failed fromNotice spawn Retry re-delivers the notice once as fromNotice", async () => {
     const decoyRow = decoy();
-    const { row, d } = failedFromNoticeTarget();
+    const { row, d } = renamedFailedFromNoticeTarget();
     const fake = createFakeCoder({
       projects: [project()],
       threads: [decoyRow, row],
@@ -1242,7 +1244,7 @@ describe("App Retry turn fromNotice flag (#955)", () => {
 
   it("a later human prompt after a notice still retries that human prompt", async () => {
     const decoyRow = decoy();
-    const { row, d } = laterHumanAfterNoticeTarget();
+    const { row, d } = renamedLaterHumanAfterNoticeTarget();
     const fake = createFakeCoder({
       projects: [project()],
       threads: [decoyRow, row],
