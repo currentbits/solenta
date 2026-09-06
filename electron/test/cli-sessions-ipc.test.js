@@ -1,9 +1,9 @@
 "use strict";
 
 /**
- * #433 / #972: threads.listCliSessions / threads.importCliSession IPC.
- * Home is CODEX_HOME / GROK_HOME on the main process — the renderer
- * cannot point the scan.
+ * #433 / #972 / #976: threads.listCliSessions / threads.importCliSession IPC.
+ * Home is CODEX_HOME / GROK_HOME / OPENCODE_HOME on the main process —
+ * the renderer cannot point the scan.
  *
  * Run: node --test electron/test/cli-sessions-ipc.test.js
  */
@@ -44,7 +44,9 @@ const { IPC_HANDLERS } = require("../ipc.js");
 const {
   parseCodexRollout,
   parseGrokChatHistory,
+  readOpenCodeImportTurns,
 } = require("../cli-sessions.js");
+const { DatabaseSync } = require("node:sqlite");
 
 const SESSION_A = "01a07579-aaaa-7000-8000-aaaaaaaaaaaa";
 const SESSION_B = "01a07579-bbbb-7000-8000-bbbbbbbbbbbb";
@@ -241,6 +243,157 @@ describe("Grok session import IPC (#972)", () => {
     assert.equal(thread.provider, "grok");
     assert.equal(thread.sessionId, SESSION_A);
     const expected = parseGrokChatHistory(fs.readFileSync(fileA, "utf8"));
+    assert.deepEqual(
+      store.getMessages(thread.id).map((m) => `${m.role}:${m.text}`),
+      expected.map((t) => `${t.role}:${t.text}`),
+    );
+    assert.equal(
+      store.getMessages(thread.id).some((m) => m.text === "prompt b"),
+      false,
+    );
+  });
+});
+
+const OC_A = "ses_aaaa1111ffffABCDEFGHijkl";
+const OC_B = "ses_bbbb2222ffffABCDEFGHijkl";
+
+function writeOpenCodeSession(home, sessionId, turns, mtimeMs = Date.now()) {
+  fs.mkdirSync(home, { recursive: true });
+  const dbPath = path.join(home, "opencode.db");
+  const db = new DatabaseSync(dbPath);
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS session (
+      id TEXT PRIMARY KEY,
+      project_id TEXT NOT NULL DEFAULT 'p',
+      slug TEXT NOT NULL DEFAULT '',
+      directory TEXT NOT NULL DEFAULT '',
+      title TEXT NOT NULL DEFAULT '',
+      version TEXT NOT NULL DEFAULT '',
+      cost REAL NOT NULL DEFAULT 0,
+      tokens_input INTEGER NOT NULL DEFAULT 0,
+      tokens_output INTEGER NOT NULL DEFAULT 0,
+      tokens_reasoning INTEGER NOT NULL DEFAULT 0,
+      tokens_cache_read INTEGER NOT NULL DEFAULT 0,
+      tokens_cache_write INTEGER NOT NULL DEFAULT 0,
+      time_created INTEGER NOT NULL,
+      time_updated INTEGER NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS message (
+      id TEXT PRIMARY KEY,
+      session_id TEXT NOT NULL,
+      time_created INTEGER NOT NULL,
+      time_updated INTEGER NOT NULL,
+      data TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS part (
+      id TEXT PRIMARY KEY,
+      message_id TEXT NOT NULL,
+      session_id TEXT NOT NULL,
+      time_created INTEGER NOT NULL,
+      time_updated INTEGER NOT NULL,
+      data TEXT NOT NULL
+    );
+  `);
+  const title =
+    (turns.find((t) => t.role === "user") || {}).text || sessionId;
+  db.prepare(
+    `INSERT OR REPLACE INTO session (
+      id, project_id, slug, directory, title, version, time_created, time_updated
+    ) VALUES (?, 'p', '', '', ?, '', ?, ?)`,
+  ).run(sessionId, title, mtimeMs, mtimeMs);
+  let i = 0;
+  for (const turn of turns) {
+    i += 1;
+    const msgId = `msg_${sessionId}_${i}`;
+    const t = Number(turn.createdAt) || mtimeMs + i;
+    db.prepare(
+      `INSERT INTO message (id, session_id, time_created, time_updated, data)
+       VALUES (?, ?, ?, ?, ?)`,
+    ).run(msgId, sessionId, t, t, JSON.stringify({ role: turn.role }));
+    db.prepare(
+      `INSERT INTO part (id, message_id, session_id, time_created, time_updated, data)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+    ).run(
+      `prt_${sessionId}_${i}`,
+      msgId,
+      sessionId,
+      t,
+      t,
+      JSON.stringify({ type: "text", text: turn.text }),
+    );
+  }
+  db.close();
+  return dbPath;
+}
+
+describe("OpenCode session import IPC (#976)", () => {
+  let home;
+  let tmpDir;
+  let store;
+  let ctx;
+  let projectId;
+  let prevHome;
+
+  beforeEach(() => {
+    home = fs.mkdtempSync(
+      path.join(os.tmpdir(), "coder-opencode-sess-ipc-home-"),
+    );
+    tmpDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "coder-opencode-sess-ipc-store-"),
+    );
+    store = new Store(path.join(tmpDir, "store.json"));
+    projectId = "proj-import";
+    store.setProjects([
+      {
+        id: projectId,
+        slug: "demo",
+        name: "demo",
+        path: path.join(tmpDir, "demo"),
+      },
+    ]);
+    ctx = {
+      store,
+      broadcast: () => {},
+    };
+    prevHome = process.env.OPENCODE_HOME;
+    process.env.OPENCODE_HOME = home;
+  });
+
+  afterEach(() => {
+    if (prevHome === undefined) delete process.env.OPENCODE_HOME;
+    else process.env.OPENCODE_HOME = prevHome;
+    fs.rmSync(home, { recursive: true, force: true });
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("lists both sessions and importing one does not pick up the sibling", async () => {
+    writeOpenCodeSession(home, OC_A, [
+      { role: "user", text: "prompt a" },
+      { role: "assistant", text: "reply a" },
+    ]);
+    writeOpenCodeSession(home, OC_B, [
+      { role: "user", text: "prompt b" },
+      { role: "assistant", text: "reply b" },
+    ]);
+
+    const listed = await IPC_HANDLERS["threads:listCliSessions"](ctx, {
+      provider: "opencode",
+    });
+    assert.equal(listed.length, 2);
+    assert.deepEqual(
+      listed.map((s) => s.sessionId).sort(),
+      [OC_A, OC_B].sort(),
+    );
+
+    const thread = await IPC_HANDLERS["threads:importCliSession"](ctx, {
+      provider: "opencode",
+      sessionId: OC_A,
+      projectId,
+      home: path.join(tmpDir, "evil-home"),
+    });
+    assert.equal(thread.provider, "opencode");
+    assert.equal(thread.sessionId, OC_A);
+    const expected = readOpenCodeImportTurns(home, OC_A);
     assert.deepEqual(
       store.getMessages(thread.id).map((m) => `${m.role}:${m.text}`),
       expected.map((t) => `${t.role}:${t.text}`),

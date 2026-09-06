@@ -9,7 +9,7 @@
  * OpenCode: listOpenCodeSessions / importOpenCodeSession under
  * OPENCODE_HOME/opencode.db, default XDG_DATA_HOME/opencode. When the db
  * is missing or has no session table, walk the pre-1.14 JSON tree at
- * storage/session/<projectID>/<sessionID>.json plus message/ and part/.
+ * storage/session/<projectID>/<sessionID>.json plus message/ and part/).
  * #554 reclaim points it at one known sessionId (Codex: date-tree suffix
  * match; Claude and Grok: direct cwd-encoded path, no directory scan).
  * Claude long cwds

@@ -10,7 +10,7 @@ function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
-export type CliImportProvider = "codex" | "grok";
+export type CliImportProvider = "codex" | "grok" | "opencode";
 
 const COPY: Record<
   CliImportProvider,
@@ -26,6 +26,11 @@ const COPY: Record<
     note: "Choose a Grok CLI session to import into this project.",
     empty: "No Grok CLI sessions found",
   },
+  opencode: {
+    title: "Import OpenCode session",
+    note: "Choose an OpenCode CLI session to import into this project.",
+    empty: "No OpenCode CLI sessions found",
+  },
 };
 
 interface ImportCliSessionModalProps {
@@ -33,19 +38,19 @@ interface ImportCliSessionModalProps {
   provider: CliImportProvider;
   onClose: () => void;
   listCliSessions: (input?: {
-    provider?: "codex" | "grok";
+    provider?: CliImportProvider;
   }) => Promise<CliSessionCandidate[]>;
   importCliSession: (input: {
     sessionId: string;
     projectId: string;
-    provider?: "codex" | "grok";
+    provider?: CliImportProvider;
   }) => Promise<ThreadInfo>;
   onImported: (thread: ThreadInfo) => void;
 }
 
 /**
- * Pick a Codex or Grok CLI session from disk and import it as a Solenta
- * thread in the current project. Home stays on the main process.
+ * Pick a Codex, Grok, or OpenCode CLI session from disk and import it as a
+ * Solenta thread in the current project. Home stays on the main process.
  */
 export function ImportCliSessionModal({
   projectId,
@@ -78,9 +83,9 @@ export function ImportCliSessionModal({
     setSessions(null);
     try {
       const listed =
-        provider === "grok"
-          ? await listCliSessions({ provider: "grok" })
-          : await listCliSessions();
+        provider === "codex"
+          ? await listCliSessions()
+          : await listCliSessions({ provider });
       setSessions(listed);
     } catch (err) {
       setSessions([]);
@@ -98,13 +103,13 @@ export function ImportCliSessionModal({
     setImportError(null);
     try {
       const thread =
-        provider === "grok"
-          ? await importCliSession({
+        provider === "codex"
+          ? await importCliSession({ sessionId, projectId })
+          : await importCliSession({
               sessionId,
               projectId,
-              provider: "grok",
-            })
-          : await importCliSession({ sessionId, projectId });
+              provider,
+            });
       onImported(thread);
     } catch (err) {
       setImportError(errorMessage(err));

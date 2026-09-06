@@ -95,7 +95,10 @@ import {
 } from "../sidebarSelection";
 import { KeyboardSheet } from "./KeyboardSheet";
 import { StayAwakeControl } from "./StayAwakeControl";
-import { ImportCliSessionModal } from "./ImportCliSessionModal";
+import {
+  ImportCliSessionModal,
+  type CliImportProvider,
+} from "./ImportCliSessionModal";
 import styles from "./Sidebar.module.css";
 
 const TICK_MS = 5000;
@@ -284,9 +287,9 @@ interface SidebarProps {
     projectPath: string;
     ref: string;
   }) => Promise<{ ok: true } | { ok: false; reason: string }>;
-  /** Codex / Grok CLI sessions on disk. Desktop import picker. */
+  /** Codex / Grok / OpenCode CLI sessions on disk. Desktop import picker. */
   listCliSessions?: (input?: {
-    provider?: "codex" | "grok";
+    provider?: CliImportProvider;
   }) => Promise<CliSessionCandidate[]>;
   /**
    * Import one listed CLI session as a Solenta thread in projectId.
@@ -295,7 +298,7 @@ interface SidebarProps {
   importCliSession?: (input: {
     sessionId: string;
     projectId: string;
-    provider?: "codex" | "grok";
+    provider?: CliImportProvider;
   }) => Promise<ThreadInfo>;
   onOpenActivity?: (scopedProjectId?: string | null) => void;
   /**
@@ -1510,9 +1513,8 @@ export const Sidebar = memo(function Sidebar({
       setFilterMenu(null);
     },
   );
-  const [importCliProvider, setImportCliProvider] = useState<
-    "codex" | "grok" | null
-  >(null);
+  const [importCliProvider, setImportCliProvider] =
+    useState<CliImportProvider | null>(null);
   const [issueFormFor, setIssueFormFor] = useState<string | null>(null);
   const [issueRef, setIssueRef] = useState("");
   const [issueError, setIssueError] = useState<string | null>(null);
@@ -2486,6 +2488,19 @@ export const Sidebar = memo(function Sidebar({
                         }}
                       >
                         Import Grok session…
+                      </button>
+                      <button
+                        type="button"
+                        className={styles.menuItem}
+                        role="menuitem"
+                        data-import-opencode-session={createProjectId}
+                        title="Import an OpenCode CLI session from disk"
+                        onClick={() => {
+                          setCreateMenuOpen(false);
+                          setImportCliProvider("opencode");
+                        }}
+                      >
+                        Import OpenCode session…
                       </button>
                     </>
                   )}

@@ -1645,13 +1645,18 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
         const i = input as {
           sessionId: string;
           projectId: string;
-          provider?: "codex" | "grok";
+          provider?: "codex" | "grok" | "opencode";
         };
         const createdAt = Date.now();
         const t = thread({
           id: `t-cli-${i.sessionId}`,
           projectId: i.projectId,
-          provider: i.provider === "grok" ? "grok" : "codex",
+          provider:
+            i.provider === "grok"
+              ? "grok"
+              : i.provider === "opencode"
+                ? "opencode"
+                : "codex",
           sessionId: i.sessionId,
           createdAt,
           updatedAt: createdAt,

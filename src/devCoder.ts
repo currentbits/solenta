@@ -3660,17 +3660,23 @@ function buildDevCoder(): CoderApi {
         return [];
       },
       async importCliSession(input) {
-        const grok = input.provider === "grok";
-        const opencode = input.provider === "opencode";
+        const provider =
+          input.provider === "grok"
+            ? "grok"
+            : input.provider === "opencode"
+              ? "opencode"
+              : "codex";
+        const title =
+          provider === "grok"
+            ? "Imported Grok session"
+            : provider === "opencode"
+              ? "Imported OpenCode session"
+              : "Imported Codex session";
         return registerThread(
           newThread({
             projectId: input.projectId,
-            title: grok
-              ? "Imported Grok session"
-              : opencode
-                ? "Imported OpenCode session"
-                : "Imported Codex session",
-            provider: grok ? "grok" : opencode ? "opencode" : "codex",
+            title,
+            provider,
             sessionId: input.sessionId,
           }),
         );
