@@ -498,7 +498,8 @@ function reclaimFixture(provider) {
     ];
     if (provider === "claude") {
       // Claude Code 2.1.219 GR() realpaths cwd before RA(); hash the
-      // transcript the same way (macOS /var vs /private/var).
+      // transcript the same way (macOS /var vs /private/var). Stored-cwd
+      // RA() is still tried first; this GR() path is the fallback.
       let hashedCwd = String(cwd);
       try {
         hashedCwd = fs.realpathSync(cwd).normalize("NFC");
@@ -837,6 +838,76 @@ describe("reclaim finds a Claude prefix-sibling hashed dir (#966)", () => {
 
   it("appends outside turns from the prefix-sibling hashed dir", () => {
     assert.notEqual(SIBLING_GROUP, LONG_GROUP);
+    const updated = services.setEjected(store, {
+      threadId,
+      ejected: false,
+      home: providerHome,
+    });
+    assert.equal(updated.ejected, false);
+    const assistants = roleTexts(store, threadId, "assistant");
+    assert.ok(
+      assistants.includes("outside reply"),
+      `expected outside assistant turn, got ${JSON.stringify(assistants)}`,
+    );
+  });
+});
+
+describe("reclaim finds a Claude session via realpath cwd (#968)", () => {
+  let tmpDir;
+  let store;
+  let threadId;
+  let providerHome;
+
+  beforeEach(async () => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "coder-eject-claude-realpath-"));
+    providerHome = path.join(tmpDir, "claude-home");
+    store = new Store(path.join(tmpDir, "store.json"));
+    const repo = path.join(tmpDir, "repo");
+    fs.mkdirSync(repo);
+    git(repo, ["init"]);
+    const project = await services.addProject(store, repo);
+    const thread = services.createThread(store, {
+      projectId: project.id,
+      title: "Lead",
+    });
+    threadId = thread.id;
+    services.setProvider(store, { threadId, provider: "claude" });
+    const real = path.join(tmpDir, "real-wt");
+    const link = path.join(tmpDir, "link-wt");
+    fs.mkdirSync(real);
+    fs.symlinkSync(real, link);
+    const resolved = fs.realpathSync(link);
+    assert.notEqual(link, resolved);
+    store.updateThread(threadId, {
+      sessionId: RECLAIM_SESSION,
+      worktreePath: link,
+    });
+    store.appendMessage(threadId, {
+      id: "m-user-1",
+      role: "user",
+      text: "hello inside",
+      createdAt: 1,
+    });
+    store.appendMessage(threadId, {
+      id: "m-asst-1",
+      role: "assistant",
+      text: "inside reply",
+      createdAt: 2,
+    });
+    services.setEjected(store, { threadId, ejected: true });
+    writeClaudeTranscript(providerHome, resolved, RECLAIM_SESSION, [
+      { role: "user", text: "hello inside" },
+      { role: "assistant", text: "inside reply" },
+      { role: "user", text: "outside prompt" },
+      { role: "assistant", text: "outside reply" },
+    ]);
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("appends outside turns from RA(realpath) when stored cwd is a symlink", () => {
     const updated = services.setEjected(store, {
       threadId,
       ejected: false,

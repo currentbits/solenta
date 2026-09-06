@@ -10,11 +10,12 @@
  * When that hashed dir misses, overflow lookup readdirs projects/ top-level
  * names that start with encoded.slice(0,200)+'-' and stats the known
  * sessionId jsonl (Claude Code 2.1.219 LM()) — not a walk of every project.
- * After LM(cwd) misses, e4l lists git worktrees of that cwd (porcelain,
- * excluding cwd itself) and runs LM() + jsonl stat in each. Lookup cwd is
- * GR() first: realpath then NFC, matching Claude Code 2.1.219 Nqe().
- * Grok long cwds use grok-build's slug+blake3 dirname. Do not copy the
- * provider store.
+ * Claude Code 2.1.219 Nqe() realpaths cwd (GR: realpath then NFC) before
+ * RA()/LM(); if RA(cwd) misses and GR(cwd) differs, retry that hashed name
+ * and its overflow prefix siblings. After LM still misses, e4l lists git
+ * worktrees of that cwd (porcelain, excluding cwd itself) and runs LM() +
+ * jsonl stat in each. Grok long cwds use grok-build's slug+blake3 dirname.
+ * Do not copy the provider store.
  */
 
 const fs = require("node:fs");
@@ -346,6 +347,7 @@ function listClaudeGitWorktrees(cwd) {
 /**
  * Claude Code 2.1.219 LM(cwd): RA() dir first, then overflow prefix
  * siblings. Stats the known sessionId jsonl. Does not walk every project.
+ * Short RA() names have no prefix siblings.
  * @param {string} projectsDir
  * @param {string} cwd
  * @param {string} jsonl
@@ -356,6 +358,7 @@ function findClaudeJsonlViaLm(projectsDir, cwd, jsonl) {
   if (!encoded) return null;
   const direct = existingClaudeSessionJsonl(path.join(projectsDir, encoded, jsonl));
   if (direct) return direct;
+  // LM(): short RA() names have no prefix siblings.
   if (encoded.length <= CLAUDE_PROJECT_DIR_MAX_CHARS) return null;
   const prefix = `${encoded.slice(0, CLAUDE_PROJECT_DIR_MAX_CHARS)}-`;
   let entries;
@@ -376,11 +379,11 @@ function findClaudeJsonlViaLm(projectsDir, cwd, jsonl) {
 }
 
 /**
- * GR() the known cwd, then prefer RA(cwd)/<id>.jsonl. If that misses and
- * the cwd overflows 200 encoded chars, readdir projects/ top-level names
- * for LM() prefix siblings and stat the known sessionId. If LM(cwd) still
- * misses, e4l lists git worktrees of cwd (except cwd) and runs LM() on
- * each — not a walk of every project dir.
+ * Solenta hashes the stored worktreePath first so a present RA(cwd) still
+ * wins. On a miss, GR() (realpath then NFC) retries RA(realpath) and its
+ * overflow prefix siblings. If LM still misses, e4l lists git worktrees of
+ * the GR() cwd (except cwd) and runs LM() on each — not a walk of every
+ * project dir.
  * @param {string} home
  * @param {string} cwd
  * @param {string} sessionId
@@ -389,15 +392,20 @@ function findClaudeJsonlViaLm(projectsDir, cwd, jsonl) {
 function findClaudeSessionFile(home, cwd, sessionId) {
   const id = String(sessionId || "");
   if (!isPathSafeSessionId(id)) return null;
-  const resolved = realpathClaudeCwd(cwd);
-  const encoded = encodeClaudeProjectDir(resolved);
-  if (!encoded) return null;
+  const rawCwd = String(cwd || "");
+  if (!rawCwd) return null;
   const projectsDir = path.join(String(home || ""), "projects");
   const jsonl = `${id}.jsonl`;
-  const direct = findClaudeJsonlViaLm(projectsDir, resolved, jsonl);
-  if (direct) return direct;
-  for (const worktreePath of listClaudeGitWorktrees(resolved)) {
-    if (worktreePath === resolved) continue;
+  const stored = findClaudeJsonlViaLm(projectsDir, rawCwd, jsonl);
+  if (stored) return stored;
+  const resolved = realpathClaudeCwd(rawCwd);
+  if (resolved && resolved !== rawCwd) {
+    const viaRealpath = findClaudeJsonlViaLm(projectsDir, resolved, jsonl);
+    if (viaRealpath) return viaRealpath;
+  }
+  const gitCwd = resolved || rawCwd;
+  for (const worktreePath of listClaudeGitWorktrees(gitCwd)) {
+    if (worktreePath === gitCwd || worktreePath === rawCwd) continue;
     const sibling = findClaudeJsonlViaLm(projectsDir, worktreePath, jsonl);
     if (sibling) return sibling;
   }

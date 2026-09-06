@@ -202,14 +202,35 @@ function claudeAssistant(text, timestamp, extra = {}) {
 
 describe("Claude session reader (#554)", () => {
   let home;
+  /** @type {string | null} */
+  let linkedRoot;
 
   beforeEach(() => {
     home = fs.mkdtempSync(path.join(os.tmpdir(), "coder-claude-sessions-"));
+    linkedRoot = null;
   });
 
   afterEach(() => {
     fs.rmSync(home, { recursive: true, force: true });
+    if (linkedRoot) fs.rmSync(linkedRoot, { recursive: true, force: true });
   });
+
+  /**
+   * Claude Code 2.1.219 Nqe() does `s = realpath(cwd) || cwd` before RA()/LM().
+   * @param {string} realRel
+   * @param {string} linkRel
+   */
+  function makeLinkedWorktree(realRel, linkRel) {
+    linkedRoot = fs.mkdtempSync(path.join(os.tmpdir(), "coder-claude-link-"));
+    const real = path.join(linkedRoot, realRel);
+    const link = path.join(linkedRoot, linkRel);
+    fs.mkdirSync(real, { recursive: true });
+    fs.mkdirSync(path.dirname(link), { recursive: true });
+    fs.symlinkSync(real, link);
+    const resolved = fs.realpathSync(link);
+    assert.notEqual(link, resolved, "fixture symlink realpath must differ from cwd");
+    return { real, link, resolved };
+  }
 
   it("opens one jsonl by sessionId+cwd and ignores another project dir", () => {
     writeClaudeSession(home, CLAUDE_CWD, SESSION_A, [
@@ -353,6 +374,98 @@ describe("Claude session reader (#554)", () => {
     assert.ok(found);
     assert.equal(found.includes(CLAUDE_LONG_GROUP), true);
     assert.equal(found.includes(CLAUDE_SIBLING_GROUP), false);
+  });
+
+  it("opens RA(realpath(cwd)) when the stored cwd is a symlink", () => {
+    const { link, resolved } = makeLinkedWorktree("real-wt", "link-wt");
+    assert.ok(
+      encodeClaudeProjectDir(link).length <= 200,
+      "stored symlink cwd must stay a short RA() so this is not an overflow scan",
+    );
+    writeClaudeSession(home, resolved, SESSION_A, [
+      claudeUser("realpath prompt", "2026-09-06T12:00:01.000Z"),
+      claudeAssistant("realpath reply", "2026-09-06T12:00:02.000Z"),
+    ]);
+    writeClaudeSession(home, "/tmp/other-wt", SESSION_A, [
+      claudeUser("wrong cwd", "2026-09-06T12:00:01.000Z"),
+    ]);
+
+    const found = findClaudeSessionFile(home, link, SESSION_A);
+    assert.ok(found, "must locate RA(realpath) without scanning projects/");
+    assert.equal(found.includes(encodeClaudeProjectDir(resolved)), true);
+    assert.equal(found.includes(encodeClaudeProjectDir(link)), false);
+    assert.equal(findClaudeSessionFile(home, link, SESSION_B), null);
+
+    const turns = readClaudeSessionTurns(home, link, SESSION_A);
+    assert.deepEqual(
+      turns.map((t) => `${t.role}:${t.text}`),
+      ["user:realpath prompt", "assistant:realpath reply"],
+    );
+  });
+
+  it("prefers RA(stored cwd) over RA(realpath) when both jsonl files exist", () => {
+    const { link, resolved } = makeLinkedWorktree("real-wt", "link-wt");
+    writeClaudeSession(home, link, SESSION_A, [
+      claudeUser("stored prompt", "2026-09-06T12:00:01.000Z"),
+    ]);
+    writeClaudeSession(home, resolved, SESSION_A, [
+      claudeUser("realpath prompt", "2026-09-06T12:00:01.000Z"),
+    ]);
+
+    const found = findClaudeSessionFile(home, link, SESSION_A);
+    assert.ok(found);
+    assert.equal(found.includes(encodeClaudeProjectDir(link)), true);
+    assert.equal(found.includes(encodeClaudeProjectDir(resolved)), false);
+  });
+
+  it("opens RA(realpath) overflow siblings when a short symlink cwd misses", () => {
+    const { link, resolved } = makeLinkedWorktree(
+      path.join("real", "a".repeat(200)),
+      "link-wt",
+    );
+    const storedEncoded = encodeClaudeProjectDir(link);
+    const resolvedEncoded = encodeClaudeProjectDir(resolved);
+    assert.ok(
+      storedEncoded.length <= 200,
+      "stored symlink cwd must be short so RA(cwd) does not readdir",
+    );
+    assert.ok(
+      resolvedEncoded.length > 200,
+      "realpath must overflow so LM() prefix siblings apply to RA(realpath)",
+    );
+    assert.notEqual(storedEncoded, resolvedEncoded);
+    const resolvedPrefix = `${resolvedEncoded.slice(0, 200)}-`;
+    const resolvedSibling = `${resolvedPrefix}drift1`;
+    writeClaudeSessionAtGroup(home, resolvedSibling, SESSION_A, [
+      claudeUser("realpath sibling prompt", "2026-09-06T12:00:01.000Z"),
+      claudeAssistant("realpath sibling reply", "2026-09-06T12:00:02.000Z"),
+    ]);
+    writeClaudeSession(home, "/tmp/other-wt", SESSION_A, [
+      claudeUser("wrong group", "2026-09-06T12:00:01.000Z"),
+    ]);
+
+    const found = findClaudeSessionFile(home, link, SESSION_A);
+    assert.ok(found, "must locate prefix-sibling of RA(realpath), not a full walk");
+    assert.equal(found.includes(resolvedSibling), true);
+    assert.equal(found.includes(storedEncoded), false);
+    assert.equal(findClaudeSessionFile(home, link, SESSION_B), null);
+
+    const turns = readClaudeSessionTurns(home, link, SESSION_A);
+    assert.deepEqual(
+      turns.map((t) => `${t.role}:${t.text}`),
+      ["user:realpath sibling prompt", "assistant:realpath sibling reply"],
+    );
+  });
+
+  it("does not scan projects/ when a short symlink cwd and its realpath both miss", () => {
+    const { link, resolved } = makeLinkedWorktree("real-wt", "link-wt");
+    assert.ok(encodeClaudeProjectDir(link).length <= 200);
+    assert.ok(encodeClaudeProjectDir(resolved).length <= 200);
+    writeClaudeSession(home, "/tmp/other-wt", SESSION_A, [
+      claudeUser("wrong cwd", "2026-09-06T12:00:01.000Z"),
+    ]);
+
+    assert.equal(findClaudeSessionFile(home, link, SESSION_A), null);
   });
 
   it("opens a jsonl under a linked git worktree hashed dir (e4l)", () => {
