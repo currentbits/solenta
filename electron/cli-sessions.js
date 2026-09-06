@@ -16,7 +16,8 @@
  * storage/session/<projectID>/<sessionID>.json plus message/ and part/).
  * #554 reclaim points it at one known sessionId (Codex: date-tree suffix
  * match; Claude and Grok: direct cwd-encoded path, no directory scan).
- * Claude long cwds
+ * Claude import walks projects/<group>/<sessionId>.jsonl; reclaim still
+ * uses cwd+sessionId only. Claude long cwds
  * use Claude Code 2.1.x's 200-char dash prefix plus abs(djb2).toString(36).
  * When that hashed dir misses, overflow lookup readdirs projects/ top-level
  * names that start with encoded.slice(0,200)+'-' and stats the known
@@ -579,31 +580,12 @@ function readClaudeSessionTurns(home, cwd, sessionId) {
   return parseClaudeJsonl(text);
 }
 
-/**
- * @param {import("./store").Store} store
- * @param {object} thread
- * @param {string} home
- * @param {string} cwd
- * @returns {number}
- */
-function absorbClaudeSessionTurns(store, thread, home, cwd) {
-  if (!thread || thread.provider !== "claude") return 0;
-  const sessionId = thread.sessionId;
-  if (!sessionId) return 0;
-  return absorbTurns(
-    store,
-    thread.id,
-    readClaudeSessionTurns(home, cwd, sessionId),
-  );
-}
-
 /** Filename: <sessionId>.jsonl directly under a project group. */
 const CLAUDE_SESSION_NAME = /^([0-9a-zA-Z-]+)\.jsonl$/;
 
 /**
  * Walk `projects/<group>/<sessionId>.jsonl`. Does not recurse into group
- * subdirs. The walk cannot leave `projects/`. Distinct from
- * findClaudeSessionFile (reclaim, cwd+sessionId, no scan).
+ * subdirs. The walk cannot leave `projects/`.
  *
  * @param {string | null | undefined} home
  * @param {(info: { sessionId: string, file: string, mtimeMs: number }) => void} onFile
@@ -709,7 +691,6 @@ function readClaudeImportTurns(home, sessionId) {
 /**
  * Create a Solenta thread from one Claude jsonl. Reuses parseClaudeJsonl.
  * Idempotent on provider=claude + sessionId so re-import does not duplicate.
- * Does not copy ~/.claude and does not touch reclaim.
  *
  * @param {import("./store").Store} store
  * @param {{ sessionId: string, projectId: string, home?: string | null }} input
@@ -754,6 +735,24 @@ function importClaudeSession(store, input) {
   }
   store.save();
   return store.getThread(thread.id);
+}
+
+/**
+ * @param {import("./store").Store} store
+ * @param {object} thread
+ * @param {string} home
+ * @param {string} cwd
+ * @returns {number}
+ */
+function absorbClaudeSessionTurns(store, thread, home, cwd) {
+  if (!thread || thread.provider !== "claude") return 0;
+  const sessionId = thread.sessionId;
+  if (!sessionId) return 0;
+  return absorbTurns(
+    store,
+    thread.id,
+    readClaudeSessionTurns(home, cwd, sessionId),
+  );
 }
 
 /**

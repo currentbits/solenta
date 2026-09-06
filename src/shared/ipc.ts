@@ -355,9 +355,12 @@ export interface VibeKanbanImportResult {
 }
 
 /**
- * One CLI session on disk (#433 Codex, #972 Grok, #975 Cursor, #976 OpenCode).
+ * One CLI session on disk (#433 Codex, #972 Grok, #970 Claude, #975 Cursor,
+ * #976 OpenCode). The scan stays on the main process; the renderer cannot
+ * supply a home.
  * Codex: `CODEX_HOME/sessions/YYYY/MM/DD/rollout-*-<sessionId>.jsonl`.
  * Grok: `GROK_HOME/sessions/<encoded-cwd>/<sessionId>/chat_history.jsonl`.
+ * Claude: `CLAUDE_CONFIG_DIR/projects/<group>/<sessionId>.jsonl`.
  * Cursor: `CURSOR_HOME/projects/<group>/agent-transcripts/<id>/<id>.jsonl`.
  * OpenCode: `OPENCODE_HOME/opencode.db`, or the pre-1.14 JSON tree at
  * `storage/session/<projectID>/<sessionID>.json` when the db is missing
