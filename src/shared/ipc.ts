@@ -3397,6 +3397,7 @@ export interface CoderApi {
      * Eject or reclaim a thread's provider session (issue #554). Eject
      * keeps sessionId but Solenta will not resume it, copies the raw-CLI
      * resume command, and runs it in $TERMINAL when that env is set.
+     * A running Solenta child is stopped so the writer is released (#960).
      * Reclaim re-reads the known provider session for that sessionId
      * (Codex rollout, Claude projects jsonl, Grok chat_history) and
      * appends turns that happened outside Solenta (same reader #433

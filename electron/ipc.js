@@ -681,6 +681,22 @@ const IPC_HANDLERS = {
   },
   "threads:setEjected": async (ctx, input) => {
     const updated = services.setEjected(ctx.store, input);
+    // #960: releasing the session writer is the point of eject. Stop this
+    // thread's child only — a crew cascade would kill workers the user did
+    // not ask to park.
+    if (
+      input &&
+      input.ejected === true &&
+      ctx.runner &&
+      typeof ctx.runner.isRunning === "function" &&
+      typeof ctx.runner.stopRun === "function" &&
+      ctx.runner.isRunning(input.threadId)
+    ) {
+      await ctx.runner.stopRun({
+        threadId: input.threadId,
+        cascadeCrew: false,
+      });
+    }
     // #979: an idle Claude keep-alive still holds the session writer after
     // the Solenta turn has ended (stopRun is a no-op then). Same retire as
     // settle/archive/delete — this thread only, no crew cascade.
@@ -695,7 +711,7 @@ const IPC_HANDLERS = {
         // Thread gone between reclaim and the detail push.
       }
     }
-    return updated;
+    return ctx.store.getThread(input.threadId) || updated;
   },
   "threads:setCrossThreadInbound": async (ctx, input) => {
     const updated = services.setCrossThreadInbound(ctx.store, input);

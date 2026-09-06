@@ -8063,7 +8063,7 @@ function createRunner(opts) {
   }
 
   /**
-   * @param {{ threadId: string }} input
+   * @param {{ threadId: string, cascadeCrew?: boolean }} input
    * @param {Set<string>} [seen] - internal: crew cascade cycle guard
    */
   async function stopRun(input, seen = new Set()) {
@@ -8072,7 +8072,12 @@ function createRunner(opts) {
     // burning tokens and re-wakes the parent through queueOrchNotice. Doing
     // it before this thread's own terminal also means a notice that races in
     // during the kills is stopped again by the run below.
-    const crew = await stopCrew(String(threadId), seen);
+    // Eject (#960) passes cascadeCrew: false — only this session's writer
+    // must be released; the crew keeps running.
+    const cascadeCrew = input.cascadeCrew !== false;
+    const crew = cascadeCrew
+      ? await stopCrew(String(threadId), seen)
+      : { stopped: 0, traced: false };
     if (crew.stopped > 0) {
       const own = active.get(threadId);
       appendMessage(
