@@ -70,6 +70,8 @@ import type {
   ThreadInfo,
   ThreadSummaryInfo,
   CrewTaskView,
+  CrewIntegration,
+  CrewIntegrationReceipt,
   RewindResult,
   SimulatorCapabilitySnapshot,
   SimulatorDeviceInfo,
@@ -1583,6 +1585,26 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
             tasks: [] as CrewTaskView[],
           },
         ),
+      crewIntegration: (input: { threadId: string }) =>
+        rec(
+          "threads.crewIntegration",
+          [input],
+          {
+            leadThreadId: input.threadId,
+            leadBranch: null,
+            leadWorktreePath: null,
+            missingLeadWorktree: true,
+            finalTarget: "main",
+            finalAction: "merge" as const,
+            combinedFiles: [],
+            leadHeadSha: null,
+            leadVerify: null,
+            verifyStale: false,
+            landed: false,
+            workers: [],
+            receipts: [],
+          } as CrewIntegration,
+        ),
       search: (input: unknown) => rec("threads.search", [input], [] as ThreadInfo[]),
       create: (input: unknown) => {
         const createdAt = Date.now();
@@ -2518,6 +2540,18 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
           message: "feat: suggested message",
         }),
       mergeWorktree: (input: unknown) => rec("git.mergeWorktree", [input], thread()),
+      integrateWorker: (input: unknown) =>
+        rec("git.integrateWorker", [input], {
+          noop: true,
+          merged: false,
+          receipt: {
+            workerId: "",
+            sourceSha: "",
+            leadId: "",
+            leadShaAfter: "",
+            at: 0,
+          } as CrewIntegrationReceipt,
+        }),
       conflictContext: (input: unknown) =>
         rec("git.conflictContext", [input], {
           files: [],

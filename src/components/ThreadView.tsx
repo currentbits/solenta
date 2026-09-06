@@ -681,6 +681,8 @@ interface ThreadViewProps {
   onMergeWorktree?: (opts?: {
     ciWorkflowApproved?: boolean;
   }) => Promise<unknown>;
+  /** Crew worker: open the lead Integration view instead of merging here. */
+  onOpenCrewLead?: (leadId: string) => void;
   onRemoveWorktree?: (force?: boolean) => Promise<unknown>;
   /** Local branches for the post-create stacked-base picker (#187). */
   listBaseBranches?: (
@@ -4291,6 +4293,7 @@ export const ThreadView = memo(function ThreadView({
   gitFetch,
   onSetupWorktree,
   onMergeWorktree,
+  onOpenCrewLead,
   onRemoveWorktree,
   listBaseBranches,
   onSetBaseBranch,
@@ -4815,6 +4818,7 @@ export const ThreadView = memo(function ThreadView({
     isWorking,
     onSetupWorktree: onSetupWorktree ?? (async () => {}),
     onMergeWorktree: onMergeWorktree ?? (async () => {}),
+    onOpenCrewLead,
     onRemoveWorktree: onRemoveWorktree ?? (async () => {}),
     onStartRun,
     conflictContext,

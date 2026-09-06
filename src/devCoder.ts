@@ -86,6 +86,7 @@ import type {
   ThreadDetail,
   ThreadInfo,
   CrewTaskView,
+  CrewIntegration,
   DigestResult,
   UsageEntry,
   UsageReport,
@@ -3599,6 +3600,23 @@ function buildDevCoder(): CoderApi {
           tasks: known ? SEED_CREW_TASKS.map((t) => ({ ...t })) : [],
         };
       },
+      async crewIntegration(input: { threadId: string }): Promise<CrewIntegration> {
+        return {
+          leadThreadId: input.threadId,
+          leadBranch: null,
+          leadWorktreePath: null,
+          missingLeadWorktree: true,
+          finalTarget: "main",
+          finalAction: "merge",
+          combinedFiles: [],
+          leadHeadSha: null,
+          leadVerify: null,
+          verifyStale: false,
+          landed: false,
+          workers: [],
+          receipts: [],
+        };
+      },
       /**
        * Full-content search: title + notes + message text, case-insensitive
        * substring, newest activity first, max 50. Includes archived. 0–1
@@ -5402,6 +5420,12 @@ function buildDevCoder(): CoderApi {
           branch: detail.thread.branch ?? null,
           baseBranch: "main",
         };
+      },
+      async integrateWorker(_input: {
+        leadThreadId: string;
+        workerThreadId: string;
+      }) {
+        throw new Error("Set up a lead worktree first");
       },
       async mergeWorktree(input) {
         const detail = details.get(input.threadId);

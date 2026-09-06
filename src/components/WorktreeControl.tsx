@@ -28,6 +28,8 @@ export interface WorktreeControlProps {
   onMergeWorktree: (opts?: {
     ciWorkflowApproved?: boolean;
   }) => Promise<unknown>;
+  /** Crew worker: jump to the lead Integration view (#954). */
+  onOpenCrewLead?: (leadId: string) => void;
   onRemoveWorktree: (force?: boolean) => Promise<unknown>;
   onStartRun?: (prompt: string, threadId?: string) => void | Promise<void>;
   conflictContext?: (threadId: string) => Promise<ConflictContext>;
@@ -105,6 +107,7 @@ export function useWorktreeChrome(
     isWorking,
     onSetupWorktree,
     onMergeWorktree,
+    onOpenCrewLead,
     onRemoveWorktree,
     onStartRun,
     conflictContext,
@@ -478,6 +481,17 @@ export function useWorktreeChrome(
           </div>
         )}
       </div>
+      {thread?.orchWorker && thread.handoffFrom && onOpenCrewLead ? (
+        <button
+          type="button"
+          className={styles.crewLead}
+          data-crew-lead=""
+          disabled={busy}
+          onClick={() => onOpenCrewLead(thread.handoffFrom!)}
+        >
+          Integrate from lead
+        </button>
+      ) : null}
       <button
         type="button"
         className={styles.merge}
@@ -491,7 +505,7 @@ export function useWorktreeChrome(
             Merging…
           </>
         ) : (
-          "Merge worktree"
+          `Merge onto ${thread?.baseBranch || "repo default"}`
         )}
       </button>
     </div>

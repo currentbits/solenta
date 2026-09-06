@@ -49,6 +49,7 @@ import type {
   ThreadInfo,
   ThreadSummaryInfo,
   CrewTaskView,
+  CrewIntegration as CrewIntegrationView,
   VerifyResult,
   WorkflowView,
 } from "../shared/ipc";
@@ -62,6 +63,7 @@ import {
 } from "../format";
 import { contextRing, threadContextWindow } from "../contextRing";
 import { buildWaitStates, waitLabel, type WaitState } from "../waiting";
+import { CrewIntegration } from "./CrewIntegration";
 import { MemoryTab } from "./MemoryTab";
 import { SkillsTab } from "./SkillsTab";
 import {
@@ -145,6 +147,14 @@ interface AgentsPanelProps {
   listCrewTasks?: (
     threadId: string,
   ) => Promise<{ rootThreadId: string; tasks: CrewTaskView[] }>;
+  /** Lead Integration view (#954). Absent = hide the section. */
+  crewIntegration?: (threadId: string) => Promise<CrewIntegrationView>;
+  /** Squash a worker onto the lead worktree. */
+  onIntegrateWorker?: (workerThreadId: string) => Promise<void>;
+  /** Combined-result verify on the lead. */
+  onVerifyLead?: () => Promise<void>;
+  /** Final Open PR / Merge into target. Separate from worker integrate. */
+  onLandLead?: () => Promise<void>;
   /** Select a thread (team row click). */
   onSelectThread?: (id: string) => void;
   /** Re-spawn a failed workflow phase agent (#825). */
@@ -2453,6 +2463,10 @@ export function AgentsContent({
   rosterKey = "",
   listThreadSummaries,
   listCrewTasks,
+  crewIntegration,
+  onIntegrateWorker,
+  onVerifyLead,
+  onLandLead,
   onSelectThread,
   onRetryAgent,
 }: {
@@ -2465,6 +2479,10 @@ export function AgentsContent({
   listCrewTasks?: (
     threadId: string,
   ) => Promise<{ rootThreadId: string; tasks: CrewTaskView[] }>;
+  crewIntegration?: (threadId: string) => Promise<CrewIntegrationView>;
+  onIntegrateWorker?: (workerThreadId: string) => Promise<void>;
+  onVerifyLead?: () => Promise<void>;
+  onLandLead?: () => Promise<void>;
   onSelectThread?: (id: string) => void;
   onRetryAgent?: (agentId: string) => void;
 }) {
@@ -2544,6 +2562,56 @@ export function AgentsContent({
       off?.();
     };
   }, [thread?.id, listCrewTasks]);
+
+  const [integration, setIntegration] = useState<CrewIntegrationView | null>(
+    null,
+  );
+  const [integrationError, setIntegrationError] = useState<string | null>(
+    null,
+  );
+  const [busyWorkerId, setBusyWorkerId] = useState<string | null>(null);
+  const [verifyingLead, setVerifyingLead] = useState(false);
+  const [landingLead, setLandingLead] = useState(false);
+  useEffect(() => {
+    const isLead = Boolean(
+      thread && summaries?.some((s) => s.handoffFrom === thread.id),
+    );
+    if (!thread || !crewIntegration || !isLead) {
+      setIntegration(null);
+      return;
+    }
+    let cancelled = false;
+    const load = () => {
+      crewIntegration(thread.id)
+        .then((res) => {
+          if (!cancelled) {
+            setIntegration(res);
+            setIntegrationError(null);
+          }
+        })
+        .catch((err) => {
+          if (!cancelled) {
+            setIntegration(null);
+            setIntegrationError(
+              err instanceof Error ? err.message : String(err),
+            );
+          }
+        });
+    };
+    void load();
+    const api = (
+      window as unknown as {
+        coder?: { on?: (channel: "threads:changed", cb: () => void) => () => void };
+      }
+    ).coder;
+    const off = api?.on?.("threads:changed", () => {
+      void load();
+    });
+    return () => {
+      cancelled = true;
+      off?.();
+    };
+  }, [thread?.id, crewIntegration, rosterKey, summaries]);
 
   const crewOwnerTitle = useCallback(
     (threadId: string) => {
@@ -2714,6 +2782,75 @@ export function AgentsContent({
               </button>
             )}
           </section>
+          {crewIntegration ? (
+            <CrewIntegration
+              key={thread.id}
+              view={integration}
+              thread={thread}
+              error={integrationError}
+              busyWorkerId={busyWorkerId}
+              verifying={verifyingLead}
+              finalPending={landingLead}
+              onIntegrate={async (workerId) => {
+                if (!onIntegrateWorker) return;
+                setBusyWorkerId(workerId);
+                setIntegrationError(null);
+                try {
+                  await onIntegrateWorker(workerId);
+                  if (crewIntegration) {
+                    setIntegration(await crewIntegration(thread.id));
+                  }
+                } catch (err) {
+                  setIntegrationError(
+                    err instanceof Error ? err.message : String(err),
+                  );
+                } finally {
+                  setBusyWorkerId(null);
+                }
+              }}
+              onSelectThread={onSelectThread}
+              onVerify={
+                onVerifyLead
+                  ? async () => {
+                      setVerifyingLead(true);
+                      setIntegrationError(null);
+                      try {
+                        await onVerifyLead();
+                        if (crewIntegration) {
+                          setIntegration(await crewIntegration(thread.id));
+                        }
+                      } catch (err) {
+                        setIntegrationError(
+                          err instanceof Error ? err.message : String(err),
+                        );
+                      } finally {
+                        setVerifyingLead(false);
+                      }
+                    }
+                  : undefined
+              }
+              onFinal={
+                onLandLead
+                  ? async () => {
+                      setLandingLead(true);
+                      setIntegrationError(null);
+                      try {
+                        await onLandLead();
+                        if (crewIntegration) {
+                          setIntegration(await crewIntegration(thread.id));
+                        }
+                      } catch (err) {
+                        setIntegrationError(
+                          err instanceof Error ? err.message : String(err),
+                        );
+                      } finally {
+                        setLandingLead(false);
+                      }
+                    }
+                  : undefined
+              }
+            />
+          ) : null}
           <CrewTaskList tasks={crewTasks} ownerTitle={crewOwnerTitle} />
           {subagentSection}
           {hypothesisSection}
@@ -3062,6 +3199,10 @@ export const AgentsPanel = memo(function AgentsPanel({
   rosterKey,
   listThreadSummaries,
   listCrewTasks,
+  crewIntegration,
+  onIntegrateWorker,
+  onVerifyLead,
+  onLandLead,
   onSelectThread,
   onRetryAgent,
   onViewChanges,
@@ -3214,6 +3355,10 @@ export const AgentsPanel = memo(function AgentsPanel({
           rosterKey={rosterKey}
           listThreadSummaries={listThreadSummaries}
           listCrewTasks={listCrewTasks}
+          crewIntegration={crewIntegration}
+          onIntegrateWorker={onIntegrateWorker}
+          onVerifyLead={onVerifyLead}
+          onLandLead={onLandLead}
           onSelectThread={onSelectThread}
           onRetryAgent={onRetryAgent}
         />

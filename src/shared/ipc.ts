@@ -681,6 +681,12 @@ export interface ThreadInfo {
    */
   pendingFork?: boolean;
   /**
+   * True on orchestration workers forked from a lead (issue #30 / #954).
+   * Absent/false on ordinary threads. Header Merge must not silently
+   * retarget these at the lead; the lead Integration view owns staging.
+   */
+  orchWorker?: boolean;
+  /**
    * In-session subagents spawned via the Agent tool, tracked by the runner
    * from the CLI stream (issue #21). Newest-last, capped to 20 rows.
    */
@@ -1728,6 +1734,64 @@ export interface PostMergeVerify {
   fixThreadId: string | null;
   /** Why it was skipped, when status is skipped. */
   skipReason?: string | null;
+}
+
+/* ------------------------------------------- lead integration (#954) */
+
+/** Worker row on the lead Integration view. */
+export type CrewIntegrationState =
+  | "running"
+  | "ready"
+  | "conflicted"
+  | "integrated"
+  | "landed"
+  | "missing";
+
+/** Durable worker→lead receipt. Survives cleanupWorktree and worker archive. */
+export interface CrewIntegrationReceipt {
+  workerId: string;
+  sourceSha: string;
+  leadId: string;
+  leadShaAfter: string;
+  at: number;
+}
+
+export interface CrewIntegrationWorkerRow {
+  workerId: string;
+  title: string;
+  taskId: string | null;
+  /** Worker HEAD, #948 snapshot when present, or receipt; null → "unknown". */
+  sourceSha: string | null;
+  changedFiles: string[];
+  verify: VerifyResult | null;
+  /** Lead branch, not the worker's own base. */
+  destination: string;
+  state: CrewIntegrationState;
+  blocked: boolean;
+  needs: string[];
+  archived: boolean;
+  worktreePath: string | null;
+  missingReason: string | null;
+}
+
+/**
+ * Lead Integration read model (threads.crewIntegration). Not a
+ * ThreadSummaryInfo overload: summaries stay cheap and git-free.
+ */
+export interface CrewIntegration {
+  leadThreadId: string;
+  leadBranch: string | null;
+  leadWorktreePath: string | null;
+  missingLeadWorktree: boolean;
+  finalTarget: string;
+  finalAction: "merge" | "pr";
+  combinedFiles: string[];
+  leadHeadSha: string | null;
+  leadVerify: VerifyResult | null;
+  verifyStale: boolean;
+  landed: boolean;
+  workers: CrewIntegrationWorkerRow[];
+  receipts: CrewIntegrationReceipt[];
 }
 
 /** A TCP listener whose process cwd is the thread worktree or project. */
@@ -3240,6 +3304,11 @@ export interface CoderApi {
       tasks: CrewTaskView[];
     }>;
     /**
+     * Lead Integration view (#954): destinations, per-worker rows, receipts.
+     * Includes archived workers that still belong to this lead.
+     */
+    crewIntegration(input: { threadId: string }): Promise<CrewIntegration>;
+    /**
      * Full-content search: matches thread titles, notes, AND message text
      * (case-insensitive substring), newest activity first, max 50. Includes
      * archived threads; the renderer styles them as usual.
@@ -3839,6 +3908,21 @@ export interface CoderApi {
       /** Stage only these paths for the session commit. Omitted = add -A. */
       paths?: string[];
     }): Promise<ThreadInfo>;
+    /**
+     * Squash a crew worker onto the lead's isolated worktree (#954).
+     * Refuses without a lead worktree (never falls through to main).
+     * Records a receipt before cleanup. Same source SHA is a no-op.
+     * Does not land on the final target and does not close issues.
+     */
+    integrateWorker(input: {
+      leadThreadId: string;
+      workerThreadId: string;
+      ciWorkflowApproved?: boolean;
+    }): Promise<{
+      noop: boolean;
+      merged: boolean;
+      receipt: CrewIntegrationReceipt;
+    }>;
     /**
      * Unmerged files in the thread worktree plus capped conflict-marker
      * snippets (issue #163). The merge is already replayed there.

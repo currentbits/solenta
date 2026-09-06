@@ -1198,14 +1198,40 @@ function mergeWorktree(opts) {
   }
   if (mergeError) throw mergeError;
 
+  // Staging (#954 integrateWorker) records a receipt here, before cleanup
+  // erases the worker's worktreePath/branch. Landing the lead itself (no
+  // intoPath) with receipts marks the combined result Landed.
+  if (typeof opts.afterMerge === "function") {
+    opts.afterMerge({ thread, target, branch });
+  }
+  if (!intoPath) {
+    const receipts = Array.isArray(thread.integrationReceipts)
+      ? thread.integrationReceipts
+      : [];
+    if (receipts.length) {
+      const sha = gitTry(target, ["rev-parse", "HEAD"]);
+      store.updateThread(thread.id, {
+        integrationLanded: {
+          at: Date.now(),
+          sha: sha.ok ? String(sha.stdout || "").trim() || null : null,
+          via: "merge",
+        },
+      });
+      store.save();
+    }
+  }
+
   // The work is on the default branch now: close its planboard issue (#632).
   // Fire-and-forget — a gh hiccup must not fail a merge that succeeded.
-  try {
-    void require("./postmerge.js")
-      .completeThreadIssue(store, threadId)
-      .catch(() => {});
-  } catch {
-    // ignore
+  // Worker→lead staging skips this; #947 owns issue closure on final land.
+  if (opts.skipIssueComplete !== true) {
+    try {
+      void require("./postmerge.js")
+        .completeThreadIssue(store, threadId)
+        .catch(() => {});
+    } catch {
+      // ignore
+    }
   }
 
   // (d) Remove worktree + branch, clear thread fields

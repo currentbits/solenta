@@ -248,6 +248,8 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     markDigestSeen,
     listThreadSummaries,
     listCrewTasks,
+    crewIntegration,
+    integrateWorker,
     listCheckpoints,
     restoreCheckpoint,
     runStats,
@@ -1488,6 +1490,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         onStartRun={startRun}
         onSetupWorktree={setupWorktree}
         onMergeWorktree={mergeWorktree}
+        onOpenCrewLead={handleSelectThread}
         onRemoveWorktree={removeWorktree}
         listBaseBranches={listBaseBranches}
         onSetBaseBranch={setBaseBranch}
@@ -1667,6 +1670,35 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         rosterKey={rosterKey}
         listThreadSummaries={listThreadSummaries}
         listCrewTasks={listCrewTasks}
+        crewIntegration={crewIntegration}
+        onIntegrateWorker={
+          selectedThreadId
+            ? async (workerThreadId: string) => {
+                await integrateWorker(selectedThreadId, workerThreadId);
+              }
+            : undefined
+        }
+        onVerifyLead={
+          selectedThreadId
+            ? async () => {
+                await runVerify(selectedThreadId);
+              }
+            : undefined
+        }
+        onLandLead={
+          selectedThreadId
+            ? async () => {
+                const view = await crewIntegration(selectedThreadId);
+                if (view.finalAction === "pr") {
+                  await createPr({
+                    title: visibleDetail?.thread.title || "Lead integration",
+                  });
+                  return;
+                }
+                await mergeWorktree();
+              }
+            : undefined
+        }
         onSelectThread={handleSelectThread}
         onViewChanges={openChanges}
         listCheckpoints={listCheckpoints}

@@ -1137,6 +1137,47 @@ function backfillFromNotice(messages) {
   return changed;
 }
 
+/**
+ * Lead-side worker→lead integrate receipts (#954). Survive cleanupWorktree
+ * and worker archive. Empty/junk omitted so old fixtures still deepEqual.
+ * @param {unknown} raw
+ * @returns {Array<object> | undefined}
+ */
+function normalizeIntegrationReceipts(raw) {
+  if (!Array.isArray(raw) || raw.length === 0) return undefined;
+  const out = [];
+  for (const r of raw) {
+    if (!r || typeof r !== "object") continue;
+    const workerId = typeof r.workerId === "string" ? r.workerId.trim() : "";
+    const sourceSha = typeof r.sourceSha === "string" ? r.sourceSha.trim() : "";
+    const leadId = typeof r.leadId === "string" ? r.leadId.trim() : "";
+    if (!workerId || !sourceSha || !leadId) continue;
+    out.push({
+      workerId,
+      sourceSha,
+      leadId,
+      leadShaAfter:
+        typeof r.leadShaAfter === "string" ? r.leadShaAfter.trim() : "",
+      at: typeof r.at === "number" && Number.isFinite(r.at) ? r.at : 0,
+    });
+  }
+  return out.length ? out : undefined;
+}
+
+/**
+ * Combined lead result actually reached the final target (#954).
+ * @param {unknown} raw
+ * @returns {{ at: number, sha: string | null, via: "merge" | "pr" } | undefined}
+ */
+function normalizeIntegrationLanded(raw) {
+  if (!raw || typeof raw !== "object") return undefined;
+  const via = raw.via === "pr" ? "pr" : "merge";
+  const sha =
+    typeof raw.sha === "string" && raw.sha.trim() ? raw.sha.trim() : null;
+  const at = typeof raw.at === "number" && Number.isFinite(raw.at) ? raw.at : 0;
+  return { at, sha, via };
+}
+
 function migrateThread(t) {
   if (!t || typeof t !== "object") return t;
   const next = {
@@ -1261,6 +1302,14 @@ function migrateThread(t) {
   } else {
     delete next.crossThreadInbound;
   }
+  // Lead-side integrate receipts (#954). Survive worker cleanup/archive.
+  // Omitted when empty so old fixtures still deepEqual.
+  const receipts = normalizeIntegrationReceipts(t.integrationReceipts);
+  if (receipts) next.integrationReceipts = receipts;
+  else delete next.integrationReceipts;
+  const landed = normalizeIntegrationLanded(t.integrationLanded);
+  if (landed) next.integrationLanded = landed;
+  else delete next.integrationLanded;
   return next;
 }
 

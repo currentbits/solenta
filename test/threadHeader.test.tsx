@@ -149,6 +149,7 @@ function view(props: {
   ) => Promise<unknown>;
   onSetupWorktree?: () => Promise<unknown>;
   onMergeWorktree?: () => Promise<unknown>;
+  onOpenCrewLead?: (leadId: string) => void;
   onRemoveWorktree?: (force?: boolean) => Promise<unknown>;
 }) {
   return (
@@ -190,6 +191,7 @@ function view(props: {
       gitFetch={props.gitFetch}
       onSetupWorktree={props.onSetupWorktree}
       onMergeWorktree={props.onMergeWorktree}
+      onOpenCrewLead={props.onOpenCrewLead}
       onRemoveWorktree={props.onRemoveWorktree}
     />
   );
@@ -447,7 +449,7 @@ describe("worktree in the thread topbar (#680)", () => {
     assert.ok(header, "thread header present");
     const merge = header!.querySelector("[data-worktree-merge]");
     assert.ok(merge, "Merge worktree lives in the topbar");
-    assert.equal((merge!.textContent || "").trim(), "Merge worktree");
+    assert.equal((merge!.textContent || "").trim(), "Merge onto repo default");
     await m.click(merge);
     assert.equal(merges.length, 1);
     m.unmount();
@@ -484,6 +486,56 @@ describe("worktree in the thread topbar (#680)", () => {
     const stacked = header!.querySelector("[data-stacked-base]");
     assert.ok(stacked, "stacked-base label lives in the header");
     assert.equal((stacked!.textContent || "").trim(), "stacked-base");
+    m.unmount();
+  });
+
+  it("names the merge destination on the header button (#954)", async () => {
+    const m = await mount(
+      view({
+        detail: detail({ thread: thread({ baseBranch: "release" }) }),
+        onSetupWorktree: async () => {},
+        onMergeWorktree: async () => {},
+        onRemoveWorktree: async () => {},
+      }),
+    );
+    await m.flush();
+    const merge = m.query("[data-thread-header] [data-worktree-merge]");
+    assert.ok(merge);
+    assert.equal((merge!.textContent || "").trim(), "Merge onto release");
+    m.unmount();
+  });
+
+  it("points orchWorker threads at the lead Integration view (#954)", async () => {
+    const opened: string[] = [];
+    const merges: number[] = [];
+    const m = await mount(
+      view({
+        detail: detail({
+          thread: thread({
+            orchWorker: true,
+            handoffFrom: "lead-1",
+            baseBranch: "main",
+          }),
+        }),
+        onSetupWorktree: async () => {},
+        onMergeWorktree: async () => {
+          merges.push(1);
+        },
+        onRemoveWorktree: async () => {},
+        onOpenCrewLead: (id: string) => {
+          opened.push(id);
+        },
+      }),
+    );
+    await m.flush();
+    const leadBtn = m.query("[data-thread-header] [data-crew-lead]");
+    assert.ok(leadBtn, "crew workers get an Integrate from lead control");
+    await m.click(leadBtn);
+    assert.deepEqual(opened, ["lead-1"]);
+    const merge = m.query("[data-thread-header] [data-worktree-merge]");
+    assert.ok(merge);
+    assert.equal((merge!.textContent || "").trim(), "Merge onto main");
+    assert.equal(merges.length, 0, "Integrate from lead does not merge");
     m.unmount();
   });
 

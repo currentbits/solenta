@@ -72,6 +72,7 @@ import type {
   ThreadInfo,
   ThreadSummaryInfo,
   CrewTaskView,
+  CrewIntegration,
   UpdateStatus,
   UsageReport,
   VerifyResult,
@@ -540,6 +541,14 @@ export interface UseCoderResult {
   listCrewTasks: (
     threadId: string,
   ) => Promise<{ rootThreadId: string; tasks: CrewTaskView[] }>;
+  /** Lead Integration view (#954). */
+  crewIntegration: (threadId: string) => Promise<CrewIntegration>;
+  /** Squash a crew worker onto the lead worktree (#954). */
+  integrateWorker: (
+    leadThreadId: string,
+    workerThreadId: string,
+    opts?: { ciWorkflowApproved?: boolean },
+  ) => Promise<{ noop: boolean; merged: boolean }>;
   /** Worktree checkpoints for a thread (newest-first). */
   listCheckpoints: (threadId: string) => Promise<CheckpointInfo[]>;
   /** Hard-reset the thread worktree to a checkpoint sha. */
@@ -2896,6 +2905,28 @@ export function useCoder(): UseCoderResult {
     [api],
   );
 
+  const crewIntegration = useCallback(
+    async (threadId: string) => {
+      return api.threads.crewIntegration({ threadId });
+    },
+    [api],
+  );
+
+  const integrateWorker = useCallback(
+    async (
+      leadThreadId: string,
+      workerThreadId: string,
+      opts?: { ciWorkflowApproved?: boolean },
+    ) => {
+      return api.git.integrateWorker({
+        leadThreadId,
+        workerThreadId,
+        ciWorkflowApproved: opts?.ciWorkflowApproved,
+      });
+    },
+    [api],
+  );
+
   const refreshProviders = useCallback(async () => {
     try {
       setProviders(await api.providers.list());
@@ -3513,6 +3544,8 @@ export function useCoder(): UseCoderResult {
     markDigestSeen,
     listThreadSummaries,
     listCrewTasks,
+    crewIntegration,
+    integrateWorker,
     listCheckpoints,
     restoreCheckpoint,
     runStats,

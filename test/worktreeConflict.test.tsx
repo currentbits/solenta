@@ -103,7 +103,7 @@ describe("worktree conflict resolve (#163)", () => {
         },
       }),
     );
-    await m.click(m.byText("Merge worktree"));
+    await m.click(m.query("[data-worktree-merge]"));
     assert.ok(m.text().includes("README.md"));
     assert.equal(m.query("[data-conflict-resolve]"), null);
     assert.ok(m.byText("Merge again"));
@@ -133,7 +133,7 @@ describe("worktree conflict resolve (#163)", () => {
     }
 
     const m = await mount(<Harness />);
-    await m.click(m.byText("Merge worktree"));
+    await m.click(m.query("[data-worktree-merge]"));
     assert.equal(merges, 1);
     const resolveBtn = m.query("[data-conflict-resolve]");
     assert.ok(resolveBtn, "Let the agent resolve is on the conflict banner");
@@ -178,7 +178,7 @@ describe("worktree conflict resolve (#163)", () => {
     }
 
     const m = await mount(<Harness />);
-    await m.click(m.byText("Merge worktree"));
+    await m.click(m.query("[data-worktree-merge]"));
     await m.click(m.query("[data-conflict-resolve]"));
     assert.equal(prompts.length, 1);
     await m.click(m.byText("Dismiss"));

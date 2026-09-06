@@ -442,6 +442,10 @@ const IPC_HANDLERS = {
   "threads:crewTasks": async (ctx, input) => {
     return services.listCrewTasks(ctx.store, input || {});
   },
+  "threads:crewIntegration": async (ctx, input) => {
+    const { crewIntegration } = require("./crewIntegration.js");
+    return crewIntegration(ctx.store, input || {});
+  },
   "activity:list": async (ctx) => {
     const threads = ctx.store.getThreads();
     return buildActivity(threads, ctx.store.data.workLogByThread, Date.now());
@@ -1425,6 +1429,20 @@ const IPC_HANDLERS = {
     });
     await runRetention(ctx);
     return merged;
+  },
+  "git:integrateWorker": async (ctx, input) => {
+    const { integrateWorker } = require("./crewIntegration.js");
+    const result = integrateWorker({
+      store: ctx.store,
+      leadThreadId: input && input.leadThreadId,
+      workerThreadId: input && input.workerThreadId,
+      ciWorkflowApproved: Boolean(input && input.ciWorkflowApproved),
+      broadcast: ctx.broadcast,
+      isRunning: (id) =>
+        typeof ctx.runner.isRunning === "function" && ctx.runner.isRunning(id),
+    });
+    await runRetention(ctx);
+    return result;
   },
   "git:conflictContext": async (ctx, input) => {
     return conflictContext({
