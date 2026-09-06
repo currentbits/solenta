@@ -8,6 +8,7 @@ const { execFileSync } = require("node:child_process");
 const { Store } = require("../store.js");
 const services = require("../services.js");
 const { createRunner } = require("../runner.js");
+const { setupWorktree } = require("../worktrees.js");
 const {
   extractSessionId,
   isSessionStartEvent,
@@ -624,6 +625,62 @@ describe("runner codex provider", () => {
     const prompt = String(argv[argv.length - 1]);
     assert.match(prompt, /issue_create/);
     assert.doesNotMatch(prompt, /using `gh`/);
+  });
+
+  it("workspace-write grants linked-worktree git metadata (#847)", async () => {
+    process.env.CODER_FAKE_CODEX_SCENARIO = "success";
+    const repo = store.getProjects()[0].path;
+    git(repo, ["config", "user.email", "test@example.com"]);
+    git(repo, ["config", "user.name", "Test"]);
+    fs.writeFileSync(path.join(repo, "README.md"), "hello\n");
+    git(repo, ["add", "README.md"]);
+    git(repo, ["commit", "-m", "init"]);
+    try {
+      git(repo, ["checkout", "-b", "main"]);
+    } catch {
+      // already on main
+    }
+
+    runner.stopAll();
+    runner = createRunner({
+      store,
+      core,
+      pushFn: (channel, payload) => {
+        pushes.push({ channel, payload });
+      },
+      tickMs: 15,
+      userDataPath: tmpDir,
+    });
+
+    const project = store.getProjects()[0];
+    const t = services.createThread(store, {
+      projectId: project.id,
+      title: "WT Codex",
+    });
+    services.setProvider(store, { threadId: t.id, provider: "codex" });
+    const setup = setupWorktree({
+      store,
+      threadId: t.id,
+      worktreeBase: path.join(tmpDir, "worktrees"),
+      broadcast: () => {},
+    });
+    if (fs.existsSync(argvFile)) fs.unlinkSync(argvFile);
+    await runner.startRun({ threadId: t.id, prompt: "commit me" });
+    await waitFor(() => store.getThread(t.id).status === "done");
+    const argv = JSON.parse(fs.readFileSync(argvFile, "utf8"));
+    const gitDir = execFileSync(
+      "git",
+      ["rev-parse", "--path-format=absolute", "--git-dir"],
+      { cwd: setup.worktreePath, encoding: "utf8" },
+    ).trim();
+    const joined = argv.join(" ");
+    assert.ok(
+      argv.some((a) =>
+        String(a).startsWith("sandbox_workspace_write.writable_roots="),
+      ),
+      joined,
+    );
+    assert.ok(joined.includes(gitDir), joined);
   });
 
   it("omits GitHub proxy flags when sandbox gh cannot authenticate (#848)", async () => {

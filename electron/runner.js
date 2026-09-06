@@ -4451,6 +4451,7 @@ function createRunner(opts) {
     });
     const codexExecConfig = [
       ...codexWorkspaceWriteArgs({
+        cwd: localCwd,
         permissionMode: thread.permissionMode || "default",
         allowNetwork: planboardNote === services.PLANBOARD_NOTE,
       }),

@@ -620,6 +620,7 @@ function spawnAgentCodex(opts) {
   });
   const codexExecConfig = [
     ...codexWorkspaceWriteArgs({
+      cwd,
       permissionMode: permissionMode || "default",
       allowNetwork: planboardNote === PLANBOARD_NOTE,
     }),

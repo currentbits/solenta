@@ -1,19 +1,30 @@
 "use strict";
 
 /**
- * Extra Codex `-c` flags for `workspace-write` so a Planboard session can
- * reach GitHub (#848) without opening the whole network.
+ * Extra Codex `-c` flags for `workspace-write` so a linked worktree can
+ * commit (#847) and a Planboard session can reach GitHub (#848) without
+ * opening the whole network.
+ *
+ * `codex exec --sandbox workspace-write` only allows writes in cwd. A
+ * Solenta managed worktree's `.git` file points at
+ * `<main>/.git/worktrees/<id>`, so `git add`/`git commit` fail with
+ * EPERM on index.lock until `sandbox_workspace_write.writable_roots`
+ * covers that gitdir plus the shared object/ref/reflog stores.
  *
  * `sandbox_workspace_write.network_access` only opens the seatbelt gate.
  * `features.network_proxy` then allowlists api.github.com, github.com, and
  * uploads.github.com. Plan / danger-full-access emit nothing here.
  *
- * Fail closed: flags are omitted unless gh can authenticate inside that
- * same sandbox (macOS keychain is reachable once network_access is on;
- * without it `gh` reports "token in default is invalid").
+ * Fail closed: GitHub flags are omitted unless gh can authenticate inside
+ * that same sandbox (macOS keychain is reachable once network_access is
+ * on; without it `gh` reports "token in default is invalid"). Worktree
+ * gitdir roots do not depend on gh.
  */
 
+const fs = require("node:fs");
+const path = require("node:path");
 const { spawnSync } = require("node:child_process");
+const { gitTry } = require("./worktrees.js");
 const { codexSandboxFor } = require("./providers.js");
 
 const PLANBOARD_GITHUB_HOSTS = [
@@ -26,6 +37,88 @@ const PLANBOARD_GITHUB_HOSTS = [
 let authOkOverride;
 /** @type {boolean | undefined} */
 let authOkCache;
+
+/**
+ * @param {string} p
+ */
+function realpathOrResolve(p) {
+  try {
+    return fs.realpathSync(p);
+  } catch {
+    return path.resolve(p);
+  }
+}
+
+/**
+ * @param {string} parent
+ * @param {string} child
+ */
+function isInside(parent, child) {
+  const rel = path.relative(realpathOrResolve(parent), realpathOrResolve(child));
+  return rel === "" || (!rel.startsWith("..") && !path.isAbsolute(rel));
+}
+
+/**
+ * @param {string} p
+ * @returns {string | null}
+ */
+function existingDir(p) {
+  try {
+    if (fs.existsSync(p) && fs.statSync(p).isDirectory()) return p;
+  } catch {
+    // ignore
+  }
+  return null;
+}
+
+/**
+ * Extra writable roots for a linked worktree. Empty when `.git` already
+ * lives inside cwd (standalone checkout) so workspace-write covers it.
+ *
+ * Grants this worktree's gitdir plus the shared object/ref/reflog stores.
+ * Does not grant the whole common dir (sibling worktrees live there).
+ *
+ * @param {string | null | undefined} cwd
+ * @returns {string[]}
+ */
+function codexWorkspaceWritableRoots(cwd) {
+  const dir = String(cwd || "");
+  if (!dir) return [];
+  const gitDir = gitTry(dir, [
+    "rev-parse",
+    "--path-format=absolute",
+    "--git-dir",
+  ]);
+  const common = gitTry(dir, [
+    "rev-parse",
+    "--path-format=absolute",
+    "--git-common-dir",
+  ]);
+  if (!gitDir.ok || !common.ok) return [];
+  const gitDirPath = realpathOrResolve(
+    path.resolve(dir, String(gitDir.stdout || "")),
+  );
+  const commonPath = realpathOrResolve(
+    path.resolve(dir, String(common.stdout || "")),
+  );
+  const cwdPath = realpathOrResolve(dir);
+  if (isInside(cwdPath, gitDirPath) && isInside(cwdPath, commonPath)) {
+    return [];
+  }
+  /** @type {string[]} */
+  const roots = [];
+  if (!isInside(cwdPath, gitDirPath)) {
+    const d = existingDir(gitDirPath);
+    if (d) roots.push(d);
+  }
+  if (!isInside(cwdPath, commonPath)) {
+    for (const sub of ["objects", "refs", "logs"]) {
+      const d = existingDir(path.join(commonPath, sub));
+      if (d) roots.push(d);
+    }
+  }
+  return roots;
+}
 
 /**
  * @param {unknown} value
@@ -156,6 +249,7 @@ function codexGhAuthOk() {
  * `-c` pairs to splice onto a Codex exec argv, or [].
  *
  * @param {{
+ *   cwd?: string | null,
  *   permissionMode?: string | null,
  *   allowNetwork?: boolean,
  * }} [opts]
@@ -165,9 +259,19 @@ function codexWorkspaceWriteArgs(opts) {
   if (codexSandboxFor(opts && opts.permissionMode) !== "workspace-write") {
     return [];
   }
-  if (!(opts && opts.allowNetwork)) return [];
-  if (!codexGhAuthOk()) return [];
-  return planboardGithubProxyConfigArgs();
+  /** @type {string[]} */
+  const args = [];
+  const roots = codexWorkspaceWritableRoots(opts && opts.cwd);
+  if (roots.length) {
+    args.push(
+      "-c",
+      `sandbox_workspace_write.writable_roots=[${roots.map(tomlQuote).join(", ")}]`,
+    );
+  }
+  if (opts && opts.allowNetwork && codexGhAuthOk()) {
+    args.push(...planboardGithubProxyConfigArgs());
+  }
+  return args;
 }
 
 module.exports = {
@@ -178,5 +282,6 @@ module.exports = {
   setCodexGhAuthOkForTests,
   resetCodexGhAuthOkForTests,
   codexGhAuthOk,
+  codexWorkspaceWritableRoots,
   codexWorkspaceWriteArgs,
 };
