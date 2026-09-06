@@ -312,8 +312,29 @@ function looksSessionLost(text) {
   return /No conversation found/i.test(String(text || ""));
 }
 
+/**
+ * Codex thread-store single-writer conflict (openai/codex#37403).
+ * Match the explicit conflict text only, never generic JSON-RPC -32600.
+ * Broader than classifyWriterLock: also "live local writer".
+ * @param {unknown} text
+ */
+function looksWriterLock(text) {
+  const s = String(text || "");
+  if (!s) return false;
+  return (
+    classifyWriterLock(s) != null ||
+    /already has a live local writer/i.test(s)
+  );
+}
+
+const CODEX_WRITER_LOCK_COPY =
+  "This Codex session is still owned by another process. Quit Codex Desktop or the other CLI that has it open. The worker notice is waiting and will resume once the session is free.";
+
 const CODEX_EJECTED_COPY =
   "This Codex session was ejected. Solenta will not resume it. The worker notice is waiting.";
+
+/** Flock can lag Solenta's child exit; one bounded re-flush, no loop. */
+const CODEX_WRITER_RELEASE_MS = 400;
 
 /**
  * Map a claude-stream result event's errors[] (+ optional result/stderr) into
@@ -1071,12 +1092,6 @@ function createRunner(opts) {
   const orchNotices = new Map();
 
   /**
-   * Threads that already got CODEX_EJECTED_COPY for a parked notice.
-   * @type {Set<string>}
-   */
-  const codexEjectedNotified = new Set();
-
-  /**
    * Consecutive machine-delivered turns per thread (issue #277). A notice
    * flush increments; a user-initiated startRun resets to 0. At
    * CREW_AUTO_TURN_CAP the next flush is refused through the same
@@ -1084,6 +1099,87 @@ function createRunner(opts) {
    * @type {Map<string, number>}
    */
   const autoTurns = new Map();
+
+  /** sessionId -> Date.now() when a Solenta Codex child left `active`. */
+  const recentlyReleasedCodex = new Map();
+  /** threadId -> timeout for one bounded post-release flush. */
+  const codexReleaseFlush = new Map();
+  /** threadId: recovery copy already posted for a parked notice. */
+  const codexParkNotified = new Set();
+
+  function cancelCodexReleaseFlush(threadId) {
+    const timer = codexReleaseFlush.get(threadId);
+    if (!timer) return;
+    clearTimeout(timer);
+    codexReleaseFlush.delete(threadId);
+  }
+
+  function noteCodexRelease(sessionId) {
+    const sid = sessionId != null ? String(sessionId) : "";
+    if (!sid) return;
+    recentlyReleasedCodex.set(sid, Date.now());
+  }
+
+  function scheduleCodexReleaseFlush(threadId) {
+    if (codexReleaseFlush.has(threadId)) return;
+    const timer = setTimeout(() => {
+      codexReleaseFlush.delete(threadId);
+      try {
+        flushOrchNotices(threadId);
+      } catch {
+        // silent
+      }
+    }, CODEX_WRITER_RELEASE_MS);
+    if (typeof timer.unref === "function") timer.unref();
+    codexReleaseFlush.set(threadId, timer);
+  }
+
+  /**
+   * True when another Solenta Codex child still holds this sessionId
+   * (live or shutting down).
+   * @param {string} sessionId
+   * @param {string} exceptThreadId
+   */
+  function codexSessionHeld(sessionId, exceptThreadId) {
+    const sid = String(sessionId || "");
+    if (!sid) return false;
+    for (const [id, entry] of active) {
+      if (id === exceptThreadId) continue;
+      if (!entry || entry.kind !== "codex") continue;
+      if (entry.sessionId && String(entry.sessionId) === sid) return true;
+      const t = store.getThread(id);
+      if (t && t.sessionId && String(t.sessionId) === sid) return true;
+    }
+    return false;
+  }
+
+  /**
+   * Park a machine-delivered Codex wake-up: writer-lock, eject, or a
+   * sibling Solenta child still owns the session. `{ wait: true }` is the
+   * one-shot delay after our own child just released.
+   * @param {object} thread
+   * @returns {{ copy?: string, wait?: boolean } | null}
+   */
+  function parkCodexFromNotice(thread) {
+    if (!thread) return null;
+    if (resolveProvider(thread) !== "codex") return null;
+    if (thread.ejected === true) return { copy: CODEX_EJECTED_COPY };
+    const sid = thread.sessionId ? String(thread.sessionId) : "";
+    if (sid && recentlyReleasedCodex.has(sid)) {
+      const age = Date.now() - recentlyReleasedCodex.get(sid);
+      if (age >= 0 && age < CODEX_WRITER_RELEASE_MS) return { wait: true };
+    }
+    if (sid && codexSessionHeld(sid, thread.id)) {
+      return { copy: CODEX_WRITER_LOCK_COPY };
+    }
+    if (
+      thread.lastErrorKind === "writer-lock" ||
+      looksWriterLock(thread.lastError)
+    ) {
+      return { copy: CODEX_WRITER_LOCK_COPY };
+    }
+    return null;
+  }
 
   /**
    * Append a line to the notice queue. Caller already checked the thread
@@ -1192,13 +1288,16 @@ function createRunner(opts) {
       orchNotices.delete(threadId);
       return;
     }
-    // #554: do not auto-continue an ejected Codex session. Writer-lock
-    // parking (#950) is a separate skip; do not fold it in here.
-    if (resolveProvider(thread) === "codex" && thread.ejected === true) {
-      if (!codexEjectedNotified.has(threadId)) {
-        codexEjectedNotified.add(threadId);
+    const park = parkCodexFromNotice(thread);
+    if (park) {
+      if (park.wait) {
+        scheduleCodexReleaseFlush(threadId);
+        return;
+      }
+      if (!codexParkNotified.has(threadId)) {
+        codexParkNotified.add(threadId);
         try {
-          appendMessage(threadId, "event", CODEX_EJECTED_COPY);
+          appendMessage(threadId, "event", park.copy);
           store.save();
           pushDetail(threadId, lastWorkflowByThread.get(threadId) || null);
           pushThreadsChanged();
@@ -1208,6 +1307,7 @@ function createRunner(opts) {
       }
       return;
     }
+    codexParkNotified.delete(threadId);
     orchNotices.delete(threadId);
     const prompt = noticePrompt(notes);
     // Per-orchestration ceiling (issue #67) and consecutive auto-turn cap
@@ -2973,6 +3073,13 @@ function createRunner(opts) {
     }
     active.delete(threadId);
     const thread = store.getThread(threadId);
+    if (entry.kind === "codex") {
+      noteCodexRelease(
+        (entry.sessionId != null && entry.sessionId) ||
+          (thread && thread.sessionId) ||
+          null,
+      );
+    }
     if (thread && (thread.stalledAt != null || thread.lastEventAt != null)) {
       store.updateThread(threadId, { stalledAt: null, lastEventAt: null });
     }
@@ -4544,6 +4651,7 @@ function createRunner(opts) {
       workingId,
       codexState,
       runUsage,
+      sessionId: resumeId,
     };
     Object.defineProperty(entry, "workflow", {
       get() {
@@ -4718,6 +4826,8 @@ function createRunner(opts) {
           const sid = codexParse.extractSessionId(ev);
           if (sid) {
             capturedSessionId = sid;
+            const live = active.get(threadId);
+            if (live && live.kind === "codex") live.sessionId = sid;
             store.updateThread(
               threadId,
               startedFresh
@@ -7572,6 +7682,16 @@ function createRunner(opts) {
     if (!thread) {
       throw new Error(`Unknown thread: ${threadId}`);
     }
+    if (
+      resolveProvider(thread) === "codex" &&
+      thread.sessionId &&
+      thread.ejected !== true &&
+      codexSessionHeld(thread.sessionId, threadId)
+    ) {
+      throw new Error(
+        "A Codex session writer is already running for this session in another Solenta thread",
+      );
+    }
 
     // Machine-delivered turns increment autoTurns in flushOrchNotices.
     // Anything else (user send, retry, verify fix) is a human in the loop.
@@ -8306,6 +8426,11 @@ function createRunner(opts) {
     for (const id of [...quotaTimers.keys()]) {
       cancelQuotaWake(id);
     }
+    for (const id of [...codexReleaseFlush.keys()]) {
+      cancelCodexReleaseFlush(id);
+    }
+    recentlyReleasedCodex.clear();
+    codexParkNotified.clear();
     // Kept-alive Claude sessions (idle between turns): kill + clear timers.
     for (const threadId of [...claudeSessions.keys()]) {
       disposeClaudeSession(threadId);
@@ -8454,6 +8579,7 @@ module.exports = {
   NOUNS,
   classifyClaudeResultError,
   formatRunExitError,
+  looksWriterLock,
   /** @internal test/diagnostics */
   liveClaudeChildren,
 };

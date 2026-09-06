@@ -80,6 +80,26 @@ describe("materializeCodexGuardrailHome", () => {
       "hooks.json must be ours, not a link into ~/.codex",
     );
   });
+
+  it("shares sessions/ but not thread-writer-locks/ (#950)", () => {
+    fs.mkdirSync(path.join(source, "sessions"));
+    fs.mkdirSync(path.join(source, "thread-writer-locks"));
+    fs.writeFileSync(
+      path.join(source, "thread-writer-locks", "sess.lock"),
+      "held\n",
+    );
+    materializeCodexGuardrailHome({ dest, sourceHome: source });
+    assert.ok(
+      fs.lstatSync(path.join(dest, "sessions")).isSymbolicLink(),
+      "sessions must stay shared so resume still works",
+    );
+    const lockDest = path.join(dest, "thread-writer-locks");
+    assert.equal(
+      fs.existsSync(lockDest) && fs.lstatSync(lockDest).isSymbolicLink(),
+      false,
+      "overlay must not share Desktop's writer-lock namespace",
+    );
+  });
 });
 
 describe("codex guardrail hook (stdin)", () => {

@@ -50,7 +50,15 @@ function materializeCodexGuardrailHome(opts) {
       names = [];
     }
     for (const name of names) {
-      if (!name || name === "hooks.json" || name !== path.basename(name)) {
+      // hooks.json is Solenta's PreToolUse (#813). thread-writer-locks is
+      // Codex's single-writer flock dir: sharing it with ~/.codex means
+      // Desktop (or another CLI) blocks Solenta resume (#950).
+      if (
+        !name ||
+        name === "hooks.json" ||
+        name === "thread-writer-locks" ||
+        name !== path.basename(name)
+      ) {
         continue;
       }
       linkOrSkip(path.join(sourceHome, name), path.join(dest, name));
