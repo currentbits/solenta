@@ -355,9 +355,12 @@ export interface VibeKanbanImportResult {
 }
 
 /**
- * One CLI session on disk (#433 Codex, #972 Grok).
+ * One CLI session on disk (#433 Codex, #972 Grok, #976 OpenCode).
  * Codex: `CODEX_HOME/sessions/YYYY/MM/DD/rollout-*-<sessionId>.jsonl`.
  * Grok: `GROK_HOME/sessions/<encoded-cwd>/<sessionId>/chat_history.jsonl`.
+ * OpenCode: `OPENCODE_HOME/opencode.db`, or the pre-1.14 JSON tree at
+ * `storage/session/<projectID>/<sessionID>.json` when the db is missing
+ * or has no session table.
  */
 export interface CliSessionCandidate {
   sessionId: string;
@@ -3269,13 +3272,15 @@ export interface CoderApi {
       baseBranch?: string | null;
     }): Promise<ThreadInfo>;
     /**
-     * List CLI sessions on disk (#433 Codex, #972 Grok).
+     * List CLI sessions on disk (#433 Codex, #972 Grok, #976 OpenCode).
      * The scan stays on the main process; the renderer cannot supply a home.
-     * `provider: "grok"` walks GROK_HOME/sessions. Omitted/codex walks
-     * CODEX_HOME/sessions.
+     * `provider: "grok"` walks GROK_HOME/sessions. `provider: "opencode"`
+     * reads OPENCODE_HOME/opencode.db, falling back to the pre-1.14 JSON
+     * tree when the db is missing or has no session table.
+     * Omitted/codex walks CODEX_HOME/sessions.
      */
     listCliSessions(input?: {
-      provider?: "codex" | "grok";
+      provider?: "codex" | "grok" | "opencode";
     }): Promise<CliSessionCandidate[]>;
     /**
      * Create a Solenta thread from one listed CLI session.
@@ -3285,7 +3290,7 @@ export interface CoderApi {
     importCliSession(input: {
       sessionId: string;
       projectId: string;
-      provider?: "codex" | "grok";
+      provider?: "codex" | "grok" | "opencode";
     }): Promise<ThreadInfo>;
     get(id: string): Promise<ThreadDetail>;
     /**

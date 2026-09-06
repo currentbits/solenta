@@ -3654,16 +3654,23 @@ function buildDevCoder(): CoderApi {
         });
         return registerThread(t);
       },
-      async listCliSessions(_input?: { provider?: "codex" | "grok" }) {
+      async listCliSessions(_input?: {
+        provider?: "codex" | "grok" | "opencode";
+      }) {
         return [];
       },
       async importCliSession(input) {
         const grok = input.provider === "grok";
+        const opencode = input.provider === "opencode";
         return registerThread(
           newThread({
             projectId: input.projectId,
-            title: grok ? "Imported Grok session" : "Imported Codex session",
-            provider: grok ? "grok" : "codex",
+            title: grok
+              ? "Imported Grok session"
+              : opencode
+                ? "Imported OpenCode session"
+                : "Imported Codex session",
+            provider: grok ? "grok" : opencode ? "opencode" : "codex",
             sessionId: input.sessionId,
           }),
         );

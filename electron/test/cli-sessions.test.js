@@ -29,7 +29,11 @@ const {
   parseGrokChatHistory,
   listGrokSessions,
   importGrokSession,
+  listOpenCodeSessions,
+  importOpenCodeSession,
+  readOpenCodeImportTurns,
 } = require("../cli-sessions.js");
+const { DatabaseSync } = require("node:sqlite");
 
 const SESSION_A = "01a07579-aaaa-7000-8000-aaaaaaaaaaaa";
 const SESSION_B = "01a07579-bbbb-7000-8000-bbbbbbbbbbbb";
@@ -1083,5 +1087,576 @@ describe("importGrokSession (#972)", () => {
       /invalid/i,
     );
     assert.equal(store.getThreads().length, 0);
+  });
+});
+
+const OC_A = "ses_aaaa1111ffffABCDEFGHijkl";
+const OC_B = "ses_bbbb2222ffffABCDEFGHijkl";
+
+function openCodeDbPath(home) {
+  return path.join(home, "opencode.db");
+}
+
+function ensureOpenCodeSchema(db) {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS session (
+      id TEXT PRIMARY KEY,
+      project_id TEXT NOT NULL DEFAULT 'p',
+      slug TEXT NOT NULL DEFAULT '',
+      directory TEXT NOT NULL DEFAULT '',
+      title TEXT NOT NULL DEFAULT '',
+      version TEXT NOT NULL DEFAULT '',
+      cost REAL NOT NULL DEFAULT 0,
+      tokens_input INTEGER NOT NULL DEFAULT 0,
+      tokens_output INTEGER NOT NULL DEFAULT 0,
+      tokens_reasoning INTEGER NOT NULL DEFAULT 0,
+      tokens_cache_read INTEGER NOT NULL DEFAULT 0,
+      tokens_cache_write INTEGER NOT NULL DEFAULT 0,
+      time_created INTEGER NOT NULL,
+      time_updated INTEGER NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS message (
+      id TEXT PRIMARY KEY,
+      session_id TEXT NOT NULL,
+      time_created INTEGER NOT NULL,
+      time_updated INTEGER NOT NULL,
+      data TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS part (
+      id TEXT PRIMARY KEY,
+      message_id TEXT NOT NULL,
+      session_id TEXT NOT NULL,
+      time_created INTEGER NOT NULL,
+      time_updated INTEGER NOT NULL,
+      data TEXT NOT NULL
+    );
+  `);
+}
+
+function writeOpenCodeSession(home, sessionId, turns, mtimeMs = Date.now()) {
+  fs.mkdirSync(home, { recursive: true });
+  const dbPath = openCodeDbPath(home);
+  const db = new DatabaseSync(dbPath);
+  ensureOpenCodeSchema(db);
+  const title =
+    (turns.find((t) => t.role === "user") || {}).text || sessionId;
+  db.prepare(
+    `INSERT OR REPLACE INTO session (
+      id, project_id, slug, directory, title, version, time_created, time_updated
+    ) VALUES (?, 'p', '', '', ?, '', ?, ?)`,
+  ).run(sessionId, title, mtimeMs, mtimeMs);
+  let i = 0;
+  for (const turn of turns) {
+    i += 1;
+    const msgId = `msg_${sessionId}_${i}`;
+    const t = Number(turn.createdAt) || mtimeMs + i;
+    db.prepare(
+      `INSERT INTO message (id, session_id, time_created, time_updated, data)
+       VALUES (?, ?, ?, ?, ?)`,
+    ).run(msgId, sessionId, t, t, JSON.stringify({ role: turn.role }));
+    const parts = [
+      { type: "text", text: turn.text },
+      ...(turn.extraParts || []),
+    ];
+    let p = 0;
+    for (const part of parts) {
+      p += 1;
+      db.prepare(
+        `INSERT INTO part (id, message_id, session_id, time_created, time_updated, data)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+      ).run(
+        `prt_${sessionId}_${i}_${p}`,
+        msgId,
+        sessionId,
+        t + p,
+        t + p,
+        JSON.stringify(part),
+      );
+    }
+  }
+  db.close();
+  return dbPath;
+}
+
+/**
+ * Pre-1.14 OpenCode JSON tree:
+ * storage/session/<projectID>/<sessionID>.json
+ * storage/message/<sessionID>/<messageID>.json
+ * storage/part/<messageID>/<partID>.json
+ */
+function writeOpenCodeJsonSession(
+  home,
+  sessionId,
+  turns,
+  mtimeMs = Date.now(),
+  projectId = "proj_json",
+) {
+  const sessionDir = path.join(home, "storage", "session", projectId);
+  fs.mkdirSync(sessionDir, { recursive: true });
+  const sessionFile = path.join(sessionDir, `${sessionId}.json`);
+  const title =
+    (turns.find((t) => t.role === "user") || {}).text || sessionId;
+  fs.writeFileSync(
+    sessionFile,
+    `${JSON.stringify({
+      id: sessionId,
+      projectID: projectId,
+      title,
+      time: { created: mtimeMs, updated: mtimeMs },
+    })}\n`,
+  );
+  const at = mtimeMs / 1000;
+  fs.utimesSync(sessionFile, at, at);
+
+  let i = 0;
+  for (const turn of turns) {
+    i += 1;
+    const msgId = `msg_${sessionId}_${i}`;
+    const t = Number(turn.createdAt) || mtimeMs + i;
+    const msgDir = path.join(home, "storage", "message", sessionId);
+    fs.mkdirSync(msgDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(msgDir, `${msgId}.json`),
+      `${JSON.stringify({
+        id: msgId,
+        sessionID: sessionId,
+        role: turn.role,
+        time: { created: t },
+      })}\n`,
+    );
+    const parts = [
+      { type: "text", text: turn.text },
+      ...(turn.extraParts || []),
+    ];
+    let p = 0;
+    for (const part of parts) {
+      p += 1;
+      const partId = `prt_${sessionId}_${i}_${p}`;
+      const partDir = path.join(home, "storage", "part", msgId);
+      fs.mkdirSync(partDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(partDir, `${partId}.json`),
+        `${JSON.stringify({
+          id: partId,
+          sessionID: sessionId,
+          messageID: msgId,
+          time: { created: t + p },
+          ...part,
+        })}\n`,
+      );
+    }
+  }
+  return sessionFile;
+}
+
+describe("listOpenCodeSessions (#976)", () => {
+  let home;
+
+  beforeEach(() => {
+    home = fs.mkdtempSync(path.join(os.tmpdir(), "coder-opencode-sessions-list-"));
+  });
+
+  afterEach(() => {
+    fs.rmSync(home, { recursive: true, force: true });
+  });
+
+  it("lists both sessions in a mocked opencode.db", () => {
+    writeOpenCodeSession(
+      home,
+      OC_A,
+      [
+        { role: "user", text: "prompt a" },
+        { role: "assistant", text: "reply a" },
+      ],
+      2000,
+    );
+    writeOpenCodeSession(
+      home,
+      OC_B,
+      [
+        { role: "user", text: "prompt b" },
+        { role: "assistant", text: "reply b" },
+      ],
+      1000,
+    );
+
+    const listed = listOpenCodeSessions(home);
+    assert.equal(listed.length, 2);
+    assert.deepEqual(
+      listed.map((s) => s.sessionId),
+      [OC_A, OC_B],
+    );
+    for (const row of listed) {
+      assert.equal(typeof row.mtimeMs, "number");
+      assert.equal(Number.isFinite(row.mtimeMs), true);
+    }
+    assert.equal(listed[0].mtimeMs, 2000);
+    assert.equal(listed[1].mtimeMs, 1000);
+  });
+
+  it("returns an empty list when opencode.db is missing", () => {
+    assert.deepEqual(listOpenCodeSessions(home), []);
+  });
+
+  it("does not list files outside opencode.db or unsafe session ids", () => {
+    writeOpenCodeSession(home, OC_A, [{ role: "user", text: "prompt a" }]);
+    fs.mkdirSync(path.join(home, "storage", "session", "proj"), {
+      recursive: true,
+    });
+    fs.writeFileSync(
+      path.join(home, "storage", "session", "proj", `${OC_B}.json`),
+      JSON.stringify({ id: OC_B, title: "json leftover" }),
+    );
+    const db = new DatabaseSync(openCodeDbPath(home));
+    db.prepare(
+      `INSERT INTO session (
+        id, project_id, slug, directory, title, version, time_created, time_updated
+      ) VALUES (?, 'p', '', '', 'evil', '', 1, 1)`,
+    ).run("../evil");
+    db.close();
+
+    const listed = listOpenCodeSessions(home);
+    assert.deepEqual(
+      listed.map((s) => s.sessionId),
+      [OC_A],
+    );
+  });
+});
+
+describe("importOpenCodeSession (#976)", () => {
+  let home;
+  let tmpDir;
+  let store;
+  let projectId;
+
+  beforeEach(() => {
+    home = fs.mkdtempSync(path.join(os.tmpdir(), "coder-opencode-sessions-imp-"));
+    tmpDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "coder-opencode-sessions-store-"),
+    );
+    store = new Store(path.join(tmpDir, "store.json"));
+    projectId = "proj-import";
+    store.setProjects([
+      {
+        id: projectId,
+        slug: "demo",
+        name: "demo",
+        path: path.join(tmpDir, "demo"),
+      },
+    ]);
+  });
+
+  afterEach(() => {
+    fs.rmSync(home, { recursive: true, force: true });
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("creates an opencode thread whose transcript matches the parsed turns and ignores the sibling", () => {
+    const dbPath = writeOpenCodeSession(home, OC_A, [
+      { role: "user", text: "prompt a" },
+      {
+        role: "assistant",
+        text: "reply a",
+        extraParts: [
+          { type: "step-start" },
+          { type: "reasoning", text: "thinking" },
+          { type: "tool", tool: "write" },
+        ],
+      },
+    ]);
+    writeOpenCodeSession(home, OC_B, [
+      { role: "user", text: "prompt b" },
+      { role: "assistant", text: "reply b" },
+    ]);
+
+    const expected = readOpenCodeImportTurns(home, OC_A);
+    const thread = importOpenCodeSession(store, {
+      home,
+      sessionId: OC_A,
+      projectId,
+    });
+
+    assert.ok(thread && thread.id);
+    assert.equal(thread.provider, "opencode");
+    assert.equal(thread.sessionId, OC_A);
+    assert.equal(thread.projectId, projectId);
+    assert.equal(thread.ejected, false);
+
+    const messages = store.getMessages(thread.id);
+    assert.deepEqual(
+      messages.map((m) => `${m.role}:${m.text}`),
+      expected.map((t) => `${t.role}:${t.text}`),
+    );
+    assert.deepEqual(
+      messages.map((m) => `${m.role}:${m.text}`),
+      ["user:prompt a", "assistant:reply a"],
+    );
+    assert.equal(
+      messages.some((m) => m.text === "prompt b" || m.text === "reply b"),
+      false,
+    );
+    assert.equal(
+      messages.some((m) => m.text === "thinking"),
+      false,
+    );
+    assert.equal(store.getThreads().length, 1);
+    assert.equal(
+      fs.existsSync(dbPath),
+      true,
+      "must not copy or consume the OpenCode store",
+    );
+    assert.equal(
+      fs.existsSync(path.join(tmpDir, "opencode.db")),
+      false,
+      "must not copy opencode.db into the Solenta store dir",
+    );
+  });
+
+  it("re-importing the same opencode sessionId does not mint a second thread", () => {
+    writeOpenCodeSession(home, OC_A, [
+      { role: "user", text: "prompt a" },
+      { role: "assistant", text: "reply a" },
+    ]);
+    const first = importOpenCodeSession(store, {
+      home,
+      sessionId: OC_A,
+      projectId,
+    });
+    const second = importOpenCodeSession(store, {
+      home,
+      sessionId: OC_A,
+      projectId,
+    });
+    assert.equal(second.id, first.id);
+    assert.equal(store.getThreads().length, 1);
+    assert.equal(store.getMessages(first.id).length, 2);
+  });
+
+  it("rejects a sessionId that is not a path-safe id", () => {
+    writeOpenCodeSession(home, OC_A, [{ role: "user", text: "prompt a" }]);
+    assert.throws(
+      () =>
+        importOpenCodeSession(store, {
+          home,
+          sessionId: "../evil",
+          projectId,
+        }),
+      /invalid/i,
+    );
+    assert.equal(store.getThreads().length, 0);
+  });
+});
+
+describe("listOpenCodeSessions JSON fallback (#977)", () => {
+  let home;
+
+  beforeEach(() => {
+    home = fs.mkdtempSync(
+      path.join(os.tmpdir(), "coder-opencode-json-sessions-list-"),
+    );
+  });
+
+  afterEach(() => {
+    fs.rmSync(home, { recursive: true, force: true });
+  });
+
+  it("lists both sessions from a JSON-only home when opencode.db is missing", () => {
+    writeOpenCodeJsonSession(
+      home,
+      OC_A,
+      [
+        { role: "user", text: "prompt a" },
+        { role: "assistant", text: "reply a" },
+      ],
+      2000,
+      "proj_a",
+    );
+    writeOpenCodeJsonSession(
+      home,
+      OC_B,
+      [
+        { role: "user", text: "prompt b" },
+        { role: "assistant", text: "reply b" },
+      ],
+      1000,
+      "proj_b",
+    );
+
+    assert.equal(fs.existsSync(openCodeDbPath(home)), false);
+
+    const listed = listOpenCodeSessions(home);
+    assert.equal(listed.length, 2);
+    assert.deepEqual(
+      listed.map((s) => s.sessionId),
+      [OC_A, OC_B],
+    );
+    assert.equal(listed[0].mtimeMs, 2000);
+    assert.equal(listed[1].mtimeMs, 1000);
+  });
+
+  it("lists JSON sessions when opencode.db exists but has no session table", () => {
+    writeOpenCodeJsonSession(
+      home,
+      OC_A,
+      [{ role: "user", text: "prompt a" }],
+      2000,
+    );
+    const db = new DatabaseSync(openCodeDbPath(home));
+    db.exec("CREATE TABLE unrelated (id TEXT)");
+    db.close();
+
+    const listed = listOpenCodeSessions(home);
+    assert.deepEqual(
+      listed.map((s) => s.sessionId),
+      [OC_A],
+    );
+  });
+
+  it("does not list files outside storage/session or unsafe session ids", () => {
+    writeOpenCodeJsonSession(home, OC_A, [{ role: "user", text: "prompt a" }]);
+    fs.writeFileSync(
+      path.join(home, `${OC_B}.json`),
+      JSON.stringify({ id: OC_B, title: "outside storage" }),
+    );
+    fs.mkdirSync(path.join(home, "storage", "message", OC_B), {
+      recursive: true,
+    });
+    fs.writeFileSync(
+      path.join(home, "storage", "message", OC_B, "msg_1.json"),
+      JSON.stringify({ id: "msg_1", role: "user" }),
+    );
+    fs.mkdirSync(path.join(home, "storage", "session", "proj"), {
+      recursive: true,
+    });
+    fs.writeFileSync(
+      path.join(home, "storage", "session", "proj", "../evil.json"),
+      JSON.stringify({ id: "../evil" }),
+    );
+
+    const listed = listOpenCodeSessions(home);
+    assert.deepEqual(
+      listed.map((s) => s.sessionId),
+      [OC_A],
+    );
+  });
+});
+
+describe("importOpenCodeSession JSON fallback (#977)", () => {
+  let home;
+  let tmpDir;
+  let store;
+  let projectId;
+
+  beforeEach(() => {
+    home = fs.mkdtempSync(
+      path.join(os.tmpdir(), "coder-opencode-json-sessions-imp-"),
+    );
+    tmpDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "coder-opencode-json-sessions-store-"),
+    );
+    store = new Store(path.join(tmpDir, "store.json"));
+    projectId = "proj-import";
+    store.setProjects([
+      {
+        id: projectId,
+        slug: "demo",
+        name: "demo",
+        path: path.join(tmpDir, "demo"),
+      },
+    ]);
+  });
+
+  afterEach(() => {
+    fs.rmSync(home, { recursive: true, force: true });
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("creates an opencode thread from JSON-only storage and does not copy the tree", () => {
+    const fileA = writeOpenCodeJsonSession(home, OC_A, [
+      { role: "user", text: "prompt a" },
+      {
+        role: "assistant",
+        text: "reply a",
+        extraParts: [
+          { type: "step-start" },
+          { type: "reasoning", text: "thinking" },
+          { type: "tool", tool: "write" },
+        ],
+      },
+    ]);
+    writeOpenCodeJsonSession(
+      home,
+      OC_B,
+      [
+        { role: "user", text: "prompt b" },
+        { role: "assistant", text: "reply b" },
+      ],
+      Date.now(),
+      "proj_b",
+    );
+
+    assert.equal(fs.existsSync(openCodeDbPath(home)), false);
+
+    const expected = readOpenCodeImportTurns(home, OC_A);
+    const thread = importOpenCodeSession(store, {
+      home,
+      sessionId: OC_A,
+      projectId,
+    });
+
+    assert.ok(thread && thread.id);
+    assert.equal(thread.provider, "opencode");
+    assert.equal(thread.sessionId, OC_A);
+    assert.equal(thread.projectId, projectId);
+    assert.equal(thread.ejected, false);
+
+    const messages = store.getMessages(thread.id);
+    assert.deepEqual(
+      messages.map((m) => `${m.role}:${m.text}`),
+      expected.map((t) => `${t.role}:${t.text}`),
+    );
+    assert.deepEqual(
+      messages.map((m) => `${m.role}:${m.text}`),
+      ["user:prompt a", "assistant:reply a"],
+    );
+    assert.equal(
+      messages.some((m) => m.text === "prompt b" || m.text === "reply b"),
+      false,
+    );
+    assert.equal(
+      messages.some((m) => m.text === "thinking"),
+      false,
+    );
+    assert.equal(store.getThreads().length, 1);
+    assert.equal(
+      fs.existsSync(fileA),
+      true,
+      "must not copy or consume the OpenCode JSON store",
+    );
+    assert.equal(
+      fs.existsSync(path.join(tmpDir, "storage")),
+      false,
+      "must not copy storage/ into the Solenta store dir",
+    );
+  });
+
+  it("re-importing the same JSON sessionId does not mint a second thread", () => {
+    writeOpenCodeJsonSession(home, OC_A, [
+      { role: "user", text: "prompt a" },
+      { role: "assistant", text: "reply a" },
+    ]);
+    const first = importOpenCodeSession(store, {
+      home,
+      sessionId: OC_A,
+      projectId,
+    });
+    const second = importOpenCodeSession(store, {
+      home,
+      sessionId: OC_A,
+      projectId,
+    });
+    assert.equal(second.id, first.id);
+    assert.equal(store.getThreads().length, 1);
+    assert.equal(store.getMessages(first.id).length, 2);
   });
 });
