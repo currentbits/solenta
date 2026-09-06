@@ -135,8 +135,6 @@ const IPC_CHANNELS = Object.freeze([
   { ns: "threads", method: "listCliSessions" },
   { ns: "threads", method: "importCliSession" },
   { ns: "threads", method: "create" },
-  { ns: "threads", method: "listCliSessions" },
-  { ns: "threads", method: "importCliSession" },
   { ns: "threads", method: "get" },
   { ns: "threads", method: "peek" },
   { ns: "threads", method: "setPermissionMode" },

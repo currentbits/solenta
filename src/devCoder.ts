@@ -3601,20 +3601,36 @@ function buildDevCoder(): CoderApi {
         };
       },
       async crewIntegration(input: { threadId: string }): Promise<CrewIntegration> {
+        const lead = threads.find((t) => t.id === input.threadId);
+        const workers = threads.filter((t) => t.handoffFrom === input.threadId);
         return {
           leadThreadId: input.threadId,
-          leadBranch: null,
-          leadWorktreePath: null,
-          missingLeadWorktree: true,
-          finalTarget: "main",
+          leadBranch: lead?.branch ?? null,
+          leadWorktreePath: lead?.worktreePath ?? null,
+          missingLeadWorktree: !lead?.worktreePath,
+          finalTarget: lead?.baseBranch || "main",
           finalAction: "merge",
           combinedFiles: [],
           leadHeadSha: null,
-          leadVerify: null,
+          leadVerify: lead?.verify ?? null,
           verifyStale: false,
-          landed: false,
-          workers: [],
-          receipts: [],
+          landed: lead?.prState === "MERGED",
+          workers: workers.map((w) => ({
+            workerId: w.id,
+            title: w.title,
+            taskId: null,
+            sourceSha: null,
+            changedFiles: [],
+            verify: w.verify ?? null,
+            destination: lead?.branch || "lead worktree",
+            state: w.status === "working" ? "running" : "ready",
+            blocked: false,
+            needs: [],
+            archived: w.archived === true,
+            worktreePath: w.worktreePath ?? null,
+            missingReason: null,
+          })),
+          receipts: lead?.integrationReceipts ?? [],
         };
       },
       /**

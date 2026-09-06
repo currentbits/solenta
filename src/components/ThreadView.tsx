@@ -697,6 +697,8 @@ interface ThreadViewProps {
   conflictContext?: (threadId: string) => Promise<ConflictContext>;
   /** Open the thread worktree in the configured editor. */
   onOpenWorktree?: () => void | Promise<void>;
+  /** orchWorker: jump to the lead Integration section (issue #982). */
+  onOpenCrewIntegration?: (leadThreadId: string) => void;
   /** Run the project's setup command or a named quick action (issue #153). */
   onRunCommand?: (
     threadId: string,
@@ -4299,6 +4301,7 @@ export const ThreadView = memo(function ThreadView({
   onSetBaseBranch,
   conflictContext,
   onOpenWorktree,
+  onOpenCrewIntegration,
   onRunCommand,
   runError = null,
   onDismissRunError,
@@ -4836,6 +4839,7 @@ export const ThreadView = memo(function ThreadView({
         ? (baseBranch) =>
             Promise.resolve(onSetBaseBranch(detail.thread.id, baseBranch))
         : undefined,
+    onOpenCrewIntegration,
   });
 
   /** Prompt Retry turn will re-send, plus the event card that carries it. */

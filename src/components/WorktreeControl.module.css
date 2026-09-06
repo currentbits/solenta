@@ -1,3 +1,36 @@
+.toolbarCluster {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  flex-shrink: 1;
+}
+
+.leadLink {
+  display: inline-flex;
+  align-items: center;
+  height: 28px;
+  padding: 0 8px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 550;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.leadLink:hover {
+  color: var(--text);
+}
+
+.leadLink:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
 .group {
   display: inline-flex;
   align-items: stretch;

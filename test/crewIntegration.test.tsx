@@ -9,13 +9,22 @@ import { describe, it } from "node:test";
 import { mount } from "./support/dom.ts";
 import { AgentsContent } from "../src/components/AgentsPanel";
 import { CrewIntegration } from "../src/components/CrewIntegration";
+import { WorktreeControl } from "../src/components/WorktreeControl";
 import type {
   CrewIntegration as CrewIntegrationView,
   CrewIntegrationWorkerRow,
+  ProjectInfo,
   ProviderInfo,
   ThreadInfo,
   ThreadSummaryInfo,
 } from "../src/shared/ipc";
+
+const project: ProjectInfo = {
+  id: "p1",
+  slug: "owner/repo",
+  name: "repo",
+  path: "/tmp/repo",
+};
 
 const PROVIDERS: ProviderInfo[] = [
   {
@@ -344,5 +353,87 @@ describe("AgentsContent Integration section", () => {
     await plain.flush();
     assert.equal(plain.query("[data-crew-integration]"), null);
     plain.unmount();
+  });
+});
+
+describe("worker-header Merge destination", () => {
+  it("names the recorded base on a plain thread", async () => {
+    const m = await mount(
+      <WorktreeControl
+        thread={thread({
+          id: "t-plain",
+          handoffFrom: null,
+          worktreePath: "/tmp/wt",
+          branch: "coder/plain",
+          baseBranch: "main",
+        })}
+        project={project}
+        isWorking={false}
+        onSetupWorktree={async () => {}}
+        onMergeWorktree={async () => {}}
+        onRemoveWorktree={async () => {}}
+      />,
+    );
+    const merge = m.query("[data-worktree-merge]");
+    assert.ok(merge);
+    assert.equal((merge!.textContent || "").trim(), "Merge onto main");
+    m.unmount();
+  });
+
+  it("falls back to repo default when no base is recorded", async () => {
+    const m = await mount(
+      <WorktreeControl
+        thread={thread({
+          id: "t-plain",
+          handoffFrom: null,
+          worktreePath: "/tmp/wt",
+          branch: "coder/plain",
+          baseBranch: null,
+        })}
+        project={project}
+        isWorking={false}
+        onSetupWorktree={async () => {}}
+        onMergeWorktree={async () => {}}
+        onRemoveWorktree={async () => {}}
+      />,
+    );
+    assert.equal(
+      (m.query("[data-worktree-merge]")!.textContent || "").trim(),
+      "Merge onto repo default",
+    );
+    m.unmount();
+  });
+
+  it("orchWorker Merge still names its own destination and points crew integration at the lead", async () => {
+    const opened: string[] = [];
+    const m = await mount(
+      <WorktreeControl
+        thread={thread({
+          id: "t-work",
+          title: "Fork: Plan the fix",
+          handoffFrom: "t-orch",
+          worktreePath: "/tmp/wt",
+          branch: "coder/worker-a",
+          baseBranch: "main",
+        })}
+        project={project}
+        isWorking={false}
+        onSetupWorktree={async () => {}}
+        onMergeWorktree={async () => {}}
+        onRemoveWorktree={async () => {}}
+        onOpenCrewIntegration={(id) => opened.push(id)}
+      />,
+    );
+    assert.equal(
+      (m.query("[data-worktree-merge]")!.textContent || "").trim(),
+      "Merge onto main",
+      "worker-header Merge is not silently retargeted at the lead",
+    );
+    const pointer = m.query("[data-crew-integration-lead]");
+    assert.ok(pointer, "orchWorker points crew integration back to the lead");
+    assert.match(pointer!.textContent || "", /lead/i);
+    await m.click(pointer);
+    assert.deepEqual(opened, ["t-orch"]);
+    m.unmount();
   });
 });

@@ -670,6 +670,11 @@ export interface ThreadInfo {
   /** Absolute path of the thread's git worktree, when one was set up. */
   worktreePath: string | null;
   /**
+   * Durable worker→lead integrate receipts on an orchestrator lead
+   * (issue #954). Absent on ordinary threads. Survives worker cleanup.
+   */
+  integrationReceipts?: CrewIntegrationReceipt[];
+  /**
    * Worktree requested but not yet created — it materializes at first run
    * (lazy, t3-style), so a thread that never runs leaves nothing on disk.
    */
@@ -3304,8 +3309,9 @@ export interface CoderApi {
       tasks: CrewTaskView[];
     }>;
     /**
-     * Lead Integration view (#954): destinations, per-worker rows, receipts.
-     * Includes archived workers that still belong to this lead.
+     * Lead Integration view (#954 / #982): destinations, per-worker rows,
+     * receipts. Includes archived workers that still belong to this lead.
+     * Do not overload summaries.
      */
     crewIntegration(input: { threadId: string }): Promise<CrewIntegration>;
     /**
@@ -3909,7 +3915,7 @@ export interface CoderApi {
       paths?: string[];
     }): Promise<ThreadInfo>;
     /**
-     * Squash a crew worker onto the lead's isolated worktree (#954).
+     * Squash a crew worker onto the lead's isolated worktree (#954 / #982).
      * Refuses without a lead worktree (never falls through to main).
      * Records a receipt before cleanup. Same source SHA is a no-op.
      * Does not land on the final target and does not close issues.

@@ -381,6 +381,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
   const [forecast, setForecast] = useState<ConflictForecast>(EMPTY_FORECAST);
   const narrow = useNarrow();
   const [agentsCollapsed, setAgentsCollapsed] = useState(true);
+  const [agentsTabFocus, setAgentsTabFocus] = useState(0);
   const sidebarPaneRef = useRef<HTMLDivElement>(null);
   const agentsPaneRef = useRef<HTMLDivElement>(null);
   const threadsBtnRef = useRef<HTMLButtonElement>(null);
@@ -400,6 +401,14 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
       selectThread(id);
     },
     [selectThread],
+  );
+  const openCrewIntegration = useCallback(
+    (leadId: string) => {
+      handleSelectThread(leadId);
+      setAgentsCollapsed(false);
+      setAgentsTabFocus((n) => n + 1);
+    },
+    [handleSelectThread],
   );
 
   // The three panes are memo'd (issue #91): a 700ms stream tick must only
@@ -1496,6 +1505,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         onSetBaseBranch={setBaseBranch}
         conflictContext={conflictContext}
         onOpenWorktree={openInEditor}
+        onOpenCrewIntegration={openCrewIntegration}
         onRewindAndResubmit={rewindAndResubmit}
         onStartWorkflow={startWorkflowRun}
         onRetryWorkflowAgent={retryWorkflowAgent}
@@ -1699,6 +1709,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
               }
             : undefined
         }
+        focusAgentsTabNonce={agentsTabFocus}
         onSelectThread={handleSelectThread}
         onViewChanges={openChanges}
         listCheckpoints={listCheckpoints}

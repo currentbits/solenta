@@ -15,6 +15,7 @@ import {
   parseConflictFiles,
   type ConflictResolveInput,
 } from "../conflictResolve";
+import { mergeOntoLabel } from "../crewIntegration";
 import { useEscapeClose } from "../useEscapeClose";
 import styles from "./WorktreeControl.module.css";
 
@@ -38,6 +39,11 @@ export interface WorktreeControlProps {
   listBaseBranches?: () => Promise<{ defaultBranch: string; branches: string[] }>;
   /** Persist a new merge/PR base, or null to clear to the repo default. */
   onSetBaseBranch?: (baseBranch: string | null) => Promise<unknown>;
+  /**
+   * orchWorker threads: open the lead's Integration section instead of
+   * treating this header Merge as crew staging (issue #982).
+   */
+  onOpenCrewIntegration?: (leadThreadId: string) => void;
 }
 
 export interface WorktreeChrome {
@@ -114,6 +120,7 @@ export function useWorktreeChrome(
     onOpenWorktree,
     listBaseBranches,
     onSetBaseBranch,
+    onOpenCrewIntegration,
   } = props;
 
   const [gitAction, setGitAction] = useState<GitAction>(null);
@@ -344,7 +351,29 @@ export function useWorktreeChrome(
   const resolveLabel =
     pendingMergeRetry && isWorking ? "Resolving…" : "Starting…";
 
+  const openLead =
+    thread.handoffFrom && (onOpenCrewIntegration || onOpenCrewLead)
+      ? () => {
+          const id = thread.handoffFrom!;
+          if (onOpenCrewIntegration) onOpenCrewIntegration(id);
+          else onOpenCrewLead?.(id);
+        }
+      : null;
+
+  const leadPointer = openLead ? (
+      <button
+        type="button"
+        className={styles.leadLink}
+        data-crew-integration-lead=""
+        data-crew-lead=""
+        onClick={openLead}
+      >
+        Crew integration on lead
+      </button>
+    ) : null;
+
   const toolbar = hasWorktree ? (
+    <div className={styles.toolbarCluster}>
     <div className={styles.group} data-worktree-control="ready">
       <div className={styles.metaWrap} ref={menuRef}>
         <button
@@ -465,6 +494,19 @@ export function useWorktreeChrome(
                 )}
               </>
             )}
+            {openLead ? (
+              <button
+                type="button"
+                className={styles.menuItem}
+                role="menuitem"
+                onClick={() => {
+                  setMenuOpen(false);
+                  openLead();
+                }}
+              >
+                Crew integration on lead
+              </button>
+            ) : null}
             <button
               type="button"
               className={`${styles.menuItem} ${styles.menuItemDanger}`}
@@ -481,22 +523,16 @@ export function useWorktreeChrome(
           </div>
         )}
       </div>
-      {thread?.orchWorker && thread.handoffFrom && onOpenCrewLead ? (
-        <button
-          type="button"
-          className={styles.crewLead}
-          data-crew-lead=""
-          disabled={busy}
-          onClick={() => onOpenCrewLead(thread.handoffFrom!)}
-        >
-          Integrate from lead
-        </button>
-      ) : null}
       <button
         type="button"
         className={styles.merge}
         data-worktree-merge=""
         disabled={busy}
+        title={
+          thread.handoffFrom
+            ? `${mergeOntoLabel(thread.baseBranch)}. Crew staging is on the lead Integration section.`
+            : mergeOntoLabel(thread.baseBranch)
+        }
         onClick={() => void runAction("merge", () => onMergeWorktree())}
       >
         {mergePending ? (
@@ -505,9 +541,11 @@ export function useWorktreeChrome(
             Merging…
           </>
         ) : (
-          `Merge onto ${thread?.baseBranch || "repo default"}`
+          mergeOntoLabel(thread.baseBranch)
         )}
       </button>
+    </div>
+    {leadPointer}
     </div>
   ) : (
     <button

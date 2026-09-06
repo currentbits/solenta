@@ -66,6 +66,10 @@ const { buildActivity } = require("./activity.js");
 const { collectDigest } = require("./digest.js");
 const { collectFleet } = require("./fleet.js");
 const { distillThread } = require("./distill.js");
+const {
+  crewIntegration,
+  integrateWorker,
+} = require("./crewIntegration.js");
 const updater = require("./updater.js");
 const feedback = require("./feedback.js");
 
@@ -443,7 +447,6 @@ const IPC_HANDLERS = {
     return services.listCrewTasks(ctx.store, input || {});
   },
   "threads:crewIntegration": async (ctx, input) => {
-    const { crewIntegration } = require("./crewIntegration.js");
     return crewIntegration(ctx.store, input || {});
   },
   "activity:list": async (ctx) => {
@@ -1431,7 +1434,6 @@ const IPC_HANDLERS = {
     return merged;
   },
   "git:integrateWorker": async (ctx, input) => {
-    const { integrateWorker } = require("./crewIntegration.js");
     const result = integrateWorker({
       store: ctx.store,
       leadThreadId: input && input.leadThreadId,

@@ -541,7 +541,7 @@ export interface UseCoderResult {
   listCrewTasks: (
     threadId: string,
   ) => Promise<{ rootThreadId: string; tasks: CrewTaskView[] }>;
-  /** Lead Integration view (#954). */
+  /** Lead Integration view (#954 / #982). */
   crewIntegration: (threadId: string) => Promise<CrewIntegration>;
   /** Squash a crew worker onto the lead worktree (#954). */
   integrateWorker: (
@@ -2918,13 +2918,21 @@ export function useCoder(): UseCoderResult {
       workerThreadId: string,
       opts?: { ciWorkflowApproved?: boolean },
     ) => {
-      return api.git.integrateWorker({
+      const result = await api.git.integrateWorker({
         leadThreadId,
         workerThreadId,
         ciWorkflowApproved: opts?.ciWorkflowApproved,
       });
+      if (selectedRef.current === leadThreadId) {
+        const d = await api.threads.get(leadThreadId);
+        if (selectedRef.current === leadThreadId) {
+          applyThreadUpdate(d.thread);
+          setDetail(d);
+        }
+      }
+      return result;
     },
-    [api],
+    [api, applyThreadUpdate],
   );
 
   const refreshProviders = useCallback(async () => {

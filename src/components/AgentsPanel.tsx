@@ -147,7 +147,7 @@ interface AgentsPanelProps {
   listCrewTasks?: (
     threadId: string,
   ) => Promise<{ rootThreadId: string; tasks: CrewTaskView[] }>;
-  /** Lead Integration view (#954). Absent = hide the section. */
+  /** Lead Integration view (#954 / #982). Absent = hide the section. */
   crewIntegration?: (threadId: string) => Promise<CrewIntegrationView>;
   /** Squash a worker onto the lead worktree. */
   onIntegrateWorker?: (workerThreadId: string) => Promise<void>;
@@ -251,6 +251,8 @@ interface AgentsPanelProps {
   discardSkillImport: (input: { previewId: string }) => Promise<void>;
   /** Center-pane view, so Pulse/Environment can mark the active destination. */
   activeView?: string;
+  /** Bump to force the Agents tab (worker-header "Crew integration on lead"). */
+  focusAgentsTabNonce?: number;
   onOpenPrs?: () => void;
   onOpenAutomations?: () => void;
   onOpenUsage?: () => void;
@@ -3206,6 +3208,7 @@ export const AgentsPanel = memo(function AgentsPanel({
   onSelectThread,
   onRetryAgent,
   onViewChanges,
+  focusAgentsTabNonce,
   listCheckpoints,
   restoreCheckpoint,
   listLocalServers,
@@ -3266,6 +3269,10 @@ export const AgentsPanel = memo(function AgentsPanel({
   const [tab, setTab] = useState<PanelTab>(() =>
     isPulseView(activeView) ? "pulse" : "git",
   );
+
+  useEffect(() => {
+    if (focusAgentsTabNonce && focusAgentsTabNonce > 0) setTab("agents");
+  }, [focusAgentsTabNonce]);
 
   useEffect(() => {
     if (isPulseView(activeView)) setTab("pulse");

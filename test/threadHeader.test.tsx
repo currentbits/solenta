@@ -433,7 +433,7 @@ describe("worktree in the thread topbar (#680)", () => {
     m.unmount();
   });
 
-  it("shows Merge worktree in the header when the thread has a worktree", async () => {
+  it("shows Merge onto destination in the header when the thread has a worktree", async () => {
     const merges: number[] = [];
     const m = await mount(
       view({
@@ -448,7 +448,7 @@ describe("worktree in the thread topbar (#680)", () => {
     const header = m.query("[data-thread-header]");
     assert.ok(header, "thread header present");
     const merge = header!.querySelector("[data-worktree-merge]");
-    assert.ok(merge, "Merge worktree lives in the topbar");
+    assert.ok(merge, "Merge lives in the topbar");
     assert.equal((merge!.textContent || "").trim(), "Merge onto repo default");
     await m.click(merge);
     assert.equal(merges.length, 1);
