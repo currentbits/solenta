@@ -1096,7 +1096,6 @@ describe("importGrokSession (#972)", () => {
   });
 });
 
-
 describe("listClaudeSessions (#970)", () => {
   let home;
 
@@ -1128,7 +1127,19 @@ describe("listClaudeSessions (#970)", () => {
     }
   });
 
-  it("does not list jsonl files outside projects/", () => {
+  it("lists hashed long-cwd groups without requiring the original cwd", () => {
+    writeClaudeSessionAtGroup(home, CLAUDE_LONG_GROUP, SESSION_A, [
+      claudeUser("long cwd prompt", "2026-09-06T12:00:01.000Z"),
+    ]);
+
+    const listed = listClaudeSessions(home);
+    assert.deepEqual(
+      listed.map((s) => s.sessionId),
+      [SESSION_A],
+    );
+  });
+
+  it("does not list jsonl files outside projects/ or unsafe session ids", () => {
     writeClaudeSession(home, CLAUDE_CWD, SESSION_A, [
       claudeUser("prompt a", "2026-09-06T12:00:01.000Z"),
     ]);
@@ -1179,7 +1190,7 @@ describe("importClaudeSession (#970)", () => {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  it("creates a thread whose transcript matches the parsed turns and ignores the sibling", () => {
+  it("creates a claude thread whose transcript matches the parsed turns and ignores the sibling", () => {
     const fileA = writeClaudeSession(home, CLAUDE_CWD, SESSION_A, [
       claudeUser("prompt a", "2026-09-06T12:00:01.000Z"),
       claudeAssistant("reply a", "2026-09-06T12:00:02.000Z"),
@@ -1200,6 +1211,7 @@ describe("importClaudeSession (#970)", () => {
     assert.equal(thread.provider, "claude");
     assert.equal(thread.sessionId, SESSION_A);
     assert.equal(thread.projectId, projectId);
+    assert.equal(thread.ejected, false);
 
     const messages = store.getMessages(thread.id);
     assert.deepEqual(
@@ -1215,10 +1227,14 @@ describe("importClaudeSession (#970)", () => {
       false,
     );
     assert.equal(store.getThreads().length, 1);
-    assert.equal(fs.existsSync(fileA), true, "must not copy or consume the Claude store");
+    assert.equal(
+      fs.existsSync(fileA),
+      true,
+      "must not copy or consume the Claude store",
+    );
   });
 
-  it("re-importing the same session does not mint a second thread", () => {
+  it("re-importing the same claude sessionId does not mint a second thread", () => {
     writeClaudeSession(home, CLAUDE_CWD, SESSION_A, [
       claudeUser("prompt a", "2026-09-06T12:00:01.000Z"),
       claudeAssistant("reply a", "2026-09-06T12:00:02.000Z"),
