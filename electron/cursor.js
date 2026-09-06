@@ -414,8 +414,9 @@ function writeSecretFile(file, data) {
  * or `$HOME/.cursor/mcp.json`. Writing the user-global file would leak
  * bearer tokens into the Cursor IDE and last-write-wins across projects
  * (#706). Overlay: symlink the rest of the real home (so git/ssh/auth
- * keep working), synthesize `$HOME/.cursor` with our bound mcp.json, and
- * symlink every other `~/.cursor` entry. Never copy the user's mcp.json.
+ * keep working) except `.local` (#879), synthesize `$HOME/.cursor` with
+ * our bound mcp.json, and symlink every other `~/.cursor` entry. Never
+ * copy the user's mcp.json.
  *
  * @param {object} opts
  * @param {string} opts.dest new HOME
@@ -437,9 +438,39 @@ function materializeCursorHome(opts) {
       names = [];
     }
     for (const name of names) {
-      if (!name || name === ".cursor" || name !== path.basename(name)) continue;
+      if (
+        !name ||
+        name === ".cursor" ||
+        name === ".local" ||
+        name !== path.basename(name)
+      ) {
+        continue;
+      }
       linkOrSkip(path.join(sourceHome, name), path.join(dest, name));
     }
+  }
+
+  // cursor-agent rewrites HOME/.local/bin/cursor-agent with a HOME-qualified
+  // target. Symlinking ~/.local into the overlay makes that rewrite the user
+  // shim; reclaim then dangles it (#879). Keep a real overlay .local/bin and
+  // only share versions/auth via ~/.local/share/cursor-agent.
+  const destLocal = path.join(dest, ".local");
+  try {
+    const localStat = fs.lstatSync(destLocal);
+    if (localStat.isSymbolicLink()) {
+      // Pre-#879 overlays linked ~/.local here. mkdir would follow it.
+      fs.unlinkSync(destLocal);
+    }
+  } catch (err) {
+    if (!err || err.code !== "ENOENT") throw err;
+  }
+  fs.mkdirSync(path.join(destLocal, "bin"), { recursive: true });
+  const srcAgent = sourceHome
+    ? path.join(sourceHome, ".local", "share", "cursor-agent")
+    : "";
+  if (srcAgent && fs.existsSync(srcAgent)) {
+    fs.mkdirSync(path.join(destLocal, "share"), { recursive: true });
+    linkOrSkip(srcAgent, path.join(destLocal, "share", "cursor-agent"));
   }
 
   const destCursor = path.join(dest, ".cursor");

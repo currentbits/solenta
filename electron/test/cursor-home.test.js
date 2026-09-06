@@ -130,6 +130,102 @@ describe("materializeCursorHome", () => {
       "the user's ~/.cursor/mcp.json must not be rewritten",
     );
   });
+
+  it("keeps the user's ~/.local/bin/cursor-agent when the CLI rewrites $HOME/.local/bin", () => {
+    const versions = path.join(
+      source,
+      ".local",
+      "share",
+      "cursor-agent",
+      "versions",
+      "v1",
+    );
+    const localBin = path.join(source, ".local", "bin");
+    fs.mkdirSync(versions, { recursive: true });
+    fs.mkdirSync(localBin, { recursive: true });
+    const realBin = path.join(versions, "cursor-agent");
+    fs.writeFileSync(realBin, "#!/bin/sh\necho real\n", { mode: 0o755 });
+    const userShim = path.join(localBin, "cursor-agent");
+    fs.symlinkSync(realBin, userShim);
+
+    materializeCursorHome({ dest, sourceHome: source, mcpServers: {} });
+
+    const overlayLocal = path.join(dest, ".local");
+    assert.equal(fs.lstatSync(overlayLocal).isSymbolicLink(), false);
+    assert.ok(
+      fs
+        .lstatSync(path.join(overlayLocal, "share", "cursor-agent"))
+        .isSymbolicLink(),
+    );
+
+    // cursor-agent installer: ln -s "$HOME/.local/share/.../cursor-agent" "$HOME/.local/bin/cursor-agent"
+    const overlayBinDir = path.join(overlayLocal, "bin");
+    fs.mkdirSync(overlayBinDir, { recursive: true });
+    fs.symlinkSync(
+      path.join(
+        dest,
+        ".local",
+        "share",
+        "cursor-agent",
+        "versions",
+        "v1",
+        "cursor-agent",
+      ),
+      path.join(overlayBinDir, "cursor-agent"),
+    );
+
+    assert.equal(fs.readlinkSync(userShim), realBin);
+  });
+
+  it("replaces a leftover overlay .local symlink instead of writing through it (#879)", () => {
+    const versions = path.join(
+      source,
+      ".local",
+      "share",
+      "cursor-agent",
+      "versions",
+      "v1",
+    );
+    const localBin = path.join(source, ".local", "bin");
+    fs.mkdirSync(versions, { recursive: true });
+    fs.mkdirSync(localBin, { recursive: true });
+    const realBin = path.join(versions, "cursor-agent");
+    fs.writeFileSync(realBin, "#!/bin/sh\necho real\n", { mode: 0o755 });
+    const userShim = path.join(localBin, "cursor-agent");
+    fs.symlinkSync(realBin, userShim);
+
+    // Pre-#879 overlay: $HOME/.local was a symlink into the user's ~/.local.
+    fs.symlinkSync(path.join(source, ".local"), path.join(dest, ".local"));
+
+    materializeCursorHome({ dest, sourceHome: source, mcpServers: {} });
+
+    const overlayLocal = path.join(dest, ".local");
+    assert.equal(fs.lstatSync(overlayLocal).isSymbolicLink(), false);
+    assert.equal(fs.lstatSync(path.join(source, ".local")).isSymbolicLink(), false);
+
+    const overlayBinDir = path.join(overlayLocal, "bin");
+    fs.mkdirSync(overlayBinDir, { recursive: true });
+    const overlayShim = path.join(overlayBinDir, "cursor-agent");
+    try {
+      fs.unlinkSync(overlayShim);
+    } catch {
+      // no existing overlay shim
+    }
+    fs.symlinkSync(
+      path.join(
+        dest,
+        ".local",
+        "share",
+        "cursor-agent",
+        "versions",
+        "v1",
+        "cursor-agent",
+      ),
+      overlayShim,
+    );
+
+    assert.equal(fs.readlinkSync(userShim), realBin);
+  });
 });
 
 describe("kimiMcpServersForRun binds project for cursor overlay", () => {
