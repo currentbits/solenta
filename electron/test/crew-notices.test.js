@@ -239,6 +239,8 @@ describe("crew notices (issue #277)", () => {
     assert.match(last.text, /Not delivered: Daily budget reached/);
     const notice = String(last.text).split(/\n\nNot delivered:/)[0];
     assert.match(notice, /worker finished/);
+    assert.match(notice, /Continue orchestrating/);
+    assert.deepEqual(userTexts(store, thread.id), ["look at the app"]);
 
     services.setSettings(store, { dailyBudgetUsd: null });
     await runner.startRun({
@@ -253,6 +255,7 @@ describe("crew notices (issue #277)", () => {
     assert.equal(users[0].text, "look at the app");
     assert.equal(users[0].fromNotice, undefined);
     assert.match(users[users.length - 1].text, /\[peer from w \("backend"\)\] worker finished/);
+    assert.match(users[users.length - 1].text, /Continue orchestrating/);
     assert.equal(users[users.length - 1].fromNotice, true);
   });
 

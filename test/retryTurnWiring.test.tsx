@@ -243,6 +243,121 @@ function workingTarget(): { row: ThreadInfo; d: ThreadDetail } {
   return { row, d };
 }
 
+const NOTICE_FOOTER =
+  "Continue orchestrating; thread_status has full details.";
+
+function orchNotice(workerId = "w-1"): string {
+  return (
+    `[orchestration] Worker thread ${workerId} ("backend") finished with status done. Last reply: API is in contract.md\n` +
+    NOTICE_FOOTER
+  );
+}
+
+function undeliverableNoticeTarget(): { row: ThreadInfo; d: ThreadDetail } {
+  const row = thread({
+    id: "t-undeliverable-notice",
+    title: "undeliverable notice retry",
+    status: "failed",
+    lastError: "Not delivered: Daily budget reached",
+    updatedAt: NOW + 1700,
+  });
+  const notice = orchNotice("w-budget");
+  const d = detail({
+    thread: row,
+    messages: [
+      msg({
+        id: "m-orig",
+        role: "user",
+        text: "look at the app",
+        createdAt: NOW - 3000,
+      }),
+      msg({
+        id: "m-asst",
+        role: "assistant",
+        text: "forked a worker",
+        createdAt: NOW - 2000,
+      }),
+      msg({
+        id: "m-err",
+        role: "event",
+        text: `${notice}\n\nNot delivered: Daily budget reached ($1.00 of $1.00). Raise or clear the cap in Settings.`,
+        createdAt: NOW,
+      }),
+    ],
+  });
+  return { row, d };
+}
+
+function failedFromNoticeTarget(): { row: ThreadInfo; d: ThreadDetail } {
+  const row = thread({
+    id: "t-failed-fromnotice",
+    title: "failed fromNotice retry",
+    status: "failed",
+    sessionId: "sess-locked",
+    lastError: "Run error: exit 1",
+    updatedAt: NOW + 1750,
+  });
+  const notice = orchNotice("w-lock");
+  const d = detail({
+    thread: row,
+    messages: [
+      msg({
+        id: "m-orig",
+        role: "user",
+        text: "look at the app",
+        createdAt: NOW - 4000,
+      }),
+      msg({
+        id: "m-asst",
+        role: "assistant",
+        text: "forked a worker",
+        createdAt: NOW - 3000,
+      }),
+      msg({
+        id: "m-notice",
+        role: "user",
+        text: notice,
+        createdAt: NOW - 1000,
+      }),
+      msg({
+        id: "m-err",
+        role: "event",
+        text: "Run error: exit 1\nthread-store already has an active writer",
+        createdAt: NOW,
+      }),
+    ],
+  });
+  return { row, d };
+}
+
+function laterHumanAfterNoticeTarget(): { row: ThreadInfo; d: ThreadDetail } {
+  const row = thread({
+    id: "t-later-human",
+    title: "later human after notice",
+    status: "failed",
+    updatedAt: NOW + 1780,
+  });
+  const d = detail({
+    thread: row,
+    messages: [
+      msg({ id: "m-orig", role: "user", text: "look at the app" }),
+      msg({ id: "m-notice", role: "user", text: orchNotice() }),
+      msg({ id: "m-asst", role: "assistant", text: "continued" }),
+      msg({
+        id: "m-human",
+        role: "user",
+        text: "now fix the sidebar chip",
+      }),
+      msg({
+        id: "m-err",
+        role: "event",
+        text: "Run error: exit 1",
+      }),
+    ],
+  });
+  return { row, d };
+}
+
 function noUserTarget(): { row: ThreadInfo; d: ThreadDetail } {
   const row = thread({
     id: "t-no-user",
@@ -732,6 +847,111 @@ describe("App Retry turn wiring (round 48)", () => {
     assert.equal(arg.agentId, "plan-2", "first failed slot in panel order");
     assert.equal(fake.of("runs.start").length, 0);
     assert.equal(fake.of("runs.startWorkflow").length, 0);
+    m.unmount();
+  });
+
+  it("undeliverable notice Retry re-sends the notice with fromNotice, not the original task", async () => {
+    const decoyRow = decoy();
+    const { row, d } = undeliverableNoticeTarget();
+    const fake = createFakeCoder({
+      projects: [project()],
+      threads: [decoyRow, row],
+      details: {
+        "t-decoy": detail({ thread: decoyRow }),
+        "t-undeliverable-notice": d,
+      },
+    });
+    const m = await boot(fake);
+    await selectThread(m, "undeliverable notice retry");
+
+    const btns = retryButtons(m);
+    assert.equal(btns.length, 1);
+    const title = btns[0]!.getAttribute("title") || "";
+    assert.equal(title, "Retry: continue orchestrating");
+    assert.ok(!title.includes("look at the app"));
+
+    const before = fake.of("runs.start").length;
+    await m.click(btns[0]!);
+    await m.flush();
+    const starts = fake.of("runs.start");
+    assert.equal(starts.length, before + 1);
+    const arg = starts[starts.length - 1]!.args[0] as {
+      threadId: string;
+      prompt: string;
+      fromNotice?: boolean;
+    };
+    assert.equal(arg.threadId, "t-undeliverable-notice");
+    assert.equal(arg.prompt, orchNotice("w-budget"));
+    assert.equal(arg.fromNotice, true);
+    m.unmount();
+  });
+
+  it("failed fromNotice spawn Retry re-delivers the notice once as fromNotice", async () => {
+    const decoyRow = decoy();
+    const { row, d } = failedFromNoticeTarget();
+    const fake = createFakeCoder({
+      projects: [project()],
+      threads: [decoyRow, row],
+      details: {
+        "t-decoy": detail({ thread: decoyRow }),
+        "t-failed-fromnotice": d,
+      },
+    });
+    const m = await boot(fake);
+    await selectThread(m, "failed fromNotice retry");
+
+    const btns = retryButtons(m);
+    assert.equal(btns.length, 1);
+    assert.equal(
+      btns[0]!.getAttribute("title"),
+      "Retry: continue orchestrating",
+    );
+
+    await m.click(btns[0]!);
+    await m.flush();
+    const starts = fake.of("runs.start");
+    assert.equal(starts.length, 1);
+    const arg = starts[0]!.args[0] as {
+      threadId: string;
+      prompt: string;
+      fromNotice?: boolean;
+    };
+    assert.equal(arg.threadId, "t-failed-fromnotice");
+    assert.equal(arg.prompt, orchNotice("w-lock"));
+    assert.equal(arg.fromNotice, true);
+    m.unmount();
+  });
+
+  it("a later human prompt after a notice still retries that human prompt", async () => {
+    const decoyRow = decoy();
+    const { row, d } = laterHumanAfterNoticeTarget();
+    const fake = createFakeCoder({
+      projects: [project()],
+      threads: [decoyRow, row],
+      details: {
+        "t-decoy": detail({ thread: decoyRow }),
+        "t-later-human": d,
+      },
+    });
+    const m = await boot(fake);
+    await selectThread(m, "later human after notice");
+
+    const btns = retryButtons(m);
+    assert.equal(btns.length, 1);
+    const title = btns[0]!.getAttribute("title") || "";
+    assert.ok(title.includes("now fix the sidebar chip"));
+    assert.ok(!title.includes("continue orchestrating"));
+
+    await m.click(btns[0]!);
+    await m.flush();
+    const starts = fake.of("runs.start");
+    assert.equal(starts.length, 1);
+    const arg = starts[0]!.args[0] as {
+      prompt: string;
+      fromNotice?: boolean;
+    };
+    assert.equal(arg.prompt, "now fix the sidebar chip");
+    assert.equal(arg.fromNotice, undefined);
     m.unmount();
   });
 
