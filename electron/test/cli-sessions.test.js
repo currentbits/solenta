@@ -23,6 +23,9 @@ const {
   encodeClaudeProjectDir,
   findClaudeSessionFile,
   readClaudeSessionTurns,
+  parseClaudeJsonl,
+  listClaudeSessions,
+  importClaudeSession,
   encodeGrokSessionDir,
   findGrokSessionFile,
   readGrokSessionTurns,
@@ -1083,6 +1086,165 @@ describe("importGrokSession (#972)", () => {
     assert.throws(
       () =>
         importGrokSession(store, {
+          home,
+          sessionId: "../sessions",
+          projectId,
+        }),
+      /invalid/i,
+    );
+    assert.equal(store.getThreads().length, 0);
+  });
+});
+
+
+describe("listClaudeSessions (#970)", () => {
+  let home;
+
+  beforeEach(() => {
+    home = fs.mkdtempSync(path.join(os.tmpdir(), "coder-claude-sessions-list-"));
+  });
+
+  afterEach(() => {
+    fs.rmSync(home, { recursive: true, force: true });
+  });
+
+  it("lists both jsonl files in a mocked projects directory", () => {
+    writeClaudeSession(home, CLAUDE_CWD, SESSION_A, [
+      claudeUser("prompt a", "2026-09-06T12:00:01.000Z"),
+      claudeAssistant("reply a", "2026-09-06T12:00:02.000Z"),
+    ]);
+    writeClaudeSession(home, "/tmp/other-wt", SESSION_B, [
+      claudeUser("prompt b", "2026-09-06T12:00:01.000Z"),
+      claudeAssistant("reply b", "2026-09-06T12:00:02.000Z"),
+    ]);
+
+    const listed = listClaudeSessions(home);
+    assert.equal(listed.length, 2);
+    const ids = listed.map((s) => s.sessionId).sort();
+    assert.deepEqual(ids, [SESSION_A, SESSION_B].sort());
+    for (const row of listed) {
+      assert.equal(typeof row.mtimeMs, "number");
+      assert.equal(Number.isFinite(row.mtimeMs), true);
+    }
+  });
+
+  it("does not list jsonl files outside projects/", () => {
+    writeClaudeSession(home, CLAUDE_CWD, SESSION_A, [
+      claudeUser("prompt a", "2026-09-06T12:00:01.000Z"),
+    ]);
+    fs.writeFileSync(
+      path.join(home, `${SESSION_B}.jsonl`),
+      `${JSON.stringify(claudeUser("outside", "2026-09-06T12:00:01.000Z"))}\n`,
+    );
+    fs.writeFileSync(
+      path.join(home, "projects", "not-a-session.json"),
+      "{}\n",
+    );
+    fs.writeFileSync(
+      path.join(home, "projects", claudeProjectDir(CLAUDE_CWD), "evil_id.jsonl"),
+      `${JSON.stringify(claudeUser("unsafe id", "2026-09-06T12:00:01.000Z"))}\n`,
+    );
+
+    const listed = listClaudeSessions(home);
+    assert.deepEqual(
+      listed.map((s) => s.sessionId),
+      [SESSION_A],
+    );
+  });
+});
+
+describe("importClaudeSession (#970)", () => {
+  let home;
+  let tmpDir;
+  let store;
+  let projectId;
+
+  beforeEach(() => {
+    home = fs.mkdtempSync(path.join(os.tmpdir(), "coder-claude-sessions-imp-"));
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "coder-claude-sessions-store-"));
+    store = new Store(path.join(tmpDir, "store.json"));
+    projectId = "proj-import";
+    store.setProjects([
+      {
+        id: projectId,
+        slug: "demo",
+        name: "demo",
+        path: path.join(tmpDir, "demo"),
+      },
+    ]);
+  });
+
+  afterEach(() => {
+    fs.rmSync(home, { recursive: true, force: true });
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("creates a thread whose transcript matches the parsed turns and ignores the sibling", () => {
+    const fileA = writeClaudeSession(home, CLAUDE_CWD, SESSION_A, [
+      claudeUser("prompt a", "2026-09-06T12:00:01.000Z"),
+      claudeAssistant("reply a", "2026-09-06T12:00:02.000Z"),
+    ]);
+    writeClaudeSession(home, "/tmp/other-wt", SESSION_B, [
+      claudeUser("prompt b", "2026-09-06T12:00:01.000Z"),
+      claudeAssistant("reply b", "2026-09-06T12:00:02.000Z"),
+    ]);
+
+    const expected = parseClaudeJsonl(fs.readFileSync(fileA, "utf8"));
+    const thread = importClaudeSession(store, {
+      home,
+      sessionId: SESSION_A,
+      projectId,
+    });
+
+    assert.ok(thread && thread.id);
+    assert.equal(thread.provider, "claude");
+    assert.equal(thread.sessionId, SESSION_A);
+    assert.equal(thread.projectId, projectId);
+
+    const messages = store.getMessages(thread.id);
+    assert.deepEqual(
+      messages.map((m) => `${m.role}:${m.text}`),
+      expected.map((t) => `${t.role}:${t.text}`),
+    );
+    assert.deepEqual(
+      messages.map((m) => `${m.role}:${m.text}`),
+      ["user:prompt a", "assistant:reply a"],
+    );
+    assert.equal(
+      messages.some((m) => m.text === "prompt b" || m.text === "reply b"),
+      false,
+    );
+    assert.equal(store.getThreads().length, 1);
+    assert.equal(fs.existsSync(fileA), true, "must not copy or consume the Claude store");
+  });
+
+  it("re-importing the same session does not mint a second thread", () => {
+    writeClaudeSession(home, CLAUDE_CWD, SESSION_A, [
+      claudeUser("prompt a", "2026-09-06T12:00:01.000Z"),
+      claudeAssistant("reply a", "2026-09-06T12:00:02.000Z"),
+    ]);
+    const first = importClaudeSession(store, {
+      home,
+      sessionId: SESSION_A,
+      projectId,
+    });
+    const second = importClaudeSession(store, {
+      home,
+      sessionId: SESSION_A,
+      projectId,
+    });
+    assert.equal(second.id, first.id);
+    assert.equal(store.getThreads().length, 1);
+    assert.equal(store.getMessages(first.id).length, 2);
+  });
+
+  it("rejects a sessionId that is not a path-safe id", () => {
+    writeClaudeSession(home, CLAUDE_CWD, SESSION_A, [
+      claudeUser("prompt a", "2026-09-06T12:00:01.000Z"),
+    ]);
+    assert.throws(
+      () =>
+        importClaudeSession(store, {
           home,
           sessionId: "../sessions",
           projectId,

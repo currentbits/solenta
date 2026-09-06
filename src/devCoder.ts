@@ -3655,27 +3655,28 @@ function buildDevCoder(): CoderApi {
         return registerThread(t);
       },
       async listCliSessions(_input?: {
-        provider?: "codex" | "grok" | "cursor" | "opencode";
+        provider?: "codex" | "grok" | "claude" | "cursor" | "opencode";
       }) {
         return [];
       },
       async importCliSession(input) {
         const provider =
-          input.provider === "grok"
-            ? "grok"
-            : input.provider === "cursor"
-              ? "cursor"
-              : input.provider === "opencode"
-                ? "opencode"
-                : "codex";
+          input.provider === "grok" ||
+          input.provider === "claude" ||
+          input.provider === "cursor" ||
+          input.provider === "opencode"
+            ? input.provider
+            : "codex";
         const title =
           provider === "grok"
             ? "Imported Grok session"
-            : provider === "cursor"
-              ? "Imported Cursor session"
-              : provider === "opencode"
-                ? "Imported OpenCode session"
-                : "Imported Codex session";
+            : provider === "claude"
+              ? "Imported Claude session"
+              : provider === "cursor"
+                ? "Imported Cursor session"
+                : provider === "opencode"
+                  ? "Imported OpenCode session"
+                  : "Imported Codex session";
         return registerThread(
           newThread({
             projectId: input.projectId,

@@ -10,7 +10,12 @@ function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
-export type CliImportProvider = "codex" | "grok" | "cursor" | "opencode";
+export type CliImportProvider =
+  | "codex"
+  | "grok"
+  | "claude"
+  | "cursor"
+  | "opencode";
 
 const COPY: Record<
   CliImportProvider,
@@ -25,6 +30,11 @@ const COPY: Record<
     title: "Import Grok session",
     note: "Choose a Grok CLI session to import into this project.",
     empty: "No Grok CLI sessions found",
+  },
+  claude: {
+    title: "Import Claude session",
+    note: "Choose a Claude Code session to import into this project.",
+    empty: "No Claude CLI sessions found",
   },
   cursor: {
     title: "Import Cursor session",
@@ -54,8 +64,9 @@ interface ImportCliSessionModalProps {
 }
 
 /**
- * Pick a Codex, Grok, Cursor, or OpenCode CLI session from disk and import it as a
- * Solenta thread in the current project. Home stays on the main process.
+ * Pick a Codex, Grok, Claude, Cursor, or OpenCode CLI session from disk
+ * and import it as a Solenta thread in the current project. Home stays
+ * on the main process.
  */
 export function ImportCliSessionModal({
   projectId,

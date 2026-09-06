@@ -488,6 +488,9 @@ const IPC_HANDLERS = {
     return services.searchThreads(ctx.store, input || { query: "" });
   },
   "threads:listCliSessions": async (_ctx, input) => {
+    if (input && input.provider === "claude") {
+      return cliSessions.listClaudeSessions();
+    }
     if (input && input.provider === "cursor") {
       return cliSessions.listCursorSessions();
     }
@@ -500,14 +503,16 @@ const IPC_HANDLERS = {
     return cliSessions.listCodexSessions();
   },
   "threads:importCliSession": async (ctx, input) => {
-    // Home is CODEX_HOME / GROK_HOME / CURSOR_HOME / OPENCODE_HOME
-    // on this process. Ignore any renderer-supplied path.
+    // Home is CODEX_HOME / GROK_HOME / CLAUDE_CONFIG_DIR / CURSOR_HOME /
+    // OPENCODE_HOME on this process. Ignore any renderer-supplied path.
     const args = {
       sessionId: input && input.sessionId,
       projectId: input && input.projectId,
     };
     let thread;
-    if (input && input.provider === "cursor") {
+    if (input && input.provider === "claude") {
+      thread = cliSessions.importClaudeSession(ctx.store, args);
+    } else if (input && input.provider === "cursor") {
       thread = cliSessions.importCursorSession(ctx.store, args);
     } else if (input && input.provider === "opencode") {
       thread = cliSessions.importOpenCodeSession(ctx.store, args);

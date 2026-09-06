@@ -1,9 +1,9 @@
 "use strict";
 
 /**
- * #433 / #972 / #975 / #976: threads.listCliSessions / threads.importCliSession IPC.
- * Home is CODEX_HOME / GROK_HOME / CURSOR_HOME / OPENCODE_HOME on the main
- * process — the renderer cannot point the scan.
+ * #433 / #972 / #970 / #975 / #976: threads.listCliSessions / threads.importCliSession IPC.
+ * Home is CODEX_HOME / GROK_HOME / CLAUDE_CONFIG_DIR / CURSOR_HOME /
+ * OPENCODE_HOME on the main process — the renderer cannot point the scan.
  *
  * Run: node --test electron/test/cli-sessions-ipc.test.js
  */
@@ -44,6 +44,7 @@ const { IPC_HANDLERS } = require("../ipc.js");
 const {
   parseCodexRollout,
   parseGrokChatHistory,
+  parseClaudeJsonl,
   parseCursorJsonl,
   readOpenCodeImportTurns,
 } = require("../cli-sessions.js");
@@ -244,6 +245,114 @@ describe("Grok session import IPC (#972)", () => {
     assert.equal(thread.provider, "grok");
     assert.equal(thread.sessionId, SESSION_A);
     const expected = parseGrokChatHistory(fs.readFileSync(fileA, "utf8"));
+    assert.deepEqual(
+      store.getMessages(thread.id).map((m) => `${m.role}:${m.text}`),
+      expected.map((t) => `${t.role}:${t.text}`),
+    );
+    assert.equal(
+      store.getMessages(thread.id).some((m) => m.text === "prompt b"),
+      false,
+    );
+  });
+});
+
+const CLAUDE_CWD = "/tmp/solenta-claude-wt";
+
+function claudeProjectDir(cwd) {
+  return String(cwd).replace(/[^A-Za-z0-9]/g, "-");
+}
+
+function writeClaudeSession(home, cwd, sessionId, records) {
+  const dir = path.join(home, "projects", claudeProjectDir(cwd));
+  fs.mkdirSync(dir, { recursive: true });
+  const file = path.join(dir, `${sessionId}.jsonl`);
+  fs.writeFileSync(
+    file,
+    records.map((r) => JSON.stringify(r)).join("\n") + "\n",
+  );
+  return file;
+}
+
+function claudeUser(text, timestamp) {
+  return {
+    type: "user",
+    message: { role: "user", content: text },
+    timestamp,
+  };
+}
+
+function claudeAssistant(text, timestamp) {
+  return {
+    type: "assistant",
+    message: { role: "assistant", content: [{ type: "text", text }] },
+    timestamp,
+  };
+}
+
+describe("Claude session import IPC (#970)", () => {
+  let home;
+  let tmpDir;
+  let store;
+  let ctx;
+  let projectId;
+  let prevHome;
+
+  beforeEach(() => {
+    home = fs.mkdtempSync(path.join(os.tmpdir(), "coder-claude-sess-ipc-home-"));
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "coder-claude-sess-ipc-store-"));
+    store = new Store(path.join(tmpDir, "store.json"));
+    projectId = "proj-import";
+    store.setProjects([
+      {
+        id: projectId,
+        slug: "demo",
+        name: "demo",
+        path: path.join(tmpDir, "demo"),
+      },
+    ]);
+    ctx = {
+      store,
+      broadcast: () => {},
+    };
+    prevHome = process.env.CLAUDE_CONFIG_DIR;
+    process.env.CLAUDE_CONFIG_DIR = home;
+  });
+
+  afterEach(() => {
+    if (prevHome === undefined) delete process.env.CLAUDE_CONFIG_DIR;
+    else process.env.CLAUDE_CONFIG_DIR = prevHome;
+    fs.rmSync(home, { recursive: true, force: true });
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("lists both jsonl files and importing one does not pick up the sibling", async () => {
+    const fileA = writeClaudeSession(home, CLAUDE_CWD, SESSION_A, [
+      claudeUser("prompt a", "2026-09-06T12:00:01.000Z"),
+      claudeAssistant("reply a", "2026-09-06T12:00:02.000Z"),
+    ]);
+    writeClaudeSession(home, "/tmp/other-wt", SESSION_B, [
+      claudeUser("prompt b", "2026-09-06T12:00:01.000Z"),
+      claudeAssistant("reply b", "2026-09-06T12:00:02.000Z"),
+    ]);
+
+    const listed = await IPC_HANDLERS["threads:listCliSessions"](ctx, {
+      provider: "claude",
+    });
+    assert.equal(listed.length, 2);
+    assert.deepEqual(
+      listed.map((s) => s.sessionId).sort(),
+      [SESSION_A, SESSION_B].sort(),
+    );
+
+    const thread = await IPC_HANDLERS["threads:importCliSession"](ctx, {
+      provider: "claude",
+      sessionId: SESSION_A,
+      projectId,
+      home: path.join(tmpDir, "evil-home"),
+    });
+    assert.equal(thread.provider, "claude");
+    assert.equal(thread.sessionId, SESSION_A);
+    const expected = parseClaudeJsonl(fs.readFileSync(fileA, "utf8"));
     assert.deepEqual(
       store.getMessages(thread.id).map((m) => `${m.role}:${m.text}`),
       expected.map((t) => `${t.role}:${t.text}`),

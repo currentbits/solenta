@@ -3,9 +3,11 @@
 /**
  * Provider CLI session transcript reader.
  *
- * #433 / #972 / #975 / #976 import scans a sessions directory with this parser
+ * #433 / #972 / #970 / #975 / #976 import scans a sessions directory with this parser
  * (Codex: listCodexSessions / importCodexSession under CODEX_HOME/sessions;
  * Grok: listGrokSessions / importGrokSession under GROK_HOME/sessions;
+ * Claude: listClaudeSessions / importClaudeSession under
+ * CLAUDE_CONFIG_DIR/projects;
  * Cursor: listCursorSessions / importCursorSession under
  * ~/.cursor/projects/<group>/agent-transcripts/<id>/<id>.jsonl;
  * OpenCode: listOpenCodeSessions / importOpenCodeSession under
@@ -593,6 +595,165 @@ function absorbClaudeSessionTurns(store, thread, home, cwd) {
     thread.id,
     readClaudeSessionTurns(home, cwd, sessionId),
   );
+}
+
+/** Filename: <sessionId>.jsonl directly under a project group. */
+const CLAUDE_SESSION_NAME = /^([0-9a-zA-Z-]+)\.jsonl$/;
+
+/**
+ * Walk `projects/<group>/<sessionId>.jsonl`. Does not recurse into group
+ * subdirs. The walk cannot leave `projects/`. Distinct from
+ * findClaudeSessionFile (reclaim, cwd+sessionId, no scan).
+ *
+ * @param {string | null | undefined} home
+ * @param {(info: { sessionId: string, file: string, mtimeMs: number }) => void} onFile
+ */
+function walkClaudeSessions(home, onFile) {
+  const projectsDir = path.resolve(resolveClaudeHome(home), "projects");
+  let groups;
+  try {
+    groups = fs.readdirSync(projectsDir, { withFileTypes: true });
+  } catch {
+    return;
+  }
+  for (const group of groups) {
+    if (!group.isDirectory() && !group.isSymbolicLink()) continue;
+    const groupDir = path.join(projectsDir, group.name);
+    if (!isInside(projectsDir, groupDir)) continue;
+    let names;
+    try {
+      names = fs.readdirSync(groupDir);
+    } catch {
+      continue;
+    }
+    for (const name of names) {
+      const match = CLAUDE_SESSION_NAME.exec(name);
+      if (!match) continue;
+      const sessionId = match[1];
+      const full = path.join(groupDir, name);
+      if (!isInside(projectsDir, full)) continue;
+      let st;
+      try {
+        st = fs.statSync(full);
+      } catch {
+        continue;
+      }
+      if (!st.isFile()) continue;
+      onFile({ sessionId, file: full, mtimeMs: st.mtimeMs });
+    }
+  }
+}
+
+/**
+ * List candidate Claude jsonl files under CLAUDE_CONFIG_DIR/projects.
+ * Newest mtime wins when the same sessionId appears twice.
+ *
+ * @param {string | null | undefined} home
+ * @returns {{ sessionId: string, mtimeMs: number }[]}
+ */
+function listClaudeSessions(home) {
+  /** @type {Map<string, { sessionId: string, mtimeMs: number }>} */
+  const byId = new Map();
+  walkClaudeSessions(home, (info) => {
+    const prev = byId.get(info.sessionId);
+    if (!prev || info.mtimeMs >= prev.mtimeMs) {
+      byId.set(info.sessionId, {
+        sessionId: info.sessionId,
+        mtimeMs: info.mtimeMs,
+      });
+    }
+  });
+  return [...byId.values()].sort((a, b) => b.mtimeMs - a.mtimeMs);
+}
+
+/**
+ * Import scan: locate one sessionId jsonl under projects/. Newest mtime
+ * wins. Distinct from findClaudeSessionFile (reclaim, cwd+sessionId).
+ *
+ * @param {string | null | undefined} home
+ * @param {string} sessionId
+ * @returns {string | null}
+ */
+function findClaudeImportFile(home, sessionId) {
+  const id = String(sessionId || "");
+  if (!isPathSafeSessionId(id)) return null;
+  let found = null;
+  let foundMtime = -1;
+  walkClaudeSessions(home, (info) => {
+    if (info.sessionId !== id) return;
+    if (info.mtimeMs >= foundMtime) {
+      found = info.file;
+      foundMtime = info.mtimeMs;
+    }
+  });
+  return found;
+}
+
+/**
+ * @param {string | null | undefined} home
+ * @param {string} sessionId
+ * @returns {{ role: "user" | "assistant", text: string, createdAt: number }[]}
+ */
+function readClaudeImportTurns(home, sessionId) {
+  const file = findClaudeImportFile(home, sessionId);
+  if (!file) return [];
+  let text;
+  try {
+    text = fs.readFileSync(file, "utf8");
+  } catch {
+    return [];
+  }
+  return parseClaudeJsonl(text);
+}
+
+/**
+ * Create a Solenta thread from one Claude jsonl. Reuses parseClaudeJsonl.
+ * Idempotent on provider=claude + sessionId so re-import does not duplicate.
+ * Does not copy ~/.claude and does not touch reclaim.
+ *
+ * @param {import("./store").Store} store
+ * @param {{ sessionId: string, projectId: string, home?: string | null }} input
+ */
+function importClaudeSession(store, input) {
+  const sessionId = String((input && input.sessionId) || "");
+  if (!isPathSafeSessionId(sessionId)) {
+    throw new Error("Invalid Claude session id");
+  }
+  const projectId = input && input.projectId;
+  if (!projectId) {
+    throw new Error("projectId is required");
+  }
+  const home = resolveClaudeHome(input && input.home);
+  if (!findClaudeImportFile(home, sessionId)) {
+    throw new Error(`Claude session not found: ${sessionId}`);
+  }
+  const existing = (store.getThreads() || []).find(
+    (t) => t && t.provider === "claude" && t.sessionId === sessionId,
+  );
+  if (existing) return existing;
+
+  const turns = readClaudeImportTurns(home, sessionId);
+  const firstUser = turns.find((t) => t.role === "user");
+  const titleLine = firstUser
+    ? String(firstUser.text).split(/\r?\n/, 1)[0].trim()
+    : "";
+  const { createThread } = require("./services.js");
+  const thread = createThread(store, {
+    projectId,
+    title: titleLine || "Imported Claude session",
+    provider: "claude",
+  });
+  store.updateThread(thread.id, { sessionId });
+  for (const turn of turns) {
+    store.appendMessage(thread.id, {
+      id: randomUUID(),
+      role: turn.role,
+      text: turn.text,
+      createdAt: turn.createdAt || Date.now(),
+    });
+  }
+  store.save();
+  return store.getThread(thread.id);
 }
 
 /**
@@ -1651,6 +1812,8 @@ module.exports = {
   findClaudeSessionFile,
   parseClaudeJsonl,
   readClaudeSessionTurns,
+  listClaudeSessions,
+  importClaudeSession,
   absorbClaudeSessionTurns,
   resolveGrokHome,
   encodeGrokSessionDir,
