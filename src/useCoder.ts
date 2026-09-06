@@ -701,18 +701,18 @@ export interface UseCoderResult {
   listCliCommands: (input?: {
     projectPath?: string;
   }) => Promise<CliSlashCommand[]>;
-  /** Grok CLI sessions on disk (GROK_HOME/sessions). */
+  /** Codex / Grok CLI sessions on disk. */
   listCliSessions: (input?: {
-    provider?: "grok";
+    provider?: "codex" | "grok";
   }) => Promise<CliSessionCandidate[]>;
   /**
-   * Import one listed Grok session as a Solenta thread in projectId.
+   * Import one listed CLI session as a Solenta thread in projectId.
    * Selects the thread the same way createThread does.
    */
   importCliSession: (input: {
     sessionId: string;
     projectId: string;
-    provider?: "grok";
+    provider?: "codex" | "grok";
   }) => Promise<ThreadInfo>;
   /** Full-content thread search (titles + message text); Sidebar owns debounce/state. */
   searchThreads: (input: { query: string }) => Promise<ThreadInfo[]>;
@@ -3355,7 +3355,7 @@ export function useCoder(): UseCoderResult {
   );
 
   const listCliSessions = useCallback(
-    async (input?: { provider?: "grok" }) => {
+    async (input?: { provider?: "codex" | "grok" }) => {
       return api.threads.listCliSessions(input);
     },
     [api],
@@ -3365,12 +3365,12 @@ export function useCoder(): UseCoderResult {
     async (input: {
       sessionId: string;
       projectId: string;
-      provider?: "grok";
+      provider?: "codex" | "grok";
     }) => {
       const t = await api.threads.importCliSession({
         sessionId: input.sessionId,
         projectId: input.projectId,
-        provider: input.provider,
+        ...(input.provider ? { provider: input.provider } : {}),
       });
       const next = threadsRef.current.some((x) => x.id === t.id)
         ? threadsRef.current.map((x) => (x.id === t.id ? t : x))

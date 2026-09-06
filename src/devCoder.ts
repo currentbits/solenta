@@ -3654,15 +3654,16 @@ function buildDevCoder(): CoderApi {
         });
         return registerThread(t);
       },
-      async listCliSessions() {
+      async listCliSessions(_input?: { provider?: "codex" | "grok" }) {
         return [];
       },
       async importCliSession(input) {
+        const grok = input.provider === "grok";
         return registerThread(
           newThread({
             projectId: input.projectId,
-            title: "Imported Grok session",
-            provider: "grok",
+            title: grok ? "Imported Grok session" : "Imported Codex session",
+            provider: grok ? "grok" : "codex",
             sessionId: input.sessionId,
           }),
         );

@@ -284,18 +284,18 @@ interface SidebarProps {
     projectPath: string;
     ref: string;
   }) => Promise<{ ok: true } | { ok: false; reason: string }>;
-  /** Grok CLI sessions on disk (GROK_HOME/sessions). Desktop import picker. */
+  /** Codex / Grok CLI sessions on disk. Desktop import picker. */
   listCliSessions?: (input?: {
-    provider?: "grok";
+    provider?: "codex" | "grok";
   }) => Promise<CliSessionCandidate[]>;
   /**
-   * Import one listed Grok session as a Solenta thread in projectId.
+   * Import one listed CLI session as a Solenta thread in projectId.
    * Caller selects/reveals the returned thread.
    */
   importCliSession?: (input: {
     sessionId: string;
     projectId: string;
-    provider?: "grok";
+    provider?: "codex" | "grok";
   }) => Promise<ThreadInfo>;
   onOpenActivity?: (scopedProjectId?: string | null) => void;
   /**
@@ -1510,7 +1510,9 @@ export const Sidebar = memo(function Sidebar({
       setFilterMenu(null);
     },
   );
-  const [importCliOpen, setImportCliOpen] = useState(false);
+  const [importCliProvider, setImportCliProvider] = useState<
+    "codex" | "grok" | null
+  >(null);
   const [issueFormFor, setIssueFormFor] = useState<string | null>(null);
   const [issueRef, setIssueRef] = useState("");
   const [issueError, setIssueError] = useState<string | null>(null);
@@ -2458,19 +2460,34 @@ export const Sidebar = memo(function Sidebar({
                     </button>
                   )}
                   {listCliSessions && importCliSession && createProjectId && (
-                    <button
-                      type="button"
-                      className={styles.menuItem}
-                      role="menuitem"
-                      data-import-grok-session={createProjectId}
-                      title="Import a Grok CLI session from disk"
-                      onClick={() => {
-                        setCreateMenuOpen(false);
-                        setImportCliOpen(true);
-                      }}
-                    >
-                      Import Grok session…
-                    </button>
+                    <>
+                      <button
+                        type="button"
+                        className={styles.menuItem}
+                        role="menuitem"
+                        data-import-cli-session={createProjectId}
+                        title="Import a Codex CLI session from disk"
+                        onClick={() => {
+                          setCreateMenuOpen(false);
+                          setImportCliProvider("codex");
+                        }}
+                      >
+                        Import Codex session…
+                      </button>
+                      <button
+                        type="button"
+                        className={styles.menuItem}
+                        role="menuitem"
+                        data-import-grok-session={createProjectId}
+                        title="Import a Grok CLI session from disk"
+                        onClick={() => {
+                          setCreateMenuOpen(false);
+                          setImportCliProvider("grok");
+                        }}
+                      >
+                        Import Grok session…
+                      </button>
+                    </>
                   )}
                 </div>
               )}
@@ -2905,17 +2922,18 @@ export const Sidebar = memo(function Sidebar({
         </button>
       </nav>
 
-      {importCliOpen &&
+      {importCliProvider &&
         listCliSessions &&
         importCliSession &&
         createProjectId && (
           <ImportCliSessionModal
             projectId={createProjectId}
+            provider={importCliProvider}
             listCliSessions={listCliSessions}
             importCliSession={importCliSession}
-            onClose={() => setImportCliOpen(false)}
+            onClose={() => setImportCliProvider(null)}
             onImported={(imported) => {
-              setImportCliOpen(false);
+              setImportCliProvider(null);
               onSelectThread(imported.id);
             }}
           />

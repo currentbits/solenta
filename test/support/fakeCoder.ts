@@ -1642,12 +1642,16 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
       listCliSessions: (input?: unknown) =>
         rec("threads.listCliSessions", input == null ? [] : [input], []),
       importCliSession: (input: unknown) => {
-        const i = input as { sessionId: string; projectId: string };
+        const i = input as {
+          sessionId: string;
+          projectId: string;
+          provider?: "codex" | "grok";
+        };
         const createdAt = Date.now();
         const t = thread({
           id: `t-cli-${i.sessionId}`,
           projectId: i.projectId,
-          provider: "grok",
+          provider: i.provider === "grok" ? "grok" : "codex",
           sessionId: i.sessionId,
           createdAt,
           updatedAt: createdAt,

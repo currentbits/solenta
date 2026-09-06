@@ -16,7 +16,10 @@ const { execFileSync } = require("node:child_process");
 const { Store } = require("../store.js");
 const {
   findCodexSessionFile,
+  parseCodexRollout,
   readCodexSessionTurns,
+  listCodexSessions,
+  importCodexSession,
   encodeClaudeProjectDir,
   findClaudeSessionFile,
   readClaudeSessionTurns,
@@ -31,13 +34,11 @@ const {
 const SESSION_A = "01a07579-aaaa-7000-8000-aaaaaaaaaaaa";
 const SESSION_B = "01a07579-bbbb-7000-8000-bbbbbbbbbbbb";
 
-function writeRollout(home, sessionId, records) {
-  const dir = path.join(home, "sessions", "2026", "09", "06");
+function writeRollout(home, sessionId, records, shard = ["2026", "09", "06"]) {
+  const dir = path.join(home, "sessions", ...shard);
   fs.mkdirSync(dir, { recursive: true });
-  const file = path.join(
-    dir,
-    `rollout-2026-09-06T12-00-00-${sessionId}.jsonl`,
-  );
+  const stamp = `${shard[0]}-${shard[1]}-${shard[2]}T12-00-00`;
+  const file = path.join(dir, `rollout-${stamp}-${sessionId}.jsonl`);
   const lines = [
     JSON.stringify({
       timestamp: "2026-09-06T12:00:00.000Z",
@@ -142,6 +143,129 @@ describe("Codex session reader (#433 / #554)", () => {
     assert.equal(findCodexSessionFile(home, "../sessions"), null);
     assert.equal(findCodexSessionFile(home, "a/b"), null);
     assert.equal(findCodexSessionFile(home, ""), null);
+  });
+});
+
+describe("listCodexSessions (#433)", () => {
+  let home;
+
+  beforeEach(() => {
+    home = fs.mkdtempSync(path.join(os.tmpdir(), "coder-cli-sessions-list-"));
+  });
+
+  afterEach(() => {
+    fs.rmSync(home, { recursive: true, force: true });
+  });
+
+  it("lists both rollouts in a mocked date-sharded sessions directory", () => {
+    writeRollout(home, SESSION_A, [
+      messageRecord("user", "prompt a", "2026-09-06T12:00:01.000Z"),
+      messageRecord("assistant", "reply a", "2026-09-06T12:00:02.000Z"),
+    ]);
+    writeRollout(
+      home,
+      SESSION_B,
+      [
+        messageRecord("user", "prompt b", "2026-09-06T12:00:01.000Z"),
+        messageRecord("assistant", "reply b", "2026-09-06T12:00:02.000Z"),
+      ],
+      ["2026", "08", "31"],
+    );
+
+    const listed = listCodexSessions(home);
+    assert.equal(listed.length, 2);
+    const ids = listed.map((s) => s.sessionId).sort();
+    assert.deepEqual(ids, [SESSION_A, SESSION_B].sort());
+  });
+});
+
+describe("importCodexSession (#433)", () => {
+  let home;
+  let tmpDir;
+  let store;
+  let projectId;
+
+  beforeEach(() => {
+    home = fs.mkdtempSync(path.join(os.tmpdir(), "coder-cli-sessions-imp-"));
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "coder-cli-sessions-store-"));
+    store = new Store(path.join(tmpDir, "store.json"));
+    projectId = "proj-import";
+    store.setProjects([
+      {
+        id: projectId,
+        slug: "demo",
+        name: "demo",
+        path: path.join(tmpDir, "demo"),
+      },
+    ]);
+  });
+
+  afterEach(() => {
+    fs.rmSync(home, { recursive: true, force: true });
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("creates a thread whose transcript matches the parsed turns and ignores the sibling", () => {
+    const fileA = writeRollout(home, SESSION_A, [
+      messageRecord("user", "prompt a", "2026-09-06T12:00:01.000Z"),
+      messageRecord("assistant", "reply a", "2026-09-06T12:00:02.000Z"),
+    ]);
+    writeRollout(
+      home,
+      SESSION_B,
+      [
+        messageRecord("user", "prompt b", "2026-09-06T12:00:01.000Z"),
+        messageRecord("assistant", "reply b", "2026-09-06T12:00:02.000Z"),
+      ],
+      ["2026", "08", "31"],
+    );
+
+    const expected = parseCodexRollout(fs.readFileSync(fileA, "utf8"));
+    const thread = importCodexSession(store, {
+      home,
+      sessionId: SESSION_A,
+      projectId,
+    });
+
+    assert.ok(thread && thread.id);
+    assert.equal(thread.provider, "codex");
+    assert.equal(thread.sessionId, SESSION_A);
+    assert.equal(thread.projectId, projectId);
+
+    const messages = store.getMessages(thread.id);
+    assert.deepEqual(
+      messages.map((m) => `${m.role}:${m.text}`),
+      expected.map((t) => `${t.role}:${t.text}`),
+    );
+    assert.deepEqual(
+      messages.map((m) => `${m.role}:${m.text}`),
+      ["user:prompt a", "assistant:reply a"],
+    );
+    assert.equal(
+      messages.some((m) => m.text === "prompt b" || m.text === "reply b"),
+      false,
+    );
+    assert.equal(store.getThreads().length, 1);
+  });
+
+  it("re-importing the same session does not mint a second thread", () => {
+    writeRollout(home, SESSION_A, [
+      messageRecord("user", "prompt a", "2026-09-06T12:00:01.000Z"),
+      messageRecord("assistant", "reply a", "2026-09-06T12:00:02.000Z"),
+    ]);
+    const first = importCodexSession(store, {
+      home,
+      sessionId: SESSION_A,
+      projectId,
+    });
+    const second = importCodexSession(store, {
+      home,
+      sessionId: SESSION_A,
+      projectId,
+    });
+    assert.equal(second.id, first.id);
+    assert.equal(store.getThreads().length, 1);
+    assert.equal(store.getMessages(first.id).length, 2);
   });
 });
 

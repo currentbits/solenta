@@ -4,7 +4,8 @@
  * Provider CLI session transcript reader.
  *
  * #433 / #972 import scans a sessions directory with this parser
- * (Grok: listGrokSessions / importGrokSession under GROK_HOME/sessions).
+ * (Codex: listCodexSessions / importCodexSession under CODEX_HOME/sessions;
+ * Grok: listGrokSessions / importGrokSession under GROK_HOME/sessions).
  * #554 reclaim points it at one known sessionId (Codex: date-tree suffix
  * match; Claude and Grok: direct cwd-encoded path, no directory scan).
  * Claude long cwds
@@ -30,6 +31,10 @@ const { blake3Hex } = require("./blake3.js");
 const GROK_ENCODED_CWD_DIR_MAX_BYTES = 255;
 const CLAUDE_PROJECT_DIR_MAX_CHARS = 200;
 
+/** Filename: rollout-YYYY-MM-DDTHH-MM-SS-<sessionId>.jsonl */
+const ROLLOUT_NAME =
+  /^rollout-\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-([0-9a-zA-Z-]+)\.jsonl$/;
+
 /**
  * @param {string | null | undefined} home
  * @returns {string}
@@ -41,27 +46,32 @@ function resolveCodexHome(home) {
 }
 
 /**
- * Codex rollout files are `sessions/YYYY/MM/DD/rollout-*-<sessionId>.jsonl`.
- * @param {string} home CODEX_HOME
- * @param {string} sessionId
- * @returns {string | null}
+ * @param {string} parent
+ * @param {string} child
  */
-function findCodexSessionFile(home, sessionId) {
-  const id = String(sessionId || "");
-  if (!/^[0-9a-zA-Z-]+$/.test(id)) return null;
-  const sessionsDir = path.join(String(home || ""), "sessions");
-  const suffix = `-${id}.jsonl`;
-  let found = null;
-  let foundMtime = -1;
+function isInside(parent, child) {
+  const rel = path.relative(parent, child);
+  return rel !== "" && !rel.startsWith("..") && !path.isAbsolute(rel);
+}
+
+/**
+ * Walk date-sharded `sessions/YYYY/MM/DD/rollout-*-<id>.jsonl`.
+ * The walk cannot leave `sessions/`.
+ * @param {string} home
+ * @param {(info: { sessionId: string, file: string, mtimeMs: number }) => void} onFile
+ */
+function walkCodexRollouts(home, onFile) {
+  const sessionsDir = path.resolve(String(home || ""), "sessions");
   let years;
   try {
     years = fs.readdirSync(sessionsDir, { withFileTypes: true });
   } catch {
-    return null;
+    return;
   }
   for (const year of years) {
     if (!year.isDirectory() && !year.isSymbolicLink()) continue;
     const yearDir = path.join(sessionsDir, year.name);
+    if (!isInside(sessionsDir, yearDir)) continue;
     let months;
     try {
       months = fs.readdirSync(yearDir, { withFileTypes: true });
@@ -71,6 +81,7 @@ function findCodexSessionFile(home, sessionId) {
     for (const month of months) {
       if (!month.isDirectory() && !month.isSymbolicLink()) continue;
       const monthDir = path.join(yearDir, month.name);
+      if (!isInside(sessionsDir, monthDir)) continue;
       let days;
       try {
         days = fs.readdirSync(monthDir, { withFileTypes: true });
@@ -80,6 +91,7 @@ function findCodexSessionFile(home, sessionId) {
       for (const day of days) {
         if (!day.isDirectory() && !day.isSymbolicLink()) continue;
         const dayDir = path.join(monthDir, day.name);
+        if (!isInside(sessionsDir, dayDir)) continue;
         let names;
         try {
           names = fs.readdirSync(dayDir);
@@ -87,22 +99,42 @@ function findCodexSessionFile(home, sessionId) {
           continue;
         }
         for (const name of names) {
-          if (!name.startsWith("rollout-") || !name.endsWith(suffix)) continue;
+          const match = ROLLOUT_NAME.exec(name);
+          if (!match) continue;
+          const sessionId = match[1];
           const full = path.join(dayDir, name);
-          let mtime = 0;
+          if (!isInside(sessionsDir, full)) continue;
+          let mtimeMs = 0;
           try {
-            mtime = fs.statSync(full).mtimeMs;
+            mtimeMs = fs.statSync(full).mtimeMs;
           } catch {
             continue;
           }
-          if (mtime >= foundMtime) {
-            found = full;
-            foundMtime = mtime;
-          }
+          onFile({ sessionId, file: full, mtimeMs });
         }
       }
     }
   }
+}
+
+/**
+ * Codex rollout files are `sessions/YYYY/MM/DD/rollout-*-<sessionId>.jsonl`.
+ * @param {string} home CODEX_HOME
+ * @param {string} sessionId
+ * @returns {string | null}
+ */
+function findCodexSessionFile(home, sessionId) {
+  const id = String(sessionId || "");
+  if (!/^[0-9a-zA-Z-]+$/.test(id)) return null;
+  let found = null;
+  let foundMtime = -1;
+  walkCodexRollouts(home, (info) => {
+    if (info.sessionId !== id) return;
+    if (info.mtimeMs >= foundMtime) {
+      found = info.file;
+      foundMtime = info.mtimeMs;
+    }
+  });
   return found;
 }
 
@@ -183,6 +215,78 @@ function readCodexSessionTurns(home, sessionId) {
 }
 
 /**
+ * List candidate Codex rollouts under CODEX_HOME/sessions.
+ * Newest mtime wins when the same sessionId appears twice.
+ *
+ * @param {string | null | undefined} home
+ * @returns {{ sessionId: string, mtimeMs: number }[]}
+ */
+function listCodexSessions(home) {
+  /** @type {Map<string, { sessionId: string, mtimeMs: number }>} */
+  const byId = new Map();
+  walkCodexRollouts(resolveCodexHome(home), (info) => {
+    const prev = byId.get(info.sessionId);
+    if (!prev || info.mtimeMs >= prev.mtimeMs) {
+      byId.set(info.sessionId, {
+        sessionId: info.sessionId,
+        mtimeMs: info.mtimeMs,
+      });
+    }
+  });
+  return [...byId.values()].sort((a, b) => b.mtimeMs - a.mtimeMs);
+}
+
+/**
+ * Create a Solenta thread from one Codex rollout. Reuses parseCodexRollout.
+ * Idempotent on provider=codex + sessionId so re-import does not duplicate.
+ * Does not copy ~/.codex and does not touch reclaim.
+ *
+ * @param {import("./store").Store} store
+ * @param {{ sessionId: string, projectId: string, home?: string | null }} input
+ */
+function importCodexSession(store, input) {
+  const sessionId = String((input && input.sessionId) || "");
+  if (!/^[0-9a-zA-Z-]+$/.test(sessionId)) {
+    throw new Error("Invalid Codex session id");
+  }
+  const projectId = input && input.projectId;
+  if (!projectId) {
+    throw new Error("projectId is required");
+  }
+  const home = resolveCodexHome(input && input.home);
+  if (!findCodexSessionFile(home, sessionId)) {
+    throw new Error(`Codex session not found: ${sessionId}`);
+  }
+  const existing = (store.getThreads() || []).find(
+    (t) => t && t.provider === "codex" && t.sessionId === sessionId,
+  );
+  if (existing) return existing;
+
+  const turns = readCodexSessionTurns(home, sessionId);
+  const firstUser = turns.find((t) => t.role === "user");
+  const titleLine = firstUser
+    ? String(firstUser.text).split(/\r?\n/, 1)[0].trim()
+    : "";
+  const { createThread } = require("./services.js");
+  const thread = createThread(store, {
+    projectId,
+    title: titleLine || "Imported Codex session",
+    provider: "codex",
+  });
+  store.updateThread(thread.id, { sessionId });
+  for (const turn of turns) {
+    store.appendMessage(thread.id, {
+      id: randomUUID(),
+      role: turn.role,
+      text: turn.text,
+      createdAt: turn.createdAt || Date.now(),
+    });
+  }
+  store.save();
+  return store.getThread(thread.id);
+}
+
+/**
  * Append provider turns that are not already in the Solenta transcript.
  * Match by role+text occurrence count so reclaim is idempotent.
  *
@@ -234,11 +338,6 @@ function absorbCodexSessionTurns(store, thread, home) {
 
 function isPathSafeSessionId(sessionId) {
   return /^[0-9a-zA-Z-]+$/.test(String(sessionId || ""));
-}
-
-function isInside(parent, child) {
-  const rel = path.relative(parent, child);
-  return rel !== "" && !rel.startsWith("..") && !path.isAbsolute(rel);
 }
 
 /**
@@ -841,6 +940,8 @@ module.exports = {
   findCodexSessionFile,
   parseCodexRollout,
   readCodexSessionTurns,
+  listCodexSessions,
+  importCodexSession,
   absorbCodexSessionTurns,
   resolveClaudeHome,
   encodeClaudeProjectDir,

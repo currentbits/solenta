@@ -356,6 +356,7 @@ export interface VibeKanbanImportResult {
 
 /**
  * One CLI session on disk (#433 Codex, #972 Grok).
+ * Codex: `CODEX_HOME/sessions/YYYY/MM/DD/rollout-*-<sessionId>.jsonl`.
  * Grok: `GROK_HOME/sessions/<encoded-cwd>/<sessionId>/chat_history.jsonl`.
  */
 export interface CliSessionCandidate {
@@ -3271,7 +3272,7 @@ export interface CoderApi {
      * List CLI sessions on disk (#433 Codex, #972 Grok).
      * The scan stays on the main process; the renderer cannot supply a home.
      * `provider: "grok"` walks GROK_HOME/sessions. Omitted/codex walks
-     * CODEX_HOME/sessions when that importer is present.
+     * CODEX_HOME/sessions.
      */
     listCliSessions(input?: {
       provider?: "codex" | "grok";

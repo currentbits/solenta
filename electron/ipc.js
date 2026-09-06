@@ -491,26 +491,19 @@ const IPC_HANDLERS = {
     if (input && input.provider === "grok") {
       return cliSessions.listGrokSessions();
     }
-    if (typeof cliSessions.listCodexSessions === "function") {
-      return cliSessions.listCodexSessions();
-    }
-    return [];
+    return cliSessions.listCodexSessions();
   },
   "threads:importCliSession": async (ctx, input) => {
-    // Home is GROK_HOME / CODEX_HOME on this process.
+    // Home is CODEX_HOME / GROK_HOME on this process.
     // Ignore any renderer-supplied path.
     const args = {
       sessionId: input && input.sessionId,
       projectId: input && input.projectId,
     };
-    let thread;
-    if (input && input.provider === "grok") {
-      thread = cliSessions.importGrokSession(ctx.store, args);
-    } else if (typeof cliSessions.importCodexSession === "function") {
-      thread = cliSessions.importCodexSession(ctx.store, args);
-    } else {
-      throw new Error("CLI session import is not available");
-    }
+    const thread =
+      input && input.provider === "grok"
+        ? cliSessions.importGrokSession(ctx.store, args)
+        : cliSessions.importCodexSession(ctx.store, args);
     ctx.broadcast("threads:changed", services.listThreads(ctx.store));
     return thread;
   },

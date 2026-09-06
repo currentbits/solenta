@@ -10,26 +10,46 @@ function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
+export type CliImportProvider = "codex" | "grok";
+
+const COPY: Record<
+  CliImportProvider,
+  { title: string; note: string; empty: string }
+> = {
+  codex: {
+    title: "Import Codex session",
+    note: "Choose a Codex CLI session to import into this project.",
+    empty: "No Codex CLI sessions found",
+  },
+  grok: {
+    title: "Import Grok session",
+    note: "Choose a Grok CLI session to import into this project.",
+    empty: "No Grok CLI sessions found",
+  },
+};
+
 interface ImportCliSessionModalProps {
   projectId: string;
+  provider: CliImportProvider;
   onClose: () => void;
   listCliSessions: (input?: {
-    provider?: "grok";
+    provider?: "codex" | "grok";
   }) => Promise<CliSessionCandidate[]>;
   importCliSession: (input: {
     sessionId: string;
     projectId: string;
-    provider?: "grok";
+    provider?: "codex" | "grok";
   }) => Promise<ThreadInfo>;
   onImported: (thread: ThreadInfo) => void;
 }
 
 /**
- * Pick a Grok CLI session from GROK_HOME/sessions and import it as a
- * Solenta thread in the current project. Home stays on the main process.
+ * Pick a Codex or Grok CLI session from disk and import it as a Solenta
+ * thread in the current project. Home stays on the main process.
  */
 export function ImportCliSessionModal({
   projectId,
+  provider,
   onClose,
   listCliSessions,
   importCliSession,
@@ -41,6 +61,7 @@ export function ImportCliSessionModal({
   const [importError, setImportError] = useState<string | null>(null);
   const [pendingId, setPendingId] = useState<string | null>(null);
   const [now] = useState(() => Date.now());
+  const copy = COPY[provider];
 
   const pending = pendingId != null;
   const handleClose = useCallback(() => {
@@ -56,13 +77,16 @@ export function ImportCliSessionModal({
     setImportError(null);
     setSessions(null);
     try {
-      const listed = await listCliSessions({ provider: "grok" });
+      const listed =
+        provider === "grok"
+          ? await listCliSessions({ provider: "grok" })
+          : await listCliSessions();
       setSessions(listed);
     } catch (err) {
       setSessions([]);
       setListError(errorMessage(err));
     }
-  }, [listCliSessions]);
+  }, [listCliSessions, provider]);
 
   useEffect(() => {
     void load();
@@ -73,11 +97,14 @@ export function ImportCliSessionModal({
     setPendingId(sessionId);
     setImportError(null);
     try {
-      const thread = await importCliSession({
-        sessionId,
-        projectId,
-        provider: "grok",
-      });
+      const thread =
+        provider === "grok"
+          ? await importCliSession({
+              sessionId,
+              projectId,
+              provider: "grok",
+            })
+          : await importCliSession({ sessionId, projectId });
       onImported(thread);
     } catch (err) {
       setImportError(errorMessage(err));
@@ -104,7 +131,7 @@ export function ImportCliSessionModal({
       >
         <div className={chrome.header}>
           <h2 id="import-cli-session-title" className={chrome.title}>
-            Import Grok session
+            {copy.title}
           </h2>
           <button
             type="button"
@@ -117,9 +144,7 @@ export function ImportCliSessionModal({
           </button>
         </div>
         <div className={chrome.body}>
-          <p className={chrome.note}>
-            Choose a Grok CLI session to import into this project.
-          </p>
+          <p className={chrome.note}>{copy.note}</p>
           {sessions == null && !listError ? (
             <p className={chrome.browseEmpty}>Loading sessions…</p>
           ) : listError ? (
@@ -142,7 +167,7 @@ export function ImportCliSessionModal({
             </>
           ) : sessions && sessions.length === 0 ? (
             <p className={chrome.browseEmpty} data-cli-session-empty="">
-              No Grok CLI sessions found
+              {copy.empty}
             </p>
           ) : (
             <ul className={`${chrome.browseList} ${styles.list}`}>
