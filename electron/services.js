@@ -2019,7 +2019,8 @@ function copyEjectCommand(store, thread, opts) {
  * Reclaim (`ejected: false`) re-reads the known provider session for
  * this sessionId and appends turns that happened outside Solenta
  * (#433 reader: Codex rollout, Claude ~/.claude/projects jsonl, Grok
- * chat_history.jsonl).
+ * chat_history.jsonl, Cursor agent-transcripts jsonl, OpenCode
+ * opencode.db / JSON fallback).
  *
  * @param {import('./store').Store} store
  * @param {{ threadId: string, ejected: boolean, home?: string }} input

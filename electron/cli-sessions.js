@@ -15,7 +15,8 @@
  * is missing or has no session table, walk the pre-1.14 JSON tree at
  * storage/session/<projectID>/<sessionID>.json plus message/ and part/).
  * #554 reclaim points it at one known sessionId (Codex: date-tree suffix
- * match; Claude and Grok: direct cwd-encoded path, no directory scan).
+ * match; Claude and Grok: direct cwd-encoded path, no directory scan;
+ * Cursor and OpenCode: the same sessionId scan as import, not cwd).
  * Claude import walks projects/<group>/<sessionId>.jsonl; reclaim still
  * uses cwd+sessionId only. Claude long cwds
  * use Claude Code 2.1.x's 200-char dash prefix plus abs(djb2).toString(36).
@@ -1180,8 +1181,8 @@ function listCursorSessions(home) {
 }
 
 /**
- * Import scan: locate one sessionId jsonl under projects/. Newest mtime
- * wins. Distinct from reclaim (none for Cursor in this slice).
+ * Locate one sessionId jsonl under projects/. Newest mtime wins.
+ * Shared by import and reclaim; both scan by sessionId, not cwd.
  *
  * @param {string | null | undefined} home
  * @param {string} sessionId
@@ -1222,7 +1223,7 @@ function readCursorImportTurns(home, sessionId) {
 /**
  * Create a Solenta thread from one Cursor agent-transcript jsonl.
  * Idempotent on provider=cursor + sessionId so re-import does not duplicate.
- * Does not copy ~/.cursor and does not touch reclaim.
+ * Does not copy ~/.cursor. Reclaim uses absorbCursorSessionTurns.
  *
  * @param {import("./store").Store} store
  * @param {{ sessionId: string, projectId: string, home?: string | null }} input
@@ -1267,6 +1268,22 @@ function importCursorSession(store, input) {
   }
   store.save();
   return store.getThread(thread.id);
+}
+
+/**
+ * Reclaim: re-read the Cursor jsonl by sessionId (import-path scan, not
+ * cwd) and append turns that are not already in the Solenta transcript.
+ *
+ * @param {import("./store").Store} store
+ * @param {object} thread
+ * @param {string} home
+ * @returns {number}
+ */
+function absorbCursorSessionTurns(store, thread, home) {
+  if (!thread || thread.provider !== "cursor") return 0;
+  const sessionId = thread.sessionId;
+  if (!sessionId) return 0;
+  return absorbTurns(store, thread.id, readCursorImportTurns(home, sessionId));
 }
 
 /**
@@ -1432,8 +1449,8 @@ function listOpenCodeJsonSessions(home) {
 }
 
 /**
- * Import scan: locate one sessionId JSON under storage/session/.
- * Newest mtime wins. Not a reclaim helper.
+ * Locate one sessionId JSON under storage/session/. Newest mtime wins.
+ * Shared by import and reclaim.
  *
  * @param {string} home
  * @param {string} sessionId
@@ -1631,8 +1648,7 @@ function openCodePartText(data) {
 
 /**
  * Read user/assistant text parts for one OpenCode sessionId.
- * Skips reasoning, tool, and step parts. Distinct from reclaim
- * (none for OpenCode in this slice).
+ * Skips reasoning, tool, and step parts. Shared by import and reclaim.
  *
  * @param {string | null | undefined} home
  * @param {string} sessionId
@@ -1704,7 +1720,8 @@ function readOpenCodeImportTurns(home, sessionId) {
 /**
  * Create a Solenta thread from one OpenCode session row.
  * Idempotent on provider=opencode + sessionId so re-import does not duplicate.
- * Does not copy ~/.opencode or ~/.local/share/opencode and does not touch reclaim.
+ * Does not copy ~/.opencode or ~/.local/share/opencode.
+ * Reclaim uses absorbOpenCodeSessionTurns.
  *
  * @param {import("./store").Store} store
  * @param {{ sessionId: string, projectId: string, home?: string | null }} input
@@ -1752,6 +1769,27 @@ function importOpenCodeSession(store, input) {
 }
 
 /**
+ * Reclaim: re-read the OpenCode session by sessionId (import-path reader,
+ * sqlite or JSON fallback, not cwd) and append turns that are not already
+ * in the Solenta transcript.
+ *
+ * @param {import("./store").Store} store
+ * @param {object} thread
+ * @param {string} home
+ * @returns {number}
+ */
+function absorbOpenCodeSessionTurns(store, thread, home) {
+  if (!thread || thread.provider !== "opencode") return 0;
+  const sessionId = thread.sessionId;
+  if (!sessionId) return 0;
+  return absorbTurns(
+    store,
+    thread.id,
+    readOpenCodeImportTurns(home, sessionId),
+  );
+}
+
+/**
  * @param {import("./store").Store} store
  * @param {object} thread
  * @param {string} home
@@ -1795,6 +1833,16 @@ function absorbSessionTurns(store, thread, opts) {
   if (thread.provider === "grok") {
     return absorbGrokSessionTurns(store, thread, resolveGrokHome(home), cwd);
   }
+  if (thread.provider === "cursor") {
+    return absorbCursorSessionTurns(store, thread, resolveCursorHome(home));
+  }
+  if (thread.provider === "opencode") {
+    return absorbOpenCodeSessionTurns(
+      store,
+      thread,
+      resolveOpenCodeHome(home),
+    );
+  }
   return 0;
 }
 
@@ -1826,9 +1874,11 @@ module.exports = {
   parseCursorJsonl,
   listCursorSessions,
   importCursorSession,
+  absorbCursorSessionTurns,
   resolveOpenCodeHome,
   listOpenCodeSessions,
   importOpenCodeSession,
   readOpenCodeImportTurns,
+  absorbOpenCodeSessionTurns,
   absorbSessionTurns,
 };

@@ -571,6 +571,336 @@ for (const provider of ["claude", "grok"]) {
   });
 }
 
+function cursorProjectDir(cwd) {
+  return String(cwd)
+    .replace(/^\//, "")
+    .replace(/[^A-Za-z0-9]/g, "-");
+}
+
+function writeCursorTranscript(home, cwd, sessionId, turns) {
+  const dir = path.join(
+    home,
+    "projects",
+    cursorProjectDir(cwd),
+    "agent-transcripts",
+    sessionId,
+  );
+  fs.mkdirSync(dir, { recursive: true });
+  const records = turns.map((t) => {
+    if (t.role === "user") {
+      return {
+        role: "user",
+        message: {
+          content: [
+            {
+              type: "text",
+              text: `<user_query>\n${t.text}\n</user_query>`,
+            },
+          ],
+        },
+      };
+    }
+    return {
+      role: "assistant",
+      message: { content: [{ type: "text", text: t.text }] },
+    };
+  });
+  const file = path.join(dir, `${sessionId}.jsonl`);
+  fs.writeFileSync(file, records.map((r) => JSON.stringify(r)).join("\n") + "\n");
+  return file;
+}
+
+function writeOpenCodeTranscript(home, sessionId, turns) {
+  const { DatabaseSync } = require("node:sqlite");
+  fs.mkdirSync(home, { recursive: true });
+  const dbPath = path.join(home, "opencode.db");
+  const db = new DatabaseSync(dbPath);
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS session (
+      id TEXT PRIMARY KEY,
+      project_id TEXT NOT NULL DEFAULT 'p',
+      slug TEXT NOT NULL DEFAULT '',
+      directory TEXT NOT NULL DEFAULT '',
+      title TEXT NOT NULL DEFAULT '',
+      version TEXT NOT NULL DEFAULT '',
+      cost REAL NOT NULL DEFAULT 0,
+      tokens_input INTEGER NOT NULL DEFAULT 0,
+      tokens_output INTEGER NOT NULL DEFAULT 0,
+      tokens_reasoning INTEGER NOT NULL DEFAULT 0,
+      tokens_cache_read INTEGER NOT NULL DEFAULT 0,
+      tokens_cache_write INTEGER NOT NULL DEFAULT 0,
+      time_created INTEGER NOT NULL,
+      time_updated INTEGER NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS message (
+      id TEXT PRIMARY KEY,
+      session_id TEXT NOT NULL,
+      time_created INTEGER NOT NULL,
+      time_updated INTEGER NOT NULL,
+      data TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS part (
+      id TEXT PRIMARY KEY,
+      message_id TEXT NOT NULL,
+      session_id TEXT NOT NULL,
+      time_created INTEGER NOT NULL,
+      time_updated INTEGER NOT NULL,
+      data TEXT NOT NULL
+    );
+  `);
+  const now = Date.now();
+  db.prepare(
+    `INSERT OR REPLACE INTO session (
+      id, project_id, slug, directory, title, version, time_created, time_updated
+    ) VALUES (?, 'p', '', '', ?, '', ?, ?)`,
+  ).run(sessionId, "Lead", now, now);
+  let i = 0;
+  for (const turn of turns) {
+    i += 1;
+    const msgId = `msg_${sessionId}_${i}`;
+    const t = now + i;
+    db.prepare(
+      `INSERT INTO message (id, session_id, time_created, time_updated, data)
+       VALUES (?, ?, ?, ?, ?)`,
+    ).run(msgId, sessionId, t, t, JSON.stringify({ role: turn.role }));
+    db.prepare(
+      `INSERT INTO part (id, message_id, session_id, time_created, time_updated, data)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+    ).run(
+      `prt_${sessionId}_${i}`,
+      msgId,
+      sessionId,
+      t,
+      t,
+      JSON.stringify({ type: "text", text: turn.text }),
+    );
+  }
+  db.close();
+  return dbPath;
+}
+
+function writeOpenCodeJsonTranscript(home, sessionId, turns) {
+  const projectId = "proj_reclaim";
+  const sessionDir = path.join(home, "storage", "session", projectId);
+  fs.mkdirSync(sessionDir, { recursive: true });
+  const sessionFile = path.join(sessionDir, `${sessionId}.json`);
+  const now = Date.now();
+  fs.writeFileSync(
+    sessionFile,
+    `${JSON.stringify({
+      id: sessionId,
+      projectID: projectId,
+      title: "Lead",
+      time: { created: now, updated: now },
+    })}\n`,
+  );
+  let i = 0;
+  for (const turn of turns) {
+    i += 1;
+    const msgId = `msg_${sessionId}_${i}`;
+    const t = now + i;
+    const msgDir = path.join(home, "storage", "message", sessionId);
+    fs.mkdirSync(msgDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(msgDir, `${msgId}.json`),
+      `${JSON.stringify({
+        id: msgId,
+        sessionID: sessionId,
+        role: turn.role,
+        time: { created: t },
+      })}\n`,
+    );
+    const partId = `prt_${sessionId}_${i}`;
+    const partDir = path.join(home, "storage", "part", msgId);
+    fs.mkdirSync(partDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(partDir, `${partId}.json`),
+      `${JSON.stringify({
+        id: partId,
+        messageID: msgId,
+        sessionID: sessionId,
+        type: "text",
+        text: turn.text,
+      })}\n`,
+    );
+  }
+  return sessionFile;
+}
+
+const RECLAIM_TURNS = [
+  { role: "user", text: "hello inside" },
+  { role: "assistant", text: "inside reply" },
+  { role: "user", text: "outside prompt" },
+  { role: "assistant", text: "outside reply" },
+];
+
+async function sessionScanReclaimFixture(provider) {
+  const tmpDir = fs.mkdtempSync(
+    path.join(os.tmpdir(), `coder-eject-reclaim-${provider}-`),
+  );
+  const providerHome = path.join(tmpDir, `${provider}-home`);
+  const store = new Store(path.join(tmpDir, "store.json"));
+  const repo = path.join(tmpDir, "repo");
+  fs.mkdirSync(repo);
+  git(repo, ["init"]);
+  const project = await services.addProject(store, repo);
+  const thread = services.createThread(store, {
+    projectId: project.id,
+    title: "Lead",
+  });
+  const threadId = thread.id;
+  const providerId = provider === "opencode-json" ? "opencode" : provider;
+  services.setProvider(store, { threadId, provider: providerId });
+  store.updateThread(threadId, { sessionId: RECLAIM_SESSION });
+  store.appendMessage(threadId, {
+    id: "m-user-1",
+    role: "user",
+    text: "hello inside",
+    createdAt: 1,
+  });
+  store.appendMessage(threadId, {
+    id: "m-asst-1",
+    role: "assistant",
+    text: "inside reply",
+    createdAt: 2,
+  });
+  services.setEjected(store, { threadId, ejected: true });
+  let artifact;
+  if (provider === "cursor") {
+    // SessionId scan, not cwd: stash the jsonl under a group that is not
+    // the thread's worktree / project path.
+    artifact = writeCursorTranscript(
+      providerHome,
+      "/tmp/other-cursor-cwd",
+      RECLAIM_SESSION,
+      RECLAIM_TURNS,
+    );
+  } else if (provider === "opencode-json") {
+    artifact = writeOpenCodeJsonTranscript(
+      providerHome,
+      RECLAIM_SESSION,
+      RECLAIM_TURNS,
+    );
+  } else {
+    artifact = writeOpenCodeTranscript(
+      providerHome,
+      RECLAIM_SESSION,
+      RECLAIM_TURNS,
+    );
+  }
+  return { tmpDir, store, threadId, providerHome, artifact };
+}
+
+function assertReclaimAbsorbed(store, threadId) {
+  const assistants = roleTexts(store, threadId, "assistant");
+  assert.ok(
+    assistants.includes("outside reply"),
+    `expected outside assistant turn, got ${JSON.stringify(assistants)}`,
+  );
+  assert.ok(roleTexts(store, threadId, "user").includes("outside prompt"));
+}
+
+function assertReclaimNoDupes(store, threadId) {
+  const assistants = roleTexts(store, threadId, "assistant");
+  assert.equal(assistants.filter((t) => t === "inside reply").length, 1);
+  assert.equal(assistants.filter((t) => t === "outside reply").length, 1);
+  const users = roleTexts(store, threadId, "user");
+  assert.equal(users.filter((t) => t === "hello inside").length, 1);
+  assert.equal(users.filter((t) => t === "outside prompt").length, 1);
+}
+
+for (const provider of ["cursor", "opencode"]) {
+  describe(`reclaim appends outside ${provider} turns (#554)`, () => {
+    let tmpDir;
+    let store;
+    let threadId;
+    let providerHome;
+    let artifact;
+
+    beforeEach(async () => {
+      const fx = await sessionScanReclaimFixture(provider);
+      tmpDir = fx.tmpDir;
+      store = fx.store;
+      threadId = fx.threadId;
+      providerHome = fx.providerHome;
+      artifact = fx.artifact;
+    });
+
+    afterEach(() => {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    });
+
+    it("appends at least one outside assistant turn after reclaim", () => {
+      const updated = services.setEjected(store, {
+        threadId,
+        ejected: false,
+        home: providerHome,
+      });
+      assert.equal(updated.ejected, false);
+      assert.equal(store.getThread(threadId).sessionId, RECLAIM_SESSION);
+      assertReclaimAbsorbed(store, threadId);
+      assert.equal(
+        fs.existsSync(artifact),
+        true,
+        "must not copy or consume the provider store",
+      );
+    });
+
+    it("does not duplicate turns already in the Solenta transcript", () => {
+      services.setEjected(store, {
+        threadId,
+        ejected: false,
+        home: providerHome,
+      });
+      services.setEjected(store, { threadId, ejected: true });
+      services.setEjected(store, {
+        threadId,
+        ejected: false,
+        home: providerHome,
+      });
+      assertReclaimNoDupes(store, threadId);
+    });
+  });
+}
+
+describe("reclaim appends outside OpenCode JSON-fallback turns (#554)", () => {
+  let tmpDir;
+  let store;
+  let threadId;
+  let providerHome;
+  let artifact;
+
+  beforeEach(async () => {
+    const fx = await sessionScanReclaimFixture("opencode-json");
+    tmpDir = fx.tmpDir;
+    store = fx.store;
+    threadId = fx.threadId;
+    providerHome = fx.providerHome;
+    artifact = fx.artifact;
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("appends at least one outside assistant turn after reclaim", () => {
+    assert.equal(fs.existsSync(path.join(providerHome, "opencode.db")), false);
+    const updated = services.setEjected(store, {
+      threadId,
+      ejected: false,
+      home: providerHome,
+    });
+    assert.equal(updated.ejected, false);
+    assert.equal(store.getThread(threadId).sessionId, RECLAIM_SESSION);
+    assertReclaimAbsorbed(store, threadId);
+    assert.equal(
+      fs.existsSync(artifact),
+      true,
+      "must not copy or consume the OpenCode JSON store",
+    );
+  });
+});
+
 describe("reclaim finds a Grok hashed cwd group (#964)", () => {
   const LONG_CWD = `/tmp/${"a".repeat(300)}`;
   const LONG_GROUP =
