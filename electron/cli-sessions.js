@@ -13,7 +13,11 @@
  * OpenCode: listOpenCodeSessions / importOpenCodeSession under
  * OPENCODE_HOME/opencode.db, default XDG_DATA_HOME/opencode. When the db
  * is missing or has no session table, walk the pre-1.14 JSON tree at
- * storage/session/<projectID>/<sessionID>.json plus message/ and part/).
+ * storage/session/<projectID>/<sessionID>.json plus message/ and part/;
+ * Kimi: listKimiSessions / importKimiSession under
+ * KIMI_CODE_HOME/sessions/<wd>/<id>/agents/main/wire.jsonl;
+ * Muse: listMuseSessions / importMuseSession under
+ * XDG_DATA_HOME/muse/sessions/YYYY/MM/DD/<id>/session.jsonl).
  * #554 reclaim points it at one known sessionId (Codex: date-tree suffix
  * match; Claude and Grok: direct cwd-encoded path, no directory scan;
  * Cursor and OpenCode: the same sessionId scan as import, not cwd;
@@ -1951,7 +1955,7 @@ function parseKimiWire(text) {
  */
 function findKimiWireFile(home, sessionId) {
   const id = String(sessionId || "");
-  if (!isKimiSessionId(id)) return null;
+  if (!isKimiSessionId(id) || id === "cwd") return null;
   const sessionsDir = path.resolve(String(home || ""), "sessions");
   let wds;
   try {
@@ -2224,6 +2228,267 @@ function absorbMuseSessionTurns(store, thread, home) {
 }
 
 /**
+ * Walk `sessions/<wd>/<sessionId>/agents/main/wire.jsonl`. Does not
+ * recurse into agent-0. The walk cannot leave `sessions/`.
+ *
+ * @param {string | null | undefined} home
+ * @param {(info: { sessionId: string, file: string, mtimeMs: number }) => void} onFile
+ */
+function walkKimiSessions(home, onFile) {
+  const sessionsDir = path.resolve(resolveKimiHome(home), "sessions");
+  let wds;
+  try {
+    wds = fs.readdirSync(sessionsDir, { withFileTypes: true });
+  } catch {
+    return;
+  }
+  for (const wd of wds) {
+    if (!wd.isDirectory() && !wd.isSymbolicLink()) continue;
+    const wdDir = path.join(sessionsDir, wd.name);
+    if (!isInside(sessionsDir, wdDir)) continue;
+    let ids;
+    try {
+      ids = fs.readdirSync(wdDir, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const entry of ids) {
+      if (!entry.isDirectory() && !entry.isSymbolicLink()) continue;
+      const sessionId = entry.name;
+      if (!isKimiSessionId(sessionId) || sessionId === "cwd") continue;
+      const file = path.join(
+        wdDir,
+        sessionId,
+        "agents",
+        "main",
+        "wire.jsonl",
+      );
+      if (!isInside(sessionsDir, file)) continue;
+      let st;
+      try {
+        st = fs.statSync(file);
+      } catch {
+        continue;
+      }
+      if (!st.isFile()) continue;
+      onFile({ sessionId, file, mtimeMs: st.mtimeMs });
+    }
+  }
+}
+
+/**
+ * List candidate Kimi sessions under KIMI_CODE_HOME/sessions.
+ * Newest mtime wins when the same sessionId appears twice.
+ *
+ * @param {string | null | undefined} home
+ * @returns {{ sessionId: string, mtimeMs: number }[]}
+ */
+function listKimiSessions(home) {
+  /** @type {Map<string, { sessionId: string, mtimeMs: number }>} */
+  const byId = new Map();
+  walkKimiSessions(home, (info) => {
+    const prev = byId.get(info.sessionId);
+    if (!prev || info.mtimeMs >= prev.mtimeMs) {
+      byId.set(info.sessionId, {
+        sessionId: info.sessionId,
+        mtimeMs: info.mtimeMs,
+      });
+    }
+  });
+  return [...byId.values()].sort((a, b) => b.mtimeMs - a.mtimeMs);
+}
+
+/**
+ * Create a Solenta thread from one Kimi main-agent wire.jsonl.
+ * Idempotent on provider=kimi + sessionId so re-import does not duplicate.
+ * Does not copy ~/.kimi-code. Does not absorb into an existing thread.
+ *
+ * @param {import("./store").Store} store
+ * @param {{ sessionId: string, projectId: string, home?: string | null }} input
+ */
+function importKimiSession(store, input) {
+  const sessionId = String((input && input.sessionId) || "");
+  if (!isKimiSessionId(sessionId) || sessionId === "cwd") {
+    throw new Error("Invalid Kimi session id");
+  }
+  const projectId = input && input.projectId;
+  if (!projectId) {
+    throw new Error("projectId is required");
+  }
+  const home = resolveKimiHome(input && input.home);
+  if (!findKimiWireFile(home, sessionId)) {
+    throw new Error(`Kimi session not found: ${sessionId}`);
+  }
+  const existing = (store.getThreads() || []).find(
+    (t) => t && t.provider === "kimi" && t.sessionId === sessionId,
+  );
+  if (existing) return existing;
+
+  const turns = readKimiSessionTurns(home, sessionId);
+  const firstUser = turns.find((t) => t.role === "user");
+  const titleLine = firstUser
+    ? String(firstUser.text).split(/\r?\n/, 1)[0].trim()
+    : "";
+  const { createThread } = require("./services.js");
+  const thread = createThread(store, {
+    projectId,
+    title: titleLine || "Imported Kimi session",
+    provider: "kimi",
+  });
+  store.updateThread(thread.id, { sessionId });
+  for (const turn of turns) {
+    store.appendMessage(thread.id, {
+      id: randomUUID(),
+      role: turn.role,
+      text: turn.text,
+      createdAt: turn.createdAt || Date.now(),
+    });
+  }
+  store.save();
+  return store.getThread(thread.id);
+}
+
+/**
+ * Walk `sessions/YYYY/MM/DD/<sessionId>/session.jsonl`. The walk cannot
+ * leave `sessions/`. Overlay dest is not this home.
+ *
+ * @param {string | null | undefined} home
+ * @param {(info: { sessionId: string, file: string, mtimeMs: number }) => void} onFile
+ */
+function walkMuseSessions(home, onFile) {
+  const sessionsDir = path.resolve(resolveMuseHome(home), "sessions");
+  let years;
+  try {
+    years = fs.readdirSync(sessionsDir, { withFileTypes: true });
+  } catch {
+    return;
+  }
+  for (const year of years) {
+    if (!year.isDirectory() && !year.isSymbolicLink()) continue;
+    if (!/^\d{4}$/.test(year.name)) continue;
+    const yearDir = path.join(sessionsDir, year.name);
+    if (!isInside(sessionsDir, yearDir)) continue;
+    let months;
+    try {
+      months = fs.readdirSync(yearDir, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const month of months) {
+      if (!month.isDirectory() && !month.isSymbolicLink()) continue;
+      if (!/^(0[1-9]|1[0-2])$/.test(month.name)) continue;
+      const monthDir = path.join(yearDir, month.name);
+      if (!isInside(sessionsDir, monthDir)) continue;
+      let days;
+      try {
+        days = fs.readdirSync(monthDir, { withFileTypes: true });
+      } catch {
+        continue;
+      }
+      for (const day of days) {
+        if (!day.isDirectory() && !day.isSymbolicLink()) continue;
+        if (!/^(0[1-9]|[12]\d|3[01])$/.test(day.name)) continue;
+        const dayDir = path.join(monthDir, day.name);
+        if (!isInside(sessionsDir, dayDir)) continue;
+        let ids;
+        try {
+          ids = fs.readdirSync(dayDir, { withFileTypes: true });
+        } catch {
+          continue;
+        }
+        for (const entry of ids) {
+          if (!entry.isDirectory() && !entry.isSymbolicLink()) continue;
+          const sessionId = entry.name;
+          if (!isPathSafeSessionId(sessionId)) continue;
+          const file = path.join(dayDir, sessionId, "session.jsonl");
+          if (!isInside(sessionsDir, file)) continue;
+          let st;
+          try {
+            st = fs.statSync(file);
+          } catch {
+            continue;
+          }
+          if (!st.isFile()) continue;
+          onFile({ sessionId, file, mtimeMs: st.mtimeMs });
+        }
+      }
+    }
+  }
+}
+
+/**
+ * List candidate Muse sessions under XDG_DATA_HOME/muse/sessions.
+ * Newest mtime wins when the same sessionId appears twice.
+ *
+ * @param {string | null | undefined} home
+ * @returns {{ sessionId: string, mtimeMs: number }[]}
+ */
+function listMuseSessions(home) {
+  /** @type {Map<string, { sessionId: string, mtimeMs: number }>} */
+  const byId = new Map();
+  walkMuseSessions(home, (info) => {
+    const prev = byId.get(info.sessionId);
+    if (!prev || info.mtimeMs >= prev.mtimeMs) {
+      byId.set(info.sessionId, {
+        sessionId: info.sessionId,
+        mtimeMs: info.mtimeMs,
+      });
+    }
+  });
+  return [...byId.values()].sort((a, b) => b.mtimeMs - a.mtimeMs);
+}
+
+/**
+ * Create a Solenta thread from one Muse session.jsonl.
+ * Idempotent on provider=muse + sessionId so re-import does not duplicate.
+ * Does not copy the XDG muse store. Does not absorb into an existing thread.
+ *
+ * @param {import("./store").Store} store
+ * @param {{ sessionId: string, projectId: string, home?: string | null }} input
+ */
+function importMuseSession(store, input) {
+  const sessionId = String((input && input.sessionId) || "");
+  if (!isPathSafeSessionId(sessionId)) {
+    throw new Error("Invalid Muse session id");
+  }
+  const projectId = input && input.projectId;
+  if (!projectId) {
+    throw new Error("projectId is required");
+  }
+  const home = resolveMuseHome(input && input.home);
+  if (!findMuseSessionFile(home, sessionId)) {
+    throw new Error(`Muse session not found: ${sessionId}`);
+  }
+  const existing = (store.getThreads() || []).find(
+    (t) => t && t.provider === "muse" && t.sessionId === sessionId,
+  );
+  if (existing) return existing;
+
+  const turns = readMuseSessionTurns(home, sessionId);
+  const firstUser = turns.find((t) => t.role === "user");
+  const titleLine = firstUser
+    ? String(firstUser.text).split(/\r?\n/, 1)[0].trim()
+    : "";
+  const { createThread } = require("./services.js");
+  const thread = createThread(store, {
+    projectId,
+    title: titleLine || "Imported Muse session",
+    provider: "muse",
+  });
+  store.updateThread(thread.id, { sessionId });
+  for (const turn of turns) {
+    store.appendMessage(thread.id, {
+      id: randomUUID(),
+      role: turn.role,
+      text: turn.text,
+      createdAt: turn.createdAt || Date.now(),
+    });
+  }
+  store.save();
+  return store.getThread(thread.id);
+}
+
+/**
  * @param {import("./store").Store} store
  * @param {object} thread
  * @param {string} home
@@ -2320,7 +2585,13 @@ module.exports = {
   importOpenCodeSession,
   readOpenCodeImportTurns,
   absorbOpenCodeSessionTurns,
+  parseKimiWire,
+  listKimiSessions,
+  importKimiSession,
   absorbKimiSessionTurns,
+  parseMuseJsonl,
+  listMuseSessions,
+  importMuseSession,
   absorbMuseSessionTurns,
   absorbSessionTurns,
 };

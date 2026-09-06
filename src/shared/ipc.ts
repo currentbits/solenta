@@ -3352,17 +3352,19 @@ export interface CoderApi {
     }): Promise<ThreadInfo>;
     /**
      * List CLI sessions on disk (#433 Codex, #972 Grok, #970 Claude,
-     * #975 Cursor, #976 OpenCode).
+     * #975 Cursor, #976 OpenCode, #1002 Kimi, #1003 Muse).
      * The scan stays on the main process; the renderer cannot supply a home.
      * `provider: "grok"` walks GROK_HOME/sessions. `provider: "claude"`
      * walks CLAUDE_CONFIG_DIR/projects. `provider: "cursor"` walks
      * CURSOR_HOME/projects. `provider: "opencode"` reads
      * OPENCODE_HOME/opencode.db, falling back to the pre-1.14 JSON tree
      * when the db is missing or has no session table.
+     * `provider: "kimi"` walks KIMI_CODE_HOME/sessions.
+     * `provider: "muse"` walks XDG_DATA_HOME/muse/sessions.
      * Omitted/codex walks CODEX_HOME/sessions.
      */
     listCliSessions(input?: {
-      provider?: "codex" | "grok" | "claude" | "cursor" | "opencode";
+      provider?: "codex" | "grok" | "claude" | "cursor" | "opencode" | "kimi" | "muse";
     }): Promise<CliSessionCandidate[]>;
     /**
      * Create a Solenta thread from one listed CLI session.
@@ -3372,7 +3374,7 @@ export interface CoderApi {
     importCliSession(input: {
       sessionId: string;
       projectId: string;
-      provider?: "codex" | "grok" | "claude" | "cursor" | "opencode";
+      provider?: "codex" | "grok" | "claude" | "cursor" | "opencode" | "kimi" | "muse";
     }): Promise<ThreadInfo>;
     get(id: string): Promise<ThreadDetail>;
     /**

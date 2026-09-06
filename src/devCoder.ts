@@ -3689,7 +3689,7 @@ function buildDevCoder(): CoderApi {
         return registerThread(t);
       },
       async listCliSessions(_input?: {
-        provider?: "codex" | "grok" | "claude" | "cursor" | "opencode";
+        provider?: "codex" | "grok" | "claude" | "cursor" | "opencode" | "kimi" | "muse";
       }) {
         return [];
       },
@@ -3698,7 +3698,9 @@ function buildDevCoder(): CoderApi {
           input.provider === "grok" ||
           input.provider === "claude" ||
           input.provider === "cursor" ||
-          input.provider === "opencode"
+          input.provider === "opencode" ||
+          input.provider === "kimi" ||
+          input.provider === "muse"
             ? input.provider
             : "codex";
         const title =
@@ -3710,7 +3712,11 @@ function buildDevCoder(): CoderApi {
                 ? "Imported Cursor session"
                 : provider === "opencode"
                   ? "Imported OpenCode session"
-                  : "Imported Codex session";
+                  : provider === "kimi"
+                    ? "Imported Kimi session"
+                    : provider === "muse"
+                      ? "Imported Muse session"
+                      : "Imported Codex session";
         return registerThread(
           newThread({
             projectId: input.projectId,

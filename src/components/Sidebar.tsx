@@ -287,7 +287,7 @@ interface SidebarProps {
     projectPath: string;
     ref: string;
   }) => Promise<{ ok: true } | { ok: false; reason: string }>;
-  /** Codex / Grok / Claude / Cursor / OpenCode CLI sessions on disk. Desktop import picker. */
+  /** Codex / Grok / Claude / Cursor / OpenCode / Kimi / Muse CLI sessions on disk. Desktop import picker. */
   listCliSessions?: (input?: {
     provider?: CliImportProvider;
   }) => Promise<CliSessionCandidate[]>;
@@ -2527,6 +2527,32 @@ export const Sidebar = memo(function Sidebar({
                         }}
                       >
                         Import OpenCode session…
+                      </button>
+                      <button
+                        type="button"
+                        className={styles.menuItem}
+                        role="menuitem"
+                        data-import-kimi-session={createProjectId}
+                        title="Import a Kimi CLI session from disk"
+                        onClick={() => {
+                          setCreateMenuOpen(false);
+                          setImportCliProvider("kimi");
+                        }}
+                      >
+                        Import Kimi session…
+                      </button>
+                      <button
+                        type="button"
+                        className={styles.menuItem}
+                        role="menuitem"
+                        data-import-muse-session={createProjectId}
+                        title="Import a Muse CLI session from disk"
+                        onClick={() => {
+                          setCreateMenuOpen(false);
+                          setImportCliProvider("muse");
+                        }}
+                      >
+                        Import Muse session…
                       </button>
                     </>
                   )}

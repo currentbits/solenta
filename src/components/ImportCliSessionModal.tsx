@@ -15,7 +15,9 @@ export type CliImportProvider =
   | "grok"
   | "claude"
   | "cursor"
-  | "opencode";
+  | "opencode"
+  | "kimi"
+  | "muse";
 
 const COPY: Record<
   CliImportProvider,
@@ -46,6 +48,16 @@ const COPY: Record<
     note: "Choose an OpenCode CLI session to import into this project.",
     empty: "No OpenCode CLI sessions found",
   },
+  kimi: {
+    title: "Import Kimi session",
+    note: "Choose a Kimi CLI session to import into this project.",
+    empty: "No Kimi CLI sessions found",
+  },
+  muse: {
+    title: "Import Muse session",
+    note: "Choose a Muse CLI session to import into this project.",
+    empty: "No Muse CLI sessions found",
+  },
 };
 
 interface ImportCliSessionModalProps {
@@ -64,7 +76,7 @@ interface ImportCliSessionModalProps {
 }
 
 /**
- * Pick a Codex, Grok, Claude, Cursor, or OpenCode CLI session from disk
+ * Pick a Codex, Grok, Claude, Cursor, OpenCode, Kimi, or Muse CLI session from disk
  * and import it as a Solenta thread in the current project. Home stays
  * on the main process.
  */

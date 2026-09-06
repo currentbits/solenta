@@ -507,11 +507,18 @@ const IPC_HANDLERS = {
     if (input && input.provider === "grok") {
       return cliSessions.listGrokSessions();
     }
+    if (input && input.provider === "kimi") {
+      return cliSessions.listKimiSessions();
+    }
+    if (input && input.provider === "muse") {
+      return cliSessions.listMuseSessions();
+    }
     return cliSessions.listCodexSessions();
   },
   "threads:importCliSession": async (ctx, input) => {
     // Home is CODEX_HOME / GROK_HOME / CLAUDE_CONFIG_DIR / CURSOR_HOME /
-    // OPENCODE_HOME on this process. Ignore any renderer-supplied path.
+    // OPENCODE_HOME / KIMI_CODE_HOME / XDG_DATA_HOME/muse on this process.
+    // Ignore any renderer-supplied path.
     const args = {
       sessionId: input && input.sessionId,
       projectId: input && input.projectId,
@@ -525,6 +532,10 @@ const IPC_HANDLERS = {
       thread = cliSessions.importOpenCodeSession(ctx.store, args);
     } else if (input && input.provider === "grok") {
       thread = cliSessions.importGrokSession(ctx.store, args);
+    } else if (input && input.provider === "kimi") {
+      thread = cliSessions.importKimiSession(ctx.store, args);
+    } else if (input && input.provider === "muse") {
+      thread = cliSessions.importMuseSession(ctx.store, args);
     } else {
       thread = cliSessions.importCodexSession(ctx.store, args);
     }

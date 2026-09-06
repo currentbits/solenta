@@ -1,8 +1,8 @@
 "use strict";
 
 /**
- * #433 / #554: Codex rollout reader pointed at one known sessionId.
- * Reclaim (and later import) share this parser. No second session store.
+ * #433 / #554 / #1002 / #1003: Codex rollout reader pointed at one known
+ * sessionId. Reclaim and import share this parser. No second session store.
  *
  * Run: node --test electron/test/cli-sessions.test.js
  */
@@ -38,6 +38,12 @@ const {
   listOpenCodeSessions,
   importOpenCodeSession,
   readOpenCodeImportTurns,
+  parseKimiWire,
+  listKimiSessions,
+  importKimiSession,
+  parseMuseJsonl,
+  listMuseSessions,
+  importMuseSession,
 } = require("../cli-sessions.js");
 const { DatabaseSync } = require("node:sqlite");
 
@@ -2065,3 +2071,439 @@ describe("importOpenCodeSession JSON fallback (#977)", () => {
     assert.equal(store.getMessages(first.id).length, 2);
   });
 });
+
+const KIMI_A = "session_aaaa1111-2222-3333-4444-aaaaaaaaaaaa";
+const KIMI_B = "session_bbbb2222-3333-4444-5555-bbbbbbbbbbbb";
+
+function writeKimiSession(home, sessionId, records, wd = "wd_import") {
+  const dir = path.join(home, "sessions", wd, sessionId, "agents", "main");
+  fs.mkdirSync(dir, { recursive: true });
+  const file = path.join(dir, "wire.jsonl");
+  fs.writeFileSync(
+    file,
+    records.map((r) => JSON.stringify(r)).join("\n") + "\n",
+  );
+  return file;
+}
+
+function kimiUser(text, time = 1) {
+  return {
+    type: "turn.prompt",
+    input: [{ type: "text", text }],
+    origin: { kind: "user" },
+    time,
+  };
+}
+
+function kimiAssistant(text, time = 2) {
+  return {
+    type: "context.append_loop_event",
+    event: {
+      type: "content.part",
+      part: { type: "text", text },
+    },
+    time,
+  };
+}
+
+function kimiThink(text, time = 2) {
+  return {
+    type: "context.append_loop_event",
+    event: {
+      type: "content.part",
+      part: { type: "think", think: text },
+    },
+    time,
+  };
+}
+
+describe("listKimiSessions (#1002)", () => {
+  let home;
+
+  beforeEach(() => {
+    home = fs.mkdtempSync(path.join(os.tmpdir(), "coder-kimi-sessions-list-"));
+  });
+
+  afterEach(() => {
+    fs.rmSync(home, { recursive: true, force: true });
+  });
+
+  it("lists both main wire.jsonl files in mocked wd dirs", () => {
+    writeKimiSession(home, KIMI_A, [kimiUser("prompt a")], "wd_one");
+    writeKimiSession(home, KIMI_B, [kimiUser("prompt b")], "wd_two");
+
+    const listed = listKimiSessions(home);
+    assert.equal(listed.length, 2);
+    const ids = listed.map((s) => s.sessionId).sort();
+    assert.deepEqual(ids, [KIMI_A, KIMI_B].sort());
+    for (const row of listed) {
+      assert.equal(typeof row.mtimeMs, "number");
+      assert.equal(Number.isFinite(row.mtimeMs), true);
+    }
+  });
+
+  it("does not list files outside sessions/, agent-0 wires, or unsafe session ids", () => {
+    writeKimiSession(home, KIMI_A, [kimiUser("prompt a")]);
+    fs.writeFileSync(
+      path.join(home, `${KIMI_B}.jsonl`),
+      `${JSON.stringify(kimiUser("outside"))}\n`,
+    );
+    const agentDir = path.join(
+      home,
+      "sessions",
+      "wd_import",
+      KIMI_A,
+      "agents",
+      "agent-0",
+    );
+    fs.mkdirSync(agentDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(agentDir, "wire.jsonl"),
+      `${JSON.stringify(kimiAssistant("subagent"))}\n`,
+    );
+    const unsafeDir = path.join(
+      home,
+      "sessions",
+      "wd_import",
+      "evil.id",
+      "agents",
+      "main",
+    );
+    fs.mkdirSync(unsafeDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(unsafeDir, "wire.jsonl"),
+      `${JSON.stringify(kimiUser("unsafe id"))}\n`,
+    );
+    writeKimiSession(home, "cwd", [kimiUser("legacy cwd")]);
+
+    const listed = listKimiSessions(home);
+    assert.deepEqual(
+      listed.map((s) => s.sessionId),
+      [KIMI_A],
+    );
+  });
+});
+
+describe("importKimiSession (#1002)", () => {
+  let home;
+  let tmpDir;
+  let store;
+  let projectId;
+
+  beforeEach(() => {
+    home = fs.mkdtempSync(path.join(os.tmpdir(), "coder-kimi-sessions-imp-"));
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "coder-kimi-sessions-store-"));
+    store = new Store(path.join(tmpDir, "store.json"));
+    projectId = "proj-import";
+    store.setProjects([
+      {
+        id: projectId,
+        slug: "demo",
+        name: "demo",
+        path: path.join(tmpDir, "demo"),
+      },
+    ]);
+  });
+
+  afterEach(() => {
+    fs.rmSync(home, { recursive: true, force: true });
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("creates a kimi thread whose transcript matches the parsed turns and ignores the sibling", () => {
+    const fileA = writeKimiSession(home, KIMI_A, [
+      kimiUser("prompt a"),
+      kimiThink("thinking"),
+      kimiAssistant("reply a"),
+    ]);
+    writeKimiSession(
+      home,
+      KIMI_B,
+      [kimiUser("prompt b"), kimiAssistant("reply b")],
+      "wd_other",
+    );
+
+    const expected = parseKimiWire(fs.readFileSync(fileA, "utf8"));
+    const thread = importKimiSession(store, {
+      home,
+      sessionId: KIMI_A,
+      projectId,
+    });
+
+    assert.ok(thread && thread.id);
+    assert.equal(thread.provider, "kimi");
+    assert.equal(thread.sessionId, KIMI_A);
+    assert.equal(thread.projectId, projectId);
+    assert.equal(thread.ejected, false);
+
+    const messages = store.getMessages(thread.id);
+    assert.deepEqual(
+      messages.map((m) => `${m.role}:${m.text}`),
+      expected.map((t) => `${t.role}:${t.text}`),
+    );
+    assert.deepEqual(
+      messages.map((m) => `${m.role}:${m.text}`),
+      ["user:prompt a", "assistant:reply a"],
+    );
+    assert.equal(
+      messages.some((m) => m.text === "prompt b" || m.text === "reply b"),
+      false,
+    );
+    assert.equal(
+      messages.some((m) => m.text === "thinking"),
+      false,
+    );
+    assert.equal(store.getThreads().length, 1);
+    assert.equal(
+      fs.existsSync(fileA),
+      true,
+      "must not copy or consume the Kimi store",
+    );
+  });
+
+  it("re-importing the same kimi sessionId does not mint a second thread", () => {
+    writeKimiSession(home, KIMI_A, [
+      kimiUser("prompt a"),
+      kimiAssistant("reply a"),
+    ]);
+    const first = importKimiSession(store, {
+      home,
+      sessionId: KIMI_A,
+      projectId,
+    });
+    const second = importKimiSession(store, {
+      home,
+      sessionId: KIMI_A,
+      projectId,
+    });
+    assert.equal(second.id, first.id);
+    assert.equal(store.getThreads().length, 1);
+    assert.equal(store.getMessages(first.id).length, 2);
+  });
+
+  it("rejects a sessionId that is not a path-safe id", () => {
+    writeKimiSession(home, KIMI_A, [kimiUser("prompt a")]);
+    assert.throws(
+      () =>
+        importKimiSession(store, {
+          home,
+          sessionId: "../sessions",
+          projectId,
+        }),
+      /invalid/i,
+    );
+    assert.equal(store.getThreads().length, 0);
+  });
+});
+
+const MUSE_A = "01a07579-aaaa-7000-8000-aaaaaaaaaaaa";
+const MUSE_B = "01a07579-bbbb-7000-8000-bbbbbbbbbbbb";
+
+function writeMuseSession(home, sessionId, records, shard = ["2026", "09", "06"]) {
+  const dir = path.join(home, "sessions", ...shard, sessionId);
+  fs.mkdirSync(dir, { recursive: true });
+  const file = path.join(dir, "session.jsonl");
+  fs.writeFileSync(
+    file,
+    records.map((r) => JSON.stringify(r)).join("\n") + "\n",
+  );
+  return file;
+}
+
+function museUser(text, recordedAt = 2) {
+  return {
+    payload_type: "runtime.session",
+    payload: {
+      kind: "run",
+      event: { kind: "started", prompt: text },
+    },
+    recorded_at: recordedAt,
+  };
+}
+
+function museAssistant(text, recordedAt = 3) {
+  return {
+    payload_type: "runtime.session",
+    payload: {
+      kind: "run",
+      event: { kind: "assistant_message_committed", text },
+    },
+    recorded_at: recordedAt,
+  };
+}
+
+describe("listMuseSessions (#1003)", () => {
+  let home;
+
+  beforeEach(() => {
+    home = fs.mkdtempSync(path.join(os.tmpdir(), "coder-muse-sessions-list-"));
+  });
+
+  afterEach(() => {
+    fs.rmSync(home, { recursive: true, force: true });
+  });
+
+  it("lists both session.jsonl files in mocked date-sharded dirs", () => {
+    writeMuseSession(home, MUSE_A, [museUser("prompt a")], ["2026", "09", "03"]);
+    writeMuseSession(home, MUSE_B, [museUser("prompt b")], ["2026", "09", "06"]);
+
+    const listed = listMuseSessions(home);
+    assert.equal(listed.length, 2);
+    const ids = listed.map((s) => s.sessionId).sort();
+    assert.deepEqual(ids, [MUSE_A, MUSE_B].sort());
+    for (const row of listed) {
+      assert.equal(typeof row.mtimeMs, "number");
+      assert.equal(Number.isFinite(row.mtimeMs), true);
+    }
+  });
+
+  it("does not list files outside sessions/YYYY/MM/DD or unsafe session ids", () => {
+    writeMuseSession(home, MUSE_A, [museUser("prompt a")]);
+    fs.writeFileSync(
+      path.join(home, `${MUSE_B}.jsonl`),
+      `${JSON.stringify(museUser("outside"))}\n`,
+    );
+    const leftoverDir = path.join(home, "sessions", MUSE_B);
+    fs.mkdirSync(leftoverDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(leftoverDir, "session.jsonl"),
+      `${JSON.stringify(museUser("not date sharded"))}\n`,
+    );
+    const unsafeDir = path.join(
+      home,
+      "sessions",
+      "2026",
+      "09",
+      "06",
+      "evil_id",
+    );
+    fs.mkdirSync(unsafeDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(unsafeDir, "session.jsonl"),
+      `${JSON.stringify(museUser("unsafe id"))}\n`,
+    );
+
+    const listed = listMuseSessions(home);
+    assert.deepEqual(
+      listed.map((s) => s.sessionId),
+      [MUSE_A],
+    );
+  });
+});
+
+describe("importMuseSession (#1003)", () => {
+  let home;
+  let tmpDir;
+  let store;
+  let projectId;
+
+  beforeEach(() => {
+    home = fs.mkdtempSync(path.join(os.tmpdir(), "coder-muse-sessions-imp-"));
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "coder-muse-sessions-store-"));
+    store = new Store(path.join(tmpDir, "store.json"));
+    projectId = "proj-import";
+    store.setProjects([
+      {
+        id: projectId,
+        slug: "demo",
+        name: "demo",
+        path: path.join(tmpDir, "demo"),
+      },
+    ]);
+  });
+
+  afterEach(() => {
+    fs.rmSync(home, { recursive: true, force: true });
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("creates a muse thread whose transcript matches the parsed turns and ignores the sibling", () => {
+    const fileA = writeMuseSession(home, MUSE_A, [
+      museUser("prompt a"),
+      museAssistant("reply a"),
+      {
+        payload_type: "run.output.delta",
+        payload: { text: "delta leftover" },
+        recorded_at: 4,
+      },
+    ]);
+    writeMuseSession(
+      home,
+      MUSE_B,
+      [museUser("prompt b"), museAssistant("reply b")],
+      ["2026", "09", "03"],
+    );
+
+    const expected = parseMuseJsonl(fs.readFileSync(fileA, "utf8"));
+    const thread = importMuseSession(store, {
+      home,
+      sessionId: MUSE_A,
+      projectId,
+    });
+
+    assert.ok(thread && thread.id);
+    assert.equal(thread.provider, "muse");
+    assert.equal(thread.sessionId, MUSE_A);
+    assert.equal(thread.projectId, projectId);
+    assert.equal(thread.ejected, false);
+
+    const messages = store.getMessages(thread.id);
+    assert.deepEqual(
+      messages.map((m) => `${m.role}:${m.text}`),
+      expected.map((t) => `${t.role}:${t.text}`),
+    );
+    assert.deepEqual(
+      messages.map((m) => `${m.role}:${m.text}`),
+      ["user:prompt a", "assistant:reply a"],
+    );
+    assert.equal(
+      messages.some((m) => m.text === "prompt b" || m.text === "reply b"),
+      false,
+    );
+    assert.equal(
+      messages.some((m) => m.text === "delta leftover"),
+      false,
+    );
+    assert.equal(store.getThreads().length, 1);
+    assert.equal(
+      fs.existsSync(fileA),
+      true,
+      "must not copy or consume the Muse store",
+    );
+  });
+
+  it("re-importing the same muse sessionId does not mint a second thread", () => {
+    writeMuseSession(home, MUSE_A, [
+      museUser("prompt a"),
+      museAssistant("reply a"),
+    ]);
+    const first = importMuseSession(store, {
+      home,
+      sessionId: MUSE_A,
+      projectId,
+    });
+    const second = importMuseSession(store, {
+      home,
+      sessionId: MUSE_A,
+      projectId,
+    });
+    assert.equal(second.id, first.id);
+    assert.equal(store.getThreads().length, 1);
+    assert.equal(store.getMessages(first.id).length, 2);
+  });
+
+  it("rejects a sessionId that is not a path-safe id", () => {
+    writeMuseSession(home, MUSE_A, [museUser("prompt a")]);
+    assert.throws(
+      () =>
+        importMuseSession(store, {
+          home,
+          sessionId: "../sessions",
+          projectId,
+        }),
+      /invalid/i,
+    );
+    assert.equal(store.getThreads().length, 0);
+  });
+});
+

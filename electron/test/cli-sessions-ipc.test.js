@@ -1,9 +1,10 @@
 "use strict";
 
 /**
- * #433 / #972 / #970 / #975 / #976: threads.listCliSessions / threads.importCliSession IPC.
- * Home is CODEX_HOME / GROK_HOME / CLAUDE_CONFIG_DIR / CURSOR_HOME /
- * OPENCODE_HOME on the main process — the renderer cannot point the scan.
+ * #433 / #972 / #970 / #975 / #976 / #1002 / #1003: threads.listCliSessions /
+ * threads.importCliSession IPC. Home is CODEX_HOME / GROK_HOME /
+ * CLAUDE_CONFIG_DIR / CURSOR_HOME / OPENCODE_HOME / KIMI_CODE_HOME /
+ * XDG_DATA_HOME/muse on the main process — the renderer cannot point the scan.
  *
  * Run: node --test electron/test/cli-sessions-ipc.test.js
  */
@@ -47,6 +48,8 @@ const {
   parseClaudeJsonl,
   parseCursorJsonl,
   readOpenCodeImportTurns,
+  parseKimiWire,
+  parseMuseJsonl,
 } = require("../cli-sessions.js");
 const { DatabaseSync } = require("node:sqlite");
 
@@ -642,3 +645,250 @@ describe("OpenCode session import IPC (#976)", () => {
     );
   });
 });
+
+const KIMI_A = "session_aaaa1111-2222-3333-4444-aaaaaaaaaaaa";
+const KIMI_B = "session_bbbb2222-3333-4444-5555-bbbbbbbbbbbb";
+
+function writeKimiSession(home, sessionId, records, wd = "wd_import") {
+  const dir = path.join(home, "sessions", wd, sessionId, "agents", "main");
+  fs.mkdirSync(dir, { recursive: true });
+  const file = path.join(dir, "wire.jsonl");
+  fs.writeFileSync(
+    file,
+    records.map((r) => JSON.stringify(r)).join("\n") + "\n",
+  );
+  return file;
+}
+
+describe("Kimi session import IPC (#1002)", () => {
+  let home;
+  let tmpDir;
+  let store;
+  let ctx;
+  let projectId;
+  let prevHome;
+
+  beforeEach(() => {
+    home = fs.mkdtempSync(path.join(os.tmpdir(), "coder-kimi-sess-ipc-home-"));
+    tmpDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "coder-kimi-sess-ipc-store-"),
+    );
+    store = new Store(path.join(tmpDir, "store.json"));
+    projectId = "proj-import";
+    store.setProjects([
+      {
+        id: projectId,
+        slug: "demo",
+        name: "demo",
+        path: path.join(tmpDir, "demo"),
+      },
+    ]);
+    ctx = {
+      store,
+      broadcast: () => {},
+    };
+    prevHome = process.env.KIMI_CODE_HOME;
+    process.env.KIMI_CODE_HOME = home;
+  });
+
+  afterEach(() => {
+    if (prevHome === undefined) delete process.env.KIMI_CODE_HOME;
+    else process.env.KIMI_CODE_HOME = prevHome;
+    fs.rmSync(home, { recursive: true, force: true });
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("lists both sessions and importing one does not pick up the sibling", async () => {
+    const fileA = writeKimiSession(home, KIMI_A, [
+      {
+        type: "turn.prompt",
+        input: [{ type: "text", text: "prompt a" }],
+        origin: { kind: "user" },
+        time: 1,
+      },
+      {
+        type: "context.append_loop_event",
+        event: {
+          type: "content.part",
+          part: { type: "text", text: "reply a" },
+        },
+        time: 2,
+      },
+    ]);
+    writeKimiSession(
+      home,
+      KIMI_B,
+      [
+        {
+          type: "turn.prompt",
+          input: [{ type: "text", text: "prompt b" }],
+          origin: { kind: "user" },
+          time: 1,
+        },
+        {
+          type: "context.append_loop_event",
+          event: {
+            type: "content.part",
+            part: { type: "text", text: "reply b" },
+          },
+          time: 2,
+        },
+      ],
+      "wd_other",
+    );
+
+    const listed = await IPC_HANDLERS["threads:listCliSessions"](ctx, {
+      provider: "kimi",
+    });
+    assert.equal(listed.length, 2);
+    assert.deepEqual(
+      listed.map((s) => s.sessionId).sort(),
+      [KIMI_A, KIMI_B].sort(),
+    );
+
+    const thread = await IPC_HANDLERS["threads:importCliSession"](ctx, {
+      provider: "kimi",
+      sessionId: KIMI_A,
+      projectId,
+      home: path.join(tmpDir, "evil-home"),
+    });
+    assert.equal(thread.provider, "kimi");
+    assert.equal(thread.sessionId, KIMI_A);
+    const expected = parseKimiWire(fs.readFileSync(fileA, "utf8"));
+    assert.deepEqual(
+      store.getMessages(thread.id).map((m) => `${m.role}:${m.text}`),
+      expected.map((t) => `${t.role}:${t.text}`),
+    );
+    assert.equal(
+      store.getMessages(thread.id).some((m) => m.text === "prompt b"),
+      false,
+    );
+  });
+});
+
+const MUSE_A = "01a07579-cccc-7000-8000-cccccccccccc";
+const MUSE_B = "01a07579-dddd-7000-8000-dddddddddddd";
+
+function writeMuseSession(home, sessionId, records, shard = ["2026", "09", "06"]) {
+  const dir = path.join(home, "sessions", ...shard, sessionId);
+  fs.mkdirSync(dir, { recursive: true });
+  const file = path.join(dir, "session.jsonl");
+  fs.writeFileSync(
+    file,
+    records.map((r) => JSON.stringify(r)).join("\n") + "\n",
+  );
+  return file;
+}
+
+describe("Muse session import IPC (#1003)", () => {
+  let xdg;
+  let home;
+  let tmpDir;
+  let store;
+  let ctx;
+  let projectId;
+  let prevXdg;
+
+  beforeEach(() => {
+    xdg = fs.mkdtempSync(path.join(os.tmpdir(), "coder-muse-sess-ipc-xdg-"));
+    home = path.join(xdg, "muse");
+    tmpDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "coder-muse-sess-ipc-store-"),
+    );
+    store = new Store(path.join(tmpDir, "store.json"));
+    projectId = "proj-import";
+    store.setProjects([
+      {
+        id: projectId,
+        slug: "demo",
+        name: "demo",
+        path: path.join(tmpDir, "demo"),
+      },
+    ]);
+    ctx = {
+      store,
+      broadcast: () => {},
+    };
+    prevXdg = process.env.XDG_DATA_HOME;
+    process.env.XDG_DATA_HOME = xdg;
+  });
+
+  afterEach(() => {
+    if (prevXdg === undefined) delete process.env.XDG_DATA_HOME;
+    else process.env.XDG_DATA_HOME = prevXdg;
+    fs.rmSync(xdg, { recursive: true, force: true });
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("lists both sessions and importing one does not pick up the sibling", async () => {
+    const fileA = writeMuseSession(home, MUSE_A, [
+      {
+        payload_type: "runtime.session",
+        payload: {
+          kind: "run",
+          event: { kind: "started", prompt: "prompt a" },
+        },
+        recorded_at: 2,
+      },
+      {
+        payload_type: "runtime.session",
+        payload: {
+          kind: "run",
+          event: { kind: "assistant_message_committed", text: "reply a" },
+        },
+        recorded_at: 3,
+      },
+    ]);
+    writeMuseSession(
+      home,
+      MUSE_B,
+      [
+        {
+          payload_type: "runtime.session",
+          payload: {
+            kind: "run",
+            event: { kind: "started", prompt: "prompt b" },
+          },
+          recorded_at: 2,
+        },
+        {
+          payload_type: "runtime.session",
+          payload: {
+            kind: "run",
+            event: { kind: "assistant_message_committed", text: "reply b" },
+          },
+          recorded_at: 3,
+        },
+      ],
+      ["2026", "09", "03"],
+    );
+
+    const listed = await IPC_HANDLERS["threads:listCliSessions"](ctx, {
+      provider: "muse",
+    });
+    assert.equal(listed.length, 2);
+    assert.deepEqual(
+      listed.map((s) => s.sessionId).sort(),
+      [MUSE_A, MUSE_B].sort(),
+    );
+
+    const thread = await IPC_HANDLERS["threads:importCliSession"](ctx, {
+      provider: "muse",
+      sessionId: MUSE_A,
+      projectId,
+      home: path.join(tmpDir, "evil-home"),
+    });
+    assert.equal(thread.provider, "muse");
+    assert.equal(thread.sessionId, MUSE_A);
+    const expected = parseMuseJsonl(fs.readFileSync(fileA, "utf8"));
+    assert.deepEqual(
+      store.getMessages(thread.id).map((m) => `${m.role}:${m.text}`),
+      expected.map((t) => `${t.role}:${t.text}`),
+    );
+    assert.equal(
+      store.getMessages(thread.id).some((m) => m.text === "prompt b"),
+      false,
+    );
+  });
+});
+
