@@ -54,6 +54,7 @@ import type {
   ProjectUpdateInput,
   ProviderInfo,
   ReasoningEffort,
+  CliSessionCandidate,
   CliSlashCommand,
   SkillCatalogEntry,
   SkillImportPreview,
@@ -700,6 +701,19 @@ export interface UseCoderResult {
   listCliCommands: (input?: {
     projectPath?: string;
   }) => Promise<CliSlashCommand[]>;
+  /** Grok CLI sessions on disk (GROK_HOME/sessions). */
+  listCliSessions: (input?: {
+    provider?: "grok";
+  }) => Promise<CliSessionCandidate[]>;
+  /**
+   * Import one listed Grok session as a Solenta thread in projectId.
+   * Selects the thread the same way createThread does.
+   */
+  importCliSession: (input: {
+    sessionId: string;
+    projectId: string;
+    provider?: "grok";
+  }) => Promise<ThreadInfo>;
   /** Full-content thread search (titles + message text); Sidebar owns debounce/state. */
   searchThreads: (input: { query: string }) => Promise<ThreadInfo[]>;
   /** Load another thread's transcript without marking it visited (#393). */
@@ -3340,6 +3354,35 @@ export function useCoder(): UseCoderResult {
     [api],
   );
 
+  const listCliSessions = useCallback(
+    async (input?: { provider?: "grok" }) => {
+      return api.threads.listCliSessions(input);
+    },
+    [api],
+  );
+
+  const importCliSession = useCallback(
+    async (input: {
+      sessionId: string;
+      projectId: string;
+      provider?: "grok";
+    }) => {
+      const t = await api.threads.importCliSession({
+        sessionId: input.sessionId,
+        projectId: input.projectId,
+        provider: input.provider,
+      });
+      const next = threadsRef.current.some((x) => x.id === t.id)
+        ? threadsRef.current.map((x) => (x.id === t.id ? t : x))
+        : [t, ...threadsRef.current];
+      applyThreads(next);
+      selectedRef.current = t.id;
+      setSelectedThreadId(t.id);
+      return t;
+    },
+    [api, applyThreads],
+  );
+
   const searchThreads = useCallback(
     async (input: { query: string }) => {
       return api.threads.search(input);
@@ -3534,6 +3577,8 @@ export function useCoder(): UseCoderResult {
     installSkillImport,
     discardSkillImport,
     listCliCommands,
+    listCliSessions,
+    importCliSession,
     searchThreads,
     peekThread,
   };

@@ -3,9 +3,11 @@
 /**
  * Provider CLI session transcript reader.
  *
- * #433 import will scan a sessions directory with this parser. #554 reclaim
- * points it at one known sessionId (Codex: date-tree suffix match; Claude
- * and Grok: direct cwd-encoded path, no directory scan). Claude long cwds
+ * #433 / #972 import scans a sessions directory with this parser
+ * (Grok: listGrokSessions / importGrokSession under GROK_HOME/sessions).
+ * #554 reclaim points it at one known sessionId (Codex: date-tree suffix
+ * match; Claude and Grok: direct cwd-encoded path, no directory scan).
+ * Claude long cwds
  * use Claude Code 2.1.x's 200-char dash prefix plus abs(djb2).toString(36).
  * When that hashed dir misses, overflow lookup readdirs projects/ top-level
  * names that start with encoded.slice(0,200)+'-' and stats the known
@@ -232,6 +234,11 @@ function absorbCodexSessionTurns(store, thread, home) {
 
 function isPathSafeSessionId(sessionId) {
   return /^[0-9a-zA-Z-]+$/.test(String(sessionId || ""));
+}
+
+function isInside(parent, child) {
+  const rel = path.relative(parent, child);
+  return rel !== "" && !rel.startsWith("..") && !path.isAbsolute(rel);
 }
 
 /**
@@ -627,6 +634,162 @@ function readGrokSessionTurns(home, cwd, sessionId) {
 }
 
 /**
+ * Walk `sessions/<encoded-cwd>/<sessionId>/chat_history.jsonl`. Does not
+ * recurse past that depth. The walk cannot leave `sessions/`. Distinct
+ * from findGrokSessionFile (reclaim, cwd+sessionId, no scan).
+ *
+ * @param {string | null | undefined} home
+ * @param {(info: { sessionId: string, file: string, mtimeMs: number }) => void} onFile
+ */
+function walkGrokSessions(home, onFile) {
+  const sessionsDir = path.resolve(resolveGrokHome(home), "sessions");
+  let groups;
+  try {
+    groups = fs.readdirSync(sessionsDir, { withFileTypes: true });
+  } catch {
+    return;
+  }
+  for (const group of groups) {
+    if (!group.isDirectory() && !group.isSymbolicLink()) continue;
+    const groupDir = path.join(sessionsDir, group.name);
+    if (!isInside(sessionsDir, groupDir)) continue;
+    let ids;
+    try {
+      ids = fs.readdirSync(groupDir, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const entry of ids) {
+      if (!entry.isDirectory() && !entry.isSymbolicLink()) continue;
+      const sessionId = entry.name;
+      if (!isPathSafeSessionId(sessionId)) continue;
+      const file = path.join(groupDir, sessionId, "chat_history.jsonl");
+      if (!isInside(sessionsDir, file)) continue;
+      let st;
+      try {
+        st = fs.statSync(file);
+      } catch {
+        continue;
+      }
+      if (!st.isFile()) continue;
+      onFile({ sessionId, file, mtimeMs: st.mtimeMs });
+    }
+  }
+}
+
+/**
+ * List candidate Grok sessions under GROK_HOME/sessions.
+ * Newest mtime wins when the same sessionId appears twice.
+ *
+ * @param {string | null | undefined} home
+ * @returns {{ sessionId: string, mtimeMs: number }[]}
+ */
+function listGrokSessions(home) {
+  /** @type {Map<string, { sessionId: string, mtimeMs: number }>} */
+  const byId = new Map();
+  walkGrokSessions(home, (info) => {
+    const prev = byId.get(info.sessionId);
+    if (!prev || info.mtimeMs >= prev.mtimeMs) {
+      byId.set(info.sessionId, {
+        sessionId: info.sessionId,
+        mtimeMs: info.mtimeMs,
+      });
+    }
+  });
+  return [...byId.values()].sort((a, b) => b.mtimeMs - a.mtimeMs);
+}
+
+/**
+ * Import scan: locate one sessionId chat_history.jsonl under sessions/.
+ * Newest mtime wins. Distinct from findGrokSessionFile (reclaim).
+ *
+ * @param {string | null | undefined} home
+ * @param {string} sessionId
+ * @returns {string | null}
+ */
+function findGrokImportFile(home, sessionId) {
+  const id = String(sessionId || "");
+  if (!isPathSafeSessionId(id)) return null;
+  let found = null;
+  let foundMtime = -1;
+  walkGrokSessions(home, (info) => {
+    if (info.sessionId !== id) return;
+    if (info.mtimeMs >= foundMtime) {
+      found = info.file;
+      foundMtime = info.mtimeMs;
+    }
+  });
+  return found;
+}
+
+/**
+ * @param {string | null | undefined} home
+ * @param {string} sessionId
+ * @returns {{ role: "user" | "assistant", text: string, createdAt: number }[]}
+ */
+function readGrokImportTurns(home, sessionId) {
+  const file = findGrokImportFile(home, sessionId);
+  if (!file) return [];
+  let text;
+  try {
+    text = fs.readFileSync(file, "utf8");
+  } catch {
+    return [];
+  }
+  return parseGrokChatHistory(text);
+}
+
+/**
+ * Create a Solenta thread from one Grok chat_history.jsonl.
+ * Idempotent on provider=grok + sessionId so re-import does not duplicate.
+ * Does not copy ~/.grok and does not touch reclaim.
+ *
+ * @param {import("./store").Store} store
+ * @param {{ sessionId: string, projectId: string, home?: string | null }} input
+ */
+function importGrokSession(store, input) {
+  const sessionId = String((input && input.sessionId) || "");
+  if (!isPathSafeSessionId(sessionId)) {
+    throw new Error("Invalid Grok session id");
+  }
+  const projectId = input && input.projectId;
+  if (!projectId) {
+    throw new Error("projectId is required");
+  }
+  const home = resolveGrokHome(input && input.home);
+  if (!findGrokImportFile(home, sessionId)) {
+    throw new Error(`Grok session not found: ${sessionId}`);
+  }
+  const existing = (store.getThreads() || []).find(
+    (t) => t && t.provider === "grok" && t.sessionId === sessionId,
+  );
+  if (existing) return existing;
+
+  const turns = readGrokImportTurns(home, sessionId);
+  const firstUser = turns.find((t) => t.role === "user");
+  const titleLine = firstUser
+    ? String(firstUser.text).split(/\r?\n/, 1)[0].trim()
+    : "";
+  const { createThread } = require("./services.js");
+  const thread = createThread(store, {
+    projectId,
+    title: titleLine || "Imported Grok session",
+    provider: "grok",
+  });
+  store.updateThread(thread.id, { sessionId });
+  for (const turn of turns) {
+    store.appendMessage(thread.id, {
+      id: randomUUID(),
+      role: turn.role,
+      text: turn.text,
+      createdAt: turn.createdAt || Date.now(),
+    });
+  }
+  store.save();
+  return store.getThread(thread.id);
+}
+
+/**
  * @param {import("./store").Store} store
  * @param {object} thread
  * @param {string} home
@@ -690,6 +853,8 @@ module.exports = {
   findGrokSessionFile,
   parseGrokChatHistory,
   readGrokSessionTurns,
+  listGrokSessions,
+  importGrokSession,
   absorbGrokSessionTurns,
   absorbSessionTurns,
 };

@@ -1,0 +1,30 @@
+.list {
+  max-height: min(360px, 50vh);
+}
+
+.list li {
+  margin: 0;
+  padding: 0;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  white-space: nowrap;
+}
+
+.id {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-family: var(--mono);
+  font-size: 12px;
+}
+
+.age {
+  flex-shrink: 0;
+  color: var(--text-dim);
+  font-size: 11px;
+}

@@ -1639,6 +1639,23 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
         threads = [t, ...threads.filter((x) => x.id !== t.id)];
         return rec("threads.create", [input], t);
       },
+      listCliSessions: (input?: unknown) =>
+        rec("threads.listCliSessions", input == null ? [] : [input], []),
+      importCliSession: (input: unknown) => {
+        const i = input as { sessionId: string; projectId: string };
+        const createdAt = Date.now();
+        const t = thread({
+          id: `t-cli-${i.sessionId}`,
+          projectId: i.projectId,
+          provider: "grok",
+          sessionId: i.sessionId,
+          createdAt,
+          updatedAt: createdAt,
+          lastVisitedAt: createdAt,
+        });
+        threads = [t, ...threads.filter((x) => x.id !== t.id)];
+        return rec("threads.importCliSession", [input], t);
+      },
       /**
        * Production stamps lastVisitedAt inside threads.get (select = visit)
        * without bumping updatedAt. Keep this fake honest so renderer tests

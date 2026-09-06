@@ -313,6 +313,8 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     installSkillImport,
     discardSkillImport,
     listCliCommands,
+    listCliSessions,
+    importCliSession,
     searchThreads,
     peekThread,
     automations,
@@ -1028,6 +1030,19 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     providers,
   ]);
 
+  const handleImportCliSession = useCallback(
+    async (input: {
+      sessionId: string;
+      projectId: string;
+      provider?: "grok";
+    }) => {
+      const t = await importCliSession(input);
+      setRevealThreadId(t.id);
+      return t;
+    },
+    [importCliSession],
+  );
+
   const handleCreateThreadFromIssue = useCallback(
     async (input: {
       projectId: string;
@@ -1326,6 +1341,8 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         revealThreadId={revealThreadId}
         onRevealHandled={clearReveal}
         onCreateThreadFromIssue={handleCreateThreadFromIssue}
+        listCliSessions={listCliSessions}
+        importCliSession={handleImportCliSession}
         onAddProject={handleAddProject}
         onRemoveProject={handleRemoveProject}
         onEditProject={setEditProjectId}

@@ -3654,6 +3654,19 @@ function buildDevCoder(): CoderApi {
         });
         return registerThread(t);
       },
+      async listCliSessions() {
+        return [];
+      },
+      async importCliSession(input) {
+        return registerThread(
+          newThread({
+            projectId: input.projectId,
+            title: "Imported Grok session",
+            provider: "grok",
+            sessionId: input.sessionId,
+          }),
+        );
+      },
       async fork(input) {
         const sourceDetail = details.get(input.threadId);
         if (!sourceDetail) throw new Error(`Unknown thread: ${input.threadId}`);

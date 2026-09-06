@@ -10,6 +10,7 @@ import {
 } from "react";
 import autoAnimate from "@formkit/auto-animate";
 import type {
+  CliSessionCandidate,
   ConflictForecast,
   ProjectInfo,
   ProviderInfo,
@@ -94,6 +95,7 @@ import {
 } from "../sidebarSelection";
 import { KeyboardSheet } from "./KeyboardSheet";
 import { StayAwakeControl } from "./StayAwakeControl";
+import { ImportCliSessionModal } from "./ImportCliSessionModal";
 import styles from "./Sidebar.module.css";
 
 const TICK_MS = 5000;
@@ -282,6 +284,19 @@ interface SidebarProps {
     projectPath: string;
     ref: string;
   }) => Promise<{ ok: true } | { ok: false; reason: string }>;
+  /** Grok CLI sessions on disk (GROK_HOME/sessions). Desktop import picker. */
+  listCliSessions?: (input?: {
+    provider?: "grok";
+  }) => Promise<CliSessionCandidate[]>;
+  /**
+   * Import one listed Grok session as a Solenta thread in projectId.
+   * Caller selects/reveals the returned thread.
+   */
+  importCliSession?: (input: {
+    sessionId: string;
+    projectId: string;
+    provider?: "grok";
+  }) => Promise<ThreadInfo>;
   onOpenActivity?: (scopedProjectId?: string | null) => void;
   /**
    * Freshly created thread to reveal (t3: new work must be visible): the
@@ -1457,6 +1472,8 @@ export const Sidebar = memo(function Sidebar({
   onOpenKanban,
   onOpenPlanboard,
   onCreateThreadFromIssue,
+  listCliSessions,
+  importCliSession,
   onOpenActivity,
   revealThreadId = null,
   onRevealHandled,
@@ -1493,6 +1510,7 @@ export const Sidebar = memo(function Sidebar({
       setFilterMenu(null);
     },
   );
+  const [importCliOpen, setImportCliOpen] = useState(false);
   const [issueFormFor, setIssueFormFor] = useState<string | null>(null);
   const [issueRef, setIssueRef] = useState("");
   const [issueError, setIssueError] = useState<string | null>(null);
@@ -2439,6 +2457,21 @@ export const Sidebar = memo(function Sidebar({
                       From issue
                     </button>
                   )}
+                  {listCliSessions && importCliSession && createProjectId && (
+                    <button
+                      type="button"
+                      className={styles.menuItem}
+                      role="menuitem"
+                      data-import-grok-session={createProjectId}
+                      title="Import a Grok CLI session from disk"
+                      onClick={() => {
+                        setCreateMenuOpen(false);
+                        setImportCliOpen(true);
+                      }}
+                    >
+                      Import Grok session…
+                    </button>
+                  )}
                 </div>
               )}
             </span>
@@ -2871,6 +2904,22 @@ export const Sidebar = memo(function Sidebar({
           </Icon>
         </button>
       </nav>
+
+      {importCliOpen &&
+        listCliSessions &&
+        importCliSession &&
+        createProjectId && (
+          <ImportCliSessionModal
+            projectId={createProjectId}
+            listCliSessions={listCliSessions}
+            importCliSession={importCliSession}
+            onClose={() => setImportCliOpen(false)}
+            onImported={(imported) => {
+              setImportCliOpen(false);
+              onSelectThread(imported.id);
+            }}
+          />
+        )}
 
       {issueProject && onCreateThreadFromIssue && (
         <form

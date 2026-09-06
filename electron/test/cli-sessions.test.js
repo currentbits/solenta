@@ -13,6 +13,7 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const { execFileSync } = require("node:child_process");
+const { Store } = require("../store.js");
 const {
   findCodexSessionFile,
   readCodexSessionTurns,
@@ -22,6 +23,9 @@ const {
   encodeGrokSessionDir,
   findGrokSessionFile,
   readGrokSessionTurns,
+  parseGrokChatHistory,
+  listGrokSessions,
+  importGrokSession,
 } = require("../cli-sessions.js");
 
 const SESSION_A = "01a07579-aaaa-7000-8000-aaaaaaaaaaaa";
@@ -779,5 +783,181 @@ describe("Grok session reader (#554)", () => {
       turns.map((t) => `${t.role}:${t.text}`),
       ["user:long cwd prompt", "assistant:long cwd reply"],
     );
+  });
+});
+
+describe("listGrokSessions (#972)", () => {
+  let home;
+
+  beforeEach(() => {
+    home = fs.mkdtempSync(path.join(os.tmpdir(), "coder-grok-sessions-list-"));
+  });
+
+  afterEach(() => {
+    fs.rmSync(home, { recursive: true, force: true });
+  });
+
+  it("lists both chat_history files in mocked encoded-cwd dirs", () => {
+    writeGrokSession(home, GROK_CWD, SESSION_A, [
+      { type: "user", content: "prompt a" },
+      { type: "assistant", content: "reply a" },
+    ]);
+    writeGrokSession(home, "/tmp/other-wt", SESSION_B, [
+      { type: "user", content: "prompt b" },
+      { type: "assistant", content: "reply b" },
+    ]);
+
+    const listed = listGrokSessions(home);
+    assert.equal(listed.length, 2);
+    const ids = listed.map((s) => s.sessionId).sort();
+    assert.deepEqual(ids, [SESSION_A, SESSION_B].sort());
+    for (const row of listed) {
+      assert.equal(typeof row.mtimeMs, "number");
+      assert.equal(Number.isFinite(row.mtimeMs), true);
+    }
+  });
+
+  it("lists hashed long-cwd groups without requiring the original cwd", () => {
+    writeGrokSessionAtGroup(home, GROK_LONG_GROUP, SESSION_A, [
+      { type: "user", content: "long cwd prompt" },
+    ]);
+
+    const listed = listGrokSessions(home);
+    assert.deepEqual(
+      listed.map((s) => s.sessionId),
+      [SESSION_A],
+    );
+  });
+
+  it("does not list files outside sessions/ or unsafe session ids", () => {
+    writeGrokSession(home, GROK_CWD, SESSION_A, [
+      { type: "user", content: "prompt a" },
+    ]);
+    fs.writeFileSync(
+      path.join(home, "chat_history.jsonl"),
+      `${JSON.stringify({ type: "user", content: "outside" })}\n`,
+    );
+    fs.mkdirSync(path.join(home, "sessions", "evil", "../sessions"), {
+      recursive: true,
+    });
+    const unsafeDir = path.join(home, "sessions", encodeURIComponent(GROK_CWD), "evil_id");
+    fs.mkdirSync(unsafeDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(unsafeDir, "chat_history.jsonl"),
+      `${JSON.stringify({ type: "user", content: "unsafe id" })}\n`,
+    );
+
+    const listed = listGrokSessions(home);
+    assert.deepEqual(
+      listed.map((s) => s.sessionId),
+      [SESSION_A],
+    );
+  });
+});
+
+describe("importGrokSession (#972)", () => {
+  let home;
+  let tmpDir;
+  let store;
+  let projectId;
+
+  beforeEach(() => {
+    home = fs.mkdtempSync(path.join(os.tmpdir(), "coder-grok-sessions-imp-"));
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "coder-grok-sessions-store-"));
+    store = new Store(path.join(tmpDir, "store.json"));
+    projectId = "proj-import";
+    store.setProjects([
+      {
+        id: projectId,
+        slug: "demo",
+        name: "demo",
+        path: path.join(tmpDir, "demo"),
+      },
+    ]);
+  });
+
+  afterEach(() => {
+    fs.rmSync(home, { recursive: true, force: true });
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("creates a grok thread whose transcript matches the parsed turns and ignores the sibling", () => {
+    const fileA = writeGrokSession(home, GROK_CWD, SESSION_A, [
+      { type: "user", content: "prompt a" },
+      { type: "assistant", content: "reply a" },
+    ]);
+    writeGrokSession(home, "/tmp/other-wt", SESSION_B, [
+      { type: "user", content: "prompt b" },
+      { type: "assistant", content: "reply b" },
+    ]);
+
+    const expected = parseGrokChatHistory(fs.readFileSync(fileA, "utf8"));
+    const thread = importGrokSession(store, {
+      home,
+      sessionId: SESSION_A,
+      projectId,
+    });
+
+    assert.ok(thread && thread.id);
+    assert.equal(thread.provider, "grok");
+    assert.equal(thread.sessionId, SESSION_A);
+    assert.equal(thread.projectId, projectId);
+    assert.equal(thread.ejected, false);
+
+    const messages = store.getMessages(thread.id);
+    assert.deepEqual(
+      messages.map((m) => `${m.role}:${m.text}`),
+      expected.map((t) => `${t.role}:${t.text}`),
+    );
+    assert.deepEqual(
+      messages.map((m) => `${m.role}:${m.text}`),
+      ["user:prompt a", "assistant:reply a"],
+    );
+    assert.equal(
+      messages.some((m) => m.text === "prompt b" || m.text === "reply b"),
+      false,
+    );
+    assert.equal(store.getThreads().length, 1);
+    assert.equal(
+      fs.existsSync(fileA),
+      true,
+      "must not copy or consume the Grok store",
+    );
+  });
+
+  it("re-importing the same grok sessionId does not mint a second thread", () => {
+    writeGrokSession(home, GROK_CWD, SESSION_A, [
+      { type: "user", content: "prompt a" },
+      { type: "assistant", content: "reply a" },
+    ]);
+    const first = importGrokSession(store, {
+      home,
+      sessionId: SESSION_A,
+      projectId,
+    });
+    const second = importGrokSession(store, {
+      home,
+      sessionId: SESSION_A,
+      projectId,
+    });
+    assert.equal(second.id, first.id);
+    assert.equal(store.getThreads().length, 1);
+    assert.equal(store.getMessages(first.id).length, 2);
+  });
+
+  it("rejects a sessionId that is not a path-safe id", () => {
+    writeGrokSession(home, GROK_CWD, SESSION_A, [
+      { type: "user", content: "prompt a" },
+    ]);
+    assert.throws(
+      () =>
+        importGrokSession(store, {
+          home,
+          sessionId: "../sessions",
+          projectId,
+        }),
+      /invalid/i,
+    );
+    assert.equal(store.getThreads().length, 0);
   });
 });

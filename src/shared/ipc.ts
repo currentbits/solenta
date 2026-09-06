@@ -354,6 +354,15 @@ export interface VibeKanbanImportResult {
   skipped: Array<{ title: string; reason: string }>;
 }
 
+/**
+ * One CLI session on disk (#433 Codex, #972 Grok).
+ * Grok: `GROK_HOME/sessions/<encoded-cwd>/<sessionId>/chat_history.jsonl`.
+ */
+export interface CliSessionCandidate {
+  sessionId: string;
+  mtimeMs: number;
+}
+
 export type ThreadStatus = "idle" | "working" | "done" | "failed" | "quota-wait";
 
 export type PermissionMode = "default" | "acceptEdits" | "plan" | "bypassPermissions";
@@ -3257,6 +3266,25 @@ export interface CoderApi {
        * Honoured by setupWorktree, mergeWorktree (no intoPath), and createPr.
        */
       baseBranch?: string | null;
+    }): Promise<ThreadInfo>;
+    /**
+     * List CLI sessions on disk (#433 Codex, #972 Grok).
+     * The scan stays on the main process; the renderer cannot supply a home.
+     * `provider: "grok"` walks GROK_HOME/sessions. Omitted/codex walks
+     * CODEX_HOME/sessions when that importer is present.
+     */
+    listCliSessions(input?: {
+      provider?: "codex" | "grok";
+    }): Promise<CliSessionCandidate[]>;
+    /**
+     * Create a Solenta thread from one listed CLI session.
+     * Transcript comes from that sessionId only. Re-import returns the
+     * existing thread. Renderer-supplied home paths are ignored.
+     */
+    importCliSession(input: {
+      sessionId: string;
+      projectId: string;
+      provider?: "codex" | "grok";
     }): Promise<ThreadInfo>;
     get(id: string): Promise<ThreadDetail>;
     /**

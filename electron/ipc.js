@@ -59,6 +59,7 @@ const skillCatalog = require("./skillCatalog.js");
 const skillImports = require("./skillImports.js");
 const { createSafeCommandRunner } = require("./skillPluginAdapters.js");
 const cliCommands = require("./cliCommands.js");
+const cliSessions = require("./cli-sessions.js");
 const { fetchIssue, listIssues, setPlanStatus, createIssue } = require("./issues.js");
 const automations = require("./automations.js");
 const { buildActivity } = require("./activity.js");
@@ -485,6 +486,33 @@ const IPC_HANDLERS = {
   },
   "threads:search": async (ctx, input) => {
     return services.searchThreads(ctx.store, input || { query: "" });
+  },
+  "threads:listCliSessions": async (_ctx, input) => {
+    if (input && input.provider === "grok") {
+      return cliSessions.listGrokSessions();
+    }
+    if (typeof cliSessions.listCodexSessions === "function") {
+      return cliSessions.listCodexSessions();
+    }
+    return [];
+  },
+  "threads:importCliSession": async (ctx, input) => {
+    // Home is GROK_HOME / CODEX_HOME on this process.
+    // Ignore any renderer-supplied path.
+    const args = {
+      sessionId: input && input.sessionId,
+      projectId: input && input.projectId,
+    };
+    let thread;
+    if (input && input.provider === "grok") {
+      thread = cliSessions.importGrokSession(ctx.store, args);
+    } else if (typeof cliSessions.importCodexSession === "function") {
+      thread = cliSessions.importCodexSession(ctx.store, args);
+    } else {
+      throw new Error("CLI session import is not available");
+    }
+    ctx.broadcast("threads:changed", services.listThreads(ctx.store));
+    return thread;
   },
   "threads:create": async (ctx, input) => {
     const thread = services.createThread(ctx.store, input);
