@@ -287,7 +287,7 @@ interface SidebarProps {
     projectPath: string;
     ref: string;
   }) => Promise<{ ok: true } | { ok: false; reason: string }>;
-  /** Codex / Grok / OpenCode CLI sessions on disk. Desktop import picker. */
+  /** Codex / Grok / Cursor / OpenCode CLI sessions on disk. Desktop import picker. */
   listCliSessions?: (input?: {
     provider?: CliImportProvider;
   }) => Promise<CliSessionCandidate[]>;
@@ -2488,6 +2488,19 @@ export const Sidebar = memo(function Sidebar({
                         }}
                       >
                         Import Grok session…
+                      </button>
+                      <button
+                        type="button"
+                        className={styles.menuItem}
+                        role="menuitem"
+                        data-import-cursor-session={createProjectId}
+                        title="Import a Cursor CLI session from disk"
+                        onClick={() => {
+                          setCreateMenuOpen(false);
+                          setImportCliProvider("cursor");
+                        }}
+                      >
+                        Import Cursor session…
                       </button>
                       <button
                         type="button"

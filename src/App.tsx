@@ -1034,7 +1034,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     async (input: {
       sessionId: string;
       projectId: string;
-      provider?: "codex" | "grok" | "opencode";
+      provider?: "codex" | "grok" | "cursor" | "opencode";
     }) => {
       const t = await importCliSession(input);
       setRevealThreadId(t.id);

@@ -29,6 +29,9 @@ const {
   parseGrokChatHistory,
   listGrokSessions,
   importGrokSession,
+  parseCursorJsonl,
+  listCursorSessions,
+  importCursorSession,
   listOpenCodeSessions,
   importOpenCodeSession,
   readOpenCodeImportTurns,
@@ -1082,6 +1085,230 @@ describe("importGrokSession (#972)", () => {
         importGrokSession(store, {
           home,
           sessionId: "../sessions",
+          projectId,
+        }),
+      /invalid/i,
+    );
+    assert.equal(store.getThreads().length, 0);
+  });
+});
+
+const CURSOR_CWD = "/tmp/solenta-cursor-wt";
+
+function cursorProjectDir(cwd) {
+  return String(cwd)
+    .replace(/^\//, "")
+    .replace(/[^A-Za-z0-9]/g, "-");
+}
+
+function cursorUser(text) {
+  return {
+    role: "user",
+    message: {
+      content: [
+        {
+          type: "text",
+          text: `<timestamp>Sunday, Sep 6, 2026, 12:00 PM (UTC+2)</timestamp>\n<user_query>\n${text}\n</user_query>`,
+        },
+      ],
+    },
+  };
+}
+
+function cursorAssistant(text) {
+  return {
+    role: "assistant",
+    message: {
+      content: [{ type: "text", text }],
+    },
+  };
+}
+
+function writeCursorSession(home, cwd, sessionId, records) {
+  const dir = path.join(
+    home,
+    "projects",
+    cursorProjectDir(cwd),
+    "agent-transcripts",
+    sessionId,
+  );
+  fs.mkdirSync(dir, { recursive: true });
+  const file = path.join(dir, `${sessionId}.jsonl`);
+  fs.writeFileSync(
+    file,
+    records.map((r) => JSON.stringify(r)).join("\n") + "\n",
+  );
+  return file;
+}
+
+describe("listCursorSessions (#975)", () => {
+  let home;
+
+  beforeEach(() => {
+    home = fs.mkdtempSync(path.join(os.tmpdir(), "coder-cursor-sessions-list-"));
+  });
+
+  afterEach(() => {
+    fs.rmSync(home, { recursive: true, force: true });
+  });
+
+  it("lists both jsonl files in mocked project agent-transcripts dirs", () => {
+    writeCursorSession(home, CURSOR_CWD, SESSION_A, [
+      cursorUser("prompt a"),
+      cursorAssistant("reply a"),
+    ]);
+    writeCursorSession(home, "/tmp/other-wt", SESSION_B, [
+      cursorUser("prompt b"),
+      cursorAssistant("reply b"),
+    ]);
+
+    const listed = listCursorSessions(home);
+    assert.equal(listed.length, 2);
+    const ids = listed.map((s) => s.sessionId).sort();
+    assert.deepEqual(ids, [SESSION_A, SESSION_B].sort());
+    for (const row of listed) {
+      assert.equal(typeof row.mtimeMs, "number");
+      assert.equal(Number.isFinite(row.mtimeMs), true);
+    }
+  });
+
+  it("does not list files outside projects/ or unsafe session ids", () => {
+    writeCursorSession(home, CURSOR_CWD, SESSION_A, [
+      cursorUser("prompt a"),
+    ]);
+    fs.writeFileSync(
+      path.join(home, `${SESSION_B}.jsonl`),
+      `${JSON.stringify(cursorUser("outside"))}\n`,
+    );
+    const chatsDir = path.join(home, "chats", "deadbeef", SESSION_B);
+    fs.mkdirSync(chatsDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(chatsDir, "meta.json"),
+      JSON.stringify({ cwd: CURSOR_CWD }),
+    );
+    const unsafeDir = path.join(
+      home,
+      "projects",
+      cursorProjectDir(CURSOR_CWD),
+      "agent-transcripts",
+      "evil_id",
+    );
+    fs.mkdirSync(unsafeDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(unsafeDir, "evil_id.jsonl"),
+      `${JSON.stringify(cursorUser("unsafe id"))}\n`,
+    );
+
+    const listed = listCursorSessions(home);
+    assert.deepEqual(
+      listed.map((s) => s.sessionId),
+      [SESSION_A],
+    );
+  });
+});
+
+describe("importCursorSession (#975)", () => {
+  let home;
+  let tmpDir;
+  let store;
+  let projectId;
+
+  beforeEach(() => {
+    home = fs.mkdtempSync(path.join(os.tmpdir(), "coder-cursor-sessions-imp-"));
+    tmpDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "coder-cursor-sessions-store-"),
+    );
+    store = new Store(path.join(tmpDir, "store.json"));
+    projectId = "proj-import";
+    store.setProjects([
+      {
+        id: projectId,
+        slug: "demo",
+        name: "demo",
+        path: path.join(tmpDir, "demo"),
+      },
+    ]);
+  });
+
+  afterEach(() => {
+    fs.rmSync(home, { recursive: true, force: true });
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("creates a cursor thread whose transcript matches the parsed turns and ignores the sibling", () => {
+    const fileA = writeCursorSession(home, CURSOR_CWD, SESSION_A, [
+      cursorUser("prompt a"),
+      cursorAssistant("reply a"),
+      { type: "turn_ended", status: "success" },
+    ]);
+    writeCursorSession(home, "/tmp/other-wt", SESSION_B, [
+      cursorUser("prompt b"),
+      cursorAssistant("reply b"),
+    ]);
+
+    const expected = parseCursorJsonl(fs.readFileSync(fileA, "utf8"));
+    const thread = importCursorSession(store, {
+      home,
+      sessionId: SESSION_A,
+      projectId,
+    });
+
+    assert.ok(thread && thread.id);
+    assert.equal(thread.provider, "cursor");
+    assert.equal(thread.sessionId, SESSION_A);
+    assert.equal(thread.projectId, projectId);
+    assert.equal(thread.ejected, false);
+
+    const messages = store.getMessages(thread.id);
+    assert.deepEqual(
+      messages.map((m) => `${m.role}:${m.text}`),
+      expected.map((t) => `${t.role}:${t.text}`),
+    );
+    assert.deepEqual(
+      messages.map((m) => `${m.role}:${m.text}`),
+      ["user:prompt a", "assistant:reply a"],
+    );
+    assert.equal(
+      messages.some((m) => m.text === "prompt b" || m.text === "reply b"),
+      false,
+    );
+    assert.equal(store.getThreads().length, 1);
+    assert.equal(
+      fs.existsSync(fileA),
+      true,
+      "must not copy or consume the Cursor store",
+    );
+  });
+
+  it("re-importing the same cursor sessionId does not mint a second thread", () => {
+    writeCursorSession(home, CURSOR_CWD, SESSION_A, [
+      cursorUser("prompt a"),
+      cursorAssistant("reply a"),
+    ]);
+    const first = importCursorSession(store, {
+      home,
+      sessionId: SESSION_A,
+      projectId,
+    });
+    const second = importCursorSession(store, {
+      home,
+      sessionId: SESSION_A,
+      projectId,
+    });
+    assert.equal(second.id, first.id);
+    assert.equal(store.getThreads().length, 1);
+    assert.equal(store.getMessages(first.id).length, 2);
+  });
+
+  it("rejects a sessionId that is not a path-safe id", () => {
+    writeCursorSession(home, CURSOR_CWD, SESSION_A, [
+      cursorUser("prompt a"),
+    ]);
+    assert.throws(
+      () =>
+        importCursorSession(store, {
+          home,
+          sessionId: "../projects",
           projectId,
         }),
       /invalid/i,

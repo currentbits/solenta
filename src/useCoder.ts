@@ -701,9 +701,9 @@ export interface UseCoderResult {
   listCliCommands: (input?: {
     projectPath?: string;
   }) => Promise<CliSlashCommand[]>;
-  /** Codex / Grok / OpenCode CLI sessions on disk. */
+  /** Codex / Grok / Cursor / OpenCode CLI sessions on disk. */
   listCliSessions: (input?: {
-    provider?: "codex" | "grok" | "opencode";
+    provider?: "codex" | "grok" | "cursor" | "opencode";
   }) => Promise<CliSessionCandidate[]>;
   /**
    * Import one listed CLI session as a Solenta thread in projectId.
@@ -712,7 +712,7 @@ export interface UseCoderResult {
   importCliSession: (input: {
     sessionId: string;
     projectId: string;
-    provider?: "codex" | "grok" | "opencode";
+    provider?: "codex" | "grok" | "cursor" | "opencode";
   }) => Promise<ThreadInfo>;
   /** Full-content thread search (titles + message text); Sidebar owns debounce/state. */
   searchThreads: (input: { query: string }) => Promise<ThreadInfo[]>;
@@ -3355,7 +3355,7 @@ export function useCoder(): UseCoderResult {
   );
 
   const listCliSessions = useCallback(
-    async (input?: { provider?: "codex" | "grok" | "opencode" }) => {
+    async (input?: { provider?: "codex" | "grok" | "cursor" | "opencode" }) => {
       return api.threads.listCliSessions(input);
     },
     [api],
@@ -3365,7 +3365,7 @@ export function useCoder(): UseCoderResult {
     async (input: {
       sessionId: string;
       projectId: string;
-      provider?: "codex" | "grok" | "opencode";
+      provider?: "codex" | "grok" | "cursor" | "opencode";
     }) => {
       const t = await api.threads.importCliSession({
         sessionId: input.sessionId,

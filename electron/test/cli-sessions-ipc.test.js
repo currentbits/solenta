@@ -1,9 +1,9 @@
 "use strict";
 
 /**
- * #433 / #972 / #976: threads.listCliSessions / threads.importCliSession IPC.
- * Home is CODEX_HOME / GROK_HOME / OPENCODE_HOME on the main process —
- * the renderer cannot point the scan.
+ * #433 / #972 / #975 / #976: threads.listCliSessions / threads.importCliSession IPC.
+ * Home is CODEX_HOME / GROK_HOME / CURSOR_HOME / OPENCODE_HOME on the main
+ * process — the renderer cannot point the scan.
  *
  * Run: node --test electron/test/cli-sessions-ipc.test.js
  */
@@ -44,6 +44,7 @@ const { IPC_HANDLERS } = require("../ipc.js");
 const {
   parseCodexRollout,
   parseGrokChatHistory,
+  parseCursorJsonl,
   readOpenCodeImportTurns,
 } = require("../cli-sessions.js");
 const { DatabaseSync } = require("node:sqlite");
@@ -243,6 +244,134 @@ describe("Grok session import IPC (#972)", () => {
     assert.equal(thread.provider, "grok");
     assert.equal(thread.sessionId, SESSION_A);
     const expected = parseGrokChatHistory(fs.readFileSync(fileA, "utf8"));
+    assert.deepEqual(
+      store.getMessages(thread.id).map((m) => `${m.role}:${m.text}`),
+      expected.map((t) => `${t.role}:${t.text}`),
+    );
+    assert.equal(
+      store.getMessages(thread.id).some((m) => m.text === "prompt b"),
+      false,
+    );
+  });
+});
+
+const CURSOR_CWD = "/tmp/solenta-cursor-wt";
+
+function cursorProjectDir(cwd) {
+  return String(cwd)
+    .replace(/^\//, "")
+    .replace(/[^A-Za-z0-9]/g, "-");
+}
+
+function writeCursorSession(home, cwd, sessionId, records) {
+  const dir = path.join(
+    home,
+    "projects",
+    cursorProjectDir(cwd),
+    "agent-transcripts",
+    sessionId,
+  );
+  fs.mkdirSync(dir, { recursive: true });
+  const file = path.join(dir, `${sessionId}.jsonl`);
+  fs.writeFileSync(
+    file,
+    records.map((r) => JSON.stringify(r)).join("\n") + "\n",
+  );
+  return file;
+}
+
+describe("Cursor session import IPC (#975)", () => {
+  let home;
+  let tmpDir;
+  let store;
+  let ctx;
+  let projectId;
+  let prevHome;
+
+  beforeEach(() => {
+    home = fs.mkdtempSync(path.join(os.tmpdir(), "coder-cursor-sess-ipc-home-"));
+    tmpDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "coder-cursor-sess-ipc-store-"),
+    );
+    store = new Store(path.join(tmpDir, "store.json"));
+    projectId = "proj-import";
+    store.setProjects([
+      {
+        id: projectId,
+        slug: "demo",
+        name: "demo",
+        path: path.join(tmpDir, "demo"),
+      },
+    ]);
+    ctx = {
+      store,
+      broadcast: () => {},
+    };
+    prevHome = process.env.CURSOR_HOME;
+    process.env.CURSOR_HOME = home;
+  });
+
+  afterEach(() => {
+    if (prevHome === undefined) delete process.env.CURSOR_HOME;
+    else process.env.CURSOR_HOME = prevHome;
+    fs.rmSync(home, { recursive: true, force: true });
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("lists both sessions and importing one does not pick up the sibling", async () => {
+    const fileA = writeCursorSession(home, CURSOR_CWD, SESSION_A, [
+      {
+        role: "user",
+        message: {
+          content: [
+            {
+              type: "text",
+              text: "<user_query>\nprompt a\n</user_query>",
+            },
+          ],
+        },
+      },
+      {
+        role: "assistant",
+        message: { content: [{ type: "text", text: "reply a" }] },
+      },
+    ]);
+    writeCursorSession(home, "/tmp/other-wt", SESSION_B, [
+      {
+        role: "user",
+        message: {
+          content: [
+            {
+              type: "text",
+              text: "<user_query>\nprompt b\n</user_query>",
+            },
+          ],
+        },
+      },
+      {
+        role: "assistant",
+        message: { content: [{ type: "text", text: "reply b" }] },
+      },
+    ]);
+
+    const listed = await IPC_HANDLERS["threads:listCliSessions"](ctx, {
+      provider: "cursor",
+    });
+    assert.equal(listed.length, 2);
+    assert.deepEqual(
+      listed.map((s) => s.sessionId).sort(),
+      [SESSION_A, SESSION_B].sort(),
+    );
+
+    const thread = await IPC_HANDLERS["threads:importCliSession"](ctx, {
+      provider: "cursor",
+      sessionId: SESSION_A,
+      projectId,
+      home: path.join(tmpDir, "evil-home"),
+    });
+    assert.equal(thread.provider, "cursor");
+    assert.equal(thread.sessionId, SESSION_A);
+    const expected = parseCursorJsonl(fs.readFileSync(fileA, "utf8"));
     assert.deepEqual(
       store.getMessages(thread.id).map((m) => `${m.role}:${m.text}`),
       expected.map((t) => `${t.role}:${t.text}`),
