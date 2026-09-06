@@ -2020,7 +2020,8 @@ function copyEjectCommand(store, thread, opts) {
  * this sessionId and appends turns that happened outside Solenta
  * (#433 reader: Codex rollout, Claude ~/.claude/projects jsonl, Grok
  * chat_history.jsonl, Cursor agent-transcripts jsonl, OpenCode
- * opencode.db / JSON fallback).
+ * opencode.db / JSON fallback, Kimi sessions/<wd>/<id>/agents/main/wire.jsonl,
+ * Muse sessions/YYYY/MM/DD/<id>/session.jsonl).
  *
  * @param {import('./store').Store} store
  * @param {{ threadId: string, ejected: boolean, home?: string }} input

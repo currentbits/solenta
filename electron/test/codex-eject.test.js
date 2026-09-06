@@ -679,6 +679,74 @@ function writeOpenCodeTranscript(home, sessionId, turns) {
   return dbPath;
 }
 
+function writeKimiTranscript(home, sessionId, turns) {
+  const dir = path.join(
+    home,
+    "sessions",
+    "wd_reclaim",
+    sessionId,
+    "agents",
+    "main",
+  );
+  fs.mkdirSync(dir, { recursive: true });
+  let t = 1;
+  let turnId = 0;
+  const records = turns.map((turn) => {
+    t += 1;
+    if (turn.role === "user") {
+      return {
+        type: "turn.prompt",
+        input: [{ type: "text", text: turn.text }],
+        origin: { kind: "user" },
+        time: t,
+      };
+    }
+    const id = turn.turnId != null ? String(turn.turnId) : String(turnId++);
+    return {
+      type: "context.append_loop_event",
+      event: {
+        type: "content.part",
+        turnId: id,
+        part: { type: "text", text: turn.text },
+      },
+      time: t,
+    };
+  });
+  const file = path.join(dir, "wire.jsonl");
+  fs.writeFileSync(file, records.map((r) => JSON.stringify(r)).join("\n") + "\n");
+  return file;
+}
+
+function writeMuseTranscript(home, sessionId, turns) {
+  const dir = path.join(home, "sessions", "2026", "09", "06", sessionId);
+  fs.mkdirSync(dir, { recursive: true });
+  let t = 1;
+  const records = turns.map((turn) => {
+    t += 1;
+    if (turn.role === "user") {
+      return {
+        payload_type: "runtime.session",
+        payload: {
+          kind: "run",
+          event: { kind: "started", prompt: turn.text },
+        },
+        recorded_at: t,
+      };
+    }
+    return {
+      payload_type: "runtime.session",
+      payload: {
+        kind: "run",
+        event: { kind: "assistant_message_committed", text: turn.text },
+      },
+      recorded_at: t,
+    };
+  });
+  const file = path.join(dir, "session.jsonl");
+  fs.writeFileSync(file, records.map((r) => JSON.stringify(r)).join("\n") + "\n");
+  return file;
+}
+
 function writeOpenCodeJsonTranscript(home, sessionId, turns) {
   const projectId = "proj_reclaim";
   const sessionDir = path.join(home, "storage", "session", projectId);
@@ -781,6 +849,18 @@ async function sessionScanReclaimFixture(provider) {
       RECLAIM_SESSION,
       RECLAIM_TURNS,
     );
+  } else if (provider === "kimi") {
+    artifact = writeKimiTranscript(
+      providerHome,
+      RECLAIM_SESSION,
+      RECLAIM_TURNS,
+    );
+  } else if (provider === "muse") {
+    artifact = writeMuseTranscript(
+      providerHome,
+      RECLAIM_SESSION,
+      RECLAIM_TURNS,
+    );
   } else {
     artifact = writeOpenCodeTranscript(
       providerHome,
@@ -862,6 +942,210 @@ for (const provider of ["cursor", "opencode"]) {
     });
   });
 }
+
+function rewriteSessionScanTranscript(provider, providerHome, turns) {
+  if (provider === "kimi") {
+    return writeKimiTranscript(providerHome, RECLAIM_SESSION, turns);
+  }
+  return writeMuseTranscript(providerHome, RECLAIM_SESSION, turns);
+}
+
+for (const provider of ["kimi", "muse"]) {
+  describe(`reclaim appends outside ${provider} turns (#554)`, () => {
+    let tmpDir;
+    let store;
+    let threadId;
+    let providerHome;
+    let artifact;
+
+    beforeEach(async () => {
+      const fx = await sessionScanReclaimFixture(provider);
+      tmpDir = fx.tmpDir;
+      store = fx.store;
+      threadId = fx.threadId;
+      providerHome = fx.providerHome;
+      artifact = fx.artifact;
+    });
+
+    afterEach(() => {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    });
+
+    it("appends at least one outside assistant turn after reclaim", () => {
+      const updated = services.setEjected(store, {
+        threadId,
+        ejected: false,
+        home: providerHome,
+      });
+      assert.equal(updated.ejected, false);
+      assert.equal(store.getThread(threadId).sessionId, RECLAIM_SESSION);
+      assertReclaimAbsorbed(store, threadId);
+      assert.equal(
+        fs.existsSync(artifact),
+        true,
+        "must not copy or consume the provider store",
+      );
+    });
+
+    it("does not duplicate turns already in the Solenta transcript", () => {
+      services.setEjected(store, {
+        threadId,
+        ejected: false,
+        home: providerHome,
+      });
+      services.setEjected(store, { threadId, ejected: true });
+      services.setEjected(store, {
+        threadId,
+        ejected: false,
+        home: providerHome,
+      });
+      assertReclaimNoDupes(store, threadId);
+    });
+
+    it("appends a second identical assistant turn once", () => {
+      rewriteSessionScanTranscript(provider, providerHome, [
+        { role: "user", text: "hello inside" },
+        { role: "assistant", text: "inside reply" },
+        { role: "assistant", text: "inside reply" },
+        { role: "user", text: "outside prompt" },
+        { role: "assistant", text: "outside reply" },
+      ]);
+      services.setEjected(store, {
+        threadId,
+        ejected: false,
+        home: providerHome,
+      });
+      const afterFirst = roleTexts(store, threadId, "assistant").filter(
+        (t) => t === "inside reply",
+      );
+      assert.equal(afterFirst.length, 2);
+      services.setEjected(store, { threadId, ejected: true });
+      services.setEjected(store, {
+        threadId,
+        ejected: false,
+        home: providerHome,
+      });
+      const afterSecond = roleTexts(store, threadId, "assistant").filter(
+        (t) => t === "inside reply",
+      );
+      assert.equal(afterSecond.length, 2);
+    });
+  });
+}
+
+function writeKimiFragmentWire(home, sessionId) {
+  const dir = path.join(
+    home,
+    "sessions",
+    "wd_reclaim",
+    sessionId,
+    "agents",
+    "main",
+  );
+  fs.mkdirSync(dir, { recursive: true });
+  const records = [
+    {
+      type: "turn.prompt",
+      input: [{ type: "text", text: "hello inside" }],
+      origin: { kind: "user" },
+      time: 1,
+    },
+    {
+      type: "context.append_loop_event",
+      event: {
+        type: "content.part",
+        turnId: "0",
+        part: { type: "text", text: "inside " },
+      },
+      time: 2,
+    },
+    {
+      type: "context.append_loop_event",
+      event: {
+        type: "content.part",
+        turnId: "0",
+        part: { type: "think", think: "skip me" },
+      },
+      time: 3,
+    },
+    {
+      type: "context.append_loop_event",
+      event: {
+        type: "content.part",
+        turnId: "0",
+        part: { type: "text", text: "reply" },
+      },
+      time: 4,
+    },
+    {
+      type: "turn.prompt",
+      input: [{ type: "text", text: "outside prompt" }],
+      origin: { kind: "user" },
+      time: 5,
+    },
+    {
+      type: "context.append_loop_event",
+      event: {
+        type: "content.part",
+        turnId: "1",
+        part: { type: "text", text: "outside reply" },
+      },
+      time: 6,
+    },
+  ];
+  const file = path.join(dir, "wire.jsonl");
+  fs.writeFileSync(file, records.map((r) => JSON.stringify(r)).join("\n") + "\n");
+  return file;
+}
+
+describe("reclaim joins Kimi content.part fragments (#999)", () => {
+  let tmpDir;
+  let store;
+  let threadId;
+  let providerHome;
+
+  beforeEach(async () => {
+    const fx = await sessionScanReclaimFixture("kimi");
+    tmpDir = fx.tmpDir;
+    store = fx.store;
+    threadId = fx.threadId;
+    providerHome = fx.providerHome;
+    writeKimiFragmentWire(providerHome, RECLAIM_SESSION);
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("does not append fragments that concatenate to the stored assistant message", () => {
+    services.setEjected(store, {
+      threadId,
+      ejected: false,
+      home: providerHome,
+    });
+    const assistants = roleTexts(store, threadId, "assistant");
+    assert.equal(
+      assistants.filter((t) => t === "inside reply").length,
+      1,
+      `expected the concatenated assistant once, got ${JSON.stringify(assistants)}`,
+    );
+    assert.equal(
+      assistants.filter((t) => t === "inside " || t === "inside" || t === "reply")
+        .length,
+      0,
+      `did not expect on-disk fragments, got ${JSON.stringify(assistants)}`,
+    );
+    assert.ok(
+      assistants.includes("outside reply"),
+      `expected outside assistant turn, got ${JSON.stringify(assistants)}`,
+    );
+    assert.equal(
+      assistants.some((t) => /skip me/.test(t)),
+      false,
+    );
+    assert.ok(roleTexts(store, threadId, "user").includes("outside prompt"));
+  });
+});
 
 describe("reclaim appends outside OpenCode JSON-fallback turns (#554)", () => {
   let tmpDir;
