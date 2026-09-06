@@ -6,6 +6,7 @@ const { randomUUID } = require("node:crypto");
 const { expandUserPath } = require("./fsBrowse.js");
 const {
   getProvider,
+  ejectCommand,
   knownProviderIds,
   listProviders,
   honouredEfforts,
@@ -1949,9 +1950,71 @@ function setMuted(store, input) {
 }
 
 /**
+ * Best-effort clipboard write. Missing electron (tests, web) is a no-op.
+ * @param {string} text
+ */
+function defaultClipboardWrite(text) {
+  try {
+    const { clipboard } = require("electron");
+    if (clipboard && typeof clipboard.writeText === "function") {
+      clipboard.writeText(text);
+    }
+  } catch {
+    // no clipboard in this process
+  }
+}
+
+/**
+ * Copy the raw-CLI resume command and, when $TERMINAL is set, run it.
+ * Reclaim (ejected: false) never copies. Clipboard still succeeds if the
+ * terminal spawn throws.
+ *
+ * @param {import('./store').Store} store
+ * @param {object} thread
+ * @param {{
+ *   writeText?: (text: string) => void,
+ *   env?: NodeJS.ProcessEnv,
+ *   spawn?: typeof import('node:child_process').spawn,
+ * } | null | undefined} opts
+ */
+function copyEjectCommand(store, thread, opts) {
+  const project = store.getProject(thread.projectId);
+  const cwd = thread.worktreePath || (project && project.path) || "";
+  const { command } = ejectCommand({
+    provider: thread.provider,
+    sessionId: thread.sessionId,
+    cwd,
+  });
+  const writeText =
+    opts && typeof opts.writeText === "function"
+      ? opts.writeText
+      : defaultClipboardWrite;
+  writeText(command);
+
+  const env = (opts && opts.env) || process.env;
+  const term = String((env && env.TERMINAL) || "").trim();
+  if (!term) return;
+  const spawnFn =
+    opts && typeof opts.spawn === "function"
+      ? opts.spawn
+      : require("node:child_process").spawn;
+  const runnable = command.split("\n")[0];
+  try {
+    const child = spawnFn(term, ["-e", "sh", "-c", runnable], {
+      detached: true,
+      stdio: "ignore",
+    });
+    if (child && typeof child.unref === "function") child.unref();
+  } catch {
+    // command is still on the clipboard
+  }
+}
+
+/**
  * Mark a thread ejected so Solenta will not resume its provider session
  * (issue #554). The sessionId stays on the row for the raw CLI. Never
- * bumps updatedAt: eject is ownership, not activity.
+ * bumps updatedAt: eject is ownership, not activity. Eject copies the
+ * per-provider resume command and optionally runs it in $TERMINAL.
  *
  * Reclaim (`ejected: false`) re-reads the known provider session for
  * this sessionId and appends turns that happened outside Solenta
@@ -1960,8 +2023,13 @@ function setMuted(store, input) {
  *
  * @param {import('./store').Store} store
  * @param {{ threadId: string, ejected: boolean, home?: string }} input
+ * @param {{
+ *   writeText?: (text: string) => void,
+ *   env?: NodeJS.ProcessEnv,
+ *   spawn?: typeof import('node:child_process').spawn,
+ * } | null | undefined} [opts]
  */
-function setEjected(store, input) {
+function setEjected(store, input, opts) {
   const { threadId, ejected } = input;
   const thread = store.getThread(threadId);
   if (!thread) {
@@ -1970,7 +2038,13 @@ function setEjected(store, input) {
   const patch = { ejected: ejected === true };
   const updated = store.updateThread(threadId, patch);
   const next = updated ? { ...updated } : { ...thread, ...patch };
-  if (ejected !== true) {
+  if (ejected === true) {
+    try {
+      copyEjectCommand(store, next, opts);
+    } catch {
+      // ejected is persisted; clipboard / $TERMINAL is best-effort
+    }
+  } else {
     const { absorbSessionTurns } = require("./cli-sessions.js");
     absorbSessionTurns(store, next, {
       home: input && input.home,

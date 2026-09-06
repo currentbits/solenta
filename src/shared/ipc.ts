@@ -3395,11 +3395,13 @@ export interface CoderApi {
     setMuted(input: { threadId: string; muted: boolean }): Promise<ThreadInfo>;
     /**
      * Eject or reclaim a thread's provider session (issue #554). Eject
-     * keeps sessionId but Solenta will not resume it. Reclaim re-reads
-     * the known provider session for that sessionId (Codex rollout,
-     * Claude projects jsonl, Grok chat_history) and appends turns that
-     * happened outside Solenta (same reader #433 import will use).
-     * The flag write itself never bumps updatedAt; appended turns do.
+     * keeps sessionId but Solenta will not resume it, copies the raw-CLI
+     * resume command, and runs it in $TERMINAL when that env is set.
+     * Reclaim re-reads the known provider session for that sessionId
+     * (Codex rollout, Claude projects jsonl, Grok chat_history) and
+     * appends turns that happened outside Solenta (same reader #433
+     * import will use). The flag write itself never bumps updatedAt;
+     * appended turns do.
      */
     setEjected(input: { threadId: string; ejected: boolean }): Promise<ThreadInfo>;
     /**

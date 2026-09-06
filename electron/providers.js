@@ -4,6 +4,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { execFile, execFileSync } = require("node:child_process");
 const catalogDivergence = require("./catalogDivergence.js");
+const { posixQuote } = require("./ssh.js");
 
 /**
  * Data-driven provider registry for agent CLIs.
@@ -1410,6 +1411,64 @@ function getProvider(id) {
 }
 
 /**
+ * Interactive resume tail for the raw CLI (issue #554). Headless spawn
+ * flags stay in buildArgs; this is what the user pastes into a terminal.
+ * Flags stay unquoted; the session id is always POSIX-quoted.
+ * @param {ProviderEntry} entry
+ * @param {string} sessionId
+ * @returns {string | null}
+ */
+function ejectResumeTail(entry, sessionId) {
+  if (!entry || !entry.supportsResume || !sessionId) return null;
+  const id = posixQuote(sessionId);
+  switch (entry.id) {
+    case "claude":
+    case "grok":
+    case "cursor":
+      return `--resume ${id}`;
+    case "codex":
+      return `exec resume ${id}`;
+    case "opencode":
+      return `-s ${id}`;
+    case "kimi":
+      return `-S ${id}`;
+    case "muse":
+      return `--session-id ${id}`;
+    default:
+      return null;
+  }
+}
+
+/**
+ * Exact command to continue a thread in the raw CLI inside its worktree.
+ * @param {{ provider?: string | null, sessionId?: string | null, cwd?: string | null }} input
+ * @returns {{ command: string, note?: string }}
+ */
+function ejectCommand(input) {
+  const cwd = input && input.cwd ? String(input.cwd) : "";
+  const cd = cwd ? `cd ${posixQuote(cwd)}` : "";
+  const entry = getProvider(input && input.provider);
+  const sessionId =
+    input && input.sessionId != null && String(input.sessionId).trim() !== ""
+      ? String(input.sessionId)
+      : "";
+  const resumeTail = ejectResumeTail(entry, sessionId);
+  if (resumeTail && entry && entry.defaultBin) {
+    const command = cd
+      ? `${cd} && ${entry.defaultBin} ${resumeTail}`
+      : `${entry.defaultBin} ${resumeTail}`;
+    return { command };
+  }
+  const name = entry && entry.name ? entry.name : "This provider";
+  const note =
+    !entry || !entry.supportsResume
+      ? `${name} has no resume; start a new session in this directory.`
+      : "No session to resume; start a new session in this directory.";
+  const command = cd ? `${cd}\n# ${note}` : `# ${note}`;
+  return { command, note };
+}
+
+/**
  * All known public provider ids (not including simulate/generic).
  */
 function knownProviderIds() {
@@ -1592,6 +1651,7 @@ module.exports = {
   SIMULATE_ENTRY,
   ALL_PERMISSION_MODES,
   getProvider,
+  ejectCommand,
   knownProviderIds,
   resolveBin,
   isBinAvailable,
