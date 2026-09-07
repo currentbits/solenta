@@ -1124,11 +1124,13 @@ export function HarnessImportPreviewPanel({
   selected,
   replace,
   trusted,
+  pluginTrusted,
   busy,
   error,
   onToggle,
   onReplace,
   onTrust,
+  onPluginTrust,
   onSelectRemaining,
   onSelectAll,
   onInstall,
@@ -1138,11 +1140,13 @@ export function HarnessImportPreviewPanel({
   selected: ReadonlySet<string>;
   replace: boolean;
   trusted: boolean;
+  pluginTrusted: boolean;
   busy: boolean;
   error: string | null;
   onToggle: (id: string) => void;
   onReplace: (value: boolean) => void;
   onTrust: (value: boolean) => void;
+  onPluginTrust: (value: boolean) => void;
   onSelectRemaining: () => void;
   onSelectAll: () => void;
   onInstall: () => void;
@@ -1150,13 +1154,17 @@ export function HarnessImportPreviewPanel({
 }) {
   const selectedMcp = preview.mcp.filter((s) => selected.has(s.id));
   const needsTrust = selectedMcp.some((s) => s.requiresTrust);
+  const hasPlugins = (preview.plugins || []).length > 0;
   const hasCollision = [
     ...preview.skills,
     ...preview.commands,
     ...preview.mcp,
   ].some((row) => selected.has(row.id) && row.alreadyImported);
   const canInstall =
-    selected.size > 0 && (!hasCollision || replace) && (!needsTrust || trusted);
+    selected.size > 0 &&
+    (!hasCollision || replace) &&
+    (!needsTrust || trusted) &&
+    (!hasPlugins || pluginTrusted);
 
   function section<T extends { id: string }>(
     label: string,
@@ -1306,6 +1314,38 @@ export function HarnessImportPreviewPanel({
           Replace existing items
         </label>
       )}
+      {hasPlugins && (
+        <div className={styles.pluginBlock}>
+          <p className={styles.pluginNote}>
+            Recognized provider extras can be activated after explicit trust.
+            Unsupported extras remain inactive.
+          </p>
+          {groupPlugins(preview.plugins || []).map(([provider, extras]) => (
+            <div key={provider} className={styles.pluginGroup}>
+              <div className={styles.pluginProvider}>{provider}</div>
+              {extras.map((extra) => (
+                <div key={`${extra.provider}:${extra.label}`}>
+                  <div className={styles.rowDetail}>
+                    {extra.label} · {extra.activation.status}
+                  </div>
+                  {extra.executableFiles.length > 0 && (
+                    <ul className={styles.warnList}>
+                      {extra.executableFiles.map((file, index) => (
+                        <li
+                          key={`${extra.provider}:${extra.label}:${index}:${file}`}
+                          className={styles.pathWrap}
+                        >
+                          {file}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              ))}
+            </div>
+          ))}
+        </div>
+      )}
       {needsTrust && (
         <label className={styles.checkLabel}>
           <input
@@ -1316,6 +1356,19 @@ export function HarnessImportPreviewPanel({
             onChange={(e) => onTrust(e.target.checked)}
           />
           Trust local MCP commands. Preview did not execute them.
+        </label>
+      )}
+      {hasPlugins && (
+        <label className={styles.checkLabel}>
+          <input
+            type="checkbox"
+            checked={pluginTrusted}
+            disabled={busy}
+            aria-label="I trust this package and understand it may include executable instructions or hooks."
+            onChange={(e) => onPluginTrust(e.target.checked)}
+          />
+          I trust this package and understand it may include executable
+          instructions or hooks.
         </label>
       )}
       {error && (

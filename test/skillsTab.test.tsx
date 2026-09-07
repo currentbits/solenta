@@ -409,6 +409,7 @@ function Harness(opts: HarnessOptions) {
           memories: [],
           instructions: [],
           settings: null,
+          plugins: [],
           warnings: [],
         };
       }}
@@ -432,6 +433,7 @@ function Harness(opts: HarnessOptions) {
             memories: [],
             instructions: [],
             settings: null,
+            plugins: [],
           }
         );
       }}
@@ -2299,6 +2301,77 @@ describe("SkillsTab harness import", () => {
     await m.click(m.byText("Import selected"));
     assert.equal(installed.length, 1);
     assert.deepEqual(installed[0].selected, ["skill:house-style"]);
+    assert.equal(installed[0].trustPluginCode, false);
+    m.unmount();
+  });
+
+  it("requires plugin trust and sends trustPluginCode", async () => {
+    const installed: HarnessInstallRequest[] = [];
+    const m = await mount(
+      <Harness
+        onPreviewHarnessImport={() => ({
+          previewId: "h".repeat(32),
+          source: { id: "claude" as const, label: "Claude Code" },
+          skills: [
+            {
+              id: "skill:ponytail-help",
+              name: "ponytail-help",
+              description: "Helper",
+              origin: "plugin",
+              bytes: 80,
+              alreadyImported: false,
+              warnings: [],
+            },
+          ],
+          commands: [],
+          mcp: [],
+          memories: [],
+          instructions: [],
+          settings: null,
+          warnings: [],
+          plugins: [
+            {
+              provider: "claude",
+              label: "ponytail",
+              executableFiles: ["hooks/setup.sh"],
+              activation: { kind: "claude-plugin", status: "pending" },
+            },
+            {
+              provider: "hooks",
+              label: "Hooks",
+              executableFiles: ["hooks/setup.sh"],
+              activation: { kind: "hooks", status: "pending" },
+            },
+          ],
+        })}
+        onInstallHarnessImport={(input) => {
+          installed.push(input);
+        }}
+      />,
+    );
+    await m.click(m.query('[data-harness-source="claude"]') as HTMLButtonElement);
+    const panel = m.query("[data-harness-preview]");
+    assert.ok(panel?.textContent?.includes("ponytail"));
+    assert.ok(panel?.textContent?.includes("hooks/setup.sh"));
+    assert.ok(
+      panel?.textContent?.toLowerCase().includes("activated after explicit trust") ||
+        panel?.textContent?.toLowerCase().includes("activated after you trust"),
+    );
+    const install = m.byText("Import selected") as HTMLButtonElement;
+    assert.equal(install.disabled, true);
+    const ack = m.query(
+      'input[aria-label="I trust this package and understand it may include executable instructions or hooks."]',
+    ) as HTMLInputElement | null;
+    assert.ok(ack, "plugin trust checkbox must render");
+    await m.click(ack);
+    assert.equal(
+      (m.byText("Import selected") as HTMLButtonElement).disabled,
+      false,
+    );
+    await m.click(m.byText("Import selected"));
+    assert.equal(installed.length, 1);
+    assert.equal(installed[0].trustPluginCode, true);
+    assert.deepEqual(installed[0].selected, ["skill:ponytail-help"]);
     m.unmount();
   });
 
@@ -2332,6 +2405,7 @@ describe("SkillsTab harness import", () => {
           memories: [],
           instructions: [],
           settings: null,
+          plugins: [],
           warnings: [],
         })}
         onInstallHarnessImport={(input) => {
@@ -2385,6 +2459,7 @@ describe("SkillsTab harness import", () => {
           memories: [],
           instructions: [],
           settings: null,
+          plugins: [],
           warnings: [],
         })}
         onInstallHarnessImport={(input) => {

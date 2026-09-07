@@ -167,6 +167,28 @@ function harnessStatusMessage(result: HarnessInstallResult): string {
   if (counts.stored) parts.push(`stored ${counts.stored}`);
   if (counts.replaced) parts.push(`replaced ${counts.replaced}`);
   if (counts.skipped) parts.push(`skipped ${counts.skipped} already present`);
+  const plugins = result.plugins || [];
+  const activated = plugins.filter((p) => p.status === "activated");
+  const manual = plugins.filter((p) => p.status === "manual");
+  const failed = plugins.filter((p) => p.status === "failed");
+  if (activated.length === 1) {
+    parts.push(`activated ${activated[0].label}`);
+  } else if (activated.length > 1) {
+    parts.push(`activated ${activated.length} plugins`);
+  }
+  if (manual.length === 1) {
+    parts.push(`${manual[0].label} needs a manual install`);
+  } else if (manual.length > 1) {
+    parts.push(`${manual.length} plugin actions need a manual install`);
+  }
+  if (failed.length) {
+    const first = failed[0];
+    parts.push(
+      first.error
+        ? `${first.label} failed: ${first.error}`
+        : `${first.label} failed`,
+    );
+  }
   return parts.join(", ") || "Nothing new to import";
 }
 
@@ -283,6 +305,7 @@ export function SkillsTab({
   );
   const [harnessReplace, setHarnessReplace] = useState(false);
   const [harnessTrust, setHarnessTrust] = useState(false);
+  const [harnessPluginTrust, setHarnessPluginTrust] = useState(false);
   const [harnessError, setHarnessError] = useState<string | null>(null);
 
   const mountedRef = useRef(true);
@@ -835,6 +858,7 @@ export function SkillsTab({
       setHarnessSelected(new Set(harnessRemainingIds(next)));
       setHarnessReplace(false);
       setHarnessTrust(false);
+      setHarnessPluginTrust(false);
       if (previousId && previousId !== next.previewId) {
         discardHarnessOnce(previousId);
       }
@@ -865,11 +889,15 @@ export function SkillsTab({
     const needsTrust = harnessPreview.mcp.some(
       (s) => harnessSelected.has(s.id) && s.requiresTrust,
     );
-    const hasCollision = [...harnessPreview.skills, ...harnessPreview.mcp].some(
-      (row) => harnessSelected.has(row.id) && row.alreadyImported,
-    );
+    const hasPlugins = (harnessPreview.plugins || []).length > 0;
+    const hasCollision = [
+      ...harnessPreview.skills,
+      ...harnessPreview.commands,
+      ...harnessPreview.mcp,
+    ].some((row) => harnessSelected.has(row.id) && row.alreadyImported);
     if (hasCollision && !harnessReplace) return;
     if (needsTrust && !harnessTrust) return;
+    if (hasPlugins && !harnessPluginTrust) return;
     importLockRef.current = true;
     const gen = ++generationRef.current;
     const previewId = harnessPreview.previewId;
@@ -882,6 +910,7 @@ export function SkillsTab({
         selected: chosen,
         replace: harnessReplace,
         trustLocal: needsTrust ? harnessTrust : false,
+        trustPluginCode: hasPlugins ? harnessPluginTrust : false,
         projectPath: projectPath || undefined,
       });
       harnessDiscardedRef.current.add(previewId);
@@ -889,6 +918,13 @@ export function SkillsTab({
       setHarnessPreview(null);
       setHarnessReplace(false);
       setHarnessTrust(false);
+      setHarnessPluginTrust(false);
+      if (result.plugins && result.plugins.some((p) => p.status !== "skipped")) {
+        setInstallResult({
+          installed: [],
+          plugins: result.plugins,
+        });
+      }
       await reloadAll();
       if (!mountedRef.current || gen !== generationRef.current) return;
       setStatusMessage(harnessStatusMessage(result));
@@ -991,6 +1027,7 @@ export function SkillsTab({
               selected={harnessSelected}
               replace={harnessReplace}
               trusted={harnessTrust}
+              pluginTrusted={harnessPluginTrust}
               busy={skillBusy}
               error={harnessError}
               onToggle={(id) => {
@@ -1003,6 +1040,7 @@ export function SkillsTab({
               }}
               onReplace={setHarnessReplace}
               onTrust={setHarnessTrust}
+              onPluginTrust={setHarnessPluginTrust}
               onSelectRemaining={() =>
                 setHarnessSelected(new Set(harnessRemainingIds(harnessPreview)))
               }

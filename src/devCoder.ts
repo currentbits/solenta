@@ -1856,6 +1856,7 @@ function buildDevCoder(): CoderApi {
       memories: [],
       instructions: [],
       settings: null,
+      plugins: [],
       warnings: [],
     };
   }
@@ -3133,6 +3134,7 @@ function buildDevCoder(): CoderApi {
           memories: [],
           instructions: [],
           settings: null,
+          plugins: [],
         };
       },
       async discardImport(input: { previewId: string }): Promise<void> {

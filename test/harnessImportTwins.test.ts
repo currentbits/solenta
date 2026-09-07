@@ -22,6 +22,7 @@ describe("harness import twins", () => {
         selected: ["skill:house-style", "command:user:draft"],
         replace: false,
         trustLocal: false,
+        trustPluginCode: false,
       });
       assert.equal(result.skills[0].status, "installed");
       assert.equal(result.commands[0].status, "installed");

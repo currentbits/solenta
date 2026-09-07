@@ -1265,7 +1265,9 @@ const IPC_HANDLERS = {
         selected: request.selected,
         replace: request.replace === true,
         trustLocal: request.trustLocal === true,
+        trustPluginCode: request.trustPluginCode === true,
       },
+      runFile: createSafeCommandRunner(),
       saveMcp: (nextList) => {
         const next = services.setSettings(
           ctx.store,

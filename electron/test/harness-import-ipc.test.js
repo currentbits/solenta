@@ -117,4 +117,41 @@ describe("harness import IPC", () => {
     });
     assert.ok(preview.instructions.some((i) => /From process HOME/.test(i.title)));
   });
+
+  it("installImport only trusts plugin code when trustPluginCode is true", async () => {
+    const claude = path.join(process.env.HOME, ".claude");
+    fs.mkdirSync(path.join(claude, "plugins", "ponytail", "skills", "ponytail-help"), {
+      recursive: true,
+    });
+    fs.writeFileSync(
+      path.join(claude, "plugins", "ponytail", "skills", "ponytail-help", "SKILL.md"),
+      "---\nname: ponytail-help\ndescription: helper\n---\n\n# ponytail-help\n",
+    );
+    fs.mkdirSync(path.join(claude, "plugins", "ponytail", ".claude-plugin"), {
+      recursive: true,
+    });
+    fs.writeFileSync(
+      path.join(claude, "plugins", "ponytail", ".claude-plugin", "plugin.json"),
+      JSON.stringify({ name: "ponytail" }),
+    );
+    fs.mkdirSync(path.join(process.env.HOME, ".claude", "skills"), {
+      recursive: true,
+    });
+    const preview = await IPC_HANDLERS["harness:previewImport"](makeCtx(), {
+      source: "claude",
+    });
+    assert.ok(Array.isArray(preview.plugins));
+    const result = await IPC_HANDLERS["harness:installImport"](makeCtx(), {
+      previewId: preview.previewId,
+      selected: ["skill:ponytail-help"],
+      replace: false,
+      trustLocal: false,
+      trustPluginCode: 1,
+    });
+    assert.ok(Array.isArray(result.plugins));
+    assert.ok(
+      result.plugins.length === 0 ||
+        result.plugins.every((p) => p.status === "skipped"),
+    );
+  });
 });

@@ -59,6 +59,33 @@ function writeSkill(base, name, description) {
   writeFile(path.join(base, name, "SKILL.md"), skillMd(name, description));
 }
 
+const PONYTAIL_URL = "https://github.com/DietrichGebert/ponytail";
+
+function writePluginShape(root, opts) {
+  const name = (opts && opts.name) || "ponytail";
+  writeSkill(path.join(root, "skills"), `${name}-help`, `${name} helper`);
+  writeFile(
+    path.join(root, ".claude-plugin", "plugin.json"),
+    JSON.stringify({ name, description: "Claude plugin" }),
+  );
+  writeFile(
+    path.join(root, ".codex-plugin", "plugin.json"),
+    JSON.stringify({ name }),
+  );
+  writeFile(
+    path.join(root, ".grok-plugin", "marketplace.json"),
+    JSON.stringify({ name }),
+  );
+  const pluginJson = { name };
+  if (opts && opts.repository) pluginJson.repository = opts.repository;
+  writeFile(path.join(root, "plugin.json"), JSON.stringify(pluginJson));
+  writeFile(
+    path.join(root, "hooks", `${name}-statusline.sh`),
+    "#!/bin/sh\necho ok\n",
+  );
+  writeFile(path.join(root, "commands", `${name}.md`), `# ${name}\n`);
+}
+
 function activate(...targets) {
   const dirs = SKILL_DIRS(env);
   for (const t of targets) {
@@ -485,6 +512,323 @@ describe("installImport", () => {
     assert.equal(fs.existsSync(pwned), false);
     const dest = path.join(SKILL_DIRS(env).claude, "with-hook", "hooks", "setup.sh");
     assert.equal(fs.existsSync(dest), true);
+  });
+
+  it("previews plugin.json, hooks, and commands without executing them", async () => {
+    const claude = path.join(env.HOME, ".claude");
+    const pwned = path.join(tmp, "pwned-plugin-preview");
+    writePluginShape(path.join(claude, "plugins", "ponytail"), {
+      repository: PONYTAIL_URL,
+    });
+    writeFile(
+      path.join(claude, "plugins", "ponytail", "hooks", "setup.sh"),
+      `#!/bin/sh\necho PWNED > "${pwned}"\n`,
+    );
+    writeFile(
+      path.join(claude, "plugins", "cache", "noise", "SKILL.md"),
+      skillMd("cache-noise", "Must not import from cache"),
+    );
+    writeFile(
+      path.join(claude, "plugins", "marketplaces", "ponytail", "plugin.json"),
+      JSON.stringify({ name: "marketplace-copy" }),
+    );
+    const preview = await previewImport({
+      userDataPath: userData,
+      source: "claude",
+      current: [],
+      env,
+    });
+    assert.equal(fs.existsSync(pwned), false);
+    const kinds = preview.plugins.map((p) => p.activation.kind).sort();
+    assert.ok(kinds.includes("claude-plugin"));
+    assert.ok(kinds.includes("codex-plugin"));
+    assert.ok(kinds.includes("grok-plugin"));
+    assert.ok(kinds.includes("hooks"));
+    assert.ok(kinds.includes("commands"));
+    assert.ok(
+      preview.plugins.some(
+        (p) =>
+          p.activation.kind === "hooks" &&
+          p.executableFiles.some((f) => f.endsWith("setup.sh") || f.endsWith("ponytail-statusline.sh")),
+      ),
+    );
+    assert.ok(preview.skills.some((s) => s.name === "ponytail-help"));
+    assert.equal(
+      preview.skills.some((s) => s.name === "cache-noise"),
+      false,
+    );
+    assert.equal(
+      preview.plugins.some((p) => p.label === "marketplace-copy"),
+      false,
+    );
+    const staged = path.join(userData, "harness-imports", preview.previewId, "stage");
+    assert.equal(fs.existsSync(path.join(staged, "cache")), false);
+    assert.equal(fs.existsSync(path.join(staged, "marketplaces")), false);
+    assert.equal(JSON.stringify(preview).includes(pwned), false);
+  });
+
+  it("reads extras from installed_plugins.json without copying the cache tree", async () => {
+    const claude = path.join(env.HOME, ".claude");
+    const installPath = path.join(
+      claude,
+      "plugins",
+      "cache",
+      "ponytail",
+      "ponytail",
+      "4.8.4",
+    );
+    writePluginShape(installPath, { repository: PONYTAIL_URL });
+    writeFile(
+      path.join(claude, "plugins", "cache", "other", "1.0.0", "SKILL.md"),
+      skillMd("other-cache", "Uninstalled cache copy"),
+    );
+    writeFile(
+      path.join(claude, "plugins", "installed_plugins.json"),
+      JSON.stringify({
+        version: 1,
+        plugins: {
+          "ponytail@ponytail": [
+            { scope: "user", installPath, version: "4.8.4" },
+          ],
+        },
+      }),
+    );
+    const preview = await previewImport({
+      userDataPath: userData,
+      source: "claude",
+      current: [],
+      env,
+    });
+    assert.ok(preview.plugins.some((p) => p.activation.kind === "claude-plugin"));
+    assert.ok(preview.skills.some((s) => s.name === "ponytail-help"));
+    assert.equal(
+      preview.skills.some((s) => s.name === "other-cache"),
+      false,
+    );
+    const staged = path.join(userData, "harness-imports", preview.previewId, "stage");
+    assert.equal(fs.existsSync(path.join(staged, "cache")), false);
+    assert.equal(
+      fs.existsSync(path.join(staged, "skills", "other-cache")),
+      false,
+    );
+  });
+
+  it("skips plugin extras when trustPluginCode is false", async () => {
+    const claude = path.join(env.HOME, ".claude");
+    writePluginShape(path.join(claude, "plugins", "ponytail"), {
+      repository: PONYTAIL_URL,
+    });
+    activate("claude");
+    const preview = await previewImport({
+      userDataPath: userData,
+      source: "claude",
+      current: [],
+      env,
+    });
+    const calls = [];
+    const result = await installImport({
+      userDataPath: userData,
+      env,
+      current: [],
+      runFile: async (binary, args, opts) => {
+        calls.push({ binary, args, opts });
+        throw new Error("runner must not be called");
+      },
+      request: {
+        previewId: preview.previewId,
+        selected: ["skill:ponytail-help"],
+        replace: false,
+        trustLocal: false,
+        trustPluginCode: false,
+      },
+    });
+    assert.equal(calls.length, 0);
+    assert.ok(result.plugins.length > 0);
+    assert.ok(result.plugins.every((p) => p.status === "skipped"));
+    assert.equal(
+      fs.existsSync(path.join(SKILL_DIRS(env).claude, "ponytail-help", "SKILL.md")),
+      true,
+    );
+  });
+
+  it("does not activate local plugin extras even when trusted", async () => {
+    const claude = path.join(env.HOME, ".claude");
+    writePluginShape(path.join(claude, "plugins", "local-pony"));
+    activate("claude");
+    const preview = await previewImport({
+      userDataPath: userData,
+      source: "claude",
+      current: [],
+      env,
+    });
+    const calls = [];
+    const result = await installImport({
+      userDataPath: userData,
+      env,
+      current: [],
+      runFile: async (binary, args) => {
+        calls.push({ binary, args });
+        return { stdout: "", stderr: "" };
+      },
+      request: {
+        previewId: preview.previewId,
+        selected: ["skill:ponytail-help"],
+        replace: false,
+        trustLocal: false,
+        trustPluginCode: true,
+      },
+    });
+    assert.equal(calls.length, 0);
+    assert.ok(result.plugins.length > 0);
+    assert.ok(result.plugins.every((p) => p.status === "unsupported"));
+  });
+
+  it("activates trusted GitHub extras and keeps skills if Codex fails", async () => {
+    const claude = path.join(env.HOME, ".claude");
+    writePluginShape(path.join(claude, "plugins", "ponytail"), {
+      repository: PONYTAIL_URL,
+    });
+    activate("claude");
+    const preview = await previewImport({
+      userDataPath: userData,
+      source: "claude",
+      current: [],
+      env,
+    });
+    const dest = path.join(SKILL_DIRS(env).claude, "ponytail-help", "SKILL.md");
+    const calls = [];
+    const result = await installImport({
+      userDataPath: userData,
+      env,
+      current: [],
+      runFile: async (binary, args, opts) => {
+        calls.push({ binary, args, opts });
+        assert.equal(opts && opts.shell, undefined);
+        if (binary === "codex" && args[1] === "marketplace") {
+          const err = new Error("codex marketplace add failed");
+          err.stderr = `${"nope ".repeat(80)}${path.join(userData, "harness-imports")}/stage ghs_should_never_leak`;
+          throw err;
+        }
+        return { stdout: "ok", stderr: "" };
+      },
+      request: {
+        previewId: preview.previewId,
+        selected: ["skill:ponytail-help"],
+        replace: false,
+        trustLocal: false,
+        trustPluginCode: true,
+      },
+    });
+    assert.equal(fs.existsSync(dest), true, "skill files must survive plugin failure");
+    const byProvider = Object.fromEntries(
+      result.plugins.map((row) => [row.provider, row]),
+    );
+    assert.equal(byProvider.codex.status, "failed");
+    assert.equal(byProvider.grok.status, "activated");
+    assert.equal(byProvider.claude.status, "manual");
+    assert.deepEqual(byProvider.claude.instructions, [
+      "/plugin marketplace add DietrichGebert/ponytail",
+      "/plugin install ponytail@ponytail",
+    ]);
+    assert.equal(byProvider.plugin.status, "covered");
+    assert.equal(byProvider.hooks.status, "covered");
+    assert.equal(byProvider.commands.status, "covered");
+    assert.ok(byProvider.codex.error.length <= 200);
+    assert.equal(byProvider.codex.error.includes("ghs_should_never_leak"), false);
+    assert.equal(JSON.stringify(result).includes(userData), false);
+    assert.deepEqual(
+      calls.map((c) => [c.binary, c.args[1]]),
+      [
+        ["codex", "marketplace"],
+        ["grok", "install"],
+      ],
+    );
+  });
+
+  it("treats a non-boolean trustPluginCode as untrusted", async () => {
+    const claude = path.join(env.HOME, ".claude");
+    writePluginShape(path.join(claude, "plugins", "ponytail"), {
+      repository: PONYTAIL_URL,
+    });
+    activate("claude");
+    const preview = await previewImport({
+      userDataPath: userData,
+      source: "claude",
+      current: [],
+      env,
+    });
+    const calls = [];
+    const result = await installImport({
+      userDataPath: userData,
+      env,
+      current: [],
+      runFile: async (binary, args) => {
+        calls.push({ binary, args });
+        throw new Error("runner must not be called");
+      },
+      request: {
+        previewId: preview.previewId,
+        selected: ["skill:ponytail-help"],
+        replace: false,
+        trustLocal: false,
+        trustPluginCode: 1,
+      },
+    });
+    assert.equal(calls.length, 0);
+    assert.ok(result.plugins.every((p) => p.status === "skipped"));
+  });
+
+  it("re-run skips the skill and does not re-execute plugin extras without trust", async () => {
+    const claude = path.join(env.HOME, ".claude");
+    writePluginShape(path.join(claude, "plugins", "ponytail"), {
+      repository: PONYTAIL_URL,
+    });
+    activate("claude");
+    const firstPreview = await previewImport({
+      userDataPath: userData,
+      source: "claude",
+      current: [],
+      env,
+    });
+    await installImport({
+      userDataPath: userData,
+      env,
+      current: [],
+      runFile: async () => ({ stdout: "", stderr: "" }),
+      request: {
+        previewId: firstPreview.previewId,
+        selected: ["skill:ponytail-help"],
+        replace: false,
+        trustLocal: false,
+        trustPluginCode: false,
+      },
+    });
+    const preview2 = await previewImport({
+      userDataPath: userData,
+      source: "claude",
+      current: [],
+      env,
+    });
+    const calls = [];
+    const again = await installImport({
+      userDataPath: userData,
+      env,
+      current: [],
+      runFile: async (binary, args) => {
+        calls.push({ binary, args });
+        throw new Error("runner must not be called");
+      },
+      request: {
+        previewId: preview2.previewId,
+        selected: ["skill:ponytail-help"],
+        replace: false,
+        trustLocal: false,
+        trustPluginCode: false,
+      },
+    });
+    assert.equal(again.skills[0].status, "skipped");
+    assert.equal(calls.length, 0);
+    assert.ok(again.plugins.every((p) => p.status === "skipped"));
   });
 
   it("discards a preview directory", async () => {

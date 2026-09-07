@@ -498,6 +498,7 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
       memories: [],
       instructions: [],
       settings: null,
+      plugins: [],
       warnings: [],
     };
   }
@@ -1344,6 +1345,7 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
           memories: [],
           instructions: [],
           settings: null,
+          plugins: [],
         } satisfies HarnessInstallResult);
       },
       discardImport: (input: { previewId: string }) => {

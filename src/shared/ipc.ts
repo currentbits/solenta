@@ -2866,6 +2866,7 @@ export interface HarnessImportPreview {
   memories: HarnessTextRow[];
   instructions: HarnessTextRow[];
   settings: HarnessSettingsRow | null;
+  plugins: SkillPluginExtra[];
   warnings: string[];
 }
 
@@ -2874,6 +2875,7 @@ export interface HarnessInstallRequest {
   selected: string[];
   replace: boolean;
   trustLocal: boolean;
+  trustPluginCode: boolean;
   projectPath?: string;
 }
 
@@ -2886,6 +2888,7 @@ export interface HarnessInstallResult {
   memories: Array<{ title: string; status: HarnessItemStatus }>;
   instructions: Array<{ title: string; status: HarnessItemStatus }>;
   settings: { status: HarnessItemStatus } | null;
+  plugins: SkillPluginInstallResult[];
 }
 
 /** Payload for skills:add; the skill fans out to every active target. */

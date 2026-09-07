@@ -36,6 +36,8 @@ const {
   collectCodexPluginRoots,
 } = require("./pluginRoots.js");
 const { readPluginManifest } = require("./pluginManifest.js");
+const { detectPluginExtras } = require("./skillImports.js");
+const { activateSkillPlugins } = require("./skillPluginAdapters.js");
 
 const CLOCK_SKEW_MS = 60_000;
 const PREVIEW_TTL_MS = 30 * 60 * 1000;
@@ -64,6 +66,7 @@ const IGNORED_DIRS = new Set([
   "debug",
   "cache",
   "marketplaces",
+  "data",
   "telemetry",
   "statsig",
   "file-history",
@@ -491,6 +494,91 @@ function pluginRootsForSource(id, home) {
   if (id === "codex") return collectCodexPluginRoots(home);
   if (id === "cursor") return collectCursorPluginRoots(home);
   return [];
+}
+
+function githubRepoUrl(value) {
+  const s = String(value || "").trim();
+  const m = s.match(
+    /^https?:\/\/github\.com\/([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+?)(?:\.git)?\/?$/i,
+  );
+  if (!m) return "";
+  return `https://github.com/${m[1]}/${m[2]}`;
+}
+
+function sourceUrlFromPluginJson(root) {
+  const files = [
+    path.join(root, "plugin.json"),
+    path.join(root, ".claude-plugin", "plugin.json"),
+    path.join(root, ".codex-plugin", "plugin.json"),
+  ];
+  for (const file of files) {
+    const raw = readCappedFile(file, MAX_JSON_BYTES);
+    if (raw == null) continue;
+    try {
+      const obj = JSON.parse(raw);
+      if (!obj || typeof obj !== "object") continue;
+      if (typeof obj.repository === "string") {
+        const url = githubRepoUrl(obj.repository);
+        if (url) return url;
+      }
+      if (obj.repository && typeof obj.repository.url === "string") {
+        const url = githubRepoUrl(obj.repository.url);
+        if (url) return url;
+      }
+      if (typeof obj.url === "string") {
+        const url = githubRepoUrl(obj.url);
+        if (url) return url;
+      }
+    } catch {
+      // ignore unreadable manifests
+    }
+  }
+  return "";
+}
+
+function storedPluginExtras(extras) {
+  return extras.map((extra) => ({
+    provider: extra.provider,
+    label: extra.label,
+    pluginName: extra.pluginName || undefined,
+    executableFiles: (extra.executableFiles || []).filter(
+      (rel) =>
+        typeof rel === "string" &&
+        rel &&
+        !path.isAbsolute(rel) &&
+        !rel.split("/").includes(".."),
+    ),
+    activation: {
+      kind: extra.activation.kind,
+      status: "pending",
+    },
+  }));
+}
+
+function publicPluginExtras(extras) {
+  return storedPluginExtras(extras).map((extra) => ({
+    provider: extra.provider,
+    label: extra.label,
+    executableFiles: extra.executableFiles,
+    activation: extra.activation,
+  }));
+}
+
+function scanPluginGroups(home, pluginRoots) {
+  /** @type {Array<{ rel: string, sourceUrl: string, extras: object[] }>} */
+  const groups = [];
+  for (const abs of pluginRoots || []) {
+    if (groups.length >= MAX_PLUGIN_GROUPS) break;
+    if (!abs || !isPlainDir(abs)) continue;
+    const extras = detectPluginExtras(abs);
+    if (!extras.length) continue;
+    groups.push({
+      rel: posixRel(home, abs),
+      sourceUrl: sourceUrlFromPluginJson(abs),
+      extras: storedPluginExtras(extras),
+    });
+  }
+  return groups;
 }
 
 function addPluginCommandFile(opts) {
@@ -1314,6 +1402,9 @@ function publicPreview(manifest) {
           alreadyImported: Boolean(manifest.settings.alreadyImported),
         }
       : null,
+    plugins: (manifest.pluginGroups || []).flatMap((group) =>
+      publicPluginExtras(group.extras || []),
+    ),
     warnings: [...(manifest.warnings || [])],
   };
 }
@@ -1340,6 +1431,8 @@ async function previewImport(opts) {
       ? opts.projectPath.trim()
       : "";
   try {
+    const pluginRoots = pluginRootsForSource(meta.id, home);
+    const pluginGroups = scanPluginGroups(home, pluginRoots);
     const skills = scanSkills(meta.id, home, env, warnings);
     const commands = scanCommands(meta.id, home, projectPath, env, warnings);
     const mcp = scanMcp(meta.id, home, env, opts && opts.current, warnings);
@@ -1433,6 +1526,7 @@ async function previewImport(opts) {
       memories,
       instructions,
       settings,
+      pluginGroups,
     };
     const manifestPath = path.join(previewDir, "manifest.json");
     fs.writeFileSync(manifestPath, JSON.stringify(manifest), {
@@ -1678,6 +1772,8 @@ async function installImport(opts) {
   if (!selected.length) throw new Error("Select at least one item to import");
   const replace = request.replace === true;
   const trustLocal = request.trustLocal === true;
+  const trustPluginCode = request.trustPluginCode === true;
+  const runFile = opts && typeof opts.runFile === "function" ? opts.runFile : null;
   const projectPath =
     (opts && opts.projectPath) || raw.projectPath || "";
 
@@ -1730,8 +1826,54 @@ async function installImport(opts) {
       : { status: "skipped" };
   }
 
+  /** @type {object[]} */
+  let plugins;
+  try {
+    plugins = await activateHarnessPlugins(raw, trustPluginCode, runFile);
+  } catch {
+    plugins = (raw.pluginGroups || []).flatMap((group) =>
+      (group.extras || []).map((extra) => ({
+        provider: extra.provider,
+        label: extra.label,
+        status: trustPluginCode ? "failed" : "skipped",
+        ...(trustPluginCode ? { error: "Plugin activation failed" } : {}),
+      })),
+    );
+  }
+
   fs.rmSync(dir, { recursive: true, force: true });
-  return { skills, commands, mcp, memories, instructions, settings };
+  return { skills, commands, mcp, memories, instructions, settings, plugins };
+}
+
+async function activateHarnessPlugins(manifest, trustPluginCode, runFile) {
+  const groups = Array.isArray(manifest && manifest.pluginGroups)
+    ? manifest.pluginGroups
+    : [];
+  /** @type {object[]} */
+  const out = [];
+  for (const group of groups) {
+    let rows;
+    try {
+      rows = await activateSkillPlugins({
+        manifest: {
+          kind: group.sourceUrl ? "github" : "local",
+          sourceUrl: group.sourceUrl || undefined,
+          plugins: group.extras || [],
+        },
+        trustPluginCode,
+        runFile,
+      });
+    } catch {
+      rows = (group.extras || []).map((extra) => ({
+        provider: extra.provider,
+        label: extra.label,
+        status: trustPluginCode ? "failed" : "skipped",
+        ...(trustPluginCode ? { error: "Plugin activation failed" } : {}),
+      }));
+    }
+    out.push(...rows);
+  }
+  return out;
 }
 
 function discardImport(opts) {
