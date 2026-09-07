@@ -1253,3 +1253,235 @@ describe("App planboard wiring (#207)", () => {
     }
   });
 });
+
+describe("Activity and Kanban in-view project scope (#944)", () => {
+  async function openScopeAndView(
+    m: Awaited<ReturnType<typeof mount>>,
+    projectId: string,
+    view: "activity" | "kanban",
+  ): Promise<void> {
+    const trigger = m.query("[data-scope-trigger]");
+    assert.ok(trigger, "sidebar scope trigger");
+    await m.click(trigger as HTMLElement);
+    await m.flush();
+    const item = m.query(`[data-scope-item="${projectId}"]`);
+    assert.ok(item, `scope item ${projectId}`);
+    await m.click(item as HTMLElement);
+    await m.flush();
+    const nav = m.query(`[data-view-nav="${view}"]`);
+    assert.ok(nav, `${view} nav`);
+    await m.click(nav as HTMLElement);
+    await m.flush();
+  }
+
+  it("opens Activity from a sidebar project and can switch to All projects", async () => {
+    const pLedger = project({
+      id: "p-ledger",
+      slug: "acme/ledger",
+      path: "/tmp/ledger",
+    });
+    const pBilling = project({
+      id: "p-billing",
+      slug: "acme/billing",
+      path: "/tmp/billing",
+    });
+    const tLedger = thread({
+      id: "t-ledger",
+      projectId: "p-ledger",
+      title: "Ship ledger",
+    });
+    const tBilling = thread({
+      id: "t-billing",
+      projectId: "p-billing",
+      title: "New billing thread",
+    });
+    const fake = createFakeCoder({
+      projects: [pLedger, pBilling],
+      threads: [tLedger, tBilling],
+      details: {
+        "t-ledger": detail({ thread: tLedger }),
+        "t-billing": detail({ thread: tBilling }),
+      },
+    });
+    const m = await boot(fake);
+    try {
+      await m.flush();
+      await openScopeAndView(m, "p-billing", "activity");
+      const pane = m.query("[data-activity]");
+      assert.ok(pane, "activity view");
+      const select = m.query('select[aria-label="Project"]') as HTMLSelectElement | null;
+      assert.ok(select);
+      assert.equal(select.value, "p-billing");
+      assert.ok(pane.textContent?.includes("New billing thread"));
+      assert.ok(!pane.textContent?.includes("Ship ledger"));
+
+      await m.change(select, "");
+      assert.ok(pane.textContent?.includes("New billing thread"));
+      assert.ok(pane.textContent?.includes("Ship ledger"));
+    } finally {
+      m.unmount();
+    }
+  });
+
+  it("keeps an open Activity scope when the sidebar filter changes", async () => {
+    const pLedger = project({
+      id: "p-ledger",
+      slug: "acme/ledger",
+      path: "/tmp/ledger",
+    });
+    const pBilling = project({
+      id: "p-billing",
+      slug: "acme/billing",
+      path: "/tmp/billing",
+    });
+    const tLedger = thread({
+      id: "t-ledger",
+      projectId: "p-ledger",
+      title: "Ship ledger",
+    });
+    const tBilling = thread({
+      id: "t-billing",
+      projectId: "p-billing",
+      title: "New billing thread",
+    });
+    const fake = createFakeCoder({
+      projects: [pLedger, pBilling],
+      threads: [tLedger, tBilling],
+      details: {
+        "t-ledger": detail({ thread: tLedger }),
+        "t-billing": detail({ thread: tBilling }),
+      },
+    });
+    const m = await boot(fake);
+    try {
+      await m.flush();
+      await openScopeAndView(m, "p-billing", "activity");
+      const trigger = m.query("[data-scope-trigger]");
+      assert.ok(trigger);
+      await m.click(trigger as HTMLElement);
+      await m.flush();
+      await m.click(m.query('[data-scope-item="p-ledger"]') as HTMLElement);
+      await m.flush();
+
+      const select = m.query('select[aria-label="Project"]') as HTMLSelectElement | null;
+      assert.ok(select);
+      assert.equal(select.value, "p-billing", "sidebar must not rewrite an open report");
+      const pane = m.query("[data-activity]");
+      assert.ok(pane);
+      assert.ok(pane.textContent?.includes("New billing thread"));
+      assert.ok(!pane.textContent?.includes("Ship ledger"));
+    } finally {
+      m.unmount();
+    }
+  });
+
+  it("preserves Activity scope after opening a thread and returning (#944)", async () => {
+    const pLedger = project({
+      id: "p-ledger",
+      slug: "acme/ledger",
+      path: "/tmp/ledger",
+    });
+    const pBilling = project({
+      id: "p-billing",
+      slug: "acme/billing",
+      path: "/tmp/billing",
+    });
+    const tLedger = thread({
+      id: "t-ledger",
+      projectId: "p-ledger",
+      title: "Ship ledger",
+    });
+    const tBilling = thread({
+      id: "t-billing",
+      projectId: "p-billing",
+      title: "New billing thread",
+    });
+    const fake = createFakeCoder({
+      projects: [pLedger, pBilling],
+      threads: [tLedger, tBilling],
+      details: {
+        "t-ledger": detail({ thread: tLedger }),
+        "t-billing": detail({ thread: tBilling }),
+      },
+    });
+    const m = await boot(fake);
+    try {
+      await m.flush();
+      await openScopeAndView(m, "p-billing", "activity");
+      const select = m.query('select[aria-label="Project"]') as HTMLSelectElement;
+      await m.change(select, "");
+      assert.ok(m.text().includes("Ship ledger"));
+
+      const row = m.query('button[aria-label="Select thread: Ship ledger"]');
+      assert.ok(row, "activity row");
+      await m.click(row as HTMLElement);
+      await m.flush();
+      assert.equal(m.query("[data-activity]"), null, "left for the thread");
+
+      const nav = m.query('[data-view-nav="activity"]');
+      assert.ok(nav);
+      await m.click(nav as HTMLElement);
+      await m.flush();
+
+      const again = m.query('select[aria-label="Project"]') as HTMLSelectElement | null;
+      assert.ok(again);
+      assert.equal(
+        again.value,
+        "",
+        "returning via Activity nav must keep the in-view All projects choice",
+      );
+      assert.ok(m.text().includes("Ship ledger"));
+      assert.ok(m.text().includes("New billing thread"));
+    } finally {
+      m.unmount();
+    }
+  });
+
+  it("opens Kanban from a sidebar project and can switch to All projects", async () => {
+    const pLedger = project({
+      id: "p-ledger",
+      slug: "acme/ledger",
+      path: "/tmp/ledger",
+    });
+    const pBilling = project({
+      id: "p-billing",
+      slug: "acme/billing",
+      path: "/tmp/billing",
+    });
+    const fake = createFakeCoder({
+      projects: [pLedger, pBilling],
+      threads: [
+        thread({
+          id: "t-ledger",
+          projectId: "p-ledger",
+          title: "Ship ledger",
+          status: "idle",
+        }),
+        thread({
+          id: "t-billing",
+          projectId: "p-billing",
+          title: "New billing thread",
+          status: "idle",
+        }),
+      ],
+    });
+    const m = await boot(fake);
+    try {
+      await m.flush();
+      await openScopeAndView(m, "p-billing", "kanban");
+      const pane = m.query("[data-kanban]");
+      assert.ok(pane, "kanban view");
+      const select = m.query('select[aria-label="Project"]') as HTMLSelectElement | null;
+      assert.ok(select);
+      assert.equal(select.value, "p-billing");
+      assert.ok(pane.textContent?.includes("New billing thread"));
+      assert.ok(!pane.textContent?.includes("Ship ledger"));
+
+      await m.change(select, "");
+      assert.ok(pane.textContent?.includes("New billing thread"));
+      assert.ok(pane.textContent?.includes("Ship ledger"));
+    } finally {
+      m.unmount();
+    }
+  });
+});

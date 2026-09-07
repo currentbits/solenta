@@ -142,7 +142,57 @@ describe("ActivityView", () => {
     m.unmount();
   });
 
-  it("shows the empty state when the scope filters everything out (#598)", async () => {
+  it("header Project select is seeded from projectScope and lists All projects (#944)", async () => {
+    const m = await mount(
+      <ActivityView
+        projects={[p1, p2]}
+        projectScope="p2"
+        listActivity={async () => []}
+        onSelectThread={() => {}}
+      />,
+    );
+    await m.flush();
+    const select = m.query('select[aria-label="Project"]') as HTMLSelectElement | null;
+    assert.ok(select, "labelled Project select");
+    assert.equal(select.value, "p2");
+    const labels = [...select.options].map((o) => o.textContent);
+    assert.ok(labels.includes("All projects"));
+    assert.ok(labels.includes("acme/ledger"));
+    assert.ok(labels.includes("acme/billing"));
+    assert.ok(m.text().includes("Project"), "visible Project label");
+    m.unmount();
+  });
+
+  it("changing the header Project select reports the new scope (#944)", async () => {
+    const seen: Array<string | null> = [];
+    const m = await mount(
+      <ActivityView
+        projects={[p1, p2]}
+        projectScope="p2"
+        listActivity={async () => [
+          item({
+            id: "t2:created:1",
+            threadId: "t2",
+            projectId: "p2",
+            kind: "created",
+            threadTitle: "New billing thread",
+          }),
+        ]}
+        onSelectThread={() => {}}
+        onProjectScopeChange={(id) => {
+          seen.push(id);
+        }}
+      />,
+    );
+    await m.flush();
+    const select = m.query('select[aria-label="Project"]') as HTMLSelectElement;
+    await m.change(select, "");
+    assert.deepEqual(seen, [null]);
+    m.unmount();
+  });
+
+  it("scoped empty state names the project and offers Show all projects (#944)", async () => {
+    const seen: Array<string | null> = [];
     const listActivity = async (): Promise<ActivityItem[]> => [
       item({
         id: "t1:done:1",
@@ -157,10 +207,50 @@ describe("ActivityView", () => {
         projectScope="p2"
         listActivity={listActivity}
         onSelectThread={() => {}}
+        onProjectScopeChange={(id) => {
+          seen.push(id);
+        }}
       />,
     );
     await m.flush();
-    assert.ok(m.text().includes("No activity yet"));
+    assert.equal(
+      m.query("[data-scope-empty]")?.textContent,
+      "No activity in acme/billing",
+    );
+    assert.equal(m.query("[data-activity-row]"), null);
+    const escape = m.byText("Show all projects");
+    assert.ok(escape, "Show all projects escape");
+    await m.click(escape);
+    assert.deepEqual(seen, [null]);
+    m.unmount();
+  });
+
+  it("names a removed project in the header and empty state (#944)", async () => {
+    const m = await mount(
+      <ActivityView
+        projects={[p1]}
+        projectScope="p-gone"
+        listActivity={async () => [
+          item({
+            id: "t1:done:1",
+            threadId: "t1",
+            kind: "done",
+            threadTitle: "Ship ledger",
+          }),
+        ]}
+        onSelectThread={() => {}}
+      />,
+    );
+    await m.flush();
+    const select = m.query('select[aria-label="Project"]') as HTMLSelectElement | null;
+    assert.ok(select);
+    assert.equal(select.value, "p-gone");
+    assert.ok(
+      [...select.options].some((o) => o.textContent === "Removed project"),
+      "explicit removed-project option",
+    );
+    assert.equal(m.query("[data-scope-empty]")?.textContent, "Removed project");
+    assert.ok(m.byText("Show all projects"));
     assert.equal(m.query("[data-activity-row]"), null);
     m.unmount();
   });

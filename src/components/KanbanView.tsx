@@ -12,6 +12,10 @@ import type {
 } from "../shared/ipc";
 import { buildWaitStates } from "../waiting";
 import { ThreadCard } from "./Sidebar";
+import {
+  ProjectScopeSelect,
+  projectScopeLabel,
+} from "./ProjectScopeSelect";
 import styles from "./KanbanView.module.css";
 
 const TICK_MS = 5000;
@@ -23,6 +27,7 @@ export interface KanbanViewProps {
   projectScope?: string | null;
   providers: ProviderInfo[];
   onSelectThread: (id: string) => void;
+  onProjectScopeChange?: (id: string | null) => void;
   onCreateThread?: () => void;
   autoSettleAfterDays?: number | null;
   autoSettleOnMerge?: boolean;
@@ -35,6 +40,7 @@ export function KanbanView({
   projectScope = null,
   providers,
   onSelectThread,
+  onProjectScopeChange,
   onCreateThread,
   autoSettleAfterDays,
   autoSettleOnMerge,
@@ -70,6 +76,7 @@ export function KanbanView({
     [scoped, settleOpts],
   );
   const empty = isKanbanEmpty(columns);
+  const scope = projectScopeLabel(projects, projectScope);
   const waitStates = useMemo(() => buildWaitStates(threads), [threads]);
   const threadTitles = useMemo(() => {
     const titles = new Map<string, string>();
@@ -84,13 +91,37 @@ export function KanbanView({
     <main className={styles.main} data-kanban="">
       <header className={styles.header}>
         <h1 className={styles.title}>Kanban</h1>
+        <div className={styles.controls}>
+          <ProjectScopeSelect
+            projects={projects}
+            value={projectScope}
+            onChange={onProjectScopeChange}
+          />
+        </div>
       </header>
       {empty ? (
         <div className={styles.empty}>
-          <p className={styles.emptyTitle}>No threads on the board</p>
-          <p className={styles.emptyHint}>
-            Start one with New thread in the sidebar.
+          <p className={styles.emptyTitle} data-scope-empty={scope.kind}>
+            {scope.kind === "removed"
+              ? "Removed project"
+              : scope.kind === "project"
+                ? `No threads in ${scope.name}`
+                : "No threads on the board"}
           </p>
+          <p className={styles.emptyHint}>
+            {scope.kind === "removed"
+              ? "This project is no longer in the workspace."
+              : "Start one with New thread in the sidebar."}
+          </p>
+          {scope.kind !== "all" ? (
+            <button
+              type="button"
+              className={styles.showAll}
+              onClick={() => onProjectScopeChange?.(null)}
+            >
+              Show all projects
+            </button>
+          ) : null}
           {onCreateThread ? (
             <button
               type="button"

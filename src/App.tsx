@@ -406,8 +406,17 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
   rememberLastRef.current = settings?.agentsPanelRememberLast === true;
   const hideAgentsRail = agentsCollapsed && !narrow;
 
+  const viewRef = useRef(view);
+  viewRef.current = view;
+  /** Last report the user left for a thread, so Activity/Kanban keep in-view scope (#944). */
+  const returnToReportRef = useRef<"activity" | "kanban" | null>(null);
+
   const handleSelectThread = useCallback(
     (id: string) => {
+      const current = viewRef.current;
+      if (current === "activity" || current === "kanban") {
+        returnToReportRef.current = current;
+      }
       setView("thread");
       setDrawer(null);
       selectThread(id);
@@ -433,7 +442,10 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
   // ones (handoffSource, rosterKey) collapse the churning array to a value
   // that moves when the thing the pane cares about moves.
   const openKanban = useCallback((pid?: string | null) => {
-    setKanbanProjectId(pid ?? null);
+    const returning =
+      viewRef.current === "thread" && returnToReportRef.current === "kanban";
+    if (!returning) setKanbanProjectId(pid ?? null);
+    returnToReportRef.current = null;
     setView("kanban");
   }, []);
   // Unscoped (#597) means "the project I am in": land the board on the
@@ -458,7 +470,10 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     setDrawer(null);
   }, []);
   const openActivity = useCallback((pid?: string | null) => {
-    setActivityProjectId(pid ?? null);
+    const returning =
+      viewRef.current === "thread" && returnToReportRef.current === "activity";
+    if (!returning) setActivityProjectId(pid ?? null);
+    returnToReportRef.current = null;
     setView("activity");
   }, []);
   const openUsage = useCallback(() => {
@@ -1413,6 +1428,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
               projectScope={activityProjectId}
               listActivity={listActivity}
               onSelectThread={handleSelectThread}
+              onProjectScopeChange={setActivityProjectId}
               existingThreadIds={liveThreadIds}
             />
           ) : view === "usage" ? (
@@ -1496,6 +1512,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
               projectScope={kanbanProjectId}
               providers={providers}
               onSelectThread={handleSelectThread}
+              onProjectScopeChange={setKanbanProjectId}
               onCreateThread={handleCreateThreadPlain}
               autoSettleAfterDays={
                 settings == null ? undefined : settings.autoSettleAfterDays

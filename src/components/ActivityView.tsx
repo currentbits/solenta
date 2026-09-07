@@ -2,6 +2,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { activityKindLabel, groupActivityByDay } from "../activity";
 import { formatRelativeAge } from "../format";
 import type { ActivityItem, ProjectInfo } from "../shared/ipc";
+import {
+  ProjectScopeSelect,
+  projectScopeLabel,
+} from "./ProjectScopeSelect";
 import styles from "./ActivityView.module.css";
 
 export interface ActivityViewProps {
@@ -10,6 +14,7 @@ export interface ActivityViewProps {
   projectScope?: string | null;
   listActivity: () => Promise<ActivityItem[]>;
   onSelectThread: (id: string) => void;
+  onProjectScopeChange?: (id: string | null) => void;
   /** Live sidebar ids. Omitted means the list is still loading — treat rows as openable. */
   existingThreadIds?: Iterable<string>;
 }
@@ -19,6 +24,7 @@ export function ActivityView({
   projectScope = null,
   listActivity,
   onSelectThread,
+  onProjectScopeChange,
   existingThreadIds,
 }: ActivityViewProps) {
   const [items, setItems] = useState<ActivityItem[]>([]);
@@ -68,20 +74,28 @@ export function ActivityView({
     return new Set(existingThreadIds);
   }, [existingThreadIds]);
   const empty = !loading && scoped.length === 0;
+  const scope = projectScopeLabel(projects, projectScope);
 
   return (
     <main className={styles.main} data-activity="">
       <header className={styles.header}>
         <h1 className={styles.title}>Activity</h1>
-        <button
-          type="button"
-          className={styles.refresh}
-          onClick={() => void loadAll()}
-          disabled={loading}
-          title="Refresh"
-        >
-          Refresh
-        </button>
+        <div className={styles.controls}>
+          <ProjectScopeSelect
+            projects={projects}
+            value={projectScope}
+            onChange={onProjectScopeChange}
+          />
+          <button
+            type="button"
+            className={styles.refresh}
+            onClick={() => void loadAll()}
+            disabled={loading}
+            title="Refresh"
+          >
+            Refresh
+          </button>
+        </div>
       </header>
 
       {loading && items.length === 0 ? (
@@ -90,10 +104,27 @@ export function ActivityView({
         </p>
       ) : empty ? (
         <div className={styles.empty}>
-          <p className={styles.emptyTitle}>No activity yet</p>
-          <p className={styles.emptyHint}>
-            Runs, replies, and thread updates will show up here.
+          <p className={styles.emptyTitle} data-scope-empty={scope.kind}>
+            {scope.kind === "removed"
+              ? "Removed project"
+              : scope.kind === "project"
+                ? `No activity in ${scope.name}`
+                : "No activity yet"}
           </p>
+          <p className={styles.emptyHint}>
+            {scope.kind === "removed"
+              ? "This project is no longer in the workspace."
+              : "Runs, replies, and thread updates will show up here."}
+          </p>
+          {scope.kind !== "all" ? (
+            <button
+              type="button"
+              className={styles.showAll}
+              onClick={() => onProjectScopeChange?.(null)}
+            >
+              Show all projects
+            </button>
+          ) : null}
         </div>
       ) : (
         <div className={styles.list}>
