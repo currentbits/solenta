@@ -59,6 +59,20 @@
         Every notable change to Solenta, newest first.
       </p>
 
+      <h2 id="v0-19-0">0.19.0 <small>2026-09-07</small></h2>
+      <h3>Added</h3>
+      <ul>
+        <li><strong>Inspector sidebar.</strong> Environment, Agents, Pulse, Memory, and Skills are continuous lists. Memory has a short search toolbar; Skills dropped the repeated subsection counts.</li>
+        <li><strong>Provider marks.</strong> Thread cards show a small harness glyph instead of the provider name.</li>
+        <li><strong>Account usage.</strong> <code>/usage</code> shows live quota windows and reset clocks from Codex, Grok, Claude, and Kimi, not just local spend history.</li>
+      </ul>
+      <h3>Fixed</h3>
+      <ul>
+        <li>A queued follow-up stays visible on the thread instead of looking swallowed while the current turn is still running.</li>
+        <li>Grok 1.0.13 no longer keeps a preview as a managed background task, which used to stall the next queued prompt for up to ten minutes.</li>
+        <li>Codex resume keeps MCP and sandbox flags after <code>exec</code>, so Planboard and memory tools no longer die with a never-approval on GPT threads.</li>
+      </ul>
+
       <h2 id="v0-18-1">0.18.1 <small>2026-09-04</small></h2>
       <h3>Added</h3>
       <ul>
