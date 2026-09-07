@@ -650,6 +650,36 @@ describe("listInvocableCommands", () => {
     assert.equal(byName(rows, "/shipper:deploy")?.hint, "Plugin deploy");
   });
 
+  it("follows plugin.json commands array for Codex plugins", () => {
+    const installPath = path.join(
+      tmp,
+      ".codex",
+      "plugins",
+      "cache",
+      "mp",
+      "custom",
+      "1.0.0",
+    );
+    writePluginCommands(
+      installPath,
+      "custom",
+      [
+        ["slash/foo.md", "Custom slash", "Do foo."],
+        ["commands/default.md", "Default dir", "Should not list."],
+      ],
+      { commands: ["./slash"] },
+    );
+    fs.writeFileSync(
+      path.join(tmp, ".codex", "config.toml"),
+      `[plugins."custom@mp"]\nenabled = true\n`,
+      "utf8",
+    );
+
+    const listed = names(listInvocableCommands({ env: envHome() }));
+    assert.ok(listed.includes("/custom:foo"));
+    assert.ok(!listed.includes("/custom:default"));
+  });
+
   it("namespaces a nameless plugin from the plugin dir, not a missing plugin.json name", () => {
     const localRoot = path.join(tmp, ".cursor", "plugins", "local", "shipper");
     fs.mkdirSync(path.join(localRoot, ".cursor-plugin"), { recursive: true });
@@ -1140,6 +1170,33 @@ describe("expandInvocableCommand", () => {
     assert.ok(hit);
     assert.equal(hit.kind, "command");
     assert.equal(hit.prompt.trim(), "Write a changelog for v0.7.0.");
+  });
+
+  it("expands a Codex plugin command without a prior import", () => {
+    const installPath = path.join(
+      tmp,
+      ".codex",
+      "plugins",
+      "cache",
+      "mp",
+      "shipper",
+      "1.2.3",
+    );
+    writePluginCommands(installPath, "shipper", [
+      ["commands/deploy.md", "Deploy the app", "Ship $ARGUMENTS."],
+    ]);
+    fs.writeFileSync(
+      path.join(tmp, ".codex", "config.toml"),
+      `[plugins."shipper@mp"]\nenabled = true\n`,
+      "utf8",
+    );
+    const hit = expandInvocableCommand("/shipper:deploy v1", {
+      env: envHome(),
+    });
+    assert.ok(hit);
+    assert.equal(hit.name, "/shipper:deploy");
+    assert.equal(hit.kind, "command");
+    assert.equal(hit.prompt.trim(), "Ship v1.");
   });
 
   it("returns null for unknown /foo and for non-slash prompts", () => {
