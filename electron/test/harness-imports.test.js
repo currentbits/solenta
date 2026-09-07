@@ -1665,6 +1665,75 @@ describe("plugin slash commands", () => {
     assert.equal(fs.existsSync(path.join(staged, "hooks")), false);
   });
 
+  it("lists Cursor local plugin commands from CURSOR_HOME and ignores ~/.cursor", async () => {
+    writePluginCommands(
+      path.join(env.HOME, ".cursor", "plugins", "local", "decoy"),
+      "decoy",
+      [["commands/nope.md", "Home decoy", "Do not import."]],
+    );
+    const cursor = path.join(tmp, "cursor-home");
+    writePluginCommands(path.join(cursor, "plugins", "local", "shipper"), "shipper", [
+      ["commands/review.md", "Review the diff", "Review $ARGUMENTS."],
+    ]);
+    writePluginCommands(
+      path.join(cursor, "plugins", "cache", "cursor-public", "github", "abc123"),
+      "github",
+      [["commands/nope.md", "Cached marketplace plugin", "Do not import."]],
+    );
+
+    const preview = await previewImport({
+      userDataPath: userData,
+      source: "cursor",
+      current: [],
+      env: { ...env, CURSOR_HOME: cursor },
+    });
+    const byName = Object.fromEntries(preview.commands.map((c) => [c.name, c]));
+    assert.equal(byName["shipper:review"].origin, "plugin");
+    assert.equal(byName["decoy:nope"], undefined);
+    assert.equal(byName["github:nope"], undefined);
+  });
+
+  it("lists Codex enabled plugin commands from CODEX_HOME and ignores ~/.codex", async () => {
+    const decoy = path.join(env.HOME, ".codex");
+    writePluginCommands(
+      path.join(decoy, "plugins", "cache", "mp", "decoy", "1.0.0"),
+      "decoy",
+      [["commands/nope.md", "Home decoy", "Do not import."]],
+    );
+    writeFile(
+      path.join(decoy, "config.toml"),
+      `[plugins."decoy@mp"]\nenabled = true\n`,
+    );
+    const codex = path.join(tmp, "codex-home");
+    writePluginCommands(
+      path.join(codex, "plugins", "cache", "mp", "shipper", "1.2.3"),
+      "shipper",
+      [["commands/deploy.md", "Deploy the app", "Ship it."]],
+    );
+    writePluginCommands(
+      path.join(codex, "plugins", "cache", "orphan", "ghost", "1.0.0"),
+      "ghost",
+      [["commands/nope.md", "Unlisted cache copy", "Nope."]],
+    );
+    writeFile(
+      path.join(codex, "config.toml"),
+      `[plugins."shipper@mp"]\nenabled = true\n`,
+    );
+
+    const preview = await previewImport({
+      userDataPath: userData,
+      source: "codex",
+      current: [],
+      env: { ...env, CODEX_HOME: codex },
+    });
+    const byName = Object.fromEntries(
+      preview.commands.filter((c) => c.origin === "plugin").map((c) => [c.name, c]),
+    );
+    assert.equal(byName["shipper:deploy"].origin, "plugin");
+    assert.equal(byName["decoy:nope"], undefined);
+    assert.equal(byName["ghost:nope"], undefined);
+  });
+
   it("installs Codex plugin commands into ~/.grok/commands/<plugin>/ and skips them on re-run", async () => {
     const installPath = path.join(
       env.HOME,
