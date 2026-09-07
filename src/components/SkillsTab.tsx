@@ -15,6 +15,11 @@ import type {
   SkillInfo,
   SkillPreviewImportInput,
   SkillWrite,
+  HarnessSourceId,
+  HarnessSourceInfo,
+  HarnessImportPreview,
+  HarnessInstallRequest,
+  HarnessInstallResult,
 } from "../shared/ipc";
 import {
   AddSkillSection,
@@ -22,6 +27,8 @@ import {
   AddedSkillsSection,
   CuratedMcpsSection,
   CuratedSkillsSection,
+  HarnessImportPreviewPanel,
+  HarnessImportSection,
   McpImportPreviewPanel,
   ProjectSkillsSection,
   SkillImportPreviewPanel,
@@ -76,6 +83,15 @@ export interface SkillsTabProps {
     input: SkillInstallRequest,
   ) => Promise<SkillInstallResult>;
   discardSkillImport: (input: { previewId: string }) => Promise<void>;
+  detectHarnessSources: () => Promise<HarnessSourceInfo[]>;
+  previewHarnessImport: (input: {
+    source: HarnessSourceId;
+    projectPath?: string;
+  }) => Promise<HarnessImportPreview>;
+  installHarnessImport: (
+    input: HarnessInstallRequest,
+  ) => Promise<HarnessInstallResult>;
+  discardHarnessImport: (input: { previewId: string }) => Promise<void>;
 }
 
 function errorMessage(err: unknown): string {
@@ -101,6 +117,57 @@ function copiedMessage(copied: number): string {
 
 function installedMessage(count: number): string {
   return count === 1 ? "Installed 1 skill" : `Installed ${count} skills`;
+}
+
+function harnessItemIds(preview: HarnessImportPreview): string[] {
+  const ids = [
+    ...preview.skills.map((s) => s.id),
+    ...preview.commands.map((s) => s.id),
+    ...preview.mcp.map((s) => s.id),
+    ...preview.memories.map((s) => s.id),
+    ...preview.instructions.map((s) => s.id),
+  ];
+  if (preview.settings) ids.push(preview.settings.id);
+  return ids;
+}
+
+function harnessRemainingIds(preview: HarnessImportPreview): string[] {
+  const ids: string[] = [];
+  for (const row of [
+    ...preview.skills,
+    ...preview.commands,
+    ...preview.mcp,
+    ...preview.memories,
+    ...preview.instructions,
+  ]) {
+    if (!row.alreadyImported) ids.push(row.id);
+  }
+  if (preview.settings && !preview.settings.alreadyImported) {
+    ids.push(preview.settings.id);
+  }
+  return ids;
+}
+
+function harnessStatusMessage(result: HarnessInstallResult): string {
+  const counts = { installed: 0, stored: 0, skipped: 0, replaced: 0 };
+  const bump = (status: string) => {
+    if (status === "installed") counts.installed += 1;
+    else if (status === "stored") counts.stored += 1;
+    else if (status === "replaced") counts.replaced += 1;
+    else counts.skipped += 1;
+  };
+  for (const row of result.skills) bump(row.status);
+  for (const row of result.commands) bump(row.status);
+  for (const row of result.mcp) bump(row.status);
+  for (const row of result.memories) bump(row.status);
+  for (const row of result.instructions) bump(row.status);
+  if (result.settings) bump(result.settings.status);
+  const parts = [];
+  if (counts.installed) parts.push(`Imported ${counts.installed}`);
+  if (counts.stored) parts.push(`stored ${counts.stored}`);
+  if (counts.replaced) parts.push(`replaced ${counts.replaced}`);
+  if (counts.skipped) parts.push(`skipped ${counts.skipped} already present`);
+  return parts.join(", ") || "Nothing new to import";
 }
 
 function installStatusMessage(result: SkillInstallResult): string {
@@ -153,6 +220,10 @@ export function SkillsTab({
   previewSkillImport,
   installSkillImport,
   discardSkillImport,
+  detectHarnessSources,
+  previewHarnessImport,
+  installHarnessImport,
+  discardHarnessImport,
 }: SkillsTabProps) {
   const [mcpServers, setMcpServers] = useState<McpServerDefinition[]>([]);
 
@@ -204,8 +275,22 @@ export function SkillsTab({
   const [replace, setReplace] = useState(false);
   const [trusted, setTrusted] = useState(false);
 
+  const [harnessSources, setHarnessSources] = useState<HarnessSourceInfo[]>([]);
+  const [harnessPreview, setHarnessPreview] =
+    useState<HarnessImportPreview | null>(null);
+  const [harnessSelected, setHarnessSelected] = useState<Set<string>>(
+    new Set(),
+  );
+  const [harnessReplace, setHarnessReplace] = useState(false);
+  const [harnessTrust, setHarnessTrust] = useState(false);
+  const [harnessError, setHarnessError] = useState<string | null>(null);
+
   const mountedRef = useRef(true);
   const previewIdRef = useRef<string | null>(null);
+  const harnessPreviewIdRef = useRef<string | null>(null);
+  const harnessDiscardedRef = useRef(new Set<string>());
+  const harnessDiscardFnRef = useRef(discardHarnessImport);
+  harnessDiscardFnRef.current = discardHarnessImport;
   const importLockRef = useRef(false);
   const generationRef = useRef(0);
   const discardedRef = useRef(new Set<string>());
@@ -226,6 +311,15 @@ export function SkillsTab({
     void mcpDiscardFnRef.current({ previewId }).catch(() => {});
   };
 
+  const discardHarnessOnce = (previewId: string | null | undefined) => {
+    if (!previewId || harnessDiscardedRef.current.has(previewId)) return;
+    harnessDiscardedRef.current.add(previewId);
+    if (harnessPreviewIdRef.current === previewId) {
+      harnessPreviewIdRef.current = null;
+    }
+    void harnessDiscardFnRef.current({ previewId }).catch(() => {});
+  };
+
   useEffect(() => {
     mountedRef.current = true;
     return () => {
@@ -234,6 +328,7 @@ export function SkillsTab({
       importLockRef.current = false;
       discardOnce(previewIdRef.current);
       discardMcpOnce(mcpPreviewIdRef.current);
+      discardHarnessOnce(harnessPreviewIdRef.current);
     };
   }, []);
 
@@ -290,6 +385,20 @@ export function SkillsTab({
   useEffect(() => {
     void reloadAll();
   }, [reloadAll]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void detectHarnessSources()
+      .then((rows) => {
+        if (!cancelled && mountedRef.current) setHarnessSources(rows);
+      })
+      .catch(() => {
+        if (!cancelled && mountedRef.current) setHarnessSources([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [detectHarnessSources]);
 
   const runMcp = async (fn: () => Promise<void>): Promise<boolean> => {
     setMcpBusy(true);
@@ -705,6 +814,99 @@ export function SkillsTab({
     }
   };
 
+  const handleHarnessScan = async (source: HarnessSourceId) => {
+    if (importLockRef.current) return;
+    importLockRef.current = true;
+    const gen = ++generationRef.current;
+    const previousId = harnessPreviewIdRef.current;
+    setSkillBusy(true);
+    setHarnessError(null);
+    try {
+      const next = await previewHarnessImport({
+        source,
+        projectPath: projectPath || undefined,
+      });
+      if (!mountedRef.current || gen !== generationRef.current) {
+        discardHarnessOnce(next.previewId);
+        return;
+      }
+      harnessPreviewIdRef.current = next.previewId;
+      setHarnessPreview(next);
+      setHarnessSelected(new Set(harnessRemainingIds(next)));
+      setHarnessReplace(false);
+      setHarnessTrust(false);
+      if (previousId && previousId !== next.previewId) {
+        discardHarnessOnce(previousId);
+      }
+    } catch (err) {
+      if (mountedRef.current && gen === generationRef.current) {
+        setHarnessError(errorMessage(err));
+      }
+    } finally {
+      if (gen === generationRef.current) {
+        importLockRef.current = false;
+        if (mountedRef.current) setSkillBusy(false);
+      }
+    }
+  };
+
+  const handleDiscardHarness = () => {
+    const id = harnessPreviewIdRef.current ?? harnessPreview?.previewId ?? null;
+    if (!id || importLockRef.current) return;
+    discardHarnessOnce(id);
+    setHarnessPreview(null);
+    setHarnessError(null);
+  };
+
+  const handleInstallHarness = async () => {
+    if (!harnessPreview || importLockRef.current) return;
+    const chosen = [...harnessSelected];
+    if (!chosen.length) return;
+    const needsTrust = harnessPreview.mcp.some(
+      (s) => harnessSelected.has(s.id) && s.requiresTrust,
+    );
+    const hasCollision = [...harnessPreview.skills, ...harnessPreview.mcp].some(
+      (row) => harnessSelected.has(row.id) && row.alreadyImported,
+    );
+    if (hasCollision && !harnessReplace) return;
+    if (needsTrust && !harnessTrust) return;
+    importLockRef.current = true;
+    const gen = ++generationRef.current;
+    const previewId = harnessPreview.previewId;
+    harnessPreviewIdRef.current = null;
+    setSkillBusy(true);
+    setHarnessError(null);
+    try {
+      const result = await installHarnessImport({
+        previewId,
+        selected: chosen,
+        replace: harnessReplace,
+        trustLocal: needsTrust ? harnessTrust : false,
+        projectPath: projectPath || undefined,
+      });
+      harnessDiscardedRef.current.add(previewId);
+      if (!mountedRef.current || gen !== generationRef.current) return;
+      setHarnessPreview(null);
+      setHarnessReplace(false);
+      setHarnessTrust(false);
+      await reloadAll();
+      if (!mountedRef.current || gen !== generationRef.current) return;
+      setStatusMessage(harnessStatusMessage(result));
+    } catch (err) {
+      if (!mountedRef.current || gen !== generationRef.current) {
+        discardHarnessOnce(previewId);
+        return;
+      }
+      harnessPreviewIdRef.current = previewId;
+      setHarnessError(errorMessage(err));
+    } finally {
+      if (gen === generationRef.current) {
+        importLockRef.current = false;
+        if (mountedRef.current) setSkillBusy(false);
+      }
+    }
+  };
+
   const addedSkills = skills.filter((s) => s.provenance === "added");
   const projectSkills = skills.filter((s) => s.provenance === "project");
   const hasDrift = skills.some(
@@ -777,6 +979,40 @@ export function SkillsTab({
           >
             {statusMessage ?? ""}
           </p>
+          <HarnessImportSection
+            sources={harnessSources}
+            busy={skillBusy}
+            error={harnessPreview ? null : harnessError}
+            onScan={(id) => void handleHarnessScan(id)}
+          />
+          {harnessPreview && (
+            <HarnessImportPreviewPanel
+              preview={harnessPreview}
+              selected={harnessSelected}
+              replace={harnessReplace}
+              trusted={harnessTrust}
+              busy={skillBusy}
+              error={harnessError}
+              onToggle={(id) => {
+                setHarnessSelected((prev) => {
+                  const next = new Set(prev);
+                  if (next.has(id)) next.delete(id);
+                  else next.add(id);
+                  return next;
+                });
+              }}
+              onReplace={setHarnessReplace}
+              onTrust={setHarnessTrust}
+              onSelectRemaining={() =>
+                setHarnessSelected(new Set(harnessRemainingIds(harnessPreview)))
+              }
+              onSelectAll={() =>
+                setHarnessSelected(new Set(harnessItemIds(harnessPreview)))
+              }
+              onInstall={() => void handleInstallHarness()}
+              onCancel={() => handleDiscardHarness()}
+            />
+          )}
           <CuratedSkillsSection
             catalog={catalog}
             loading={catalogLoading}

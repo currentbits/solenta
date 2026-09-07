@@ -63,6 +63,10 @@ import type {
   SkillInfo,
   SkillPreviewImportInput,
   SkillTarget,
+  HarnessSourceId,
+  HarnessImportPreview,
+  HarnessInstallRequest,
+  HarnessInstallResult,
   SpaceInfo,
   StayAwakeStatus,
   ThreadDetail,
@@ -457,6 +461,48 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
       { provider: "commands", label: "Commands", status: "covered" },
     ];
   }
+
+  function cannedHarnessPreview(source: HarnessSourceId): HarnessImportPreview {
+    const labels = {
+      claude: "Claude Code",
+      cursor: "Cursor",
+      codex: "Codex",
+    } as const;
+    return {
+      previewId: "h".repeat(32),
+      source: { id: source, label: labels[source] },
+      skills: [
+        {
+          id: "skill:house-style",
+          name: "house-style",
+          description: "Imported house style",
+          origin: "skills",
+          bytes: 80,
+          alreadyImported: false,
+          warnings: [],
+        },
+      ],
+      commands: source === "claude"
+        ? [
+            {
+              id: "command:user:draft",
+              name: "draft",
+              description: "Draft a changelog",
+              origin: "user" as const,
+              bytes: 40,
+              alreadyImported: false,
+            },
+          ]
+        : [],
+      mcp: [],
+      memories: [],
+      instructions: [],
+      settings: null,
+      warnings: [],
+    };
+  }
+
+  let pendingHarnessPreview: HarnessImportPreview | null = null;
   let skillsState: SkillInfo[] = [
     {
       name: "review-pr",
@@ -1241,6 +1287,71 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
       },
       discardImport: (input: { previewId: string }) =>
         rec("skills.discardImport", [input], undefined),
+    },
+    harness: {
+      detectSources: () =>
+        rec("harness.detectSources", [], [
+          { id: "claude" as const, label: "Claude Code", present: true },
+          { id: "cursor" as const, label: "Cursor", present: false },
+          { id: "codex" as const, label: "Codex", present: false },
+        ]),
+      previewImport: (input: { source: HarnessSourceId; projectPath?: string }) => {
+        pendingHarnessPreview = cannedHarnessPreview(input.source);
+        return rec("harness.previewImport", [input], pendingHarnessPreview);
+      },
+      installImport: (input: HarnessInstallRequest) => {
+        if (
+          !pendingHarnessPreview ||
+          pendingHarnessPreview.previewId !== input.previewId
+        ) {
+          calls.push({ channel: "harness.installImport", args: [input] });
+          return Promise.reject(new Error("Import preview is invalid"));
+        }
+        const installedIn = [...ALL_SKILL_TARGETS];
+        const skills: HarnessInstallResult["skills"] = [];
+        const commands: HarnessInstallResult["commands"] = [];
+        for (const id of input.selected) {
+          if (id.startsWith("command:")) {
+            commands.push({
+              name: id.replace(/^command:(?:user|project):/, ""),
+              status: "installed",
+            });
+            continue;
+          }
+          if (!id.startsWith("skill:")) continue;
+          const name = id.slice("skill:".length);
+          skillsState = [
+            ...skillsState.filter(
+              (s) => !(s.name === name && s.source !== "project"),
+            ),
+            {
+              name,
+              description: name,
+              source: "claude",
+              installedIn,
+              missingFrom: [],
+              bytes: 80,
+              provenance: "added",
+            },
+          ];
+          skills.push({ name, status: "installed" });
+        }
+        pendingHarnessPreview = null;
+        return rec("harness.installImport", [input], {
+          skills,
+          commands,
+          mcp: [],
+          memories: [],
+          instructions: [],
+          settings: null,
+        } satisfies HarnessInstallResult);
+      },
+      discardImport: (input: { previewId: string }) => {
+        if (pendingHarnessPreview?.previewId === input.previewId) {
+          pendingHarnessPreview = null;
+        }
+        return rec("harness.discardImport", [input], undefined);
+      },
     },
     providers: { list: () => rec("providers.list", [], providers) },
     sourceControl: {

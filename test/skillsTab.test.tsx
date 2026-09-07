@@ -27,6 +27,11 @@ import type {
   SkillPreviewImportInput,
   SkillTarget,
   SkillWrite,
+  HarnessSourceId,
+  HarnessSourceInfo,
+  HarnessImportPreview,
+  HarnessInstallRequest,
+  HarnessInstallResult,
 } from "../src/shared/ipc";
 
 afterEach(unmountAll);
@@ -200,6 +205,16 @@ interface HarnessOptions {
     input: SkillInstallRequest,
   ) => SkillInstallResult | void;
   onDiscardSkillImport?: (input: { previewId: string }) => void;
+  harnessSources?: HarnessSourceInfo[];
+  onDetectHarnessSources?: () => HarnessSourceInfo[];
+  onPreviewHarnessImport?: (input: {
+    source: HarnessSourceId;
+    projectPath?: string;
+  }) => HarnessImportPreview;
+  onInstallHarnessImport?: (
+    input: HarnessInstallRequest,
+  ) => HarnessInstallResult | void;
+  onDiscardHarnessImport?: (input: { previewId: string }) => void;
 }
 
 /**
@@ -355,6 +370,73 @@ function Harness(opts: HarnessOptions) {
       }}
       discardSkillImport={async (input) => {
         opts.onDiscardSkillImport?.(input);
+      }}
+      detectHarnessSources={async () =>
+        opts.onDetectHarnessSources?.() ??
+        opts.harnessSources ?? [
+          { id: "claude", label: "Claude Code", present: true },
+          { id: "cursor", label: "Cursor", present: false },
+          { id: "codex", label: "Codex", present: false },
+        ]
+      }
+      previewHarnessImport={async (input) => {
+        if (opts.onPreviewHarnessImport) return opts.onPreviewHarnessImport(input);
+        return {
+          previewId: "h".repeat(32),
+          source: { id: input.source, label: "Claude Code" },
+          skills: [
+            {
+              id: "skill:house-style",
+              name: "house-style",
+              description: "Imported house style",
+              origin: "skills",
+              bytes: 80,
+              alreadyImported: false,
+              warnings: [],
+            },
+            {
+              id: "skill:already",
+              name: "already",
+              description: "Already present",
+              origin: "skills",
+              bytes: 40,
+              alreadyImported: true,
+              warnings: [],
+            },
+          ],
+          commands: [],
+          mcp: [],
+          memories: [],
+          instructions: [],
+          settings: null,
+          warnings: [],
+        };
+      }}
+      installHarnessImport={async (input) => {
+        const override = opts.onInstallHarnessImport?.(input);
+        return (
+          override ?? {
+            skills: input.selected
+              .filter((id) => id.startsWith("skill:"))
+              .map((id) => ({
+                name: id.slice("skill:".length),
+                status: "installed" as const,
+              })),
+            commands: input.selected
+              .filter((id) => id.startsWith("command:"))
+              .map((id) => ({
+                name: id.replace(/^command:(?:user|project):/, ""),
+                status: "installed" as const,
+              })),
+            mcp: [],
+            memories: [],
+            instructions: [],
+            settings: null,
+          }
+        );
+      }}
+      discardHarnessImport={async (input) => {
+        opts.onDiscardHarnessImport?.(input);
       }}
       addSkill={async (input) => {
         opts.onAddSkill?.(input);
@@ -2181,5 +2263,148 @@ describe("SkillsTab import preview", () => {
     assert.deepEqual(discarded, []);
     m.unmount();
     assert.deepEqual(discarded, []);
+  });
+});
+
+describe("SkillsTab harness import", () => {
+  it("scans Claude Code, selects remaining, and installs them", async () => {
+    const installed: HarnessInstallRequest[] = [];
+    const m = await mount(
+      <Harness
+        onInstallHarnessImport={(input) => {
+          installed.push(input);
+        }}
+      />,
+    );
+    const claude = m.query(
+      '[data-harness-source="claude"]',
+    ) as HTMLButtonElement | null;
+    const cursor = m.query(
+      '[data-harness-source="cursor"]',
+    ) as HTMLButtonElement | null;
+    assert.ok(claude);
+    assert.equal(claude?.disabled, false);
+    assert.equal(cursor?.disabled, true);
+    await m.click(claude);
+    const panel = m.query("[data-harness-preview]");
+    assert.ok(panel);
+    const remaining = m.query(
+      'input[aria-label="Select house-style"]',
+    ) as HTMLInputElement | null;
+    const already = m.query(
+      'input[aria-label="Select already"]',
+    ) as HTMLInputElement | null;
+    assert.equal(remaining?.checked, true);
+    assert.equal(already?.checked, false);
+    await m.click(m.byText("Import selected"));
+    assert.equal(installed.length, 1);
+    assert.deepEqual(installed[0].selected, ["skill:house-style"]);
+    m.unmount();
+  });
+
+  it("lists slash commands and leaves already-imported ones unchecked", async () => {
+    const installed: HarnessInstallRequest[] = [];
+    const m = await mount(
+      <Harness
+        onPreviewHarnessImport={() => ({
+          previewId: "c".repeat(32),
+          source: { id: "claude", label: "Claude Code" },
+          skills: [],
+          commands: [
+            {
+              id: "command:user:draft",
+              name: "draft",
+              description: "Draft a changelog",
+              origin: "user",
+              bytes: 40,
+              alreadyImported: false,
+            },
+            {
+              id: "command:user:git:pr",
+              name: "git:pr",
+              description: "Open a pull request",
+              origin: "user",
+              bytes: 20,
+              alreadyImported: true,
+            },
+          ],
+          mcp: [],
+          memories: [],
+          instructions: [],
+          settings: null,
+          warnings: [],
+        })}
+        onInstallHarnessImport={(input) => {
+          installed.push(input);
+        }}
+      />,
+    );
+    await m.click(m.query('[data-harness-source="claude"]') as HTMLButtonElement);
+    assert.ok(m.byText("/draft"));
+    assert.ok(m.byText("/git:pr"));
+    const remaining = m.query(
+      'input[aria-label="Select /draft"]',
+    ) as HTMLInputElement | null;
+    const already = m.query(
+      'input[aria-label="Select /git:pr"]',
+    ) as HTMLInputElement | null;
+    assert.equal(remaining?.checked, true);
+    assert.equal(already?.checked, false);
+    await m.click(m.byText("Import selected"));
+    assert.deepEqual(installed[0].selected, ["command:user:draft"]);
+    m.unmount();
+  });
+
+  it("lists plugin slash commands on the harness preview", async () => {
+    const installed: HarnessInstallRequest[] = [];
+    const m = await mount(
+      <Harness
+        onPreviewHarnessImport={() => ({
+          previewId: "d".repeat(32),
+          source: { id: "claude", label: "Claude Code" },
+          skills: [],
+          commands: [
+            {
+              id: "command:plugin:shipper:review",
+              name: "shipper:review",
+              description: "Review the diff",
+              origin: "plugin",
+              bytes: 40,
+              alreadyImported: false,
+            },
+            {
+              id: "command:plugin:shipper:git:pr",
+              name: "shipper:git:pr",
+              description: "Open a pull request",
+              origin: "plugin",
+              bytes: 20,
+              alreadyImported: true,
+            },
+          ],
+          mcp: [],
+          memories: [],
+          instructions: [],
+          settings: null,
+          warnings: [],
+        })}
+        onInstallHarnessImport={(input) => {
+          installed.push(input);
+        }}
+      />,
+    );
+    await m.click(m.query('[data-harness-source="claude"]') as HTMLButtonElement);
+    assert.ok(m.byText("/shipper:review"));
+    assert.ok(m.byText("/shipper:git:pr"));
+    const remaining = m.query(
+      'input[aria-label="Select /shipper:review"]',
+    ) as HTMLInputElement | null;
+    const already = m.query(
+      'input[aria-label="Select /shipper:git:pr"]',
+    ) as HTMLInputElement | null;
+    assert.equal(remaining?.checked, true);
+    assert.equal(already?.checked, false);
+    await m.click(m.byText("Import selected"));
+    assert.deepEqual(installed[0].selected, ["command:plugin:shipper:review"]);
+    m.unmount();
   });
 });

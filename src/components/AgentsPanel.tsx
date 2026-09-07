@@ -46,6 +46,11 @@ import type {
   SkillPreviewImportInput,
   SkillTarget,
   SkillWrite,
+  HarnessSourceId,
+  HarnessSourceInfo,
+  HarnessImportPreview,
+  HarnessInstallRequest,
+  HarnessInstallResult,
   ThreadInfo,
   ThreadSummaryInfo,
   CrewTaskView,
@@ -249,6 +254,15 @@ interface AgentsPanelProps {
     input: SkillInstallRequest,
   ) => Promise<SkillInstallResult>;
   discardSkillImport: (input: { previewId: string }) => Promise<void>;
+  detectHarnessSources: () => Promise<HarnessSourceInfo[]>;
+  previewHarnessImport: (input: {
+    source: HarnessSourceId;
+    projectPath?: string;
+  }) => Promise<HarnessImportPreview>;
+  installHarnessImport: (
+    input: HarnessInstallRequest,
+  ) => Promise<HarnessInstallResult>;
+  discardHarnessImport: (input: { previewId: string }) => Promise<void>;
   /** Center-pane view, so Pulse/Environment can mark the active destination. */
   activeView?: string;
   /** Bump to force the Agents tab (worker-header "Crew integration on lead"). */
@@ -3256,6 +3270,10 @@ export const AgentsPanel = memo(function AgentsPanel({
   previewSkillImport,
   installSkillImport,
   discardSkillImport,
+  detectHarnessSources,
+  previewHarnessImport,
+  installHarnessImport,
+  discardHarnessImport,
   activeView,
   onOpenPrs,
   onOpenAutomations,
@@ -3435,6 +3453,10 @@ export const AgentsPanel = memo(function AgentsPanel({
           previewSkillImport={previewSkillImport}
           installSkillImport={installSkillImport}
           discardSkillImport={discardSkillImport}
+          detectHarnessSources={detectHarnessSources}
+          previewHarnessImport={previewHarnessImport}
+          installHarnessImport={installHarnessImport}
+          discardHarnessImport={discardHarnessImport}
         />
       ) : (
         <PulseTab

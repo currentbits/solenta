@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import type {
   McpCatalogEntry,
   McpImportPreview,
@@ -9,6 +10,12 @@ import type {
   SkillInfo,
   SkillPluginExtra,
   SkillTarget,
+  HarnessSourceInfo,
+  HarnessImportPreview,
+  HarnessSkillRow,
+  HarnessCommandRow,
+  HarnessMcpRow,
+  HarnessTextRow,
 } from "../shared/ipc";
 import styles from "./SkillsTab.module.css";
 
@@ -1022,6 +1029,318 @@ export function SkillInstallResultPanel({
           ))}
         </div>
       ))}
+    </section>
+  );
+}
+
+export function HarnessImportSection({
+  sources,
+  busy,
+  error,
+  onScan,
+}: {
+  sources: HarnessSourceInfo[];
+  busy: boolean;
+  error: string | null;
+  onScan: (id: HarnessSourceInfo["id"]) => void;
+}) {
+  return (
+    <section
+      className={styles.subSection}
+      aria-label="Import from other tools"
+      data-harness-import
+    >
+      <div className={styles.sectionLabel}>Import from other tools</div>
+      <p className={styles.rowDetail}>
+        One-way copy of skills, slash commands, MCP servers, memories, and
+        instruction files. Provider homes stay on disk.
+      </p>
+      <div className={styles.addActions}>
+        {sources.map((source) => (
+          <button
+            key={source.id}
+            type="button"
+            className={styles.ghostBtn}
+            disabled={busy || !source.present}
+            data-harness-source={source.id}
+            aria-label={`Import from ${source.label}`}
+            onClick={() => onScan(source.id)}
+          >
+            {source.label}
+          </button>
+        ))}
+      </div>
+      {error && (
+        <p className={styles.formError} role="alert">
+          {error}
+        </p>
+      )}
+    </section>
+  );
+}
+
+function HarnessCheckRow({
+  id,
+  name,
+  detail,
+  alreadyImported,
+  extra,
+  selected,
+  busy,
+  onToggle,
+}: {
+  id: string;
+  name: string;
+  detail?: string;
+  alreadyImported: boolean;
+  extra?: string;
+  selected: ReadonlySet<string>;
+  busy: boolean;
+  onToggle: (id: string) => void;
+}) {
+  return (
+    <li className={styles.checkRow}>
+      <label className={styles.checkLabel}>
+        <input
+          type="checkbox"
+          checked={selected.has(id)}
+          disabled={busy}
+          aria-label={`Select ${name}`}
+          onChange={() => onToggle(id)}
+        />
+        <span className={styles.rowMain}>
+          <span className={styles.rowName}>{name}</span>
+          {detail && <span className={styles.rowDetail}>{detail}</span>}
+        </span>
+      </label>
+      {alreadyImported && <span className={styles.drift}>Already imported</span>}
+      {extra && <span className={styles.drift}>{extra}</span>}
+    </li>
+  );
+}
+
+export function HarnessImportPreviewPanel({
+  preview,
+  selected,
+  replace,
+  trusted,
+  busy,
+  error,
+  onToggle,
+  onReplace,
+  onTrust,
+  onSelectRemaining,
+  onSelectAll,
+  onInstall,
+  onCancel,
+}: {
+  preview: HarnessImportPreview;
+  selected: ReadonlySet<string>;
+  replace: boolean;
+  trusted: boolean;
+  busy: boolean;
+  error: string | null;
+  onToggle: (id: string) => void;
+  onReplace: (value: boolean) => void;
+  onTrust: (value: boolean) => void;
+  onSelectRemaining: () => void;
+  onSelectAll: () => void;
+  onInstall: () => void;
+  onCancel: () => void;
+}) {
+  const selectedMcp = preview.mcp.filter((s) => selected.has(s.id));
+  const needsTrust = selectedMcp.some((s) => s.requiresTrust);
+  const hasCollision = [
+    ...preview.skills,
+    ...preview.commands,
+    ...preview.mcp,
+  ].some((row) => selected.has(row.id) && row.alreadyImported);
+  const canInstall =
+    selected.size > 0 && (!hasCollision || replace) && (!needsTrust || trusted);
+
+  function section<T extends { id: string }>(
+    label: string,
+    rows: T[],
+    render: (row: T) => ReactNode,
+  ) {
+    if (!rows.length) return null;
+    return (
+      <>
+        <div className={styles.formLabel}>{label}</div>
+        <ul className={styles.checkList}>{rows.map(render)}</ul>
+      </>
+    );
+  }
+
+  return (
+    <section
+      className={styles.preview}
+      aria-label="Harness import preview"
+      data-harness-preview
+    >
+      <div className={styles.formLabel}>Import from {preview.source.label}</div>
+      <div className={styles.addActions}>
+        <button
+          type="button"
+          className={styles.ghostBtn}
+          disabled={busy}
+          onClick={() => onSelectRemaining()}
+        >
+          Import remaining
+        </button>
+        <button
+          type="button"
+          className={styles.ghostBtn}
+          disabled={busy}
+          onClick={() => onSelectAll()}
+        >
+          Import all
+        </button>
+      </div>
+      {section("Skills", preview.skills, (skill: HarnessSkillRow) => (
+        <HarnessCheckRow
+          key={skill.id}
+          id={skill.id}
+          name={skill.name}
+          detail={skill.description || skill.origin}
+          alreadyImported={skill.alreadyImported}
+          selected={selected}
+          busy={busy}
+          onToggle={onToggle}
+        />
+      ))}
+      {section("Commands", preview.commands, (cmd: HarnessCommandRow) => (
+        <HarnessCheckRow
+          key={cmd.id}
+          id={cmd.id}
+          name={`/${cmd.name}`}
+          detail={
+            cmd.description ||
+            (cmd.origin === "project"
+              ? "project command"
+              : cmd.origin === "plugin"
+                ? "plugin command"
+                : "user command")
+          }
+          alreadyImported={cmd.alreadyImported}
+          selected={selected}
+          busy={busy}
+          onToggle={onToggle}
+        />
+      ))}
+      {section("MCP servers", preview.mcp, (server: HarnessMcpRow) => (
+        <HarnessCheckRow
+          key={server.id}
+          id={server.id}
+          name={server.name}
+          detail={
+            server.transport === "stdio"
+              ? `${server.transport} · ${server.command || ""}`
+              : `${server.transport} · ${server.url || ""}`
+          }
+          alreadyImported={server.alreadyImported}
+          extra={server.requiresTrust ? "Needs trust" : undefined}
+          selected={selected}
+          busy={busy}
+          onToggle={onToggle}
+        />
+      ))}
+      {section("Memories", preview.memories, (row: HarnessTextRow) => (
+        <HarnessCheckRow
+          key={row.id}
+          id={row.id}
+          name={row.title}
+          detail={row.excerpt}
+          alreadyImported={row.alreadyImported}
+          selected={selected}
+          busy={busy}
+          onToggle={onToggle}
+        />
+      ))}
+      {section("Instructions", preview.instructions, (row: HarnessTextRow) => (
+        <HarnessCheckRow
+          key={row.id}
+          id={row.id}
+          name={row.title}
+          detail={row.excerpt}
+          alreadyImported={row.alreadyImported}
+          selected={selected}
+          busy={busy}
+          onToggle={onToggle}
+        />
+      ))}
+      {preview.settings && (
+        <>
+          <div className={styles.formLabel}>Settings</div>
+          <ul className={styles.checkList}>
+            <HarnessCheckRow
+              id={preview.settings.id}
+              name={preview.settings.title}
+              detail={preview.settings.summary}
+              alreadyImported={preview.settings.alreadyImported}
+              selected={selected}
+              busy={busy}
+              onToggle={onToggle}
+            />
+          </ul>
+        </>
+      )}
+      {preview.warnings.length > 0 && (
+        <ul className={styles.warnList}>
+          {preview.warnings.map((warning) => (
+            <li key={warning} className={styles.pathWrap}>
+              {warning}
+            </li>
+          ))}
+        </ul>
+      )}
+      {hasCollision && (
+        <label className={styles.checkLabel}>
+          <input
+            type="checkbox"
+            checked={replace}
+            disabled={busy}
+            aria-label="Replace existing items"
+            onChange={(e) => onReplace(e.target.checked)}
+          />
+          Replace existing items
+        </label>
+      )}
+      {needsTrust && (
+        <label className={styles.checkLabel}>
+          <input
+            type="checkbox"
+            checked={trusted}
+            disabled={busy}
+            aria-label="Trust local MCP commands"
+            onChange={(e) => onTrust(e.target.checked)}
+          />
+          Trust local MCP commands. Preview did not execute them.
+        </label>
+      )}
+      {error && (
+        <p className={styles.formError} role="alert">
+          {error}
+        </p>
+      )}
+      <div className={styles.addActions}>
+        <button
+          type="button"
+          className={styles.ghostBtn}
+          disabled={busy || !canInstall}
+          onClick={() => onInstall()}
+        >
+          {busy ? "Importing…" : "Import selected"}
+        </button>
+        <button
+          type="button"
+          className={styles.ghostBtn}
+          disabled={busy}
+          onClick={() => onCancel()}
+        >
+          Cancel
+        </button>
+      </div>
     </section>
   );
 }

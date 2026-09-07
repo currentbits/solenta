@@ -64,6 +64,11 @@ import type {
   SkillPreviewImportInput,
   SkillTarget,
   SkillWrite,
+  HarnessSourceId,
+  HarnessSourceInfo,
+  HarnessImportPreview,
+  HarnessInstallRequest,
+  HarnessInstallResult,
   SimulatorStatus,
   SpecArtifact,
   StayAwakeMode,
@@ -707,6 +712,15 @@ export interface UseCoderResult {
     input: SkillInstallRequest,
   ) => Promise<SkillInstallResult>;
   discardSkillImport: (input: { previewId: string }) => Promise<void>;
+  detectHarnessSources: () => Promise<HarnessSourceInfo[]>;
+  previewHarnessImport: (input: {
+    source: HarnessSourceId;
+    projectPath?: string;
+  }) => Promise<HarnessImportPreview>;
+  installHarnessImport: (
+    input: HarnessInstallRequest,
+  ) => Promise<HarnessInstallResult>;
+  discardHarnessImport: (input: { previewId: string }) => Promise<void>;
   listCliCommands: (input?: {
     projectPath?: string;
   }) => Promise<CliSlashCommand[]>;
@@ -3386,6 +3400,31 @@ export function useCoder(): UseCoderResult {
     [api],
   );
 
+  const detectHarnessSources = useCallback(async () => {
+    return api.harness.detectSources();
+  }, [api]);
+
+  const previewHarnessImport = useCallback(
+    async (input: { source: HarnessSourceId; projectPath?: string }) => {
+      return api.harness.previewImport(input);
+    },
+    [api],
+  );
+
+  const installHarnessImport = useCallback(
+    async (input: HarnessInstallRequest) => {
+      return api.harness.installImport(input);
+    },
+    [api],
+  );
+
+  const discardHarnessImport = useCallback(
+    async (input: { previewId: string }) => {
+      return api.harness.discardImport(input);
+    },
+    [api],
+  );
+
   const listCliCommands = useCallback(
     async (input?: { projectPath?: string }) => {
       return api.skills.commands(input);
@@ -3619,6 +3658,10 @@ export function useCoder(): UseCoderResult {
     previewSkillImport,
     installSkillImport,
     discardSkillImport,
+    detectHarnessSources,
+    previewHarnessImport,
+    installHarnessImport,
+    discardHarnessImport,
     listCliCommands,
     listCliSessions,
     importCliSession,

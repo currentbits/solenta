@@ -73,6 +73,10 @@ import type {
   SkillCatalogEntry,
   SkillImportPreview,
   SkillInstallRequest,
+  HarnessSourceId,
+  HarnessImportPreview,
+  HarnessInstallRequest,
+  HarnessInstallResult,
   SkillInstallResult,
   SkillPluginExtra,
   SkillPluginInstallResult,
@@ -1815,6 +1819,48 @@ function buildDevCoder(): CoderApi {
       { provider: "commands", label: "Commands", status: "covered" },
     ];
   }
+
+  function cannedHarnessPreview(source: HarnessSourceId): HarnessImportPreview {
+    const labels = {
+      claude: "Claude Code",
+      cursor: "Cursor",
+      codex: "Codex",
+    } as const;
+    return {
+      previewId: "h".repeat(32),
+      source: { id: source, label: labels[source] },
+      skills: [
+        {
+          id: "skill:house-style",
+          name: "house-style",
+          description: "Imported house style",
+          origin: "skills",
+          bytes: 80,
+          alreadyImported: false,
+          warnings: [],
+        },
+      ],
+      commands: source === "claude"
+        ? [
+            {
+              id: "command:user:draft",
+              name: "draft",
+              description: "Draft a changelog",
+              origin: "user" as const,
+              bytes: 40,
+              alreadyImported: false,
+            },
+          ]
+        : [],
+      mcp: [],
+      memories: [],
+      instructions: [],
+      settings: null,
+      warnings: [],
+    };
+  }
+
+  let pendingHarnessPreview: HarnessImportPreview | null = null;
   let skillsList: SkillInfo[] = [
     {
       name: "review-pr",
@@ -3025,6 +3071,75 @@ function buildDevCoder(): CoderApi {
         };
       },
       async discardImport(): Promise<void> {},
+    },
+    harness: {
+      async detectSources() {
+        return [
+          { id: "claude" as const, label: "Claude Code", present: true },
+          { id: "cursor" as const, label: "Cursor", present: false },
+          { id: "codex" as const, label: "Codex", present: false },
+        ];
+      },
+      async previewImport(input: {
+        source: HarnessSourceId;
+        projectPath?: string;
+      }): Promise<HarnessImportPreview> {
+        pendingHarnessPreview = cannedHarnessPreview(input.source);
+        return pendingHarnessPreview;
+      },
+      async installImport(
+        input: HarnessInstallRequest,
+      ): Promise<HarnessInstallResult> {
+        if (
+          !pendingHarnessPreview ||
+          pendingHarnessPreview.previewId !== input.previewId
+        ) {
+          throw new Error("Import preview is invalid");
+        }
+        const installedIn = [...ALL_SKILL_TARGETS];
+        const skills: HarnessInstallResult["skills"] = [];
+        const commands: HarnessInstallResult["commands"] = [];
+        for (const id of input.selected) {
+          if (id.startsWith("command:")) {
+            commands.push({
+              name: id.replace(/^command:(?:user|project):/, ""),
+              status: "installed",
+            });
+            continue;
+          }
+          if (!id.startsWith("skill:")) continue;
+          const name = id.slice("skill:".length);
+          skillsList = [
+            ...skillsList.filter(
+              (s) => !(s.name === name && s.source !== "project"),
+            ),
+            {
+              name,
+              description: name,
+              source: "claude",
+              installedIn,
+              missingFrom: [],
+              bytes: 80,
+              provenance: "added",
+            },
+          ];
+          skills.push({ name, status: "installed" });
+        }
+        pendingHarnessPreview = null;
+        return {
+          skills,
+          commands,
+          mcp: [],
+          memories: [],
+          instructions: [],
+          settings: null,
+        };
+      },
+      async discardImport(input: { previewId: string }): Promise<void> {
+        if (pendingHarnessPreview?.previewId === input.previewId) {
+          pendingHarnessPreview = null;
+        }
+      },
     },
     providers: {
       async list() {

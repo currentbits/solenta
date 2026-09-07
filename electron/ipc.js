@@ -57,6 +57,7 @@ const mcpImports = require("./mcpImports.js");
 const skills = require("./skills.js");
 const skillCatalog = require("./skillCatalog.js");
 const skillImports = require("./skillImports.js");
+const harnessImports = require("./harnessImports.js");
 const { createSafeCommandRunner } = require("./skillPluginAdapters.js");
 const cliCommands = require("./cliCommands.js");
 const cliSessions = require("./cli-sessions.js");
@@ -1227,6 +1228,61 @@ const IPC_HANDLERS = {
   },
   "skills:discardImport": async (ctx, input) => {
     return skillImports.discardImport({
+      userDataPath: ctx.userDataPath,
+      previewId: input && input.previewId,
+    });
+  },
+  "harness:detectSources": async () => {
+    return harnessImports.detectSources({ env: process.env });
+  },
+  "harness:previewImport": async (ctx, input) => {
+    const request = input && typeof input === "object" ? input : {};
+    const current = services.getSettings(ctx.store).mcpServers;
+    const projectPath =
+      typeof request.projectPath === "string" ? request.projectPath : undefined;
+    return harnessImports.previewImport({
+      userDataPath: ctx.userDataPath,
+      source: request.source,
+      projectPath,
+      current,
+      memory: ctx.memory,
+      env: process.env,
+    });
+  },
+  "harness:installImport": async (ctx, input) => {
+    const request = input && typeof input === "object" ? input : {};
+    const current = services.getSettings(ctx.store).mcpServers;
+    const projectPath =
+      typeof request.projectPath === "string" ? request.projectPath : undefined;
+    return harnessImports.installImport({
+      userDataPath: ctx.userDataPath,
+      current,
+      memory: ctx.memory,
+      env: process.env,
+      projectPath,
+      request: {
+        previewId: request.previewId,
+        selected: request.selected,
+        replace: request.replace === true,
+        trustLocal: request.trustLocal === true,
+      },
+      saveMcp: (nextList) => {
+        const next = services.setSettings(
+          ctx.store,
+          { mcpServers: nextList },
+          { replaceMcpServers: true },
+        );
+        try {
+          syncUserMcpServers(next.mcpServers, { userDataPath: ctx.userDataPath });
+        } catch {
+          // ignore
+        }
+        return next.mcpServers;
+      },
+    });
+  },
+  "harness:discardImport": async (ctx, input) => {
+    return harnessImports.discardImport({
       userDataPath: ctx.userDataPath,
       previewId: input && input.previewId,
     });

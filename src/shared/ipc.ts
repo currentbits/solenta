@@ -2793,6 +2793,101 @@ export interface SkillInstallResult {
   plugins: SkillPluginInstallResult[];
 }
 
+/** Claude Code, Cursor, or Codex home on disk. */
+export type HarnessSourceId = "claude" | "cursor" | "codex";
+
+export interface HarnessSourceInfo {
+  id: HarnessSourceId;
+  label: string;
+  present: boolean;
+}
+
+export interface HarnessSkillRow {
+  id: string;
+  name: string;
+  description: string;
+  origin: string;
+  bytes: number;
+  alreadyImported: boolean;
+  warnings: string[];
+}
+
+/** Claude custom slash command markdown (`/draft`, `/git:pr`, `/plugin:name`). */
+export interface HarnessCommandRow {
+  id: string;
+  name: string;
+  description: string;
+  origin: "user" | "project" | "plugin";
+  bytes: number;
+  alreadyImported: boolean;
+}
+
+export interface HarnessMcpRow {
+  id: string;
+  name: string;
+  transport: "http" | "sse" | "stdio";
+  command?: string;
+  args?: string[];
+  url?: string;
+  cwd?: string;
+  envNames: string[];
+  headerNames: string[];
+  hasToken: boolean;
+  hasSecrets: boolean;
+  requiredSecrets: Array<{ id: string; label: string }>;
+  requiresTrust: boolean;
+  collision: boolean;
+  alreadyImported: boolean;
+  warnings: string[];
+}
+
+export interface HarnessTextRow {
+  id: string;
+  title: string;
+  excerpt: string;
+  bytes: number;
+  alreadyImported: boolean;
+}
+
+export interface HarnessSettingsRow {
+  id: string;
+  title: string;
+  summary: string;
+  alreadyImported: boolean;
+}
+
+/** Opaque staged harness import. Never includes secret values or staging paths. */
+export interface HarnessImportPreview {
+  previewId: string;
+  source: { id: HarnessSourceId; label: string };
+  skills: HarnessSkillRow[];
+  commands: HarnessCommandRow[];
+  mcp: HarnessMcpRow[];
+  memories: HarnessTextRow[];
+  instructions: HarnessTextRow[];
+  settings: HarnessSettingsRow | null;
+  warnings: string[];
+}
+
+export interface HarnessInstallRequest {
+  previewId: string;
+  selected: string[];
+  replace: boolean;
+  trustLocal: boolean;
+  projectPath?: string;
+}
+
+export type HarnessItemStatus = "installed" | "replaced" | "skipped" | "stored";
+
+export interface HarnessInstallResult {
+  skills: Array<{ name: string; status: HarnessItemStatus }>;
+  commands: Array<{ name: string; status: HarnessItemStatus }>;
+  mcp: Array<{ name: string; status: HarnessItemStatus }>;
+  memories: Array<{ title: string; status: HarnessItemStatus }>;
+  instructions: Array<{ title: string; status: HarnessItemStatus }>;
+  settings: { status: HarnessItemStatus } | null;
+}
+
 /** Payload for skills:add; the skill fans out to every active target. */
 export interface SkillWrite {
   name: string;
@@ -3194,6 +3289,20 @@ export interface CoderApi {
     pickImport(): Promise<SkillImportPreview | null>;
     previewImport(input: SkillPreviewImportInput): Promise<SkillImportPreview>;
     installImport(input: SkillInstallRequest): Promise<SkillInstallResult>;
+    discardImport(input: { previewId: string }): Promise<void>;
+  };
+  /**
+   * One-way import from a Claude / Cursor / Codex home. Preview never
+   * executes imported files. Re-run skips items Solenta already has.
+   * Does not import CLI sessions (#433).
+   */
+  harness: {
+    detectSources(): Promise<HarnessSourceInfo[]>;
+    previewImport(input: {
+      source: HarnessSourceId;
+      projectPath?: string;
+    }): Promise<HarnessImportPreview>;
+    installImport(input: HarnessInstallRequest): Promise<HarnessInstallResult>;
     discardImport(input: { previewId: string }): Promise<void>;
   };
   providers: {

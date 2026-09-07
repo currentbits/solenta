@@ -314,6 +314,10 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     previewSkillImport,
     installSkillImport,
     discardSkillImport,
+    detectHarnessSources,
+    previewHarnessImport,
+    installHarnessImport,
+    discardHarnessImport,
     listCliCommands,
     listCliSessions,
     importCliSession,
@@ -1759,6 +1763,10 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         previewSkillImport={previewSkillImport}
         installSkillImport={installSkillImport}
         discardSkillImport={discardSkillImport}
+        detectHarnessSources={detectHarnessSources}
+        previewHarnessImport={previewHarnessImport}
+        installHarnessImport={installHarnessImport}
+        discardHarnessImport={discardHarnessImport}
         activeView={view}
         onOpenPrs={openPrs}
         onOpenAutomations={openAutomations}
