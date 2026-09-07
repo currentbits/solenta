@@ -2640,9 +2640,10 @@ export function AgentsContent({
 
   // Roles derive from handoffFrom: a thread WITH one is a Worker; a thread
   // another summary points to is an Orchestrator. Neither = plain session.
-  // Done workers fold behind a "N done" toggle so a long orchestration stays
-  // scannable, but the roster never vanishes; failed / idle / working stay
-  // as plain rows.
+  // Done workers fold behind a "N done" toggle while any worker is still
+  // live so a long orchestration stays scannable. When none are live, list
+  // them immediately (no toggle) so an all-done crew is not an empty Team.
+  // Failed / idle / working stay as plain rows.
   const [showDoneWorkers, setShowDoneWorkers] = useState(false);
   const team = useMemo(() => {
     if (!thread || !summaries) return null;
@@ -2774,7 +2775,7 @@ export function AgentsContent({
                   onSelect={onSelectThread}
                 />
               ))}
-              {showDoneWorkers &&
+              {(showDoneWorkers || team.workers.length === 0) &&
                 team.doneWorkers.map((w) => (
                   <TeamRow
                     key={w.id}
@@ -2785,7 +2786,7 @@ export function AgentsContent({
                   />
                 ))}
             </ul>
-            {team.doneWorkers.length > 0 && (
+            {team.doneWorkers.length > 0 && team.workers.length > 0 && (
               <button
                 type="button"
                 className={styles.doneToggle}

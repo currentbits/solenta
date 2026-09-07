@@ -415,15 +415,51 @@ describe("Agents team view", () => {
     const m = await mount(content(thread(), [ORCHESTRATOR, done]));
     await m.flush();
 
-    let text = m.text();
+    const text = m.text();
     assert.match(text, /Orchestrator/, "card keeps the orchestrator chip");
     assert.ok(m.query('[aria-label="Team"]'), "team section still renders");
-    assert.match(text, /1 done/, "roster folded, not gone");
-    assert.doesNotMatch(text, /already finished/);
+    assert.match(text, /already finished/, "done worker listed, not vanished");
+    assert.equal(
+      m.byText("1 done"),
+      null,
+      "no collapsed toggle when none are live",
+    );
+    m.unmount();
+  });
 
-    await m.click(m.byText("1 done"));
-    text = m.text();
-    assert.match(text, /already finished/, "done worker recoverable");
+  it("orchestrator: done+settled workers are findable without the Settled shelf", async () => {
+    const done = summary({
+      id: "t-done",
+      title: "Fork: already finished",
+      provider: "grok",
+      status: "done",
+      handoffFrom: "t-orch",
+    });
+    const settled = summary({
+      id: "t-settled",
+      title: "Fork: settled worker",
+      provider: "grok",
+      status: "done",
+      handoffFrom: "t-orch",
+    });
+    const m = await mount(content(thread(), [ORCHESTRATOR, done, settled]));
+    await m.flush();
+
+    const text = m.text();
+    assert.ok(m.query('[aria-label="Team"]'), "team section still renders");
+    assert.match(text, /already finished/, "done worker listed immediately");
+    assert.match(text, /settled worker/, "settled worker listed immediately");
+    assert.equal(
+      m.byText("2 done"),
+      null,
+      "no collapsed done toggle when the live roster is empty",
+    );
+    assert.equal(m.byText("Hide done"), null);
+    assert.doesNotMatch(
+      text,
+      /Settled/,
+      "Team is not the sidebar Settled shelf",
+    );
     m.unmount();
   });
 
