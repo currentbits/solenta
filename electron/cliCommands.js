@@ -9,6 +9,12 @@
  * Listing is for the composer palette. Expansion is for the runner: the
  * transcript keeps the raw `/name`, the CLI sees the expanded prompt.
  *
+ * Plugin commands: Claude via installed_plugins.json; Cursor via
+ * collectCursorPluginRoots; Codex via enabled
+ * `[plugins."name@marketplace"]` cache version dirs plus plugins/
+ * children except cache and marketplaces. Marketplace cache trees are
+ * never copied. Listing never executes plugin files.
+ *
  * Orchestration verbs (`/handoff` `/advisor` `/committee`) stay in
  * orchcommands.js — they never expand as skills even if a SKILL.md exists.
  */

@@ -4,7 +4,8 @@
  * Cursor and Codex plugin-root walks shared by the live / palette
  * (cliCommands.listInvocableCommands) and Skills-tab import
  * (harnessImports.pluginRootsForSource). Callers pass the already-resolved
- * home. Plugin files are never executed.
+ * home. Codex also lists plugins/ children except cache and marketplaces.
+ * Plugin files are never executed.
  */
 
 const fs = require("node:fs");
@@ -232,33 +233,47 @@ function collectCursorPluginRoots(home) {
 }
 
 /**
- * Enabled Codex plugin version dirs: config.toml plus
- * plugins/cache/<marketplace>/<name>/<version>. Never the rest of cache.
+ * Codex plugin roots: enabled `[plugins."name@marketplace"]` version
+ * dirs under plugins/cache/<marketplace>/<name>/<version>, plus
+ * plugins/ children except cache and marketplaces. Never walks the
+ * rest of the marketplace cache. Missing config.toml still lists
+ * sidecar children.
  * @param {string} home
  * @returns {string[]}
  */
 function collectCodexPluginRoots(home) {
   const plugins = path.join(home, "plugins");
-  const raw = readCappedFile(path.join(home, "config.toml"), MAX_JSON_BYTES);
-  if (raw == null) return [];
   /** @type {string[]} */
   const out = [];
   const seen = new Set();
-  for (const spec of parseCodexPluginTables(raw).enabled) {
-    const at = String(spec).lastIndexOf("@");
-    if (at <= 0) continue;
-    const name = spec.slice(0, at);
-    const mp = spec.slice(at + 1);
-    if (!PLUGIN_NAME_RE.test(name) || !PLUGIN_NAME_RE.test(mp)) continue;
-    const cacheRoot = path.join(plugins, "cache", mp, name);
-    if (!isInside(plugins, cacheRoot)) continue;
-    for (const versionDir of listVersionDirs(cacheRoot)) {
-      if (!isInside(cacheRoot, versionDir) || !isPlainDir(versionDir)) continue;
-      if (seen.has(versionDir)) continue;
-      seen.add(versionDir);
-      out.push(versionDir);
-      if (out.length >= MAX_PLUGIN_GROUPS) return out;
+
+  const add = (root) => {
+    if (!root || seen.has(root) || !isPlainDir(root)) return false;
+    seen.add(root);
+    out.push(root);
+    return out.length >= MAX_PLUGIN_GROUPS;
+  };
+
+  const raw = readCappedFile(path.join(home, "config.toml"), MAX_JSON_BYTES);
+  if (raw != null) {
+    for (const spec of parseCodexPluginTables(raw).enabled) {
+      const at = String(spec).lastIndexOf("@");
+      if (at <= 0) continue;
+      const name = spec.slice(0, at);
+      const mp = spec.slice(at + 1);
+      if (!PLUGIN_NAME_RE.test(name) || !PLUGIN_NAME_RE.test(mp)) continue;
+      const cacheRoot = path.join(plugins, "cache", mp, name);
+      if (!isInside(plugins, cacheRoot)) continue;
+      for (const versionDir of listVersionDirs(cacheRoot)) {
+        if (!isInside(cacheRoot, versionDir)) continue;
+        if (add(versionDir)) return out;
+      }
     }
+  }
+
+  for (const child of listVersionDirs(plugins)) {
+    if (!isInside(plugins, child)) continue;
+    if (add(child)) return out;
   }
   return out;
 }

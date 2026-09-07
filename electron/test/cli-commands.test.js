@@ -43,13 +43,15 @@ function writeCommand(file, description, body) {
   );
 }
 
-function writePluginCommands(root, name, files) {
+function writePluginCommands(root, name, files, extra = {}) {
   fs.mkdirSync(path.join(root, ".claude-plugin"), { recursive: true });
+  const manifest = { name, ...extra };
   fs.writeFileSync(
     path.join(root, ".claude-plugin", "plugin.json"),
-    JSON.stringify({ name }),
+    JSON.stringify(manifest),
+    "utf8",
   );
-  fs.writeFileSync(path.join(root, "plugin.json"), JSON.stringify({ name }));
+  fs.writeFileSync(path.join(root, "plugin.json"), JSON.stringify(manifest));
   for (const [rel, description, body] of files) {
     writeCommand(path.join(root, rel), description, body);
   }
@@ -249,6 +251,51 @@ describe("listInvocableCommands", () => {
       listInvocableCommands({ env: { HOME: path.join(tmp, "nope") } }),
       [],
     );
+  });
+
+  it("lists Codex plugins/ sidecar commands without config.toml", () => {
+    const plugins = path.join(tmp, ".codex", "plugins");
+    writePluginCommands(path.join(plugins, "sidecar"), "sidecar", [
+      ["commands/review.md", "Review the diff", "Review $ARGUMENTS."],
+      ["commands/git/pr.md", "Open a pull request", "Create the PR."],
+    ]);
+    const marker = path.join(plugins, "sidecar", "sidecar-executed");
+    const hook = path.join(plugins, "sidecar", "hooks", "setup.sh");
+    fs.mkdirSync(path.dirname(hook), { recursive: true });
+    fs.writeFileSync(
+      hook,
+      `#!/bin/sh\ntouch "${marker}"\n`,
+      "utf8",
+    );
+    fs.chmodSync(hook, 0o755);
+
+    const listed = names(listInvocableCommands({ env: envHome() }));
+    assert.ok(listed.includes("/sidecar:review"), "plugins/ child is listed");
+    assert.ok(listed.includes("/review"));
+    assert.ok(listed.includes("/sidecar:git:pr"));
+    assert.equal(fs.existsSync(marker), false, "plugin files must not be executed");
+  });
+
+  it("omits Codex plugins/cache and plugins/marketplaces from the palette", () => {
+    const plugins = path.join(tmp, ".codex", "plugins");
+    writePluginCommands(path.join(plugins, "sidecar"), "sidecar", [
+      ["commands/review.md", "Sidecar review", "Review the sidecar."],
+    ]);
+    writePluginCommands(
+      path.join(plugins, "cache", "mp", "ghost", "1.0.0"),
+      "ghost",
+      [["commands/nope.md", "Unlisted cache copy", "Nope."]],
+    );
+    writePluginCommands(
+      path.join(plugins, "marketplaces", "noise"),
+      "noise",
+      [["commands/nope.md", "Marketplace copy", "Nope."]],
+    );
+
+    const listed = names(listInvocableCommands({ env: envHome() }));
+    assert.ok(listed.includes("/sidecar:review"));
+    assert.ok(!listed.includes("/ghost:nope"), "plugins/cache is not a root");
+    assert.ok(!listed.includes("/noise:nope"), "plugins/marketplaces is not a root");
   });
 
   it("lists a Cursor local plugin command and omits unlisted cache plugins", () => {
@@ -570,6 +617,37 @@ describe("listInvocableCommands", () => {
     assert.ok(!listed.includes("/nope"));
     assert.ok(!listed.includes("/other:nope"), "disabled cache plugin omitted");
     assert.ok(!listed.includes("/ghost:nope"), "unlisted cache plugin omitted");
+  });
+
+  it("keeps an existing /name over a Codex plugin bare name", () => {
+    const userDir = path.join(tmp, ".grok", "commands");
+    writeCommand(
+      path.join(userDir, "deploy.md"),
+      "User deploy",
+      "User body $ARGUMENTS.",
+    );
+    const installPath = path.join(
+      tmp,
+      ".codex",
+      "plugins",
+      "cache",
+      "mp",
+      "shipper",
+      "1.2.3",
+    );
+    writePluginCommands(installPath, "shipper", [
+      ["commands/deploy.md", "Plugin deploy", "Plugin body $ARGUMENTS."],
+    ]);
+    fs.mkdirSync(path.join(tmp, ".codex"), { recursive: true });
+    fs.writeFileSync(
+      path.join(tmp, ".codex", "config.toml"),
+      `[plugins."shipper@mp"]\nenabled = true\n`,
+      "utf8",
+    );
+
+    const rows = listInvocableCommands({ env: envHome() });
+    assert.equal(byName(rows, "/deploy")?.hint, "User deploy");
+    assert.equal(byName(rows, "/shipper:deploy")?.hint, "Plugin deploy");
   });
 
   it("namespaces a nameless plugin from the plugin dir, not a missing plugin.json name", () => {
