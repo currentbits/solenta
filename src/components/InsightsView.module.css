@@ -150,6 +150,17 @@
   border-color: var(--border);
 }
 
+.row[data-thread-unavailable] .rowBody {
+  pointer-events: auto;
+}
+
+.unavailable {
+  flex-shrink: 0;
+  font-size: 11px;
+  font-weight: 550;
+  color: var(--text-dim);
+}
+
 .rowSelect {
   position: absolute;
   inset: 0;

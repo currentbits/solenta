@@ -1425,6 +1425,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
             <InsightsView
               loadFailureModes={loadFailureModes}
               onSelectThread={handleSelectThread}
+              existingThreadIds={liveThreadIds}
             />
           ) : view === "digest" ? (
             <DigestView
@@ -1432,6 +1433,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
               loadDigest={listDigest}
               markSeen={markDigestSeen}
               onSelectThread={handleSelectThread}
+              existingThreadIds={liveThreadIds}
             />
           ) : view === "prs" ? (
             <PrListView

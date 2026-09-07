@@ -13,6 +13,8 @@ export interface DigestViewProps {
   loadDigest: (input?: { sinceMs?: number }) => Promise<DigestResult>;
   markSeen: () => Promise<{ seenAt: number }>;
   onSelectThread: (id: string) => void;
+  /** Live sidebar ids. Omitted means the list is still loading — treat rows as openable. */
+  existingThreadIds?: Iterable<string>;
 }
 
 function formatDigestWindow(sinceMs: number, now: number): string {
@@ -56,6 +58,7 @@ export function DigestView({
   loadDigest,
   markSeen,
   onSelectThread,
+  existingThreadIds,
 }: DigestViewProps) {
   const [result, setResult] = useState<DigestResult | null>(null);
   const [loading, setLoading] = useState(false);
@@ -99,6 +102,11 @@ export function DigestView({
     for (const project of projects) map.set(project.id, project.slug);
     return map;
   }, [projects]);
+
+  const liveThreadIds = useMemo(() => {
+    if (existingThreadIds == null) return null;
+    return new Set(existingThreadIds);
+  }, [existingThreadIds]);
 
   const summary = useMemo(
     () => summarizeDigest(result?.runs ?? []),
@@ -191,23 +199,33 @@ export function DigestView({
                   const slug =
                     projectSlug.get(run.projectId) ?? run.projectSlug;
                   const check = checkState(run.checks);
+                  const missing =
+                    liveThreadIds != null && !liveThreadIds.has(run.threadId);
                   return (
                     <div
                       key={run.threadId}
                       className={styles.row}
                       data-digest-row={run.threadId}
                       data-bucket={group.bucket}
+                      data-thread-unavailable={missing ? "" : undefined}
                     >
-                      <button
-                        type="button"
-                        className={styles.rowSelect}
-                        aria-label={`Select thread: ${run.title}`}
-                        onClick={() => onSelectThread(run.threadId)}
-                      />
+                      {missing ? null : (
+                        <button
+                          type="button"
+                          className={styles.rowSelect}
+                          aria-label={`Select thread: ${run.title}`}
+                          onClick={() => onSelectThread(run.threadId)}
+                        />
+                      )}
                       <div className={styles.rowBody}>
                         <div className={styles.rowTop}>
                           <span className={styles.slug}>{slug}</span>
                           <span className={styles.threadTitle}>{run.title}</span>
+                          {missing ? (
+                            <span className={styles.unavailable}>
+                              Transcript unavailable
+                            </span>
+                          ) : null}
                         </div>
                         <div className={styles.rowMeta}>
                           <span className={styles.reason}>{entry.reason}</span>

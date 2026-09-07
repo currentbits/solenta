@@ -217,6 +217,122 @@ describe("DigestView", () => {
     m.unmount();
   });
 
+  it("opens a live thread by id when the live set is known", async () => {
+    let selected: string | null = null;
+    const m = await mount(
+      <DigestView
+        projects={[p1]}
+        loadDigest={async () =>
+          result([
+            run({
+              threadId: "t-live",
+              title: "Same title",
+              costUsd: 1.25,
+              commits: 1,
+              checks: { ran: true, failed: false, label: "npm test" },
+            }),
+            run({
+              threadId: "t-gone",
+              title: "Same title",
+              costUsd: 4.5,
+            }),
+          ])
+        }
+        markSeen={async () => ({ seenAt: NOW })}
+        existingThreadIds={["t-live"]}
+        onSelectThread={(id) => {
+          selected = id;
+        }}
+      />,
+    );
+    await m.flush();
+    const live = m.query('[data-digest-row="t-live"]');
+    const gone = m.query('[data-digest-row="t-gone"]');
+    assert.ok(live, "live row stays");
+    assert.ok(gone, "deleted row stays for historical accounting");
+    const select = live!.querySelector(
+      'button[aria-label="Select thread: Same title"]',
+    );
+    assert.ok(select, "live row keeps an accessible select control");
+    await m.click(select as HTMLElement);
+    assert.equal(selected, "t-live");
+    m.unmount();
+  });
+
+  it("keeps a missing thread visible and does not navigate", async () => {
+    let selected: string | null = null;
+    const m = await mount(
+      <DigestView
+        projects={[p1]}
+        loadDigest={async () =>
+          result([
+            run({
+              threadId: "t-gone",
+              title: "Deleted run",
+              costUsd: 3.2,
+              turns: 5,
+            }),
+          ])
+        }
+        markSeen={async () => ({ seenAt: NOW })}
+        existingThreadIds={["t-other"]}
+        onSelectThread={(id) => {
+          selected = id;
+        }}
+      />,
+    );
+    await m.flush();
+    const row = m.query('[data-digest-row="t-gone"]');
+    assert.ok(row, "historical row stays");
+    assert.match(row!.textContent ?? "", /unavailable/i);
+    assert.equal(
+      row!.querySelector('button[aria-label="Select thread: Deleted run"]'),
+      null,
+      "missing thread has no open action",
+    );
+    const cost = [...row!.querySelectorAll("span")].find((el) =>
+      (el.textContent ?? "").includes("$3.20"),
+    );
+    assert.ok(cost, "cost stays visible");
+    assert.equal(
+      cost!.closest("button"),
+      null,
+      "numeric cells stay outside the hit target",
+    );
+    await m.click(row);
+    assert.equal(selected, null, "deleted row must not navigate");
+    m.unmount();
+  });
+
+  it("treats omitted live ids as openable so boot does not flash unavailable", async () => {
+    let selected: string | null = null;
+    const m = await mount(
+      <DigestView
+        projects={[p1]}
+        loadDigest={async () =>
+          result([run({ threadId: "t-boot", title: "Still loading" })])
+        }
+        markSeen={async () => ({ seenAt: NOW })}
+        onSelectThread={(id) => {
+          selected = id;
+        }}
+      />,
+    );
+    await m.flush();
+    const row = m.query('[data-digest-row="t-boot"]');
+    assert.ok(row, "row renders during boot");
+    assert.equal(
+      /unavailable/i.test(row!.textContent ?? ""),
+      false,
+      "omitted live set must not mark rows unavailable",
+    );
+    const select = m.query('button[aria-label="Select thread: Still loading"]');
+    assert.ok(select, "row stays openable before the list arrives");
+    await m.click(select);
+    assert.equal(selected, "t-boot");
+    m.unmount();
+  });
+
   it("renders the empty-window state when nothing ran", async () => {
     const m = await mount(
       <DigestView
