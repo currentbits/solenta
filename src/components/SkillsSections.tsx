@@ -1053,8 +1053,7 @@ export function HarnessImportSection({
       <div className={styles.sectionLabel}>Import from other tools</div>
       <p className={styles.rowDetail}>
         One-way copy of skills, slash commands, MCP servers, memories, and
-        instruction files. Provider homes stay on disk.
-      </p>
+        instruction files. Provider homes stay on disk.      </p>
       <div className={styles.addActions}>
         {sources.map((source) => (
           <button
@@ -1165,7 +1164,6 @@ export function HarnessImportPreviewPanel({
     (!hasCollision || replace) &&
     (!needsTrust || trusted) &&
     (!hasPlugins || pluginTrusted);
-
   function section<T extends { id: string }>(
     label: string,
     rows: T[],
@@ -1235,8 +1233,7 @@ export function HarnessImportPreviewPanel({
           busy={busy}
           onToggle={onToggle}
         />
-      ))}
-      {section("MCP servers", preview.mcp, (server: HarnessMcpRow) => (
+      ))}      {section("MCP servers", preview.mcp, (server: HarnessMcpRow) => (
         <HarnessCheckRow
           key={server.id}
           id={server.id}

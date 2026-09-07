@@ -2541,7 +2541,6 @@ describe("SkillsTab harness import", () => {
     assert.equal(remaining?.checked, true);
     assert.equal(already?.checked, false);
     await m.click(m.byText("Import selected"));
-    assert.deepEqual(installed[0].selected, ["command:plugin:shipper:review"]);
-    m.unmount();
+    assert.deepEqual(installed[0].selected, ["command:plugin:shipper:review"]);    m.unmount();
   });
 });

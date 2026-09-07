@@ -2821,7 +2821,6 @@ export interface HarnessCommandRow {
   bytes: number;
   alreadyImported: boolean;
 }
-
 export interface HarnessMcpRow {
   id: string;
   name: string;
