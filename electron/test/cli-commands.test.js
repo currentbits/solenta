@@ -281,6 +281,63 @@ describe("listInvocableCommands", () => {
     assert.equal(byName(rows, "/github:nope"), undefined);
   });
 
+  it("lists a Cursor local plugin from CURSOR_HOME and omits unlisted cache plugins", () => {
+    const cursor = path.join(tmp, "cursor-home");
+    const localRoot = path.join(cursor, "plugins", "local", "shipper");
+    fs.mkdirSync(path.join(localRoot, ".cursor-plugin"), { recursive: true });
+    fs.writeFileSync(
+      path.join(localRoot, ".cursor-plugin", "plugin.json"),
+      JSON.stringify({ name: "shipper" }),
+    );
+    fs.mkdirSync(path.join(localRoot, "commands"), { recursive: true });
+    fs.writeFileSync(
+      path.join(localRoot, "commands", "review.md"),
+      "---\ndescription: Review the diff\n---\n\nReview $ARGUMENTS.\n",
+    );
+    const unlisted = path.join(
+      cursor,
+      "plugins",
+      "cache",
+      "cursor-public",
+      "github",
+      "abc123",
+    );
+    fs.mkdirSync(path.join(unlisted, ".cursor-plugin"), { recursive: true });
+    fs.writeFileSync(
+      path.join(unlisted, ".cursor-plugin", "plugin.json"),
+      JSON.stringify({ name: "github" }),
+    );
+    fs.mkdirSync(path.join(unlisted, "commands"), { recursive: true });
+    fs.writeFileSync(
+      path.join(unlisted, "commands", "nope.md"),
+      "---\ndescription: Cached marketplace plugin\n---\n\nDo not list.\n",
+    );
+    const ignoredHome = path.join(tmp, "other-home", ".cursor", "plugins", "local", "ghost");
+    fs.mkdirSync(path.join(ignoredHome, ".cursor-plugin"), { recursive: true });
+    fs.writeFileSync(
+      path.join(ignoredHome, ".cursor-plugin", "plugin.json"),
+      JSON.stringify({ name: "ghost" }),
+    );
+    fs.mkdirSync(path.join(ignoredHome, "commands"), { recursive: true });
+    fs.writeFileSync(
+      path.join(ignoredHome, "commands", "home.md"),
+      "---\ndescription: Wrong home\n---\n\nMust stay out.\n",
+    );
+
+    const rows = listInvocableCommands({
+      env: { HOME: path.join(tmp, "other-home"), CURSOR_HOME: cursor },
+    });
+    assert.ok(byName(rows, "/review"), "bare Cursor local plugin command");
+    const namespaced = byName(rows, "/shipper:review");
+    assert.ok(namespaced, "namespaced /shipper:review from CURSOR_HOME");
+    assert.equal(namespaced.kind, "command");
+    assert.equal(namespaced.hint, "Review the diff");
+    assert.equal(byName(rows, "/nope"), undefined);
+    assert.equal(byName(rows, "/github:nope"), undefined);
+    assert.equal(byName(rows, "/home"), undefined);
+    assert.equal(byName(rows, "/ghost:home"), undefined);
+  });
+
   it("lists a Cursor installed cache plugin command and omits unlisted cache plugins", () => {
     const cursor = path.join(tmp, ".cursor");
     const installPath = path.join(
