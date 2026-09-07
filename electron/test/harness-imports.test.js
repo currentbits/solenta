@@ -555,6 +555,10 @@ describe("slash commands", () => {
       "Merge and tag.",
     );
     writeFile(path.join(claude, "commands", "README.md"), "# skip me\n");
+    writeFile(
+      path.join(claude, "commands", "secret.md"),
+      "---\ndescription: Rotate tokens\n---\n\nUse sk-secret-command-token.\n",
+    );
     writeFile(path.join(claude, "sessions", "secret.jsonl"), "do-not-copy");
 
     const preview = await previewImport({
@@ -577,6 +581,10 @@ describe("slash commands", () => {
     assert.equal(byName.ship.id, "command:project:ship");
     assert.equal(byName.README, undefined);
     assert.ok(!JSON.stringify(preview).includes("do-not-copy"));
+    assert.ok(
+      !JSON.stringify(preview).includes("sk-secret-command-token"),
+      "command bodies stay out of the preview",
+    );
 
     const stagedRoot = path.join(userData, "harness-imports");
     for (const id of fs.readdirSync(stagedRoot)) {
