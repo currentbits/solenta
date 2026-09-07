@@ -1066,6 +1066,50 @@ describe("plugin slash commands", () => {
     assert.equal(fs.existsSync(path.join(staged, "hooks")), false);
   });
 
+  it("lists Codex plugins/ sidecar commands without config.toml", async () => {
+    const codex = path.join(env.HOME, ".codex");
+    writePluginCommands(
+      path.join(codex, "plugins", "sidecar"),
+      "sidecar",
+      [
+        ["commands/review.md", "Review the diff", "Review $ARGUMENTS."],
+        ["commands/git/pr.md", "Open a pull request", "Create the PR."],
+      ],
+    );
+    writeFile(
+      path.join(codex, "plugins", "sidecar", "hooks", "setup.sh"),
+      "#!/bin/sh\necho sidecar-secret-value\ntouch sidecar-executed\n",
+    );
+
+    const preview = await previewImport({
+      userDataPath: userData,
+      source: "codex",
+      current: [],
+      env,
+    });
+    const byName = Object.fromEntries(
+      preview.commands.map((c) => [c.name, c]),
+    );
+    assert.equal(byName["sidecar:review"].id, "command:plugin:sidecar:review");
+    assert.equal(byName["sidecar:review"].origin, "plugin");
+    assert.equal(byName["sidecar:review"].description, "Review the diff");
+    assert.equal(byName["sidecar:git:pr"].id, "command:plugin:sidecar:git:pr");
+    const dumped = JSON.stringify(preview);
+    assert.ok(!dumped.includes("sidecar-secret-value"));
+    assert.equal(
+      fs.existsSync(path.join(codex, "plugins", "sidecar", "sidecar-executed")),
+      false,
+      "plugin files must not be executed",
+    );
+    const staged = path.join(
+      userData,
+      "harness-imports",
+      preview.previewId,
+      "stage",
+    );
+    assert.equal(fs.existsSync(path.join(staged, "hooks")), false);
+  });
+
   it("namespaces a Codex cache plugin from .codex-plugin/plugin.json, not the version dir", async () => {
     const installPath = path.join(
       env.HOME,
@@ -1114,6 +1158,49 @@ describe("plugin slash commands", () => {
     const dumped = JSON.stringify(preview);
     assert.ok(!dumped.includes("deploy-secret"));
     assert.ok(!dumped.includes("plugin-secret-value"));
+  });
+
+  it("omits Codex plugins/cache and plugins/marketplaces from harness import", async () => {
+    const codex = path.join(env.HOME, ".codex");
+    writePluginCommands(
+      path.join(codex, "plugins", "sidecar"),
+      "sidecar",
+      [["commands/review.md", "Sidecar review", "Review the sidecar."]],
+    );
+    writePluginCommands(
+      path.join(codex, "plugins", "cache", "mp", "ghost", "1.0.0"),
+      "ghost",
+      [["commands/nope.md", "Unlisted cache copy", "Nope with cache-secret."]],
+    );
+    writePluginCommands(
+      path.join(codex, "plugins", "marketplaces", "noise"),
+      "noise",
+      [["commands/nope.md", "Marketplace copy", "Nope with market-secret."]],
+    );
+
+    const preview = await previewImport({
+      userDataPath: userData,
+      source: "codex",
+      current: [],
+      env,
+    });
+    const byName = Object.fromEntries(
+      preview.commands.map((c) => [c.name, c]),
+    );
+    assert.equal(byName["sidecar:review"].id, "command:plugin:sidecar:review");
+    assert.equal(byName["ghost:nope"], undefined);
+    assert.equal(byName["noise:nope"], undefined);
+    const dumped = JSON.stringify(preview);
+    assert.ok(!dumped.includes("cache-secret"));
+    assert.ok(!dumped.includes("market-secret"));
+    const staged = path.join(
+      userData,
+      "harness-imports",
+      preview.previewId,
+      "stage",
+    );
+    assert.equal(fs.existsSync(path.join(staged, "cache")), false);
+    assert.equal(fs.existsSync(path.join(staged, "marketplaces")), false);
   });
 
   it("omits a nameless Cursor cache plugin from Skills-tab preview", async () => {
