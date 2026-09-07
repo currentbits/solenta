@@ -3586,9 +3586,10 @@ export interface CoderApi {
      * A running Solenta child is stopped so the writer is released (#960).
      * Reclaim re-reads the known provider session for that sessionId
      * (Codex rollout, Claude projects jsonl, Grok chat_history, Cursor
-     * agent-transcripts, OpenCode db/JSON, Kimi wire.jsonl, Muse
-     * session.jsonl) and appends turns that happened outside Solenta
-     * (same reader #433 import will use). The flag write itself never
+     * agent-transcripts jsonl, OpenCode opencode.db / JSON fallback,
+     * Kimi wire.jsonl, Muse session.jsonl) and appends turns that
+     * happened outside Solenta (same absorbTurns role+text occurrence
+     * matching as #433). The flag write itself never
      * bumps updatedAt; appended turns do.
      */
     setEjected(input: { threadId: string; ejected: boolean }): Promise<ThreadInfo>;

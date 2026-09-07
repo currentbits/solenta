@@ -802,7 +802,16 @@ const RECLAIM_TURNS = [
   { role: "assistant", text: "outside reply" },
 ];
 
-async function sessionScanReclaimFixture(provider) {
+/** Same inside pair twice so absorbTurns must count occurrences, not unique keys. */
+const OCCURRENCE_TURNS = [
+  { role: "user", text: "hello inside" },
+  { role: "assistant", text: "inside reply" },
+  { role: "assistant", text: "inside reply" },
+  { role: "user", text: "outside prompt" },
+  { role: "assistant", text: "outside reply" },
+];
+
+async function sessionScanReclaimFixture(provider, turns = RECLAIM_TURNS) {
   const tmpDir = fs.mkdtempSync(
     path.join(os.tmpdir(), `coder-eject-reclaim-${provider}-`),
   );
@@ -841,13 +850,13 @@ async function sessionScanReclaimFixture(provider) {
       providerHome,
       "/tmp/other-cursor-cwd",
       RECLAIM_SESSION,
-      RECLAIM_TURNS,
+      turns,
     );
   } else if (provider === "opencode-json") {
     artifact = writeOpenCodeJsonTranscript(
       providerHome,
       RECLAIM_SESSION,
-      RECLAIM_TURNS,
+      turns,
     );
   } else if (provider === "kimi") {
     artifact = writeKimiTranscript(
@@ -865,7 +874,7 @@ async function sessionScanReclaimFixture(provider) {
     artifact = writeOpenCodeTranscript(
       providerHome,
       RECLAIM_SESSION,
-      RECLAIM_TURNS,
+      turns,
     );
   }
   return { tmpDir, store, threadId, providerHome, artifact };
@@ -1183,7 +1192,74 @@ describe("reclaim appends outside OpenCode JSON-fallback turns (#554)", () => {
       "must not copy or consume the OpenCode JSON store",
     );
   });
+
+  it("does not duplicate turns already in the Solenta transcript", () => {
+    services.setEjected(store, {
+      threadId,
+      ejected: false,
+      home: providerHome,
+    });
+    services.setEjected(store, { threadId, ejected: true });
+    services.setEjected(store, {
+      threadId,
+      ejected: false,
+      home: providerHome,
+    });
+    assertReclaimNoDupes(store, threadId);
+  });
 });
+
+for (const provider of ["cursor", "opencode", "opencode-json"]) {
+  describe(`reclaim occurrence-matches ${provider} turns (#433)`, () => {
+    let tmpDir;
+    let store;
+    let threadId;
+    let providerHome;
+
+    beforeEach(async () => {
+      const fx = await sessionScanReclaimFixture(provider, OCCURRENCE_TURNS);
+      tmpDir = fx.tmpDir;
+      store = fx.store;
+      threadId = fx.threadId;
+      providerHome = fx.providerHome;
+    });
+
+    afterEach(() => {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    });
+
+    it("appends a second identical role+text turn that is not already in the transcript", () => {
+      services.setEjected(store, {
+        threadId,
+        ejected: false,
+        home: providerHome,
+      });
+      const assistants = roleTexts(store, threadId, "assistant");
+      assert.equal(assistants.filter((t) => t === "inside reply").length, 2);
+      assert.equal(assistants.filter((t) => t === "outside reply").length, 1);
+      const users = roleTexts(store, threadId, "user");
+      assert.equal(users.filter((t) => t === "hello inside").length, 1);
+      assert.equal(users.filter((t) => t === "outside prompt").length, 1);
+    });
+
+    it("does not append a third copy on a second reclaim", () => {
+      services.setEjected(store, {
+        threadId,
+        ejected: false,
+        home: providerHome,
+      });
+      services.setEjected(store, { threadId, ejected: true });
+      services.setEjected(store, {
+        threadId,
+        ejected: false,
+        home: providerHome,
+      });
+      const assistants = roleTexts(store, threadId, "assistant");
+      assert.equal(assistants.filter((t) => t === "inside reply").length, 2);
+      assert.equal(assistants.filter((t) => t === "outside reply").length, 1);
+    });
+  });
+}
 
 describe("reclaim finds a Grok hashed cwd group (#964)", () => {
   const LONG_CWD = `/tmp/${"a".repeat(300)}`;
