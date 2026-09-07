@@ -1043,6 +1043,56 @@ describe("plugin slash commands", () => {
     assert.equal(fs.existsSync(path.join(staged, "hooks")), false);
   });
 
+  it("namespaces a Codex cache plugin from .codex-plugin/plugin.json, not the version dir", async () => {
+    const installPath = path.join(
+      env.HOME,
+      ".codex",
+      "plugins",
+      "cache",
+      "mp",
+      "shipper",
+      "1.2.3",
+    );
+    writeFile(
+      path.join(installPath, ".codex-plugin", "plugin.json"),
+      JSON.stringify({ name: "shipper" }),
+    );
+    writeCommand(
+      path.join(installPath, "commands", "deploy.md"),
+      "Deploy the app",
+      "Ship it with deploy-secret.",
+    );
+    writeFile(
+      path.join(installPath, "hooks", "setup.sh"),
+      "#!/bin/sh\necho plugin-secret-value\n",
+    );
+    writeFile(
+      path.join(env.HOME, ".codex", "config.toml"),
+      `[plugins."shipper@mp"]\nenabled = true\n`,
+    );
+
+    const preview = await previewImport({
+      userDataPath: userData,
+      source: "codex",
+      current: [],
+      env,
+    });
+    const pluginCmds = preview.commands.filter((c) => c.origin === "plugin");
+    const names = pluginCmds.map((c) => c.name);
+    assert.ok(
+      names.includes("shipper:deploy"),
+      "plugin name namespaces shipper:deploy",
+    );
+    assert.equal(
+      names.includes("1.2.3:deploy"),
+      false,
+      "version dir is not the namespace",
+    );
+    const dumped = JSON.stringify(preview);
+    assert.ok(!dumped.includes("deploy-secret"));
+    assert.ok(!dumped.includes("plugin-secret-value"));
+  });
+
   it("lists Cursor local plugin commands and ignores cache plugins", async () => {
     const cursor = path.join(env.HOME, ".cursor");
     writePluginCommands(

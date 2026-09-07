@@ -618,6 +618,7 @@ function readPluginCommandManifest(pluginRoot) {
   const candidates = [
     path.join(pluginRoot, ".claude-plugin", "plugin.json"),
     path.join(pluginRoot, ".cursor-plugin", "plugin.json"),
+    path.join(pluginRoot, ".codex-plugin", "plugin.json"),
     path.join(pluginRoot, "plugin.json"),
   ];
   /** @type {Record<string, unknown>} */
