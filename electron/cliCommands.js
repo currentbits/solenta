@@ -436,4 +436,6 @@ module.exports = {
   expandInvocableCommand,
   listPaletteCommands,
   commandHint,
+  pluginInstallPaths,
+  readPluginManifest,
 };

@@ -426,7 +426,7 @@ function Harness(opts: HarnessOptions) {
             commands: input.selected
               .filter((id) => id.startsWith("command:"))
               .map((id) => ({
-                name: id.replace(/^command:(?:user|project):/, ""),
+                name: id.replace(/^command:(?:user|project|plugin):/, ""),
                 status: "installed" as const,
               })),
             mcp: [],

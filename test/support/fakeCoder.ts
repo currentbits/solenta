@@ -1314,7 +1314,7 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
         for (const id of input.selected) {
           if (id.startsWith("command:")) {
             commands.push({
-              name: id.replace(/^command:(?:user|project):/, ""),
+              name: id.replace(/^command:(?:user|project|plugin):/, ""),
               status: "installed",
             });
             continue;
