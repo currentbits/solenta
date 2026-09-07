@@ -17,14 +17,16 @@ const fs = require("node:fs");
 const path = require("node:path");
 const os = require("node:os");
 const { parseSkillMarkdown, SKILL_DIRS } = require("./skills.js");
+const {
+  collectCursorPluginRoots,
+  collectCodexPluginRoots,
+} = require("./pluginRoots.js");
 const { readPluginManifest } = require("./pluginManifest.js");
 
 /** Runner intercepts these; a same-named skill must not steal the send. */
 const ORCH_TOKENS = new Set(["handoff", "advisor", "committee"]);
 
 const HINT_MAX = 80;
-const MAX_PLUGIN_GROUPS = 40;
-const PLUGIN_NAME_RE = /^[a-z0-9-]+$/i;
 
 /**
  * @param {NodeJS.ProcessEnv} [env]
@@ -85,109 +87,6 @@ function readFile(file) {
   } catch {
     return null;
   }
-}
-
-function isPlainDir(p) {
-  try {
-    return fs.lstatSync(p).isDirectory();
-  } catch {
-    return false;
-  }
-}
-
-function isInside(parent, child) {
-  const rel = path.relative(parent, child);
-  return rel === "" || (!rel.startsWith("..") && !path.isAbsolute(rel));
-}
-
-function splitTomlTableKey(raw) {
-  const parts = [];
-  let i = 0;
-  const s = String(raw || "");
-  while (i < s.length) {
-    if (s[i] === '"' || s[i] === "'") {
-      const q = s[i];
-      let j = i + 1;
-      while (j < s.length && s[j] !== q) j += 1;
-      parts.push(s.slice(i + 1, j));
-      i = j + 1;
-      if (s[i] === ".") i += 1;
-      continue;
-    }
-    let j = i;
-    while (j < s.length && s[j] !== ".") j += 1;
-    parts.push(s.slice(i, j));
-    i = j + 1;
-  }
-  return parts.filter(Boolean);
-}
-
-function parseTomlScalar(raw) {
-  const s = String(raw || "").trim();
-  if (
-    (s.startsWith('"') && s.endsWith('"')) ||
-    (s.startsWith("'") && s.endsWith("'"))
-  ) {
-    return s.slice(1, -1);
-  }
-  if (s === "true") return true;
-  if (s === "false") return false;
-  if (/^-?\d+(\.\d+)?$/.test(s)) return Number(s);
-  return s;
-}
-
-/**
- * `[plugins."name@marketplace"]` tables with `enabled = true`.
- * Nested plugin subtables and disabled rows are ignored.
- * @param {string} text
- * @returns {{ enabled: string[] }}
- */
-function parseCodexPluginTables(text) {
-  /** @type {string[]} */
-  const enabled = [];
-  /** @type {string | null} */
-  let current = null;
-  for (const rawLine of String(text || "").split(/\r?\n/)) {
-    const hash = rawLine.indexOf("#");
-    const line = (hash >= 0 ? rawLine.slice(0, hash) : rawLine).trim();
-    if (!line) continue;
-    const header = line.match(/^\[([^\]]+)\]$/);
-    if (header) {
-      const parts = splitTomlTableKey(header[1]);
-      current =
-        parts[0] === "plugins" && parts.length === 2 && parts[1]
-          ? parts[1]
-          : null;
-      continue;
-    }
-    if (!current) continue;
-    const eq = line.indexOf("=");
-    if (eq < 0) continue;
-    const key = line.slice(0, eq).trim();
-    const value = parseTomlScalar(line.slice(eq + 1).trim());
-    if (key === "enabled" && value === true) enabled.push(current);
-  }
-  return { enabled };
-}
-
-function listVersionDirs(dir) {
-  if (!isPlainDir(dir)) return [];
-  let ents;
-  try {
-    ents = fs.readdirSync(dir, { withFileTypes: true });
-  } catch {
-    return [];
-  }
-  return ents
-    .filter(
-      (ent) =>
-        ent.isDirectory() &&
-        !ent.isSymbolicLink() &&
-        !ent.name.includes("\0") &&
-        ent.name !== "." &&
-        ent.name !== "..",
-    )
-    .map((ent) => path.join(dir, ent.name));
 }
 
 /**
@@ -320,132 +219,12 @@ function cursorHome(env = process.env) {
 }
 
 /**
- * `plugins/installed.json` `user` entries: `"name@marketplace"` or `"name"`.
- * @param {string} raw
- * @returns {{ name: string, marketplace: string }[]}
- */
-function parseCursorInstalledSpecs(raw) {
-  let json;
-  try {
-    json = JSON.parse(raw);
-  } catch {
-    return [];
-  }
-  const user = json && Array.isArray(json.user) ? json.user : [];
-  /** @type {{ name: string, marketplace: string }[]} */
-  const out = [];
-  for (const item of user) {
-    if (typeof item !== "string") continue;
-    const spec = item.trim();
-    if (!spec) continue;
-    const at = spec.lastIndexOf("@");
-    if (at > 0) {
-      out.push({ name: spec.slice(0, at), marketplace: spec.slice(at + 1) });
-    } else {
-      out.push({ name: spec, marketplace: "" });
-    }
-  }
-  return out;
-}
-
-/**
- * Plain directory children. Symlinks stay out.
- * @param {string} dir
- * @returns {string[]}
- */
-function listPluginDirs(dir) {
-  let ents;
-  try {
-    ents = fs.readdirSync(dir, { withFileTypes: true });
-  } catch {
-    return [];
-  }
-  /** @type {string[]} */
-  const out = [];
-  for (const ent of ents) {
-    if (!ent.isDirectory() || ent.isSymbolicLink()) continue;
-    if (ent.name === "." || ent.name === "..") continue;
-    out.push(path.join(dir, ent.name));
-  }
-  return out;
-}
-
-/**
- * Cursor plugin roots: plugins/local/<name>, plus installed.json user
- * entries at plugins/cache/<marketplace>/<name>/<hash>. Unlisted cache
- * trees stay out. Plugin files are never executed.
  * @param {NodeJS.ProcessEnv} [env]
- * @returns {string[]}
+ * @returns {string}
  */
-function collectCursorPluginRoots(env = process.env) {
-  const home = cursorHome(env);
-  const plugins = path.join(home, "plugins");
-  const local = path.join(plugins, "local");
-  /** @type {string[]} */
-  const out = [];
-  const seen = new Set();
-  for (const child of listPluginDirs(local)) {
-    if (seen.has(child)) continue;
-    seen.add(child);
-    out.push(child);
-  }
-
-  const raw = readFile(path.join(plugins, "installed.json"));
-  if (!raw) return out;
-  for (const spec of parseCursorInstalledSpecs(raw)) {
-    const name = spec.name;
-    if (!/^[a-z0-9-]+$/i.test(name)) continue;
-    const marketplaces = spec.marketplace
-      ? [spec.marketplace]
-      : listPluginDirs(path.join(plugins, "cache")).map((d) =>
-          path.basename(d),
-        );
-    for (const mp of marketplaces) {
-      if (!/^[a-z0-9-]+$/i.test(mp)) continue;
-      const cacheRoot = path.join(plugins, "cache", mp, name);
-      for (const versionDir of listPluginDirs(cacheRoot)) {
-        if (seen.has(versionDir)) continue;
-        seen.add(versionDir);
-        out.push(versionDir);
-      }
-    }
-  }
-  return out;
-}
-
-/**
- * Enabled Codex plugin version dirs: CODEX_HOME or ~/.codex, config.toml
- * plus plugins/cache/<marketplace>/<name>/<version>. Never the rest of
- * cache. Same walk as harnessImports.collectCodexPluginRoots.
- * @param {NodeJS.ProcessEnv} [env]
- * @returns {string[]}
- */
-function collectCodexPluginRoots(env = process.env) {
-  const home =
-    (env && env.CODEX_HOME) || path.join(homeDir(env), ".codex");
-  const plugins = path.join(home, "plugins");
-  const raw = readFile(path.join(home, "config.toml"));
-  if (raw == null) return [];
-  /** @type {string[]} */
-  const out = [];
-  const seen = new Set();
-  for (const spec of parseCodexPluginTables(raw).enabled) {
-    const at = String(spec).lastIndexOf("@");
-    if (at <= 0) continue;
-    const name = spec.slice(0, at);
-    const mp = spec.slice(at + 1);
-    if (!PLUGIN_NAME_RE.test(name) || !PLUGIN_NAME_RE.test(mp)) continue;
-    const cacheRoot = path.join(plugins, "cache", mp, name);
-    if (!isInside(plugins, cacheRoot)) continue;
-    for (const versionDir of listVersionDirs(cacheRoot)) {
-      if (!isInside(cacheRoot, versionDir) || !isPlainDir(versionDir)) continue;
-      if (seen.has(versionDir)) continue;
-      seen.add(versionDir);
-      out.push(versionDir);
-      if (out.length >= MAX_PLUGIN_GROUPS) return out;
-    }
-  }
-  return out;
+function codexHome(env = process.env) {
+  if (env && env.CODEX_HOME) return env.CODEX_HOME;
+  return path.join(homeDir(env), ".codex");
 }
 
 /**
@@ -562,10 +341,10 @@ function listInvocableCommands(opts = {}) {
   for (const pluginRoot of pluginInstallPaths(env)) {
     addPluginRoot(pluginRoot);
   }
-  for (const pluginRoot of collectCursorPluginRoots(env)) {
+  for (const pluginRoot of collectCursorPluginRoots(cursorHome(env))) {
     addPluginRoot(pluginRoot);
   }
-  for (const pluginRoot of collectCodexPluginRoots(env)) {
+  for (const pluginRoot of collectCodexPluginRoots(codexHome(env))) {
     addPluginRoot(pluginRoot);
   }
 

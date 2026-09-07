@@ -1297,6 +1297,62 @@ describe("plugin slash commands", () => {
     assert.equal(fs.existsSync(path.join(staged, "hooks")), false);
   });
 
+  it("lists CURSOR_HOME plugin commands and omits a HOME/.cursor decoy", async () => {
+    const cursorHome = path.join(tmp, "cursor-home");
+    writePluginCommands(
+      path.join(cursorHome, "plugins", "local", "shipper"),
+      "shipper",
+      [["commands/review.md", "Review the diff", "Review $ARGUMENTS."]],
+    );
+    writePluginCommands(
+      path.join(env.HOME, ".cursor", "plugins", "local", "decoy"),
+      "decoy",
+      [["commands/review.md", "HOME decoy", "Do not import."]],
+    );
+
+    const preview = await previewImport({
+      userDataPath: userData,
+      source: "cursor",
+      current: [],
+      env: { ...env, CURSOR_HOME: cursorHome },
+    });
+    const names = preview.commands.map((c) => c.name);
+    assert.ok(names.includes("shipper:review"), "CURSOR_HOME lists shipper:review");
+    assert.equal(names.includes("decoy:review"), false);
+  });
+
+  it("lists CODEX_HOME plugin commands and omits a HOME/.codex decoy", async () => {
+    const codexHome = path.join(tmp, "codex-home");
+    writePluginCommands(
+      path.join(codexHome, "plugins", "cache", "mp", "shipper", "1.2.3"),
+      "shipper",
+      [["commands/deploy.md", "Deploy the app", "Ship it."]],
+    );
+    writeFile(
+      path.join(codexHome, "config.toml"),
+      `[plugins."shipper@mp"]\nenabled = true\n`,
+    );
+    writePluginCommands(
+      path.join(env.HOME, ".codex", "plugins", "cache", "mp", "decoy", "9.0.0"),
+      "decoy",
+      [["commands/deploy.md", "HOME decoy", "Do not import."]],
+    );
+    writeFile(
+      path.join(env.HOME, ".codex", "config.toml"),
+      `[plugins."decoy@mp"]\nenabled = true\n`,
+    );
+
+    const preview = await previewImport({
+      userDataPath: userData,
+      source: "codex",
+      current: [],
+      env: { ...env, CODEX_HOME: codexHome },
+    });
+    const names = preview.commands.map((c) => c.name);
+    assert.ok(names.includes("shipper:deploy"), "CODEX_HOME lists shipper:deploy");
+    assert.equal(names.includes("decoy:deploy"), false);
+  });
+
   it("installs Codex plugin commands into ~/.grok/commands/<plugin>/ and skips them on re-run", async () => {
     const installPath = path.join(
       env.HOME,
