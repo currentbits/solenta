@@ -749,13 +749,37 @@ function scanPluginCommands(id, home, env, projectPath, seen, out, warnings) {
   }
 }
 
+/**
+ * Claude: ~/.claude/commands and <project>/.claude/commands.
+ * Codex: ~/.codex/prompts and <project>/.codex/prompts.
+ * Cursor command dirs are not scanned.
+ *
+ * @param {string} id
+ * @param {"user" | "project"} origin
+ * @param {string} home
+ * @param {string} projectPath
+ * @returns {string}
+ */
+function commandSourceDir(id, origin, home, projectPath) {
+  if (id === "codex") {
+    if (origin === "project") {
+      return path.join(String(projectPath || ""), ".codex", "prompts");
+    }
+    return path.join(home, "prompts");
+  }
+  if (origin === "project") {
+    return path.join(String(projectPath || ""), ".claude", "commands");
+  }
+  return path.join(home, "commands");
+}
+
 function scanCommands(id, home, projectPath, env, warnings) {
   /** @type {Array<object>} */
   const out = [];
   const seen = new Set();
-  if (id === "claude") {
+  if (id === "claude" || id === "codex") {
     scanCommandDir(
-      path.join(home, "commands"),
+      commandSourceDir(id, "user", home, projectPath),
       home,
       "user",
       env,
@@ -768,7 +792,7 @@ function scanCommands(id, home, projectPath, env, warnings) {
       typeof projectPath === "string" ? projectPath.trim() : "";
     if (project && isPlainDir(project)) {
       scanCommandDir(
-        path.join(project, ".claude", "commands"),
+        commandSourceDir(id, "project", home, project),
         project,
         "project",
         env,
@@ -1459,7 +1483,7 @@ async function previewImport(opts) {
         let srcRoot;
         let stageDest;
         if (cmd.origin === "project") {
-          srcRoot = path.join(projectPath, ".claude", "commands");
+          srcRoot = commandSourceDir(meta.id, "project", home, projectPath);
           stageDest = path.join(commandStage, "project");
         } else if (cmd.origin === "plugin") {
           const pluginRoot = path.join(home, cmd.pluginRel);
@@ -1478,7 +1502,7 @@ async function previewImport(opts) {
           }
           stageDest = path.join(commandStage, "plugin", cmd.pluginName);
         } else {
-          srcRoot = path.join(home, "commands");
+          srcRoot = commandSourceDir(meta.id, "user", home, projectPath);
           stageDest = path.join(commandStage, "user");
         }
         stageCommand(srcRoot, cmd.rel, stageDest);

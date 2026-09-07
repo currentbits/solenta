@@ -2429,6 +2429,68 @@ describe("SkillsTab harness import", () => {
     m.unmount();
   });
 
+  it("lists Codex prompt rows in the Commands section", async () => {
+    const installed: HarnessInstallRequest[] = [];
+    const m = await mount(
+      <Harness
+        harnessSources={[
+          { id: "claude", label: "Claude Code", present: false },
+          { id: "cursor", label: "Cursor", present: false },
+          { id: "codex", label: "Codex", present: true },
+        ]}
+        onPreviewHarnessImport={(input) => {
+          assert.equal(input.source, "codex");
+          return {
+            previewId: "d".repeat(32),
+            source: { id: "codex", label: "Codex" },
+            skills: [],
+            commands: [
+              {
+                id: "command:user:draft",
+                name: "draft",
+                description: "Draft a changelog",
+                origin: "user",
+                bytes: 40,
+                alreadyImported: false,
+              },
+              {
+                id: "command:user:git:pr",
+                name: "git:pr",
+                description: "Open a pull request",
+                origin: "user",
+                bytes: 20,
+                alreadyImported: true,
+              },
+            ],
+            mcp: [],
+            memories: [],
+            instructions: [],
+            settings: null,
+            plugins: [],
+            warnings: [],
+          };
+        }}
+        onInstallHarnessImport={(input) => {
+          installed.push(input);
+        }}
+      />,
+    );
+    await m.click(m.query('[data-harness-source="codex"]') as HTMLButtonElement);
+    assert.ok(m.byText("/draft"));
+    assert.ok(m.byText("/git:pr"));
+    const remaining = m.query(
+      'input[aria-label="Select /draft"]',
+    ) as HTMLInputElement | null;
+    const already = m.query(
+      'input[aria-label="Select /git:pr"]',
+    ) as HTMLInputElement | null;
+    assert.equal(remaining?.checked, true);
+    assert.equal(already?.checked, false);
+    await m.click(m.byText("Import selected"));
+    assert.deepEqual(installed[0].selected, ["command:user:draft"]);
+    m.unmount();
+  });
+
   it("lists plugin slash commands on the harness preview", async () => {
     const installed: HarnessInstallRequest[] = [];
     const m = await mount(

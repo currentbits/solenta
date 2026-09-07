@@ -2812,7 +2812,7 @@ export interface HarnessSkillRow {
   warnings: string[];
 }
 
-/** Claude custom slash command markdown (`/draft`, `/git:pr`, `/plugin:name`). */
+/** Custom slash command markdown (`/draft`, `/git:pr`, `/plugin:name`) from Claude or Codex. */
 export interface HarnessCommandRow {
   id: string;
   name: string;

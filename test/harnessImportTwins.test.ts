@@ -28,6 +28,9 @@ describe("harness import twins", () => {
       assert.equal(result.commands[0].status, "installed");
       const listed = await api.skills.list();
       assert.ok(listed.some((s) => s.name === "house-style"));
+      const codex = await api.harness.previewImport({ source: "codex" });
+      assert.equal(codex.source.id, "codex");
+      assert.ok(codex.commands.some((c) => c.name === "draft"));
     }
   });
 });

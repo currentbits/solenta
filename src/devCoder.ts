@@ -1840,7 +1840,7 @@ function buildDevCoder(): CoderApi {
           warnings: [],
         },
       ],
-      commands: source === "claude"
+      commands: source === "claude" || source === "codex"
         ? [
             {
               id: "command:user:draft",

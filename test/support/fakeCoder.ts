@@ -482,7 +482,7 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
           warnings: [],
         },
       ],
-      commands: source === "claude"
+      commands: source === "claude" || source === "codex"
         ? [
             {
               id: "command:user:draft",

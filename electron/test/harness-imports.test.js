@@ -3443,3 +3443,238 @@ describe("plugin skills", () => {
   });
 });
 
+describe("codex prompts", () => {
+  function writeCommand(file, description, body) {
+    writeFile(
+      file,
+      `---\ndescription: ${description}\n---\n\n${body}\n`,
+    );
+  }
+
+  it("lists user and project Codex prompt markdown, including nested names", async () => {
+    const codex = path.join(env.HOME, ".codex");
+    const project = path.join(tmp, "proj");
+    fs.mkdirSync(codex, { recursive: true });
+    fs.mkdirSync(project, { recursive: true });
+    writeCommand(
+      path.join(codex, "prompts", "draft.md"),
+      "Draft a changelog",
+      "Write a changelog for $ARGUMENTS.",
+    );
+    writeCommand(
+      path.join(codex, "prompts", "git", "pr.md"),
+      "Open a pull request",
+      "Create the PR.",
+    );
+    writeCommand(
+      path.join(project, ".codex", "prompts", "ship.md"),
+      "Ship the branch",
+      "Merge and tag.",
+    );
+    writeFile(path.join(codex, "prompts", "README.md"), "# skip me\n");
+    writeCommand(
+      path.join(codex, "commands", "nope.md"),
+      "Wrong dir",
+      "Do not import.",
+    );
+    writeFile(path.join(codex, "sessions", "secret.jsonl"), "do-not-copy");
+
+    const preview = await previewImport({
+      userDataPath: userData,
+      source: "codex",
+      projectPath: project,
+      current: [],
+      env,
+    });
+    const byName = Object.fromEntries(
+      preview.commands.map((c) => [c.name, c]),
+    );
+    assert.equal(byName.draft.description, "Draft a changelog");
+    assert.equal(byName.draft.origin, "user");
+    assert.equal(byName.draft.id, "command:user:draft");
+    assert.equal(byName.draft.alreadyImported, false);
+    assert.ok(byName["git:pr"], "nested git/pr.md becomes git:pr");
+    assert.equal(byName["git:pr"].id, "command:user:git:pr");
+    assert.equal(byName.ship.origin, "project");
+    assert.equal(byName.ship.id, "command:project:ship");
+    assert.equal(byName.README, undefined);
+    assert.equal(byName.nope, undefined);
+    assert.ok(!JSON.stringify(preview).includes("do-not-copy"));
+  });
+
+  it("marks a Codex prompt already imported when ~/.grok/commands has the dest file", async () => {
+    const codex = path.join(env.HOME, ".codex");
+    fs.mkdirSync(codex, { recursive: true });
+    writeCommand(
+      path.join(codex, "prompts", "draft.md"),
+      "Draft a changelog",
+      "Write a changelog for $ARGUMENTS.",
+    );
+    writeCommand(
+      path.join(env.HOME, ".grok", "commands", "draft.md"),
+      "Already copied",
+      "Solenta copy.",
+    );
+    const preview = await previewImport({
+      userDataPath: userData,
+      source: "codex",
+      current: [],
+      env,
+    });
+    const draft = preview.commands.find((c) => c.name === "draft");
+    assert.ok(draft);
+    assert.equal(draft.alreadyImported, true);
+  });
+
+  it("installs user Codex prompts into ~/.grok/commands and skips them on re-run", async () => {
+    const codex = path.join(env.HOME, ".codex");
+    fs.mkdirSync(codex, { recursive: true });
+    writeCommand(
+      path.join(codex, "prompts", "draft.md"),
+      "Draft a changelog",
+      "Write a changelog for $ARGUMENTS.",
+    );
+    writeCommand(
+      path.join(codex, "prompts", "git", "pr.md"),
+      "Open a pull request",
+      "Create the PR.",
+    );
+    const pwned = path.join(tmp, "pwned-codex-prompt");
+    writeFile(
+      path.join(codex, "prompts", "hook.sh"),
+      `#!/bin/sh\necho PWNED > "${pwned}"\n`,
+    );
+
+    const preview = await previewImport({
+      userDataPath: userData,
+      source: "codex",
+      current: [],
+      env,
+    });
+    const selected = preview.commands.map((c) => c.id);
+    const first = await installImport({
+      userDataPath: userData,
+      env,
+      current: [],
+      request: {
+        previewId: preview.previewId,
+        selected,
+        replace: false,
+        trustLocal: false,
+      },
+    });
+    assert.deepEqual(
+      first.commands.map((c) => c.status).sort(),
+      ["installed", "installed"],
+    );
+    assert.equal(fs.existsSync(pwned), false);
+    const destDraft = path.join(env.HOME, ".grok", "commands", "draft.md");
+    const destPr = path.join(env.HOME, ".grok", "commands", "git", "pr.md");
+    assert.equal(fs.existsSync(destDraft), true);
+    assert.equal(fs.existsSync(destPr), true);
+    assert.match(fs.readFileSync(destDraft, "utf8"), /\$ARGUMENTS/);
+    const listed = listInvocableCommands({ env });
+    assert.ok(listed.some((r) => r.name === "/draft" && r.kind === "command"));
+    assert.ok(listed.some((r) => r.name === "/git:pr" && r.kind === "command"));
+
+    const preview2 = await previewImport({
+      userDataPath: userData,
+      source: "codex",
+      current: [],
+      env,
+    });
+    const again = await installImport({
+      userDataPath: userData,
+      env,
+      current: [],
+      request: {
+        previewId: preview2.previewId,
+        selected: preview2.commands.map((c) => c.id),
+        replace: false,
+        trustLocal: false,
+      },
+    });
+    assert.ok(again.commands.every((c) => c.status === "skipped"));
+  });
+
+  it("installs project Codex prompts into <project>/.grok/commands", async () => {
+    const codex = path.join(env.HOME, ".codex");
+    const project = path.join(tmp, "proj");
+    fs.mkdirSync(codex, { recursive: true });
+    fs.mkdirSync(project, { recursive: true });
+    writeCommand(
+      path.join(project, ".codex", "prompts", "ship.md"),
+      "Ship the branch",
+      "Merge and tag.",
+    );
+    const preview = await previewImport({
+      userDataPath: userData,
+      source: "codex",
+      projectPath: project,
+      current: [],
+      env,
+    });
+    const ship = preview.commands.find((c) => c.name === "ship");
+    assert.ok(ship);
+    const result = await installImport({
+      userDataPath: userData,
+      env,
+      current: [],
+      projectPath: project,
+      request: {
+        previewId: preview.previewId,
+        selected: [ship.id],
+        replace: false,
+        trustLocal: false,
+      },
+    });
+    assert.equal(result.commands[0].status, "installed");
+    const dest = path.join(project, ".grok", "commands", "ship.md");
+    assert.equal(fs.existsSync(dest), true);
+    assert.equal(
+      fs.existsSync(path.join(env.HOME, ".grok", "commands", "ship.md")),
+      false,
+      "project prompts stay in the project",
+    );
+    const listed = listInvocableCommands({ projectPath: project, env });
+    assert.ok(listed.some((r) => r.name === "/ship" && r.kind === "command"));
+  });
+
+  it("replaces an existing dest command when replace is true", async () => {
+    const codex = path.join(env.HOME, ".codex");
+    fs.mkdirSync(codex, { recursive: true });
+    writeCommand(
+      path.join(codex, "prompts", "draft.md"),
+      "New body",
+      "Updated prompt.",
+    );
+    writeCommand(
+      path.join(env.HOME, ".grok", "commands", "draft.md"),
+      "Old body",
+      "Stale prompt.",
+    );
+    const preview = await previewImport({
+      userDataPath: userData,
+      source: "codex",
+      current: [],
+      env,
+    });
+    const result = await installImport({
+      userDataPath: userData,
+      env,
+      current: [],
+      request: {
+        previewId: preview.previewId,
+        selected: ["command:user:draft"],
+        replace: true,
+        trustLocal: false,
+      },
+    });
+    assert.equal(result.commands[0].status, "replaced");
+    assert.match(
+      fs.readFileSync(path.join(env.HOME, ".grok", "commands", "draft.md"), "utf8"),
+      /Updated prompt/,
+    );
+  });
+});
+
