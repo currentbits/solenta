@@ -1660,6 +1660,39 @@ describe("Sidebar status label + wait row", () => {
     m.unmount();
   });
 
+  it("settled workers of an active parent stay nested in Active", async () => {
+    await clearSidebarStorage();
+    const m = await mount(
+      sidebar([
+        ORCH,
+        worker({
+          id: "w-settled",
+          title: "Fork: Import existing CLI agent sessions",
+          status: "done",
+          runStartedAt: null,
+          settledOverride: "settled",
+        }),
+      ]),
+    );
+    const card = m.query('[data-thread-card="w-settled"]');
+    assert.ok(
+      card,
+      "settled worker must stay next to the parent without opening Settled",
+    );
+    assert.equal(card!.getAttribute("data-nested"), "true");
+    assert.equal(
+      card!.getAttribute("data-settled"),
+      null,
+      "Active nest is a full card, not a Settled slim row",
+    );
+    assert.equal(
+      m.query("[data-settled-shelf-toggle]"),
+      null,
+      "the only settled thread is nested under its parent, not in the shelf",
+    );
+    m.unmount();
+  });
+
   it("an idle thread with a queued follow-up says so", async () => {
     await clearSidebarStorage();
     const m = await mount(

@@ -418,7 +418,16 @@ describe("Agents team view", () => {
     const text = m.text();
     assert.match(text, /Orchestrator/, "card keeps the orchestrator chip");
     assert.ok(m.query('[aria-label="Team"]'), "team section still renders");
-    assert.match(text, /already finished/, "done worker listed, not vanished");
+    assert.match(
+      text,
+      /already finished/,
+      "the only workers are done: list them, do not fold behind a toggle",
+    );
+    assert.equal(
+      m.query("[data-wait-line]"),
+      null,
+      "finished workers must not keep a wait line",
+    );
     assert.equal(
       m.byText("1 done"),
       null,
@@ -428,27 +437,43 @@ describe("Agents team view", () => {
   });
 
   it("orchestrator: done+settled workers are findable without the Settled shelf", async () => {
-    const done = summary({
-      id: "t-done",
-      title: "Fork: already finished",
+    const settledA = summary({
+      id: "t-settled-a",
+      title: "Fork: Import existing CLI agent sessions",
       provider: "grok",
       status: "done",
       handoffFrom: "t-orch",
     });
-    const settled = summary({
-      id: "t-settled",
-      title: "Fork: settled worker",
+    const settledB = summary({
+      id: "t-settled-b",
+      title: "Fork: Map the wait line",
       provider: "grok",
       status: "done",
       handoffFrom: "t-orch",
     });
-    const m = await mount(content(thread(), [ORCHESTRATOR, done, settled]));
+    const selected: string[] = [];
+    const m = await mount(
+      content(
+        thread({ status: "idle" }),
+        [ORCHESTRATOR, settledA, settledB],
+        (id) => selected.push(id),
+      ),
+    );
     await m.flush();
 
     const text = m.text();
-    assert.ok(m.query('[aria-label="Team"]'), "team section still renders");
-    assert.match(text, /already finished/, "done worker listed immediately");
-    assert.match(text, /settled worker/, "settled worker listed immediately");
+    assert.ok(m.query('[aria-label="Team"]'), "team roster still mounts");
+    assert.match(
+      text,
+      /Import existing CLI agent sessions/,
+      "settled worker title is visible without opening Settled",
+    );
+    assert.match(text, /Map the wait line/);
+    assert.doesNotMatch(
+      text,
+      /\d+ done/,
+      "no collapsed 'N done' toggle when every worker has landed",
+    );
     assert.equal(
       m.byText("2 done"),
       null,
@@ -459,6 +484,14 @@ describe("Agents team view", () => {
       text,
       /Settled/,
       "Team is not the sidebar Settled shelf",
+    );
+    assert.equal(m.query("[data-wait-line]"), null);
+
+    await m.click(m.byText("Fork: Import existing CLI agent sessions"));
+    assert.deepEqual(
+      selected,
+      ["t-settled-a"],
+      "clicking the settled worker selects it from Team",
     );
     m.unmount();
   });
