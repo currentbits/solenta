@@ -12,11 +12,11 @@ const path = require("node:path");
 const MAX_JSON_BYTES = 512 * 1024;
 const PLUGIN_NAME_RE = /^[a-z0-9-]+$/i;
 
-const CANDIDATES = [
-  [".claude-plugin", "plugin.json"],
-  [".cursor-plugin", "plugin.json"],
-  [".codex-plugin", "plugin.json"],
-  ["plugin.json"],
+const PLUGIN_JSON_RELS = [
+  ".claude-plugin/plugin.json",
+  ".cursor-plugin/plugin.json",
+  ".codex-plugin/plugin.json",
+  "plugin.json",
 ];
 
 function isInside(parent, child) {
@@ -67,25 +67,25 @@ function readPluginManifest(pluginRoot, opts = {}) {
   const requireName = Boolean(opts.requireName);
   /** @type {Record<string, unknown>} */
   let json = {};
-  for (const parts of CANDIDATES) {
-    const raw = readCappedJson(path.join(pluginRoot, ...parts));
+  for (const rel of PLUGIN_JSON_RELS) {
+    const raw = readCappedJson(path.join(pluginRoot, rel));
     if (raw == null) continue;
     try {
-      json = JSON.parse(raw);
+      const parsed = JSON.parse(raw);
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+        continue;
+      }
+      json = parsed;
       break;
     } catch {
       continue;
     }
   }
-  if (!json || typeof json !== "object" || Array.isArray(json)) json = {};
 
   const rawName = typeof json.name === "string" ? json.name.trim() : "";
-  const name = PLUGIN_NAME_RE.test(rawName)
-    ? rawName.toLowerCase()
-    : requireName
-      ? ""
-      : path.basename(pluginRoot).toLowerCase();
-  if (requireName && !name) return null;
+  const validName = PLUGIN_NAME_RE.test(rawName) ? rawName.toLowerCase() : "";
+  if (requireName && !validName) return null;
+  const name = validName || path.basename(pluginRoot).toLowerCase();
 
   /** @type {string[]} */
   const commandDirs = [];
@@ -106,4 +106,8 @@ function readPluginManifest(pluginRoot, opts = {}) {
   return { name, commandDirs, skillDirs };
 }
 
-module.exports = { readPluginManifest };
+module.exports = {
+  MAX_JSON_BYTES,
+  PLUGIN_JSON_RELS,
+  readPluginManifest,
+};
