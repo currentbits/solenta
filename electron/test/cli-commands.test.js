@@ -461,9 +461,21 @@ describe("listInvocableCommands", () => {
     assert.ok(!listed.includes("/ghost:nope"), "unlisted cache plugin stays out");
   });
 
-  it("lists CURSOR_HOME plugin commands and omits a HOME/.cursor decoy", () => {
-    const cursorHome = path.join(tmp, "cursor-home");
-    const localRoot = path.join(cursorHome, "plugins", "local", "shipper");
+  it("lists a Cursor plugin from CURSOR_HOME and omits ~/.cursor under a different HOME", () => {
+    const decoyRoot = path.join(tmp, ".cursor", "plugins", "local", "decoy");
+    fs.mkdirSync(path.join(decoyRoot, ".claude-plugin"), { recursive: true });
+    fs.writeFileSync(
+      path.join(decoyRoot, ".claude-plugin", "plugin.json"),
+      JSON.stringify({ name: "decoy" }),
+    );
+    fs.mkdirSync(path.join(decoyRoot, "commands"), { recursive: true });
+    fs.writeFileSync(
+      path.join(decoyRoot, "commands", "nope.md"),
+      "---\ndescription: Home decoy\n---\n\nDo not list.\n",
+    );
+
+    const cursor = path.join(tmp, "cursor-home");
+    const localRoot = path.join(cursor, "plugins", "local", "shipper");
     fs.mkdirSync(path.join(localRoot, ".claude-plugin"), { recursive: true });
     fs.writeFileSync(
       path.join(localRoot, ".claude-plugin", "plugin.json"),
@@ -474,30 +486,64 @@ describe("listInvocableCommands", () => {
       path.join(localRoot, "commands", "review.md"),
       "---\ndescription: Review the diff\n---\n\nReview $ARGUMENTS.\n",
     );
-
-    const decoyRoot = path.join(tmp, ".cursor", "plugins", "local", "decoy");
-    fs.mkdirSync(path.join(decoyRoot, ".claude-plugin"), { recursive: true });
-    fs.writeFileSync(
-      path.join(decoyRoot, ".claude-plugin", "plugin.json"),
-      JSON.stringify({ name: "decoy" }),
+    const unlisted = path.join(
+      cursor,
+      "plugins",
+      "cache",
+      "cursor-public",
+      "github",
+      "abc123",
     );
-    fs.mkdirSync(path.join(decoyRoot, "commands"), { recursive: true });
+    fs.mkdirSync(path.join(unlisted, ".claude-plugin"), { recursive: true });
     fs.writeFileSync(
-      path.join(decoyRoot, "commands", "review.md"),
-      "---\ndescription: HOME decoy\n---\n\nDo not list.\n",
+      path.join(unlisted, ".claude-plugin", "plugin.json"),
+      JSON.stringify({ name: "github" }),
+    );
+    fs.mkdirSync(path.join(unlisted, "commands"), { recursive: true });
+    fs.writeFileSync(
+      path.join(unlisted, "commands", "nope.md"),
+      "---\ndescription: Cached marketplace plugin\n---\n\nDo not list.\n",
     );
 
     const rows = listInvocableCommands({
-      env: { HOME: tmp, CURSOR_HOME: cursorHome },
+      env: { HOME: tmp, CURSOR_HOME: cursor },
     });
-    assert.ok(byName(rows, "/shipper:review"), "CURSOR_HOME lists /shipper:review");
-    assert.equal(byName(rows, "/decoy:review"), undefined);
+    assert.ok(byName(rows, "/review"), "bare Cursor local plugin command");
+    assert.ok(byName(rows, "/shipper:review"), "namespaced /shipper:review");
+    assert.equal(byName(rows, "/decoy:nope"), undefined);
+    assert.equal(byName(rows, "/github:nope"), undefined);
+    assert.equal(byName(rows, "/nope"), undefined);
   });
 
-  it("lists CODEX_HOME plugin commands and omits a HOME/.codex decoy", () => {
-    const codexHome = path.join(tmp, "codex-home");
+  it("lists a Codex plugin from CODEX_HOME and omits ~/.codex under a different HOME", () => {
+    const decoyPath = path.join(
+      tmp,
+      ".codex",
+      "plugins",
+      "cache",
+      "mp",
+      "decoy",
+      "1.0.0",
+    );
+    fs.mkdirSync(path.join(decoyPath, ".codex-plugin"), { recursive: true });
+    fs.writeFileSync(
+      path.join(decoyPath, ".codex-plugin", "plugin.json"),
+      JSON.stringify({ name: "decoy" }),
+    );
+    fs.mkdirSync(path.join(decoyPath, "commands"), { recursive: true });
+    fs.writeFileSync(
+      path.join(decoyPath, "commands", "nope.md"),
+      "---\ndescription: Home decoy\n---\n\nDo not list.\n",
+    );
+    fs.mkdirSync(path.join(tmp, ".codex"), { recursive: true });
+    fs.writeFileSync(
+      path.join(tmp, ".codex", "config.toml"),
+      `[plugins."decoy@mp"]\nenabled = true\n`,
+    );
+
+    const codex = path.join(tmp, "codex-home");
     const installPath = path.join(
-      codexHome,
+      codex,
       "plugins",
       "cache",
       "mp",
@@ -514,42 +560,36 @@ describe("listInvocableCommands", () => {
       path.join(installPath, "commands", "deploy.md"),
       "---\ndescription: Deploy the app\n---\n\nShip it.\n",
     );
-    fs.mkdirSync(codexHome, { recursive: true });
+    const unlistedPath = path.join(
+      codex,
+      "plugins",
+      "cache",
+      "orphan",
+      "ghost",
+      "1.0.0",
+    );
+    fs.mkdirSync(path.join(unlistedPath, ".codex-plugin"), { recursive: true });
     fs.writeFileSync(
-      path.join(codexHome, "config.toml"),
+      path.join(unlistedPath, ".codex-plugin", "plugin.json"),
+      JSON.stringify({ name: "ghost" }),
+    );
+    fs.mkdirSync(path.join(unlistedPath, "commands"), { recursive: true });
+    fs.writeFileSync(
+      path.join(unlistedPath, "commands", "nope.md"),
+      "---\ndescription: Unlisted cache copy\n---\n\nNope.\n",
+    );
+    fs.mkdirSync(codex, { recursive: true });
+    fs.writeFileSync(
+      path.join(codex, "config.toml"),
       `[plugins."shipper@mp"]\nenabled = true\n`,
     );
 
-    const decoyPath = path.join(
-      tmp,
-      ".codex",
-      "plugins",
-      "cache",
-      "mp",
-      "decoy",
-      "9.0.0",
+    const listed = names(
+      listInvocableCommands({ env: { HOME: tmp, CODEX_HOME: codex } }),
     );
-    fs.mkdirSync(path.join(decoyPath, ".codex-plugin"), { recursive: true });
-    fs.writeFileSync(
-      path.join(decoyPath, ".codex-plugin", "plugin.json"),
-      JSON.stringify({ name: "decoy" }),
-    );
-    fs.mkdirSync(path.join(decoyPath, "commands"), { recursive: true });
-    fs.writeFileSync(
-      path.join(decoyPath, "commands", "deploy.md"),
-      "---\ndescription: HOME decoy\n---\n\nDo not list.\n",
-    );
-    fs.mkdirSync(path.join(tmp, ".codex"), { recursive: true });
-    fs.writeFileSync(
-      path.join(tmp, ".codex", "config.toml"),
-      `[plugins."decoy@mp"]\nenabled = true\n`,
-    );
-
-    const rows = listInvocableCommands({
-      env: { HOME: tmp, CODEX_HOME: codexHome },
-    });
-    assert.ok(byName(rows, "/shipper:deploy"), "CODEX_HOME lists /shipper:deploy");
-    assert.equal(byName(rows, "/decoy:deploy"), undefined);
+    assert.ok(listed.includes("/shipper:deploy"));
+    assert.ok(!listed.includes("/decoy:nope"));
+    assert.ok(!listed.includes("/ghost:nope"));
   });
 
   it("lists a nameless Cursor cache plugin as /abc123:review", () => {
