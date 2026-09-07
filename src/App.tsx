@@ -329,6 +329,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     updateAutomation,
     removeAutomation,
     runAutomationNow,
+    loading,
   } = useCoder();
 
   useEffect(() => {
@@ -406,6 +407,10 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
       selectThread(id);
     },
     [selectThread],
+  );
+  const liveThreadIds = useMemo(
+    () => (loading ? undefined : threads.map((t) => t.id)),
+    [loading, threads],
   );
   const openCrewIntegration = useCallback(
     (leadId: string) => {
@@ -1402,6 +1407,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
               projectScope={activityProjectId}
               listActivity={listActivity}
               onSelectThread={handleSelectThread}
+              existingThreadIds={liveThreadIds}
             />
           ) : view === "usage" ? (
             <UsageView

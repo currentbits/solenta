@@ -10,6 +10,8 @@ export interface ActivityViewProps {
   projectScope?: string | null;
   listActivity: () => Promise<ActivityItem[]>;
   onSelectThread: (id: string) => void;
+  /** Live sidebar ids. Omitted means the list is still loading — treat rows as openable. */
+  existingThreadIds?: Iterable<string>;
 }
 
 export function ActivityView({
@@ -17,6 +19,7 @@ export function ActivityView({
   projectScope = null,
   listActivity,
   onSelectThread,
+  existingThreadIds,
 }: ActivityViewProps) {
   const [items, setItems] = useState<ActivityItem[]>([]);
   const [loading, setLoading] = useState(false);
@@ -60,6 +63,10 @@ export function ActivityView({
     [items, projectScope],
   );
   const groups = useMemo(() => groupActivityByDay(scoped, now), [scoped, now]);
+  const liveThreadIds = useMemo(() => {
+    if (existingThreadIds == null) return null;
+    return new Set(existingThreadIds);
+  }, [existingThreadIds]);
   const empty = !loading && scoped.length === 0;
 
   return (
@@ -100,24 +107,34 @@ export function ActivityView({
               {group.items.map((item) => {
                 const slug = projectSlug.get(item.projectId) ?? item.projectId;
                 const kind = activityKindLabel(item.kind);
+                const missing =
+                  liveThreadIds != null && !liveThreadIds.has(item.threadId);
                 return (
                   <div
                     key={item.id}
                     className={styles.row}
                     data-activity-row={item.id}
+                    data-thread-unavailable={missing ? "" : undefined}
                   >
-                    <button
-                      type="button"
-                      className={styles.rowSelect}
-                      aria-label={`Select thread: ${item.threadTitle}`}
-                      onClick={() => onSelectThread(item.threadId)}
-                    />
+                    {missing ? null : (
+                      <button
+                        type="button"
+                        className={styles.rowSelect}
+                        aria-label={`Select thread: ${item.threadTitle}`}
+                        onClick={() => onSelectThread(item.threadId)}
+                      />
+                    )}
                     <div className={styles.rowBody}>
                       <div className={styles.rowTop}>
                         <span className={styles.slug}>{slug}</span>
                         <span className={styles.threadTitle}>
                           {item.threadTitle}
                         </span>
+                        {missing ? (
+                          <span className={styles.unavailable}>
+                            Transcript unavailable
+                          </span>
+                        ) : null}
                       </div>
                       <div className={styles.rowMeta}>
                         <span className={styles.kind} data-kind={item.kind}>

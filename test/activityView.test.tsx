@@ -178,4 +178,140 @@ describe("ActivityView", () => {
     assert.equal(m.query("[data-activity-row]"), null);
     m.unmount();
   });
+
+  it("keeps a missing-thread row visible without selecting it", async () => {
+    let selected: string | null = null;
+    const m = await mount(
+      <ActivityView
+        projects={[p1]}
+        listActivity={async () => [
+          item({
+            id: "gone:done:1",
+            threadId: "gone",
+            kind: "done",
+            threadTitle: "Deleted claim",
+          }),
+        ]}
+        existingThreadIds={["t-live"]}
+        onSelectThread={(id) => {
+          selected = id;
+        }}
+      />,
+    );
+    await m.flush();
+    const row = m.query('[data-activity-row="gone:done:1"]');
+    assert.ok(row, "historical row stays");
+    assert.ok(m.text().includes("Deleted claim"));
+    assert.ok(m.text().includes("Transcript unavailable"));
+    assert.equal(
+      m.query('button[aria-label="Select thread: Deleted claim"]'),
+      null,
+      "no select overlay",
+    );
+    const kind = m.query("[data-kind]");
+    assert.ok(kind, "kind stays a text cell");
+    assert.equal(kind!.closest("button"), null, "kind is not a hit target");
+    assert.equal(row!.querySelectorAll("button").length, 0, "no row hit target");
+    await m.click(row);
+    assert.equal(selected, null);
+    m.unmount();
+  });
+
+  it("treats an empty existingThreadIds set as loaded and unavailable", async () => {
+    let selected: string | null = null;
+    const m = await mount(
+      <ActivityView
+        projects={[p1]}
+        listActivity={async () => [
+          item({
+            id: "gone:done:1",
+            threadId: "gone",
+            kind: "done",
+            threadTitle: "Deleted claim",
+          }),
+        ]}
+        existingThreadIds={[]}
+        onSelectThread={(id) => {
+          selected = id;
+        }}
+      />,
+    );
+    await m.flush();
+    assert.ok(m.text().includes("Transcript unavailable"));
+    assert.equal(
+      m.query('button[aria-label="Select thread: Deleted claim"]'),
+      null,
+    );
+    await m.click(m.query('[data-activity-row="gone:done:1"]'));
+    assert.equal(selected, null);
+    m.unmount();
+  });
+
+  it("treats omitted live ids as openable so boot does not flash unavailable", async () => {
+    let selected: string | null = null;
+    const m = await mount(
+      <ActivityView
+        projects={[p1]}
+        listActivity={async () => [
+          item({
+            id: "t-boot:started:1",
+            threadId: "t-boot",
+            kind: "started",
+            threadTitle: "Still loading",
+          }),
+        ]}
+        onSelectThread={(id) => {
+          selected = id;
+        }}
+      />,
+    );
+    await m.flush();
+    const row = m.query('[data-activity-row="t-boot:started:1"]');
+    assert.ok(row, "row renders during boot");
+    assert.equal(
+      /unavailable/i.test(row!.textContent ?? ""),
+      false,
+      "omitted live set must not mark rows unavailable",
+    );
+    const select = m.query('button[aria-label="Select thread: Still loading"]');
+    assert.ok(select, "row stays openable before the list arrives");
+    await m.click(select);
+    assert.equal(selected, "t-boot");
+    m.unmount();
+  });
+
+  it("opens a live row by thread id when another row shares the title", async () => {
+    let selected: string | null = null;
+    const m = await mount(
+      <ActivityView
+        projects={[p1]}
+        listActivity={async () => [
+          item({
+            id: "t-hit:started:1",
+            threadId: "t-hit",
+            kind: "started",
+            threadTitle: "click me",
+          }),
+          item({
+            id: "gone:done:1",
+            threadId: "gone",
+            kind: "done",
+            threadTitle: "click me",
+          }),
+        ]}
+        existingThreadIds={["t-hit"]}
+        onSelectThread={(id) => {
+          selected = id;
+        }}
+      />,
+    );
+    await m.flush();
+    const live = m.query('button[aria-label="Select thread: click me"]');
+    assert.ok(live, "live row select button");
+    await m.click(live);
+    assert.equal(selected, "t-hit");
+    assert.ok(m.query('[data-activity-row="gone:done:1"]'), "missing row stays");
+    assert.ok(m.text().includes("Transcript unavailable"));
+    m.unmount();
+  });
 });
