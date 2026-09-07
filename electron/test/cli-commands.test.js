@@ -189,6 +189,95 @@ describe("listInvocableCommands", () => {
       [],
     );
   });
+
+  it("lists a Codex enabled plugin command without a harness import", () => {
+    const codex = path.join(tmp, ".codex");
+    const installPath = path.join(
+      codex,
+      "plugins",
+      "cache",
+      "mp",
+      "shipper",
+      "1.2.3",
+    );
+    fs.mkdirSync(path.join(installPath, ".codex-plugin"), { recursive: true });
+    fs.writeFileSync(
+      path.join(installPath, ".codex-plugin", "plugin.json"),
+      JSON.stringify({ name: "shipper" }),
+    );
+    fs.mkdirSync(path.join(installPath, "commands"), { recursive: true });
+    fs.writeFileSync(
+      path.join(installPath, "commands", "deploy.md"),
+      "---\ndescription: Deploy the app\n---\n\nShip it.\n",
+    );
+
+    const disabledPath = path.join(
+      codex,
+      "plugins",
+      "cache",
+      "mp",
+      "other",
+      "9.0.0",
+    );
+    fs.mkdirSync(path.join(disabledPath, ".codex-plugin"), { recursive: true });
+    fs.writeFileSync(
+      path.join(disabledPath, ".codex-plugin", "plugin.json"),
+      JSON.stringify({ name: "other" }),
+    );
+    fs.mkdirSync(path.join(disabledPath, "commands"), { recursive: true });
+    fs.writeFileSync(
+      path.join(disabledPath, "commands", "nope.md"),
+      "---\ndescription: Disabled cache copy\n---\n\nNope.\n",
+    );
+
+    const unlistedPath = path.join(
+      codex,
+      "plugins",
+      "cache",
+      "orphan",
+      "ghost",
+      "1.0.0",
+    );
+    fs.mkdirSync(path.join(unlistedPath, ".codex-plugin"), { recursive: true });
+    fs.writeFileSync(
+      path.join(unlistedPath, ".codex-plugin", "plugin.json"),
+      JSON.stringify({ name: "ghost" }),
+    );
+    fs.mkdirSync(path.join(unlistedPath, "commands"), { recursive: true });
+    fs.writeFileSync(
+      path.join(unlistedPath, "commands", "nope.md"),
+      "---\ndescription: Unlisted cache copy\n---\n\nNope.\n",
+    );
+
+    fs.mkdirSync(codex, { recursive: true });
+    fs.writeFileSync(
+      path.join(codex, "config.toml"),
+      [
+        `[plugins."shipper@mp"]`,
+        "enabled = true",
+        "",
+        `[plugins."other@mp"]`,
+        "enabled = false",
+        "",
+      ].join("\n"),
+    );
+
+    const rows = listInvocableCommands({ env: envHome() });
+    const listed = names(rows);
+    const row = byName(rows, "/shipper:deploy");
+    assert.ok(
+      row,
+      "enabled Codex cache plugin is listed without a harness import",
+    );
+    assert.equal(row.kind, "command");
+    assert.equal(row.hint, "Deploy the app");
+    assert.ok(
+      !listed.includes("/1.2.3:deploy"),
+      "namespace comes from .codex-plugin/plugin.json, not the version dir",
+    );
+    assert.ok(!listed.includes("/other:nope"), "disabled Codex plugin stays out");
+    assert.ok(!listed.includes("/ghost:nope"), "unlisted cache plugin stays out");
+  });
 });
 
 describe("expandInvocableCommand", () => {
