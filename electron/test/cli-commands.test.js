@@ -34,6 +34,27 @@ function writeSkill(base, name, content) {
   fs.writeFileSync(path.join(dir, "SKILL.md"), content, "utf8");
 }
 
+function writeCommand(file, description, body) {
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(
+    file,
+    `---\ndescription: ${description}\n---\n\n${body}\n`,
+    "utf8",
+  );
+}
+
+function writePluginCommands(root, name, files) {
+  fs.mkdirSync(path.join(root, ".claude-plugin"), { recursive: true });
+  fs.writeFileSync(
+    path.join(root, ".claude-plugin", "plugin.json"),
+    JSON.stringify({ name }),
+  );
+  fs.writeFileSync(path.join(root, "plugin.json"), JSON.stringify({ name }));
+  for (const [rel, description, body] of files) {
+    writeCommand(path.join(root, rel), description, body);
+  }
+}
+
 function names(rows) {
   return rows.map((r) => r.name);
 }
@@ -430,6 +451,46 @@ describe("listInvocableCommands", () => {
   });
 
   it("lists a Codex enabled plugin command without a harness import", () => {
+    const home = path.join(tmp, "codex-home");
+    const installPath = path.join(
+      home,
+      "plugins",
+      "cache",
+      "mp",
+      "shipper",
+      "1.2.3",
+    );
+    writePluginCommands(installPath, "shipper", [
+      ["commands/deploy.md", "Deploy the app", "Ship $ARGUMENTS."],
+      ["commands/git/pr.md", "Open a pull request", "Create the PR."],
+    ]);
+    const pwned = path.join(tmp, "pwned-codex-plugin");
+    fs.mkdirSync(path.join(installPath, "hooks"), { recursive: true });
+    fs.writeFileSync(
+      path.join(installPath, "hooks", "setup.sh"),
+      `#!/bin/sh\necho PWNED > "${pwned}"\n`,
+    );
+    fs.writeFileSync(
+      path.join(home, "config.toml"),
+      `[plugins."shipper@mp"]\nenabled = true\n`,
+    );
+
+    const rows = listInvocableCommands({
+      env: { HOME: tmp, CODEX_HOME: home },
+    });
+    const deploy = byName(rows, "/deploy");
+    assert.ok(deploy, "bare plugin command /deploy is listed");
+    assert.equal(deploy.kind, "command");
+    assert.equal(deploy.hint, "Deploy the app");
+    const namespaced = byName(rows, "/shipper:deploy");
+    assert.ok(namespaced, "namespaced /shipper:deploy");
+    assert.equal(namespaced.kind, "command");
+    assert.ok(byName(rows, "/git:pr"), "nested command becomes /git:pr");
+    assert.ok(byName(rows, "/shipper:git:pr"), "namespaced nested command");
+    assert.equal(fs.existsSync(pwned), false, "plugin hooks are not executed");
+  });
+
+  it("omits unlisted and disabled Codex plugin cache commands", () => {
     const codex = path.join(tmp, ".codex");
     const installPath = path.join(
       codex,
@@ -510,12 +571,14 @@ describe("listInvocableCommands", () => {
     );
     assert.equal(row.kind, "command");
     assert.equal(row.hint, "Deploy the app");
+    assert.ok(listed.includes("/deploy"), "enabled shipper is listed");
     assert.ok(
       !listed.includes("/1.2.3:deploy"),
       "namespace comes from .codex-plugin/plugin.json, not the version dir",
     );
-    assert.ok(!listed.includes("/other:nope"), "disabled Codex plugin stays out");
-    assert.ok(!listed.includes("/ghost:nope"), "unlisted cache plugin stays out");
+    assert.ok(!listed.includes("/nope"));
+    assert.ok(!listed.includes("/other:nope"), "disabled cache plugin omitted");
+    assert.ok(!listed.includes("/ghost:nope"), "unlisted cache plugin omitted");
   });
 
   it("namespaces a nameless plugin from the plugin dir, not a missing plugin.json name", () => {
