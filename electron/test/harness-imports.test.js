@@ -869,6 +869,77 @@ describe("plugin slash commands", () => {
     writeFile(installedFile, JSON.stringify(json));
   }
 
+  it("lists plugin command markdown from plugins/ children and installed_plugins.json", async () => {
+    const claude = path.join(env.HOME, ".claude");
+    writePluginCommands(path.join(claude, "plugins", "shipper"), "shipper", [
+      ["commands/review.md", "Review the diff", "Review $ARGUMENTS."],
+      ["commands/git/pr.md", "Open a pull request", "Create the PR."],
+      [".claude/commands/ship.md", "Ship the branch", "Merge and tag."],
+    ]);
+    writeFile(path.join(claude, "plugins", "shipper", "commands", "README.md"), "# skip\n");
+    writeFile(
+      path.join(claude, "plugins", "shipper", "hooks", "setup.sh"),
+      "#!/bin/sh\necho PWNED\n",
+    );
+
+    const installPath = path.join(
+      claude,
+      "plugins",
+      "cache",
+      "ponytail",
+      "ponytail",
+      "4.8.4",
+    );
+    writePluginCommands(installPath, "ponytail", [
+      ["commands/status.md", "Plugin status", "Print status."],
+    ]);
+    writeFile(
+      path.join(claude, "plugins", "cache", "other", "1.0.0", "commands", "nope.md"),
+      "---\ndescription: Uninstalled cache copy\n---\n\nNope.\n",
+    );
+    writeFile(
+      path.join(claude, "plugins", "marketplaces", "noise", "commands", "nope.md"),
+      "---\ndescription: Marketplace copy\n---\n\nNope.\n",
+    );
+    writeFile(
+      path.join(claude, "plugins", "installed_plugins.json"),
+      JSON.stringify({
+        version: 1,
+        plugins: {
+          "ponytail@ponytail": [
+            { scope: "user", installPath, version: "4.8.4" },
+          ],
+        },
+      }),
+    );
+
+    const preview = await previewImport({
+      userDataPath: userData,
+      source: "claude",
+      current: [],
+      env,
+    });
+    const byName = Object.fromEntries(
+      preview.commands.filter((c) => c.origin === "plugin").map((c) => [c.name, c]),
+    );
+    assert.equal(byName["shipper:review"].description, "Review the diff");
+    assert.equal(byName["shipper:review"].id, "command:plugin:shipper:review");
+    assert.equal(byName["shipper:git:pr"].origin, "plugin");
+    assert.ok(byName["shipper:ship"], "default .claude/commands is scanned");
+    assert.ok(byName["ponytail:status"], "installed_plugins.json installPath is scanned");
+    assert.equal(byName.README, undefined);
+    assert.equal(byName.nope, undefined);
+    assert.equal(byName["other:nope"], undefined);
+    assert.equal(byName["noise:nope"], undefined);
+
+    const stagedRoot = path.join(userData, "harness-imports");
+    for (const id of fs.readdirSync(stagedRoot)) {
+      const stage = path.join(stagedRoot, id, "stage");
+      assert.equal(fs.existsSync(path.join(stage, "cache")), false);
+      assert.equal(fs.existsSync(path.join(stage, "marketplaces")), false);
+    }
+  });
+
   it("lists installed plugin command markdown with ids that cannot collide with user slugs", async () => {
     const claude = path.join(env.HOME, ".claude");
     writeCommand(

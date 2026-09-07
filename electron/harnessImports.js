@@ -443,8 +443,51 @@ function pluginInstallPaths(home) {
   return out;
 }
 
+/**
+ * Direct children of plugins/ (local installs). Never cache or marketplaces.
+ * @param {string} home
+ * @returns {string[]}
+ */
+function collectClaudePluginChildRoots(home) {
+  const plugins = path.join(home, "plugins");
+  if (!isPlainDir(plugins) || !isInside(home, plugins)) return [];
+  let ents;
+  try {
+    ents = fs.readdirSync(plugins, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+  /** @type {string[]} */
+  const out = [];
+  for (const ent of ents) {
+    if (ent.isSymbolicLink() || !ent.isDirectory() || ent.name.includes("\0")) {
+      continue;
+    }
+    if (IGNORED_DIRS.has(ent.name)) continue;
+    const resolved = path.join(plugins, ent.name);
+    if (!isPlainDir(resolved) || !isInside(plugins, resolved)) continue;
+    out.push(resolved);
+    if (out.length >= MAX_PLUGIN_GROUPS) return out;
+  }
+  return out;
+}
+
 function pluginRootsForSource(id, home) {
-  if (id === "claude") return pluginInstallPaths(home);
+  if (id === "claude") {
+    const seen = new Set();
+    /** @type {string[]} */
+    const out = [];
+    for (const root of [
+      ...collectClaudePluginChildRoots(home),
+      ...pluginInstallPaths(home),
+    ]) {
+      if (seen.has(root)) continue;
+      seen.add(root);
+      out.push(root);
+      if (out.length >= MAX_PLUGIN_GROUPS) return out;
+    }
+    return out;
+  }
   if (id === "codex") return collectCodexPluginRoots(home);
   if (id === "cursor") return collectCursorPluginRoots(home);
   return [];
