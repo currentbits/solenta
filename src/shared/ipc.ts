@@ -681,6 +681,8 @@ export interface ThreadInfo {
   webSearch?: boolean;
   /** Absolute path of the thread's git worktree, when one was set up. */
   worktreePath: string | null;
+  /** Numbered merge-queue lane (#346). Absent when the thread has no lane. */
+  lane?: MergeLaneBeat | null;
   /**
    * Durable worker→lead integrate receipts on an orchestrator lead
    * (issue #954). Absent on ordinary threads. Survives worker cleanup.
@@ -1822,6 +1824,49 @@ export interface LocalServerInfo {
   host: string;
   port: number;
   url: string;
+}
+
+/** Numbered merge-queue lane (#346). */
+export interface MergeLaneInfo {
+  n: number;
+  threadId: string;
+  port: number;
+  path: string | null;
+  branch: string | null;
+  claimedAt: number;
+  lastBeat: number;
+}
+
+export interface MergeLaneClaim {
+  n: number;
+  port: number;
+  path: string;
+  branch: string;
+}
+
+export interface MergeLanePreview {
+  lane: number;
+  sha: string;
+  files: string[];
+  path: string;
+}
+
+export interface MergeLaneRestore {
+  restored: boolean;
+  sha?: string;
+}
+
+export interface MergeLaneRecycle {
+  n: number;
+  threadId: string;
+}
+
+/** Stamp returned by heartbeatLane. */
+export interface MergeLaneBeat {
+  n: number;
+  port: number;
+  claimedAt: number;
+  lastBeat: number;
 }
 
 /** Per-thread `npm run` dev server started from the Environment tab. */
@@ -4204,6 +4249,28 @@ export interface CoderApi {
      * reports as unblocked candidates; branches are never deleted.
      */
     gcClean(input: GcCleanInput): Promise<GcCleanResult>;
+  };
+  /**
+   * Local merge-queue lanes (#346). Claim a numbered worktree, preview it
+   * onto the project checkout, restore, recycle a wedged lane, or heartbeat
+   * a claimed lane. Promote stays `git.mergeWorktree` (human-only). These
+   * methods do not close issues.
+   */
+  mergeQueue: {
+    claimLane(input: { threadId: string }): Promise<MergeLaneClaim>;
+    listLanes(input: { projectId: string }): Promise<MergeLaneInfo[]>;
+    previewLane(input: {
+      projectId: string;
+      lane: number;
+    }): Promise<MergeLanePreview>;
+    restorePreview(input: { projectId: string }): Promise<MergeLaneRestore>;
+    recycleWedgedLanes(input: {
+      projectId: string;
+    }): Promise<MergeLaneRecycle[]>;
+    heartbeatLane(input: {
+      threadId: string;
+      now?: number;
+    }): Promise<MergeLaneBeat | null>;
   };
   issues: {
     /**

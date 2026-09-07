@@ -263,6 +263,11 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     gitFetch,
     gitRepoInfo,
     gitPull,
+    claimLane,
+    listLanes,
+    previewLane,
+    restorePreview,
+    heartbeatLane,
     listDevScripts,
     startDevServer,
     stopDevServer,
@@ -1765,6 +1770,11 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         gitFetch={gitFetch}
         gitRepoInfo={gitRepoInfo}
         gitPull={gitPull}
+        claimLane={claimLane}
+        listLanes={listLanes}
+        previewLane={previewLane}
+        restorePreview={restorePreview}
+        heartbeatLane={heartbeatLane}
         listDevScripts={listDevScripts}
         startDevServer={startDevServer}
         stopDevServer={stopDevServer}

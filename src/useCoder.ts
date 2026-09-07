@@ -23,6 +23,11 @@ import type {
   GitSyncInfo,
   GitRepoInfo,
   GitPullResult,
+  MergeLaneBeat,
+  MergeLaneClaim,
+  MergeLaneInfo,
+  MergeLanePreview,
+  MergeLaneRestore,
   FetchIssueResult,
   CreateIssueResult,
   LocalServerInfo,
@@ -578,6 +583,22 @@ export interface UseCoderResult {
   gitRepoInfo: (threadId: string) => Promise<GitRepoInfo>;
   /** `git pull --ff-only` for a thread root. Never rejects. */
   gitPull: (threadId: string) => Promise<GitPullResult>;
+  /** Claim the next free numbered merge-queue lane (#346). */
+  claimLane: (input: { threadId: string }) => Promise<MergeLaneClaim>;
+  /** Lanes claimed in a project. */
+  listLanes: (input: { projectId: string }) => Promise<MergeLaneInfo[]>;
+  /** Mirror a lane onto the project checkout. */
+  previewLane: (input: {
+    projectId: string;
+    lane: number;
+  }) => Promise<MergeLanePreview>;
+  /** Undo a lane preview on the project checkout. */
+  restorePreview: (input: { projectId: string }) => Promise<MergeLaneRestore>;
+  /** Stamp lastBeat on a claimed merge-queue lane (#346). */
+  heartbeatLane: (input: {
+    threadId: string;
+    now?: number;
+  }) => Promise<MergeLaneBeat | null>;
   /** Runnable package.json scripts (dev/start/serve) at the thread root. */
   listDevScripts: (threadId: string) => Promise<string[]>;
   /** Start the thread's npm dev script. */
@@ -3102,6 +3123,41 @@ export function useCoder(): UseCoderResult {
     [api],
   );
 
+  const claimLane = useCallback(
+    async (input: { threadId: string }) => {
+      return api.mergeQueue.claimLane(input);
+    },
+    [api],
+  );
+
+  const listLanes = useCallback(
+    async (input: { projectId: string }) => {
+      return api.mergeQueue.listLanes(input);
+    },
+    [api],
+  );
+
+  const previewLane = useCallback(
+    async (input: { projectId: string; lane: number }) => {
+      return api.mergeQueue.previewLane(input);
+    },
+    [api],
+  );
+
+  const restorePreview = useCallback(
+    async (input: { projectId: string }) => {
+      return api.mergeQueue.restorePreview(input);
+    },
+    [api],
+  );
+
+  const heartbeatLane = useCallback(
+    async (input: { threadId: string; now?: number }) => {
+      return api.mergeQueue.heartbeatLane(input);
+    },
+    [api],
+  );
+
   const startDevServer = useCallback(
     async (threadId: string, script: string) => {
       return api.devserver.start({ threadId, script });
@@ -3626,6 +3682,11 @@ export function useCoder(): UseCoderResult {
     gitFetch,
     gitRepoInfo,
     gitPull,
+    claimLane,
+    listLanes,
+    previewLane,
+    restorePreview,
+    heartbeatLane,
     listDevScripts,
     startDevServer,
     stopDevServer,

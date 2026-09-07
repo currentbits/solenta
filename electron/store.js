@@ -1178,6 +1178,45 @@ function normalizeIntegrationLanded(raw) {
   return { at, sha, via };
 }
 
+/**
+ * @param {unknown} raw
+ * @returns {string[]}
+ */
+function normalizeMergeQueue(raw) {
+  if (!Array.isArray(raw) || raw.length === 0) return undefined;
+  const out = [];
+  for (const id of raw) {
+    if (typeof id !== "string") continue;
+    const trimmed = id.trim();
+    if (trimmed && !out.includes(trimmed)) out.push(trimmed);
+  }
+  return out.length ? out : undefined;
+}
+
+/**
+ * Numbered merge-queue lane (#346). Omitted when invalid.
+ * @param {unknown} raw
+ * @returns {{ n: number, port: number, claimedAt: number, lastBeat: number } | undefined}
+ */
+function normalizeMergeLane(raw) {
+  if (!raw || typeof raw !== "object") return undefined;
+  const n = Number(raw.n);
+  if (!Number.isInteger(n) || n < 1) return undefined;
+  const port = Number(raw.port);
+  return {
+    n,
+    port: Number.isInteger(port) && port > 0 ? port : n,
+    claimedAt:
+      typeof raw.claimedAt === "number" && Number.isFinite(raw.claimedAt)
+        ? raw.claimedAt
+        : 0,
+    lastBeat:
+      typeof raw.lastBeat === "number" && Number.isFinite(raw.lastBeat)
+        ? raw.lastBeat
+        : 0,
+  };
+}
+
 function migrateThread(t) {
   if (!t || typeof t !== "object") return t;
   const next = {
@@ -1310,6 +1349,12 @@ function migrateThread(t) {
   const landed = normalizeIntegrationLanded(t.integrationLanded);
   if (landed) next.integrationLanded = landed;
   else delete next.integrationLanded;
+  const mergeQueue = normalizeMergeQueue(t.mergeQueue);
+  if (mergeQueue) next.mergeQueue = mergeQueue;
+  else delete next.mergeQueue;
+  const lane = normalizeMergeLane(t.lane);
+  if (lane) next.lane = lane;
+  else delete next.lane;
   return next;
 }
 
