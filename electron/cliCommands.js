@@ -365,6 +365,109 @@ function pluginInstallPaths(env = process.env) {
 }
 
 /**
+ * @param {NodeJS.ProcessEnv} [env]
+ * @returns {string}
+ */
+function cursorHome(env = process.env) {
+  if (env && env.CURSOR_HOME) return env.CURSOR_HOME;
+  return path.join(homeDir(env), ".cursor");
+}
+
+/**
+ * `plugins/installed.json` `user` entries: `"name@marketplace"` or `"name"`.
+ * @param {string} raw
+ * @returns {{ name: string, marketplace: string }[]}
+ */
+function parseCursorInstalledSpecs(raw) {
+  let json;
+  try {
+    json = JSON.parse(raw);
+  } catch {
+    return [];
+  }
+  const user = json && Array.isArray(json.user) ? json.user : [];
+  /** @type {{ name: string, marketplace: string }[]} */
+  const out = [];
+  for (const item of user) {
+    if (typeof item !== "string") continue;
+    const spec = item.trim();
+    if (!spec) continue;
+    const at = spec.lastIndexOf("@");
+    if (at > 0) {
+      out.push({ name: spec.slice(0, at), marketplace: spec.slice(at + 1) });
+    } else {
+      out.push({ name: spec, marketplace: "" });
+    }
+  }
+  return out;
+}
+
+/**
+ * Plain directory children. Symlinks stay out.
+ * @param {string} dir
+ * @returns {string[]}
+ */
+function listPluginDirs(dir) {
+  let ents;
+  try {
+    ents = fs.readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+  /** @type {string[]} */
+  const out = [];
+  for (const ent of ents) {
+    if (!ent.isDirectory() || ent.isSymbolicLink()) continue;
+    if (ent.name === "." || ent.name === "..") continue;
+    out.push(path.join(dir, ent.name));
+  }
+  return out;
+}
+
+/**
+ * Cursor plugin roots: plugins/local/<name>, plus installed.json user
+ * entries at plugins/cache/<marketplace>/<name>/<hash>. Unlisted cache
+ * trees stay out. Plugin files are never executed.
+ * @param {NodeJS.ProcessEnv} [env]
+ * @returns {string[]}
+ */
+function collectCursorPluginRoots(env = process.env) {
+  const home = cursorHome(env);
+  const plugins = path.join(home, "plugins");
+  const local = path.join(plugins, "local");
+  /** @type {string[]} */
+  const out = [];
+  const seen = new Set();
+  for (const child of listPluginDirs(local)) {
+    if (seen.has(child)) continue;
+    seen.add(child);
+    out.push(child);
+  }
+
+  const raw = readFile(path.join(plugins, "installed.json"));
+  if (!raw) return out;
+  for (const spec of parseCursorInstalledSpecs(raw)) {
+    const name = spec.name;
+    if (!/^[a-z0-9-]+$/i.test(name)) continue;
+    const marketplaces = spec.marketplace
+      ? [spec.marketplace]
+      : listPluginDirs(path.join(plugins, "cache")).map((d) =>
+          path.basename(d),
+        );
+    for (const mp of marketplaces) {
+      if (!/^[a-z0-9-]+$/i.test(mp)) continue;
+      const cacheRoot = path.join(plugins, "cache", mp, name);
+      for (const versionDir of listPluginDirs(cacheRoot)) {
+        if (seen.has(versionDir)) continue;
+        seen.add(versionDir);
+        out.push(versionDir);
+      }
+    }
+  }
+  return out;
+}
+
+/**
  * Enabled Codex plugin version dirs: CODEX_HOME or ~/.codex, config.toml
  * plus plugins/cache/<marketplace>/<name>/<version>. Never the rest of
  * cache. Same walk as harnessImports.collectCodexPluginRoots.
@@ -510,8 +613,10 @@ function listInvocableCommands(opts = {}) {
       }
     }
   };
-
   for (const pluginRoot of pluginInstallPaths(env)) {
+    addPluginRoot(pluginRoot);
+  }
+  for (const pluginRoot of collectCursorPluginRoots(env)) {
     addPluginRoot(pluginRoot);
   }
   for (const pluginRoot of collectCodexPluginRoots(env)) {

@@ -190,6 +190,139 @@ describe("listInvocableCommands", () => {
     );
   });
 
+  it("lists a Cursor local plugin command and omits unlisted cache plugins", () => {
+    const cursor = path.join(tmp, ".cursor");
+    const localRoot = path.join(cursor, "plugins", "local", "shipper");
+    fs.mkdirSync(path.join(localRoot, ".claude-plugin"), { recursive: true });
+    fs.writeFileSync(
+      path.join(localRoot, ".claude-plugin", "plugin.json"),
+      JSON.stringify({ name: "shipper" }),
+    );
+    fs.mkdirSync(path.join(localRoot, "commands"), { recursive: true });
+    fs.writeFileSync(
+      path.join(localRoot, "commands", "review.md"),
+      "---\ndescription: Review the diff\n---\n\nReview $ARGUMENTS.\n",
+    );
+    const unlisted = path.join(
+      cursor,
+      "plugins",
+      "cache",
+      "cursor-public",
+      "github",
+      "abc123",
+    );
+    fs.mkdirSync(path.join(unlisted, ".claude-plugin"), { recursive: true });
+    fs.writeFileSync(
+      path.join(unlisted, ".claude-plugin", "plugin.json"),
+      JSON.stringify({ name: "github" }),
+    );
+    fs.mkdirSync(path.join(unlisted, "commands"), { recursive: true });
+    fs.writeFileSync(
+      path.join(unlisted, "commands", "nope.md"),
+      "---\ndescription: Cached marketplace plugin\n---\n\nDo not list.\n",
+    );
+
+    const rows = listInvocableCommands({ env: envHome() });
+    assert.ok(byName(rows, "/review"), "bare Cursor local plugin command");
+    const namespaced = byName(rows, "/shipper:review");
+    assert.ok(namespaced, "namespaced /shipper:review");
+    assert.equal(namespaced.kind, "command");
+    assert.equal(namespaced.hint, "Review the diff");
+    assert.equal(byName(rows, "/nope"), undefined);
+    assert.equal(byName(rows, "/github:nope"), undefined);
+  });
+
+  it("lists a Cursor installed cache plugin command and omits unlisted cache plugins", () => {
+    const cursor = path.join(tmp, ".cursor");
+    const installPath = path.join(
+      cursor,
+      "plugins",
+      "cache",
+      "cursor-public",
+      "shipper",
+      "abc123",
+    );
+    fs.mkdirSync(path.join(installPath, ".claude-plugin"), { recursive: true });
+    fs.writeFileSync(
+      path.join(installPath, ".claude-plugin", "plugin.json"),
+      JSON.stringify({ name: "shipper" }),
+    );
+    fs.mkdirSync(path.join(installPath, "commands"), { recursive: true });
+    fs.writeFileSync(
+      path.join(installPath, "commands", "deploy.md"),
+      "---\ndescription: Deploy the app\n---\n\nShip $ARGUMENTS.\n",
+    );
+    const unlisted = path.join(
+      cursor,
+      "plugins",
+      "cache",
+      "cursor-public",
+      "other",
+      "def456",
+    );
+    fs.mkdirSync(path.join(unlisted, ".claude-plugin"), { recursive: true });
+    fs.writeFileSync(
+      path.join(unlisted, ".claude-plugin", "plugin.json"),
+      JSON.stringify({ name: "other" }),
+    );
+    fs.mkdirSync(path.join(unlisted, "commands"), { recursive: true });
+    fs.writeFileSync(
+      path.join(unlisted, "commands", "nope.md"),
+      "---\ndescription: Unlisted cache copy\n---\n\nDo not list.\n",
+    );
+    fs.mkdirSync(path.join(cursor, "plugins"), { recursive: true });
+    fs.writeFileSync(
+      path.join(cursor, "plugins", "installed.json"),
+      JSON.stringify({ user: ["shipper@cursor-public"] }),
+    );
+
+    const rows = listInvocableCommands({ env: envHome() });
+    assert.ok(byName(rows, "/deploy"), "bare Cursor installed plugin command");
+    const namespaced = byName(rows, "/shipper:deploy");
+    assert.ok(namespaced, "namespaced /shipper:deploy from installed cache");
+    assert.equal(namespaced.kind, "command");
+    assert.equal(namespaced.hint, "Deploy the app");
+    assert.equal(byName(rows, "/other:nope"), undefined);
+    assert.equal(byName(rows, "/nope"), undefined);
+  });
+
+  it("namespaces a Cursor cache plugin from .cursor-plugin/plugin.json, not the hash dir", () => {
+    const cursor = path.join(tmp, ".cursor");
+    const installPath = path.join(
+      cursor,
+      "plugins",
+      "cache",
+      "cursor-public",
+      "shipper",
+      "abc123",
+    );
+    fs.mkdirSync(path.join(installPath, ".cursor-plugin"), { recursive: true });
+    fs.writeFileSync(
+      path.join(installPath, ".cursor-plugin", "plugin.json"),
+      JSON.stringify({ name: "shipper" }),
+    );
+    fs.mkdirSync(path.join(installPath, "commands"), { recursive: true });
+    fs.writeFileSync(
+      path.join(installPath, "commands", "deploy.md"),
+      "---\ndescription: Deploy the app\n---\n\nShip $ARGUMENTS.\n",
+    );
+    fs.mkdirSync(path.join(cursor, "plugins"), { recursive: true });
+    fs.writeFileSync(
+      path.join(cursor, "plugins", "installed.json"),
+      JSON.stringify({ user: ["shipper@cursor-public"] }),
+    );
+
+    const listed = names(listInvocableCommands({ env: envHome() }));
+    assert.ok(
+      listed.includes("/shipper:deploy"),
+      "plugin name from .cursor-plugin/plugin.json",
+    );
+    assert.ok(
+      !listed.includes("/abc123:deploy"),
+      "hash dir is not the namespace",
+    );
+  });
+
   it("lists a Codex enabled plugin command without a harness import", () => {
     const codex = path.join(tmp, ".codex");
     const installPath = path.join(
