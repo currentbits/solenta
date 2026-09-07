@@ -246,7 +246,8 @@
         carries its project slug and, when the repo has one, its favicon
         or app icon; a scope filter at the top of the list limits every
         section to one repo, and status, provider, and tag filters plus
-        group-by sit next to it. <strong>Pinned</strong> threads sit in their
+        group-by sit next to it. Each card uses a small provider mark instead
+        of the harness name. <strong>Pinned</strong> threads sit in their
         own block at the top (oldest pin first) and never auto-settle.
         Below that, active threads; then a <strong>Snoozed</strong> shelf
         (wake-soonest first) and a <strong>Settled</strong> shelf (newest
@@ -267,9 +268,10 @@
         and the underlying CLI's own skills and custom commands.
         <code>/btw</code> (or <kbd>⌥Enter</kbd> on a plain draft) asks a
         side question on the same thread without interrupting the live run.
-        A card, not a new thread, not the follow-up queue. A mic on the
-        composer transcribes locally, and optional vim mode adds Insert and
-        Normal motions.
+        A card, not a new thread, not the follow-up queue. <code>/usage</code>
+        opens live account quotas (five-hour and weekly windows where the
+        provider reports them). A mic on the composer transcribes locally,
+        and optional vim mode adds Insert and Normal motions.
       </p>
       <p>
         A thread that fails keeps its <strong>failure reason</strong> and shows
@@ -658,6 +660,8 @@
         The <strong>Usage</strong> view breaks spend and token burn down per
         provider and per model over the last 7, 30 or 90 days, so the question
         of which model is actually costing you money has an answer.
+        <code>/usage</code> is separate: it reads the provider's own quota
+        windows and reset clocks, not the local history.
       </p>
       <p>
         <strong>Fleet analytics</strong> asks the harder question: is the work
