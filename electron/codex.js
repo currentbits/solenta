@@ -6,6 +6,7 @@
 // prompt travels in argv (#442).
 const spawn = require("cross-spawn");
 const { killTree, agentSpawnOptions } = require("./proc.js");
+const { harvestToolResult } = require("./tool-images.js");
 
 const SIGKILL_AFTER_MS = 3000;
 // Max stderr retained per child process (tail), for error reporting.
@@ -410,6 +411,7 @@ function shortSummary(name, value) {
  *   summary?: string,
  *   input?: string,
  *   output?: string | null,
+ *   images?: { mediaType: string, data: string }[],
  *   isError?: boolean,
  *   done?: boolean,
  *   changes?: object[],
@@ -489,16 +491,21 @@ function extractLiveItem(ev) {
       }
     }
     let output = null;
+    /** @type {{ mediaType: string, data: string }[] | undefined} */
+    let images;
     if (item.error && typeof item.error === "object" && item.error.message) {
       output = String(item.error.message);
     } else if (item.result != null) {
+      const harvested = harvestToolResult(item.result);
+      if (harvested.images.length) images = harvested.images;
+      const payload = harvested.images.length
+        ? harvested.redacted
+        : item.result;
       try {
         output =
-          typeof item.result === "string"
-            ? item.result
-            : JSON.stringify(item.result);
+          typeof payload === "string" ? payload : JSON.stringify(payload);
       } catch {
-        output = String(item.result);
+        output = String(payload);
       }
     }
     return {
@@ -509,6 +516,7 @@ function extractLiveItem(ev) {
       summary: shortSummary(name, input),
       input,
       output,
+      ...(images ? { images } : {}),
       isError: status === "failed" || Boolean(item.error),
       done: phase === "completed",
       server,

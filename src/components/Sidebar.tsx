@@ -2996,6 +2996,7 @@ export const Sidebar = memo(function Sidebar({
           <ImportCliSessionModal
             projectId={createProjectId}
             provider={importCliProvider}
+            threads={threads}
             listCliSessions={listCliSessions}
             importCliSession={importCliSession}
             onClose={() => setImportCliProvider(null)}

@@ -541,6 +541,18 @@ const IPC_HANDLERS = {
       thread = cliSessions.importCodexSession(ctx.store, args);
     }
     ctx.broadcast("threads:changed", services.listThreads(ctx.store));
+    // Re-import may have absorbed new turns. Push the open transcript
+    // the same way reclaim does. Tests (and boot) may lack a runner.
+    if (thread && thread.id) {
+      try {
+        ctx.broadcast(
+          "thread:updated",
+          threadDetailFor(ctx, thread.id, false),
+        );
+      } catch {
+        // Sidebar list still refreshed.
+      }
+    }
     return thread;
   },
   "threads:create": async (ctx, input) => {

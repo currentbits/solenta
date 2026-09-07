@@ -454,6 +454,32 @@ describe("codex event parse helpers", () => {
     assert.equal(mcp.tool, "get_issue");
     assert.equal(mcp.server, "github");
 
+    const png =
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==";
+    const mcpImage = extractLiveItem({
+      type: "item.completed",
+      item: {
+        id: "m-img",
+        type: "mcp_tool_call",
+        server: "shots",
+        tool: "screenshot",
+        status: "completed",
+        result: [
+          { type: "text", text: "captured" },
+          {
+            type: "image",
+            source: { type: "base64", media_type: "image/png", data: png },
+          },
+        ],
+      },
+    });
+    assert.equal(mcpImage.kind, "mcp_tool_call");
+    assert.equal(mcpImage.images.length, 1);
+    assert.equal(mcpImage.images[0].mediaType, "image/png");
+    assert.equal(mcpImage.images[0].data, png);
+    assert.equal(mcpImage.output.includes(png), false);
+    assert.match(mcpImage.output, /\[image\]/);
+
     const search = extractLiveItem({
       type: "item.started",
       item: { id: "s1", type: "web_search", query: "codex exec json" },

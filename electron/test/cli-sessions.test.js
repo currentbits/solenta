@@ -283,6 +283,47 @@ describe("importCodexSession (#433)", () => {
     assert.equal(store.getThreads().length, 1);
     assert.equal(store.getMessages(first.id).length, 2);
   });
+
+  it("re-import absorbs new turns without duplicating existing ones", () => {
+    writeRollout(home, SESSION_A, [
+      messageRecord("user", "prompt a", "2026-09-06T12:00:01.000Z"),
+      messageRecord("assistant", "reply a", "2026-09-06T12:00:02.000Z"),
+    ]);
+    const first = importCodexSession(store, {
+      home,
+      sessionId: SESSION_A,
+      projectId,
+    });
+    writeRollout(home, SESSION_A, [
+      messageRecord("user", "prompt a", "2026-09-06T12:00:01.000Z"),
+      messageRecord("assistant", "reply a", "2026-09-06T12:00:02.000Z"),
+      messageRecord("user", "prompt a2", "2026-09-06T12:00:03.000Z"),
+      messageRecord("assistant", "reply a2", "2026-09-06T12:00:04.000Z"),
+    ]);
+    const second = importCodexSession(store, {
+      home,
+      sessionId: SESSION_A,
+      projectId,
+    });
+    assert.equal(second.id, first.id);
+    assert.equal(store.getThreads().length, 1);
+    assert.deepEqual(
+      store.getMessages(first.id).map((m) => `${m.role}:${m.text}`),
+      [
+        "user:prompt a",
+        "assistant:reply a",
+        "user:prompt a2",
+        "assistant:reply a2",
+      ],
+    );
+    const third = importCodexSession(store, {
+      home,
+      sessionId: SESSION_A,
+      projectId,
+    });
+    assert.equal(third.id, first.id);
+    assert.equal(store.getMessages(first.id).length, 4);
+  });
 });
 
 const CLAUDE_CWD = "/tmp/solenta-claude-wt";
@@ -1085,6 +1126,40 @@ describe("importGrokSession (#972)", () => {
     assert.equal(store.getMessages(first.id).length, 2);
   });
 
+  it("re-import absorbs new grok turns without duplicating existing ones", () => {
+    writeGrokSession(home, GROK_CWD, SESSION_A, [
+      { type: "user", content: "prompt a" },
+      { type: "assistant", content: "reply a" },
+    ]);
+    const first = importGrokSession(store, {
+      home,
+      sessionId: SESSION_A,
+      projectId,
+    });
+    writeGrokSession(home, GROK_CWD, SESSION_A, [
+      { type: "user", content: "prompt a" },
+      { type: "assistant", content: "reply a" },
+      { type: "user", content: "prompt a2" },
+      { type: "assistant", content: "reply a2" },
+    ]);
+    const second = importGrokSession(store, {
+      home,
+      sessionId: SESSION_A,
+      projectId,
+    });
+    assert.equal(second.id, first.id);
+    assert.equal(store.getThreads().length, 1);
+    assert.deepEqual(
+      store.getMessages(first.id).map((m) => `${m.role}:${m.text}`),
+      [
+        "user:prompt a",
+        "assistant:reply a",
+        "user:prompt a2",
+        "assistant:reply a2",
+      ],
+    );
+  });
+
   it("rejects a sessionId that is not a path-safe id", () => {
     writeGrokSession(home, GROK_CWD, SESSION_A, [
       { type: "user", content: "prompt a" },
@@ -1258,6 +1333,40 @@ describe("importClaudeSession (#970)", () => {
     assert.equal(second.id, first.id);
     assert.equal(store.getThreads().length, 1);
     assert.equal(store.getMessages(first.id).length, 2);
+  });
+
+  it("re-import absorbs new claude turns without duplicating existing ones", () => {
+    writeClaudeSession(home, CLAUDE_CWD, SESSION_A, [
+      claudeUser("prompt a", "2026-09-06T12:00:01.000Z"),
+      claudeAssistant("reply a", "2026-09-06T12:00:02.000Z"),
+    ]);
+    const first = importClaudeSession(store, {
+      home,
+      sessionId: SESSION_A,
+      projectId,
+    });
+    writeClaudeSession(home, CLAUDE_CWD, SESSION_A, [
+      claudeUser("prompt a", "2026-09-06T12:00:01.000Z"),
+      claudeAssistant("reply a", "2026-09-06T12:00:02.000Z"),
+      claudeUser("prompt a2", "2026-09-06T12:00:03.000Z"),
+      claudeAssistant("reply a2", "2026-09-06T12:00:04.000Z"),
+    ]);
+    const second = importClaudeSession(store, {
+      home,
+      sessionId: SESSION_A,
+      projectId,
+    });
+    assert.equal(second.id, first.id);
+    assert.equal(store.getThreads().length, 1);
+    assert.deepEqual(
+      store.getMessages(first.id).map((m) => `${m.role}:${m.text}`),
+      [
+        "user:prompt a",
+        "assistant:reply a",
+        "user:prompt a2",
+        "assistant:reply a2",
+      ],
+    );
   });
 
   it("rejects a sessionId that is not a path-safe id", () => {
@@ -1482,6 +1591,40 @@ describe("importCursorSession (#975)", () => {
     assert.equal(second.id, first.id);
     assert.equal(store.getThreads().length, 1);
     assert.equal(store.getMessages(first.id).length, 2);
+  });
+
+  it("re-import absorbs new cursor turns without duplicating existing ones", () => {
+    writeCursorSession(home, CURSOR_CWD, SESSION_A, [
+      cursorUser("prompt a"),
+      cursorAssistant("reply a"),
+    ]);
+    const first = importCursorSession(store, {
+      home,
+      sessionId: SESSION_A,
+      projectId,
+    });
+    writeCursorSession(home, CURSOR_CWD, SESSION_A, [
+      cursorUser("prompt a"),
+      cursorAssistant("reply a"),
+      cursorUser("prompt a2"),
+      cursorAssistant("reply a2"),
+    ]);
+    const second = importCursorSession(store, {
+      home,
+      sessionId: SESSION_A,
+      projectId,
+    });
+    assert.equal(second.id, first.id);
+    assert.equal(store.getThreads().length, 1);
+    assert.deepEqual(
+      store.getMessages(first.id).map((m) => `${m.role}:${m.text}`),
+      [
+        "user:prompt a",
+        "assistant:reply a",
+        "user:prompt a2",
+        "assistant:reply a2",
+      ],
+    );
   });
 
   it("rejects a sessionId that is not a path-safe id", () => {
@@ -1843,6 +1986,41 @@ describe("importOpenCodeSession (#976)", () => {
     assert.equal(store.getMessages(first.id).length, 2);
   });
 
+  it("re-import absorbs new opencode turns without duplicating existing ones", () => {
+    const dbPath = writeOpenCodeSession(home, OC_A, [
+      { role: "user", text: "prompt a" },
+      { role: "assistant", text: "reply a" },
+    ]);
+    const first = importOpenCodeSession(store, {
+      home,
+      sessionId: OC_A,
+      projectId,
+    });
+    fs.unlinkSync(dbPath);
+    writeOpenCodeSession(home, OC_A, [
+      { role: "user", text: "prompt a" },
+      { role: "assistant", text: "reply a" },
+      { role: "user", text: "prompt a2" },
+      { role: "assistant", text: "reply a2" },
+    ]);
+    const second = importOpenCodeSession(store, {
+      home,
+      sessionId: OC_A,
+      projectId,
+    });
+    assert.equal(second.id, first.id);
+    assert.equal(store.getThreads().length, 1);
+    assert.deepEqual(
+      store.getMessages(first.id).map((m) => `${m.role}:${m.text}`),
+      [
+        "user:prompt a",
+        "assistant:reply a",
+        "user:prompt a2",
+        "assistant:reply a2",
+      ],
+    );
+  });
+
   it("rejects a sessionId that is not a path-safe id", () => {
     writeOpenCodeSession(home, OC_A, [{ role: "user", text: "prompt a" }]);
     assert.throws(
@@ -2069,6 +2247,40 @@ describe("importOpenCodeSession JSON fallback (#977)", () => {
     assert.equal(second.id, first.id);
     assert.equal(store.getThreads().length, 1);
     assert.equal(store.getMessages(first.id).length, 2);
+  });
+
+  it("re-import absorbs new JSON-fallback turns without duplicating existing ones", () => {
+    writeOpenCodeJsonSession(home, OC_A, [
+      { role: "user", text: "prompt a" },
+      { role: "assistant", text: "reply a" },
+    ]);
+    const first = importOpenCodeSession(store, {
+      home,
+      sessionId: OC_A,
+      projectId,
+    });
+    writeOpenCodeJsonSession(home, OC_A, [
+      { role: "user", text: "prompt a" },
+      { role: "assistant", text: "reply a" },
+      { role: "user", text: "prompt a2" },
+      { role: "assistant", text: "reply a2" },
+    ]);
+    const second = importOpenCodeSession(store, {
+      home,
+      sessionId: OC_A,
+      projectId,
+    });
+    assert.equal(second.id, first.id);
+    assert.equal(store.getThreads().length, 1);
+    assert.deepEqual(
+      store.getMessages(first.id).map((m) => `${m.role}:${m.text}`),
+      [
+        "user:prompt a",
+        "assistant:reply a",
+        "user:prompt a2",
+        "assistant:reply a2",
+      ],
+    );
   });
 });
 

@@ -232,4 +232,61 @@ describe("Grok session import picker", () => {
     assert.ok(m.query("[data-new-thread]"), "existing New thread button remains");
     m.unmount();
   });
+
+  it("marks already-imported sessions and Import remaining imports the rest", async () => {
+    const imported: unknown[] = [];
+    const selected: string[] = [];
+    const grokThread: ThreadInfo = {
+      ...thread,
+      id: "t-grok",
+      provider: "grok",
+      sessionId: SESSION_A,
+      title: "Imported Grok session",
+    };
+    const m = await mount(
+      <Sidebar
+        {...sidebarProps({
+          threads: [thread, grokThread],
+          onSelectThread: (id) => selected.push(id),
+          listCliSessions: async () => sessions,
+          importCliSession: async (input) => {
+            imported.push(input);
+            return {
+              ...thread,
+              id: `t-${input.sessionId}`,
+              provider: "grok",
+              sessionId: input.sessionId,
+              title: "Imported Grok session",
+            };
+          },
+        })}
+      />,
+    );
+    await m.click(m.query("[data-new-thread-caret]"));
+    await m.click(m.query("[data-import-grok-session]"));
+    await m.flush();
+
+    const rowA = m.query(`[data-cli-session="${SESSION_A}"]`);
+    const rowB = m.query(`[data-cli-session="${SESSION_B}"]`);
+    assert.ok(rowA);
+    assert.ok(rowB);
+    assert.equal(rowA!.hasAttribute("data-cli-session-imported"), true);
+    assert.equal(rowB!.hasAttribute("data-cli-session-imported"), false);
+    assert.match(rowA!.textContent || "", /Imported/);
+
+    const remaining = m.query("[data-cli-session-import-remaining]");
+    assert.ok(remaining);
+    assert.match(remaining!.textContent || "", /Import remaining \(1\)/);
+    await m.click(remaining);
+    await m.flush();
+
+    assert.equal(imported.length, 1);
+    assert.deepEqual(imported[0], {
+      sessionId: SESSION_B,
+      projectId: "p1",
+      provider: "grok",
+    });
+    assert.deepEqual(selected, [`t-${SESSION_B}`]);
+    m.unmount();
+  });
 });

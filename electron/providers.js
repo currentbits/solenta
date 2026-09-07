@@ -54,6 +54,9 @@ const { posixQuote } = require("./ssh.js");
  * @property {string} binEnv - env var that overrides the binary
  * @property {string} defaultBin
  * @property {boolean} supportsResume
+ * @property {boolean} [sessionPinsModel] - exec resume hydrates the model
+ *   from the rollout and ignores -m (Codex). A model-only switch must drop
+ *   sessionId; the runner also skips resume when usage.model !== thread.model.
  * @property {string[]} models
  * @property {ModelInfo[]} modelInfo
  * @property {Array<"low"|"medium"|"high"|"xhigh"|"max"|"ultra"|"ultracode">} efforts
@@ -294,6 +297,8 @@ const PROVIDERS = [
     binEnv: "CODER_CODEX_BIN",
     defaultBin: "codex",
     supportsResume: true,
+    // exec resume hydrates model from the rollout; -m does not switch it.
+    sessionPinsModel: true,
     // Snapshot of ~/.codex/models_cache.json visibility=list (client 0.153.2,
     // 2026-09-04). Astra is the flagship (priority 1); Sol is the 5.6
     // workhorse. gpt-5.4 is retired (upgrade → terra) and omitted.
@@ -1411,6 +1416,33 @@ function getProvider(id) {
 }
 
 /**
+ * Session id to pass to buildArgs. Ejected threads never resume. Codex
+ * pins the model on the rollout: if the user asked for a different model
+ * than usage last reported, start a fresh exec so -m actually applies.
+ *
+ * @param {ProviderEntry | null | undefined} entry
+ * @param {{ ejected?: boolean, sessionId?: string | null, model?: string | null } | null | undefined} thread
+ * @param {{ model?: string | null } | null | undefined} usage
+ * @returns {string | null}
+ */
+function sessionIdForResume(entry, thread, usage) {
+  if (!thread || thread.ejected === true) return null;
+  const sid = thread.sessionId || null;
+  if (!sid) return null;
+  if (
+    entry &&
+    entry.sessionPinsModel === true &&
+    thread.model &&
+    usage &&
+    usage.model &&
+    String(usage.model) !== String(thread.model)
+  ) {
+    return null;
+  }
+  return sid;
+}
+
+/**
  * Interactive resume tail for the raw CLI (issue #554). Headless spawn
  * flags stay in buildArgs; this is what the user pastes into a terminal.
  * Flags stay unquoted; the session id is always POSIX-quoted.
@@ -1651,6 +1683,7 @@ module.exports = {
   SIMULATE_ENTRY,
   ALL_PERMISSION_MODES,
   getProvider,
+  sessionIdForResume,
   ejectCommand,
   knownProviderIds,
   resolveBin,

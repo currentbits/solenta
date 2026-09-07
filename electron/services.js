@@ -1454,6 +1454,17 @@ function setProvider(store, input) {
     );
   } else if (modelProvided) {
     patch.model = normalizeModelForProvider(nextEntry, input.model);
+    // Codex exec resume hydrates the model from the rollout and ignores
+    // -m. Drop the session so the next send is a fresh exec with the
+    // chosen model (#1020).
+    if (
+      thread.sessionId &&
+      patch.model !== thread.model &&
+      nextEntry &&
+      nextEntry.sessionPinsModel === true
+    ) {
+      patch.sessionId = null;
+    }
     const nextEfforts = honouredEfforts(nextEntry, patch.model);
     if (
       thread.reasoningEffort != null &&

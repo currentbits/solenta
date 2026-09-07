@@ -146,6 +146,27 @@ describe("setProvider lock semantics", () => {
     assert.equal(store.getThread(thread.id).updatedAt, before);
   });
 
+  it("drops the Codex session when the model changes so Astra is not a Sol resume", () => {
+    const thread = store.getThreads()[0];
+    services.setProvider(store, { threadId: thread.id, provider: "codex" });
+    store.updateThread(thread.id, {
+      sessionId: "sess-sol",
+      model: "gpt-5.6-sol",
+    });
+    store.saveNow();
+    const updated = services.setProvider(store, {
+      threadId: thread.id,
+      model: "gpt-6-astra",
+    });
+    assert.equal(updated.model, "gpt-6-astra");
+    assert.equal(updated.sessionId, null);
+    const same = services.setProvider(store, {
+      threadId: thread.id,
+      model: "gpt-6-astra",
+    });
+    assert.equal(same.sessionId, null);
+  });
+
   it("accepts listed AND unlisted codex models", () => {
     // The published list is a suggestion, not an allowlist. Blocking an
     // unlisted id would stop a user reaching a model their CLI supports but

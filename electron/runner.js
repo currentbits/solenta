@@ -29,6 +29,7 @@ const {
   isBinAvailable,
   listProviders,
   snapPermissionMode,
+  sessionIdForResume,
 } = require("./providers.js");
 const { codexWorkspaceWriteArgs } = require("./codexWorkspaceWrite.js");
 const orchcommands = require("./orchcommands.js");
@@ -4557,9 +4558,12 @@ function createRunner(opts) {
     /** reasoning item id -> thinking message id */
     /** @type {Map<string, string>} */
     const thinkingMsgById = new Map();
-    const resumeId =
-      thread.ejected === true ? null : thread.sessionId || null;
-    const startedFresh = thread.ejected === true;
+    const resumeId = sessionIdForResume(
+      providerEntry,
+      thread,
+      store.getUsage(threadId),
+    );
+    const startedFresh = Boolean(thread.sessionId) && !resumeId;
     /** @type {string | null} */
     let capturedSessionId = resumeId;
     let sawTerminalUsage = false;
@@ -4718,6 +4722,7 @@ function createRunner(opts) {
               output: output != null ? output : existing.tool.output,
               isError: Boolean(live.isError),
               done: Boolean(live.done),
+              ...persistToolImages(threadId, live.images),
             },
           });
           if (live.done) {
@@ -4739,6 +4744,7 @@ function createRunner(opts) {
         output,
         isError: Boolean(live.isError),
         done: Boolean(live.done),
+        ...persistToolImages(threadId, live.images),
       };
       const msgId = appendMessage(threadId, "tool", summary, runId, tool);
       toolMsgById.set(id, msgId);

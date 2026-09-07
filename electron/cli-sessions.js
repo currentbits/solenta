@@ -18,6 +18,8 @@
  * KIMI_CODE_HOME/sessions/<wd>/<id>/agents/main/wire.jsonl;
  * Muse: listMuseSessions / importMuseSession under
  * XDG_DATA_HOME/muse/sessions/YYYY/MM/DD/<id>/session.jsonl).
+ * Re-import of the same provider+sessionId absorbs new turns (dedup sync)
+ * instead of minting a second thread or returning a stale snapshot.
  * #554 reclaim points it at one known sessionId (Codex: date-tree suffix
  * match; Claude and Grok: direct cwd-encoded path, no directory scan;
  * Cursor and OpenCode: the same sessionId scan as import, not cwd;
@@ -254,6 +256,7 @@ function listCodexSessions(home) {
 /**
  * Create a Solenta thread from one Codex rollout. Reuses parseCodexRollout.
  * Idempotent on provider=codex + sessionId so re-import does not duplicate.
+ * Re-import absorbs turns added on disk since the last import.
  * Does not copy ~/.codex and does not touch reclaim.
  *
  * @param {import("./store").Store} store
@@ -275,30 +278,14 @@ function importCodexSession(store, input) {
   const existing = (store.getThreads() || []).find(
     (t) => t && t.provider === "codex" && t.sessionId === sessionId,
   );
-  if (existing) return existing;
-
-  const turns = readCodexSessionTurns(home, sessionId);
-  const firstUser = turns.find((t) => t.role === "user");
-  const titleLine = firstUser
-    ? String(firstUser.text).split(/\r?\n/, 1)[0].trim()
-    : "";
-  const { createThread } = require("./services.js");
-  const thread = createThread(store, {
+  return commitImportedTurns(store, {
+    existing,
     projectId,
-    title: titleLine || "Imported Codex session",
     provider: "codex",
+    sessionId,
+    turns: readCodexSessionTurns(home, sessionId),
+    defaultTitle: "Imported Codex session",
   });
-  store.updateThread(thread.id, { sessionId });
-  for (const turn of turns) {
-    store.appendMessage(thread.id, {
-      id: randomUUID(),
-      role: turn.role,
-      text: turn.text,
-      createdAt: turn.createdAt || Date.now(),
-    });
-  }
-  store.save();
-  return store.getThread(thread.id);
 }
 
 /**
@@ -336,6 +323,48 @@ function absorbTurns(store, threadId, turns) {
     appended += 1;
   }
   return appended;
+}
+
+/**
+ * Create a Solenta thread from parsed CLI turns, or absorb new turns into
+ * the existing provider+sessionId thread. Re-import is the #433 sync path:
+ * no second thread; occurrence-count match so already-imported turns stay.
+ * Uses the import-path reader (sessionId scan), not reclaim's cwd lookup —
+ * imported threads may live in a Solenta project whose path is not the
+ * CLI session cwd.
+ *
+ * @param {import("./store").Store} store
+ * @param {{
+ *   existing?: object | null,
+ *   projectId: string,
+ *   provider: string,
+ *   sessionId: string,
+ *   turns: { role: "user" | "assistant", text: string, createdAt: number }[],
+ *   defaultTitle: string,
+ * }} opts
+ */
+function commitImportedTurns(store, opts) {
+  const existing = opts.existing;
+  const turns = opts.turns || [];
+  if (existing) {
+    const appended = absorbTurns(store, existing.id, turns);
+    if (appended > 0) store.save();
+    return store.getThread(existing.id) || existing;
+  }
+  const firstUser = turns.find((t) => t.role === "user");
+  const titleLine = firstUser
+    ? String(firstUser.text).split(/\r?\n/, 1)[0].trim()
+    : "";
+  const { createThread } = require("./services.js");
+  const thread = createThread(store, {
+    projectId: opts.projectId,
+    title: titleLine || opts.defaultTitle,
+    provider: opts.provider,
+  });
+  store.updateThread(thread.id, { sessionId: opts.sessionId });
+  absorbTurns(store, thread.id, turns);
+  store.save();
+  return store.getThread(thread.id);
 }
 
 /**
@@ -697,6 +726,7 @@ function readClaudeImportTurns(home, sessionId) {
 /**
  * Create a Solenta thread from one Claude jsonl. Reuses parseClaudeJsonl.
  * Idempotent on provider=claude + sessionId so re-import does not duplicate.
+ * Re-import absorbs turns added on disk since the last import.
  *
  * @param {import("./store").Store} store
  * @param {{ sessionId: string, projectId: string, home?: string | null }} input
@@ -717,30 +747,14 @@ function importClaudeSession(store, input) {
   const existing = (store.getThreads() || []).find(
     (t) => t && t.provider === "claude" && t.sessionId === sessionId,
   );
-  if (existing) return existing;
-
-  const turns = readClaudeImportTurns(home, sessionId);
-  const firstUser = turns.find((t) => t.role === "user");
-  const titleLine = firstUser
-    ? String(firstUser.text).split(/\r?\n/, 1)[0].trim()
-    : "";
-  const { createThread } = require("./services.js");
-  const thread = createThread(store, {
+  return commitImportedTurns(store, {
+    existing,
     projectId,
-    title: titleLine || "Imported Claude session",
     provider: "claude",
+    sessionId,
+    turns: readClaudeImportTurns(home, sessionId),
+    defaultTitle: "Imported Claude session",
   });
-  store.updateThread(thread.id, { sessionId });
-  for (const turn of turns) {
-    store.appendMessage(thread.id, {
-      id: randomUUID(),
-      role: turn.role,
-      text: turn.text,
-      createdAt: turn.createdAt || Date.now(),
-    });
-  }
-  store.save();
-  return store.getThread(thread.id);
 }
 
 /**
@@ -1013,6 +1027,7 @@ function readGrokImportTurns(home, sessionId) {
 /**
  * Create a Solenta thread from one Grok chat_history.jsonl.
  * Idempotent on provider=grok + sessionId so re-import does not duplicate.
+ * Re-import absorbs turns added on disk since the last import.
  * Does not copy ~/.grok and does not touch reclaim.
  *
  * @param {import("./store").Store} store
@@ -1034,30 +1049,14 @@ function importGrokSession(store, input) {
   const existing = (store.getThreads() || []).find(
     (t) => t && t.provider === "grok" && t.sessionId === sessionId,
   );
-  if (existing) return existing;
-
-  const turns = readGrokImportTurns(home, sessionId);
-  const firstUser = turns.find((t) => t.role === "user");
-  const titleLine = firstUser
-    ? String(firstUser.text).split(/\r?\n/, 1)[0].trim()
-    : "";
-  const { createThread } = require("./services.js");
-  const thread = createThread(store, {
+  return commitImportedTurns(store, {
+    existing,
     projectId,
-    title: titleLine || "Imported Grok session",
     provider: "grok",
+    sessionId,
+    turns: readGrokImportTurns(home, sessionId),
+    defaultTitle: "Imported Grok session",
   });
-  store.updateThread(thread.id, { sessionId });
-  for (const turn of turns) {
-    store.appendMessage(thread.id, {
-      id: randomUUID(),
-      role: turn.role,
-      text: turn.text,
-      createdAt: turn.createdAt || Date.now(),
-    });
-  }
-  store.save();
-  return store.getThread(thread.id);
 }
 
 /**
@@ -1228,6 +1227,7 @@ function readCursorImportTurns(home, sessionId) {
 /**
  * Create a Solenta thread from one Cursor agent-transcript jsonl.
  * Idempotent on provider=cursor + sessionId so re-import does not duplicate.
+ * Re-import absorbs turns added on disk since the last import.
  * Does not copy ~/.cursor. Reclaim uses absorbCursorSessionTurns.
  *
  * @param {import("./store").Store} store
@@ -1249,30 +1249,14 @@ function importCursorSession(store, input) {
   const existing = (store.getThreads() || []).find(
     (t) => t && t.provider === "cursor" && t.sessionId === sessionId,
   );
-  if (existing) return existing;
-
-  const turns = readCursorImportTurns(home, sessionId);
-  const firstUser = turns.find((t) => t.role === "user");
-  const titleLine = firstUser
-    ? String(firstUser.text).split(/\r?\n/, 1)[0].trim()
-    : "";
-  const { createThread } = require("./services.js");
-  const thread = createThread(store, {
+  return commitImportedTurns(store, {
+    existing,
     projectId,
-    title: titleLine || "Imported Cursor session",
     provider: "cursor",
+    sessionId,
+    turns: readCursorImportTurns(home, sessionId),
+    defaultTitle: "Imported Cursor session",
   });
-  store.updateThread(thread.id, { sessionId });
-  for (const turn of turns) {
-    store.appendMessage(thread.id, {
-      id: randomUUID(),
-      role: turn.role,
-      text: turn.text,
-      createdAt: turn.createdAt || Date.now(),
-    });
-  }
-  store.save();
-  return store.getThread(thread.id);
 }
 
 /**
@@ -1725,6 +1709,7 @@ function readOpenCodeImportTurns(home, sessionId) {
 /**
  * Create a Solenta thread from one OpenCode session row.
  * Idempotent on provider=opencode + sessionId so re-import does not duplicate.
+ * Re-import absorbs turns added on disk since the last import.
  * Does not copy ~/.opencode or ~/.local/share/opencode.
  * Reclaim uses absorbOpenCodeSessionTurns.
  *
@@ -1747,30 +1732,14 @@ function importOpenCodeSession(store, input) {
   const existing = (store.getThreads() || []).find(
     (t) => t && t.provider === "opencode" && t.sessionId === sessionId,
   );
-  if (existing) return existing;
-
-  const turns = readOpenCodeImportTurns(home, sessionId);
-  const firstUser = turns.find((t) => t.role === "user");
-  const titleLine = firstUser
-    ? String(firstUser.text).split(/\r?\n/, 1)[0].trim()
-    : "";
-  const { createThread } = require("./services.js");
-  const thread = createThread(store, {
+  return commitImportedTurns(store, {
+    existing,
     projectId,
-    title: titleLine || "Imported OpenCode session",
     provider: "opencode",
+    sessionId,
+    turns: readOpenCodeImportTurns(home, sessionId),
+    defaultTitle: "Imported OpenCode session",
   });
-  store.updateThread(thread.id, { sessionId });
-  for (const turn of turns) {
-    store.appendMessage(thread.id, {
-      id: randomUUID(),
-      role: turn.role,
-      text: turn.text,
-      createdAt: turn.createdAt || Date.now(),
-    });
-  }
-  store.save();
-  return store.getThread(thread.id);
 }
 
 /**

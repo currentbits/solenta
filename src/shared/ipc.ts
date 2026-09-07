@@ -3480,7 +3480,8 @@ export interface CoderApi {
     /**
      * Create a Solenta thread from one listed CLI session.
      * Transcript comes from that sessionId only. Re-import returns the
-     * existing thread. Renderer-supplied home paths are ignored.
+     * existing thread and appends turns added on disk since last import
+     * (dedup sync). Renderer-supplied home paths are ignored.
      */
     importCliSession(input: {
       sessionId: string;
@@ -3805,7 +3806,9 @@ export interface CoderApi {
      * an allowlist. Any non-empty string of at most 100 characters is accepted
      * and passed to the CLI as-is (Custom... in the picker). A bad id fails
      * at the CLI. Model alone may still be changed between turns for
-     * providers whose sessions tolerate it.
+     * providers whose sessions tolerate it. Codex pins the model on the
+     * session: a model-only change drops sessionId so the next send is a
+     * fresh exec (resume would keep Sol after picking Astra).
      */
     setProvider(input: { threadId: string; provider?: string; model?: string | null }): Promise<ThreadInfo>;
     /**

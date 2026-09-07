@@ -25,27 +25,27 @@ const COPY: Record<
 > = {
   codex: {
     title: "Import Codex session",
-    note: "Choose a Codex CLI session to import into this project.",
+    note: "Choose a Codex CLI session to import into this project. Re-importing updates the existing thread without creating a duplicate.",
     empty: "No Codex CLI sessions found",
   },
   grok: {
     title: "Import Grok session",
-    note: "Choose a Grok CLI session to import into this project.",
+    note: "Choose a Grok CLI session to import into this project. Re-importing updates the existing thread without creating a duplicate.",
     empty: "No Grok CLI sessions found",
   },
   claude: {
     title: "Import Claude session",
-    note: "Choose a Claude Code session to import into this project.",
+    note: "Choose a Claude Code session to import into this project. Re-importing updates the existing thread without creating a duplicate.",
     empty: "No Claude CLI sessions found",
   },
   cursor: {
     title: "Import Cursor session",
-    note: "Choose a Cursor CLI session to import into this project.",
+    note: "Choose a Cursor CLI session to import into this project. Re-importing updates the existing thread without creating a duplicate.",
     empty: "No Cursor CLI sessions found",
   },
   opencode: {
     title: "Import OpenCode session",
-    note: "Choose an OpenCode CLI session to import into this project.",
+    note: "Choose an OpenCode CLI session to import into this project. Re-importing updates the existing thread without creating a duplicate.",
     empty: "No OpenCode CLI sessions found",
   },
   kimi: {
@@ -64,6 +64,8 @@ interface ImportCliSessionModalProps {
   projectId: string;
   provider: CliImportProvider;
   onClose: () => void;
+  /** Existing threads, used to mark already-imported sessionIds. */
+  threads?: ThreadInfo[];
   listCliSessions: (input?: {
     provider?: CliImportProvider;
   }) => Promise<CliSessionCandidate[]>;
@@ -75,15 +77,27 @@ interface ImportCliSessionModalProps {
   onImported: (thread: ThreadInfo) => void;
 }
 
+function importedSessionIds(
+  threads: ThreadInfo[] | undefined,
+  provider: CliImportProvider,
+): Set<string> {
+  const ids = new Set<string>();
+  for (const t of threads || []) {
+    if (t && t.provider === provider && t.sessionId) ids.add(t.sessionId);
+  }
+  return ids;
+}
+
 /**
  * Pick a Codex, Grok, Claude, Cursor, OpenCode, Kimi, or Muse CLI session from disk
  * and import it as a Solenta thread in the current project. Home stays
- * on the main process.
+ * on the main process. Re-import syncs new turns onto the existing thread.
  */
 export function ImportCliSessionModal({
   projectId,
   provider,
   onClose,
+  threads,
   listCliSessions,
   importCliSession,
   onImported,
@@ -97,6 +111,10 @@ export function ImportCliSessionModal({
   const copy = COPY[provider];
 
   const pending = pendingId != null;
+  const alreadyImported = importedSessionIds(threads, provider);
+  const remaining = (sessions || []).filter(
+    (s) => !alreadyImported.has(s.sessionId),
+  );
   const handleClose = useCallback(() => {
     if (pending) return;
     onClose();
@@ -125,20 +143,35 @@ export function ImportCliSessionModal({
     void load();
   }, [load]);
 
+  const importArgs = (sessionId: string) =>
+    provider === "codex"
+      ? { sessionId, projectId }
+      : { sessionId, projectId, provider };
+
   const importOne = async (sessionId: string) => {
     if (pending) return;
     setPendingId(sessionId);
     setImportError(null);
     try {
-      const thread =
-        provider === "codex"
-          ? await importCliSession({ sessionId, projectId })
-          : await importCliSession({
-              sessionId,
-              projectId,
-              provider,
-            });
+      const thread = await importCliSession(importArgs(sessionId));
       onImported(thread);
+    } catch (err) {
+      setImportError(errorMessage(err));
+    } finally {
+      setPendingId(null);
+    }
+  };
+
+  const importRemaining = async () => {
+    if (pending || remaining.length === 0) return;
+    setPendingId("remaining");
+    setImportError(null);
+    let last: ThreadInfo | null = null;
+    try {
+      for (const session of remaining) {
+        last = await importCliSession(importArgs(session.sessionId));
+      }
+      if (last) onImported(last);
     } catch (err) {
       setImportError(errorMessage(err));
     } finally {
@@ -203,28 +236,55 @@ export function ImportCliSessionModal({
               {copy.empty}
             </p>
           ) : (
-            <ul className={`${chrome.browseList} ${styles.list}`}>
-              {(sessions || []).map((session) => (
-                <li key={session.sessionId}>
-                  <button
-                    type="button"
-                    className={`${chrome.browseRow} ${styles.row}`}
-                    data-cli-session={session.sessionId}
-                    disabled={pending}
-                    aria-busy={
-                      pendingId === session.sessionId ? true : undefined
-                    }
-                    title={session.sessionId}
-                    onClick={() => void importOne(session.sessionId)}
-                  >
-                    <span className={styles.id}>{session.sessionId}</span>
-                    <span className={styles.age}>
-                      {formatRelativeAge(session.mtimeMs, now)}
-                    </span>
-                  </button>
-                </li>
-              ))}
-            </ul>
+            <>
+              <ul className={`${chrome.browseList} ${styles.list}`}>
+                {(sessions || []).map((session) => {
+                  const imported = alreadyImported.has(session.sessionId);
+                  return (
+                    <li key={session.sessionId}>
+                      <button
+                        type="button"
+                        className={`${chrome.browseRow} ${styles.row}`}
+                        data-cli-session={session.sessionId}
+                        data-cli-session-imported={
+                          imported ? "" : undefined
+                        }
+                        disabled={pending}
+                        aria-busy={
+                          pendingId === session.sessionId ? true : undefined
+                        }
+                        title={session.sessionId}
+                        onClick={() => void importOne(session.sessionId)}
+                      >
+                        <span className={styles.id}>{session.sessionId}</span>
+                        <span className={styles.meta}>
+                          {imported ? (
+                            <span className={styles.imported}>Imported</span>
+                          ) : null}
+                          <span className={styles.age}>
+                            {formatRelativeAge(session.mtimeMs, now)}
+                          </span>
+                        </span>
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+              {remaining.length > 1 ||
+              (remaining.length > 0 && alreadyImported.size > 0) ? (
+                <button
+                  type="button"
+                  className={chrome.btn}
+                  data-cli-session-import-remaining=""
+                  disabled={pending}
+                  onClick={() => void importRemaining()}
+                >
+                  {alreadyImported.size > 0
+                    ? `Import remaining (${remaining.length})`
+                    : `Import all (${remaining.length})`}
+                </button>
+              ) : null}
+            </>
           )}
           {importError && (
             <p

@@ -182,6 +182,38 @@ describe("CLI session import IPC (#433)", () => {
       false,
     );
   });
+
+  it("re-import absorbs new turns and does not mint a second thread", async () => {
+    writeRollout(home, SESSION_A, [
+      messageRecord("user", "prompt a", "2026-09-06T12:00:01.000Z"),
+      messageRecord("assistant", "reply a", "2026-09-06T12:00:02.000Z"),
+    ]);
+    const first = await IPC_HANDLERS["threads:importCliSession"](ctx, {
+      sessionId: SESSION_A,
+      projectId,
+    });
+    writeRollout(home, SESSION_A, [
+      messageRecord("user", "prompt a", "2026-09-06T12:00:01.000Z"),
+      messageRecord("assistant", "reply a", "2026-09-06T12:00:02.000Z"),
+      messageRecord("user", "prompt a2", "2026-09-06T12:00:03.000Z"),
+      messageRecord("assistant", "reply a2", "2026-09-06T12:00:04.000Z"),
+    ]);
+    const second = await IPC_HANDLERS["threads:importCliSession"](ctx, {
+      sessionId: SESSION_A,
+      projectId,
+    });
+    assert.equal(second.id, first.id);
+    assert.equal(store.getThreads().length, 1);
+    assert.deepEqual(
+      store.getMessages(first.id).map((m) => `${m.role}:${m.text}`),
+      [
+        "user:prompt a",
+        "assistant:reply a",
+        "user:prompt a2",
+        "assistant:reply a2",
+      ],
+    );
+  });
 });
 
 describe("Grok session import IPC (#972)", () => {

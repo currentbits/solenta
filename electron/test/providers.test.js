@@ -9,6 +9,7 @@ const {
   resolveBin,
   isBinAvailable,
   listProviders,
+  sessionIdForResume,
 } = require("../providers.js");
 
 describe("providers registry", () => {
@@ -65,6 +66,7 @@ describe("providers registry", () => {
     const codex = getProvider("codex");
     assert.equal(codex.kind, "codex-json");
     assert.equal(codex.supportsResume, true);
+    assert.equal(codex.sessionPinsModel, true);
     assert.ok(codex.models.includes("gpt-5.5"));
     assert.ok(codex.models.includes("gpt-6-astra"));
     assert.ok(codex.models.includes("gpt-5.6-sol"));
@@ -497,5 +499,48 @@ describe("providers registry", () => {
     available = false;
     const b = listProviders({ which, env: {}, includeSimulate: false });
     assert.equal(b.find((p) => p.id === "claude").available, false);
+  });
+});
+
+describe("sessionIdForResume (#1020)", () => {
+  const codex = getProvider("codex");
+  const claude = getProvider("claude");
+
+  it("skips Codex resume when the chosen model differs from the last reported one", () => {
+    const thread = {
+      sessionId: "sess-sol",
+      model: "gpt-6-astra",
+      ejected: false,
+    };
+    assert.equal(
+      sessionIdForResume(codex, thread, { model: "gpt-5.6-sol" }),
+      null,
+    );
+    assert.equal(
+      sessionIdForResume(codex, thread, { model: "gpt-6-astra" }),
+      "sess-sol",
+    );
+  });
+
+  it("keeps Claude resume across a model-only change", () => {
+    assert.equal(
+      sessionIdForResume(
+        claude,
+        { sessionId: "sess-1", model: "claude-sonnet-5" },
+        { model: "claude-opus-5" },
+      ),
+      "sess-1",
+    );
+  });
+
+  it("never resumes an ejected thread", () => {
+    assert.equal(
+      sessionIdForResume(
+        codex,
+        { sessionId: "sess-sol", model: "gpt-6-astra", ejected: true },
+        { model: "gpt-6-astra" },
+      ),
+      null,
+    );
   });
 });
