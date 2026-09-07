@@ -554,4 +554,112 @@ describe("buildFlatSidebar (T3 flat sidebar)", () => {
     );
     assert.deepEqual(flat.pinned.map((t) => t.id), ["p-old", "p-new"]);
   });
+
+  it("keeps settled workers nested under an still-active parent", () => {
+    const flat = buildFlatSidebar(
+      [
+        thread({
+          id: "orch",
+          projectId: "p1",
+          updatedAt: NOW,
+          createdAt: NOW - 2,
+          status: "idle",
+        }),
+        thread({
+          id: "w-settled",
+          projectId: "p1",
+          updatedAt: NOW,
+          createdAt: NOW - 1,
+          status: "done",
+          handoffFrom: "orch",
+          settledOverride: "settled",
+        }),
+        thread({
+          id: "unrelated-settled",
+          projectId: "p1",
+          updatedAt: NOW,
+          createdAt: NOW - 3,
+          status: "done",
+          settledOverride: "settled",
+        }),
+      ],
+      settleOpts,
+    );
+    assert.deepEqual(flat.active.map((t) => t.id), ["orch", "w-settled"]);
+    assert.deepEqual(flat.pinned.map((t) => t.id), []);
+    assert.deepEqual(flat.settled.map((t) => t.id), ["unrelated-settled"]);
+  });
+
+  it("keeps settled workers nested under a pinned parent", () => {
+    const flat = buildFlatSidebar(
+      [
+        thread({
+          id: "orch",
+          projectId: "p1",
+          updatedAt: NOW,
+          createdAt: NOW - 2,
+          status: "idle",
+          pinnedAt: NOW - 1,
+        }),
+        thread({
+          id: "w-settled",
+          projectId: "p1",
+          updatedAt: NOW,
+          createdAt: NOW - 1,
+          status: "done",
+          handoffFrom: "orch",
+          settledOverride: "settled",
+        }),
+        thread({
+          id: "unrelated-settled",
+          projectId: "p1",
+          updatedAt: NOW,
+          createdAt: NOW - 3,
+          status: "done",
+          settledOverride: "settled",
+        }),
+      ],
+      settleOpts,
+    );
+    assert.deepEqual(flat.pinned.map((t) => t.id), ["orch", "w-settled"]);
+    assert.deepEqual(flat.active.map((t) => t.id), []);
+    assert.deepEqual(flat.settled.map((t) => t.id), ["unrelated-settled"]);
+  });
+
+  it("nests a settled grandchild under a pinned orchestrator", () => {
+    const flat = buildFlatSidebar(
+      [
+        thread({
+          id: "orch",
+          projectId: "p1",
+          updatedAt: NOW,
+          createdAt: NOW - 3,
+          status: "idle",
+          pinnedAt: NOW - 1,
+        }),
+        thread({
+          id: "w1",
+          projectId: "p1",
+          updatedAt: NOW,
+          createdAt: NOW - 2,
+          status: "done",
+          handoffFrom: "orch",
+          settledOverride: "settled",
+        }),
+        thread({
+          id: "w1a",
+          projectId: "p1",
+          updatedAt: NOW,
+          createdAt: NOW - 1,
+          status: "done",
+          handoffFrom: "w1",
+          settledOverride: "settled",
+        }),
+      ],
+      settleOpts,
+    );
+    assert.deepEqual(flat.pinned.map((t) => t.id), ["orch", "w1", "w1a"]);
+    assert.deepEqual(flat.active.map((t) => t.id), []);
+    assert.deepEqual(flat.settled.map((t) => t.id), []);
+  });
 });

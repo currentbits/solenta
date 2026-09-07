@@ -190,7 +190,49 @@ export function buildFlatSidebar(
     (a, b) => b.updatedAt - a.updatedAt || a.id.localeCompare(b.id),
   );
 
-  return { pinned, active: attachForks(active), snoozed, settled, archived };
+  // Settled workers of a still-visible parent stay nested next to it.
+  // Pinned is its own attachForks pass — a pinned ancestor must take the
+  // child in the pinned block, not dump it as a disconnected Active row.
+  const pinnedIds = new Set(pinned.map((t) => t.id));
+  const activeIds = new Set(active.map((t) => t.id));
+  const byId = new Map<string, ThreadInfo>();
+  for (const t of threads) {
+    if (scopeProjectId != null && t.projectId !== scopeProjectId) continue;
+    byId.set(t.id, t);
+  }
+  const visibleAncestorKind = (
+    t: ThreadInfo,
+  ): "pinned" | "active" | null => {
+    let cur = t.handoffFrom;
+    const seen = new Set<string>();
+    while (cur && !seen.has(cur)) {
+      if (pinnedIds.has(cur)) return "pinned";
+      if (activeIds.has(cur)) return "active";
+      seen.add(cur);
+      const row = byId.get(cur);
+      if (!row || row.archived || effectiveSnoozed(row, opts.now)) return null;
+      cur = row.handoffFrom;
+    }
+    return null;
+  };
+  const nestPinned: ThreadInfo[] = [];
+  const nestActive: ThreadInfo[] = [];
+  const settledRest: ThreadInfo[] = [];
+  for (const t of settled) {
+    const kind = visibleAncestorKind(t);
+    if (kind === "pinned") nestPinned.push(t);
+    else if (kind === "active") nestActive.push(t);
+    else settledRest.push(t);
+  }
+
+  return {
+    pinned:
+      nestPinned.length > 0 ? attachForks([...pinned, ...nestPinned]) : pinned,
+    active: attachForks([...active, ...nestActive]),
+    snoozed,
+    settled: settledRest,
+    archived,
+  };
 }
 
 /** Default opts when a caller has no clock of its own (tests, pure helpers). */

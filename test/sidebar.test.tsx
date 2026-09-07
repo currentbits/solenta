@@ -1922,6 +1922,67 @@ describe("Sidebar card anatomy + hover actions", () => {
     m.unmount();
   });
 
+  it("settled workers of a pinned parent stay nested in the pinned block", async () => {
+    await clearSidebarStorage();
+    const m = await mount(
+      sidebar([
+        thread({
+          id: "orch",
+          title: "orchestrate the fix",
+          status: "idle",
+          pinnedAt: FRESH - 1000,
+          updatedAt: FRESH,
+        }),
+        thread({
+          id: "w-settled",
+          title: "Fork: Import existing CLI agent sessions",
+          status: "done",
+          handoffFrom: "orch",
+          runStartedAt: null,
+          settledOverride: "settled",
+          updatedAt: FRESH,
+        }),
+        thread({
+          id: "active-card",
+          title: "active",
+          createdAt: FRESH + 100,
+          updatedAt: FRESH + 100,
+        }),
+      ]),
+    );
+    const card = m.query('[data-thread-card="w-settled"]');
+    assert.ok(
+      card,
+      "settled worker must stay next to the pinned parent without opening Settled",
+    );
+    assert.equal(card!.getAttribute("data-nested"), "true");
+    assert.equal(
+      card!.getAttribute("data-settled"),
+      null,
+      "pinned nest is a full card, not a Settled slim row",
+    );
+    const order = cardTitles(m);
+    const pinIdx = order.indexOf("orch");
+    const childIdx = order.indexOf("w-settled");
+    const activeIdx = order.indexOf("active-card");
+    assert.equal(
+      childIdx,
+      pinIdx + 1,
+      "child sits immediately under the pinned parent",
+    );
+    assert.ok(
+      childIdx < activeIdx,
+      "child is in the pinned block, not a lone Active card",
+    );
+    assert.ok(m.query("[data-pinned-divider]"));
+    assert.equal(
+      m.query("[data-settled-shelf-toggle]"),
+      null,
+      "the only settled thread is nested under its parent, not in the shelf",
+    );
+    m.unmount();
+  });
+
   it("attention card menu settle sends override settled; settle-btn disabled while working", async () => {
     await clearSidebarStorage();
     const settleCalls: Array<{ id: string; o: string }> = [];
