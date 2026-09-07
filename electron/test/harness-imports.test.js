@@ -2307,3 +2307,4 @@ describe("plugin skills", () => {
     assert.equal(fs.existsSync(dest), true);
   });
 });
+
