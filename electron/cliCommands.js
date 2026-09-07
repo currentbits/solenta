@@ -10,7 +10,8 @@
  * transcript keeps the raw `/name`, the CLI sees the expanded prompt.
  *
  * Plugin commands: Claude via installed_plugins.json; Cursor via
- * collectCursorPluginRoots; Codex via enabled
+ * collectCursorPluginRoots (plugins/local/<name> plus installed.json
+ * user cache hashes); Codex via enabled
  * `[plugins."name@marketplace"]` cache version dirs plus plugins/
  * children except cache and marketplaces. Marketplace cache trees are
  * never copied. Listing never executes plugin files.

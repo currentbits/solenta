@@ -253,6 +253,171 @@ describe("listInvocableCommands", () => {
     );
   });
 
+  it("lists Cursor local plugin commands as /name and /plugin:name without import", () => {
+    writePluginCommands(
+      path.join(tmp, ".cursor", "plugins", "local", "shipper"),
+      "shipper",
+      [
+        ["commands/review.md", "Review the diff", "Review $ARGUMENTS."],
+        ["commands/git/pr.md", "Open a pull request", "Create the PR."],
+      ],
+    );
+
+    const rows = listInvocableCommands({ env: envHome() });
+    const review = byName(rows, "/shipper:review");
+    assert.ok(review, "namespaced /shipper:review is listed without import");
+    assert.equal(review.kind, "command");
+    assert.equal(review.hint, "Review the diff");
+    assert.ok(byName(rows, "/review"), "bare plugin command name");
+    assert.ok(
+      byName(rows, "/shipper:git:pr"),
+      "nested git/pr.md → /shipper:git:pr",
+    );
+    assert.ok(byName(rows, "/git:pr"), "nested bare /git:pr");
+  });
+
+  it("lists Cursor installed cache plugin commands without walking unlisted cache", () => {
+    const installPath = path.join(
+      tmp,
+      ".cursor",
+      "plugins",
+      "cache",
+      "cursor-public",
+      "shipper",
+      "abc123",
+    );
+    writePluginCommands(installPath, "shipper", [
+      ["commands/deploy.md", "Deploy the app", "Ship $ARGUMENTS."],
+      ["commands/git/pr.md", "Open a pull request", "Create the PR."],
+    ]);
+    writePluginCommands(
+      path.join(
+        tmp,
+        ".cursor",
+        "plugins",
+        "cache",
+        "cursor-public",
+        "other",
+        "def456",
+      ),
+      "other",
+      [["commands/nope.md", "Unlisted cache copy", "Nope."]],
+    );
+    writePluginCommands(
+      path.join(tmp, ".cursor", "plugins", "cache", "orphan", "ghost", "1.0.0"),
+      "ghost",
+      [["commands/nope.md", "Unlisted cache copy", "Nope."]],
+    );
+    fs.mkdirSync(path.join(tmp, ".cursor", "plugins"), { recursive: true });
+    fs.writeFileSync(
+      path.join(tmp, ".cursor", "plugins", "installed.json"),
+      JSON.stringify({ user: ["shipper@cursor-public"] }),
+      "utf8",
+    );
+
+    const listed = names(listInvocableCommands({ env: envHome() }));
+    assert.ok(listed.includes("/shipper:deploy"));
+    assert.ok(listed.includes("/shipper:git:pr"));
+    assert.ok(!listed.includes("/other:nope"));
+    assert.ok(!listed.includes("/ghost:nope"));
+  });
+
+  it("reads the plugin name from .cursor-plugin/plugin.json", () => {
+    const root = path.join(tmp, ".cursor", "plugins", "local", "abc123");
+    fs.mkdirSync(path.join(root, ".cursor-plugin"), { recursive: true });
+    fs.writeFileSync(
+      path.join(root, ".cursor-plugin", "plugin.json"),
+      JSON.stringify({ name: "shipper" }),
+      "utf8",
+    );
+    writeCommand(
+      path.join(root, "commands", "review.md"),
+      "Review the diff",
+      "Review it.",
+    );
+
+    const listed = names(listInvocableCommands({ env: envHome() }));
+    assert.ok(listed.includes("/shipper:review"));
+    assert.ok(!listed.includes("/abc123:review"));
+  });
+
+  it("follows plugin.json commands array for Cursor plugins", () => {
+    writePluginCommands(
+      path.join(tmp, ".cursor", "plugins", "local", "custom"),
+      "custom",
+      [
+        ["slash/foo.md", "Custom slash", "Do foo."],
+        ["commands/default.md", "Default dir", "Should not list."],
+      ],
+      { commands: ["./slash"] },
+    );
+
+    const listed = names(listInvocableCommands({ env: envHome() }));
+    assert.ok(listed.includes("/custom:foo"));
+    assert.ok(!listed.includes("/custom:default"));
+  });
+
+  it("keeps an existing /name over a Cursor plugin bare name", () => {
+    writeCommand(
+      path.join(tmp, ".grok", "commands", "review.md"),
+      "User review",
+      "User body $ARGUMENTS.",
+    );
+    writePluginCommands(
+      path.join(tmp, ".cursor", "plugins", "local", "shipper"),
+      "shipper",
+      [["commands/review.md", "Plugin review", "Plugin body $ARGUMENTS."]],
+    );
+
+    const rows = listInvocableCommands({ env: envHome() });
+    assert.equal(byName(rows, "/review")?.hint, "User review");
+    assert.equal(byName(rows, "/shipper:review")?.hint, "Plugin review");
+  });
+
+  it("does not execute Cursor plugin hook scripts while listing", () => {
+    const installPath = path.join(
+      tmp,
+      ".cursor",
+      "plugins",
+      "local",
+      "shipper",
+    );
+    writePluginCommands(installPath, "shipper", [
+      ["commands/review.md", "Review the diff", "Review it."],
+    ]);
+    const marker = path.join(tmp, "hook-ran");
+    const hook = path.join(installPath, "hooks", "setup.sh");
+    fs.mkdirSync(path.dirname(hook), { recursive: true });
+    fs.writeFileSync(hook, `#!/bin/sh\ntouch "${marker}"\n`, "utf8");
+    fs.chmodSync(hook, 0o755);
+
+    const rows = listInvocableCommands({ env: envHome() });
+    assert.ok(byName(rows, "/shipper:review"));
+    assert.equal(fs.existsSync(marker), false, "hook script must not run");
+  });
+
+  it("lists Cursor plugins from CURSOR_HOME instead of ~/.cursor", () => {
+    const cursorHome = path.join(tmp, "cursor-home");
+    writePluginCommands(
+      path.join(cursorHome, "plugins", "local", "shipper"),
+      "shipper",
+      [["commands/review.md", "Review the diff", "Review it."]],
+    );
+    writePluginCommands(
+      path.join(tmp, ".cursor", "plugins", "local", "other"),
+      "other",
+      [["commands/nope.md", "Default home", "Nope."]],
+    );
+
+    const listed = names(
+      listInvocableCommands({
+        env: { HOME: tmp, CURSOR_HOME: cursorHome },
+      }),
+    );
+    assert.ok(listed.includes("/shipper:review"));
+    assert.ok(!listed.includes("/other:nope"));
+  });
+
   it("lists Codex plugins/ sidecar commands without config.toml", () => {
     const plugins = path.join(tmp, ".codex", "plugins");
     writePluginCommands(path.join(plugins, "sidecar"), "sidecar", [
@@ -1197,6 +1362,21 @@ describe("expandInvocableCommand", () => {
     assert.equal(hit.name, "/shipper:deploy");
     assert.equal(hit.kind, "command");
     assert.equal(hit.prompt.trim(), "Ship v1.");
+  });
+
+  it("expands a Cursor plugin command without a prior import", () => {
+    writePluginCommands(
+      path.join(tmp, ".cursor", "plugins", "local", "shipper"),
+      "shipper",
+      [["commands/review.md", "Review the diff", "Review $ARGUMENTS."]],
+    );
+    const hit = expandInvocableCommand("/shipper:review the tests", {
+      env: envHome(),
+    });
+    assert.ok(hit);
+    assert.equal(hit.name, "/shipper:review");
+    assert.equal(hit.kind, "command");
+    assert.equal(hit.prompt.trim(), "Review the tests.");
   });
 
   it("returns null for unknown /foo and for non-slash prompts", () => {
