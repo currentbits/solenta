@@ -238,6 +238,143 @@ describe("preview MCP tool (issue #155)", () => {
   });
 });
 
+describe("refresh_worker_snapshot MCP tool", () => {
+  function orchWorker(overrides = {}) {
+    return {
+      id: "w-idle",
+      title: "Idle worker",
+      provider: "claude",
+      status: "idle",
+      orchWorker: true,
+      handoffFrom: "t1",
+      projectId: "p1",
+      pendingWorktree: true,
+      leadSnapshotSha: "aaa",
+      ...overrides,
+    };
+  }
+
+  it("lets the lead refresh its idle worker via services.refreshWorkerSnapshot", async () => {
+    const deps = makeDeps();
+    const worker = orchWorker();
+    deps.store.threads.push(worker);
+    const calls = [];
+    deps.refreshWorkerSnapshot = (_store, input) => {
+      calls.push(input);
+      return { ...worker, leadSnapshotSha: "bbb" };
+    };
+    const h = createToolHandlers(deps);
+    const out = await h.refresh_worker_snapshot({
+      threadId: "t1",
+      projectId: "p1",
+      workerThreadId: worker.id,
+    });
+    assert.deepEqual(calls, [{ threadId: worker.id }]);
+    assert.equal(out.leadSnapshotSha, "bbb");
+    assert.equal(deps.broadcasts.length, 1);
+    assert.equal(deps.broadcasts[0].channel, "threads:changed");
+  });
+
+  it("refuses unless the caller is the worker's handoffFrom", async () => {
+    const deps = makeDeps();
+    const worker = orchWorker({ handoffFrom: "someone-else" });
+    deps.store.threads.push(worker);
+    let called = false;
+    deps.refreshWorkerSnapshot = () => {
+      called = true;
+      return worker;
+    };
+    const h = createToolHandlers(deps);
+    await assert.rejects(
+      () =>
+        h.refresh_worker_snapshot({
+          threadId: "t1",
+          projectId: "p1",
+          workerThreadId: worker.id,
+        }),
+      /handoffFrom mismatch/,
+    );
+    assert.equal(called, false);
+  });
+
+  it("refuses an unknown worker and a worker in another project", async () => {
+    const deps = makeDeps();
+    deps.store.threads.push(
+      orchWorker({ id: "w-p2", projectId: "p2", handoffFrom: "t3" }),
+    );
+    const h = createToolHandlers(deps);
+    await assert.rejects(
+      () =>
+        h.refresh_worker_snapshot({
+          threadId: "t1",
+          projectId: "p1",
+          workerThreadId: "ghost",
+        }),
+      /Unknown thread: ghost/,
+    );
+    await assert.rejects(
+      () =>
+        h.refresh_worker_snapshot({
+          threadId: "t1",
+          projectId: "p1",
+          workerThreadId: "w-p2",
+        }),
+      /belongs to "Beta".*not to "Alpha"/s,
+    );
+  });
+
+  it("reuses the service refusals for running, independent, and worktree:false workers", async () => {
+    const deps = makeDeps();
+    deps.store.threads.push(
+      orchWorker({
+        id: "w-run",
+        status: "working",
+        pendingWorktree: true,
+      }),
+      {
+        id: "plain",
+        title: "Independent",
+        status: "idle",
+        handoffFrom: "t1",
+        projectId: "p1",
+      },
+      orchWorker({
+        id: "w-shared",
+        pendingWorktree: false,
+        worktreePath: null,
+      }),
+    );
+    const h = createToolHandlers(deps);
+    await assert.rejects(
+      () =>
+        h.refresh_worker_snapshot({
+          threadId: "t1",
+          projectId: "p1",
+          workerThreadId: "w-run",
+        }),
+      /running worker|idle/i,
+    );
+    await assert.rejects(
+      () =>
+        h.refresh_worker_snapshot({
+          threadId: "t1",
+          projectId: "p1",
+          workerThreadId: "plain",
+        }),
+      /orchestration worker/i,
+    );
+    await assert.rejects(
+      () =>
+        h.refresh_worker_snapshot({
+          threadId: "t1",
+          projectId: "p1",
+          workerThreadId: "w-shared",
+        }),
+      /worktree/i,
+    );
+  });
+});
+
 describe("orch-server tool handlers", () => {
   it("instructions tell the orchestrator it is woken when workers finish", () => {
     assert.match(INSTRUCTIONS, /woken on a new turn/);
@@ -261,6 +398,8 @@ describe("orch-server tool handlers", () => {
     assert.doesNotMatch(INSTRUCTIONS, /this server sees all of them/);
     assert.match(INSTRUCTIONS, /preview drives the Browser pane/);
     assert.match(INSTRUCTIONS, /Do not claim the UI works without a screenshot/);
+    assert.match(INSTRUCTIONS, /refresh_worker_snapshot/);
+    assert.match(INSTRUCTIONS, /Nothing auto-refreshes/);
   });
 
   it("threads_list maps id, title, provider, status, handoffFrom, project, later fields", async () => {
@@ -426,9 +565,22 @@ describe("orch-server tool handlers", () => {
   });
 
   it("thread_fork isolates the worker in its own worktree by default", async () => {
-    // Real dir with a .git entry: the repo check is fs-based (issue #30).
+    // Real repo with a committed HEAD: forkWorkerThread records that
+    // snapshot before arming pendingWorktree (#948).
+    const { execFileSync } = require("node:child_process");
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "orch-wt-"));
-    fs.mkdirSync(path.join(dir, ".git"));
+    execFileSync("git", ["init"], { cwd: dir, stdio: "ignore" });
+    execFileSync("git", ["config", "user.email", "test@example.com"], {
+      cwd: dir,
+      stdio: "ignore",
+    });
+    execFileSync("git", ["config", "user.name", "Test"], {
+      cwd: dir,
+      stdio: "ignore",
+    });
+    fs.writeFileSync(path.join(dir, "README.md"), "hello\n");
+    execFileSync("git", ["add", "README.md"], { cwd: dir, stdio: "ignore" });
+    execFileSync("git", ["commit", "-m", "init"], { cwd: dir, stdio: "ignore" });
     const projects = { p1: { id: "p1", path: dir } };
     /** @param {object} project */
     const forkInto = async (project, args) => {
@@ -1248,6 +1400,7 @@ describe("orch-server HTTP", () => {
       "hypothesis_record",
       "peer_send",
       "preview",
+      "refresh_worker_snapshot",
       "spec_submit",
       "task_add",
       "task_claim",

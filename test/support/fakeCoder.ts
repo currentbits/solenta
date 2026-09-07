@@ -2262,6 +2262,31 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
         threads = threads.map((t) => (t.id === i.threadId ? next : t));
         return Promise.resolve(next);
       },
+      refreshWorkerSnapshot: (input: unknown) => {
+        const i = input as { threadId: string };
+        calls.push({ channel: "threads.refreshWorkerSnapshot", args: [input] });
+        const existing = threads.find((t) => t.id === i.threadId);
+        if (!existing) {
+          return Promise.reject(new Error(`Unknown thread: ${i.threadId}`));
+        }
+        if (existing.status === "working") {
+          return Promise.reject(
+            new Error("Cannot refresh a running worker. Wait until it is idle."),
+          );
+        }
+        if (!existing.orchWorker) {
+          return Promise.reject(
+            new Error("Refresh is only for orchestration workers."),
+          );
+        }
+        const next: ThreadInfo = {
+          ...existing,
+          leadSnapshotSha: "refreshed0000000000000000000000000000000",
+          leadSnapshotDirty: false,
+        };
+        threads = threads.map((t) => (t.id === i.threadId ? next : t));
+        return Promise.resolve(next);
+      },
       resolveSuggestion: (input: unknown) => {
         const i = input as {
           threadId: string;

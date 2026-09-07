@@ -327,6 +327,11 @@ function crewIntegration(store, input) {
       const liveHead = revParse(worker.worktreePath);
       const sourceSha =
         snapshotSha(worker) || liveHead || (receipt && receipt.sourceSha) || null;
+      const sourceBranch =
+        typeof worker.leadSnapshotBranch === "string" &&
+        worker.leadSnapshotBranch.trim()
+          ? worker.leadSnapshotBranch.trim()
+          : null;
       let changedFiles = [];
       if (worktreeLive(worker.worktreePath) && projectPath) {
         const base =
@@ -344,6 +349,8 @@ function crewIntegration(store, input) {
         title: (task && task.title) || worker.title || worker.id,
         taskId: task ? task.id : null,
         sourceSha,
+        sourceBranch,
+        sourceDirty: worker.leadSnapshotDirty === true,
         changedFiles,
         verify,
         destination: leadBranch || "lead worktree",

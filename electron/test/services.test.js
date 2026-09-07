@@ -1348,6 +1348,11 @@ describe("forkWorkerThread", () => {
     // addProject requires a real work tree (`git rev-parse`), not just a
     // `.git` directory. canHostWorktree still keys off `.git` existing.
     git(repo, ["init"]);
+    git(repo, ["config", "user.email", "test@example.com"]);
+    git(repo, ["config", "user.name", "Test"]);
+    fs.writeFileSync(path.join(repo, "README.md"), "hello\n");
+    git(repo, ["add", "README.md"]);
+    git(repo, ["commit", "-m", "init"]);
     project = await services.addProject(store, repo);
   });
 

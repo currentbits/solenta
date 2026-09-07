@@ -156,6 +156,8 @@ interface AgentsPanelProps {
   crewIntegration?: (threadId: string) => Promise<CrewIntegrationView>;
   /** Squash a worker onto the lead worktree. */
   onIntegrateWorker?: (workerThreadId: string) => Promise<void>;
+  /** Retarget an idle worker onto the lead's current committed HEAD. */
+  onRefreshWorker?: (workerThreadId: string) => Promise<void>;
   /** Combined-result verify on the lead. */
   onVerifyLead?: () => Promise<void>;
   /** Final Open PR / Merge into target. Separate from worker integrate. */
@@ -2481,6 +2483,7 @@ export function AgentsContent({
   listCrewTasks,
   crewIntegration,
   onIntegrateWorker,
+  onRefreshWorker,
   onVerifyLead,
   onLandLead,
   onSelectThread,
@@ -2497,6 +2500,7 @@ export function AgentsContent({
   ) => Promise<{ rootThreadId: string; tasks: CrewTaskView[] }>;
   crewIntegration?: (threadId: string) => Promise<CrewIntegrationView>;
   onIntegrateWorker?: (workerThreadId: string) => Promise<void>;
+  onRefreshWorker?: (workerThreadId: string) => Promise<void>;
   onVerifyLead?: () => Promise<void>;
   onLandLead?: () => Promise<void>;
   onSelectThread?: (id: string) => void;
@@ -2586,6 +2590,9 @@ export function AgentsContent({
     null,
   );
   const [busyWorkerId, setBusyWorkerId] = useState<string | null>(null);
+  const [busyKind, setBusyKind] = useState<"integrate" | "refresh" | null>(
+    null,
+  );
   const [verifyingLead, setVerifyingLead] = useState(false);
   const [landingLead, setLandingLead] = useState(false);
   useEffect(() => {
@@ -2807,11 +2814,13 @@ export function AgentsContent({
               thread={thread}
               error={integrationError}
               busyWorkerId={busyWorkerId}
+              busyKind={busyKind}
               verifying={verifyingLead}
               finalPending={landingLead}
               onIntegrate={async (workerId) => {
                 if (!onIntegrateWorker) return;
                 setBusyWorkerId(workerId);
+                setBusyKind("integrate");
                 setIntegrationError(null);
                 try {
                   await onIntegrateWorker(workerId);
@@ -2824,8 +2833,31 @@ export function AgentsContent({
                   );
                 } finally {
                   setBusyWorkerId(null);
+                  setBusyKind(null);
                 }
               }}
+              onRefreshWorker={
+                onRefreshWorker
+                  ? async (workerId) => {
+                      setBusyWorkerId(workerId);
+                      setBusyKind("refresh");
+                      setIntegrationError(null);
+                      try {
+                        await onRefreshWorker(workerId);
+                        if (crewIntegration) {
+                          setIntegration(await crewIntegration(thread.id));
+                        }
+                      } catch (err) {
+                        setIntegrationError(
+                          err instanceof Error ? err.message : String(err),
+                        );
+                      } finally {
+                        setBusyWorkerId(null);
+                        setBusyKind(null);
+                      }
+                    }
+                  : undefined
+              }
               onSelectThread={onSelectThread}
               onVerify={
                 onVerifyLead
@@ -3219,6 +3251,7 @@ export const AgentsPanel = memo(function AgentsPanel({
   listCrewTasks,
   crewIntegration,
   onIntegrateWorker,
+  onRefreshWorker,
   onVerifyLead,
   onLandLead,
   onSelectThread,
@@ -3384,6 +3417,7 @@ export const AgentsPanel = memo(function AgentsPanel({
           listCrewTasks={listCrewTasks}
           crewIntegration={crewIntegration}
           onIntegrateWorker={onIntegrateWorker}
+          onRefreshWorker={onRefreshWorker}
           onVerifyLead={onVerifyLead}
           onLandLead={onLandLead}
           onSelectThread={onSelectThread}

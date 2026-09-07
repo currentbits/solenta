@@ -31,6 +31,11 @@
   box-shadow: var(--focus-ring);
 }
 
+.leadLink:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
 .group {
   display: inline-flex;
   align-items: stretch;
@@ -106,6 +111,26 @@
   font-size: 11px;
   letter-spacing: -0.01em;
   opacity: 0.78;
+}
+
+.snapshot {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-muted);
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: -0.01em;
+}
+
+.snapshotDirty {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-muted);
+  font-size: 11px;
 }
 
 .menuItemNested {

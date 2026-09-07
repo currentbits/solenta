@@ -491,6 +491,106 @@ function resolveStartPoint(repoPath, name) {
   throw new Error(`Unknown base branch: ${want}`);
 }
 
+const MISSING_LEAD_SNAPSHOT =
+  "Could not record the lead's committed snapshot. The worker will not start from main.";
+const MISSING_START_SNAPSHOT =
+  "This orchestration worker has no recorded lead snapshot. Refusing to fall back to main.";
+
+/**
+ * Lead committed HEAD at worker-fork time (#948). Dirty edits are noted,
+ * never copied, stashed, or committed.
+ *
+ * @param {import('./store').Store} store
+ * @param {object | null | undefined} lead
+ * @returns {{ sha: string, branch: string | null, dirty: boolean }}
+ */
+function captureLeadSnapshot(store, lead) {
+  if (!lead) {
+    throw new Error(`${MISSING_LEAD_SNAPSHOT} Unknown lead thread.`);
+  }
+  const project =
+    typeof store.getProject === "function"
+      ? store.getProject(lead.projectId)
+      : null;
+  if (!project || !project.path) {
+    throw new Error(`${MISSING_LEAD_SNAPSHOT} Unknown project for the lead.`);
+  }
+
+  let cwd = project.path;
+  if (lead.worktreePath && fs.existsSync(lead.worktreePath)) {
+    const inside = gitTry(lead.worktreePath, [
+      "rev-parse",
+      "--is-inside-work-tree",
+    ]);
+    if (inside.ok && String(inside.stdout || "").trim() === "true") {
+      cwd = lead.worktreePath;
+    }
+  } else if (typeof lead.branch === "string" && lead.branch.trim()) {
+    const named = gitTry(project.path, [
+      "rev-parse",
+      "--verify",
+      `${lead.branch.trim()}^{commit}`,
+    ]);
+    if (named.ok && String(named.stdout || "").trim()) {
+      return {
+        sha: String(named.stdout).trim(),
+        branch: lead.branch.trim(),
+        dirty: false,
+      };
+    }
+  }
+
+  const head = gitTry(cwd, ["rev-parse", "--verify", "HEAD"]);
+  if (!head.ok || !String(head.stdout || "").trim()) {
+    throw new Error(
+      `${MISSING_LEAD_SNAPSHOT} The lead has no committed HEAD.`,
+    );
+  }
+  const sha = String(head.stdout).trim();
+  const named =
+    (typeof lead.branch === "string" && lead.branch.trim()) ||
+    String(gitTry(cwd, ["branch", "--show-current"]).stdout || "").trim() ||
+    null;
+  const porcelain = gitTry(cwd, ["status", "--porcelain", "-uall"]);
+  const dirty = Boolean(
+    porcelain.ok && String(porcelain.stdout || "").trim(),
+  );
+  return { sha, branch: named, dirty };
+}
+
+/**
+ * Worktree start-point (#948). A recorded lead snapshot is exclusive:
+ * missing or unresolvable SHAs fail instead of falling back to main.
+ * Independent threads still use the stacked base / repo default.
+ *
+ * @param {{ orchWorker?: boolean, leadSnapshotSha?: string | null } | null | undefined} thread
+ * @param {string} projectPath
+ * @returns {string}
+ */
+function resolveWorktreeStart(thread, projectPath) {
+  const snap =
+    thread && typeof thread.leadSnapshotSha === "string"
+      ? thread.leadSnapshotSha.trim()
+      : "";
+  if (snap) {
+    const probe = gitTry(projectPath, [
+      "rev-parse",
+      "--verify",
+      `${snap}^{commit}`,
+    ]);
+    if (!probe.ok || !String(probe.stdout || "").trim()) {
+      throw new Error(
+        `Worker start snapshot ${snap} is missing from the repository. Refusing to fall back to main.`,
+      );
+    }
+    return String(probe.stdout).trim();
+  }
+  if (thread && thread.orchWorker) {
+    throw new Error(MISSING_START_SNAPSHOT);
+  }
+  return resolveStartPoint(projectPath, mergeBaseName(thread, projectPath));
+}
+
 /**
  * Colocated jj detaches git HEAD on every command. Git-tab Merge must
  * not silently switch that checkout onto main (#521 / #770).
@@ -1570,10 +1670,7 @@ function setupWorktree(opts) {
   }
 
   try {
-    const start = resolveStartPoint(
-      project.path,
-      mergeBaseName(thread, project.path),
-    );
+    const start = resolveWorktreeStart(thread, project.path);
     gitOut(project.path, ["worktree", "add", "-b", branch, addPath, start]);
   } catch (err) {
     // Verbatim git stderr (#511). Never first-line-only: the lock/disk/
@@ -1621,10 +1718,30 @@ function setupWorktree(opts) {
  * @param {object} opts
  * @param {import('./store').Store} opts.store
  * @param {object} opts.thread
- * @param {string | null} opts.baseName
+ * @param {string | null} [opts.baseName]
+ * @param {string} [opts.fromRef] previous start (lead snapshot SHA on refresh)
+ * @param {string} [opts.ontoRef] new start SHA; never falls back to main
  */
+function resolveCommitOrThrow(repoPath, ref) {
+  const want = String(ref || "").trim();
+  if (!want) {
+    throw new Error(MISSING_START_SNAPSHOT);
+  }
+  const probe = gitTry(repoPath, [
+    "rev-parse",
+    "--verify",
+    `${want}^{commit}`,
+  ]);
+  if (!probe.ok || !String(probe.stdout || "").trim()) {
+    throw new Error(
+      `Worker start snapshot ${want} is missing from the repository. Refusing to fall back to main.`,
+    );
+  }
+  return String(probe.stdout).trim();
+}
+
 function retargetWorktreeBase(opts) {
-  const { store, thread, baseName } = opts;
+  const { store, thread, baseName, fromRef, ontoRef } = opts;
   const wtPath = thread && thread.worktreePath;
   if (!wtPath) return;
 
@@ -1642,11 +1759,15 @@ function retargetWorktreeBase(opts) {
     );
   }
 
-  const startName = baseName || repoDefaultBranch(project.path);
-  const start = resolveStartPoint(project.path, startName);
+  const startName = ontoRef || baseName || repoDefaultBranch(project.path);
+  const start = ontoRef
+    ? resolveCommitOrThrow(project.path, ontoRef)
+    : resolveStartPoint(project.path, startName);
   const oldStartName =
-    recordedBaseBranch(thread) || repoDefaultBranch(project.path);
-  const oldStart = resolveStartPoint(project.path, oldStartName);
+    fromRef || recordedBaseBranch(thread) || repoDefaultBranch(project.path);
+  const oldStart = fromRef
+    ? resolveCommitOrThrow(project.path, fromRef)
+    : resolveStartPoint(project.path, oldStartName);
   const oldSha = gitOut(project.path, [
     "rev-parse",
     "--verify",
@@ -6052,6 +6173,8 @@ module.exports = {
   listBranches,
   recordedBaseBranch,
   repoDefaultBranch,
+  captureLeadSnapshot,
+  resolveWorktreeStart,
   clearMissingWorktree,
   prepareThreadWorktree,
   gitFailureText,

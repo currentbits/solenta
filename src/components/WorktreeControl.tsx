@@ -15,7 +15,7 @@ import {
   parseConflictFiles,
   type ConflictResolveInput,
 } from "../conflictResolve";
-import { mergeOntoLabel } from "../crewIntegration";
+import { mergeOntoLabel, sourceSnapshotLabel } from "../crewIntegration";
 import { useEscapeClose } from "../useEscapeClose";
 import styles from "./WorktreeControl.module.css";
 
@@ -44,6 +44,8 @@ export interface WorktreeControlProps {
    * treating this header Merge as crew staging (issue #982).
    */
   onOpenCrewIntegration?: (leadThreadId: string) => void;
+  /** Retarget this idle worker onto the lead's current committed HEAD. */
+  onRefreshWorkerSnapshot?: () => Promise<unknown>;
 }
 
 export interface WorktreeChrome {
@@ -121,6 +123,7 @@ export function useWorktreeChrome(
     listBaseBranches,
     onSetBaseBranch,
     onOpenCrewIntegration,
+    onRefreshWorkerSnapshot,
   } = props;
 
   const [gitAction, setGitAction] = useState<GitAction>(null);
@@ -139,6 +142,7 @@ export function useWorktreeChrome(
   const [pendingMergeRetry, setPendingMergeRetry] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [copiedPath, setCopiedPath] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   const sawWorkingRef = useRef(false);
   const onMergeRef = useRef(onMergeWorktree);
   onMergeRef.current = onMergeWorktree;
@@ -146,7 +150,7 @@ export function useWorktreeChrome(
   const copyTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const hasWorktree = Boolean(thread?.worktreePath);
-  const busy = isWorking || gitAction != null || resolving;
+  const busy = isWorking || gitAction != null || resolving || refreshing;
   const visible = Boolean(thread && !project?.remoteHost);
 
   useEffect(() => {
@@ -226,6 +230,36 @@ export function useWorktreeChrome(
       } else {
         setCardError(classified.text);
       }
+    }
+  };
+
+  const handleRefreshSnapshot = async () => {
+    if (!onRefreshWorkerSnapshot || busy) return;
+    setRefreshing(true);
+    setCardError(null);
+    setConflictMessage(null);
+    try {
+      await onRefreshWorkerSnapshot();
+    } catch (err) {
+      const msg =
+        err instanceof Error && err.message
+          ? err.message
+          : "Could not refresh snapshot";
+      const classified = classifyGitError(msg);
+      if (classified.kind === "dirty") setDirtyMessage(classified.text);
+      else if (
+        classified.kind === "rebase-conflict" ||
+        classified.kind === "conflict"
+      ) {
+        setConflictKind(
+          classified.kind === "rebase-conflict" ? "rebase" : "merge",
+        );
+        setConflictMessage(classified.text);
+      } else {
+        setCardError(classified.text);
+      }
+    } finally {
+      setRefreshing(false);
     }
   };
 
@@ -369,6 +403,34 @@ export function useWorktreeChrome(
         onClick={openLead}
       >
         Crew integration on lead
+      </button>
+    ) : null;
+
+  const startSnapshot = thread.leadSnapshotSha ? (
+    <span
+      className={styles.snapshot}
+      data-start-snapshot=""
+      title={`Started from ${thread.leadSnapshotBranch || "lead"} ${thread.leadSnapshotSha}`}
+    >
+      from {sourceSnapshotLabel(thread.leadSnapshotBranch, thread.leadSnapshotSha)}
+    </span>
+  ) : null;
+  const startDirty = thread.leadSnapshotDirty ? (
+    <span className={styles.snapshotDirty} data-start-snapshot-dirty="">
+      inherits committed work only
+    </span>
+  ) : null;
+  const refreshSnapshot =
+    onRefreshWorkerSnapshot && thread.orchWorker ? (
+      <button
+        type="button"
+        className={styles.leadLink}
+        data-refresh-snapshot=""
+        disabled={busy}
+        title="Retarget this worker onto the lead's current committed HEAD. Uncommitted lead edits are not copied."
+        onClick={() => void handleRefreshSnapshot()}
+      >
+        {refreshing ? "Refreshing…" : "Refresh snapshot"}
       </button>
     ) : null;
 
@@ -545,9 +607,13 @@ export function useWorktreeChrome(
         )}
       </button>
     </div>
+    {startSnapshot}
+    {startDirty}
+    {refreshSnapshot}
     {leadPointer}
     </div>
   ) : (
+    <div className={styles.toolbarCluster}>
     <button
       type="button"
       className={styles.setup}
@@ -569,6 +635,10 @@ export function useWorktreeChrome(
         </>
       )}
     </button>
+    {startSnapshot}
+    {startDirty}
+    {refreshSnapshot}
+    </div>
   );
 
   const banner = (

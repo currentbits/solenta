@@ -220,17 +220,20 @@ describe("crew integration (#954)", () => {
 
   it("conflict leaves the lead HEAD intact and marks the worker conflicted", () => {
     const leadWt = workOn(lead, "lead.txt", "lead\n");
-    fs.writeFileSync(path.join(leadWt.worktreePath, "README.md"), "lead side\n");
-    git(leadWt.worktreePath, ["add", "README.md"]);
-    git(leadWt.worktreePath, ["commit", "-m", "lead edit"]);
-    const leadSha = head(leadWt.worktreePath);
-
+    // Fork before the lead diverges so the worker stays on the original
+    // snapshot (#948). Parallel edits of README.md then conflict on integrate.
     const worker = forkWorker("B");
     const wt = setupWorktree({
       store,
       threadId: worker.id,
       worktreeBase,
     });
+
+    fs.writeFileSync(path.join(leadWt.worktreePath, "README.md"), "lead side\n");
+    git(leadWt.worktreePath, ["add", "README.md"]);
+    git(leadWt.worktreePath, ["commit", "-m", "lead edit"]);
+    const leadSha = head(leadWt.worktreePath);
+
     fs.writeFileSync(path.join(wt.worktreePath, "README.md"), "worker side\n");
     git(wt.worktreePath, ["add", "README.md"]);
     git(wt.worktreePath, ["commit", "-m", "worker edit"]);

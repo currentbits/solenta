@@ -3736,7 +3736,9 @@ function buildDevCoder(): CoderApi {
             workerId: w.id,
             title: w.title,
             taskId: null,
-            sourceSha: null,
+            sourceSha: w.leadSnapshotSha ?? null,
+            sourceBranch: w.leadSnapshotBranch ?? null,
+            sourceDirty: w.leadSnapshotDirty === true,
             changedFiles: [],
             verify: w.verify ?? null,
             destination: lead?.branch || "lead worktree",
@@ -4051,6 +4053,20 @@ function buildDevCoder(): CoderApi {
           baseBranch: input.baseBranch
             ? String(input.baseBranch).trim() || null
             : null,
+        });
+      },
+      async refreshWorkerSnapshot(input: { threadId: string }) {
+        const detail = details.get(input.threadId);
+        if (!detail) throw new Error(`Thread not found: ${input.threadId}`);
+        if (detail.thread.status === "working") {
+          throw new Error("Cannot refresh a running worker. Wait until it is idle.");
+        }
+        if (!detail.thread.orchWorker) {
+          throw new Error("Refresh is only for orchestration workers.");
+        }
+        return patchThread(input.threadId, {
+          leadSnapshotSha: "refreshed0000000000000000000000000000000",
+          leadSnapshotDirty: false,
         });
       },
       async resolveSuggestion(input: {

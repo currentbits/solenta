@@ -1302,6 +1302,10 @@ function forkThread(store, input) {
  * Shared by orchServer's thread_fork tool and the runner's pendingFork
  * dispatch so the two definitions of "a worker" cannot drift apart. Starting
  * the run is the caller's job: services must not depend on the runner.
+ * Worktree workers record the lead's committed HEAD (`leadSnapshotSha`)
+ * at fork time so lazy materialization can start from that exact SHA
+ * even if the lead advances (issue #948). That start ref is not
+ * `baseBranch` (the merge/PR destination).
  *
  * @param {any} store
  * @param {{ threadId: string, provider?: string, model?: string | null, pool?: string, worktree?: boolean }} input
@@ -1335,27 +1339,40 @@ function forkWorkerThread(store, input, forkImpl = forkThread) {
   } else if (Object.prototype.hasOwnProperty.call(input, "model")) {
     forkInput.model = input.model;
   }
-  const fork = forkImpl(store, forkInput);
-
-  const patch = { orchWorker: true };
-  if (resolved && resolved.fromPool && resolved.alias) {
-    patch.poolAlias = resolved.alias;
-  }
   const source = store.getThread(input.threadId);
-  const projectId = fork.projectId ?? (source ? source.projectId : null);
+  const projectId = source ? source.projectId : null;
   const project =
     typeof store.getProject === "function" && projectId != null
       ? store.getProject(projectId)
       : null;
   // Ask workers stay in the checkout — a worktree would burn the isolation
   // Ask exists to avoid (issue #392).
-  const sourceAsk = Boolean(source && source.ask) || Boolean(fork.ask);
-  if (input.worktree !== false && !sourceAsk && canHostWorktree(project)) {
-    patch.pendingWorktree = true;
+  const sourceAsk = Boolean(source && source.ask);
+  const wantsWorktree =
+    input.worktree !== false && !sourceAsk && canHostWorktree(project);
+
+  /** @type {{ sha: string, branch: string | null, dirty: boolean } | null} */
+  let snapshot = null;
+  if (wantsWorktree) {
+    const { captureLeadSnapshot } = require("./worktrees.js");
+    snapshot = captureLeadSnapshot(store, source);
   }
-  store.updateThread(fork.id, patch);
+
+  const fork = forkImpl(store, forkInput);
+
+  const patch = { orchWorker: true };
+  if (resolved && resolved.fromPool && resolved.alias) {
+    patch.poolAlias = resolved.alias;
+  }
+  if (wantsWorktree && snapshot) {
+    patch.pendingWorktree = true;
+    patch.leadSnapshotSha = snapshot.sha;
+    patch.leadSnapshotBranch = snapshot.branch;
+    if (snapshot.dirty) patch.leadSnapshotDirty = true;
+  }
+  const updated = store.updateThread(fork.id, patch);
   store.save();
-  return fork;
+  return updated ? { ...updated } : { ...fork, ...patch };
 }
 
 /**
@@ -2178,6 +2195,70 @@ function setBaseBranch(store, input) {
     retargetWorktreeBase({ store, thread, baseName: name });
   }
   const patch = { baseBranch: name };
+  const updated = store.updateThread(threadId, patch);
+  store.save();
+  return updated ? { ...updated } : { ...thread, ...patch };
+}
+
+/**
+ * Retarget an idle orchestration worker onto the lead's current committed
+ * HEAD (#1110). Updates `leadSnapshotSha` only — never `baseBranch`.
+ * Materialized worktrees reuse retargetWorktreeBase / #775 rebase-onto
+ * from the previous snapshot. Dirty lead edits are noted, never copied.
+ *
+ * @param {import('./store').Store} store
+ * @param {{ threadId: string }} input
+ */
+function refreshWorkerSnapshot(store, input) {
+  const threadId = input && input.threadId;
+  const thread = store.getThread(threadId);
+  if (!thread) {
+    throw new Error(`Unknown thread: ${threadId}`);
+  }
+  if (thread.status === "working") {
+    throw new Error("Cannot refresh a running worker. Wait until it is idle.");
+  }
+  if (!thread.orchWorker) {
+    throw new Error("Refresh is only for orchestration workers.");
+  }
+  const pending = thread.pendingWorktree === true;
+  const live = Boolean(thread.worktreePath);
+  if (!pending && !live) {
+    throw new Error("Refresh is only for worktree workers.");
+  }
+
+  const lead = thread.handoffFrom
+    ? store.getThread(thread.handoffFrom)
+    : null;
+  const {
+    captureLeadSnapshot,
+    retargetWorktreeBase,
+  } = require("./worktrees.js");
+  const snapshot = captureLeadSnapshot(store, lead);
+
+  if (live) {
+    const fromRef =
+      typeof thread.leadSnapshotSha === "string"
+        ? thread.leadSnapshotSha.trim()
+        : "";
+    if (!fromRef) {
+      throw new Error(
+        "This orchestration worker has no recorded lead snapshot. Refusing to fall back to main.",
+      );
+    }
+    retargetWorktreeBase({
+      store,
+      thread,
+      fromRef,
+      ontoRef: snapshot.sha,
+    });
+  }
+
+  const patch = {
+    leadSnapshotSha: snapshot.sha,
+    leadSnapshotBranch: snapshot.branch,
+    leadSnapshotDirty: snapshot.dirty === true,
+  };
   const updated = store.updateThread(threadId, patch);
   store.save();
   return updated ? { ...updated } : { ...thread, ...patch };
@@ -5173,6 +5254,7 @@ module.exports = {
   setQuotaWaitAutoResume,
   setNotes,
   setBaseBranch,
+  refreshWorkerSnapshot,
   setFeltEstimate,
   setVerifyCommand,
   runVerifyNow,

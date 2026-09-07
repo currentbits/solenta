@@ -193,6 +193,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     renameThread,
     setNotes,
     setBaseBranch,
+    refreshWorkerSnapshot,
     resolveSuggestion,
     setFeltEstimate,
     startSpec,
@@ -1507,6 +1508,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         onRemoveWorktree={removeWorktree}
         listBaseBranches={listBaseBranches}
         onSetBaseBranch={setBaseBranch}
+        onRefreshWorkerSnapshot={refreshWorkerSnapshot}
         conflictContext={conflictContext}
         onOpenWorktree={openInEditor}
         onOpenCrewIntegration={openCrewIntegration}
@@ -1692,6 +1694,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
               }
             : undefined
         }
+        onRefreshWorker={refreshWorkerSnapshot}
         onVerifyLead={
           selectedThreadId
             ? async () => {

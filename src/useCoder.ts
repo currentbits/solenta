@@ -375,6 +375,8 @@ export interface UseCoderResult {
   setNotes: (threadId: string, notes: string) => Promise<void>;
   /** Change the recorded merge/PR base after create (#187). */
   setBaseBranch: (threadId: string, baseBranch: string | null) => Promise<void>;
+  /** Retarget an idle worker onto the lead's current committed HEAD. */
+  refreshWorkerSnapshot: (threadId: string) => Promise<void>;
   /**
    * Resolve a suggested-work chip (issue #550). Updates the thread from the
    * returned ThreadInfo. status is never "open" — chips do not reopen.
@@ -2144,6 +2146,25 @@ export function useCoder(): UseCoderResult {
     [api, applyThreads],
   );
 
+  const refreshWorkerSnapshot = useCallback(
+    async (threadId: string) => {
+      try {
+        const thread = await api.threads.refreshWorkerSnapshot({ threadId });
+        applyThreads(
+          threadsRef.current.map((t) => (t.id === thread.id ? thread : t)),
+        );
+        setDetail((prev) =>
+          prev && prev.thread.id === thread.id ? { ...prev, thread } : prev,
+        );
+        setError(null);
+      } catch (err) {
+        setError({ scope: "run", message: errorMessage(err) });
+        throw err;
+      }
+    },
+    [api, applyThreads],
+  );
+
   const resolveSuggestion = useCallback(
     async (
       threadId: string,
@@ -3534,6 +3555,7 @@ export function useCoder(): UseCoderResult {
     renameThread,
     setNotes,
     setBaseBranch,
+    refreshWorkerSnapshot,
     resolveSuggestion,
     setFeltEstimate,
     startSpec,

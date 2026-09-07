@@ -27,6 +27,7 @@ const {
   renameThread,
   listThreads,
   planboardNoteFor,
+  refreshWorkerSnapshot,
 } = require("./services.js");
 const {
   decideCrossThreadSend,
@@ -113,6 +114,11 @@ const INSTRUCTIONS =
   "over a document (plan.md, contract.md) is to COMMIT it on your branch and " +
   "send the peer a `branch:path` ref in the task note or peer message. The peer " +
   "reads it with `git show <branch>:<path>`. Chat history is not a hand-off. " +
+  "refresh_worker_snapshot retargets an idle orchestration worker you forked " +
+  "onto your current committed HEAD (leadSnapshotSha only; never baseBranch). " +
+  "Nothing auto-refreshes — call it explicitly. Uncommitted lead edits are " +
+  "not copied. Running workers, worktree:false workers, and independent " +
+  "threads are refused. " +
   "When this project's origin is GitHub, issue_list, issue_create, " +
   "issue_set_plan, and issue_complete write Planboard issues on that origin " +
   "(plan:todo, plan:doing, plan:done). They run on the host, not through " +
@@ -1057,6 +1063,32 @@ function createToolHandlers(deps) {
     return listIssues(originPathOf(thread));
   }
 
+  /**
+   * Explicit lead-driven refresh onto the current committed snapshot (#1112).
+   * Ownership matches git.integrateWorker: caller must be the worker's
+   * handoffFrom. The rebase / pending-SHA work is services.refreshWorkerSnapshot.
+   */
+  async function refresh_worker_snapshot(args) {
+    const self = requireOwnThread(args);
+    const worker = store.getThread(args.workerThreadId);
+    if (!worker) {
+      throw new Error(`Unknown thread: ${args.workerThreadId}`);
+    }
+    assertSameProject(worker, args.projectId);
+    if (String(worker.handoffFrom || "") !== String(self.id)) {
+      throw new Error(
+        `Worker ${worker.id} is not this lead's worker (handoffFrom mismatch)`,
+      );
+    }
+    const refresh =
+      typeof deps.refreshWorkerSnapshot === "function"
+        ? deps.refreshWorkerSnapshot
+        : refreshWorkerSnapshot;
+    const updated = refresh(store, { threadId: worker.id });
+    broadcastThreadsChanged();
+    return updated;
+  }
+
   async function preview(args) {
     requireOwnThread(args);
     const action = String((args && args.action) || "");
@@ -1107,6 +1139,7 @@ function createToolHandlers(deps) {
     task_release,
     peer_send,
     preview,
+    refresh_worker_snapshot,
     issue_create,
     issue_set_plan,
     issue_complete,
@@ -1579,6 +1612,29 @@ function buildMcpServer(sdk, handlers, opts = {}) {
       },
     },
     async (args) => previewResult(await handlers.preview(args)),
+  );
+
+  server.registerTool(
+    "refresh_worker_snapshot",
+    {
+      description:
+        "Retarget an idle orchestration worker you forked onto your current " +
+        "committed HEAD. Updates leadSnapshotSha only — never baseBranch " +
+        "(the Merge/PR destination). Nothing auto-refreshes; call this " +
+        "explicitly. Uncommitted lead edits are not copied. threadId and " +
+        "projectId are YOUR OWN; workerThreadId must be a worker whose " +
+        "handoffFrom is you (same ownership as git.integrateWorker). " +
+        "Refuses running workers, worktree:false workers, and independent " +
+        "threads. A materialized worker rebases its unique commits from the " +
+        "old snapshot onto the new one; a pending worker only rewrites the " +
+        "recorded SHA.",
+      inputSchema: {
+        threadId: z.string().min(1),
+        projectId: z.string().min(1),
+        workerThreadId: z.string().min(1),
+      },
+    },
+    async (args) => json(await handlers.refresh_worker_snapshot(args)),
   );
 
   server.registerTool(

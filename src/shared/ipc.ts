@@ -397,6 +397,18 @@ export interface ThreadInfo {
    * land on that branch instead of main. Locked after the first PR.
    */
   baseBranch?: string | null;
+  /**
+   * Orchestration worker start snapshot (#948). The lead's committed
+   * HEAD at fork time. Separate from `baseBranch` (merge/PR destination).
+   */
+  leadSnapshotSha?: string | null;
+  /** Branch name that owned `leadSnapshotSha` when the worker was forked. */
+  leadSnapshotBranch?: string | null;
+  /**
+   * Lead worktree/checkout had uncommitted edits at fork. The worker
+   * inherits committed HEAD only; those edits are not copied.
+   */
+  leadSnapshotDirty?: boolean;
   prNumber: number | null;
   /** Set alongside prNumber so the badge can link out without calling gh. */
   prUrl: string | null;
@@ -1767,6 +1779,10 @@ export interface CrewIntegrationWorkerRow {
   taskId: string | null;
   /** Worker HEAD, #948 snapshot when present, or receipt; null → "unknown". */
   sourceSha: string | null;
+  /** Lead branch recorded with the start snapshot (#948). */
+  sourceBranch?: string | null;
+  /** Lead was dirty at fork; worker inherited committed work only. */
+  sourceDirty?: boolean;
   changedFiles: string[];
   verify: VerifyResult | null;
   /** Lead branch, not the worker's own base. */
@@ -3628,6 +3644,11 @@ export interface CoderApi {
       threadId: string;
       baseBranch?: string | null;
     }): Promise<ThreadInfo>;
+    /**
+     * Retarget an idle orchestration worker onto the lead's current
+     * committed HEAD. Updates `leadSnapshotSha` only — never `baseBranch`.
+     */
+    refreshWorkerSnapshot(input: { threadId: string }): Promise<ThreadInfo>;
     /**
      * Record the one-tap felt estimate for a finished thread (issue #401).
      * savedMs is a non-negative duration (clamped to FELT_ESTIMATE_MAX_MS);

@@ -77,6 +77,8 @@ function row(
   return {
     taskId: null,
     sourceSha: "abc1234def",
+    sourceBranch: null,
+    sourceDirty: false,
     changedFiles: ["file.ts"],
     verify: null,
     destination: "coder/lead",
@@ -238,6 +240,114 @@ describe("CrewIntegration section", () => {
     assert.doesNotMatch(gone!.textContent || "", /Landed/);
     assert.equal(inn!.getAttribute("data-state"), "integrated");
     assert.match(inn!.textContent || "", /Integrated/);
+    m.unmount();
+  });
+
+  it("shows the source branch and short SHA on each worker row (#948)", async () => {
+    const m = await mount(
+      <CrewIntegration
+        view={view({
+          workers: [
+            row({
+              workerId: "a",
+              title: "API",
+              state: "ready",
+              sourceSha: "abcdef1234567890",
+              sourceBranch: "coder/lead",
+              sourceDirty: true,
+            }),
+          ],
+        })}
+        thread={thread()}
+        onIntegrate={async () => {}}
+      />,
+    );
+    const sha = m.query("[data-crew-worker='a'] [data-source-sha]");
+    assert.ok(sha);
+    assert.match(sha!.textContent || "", /coder\/lead/);
+    assert.match(sha!.textContent || "", /abcdef1/);
+    const dirty = m.query("[data-crew-worker='a'] [data-source-dirty]");
+    assert.ok(dirty);
+    assert.match(dirty!.textContent || "", /inherits committed work only/i);
+    const dest = m.query("[data-crew-worker='a'] [data-destination]");
+    assert.ok(dest);
+    assert.match(dest!.textContent || "", /into coder\/lead/);
+    m.unmount();
+  });
+
+  it("offers an explicit refresh on an idle worker and hides it on a running one", async () => {
+    const refreshed: string[] = [];
+    const m = await mount(
+      <CrewIntegration
+        view={view({
+          workers: [
+            row({
+              workerId: "a",
+              title: "API",
+              state: "ready",
+              sourceSha: "abcdef1234567890",
+              sourceBranch: "coder/lead",
+            }),
+            row({
+              workerId: "run",
+              title: "Busy",
+              state: "running",
+              sourceSha: "abcdef1234567890",
+              sourceBranch: "coder/lead",
+            }),
+          ],
+        })}
+        thread={thread()}
+        onIntegrate={async () => {}}
+        onRefreshWorker={async (id) => {
+          refreshed.push(id);
+        }}
+      />,
+    );
+    const ready = m.query(
+      "[data-crew-worker='a'] [data-refresh-snapshot]",
+    ) as HTMLButtonElement;
+    assert.ok(ready, "refresh on idle worker");
+    assert.equal(ready.disabled, false);
+    assert.equal(
+      m.query("[data-crew-worker='run'] [data-refresh-snapshot]"),
+      null,
+    );
+    await m.click(ready);
+    assert.deepEqual(refreshed, ["a"]);
+    m.unmount();
+  });
+
+  it("does not label Integrate as Integrating while a refresh is in flight", async () => {
+    const m = await mount(
+      <CrewIntegration
+        view={view({
+          workers: [
+            row({
+              workerId: "a",
+              title: "API",
+              state: "ready",
+              sourceSha: "abcdef1234567890",
+              sourceBranch: "coder/lead",
+            }),
+          ],
+        })}
+        thread={thread()}
+        onIntegrate={async () => {}}
+        onRefreshWorker={async () => {}}
+        busyWorkerId="a"
+        busyKind="refresh"
+      />,
+    );
+    const refresh = m.query(
+      "[data-crew-worker='a'] [data-refresh-snapshot]",
+    ) as HTMLButtonElement;
+    const integrate = m.query(
+      "[data-crew-worker='a'] [data-integrate]",
+    ) as HTMLButtonElement;
+    assert.match(refresh.textContent || "", /Refreshing/);
+    assert.match(integrate.textContent || "", /Integrate into/);
+    assert.doesNotMatch(integrate.textContent || "", /Integrating/);
     m.unmount();
   });
 

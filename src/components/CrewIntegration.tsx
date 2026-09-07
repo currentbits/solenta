@@ -5,6 +5,7 @@ import type {
   CrewIntegrationWorkerRow,
   ThreadInfo,
 } from "../shared/ipc";
+import { sourceSnapshotLabel } from "../crewIntegration";
 import { formatVerifySummary } from "../verifyCard";
 import styles from "./CrewIntegration.module.css";
 
@@ -25,11 +26,6 @@ function stateLabel(state: CrewIntegrationState): string {
   }
 }
 
-function shortSha(sha: string | null | undefined): string {
-  if (!sha) return "unknown";
-  return sha.length > 7 ? sha.slice(0, 7) : sha;
-}
-
 function canIntegrate(row: CrewIntegrationWorkerRow): boolean {
   return row.state === "ready" && !row.blocked;
 }
@@ -38,12 +34,14 @@ export interface CrewIntegrationProps {
   view: CrewIntegrationView | null;
   thread: ThreadInfo | null;
   onIntegrate: (workerId: string) => Promise<void>;
+  onRefreshWorker?: (workerId: string) => Promise<void>;
   onSelectThread?: (id: string) => void;
   onVerify?: () => Promise<void>;
   onFinal?: () => Promise<void>;
   verifying?: boolean;
   finalPending?: boolean;
   busyWorkerId?: string | null;
+  busyKind?: "integrate" | "refresh" | null;
   error?: string | null;
 }
 
@@ -51,12 +49,14 @@ export function CrewIntegration({
   view,
   thread,
   onIntegrate,
+  onRefreshWorker,
   onSelectThread,
   onVerify,
   onFinal,
   verifying = false,
   finalPending = false,
   busyWorkerId = null,
+  busyKind = null,
   error = null,
 }: CrewIntegrationProps) {
   const workers = view?.workers ?? [];
@@ -205,8 +205,11 @@ export function CrewIntegration({
                 </div>
                 <div className={styles.meta}>
                   <span data-source-sha="">
-                    {shortSha(row.sourceSha)}
+                    {sourceSnapshotLabel(row.sourceBranch, row.sourceSha)}
                   </span>
+                  {row.sourceDirty ? (
+                    <span data-source-dirty="">inherits committed work only</span>
+                  ) : null}
                   <span data-destination="">into {row.destination}</span>
                   {row.changedFiles.length > 0 ? (
                     <span data-changed-files="">
@@ -237,6 +240,21 @@ export function CrewIntegration({
                   >
                     Review diff
                   </button>
+                  {onRefreshWorker &&
+                  row.state !== "running" &&
+                  row.state !== "landed" ? (
+                    <button
+                      type="button"
+                      className={styles.btn}
+                      data-refresh-snapshot=""
+                      disabled={busyWorkerId === row.workerId}
+                      onClick={() => void onRefreshWorker(row.workerId)}
+                    >
+                      {busyWorkerId === row.workerId && busyKind === "refresh"
+                        ? "Refreshing…"
+                        : "Refresh snapshot"}
+                    </button>
+                  ) : null}
                   {row.state === "conflicted" ? (
                     <button
                       type="button"
@@ -254,7 +272,7 @@ export function CrewIntegration({
                       disabled={integrateDisabled}
                       onClick={() => void onIntegrate(row.workerId)}
                     >
-                      {busyWorkerId === row.workerId
+                      {busyWorkerId === row.workerId && busyKind !== "refresh"
                         ? "Integrating…"
                         : `Integrate into ${leadBranch}`}
                     </button>

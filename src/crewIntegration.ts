@@ -68,3 +68,13 @@ export function formatSourceSha(sha: string | null | undefined): string {
   if (!sha) return "unknown";
   return sha.length > 7 ? sha.slice(0, 7) : sha;
 }
+
+/** Source branch plus short SHA for worker details and the lead list (#948). */
+export function sourceSnapshotLabel(
+  branch: string | null | undefined,
+  sha: string | null | undefined,
+): string {
+  const short = formatSourceSha(sha);
+  const name = typeof branch === "string" ? branch.trim() : "";
+  return name ? `${name} ${short}` : short;
+}
