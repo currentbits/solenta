@@ -42,6 +42,55 @@ function byName(rows, name) {
   return rows.find((r) => r.name === name);
 }
 
+const MAX_JSON_BYTES = 512 * 1024;
+
+function writeCommand(file, description, body) {
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(
+    file,
+    `---\ndescription: ${description}\n---\n\n${body}\n`,
+    "utf8",
+  );
+}
+
+function padPluginJson(obj, minBytes) {
+  const body = JSON.stringify(obj);
+  const pad = minBytes - Buffer.byteLength(body);
+  return pad > 0 ? body + " ".repeat(pad) : body;
+}
+
+function writeClaudeInstalled(pluginRoot) {
+  fs.mkdirSync(path.join(tmp, ".claude", "plugins"), { recursive: true });
+  fs.writeFileSync(
+    path.join(tmp, ".claude", "plugins", "installed_plugins.json"),
+    JSON.stringify({
+      version: 2,
+      plugins: {
+        "shipper@mp": [{ scope: "user", installPath: pluginRoot }],
+      },
+    }),
+  );
+}
+
+function writeCursorCacheRoot() {
+  const installPath = path.join(
+    tmp,
+    ".cursor",
+    "plugins",
+    "cache",
+    "cursor-public",
+    "shipper",
+    "abc123",
+  );
+  fs.mkdirSync(installPath, { recursive: true });
+  fs.mkdirSync(path.join(tmp, ".cursor", "plugins"), { recursive: true });
+  fs.writeFileSync(
+    path.join(tmp, ".cursor", "plugins", "installed.json"),
+    JSON.stringify({ user: ["shipper@cursor-public"] }),
+  );
+  return installPath;
+}
+
 describe("listInvocableCommands", () => {
   it("lists a user skill as /name with a truncated hint", () => {
     writeSkill(
@@ -412,6 +461,7 @@ describe("listInvocableCommands", () => {
     assert.ok(!listed.includes("/ghost:nope"), "unlisted cache plugin stays out");
   });
 
+
   it("lists CURSOR_HOME plugin commands and omits a HOME/.cursor decoy", () => {
     const cursorHome = path.join(tmp, "cursor-home");
     const localRoot = path.join(cursorHome, "plugins", "local", "shipper");
@@ -504,42 +554,29 @@ describe("listInvocableCommands", () => {
   });
 
   it("lists a nameless Cursor cache plugin as /abc123:review", () => {
-    const cursor = path.join(tmp, ".cursor");
-    const installPath = path.join(
-      cursor,
-      "plugins",
-      "cache",
-      "cursor-public",
-      "shipper",
-      "abc123",
-    );
+    const installPath = writeCursorCacheRoot();
     fs.mkdirSync(path.join(installPath, ".cursor-plugin"), { recursive: true });
     fs.writeFileSync(
       path.join(installPath, ".cursor-plugin", "plugin.json"),
       JSON.stringify({}),
     );
-    fs.mkdirSync(path.join(installPath, "commands"), { recursive: true });
-    fs.writeFileSync(
+    writeCommand(
       path.join(installPath, "commands", "review.md"),
-      "---\ndescription: Review the diff\n---\n\nReview $ARGUMENTS.\n",
-    );
-    fs.mkdirSync(path.join(cursor, "plugins"), { recursive: true });
-    fs.writeFileSync(
-      path.join(cursor, "plugins", "installed.json"),
-      JSON.stringify({ user: ["shipper@cursor-public"] }),
+      "Review the diff",
+      "Review $ARGUMENTS.",
     );
 
     const listed = names(listInvocableCommands({ env: envHome() }));
     assert.ok(
       listed.includes("/abc123:review"),
-      "missing name falls back to the cache hash dir",
+      "missing plugin name falls back to the cache hash dir",
     );
   });
 
   it("lists an invalid-name Codex cache plugin as /1.2.3:deploy", () => {
-    const codex = path.join(tmp, ".codex");
     const installPath = path.join(
-      codex,
+      tmp,
+      ".codex",
       "plugins",
       "cache",
       "mp",
@@ -549,29 +586,237 @@ describe("listInvocableCommands", () => {
     fs.mkdirSync(path.join(installPath, ".codex-plugin"), { recursive: true });
     fs.writeFileSync(
       path.join(installPath, ".codex-plugin", "plugin.json"),
-      JSON.stringify({ name: "Shipper!" }),
+      JSON.stringify({ name: "Nope!" }),
     );
-    fs.mkdirSync(path.join(installPath, "commands"), { recursive: true });
-    fs.writeFileSync(
+    writeCommand(
       path.join(installPath, "commands", "deploy.md"),
-      "---\ndescription: Deploy the app\n---\n\nShip it.\n",
+      "Deploy the app",
+      "Ship it.",
     );
-    fs.mkdirSync(codex, { recursive: true });
+    fs.mkdirSync(path.join(tmp, ".codex"), { recursive: true });
     fs.writeFileSync(
-      path.join(codex, "config.toml"),
+      path.join(tmp, ".codex", "config.toml"),
       `[plugins."shipper@mp"]\nenabled = true\n`,
     );
 
     const listed = names(listInvocableCommands({ env: envHome() }));
     assert.ok(
       listed.includes("/1.2.3:deploy"),
-      "invalid name falls back to the version dir",
+      "invalid plugin name falls back to the version dir",
     );
     assert.ok(
       !listed.includes("/shipper:deploy"),
       "invalid plugin.json name is not the namespace",
     );
   });
+
+  it("treats plugin.json larger than 512KB as missing and falls back to the dir name", () => {
+    const installPath = writeCursorCacheRoot();
+    const payload = padPluginJson(
+      { name: "shipper", commands: ["./slash"] },
+      MAX_JSON_BYTES + 1,
+    );
+    fs.writeFileSync(path.join(installPath, "plugin.json"), payload);
+    assert.ok(
+      fs.statSync(path.join(installPath, "plugin.json")).size > MAX_JSON_BYTES,
+    );
+    writeCommand(
+      path.join(installPath, "slash", "review.md"),
+      "From slash dir",
+      "Do not list if the oversized json is ignored.",
+    );
+    writeCommand(
+      path.join(installPath, "commands", "default.md"),
+      "Default dir",
+      "List via basename when the oversized json is missing.",
+    );
+
+    const listed = names(listInvocableCommands({ env: envHome() }));
+    assert.ok(
+      listed.includes("/abc123:default"),
+      "oversized plugin.json is ignored; palette uses basename + default dirs",
+    );
+    assert.ok(
+      !listed.includes("/shipper:review"),
+      "oversized plugin.json must not supply the name or commands array",
+    );
+  });
+
+  it("falls through an oversized earlier plugin.json to a later candidate", () => {
+    const installPath = writeCursorCacheRoot();
+    fs.mkdirSync(path.join(installPath, ".claude-plugin"), { recursive: true });
+    fs.writeFileSync(
+      path.join(installPath, ".claude-plugin", "plugin.json"),
+      padPluginJson({ name: "too-big", commands: ["./slash"] }, MAX_JSON_BYTES + 1),
+    );
+    fs.writeFileSync(
+      path.join(installPath, "plugin.json"),
+      JSON.stringify({ name: "shipper", commands: ["./ok"] }),
+    );
+    writeCommand(
+      path.join(installPath, "slash", "wrong.md"),
+      "From oversized candidate",
+      "Must not list.",
+    );
+    writeCommand(
+      path.join(installPath, "ok", "review.md"),
+      "From later candidate",
+      "List this.",
+    );
+
+    const listed = names(listInvocableCommands({ env: envHome() }));
+    assert.ok(listed.includes("/shipper:review"));
+    assert.ok(!listed.includes("/too-big:wrong"));
+    assert.ok(!listed.includes("/abc123:review"));
+  });
+
+  it("treats a symlinked plugin.json as missing and falls back to the dir name", () => {
+    const installPath = writeCursorCacheRoot();
+    const outside = path.join(tmp, "outside.json");
+    fs.writeFileSync(
+      outside,
+      JSON.stringify({ name: "shipper", commands: ["./slash"] }),
+    );
+    fs.symlinkSync(outside, path.join(installPath, "plugin.json"));
+    writeCommand(
+      path.join(installPath, "slash", "review.md"),
+      "From symlink target",
+      "Do not follow.",
+    );
+    writeCommand(
+      path.join(installPath, "commands", "default.md"),
+      "Default dir",
+      "List via basename.",
+    );
+
+    const listed = names(listInvocableCommands({ env: envHome() }));
+    assert.ok(
+      listed.includes("/abc123:default"),
+      "symlinked plugin.json is ignored; palette uses basename",
+    );
+    assert.ok(!listed.includes("/shipper:review"));
+  });
+
+  it("falls through a symlinked earlier plugin.json to a later candidate", () => {
+    const installPath = writeCursorCacheRoot();
+    const outside = path.join(tmp, "outside.json");
+    fs.writeFileSync(outside, JSON.stringify({ name: "from-symlink" }));
+    fs.mkdirSync(path.join(installPath, ".claude-plugin"), { recursive: true });
+    fs.symlinkSync(
+      outside,
+      path.join(installPath, ".claude-plugin", "plugin.json"),
+    );
+    fs.writeFileSync(
+      path.join(installPath, "plugin.json"),
+      JSON.stringify({ name: "shipper", commands: ["./ok"] }),
+    );
+    writeCommand(
+      path.join(installPath, "ok", "review.md"),
+      "From later candidate",
+      "List this.",
+    );
+
+    const listed = names(listInvocableCommands({ env: envHome() }));
+    assert.ok(listed.includes("/shipper:review"));
+    assert.ok(!listed.includes("/from-symlink:review"));
+  });
+
+  it("omits command and skill dirs that resolve outside the plugin root", () => {
+    const pluginRoot = path.join(
+      tmp,
+      ".claude",
+      "plugins",
+      "cache",
+      "mp",
+      "shipper",
+      "1.0.0",
+    );
+    const absCommands = path.join(tmp, "abs-commands");
+    const absSkills = path.join(tmp, "abs-skills");
+    fs.mkdirSync(pluginRoot, { recursive: true });
+    fs.writeFileSync(
+      path.join(pluginRoot, "plugin.json"),
+      JSON.stringify({
+        name: "shipper",
+        commands: ["../escaped-commands", absCommands, "./commands"],
+        skills: ["../escaped-skills", absSkills, "./skills"],
+      }),
+    );
+    writeCommand(
+      path.join(pluginRoot, "..", "escaped-commands", "leak.md"),
+      "Escaped command",
+      "Must not list.",
+    );
+    writeCommand(
+      path.join(absCommands, "abs.md"),
+      "Absolute command",
+      "Must not list.",
+    );
+    writeCommand(
+      path.join(pluginRoot, "commands", "review.md"),
+      "In-root command",
+      "List this.",
+    );
+    writeSkill(
+      path.join(pluginRoot, "..", "escaped-skills"),
+      "leak",
+      "---\ndescription: Escaped skill\n---\n\nNope.\n",
+    );
+    writeSkill(
+      absSkills,
+      "abs-skill",
+      "---\ndescription: Absolute skill\n---\n\nNope.\n",
+    );
+    writeSkill(
+      path.join(pluginRoot, "skills"),
+      "ok",
+      "---\ndescription: In-root skill\n---\n\nYes.\n",
+    );
+    writeClaudeInstalled(pluginRoot);
+
+    const listed = names(listInvocableCommands({ env: envHome() }));
+    assert.ok(listed.includes("/shipper:review"));
+    assert.ok(listed.includes("/ok"));
+    assert.ok(listed.includes("/shipper:ok"));
+    assert.ok(!listed.includes("/shipper:leak"));
+    assert.ok(!listed.includes("/leak"));
+    assert.ok(!listed.includes("/shipper:abs"));
+    assert.ok(!listed.includes("/abs"));
+    assert.ok(!listed.includes("/abs-skill"));
+    assert.ok(!listed.includes("/shipper:abs-skill"));
+  });
+
+  it("falls through invalid JSON on an earlier plugin.json to a later candidate", () => {
+    const pluginRoot = path.join(
+      tmp,
+      ".claude",
+      "plugins",
+      "cache",
+      "mp",
+      "shipper",
+      "1.0.0",
+    );
+    fs.mkdirSync(path.join(pluginRoot, ".claude-plugin"), { recursive: true });
+    fs.writeFileSync(
+      path.join(pluginRoot, ".claude-plugin", "plugin.json"),
+      "{ not json",
+    );
+    fs.writeFileSync(
+      path.join(pluginRoot, "plugin.json"),
+      JSON.stringify({ name: "shipper", commands: ["./slash"] }),
+    );
+    writeCommand(
+      path.join(pluginRoot, "slash", "review.md"),
+      "From later candidate",
+      "List this.",
+    );
+    writeClaudeInstalled(pluginRoot);
+
+    const listed = names(listInvocableCommands({ env: envHome() }));
+    assert.ok(listed.includes("/shipper:review"));
+    assert.ok(!listed.includes("/1.0.0:review"));
+  });
+
 });
 
 describe("expandInvocableCommand", () => {

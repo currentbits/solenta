@@ -2,7 +2,8 @@
 
 /**
  * Shared plugin.json reader for the live / palette and Skills-tab import.
- * Never executes plugin files.
+ * Never executes plugin files. JSON reads cap at 512KB. Command/skill
+ * dirs that escape the plugin root are ignored.
  */
 
 const fs = require("node:fs");
@@ -58,7 +59,9 @@ function addDir(into, pluginRoot, entry) {
 /**
  * @param {string} pluginRoot
  * @param {{ requireName?: boolean }} [opts]
- * @returns {{ name: string, skillDirs: string[], commandDirs: string[] } | null}
+ *   requireName true (Skills-tab import): missing/invalid name → null.
+ *   requireName false (live / palette): fall back to basename(pluginRoot).
+ * @returns {{ name: string, commandDirs: string[], skillDirs: string[] } | null}
  */
 function readPluginManifest(pluginRoot, opts = {}) {
   const requireName = Boolean(opts.requireName);
@@ -71,7 +74,7 @@ function readPluginManifest(pluginRoot, opts = {}) {
       json = JSON.parse(raw);
       break;
     } catch {
-      /* next candidate */
+      continue;
     }
   }
   if (!json || typeof json !== "object" || Array.isArray(json)) json = {};

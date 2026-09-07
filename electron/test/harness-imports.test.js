@@ -43,6 +43,14 @@ function writeFile(file, content) {
   fs.writeFileSync(file, content);
 }
 
+const MAX_JSON_BYTES = 512 * 1024;
+
+function padPluginJson(obj, minBytes) {
+  const body = JSON.stringify(obj);
+  const pad = minBytes - Buffer.byteLength(body);
+  return pad > 0 ? body + " ".repeat(pad) : body;
+}
+
 function skillMd(name, description) {
   return `---\nname: ${name}\ndescription: ${description}\n---\n\n# ${name}\n\nBody for ${name}.\n`;
 }
@@ -808,6 +816,21 @@ describe("plugin slash commands", () => {
     );
   }
 
+  function writeClaudePluginInstall(installPath, name = "shipper") {
+    const claudePlugins = path.join(env.HOME, ".claude", "plugins");
+    fs.mkdirSync(claudePlugins, { recursive: true });
+    const installedFile = path.join(claudePlugins, "installed_plugins.json");
+    let json = { version: 2, plugins: {} };
+    try {
+      json = JSON.parse(fs.readFileSync(installedFile, "utf8"));
+    } catch {
+      /* first plugin */
+    }
+    json.plugins = json.plugins || {};
+    json.plugins[`${name}@local`] = [{ scope: "user", installPath }];
+    writeFile(installedFile, JSON.stringify(json));
+  }
+
   function writeInstalledPlugin(opts) {
     const {
       name,
@@ -1127,7 +1150,7 @@ describe("plugin slash commands", () => {
     assert.equal(
       names.includes("abc123:review"),
       false,
-      "missing name cannot become destRel from the cache hash",
+      "missing plugin name must not become destRel from the cache hash",
     );
   });
 
@@ -1143,7 +1166,7 @@ describe("plugin slash commands", () => {
     );
     writeFile(
       path.join(installPath, ".codex-plugin", "plugin.json"),
-      JSON.stringify({ name: "Shipper!" }),
+      JSON.stringify({ name: "Nope!" }),
     );
     writeCommand(
       path.join(installPath, "commands", "deploy.md"),
@@ -1165,13 +1188,263 @@ describe("plugin slash commands", () => {
     assert.equal(
       names.includes("1.2.3:deploy"),
       false,
-      "invalid name cannot become destRel from the version dir",
+      "invalid plugin name must not become destRel from the version dir",
     );
     assert.equal(
       names.includes("shipper:deploy"),
       false,
       "invalid plugin.json name is not imported",
     );
+  });
+
+  it("omits a plugin whose only plugin.json is larger than 512KB", async () => {
+    const cursor = path.join(env.HOME, ".cursor");
+    const installPath = path.join(
+      cursor,
+      "plugins",
+      "cache",
+      "cursor-public",
+      "shipper",
+      "abc123",
+    );
+    const payload = padPluginJson(
+      { name: "shipper", commands: ["./slash"] },
+      MAX_JSON_BYTES + 1,
+    );
+    writeFile(path.join(installPath, "plugin.json"), payload);
+    assert.ok(
+      fs.statSync(path.join(installPath, "plugin.json")).size > MAX_JSON_BYTES,
+    );
+    writeCommand(
+      path.join(installPath, "slash", "review.md"),
+      "From slash dir",
+      "Do not import.",
+    );
+    writeCommand(
+      path.join(installPath, "commands", "default.md"),
+      "Default dir",
+      "Must not become destRel from the cache hash.",
+    );
+    writeFile(
+      path.join(cursor, "plugins", "installed.json"),
+      JSON.stringify({ user: ["shipper@cursor-public"] }),
+    );
+
+    const preview = await previewImport({
+      userDataPath: userData,
+      source: "cursor",
+      current: [],
+      env,
+    });
+    const names = preview.commands.map((c) => c.name);
+    assert.equal(names.includes("shipper:review"), false);
+    assert.equal(
+      names.includes("abc123:default"),
+      false,
+      "oversized plugin.json must not fall back to the cache hash as destRel",
+    );
+  });
+
+  it("falls through an oversized earlier plugin.json to a later candidate", async () => {
+    const installPath = path.join(
+      env.HOME,
+      ".claude",
+      "plugins",
+      "cache",
+      "mp",
+      "shipper",
+      "1.0.0",
+    );
+    writeFile(
+      path.join(installPath, ".claude-plugin", "plugin.json"),
+      padPluginJson({ name: "too-big", commands: ["./slash"] }, MAX_JSON_BYTES + 1),
+    );
+    writeFile(
+      path.join(installPath, "plugin.json"),
+      JSON.stringify({ name: "shipper", commands: ["./ok"] }),
+    );
+    writeCommand(
+      path.join(installPath, "slash", "wrong.md"),
+      "From oversized candidate",
+      "Must not list.",
+    );
+    writeCommand(
+      path.join(installPath, "ok", "review.md"),
+      "From later candidate",
+      "List this.",
+    );
+    writeClaudePluginInstall(installPath);
+
+    const preview = await previewImport({
+      userDataPath: userData,
+      source: "claude",
+      current: [],
+      env,
+    });
+    const names = preview.commands.map((c) => c.name);
+    assert.ok(names.includes("shipper:review"));
+    assert.equal(names.includes("too-big:wrong"), false);
+  });
+
+  it("omits a plugin whose only plugin.json is a symlink", async () => {
+    const cursor = path.join(env.HOME, ".cursor");
+    const installPath = path.join(
+      cursor,
+      "plugins",
+      "cache",
+      "cursor-public",
+      "shipper",
+      "abc123",
+    );
+    fs.mkdirSync(installPath, { recursive: true });
+    const outside = path.join(tmp, "outside.json");
+    writeFile(
+      outside,
+      JSON.stringify({ name: "shipper", commands: ["./slash"] }),
+    );
+    fs.symlinkSync(outside, path.join(installPath, "plugin.json"));
+    writeCommand(
+      path.join(installPath, "slash", "review.md"),
+      "From symlink target",
+      "Do not follow.",
+    );
+    writeCommand(
+      path.join(installPath, "commands", "default.md"),
+      "Default dir",
+      "Must not become destRel from the cache hash.",
+    );
+    writeFile(
+      path.join(cursor, "plugins", "installed.json"),
+      JSON.stringify({ user: ["shipper@cursor-public"] }),
+    );
+
+    const preview = await previewImport({
+      userDataPath: userData,
+      source: "cursor",
+      current: [],
+      env,
+    });
+    const names = preview.commands.map((c) => c.name);
+    assert.equal(names.includes("shipper:review"), false);
+    assert.equal(names.includes("abc123:default"), false);
+  });
+
+  it("falls through a symlinked earlier plugin.json to a later candidate", async () => {
+    const installPath = path.join(
+      env.HOME,
+      ".claude",
+      "plugins",
+      "cache",
+      "mp",
+      "shipper",
+      "1.0.0",
+    );
+    fs.mkdirSync(path.join(installPath, ".claude-plugin"), { recursive: true });
+    const outside = path.join(tmp, "outside.json");
+    writeFile(outside, JSON.stringify({ name: "from-symlink" }));
+    fs.symlinkSync(
+      outside,
+      path.join(installPath, ".claude-plugin", "plugin.json"),
+    );
+    writeFile(
+      path.join(installPath, "plugin.json"),
+      JSON.stringify({ name: "shipper", commands: ["./ok"] }),
+    );
+    writeCommand(
+      path.join(installPath, "ok", "review.md"),
+      "From later candidate",
+      "List this.",
+    );
+    writeClaudePluginInstall(installPath);
+
+    const preview = await previewImport({
+      userDataPath: userData,
+      source: "claude",
+      current: [],
+      env,
+    });
+    const names = preview.commands.map((c) => c.name);
+    assert.ok(names.includes("shipper:review"));
+    assert.equal(names.includes("from-symlink:review"), false);
+  });
+
+  it("omits command dirs that resolve outside the plugin root", async () => {
+    const installPath = path.join(
+      env.HOME,
+      ".claude",
+      "plugins",
+      "cache",
+      "mp",
+      "shipper",
+      "1.0.0",
+    );
+    const absCommands = path.join(tmp, "abs-commands");
+    writeFile(
+      path.join(installPath, "plugin.json"),
+      JSON.stringify({
+        name: "shipper",
+        commands: ["../escaped-commands", absCommands, "./commands"],
+      }),
+    );
+    writeCommand(
+      path.join(installPath, "..", "escaped-commands", "leak.md"),
+      "Escaped command",
+      "Must not list.",
+    );
+    writeCommand(path.join(absCommands, "abs.md"), "Absolute command", "Nope.");
+    writeCommand(
+      path.join(installPath, "commands", "review.md"),
+      "In-root command",
+      "List this.",
+    );
+    writeClaudePluginInstall(installPath);
+
+    const preview = await previewImport({
+      userDataPath: userData,
+      source: "claude",
+      current: [],
+      env,
+    });
+    const names = preview.commands.map((c) => c.name);
+    assert.ok(names.includes("shipper:review"));
+    assert.equal(names.includes("shipper:leak"), false);
+    assert.equal(names.includes("shipper:abs"), false);
+  });
+
+  it("falls through invalid JSON on an earlier plugin.json to a later candidate", async () => {
+    const installPath = path.join(
+      env.HOME,
+      ".claude",
+      "plugins",
+      "cache",
+      "mp",
+      "shipper",
+      "1.0.0",
+    );
+    writeFile(
+      path.join(installPath, ".claude-plugin", "plugin.json"),
+      "{ not json",
+    );
+    writeFile(
+      path.join(installPath, "plugin.json"),
+      JSON.stringify({ name: "shipper", commands: ["./slash"] }),
+    );
+    writeCommand(
+      path.join(installPath, "slash", "review.md"),
+      "From later candidate",
+      "List this.",
+    );
+    writeClaudePluginInstall(installPath);
+
+    const preview = await previewImport({
+      userDataPath: userData,
+      source: "claude",
+      current: [],
+      env,
+    });
+    const names = preview.commands.map((c) => c.name);
+    assert.ok(names.includes("shipper:review"));
+    assert.equal(names.includes("1.0.0:review"), false);
   });
 
   it("lists Cursor local plugin commands and ignores cache plugins", async () => {
@@ -1747,6 +2020,45 @@ describe("plugin skills", () => {
     json.plugins[`${name}@local`] = [{ scope: "user", installPath }];
     writeFile(installedFile, JSON.stringify(json));
   }
+
+  it("omits skill dirs that resolve outside the plugin root", async () => {
+    const installPath = path.join(
+      env.HOME,
+      ".claude",
+      "plugins",
+      "cache",
+      "mp",
+      "shipper",
+      "1.0.0",
+    );
+    const absSkills = path.join(tmp, "abs-skills");
+    writeFile(
+      path.join(installPath, "plugin.json"),
+      JSON.stringify({
+        name: "shipper",
+        skills: ["../escaped-skills", absSkills, "./skills"],
+      }),
+    );
+    writeSkill(
+      path.join(installPath, "..", "escaped-skills"),
+      "leak",
+      "Escaped skill",
+    );
+    writeSkill(absSkills, "abs-skill", "Absolute skill");
+    writeSkill(path.join(installPath, "skills"), "ok", "In-root skill");
+    writeClaudeInstalled("shipper", installPath);
+
+    const preview = await previewImport({
+      userDataPath: userData,
+      source: "claude",
+      current: [],
+      env,
+    });
+    const names = preview.skills.map((s) => s.name);
+    assert.ok(names.includes("ok"));
+    assert.equal(names.includes("leak"), false);
+    assert.equal(names.includes("abs-skill"), false);
+  });
 
   it("lists Cursor local plugin skills and ignores unlisted cache plugins", async () => {
     const cursor = path.join(env.HOME, ".cursor");
