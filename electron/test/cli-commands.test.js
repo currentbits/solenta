@@ -461,6 +461,37 @@ describe("listInvocableCommands", () => {
     assert.ok(!listed.includes("/ghost:nope"), "unlisted cache plugin stays out");
   });
 
+  it("namespaces a nameless plugin from the plugin dir, not a missing plugin.json name", () => {
+    const localRoot = path.join(tmp, ".cursor", "plugins", "local", "shipper");
+    fs.mkdirSync(path.join(localRoot, ".cursor-plugin"), { recursive: true });
+    fs.writeFileSync(
+      path.join(localRoot, ".cursor-plugin", "plugin.json"),
+      JSON.stringify({}),
+    );
+    fs.mkdirSync(path.join(localRoot, "commands"), { recursive: true });
+    fs.writeFileSync(
+      path.join(localRoot, "commands", "review.md"),
+      "---\ndescription: Review the diff\n---\n\nReview $ARGUMENTS.\n",
+    );
+    writeSkill(
+      path.join(localRoot, "skills"),
+      "ship-review",
+      "---\ndescription: Review skill\n---\n\nBody.\n",
+    );
+
+    const listed = names(listInvocableCommands({ env: envHome() }));
+    assert.ok(
+      listed.includes("/shipper:review"),
+      "command namespace falls back to the plugin dir name",
+    );
+    assert.ok(listed.includes("/review"), "bare command still listed");
+    assert.ok(
+      listed.includes("/shipper:ship-review"),
+      "skill namespace falls back to the plugin dir name",
+    );
+    assert.ok(listed.includes("/ship-review"), "bare skill still listed");
+  });
+
   it("lists a Cursor plugin from CURSOR_HOME and omits ~/.cursor under a different HOME", () => {
     const decoyRoot = path.join(tmp, ".cursor", "plugins", "local", "decoy");
     fs.mkdirSync(path.join(decoyRoot, ".claude-plugin"), { recursive: true });

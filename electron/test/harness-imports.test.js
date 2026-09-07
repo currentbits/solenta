@@ -1498,6 +1498,32 @@ describe("plugin slash commands", () => {
     assert.equal(fs.existsSync(path.join(staged, "cache")), false);
   });
 
+  it("skips plugin command preview rows when plugin.json has no PLUGIN_NAME_RE name", async () => {
+    const root = path.join(env.HOME, ".cursor", "plugins", "local", "shipper");
+    writeFile(path.join(root, ".cursor-plugin", "plugin.json"), JSON.stringify({}));
+    writeCommand(
+      path.join(root, "commands", "review.md"),
+      "Review the diff",
+      "Review $ARGUMENTS.",
+    );
+
+    const preview = await previewImport({
+      userDataPath: userData,
+      source: "cursor",
+      current: [],
+      env,
+    });
+    assert.equal(
+      preview.commands.find((c) => c.name === "shipper:review"),
+      undefined,
+      "import does not fall back to the plugin dir name",
+    );
+    assert.equal(
+      preview.commands.find((c) => c.origin === "plugin"),
+      undefined,
+    );
+  });
+
   it("lists Cursor local plugin commands from CURSOR_HOME and ignores ~/.cursor", async () => {
     writePluginCommands(
       path.join(env.HOME, ".cursor", "plugins", "local", "decoy"),
@@ -2185,6 +2211,24 @@ describe("plugin skills", () => {
     );
     assert.equal(fs.existsSync(path.join(staged, "cache")), false);
     assert.equal(fs.existsSync(path.join(staged, "hooks")), false);
+  });
+
+  it("skips plugin skill preview rows when plugin.json has no PLUGIN_NAME_RE name", async () => {
+    const root = path.join(env.HOME, ".cursor", "plugins", "local", "shipper");
+    writeFile(path.join(root, ".cursor-plugin", "plugin.json"), JSON.stringify({}));
+    writeSkill(path.join(root, "skills"), "ship-review", "Review the diff");
+
+    const preview = await previewImport({
+      userDataPath: userData,
+      source: "cursor",
+      current: [],
+      env,
+    });
+    assert.equal(
+      preview.skills.find((s) => s.name === "ship-review"),
+      undefined,
+      "import does not list skills from a nameless plugin.json",
+    );
   });
 
   it("lists Cursor installed cache plugin skills without copying the cache tree", async () => {
