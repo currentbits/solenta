@@ -1093,6 +1093,87 @@ describe("plugin slash commands", () => {
     assert.ok(!dumped.includes("plugin-secret-value"));
   });
 
+  it("omits a nameless Cursor cache plugin from Skills-tab preview", async () => {
+    const cursor = path.join(env.HOME, ".cursor");
+    const installPath = path.join(
+      cursor,
+      "plugins",
+      "cache",
+      "cursor-public",
+      "shipper",
+      "abc123",
+    );
+    writeFile(
+      path.join(installPath, ".cursor-plugin", "plugin.json"),
+      JSON.stringify({}),
+    );
+    writeCommand(
+      path.join(installPath, "commands", "review.md"),
+      "Review the diff",
+      "Review $ARGUMENTS.",
+    );
+    writeFile(
+      path.join(cursor, "plugins", "installed.json"),
+      JSON.stringify({ user: ["shipper@cursor-public"] }),
+    );
+
+    const preview = await previewImport({
+      userDataPath: userData,
+      source: "cursor",
+      current: [],
+      env,
+    });
+    const names = preview.commands.map((c) => c.name);
+    assert.equal(
+      names.includes("abc123:review"),
+      false,
+      "missing name cannot become destRel from the cache hash",
+    );
+  });
+
+  it("omits an invalid-name Codex cache plugin from Skills-tab preview", async () => {
+    const installPath = path.join(
+      env.HOME,
+      ".codex",
+      "plugins",
+      "cache",
+      "mp",
+      "shipper",
+      "1.2.3",
+    );
+    writeFile(
+      path.join(installPath, ".codex-plugin", "plugin.json"),
+      JSON.stringify({ name: "Shipper!" }),
+    );
+    writeCommand(
+      path.join(installPath, "commands", "deploy.md"),
+      "Deploy the app",
+      "Ship it.",
+    );
+    writeFile(
+      path.join(env.HOME, ".codex", "config.toml"),
+      `[plugins."shipper@mp"]\nenabled = true\n`,
+    );
+
+    const preview = await previewImport({
+      userDataPath: userData,
+      source: "codex",
+      current: [],
+      env,
+    });
+    const names = preview.commands.map((c) => c.name);
+    assert.equal(
+      names.includes("1.2.3:deploy"),
+      false,
+      "invalid name cannot become destRel from the version dir",
+    );
+    assert.equal(
+      names.includes("shipper:deploy"),
+      false,
+      "invalid plugin.json name is not imported",
+    );
+  });
+
   it("lists Cursor local plugin commands and ignores cache plugins", async () => {
     const cursor = path.join(env.HOME, ".cursor");
     writePluginCommands(

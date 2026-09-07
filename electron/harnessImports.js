@@ -31,6 +31,7 @@ const {
   commitInstalls,
 } = require("./skillRegistry.js");
 const { encodeClaudeProjectDir } = require("./cli-sessions.js");
+const { readPluginManifest } = require("./pluginManifest.js");
 
 const CLOCK_SKEW_MS = 60_000;
 const PREVIEW_TTL_MS = 30 * 60 * 1000;
@@ -313,7 +314,7 @@ function scanPluginRootSkills(home, roots, seen, out, warnings) {
   for (const pluginRoot of roots) {
     if (out.length >= MAX_SKILL_PACKAGES) return;
     if (!isPlainDir(pluginRoot) || !isInside(home, pluginRoot)) continue;
-    const manifest = readPluginCommandManifest(pluginRoot);
+    const manifest = readPluginManifest(pluginRoot, { requireName: true });
     if (!manifest) continue;
     for (const dir of manifest.skillDirs) {
       listSkillPackagesInDir(dir, home, "plugin", seen, out, warnings);
@@ -609,59 +610,6 @@ function pluginRootsForSource(id, home) {
   return [];
 }
 
-/**
- * Same dirs as cliCommands.readPluginManifest, with capped reads.
- * @param {string} pluginRoot
- * @returns {{ name: string, commandDirs: string[], skillDirs: string[] } | null}
- */
-function readPluginCommandManifest(pluginRoot) {
-  const candidates = [
-    path.join(pluginRoot, ".claude-plugin", "plugin.json"),
-    path.join(pluginRoot, ".cursor-plugin", "plugin.json"),
-    path.join(pluginRoot, ".codex-plugin", "plugin.json"),
-    path.join(pluginRoot, "plugin.json"),
-  ];
-  /** @type {Record<string, unknown>} */
-  let json = {};
-  for (const file of candidates) {
-    const raw = readCappedFile(file, MAX_JSON_BYTES);
-    if (raw == null) continue;
-    try {
-      json = JSON.parse(raw);
-      break;
-    } catch {
-      json = {};
-    }
-  }
-  const rawName = typeof json.name === "string" ? json.name.trim() : "";
-  const name = PLUGIN_NAME_RE.test(rawName) ? rawName.toLowerCase() : "";
-  if (!name) return null;
-
-  /** @type {string[]} */
-  const commandDirs = [];
-  /** @type {string[]} */
-  const skillDirs = [];
-  function addDir(into, entry) {
-    if (typeof entry !== "string" || !entry.trim()) return;
-    const resolved = path.resolve(pluginRoot, entry.trim());
-    if (!isInside(pluginRoot, resolved)) return;
-    into.push(resolved);
-  }
-  if (Array.isArray(json.commands)) {
-    for (const entry of json.commands) addDir(commandDirs, entry);
-  } else {
-    addDir(commandDirs, "commands");
-    addDir(commandDirs, ".claude/commands");
-  }
-  if (Array.isArray(json.skills)) {
-    for (const entry of json.skills) addDir(skillDirs, entry);
-  } else {
-    addDir(skillDirs, "skills");
-    addDir(skillDirs, ".claude/skills");
-  }
-  return { name, commandDirs, skillDirs };
-}
-
 function addPluginCommandFile(opts) {
   const {
     pluginName,
@@ -805,7 +753,7 @@ function scanCommandDir(
 function scanPluginCommands(id, home, env, projectPath, seen, out, warnings) {
   for (const pluginRoot of pluginRootsForSource(id, home)) {
     if (out.length >= MAX_COMMAND_FILES) return;
-    const manifest = readPluginCommandManifest(pluginRoot);
+    const manifest = readPluginManifest(pluginRoot, { requireName: true });
     if (!manifest) continue;
     const pluginRel = posixRel(home, pluginRoot);
     if (!pluginRel || pluginRel.split("/").includes("..")) continue;

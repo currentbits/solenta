@@ -411,6 +411,76 @@ describe("listInvocableCommands", () => {
     assert.ok(!listed.includes("/other:nope"), "disabled Codex plugin stays out");
     assert.ok(!listed.includes("/ghost:nope"), "unlisted cache plugin stays out");
   });
+
+  it("lists a nameless Cursor cache plugin as /abc123:review", () => {
+    const cursor = path.join(tmp, ".cursor");
+    const installPath = path.join(
+      cursor,
+      "plugins",
+      "cache",
+      "cursor-public",
+      "shipper",
+      "abc123",
+    );
+    fs.mkdirSync(path.join(installPath, ".cursor-plugin"), { recursive: true });
+    fs.writeFileSync(
+      path.join(installPath, ".cursor-plugin", "plugin.json"),
+      JSON.stringify({}),
+    );
+    fs.mkdirSync(path.join(installPath, "commands"), { recursive: true });
+    fs.writeFileSync(
+      path.join(installPath, "commands", "review.md"),
+      "---\ndescription: Review the diff\n---\n\nReview $ARGUMENTS.\n",
+    );
+    fs.mkdirSync(path.join(cursor, "plugins"), { recursive: true });
+    fs.writeFileSync(
+      path.join(cursor, "plugins", "installed.json"),
+      JSON.stringify({ user: ["shipper@cursor-public"] }),
+    );
+
+    const listed = names(listInvocableCommands({ env: envHome() }));
+    assert.ok(
+      listed.includes("/abc123:review"),
+      "missing name falls back to the cache hash dir",
+    );
+  });
+
+  it("lists an invalid-name Codex cache plugin as /1.2.3:deploy", () => {
+    const codex = path.join(tmp, ".codex");
+    const installPath = path.join(
+      codex,
+      "plugins",
+      "cache",
+      "mp",
+      "shipper",
+      "1.2.3",
+    );
+    fs.mkdirSync(path.join(installPath, ".codex-plugin"), { recursive: true });
+    fs.writeFileSync(
+      path.join(installPath, ".codex-plugin", "plugin.json"),
+      JSON.stringify({ name: "Shipper!" }),
+    );
+    fs.mkdirSync(path.join(installPath, "commands"), { recursive: true });
+    fs.writeFileSync(
+      path.join(installPath, "commands", "deploy.md"),
+      "---\ndescription: Deploy the app\n---\n\nShip it.\n",
+    );
+    fs.mkdirSync(codex, { recursive: true });
+    fs.writeFileSync(
+      path.join(codex, "config.toml"),
+      `[plugins."shipper@mp"]\nenabled = true\n`,
+    );
+
+    const listed = names(listInvocableCommands({ env: envHome() }));
+    assert.ok(
+      listed.includes("/1.2.3:deploy"),
+      "invalid name falls back to the version dir",
+    );
+    assert.ok(
+      !listed.includes("/shipper:deploy"),
+      "invalid plugin.json name is not the namespace",
+    );
+  });
 });
 
 describe("expandInvocableCommand", () => {

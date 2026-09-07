@@ -17,6 +17,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const os = require("node:os");
 const { parseSkillMarkdown, SKILL_DIRS } = require("./skills.js");
+const { readPluginManifest } = require("./pluginManifest.js");
 
 /** Runner intercepts these; a same-named skill must not steal the send. */
 const ORCH_TOKENS = new Set(["handoff", "advisor", "committee"]);
@@ -270,61 +271,6 @@ function scanCommandDir(baseDir, rel = "") {
     });
   }
   return out;
-}
-
-/**
- * @param {string} pluginRoot
- * @returns {{ name: string, skillDirs: string[], commandDirs: string[] }}
- */
-function readPluginManifest(pluginRoot) {
-  const candidates = [
-    path.join(pluginRoot, ".claude-plugin", "plugin.json"),
-    path.join(pluginRoot, ".cursor-plugin", "plugin.json"),
-    path.join(pluginRoot, ".codex-plugin", "plugin.json"),
-    path.join(pluginRoot, "plugin.json"),
-  ];
-  /** @type {Record<string, unknown>} */
-  let json = {};
-  for (const file of candidates) {
-    const raw = readFile(file);
-    if (!raw) continue;
-    try {
-      json = JSON.parse(raw);
-      break;
-    } catch {
-      json = {};
-    }
-  }
-  const name =
-    typeof json.name === "string" && /^[a-z0-9-]+$/i.test(json.name.trim())
-      ? json.name.trim().toLowerCase()
-      : path.basename(pluginRoot).toLowerCase();
-
-  const skillDirs = [];
-  if (Array.isArray(json.skills)) {
-    for (const entry of json.skills) {
-      if (typeof entry === "string" && entry.trim()) {
-        skillDirs.push(path.resolve(pluginRoot, entry.trim()));
-      }
-    }
-  } else {
-    skillDirs.push(path.join(pluginRoot, "skills"));
-    skillDirs.push(path.join(pluginRoot, ".claude", "skills"));
-  }
-
-  const commandDirs = [];
-  if (Array.isArray(json.commands)) {
-    for (const entry of json.commands) {
-      if (typeof entry === "string" && entry.trim()) {
-        commandDirs.push(path.resolve(pluginRoot, entry.trim()));
-      }
-    }
-  } else {
-    commandDirs.push(path.join(pluginRoot, "commands"));
-    commandDirs.push(path.join(pluginRoot, ".claude", "commands"));
-  }
-
-  return { name, skillDirs, commandDirs };
 }
 
 /**
