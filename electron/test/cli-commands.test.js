@@ -65,15 +65,6 @@ function byName(rows, name) {
 
 const MAX_JSON_BYTES = 512 * 1024;
 
-function writeCommand(file, description, body) {
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  fs.writeFileSync(
-    file,
-    `---\ndescription: ${description}\n---\n\n${body}\n`,
-    "utf8",
-  );
-}
-
 function padPluginJson(obj, minBytes) {
   const body = JSON.stringify(obj);
   const pad = minBytes - Buffer.byteLength(body);
