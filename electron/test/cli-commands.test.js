@@ -461,7 +461,6 @@ describe("listInvocableCommands", () => {
     assert.ok(!listed.includes("/ghost:nope"), "unlisted cache plugin stays out");
   });
 
-
   it("lists CURSOR_HOME plugin commands and omits a HOME/.cursor decoy", () => {
     const cursorHome = path.join(tmp, "cursor-home");
     const localRoot = path.join(cursorHome, "plugins", "local", "shipper");
@@ -816,7 +815,6 @@ describe("listInvocableCommands", () => {
     assert.ok(listed.includes("/shipper:review"));
     assert.ok(!listed.includes("/1.0.0:review"));
   });
-
 });
 
 describe("expandInvocableCommand", () => {
