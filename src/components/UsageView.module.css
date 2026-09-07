@@ -354,6 +354,41 @@
   color: var(--text);
 }
 
+.threadLink {
+  display: inline;
+  max-width: 100%;
+  padding: 0;
+  border: none;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  text-decoration-color: var(--border);
+}
+
+.threadLink:hover {
+  text-decoration-color: var(--text);
+}
+
+.threadLink:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: 2px;
+}
+
+.threadGone {
+  display: inline;
+}
+
+.unavailableHint {
+  margin-left: 8px;
+  color: var(--text-dim);
+  font-style: italic;
+  font-variant-numeric: normal;
+}
+
 .table th:nth-child(n + 3),
 .table td:nth-child(n + 3) {
   text-align: right;

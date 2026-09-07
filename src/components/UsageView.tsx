@@ -17,10 +17,20 @@ import styles from "./UsageView.module.css";
 
 export type UsageMetric = "cost" | "tokens";
 
+export interface UsageReportControls {
+  range: UsageRange;
+  metric: UsageMetric;
+  group: UsageBreakdownKind;
+}
+
 export interface UsageViewProps {
   loadUsage: () => Promise<UsageReport>;
   loadProviderLimits?: ProviderLimitsLoader;
   quotaDemo?: boolean;
+  onSelectThread?: (id: string) => void;
+  existingThreadIds?: Iterable<string>;
+  reportControls?: UsageReportControls;
+  onReportControlsChange?: (next: UsageReportControls) => void;
 }
 
 const EMPTY_REPORT: UsageReport = { byDay: {}, threadsByDay: {} };
@@ -97,14 +107,51 @@ export function UsageView({
   loadUsage,
   loadProviderLimits,
   quotaDemo = false,
+  onSelectThread,
+  existingThreadIds,
+  reportControls,
+  onReportControlsChange,
 }: UsageViewProps) {
   const [report, setReport] = useState<UsageReport>(EMPTY_REPORT);
   const [loading, setLoading] = useState(false);
-  const [range, setRange] = useState<UsageRange>(7);
-  const [metric, setMetric] = useState<UsageMetric>("cost");
-  const [group, setGroup] = useState<UsageBreakdownKind>("model");
+  const [range, setRangeState] = useState<UsageRange>(
+    () => reportControls?.range ?? 7,
+  );
+  const [metric, setMetricState] = useState<UsageMetric>(
+    () => reportControls?.metric ?? "cost",
+  );
+  const [group, setGroupState] = useState<UsageBreakdownKind>(
+    () => reportControls?.group ?? "model",
+  );
   const [now, setNow] = useState(() => Date.now());
   const loadGen = useRef(0);
+
+  const setRange = useCallback(
+    (next: UsageRange) => {
+      setRangeState(next);
+      onReportControlsChange?.({ range: next, metric, group });
+    },
+    [onReportControlsChange, metric, group],
+  );
+  const setMetric = useCallback(
+    (next: UsageMetric) => {
+      setMetricState(next);
+      onReportControlsChange?.({ range, metric: next, group });
+    },
+    [onReportControlsChange, range, group],
+  );
+  const setGroup = useCallback(
+    (next: UsageBreakdownKind) => {
+      setGroupState(next);
+      onReportControlsChange?.({ range, metric, group: next });
+    },
+    [onReportControlsChange, range, metric],
+  );
+
+  const openableThreadIds = useMemo(() => {
+    if (!existingThreadIds) return null;
+    return new Set(existingThreadIds);
+  }, [existingThreadIds]);
 
   const loadAll = useCallback(async () => {
     const gen = ++loadGen.current;
@@ -447,7 +494,16 @@ export function UsageView({
                       data-usage-row={row.key}
                       data-usage-model={modelAttr}
                     >
-                      <td>{row.label}</td>
+                      <td>
+                        <BreakdownLabel
+                          row={row}
+                          group={group}
+                          onSelectThread={onSelectThread}
+                          openable={
+                            !openableThreadIds || openableThreadIds.has(row.key)
+                          }
+                        />
+                      </td>
                       <td>{row.detail}</td>
                       <td>
                         {row.unreported ? (
@@ -477,6 +533,44 @@ export function UsageView({
         </div>
       )}
     </main>
+  );
+}
+
+function BreakdownLabel({
+  row,
+  group,
+  onSelectThread,
+  openable,
+}: {
+  row: UsageBreakdownRow;
+  group: UsageBreakdownKind;
+  onSelectThread?: (id: string) => void;
+  openable: boolean;
+}) {
+  if (group !== "thread" || !onSelectThread) return row.label;
+  if (!openable) {
+    return (
+      <span
+        className={styles.threadGone}
+        data-usage-thread={row.key}
+        data-usage-thread-unavailable=""
+        title="This thread was deleted. Its usage stays in the report."
+      >
+        {row.label}
+        <span className={styles.unavailableHint}>unavailable</span>
+      </span>
+    );
+  }
+  return (
+    <button
+      type="button"
+      className={styles.threadLink}
+      data-usage-thread={row.key}
+      aria-label={`Open thread: ${row.label}`}
+      onClick={() => onSelectThread(row.key)}
+    >
+      {row.label}
+    </button>
   );
 }
 

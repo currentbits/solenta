@@ -18,7 +18,7 @@ import { PlanboardView, type ThreadStartMode } from "./components/PlanboardView"
 import { AutomationsView } from "./components/AutomationsView";
 import { ActivityView } from "./components/ActivityView";
 import { InsightsView } from "./components/InsightsView";
-import { UsageView } from "./components/UsageView";
+import { UsageView, type UsageReportControls } from "./components/UsageView";
 import { FleetView } from "./components/FleetView";
 import { DigestView } from "./components/DigestView";
 import { AgentsPanel } from "./components/AgentsPanel";
@@ -150,6 +150,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     workflows,
     selectedThreadId,
     selectThread,
+    loading,
     detail,
     detailError,
     retryDetail,
@@ -369,6 +370,11 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
   const [planboardProjectId, setPlanboardProjectId] = useState<string | null>(null);
   const [kanbanProjectId, setKanbanProjectId] = useState<string | null>(null);
   const [activityProjectId, setActivityProjectId] = useState<string | null>(null);
+  const [usageControls, setUsageControls] = useState<UsageReportControls>({
+    range: 7,
+    metric: "cost",
+    group: "model",
+  });
   const [repeatDraft, setRepeatDraft] = useState<RepeatDraft | null>(null);
   const [workflowDraft, setWorkflowDraft] = useState<DistilledWorkflow | null>(
     null,
@@ -1418,6 +1424,12 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
                   : listProviderLimits
               }
               quotaDemo={quotaDemo}
+              onSelectThread={handleSelectThread}
+              existingThreadIds={
+                loading ? undefined : threads.map((t) => t.id)
+              }
+              reportControls={usageControls}
+              onReportControlsChange={setUsageControls}
             />
           ) : view === "fleet" ? (
             <FleetView loadEvidence={loadFleetEvidence} />
