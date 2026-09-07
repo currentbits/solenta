@@ -109,5 +109,6 @@ function readPluginManifest(pluginRoot, opts = {}) {
 module.exports = {
   MAX_JSON_BYTES,
   PLUGIN_JSON_RELS,
+  PLUGIN_NAME_RE,
   readPluginManifest,
 };

@@ -324,6 +324,7 @@ function listInvocableCommands(opts = {}) {
 
   const addPluginRoot = (pluginRoot) => {
     const manifest = readPluginManifest(pluginRoot);
+    if (!manifest) return;
     const prefix = manifest.name;
     for (const dir of manifest.skillDirs) {
       for (const skill of scanSkillDir(dir)) {
