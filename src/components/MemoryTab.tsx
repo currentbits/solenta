@@ -189,9 +189,21 @@ function CodeMapCard({
   const [open, setOpen] = useState<string | null>(null);
   const [opened, setOpened] = useState(false);
   const [refresh, setRefresh] = useState(0);
+  const [boundProjectId, setBoundProjectId] = useState(projectId);
   const mounted = useRef(true);
   const epochRef = useRef(0);
   const liveProjectRef = useRef(projectId);
+
+  // AgentsPanel updates MemoryTab without a key. Reset during render so B's
+  // first paint cannot keep A's counts, modules, or expanded module.
+  if (boundProjectId !== projectId) {
+    setBoundProjectId(projectId);
+    setMap(null);
+    setOpen(null);
+    setError(null);
+    liveProjectRef.current = projectId;
+    epochRef.current += 1;
+  }
 
   useEffect(() => {
     mounted.current = true;
@@ -199,16 +211,6 @@ function CodeMapCard({
       mounted.current = false;
     };
   }, []);
-
-  useEffect(() => {
-    const projectChanged = liveProjectRef.current !== projectId;
-    liveProjectRef.current = projectId;
-    if (projectChanged) {
-      setMap(null);
-      setOpen(null);
-      setError(null);
-    }
-  }, [projectId]);
 
   useEffect(() => {
     if (!opened) return;
@@ -231,9 +233,10 @@ function CodeMapCard({
       });
   }, [loadCodeMap, projectId, opened, refresh]);
 
-  const sha = map?.headSha ? map.headSha.slice(0, 7) : "";
-  const loc = [map?.defaultBranch, sha && `@ ${sha}`].filter(Boolean).join(" ");
-  const age = map?.updatedAt ? ageFromIso(new Date(map.updatedAt).toISOString()) : "";
+  const shown = map && map.projectId === projectId ? map : null;
+  const sha = shown?.headSha ? shown.headSha.slice(0, 7) : "";
+  const loc = [shown?.defaultBranch, sha && `@ ${sha}`].filter(Boolean).join(" ");
+  const age = shown?.updatedAt ? ageFromIso(new Date(shown.updatedAt).toISOString()) : "";
 
   return (
     <details
@@ -249,9 +252,9 @@ function CodeMapCard({
         }}
       >
         <span className={styles.sectionTitle}>Code map</span>
-        {map && map.fileCount > 0 ? (
+        {shown && shown.fileCount > 0 ? (
           <span className={styles.sectionMeta}>
-            {map.fileCount} files · {map.symbolCount} symbols
+            {shown.fileCount} files · {shown.symbolCount} symbols
           </span>
         ) : null}
       </summary>
@@ -267,12 +270,12 @@ function CodeMapCard({
           {error}
         </p>
       ) : null}
-      {map && map.modules.length === 0 && !error ? (
+      {shown && shown.modules.length === 0 && !error ? (
         <p className={styles.mapEmpty}>No index yet. It builds from the checkout.</p>
       ) : null}
-      {map && map.modules.length > 0 ? (
+      {shown && shown.modules.length > 0 ? (
         <ul className={styles.mapModules}>
-          {map.modules.map((mod) => {
+          {shown.modules.map((mod) => {
             const expanded = open === mod.name;
             return (
               <li key={mod.name}>
@@ -306,10 +309,10 @@ function CodeMapCard({
           })}
         </ul>
       ) : null}
-      {map && map.dependencies.length > 0 ? (
+      {shown && shown.dependencies.length > 0 ? (
         <p className={styles.mapDeps}>
           <span className={styles.sectionMeta}>Dependencies</span>
-          {map.dependencies.join(", ")}
+          {shown.dependencies.join(", ")}
         </p>
       ) : null}
       <button

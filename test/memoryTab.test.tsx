@@ -1288,6 +1288,31 @@ describe("MemoryTab code map", () => {
     m.unmount();
   });
 
+  it("does not paint A's wiki on B's first render, before effects flush", async () => {
+    const pendingB = deferredMap();
+    let paintedAWhenBLoadStarted = false;
+    let readMap: (() => string) | null = null;
+    const load = async (input: { projectId: string }) => {
+      if (input.projectId === "proj-a") return wikiA;
+      // loadCodeMap(B) runs in the load effect, after the first render of B.
+      // If that render still holds A's state, the wiki is on screen until
+      // a later setState. AgentsPanel updates MemoryTab without a key, so
+      // this is the user-visible project-switch frame.
+      paintedAWhenBLoadStarted = showsA(readMap?.() ?? "");
+      return pendingB.promise;
+    };
+    const m = await mount(mapTab("proj-a", load));
+    readMap = () => m.query("[data-code-map]")?.textContent ?? "";
+    await openMap(m);
+    await m.rerender(mapTab("proj-b", load));
+    assert.equal(
+      paintedAWhenBLoadStarted,
+      false,
+      "B must not show A's counts or modules on the first paint after projectId changes",
+    );
+    m.unmount();
+  });
+
   it("collapses A's expanded module when projectId changes", async () => {
     const pendingB = deferredMap();
     const wikiBSameName: ProjectCodeMap = {
