@@ -59,6 +59,48 @@ const GROK_WORKER: AgentProfile = {
   permissionMode: "acceptEdits",
 };
 
+const AUDIT_A: ProjectInfo = {
+  id: "a",
+  slug: "acme/audit-a",
+  name: "audit-a",
+  path: "/tmp/audit-a",
+};
+const AUDIT_B: ProjectInfo = {
+  id: "b",
+  slug: "acme/audit-b",
+  name: "audit-b",
+  path: "/tmp/audit-b",
+};
+const AUDIT_PROJECTS = [AUDIT_A, AUDIT_B];
+
+function auditIssues(path: string): ListIssuesResult {
+  return path === AUDIT_A.path
+    ? {
+        ok: true,
+        issues: [
+          {
+            number: 11,
+            title: "A eleven",
+            url: "https://github.com/acme/audit-a/issues/11",
+            state: "OPEN",
+            labels: ["plan:todo"],
+          },
+        ],
+      }
+    : {
+        ok: true,
+        issues: [
+          {
+            number: 22,
+            title: "B twenty-two",
+            url: "https://github.com/acme/audit-b/issues/22",
+            state: "OPEN",
+            labels: ["plan:todo"],
+          },
+        ],
+      };
+}
+
 const okResult: ListIssuesResult = {
   ok: true,
   issues: [
@@ -479,6 +521,181 @@ describe("PlanboardView", () => {
     });
     assert.equal(calls[0].mode, "orchestrator");
     assert.equal(calls[0].agentProfileId, "p-scout");
+    m.unmount();
+  });
+
+  it("deferred A start after A→B leaves B's board and starts B's issue (#1131)", async () => {
+    const started: Array<{
+      projectId: string;
+      projectPath: string;
+      ref: string;
+    }> = [];
+    let resolveStart!: (value: { ok: true }) => void;
+    const held = new Promise<{ ok: true }>((resolve) => {
+      resolveStart = resolve;
+    });
+    const m = await mount(
+      <PlanboardView
+        projects={AUDIT_PROJECTS}
+        listIssues={async (path) => auditIssues(path)}
+        onStartTask={async (input) => {
+          started.push({
+            projectId: input.projectId,
+            projectPath: input.projectPath,
+            ref: input.ref,
+          });
+          if (started.length === 1) await held;
+          return { ok: true as const };
+        }}
+      />,
+    );
+
+    assert.ok(m.query('[data-plan-issue="11"]'), "A/#11 on the board");
+    await m.click(m.query('[data-plan-start="11"]'));
+    assert.deepEqual(started, [
+      { projectId: "a", projectPath: "/tmp/audit-a", ref: "11" },
+    ]);
+
+    await m.change(m.query('select[aria-label="Project"]'), "b");
+    assert.ok(m.query('[data-plan-issue="22"]'), "B/#22 after the switch");
+    assert.equal(m.query('[data-plan-issue="11"]'), null);
+    assert.equal(
+      (m.query('select[aria-label="Project"]') as HTMLSelectElement).value,
+      "b",
+    );
+
+    await inAct(() => {
+      resolveStart({ ok: true });
+    });
+    await m.flush();
+
+    assert.equal(
+      (m.query('select[aria-label="Project"]') as HTMLSelectElement).value,
+      "b",
+      "selector stays on B",
+    );
+    assert.ok(m.query('[data-plan-issue="22"]'), "B's card remains");
+    assert.equal(
+      m.query('[data-plan-issue="11"]'),
+      null,
+      "A's card must not replace B",
+    );
+    assert.equal(m.query("[data-plan-start-note]"), null, "A's note stays off B");
+    const bStart = m.query('[data-plan-start="22"]') as HTMLButtonElement | null;
+    assert.ok(bStart, "B can still start its own issue");
+    assert.equal(bStart.disabled, false);
+    assert.equal(bStart.textContent, "Start task");
+
+    await m.click(bStart);
+    assert.deepEqual(started, [
+      { projectId: "a", projectPath: "/tmp/audit-a", ref: "11" },
+      { projectId: "b", projectPath: "/tmp/audit-b", ref: "22" },
+    ]);
+    m.unmount();
+  });
+
+  it("deferred A failure after A→B leaves B's board intact (#1131)", async () => {
+    let resolveStart!: (value: { ok: false; reason: string }) => void;
+    const held = new Promise<{ ok: false; reason: string }>((resolve) => {
+      resolveStart = resolve;
+    });
+    const m = await mount(
+      <PlanboardView
+        projects={AUDIT_PROJECTS}
+        listIssues={async (path) => auditIssues(path)}
+        onStartTask={async () => held}
+      />,
+    );
+
+    await m.click(m.query('[data-plan-start="11"]'));
+    await m.change(m.query('select[aria-label="Project"]'), "b");
+    await inAct(() => {
+      resolveStart({ ok: false, reason: "auth" });
+    });
+    await m.flush();
+
+    assert.ok(m.query('[data-plan-issue="22"]'));
+    assert.equal(m.query('[data-plan-issue="11"]'), null);
+    assert.equal(m.query("[data-plan-start-note]"), null);
+    assert.ok(!m.text().includes("auth"));
+    m.unmount();
+  });
+
+  it("deferred A start after A→B→A still refreshes A (#1131)", async () => {
+    let resolveStart!: (value: { ok: true }) => void;
+    const held = new Promise<{ ok: true }>((resolve) => {
+      resolveStart = resolve;
+    });
+    let aLoads = 0;
+    const m = await mount(
+      <PlanboardView
+        projects={AUDIT_PROJECTS}
+        listIssues={async (path) => {
+          if (path === AUDIT_A.path) aLoads++;
+          return auditIssues(path);
+        }}
+        onStartTask={async () => held}
+      />,
+    );
+
+    await m.click(m.query('[data-plan-start="11"]'));
+    await m.change(m.query('select[aria-label="Project"]'), "b");
+    await m.change(m.query('select[aria-label="Project"]'), "a");
+    assert.ok(m.query('[data-plan-issue="11"]'));
+    const loadsBeforeSettle = aLoads;
+
+    await inAct(() => {
+      resolveStart({ ok: true });
+    });
+    await m.flush();
+
+    assert.ok(m.query('[data-plan-issue="11"]'), "back on A");
+    assert.equal(m.query('[data-plan-issue="22"]'), null);
+    assert.ok(
+      m.text().includes("#11: thread started"),
+      "A's own completion note is kept",
+    );
+    assert.ok(aLoads > loadsBeforeSettle, "A still reloads after its own start");
+    m.unmount();
+  });
+
+  it("deferred A start after A is removed leaves the remaining board intact (#1131)", async () => {
+    let resolveStart!: (value: { ok: true }) => void;
+    const held = new Promise<{ ok: true }>((resolve) => {
+      resolveStart = resolve;
+    });
+    function Harness() {
+      const [list, setList] = React.useState(AUDIT_PROJECTS);
+      return (
+        <>
+          <button
+            type="button"
+            data-drop-a=""
+            onClick={() => setList([AUDIT_B])}
+          >
+            drop A
+          </button>
+          <PlanboardView
+            projects={list}
+            listIssues={async (path) => auditIssues(path)}
+            onStartTask={async () => held}
+          />
+        </>
+      );
+    }
+    const m = await mount(<Harness />);
+    await m.click(m.query('[data-plan-start="11"]'));
+    await m.click(m.query("[data-drop-a]"));
+    assert.ok(m.query('[data-plan-issue="22"]'), "fallback project is B");
+
+    await inAct(() => {
+      resolveStart({ ok: true });
+    });
+    await m.flush();
+
+    assert.ok(m.query('[data-plan-issue="22"]'));
+    assert.equal(m.query('[data-plan-issue="11"]'), null);
+    assert.equal(m.query("[data-plan-start-note]"), null);
     m.unmount();
   });
 

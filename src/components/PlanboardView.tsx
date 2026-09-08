@@ -84,9 +84,19 @@ export function PlanboardView({
   const [prs, setPrs] = useState<ListPrsResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [now, setNow] = useState(() => Date.now());
-  /** Issue number whose start is in flight, and the last start's message. */
-  const [starting, setStarting] = useState<number | null>(null);
-  const [startNote, setStartNote] = useState<string | null>(null);
+  /**
+   * In-flight Start task, keyed by the project that owns the card so a
+   * switch cannot disable or label another board's buttons (#1131).
+   */
+  const [starting, setStarting] = useState<{
+    projectId: string;
+    number: number;
+  } | null>(null);
+  /** Completion note, shown only while that project is still selected. */
+  const [startNote, setStartNote] = useState<{
+    projectId: string;
+    text: string;
+  } | null>(null);
   /** Thread mode for Start task; "default" follows the app setting. */
   const [startMode, setStartMode] = useState<ThreadStartMode>("default");
   /** Orchestrator lead agent; empty = inherit from the selected thread. */
@@ -94,6 +104,9 @@ export function PlanboardView({
   /** Column ordering; "updated" is the long-standing default. */
   const [sort, setSort] = useState<PlanSort>("updated");
   const loadGen = useRef(0);
+  const projectRef = useRef<ProjectInfo | null>(null);
+  /** Project that produced the cards currently on screen. */
+  const resultOwnerRef = useRef<{ id: string; path: string } | null>(null);
 
   useEffect(() => {
     if (initialProjectId !== undefined) {
@@ -103,20 +116,25 @@ export function PlanboardView({
 
   const project =
     projects.find((p) => p.id === projectId) ?? projects[0] ?? null;
+  projectRef.current = project;
 
   const load = useCallback(async () => {
     if (!project) return;
+    const forProject = { id: project.id, path: project.path };
+    // A start-completion closure can retain an older load(); do not let it
+    // bump the generation or flip loading after the selector has moved (#1131).
+    if (projectRef.current?.id !== forProject.id) return;
     const gen = ++loadGen.current;
     setLoading(true);
     try {
       // Issues and PRs load together; a PR-list failure only costs the meter.
       const [res, prRes] = await Promise.all([
-        listIssues(project.path).catch((err) => ({
+        listIssues(forProject.path).catch((err) => ({
           ok: false as const,
           reason: rejectReason(err, "Couldn't load the plan"),
         })),
         listPrs
-          ? listPrs(project.path).catch((err) => ({
+          ? listPrs(forProject.path).catch((err) => ({
               ok: false as const,
               reason: rejectReason(err, "Couldn't load review load"),
             }))
@@ -124,6 +142,8 @@ export function PlanboardView({
       ]);
       // Drop a stale response if the selector moved on meanwhile.
       if (gen !== loadGen.current) return;
+      if (projectRef.current?.id !== forProject.id) return;
+      resultOwnerRef.current = forProject;
       setResult(res);
       setPrs(prRes);
       setNow(Date.now());
@@ -135,6 +155,7 @@ export function PlanboardView({
   useEffect(() => {
     setResult(null);
     setPrs(null);
+    resultOwnerRef.current = null;
     void load();
   }, [load]);
 
@@ -148,8 +169,12 @@ export function PlanboardView({
 
   const startTask = useCallback(
     async (issueNumber: number) => {
-      if (!onStartTask || !project || starting != null) return;
-      setStarting(issueNumber);
+      const owner = resultOwnerRef.current ?? (project
+        ? { id: project.id, path: project.path }
+        : null);
+      if (!onStartTask || !owner) return;
+      if (starting?.projectId === owner.id) return;
+      setStarting({ projectId: owner.id, number: issueNumber });
       setStartNote(null);
       const resolvedOrchId =
         startMode === "orchestrator"
@@ -160,32 +185,48 @@ export function PlanboardView({
       );
       try {
         const res = await onStartTask({
-          projectId: project.id,
-          projectPath: project.path,
+          projectId: owner.id,
+          projectPath: owner.path,
           ref: String(issueNumber),
           mode: startMode,
           ...(orchProfile ? { agentProfileId: orchProfile.id } : {}),
         });
+        // Selection moved on: keep the real start, but do not refresh or
+        // annotate a different project's board (#1131).
+        if (projectRef.current?.id !== owner.id) return;
         if (!res.ok) {
-          setStartNote(`#${issueNumber}: ${res.reason}`);
+          setStartNote({
+            projectId: owner.id,
+            text: `#${issueNumber}: ${res.reason}`,
+          });
           return;
         }
         if (res.warning) {
-          setStartNote(`#${issueNumber}: ${res.warning}`);
+          setStartNote({
+            projectId: owner.id,
+            text: `#${issueNumber}: ${res.warning}`,
+          });
         } else {
           // We stay on the board (#207), so say the start actually happened.
-          setStartNote(`#${issueNumber}: thread started`);
+          setStartNote({
+            projectId: owner.id,
+            text: `#${issueNumber}: thread started`,
+          });
         }
         // Card moved to In progress on GitHub; pull the board back in sync.
         // A rejected start is ambiguous (timeout may have applied), so do not
         // refresh or retry the mutation from this path.
         void load();
       } catch (err) {
-        setStartNote(
-          `#${issueNumber}: ${rejectReason(err, "Couldn't start task")}`,
-        );
+        if (projectRef.current?.id !== owner.id) return;
+        setStartNote({
+          projectId: owner.id,
+          text: `#${issueNumber}: ${rejectReason(err, "Couldn't start task")}`,
+        });
       } finally {
-        setStarting(null);
+        setStarting((cur) =>
+          cur?.projectId === owner.id && cur.number === issueNumber ? null : cur,
+        );
       }
     },
     [
@@ -199,6 +240,14 @@ export function PlanboardView({
       orchAgentRows,
     ],
   );
+  const startingNumber =
+    starting && project && starting.projectId === project.id
+      ? starting.number
+      : null;
+  const visibleStartNote =
+    startNote && project && startNote.projectId === project.id
+      ? startNote.text
+      : null;
 
   const columns = useMemo(
     () => planColumns(result && result.ok ? result.issues : [], sort),
@@ -318,9 +367,9 @@ export function PlanboardView({
         </div>
       </header>
 
-      {startNote ? (
+      {visibleStartNote ? (
         <p className={styles.startNote} aria-live="polite" data-plan-start-note="">
-          {startNote}
+          {visibleStartNote}
         </p>
       ) : null}
 
@@ -403,16 +452,16 @@ export function PlanboardView({
                       <button
                         type="button"
                         className={
-                          starting === issue.number
+                          startingNumber === issue.number
                             ? `${styles.start} ${styles.startActive}`
                             : styles.start
                         }
                         onClick={() => void startTask(issue.number)}
-                        disabled={starting != null}
+                        disabled={startingNumber != null}
                         data-plan-start={issue.number}
                         title={`Start a thread on #${issue.number}`}
                       >
-                        {starting === issue.number ? "Starting…" : "Start task"}
+                        {startingNumber === issue.number ? "Starting…" : "Start task"}
                       </button>
                     ) : null}
                     </div>
