@@ -240,6 +240,36 @@ describe("start spawn shape", () => {
     stop("t-env");
   });
 
+  it("prefixes WSL npm with env KEY=value so isolation reaches the distro", () => {
+    const calls = [];
+    start("t-wsl-env", "\\\\wsl$\\Ubuntu\\home\\me\\repo", "dev", {
+      platform: "win32",
+      spawn: (bin, args, opts) => {
+        calls.push({ bin, args, opts });
+        return fakeNpmChild();
+      },
+      env: {
+        PORT: "3002",
+        XDG_DATA_HOME: "/tmp/solenta-dev-homes/t-wsl-env/share",
+      },
+    });
+    assert.equal(calls[0].bin, "wsl.exe");
+    assert.deepEqual(calls[0].args, [
+      "-d",
+      "Ubuntu",
+      "--cd",
+      "/home/me/repo",
+      "--",
+      "env",
+      "PORT=3002",
+      "XDG_DATA_HOME=/tmp/solenta-dev-homes/t-wsl-env/share",
+      "npm",
+      "run",
+      "dev",
+    ]);
+    stop("t-wsl-env");
+  });
+
   it("appends --user-data-dir for an Electron script using SOLENTA_DATA_DIR", () => {
     const dir = tmpDir();
     fs.writeFileSync(
