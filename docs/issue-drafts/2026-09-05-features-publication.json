@@ -1,0 +1,68 @@
+{
+  "publishedAt": "2026-09-05T20:33:30Z",
+  "publisherThreadId": "c34ce7bb-3714-481c-91e3-1335267db074",
+  "leadThreadId": "a575bb2d-dc56-49ce-8951-3950113d3950",
+  "projectId": "bdfb084e-f13d-4968-83eb-5bc85b5dd515",
+  "source": "docs/issue-drafts/2026-09-05-features-audit.json",
+  "skippedDuplicates": [],
+  "relatedExistingNotRecreated": [
+    { "number": 553, "note": "sidebar filters/grouping already shipped; #939 is named reusable combinations" },
+    { "number": 789, "note": "per-thread tags; #939 reuses tags as one criterion" },
+    { "number": 159, "note": "spaces/project grouping; not named filter views" },
+    { "number": 160, "note": "automation failure circuit breaker; not run-history inspection" },
+    { "number": 242, "note": "event-driven automation triggers" },
+    { "number": 275, "note": "parameterized workflow bundles" },
+    { "number": 285, "note": "create automation from a finished thread" },
+    { "number": 286, "note": "hard budget caps" },
+    { "number": 323, "note": "morning digest, not per-automation run list" },
+    { "number": 388, "note": "template gallery/dry-run lifecycle" },
+    { "number": 149, "note": "checkpoint rewind of conversation" },
+    { "number": 252, "note": "checkpoint graph" },
+    { "number": 85, "note": "Run now rejection; #941 is the create form" },
+    { "number": 932, "note": "quota-wait retention; #940 is manual-delete undo" },
+    { "number": 933, "note": "corrupt shard repair; not recently-deleted restore" }
+  ],
+  "notRecreated": [916, 917, 918, 919, 920, 921, 922, 923, 924, 925, 926, 927, 928, 929, 930, 931, 932, 933, 934, 935, 936],
+  "created": [
+    {
+      "kind": "feature",
+      "number": 937,
+      "title": "Edit existing automations in place using the existing update API",
+      "url": "https://github.com/currentbits/solenta/issues/937",
+      "state": "OPEN",
+      "labels": ["plan:todo"]
+    },
+    {
+      "kind": "feature",
+      "number": 938,
+      "title": "Show recent runs and open their transcripts from each automation",
+      "url": "https://github.com/currentbits/solenta/issues/938",
+      "state": "OPEN",
+      "labels": ["plan:todo"]
+    },
+    {
+      "kind": "feature",
+      "number": 939,
+      "title": "Save named sidebar filter views for recurring triage",
+      "url": "https://github.com/currentbits/solenta/issues/939",
+      "state": "OPEN",
+      "labels": ["plan:todo"]
+    },
+    {
+      "kind": "feature",
+      "number": 940,
+      "title": "Recently deleted threads with Undo and a bounded restore window",
+      "url": "https://github.com/currentbits/solenta/issues/940",
+      "state": "OPEN",
+      "labels": ["plan:todo"]
+    },
+    {
+      "kind": "bug",
+      "number": 941,
+      "title": "Repeated Add automation while creation is pending creates duplicate enabled schedules",
+      "url": "https://github.com/currentbits/solenta/issues/941",
+      "state": "OPEN",
+      "labels": ["plan:todo"]
+    }
+  ]
+}

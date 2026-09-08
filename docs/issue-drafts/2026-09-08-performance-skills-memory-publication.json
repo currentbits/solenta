@@ -1,0 +1,223 @@
+{
+  "publishedAt": "2026-09-08T08:33:24Z",
+  "correctedAt": "2026-09-08T08:44:00Z",
+  "publisherThreadId": "6f2387e4-3257-4a95-8110-0f4c74f4e5ea",
+  "leadThreadId": "d0db8104-d443-4510-b27f-b83d96cc8fa4",
+  "projectId": "bdfb084e-f13d-4968-83eb-5bc85b5dd515",
+  "origin": "currentbits/solenta",
+  "source": "docs/issue-drafts/2026-09-08-performance-skills-memory-audit.json",
+  "hostIssueTools": {
+    "available": true,
+    "tools": ["issue_create", "issue_list", "issue_set_plan", "issue_complete"],
+    "ghWrites": "forbidden",
+    "ghReads": "allowed"
+  },
+  "publicationStatus": "published",
+  "findingsPublished": true,
+  "noFurtherCreates": true,
+  "canonicalMapping": {
+    "keep": [1122, 1123, 1124, 1125],
+    "close": {
+      "1126": 1123,
+      "1127": 1122,
+      "1128": 1125,
+      "1129": 1124
+    }
+  },
+  "bodyMatch": [
+    {
+      "keep": 1122,
+      "duplicate": 1127,
+      "titlesEqual": true,
+      "bodiesEqual": false,
+      "diff": "Duplicate body inserts one extra line `Parent: #1121` after the priority sentence. Remainder matches keep #1122."
+    },
+    {
+      "keep": 1123,
+      "duplicate": 1126,
+      "titlesEqual": true,
+      "bodiesEqual": false,
+      "diff": "Duplicate body inserts one extra line `Parent: #1121` after the priority sentence. Remainder matches keep #1123."
+    },
+    {
+      "keep": 1124,
+      "duplicate": 1129,
+      "titlesEqual": true,
+      "bodiesEqual": false,
+      "diff": "Duplicate body inserts one extra line `Parent: #1121` after the priority sentence. Remainder matches keep #1124."
+    },
+    {
+      "keep": 1125,
+      "duplicate": 1128,
+      "titlesEqual": true,
+      "bodiesEqual": false,
+      "diff": "Duplicate body inserts one extra line `Parent: #1121` after the priority sentence. Remainder matches keep #1125."
+    }
+  ],
+  "roadmap": {
+    "number": 1121,
+    "title": "Audit: large performance wins plus Skills and Memory tab UI",
+    "url": "https://github.com/currentbits/solenta/issues/1121",
+    "state": "CLOSED",
+    "plan": "done",
+    "closedAt": "2026-09-08T08:34:21Z",
+    "canonicalChildren": [1122, 1123, 1124, 1125],
+    "originCloseCommentListsDuplicates": true,
+    "originCommentCorrection": {
+      "attempted": true,
+      "tool": "issue_complete",
+      "result": "skipped already closed",
+      "note": "Host tools cannot comment on a closed issue. Canonical mapping is this JSON plus duplicate-close comments on #1126-#1129. No gh writes."
+    },
+    "note": "Audit publication only. Implementation remains on #1122-#1125."
+  },
+  "created": [
+    {
+      "key": "search_perf",
+      "kind": "finding",
+      "number": 1122,
+      "title": "Keep sidebar content search off the main thread and out of the transcript hydration cache",
+      "url": "https://github.com/currentbits/solenta/issues/1122",
+      "state": "OPEN",
+      "labels": ["plan:todo"],
+      "priority": "P1",
+      "createdAt": "2026-09-08T08:33:24Z",
+      "canonical": true
+    },
+    {
+      "key": "memory_ui",
+      "kind": "finding",
+      "number": 1123,
+      "title": "Put memories first and support browsing beyond the latest 20 entries",
+      "url": "https://github.com/currentbits/solenta/issues/1123",
+      "state": "OPEN",
+      "labels": ["plan:todo"],
+      "priority": "P2",
+      "createdAt": "2026-09-08T08:33:24Z",
+      "canonical": true
+    },
+    {
+      "key": "skills_perf",
+      "kind": "finding",
+      "number": 1124,
+      "title": "Avoid quadratic registry reads and duplicate disk scans when opening Skills",
+      "url": "https://github.com/currentbits/solenta/issues/1124",
+      "state": "OPEN",
+      "labels": ["plan:todo"],
+      "priority": "P1",
+      "createdAt": "2026-09-08T08:33:24Z",
+      "canonical": true
+    },
+    {
+      "key": "skills_ui",
+      "kind": "finding",
+      "number": 1125,
+      "title": "Make Skills a searchable installed library with separate catalog and MCP setup",
+      "url": "https://github.com/currentbits/solenta/issues/1125",
+      "state": "OPEN",
+      "labels": ["plan:todo"],
+      "priority": "P2",
+      "createdAt": "2026-09-08T08:33:24Z",
+      "canonical": true
+    }
+  ],
+  "published": [
+    {
+      "kind": "roadmap",
+      "number": 1121,
+      "title": "Audit: large performance wins plus Skills and Memory tab UI",
+      "url": "https://github.com/currentbits/solenta/issues/1121",
+      "state": "CLOSED",
+      "labels": ["plan:done"]
+    },
+    {
+      "key": "search_perf",
+      "kind": "finding",
+      "number": 1122,
+      "title": "Keep sidebar content search off the main thread and out of the transcript hydration cache",
+      "url": "https://github.com/currentbits/solenta/issues/1122",
+      "state": "OPEN",
+      "labels": ["plan:todo"]
+    },
+    {
+      "key": "memory_ui",
+      "kind": "finding",
+      "number": 1123,
+      "title": "Put memories first and support browsing beyond the latest 20 entries",
+      "url": "https://github.com/currentbits/solenta/issues/1123",
+      "state": "OPEN",
+      "labels": ["plan:todo"]
+    },
+    {
+      "key": "skills_perf",
+      "kind": "finding",
+      "number": 1124,
+      "title": "Avoid quadratic registry reads and duplicate disk scans when opening Skills",
+      "url": "https://github.com/currentbits/solenta/issues/1124",
+      "state": "OPEN",
+      "labels": ["plan:todo"]
+    },
+    {
+      "key": "skills_ui",
+      "kind": "finding",
+      "number": 1125,
+      "title": "Make Skills a searchable installed library with separate catalog and MCP setup",
+      "url": "https://github.com/currentbits/solenta/issues/1125",
+      "state": "OPEN",
+      "labels": ["plan:todo"]
+    }
+  ],
+  "closedDuplicates": [
+    {
+      "number": 1126,
+      "url": "https://github.com/currentbits/solenta/issues/1126",
+      "duplicateOf": 1123,
+      "key": "memory_ui",
+      "createdAt": "2026-09-08T08:33:25Z",
+      "state": "CLOSED",
+      "labels": ["plan:done"],
+      "closeComment": "Duplicate of #1123 (same draft, created one second later). Keep #1123."
+    },
+    {
+      "number": 1127,
+      "url": "https://github.com/currentbits/solenta/issues/1127",
+      "duplicateOf": 1122,
+      "key": "search_perf",
+      "createdAt": "2026-09-08T08:33:25Z",
+      "state": "CLOSED",
+      "labels": ["plan:done"],
+      "closeComment": "Duplicate of #1122 (same draft, created one second later). Keep #1122."
+    },
+    {
+      "number": 1128,
+      "url": "https://github.com/currentbits/solenta/issues/1128",
+      "duplicateOf": 1125,
+      "key": "skills_ui",
+      "createdAt": "2026-09-08T08:33:25Z",
+      "state": "CLOSED",
+      "labels": ["plan:done"],
+      "closeComment": "Duplicate of #1125 (same draft, created one second later). Keep #1125."
+    },
+    {
+      "number": 1129,
+      "url": "https://github.com/currentbits/solenta/issues/1129",
+      "duplicateOf": 1124,
+      "key": "skills_perf",
+      "createdAt": "2026-09-08T08:33:25Z",
+      "state": "CLOSED",
+      "labels": ["plan:done"],
+      "closeComment": "Duplicate of #1124 (same draft, created one second later). Keep #1124."
+    }
+  ],
+  "verifiedOnOrigin": {
+    "1121": { "state": "CLOSED", "labels": ["plan:done"] },
+    "1122": { "state": "OPEN", "labels": ["plan:todo"] },
+    "1123": { "state": "OPEN", "labels": ["plan:todo"] },
+    "1124": { "state": "OPEN", "labels": ["plan:todo"] },
+    "1125": { "state": "OPEN", "labels": ["plan:todo"] },
+    "1126": { "state": "CLOSED", "labels": ["plan:done"], "duplicateOf": 1123 },
+    "1127": { "state": "CLOSED", "labels": ["plan:done"], "duplicateOf": 1122 },
+    "1128": { "state": "CLOSED", "labels": ["plan:done"], "duplicateOf": 1125 },
+    "1129": { "state": "CLOSED", "labels": ["plan:done"], "duplicateOf": 1124 }
+  }
+}

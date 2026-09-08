@@ -1,0 +1,59 @@
+{
+  "exportedAt": "2026-09-08T09:10:00Z",
+  "source": "coder-threads issue_list",
+  "roadmap": {
+    "number": 1135,
+    "title": "Audit: editor and settings action reliability",
+    "url": "https://github.com/currentbits/solenta/issues/1135"
+  },
+  "doNotTouch": [1121, 1122, 1123, 1124, 1125, 1126, 1127, 1128, 1129, 1130, 1131, 1132, 1133, 1134],
+  "note": "Titles and states from host issue_list. Findings not filed this turn. Exact-title search before any later create. #1121-#1134 stay untouched.",
+  "groups": {
+    "memory_editor_config_doctor": [
+      {"number": 1123, "title": "Put memories first and support browsing beyond the latest 20 entries", "url": "https://github.com/currentbits/solenta/issues/1123", "state": "OPEN", "labels": ["plan:todo"], "why": "canonical Memory browsing UI; do not recreate"},
+      {"number": 719, "title": "Memory: auto-resolve the review queue (research + roadmap)", "url": "https://github.com/currentbits/solenta/issues/719", "state": "OPEN", "labels": ["plan:doing"], "why": "review-queue auto-resolve; Memory tab item 4"},
+      {"number": 299, "title": "Memory governance UI: suggested memories, impact preview, citations, certified tier", "url": "https://github.com/currentbits/solenta/issues/299", "state": "OPEN", "labels": ["enhancement", "plan:todo"], "why": "governance UI, not editor save reliability"},
+      {"number": 179, "title": "Memory project keys collide for same-named repos; conventions leak across projects", "url": "https://github.com/currentbits/solenta/issues/179", "state": "OPEN", "labels": ["bug", "plan:todo"], "why": "project-key collision"},
+      {"number": 311, "title": "Memory ranking: access-driven decay never lets popular-but-stale entries age out", "url": "https://github.com/currentbits/solenta/issues/311", "state": "OPEN", "labels": ["bug", "plan:todo"], "why": "ranking decay"},
+      {"number": 301, "title": "Sleep-time memory consolidation: idle-time dedupe and abstraction job", "url": "https://github.com/currentbits/solenta/issues/301", "state": "OPEN", "labels": ["enhancement", "plan:todo"], "why": "sleep-time consolidation"},
+      {"number": 300, "title": "Memory freshness: drift detection for memory entries coupled to code", "url": "https://github.com/currentbits/solenta/issues/300", "state": "OPEN", "labels": ["enhancement", "plan:todo"], "why": "freshness/drift"},
+      {"number": 271, "title": "Memory injection modes: glob-matched and relevance-matched memory, not always-on", "url": "https://github.com/currentbits/solenta/issues/271", "state": "OPEN", "labels": ["enhancement", "plan:todo"], "why": "injection modes"},
+      {"number": 247, "title": "Distill a completed thread into a durable memory/rule with one click", "url": "https://github.com/currentbits/solenta/issues/247", "state": "OPEN", "labels": ["enhancement", "plan:todo"], "why": "distill thread into memory"},
+      {"number": 796, "title": "Config doctor: inject convention bodies whole; mark knowledge clips", "url": "https://github.com/currentbits/solenta/issues/796", "state": "CLOSED", "labels": ["plan:done"], "why": "CLOSED config doctor convention injection"},
+      {"number": 723, "title": "Memory tab: auto-resolution activity line, queue card shows only ambiguous pairs", "url": "https://github.com/currentbits/solenta/issues/723", "state": "CLOSED", "labels": ["plan:done"], "why": "CLOSED Memory tab queue card"},
+      {"number": 912, "title": "Memory tab: continuous inspector-list layout", "url": "https://github.com/currentbits/solenta/issues/912", "state": "CLOSED", "labels": ["plan:done"], "why": "CLOSED Memory inspector-list layout"}
+    ],
+    "skills_mutations_imports": [
+      {"number": 1125, "title": "Make Skills a searchable installed library with separate catalog and MCP setup", "url": "https://github.com/currentbits/solenta/issues/1125", "state": "OPEN", "labels": ["plan:todo"], "why": "canonical Skills library UI; do not recreate"},
+      {"number": 1124, "title": "Avoid quadratic registry reads and duplicate disk scans when opening Skills", "url": "https://github.com/currentbits/solenta/issues/1124", "state": "OPEN", "labels": ["plan:todo"], "why": "canonical Skills scan perf; do not recreate"},
+      {"number": 984, "title": "Skills tab UI to import from Claude, Cursor, and Codex", "url": "https://github.com/currentbits/solenta/issues/984", "state": "CLOSED", "labels": ["plan:done"], "why": "CLOSED Skills tab import from Claude/Cursor/Codex"},
+      {"number": 695, "title": "Kimi skills never reach the CLI: wrong install dir, overlay hides skills, project scan is claude-only", "url": "https://github.com/currentbits/solenta/issues/695", "state": "OPEN", "labels": ["bug", "plan:done"], "why": "Kimi skills path/install dir"},
+      {"number": 305, "title": "Install-time scanning for MCP servers, skills, and agent-added dependencies", "url": "https://github.com/currentbits/solenta/issues/305", "state": "OPEN", "labels": ["enhancement", "plan:doing"], "why": "install-time scanning for MCP/skills"},
+      {"number": 324, "title": "Provider capability self-checks per thread (skills, tools, flags actually work)", "url": "https://github.com/currentbits/solenta/issues/324", "state": "OPEN", "labels": ["enhancement", "plan:todo"], "why": "provider capability self-checks including skills"},
+      {"number": 1090, "title": "Extract shared plugin.json reader for palette and harness import", "url": "https://github.com/currentbits/solenta/issues/1090", "state": "CLOSED", "labels": ["plan:done"], "why": "CLOSED shared plugin.json reader"},
+      {"number": 1091, "title": "Tests: nameless plugin.json on palette vs Skills-tab import", "url": "https://github.com/currentbits/solenta/issues/1091", "state": "CLOSED", "labels": ["plan:done"], "why": "CLOSED nameless plugin.json tests"}
+    ],
+    "workflows": [
+      {"number": 164, "title": "Repo-versioned workflow definitions (WORKFLOW.md)", "url": "https://github.com/currentbits/solenta/issues/164", "state": "OPEN", "labels": ["enhancement", "plan:todo"], "why": "repo-versioned WORKFLOW.md"},
+      {"number": 182, "title": "Multi-phase workflow runs have no crash-resume; a crash restarts from zero", "url": "https://github.com/currentbits/solenta/issues/182", "state": "OPEN", "labels": ["enhancement", "plan:todo"], "why": "multi-phase crash-resume"},
+      {"number": 275, "title": "Workflow bundles: parameterized, shareable automations with one-click launch links", "url": "https://github.com/currentbits/solenta/issues/275", "state": "OPEN", "labels": ["enhancement", "plan:todo"], "why": "workflow bundles"},
+      {"number": 729, "title": "Flatten leftover chrome: Activity, PR list, onboarding, Workflows inner tiles", "url": "https://github.com/currentbits/solenta/issues/729", "state": "OPEN", "labels": ["enhancement", "plan:done"], "why": "flatten leftover chrome includes Workflows"},
+      {"number": 836, "title": "Workflow ssh/WSL kimi/cursor phases skip the #834 remote pre-exec seam", "url": "https://github.com/currentbits/solenta/issues/836", "state": "OPEN", "labels": ["plan:done"], "why": "workflow ssh/WSL kimi/cursor skip pre-exec"}
+    ],
+    "project_settings": [
+      {"number": 930, "title": "Opening Settings before its data loads can silently remove existing spending caps", "url": "https://github.com/currentbits/solenta/issues/930", "state": "OPEN", "labels": ["plan:todo"], "why": "Settings before load can remove spending caps"},
+      {"number": 438, "title": "Settings as code: layered config files with schema, repo-shared layer, migration flow", "url": "https://github.com/currentbits/solenta/issues/438", "state": "OPEN", "labels": ["enhancement", "plan:todo"], "why": "Settings as code"},
+      {"number": 286, "title": "Hard budget caps per thread and per automation", "url": "https://github.com/currentbits/solenta/issues/286", "state": "OPEN", "labels": ["enhancement", "plan:todo"], "why": "hard budget caps"},
+      {"number": 673, "title": "Sidebar: hourly update badge next to Settings, version next to wordmark", "url": "https://github.com/currentbits/solenta/issues/673", "state": "OPEN", "labels": ["enhancement", "plan:done"], "why": "sidebar update badge next to Settings"},
+      {"number": 728, "title": "Flatten remaining app chrome: Memory, Skills, Settings, Kanban, Fleet, Digest, Planboard, Insights, Usage, Automations", "url": "https://github.com/currentbits/solenta/issues/728", "state": "OPEN", "labels": ["enhancement", "plan:done"], "why": "flatten remaining chrome names Settings"}
+    ],
+    "editor_save_discard_races": [
+      {"number": 936, "title": "Review acceptance updates never schedule persistence and can remain unsaved indefinitely", "url": "https://github.com/currentbits/solenta/issues/936", "state": "OPEN", "labels": ["plan:todo"], "why": "review acceptance never schedules persistence"},
+      {"number": 935, "title": "Failed thread-notes saves discard the edited text when the editor is reopened", "url": "https://github.com/currentbits/solenta/issues/935", "state": "OPEN", "labels": ["plan:todo"], "why": "failed thread-notes save discards text"},
+      {"number": 926, "title": "Failed queued-message edits close the editor and discard the revised text", "url": "https://github.com/currentbits/solenta/issues/926", "state": "OPEN", "labels": ["plan:todo"], "why": "failed queued-message edits discard text"},
+      {"number": 921, "title": "Unsent composer drafts disappear when switching threads in the real App", "url": "https://github.com/currentbits/solenta/issues/921", "state": "OPEN", "labels": ["plan:todo"], "why": "unsent composer drafts disappear on thread switch"},
+      {"number": 922, "title": "Failed mid-run queue saves clear the composer and lose the follow-up", "url": "https://github.com/currentbits/solenta/issues/922", "state": "OPEN", "labels": ["plan:todo"], "why": "failed mid-run queue save clears composer"},
+      {"number": 924, "title": "Manual run preflight failures permanently discard an existing queued prompt", "url": "https://github.com/currentbits/solenta/issues/924", "state": "OPEN", "labels": ["plan:todo"], "why": "preflight failure discards queued prompt"}
+    ]
+  }
+}

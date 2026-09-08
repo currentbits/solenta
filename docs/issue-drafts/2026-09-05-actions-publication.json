@@ -1,0 +1,37 @@
+{
+  "publishedAt": "2026-09-05T20:25:41Z",
+  "publisherThreadId": "c34ce7bb-3714-481c-91e3-1335267db074",
+  "leadThreadId": "a575bb2d-dc56-49ce-8951-3950113d3950",
+  "projectId": "bdfb084e-f13d-4968-83eb-5bc85b5dd515",
+  "source": "docs/issue-drafts/2026-09-05-actions-audit.json",
+  "skippedDuplicates": [],
+  "relatedExistingNotRecreated": [
+    { "number": 147, "title": "Integrated terminal drawer scoped to the thread worktree", "note": "original terminal feature; new #934 is overlapping-read delta duplication" },
+    { "number": 194, "title": "Per-thread scratch notes", "note": "original notes feature; new #935 is failed-save discard" },
+    { "number": 421, "title": "Review itinerary: an ordered, risk-ranked review plan for every agent diff", "note": "original itinerary feature; new #936 is missing scheduled persistence" }
+  ],
+  "notRecreated": [916, 917, 918, 919, 920, 921, 922, 923, 924, 925, 926, 927, 928, 929, 930, 931, 932, 933],
+  "created": [
+    {
+      "number": 934,
+      "title": "Overlapping terminal reads duplicate scrollback on slow connections",
+      "url": "https://github.com/currentbits/solenta/issues/934",
+      "state": "OPEN",
+      "labels": ["plan:todo"]
+    },
+    {
+      "number": 935,
+      "title": "Failed thread-notes saves discard the edited text when the editor is reopened",
+      "url": "https://github.com/currentbits/solenta/issues/935",
+      "state": "OPEN",
+      "labels": ["plan:todo"]
+    },
+    {
+      "number": 936,
+      "title": "Review acceptance updates never schedule persistence and can remain unsaved indefinitely",
+      "url": "https://github.com/currentbits/solenta/issues/936",
+      "state": "OPEN",
+      "labels": ["plan:todo"]
+    }
+  ]
+}

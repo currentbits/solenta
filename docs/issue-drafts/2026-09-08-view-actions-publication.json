@@ -1,0 +1,129 @@
+{
+  "publishedAt": "2026-09-08T08:51:21Z",
+  "findingsPublishedAt": "2026-09-08T09:00:34Z",
+  "publisherThreadId": "6f2387e4-3257-4a95-8110-0f4c74f4e5ea",
+  "leadThreadId": "d0db8104-d443-4510-b27f-b83d96cc8fa4",
+  "projectId": "bdfb084e-f13d-4968-83eb-5bc85b5dd515",
+  "origin": "currentbits/solenta",
+  "source": "docs/issue-drafts/2026-09-08-view-actions-audit.json",
+  "hostIssueTools": {
+    "available": true,
+    "tools": ["issue_create", "issue_list", "issue_set_plan", "issue_complete"],
+    "ghWrites": "forbidden",
+    "ghReads": "allowed"
+  },
+  "publicationStatus": "complete",
+  "findingsPublished": true,
+  "sequentialCreates": true,
+  "roadmap": {
+    "number": 1130,
+    "title": "Audit: broken view actions and navigation, follow-up",
+    "url": "https://github.com/currentbits/solenta/issues/1130",
+    "state": "CLOSED",
+    "plan": "done",
+    "closedAt": "2026-09-08T09:00:38Z",
+    "note": "Closed for audit publication only. Implementation remains on #1131-#1134."
+  },
+  "published": [
+    {
+      "kind": "roadmap",
+      "number": 1130,
+      "title": "Audit: broken view actions and navigation, follow-up",
+      "url": "https://github.com/currentbits/solenta/issues/1130",
+      "state": "CLOSED",
+      "labels": ["plan:done"]
+    },
+    {
+      "key": "planboard-project-race",
+      "kind": "finding",
+      "priority": "P1",
+      "number": 1131,
+      "title": "Planboard task completion can show another project's cards and start the wrong issue",
+      "url": "https://github.com/currentbits/solenta/issues/1131",
+      "state": "OPEN",
+      "labels": ["plan:todo"]
+    },
+    {
+      "key": "view-request-recovery",
+      "kind": "finding",
+      "priority": "P2",
+      "number": 1132,
+      "title": "Rejected PR and Planboard requests leave loading and Start task controls stuck",
+      "url": "https://github.com/currentbits/solenta/issues/1132",
+      "state": "OPEN",
+      "labels": ["plan:todo"]
+    },
+    {
+      "key": "report-refresh-errors",
+      "kind": "finding",
+      "priority": "P2",
+      "number": 1133,
+      "title": "Usage erases its report and Fleet hides failures when refresh requests reject",
+      "url": "https://github.com/currentbits/solenta/issues/1133",
+      "state": "OPEN",
+      "labels": ["plan:todo"]
+    },
+    {
+      "key": "pr-browse-search",
+      "kind": "finding",
+      "priority": "P2",
+      "number": 1134,
+      "title": "Make the PR view searchable and expose open PRs beyond its silent 50-row limit",
+      "url": "https://github.com/currentbits/solenta/issues/1134",
+      "state": "OPEN",
+      "labels": ["plan:todo"]
+    }
+  ],
+  "created": [
+    {
+      "key": "planboard-project-race",
+      "priority": "P1",
+      "number": 1131,
+      "title": "Planboard task completion can show another project's cards and start the wrong issue",
+      "url": "https://github.com/currentbits/solenta/issues/1131",
+      "state": "OPEN",
+      "labels": ["plan:todo"],
+      "exactTitleSearch": "none"
+    },
+    {
+      "key": "view-request-recovery",
+      "priority": "P2",
+      "number": 1132,
+      "title": "Rejected PR and Planboard requests leave loading and Start task controls stuck",
+      "url": "https://github.com/currentbits/solenta/issues/1132",
+      "state": "OPEN",
+      "labels": ["plan:todo"],
+      "exactTitleSearch": "none"
+    },
+    {
+      "key": "report-refresh-errors",
+      "priority": "P2",
+      "number": 1133,
+      "title": "Usage erases its report and Fleet hides failures when refresh requests reject",
+      "url": "https://github.com/currentbits/solenta/issues/1133",
+      "state": "OPEN",
+      "labels": ["plan:todo"],
+      "exactTitleSearch": "none"
+    },
+    {
+      "key": "pr-browse-search",
+      "priority": "P2",
+      "number": 1134,
+      "title": "Make the PR view searchable and expose open PRs beyond its silent 50-row limit",
+      "url": "https://github.com/currentbits/solenta/issues/1134",
+      "state": "OPEN",
+      "labels": ["plan:todo"],
+      "exactTitleSearch": "none"
+    }
+  ],
+  "overlapExport": "docs/issue-drafts/2026-09-08-view-actions-overlap.json",
+  "doNotTouch": [1121, 1122, 1123, 1124, 1125, 1126, 1127, 1128, 1129],
+  "notFiled": [],
+  "verifiedOnOrigin": {
+    "1130": { "state": "CLOSED", "labels": ["plan:done"] },
+    "1131": { "state": "OPEN", "labels": ["plan:todo"] },
+    "1132": { "state": "OPEN", "labels": ["plan:todo"] },
+    "1133": { "state": "OPEN", "labels": ["plan:todo"] },
+    "1134": { "state": "OPEN", "labels": ["plan:todo"] }
+  }
+}

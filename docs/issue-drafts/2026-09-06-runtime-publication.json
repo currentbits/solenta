@@ -1,0 +1,106 @@
+{
+  "publishedAt": "2026-09-06T06:45:00Z",
+  "correctedAt": "2026-09-06T07:10:00Z",
+  "publisherThreadId": "2c0f8f53-673b-49a7-86c5-0f8cceea3563",
+  "leadThreadId": "a575bb2d-dc56-49ce-8951-3950113d3950",
+  "projectId": "bdfb084e-f13d-4968-83eb-5bc85b5dd515",
+  "source": "docs/issue-drafts/2026-09-06-runtime-audit.json",
+  "evidenceCommand": "node --import=./test/support/disable-grok-mcp.mjs --experimental-strip-types docs/issue-drafts/2026-09-06-runtime-evidence.mjs",
+  "evidenceExitCode": 0,
+  "originBodyEdit": {
+    "attempted": true,
+    "applied": false,
+    "attemptedAt": "2026-09-06T06:57:07.612134+00:00",
+    "tool": "github_update_issue",
+    "issueNumber": 950,
+    "blocker": "Host GitHub issue-body update rejected: MCP tool call requires approval, but approval policy is never. No origin correction applied. Corrected bodies remain in 2026-09-06-runtime-audit.json; #951/#952 updates not attempted after the rejection."
+  },
+  "published": [
+    {
+      "number": 950,
+      "title": "Do not auto-continue a Codex lead while another process holds the session writer",
+      "url": "https://github.com/currentbits/solenta/issues/950",
+      "state": "OPEN",
+      "plan": "todo",
+      "localBodyCorrected": true,
+      "originBodyCorrected": false,
+      "correction": "Removed private/unlinked lock-dir recommendation and acceptance. Preserve shared locking. Park on explicit writer-conflict. Bounded/manual retry after CLI accepts. Never delete/bypass locks or treat lastError as a live lock. Symlink fixture is not a defect."
+    },
+    {
+      "number": 951,
+      "title": "Retry turn after a failed machine-delivered notice re-sends the wrong prompt",
+      "url": "https://github.com/currentbits/solenta/issues/951",
+      "state": "OPEN",
+      "plan": "todo",
+      "localBodyCorrected": true,
+      "originBodyCorrected": false,
+      "correction": "Aligned with #950/#952: no immediate auto-loop of a writer-conflict resume; manual Retry remains usable after Codex accepts; do not disable Retry from stale lastError."
+    },
+    {
+      "number": 952,
+      "title": "Classify Codex thread-store writer conflicts instead of dumping opaque stderr",
+      "url": "https://github.com/currentbits/solenta/issues/952",
+      "state": "OPEN",
+      "plan": "todo",
+      "localBodyCorrected": true,
+      "originBodyCorrected": false,
+      "correction": "Require explicit writer-conflict text; do not classify generic -32600 alone. Holder unknown; do not claim session data intact or Desktop as proven holder. Keep sessionId and usable manual Retry after release; no permanent disable from stale lastError."
+    }
+  ],
+  "skippedDuplicates": [
+    {
+      "number": 406,
+      "note": "agent-facing tool error contract, not user-visible CLI resume"
+    },
+    {
+      "number": 391,
+      "note": "agent same-fix thrash, not Retry-turn/session lock"
+    },
+    {
+      "number": 297,
+      "note": "CI flake taxonomy"
+    },
+    {
+      "number": 687,
+      "note": "question cards vs fromNotice; already preserves pendingQuestion"
+    },
+    {
+      "number": 554,
+      "note": "eject hatch to reuse, not this classification"
+    },
+    {
+      "number": 927,
+      "note": "Codex MCP advertising; same provider, different bug"
+    },
+    {
+      "number": 795,
+      "note": "CLOSED exec resume --sandbox argv; not reopened"
+    },
+    {
+      "number": 799,
+      "note": "CLOSED exec resume --search argv; not reopened"
+    },
+    {
+      "number": 808,
+      "note": "CLOSED workflow phase resume"
+    }
+  ],
+  "notFiled": [
+    {
+      "reason": "invalidated",
+      "claim": "Retry after the live writer-lock re-sends the original user prompt. fromNotice appends the notice as a user row first."
+    },
+    {
+      "reason": "invalidated",
+      "claim": "Live fail was #795/#799 resume argv. Captured argv is exec resume <id> without --sandbox/--search."
+    },
+    {
+      "reason": "invalidated",
+      "claim": "Unlink overlay thread-writer-locks while sharing sessions. Bypasses mutual exclusion on shared session data."
+    },
+    {
+      "reason": "inconclusive",
+      "claim": "Other providers have an analogous unclassified writer-lock. Not reproduced."
+    }
+  ]
+}

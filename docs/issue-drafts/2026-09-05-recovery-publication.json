@@ -1,0 +1,58 @@
+{
+  "publishedAt": "2026-09-05T20:15:08Z",
+  "publisherThreadId": "c34ce7bb-3714-481c-91e3-1335267db074",
+  "leadThreadId": "a575bb2d-dc56-49ce-8951-3950113d3950",
+  "projectId": "bdfb084e-f13d-4968-83eb-5bc85b5dd515",
+  "source": "docs/issue-drafts/2026-09-05-recovery-audit.json",
+  "skippedDuplicates": [],
+  "relatedClosedNotRecreated": [
+    { "number": 130, "title": "wireClient: unbounded offline queue, no invoke timeout, reconnect stampede", "note": "broader prior defect; new #928 is mutation-coalescing correctness" },
+    { "number": 133, "title": "Corrupt store load silently discards all user data, with no backup", "note": "envelope protection; new #933 is per-thread shard overwrite on append" },
+    { "number": 134, "title": "Automations mint a new thread on every fire; the store grows without bound", "note": "retention feature; new #932 is quota-wait deletion" }
+  ],
+  "notRecreated": [916, 918, 919, 921, 922, 923, 924, 925, 926, 927],
+  "created": [
+    {
+      "number": 928,
+      "title": "Reconnect coalescing drops repeated writes and acknowledges changes the host never applied",
+      "url": "https://github.com/currentbits/solenta/issues/928",
+      "state": "OPEN",
+      "labels": ["plan:todo"]
+    },
+    {
+      "number": 929,
+      "title": "Web reconnect refreshes the sidebar but leaves the open transcript stale after a missed final update",
+      "url": "https://github.com/currentbits/solenta/issues/929",
+      "state": "OPEN",
+      "labels": ["plan:todo"]
+    },
+    {
+      "number": 930,
+      "title": "Opening Settings before its data loads can silently remove existing spending caps",
+      "url": "https://github.com/currentbits/solenta/issues/930",
+      "state": "OPEN",
+      "labels": ["plan:todo"]
+    },
+    {
+      "number": 931,
+      "title": "Weekly automations change weekday when a missed run is caught up",
+      "url": "https://github.com/currentbits/solenta/issues/931",
+      "state": "OPEN",
+      "labels": ["plan:todo"]
+    },
+    {
+      "number": 932,
+      "title": "Automation retention permanently deletes unfinished threads waiting for quota",
+      "url": "https://github.com/currentbits/solenta/issues/932",
+      "state": "OPEN",
+      "labels": ["plan:todo"]
+    },
+    {
+      "number": 933,
+      "title": "Appending to a thread with a corrupt message shard destroys recoverable transcript bytes",
+      "url": "https://github.com/currentbits/solenta/issues/933",
+      "state": "OPEN",
+      "labels": ["plan:todo"]
+    }
+  ]
+}

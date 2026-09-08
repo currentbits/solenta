@@ -1,0 +1,444 @@
+{
+  "exportedAt": "2026-09-08T08:51:21Z",
+  "source": "coder-threads issue_list",
+  "roadmap": {
+    "number": 1130,
+    "title": "Audit: broken view actions and navigation, follow-up",
+    "url": "https://github.com/currentbits/solenta/issues/1130"
+  },
+  "doNotTouch": [
+    1121,
+    1122,
+    1123,
+    1124,
+    1125,
+    1126,
+    1127,
+    1128,
+    1129
+  ],
+  "groups": {
+    "automations": [
+      {
+        "number": 941,
+        "title": "Repeated Add automation while creation is pending creates duplicate enabled schedules",
+        "url": "https://github.com/currentbits/solenta/issues/941",
+        "state": "OPEN",
+        "labels": [
+          "plan:todo"
+        ],
+        "why": "duplicate enabled schedules while Add is pending"
+      },
+      {
+        "number": 938,
+        "title": "Show recent runs and open their transcripts from each automation",
+        "url": "https://github.com/currentbits/solenta/issues/938",
+        "state": "OPEN",
+        "labels": [
+          "plan:todo"
+        ],
+        "why": "recent runs from each automation"
+      },
+      {
+        "number": 937,
+        "title": "Edit existing automations in place using the existing update API",
+        "url": "https://github.com/currentbits/solenta/issues/937",
+        "state": "OPEN",
+        "labels": [
+          "plan:todo"
+        ],
+        "why": "edit automations in place"
+      },
+      {
+        "number": 932,
+        "title": "Automation retention permanently deletes unfinished threads waiting for quota",
+        "url": "https://github.com/currentbits/solenta/issues/932",
+        "state": "OPEN",
+        "labels": [
+          "plan:todo"
+        ],
+        "why": "retention deletes quota-wait threads"
+      },
+      {
+        "number": 931,
+        "title": "Weekly automations change weekday when a missed run is caught up",
+        "url": "https://github.com/currentbits/solenta/issues/931",
+        "state": "OPEN",
+        "labels": [
+          "plan:todo"
+        ],
+        "why": "weekly weekday shift after catch-up"
+      },
+      {
+        "number": 388,
+        "title": "Automation template gallery with a dry-run calibration lifecycle",
+        "url": "https://github.com/currentbits/solenta/issues/388",
+        "state": "OPEN",
+        "labels": [
+          "enhancement",
+          "plan:todo"
+        ],
+        "why": "template gallery / dry-run"
+      },
+      {
+        "number": 286,
+        "title": "Hard budget caps per thread and per automation",
+        "url": "https://github.com/currentbits/solenta/issues/286",
+        "state": "OPEN",
+        "labels": [
+          "enhancement",
+          "plan:todo"
+        ],
+        "why": "hard budget caps per automation"
+      },
+      {
+        "number": 275,
+        "title": "Workflow bundles: parameterized, shareable automations with one-click launch links",
+        "url": "https://github.com/currentbits/solenta/issues/275",
+        "state": "OPEN",
+        "labels": [
+          "enhancement",
+          "plan:todo"
+        ],
+        "why": "workflow bundles"
+      },
+      {
+        "number": 242,
+        "title": "Event-driven automation triggers (GitHub/CI/Linear/Sentry/webhook) + NL authoring + per-automation memory",
+        "url": "https://github.com/currentbits/solenta/issues/242",
+        "state": "OPEN",
+        "labels": [
+          "enhancement",
+          "plan:todo"
+        ],
+        "why": "event-driven automation triggers"
+      },
+      {
+        "number": 160,
+        "title": "Automation failure circuit breaker: pause after N consecutive failures",
+        "url": "https://github.com/currentbits/solenta/issues/160",
+        "state": "OPEN",
+        "labels": [
+          "enhancement",
+          "plan:todo"
+        ],
+        "why": "automation failure circuit breaker"
+      }
+    ],
+    "pr_list_and_pr_actions": [
+      {
+        "number": 729,
+        "title": "Flatten leftover chrome: Activity, PR list, onboarding, Workflows inner tiles",
+        "url": "https://github.com/currentbits/solenta/issues/729",
+        "state": "OPEN",
+        "labels": [
+          "enhancement",
+          "plan:done"
+        ],
+        "why": "flatten leftover chrome includes PR list"
+      },
+      {
+        "number": 427,
+        "title": "Forge-outage resilience: planboard and PR actions survive GitHub downtime",
+        "url": "https://github.com/currentbits/solenta/issues/427",
+        "state": "OPEN",
+        "labels": [
+          "enhancement",
+          "plan:todo"
+        ],
+        "why": "planboard and PR actions survive GitHub downtime"
+      },
+      {
+        "number": 363,
+        "title": "One-click commit-push-PR chain with PR-status sidebar icon",
+        "url": "https://github.com/currentbits/solenta/issues/363",
+        "state": "OPEN",
+        "labels": [
+          "enhancement",
+          "plan:todo"
+        ],
+        "why": "commit-push-PR chain with sidebar PR-status icon"
+      },
+      {
+        "number": 260,
+        "title": "Agent-PR triage queue: a 'which agent PR needs me' inbox",
+        "url": "https://github.com/currentbits/solenta/issues/260",
+        "state": "OPEN",
+        "labels": [
+          "enhancement",
+          "plan:todo"
+        ],
+        "why": "agent-PR triage queue"
+      },
+      {
+        "number": 255,
+        "title": "PR autopilot with a trust dial: CI green, address feedback, merge when conditions met",
+        "url": "https://github.com/currentbits/solenta/issues/255",
+        "state": "OPEN",
+        "labels": [
+          "enhancement",
+          "plan:todo"
+        ],
+        "why": "PR autopilot"
+      },
+      {
+        "number": 240,
+        "title": "Stacked PRs: position badges, ordered stack navigator, merge the safe prefix",
+        "url": "https://github.com/currentbits/solenta/issues/240",
+        "state": "OPEN",
+        "labels": [
+          "enhancement",
+          "plan:todo"
+        ],
+        "why": "stacked PRs navigator"
+      },
+      {
+        "number": 154,
+        "title": "PR workspace: draft PRs, editable bodies from repo templates, comment/merge actions in-app",
+        "url": "https://github.com/currentbits/solenta/issues/154",
+        "state": "OPEN",
+        "labels": [
+          "enhancement",
+          "plan:todo"
+        ],
+        "why": "PR workspace draft/comment/merge"
+      },
+      {
+        "number": 161,
+        "title": "Reaction loop: route CI failures and PR review comments back to the thread's agent",
+        "url": "https://github.com/currentbits/solenta/issues/161",
+        "state": "OPEN",
+        "labels": [
+          "enhancement",
+          "plan:todo"
+        ],
+        "why": "route CI/PR comments back to the thread"
+      }
+    ],
+    "fleet": [
+      {
+        "number": 728,
+        "title": "Flatten remaining app chrome: Memory, Skills, Settings, Kanban, Fleet, Digest, Planboard, Insights, Usage, Automations",
+        "url": "https://github.com/currentbits/solenta/issues/728",
+        "state": "OPEN",
+        "labels": [
+          "enhancement",
+          "plan:done"
+        ],
+        "why": "flatten remaining chrome names Fleet among secondary views"
+      }
+    ],
+    "insights_digest_activity": [
+      {
+        "number": 728,
+        "title": "Flatten remaining app chrome: Memory, Skills, Settings, Kanban, Fleet, Digest, Planboard, Insights, Usage, Automations",
+        "url": "https://github.com/currentbits/solenta/issues/728",
+        "state": "OPEN",
+        "labels": [
+          "enhancement",
+          "plan:done"
+        ],
+        "why": "flatten remaining chrome names Insights/Digest"
+      },
+      {
+        "number": 943,
+        "title": "Activity and Digest must distinguish load failures from empty results",
+        "url": "https://github.com/currentbits/solenta/issues/943",
+        "state": "OPEN",
+        "labels": [
+          "plan:todo"
+        ],
+        "why": "Activity and Digest load-failure vs empty"
+      },
+      {
+        "number": 1108,
+        "title": "Digest and Insights: keep deleted threads visible without navigating",
+        "url": "https://github.com/currentbits/solenta/issues/1108",
+        "state": "CLOSED",
+        "labels": [
+          "plan:done"
+        ],
+        "why": "CLOSED Digest and Insights deleted-thread visibility"
+      },
+      {
+        "number": 1109,
+        "title": "Activity: keep deleted threads visible without navigating",
+        "url": "https://github.com/currentbits/solenta/issues/1109",
+        "state": "CLOSED",
+        "labels": [
+          "plan:done"
+        ],
+        "why": "CLOSED Activity deleted-thread visibility"
+      }
+    ],
+    "navigation_and_view_state": [
+      {
+        "number": 942,
+        "title": "Return from a thread to the same view, selection and scroll position",
+        "url": "https://github.com/currentbits/solenta/issues/942",
+        "state": "OPEN",
+        "labels": [
+          "plan:todo"
+        ],
+        "why": "return from a thread to same view/selection/scroll"
+      },
+      {
+        "number": 929,
+        "title": "Web reconnect refreshes the sidebar but leaves the open transcript stale after a missed final update",
+        "url": "https://github.com/currentbits/solenta/issues/929",
+        "state": "OPEN",
+        "labels": [
+          "plan:todo"
+        ],
+        "why": "web reconnect leaves open transcript stale"
+      },
+      {
+        "number": 921,
+        "title": "Unsent composer drafts disappear when switching threads in the real App",
+        "url": "https://github.com/currentbits/solenta/issues/921",
+        "state": "OPEN",
+        "labels": [
+          "plan:todo"
+        ],
+        "why": "unsent composer drafts disappear when switching threads"
+      },
+      {
+        "number": 945,
+        "title": "Find Planboard cards by title or issue number without scanning every column",
+        "url": "https://github.com/currentbits/solenta/issues/945",
+        "state": "OPEN",
+        "labels": [
+          "plan:todo"
+        ],
+        "why": "find Planboard cards without scanning columns"
+      }
+    ],
+    "view_action_errors_races": [
+      {
+        "number": 941,
+        "title": "Repeated Add automation while creation is pending creates duplicate enabled schedules",
+        "url": "https://github.com/currentbits/solenta/issues/941",
+        "state": "OPEN",
+        "labels": [
+          "plan:todo"
+        ],
+        "why": "duplicate Add automation race"
+      },
+      {
+        "number": 936,
+        "title": "Review acceptance updates never schedule persistence and can remain unsaved indefinitely",
+        "url": "https://github.com/currentbits/solenta/issues/936",
+        "state": "OPEN",
+        "labels": [
+          "plan:todo"
+        ],
+        "why": "review acceptance never schedules persistence"
+      },
+      {
+        "number": 935,
+        "title": "Failed thread-notes saves discard the edited text when the editor is reopened",
+        "url": "https://github.com/currentbits/solenta/issues/935",
+        "state": "OPEN",
+        "labels": [
+          "plan:todo"
+        ],
+        "why": "failed thread-notes save discards text"
+      },
+      {
+        "number": 930,
+        "title": "Opening Settings before its data loads can silently remove existing spending caps",
+        "url": "https://github.com/currentbits/solenta/issues/930",
+        "state": "OPEN",
+        "labels": [
+          "plan:todo"
+        ],
+        "why": "Settings before load can remove spending caps"
+      },
+      {
+        "number": 928,
+        "title": "Reconnect coalescing drops repeated writes and acknowledges changes the host never applied",
+        "url": "https://github.com/currentbits/solenta/issues/928",
+        "state": "OPEN",
+        "labels": [
+          "plan:todo"
+        ],
+        "why": "reconnect coalescing drops writes"
+      },
+      {
+        "number": 926,
+        "title": "Failed queued-message edits close the editor and discard the revised text",
+        "url": "https://github.com/currentbits/solenta/issues/926",
+        "state": "OPEN",
+        "labels": [
+          "plan:todo"
+        ],
+        "why": "failed queued-message edits discard text"
+      },
+      {
+        "number": 924,
+        "title": "Manual run preflight failures permanently discard an existing queued prompt",
+        "url": "https://github.com/currentbits/solenta/issues/924",
+        "state": "OPEN",
+        "labels": [
+          "plan:todo"
+        ],
+        "why": "preflight failure discards queued prompt"
+      },
+      {
+        "number": 923,
+        "title": "Failed queue cancellation hides work that is still scheduled on the host",
+        "url": "https://github.com/currentbits/solenta/issues/923",
+        "state": "OPEN",
+        "labels": [
+          "plan:todo"
+        ],
+        "why": "failed queue cancellation hides scheduled work"
+      },
+      {
+        "number": 922,
+        "title": "Failed mid-run queue saves clear the composer and lose the follow-up",
+        "url": "https://github.com/currentbits/solenta/issues/922",
+        "state": "OPEN",
+        "labels": [
+          "plan:todo"
+        ],
+        "why": "failed mid-run queue save clears composer"
+      },
+      {
+        "number": 920,
+        "title": "Focus-trap nested confirm dialogs",
+        "url": "https://github.com/currentbits/solenta/issues/920",
+        "state": "OPEN",
+        "labels": [
+          "plan:todo"
+        ],
+        "why": "focus-trap nested confirm dialogs"
+      },
+      {
+        "number": 706,
+        "title": "Grok MCP registration is fire-and-forget and user-global: boot race, no project binding, log-only failures",
+        "url": "https://github.com/currentbits/solenta/issues/706",
+        "state": "OPEN",
+        "labels": [
+          "bug",
+          "plan:done"
+        ],
+        "why": "Grok MCP boot race"
+      },
+      {
+        "number": 181,
+        "title": "Kimi reasoning effort races concurrent kimi turns (global config.toml flip window)",
+        "url": "https://github.com/currentbits/solenta/issues/181",
+        "state": "OPEN",
+        "labels": [
+          "bug",
+          "plan:todo"
+        ],
+        "why": "kimi effort races concurrent turns"
+      }
+    ]
+  },
+  "openCount": 35,
+  "closedCount": 2,
+  "note": "Titles and states from host issue_list. Findings not filed this turn. Lead should exact-title-search before any later create."
+}

@@ -1,0 +1,129 @@
+{
+  "publishedAt": "2026-09-08T09:10:00Z",
+  "findingsPublishedAt": "2026-09-08T09:16:23Z",
+  "publisherThreadId": "6f2387e4-3257-4a95-8110-0f4c74f4e5ea",
+  "leadThreadId": "d0db8104-d443-4510-b27f-b83d96cc8fa4",
+  "projectId": "bdfb084e-f13d-4968-83eb-5bc85b5dd515",
+  "origin": "currentbits/solenta",
+  "source": "docs/issue-drafts/2026-09-08-editor-actions-audit.json",
+  "hostIssueTools": {
+    "available": true,
+    "tools": ["issue_create", "issue_list", "issue_set_plan", "issue_complete"],
+    "ghWrites": "forbidden",
+    "ghReads": "allowed"
+  },
+  "publicationStatus": "complete",
+  "findingsPublished": true,
+  "sequentialCreates": true,
+  "roadmap": {
+    "number": 1135,
+    "title": "Audit: editor and settings action reliability",
+    "url": "https://github.com/currentbits/solenta/issues/1135",
+    "state": "CLOSED",
+    "plan": "done",
+    "closedAt": "2026-09-08T09:16:23Z",
+    "note": "Closed for audit publication only. Implementation remains on #1136-#1139."
+  },
+  "published": [
+    {
+      "kind": "roadmap",
+      "number": 1135,
+      "title": "Audit: editor and settings action reliability",
+      "url": "https://github.com/currentbits/solenta/issues/1135",
+      "state": "CLOSED",
+      "labels": ["plan:done"]
+    },
+    {
+      "key": "doctor-confirmation-project",
+      "kind": "finding",
+      "priority": "P1",
+      "number": 1136,
+      "title": "Config doctor can write to a different project using a stale preview and confirmation",
+      "url": "https://github.com/currentbits/solenta/issues/1136",
+      "state": "OPEN",
+      "labels": ["plan:todo"]
+    },
+    {
+      "key": "workflow-editor-session",
+      "kind": "finding",
+      "priority": "P2",
+      "number": 1137,
+      "title": "Workflow editor silently discards drafts and lets an old save overwrite a reopened editor",
+      "url": "https://github.com/currentbits/solenta/issues/1137",
+      "state": "OPEN",
+      "labels": ["plan:todo"]
+    },
+    {
+      "key": "workflow-save-refresh",
+      "kind": "finding",
+      "priority": "P2",
+      "number": 1138,
+      "title": "Successful workflow saves are reported as failures when refresh rejects, causing duplicates on retry",
+      "url": "https://github.com/currentbits/solenta/issues/1138",
+      "state": "OPEN",
+      "labels": ["plan:todo"]
+    },
+    {
+      "key": "mcp-manual-argv",
+      "kind": "finding",
+      "priority": "P2",
+      "number": 1139,
+      "title": "Local MCP setup corrupts quoted paths and arguments containing spaces",
+      "url": "https://github.com/currentbits/solenta/issues/1139",
+      "state": "OPEN",
+      "labels": ["plan:todo"]
+    }
+  ],
+  "created": [
+    {
+      "key": "doctor-confirmation-project",
+      "priority": "P1",
+      "number": 1136,
+      "title": "Config doctor can write to a different project using a stale preview and confirmation",
+      "url": "https://github.com/currentbits/solenta/issues/1136",
+      "state": "OPEN",
+      "labels": ["plan:todo"],
+      "exactTitleSearch": "none"
+    },
+    {
+      "key": "workflow-editor-session",
+      "priority": "P2",
+      "number": 1137,
+      "title": "Workflow editor silently discards drafts and lets an old save overwrite a reopened editor",
+      "url": "https://github.com/currentbits/solenta/issues/1137",
+      "state": "OPEN",
+      "labels": ["plan:todo"],
+      "exactTitleSearch": "none"
+    },
+    {
+      "key": "workflow-save-refresh",
+      "priority": "P2",
+      "number": 1138,
+      "title": "Successful workflow saves are reported as failures when refresh rejects, causing duplicates on retry",
+      "url": "https://github.com/currentbits/solenta/issues/1138",
+      "state": "OPEN",
+      "labels": ["plan:todo"],
+      "exactTitleSearch": "none"
+    },
+    {
+      "key": "mcp-manual-argv",
+      "priority": "P2",
+      "number": 1139,
+      "title": "Local MCP setup corrupts quoted paths and arguments containing spaces",
+      "url": "https://github.com/currentbits/solenta/issues/1139",
+      "state": "OPEN",
+      "labels": ["plan:todo"],
+      "exactTitleSearch": "none"
+    }
+  ],
+  "overlapExport": "docs/issue-drafts/2026-09-08-editor-actions-overlap.json",
+  "doNotTouch": [1121, 1122, 1123, 1124, 1125, 1126, 1127, 1128, 1129, 1130, 1131, 1132, 1133, 1134],
+  "notFiled": [],
+  "verifiedOnOrigin": {
+    "1135": { "state": "CLOSED", "labels": ["plan:done"] },
+    "1136": { "state": "OPEN", "labels": ["plan:todo"] },
+    "1137": { "state": "OPEN", "labels": ["plan:todo"] },
+    "1138": { "state": "OPEN", "labels": ["plan:todo"] },
+    "1139": { "state": "OPEN", "labels": ["plan:todo"] }
+  }
+}

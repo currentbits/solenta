@@ -1,0 +1,118 @@
+{
+  "publishedAt": "2026-09-06T06:25:35Z",
+  "publisherThreadId": "c34ce7bb-3714-481c-91e3-1335267db074",
+  "leadThreadId": "a575bb2d-dc56-49ce-8951-3950113d3950",
+  "projectId": "bdfb084e-f13d-4968-83eb-5bc85b5dd515",
+  "source": "docs/issue-drafts/2026-09-06-views-audit.json",
+  "skippedDuplicates": [],
+  "relatedExistingNotRecreated": [
+    {
+      "number": 425,
+      "note": "daily-work/Pulse split; #942 preserves it"
+    },
+    {
+      "number": 556,
+      "note": "Usage breakdowns shipped; #946 adds thread drilldown"
+    },
+    {
+      "number": 597,
+      "note": "Planboard sidebar project scope"
+    },
+    {
+      "number": 598,
+      "note": "Kanban/Activity inherit sidebar scope; #944 adds in-view selector"
+    },
+    {
+      "number": 655,
+      "note": "Planboard fetch completeness; #945 is local card search"
+    },
+    {
+      "number": 728,
+      "note": "flatten chrome CSS"
+    },
+    {
+      "number": 729,
+      "note": "flatten leftover chrome CSS"
+    }
+  ],
+  "notRecreated": [
+    916,
+    917,
+    918,
+    919,
+    920,
+    921,
+    922,
+    923,
+    924,
+    925,
+    926,
+    927,
+    928,
+    929,
+    930,
+    931,
+    932,
+    933,
+    934,
+    935,
+    936,
+    937,
+    938,
+    939,
+    940,
+    941
+  ],
+  "created": [
+    {
+      "number": 942,
+      "title": "Return from a thread to the same view, selection and scroll position",
+      "url": "https://github.com/currentbits/solenta/issues/942",
+      "state": "OPEN",
+      "labels": [
+        "plan:todo"
+      ],
+      "kind": "proposal"
+    },
+    {
+      "number": 943,
+      "title": "Activity and Digest must distinguish load failures from empty results",
+      "url": "https://github.com/currentbits/solenta/issues/943",
+      "state": "OPEN",
+      "labels": [
+        "plan:todo"
+      ],
+      "kind": "bug"
+    },
+    {
+      "number": 944,
+      "title": "Show and change project scope inside Activity and Kanban",
+      "url": "https://github.com/currentbits/solenta/issues/944",
+      "state": "OPEN",
+      "labels": [
+        "plan:todo"
+      ],
+      "kind": "proposal"
+    },
+    {
+      "number": 945,
+      "title": "Find Planboard cards by title or issue number without scanning every column",
+      "url": "https://github.com/currentbits/solenta/issues/945",
+      "state": "OPEN",
+      "labels": [
+        "plan:todo"
+      ],
+      "kind": "proposal"
+    },
+    {
+      "number": 946,
+      "title": "Open the source thread directly from the Usage breakdown",
+      "url": "https://github.com/currentbits/solenta/issues/946",
+      "state": "OPEN",
+      "labels": [
+        "plan:todo"
+      ],
+      "kind": "proposal"
+    }
+  ]
+}
