@@ -1837,6 +1837,30 @@ export interface MergeLaneInfo {
   lastBeat: number;
 }
 
+export interface MergeLaneClaim {
+  n: number;
+  port: number;
+  path: string;
+  branch: string;
+}
+
+export interface MergeLanePreview {
+  lane: number;
+  sha: string;
+  files: string[];
+  path: string;
+}
+
+export interface MergeLaneRestore {
+  restored: boolean;
+  sha?: string;
+}
+
+export interface MergeLaneRecycle {
+  n: number;
+  threadId: string;
+}
+
 /** Stamp returned by heartbeatLane. */
 export interface MergeLaneBeat {
   n: number;
@@ -4227,12 +4251,22 @@ export interface CoderApi {
     gcClean(input: GcCleanInput): Promise<GcCleanResult>;
   };
   /**
-   * Local merge-queue lanes (#346 / #1114). List claimed lanes for a
-   * project and stamp lastBeat. Recycle and promote stay off this
-   * surface — these methods do not close issues.
+   * Local merge-queue lanes (#346 / #1114). Claim a numbered worktree,
+   * preview it onto the project checkout, restore, recycle a wedged lane,
+   * or heartbeat a claimed lane. Promote stays `git.mergeWorktree`
+   * (human-only). These methods do not close issues.
    */
   mergeQueue: {
+    claimLane(input: { threadId: string }): Promise<MergeLaneClaim>;
     listLanes(input: { projectId: string }): Promise<MergeLaneInfo[]>;
+    previewLane(input: {
+      projectId: string;
+      lane: number;
+    }): Promise<MergeLanePreview>;
+    restorePreview(input: { projectId: string }): Promise<MergeLaneRestore>;
+    recycleWedgedLanes(input: {
+      projectId: string;
+    }): Promise<MergeLaneRecycle[]>;
     heartbeatLane(input: {
       threadId: string;
       now?: number;

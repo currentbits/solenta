@@ -31,9 +31,16 @@ const {
   gcClean,
   scheduleRetention,
 } = require("./worktrees.js");
-const { listLanes, heartbeatLane } = require("./mergeQueue.js");
 const { suggestCommitMessage } = require("./commitmsg.js");
 const { listLocalServers } = require("./servers.js");
+const {
+  claimLane,
+  listLanes,
+  previewLane,
+  restorePreview,
+  recycleWedgedLanes,
+  heartbeatLane,
+} = require("./mergeQueue.js");
 const devservers = require("./devservers.js");
 const terminal = require("./terminal.js");
 const preview = require("./preview.js");
@@ -1687,16 +1694,6 @@ const IPC_HANDLERS = {
       return { ok: false };
     }
   },
-  "mergeQueue:listLanes": async (ctx, input) => {
-    return listLanes(ctx.store, input && input.projectId);
-  },
-  "mergeQueue:heartbeatLane": async (ctx, input) => {
-    return heartbeatLane({
-      store: ctx.store,
-      threadId: input && input.threadId,
-      now: input && input.now,
-    });
-  },
   "git:pull": async (ctx, input) => {
     // Never throws: failure modes come back in-band as { ok: false, reason }.
     try {
@@ -1733,6 +1730,45 @@ const IPC_HANDLERS = {
       worktreeBase: ctx.worktreeBase,
       paths: (input && input.paths) || [],
       broadcast: ctx.broadcast,
+    });
+  },
+  "mergeQueue:claimLane": async (ctx, input) => {
+    if (!ctx.worktreeBase) {
+      throw new Error("worktreeBase is not configured");
+    }
+    return claimLane({
+      store: ctx.store,
+      threadId: input && input.threadId,
+      worktreeBase: ctx.worktreeBase,
+    });
+  },
+  "mergeQueue:listLanes": async (ctx, input) => {
+    return listLanes(ctx.store, input && input.projectId);
+  },
+  "mergeQueue:previewLane": async (ctx, input) => {
+    return previewLane({
+      store: ctx.store,
+      projectId: input && input.projectId,
+      lane: input && input.lane,
+    });
+  },
+  "mergeQueue:restorePreview": async (ctx, input) => {
+    return restorePreview({
+      store: ctx.store,
+      projectId: input && input.projectId,
+    });
+  },
+  "mergeQueue:recycleWedgedLanes": async (ctx, input) => {
+    return recycleWedgedLanes({
+      store: ctx.store,
+      projectId: input && input.projectId,
+    });
+  },
+  "mergeQueue:heartbeatLane": async (ctx, input) => {
+    return heartbeatLane({
+      store: ctx.store,
+      threadId: input && input.threadId,
+      now: input && input.now,
     });
   },
   "vibeKanban:preview": async (ctx, input) => {

@@ -2851,8 +2851,26 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
       },
     },
     mergeQueue: {
+      claimLane: (input: unknown) =>
+        rec("mergeQueue.claimLane", [input], {
+          n: 1,
+          port: 3001,
+          path: "/tmp/lane-1",
+          branch: "lane/1",
+        }),
       listLanes: (input: unknown) =>
         rec("mergeQueue.listLanes", [input], []),
+      previewLane: (input: unknown) =>
+        rec("mergeQueue.previewLane", [input], {
+          lane: 1,
+          sha: "abc",
+          files: [],
+          path: "/tmp/project",
+        }),
+      restorePreview: (input: unknown) =>
+        rec("mergeQueue.restorePreview", [input], { restored: false }),
+      recycleWedgedLanes: (input: unknown) =>
+        rec("mergeQueue.recycleWedgedLanes", [input], []),
       heartbeatLane: (input: unknown) =>
         rec("mergeQueue.heartbeatLane", [input], null),
     },

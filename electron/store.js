@@ -1178,6 +1178,17 @@ function normalizeIntegrationLanded(raw) {
   return { at, sha, via };
 }
 
+function normalizeMergeQueue(raw) {
+  if (!Array.isArray(raw) || raw.length === 0) return undefined;
+  const out = [];
+  for (const id of raw) {
+    if (typeof id !== "string") continue;
+    const trimmed = id.trim();
+    if (trimmed && !out.includes(trimmed)) out.push(trimmed);
+  }
+  return out.length ? out : undefined;
+}
+
 /**
  * Numbered merge-queue lane (#346). Omitted when invalid.
  * @param {unknown} raw
@@ -1334,6 +1345,9 @@ function migrateThread(t) {
   const landed = normalizeIntegrationLanded(t.integrationLanded);
   if (landed) next.integrationLanded = landed;
   else delete next.integrationLanded;
+  const mergeQueue = normalizeMergeQueue(t.mergeQueue);
+  if (mergeQueue) next.mergeQueue = mergeQueue;
+  else delete next.mergeQueue;
   const lane = normalizeMergeLane(t.lane);
   if (lane) next.lane = lane;
   else delete next.lane;

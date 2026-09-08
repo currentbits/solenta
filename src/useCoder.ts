@@ -24,7 +24,10 @@ import type {
   GitRepoInfo,
   GitPullResult,
   MergeLaneBeat,
+  MergeLaneClaim,
   MergeLaneInfo,
+  MergeLanePreview,
+  MergeLaneRestore,
   FetchIssueResult,
   CreateIssueResult,
   LocalServerInfo,
@@ -580,8 +583,17 @@ export interface UseCoderResult {
   gitRepoInfo: (threadId: string) => Promise<GitRepoInfo>;
   /** `git pull --ff-only` for a thread root. Never rejects. */
   gitPull: (threadId: string) => Promise<GitPullResult>;
+  /** Claim the next free numbered merge-queue lane (#346). */
+  claimLane: (input: { threadId: string }) => Promise<MergeLaneClaim>;
   /** Claimed merge-queue lanes for a project (#346 / #1114). */
   listLanes: (input: { projectId: string }) => Promise<MergeLaneInfo[]>;
+  /** Mirror a lane onto the project checkout. */
+  previewLane: (input: {
+    projectId: string;
+    lane: number;
+  }) => Promise<MergeLanePreview>;
+  /** Undo a lane preview on the project checkout. */
+  restorePreview: (input: { projectId: string }) => Promise<MergeLaneRestore>;
   /** Stamp lastBeat on a claimed lane. Does not recycle or close issues. */
   heartbeatLane: (input: {
     threadId: string;
@@ -3111,9 +3123,30 @@ export function useCoder(): UseCoderResult {
     [api],
   );
 
+  const claimLane = useCallback(
+    async (input: { threadId: string }) => {
+      return api.mergeQueue.claimLane(input);
+    },
+    [api],
+  );
+
   const listLanes = useCallback(
     async (input: { projectId: string }) => {
       return api.mergeQueue.listLanes(input);
+    },
+    [api],
+  );
+
+  const previewLane = useCallback(
+    async (input: { projectId: string; lane: number }) => {
+      return api.mergeQueue.previewLane(input);
+    },
+    [api],
+  );
+
+  const restorePreview = useCallback(
+    async (input: { projectId: string }) => {
+      return api.mergeQueue.restorePreview(input);
     },
     [api],
   );
@@ -3649,7 +3682,10 @@ export function useCoder(): UseCoderResult {
     gitFetch,
     gitRepoInfo,
     gitPull,
+    claimLane,
     listLanes,
+    previewLane,
+    restorePreview,
     heartbeatLane,
     listDevScripts,
     startDevServer,

@@ -5649,7 +5649,24 @@ function buildDevCoder(): CoderApi {
       },
     },
     mergeQueue: {
+      async claimLane(_input: { threadId: string }) {
+        return { n: 1, port: 3001, path: "/tmp/lane-1", branch: "lane/1" };
+      },
       async listLanes(_input: { projectId: string }) {
+        return [];
+      },
+      async previewLane(input: { projectId: string; lane: number }) {
+        return {
+          lane: input.lane,
+          sha: "demo",
+          files: [],
+          path: "/tmp/project",
+        };
+      },
+      async restorePreview(_input: { projectId: string }) {
+        return { restored: false };
+      },
+      async recycleWedgedLanes(_input: { projectId: string }) {
         return [];
       },
       async heartbeatLane(_input: { threadId: string; now?: number }) {
