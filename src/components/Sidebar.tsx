@@ -54,9 +54,26 @@ import {
   serializeProviderFilter,
   statusFilterLabel,
   tagFilterLabel,
+  threadMatchesFilter,
   type GroupBy,
   type StatusFilter,
 } from "../sidebarFilters";
+import {
+  ACTIVE_SAVED_VIEW_KEY,
+  SAVED_VIEWS_KEY,
+  addSavedView,
+  criteriaEqual,
+  deleteSavedView,
+  parseActiveSavedViewId,
+  parseSavedViews,
+  renameSavedView,
+  savedViewTriggerLabel,
+  savedViewUnavailable,
+  serializeSavedViews,
+  updateSavedView,
+  type SavedView,
+  type SavedViewCriteria,
+} from "../sidebarViews";
 import type { SettingsPane } from "./SettingsModal";
 import { showContextMenu } from "../contextMenu";
 import { buildThreadActionMenuItems } from "../threadActionMenu";
@@ -107,7 +124,8 @@ const MIN_SEARCH_LEN = 2;
 const SCOPE_KEY = "sidebar:projectScope";
 const SNOOZED_OPEN_KEY = "sidebar:snoozedOpen";
 const SETTLED_OPEN_KEY = "sidebar:settledOpen";
-type FilterMenu = "status" | "provider" | "group" | "tag";
+type FilterMenu = "status" | "provider" | "group" | "tag" | "views";
+type ViewEditor = { mode: "save" | "rename"; name: string };
 
 /**
  * t3 list animation: rows glide on lifecycle transitions instead of the
@@ -1482,7 +1500,25 @@ export const Sidebar = memo(function Sidebar({
   onRevealHandled,
   conflictForecast = null,
 }: SidebarProps) {
-  const [query, setQuery] = useState("");
+  const [savedViews, setSavedViews] = useState<SavedView[]>(() =>
+    parseSavedViews(loadStored(SAVED_VIEWS_KEY)),
+  );
+  const [activeViewId, setActiveViewId] = useState<string | null>(() =>
+    parseActiveSavedViewId(
+      loadStored(ACTIVE_SAVED_VIEW_KEY),
+      parseSavedViews(loadStored(SAVED_VIEWS_KEY)),
+    ),
+  );
+  const [viewEditor, setViewEditor] = useState<ViewEditor | null>(null);
+  const [query, setQuery] = useState(() => {
+    const views = parseSavedViews(loadStored(SAVED_VIEWS_KEY));
+    const id = parseActiveSavedViewId(
+      loadStored(ACTIVE_SAVED_VIEW_KEY),
+      views,
+    );
+    const view = views.find((v) => v.id === id);
+    return view?.criteria.query ?? "";
+  });
   const [now, setNow] = useState(() => Date.now());
   const [updating, setUpdating] = useState(false);
   const [createMenuOpen, setCreateMenuOpen] = useState(false);
@@ -1511,6 +1547,7 @@ export const Sidebar = memo(function Sidebar({
       setBasePicker(null);
       setScopeMenuOpen(false);
       setFilterMenu(null);
+      setViewEditor(null);
     },
   );
   const [importCliProvider, setImportCliProvider] =
@@ -1682,23 +1719,26 @@ export const Sidebar = memo(function Sidebar({
     revealThreadId,
   ]);
 
-  // Drop a stale scope if the project was removed.
+  // Drop a stale scope if the project was removed. An active saved view
+  // keeps the criterion so a missing project stays empty, not "all projects".
   useEffect(() => {
+    if (activeViewId != null) return;
     if (projectScope != null && !projectById.has(projectScope)) {
       setProjectScope(null);
       saveStored(SCOPE_KEY, null);
     }
-  }, [projectScope, projectById]);
+  }, [projectScope, projectById, activeViewId]);
 
   const knownTags = useMemo(() => allTags(threads), [threads]);
 
   // Drop a stale tag filter when no thread carries the tag anymore.
   useEffect(() => {
+    if (activeViewId != null) return;
     if (tagFilter != null && !knownTags.includes(tagFilter)) {
       setTagFilter(null);
       saveStored(TAG_FILTER_KEY, null);
     }
-  }, [tagFilter, knownTags]);
+  }, [tagFilter, knownTags, activeViewId]);
 
   useEffect(() => {
     setSettledVisibleCount(SETTLED_TAIL_INITIAL_COUNT);
@@ -2028,6 +2068,52 @@ export const Sidebar = memo(function Sidebar({
       });
   };
 
+  const persistViews = (next: SavedView[]) => {
+    setSavedViews(next);
+    saveStored(SAVED_VIEWS_KEY, next.length ? serializeSavedViews(next) : null);
+  };
+
+  const persistActiveViewId = (id: string | null) => {
+    setActiveViewId(id);
+    saveStored(ACTIVE_SAVED_VIEW_KEY, id);
+  };
+
+  const applyCriteria = (c: SavedViewCriteria) => {
+    setStatusFilter(c.status);
+    saveStored(STATUS_FILTER_KEY, c.status);
+    setProviderFilter([...c.providers]);
+    saveStored(PROVIDER_FILTER_KEY, serializeProviderFilter(c.providers));
+    setTagFilter(c.tag);
+    saveStored(TAG_FILTER_KEY, c.tag);
+    setProjectScope(c.projectId);
+    saveStored(SCOPE_KEY, c.projectId);
+    setGroupBy(c.groupBy);
+    saveStored(GROUP_BY_KEY, c.groupBy === "none" ? null : c.groupBy);
+    setQuery(c.query);
+    if (c.status === "archived") {
+      setSettledOpen(true);
+      saveFlag(SETTLED_OPEN_KEY, true);
+    }
+  };
+
+  const currentCriteria = useMemo<SavedViewCriteria>(
+    () => ({
+      status: statusFilter,
+      providers: providerFilter,
+      projectId: projectScope,
+      tag: tagFilter,
+      query: query.trim(),
+      groupBy,
+    }),
+    [statusFilter, providerFilter, projectScope, tagFilter, query, groupBy],
+  );
+
+  const activeSavedView =
+    savedViews.find((v) => v.id === activeViewId) ?? null;
+  const viewModified =
+    activeSavedView != null &&
+    !criteriaEqual(activeSavedView.criteria, currentCriteria);
+
   const setScope = (id: string | null) => {
     setProjectScope(id);
     saveStored(SCOPE_KEY, id);
@@ -2070,7 +2156,51 @@ export const Sidebar = memo(function Sidebar({
   const toggleFilterMenu = (menu: FilterMenu) => {
     setCreateMenuOpen(false);
     setScopeMenuOpen(false);
+    setViewEditor(null);
     setFilterMenu((open) => (open === menu ? null : menu));
+  };
+
+  const recallSavedView = (view: SavedView) => {
+    persistActiveViewId(view.id);
+    applyCriteria(view.criteria);
+    setViewEditor(null);
+    setFilterMenu(null);
+  };
+
+  const submitViewEditor = () => {
+    if (!viewEditor) return;
+    if (viewEditor.mode === "save") {
+      const next = addSavedView(savedViews, {
+        name: viewEditor.name,
+        criteria: currentCriteria,
+      });
+      if (next.length === savedViews.length) return;
+      persistViews(next);
+      persistActiveViewId(next[0]!.id);
+      setViewEditor(null);
+      return;
+    }
+    if (!activeSavedView) return;
+    const next = renameSavedView(savedViews, activeSavedView.id, viewEditor.name);
+    persistViews(next);
+    setViewEditor(null);
+  };
+
+  const updateActiveView = () => {
+    if (!activeSavedView || !viewModified) return;
+    persistViews(
+      updateSavedView(savedViews, activeSavedView.id, currentCriteria),
+    );
+    setFilterMenu(null);
+    setViewEditor(null);
+  };
+
+  const deleteActiveView = () => {
+    if (!activeSavedView) return;
+    persistViews(deleteSavedView(savedViews, activeSavedView.id));
+    persistActiveViewId(null);
+    setFilterMenu(null);
+    setViewEditor(null);
   };
 
   const toggleSnoozed = () => {
@@ -2237,6 +2367,40 @@ export const Sidebar = memo(function Sidebar({
       settledTail.length ===
       0;
 
+  const viewUnavailable =
+    activeViewId != null
+      ? savedViewUnavailable(currentCriteria, {
+          projectIds: new Set(projectById.keys()),
+          tags: knownTags,
+          providerIds: new Set(providerOptions.map((p) => p.id)),
+        })
+      : null;
+
+  const keptOutsideFilter = (() => {
+    if (!activeThreadId) return false;
+    if (
+      statusFilter == null &&
+      providerFilter.length === 0 &&
+      tagFilter == null &&
+      projectScope == null
+    ) {
+      return false;
+    }
+    const open = liveById.get(activeThreadId);
+    if (!open) return false;
+    if (!displayThreads.some((t) => t.id === open.id)) return false;
+    return !threadMatchesFilter(
+      open,
+      {
+        status: statusFilter,
+        providers: providerFilter,
+        projectId: projectScope,
+        tag: tagFilter,
+      },
+      waitStates.get(open.id),
+    );
+  })();
+
   return (
     <aside className={styles.sidebar}>
       {!isWebMode() && <div className={styles.dragRegion} />}
@@ -2318,6 +2482,7 @@ export const Sidebar = memo(function Sidebar({
                 onClick={() => {
                   setScopeMenuOpen(false);
                   setFilterMenu(null);
+                  setViewEditor(null);
                   setBasePicker(null);
                   setCreateMenuOpen((open) => !open);
                 }}
@@ -2575,6 +2740,7 @@ export const Sidebar = memo(function Sidebar({
             onClick={() => {
               setCreateMenuOpen(false);
               setFilterMenu(null);
+              setViewEditor(null);
               setScopeMenuOpen((open) => !open);
             }}
           >
@@ -2689,6 +2855,156 @@ export const Sidebar = memo(function Sidebar({
             <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
           </Icon>
         </button>
+      </div>
+
+      <div className={styles.viewRow}>
+        <span className={styles.filterMenuHost}>
+          <button
+            type="button"
+            className={styles.viewTrigger}
+            data-saved-views-trigger=""
+            data-active={activeSavedView ? "true" : undefined}
+            data-modified={viewModified ? "true" : undefined}
+            aria-haspopup="menu"
+            aria-expanded={filterMenu === "views"}
+            aria-label={
+              activeSavedView
+                ? viewModified
+                  ? `Saved views, ${activeSavedView.name}, modified`
+                  : `Saved views, ${activeSavedView.name}`
+                : "Saved views"
+            }
+            onClick={() => toggleFilterMenu("views")}
+          >
+            <span className={styles.filterTriggerLabel}>
+              {savedViewTriggerLabel(
+                activeSavedView ? { name: activeSavedView.name } : null,
+                viewModified,
+              )}
+            </span>
+            <Icon size={12}>
+              <path d="m6 9 6 6 6-6" />
+            </Icon>
+          </button>
+          {filterMenu === "views" && (
+            <div
+              className={`${styles.menu} ${styles.menuLeft} ${styles.viewMenu}`}
+              role="menu"
+              data-saved-views-menu=""
+            >
+              {savedViews.length === 0 && !viewEditor && (
+                <p className={styles.viewEmpty}>No saved views</p>
+              )}
+              {savedViews.map((view) => (
+                <button
+                  key={view.id}
+                  type="button"
+                  className={styles.menuItem}
+                  role="menuitem"
+                  data-saved-view={view.id}
+                  data-saved-view-label={view.name}
+                  data-selected={
+                    view.id === activeViewId ? "true" : undefined
+                  }
+                  onClick={() => recallSavedView(view)}
+                >
+                  {view.name}
+                  {view.id === activeViewId && !viewModified && (
+                    <span className={styles.filterCheck}>
+                      <Icon size={12}>
+                        <path d="M5 12.5 9 16.5 19 7.5" />
+                      </Icon>
+                    </span>
+                  )}
+                </button>
+              ))}
+              {viewEditor ? (
+                <form
+                  className={styles.viewNameForm}
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    submitViewEditor();
+                  }}
+                >
+                  <input
+                    className={styles.viewNameInput}
+                    data-saved-view-name=""
+                    value={viewEditor.name}
+                    onChange={(e) =>
+                      setViewEditor({ ...viewEditor, name: e.target.value })
+                    }
+                    placeholder="View name"
+                    aria-label="View name"
+                    autoFocus
+                  />
+                  <button
+                    type="submit"
+                    className={styles.viewNameSave}
+                    data-saved-view-save-confirm=""
+                    disabled={viewEditor.name.trim() === ""}
+                  >
+                    Save
+                  </button>
+                </form>
+              ) : (
+                <>
+                  {savedViews.length > 0 && (
+                    <div className={styles.menuSep} />
+                  )}
+                  <button
+                    type="button"
+                    className={styles.menuItem}
+                    role="menuitem"
+                    data-saved-view-save=""
+                    onClick={() =>
+                      setViewEditor({ mode: "save", name: "" })
+                    }
+                  >
+                    Save current as…
+                  </button>
+                  {activeSavedView && viewModified && (
+                    <button
+                      type="button"
+                      className={styles.menuItem}
+                      role="menuitem"
+                      data-saved-view-update=""
+                      onClick={updateActiveView}
+                    >
+                      Update view
+                    </button>
+                  )}
+                  {activeSavedView && (
+                    <button
+                      type="button"
+                      className={styles.menuItem}
+                      role="menuitem"
+                      data-saved-view-rename=""
+                      onClick={() =>
+                        setViewEditor({
+                          mode: "rename",
+                          name: activeSavedView.name,
+                        })
+                      }
+                    >
+                      Rename…
+                    </button>
+                  )}
+                  {activeSavedView && (
+                    <button
+                      type="button"
+                      className={styles.menuItem}
+                      role="menuitem"
+                      data-saved-view-delete=""
+                      onClick={deleteActiveView}
+                    >
+                      Delete view
+                    </button>
+                  )}
+                </>
+              )}
+            </div>
+          )}
+        </span>
       </div>
 
       <div className={styles.filterRow} data-filter-row="">
@@ -3071,6 +3387,19 @@ export const Sidebar = memo(function Sidebar({
           </button>
         )}
 
+        {viewUnavailable && (
+          <p className={styles.emptySearch} data-view-unavailable="">
+            {viewUnavailable.message}
+          </p>
+        )}
+
+        {keptOutsideFilter && (
+          <p className={styles.filterCarveOut} data-filter-carve-out="">
+            The open thread stays visible even when it doesn't match these
+            filters
+          </p>
+        )}
+
         {searchInFlight && (
           <p className={styles.searchHint} aria-live="polite">
             Searching…
@@ -3244,7 +3573,7 @@ export const Sidebar = memo(function Sidebar({
                 </div>
               )}
 
-              {listEmpty && projects.length > 0 && (
+              {listEmpty && projects.length > 0 && !viewUnavailable && (
                 <p className={styles.emptySearch}>
                   {filtersOn
                     ? "No threads match these filters"

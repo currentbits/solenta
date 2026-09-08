@@ -72,6 +72,8 @@ afterEach(() => {
       "sidebar:providerFilter",
       "sidebar:tagFilter",
       "sidebar:groupBy",
+      "sidebar:savedViews",
+      "sidebar:activeSavedView",
       "coder.sidebar.collapsedGroups",
       "coder.sidebar.settledCollapsed",
     ]) {
@@ -2919,3 +2921,326 @@ describe("Sidebar thread tags (#789)", () => {
     m.unmount();
   });
 });
+
+describe("Sidebar saved filter views (#939)", () => {
+  const moreProviders: ProviderInfo[] = [
+    ...providers,
+    {
+      id: "codex",
+      name: "Codex",
+      available: true,
+      supportsResume: true,
+      models: [],
+      modelInfo: [],
+      efforts: [],
+    },
+  ];
+
+  const viewThreads: ThreadInfo[] = [
+    thread({
+      id: "busy",
+      title: "busy work",
+      status: "working",
+      runStartedAt: FRESH,
+      createdAt: FRESH + 50,
+      updatedAt: FRESH + 50,
+      projectId: "p1",
+    }),
+    thread({
+      id: "codex-fail",
+      title: "codex fail",
+      status: "failed",
+      provider: "codex",
+      createdAt: FRESH + 40,
+      updatedAt: FRESH + 40,
+      projectId: "p1",
+    }),
+    thread({
+      id: "release-tag",
+      title: "release tagged",
+      status: "idle",
+      tags: ["release"],
+      createdAt: FRESH + 30,
+      updatedAt: FRESH + 30,
+      projectId: "p1",
+    }),
+    thread({
+      id: "billing-idle",
+      title: "billing idle",
+      status: "idle",
+      createdAt: FRESH + 10,
+      updatedAt: FRESH + 10,
+      projectId: "p2",
+    }),
+  ];
+
+  async function openViewsMenu(
+    m: Awaited<ReturnType<typeof mount>>,
+  ): Promise<void> {
+    if (!m.query("[data-saved-views-menu]")) {
+      const btn = m.query("[data-saved-views-trigger]");
+      assert.ok(btn, "saved views trigger");
+      await m.click(btn);
+      await m.flush();
+    }
+  }
+
+  async function saveCurrentView(
+    m: Awaited<ReturnType<typeof mount>>,
+    name: string,
+  ): Promise<void> {
+    await openViewsMenu(m);
+    const save = m.query("[data-saved-view-save]");
+    assert.ok(save, "Save current as");
+    await m.click(save);
+    await m.flush();
+    const input = m.query("[data-saved-view-name]") as HTMLInputElement | null;
+    assert.ok(input, "name input");
+    await m.type(input, name);
+    const confirm = m.query("[data-saved-view-save-confirm]");
+    assert.ok(confirm, "save confirm");
+    await m.click(confirm);
+    await m.flush();
+  }
+
+  it("saves two combinations and recalls them independently after remount", async () => {
+    await clearSidebarStorage();
+    const opts = { projects: [p1, p2], providers: moreProviders };
+    const m1 = await mount(sidebar(viewThreads, opts));
+    await m1.click(m1.query("[data-status-filter-trigger]")!);
+    await m1.flush();
+    await m1.click(m1.query('[data-status-filter="failed"]')!);
+    await m1.flush();
+    await m1.click(m1.query("[data-provider-filter-trigger]")!);
+    await m1.flush();
+    await m1.click(m1.query('[data-provider-filter="codex"]')!);
+    await m1.flush();
+    await saveCurrentView(m1, "Failed Codex threads");
+    assert.deepEqual(cardTitles(m1), ["codex-fail"]);
+    m1.unmount();
+
+    const m2 = await mount(sidebar(viewThreads, opts));
+    await m2.click(m2.query("[data-status-filter-trigger]")!);
+    await m2.flush();
+    await m2.click(m2.query('[data-status-filter="all"]')!);
+    await m2.flush();
+    await m2.click(m2.query("[data-provider-filter-trigger]")!);
+    await m2.flush();
+    await m2.click(m2.query('[data-provider-filter="all"]')!);
+    await m2.flush();
+    await m2.click(m2.query("[data-tag-filter-trigger]")!);
+    await m2.flush();
+    await m2.click(m2.query('[data-tag-filter="release"]')!);
+    await m2.flush();
+    await saveCurrentView(m2, "Release-tagged threads");
+    assert.deepEqual(cardTitles(m2), ["release-tag"]);
+    m2.unmount();
+
+    const m3 = await mount(sidebar(viewThreads, opts));
+    await openViewsMenu(m3);
+    await m3.click(m3.query('[data-saved-view-label="Failed Codex threads"]')!);
+    await m3.flush();
+    assert.deepEqual(cardTitles(m3), ["codex-fail"]);
+    assert.match(
+      m3.query("[data-saved-views-trigger]")!.textContent || "",
+      /Failed Codex threads/,
+    );
+    m3.unmount();
+
+    const m4 = await mount(sidebar(viewThreads, opts));
+    await openViewsMenu(m4);
+    await m4.click(m4.query('[data-saved-view-label="Release-tagged threads"]')!);
+    await m4.flush();
+    assert.deepEqual(cardTitles(m4), ["release-tag"]);
+    m4.unmount();
+
+    const m5 = await mount(sidebar(viewThreads, opts));
+    await openViewsMenu(m5);
+    await m5.click(m5.query('[data-saved-view-label="Failed Codex threads"]')!);
+    await m5.flush();
+    assert.deepEqual(cardTitles(m5), ["codex-fail"]);
+    m5.unmount();
+  });
+
+  it("marks the active view modified when filters change, and update restores it", async () => {
+    await clearSidebarStorage();
+    const m = await mount(
+      sidebar(viewThreads, { projects: [p1, p2], providers: moreProviders }),
+    );
+    await m.click(m.query("[data-status-filter-trigger]")!);
+    await m.flush();
+    await m.click(m.query('[data-status-filter="failed"]')!);
+    await m.flush();
+    await saveCurrentView(m, "Failed");
+    assert.equal(
+      m.query("[data-saved-views-trigger]")!.getAttribute("data-modified"),
+      null,
+    );
+    await m.click(m.query("[data-status-filter-trigger]")!);
+    await m.flush();
+    await m.click(m.query('[data-status-filter="idle"]')!);
+    await m.flush();
+    assert.equal(
+      m.query("[data-saved-views-trigger]")!.getAttribute("data-modified"),
+      "true",
+    );
+    await openViewsMenu(m);
+    await m.click(m.query("[data-saved-view-update]")!);
+    await m.flush();
+    assert.equal(
+      m.query("[data-saved-views-trigger]")!.getAttribute("data-modified"),
+      null,
+    );
+    assert.ok(cardTitles(m).includes("release-tag"));
+    assert.ok(!cardTitles(m).includes("codex-fail"));
+    m.unmount();
+  });
+
+  it("new matching threads appear because views store criteria, not ids", async () => {
+    await clearSidebarStorage();
+    const opts = { projects: [p1, p2], providers: moreProviders };
+    const m = await mount(sidebar(viewThreads, opts));
+    await m.click(m.query("[data-status-filter-trigger]")!);
+    await m.flush();
+    await m.click(m.query('[data-status-filter="failed"]')!);
+    await m.flush();
+    await m.click(m.query("[data-provider-filter-trigger]")!);
+    await m.flush();
+    await m.click(m.query('[data-provider-filter="codex"]')!);
+    await m.flush();
+    await saveCurrentView(m, "Failed Codex");
+    assert.deepEqual(cardTitles(m), ["codex-fail"]);
+    await m.rerender(
+      sidebar(
+        [
+          ...viewThreads,
+          thread({
+            id: "codex-fail-new",
+            title: "new failure",
+            status: "failed",
+            provider: "codex",
+            createdAt: FRESH + 80,
+            updatedAt: FRESH + 80,
+            projectId: "p1",
+          }),
+        ],
+        opts,
+      ),
+    );
+    const ids = cardTitles(m);
+    assert.ok(ids.includes("codex-fail"));
+    assert.ok(ids.includes("codex-fail-new"));
+    assert.ok(!ids.includes("release-tag"));
+    m.unmount();
+  });
+
+  it("explains the open-thread carve-out when it misses the filter", async () => {
+    await clearSidebarStorage();
+    const m = await mount(
+      sidebar(viewThreads, {
+        projects: [p1, p2],
+        providers: moreProviders,
+        activeThreadId: "billing-idle",
+      }),
+    );
+    await m.click(m.query("[data-status-filter-trigger]")!);
+    await m.flush();
+    await m.click(m.query('[data-status-filter="failed"]')!);
+    await m.flush();
+    assert.ok(cardTitles(m).includes("billing-idle"));
+    const note = m.query("[data-filter-carve-out]");
+    assert.ok(note, "carve-out is visible");
+    assert.match(
+      note!.textContent || "",
+      /open thread stays visible/i,
+    );
+    m.unmount();
+  });
+
+  it("a missing project on an active view is unavailable, not silently broadened", async () => {
+    await clearSidebarStorage();
+    const { serializeSavedViews, addSavedView } = await import(
+      "../src/sidebarViews.ts"
+    );
+    const views = addSavedView([], {
+      name: "Gone project",
+      criteria: {
+        status: null,
+        providers: [],
+        projectId: "missing-project",
+        tag: null,
+        query: "",
+        groupBy: "none",
+      },
+      now: 1,
+      id: "v-gone",
+    });
+    window.localStorage.setItem("sidebar:savedViews", serializeSavedViews(views));
+    window.localStorage.setItem("sidebar:activeSavedView", "v-gone");
+    window.localStorage.setItem("sidebar:projectScope", "missing-project");
+    const m = await mount(
+      sidebar(viewThreads, { projects: [p1, p2], providers: moreProviders }),
+    );
+    const unavailable = m.query("[data-view-unavailable]");
+    assert.ok(unavailable, "explicit unavailable state");
+    assert.match(
+      unavailable!.textContent || "",
+      /project is no longer available/i,
+    );
+    assert.equal(
+      cardTitles(m).length,
+      0,
+      "must not fall back to all projects",
+    );
+    m.unmount();
+  });
+
+  it("renames the active view from the same menu", async () => {
+    await clearSidebarStorage();
+    const m = await mount(
+      sidebar(viewThreads, { projects: [p1, p2], providers: moreProviders }),
+    );
+    await m.click(m.query("[data-status-filter-trigger]")!);
+    await m.flush();
+    await m.click(m.query('[data-status-filter="failed"]')!);
+    await m.flush();
+    await saveCurrentView(m, "Failed");
+    await openViewsMenu(m);
+    await m.click(m.query("[data-saved-view-rename]")!);
+    await m.flush();
+    const input = m.query("[data-saved-view-name]") as HTMLInputElement | null;
+    assert.ok(input, "rename input");
+    await m.type(input, "Failed Codex");
+    await m.click(m.query("[data-saved-view-save-confirm]")!);
+    await m.flush();
+    assert.match(
+      m.query("[data-saved-views-trigger]")!.textContent || "",
+      /Failed Codex/,
+    );
+    assert.ok(m.query('[data-saved-view-label="Failed Codex"]'));
+    m.unmount();
+  });
+
+  it("deleting a saved view leaves threads in place", async () => {
+    await clearSidebarStorage();
+    const m = await mount(
+      sidebar(viewThreads, { projects: [p1, p2], providers: moreProviders }),
+    );
+    await m.click(m.query("[data-status-filter-trigger]")!);
+    await m.flush();
+    await m.click(m.query('[data-status-filter="failed"]')!);
+    await m.flush();
+    await saveCurrentView(m, "Failed");
+    const before = cardTitles(m);
+    await openViewsMenu(m);
+    await m.click(m.query("[data-saved-view-delete]")!);
+    await m.flush();
+    assert.deepEqual(cardTitles(m), before);
+    assert.equal(
+      m.query('[data-saved-view-label="Failed"]'),
+      null,
+    );
+    m.unmount();
+  });
+});
+
