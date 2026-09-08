@@ -3913,6 +3913,34 @@ async function rewindThread(store, input, opts) {
 const THREAD_STILL_HAS_WORKTREE =
   "Thread still has a worktree. Merge or delete it in the Git tab first.";
 
+/** Bounded restore window for manual deletion (#940). */
+const TRASH_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+
+/**
+ * @param {object | null | undefined} thread
+ * @returns {boolean}
+ */
+function isTrashed(thread) {
+  return Boolean(thread && Number.isFinite(thread.trashedAt));
+}
+
+/**
+ * @param {object | null | undefined} thread
+ * @param {number} now
+ * @returns {boolean}
+ */
+function isTrashExpired(thread, now) {
+  return isTrashed(thread) && thread.trashedAt + TRASH_TTL_MS <= now;
+}
+
+/**
+ * @param {{ now?: number } | null | undefined} opts
+ * @returns {number}
+ */
+function trashNow(opts) {
+  return opts && Number.isFinite(opts.now) ? opts.now : Date.now();
+}
+
 /**
  * Drop a thread and every *ByThread map entry (messages, work log, usage).
  * Does not save; caller owns durability so bulk callers can save once.
@@ -3921,6 +3949,80 @@ const THREAD_STILL_HAS_WORKTREE =
  */
 function purgeThread(store, threadId) {
   store.removeThread(threadId);
+}
+
+/**
+ * Manual deletion: hide the thread in Recently deleted for TRASH_TTL_MS.
+ * Same active-run / worktree guards as deleteThread. Does not prune images
+ * or run artifacts — restore still needs them. Programmatic callers that
+ * must drop a thread immediately (create rollback, worker orphans, project
+ * removal) keep using deleteThread / purgeThread.
+ * @param {import('./store').Store} store
+ * @param {{ threadId: string }} input
+ * @param {{ isRunning?: (threadId: string) => boolean, getIosSimulator?: () => object | null, now?: number, log?: (msg: string) => void }} [opts]
+ */
+function trashThread(store, input, opts) {
+  const { threadId } = input;
+  const thread = store.getThread(threadId);
+  if (!thread) {
+    throw new Error(`Unknown thread: ${threadId}`);
+  }
+  if (opts && typeof opts.isRunning === "function" && opts.isRunning(threadId)) {
+    throw new Error("Cannot delete thread while a run is active");
+  }
+  if (thread.worktreePath) {
+    throw new Error(THREAD_STILL_HAS_WORKTREE);
+  }
+  if (isTrashed(thread)) {
+    return {
+      thread: { ...thread },
+      expiresAt: thread.trashedAt + TRASH_TTL_MS,
+    };
+  }
+  const now = trashNow(opts);
+  const updated = store.updateThread(threadId, { trashedAt: now });
+  store.saveNow();
+  void scheduleSimulatorRelease(opts, "releaseThread", { threadId });
+  const row = updated || { ...thread, trashedAt: now };
+  return { thread: { ...row }, expiresAt: now + TRASH_TTL_MS };
+}
+
+/**
+ * Restore a trashed thread to the same id and history. Does not start a
+ * run, drain the queue, or fire an expired quota timer.
+ * @param {import('./store').Store} store
+ * @param {{ threadId: string }} input
+ * @param {{ now?: number, cleanupRunArtifacts?: () => unknown, log?: (msg: string) => void }} [opts]
+ */
+function restoreThread(store, input, opts) {
+  const { threadId } = input;
+  const thread = store.getThread(threadId);
+  if (!thread) {
+    throw new Error(`Unknown thread: ${threadId}`);
+  }
+  const now = trashNow(opts);
+  if (!isTrashed(thread)) {
+    throw new Error("Thread is not in Recently deleted");
+  }
+  if (isTrashExpired(thread, now)) {
+    purgeThread(store, threadId);
+    store.saveNow();
+    void scheduleImagePruneFromStore(store);
+    scheduleArtifactCleanup(opts);
+    throw new Error("Recently deleted window expired");
+  }
+  if (!store.getProject(thread.projectId)) {
+    throw new Error("Cannot restore: project is no longer available");
+  }
+  const patch = { trashedAt: null };
+  if (thread.status === "quota-wait") {
+    patch.status = "idle";
+    patch.quotaWaitUntil = null;
+  }
+  const updated = store.updateThread(threadId, patch);
+  store.saveNow();
+  const row = updated || { ...thread, ...patch };
+  return decorateThread(store, row);
 }
 
 /**
@@ -3948,6 +4050,54 @@ function deleteThread(store, input, opts) {
   void scheduleImagePruneFromStore(store);
   scheduleArtifactCleanup(opts);
   void scheduleSimulatorRelease(opts, "releaseThread", { threadId });
+}
+
+/**
+ * Reclaim expired Recently deleted rows. Safe to call on boot and list.
+ * @param {import('./store').Store} store
+ * @param {{ now?: number, cleanupRunArtifacts?: () => unknown, log?: (msg: string) => void }} [opts]
+ * @returns {number} number of threads purged
+ */
+function expireTrashedThreads(store, opts) {
+  const now = trashNow(opts);
+  const ids = store
+    .getThreads()
+    .filter((t) => isTrashExpired(t, now))
+    .map((t) => t.id);
+  if (ids.length === 0) return 0;
+  for (const id of ids) purgeThread(store, id);
+  store.saveNow();
+  void scheduleImagePruneFromStore(store);
+  scheduleArtifactCleanup(opts);
+  return ids.length;
+}
+
+/**
+ * Unexpired Recently deleted rows, newest first.
+ * @param {import('./store').Store} store
+ * @param {{ now?: number }} [opts]
+ */
+function listTrashed(store, opts) {
+  const now = trashNow(opts);
+  /** @type {object[]} */
+  const out = [];
+  for (const t of store.getThreads()) {
+    if (!isTrashed(t) || isTrashExpired(t, now)) continue;
+    const project = store.getProject(t.projectId);
+    out.push({
+      id: t.id,
+      title: t.title,
+      projectId: t.projectId,
+      projectSlug: project ? project.slug : null,
+      projectMissing: !project,
+      trashedAt: t.trashedAt,
+      expiresAt: t.trashedAt + TRASH_TTL_MS,
+    });
+  }
+  out.sort(
+    (a, b) => b.trashedAt - a.trashedAt || String(a.id).localeCompare(String(b.id)),
+  );
+  return out;
 }
 
 /**
@@ -4073,6 +4223,7 @@ function listThreads(store) {
     // Sleep-time consolidation is a system job (issue #722): keep the
     // runner thread, but never show it in the sidebar.
     if (t && t.memoryConsolidate === true) continue;
+    if (isTrashed(t)) continue;
     const prev = prevRows && prevRows.get(t);
     if (prev) {
       rows.set(t, prev);
@@ -4096,7 +4247,7 @@ function listThreads(store) {
 function threadSummaries(store) {
   return store
     .getThreads()
-    .filter((t) => !(t && t.memoryConsolidate === true))
+    .filter((t) => !(t && t.memoryConsolidate === true) && !isTrashed(t))
     .map((t) => {
       const last = store.getLastAssistantMessage(t.id);
       return {
@@ -4128,7 +4279,9 @@ async function searchThreads(store, input) {
   const query =
     input && input.query != null ? String(input.query) : "";
   const hits = await store.searchThreads(query);
-  return hits.filter((t) => !(t && t.memoryConsolidate === true));
+  return hits.filter(
+    (t) => !(t && t.memoryConsolidate === true) && !isTrashed(t),
+  );
 }
 
 /**
@@ -4155,7 +4308,7 @@ async function searchThreads(store, input) {
 function getThreadDetail(store, threadId, workflow = null, opts) {
   const markVisited = !opts || opts.markVisited !== false;
   const thread = store.getThread(threadId);
-  if (!thread) {
+  if (!thread || isTrashed(thread)) {
     throw new Error(`Unknown thread: ${threadId}`);
   }
   if (markVisited) {
@@ -5262,6 +5415,12 @@ module.exports = {
   rewindThread,
   clearSettledOnActivity,
   deleteThread,
+  trashThread,
+  restoreThread,
+  expireTrashedThreads,
+  listTrashed,
+  isTrashed,
+  TRASH_TTL_MS,
   purgeThread,
   THREAD_STILL_HAS_WORKTREE,
   listThreads,

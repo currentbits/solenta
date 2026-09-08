@@ -485,6 +485,17 @@ describe("orch-server tool handlers", () => {
     assert.equal(row.snoozedUntil, 1_800_000_000_000);
   });
 
+  it("threads_list hides Recently deleted threads (#940)", async () => {
+    const deps = makeDeps();
+    Object.assign(deps.store.getThread("t1"), { trashedAt: Date.now() });
+    const h = createToolHandlers(deps);
+    const list = await h.threads_list({ projectId: "p1" });
+    assert.deepEqual(
+      list.map((t) => t.id),
+      ["t2"],
+    );
+  });
+
   it("thread_fork forks then starts a run on the new thread", async () => {
     const deps = makeDeps();
     const h = createToolHandlers(deps);

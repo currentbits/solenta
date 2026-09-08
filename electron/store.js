@@ -1331,6 +1331,12 @@ function migrateThread(t) {
   else delete next.quotaFailoverTried;
   if (t.memoryConsolidate === true) next.memoryConsolidate = true;
   else delete next.memoryConsolidate;
+  // Recently deleted (#940). Omitted when unset so old fixtures still deepEqual.
+  if (typeof t.trashedAt === "number" && Number.isFinite(t.trashedAt)) {
+    next.trashedAt = t.trashedAt;
+  } else {
+    delete next.trashedAt;
+  }
   // Side questions (issue #471). Running cards become errors on load:
   // the completeAsk process is gone. Omit the field on old rows so
   // fixtures without `btw` still deepEqual.

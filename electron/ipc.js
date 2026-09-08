@@ -457,6 +457,10 @@ const IPC_HANDLERS = {
     return services.removeSpace(ctx.store, input || {});
   },
   "threads:list": async (ctx) => {
+    services.expireTrashedThreads(ctx.store, {
+      cleanupRunArtifacts: ctx.cleanupRunArtifacts,
+      log: ctx.log,
+    });
     return services.listThreads(ctx.store);
   },
   "threads:summaries": async (ctx) => {
@@ -1361,6 +1365,23 @@ const IPC_HANDLERS = {
     return automations.runNow(ctx, id);
   },
   "threads:delete": async (ctx, input) => {
+    services.trashThread(ctx.store, input, {
+      isRunning: (id) => ctx.runner.isRunning(id),
+      getIosSimulator: ctx.getIosSimulator,
+      log: ctx.log,
+    });
+    retireAgent(ctx, input.threadId);
+    ctx.broadcast("threads:changed", services.listThreads(ctx.store));
+  },
+  "threads:restore": async (ctx, input) => {
+    const thread = services.restoreThread(ctx.store, input, {
+      cleanupRunArtifacts: ctx.cleanupRunArtifacts,
+      log: ctx.log,
+    });
+    ctx.broadcast("threads:changed", services.listThreads(ctx.store));
+    return thread;
+  },
+  "threads:purge": async (ctx, input) => {
     services.deleteThread(ctx.store, input, {
       isRunning: (id) => ctx.runner.isRunning(id),
       getIosSimulator: ctx.getIosSimulator,
@@ -1369,6 +1390,13 @@ const IPC_HANDLERS = {
     });
     retireAgent(ctx, input.threadId);
     ctx.broadcast("threads:changed", services.listThreads(ctx.store));
+  },
+  "threads:listTrashed": async (ctx) => {
+    services.expireTrashedThreads(ctx.store, {
+      cleanupRunArtifacts: ctx.cleanupRunArtifacts,
+      log: ctx.log,
+    });
+    return services.listTrashed(ctx.store);
   },
   "runs:start": async (ctx, input) => {
     return ctx.runner.startRun(input);

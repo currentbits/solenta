@@ -392,6 +392,7 @@ function createToolHandlers(deps) {
     return store
       .getThreads()
       .filter((t) => String(t.projectId || "") === pid)
+      .filter((t) => !Number.isFinite(t && t.trashedAt))
       .map((t) => {
         const project = projectOf(t);
         return {
