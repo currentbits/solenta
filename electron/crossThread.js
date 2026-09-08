@@ -92,6 +92,9 @@ function decideCrossThreadSend(input) {
   if (isUnattended(target)) {
     return { outcome: "undeliverable", reason: "unattended receiver" };
   }
+  if (Number.isFinite(target.trashedAt)) {
+    return { outcome: "undeliverable", reason: "deleted" };
+  }
   if (target.archived && !target.orchWorker) {
     return { outcome: "undeliverable", reason: "archived" };
   }

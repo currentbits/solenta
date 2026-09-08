@@ -493,6 +493,76 @@ describe("App archive undo toast wiring", () => {
   });
 });
 
+describe("App delete undo toast wiring (#940)", () => {
+  it("deletes through the real UI and Undo restores the captured id", async () => {
+    const target = thread({
+      id: "t-to-delete",
+      title: "thread marked for delete undo",
+      projectId: "p1",
+    });
+    const keeper = thread({
+      id: "t-stays",
+      title: "keeper stays visible",
+      projectId: "p1",
+      updatedAt: (target.updatedAt ?? Date.now()) - 1000,
+    });
+    const fake = createFakeCoder({
+      projects: [project({ id: "p1" })],
+      threads: [target, keeper],
+      details: {
+        "t-to-delete": detail({ thread: target }),
+        "t-stays": detail({ thread: keeper }),
+      },
+    });
+    const m = await boot(fake);
+
+    const menuBtn = m
+      .queryAll("button")
+      .find(
+        (b) =>
+          b.getAttribute("aria-label") === "Thread actions" &&
+          !b.hasAttribute("data-more-btn"),
+      );
+    assert.ok(menuBtn, "Thread actions menu must be present on the open thread");
+    await m.click(menuBtn as HTMLElement);
+
+    const deleteItem = m
+      .queryAll("button")
+      .find((b) => (b.textContent || "").includes("Delete thread"));
+    assert.ok(deleteItem, "Delete thread menu item must exist");
+    await m.click(deleteItem as HTMLElement);
+
+    const confirm = m
+      .queryAll("button")
+      .find((b) => (b.textContent || "").trim() === "Confirm");
+    assert.ok(confirm, "delete confirm must be present");
+    assert.ok(
+      m.text().includes("Move to Recently deleted?"),
+      "confirm copy must mention Recently deleted, not permanent wipe",
+    );
+    await m.click(confirm as HTMLElement);
+
+    const deletedCalls = fake.of("threads.delete");
+    assert.ok(deletedCalls.length >= 1, "delete must hit threads.delete");
+    assert.deepEqual(
+      deletedCalls[deletedCalls.length - 1]!.args[0],
+      { threadId: "t-to-delete" },
+    );
+
+    assert.ok(m.text().includes("Deleted"), "App-level toast must appear after delete");
+    const undo = m.byText("Undo");
+    assert.ok(undo, "toast Undo control must be present");
+    await m.click(undo!);
+
+    const restored = fake
+      .of("threads.restore")
+      .map((c) => c.args[0] as { threadId: string })
+      .find((a) => a.threadId === "t-to-delete");
+    assert.ok(restored, "Undo must call threads.restore for the captured id");
+    m.unmount();
+  });
+});
+
 describe("App reasoning-effort wiring", () => {
   const claude = {
     id: "claude",

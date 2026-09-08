@@ -90,6 +90,7 @@ import type {
   SpeechStatus,
   ThreadDetail,
   ThreadInfo,
+  TrashedThreadInfo,
   CrewTaskView,
   CrewIntegration,
   DigestResult,
@@ -1599,6 +1600,11 @@ function buildDevCoder(): CoderApi {
   let spaces: SpaceInfo[] = [];
   let threads = seedThreads(projects);
   const details = new Map<string, ThreadDetail>();
+  const trashed = new Map<
+    string,
+    TrashedThreadInfo & { thread: ThreadInfo; detail?: ThreadDetail }
+  >();
+  const TRASH_TTL_MS = 7 * 24 * 60 * 60 * 1000;
   const runTimers = new Map<string, ReturnType<typeof setInterval>>();
   const runStates = new Map<string, RunState>();
   /** Threads whose worktree was merged/removed; fakeDiff stays empty until re-setup. */
@@ -4441,10 +4447,56 @@ function buildDevCoder(): CoderApi {
         }
         clearRunTimer(input.threadId);
         runStates.delete(input.threadId);
-        clearedDiff.delete(input.threadId);
+        const now = Date.now();
+        const proj = projects.find((p) => p.id === detail.thread.projectId);
+        trashed.set(input.threadId, {
+          id: input.threadId,
+          title: detail.thread.title,
+          projectId: detail.thread.projectId,
+          projectSlug: proj?.slug ?? null,
+          projectMissing: !proj,
+          trashedAt: now,
+          expiresAt: now + TRASH_TTL_MS,
+          thread: detail.thread,
+          detail,
+        });
         details.delete(input.threadId);
         threads = threads.filter((t) => t.id !== input.threadId);
         emitThreads();
+      },
+      async restore(input) {
+        const row = trashed.get(input.threadId);
+        if (!row) throw new Error("Thread is not in Recently deleted");
+        if (row.projectMissing) {
+          throw new Error("Cannot restore: project is no longer available");
+        }
+        threads = [row.thread, ...threads];
+        if (row.detail) details.set(input.threadId, row.detail);
+        trashed.delete(input.threadId);
+        emitThreads();
+        return { ...row.thread };
+      },
+      async purge(input) {
+        const live = details.get(input.threadId);
+        const row = trashed.get(input.threadId);
+        if (!live && !row) throw new Error(`Thread not found: ${input.threadId}`);
+        if (live?.thread.worktreePath || row?.thread.worktreePath) {
+          throw new Error(
+            "Thread still has a worktree. Merge or delete it in the Git tab first.",
+          );
+        }
+        clearRunTimer(input.threadId);
+        runStates.delete(input.threadId);
+        clearedDiff.delete(input.threadId);
+        details.delete(input.threadId);
+        trashed.delete(input.threadId);
+        threads = threads.filter((t) => t.id !== input.threadId);
+        emitThreads();
+      },
+      async listTrashed() {
+        return [...trashed.values()].map(
+          ({ thread: _thread, detail: _detail, ...row }) => row,
+        );
       },
     },
     runs: {

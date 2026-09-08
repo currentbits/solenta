@@ -1269,6 +1269,36 @@
   color: var(--text);
 }
 
+.slimRow[data-trashed-row] {
+  opacity: 0.75;
+  height: auto;
+  min-height: 32px;
+}
+
+.slimRow[data-trashed-row] .slimSlot {
+  gap: 6px;
+  min-width: 0;
+}
+
+.slimRow[data-trashed-row] .slimAction {
+  position: static;
+  opacity: 1;
+}
+
+.slimRow[data-trashed-row] .slimAge,
+.slimRow[data-trashed-row]:hover .slimAge {
+  opacity: 1;
+}
+
+.slimAction:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.trashPurge {
+  color: var(--danger-fg, var(--text-muted));
+}
+
 .showMore {
   align-self: flex-start;
   margin: 2px 8px;

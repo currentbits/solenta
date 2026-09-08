@@ -391,6 +391,17 @@ export interface ThreadSandbox {
   reason: string;
 }
 
+/** One row in Recently deleted (#940). Not a live ThreadInfo. */
+export interface TrashedThreadInfo {
+  id: string;
+  title: string;
+  projectId: string;
+  projectSlug: string | null;
+  projectMissing: boolean;
+  trashedAt: number;
+  expiresAt: number;
+}
+
 export interface ThreadInfo {
   id: string;
   projectId: string;
@@ -4009,11 +4020,26 @@ export interface CoderApi {
       actionId?: string;
     }): Promise<CommandRunResult>;
     /**
-     * Permanently deletes the thread with its messages and work log. Rejects
-     * while a run is active, and rejects when the thread still has a worktree
-     * (merge or delete the worktree in the Git tab first) so no work is lost.
+     * Move an eligible thread to Recently deleted for seven days (#940).
+     * Keeps transcript, notes, and attachment/artifact references. Rejects
+     * while a run is active, and rejects when the thread still has a
+     * worktree (merge or delete the worktree in the Git tab first).
      */
     delete(input: { threadId: string }): Promise<void>;
+    /**
+     * Restore a Recently deleted thread to the same identity. Does not
+     * start a run or drain queued work. Rejects when the parent project
+     * is gone (never silently attaches to another project) or the window
+     * has expired.
+     */
+    restore(input: { threadId: string }): Promise<ThreadInfo>;
+    /**
+     * Permanently delete a thread (live or trashed) with its messages and
+     * work log. Same active-run / worktree guards as the old hard delete.
+     */
+    purge(input: { threadId: string }): Promise<void>;
+    /** Unexpired Recently deleted threads, newest first, with expiry. */
+    listTrashed(): Promise<TrashedThreadInfo[]>;
   };
   activity: {
     /** Cross-thread newest-first feed of created/started/done/failed. */

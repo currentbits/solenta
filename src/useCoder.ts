@@ -85,6 +85,7 @@ import type {
   ThreadDetail,
   ThreadInfo,
   ThreadSummaryInfo,
+  TrashedThreadInfo,
   CrewTaskView,
   CrewIntegration,
   UpdateStatus,
@@ -468,8 +469,14 @@ export interface UseCoderResult {
   promoteBtw: (threadId: string, id: string) => Promise<void>;
   /** Ask the agent to review the human's TODO(human) fills. Starts a run. */
   requestTeachReview: (threadId: string) => Promise<void>;
-  /** Permanently delete the selected thread (after caller confirms). */
-  deleteThread: () => Promise<void>;
+  /** Move the selected thread to Recently deleted (after caller confirms). */
+  deleteThread: () => Promise<boolean>;
+  /** Recently deleted rows for the restore list. */
+  trashedThreads: TrashedThreadInfo[];
+  /** Restore a Recently deleted thread. Returns true on success. */
+  restoreThread: (threadId: string) => Promise<boolean>;
+  /** Permanently delete a live or trashed thread. */
+  purgeThread: (threadId: string) => Promise<boolean>;
   /**
    * Remove a project ENTRY and its threads' history (after caller confirms).
    * Repo on disk is never touched. On success refreshes projects + threads;
@@ -827,6 +834,7 @@ export function useCoder(): UseCoderResult {
   const [threads, setThreads] = useState<ThreadInfo[]>(
     () => bootSnapshot?.threads ?? [],
   );
+  const [trashedThreads, setTrashedThreads] = useState<TrashedThreadInfo[]>([]);
   const [providers, setProviders] = useState<ProviderInfo[]>([]);
   const [workflows, setWorkflows] = useState<WorkflowTemplateInfo[]>([]);
   const [workflowListError, setWorkflowListError] = useState<string | null>(
@@ -934,6 +942,14 @@ export function useCoder(): UseCoderResult {
     },
     [api],
   );
+
+  const refreshTrashed = useCallback(() => {
+    if (typeof api.threads.listTrashed !== "function") return;
+    void api.threads
+      .listTrashed()
+      .then((rows) => setTrashedThreads(Array.isArray(rows) ? rows : []))
+      .catch(() => {});
+  }, [api]);
 
   const applyThreads = useCallback((next: ThreadInfo[]) => {
     const reconciled = reconcileThreadList(threadsRef.current, next);
@@ -1160,6 +1176,7 @@ export function useCoder(): UseCoderResult {
           if (threadsListGen.current === loadGen) {
             applyThreads(list);
           }
+          refreshTrashed();
           const source =
             threadsListGen.current === loadGen ? list : threadsRef.current;
           const preferred =
@@ -1186,6 +1203,7 @@ export function useCoder(): UseCoderResult {
     unsubChanged = api.on("threads:changed", (next) => {
       threadsListGen.current += 1;
       applyThreads(next);
+      refreshTrashed();
       // Import (and any other main-process mint) can add projects without
       // going through projects.add. Refresh so the sidebar sees them.
       if (typeof api.projects?.list === "function") {
@@ -1274,7 +1292,7 @@ export function useCoder(): UseCoderResult {
       unsubSimulator?.();
       window.clearInterval(statusHandle);
     };
-  }, [api, applyThreads, refreshStatus, reloadDetail]);
+  }, [api, applyThreads, refreshStatus, reloadDetail, refreshTrashed]);
 
   // Load ThreadDetail when selection changes. threads.get stamps lastVisitedAt
   // (select = visit); merge the returned row into the list so the sidebar
@@ -2603,22 +2621,69 @@ export function useCoder(): UseCoderResult {
   );
 
   const deleteThread = useCallback(async () => {
-    if (!selectedThreadId) return;
+    if (!selectedThreadId) return false;
     const threadId = selectedThreadId;
     try {
       await api.threads.delete({ threadId });
       const list = await api.threads.list();
       applyThreads(list);
+      refreshTrashed();
       if (selectedRef.current === threadId) {
         const nextId = nextVisibleThreadId(list, threadId);
         setSelectedThreadId(nextId);
         setDetail(null);
       }
       setError(null);
+      return true;
     } catch (err) {
       setError({ scope: "run", message: errorMessage(err) });
+      return false;
     }
-  }, [api, selectedThreadId, applyThreads]);
+  }, [api, selectedThreadId, applyThreads, refreshTrashed]);
+
+  const restoreThread = useCallback(
+    async (threadId: string) => {
+      const id = String(threadId ?? "");
+      if (!id) return false;
+      try {
+        const thread = await api.threads.restore({ threadId: id });
+        const list = await api.threads.list();
+        applyThreads(list);
+        refreshTrashed();
+        setSelectedThreadId(thread.id);
+        setError(null);
+        return true;
+      } catch (err) {
+        setError({ scope: "run", message: errorMessage(err) });
+        return false;
+      }
+    },
+    [api, applyThreads, refreshTrashed],
+  );
+
+  const purgeThread = useCallback(
+    async (threadId: string) => {
+      const id = String(threadId ?? "");
+      if (!id) return false;
+      try {
+        await api.threads.purge({ threadId: id });
+        const list = await api.threads.list();
+        applyThreads(list);
+        refreshTrashed();
+        if (selectedRef.current === id) {
+          const nextId = nextVisibleThreadId(list, id);
+          setSelectedThreadId(nextId);
+          setDetail(null);
+        }
+        setError(null);
+        return true;
+      } catch (err) {
+        setError({ scope: "run", message: errorMessage(err) });
+        return false;
+      }
+    },
+    [api, applyThreads, refreshTrashed],
+  );
 
   const removeProject = useCallback(
     async (projectId: string) => {
@@ -3801,6 +3866,9 @@ export function useCoder(): UseCoderResult {
     promoteBtw,
     requestTeachReview,
     deleteThread,
+    trashedThreads,
+    restoreThread,
+    purgeThread,
     removeProject,
     setupWorktree,
     mergeWorktree,

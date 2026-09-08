@@ -637,6 +637,14 @@ app.whenReady().then(async () => {
     getIosSimulator: currentIosSimulator,
     log: (msg) => console.warn(msg),
   });
+  // Recently deleted expiry (#940): reclaim after restart even if the
+  // renderer has not listed threads yet.
+  const { expireTrashedThreads } = require("./services.js");
+  expireTrashedThreads(store, {
+    cleanupRunArtifacts: () =>
+      artifactStore ? artifactStore.cleanup() : Promise.resolve(),
+    log: (msg) => console.warn(msg),
+  });
   // Renderer may already have mounted against empty state; this is the
   // signal that invoke channels will answer (#618).
   broadcast("boot:ready");

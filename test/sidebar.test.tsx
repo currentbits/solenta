@@ -163,6 +163,9 @@ function sidebar(
     appVersion?: string | null;
     channel?: "prod" | "nightly" | null;
     searchThreads?: (input: { query: string }) => Promise<ThreadInfo[]>;
+    trashedThreads?: import("../src/shared/ipc").TrashedThreadInfo[];
+    onRestoreThread?: (threadId: string) => void;
+    onPurgeThread?: (threadId: string) => void;
   } = {},
 ) {
   const projects = over.projects ?? [p1];
@@ -206,6 +209,9 @@ function sidebar(
         (async ({ query }) =>
           threads.filter((t) => t.title.includes(query)))
       }
+      trashedThreads={over.trashedThreads}
+      onRestoreThread={over.onRestoreThread}
+      onPurgeThread={over.onPurgeThread}
     />
   );
 }
@@ -3244,3 +3250,58 @@ describe("Sidebar saved filter views (#939)", () => {
   });
 });
 
+describe("Sidebar recently deleted shelf (#940)", () => {
+  it("lists trashed threads with restore, expiry, and permanent delete", async () => {
+    await clearSidebarStorage();
+    const restored: string[] = [];
+    const purged: string[] = [];
+    const m = await mount(
+      sidebar(THREADS, {
+        projects: [p1],
+        trashedThreads: [
+          {
+            id: "gone-1",
+            title: "accidentally deleted",
+            projectId: "p1",
+            projectSlug: "acme/ledger",
+            projectMissing: false,
+            trashedAt: Date.now() - 1000,
+            expiresAt: Date.now() + 6 * DAY_MS,
+          },
+          {
+            id: "orphan-1",
+            title: "lost project",
+            projectId: "missing",
+            projectSlug: null,
+            projectMissing: true,
+            trashedAt: Date.now() - 2000,
+            expiresAt: Date.now() + 5 * DAY_MS,
+          },
+        ],
+        onRestoreThread: (id) => restored.push(id),
+        onPurgeThread: (id) => purged.push(id),
+      }),
+    );
+    const toggle = m.query("[data-trashed-shelf-toggle]");
+    assert.ok(toggle, "Recently deleted shelf toggle is present");
+    assert.match(toggle!.textContent || "", /Recently deleted \(2\)/);
+    await m.click(toggle!);
+    await m.flush();
+    assert.ok(m.query('[data-trashed-row="gone-1"]'));
+    assert.ok(m.text().includes("Expires in 6d"));
+    assert.ok(m.text().includes("Project unavailable"));
+    const restore = m.query('[data-restore-btn="gone-1"]') as HTMLButtonElement;
+    assert.ok(restore);
+    await m.click(restore);
+    assert.deepEqual(restored, ["gone-1"]);
+    const blocked = m.query(
+      '[data-restore-btn="orphan-1"]',
+    ) as HTMLButtonElement;
+    assert.ok(blocked);
+    assert.equal(blocked.disabled, true);
+    await m.click(m.query('[data-purge-btn="gone-1"]')!);
+    await m.click(m.query('[data-purge-confirm="gone-1"]')!);
+    assert.deepEqual(purged, ["gone-1"]);
+    m.unmount();
+  });
+});

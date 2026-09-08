@@ -710,7 +710,9 @@ describe("thread lifecycle releases simulator ownership", () => {
   it("releases the thread after a successful delete", async () => {
     const { ctx, simulator, store, thread } = await lifecycleCtx();
     await ipc.IPC_HANDLERS["threads:delete"](ctx, { threadId: thread.id });
-    assert.equal(store.getThread(thread.id), null);
+    const row = store.getThread(thread.id);
+    assert.ok(row);
+    assert.ok(Number.isFinite(row.trashedAt));
     assert.deepEqual(simulator.calls, [["releaseThread", thread.id]]);
   });
 
@@ -732,7 +734,7 @@ describe("thread lifecycle releases simulator ownership", () => {
     });
     const { ctx, store, thread, logs } = await lifecycleCtx({ simulator });
     await ipc.IPC_HANDLERS["threads:delete"](ctx, { threadId: thread.id });
-    assert.equal(store.getThread(thread.id), null);
+    assert.ok(store.getThread(thread.id));
     await flushRelease();
     assert.equal(logs.length, 1);
     assert.match(logs[0], /ios-simulator/);
@@ -761,7 +763,7 @@ describe("thread lifecycle releases simulator ownership", () => {
   it("works with no simulator service wired in", async () => {
     const { ctx, store, thread } = await lifecycleCtx({ simulator: null });
     await ipc.IPC_HANDLERS["threads:delete"](ctx, { threadId: thread.id });
-    assert.equal(store.getThread(thread.id), null);
+    assert.ok(store.getThread(thread.id));
   });
 });
 

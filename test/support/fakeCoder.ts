@@ -73,6 +73,7 @@ import type {
   ThreadDetail,
   ThreadPatch,
   ThreadInfo,
+  TrashedThreadInfo,
   ThreadSummaryInfo,
   CrewTaskView,
   CrewIntegration,
@@ -289,6 +290,11 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
   let projects = opts.projects ?? [project()];
   let spaces = opts.spaces ?? [];
   let threads = opts.threads ?? [thread()];
+  const trashed = new Map<
+    string,
+    TrashedThreadInfo & { thread: ThreadInfo }
+  >();
+  const TRASH_TTL_MS = 7 * 24 * 60 * 60 * 1000;
   let nextSpaceId = 1;
   const providers =
     opts.providers ??
@@ -2608,7 +2614,58 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
             at: Date.now(),
           },
         ),
-      delete: (input: unknown) => rec("threads.delete", [input], undefined),
+      delete: (input: unknown) =>
+        rec("threads.delete", [input], undefined).then((v) => {
+          const id = (input as { threadId: string }).threadId;
+          const found = threads.find((t) => t.id === id);
+          if (found) {
+            const now = Date.now();
+            const proj = projects.find((p) => p.id === found.projectId);
+            trashed.set(id, {
+              id,
+              title: found.title,
+              projectId: found.projectId,
+              projectSlug: proj?.slug ?? null,
+              projectMissing: !proj,
+              trashedAt: now,
+              expiresAt: now + TRASH_TTL_MS,
+              thread: found,
+            });
+            threads = threads.filter((t) => t.id !== id);
+          }
+          return v;
+        }),
+      restore: (input: unknown) => {
+        const id = (input as { threadId: string }).threadId;
+        const row = trashed.get(id);
+        if (!row) {
+          calls.push({ channel: "threads.restore", args: [input] });
+          return Promise.reject(new Error("Thread is not in Recently deleted"));
+        }
+        if (row.projectMissing) {
+          calls.push({ channel: "threads.restore", args: [input] });
+          return Promise.reject(
+            new Error("Cannot restore: project is no longer available"),
+          );
+        }
+        threads = [row.thread, ...threads];
+        trashed.delete(id);
+        return rec("threads.restore", [input], { ...row.thread });
+      },
+      purge: (input: unknown) =>
+        rec("threads.purge", [input], undefined).then((v) => {
+          const id = (input as { threadId: string }).threadId;
+          trashed.delete(id);
+          threads = threads.filter((t) => t.id !== id);
+          delete details[id];
+          return v;
+        }),
+      listTrashed: () =>
+        rec(
+          "threads.listTrashed",
+          [],
+          [...trashed.values()].map(({ thread: _thread, ...row }) => row),
+        ),
     },
     activity: {
       list: () => {

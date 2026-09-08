@@ -6129,7 +6129,7 @@ export const ThreadView = memo(function ThreadView({
                 {deleteConfirm ? (
                   <div className={styles.menuConfirm}>
                     <p className={styles.menuConfirmText}>
-                      Delete permanently? This removes all messages.
+                      Move to Recently deleted? You can restore for 7 days.
                     </p>
                     <div className={styles.menuConfirmActions}>
                       <button
