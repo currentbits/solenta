@@ -147,6 +147,8 @@ function CodeMapCard({
   const [error, setError] = useState<string | null>(null);
   const [open, setOpen] = useState<string | null>(null);
   const mounted = useRef(true);
+  const epochRef = useRef(0);
+  const liveProjectRef = useRef(projectId);
 
   useEffect(() => {
     mounted.current = true;
@@ -156,21 +158,29 @@ function CodeMapCard({
   }, []);
 
   useEffect(() => {
-    let cancelled = false;
+    epochRef.current += 1;
+    const epoch = epochRef.current;
+    const projectChanged = liveProjectRef.current !== projectId;
+    liveProjectRef.current = projectId;
     setError(null);
+    if (projectChanged) {
+      setMap(null);
+      setOpen(null);
+    }
+    const live = () =>
+      mounted.current &&
+      epoch === epochRef.current &&
+      liveProjectRef.current === projectId;
     void loadCodeMap({ projectId })
       .then((next) => {
-        if (!cancelled && mounted.current) setMap(next);
+        if (live()) setMap(next);
       })
       .catch((err: unknown) => {
-        if (!cancelled && mounted.current) {
+        if (live()) {
           setError(errorMessage(err));
           setMap(null);
         }
       });
-    return () => {
-      cancelled = true;
-    };
   }, [loadCodeMap, projectId]);
 
   const sha = map?.headSha ? map.headSha.slice(0, 7) : "";

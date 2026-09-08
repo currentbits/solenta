@@ -906,6 +906,189 @@ describe("MemoryTab code map", () => {
     assert.match(m.text(), /src\//);
     m.unmount();
   });
+
+  const wikiA: ProjectCodeMap = {
+    projectId: "proj-a",
+    updatedAt: Date.now() - 5 * 60_000,
+    fileCount: 12,
+    symbolCount: 40,
+    headSha: "aaaaaaa1111",
+    defaultBranch: "main",
+    modules: [
+      {
+        name: "alpha",
+        fileCount: 12,
+        symbolCount: 40,
+        hot: [{ path: "alpha/Kernel.ts", symbols: ["bootA"], rank: 9 }],
+      },
+    ],
+    dependencies: ["alpha-only-dep"],
+  };
+
+  const wikiB: ProjectCodeMap = {
+    projectId: "proj-b",
+    updatedAt: Date.now() - 2 * 60_000,
+    fileCount: 3,
+    symbolCount: 7,
+    headSha: "bbbbbbb2222",
+    defaultBranch: "trunk",
+    modules: [
+      {
+        name: "beta",
+        fileCount: 3,
+        symbolCount: 7,
+        hot: [{ path: "beta/Main.ts", symbols: ["bootB"], rank: 2 }],
+      },
+    ],
+    dependencies: ["beta-only-dep"],
+  };
+
+  function mapTab(
+    projectId: string,
+    loadCodeMap: (input: { projectId: string }) => Promise<ProjectCodeMap>,
+  ) {
+    return (
+      <MemoryTab
+        projectSlug="coder"
+        projectId={projectId}
+        searchMemory={async () => []}
+        recentMemory={async () => []}
+        getMemory={async (input) => entry({ id: input.id })}
+        updateMemory={async () => ({ id: "x" })}
+        removeMemory={async () => {}}
+        storeMemory={async () => ({ id: "x" })}
+        loadCodeMap={loadCodeMap}
+      />
+    );
+  }
+
+  function deferredMap() {
+    let resolve!: (value: ProjectCodeMap) => void;
+    const promise = new Promise<ProjectCodeMap>((r) => {
+      resolve = r;
+    });
+    return { promise, resolve };
+  }
+
+  function showsA(text: string): boolean {
+    return (
+      text.includes("12 files") ||
+      text.includes("40 symbols") ||
+      text.includes("alpha/") ||
+      text.includes("alpha-only-dep") ||
+      text.includes("Kernel.ts") ||
+      text.includes("bootA")
+    );
+  }
+
+  function showsB(text: string): boolean {
+    return (
+      text.includes("3 files") ||
+      text.includes("7 symbols") ||
+      text.includes("beta/") ||
+      text.includes("beta-only-dep") ||
+      text.includes("Main.ts") ||
+      text.includes("bootB")
+    );
+  }
+
+  it("drops A's wiki as soon as projectId changes, before B arrives", async () => {
+    const pendingB = deferredMap();
+    const load = async (input: { projectId: string }) => {
+      if (input.projectId === "proj-a") return wikiA;
+      return pendingB.promise;
+    };
+    const m = await mount(mapTab("proj-a", load));
+    const onA = m.query("[data-code-map]")?.textContent ?? "";
+    assert.equal(showsA(onA), true, "A's map must load first");
+    await m.rerender(mapTab("proj-b", load));
+    const onB = m.query("[data-code-map]")?.textContent ?? "";
+    assert.equal(showsA(onB), false, "B must not keep A's counts or modules");
+    assert.equal(showsB(onB), false, "B has not arrived yet");
+    m.unmount();
+  });
+
+  it("collapses A's expanded module when projectId changes", async () => {
+    const pendingB = deferredMap();
+    const wikiBSameName: ProjectCodeMap = {
+      ...wikiB,
+      modules: [
+        {
+          name: "alpha",
+          fileCount: 3,
+          symbolCount: 7,
+          hot: [{ path: "alpha/Other.ts", symbols: ["bootB"], rank: 2 }],
+        },
+      ],
+    };
+    const load = async (input: { projectId: string }) => {
+      if (input.projectId === "proj-a") return wikiA;
+      return pendingB.promise;
+    };
+    const m = await mount(mapTab("proj-a", load));
+    await m.click(m.byText("alpha/"));
+    assert.equal(
+      (m.query("[data-code-map]")?.textContent ?? "").includes("Kernel.ts"),
+      true,
+    );
+    await m.rerender(mapTab("proj-b", load));
+    const onB = m.query("[data-code-map]")?.textContent ?? "";
+    assert.equal(onB.includes("Kernel.ts"), false);
+    assert.equal(onB.includes("alpha/"), false);
+    pendingB.resolve(wikiBSameName);
+    await m.flush();
+    const afterB = m.query("[data-code-map]")?.textContent ?? "";
+    assert.equal(afterB.includes("alpha/"), true);
+    assert.equal(
+      afterB.includes("Other.ts"),
+      false,
+      "B's module must start collapsed even if A had the same name open",
+    );
+    m.unmount();
+  });
+
+  it("ignores a late A map after switching to B", async () => {
+    const pendingA = deferredMap();
+    const pendingB = deferredMap();
+    const load = async (input: { projectId: string }) => {
+      if (input.projectId === "proj-a") return pendingA.promise;
+      return pendingB.promise;
+    };
+    const m = await mount(mapTab("proj-a", load));
+    await m.rerender(mapTab("proj-b", load));
+    pendingA.resolve(wikiA);
+    await m.flush();
+    const onB = m.query("[data-code-map]")?.textContent ?? "";
+    assert.equal(showsA(onB), false, "in-flight A must not paint on B");
+    pendingB.resolve(wikiB);
+    await m.flush();
+    const afterB = m.query("[data-code-map]")?.textContent ?? "";
+    assert.equal(showsB(afterB), true);
+    assert.equal(showsA(afterB), false);
+    m.unmount();
+  });
+
+  it("reloads A after A→B→A and ignores a late B map", async () => {
+    const pendingB = deferredMap();
+    const load = async (input: { projectId: string }) => {
+      if (input.projectId === "proj-a") return wikiA;
+      return pendingB.promise;
+    };
+    const m = await mount(mapTab("proj-a", load));
+    assert.equal(showsA(m.query("[data-code-map]")?.textContent ?? ""), true);
+    await m.rerender(mapTab("proj-b", load));
+    assert.equal(showsA(m.query("[data-code-map]")?.textContent ?? ""), false);
+    await m.rerender(mapTab("proj-a", load));
+    const backOnA = m.query("[data-code-map]")?.textContent ?? "";
+    assert.equal(showsA(backOnA), true, "returning to A must load A's wiki");
+    assert.equal(showsB(backOnA), false);
+    pendingB.resolve(wikiB);
+    await m.flush();
+    const stillA = m.query("[data-code-map]")?.textContent ?? "";
+    assert.equal(showsA(stillA), true);
+    assert.equal(showsB(stillA), false, "late B must not paint after return to A");
+    m.unmount();
+  });
 });
 
 describe("MemoryTab inspector layout", () => {
