@@ -42,7 +42,6 @@ const DEFAULT_BUILD_OUTPUT_DIRS = ["dist", "build", ".next"];
 const DEFAULT_WEDGE_MS = 30 * 60 * 1000;
 const WEDGE_WATCHDOG_INTERVAL_MS = DEFAULT_WEDGE_MS;
 const WEDGE_WATCHDOG_STARTUP_MS = 15_000;
-
 /**
  * @param {unknown} raw
  * @returns {string[]}

@@ -1779,6 +1779,10 @@ export interface CrewIntegrationReceipt {
   leadId: string;
   leadShaAfter: string;
   at: number;
+  /** Stored thread.issueNumber at integrate time; not guessed from transcripts. */
+  issueNumber?: number | null;
+  /** This worker's issue plus nested included IDs. Closed only on final land. */
+  includedIssueIds?: number[];
 }
 
 export interface CrewIntegrationWorkerRow {

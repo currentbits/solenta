@@ -1188,7 +1188,8 @@ function normalizeIntegrationLanded(raw) {
 }
 
 /**
- * Serialized crew merge-queue thread ids (#346). Omitted when empty.
+ * Serialized crew merge queue (#346). Worker IDs waiting to integrate
+ * onto this lead. Omitted when empty so old fixtures still deepEqual.
  * @param {unknown} raw
  * @returns {string[] | undefined}
  */

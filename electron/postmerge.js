@@ -197,8 +197,27 @@ function schedulePostMergeVerify(store, threadId, now, opts) {
  */
 function onThreadPrState(store, threadId, prState, now) {
   if (String(prState || "").toUpperCase() !== "MERGED") return null;
+  const at = now == null ? Date.now() : now;
+  const thread = store.getThread(threadId);
+  if (
+    thread &&
+    Array.isArray(thread.integrationReceipts) &&
+    thread.integrationReceipts.length
+  ) {
+    store.updateThread(threadId, {
+      integrationLanded: {
+        at,
+        sha:
+          thread.integrationLanded && thread.integrationLanded.sha
+            ? thread.integrationLanded.sha
+            : null,
+        via: "pr",
+      },
+    });
+    store.save();
+  }
   void completeThreadIssue(store, threadId).catch(() => {});
-  return schedulePostMergeVerify(store, threadId, now == null ? Date.now() : now);
+  return schedulePostMergeVerify(store, threadId, at);
 }
 
 /**
@@ -209,20 +228,6 @@ function onThreadPrState(store, threadId, prState, now) {
  */
 const completedIssues = new Set();
 
-/**
- * Move a landed thread's planboard issue to plan:done and close it (#632).
- *
- * The board only ever moved forward: "Start task" and autodispatch set
- * plan:doing, and nothing wrote the done edge — so finished work sat in
- * Doing until a human noticed. Called fire-and-forget from the two places
- * work actually lands (local merge, PR → MERGED). No linked issue, or an
- * issue that is not plan:doing, means no action.
- *
- * @param {import("./store").Store} store
- * @param {string} threadId
- * @param {{ completeIssue?: Function }} [deps]
- * @returns {Promise<object | null>}
- */
 /**
  * Included worker issue IDs stored on integration receipts (#947).
  * Receipts only — do not parse worker transcripts.
@@ -248,6 +253,21 @@ function includedIssueIdsFromReceipts(thread) {
   return ids;
 }
 
+/**
+ * Move a landed thread's planboard issue to plan:done and close it (#632).
+ * On a final land, also close included worker issues from receipts (#947).
+ *
+ * The board only ever moved forward: "Start task" and autodispatch set
+ * plan:doing, and nothing wrote the done edge — so finished work sat in
+ * Doing until a human noticed. Called fire-and-forget from the two places
+ * work actually lands (local merge, PR → MERGED). No linked issue, or an
+ * issue that is not plan:doing, means no action.
+ *
+ * @param {import("./store").Store} store
+ * @param {string} threadId
+ * @param {{ completeIssue?: Function }} [deps]
+ * @returns {Promise<object | null>}
+ */
 async function completeThreadIssue(store, threadId, deps) {
   const thread = store.getThread(threadId);
   if (!thread) return null;
@@ -267,21 +287,26 @@ async function completeThreadIssue(store, threadId, deps) {
     (deps && deps.completeIssue) || require("./issues.js").completeIssue;
   const pr = thread.prNumber ? ` (PR #${thread.prNumber})` : "";
   let last = null;
+  let attempted = 0;
   for (const issueNumber of numbers) {
     const key = `${thread.projectId}:${issueNumber}`;
     if (completedIssues.has(key)) continue;
     completedIssues.add(key);
+    attempted += 1;
     const res = await complete(project.path, issueNumber, {
       comment: `Landed from Solenta thread "${thread.title}"${pr}. Closed on merge.`,
     });
     if (!res || !res.ok) {
       completedIssues.delete(key);
-      return res || null;
+      last = res || last;
+      continue;
     }
     last = res;
-    if (res.skipped) continue;
-    appendEvent(store, thread.id, `Planboard: #${issueNumber} moved to Done.`);
+    if (!res.skipped) {
+      appendEvent(store, thread.id, `Planboard: #${issueNumber} moved to Done.`);
+    }
   }
+  if (attempted === 0) return null;
   store.save();
   return last;
 }

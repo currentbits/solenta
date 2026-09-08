@@ -297,6 +297,7 @@ function integrateWorker(opts) {
     broadcast,
     skipIssueComplete: true,
     afterMerge: () => {
+      const live = store.getThread(worker.id) || worker;
       const leadShaAfter = revParse(lead.worktreePath);
       recorded = {
         workerId: worker.id,
@@ -304,6 +305,8 @@ function integrateWorker(opts) {
         leadId: lead.id,
         leadShaAfter: leadShaAfter || "",
         at: Date.now(),
+        issueNumber: storedIssueNumber(live),
+        includedIssueIds: includedIssueIdsFrom(live),
       };
       recordReceipt(store, lead, recorded);
     },
@@ -529,4 +532,5 @@ module.exports = {
   classifyMergeLanding,
   recordWorkerIntegration,
   includedIssueIdsFrom,
+  storedIssueNumber,
 };

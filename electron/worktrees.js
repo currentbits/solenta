@@ -1128,7 +1128,8 @@ function autoResolveMergeArtifacts(cwd) {
  * worktree, not on main behind the user's back (thread_merge). Git-tab
  * Merge (no intoPath) targets ThreadInfo.baseBranch if set, otherwise the
  * repo default (origin/HEAD → main), not the project checkout's current
- * branch (#187 / #770).
+ * branch (#187 / #770). intoPath staging is not a final land: issues stay
+ * open and a receipt is recorded on the lead (#947).
  *
  * @param {object} opts
  * @param {import('./store').Store} opts.store
