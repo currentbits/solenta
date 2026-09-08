@@ -23,6 +23,8 @@ import type {
   GitSyncInfo,
   GitRepoInfo,
   GitPullResult,
+  MergeLaneBeat,
+  MergeLaneInfo,
   FetchIssueResult,
   CreateIssueResult,
   LocalServerInfo,
@@ -578,6 +580,13 @@ export interface UseCoderResult {
   gitRepoInfo: (threadId: string) => Promise<GitRepoInfo>;
   /** `git pull --ff-only` for a thread root. Never rejects. */
   gitPull: (threadId: string) => Promise<GitPullResult>;
+  /** Claimed merge-queue lanes for a project (#346 / #1114). */
+  listLanes: (input: { projectId: string }) => Promise<MergeLaneInfo[]>;
+  /** Stamp lastBeat on a claimed lane. Does not recycle or close issues. */
+  heartbeatLane: (input: {
+    threadId: string;
+    now?: number;
+  }) => Promise<MergeLaneBeat | null>;
   /** Runnable package.json scripts (dev/start/serve) at the thread root. */
   listDevScripts: (threadId: string) => Promise<string[]>;
   /** Start the thread's npm dev script. */
@@ -3102,6 +3111,20 @@ export function useCoder(): UseCoderResult {
     [api],
   );
 
+  const listLanes = useCallback(
+    async (input: { projectId: string }) => {
+      return api.mergeQueue.listLanes(input);
+    },
+    [api],
+  );
+
+  const heartbeatLane = useCallback(
+    async (input: { threadId: string; now?: number }) => {
+      return api.mergeQueue.heartbeatLane(input);
+    },
+    [api],
+  );
+
   const startDevServer = useCallback(
     async (threadId: string, script: string) => {
       return api.devserver.start({ threadId, script });
@@ -3626,6 +3649,8 @@ export function useCoder(): UseCoderResult {
     gitFetch,
     gitRepoInfo,
     gitPull,
+    listLanes,
+    heartbeatLane,
     listDevScripts,
     startDevServer,
     stopDevServer,

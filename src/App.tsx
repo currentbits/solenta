@@ -22,6 +22,7 @@ import { UsageView, type UsageReportControls } from "./components/UsageView";
 import { FleetView } from "./components/FleetView";
 import { DigestView } from "./components/DigestView";
 import { AgentsPanel } from "./components/AgentsPanel";
+import { ClaimedLanesHeartbeat } from "./components/LaneHeartbeat";
 import {
   SettingsModal,
   type SettingsPane,
@@ -263,6 +264,8 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     gitFetch,
     gitRepoInfo,
     gitPull,
+    listLanes,
+    heartbeatLane,
     listDevScripts,
     startDevServer,
     stopDevServer,
@@ -1670,6 +1673,11 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
           )}
           </ErrorBoundary>
         </div>
+        <ClaimedLanesHeartbeat
+          projects={projects}
+          listLanes={listLanes}
+          heartbeatLane={heartbeatLane}
+        />
         <div
           id="pane-agents"
           ref={agentsPaneRef}

@@ -194,6 +194,8 @@ export const IPC_CHANNELS = [
   { ns: "git", method: "conflictForecast" },
   { ns: "git", method: "gcScan" },
   { ns: "git", method: "gcClean" },
+  { ns: "mergeQueue", method: "listLanes" },
+  { ns: "mergeQueue", method: "heartbeatLane" },
   { ns: "issues", method: "fetch" },
   { ns: "issues", method: "list" },
   { ns: "issues", method: "setPlanStatus" },

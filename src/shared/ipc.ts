@@ -681,6 +681,8 @@ export interface ThreadInfo {
   webSearch?: boolean;
   /** Absolute path of the thread's git worktree, when one was set up. */
   worktreePath: string | null;
+  /** Numbered merge-queue lane (#346). Absent when the thread has no lane. */
+  lane?: MergeLaneBeat | null;
   /**
    * Durable worker→lead integrate receipts on an orchestrator lead
    * (issue #954). Absent on ordinary threads. Survives worker cleanup.
@@ -1822,6 +1824,25 @@ export interface LocalServerInfo {
   host: string;
   port: number;
   url: string;
+}
+
+/** Numbered merge-queue lane (#346). */
+export interface MergeLaneInfo {
+  n: number;
+  threadId: string;
+  port: number;
+  path: string | null;
+  branch: string | null;
+  claimedAt: number;
+  lastBeat: number;
+}
+
+/** Stamp returned by heartbeatLane. */
+export interface MergeLaneBeat {
+  n: number;
+  port: number;
+  claimedAt: number;
+  lastBeat: number;
 }
 
 /** Per-thread `npm run` dev server started from the Environment tab. */
@@ -4204,6 +4225,18 @@ export interface CoderApi {
      * reports as unblocked candidates; branches are never deleted.
      */
     gcClean(input: GcCleanInput): Promise<GcCleanResult>;
+  };
+  /**
+   * Local merge-queue lanes (#346 / #1114). List claimed lanes for a
+   * project and stamp lastBeat. Recycle and promote stay off this
+   * surface — these methods do not close issues.
+   */
+  mergeQueue: {
+    listLanes(input: { projectId: string }): Promise<MergeLaneInfo[]>;
+    heartbeatLane(input: {
+      threadId: string;
+      now?: number;
+    }): Promise<MergeLaneBeat | null>;
   };
   issues: {
     /**

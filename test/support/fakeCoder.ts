@@ -2850,6 +2850,12 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
         return rec("git.runStats", [input], derived);
       },
     },
+    mergeQueue: {
+      listLanes: (input: unknown) =>
+        rec("mergeQueue.listLanes", [input], []),
+      heartbeatLane: (input: unknown) =>
+        rec("mergeQueue.heartbeatLane", [input], null),
+    },
     speech: {
       status: () =>
         rec(

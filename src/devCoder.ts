@@ -5648,6 +5648,14 @@ function buildDevCoder(): CoderApi {
         return { ...thread };
       },
     },
+    mergeQueue: {
+      async listLanes(_input: { projectId: string }) {
+        return [];
+      },
+      async heartbeatLane(_input: { threadId: string; now?: number }) {
+        return null;
+      },
+    },
     speech: {
       async status(): Promise<SpeechStatus> {
         return { state: "missing", runtimeReady: false, modelReady: false };

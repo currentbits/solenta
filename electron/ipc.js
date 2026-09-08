@@ -31,6 +31,7 @@ const {
   gcClean,
   scheduleRetention,
 } = require("./worktrees.js");
+const { listLanes, heartbeatLane } = require("./mergeQueue.js");
 const { suggestCommitMessage } = require("./commitmsg.js");
 const { listLocalServers } = require("./servers.js");
 const devservers = require("./devservers.js");
@@ -1685,6 +1686,16 @@ const IPC_HANDLERS = {
     } catch {
       return { ok: false };
     }
+  },
+  "mergeQueue:listLanes": async (ctx, input) => {
+    return listLanes(ctx.store, input && input.projectId);
+  },
+  "mergeQueue:heartbeatLane": async (ctx, input) => {
+    return heartbeatLane({
+      store: ctx.store,
+      threadId: input && input.threadId,
+      now: input && input.now,
+    });
   },
   "git:pull": async (ctx, input) => {
     // Never throws: failure modes come back in-band as { ok: false, reason }.
