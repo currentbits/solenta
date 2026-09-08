@@ -12,6 +12,7 @@ const {
   dueAutomations,
   startScheduler,
   runNow,
+  listAutomationRuns,
   MAX_THREADS_PER_AUTOMATION,
 } = require("../automations.js");
 
@@ -400,5 +401,181 @@ describe("automation CRUD + scheduler", () => {
       store.getThreads().filter((t) => t.automationId === other.id).length,
       1,
     );
+  });
+
+  it("listAutomationRuns returns only this automation's threads, newest first", async () => {
+    const created = services.addAutomation(store, {
+      projectId: "p1",
+      name: "Sweep",
+      prompt: "go",
+      provider: "claude",
+      preset: "hourly",
+    });
+    const other = services.addAutomation(store, {
+      projectId: "p1",
+      name: "Sweep",
+      prompt: "other",
+      provider: "claude",
+      preset: "hourly",
+    });
+    const handmade = services.createThread(store, {
+      projectId: "p1",
+      title: "Sweep",
+    });
+    const otherThread = await fireAuto(other.id);
+    const first = await fireAuto(created.id);
+    const second = await fireAuto(created.id);
+    store.getThread(second.id).status = "working";
+    store.getThread(first.id).status = "done";
+
+    const listed = listAutomationRuns(store, created.id);
+    assert.equal(listed.automationId, created.id);
+    assert.deepEqual(
+      listed.runs.map((r) => r.threadId),
+      [second.id, first.id],
+    );
+    assert.equal(listed.runs[0].status, "working");
+    assert.equal(listed.runs[1].status, "done");
+    assert.equal(listed.runs[0].startedAt, second.createdAt);
+    assert.equal(
+      listed.runs.some((r) => r.threadId === handmade.id),
+      false,
+    );
+    assert.equal(
+      listed.runs.some((r) => r.threadId === otherThread.id),
+      false,
+    );
+    assert.equal(listed.retentionLimitReached, false);
+  });
+
+  it("listAutomationRuns ignores another project's automation with the same name", async () => {
+    store.setProjects([
+      ...store.getProjects(),
+      { id: "p2", slug: "acme/other", name: "other", path: tmpDir },
+    ]);
+    store.saveNow();
+    const mine = services.addAutomation(store, {
+      projectId: "p1",
+      name: "Nightly",
+      prompt: "go",
+      provider: "claude",
+      preset: "hourly",
+    });
+    const theirs = services.addAutomation(store, {
+      projectId: "p2",
+      name: "Nightly",
+      prompt: "go",
+      provider: "claude",
+      preset: "hourly",
+    });
+    const mineThread = await fireAuto(mine.id);
+    const theirThread = await fireAuto(theirs.id);
+    const listed = listAutomationRuns(store, mine.id);
+    assert.deepEqual(
+      listed.runs.map((r) => r.threadId),
+      [mineThread.id],
+    );
+    assert.equal(
+      listed.runs.some((r) => r.threadId === theirThread.id),
+      false,
+    );
+  });
+
+  it("listAutomationRuns keeps association after rename", async () => {
+    const created = services.addAutomation(store, {
+      projectId: "p1",
+      name: "Sweep",
+      prompt: "go",
+      provider: "claude",
+      preset: "hourly",
+    });
+    const thread = await fireAuto(created.id);
+    services.updateAutomation(store, { id: created.id, name: "Renamed sweep" });
+    const listed = listAutomationRuns(store, created.id);
+    assert.deepEqual(
+      listed.runs.map((r) => r.threadId),
+      [thread.id],
+    );
+  });
+
+  it("listAutomationRuns passes quota-wait through and includes a live working run", async () => {
+    const created = services.addAutomation(store, {
+      projectId: "p1",
+      name: "Sweep",
+      prompt: "go",
+      provider: "claude",
+      preset: "hourly",
+    });
+    const parked = await fireAuto(created.id);
+    parked.status = "quota-wait";
+    const live = await fireAuto(created.id);
+    live.status = "working";
+    const listed = listAutomationRuns(store, created.id);
+    assert.equal(listed.runs[0].threadId, live.id);
+    assert.equal(listed.runs[0].status, "working");
+    assert.equal(listed.runs[1].threadId, parked.id);
+    assert.equal(listed.runs[1].status, "quota-wait");
+  });
+
+  it("listAutomationRuns sets retentionLimitReached at exactly the cap with no deletes", async () => {
+    const created = services.addAutomation(store, {
+      projectId: "p1",
+      name: "Sweep",
+      prompt: "go",
+      provider: "claude",
+      preset: "hourly",
+    });
+    const ids = [];
+    for (let i = 0; i < MAX_THREADS_PER_AUTOMATION; i++) {
+      const thread = await fireAuto(created.id);
+      ids.push(thread.id);
+    }
+    const listed = listAutomationRuns(store, created.id);
+    assert.equal(listed.runs.length, MAX_THREADS_PER_AUTOMATION);
+    assert.equal(listed.retentionLimitReached, true);
+    assert.deepEqual(
+      listed.runs.map((r) => r.threadId).sort(),
+      [...ids].sort(),
+    );
+    for (const id of ids) {
+      assert.ok(store.getThread(id), "exactly-cap fires are all still retained");
+    }
+  });
+
+  it("listAutomationRuns still lists only retained threads past the cap", async () => {
+    const created = services.addAutomation(store, {
+      projectId: "p1",
+      name: "Sweep",
+      prompt: "go",
+      provider: "claude",
+      preset: "hourly",
+    });
+    const ids = [];
+    for (let i = 0; i < MAX_THREADS_PER_AUTOMATION + 3; i++) {
+      const thread = await fireAuto(created.id);
+      ids.push(thread.id);
+    }
+    const listed = listAutomationRuns(store, created.id);
+    assert.equal(listed.runs.length, MAX_THREADS_PER_AUTOMATION);
+    assert.equal(listed.retentionLimitReached, true);
+    assert.equal(
+      listed.runs.some((r) => r.threadId === ids[0]),
+      false,
+    );
+    const kept = store.getThread(ids[ids.length - 1]);
+    kept.status = "failed";
+    assert.equal(
+      listAutomationRuns(store, created.id).runs[0].status,
+      "failed",
+    );
+  });
+
+  it("listAutomationRuns throws for an unknown automation and does not mint a thread", () => {
+    const before = store.getThreads().length;
+    assert.throws(
+      () => listAutomationRuns(store, "missing"),
+      /Unknown automation: missing/,
+    );
+    assert.equal(store.getThreads().length, before);
   });
 });

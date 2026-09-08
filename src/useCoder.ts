@@ -7,6 +7,7 @@ import type {
   AppStatus,
   AttachmentInfo,
   AutomationInfo,
+  AutomationRunsResult,
   AutomationWrite,
   CheckpointInfo,
   CoderApi,
@@ -328,6 +329,8 @@ export interface UseCoderResult {
   ) => Promise<AutomationInfo>;
   removeAutomation: (id: string) => Promise<void>;
   runAutomationNow: (id: string) => Promise<AutomationInfo>;
+  /** Retained run threads for one automation; does not start a run. */
+  listAutomationRuns: (id: string) => Promise<AutomationRunsResult>;
   stopRun: () => Promise<void>;
   /** Sticky permission mode. Pass threadId to target a fork, not the open thread. */
   setPermissionMode: (
@@ -1758,6 +1761,13 @@ export function useCoder(): UseCoderResult {
       }
     },
     [api, refreshAutomations],
+  );
+
+  const listAutomationRuns = useCallback(
+    async (automationId: string) => {
+      return api.automations.listRuns({ id: automationId });
+    },
+    [api],
   );
 
   const startWorkflowRun = useCallback(
@@ -3753,6 +3763,7 @@ export function useCoder(): UseCoderResult {
     updateAutomation,
     removeAutomation,
     runAutomationNow,
+    listAutomationRuns,
     stopRun,
     setPermissionMode,
     respondPermission,

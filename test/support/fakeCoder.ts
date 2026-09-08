@@ -18,6 +18,7 @@ import type {
   AppStatus,
   AttachmentInfo,
   AutomationInfo,
+  AutomationRunsResult,
   UpdateStatus,
   CheckpointInfo,
   CoderApi,
@@ -210,6 +211,8 @@ export interface FakeOptions {
   providers?: ProviderInfo[];
   workflows?: WorkflowTemplateInfo[];
   automations?: AutomationInfo[];
+  /** Per-automation retained runs for automations.listRuns. */
+  automationRuns?: Record<string, AutomationRunsResult>;
   details?: Record<string, ThreadDetail>;
   status?: AppStatus;
   /** Override app.checkUpdate result (default: disabled / unstamped). */
@@ -294,6 +297,7 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
     ] as ProviderInfo[]);
   const workflows = opts.workflows ?? [];
   let automations = opts.automations ?? [];
+  const automationRuns = opts.automationRuns ?? {};
   const details = opts.details ?? {};
   const fail = opts.fail ?? {};
   /** Mutable per-thread checkpoint lists (newest-first). */
@@ -1457,6 +1461,19 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
           automations = automations.map((a) => (a.id === id ? updated : a));
         }
         return rec("automations.runNow", [input], updated);
+      },
+      listRuns: (input: unknown) => {
+        const id = String((input as { id?: string } | null)?.id ?? "");
+        const existing = automations.find((a) => a.id === id);
+        if (!existing) {
+          throw new Error(`Unknown automation: ${id}`);
+        }
+        const listed = automationRuns[id] ?? {
+          automationId: id,
+          runs: [],
+          retentionLimitReached: false,
+        };
+        return rec("automations.listRuns", [input], listed);
       },
     },
     projects: {

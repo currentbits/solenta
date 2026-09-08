@@ -1,16 +1,20 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
+  automationRunStatusLabel,
   createFormError,
   formatNextRun,
   scheduleLabel,
 } from "../automations";
+import { formatRelativeAge } from "../format";
 import type { RepeatDraft } from "../repeatThread";
 import type {
   AutomationInfo,
   AutomationPreset,
+  AutomationRunsResult,
   AutomationWrite,
   ProjectInfo,
   ProviderInfo,
+  ThreadStatus,
 } from "../shared/ipc";
 import styles from "./AutomationsView.module.css";
 
@@ -20,6 +24,15 @@ export interface AutomationsViewProps {
   providers: ProviderInfo[];
   /** Prefill the create form (issue #285 "repeat this"). */
   draft?: RepeatDraft | null;
+  /** Typed retained-run query; viewing history starts no run. */
+  loadRuns?: (id: string) => Promise<AutomationRunsResult>;
+  onSelectThread?: (id: string) => void;
+  /**
+   * Live sidebar rows. Used to overlay current status and to hide Open
+   * thread when a retained id has since been deleted. Omit while the
+   * list is still loading — treat runs as openable.
+   */
+  liveThreads?: Array<{ id: string; status: ThreadStatus }>;
   onCreate: (input: AutomationWrite) => Promise<void> | void;
   onUpdate: (
     input: Partial<AutomationWrite> & { id: string },
@@ -28,11 +41,192 @@ export interface AutomationsViewProps {
   onRunNow: (id: string) => Promise<void> | void;
 }
 
+function liveThreadKey(
+  threads: AutomationsViewProps["liveThreads"],
+): string {
+  if (!threads) return "";
+  return threads.map((t) => t.id).join("\n");
+}
+
+function AutomationRunHistory({
+  automation,
+  loadRuns,
+  onSelectThread,
+  liveThreads,
+  now,
+}: {
+  automation: AutomationInfo;
+  loadRuns: (id: string) => Promise<AutomationRunsResult>;
+  onSelectThread?: (id: string) => void;
+  liveThreads?: Array<{ id: string; status: ThreadStatus }>;
+  now: number;
+}) {
+  const [result, setResult] = useState<AutomationRunsResult | null>(null);
+  const [expanded, setExpanded] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const loadRef = useRef(loadRuns);
+  loadRef.current = loadRuns;
+  const idsKey = liveThreadKey(liveThreads);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const next = await loadRef.current(automation.id);
+        if (cancelled) return;
+        setResult(next);
+        setLoadError(null);
+      } catch (err) {
+        if (cancelled) return;
+        setLoadError(
+          err instanceof Error && err.message ? err.message : String(err),
+        );
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [automation.id, idsKey]);
+
+  const liveById = useMemo(() => {
+    const map = new Map<string, ThreadStatus>();
+    for (const t of liveThreads ?? []) map.set(t.id, t.status);
+    return map;
+  }, [liveThreads]);
+  const liveLoaded = liveThreads != null;
+
+  const resolved = (result?.runs ?? []).map((run) => {
+    const missing = liveLoaded && !liveById.has(run.threadId);
+    const status = liveById.get(run.threadId) ?? run.status;
+    return { ...run, status, missing };
+  });
+  const latest = resolved[0] ?? null;
+  const lastRunMissing =
+    result != null &&
+    !loadError &&
+    automation.lastRunAt != null &&
+    resolved.length === 0;
+
+  const openThread = (threadId: string) => {
+    onSelectThread?.(threadId);
+  };
+
+  return (
+    <div className={styles.runsBlock}>
+      {loadError ? (
+        <p className={styles.error} data-automation-runs-error="">
+          {loadError}
+        </p>
+      ) : null}
+      {latest && !latest.missing ? (
+        <div className={styles.latest} data-automation-latest="">
+          <span className={styles.latestLabel}>Latest run</span>
+          <span className={styles.runAge}>
+            {formatRelativeAge(latest.startedAt, now)}
+          </span>
+          <span
+            className={styles.runStatus}
+            data-automation-latest-status={latest.status}
+            data-run-display={automationRunStatusLabel(latest.status)}
+          >
+            {automationRunStatusLabel(latest.status)}
+          </span>
+          <button
+            type="button"
+            className={styles.action}
+            data-automation-open-thread=""
+            title="Open thread"
+            onClick={() => openThread(latest.threadId)}
+          >
+            Open thread
+          </button>
+        </div>
+      ) : latest?.missing ? (
+        <div className={styles.latest} data-automation-latest="">
+          <span className={styles.latestLabel}>Latest run</span>
+          <span className={styles.unavailable}>Transcript unavailable</span>
+        </div>
+      ) : lastRunMissing ? (
+        <p className={styles.missing} data-automation-runs-missing="">
+          The last run is no longer retained.
+        </p>
+      ) : null}
+      {resolved.length > 0 || result?.retentionLimitReached ? (
+        <>
+          <button
+            type="button"
+            className={styles.runsToggle}
+            data-automation-runs-toggle=""
+            aria-expanded={expanded}
+            onClick={() => setExpanded((open) => !open)}
+          >
+            Recent retained runs
+          </button>
+          {expanded ? (
+            <ul className={styles.runs} data-automation-runs="">
+              {resolved.map((run) => (
+                <li key={run.threadId}>
+                  {run.missing ? (
+                    <div
+                      className={styles.runRow}
+                      data-automation-run-row={run.threadId}
+                      data-thread-unavailable=""
+                    >
+                      <span className={styles.runAge}>
+                        {formatRelativeAge(run.startedAt, now)}
+                      </span>
+                      <span className={styles.runStatus}>
+                        {automationRunStatusLabel(run.status)}
+                      </span>
+                      <span className={styles.unavailable}>
+                        Transcript unavailable
+                      </span>
+                    </div>
+                  ) : (
+                    <button
+                      type="button"
+                      className={styles.runRow}
+                      data-automation-run-row={run.threadId}
+                      title="Open thread"
+                      onClick={() => openThread(run.threadId)}
+                    >
+                      <span className={styles.runAge}>
+                        {formatRelativeAge(run.startedAt, now)}
+                      </span>
+                      <span
+                        className={styles.runStatus}
+                        data-run-display={automationRunStatusLabel(run.status)}
+                      >
+                        {automationRunStatusLabel(run.status)}
+                      </span>
+                    </button>
+                  )}
+                </li>
+              ))}
+              {result?.retentionLimitReached ? (
+                <li
+                  className={styles.pruned}
+                  data-automation-retention-limit=""
+                >
+                  Older runs may no longer be retained.
+                </li>
+              ) : null}
+            </ul>
+          ) : null}
+        </>
+      ) : null}
+    </div>
+  );
+}
+
 export function AutomationsView({
   automations,
   projects,
   providers,
   draft,
+  loadRuns,
+  onSelectThread,
+  liveThreads,
   onCreate,
   onUpdate,
   onRemove,
@@ -335,6 +529,15 @@ export function AutomationsView({
                     </span>
                   ) : null}
                 </div>
+                {loadRuns ? (
+                  <AutomationRunHistory
+                    automation={auto}
+                    loadRuns={loadRuns}
+                    onSelectThread={onSelectThread}
+                    liveThreads={liveThreads}
+                    now={now}
+                  />
+                ) : null}
                 <div className={styles.rowActions}>
                   <label className={styles.toggle}>
                     <input

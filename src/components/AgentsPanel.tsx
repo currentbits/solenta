@@ -2146,7 +2146,6 @@ export function GitTab({
   previewLane,
   restorePreview,
   recycleWedgedLanes,
-  spotlight,
   setSpotlight,
   spotlightLane,
 }: {

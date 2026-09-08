@@ -1,4 +1,28 @@
-import type { AutomationPreset } from "./shared/ipc";
+import type { AutomationPreset, ThreadStatus } from "./shared/ipc";
+
+export type AutomationRunDisplayStatus =
+  | "working"
+  | "failed"
+  | "paused"
+  | "completed";
+
+/** Map actual thread status for the automation run list (issue #938). */
+export function automationRunDisplayStatus(
+  status: ThreadStatus,
+): AutomationRunDisplayStatus {
+  if (status === "working") return "working";
+  if (status === "failed") return "failed";
+  if (status === "quota-wait") return "paused";
+  return "completed";
+}
+
+export function automationRunStatusLabel(status: ThreadStatus): string {
+  const display = automationRunDisplayStatus(status);
+  if (display === "working") return "Working";
+  if (display === "failed") return "Failed";
+  if (display === "paused") return "Paused";
+  return "Completed";
+}
 
 const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 

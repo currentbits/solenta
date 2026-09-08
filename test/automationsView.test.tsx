@@ -9,9 +9,11 @@ import { inAct, mount } from "./support/dom.ts";
 import { AutomationsView } from "../src/components/AutomationsView";
 import type {
   AutomationInfo,
+  AutomationRunsResult,
   AutomationWrite,
   ProjectInfo,
   ProviderInfo,
+  ThreadStatus,
 } from "../src/shared/ipc";
 
 const p1: ProjectInfo = {
@@ -282,6 +284,194 @@ describe("AutomationsView", () => {
       (o) => o.textContent,
     );
     assert.deepEqual(labels, ["Default", "claude-opus-4-6", "claude-sonnet-4-6"]);
+    m.unmount();
+  });
+
+  function runs(
+    over: Partial<AutomationRunsResult> & { automationId?: string },
+  ): AutomationRunsResult {
+    return {
+      automationId: over.automationId ?? "a1",
+      runs: over.runs ?? [],
+      retentionLimitReached: over.retentionLimitReached ?? false,
+    };
+  }
+
+  function runInfo(
+    threadId: string,
+    status: ThreadStatus,
+    startedAt = Date.now() - 60_000,
+  ) {
+    return { threadId, status, startedAt };
+  }
+
+  it("shows latest run status and Open thread without starting a run", async () => {
+    const selected: string[] = [];
+    const runNow: string[] = [];
+    const m = await mount(
+      <AutomationsView
+        automations={[auto({ id: "a1", name: "Hourly" })]}
+        projects={[p1]}
+        providers={providers}
+        loadRuns={async () =>
+          runs({
+            runs: [
+              runInfo("t-new", "working"),
+              runInfo("t-old", "done", Date.now() - 3600_000),
+            ],
+          })
+        }
+        onSelectThread={(id) => {
+          selected.push(id);
+        }}
+        onCreate={() => {}}
+        onUpdate={() => {}}
+        onRemove={() => {}}
+        onRunNow={() => {
+          runNow.push("fired");
+        }}
+      />,
+    );
+    await m.flush();
+    const latest = m.query("[data-automation-latest]");
+    assert.ok(latest, "latest run");
+    assert.ok(
+      (latest.textContent || "").includes("Working"),
+      "latest status is Working",
+    );
+    const open = m.query("[data-automation-open-thread]");
+    assert.ok(open, "Open thread");
+    await m.click(open);
+    assert.deepEqual(selected, ["t-new"]);
+    assert.deepEqual(runNow, []);
+    m.unmount();
+  });
+
+  it("expands Recent retained runs newest first and maps quota-wait to Paused", async () => {
+    const selected: string[] = [];
+    const runNow: string[] = [];
+    const m = await mount(
+      <AutomationsView
+        automations={[auto({ id: "a1", name: "Hourly" })]}
+        projects={[p1]}
+        providers={providers}
+        loadRuns={async () =>
+          runs({
+            runs: [
+              runInfo("t-live", "working"),
+              runInfo("t-parked", "quota-wait", Date.now() - 120_000),
+              runInfo("t-fail", "failed", Date.now() - 180_000),
+              runInfo("t-done", "done", Date.now() - 240_000),
+            ],
+            retentionLimitReached: true,
+          })
+        }
+        onSelectThread={(id) => {
+          selected.push(id);
+        }}
+        onCreate={() => {}}
+        onUpdate={() => {}}
+        onRemove={() => {}}
+        onRunNow={() => {
+          runNow.push("fired");
+        }}
+      />,
+    );
+    await m.flush();
+    assert.ok(m.text().includes("Recent retained runs"));
+    const toggle = m.query("[data-automation-runs-toggle]");
+    assert.ok(toggle, "expand");
+    await m.click(toggle);
+    assert.deepEqual(runNow, [], "expanding history starts no run");
+    const ids = m
+      .queryAll("[data-automation-run-row]")
+      .map((el) => el.getAttribute("data-automation-run-row"));
+    assert.deepEqual(ids, ["t-live", "t-parked", "t-fail", "t-done"]);
+    assert.ok(m.text().includes("Paused"));
+    assert.ok(m.text().includes("Failed"));
+    assert.ok(m.text().includes("Completed"));
+    assert.ok(m.text().includes("Older runs may no longer be retained."));
+    await m.click(m.query('[data-automation-run-row="t-parked"]'));
+    assert.deepEqual(selected, ["t-parked"]);
+    m.unmount();
+  });
+
+  it("says the last run is no longer retained when lastRunAt has no thread", async () => {
+    const m = await mount(
+      <AutomationsView
+        automations={[
+          auto({ id: "a1", name: "Hourly", lastRunAt: Date.now() - 1000 }),
+        ]}
+        projects={[p1]}
+        providers={providers}
+        loadRuns={async () => runs({ runs: [] })}
+        onCreate={() => {}}
+        onUpdate={() => {}}
+        onRemove={() => {}}
+        onRunNow={() => {}}
+      />,
+    );
+    await m.flush();
+    assert.ok(m.query("[data-automation-runs-missing]"));
+    assert.ok(m.text().includes("The last run is no longer retained."));
+    assert.equal(m.query("[data-automation-open-thread]"), null);
+    m.unmount();
+  });
+
+  it("does not open a deleted thread and overlays live working status", async () => {
+    const selected: string[] = [];
+    const m = await mount(
+      <AutomationsView
+        automations={[auto({ id: "a1", name: "Hourly" })]}
+        projects={[p1]}
+        providers={providers}
+        liveThreads={[{ id: "t-live", status: "working" }]}
+        loadRuns={async () =>
+          runs({
+            runs: [
+              runInfo("t-live", "idle"),
+              runInfo("t-gone", "done", Date.now() - 3600_000),
+            ],
+          })
+        }
+        onSelectThread={(id) => {
+          selected.push(id);
+        }}
+        onCreate={() => {}}
+        onUpdate={() => {}}
+        onRemove={() => {}}
+        onRunNow={() => {}}
+      />,
+    );
+    await m.flush();
+    const latest = m.query("[data-automation-latest]");
+    assert.ok(latest);
+    assert.ok((latest.textContent || "").includes("Working"));
+    await m.click(m.query("[data-automation-runs-toggle]"));
+    const gone = m.query('[data-automation-run-row="t-gone"]');
+    assert.ok(gone);
+    assert.ok((gone.textContent || "").includes("Transcript unavailable"));
+    await m.click(gone);
+    assert.deepEqual(selected, []);
+    m.unmount();
+  });
+
+  it("keeps Run now labeled Run now", async () => {
+    const m = await mount(
+      <AutomationsView
+        automations={[auto({ id: "a1", name: "Hourly" })]}
+        projects={[p1]}
+        providers={providers}
+        onCreate={() => {}}
+        onUpdate={() => {}}
+        onRemove={() => {}}
+        onRunNow={() => {}}
+      />,
+    );
+    const run = m.query("[data-automation-run]");
+    assert.ok(run);
+    assert.equal(run.textContent, "Run now");
+    assert.equal(m.text().includes("Replay"), false);
     m.unmount();
   });
 

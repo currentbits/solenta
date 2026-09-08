@@ -2299,6 +2299,30 @@ export interface AutomationWrite {
 }
 
 /**
+ * One retained automation-run thread (issue #938). Linkage is the
+ * typed `automationId` stamp on the thread, not the title.
+ */
+export interface AutomationRunInfo {
+  threadId: string;
+  /** Thread create time; the fire that minted this run. */
+  startedAt: number;
+  /** Actual thread status. Quota-wait is paused in the UI, not completed. */
+  status: ThreadStatus;
+}
+
+export interface AutomationRunsResult {
+  automationId: string;
+  /** Newest first, bounded by existing per-automation retention. */
+  runs: AutomationRunInfo[];
+  /**
+   * True when retained runs fill the per-automation cap. Older fires may
+   * no longer be retained. Does not prove deletion: the first N fires can
+   * all still exist, and protected rows can keep the list at/over the cap.
+   */
+  retentionLimitReached: boolean;
+}
+
+/**
  * Stay-awake mode (issue #364, item 5). See AppSettings.stayAwake.
  */
 export type StayAwakeMode = "agent" | "on" | "off";
@@ -3450,6 +3474,11 @@ export interface CoderApi {
     remove(input: { id: string }): Promise<void>;
     /** Fire one immediately and recompute nextRunAt. */
     runNow(input: { id: string }): Promise<AutomationInfo>;
+    /**
+     * Retained run threads for one automation, newest first (issue #938).
+     * Does not start a run. Unknown id rejects.
+     */
+    listRuns(input: { id: string }): Promise<AutomationRunsResult>;
   };
   projects: {
     list(): Promise<ProjectInfo[]>;

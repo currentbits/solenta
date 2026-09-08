@@ -341,6 +341,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     updateAutomation,
     removeAutomation,
     runAutomationNow,
+    listAutomationRuns,
   } = useCoder();
 
   useEffect(() => {
@@ -1512,6 +1513,9 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
               projects={projects}
               providers={providers}
               draft={repeatDraft}
+              loadRuns={listAutomationRuns}
+              onSelectThread={handleSelectThread}
+              liveThreads={loading ? undefined : threads}
               onCreate={async (input) => {
                 await addAutomation(input);
               }}

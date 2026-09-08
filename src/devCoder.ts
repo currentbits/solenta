@@ -19,6 +19,7 @@ import type {
   AppStatus,
   AttachmentInfo,
   AutomationInfo,
+  AutomationRunsResult,
   UpdateStatus,
   AutomationWrite,
   ChatMessage,
@@ -1608,6 +1609,7 @@ function buildDevCoder(): CoderApi {
   let templates: WorkflowTemplateInfo[] = [cloneTemplate(STANDARD_TEMPLATE)];
   /** Scheduled agent runs. */
   let automationsList: AutomationInfo[] = [];
+  const automationIdByThread = new Map<string, string>();
   /** Aggregated cost of finished fake runs this session (stands in for "today"). */
   let spendTodayUsd = 0;
   let dailyBudgetUsd: number | null = null;
@@ -3341,6 +3343,7 @@ function buildDevCoder(): CoderApi {
             projectId: existing.projectId,
             title: existing.name,
           });
+          automationIdByThread.set(thread.id, existing.id);
           await api.threads.setProvider({
             threadId: thread.id,
             provider: existing.provider,
@@ -3372,6 +3375,26 @@ function buildDevCoder(): CoderApi {
           );
           throw err;
         }
+      },
+      async listRuns(input: { id: string }): Promise<AutomationRunsResult> {
+        const existing = automationsList.find((a) => a.id === input.id);
+        if (!existing) {
+          throw new Error(`Unknown automation: ${input.id}`);
+        }
+        const indexed = threads
+          .map((t, i) => ({ t, i }))
+          .filter(({ t }) => automationIdByThread.get(t.id) === existing.id);
+        indexed.sort((a, b) => b.t.createdAt - a.t.createdAt || b.i - a.i);
+        const runs = indexed.map(({ t }) => ({
+          threadId: t.id,
+          startedAt: t.createdAt,
+          status: t.status,
+        }));
+        return {
+          automationId: existing.id,
+          runs,
+          retentionLimitReached: runs.length >= 20,
+        };
       },
     },
     projects: {

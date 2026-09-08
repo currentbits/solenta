@@ -181,6 +181,47 @@ async function runAutomation(ctx, auto, now, opts) {
 }
 
 /**
+ * Retained run threads for one automation, newest first (issue #938).
+ * Linkage is the typed `automationId` stamp, never the thread title.
+ * Bounded by existing per-automation retention; does not start a run.
+ *
+ * @param {import("./store").Store} store
+ * @param {string} automationId
+ * @returns {{
+ *   automationId: string,
+ *   runs: Array<{ threadId: string, startedAt: number, status: string }>,
+ *   retentionLimitReached: boolean,
+ * }}
+ */
+function listAutomationRuns(store, automationId) {
+  const id = automationId != null ? String(automationId) : "";
+  const auto = store.getAutomation(id);
+  if (!auto) {
+    throw new Error(`Unknown automation: ${id}`);
+  }
+  const indexed = store
+    .getThreads()
+    .map((t, i) => ({ t, i }))
+    .filter(
+      ({ t }) => t && t.automationId === id && t.memoryConsolidate !== true,
+    );
+  indexed.sort((a, b) => b.t.createdAt - a.t.createdAt || b.i - a.i);
+  const runs = indexed.map(({ t }) => ({
+    threadId: t.id,
+    startedAt: t.createdAt,
+    status: t.status || "idle",
+  }));
+  return {
+    automationId: id,
+    runs,
+    // At the cap, older fires *may* have been dropped. Count cannot prove
+    // deletion: the first MAX fires are all still here, and protected
+    // working/pinned/worktree rows can keep the list at/over the cap.
+    retentionLimitReached: runs.length >= MAX_THREADS_PER_AUTOMATION,
+  };
+}
+
+/**
  * Fire one automation immediately, even if nextRunAt is in the future.
  *
  * @param {{ store: import("./store").Store, runner: { startRun: Function }, broadcast?: Function }} ctx
@@ -239,6 +280,7 @@ module.exports = {
   MAX_THREADS_PER_AUTOMATION,
   nextFire,
   dueAutomations,
+  listAutomationRuns,
   runAutomation,
   runNow,
   startScheduler,

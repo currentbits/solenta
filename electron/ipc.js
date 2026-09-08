@@ -1360,6 +1360,10 @@ const IPC_HANDLERS = {
     const id = input && input.id != null ? String(input.id) : "";
     return automations.runNow(ctx, id);
   },
+  "automations:listRuns": async (ctx, input) => {
+    const id = input && input.id != null ? String(input.id) : "";
+    return automations.listAutomationRuns(ctx.store, id);
+  },
   "threads:delete": async (ctx, input) => {
     services.deleteThread(ctx.store, input, {
       isRunning: (id) => ctx.runner.isRunning(id),
