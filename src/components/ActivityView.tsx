@@ -29,20 +29,28 @@ export function ActivityView({
 }: ActivityViewProps) {
   const [items, setItems] = useState<ActivityItem[]>([]);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [hasLastSuccess, setHasLastSuccess] = useState(false);
   const [now, setNow] = useState(() => Date.now());
   const loadGen = useRef(0);
 
   const loadAll = useCallback(async () => {
     const gen = ++loadGen.current;
     setLoading(true);
+    setError(null);
     try {
       const next = await listActivity();
       if (gen !== loadGen.current) return;
       setItems(Array.isArray(next) ? next : []);
+      setHasLastSuccess(true);
       setNow(Date.now());
-    } catch {
+    } catch (err) {
       if (gen !== loadGen.current) return;
-      setItems([]);
+      const msg =
+        err instanceof Error && err.message
+          ? err.message
+          : "Failed to load activity";
+      setError(msg);
     } finally {
       if (gen === loadGen.current) setLoading(false);
     }
@@ -73,7 +81,9 @@ export function ActivityView({
     if (existingThreadIds == null) return null;
     return new Set(existingThreadIds);
   }, [existingThreadIds]);
-  const empty = !loading && scoped.length === 0;
+  const empty = hasLastSuccess && scoped.length === 0;
+  const showLoading = loading && !hasLastSuccess && !error;
+  const initialError = Boolean(error && !hasLastSuccess);
   const scope = projectScopeLabel(projects, projectScope);
 
   return (
@@ -98,11 +108,48 @@ export function ActivityView({
         </div>
       </header>
 
-      {loading && items.length === 0 ? (
+      {showLoading ? (
         <p className={styles.hint} aria-live="polite">
           Loading activity…
         </p>
-      ) : empty ? (
+      ) : initialError ? (
+        <div className={styles.empty} data-activity-error="">
+          <p className={styles.emptyTitle}>Could not load activity</p>
+          <p className={styles.emptyHint} role="alert">
+            {error}
+          </p>
+          <button
+            type="button"
+            className={styles.retry}
+            onClick={() => void loadAll()}
+            disabled={loading}
+            title="Retry"
+          >
+            Retry
+          </button>
+        </div>
+      ) : (
+        <>
+          {error ? (
+            <div className={styles.refreshStatus} data-activity-error="">
+              <p className={styles.hint} role="alert">
+                {error}
+              </p>
+              <p className={styles.hint} data-activity-stale="" data-stale="">
+                Last successful activity · stale
+              </p>
+              <button
+                type="button"
+                className={styles.retry}
+                onClick={() => void loadAll()}
+                disabled={loading}
+                title="Retry"
+              >
+                Retry
+              </button>
+            </div>
+          ) : null}
+          {empty ? (
         <div className={styles.empty}>
           <p className={styles.emptyTitle} data-scope-empty={scope.kind}>
             {scope.kind === "removed"
@@ -126,7 +173,7 @@ export function ActivityView({
             </button>
           ) : null}
         </div>
-      ) : (
+          ) : (
         <div className={styles.list}>
           {groups.map((group) => (
             <section
@@ -182,6 +229,8 @@ export function ActivityView({
             </section>
           ))}
         </div>
+          )}
+        </>
       )}
     </main>
   );

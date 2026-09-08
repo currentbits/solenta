@@ -404,4 +404,105 @@ describe("ActivityView", () => {
     assert.ok(m.text().includes("Transcript unavailable"));
     m.unmount();
   });
+
+  it("shows an initial load error with retry, not a successful empty list (#943)", async () => {
+    let calls = 0;
+    const m = await mount(
+      <ActivityView
+        projects={[p1]}
+        listActivity={async () => {
+          calls += 1;
+          throw new Error("store locked");
+        }}
+        onSelectThread={() => {}}
+      />,
+    );
+    await m.flush();
+    assert.equal(calls, 1);
+    assert.ok(m.query("[data-activity-error]"), "error marker");
+    assert.ok(m.query('[role="alert"]'), "error uses role=alert");
+    assert.ok(m.text().includes("store locked"));
+    assert.ok(m.byText("Retry"), "initial failure offers retry");
+    assert.ok(!m.text().includes("No activity yet"), "must not claim nothing happened");
+    assert.equal(m.query("[data-activity-row]"), null);
+    const refresh = m.byText("Refresh") as HTMLButtonElement | null;
+    assert.ok(refresh, "refresh control");
+    assert.equal(refresh.disabled, false, "loading control recovers");
+    m.unmount();
+  });
+
+  it("keeps the last rows after a failed refresh and recovers on retry (#943)", async () => {
+    let calls = 0;
+    const first = item({
+      id: "t1:done:1",
+      threadId: "t1",
+      kind: "done",
+      threadTitle: "Ship ledger",
+    });
+    const second = item({
+      id: "t2:started:1",
+      threadId: "t2",
+      kind: "started",
+      threadTitle: "Retry billing",
+    });
+    const m = await mount(
+      <ActivityView
+        projects={[p1]}
+        listActivity={async () => {
+          calls += 1;
+          if (calls === 1) return [first];
+          if (calls === 2) throw new Error("store locked");
+          return [second];
+        }}
+        onSelectThread={() => {}}
+      />,
+    );
+    await m.flush();
+    assert.ok(m.query('[data-activity-row="t1:done:1"]'), "first load");
+    assert.ok(m.text().includes("Ship ledger"));
+    assert.equal(m.query("[data-activity-error]"), null);
+    assert.equal(m.query("[data-activity-stale]"), null);
+
+    await m.click(m.byText("Refresh"));
+    assert.ok(m.query('[data-activity-row="t1:done:1"]'), "failed refresh keeps last rows");
+    assert.ok(m.text().includes("Ship ledger"));
+    assert.ok(!m.text().includes("No activity yet"), "must not erase into empty");
+    assert.ok(m.query("[data-activity-error]"), "refresh failure is visible");
+    assert.ok(m.query('[role="alert"]')?.textContent?.includes("store locked"));
+    assert.ok(m.query("[data-activity-stale]"), "stale/last-success marker");
+    assert.match(m.text(), /stale|out of date/i);
+    const refresh = m.byText("Refresh") as HTMLButtonElement;
+    assert.equal(refresh.disabled, false, "refresh re-enables after failure");
+    assert.ok(m.byText("Retry"), "refresh failure exposes retry");
+
+    await m.click(m.byText("Retry"));
+    assert.ok(m.query('[data-activity-row="t2:started:1"]'), "successful retry updates rows");
+    assert.ok(m.text().includes("Retry billing"));
+    assert.equal(m.query('[data-activity-row="t1:done:1"]'), null, "previous rows are replaced");
+    assert.equal(m.query("[data-activity-error]"), null, "success clears the error");
+    assert.equal(m.query("[data-activity-stale]"), null, "success clears stale");
+    m.unmount();
+  });
+
+  it("shows the successful-empty copy only after a successful empty response (#943)", async () => {
+    let calls = 0;
+    const m = await mount(
+      <ActivityView
+        projects={[p1]}
+        listActivity={async () => {
+          calls += 1;
+          if (calls === 1) throw new Error("store locked");
+          return [];
+        }}
+        onSelectThread={() => {}}
+      />,
+    );
+    await m.flush();
+    assert.ok(!m.text().includes("No activity yet"));
+    await m.click(m.byText("Retry"));
+    assert.ok(m.text().includes("No activity yet"));
+    assert.equal(m.query("[data-activity-error]"), null);
+    assert.equal(m.query("[data-activity-row]"), null);
+    m.unmount();
+  });
 });
