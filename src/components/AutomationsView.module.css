@@ -113,6 +113,11 @@
   background: var(--btn-primary-hover);
 }
 
+.submit:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 .formError {
   margin: 0;
   font-size: 12px;

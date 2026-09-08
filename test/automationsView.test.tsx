@@ -1,14 +1,15 @@
 /**
- * AutomationsView: rows, toggle, create form validation.
+ * AutomationsView: rows, toggle, create form validation, pending create.
  * Run: npm run test:renderer
  */
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import * as React from "react";
-import { mount } from "./support/dom.ts";
+import { inAct, mount } from "./support/dom.ts";
 import { AutomationsView } from "../src/components/AutomationsView";
 import type {
   AutomationInfo,
+  AutomationWrite,
   ProjectInfo,
   ProviderInfo,
 } from "../src/shared/ipc";
@@ -283,4 +284,151 @@ describe("AutomationsView", () => {
     assert.deepEqual(labels, ["Default", "claude-opus-4-6", "claude-sonnet-4-6"]);
     m.unmount();
   });
+
+  it("a pending create cannot start twice; a later submit is a new request (#941)", async () => {
+    const created: AutomationWrite[] = [];
+    const held = deferred();
+    const m = await mount(
+      <AutomationsView
+        automations={[]}
+        projects={[p1]}
+        providers={providers}
+        onCreate={async (input) => {
+          created.push(input);
+          await held.promise;
+        }}
+        onUpdate={() => {}}
+        onRemove={() => {}}
+        onRunNow={() => {}}
+      />,
+    );
+    await m.type(m.query('[data-automation-create] [name="name"]'), "Nightly");
+    await m.type(
+      m.query('[data-automation-create] [name="prompt"]'),
+      "review the repo",
+    );
+
+    const form = m.query("[data-automation-create]");
+    const submit = m.query(
+      "[data-automation-create] button[type=submit]",
+    ) as HTMLButtonElement | null;
+    assert.ok(form && submit, "create form");
+
+    const fireSubmit = () => {
+      form.dispatchEvent(
+        new Event("submit", { bubbles: true, cancelable: true }),
+      );
+    };
+    await inAct(async () => {
+      fireSubmit();
+      fireSubmit();
+    });
+    await m.flush();
+    await m.click(submit);
+    fireSubmit();
+    await m.flush();
+
+    assert.equal(created.length, 1, "pending create must be a single host request");
+    assert.equal(submit.disabled, true, "submit must show pending");
+    assert.equal(submit.getAttribute("aria-busy"), "true");
+    assert.match(submit.textContent || "", /Adding/);
+    assert.equal(
+      (m.query('[data-automation-create] [name="name"]') as HTMLInputElement)
+        .value,
+      "Nightly",
+      "form stays filled until the pending create finishes",
+    );
+
+    held.resolve();
+    await m.flush();
+    assert.equal(
+      (m.query('[data-automation-create] [name="name"]') as HTMLInputElement)
+        .value,
+      "",
+    );
+    assert.equal(submit.disabled, false);
+    assert.equal(submit.getAttribute("aria-busy"), null);
+    assert.match(submit.textContent || "", /Add automation/);
+
+    await m.type(m.query('[data-automation-create] [name="name"]'), "Nightly");
+    await m.type(
+      m.query('[data-automation-create] [name="prompt"]'),
+      "review the repo",
+    );
+    await m.click(submit);
+    assert.equal(
+      created.length,
+      2,
+      "an intentional later create with the same prompt is allowed",
+    );
+    m.unmount();
+  });
+
+  it("a failed create keeps the typed form and can retry", async () => {
+    const created: AutomationWrite[] = [];
+    let fail = true;
+    const m = await mount(
+      <AutomationsView
+        automations={[]}
+        projects={[p1]}
+        providers={providers}
+        onCreate={async (input) => {
+          created.push(input);
+          if (fail) {
+            fail = false;
+            throw new Error("store locked");
+          }
+        }}
+        onUpdate={() => {}}
+        onRemove={() => {}}
+        onRunNow={() => {}}
+      />,
+    );
+    await m.type(m.query('[data-automation-create] [name="name"]'), "Nightly");
+    await m.type(
+      m.query('[data-automation-create] [name="prompt"]'),
+      "review the repo",
+    );
+    await m.click(m.query("[data-automation-create] button[type=submit]"));
+
+    assert.equal(created.length, 1);
+    assert.equal(
+      (m.query('[data-automation-create] [name="name"]') as HTMLInputElement)
+        .value,
+      "Nightly",
+    );
+    assert.equal(
+      (m.query('[data-automation-create] [name="prompt"]') as HTMLTextAreaElement)
+        .value,
+      "review the repo",
+    );
+    assert.ok(
+      (m.query("[data-form-error]")?.textContent || "").includes("store locked"),
+      "create failure must surface on the form",
+    );
+    const submit = m.query(
+      "[data-automation-create] button[type=submit]",
+    ) as HTMLButtonElement | null;
+    assert.ok(submit);
+    assert.equal(submit.disabled, false, "retry must be available after failure");
+
+    await m.click(submit);
+    assert.equal(created.length, 2);
+    assert.equal(
+      (m.query('[data-automation-create] [name="name"]') as HTMLInputElement)
+        .value,
+      "",
+      "successful retry clears the form",
+    );
+    assert.equal(m.query("[data-form-error]"), null);
+    m.unmount();
+  });
 });
+
+function deferred() {
+  let resolve!: () => void;
+  const promise = new Promise<void>((r) => {
+    resolve = r;
+  });
+  return { promise, resolve };
+}

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   createFormError,
   formatNextRun,
@@ -55,6 +55,8 @@ export function AutomationsView({
     id: string;
     message: string;
   } | null>(null);
+  const [creating, setCreating] = useState(false);
+  const creatingRef = useRef(false);
   const [now] = useState(() => Date.now());
 
   useEffect(() => {
@@ -94,7 +96,12 @@ export function AutomationsView({
   const providerModels =
     providers.find((p) => p.id === provider)?.models ?? [];
 
+  /**
+   * Click and Enter both call submit() on this form. A useState flag is too
+   * late for a same-tick double submit, so the ref is the real lock (#941).
+   */
   const submit = async () => {
+    if (creatingRef.current) return;
     const error = createFormError({
       name,
       projectId,
@@ -107,20 +114,31 @@ export function AutomationsView({
       setFormError(error);
       return;
     }
+    creatingRef.current = true;
+    setCreating(true);
     setFormError(null);
-    await onCreate({
-      name: name.trim(),
-      projectId,
-      prompt,
-      provider,
-      model: model.trim() || null,
-      preset,
-      hour: needsHour ? Number(hour) : null,
-      enabled: true,
-    });
-    setName("");
-    setPrompt("");
-    setModel("");
+    try {
+      await onCreate({
+        name: name.trim(),
+        projectId,
+        prompt,
+        provider,
+        model: model.trim() || null,
+        preset,
+        hour: needsHour ? Number(hour) : null,
+        enabled: true,
+      });
+      setName("");
+      setPrompt("");
+      setModel("");
+    } catch (err) {
+      setFormError(
+        err instanceof Error && err.message ? err.message : String(err),
+      );
+    } finally {
+      creatingRef.current = false;
+      setCreating(false);
+    }
   };
 
   return (
@@ -264,8 +282,13 @@ export function AutomationsView({
             {formError}
           </p>
         ) : null}
-        <button type="submit" className={styles.submit}>
-          Add automation
+        <button
+          type="submit"
+          className={styles.submit}
+          disabled={creating}
+          aria-busy={creating || undefined}
+        >
+          {creating ? "Adding…" : "Add automation"}
         </button>
       </form>
 
