@@ -478,7 +478,10 @@ interface ThreadViewProps {
   /** Re-send a queued prompt after a delivery failure. */
   onRetryQueued?: () => void;
   /** Replace the queued follow-up's text (edit in the strip, issue #364 / #809). */
-  onEditQueued?: (prompt: string, items?: string[]) => void;
+  onEditQueued?: (
+    prompt: string,
+    items?: string[],
+  ) => void | Promise<void>;
   /**
    * Text a cancelled queue pushed back toward the composer (issue #364).
    * Passed through to Composer, which applies it only onto an empty draft.
@@ -4353,10 +4356,14 @@ export const ThreadView = memo(function ThreadView({
   /** Inline edit of a queued follow-up item (issue #364 / #780). */
   const [editingQueued, setEditingQueued] = useState<number | null>(null);
   const [queuedEditDraft, setQueuedEditDraft] = useState("");
+  const queuedWriteInFlight = useRef(false);
+  const [queuedWritePending, setQueuedWritePending] = useState(false);
+  const [queuedWriteError, setQueuedWriteError] = useState<string | null>(null);
   // The edit is bound to the blob it was seeded from: a thread switch or a
   // drained/cancelled queue ends it.
   useEffect(() => {
     setEditingQueued(null);
+    setQueuedWriteError(null);
   }, [detail?.thread.id, queuedPrompt == null]);
   const [notesOpen, setNotesOpen] = useState(false);
   const [notesDraft, setNotesDraft] = useState("");
@@ -4767,12 +4774,29 @@ export const ThreadView = memo(function ThreadView({
   const queuedItems = queuedThoughts(queuedPrompt, queuedItemsProp);
 
   const writeQueuedItems = (items: string[]) => {
+    if (queuedWriteInFlight.current) return;
     if (items.length === 0) {
       onCancelQueued?.();
       return;
     }
     const next = items.join("\n\n");
-    if (next !== queuedPrompt) onEditQueued?.(next, items);
+    if (next === queuedPrompt || !onEditQueued) return;
+    queuedWriteInFlight.current = true;
+    setQueuedWritePending(true);
+    setQueuedWriteError(null);
+    void Promise.resolve(onEditQueued(next, items))
+      .then(() => {
+        setQueuedWriteError(null);
+      })
+      .catch((err: unknown) => {
+        setQueuedWriteError(
+          err instanceof Error && err.message ? err.message : String(err),
+        );
+      })
+      .finally(() => {
+        queuedWriteInFlight.current = false;
+        setQueuedWritePending(false);
+      });
   };
 
   // Empty save means cancel: editing must never blank the queue (#364).
@@ -4782,7 +4806,9 @@ export const ThreadView = memo(function ThreadView({
     setEditingQueued(null);
     if (!text || queuedPrompt == null || index == null) return;
     if (queuedItems.length <= 1) {
-      if (text !== queuedPrompt) onEditQueued?.(text);
+      if (text !== queuedPrompt) {
+        void Promise.resolve(onEditQueued?.(text)).catch(() => {});
+      }
       return;
     }
     if (text === queuedItems[index]) return;
@@ -6779,6 +6805,14 @@ export const ThreadView = memo(function ThreadView({
                       {queuedError}
                     </span>
                   ) : null}
+                  {queuedWriteError ? (
+                    <span
+                      className={styles.permissionGuardrail}
+                      data-queued-write-error=""
+                    >
+                      {queuedWriteError}
+                    </span>
+                  ) : null}
                 </div>
                 <ul className={styles.queuedList}>
                   {queuedItems.map((item, i) => (
@@ -6837,6 +6871,7 @@ export const ThreadView = memo(function ThreadView({
                                 type="button"
                                 className={styles.retryBtn}
                                 aria-label="Move queued follow-up up"
+                                disabled={queuedWritePending}
                                 onClick={() =>
                                   writeQueuedItems(
                                     swapQueuedItem(queuedItems, i, -1),
@@ -6852,6 +6887,7 @@ export const ThreadView = memo(function ThreadView({
                                 type="button"
                                 className={styles.retryBtn}
                                 aria-label="Move queued follow-up down"
+                                disabled={queuedWritePending}
                                 onClick={() =>
                                   writeQueuedItems(
                                     swapQueuedItem(queuedItems, i, 1),
@@ -6866,6 +6902,7 @@ export const ThreadView = memo(function ThreadView({
                               <button
                                 type="button"
                                 className={styles.retryBtn}
+                                disabled={queuedWritePending}
                                 onClick={() => {
                                   setQueuedEditDraft(item);
                                   setEditingQueued(i);
@@ -6878,6 +6915,7 @@ export const ThreadView = memo(function ThreadView({
                             <button
                               type="button"
                               className={styles.stopBtn}
+                              disabled={queuedWritePending}
                               onClick={() =>
                                 writeQueuedItems(
                                   queuedItems.filter((_, j) => j !== i),

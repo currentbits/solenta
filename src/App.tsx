@@ -784,7 +784,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
 
   const handleEditQueued = useCallback(
     (prompt: string, items?: string[]) => {
-      editQueued(prompt, undefined, items);
+      return editQueued(prompt, undefined, items);
     },
     [editQueued],
   );

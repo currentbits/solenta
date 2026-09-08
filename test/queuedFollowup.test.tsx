@@ -771,6 +771,137 @@ describe("queued follow-up (issue #92 / #314)", () => {
     );
     m.unmount();
   });
+
+  const QUEUED_SHOT = {
+    kind: "image" as const,
+    path: "/tmp/shot.png",
+    name: "shot.png",
+  };
+
+  async function bootQueuedPair() {
+    const busy = working();
+    busy.queued = {
+      prompt: "first thought\n\nsecond thought",
+      items: ["first thought", "second thought"],
+      attachments: [QUEUED_SHOT],
+    };
+    const fake = createFakeCoder({
+      projects: [project()],
+      threads: [decoy(), busy],
+      details: {
+        "t-decoy": detail({ thread: decoy() }),
+        "t-busy": detail({ thread: busy }),
+      },
+    });
+    const m = await boot(fake);
+    const card = m.query(
+      'button[aria-label^="Select thread: busy target thread"]',
+    );
+    assert.ok(card, "busy thread card must exist");
+    await m.click(card);
+    await m.flush();
+    return { fake, m, busy };
+  }
+
+  it("keeps order and attachments after a rejected reorder, then retries (issue #1144)", async () => {
+    const { fake, m } = await bootQueuedPair();
+    const orig = fake.api.threads.setQueued.bind(fake.api.threads);
+    let rejectNext = true;
+    fake.api.threads.setQueued = (input) => {
+      if (rejectNext && (input as { replace?: boolean }).replace) {
+        rejectNext = false;
+        fake.calls.push({ channel: "threads.setQueued", args: [input] });
+        return Promise.reject(new Error("queue write failed"));
+      }
+      return orig(input);
+    };
+
+    const first = m.query('[data-queued-item="0"]');
+    assert.ok(first, "two queued thoughts must render as items");
+    const down = first.querySelector("button[data-move-queued-down]");
+    assert.ok(down, "a multi-item queue must offer reorder");
+    await m.click(down);
+
+    const items = m.queryAll("[data-queued-item]");
+    assert.equal(items.length, 2);
+    assert.match(
+      items[0]!.textContent || "",
+      /first thought/,
+      "a rejected reorder must not apply",
+    );
+    assert.match(items[1]!.textContent || "", /second thought/);
+    const err = m.query("[data-queued-write-error]");
+    assert.ok(err, "a rejected persist must show a retryable error on the strip");
+    assert.match(err.textContent || "", /queue write failed/);
+
+    const stillFirst = m.query('[data-queued-item="0"]');
+    await m.click(stillFirst!.querySelector("button[data-move-queued-down]"));
+
+    const replaceCalls = fake
+      .of("threads.setQueued")
+      .filter((c) => (c.args[0] as { replace?: boolean }).replace === true);
+    assert.equal(replaceCalls.length, 2, "retry must write again");
+    assert.deepEqual(replaceCalls[1]!.args[0], {
+      threadId: "t-busy",
+      prompt: "second thought\n\nfirst thought",
+      attachments: [QUEUED_SHOT],
+      replace: true,
+      items: ["second thought", "first thought"],
+    });
+    const retried = m.queryAll("[data-queued-item]");
+    assert.match(retried[0]!.textContent || "", /second thought/);
+    assert.match(retried[1]!.textContent || "", /first thought/);
+    assert.equal(
+      m.query("[data-queued-write-error]"),
+      null,
+      "a successful retry clears the persist error",
+    );
+    m.unmount();
+  });
+
+  it("does not start a second reorder while a replace is pending (issue #1144)", async () => {
+    const { fake, m } = await bootQueuedPair();
+    const orig = fake.api.threads.setQueued.bind(fake.api.threads);
+    let release!: (run: () => ReturnType<typeof orig>) => void;
+    const gate = new Promise<() => ReturnType<typeof orig>>((resolve) => {
+      release = resolve;
+    });
+    fake.api.threads.setQueued = (input) => {
+      fake.calls.push({ channel: "threads.setQueued", args: [input] });
+      return gate.then((run) => run());
+    };
+
+    const down = m.query('[data-queued-item="0"] button[data-move-queued-down]');
+    assert.ok(down);
+    await m.click(down);
+    await m.click(down);
+
+    assert.equal(
+      fake
+        .of("threads.setQueued")
+        .filter((c) => (c.args[0] as { replace?: boolean }).replace === true)
+        .length,
+      1,
+      "a second Down while the first replace is in flight must not write again",
+    );
+    const downBtn = m.query(
+      '[data-queued-item="0"] button[data-move-queued-down]',
+    ) as HTMLButtonElement | null;
+    assert.ok(downBtn);
+    assert.equal(downBtn.disabled, true, "Down must lock while a write is pending");
+
+    await inAct(() => {
+      release(() => orig({
+        threadId: "t-busy",
+        prompt: "second thought\n\nfirst thought",
+        attachments: [QUEUED_SHOT],
+        replace: true,
+        items: ["second thought", "first thought"],
+      }));
+    });
+    await m.flush();
+    m.unmount();
+  });
 });
 
 describe("side question /btw during a run (issue #471)", () => {

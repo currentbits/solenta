@@ -292,7 +292,11 @@ export interface UseCoderResult {
   /** Re-send a queued prompt after a delivery failure (issue #314). */
   retryQueued: (threadId?: string) => void;
   /** Replace a thread's queued follow-up text in place (issue #364 / #809). */
-  editQueued: (prompt: string, threadId?: string, items?: string[]) => void;
+  editQueued: (
+    prompt: string,
+    threadId?: string,
+    items?: string[],
+  ) => Promise<void>;
   /** Fetch a GitHub or Linear issue for a project checkout. */
   fetchIssue: (
     projectPath: string,
@@ -1000,32 +1004,31 @@ export function useCoder(): UseCoderResult {
   );
 
   const editQueued = useCallback(
-    (prompt: string, threadId?: string, items?: string[]) => {
+    async (prompt: string, threadId?: string, items?: string[]) => {
       const id = threadId ?? selectedRef.current;
       if (!id) return;
       const held = threadsRef.current.find((t) => t.id === id);
       if (!held?.queued) return;
-      void api.threads
-        .setQueued({
+      try {
+        const updated = await api.threads.setQueued({
           threadId: id,
           prompt,
           attachments: held.queued.attachments,
           replace: true,
           ...(items ? { items } : {}),
-        })
-        .then((updated) => {
-          applyThreads(
-            threadsRef.current.map((t) => (t.id === updated.id ? updated : t)),
-          );
-          setDetail((prev) =>
-            prev && prev.thread.id === updated.id
-              ? { ...prev, thread: updated }
-              : prev,
-          );
-        })
-        .catch((err) => {
-          setError({ scope: "run", message: errorMessage(err) });
         });
+        applyThreads(
+          threadsRef.current.map((t) => (t.id === updated.id ? updated : t)),
+        );
+        setDetail((prev) =>
+          prev && prev.thread.id === updated.id
+            ? { ...prev, thread: updated }
+            : prev,
+        );
+      } catch (err) {
+        setError({ scope: "run", message: errorMessage(err) });
+        throw err;
+      }
     },
     [api, applyThreads],
   );
