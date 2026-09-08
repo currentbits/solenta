@@ -224,6 +224,67 @@ describe("start spawn shape", () => {
     stop("t-win");
   });
 
+  it("forwards opts.env so a lane can inject PORT and isolation (#346 / #250)", () => {
+    const calls = [];
+    start("t-env", "/repo", "dev", {
+      platform: "darwin",
+      env: { PORT: "3001", SOLENTA_LANE: "1", SOLENTA_DATA_DIR: "/homes/t" },
+      spawn: (bin, args, opts) => {
+        calls.push({ bin, args, opts });
+        return fakeNpmChild();
+      },
+    });
+    assert.equal(calls[0].opts.env.PORT, "3001");
+    assert.equal(calls[0].opts.env.SOLENTA_LANE, "1");
+    assert.equal(calls[0].opts.env.SOLENTA_DATA_DIR, "/homes/t");
+    stop("t-env");
+  });
+
+  it("appends --user-data-dir for an Electron script using SOLENTA_DATA_DIR", () => {
+    const dir = tmpDir();
+    fs.writeFileSync(
+      path.join(dir, "package.json"),
+      JSON.stringify({ scripts: { electron: "electron ." } }),
+    );
+    const dataDir = path.join(dir, "dev-homes", "t-el-args");
+    const calls = [];
+    start("t-el-args", dir, "electron", {
+      platform: "darwin",
+      env: { SOLENTA_DATA_DIR: dataDir },
+      spawn: (bin, args, opts) => {
+        calls.push({ bin, args, opts });
+        return fakeNpmChild();
+      },
+    });
+    assert.equal(calls[0].bin, "npm");
+    assert.deepEqual(calls[0].args, [
+      "run",
+      "electron",
+      "--",
+      `--user-data-dir=${path.join(dataDir, "chrome-profile")}`,
+    ]);
+    stop("t-el-args");
+  });
+
+  it("does not append --user-data-dir for a vite script", () => {
+    const dir = tmpDir();
+    fs.writeFileSync(
+      path.join(dir, "package.json"),
+      JSON.stringify({ scripts: { dev: "vite" } }),
+    );
+    const calls = [];
+    start("t-vite", dir, "dev", {
+      platform: "darwin",
+      env: { SOLENTA_DATA_DIR: path.join(dir, "homes") },
+      spawn: (bin, args) => {
+        calls.push({ bin, args });
+        return fakeNpmChild();
+      },
+    });
+    assert.deepEqual(calls[0].args, ["run", "dev"]);
+    stop("t-vite");
+  });
+
   it("prepends the per-lane Electron stub to PATH for an electron script", () => {
     const root = tmpDir();
     fs.writeFileSync(
