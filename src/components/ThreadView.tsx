@@ -4356,6 +4356,9 @@ export const ThreadView = memo(function ThreadView({
   /** Inline edit of a queued follow-up item (issue #364 / #780). */
   const [editingQueued, setEditingQueued] = useState<number | null>(null);
   const [queuedEditDraft, setQueuedEditDraft] = useState("");
+  const [queuedEditSaving, setQueuedEditSaving] = useState(false);
+  const [queuedEditError, setQueuedEditError] = useState<string | null>(null);
+  const queuedEditSavingRef = useRef(false);
   const queuedWriteInFlight = useRef(false);
   const [queuedWritePending, setQueuedWritePending] = useState(false);
   const [queuedWriteError, setQueuedWriteError] = useState<string | null>(null);
@@ -4363,6 +4366,9 @@ export const ThreadView = memo(function ThreadView({
   // drained/cancelled queue ends it.
   useEffect(() => {
     setEditingQueued(null);
+    queuedEditSavingRef.current = false;
+    setQueuedEditSaving(false);
+    setQueuedEditError(null);
     setQueuedWriteError(null);
   }, [detail?.thread.id, queuedPrompt == null]);
   const [notesOpen, setNotesOpen] = useState(false);
@@ -4774,7 +4780,7 @@ export const ThreadView = memo(function ThreadView({
   const queuedItems = queuedThoughts(queuedPrompt, queuedItemsProp);
 
   const writeQueuedItems = (items: string[]) => {
-    if (queuedWriteInFlight.current) return;
+    if (queuedWriteInFlight.current || queuedEditSavingRef.current) return;
     if (items.length === 0) {
       onCancelQueued?.();
       return;
@@ -4799,22 +4805,62 @@ export const ThreadView = memo(function ThreadView({
       });
   };
 
-  // Empty save means cancel: editing must never blank the queue (#364).
-  const saveQueuedEdit = () => {
-    const text = queuedEditDraft.trim();
-    const index = editingQueued;
+  const closeQueuedEdit = () => {
+    if (queuedEditSavingRef.current) return;
     setEditingQueued(null);
-    if (!text || queuedPrompt == null || index == null) return;
-    if (queuedItems.length <= 1) {
-      if (text !== queuedPrompt) {
-        void Promise.resolve(onEditQueued?.(text)).catch(() => {});
-      }
+    setQueuedEditError(null);
+  };
+
+  const persistQueuedEdit = async (prompt: string, items?: string[]) => {
+    if (!onEditQueued) {
+      setEditingQueued(null);
+      setQueuedEditError(null);
       return;
     }
-    if (text === queuedItems[index]) return;
+    if (queuedEditSavingRef.current || queuedWriteInFlight.current) return;
+    queuedEditSavingRef.current = true;
+    setQueuedEditSaving(true);
+    setQueuedEditError(null);
+    try {
+      await onEditQueued(prompt, items);
+      setEditingQueued(null);
+      setQueuedEditError(null);
+    } catch (err) {
+      setQueuedEditError(
+        err instanceof Error && err.message ? err.message : String(err),
+      );
+    } finally {
+      queuedEditSavingRef.current = false;
+      setQueuedEditSaving(false);
+    }
+  };
+
+  // Empty save means cancel: editing must never blank the queue (#364).
+  // Close the editor only after the write lands so a rejected persist
+  // keeps the revised draft (#926).
+  const saveQueuedEdit = () => {
+    if (queuedEditSavingRef.current || queuedWriteInFlight.current) return;
+    const text = queuedEditDraft.trim();
+    const index = editingQueued;
+    if (!text || queuedPrompt == null || index == null) {
+      closeQueuedEdit();
+      return;
+    }
+    if (queuedItems.length <= 1) {
+      if (text === queuedPrompt) {
+        closeQueuedEdit();
+        return;
+      }
+      void persistQueuedEdit(text);
+      return;
+    }
+    if (text === queuedItems[index]) {
+      closeQueuedEdit();
+      return;
+    }
     const next = queuedItems.slice();
     next[index] = text;
-    writeQueuedItems(next);
+    void persistQueuedEdit(next.join("\n\n"), next);
   };
 
   /** Header context ring; null hides it (unknown window or no measured turn). */
@@ -6829,11 +6875,14 @@ export const ThreadView = memo(function ThreadView({
                             rows={2}
                             autoFocus
                             data-edit-queued-input=""
-                            onChange={(e) => setQueuedEditDraft(e.target.value)}
+                            onChange={(e) => {
+                              setQueuedEditDraft(e.target.value);
+                              if (queuedEditError) setQueuedEditError(null);
+                            }}
                             onKeyDown={(e) => {
                               if (e.key === "Escape") {
                                 e.preventDefault();
-                                setEditingQueued(null);
+                                closeQueuedEdit();
                               }
                               if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
                                 e.preventDefault();
@@ -6841,11 +6890,20 @@ export const ThreadView = memo(function ThreadView({
                               }
                             }}
                           />
+                          {queuedEditError ? (
+                            <span
+                              className={styles.permissionGuardrail}
+                              data-queued-edit-error=""
+                            >
+                              {queuedEditError}
+                            </span>
+                          ) : null}
                           <div className={styles.queuedActions}>
                             <button
                               type="button"
                               className={styles.retryBtn}
                               onClick={saveQueuedEdit}
+                              disabled={queuedEditSaving}
                               data-save-queued-edit=""
                             >
                               Save
@@ -6853,7 +6911,8 @@ export const ThreadView = memo(function ThreadView({
                             <button
                               type="button"
                               className={styles.stopBtn}
-                              onClick={() => setEditingQueued(null)}
+                              onClick={closeQueuedEdit}
+                              disabled={queuedEditSaving}
                             >
                               Cancel
                             </button>
@@ -6964,11 +7023,14 @@ export const ThreadView = memo(function ThreadView({
                   rows={2}
                   autoFocus
                   data-edit-queued-input=""
-                  onChange={(e) => setQueuedEditDraft(e.target.value)}
+                  onChange={(e) => {
+                    setQueuedEditDraft(e.target.value);
+                    if (queuedEditError) setQueuedEditError(null);
+                  }}
                   onKeyDown={(e) => {
                     if (e.key === "Escape") {
                       e.preventDefault();
-                      setEditingQueued(null);
+                      closeQueuedEdit();
                     }
                     if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
                       e.preventDefault();
@@ -6976,11 +7038,20 @@ export const ThreadView = memo(function ThreadView({
                     }
                   }}
                 />
+                {queuedEditError ? (
+                  <span
+                    className={styles.permissionGuardrail}
+                    data-queued-edit-error=""
+                  >
+                    {queuedEditError}
+                  </span>
+                ) : null}
                 <div className={styles.queuedActions}>
                   <button
                     type="button"
                     className={styles.retryBtn}
                     onClick={saveQueuedEdit}
+                    disabled={queuedEditSaving}
                     data-save-queued-edit=""
                   >
                     Save
@@ -6988,7 +7059,8 @@ export const ThreadView = memo(function ThreadView({
                   <button
                     type="button"
                     className={styles.stopBtn}
-                    onClick={() => setEditingQueued(null)}
+                    onClick={closeQueuedEdit}
+                    disabled={queuedEditSaving}
                   >
                     Cancel
                   </button>

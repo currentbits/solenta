@@ -180,7 +180,7 @@ function view(props: {
   onListSnapWindows?: () => Promise<Array<{ id: string; name: string }>>;
   queuedPrompt?: string | null;
   queuedItems?: string[] | null;
-  onEditQueued?: (prompt: string, items?: string[]) => void;
+  onEditQueued?: (prompt: string, items?: string[]) => void | Promise<void>;
   onCancelQueued?: () => void;
   onRetryQueued?: () => void;
 }) {

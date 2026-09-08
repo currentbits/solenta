@@ -803,6 +803,158 @@ describe("queued follow-up (issue #92 / #314)", () => {
     return { fake, m, busy };
   }
 
+  it("keeps a rejected queued-edit draft open for retry and preserves items plus attachments (issue #926)", async () => {
+    const attach = {
+      kind: "image" as const,
+      path: "/tmp/shot.png",
+      name: "shot.png",
+    };
+    const busy = working();
+    busy.queued = {
+      prompt: "Original queued text\n\nkeep this second",
+      items: ["Original queued text", "keep this second"],
+      attachments: [attach],
+    };
+    const fake = createFakeCoder({
+      projects: [project()],
+      threads: [decoy(), busy],
+      details: {
+        "t-decoy": detail({ thread: decoy() }),
+        "t-busy": detail({ thread: busy }),
+      },
+    });
+    const origSetQueued = fake.api.threads.setQueued;
+    let rejectReplace = true;
+    fake.api.threads.setQueued = ((input: unknown) => {
+      const i = input as { replace?: boolean };
+      if (i.replace === true && rejectReplace) {
+        fake.calls.push({ channel: "threads.setQueued", args: [input] });
+        return Promise.reject(new Error("queue write failed"));
+      }
+      return origSetQueued(input);
+    }) as typeof fake.api.threads.setQueued;
+
+    const m = await boot(fake);
+    const card = m.query(
+      'button[aria-label^="Select thread: busy target thread"]',
+    );
+    assert.ok(card);
+    await m.click(card);
+    await m.flush();
+
+    const first = m.query('[data-queued-item="0"]');
+    assert.ok(first, "seeded multi-item queue must render");
+    await m.click(first.querySelector("button[data-edit-queued]"));
+    const input = first.querySelector(
+      "textarea[data-edit-queued-input]",
+    ) as HTMLTextAreaElement | null;
+    assert.ok(input);
+    await m.type(input!, "Revised instructions");
+    await m.click(first.querySelector("button[data-save-queued-edit]"));
+    await m.flush();
+
+    const stillOpen = m.query(
+      "textarea[data-edit-queued-input]",
+    ) as HTMLTextAreaElement | null;
+    assert.ok(stillOpen, "a rejected write must leave the editor open");
+    assert.equal(
+      stillOpen!.value,
+      "Revised instructions",
+      "the revised draft must still be editable",
+    );
+    const editError = m.query("[data-queued-edit-error]");
+    assert.ok(editError, "the rejection must be visible on the editor");
+    assert.match(editError!.textContent || "", /queue write failed/);
+
+    rejectReplace = false;
+    await m.click(m.query("button[data-save-queued-edit]"));
+    await m.flush();
+
+    assert.equal(
+      m.query("textarea[data-edit-queued-input]"),
+      null,
+      "a successful retry must close the editor",
+    );
+    const replaceCalls = fake
+      .of("threads.setQueued")
+      .filter((c) => (c.args[0] as { replace?: boolean }).replace === true);
+    assert.equal(replaceCalls.length, 2, "reject then retry is two replace writes");
+    assert.deepEqual(replaceCalls[1]!.args[0], {
+      threadId: "t-busy",
+      prompt: "Revised instructions\n\nkeep this second",
+      attachments: [attach],
+      replace: true,
+      items: ["Revised instructions", "keep this second"],
+    });
+    const strip = m.query("[data-queued-prompt]");
+    assert.ok(strip);
+    assert.match(strip!.textContent || "", /Revised instructions/);
+    assert.match(strip!.textContent || "", /keep this second/);
+    m.unmount();
+  });
+
+  it("ignores a second Save while a queued-edit write is pending (issue #926)", async () => {
+    const busy = working();
+    busy.queued = { prompt: "Original queued text" };
+    const fake = createFakeCoder({
+      projects: [project()],
+      threads: [decoy(), busy],
+      details: {
+        "t-decoy": detail({ thread: decoy() }),
+        "t-busy": detail({ thread: busy }),
+      },
+    });
+    const origSetQueued = fake.api.threads.setQueued;
+    let release!: (value: unknown) => void;
+    fake.api.threads.setQueued = ((input: unknown) => {
+      const i = input as { replace?: boolean };
+      if (i.replace === true) {
+        fake.calls.push({ channel: "threads.setQueued", args: [input] });
+        return new Promise((resolve) => {
+          release = resolve;
+        });
+      }
+      return origSetQueued(input);
+    }) as typeof fake.api.threads.setQueued;
+
+    const m = await boot(fake);
+    const card = m.query(
+      'button[aria-label^="Select thread: busy target thread"]',
+    );
+    assert.ok(card);
+    await m.click(card);
+    await m.flush();
+
+    await m.click(m.query("button[data-edit-queued]"));
+    await m.type(m.query("textarea[data-edit-queued-input]"), "Revised once");
+    const save = m.query("button[data-save-queued-edit]") as HTMLButtonElement;
+    assert.ok(save);
+    await m.click(save);
+    assert.equal(save.disabled, true, "Save must lock while the write is in flight");
+    await m.click(save);
+    await m.flush();
+    assert.equal(
+      fake
+        .of("threads.setQueued")
+        .filter((c) => (c.args[0] as { replace?: boolean }).replace === true)
+        .length,
+      1,
+      "a second click must not start another write",
+    );
+
+    await inAct(() =>
+      release(
+        thread({
+          ...busy,
+          queued: { prompt: "Revised once" },
+        }),
+      ),
+    );
+    await m.flush();
+    assert.equal(m.query("textarea[data-edit-queued-input]"), null);
+    m.unmount();
+  });
+
   it("keeps order and attachments after a rejected reorder, then retries (issue #1144)", async () => {
     const { fake, m } = await bootQueuedPair();
     const orig = fake.api.threads.setQueued.bind(fake.api.threads);
