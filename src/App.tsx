@@ -195,6 +195,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     setPinned,
     setSnoozed,
     setTags,
+    setThreadProject,
     setMuted,
     setEjected,
     setCrossThreadInbound,
@@ -671,6 +672,13 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
       void setTags(threadId, tags);
     },
     [setTags],
+  );
+
+  const handleSetThreadProject = useCallback(
+    (threadId: string, projectId: string) => {
+      void setThreadProject(threadId, projectId);
+    },
+    [setThreadProject],
   );
 
   const handleSetMuted = useCallback(
@@ -1574,6 +1582,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         onSetPinned={handleSetPinned}
         onSetSnoozed={handleSetSnoozed}
         onSetTags={handleSetTags}
+        onSetThreadProject={handleSetThreadProject}
         onSetMuted={handleSetMuted}
         onSetEjected={handleSetEjected}
         onRenameThread={handleRenameThread}

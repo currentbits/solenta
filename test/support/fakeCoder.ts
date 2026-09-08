@@ -2051,6 +2051,66 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
         threads = threads.map((t) => (t.id === i.threadId ? next : t));
         return rec("threads.setTags", [input], next);
       },
+      /**
+       * Honest recategorize (issue #737). Same-project no-op. Worktree and
+       * active runs reject. Permitted moves drop cwd/session and git/GitHub
+       * bindings; pendingWorktree retargets.
+       */
+      setThreadProject: (input: unknown) => {
+        const i = input as { threadId: string; projectId: string };
+        const existing = threads.find((t) => t.id === i.threadId);
+        if (!existing) {
+          calls.push({ channel: "threads.setThreadProject", args: [input] });
+          return Promise.reject(new Error(`Unknown thread: ${i.threadId}`));
+        }
+        const id = i.projectId != null ? String(i.projectId) : "";
+        if (!id) {
+          calls.push({ channel: "threads.setThreadProject", args: [input] });
+          return Promise.reject(new Error("projectId is required"));
+        }
+        const dest = projects.find((p) => p.id === id);
+        if (!dest) {
+          calls.push({ channel: "threads.setThreadProject", args: [input] });
+          return Promise.reject(new Error(`Unknown project: ${id}`));
+        }
+        if (existing.projectId === id) {
+          return rec("threads.setThreadProject", [input], existing);
+        }
+        if (existing.worktreePath) {
+          calls.push({ channel: "threads.setThreadProject", args: [input] });
+          return Promise.reject(
+            new Error("Cannot move a thread that has a worktree"),
+          );
+        }
+        if (existing.orchWorker || existing.leadSnapshotSha) {
+          calls.push({ channel: "threads.setThreadProject", args: [input] });
+          return Promise.reject(new Error("Cannot move a crew worker"));
+        }
+        if (
+          existing.status === "working" ||
+          existing.status === "quota-wait"
+        ) {
+          calls.push({ channel: "threads.setThreadProject", args: [input] });
+          return Promise.reject(
+            new Error("Cannot move a thread while a run is active"),
+          );
+        }
+        const next: ThreadInfo = {
+          ...existing,
+          projectId: id,
+          sessionId: null,
+          replayContext: true,
+          branch: null,
+          baseBranch: null,
+          prNumber: null,
+          prUrl: null,
+          prState: null,
+          prMergeable: null,
+          issueNumber: null,
+        };
+        threads = threads.map((t) => (t.id === i.threadId ? next : t));
+        return rec("threads.setThreadProject", [input], next);
+      },
       setQuotaWaitAutoResume: (input: unknown) => {
         const i = input as { threadId: string; enabled: boolean | null };
         calls.push({ channel: "threads.setQuotaWaitAutoResume", args: [input] });

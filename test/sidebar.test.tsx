@@ -146,6 +146,7 @@ function sidebar(
     onSetPinned?: (threadId: string, pinned: boolean) => void;
     onSetSnoozed?: (threadId: string, until: number | null) => void;
     onSetTags?: (threadId: string, tags: string[]) => void;
+    onSetThreadProject?: (threadId: string, projectId: string) => void;
     projectError?: string | null;
     providers?: ProviderInfo[];
     onSetMuted?: (threadId: string, muted: boolean) => void;
@@ -191,6 +192,7 @@ function sidebar(
       onSetPinned={over.onSetPinned}
       onSetSnoozed={over.onSetSnoozed}
       onSetTags={over.onSetTags}
+      onSetThreadProject={over.onSetThreadProject}
       onSetMuted={over.onSetMuted}
       onRenameThread={over.onRenameThread}
       onFork={over.onFork}
@@ -2510,6 +2512,103 @@ describe("Sidebar snooze nested submenu (#583)", () => {
     );
     assert.ok(m.query('[data-snooze-btn="menu-src"]'), "T3 hover snooze");
     assert.ok(m.query('[data-settle-btn="menu-src"]'), "T3 hover settle");
+    m.unmount();
+  });
+});
+
+describe("Sidebar move-to-project menu (#737)", () => {
+  const MENU_THREAD = [
+    thread({
+      id: "menu-src",
+      title: "menu source",
+      status: "idle",
+      updatedAt: FRESH + 80,
+      projectId: "p1",
+    }),
+  ];
+
+  it("offers other projects in a submenu and calls onSetThreadProject", async () => {
+    const moves: Array<[string, string]> = [];
+    const m = await mount(
+      sidebar(MENU_THREAD, {
+        projects: [p1, p2],
+        onSetThreadProject: (id, projectId) => {
+          moves.push([id, projectId]);
+        },
+      }),
+    );
+    await m.click(m.query('[data-more-btn="menu-src"]'));
+    const menu = portalMenu();
+    assert.ok(menu, "… menu must open");
+    const trigger = menu.querySelector(
+      "[data-move-project]",
+    ) as HTMLElement | null;
+    assert.ok(trigger, "Move to project…");
+    await m.click(trigger);
+    const dest = document.querySelector(
+      '[data-move-project-id="p2"]',
+    ) as HTMLElement | null;
+    assert.ok(dest, "destination project is listed");
+    assert.equal(
+      document.querySelector('[data-move-project-id="p1"]'),
+      null,
+      "current project omitted",
+    );
+    await m.click(dest);
+    assert.deepEqual(moves, [["menu-src", "p2"]]);
+    m.unmount();
+  });
+
+  it("hides Move to project when there is only one project", async () => {
+    const m = await mount(
+      sidebar(MENU_THREAD, {
+        projects: [p1],
+        onSetThreadProject: () => {},
+        onSetPinned: () => {},
+      }),
+    );
+    await m.click(m.query('[data-more-btn="menu-src"]'));
+    const menu = portalMenu();
+    assert.ok(menu);
+    assert.equal(menu.querySelector("[data-move-project]"), null);
+    m.unmount();
+  });
+
+  it("disables Move to project on a worktree thread and does not call through", async () => {
+    const moves: Array<[string, string]> = [];
+    const m = await mount(
+      sidebar(
+        [
+          thread({
+            id: "menu-src",
+            title: "menu source",
+            status: "idle",
+            updatedAt: FRESH + 80,
+            projectId: "p1",
+            worktreePath: "/tmp/wt",
+          }),
+        ],
+        {
+          projects: [p1, p2],
+          onSetThreadProject: (id, projectId) => {
+            moves.push([id, projectId]);
+          },
+        },
+      ),
+    );
+    await m.click(m.query('[data-more-btn="menu-src"]'));
+    const trigger = portalMenu()?.querySelector(
+      "[data-move-project]",
+    ) as HTMLButtonElement | null;
+    assert.ok(trigger, "Move to project…");
+    assert.equal(trigger.disabled, true);
+    await m.click(trigger);
+    assert.equal(
+      document.querySelector("[data-move-project-id]"),
+      null,
+      "destinations stay closed while disabled",
+    );
+    assert.deepEqual(moves, []);
     m.unmount();
   });
 });

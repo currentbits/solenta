@@ -4058,6 +4058,31 @@ function buildDevCoder(): CoderApi {
         }
         return patchThread(input.threadId, { tags: clean });
       },
+      async setThreadProject(input: { threadId: string; projectId: string }) {
+        const detail = details.get(input.threadId);
+        if (!detail) throw new Error(`Thread not found: ${input.threadId}`);
+        const thread = detail.thread;
+        if (thread.projectId === input.projectId) return { ...thread };
+        if (thread.worktreePath) {
+          throw new Error("Cannot move a thread that has a worktree");
+        }
+        if (thread.orchWorker || thread.leadSnapshotSha) {
+          throw new Error("Cannot move a crew worker");
+        }
+        if (thread.status === "working" || thread.status === "quota-wait") {
+          throw new Error("Cannot move a thread while a run is active");
+        }
+        return patchThread(input.threadId, {
+          projectId: input.projectId,
+          sessionId: null,
+          replayContext: true,
+          branch: null,
+          baseBranch: null,
+          prNumber: null,
+          prUrl: null,
+          prState: null,
+        });
+      },
       async setMuted(input: { threadId: string; muted: boolean }) {
         return patchThread(input.threadId, { muted: input.muted });
       },

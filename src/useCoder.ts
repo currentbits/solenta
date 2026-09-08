@@ -393,6 +393,8 @@ export interface UseCoderResult {
   setSnoozed: (threadId: string, until: number | null) => Promise<void>;
   /** Replace a thread's user-defined tags. Does not require selection. */
   setTags: (threadId: string, tags: string[]) => Promise<void>;
+  /** Recategorize a thread onto another project. Does not require selection. */
+  setThreadProject: (threadId: string, projectId: string) => Promise<void>;
   setMuted: (threadId: string, muted: boolean) => Promise<void>;
   setEjected: (threadId: string, ejected: boolean) => Promise<void>;
   setCrossThreadInbound: (
@@ -2165,6 +2167,29 @@ export function useCoder(): UseCoderResult {
     [api, applyThreads],
   );
 
+  const setThreadProject = useCallback(
+    async (threadId: string, projectId: string) => {
+      try {
+        const thread = await api.threads.setThreadProject({
+          threadId,
+          projectId,
+        });
+        applyThreads(
+          threadsRef.current.map((t) => (t.id === thread.id ? thread : t)),
+        );
+        setDetail((prev) =>
+          prev && prev.thread.id === thread.id
+            ? { ...prev, thread }
+            : prev,
+        );
+        setError(null);
+      } catch (err) {
+        setError({ scope: "run", message: errorMessage(err) });
+      }
+    },
+    [api, applyThreads],
+  );
+
   const setMuted = useCallback(
     async (threadId: string, muted: boolean) => {
       try {
@@ -3841,6 +3866,7 @@ export function useCoder(): UseCoderResult {
     setPinned,
     setSnoozed,
     setTags,
+    setThreadProject,
     setMuted,
     setEjected,
     setCrossThreadInbound,

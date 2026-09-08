@@ -282,6 +282,11 @@ interface SidebarProps {
   onSetSnoozed?: (threadId: string, until: number | null) => void | Promise<void>;
   /** Replace a thread's user-defined tags (chip editor on the card). */
   onSetTags?: (threadId: string, tags: string[]) => void | Promise<void>;
+  /** Recategorize a thread onto another project (issue #737). */
+  onSetThreadProject?: (
+    threadId: string,
+    projectId: string,
+  ) => void | Promise<void>;
   /** Mute/unmute desktop notifications for one thread. */
   onSetMuted?: (threadId: string, muted: boolean) => void | Promise<void>;
   /** Eject/reclaim the provider session so the raw CLI can own it (#554). */
@@ -688,6 +693,7 @@ export const ThreadCard = memo(function ThreadCard({
   onSetPinned,
   onSetSnoozed,
   onSetTags,
+  onSetThreadProject,
   onSetMuted,
   onSetEjected,
   onRenameThread,
@@ -698,6 +704,7 @@ export const ThreadCard = memo(function ThreadCard({
   showSlug = true,
   conflictForecast = null,
   threadTitles,
+  listMoveProjects,
 }: {
   thread: ThreadInfo;
   slug: string;
@@ -718,7 +725,13 @@ export const ThreadCard = memo(function ThreadCard({
   onSetPinned?: (threadId: string, pinned: boolean) => void | Promise<void>;
   onSetSnoozed?: (threadId: string, until: number | null) => void | Promise<void>;
   onSetTags?: (threadId: string, tags: string[]) => void | Promise<void>;
+  onSetThreadProject?: (
+    threadId: string,
+    projectId: string,
+  ) => void | Promise<void>;
   onSetMuted?: (threadId: string, muted: boolean) => void | Promise<void>;
+  /** Live project list at menu-open time. Stable identity (ref getter). */
+  listMoveProjects?: () => readonly ProjectInfo[];
   onSetEjected?: (threadId: string, ejected: boolean) => void | Promise<void>;
   onRenameThread?: (threadId: string, title: string) => void | Promise<void>;
   onFork?: (
@@ -827,7 +840,9 @@ export const ThreadCard = memo(function ThreadCard({
       void onFork?.(thread.id, { provider: id.slice("handoff:".length) });
     } else if (id === "rename") startRename();
     else if (id === "tags") startTagEdit();
-    else if (id === "mute") void onSetMuted?.(thread.id, true);
+    else if (id.startsWith("project:")) {
+      void onSetThreadProject?.(thread.id, id.slice("project:".length));
+    } else if (id === "mute") void onSetMuted?.(thread.id, true);
     else if (id === "unmute") void onSetMuted?.(thread.id, false);
     else if (id === "eject") void onSetEjected?.(thread.id, true);
     else if (id === "reclaim") void onSetEjected?.(thread.id, false);
@@ -847,6 +862,8 @@ export const ThreadCard = memo(function ThreadCard({
       showFork: Boolean(onFork),
       showRename: Boolean(onRenameThread),
       showTags: Boolean(onSetTags),
+      showMove: Boolean(onSetThreadProject),
+      projects: listMoveProjects?.() ?? [],
       showMute: Boolean(onSetMuted),
       showEject: Boolean(onSetEjected),
       showSettle: Boolean(onSetSettled),
@@ -866,7 +883,7 @@ export const ThreadCard = memo(function ThreadCard({
   };
 
   const hasActions = Boolean(
-    onSetSettled || onSetPinned || onSetSnoozed || onSetTags || onFork || onRenameThread || onSetMuted || onSetEjected,
+    onSetSettled || onSetPinned || onSetSnoozed || onSetTags || onSetThreadProject || onFork || onRenameThread || onSetMuted || onSetEjected,
   );
 
   // Card is a non-interactive shell. Stretch select + hover actions are
@@ -1030,7 +1047,7 @@ export const ThreadCard = memo(function ThreadCard({
                     </Icon>
                   </button>
                 )}
-                {(onSetSnoozed || onFork || onRenameThread || onSetMuted || onSetEjected || onSetSettled || onSetPinned || onSetTags) && (
+                {(onSetSnoozed || onFork || onRenameThread || onSetMuted || onSetEjected || onSetSettled || onSetPinned || onSetTags || onSetThreadProject) && (
                   <button
                     type="button"
                     className={styles.iconBtn}
@@ -1495,6 +1512,7 @@ export const Sidebar = memo(function Sidebar({
   onSetPinned,
   onSetSnoozed,
   onSetTags,
+  onSetThreadProject,
   onSetMuted,
   onSetEjected,
   onRenameThread,
@@ -1901,6 +1919,9 @@ export const Sidebar = memo(function Sidebar({
 
   const visibleIdsRef = useRef(visibleIds);
   const selectAnchorRef = useRef(selectAnchor);
+  const projectsRef = useRef(projects);
+  projectsRef.current = projects;
+  const listMoveProjects = useCallback(() => projectsRef.current, []);
   useEffect(() => {
     visibleIdsRef.current = visibleIds;
     selectAnchorRef.current = selectAnchor;
@@ -2261,10 +2282,12 @@ export const Sidebar = memo(function Sidebar({
         onSetPinned={onSetPinned}
         onSetSnoozed={onSetSnoozed}
         onSetTags={onSetTags}
+        onSetThreadProject={onSetThreadProject}
         onSetMuted={onSetMuted}
         onSetEjected={onSetEjected}
         onRenameThread={onRenameThread}
         onFork={onFork}
+        listMoveProjects={listMoveProjects}
         nested={
           thread.handoffFrom != null && cardIds.has(thread.handoffFrom)
         }

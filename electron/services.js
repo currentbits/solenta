@@ -1959,6 +1959,76 @@ function setTags(store, input) {
 }
 
 /**
+ * Recategorize a thread onto another project (issue #737). Never bumps
+ * updatedAt: the move is bookkeeping. Same-project is a no-op even when
+ * the thread could not otherwise move.
+ *
+ * Worktree-backed threads (worktreePath set) refuse: merge/cleanup use
+ * store.getProject(thread.projectId).path as the git destination, so a
+ * moved row would operate on repo B while the directory still belongs
+ * to repo A. The worktree is left untouched.
+ *
+ * Active runs (working / quota-wait) refuse: a live runner callback can
+ * write the old sessionId back after the patch.
+ *
+ * A permitted move drops cwd/session and git/GitHub bindings that would
+ * still name the source repo. pendingWorktree stays so first-run
+ * materialize uses the destination project. Crew workers (orchWorker /
+ * leadSnapshotSha) refuse: resolveWorktreeStart uses that SHA exclusively
+ * and would look it up in repo B. Dropping sessionId sets replayContext
+ * so the next turn digests this thread's retained tail (same as rewind).
+ *
+ * @param {import('./store').Store} store
+ * @param {{ threadId: string, projectId: string }} input
+ */
+function setThreadProject(store, input) {
+  const { threadId, projectId } = input;
+  const thread = store.getThread(threadId);
+  if (!thread) {
+    throw new Error(`Unknown thread: ${threadId}`);
+  }
+  const id = projectId != null ? String(projectId) : "";
+  if (!id) {
+    throw new Error("projectId is required");
+  }
+  const project = store.getProject(id);
+  if (!project) {
+    throw new Error(`Unknown project: ${id}`);
+  }
+  if (thread.projectId === id) {
+    return { ...thread };
+  }
+  if (thread.worktreePath) {
+    throw new Error("Cannot move a thread that has a worktree");
+  }
+  if (thread.orchWorker || thread.leadSnapshotSha) {
+    throw new Error("Cannot move a crew worker");
+  }
+  if (thread.status === "working" || thread.status === "quota-wait") {
+    throw new Error("Cannot move a thread while a run is active");
+  }
+  const patch = {
+    projectId: id,
+    sessionId: null,
+    replayContext: true,
+    branch: null,
+    baseBranch: null,
+    prNumber: null,
+    prUrl: null,
+    prState: null,
+    prMergeable: null,
+    issueNumber: null,
+    lane: undefined,
+    leadSnapshotSha: null,
+    leadSnapshotBranch: null,
+    leadSnapshotDirty: undefined,
+  };
+  const updated = store.updateThread(threadId, patch);
+  store.save();
+  return updated ? { ...updated } : { ...thread, ...patch };
+}
+
+/**
  * Mute/unmute desktop notifications for one thread (issue #87). Notification
  * only: no run-state or visibility effect, and never bumps updatedAt.
  *
@@ -5393,6 +5463,7 @@ module.exports = {
   setSettled,
   setPinned,
   setTags,
+  setThreadProject,
   setQueued,
   takeQueued,
   addBtw,

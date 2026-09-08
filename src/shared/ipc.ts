@@ -3739,6 +3739,19 @@ export interface CoderApi {
      * updatedAt; categorization is bookkeeping.
      */
     setTags(input: { threadId: string; tags: string[] }): Promise<ThreadInfo>;
+    /**
+     * Recategorize a thread onto another project (issue #737). Rejects an
+     * unknown thread or project, a worktree-backed thread (the checkout
+     * stays put), a crew worker (leadSnapshotSha is exclusive to the
+     * source repo), and an active run. Same-project is a no-op. Never
+     * bumps updatedAt. A permitted move drops sessionId (and sets
+     * replayContext so the next turn digests the retained tail) plus
+     * git/GitHub bindings that would still name the source repo.
+     */
+    setThreadProject(input: {
+      threadId: string;
+      projectId: string;
+    }): Promise<ThreadInfo>;
     /** Mute/unmute desktop notifications for one thread. Never bumps updatedAt. */
     setMuted(input: { threadId: string; muted: boolean }): Promise<ThreadInfo>;
     /**
