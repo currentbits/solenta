@@ -1209,7 +1209,7 @@ const IPC_HANDLERS = {
       input && typeof input.projectPath === "string"
         ? input.projectPath
         : null;
-    return skills.listSkills(projectPath, process.env, ctx.userDataPath);
+    return skills.listSkillsAsync(projectPath, process.env, ctx.userDataPath);
   },
   "skills:add": async (ctx, input) => {
     return skills.addSkill(input || {});

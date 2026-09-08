@@ -117,12 +117,19 @@ function newInstallId() {
   return crypto.randomBytes(16).toString("hex");
 }
 
-function lookupInstall(userDataPath, installId) {
+function lookupInstallIn(registry, installId) {
   if (typeof installId !== "string" || !INSTALL_ID_RE.test(installId)) {
     return null;
   }
-  const rec = readRegistry(userDataPath).installs[installId];
+  const rec = registry && registry.installs ? registry.installs[installId] : null;
   return rec || null;
+}
+
+function lookupInstall(userDataPath, installId, registry) {
+  return lookupInstallIn(
+    registry || readRegistry(userDataPath),
+    installId,
+  );
 }
 
 function installIdsForName(userDataPath, name) {
@@ -165,6 +172,7 @@ module.exports = {
   writeRegistryAtomic,
   newInstallId,
   lookupInstall,
+  lookupInstallIn,
   installIdsForName,
   commitInstalls,
   removeInstallsByName,
