@@ -1139,4 +1139,38 @@ describe("PlanboardView issue search (#945)", () => {
     await m.pressFocused("Escape");
     m.unmount();
   });
+
+  it("restores sort and focuses the live-plan row from return state (#942)", async () => {
+    const m = await mount(
+      <PlanboardView
+        projects={projects}
+        listIssues={async () => okResult}
+        threads={[
+          thread({
+            id: "t-plan",
+            projectId: "p1",
+            title: "live agent plan",
+            planSteps: [{ step: "keep going", status: "doing" }],
+          }),
+        ]}
+        restore={{
+          view: "planboard",
+          projectId: "p1",
+          sort: "number-asc",
+          rowKey: "t-plan",
+          rowIndex: 0,
+          scrollTop: 0,
+        }}
+        onSelectThread={() => {}}
+      />,
+    );
+    await m.flush();
+    const sort = m.query("[data-plan-sort]") as HTMLSelectElement | null;
+    assert.ok(sort);
+    assert.equal(sort.value, "number-asc");
+    const live = m.query("[data-thread-plan='t-plan'] button");
+    assert.ok(live, "live plan control");
+    assert.equal(m.container.ownerDocument.activeElement, live);
+    m.unmount();
+  });
 });

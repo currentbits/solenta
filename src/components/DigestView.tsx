@@ -1,5 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  originFromRowKey,
+  useViewRestore,
+  type ThreadOpenOrigin,
+  type ViewReturnState,
+} from "../viewReturn";
+import {
   digestHeadline,
   formatUsd,
   summarizeDigest,
@@ -12,7 +18,9 @@ export interface DigestViewProps {
   projects: ProjectInfo[];
   loadDigest: (input?: { sinceMs?: number }) => Promise<DigestResult>;
   markSeen: () => Promise<{ seenAt: number }>;
-  onSelectThread: (id: string) => void;
+  onSelectThread: (id: string, origin?: ThreadOpenOrigin) => void;
+  restore?: ViewReturnState | null;
+  onRestoreApplied?: () => void;
   /** Live sidebar ids. Omitted means the list is still loading — treat rows as openable. */
   existingThreadIds?: Iterable<string>;
 }
@@ -59,6 +67,8 @@ export function DigestView({
   markSeen,
   onSelectThread,
   existingThreadIds,
+  restore = null,
+  onRestoreApplied,
 }: DigestViewProps) {
   const [result, setResult] = useState<DigestResult | null>(null);
   const [loading, setLoading] = useState(false);
@@ -137,9 +147,11 @@ export function DigestView({
   const initialError = Boolean(error && !hasLastSuccess);
   const windowLabel = result ? formatDigestWindow(result.sinceMs, now) : "";
   const canMarkReviewed = hasLastSuccess && !loading && !marking;
+  const rootRef = useRef<HTMLElement>(null);
+  useViewRestore(hasLastSuccess, restore, rootRef, onRestoreApplied);
 
   return (
-    <main className={styles.main} data-digest="">
+    <main className={styles.main} data-digest="" ref={rootRef}>
       <header className={styles.header}>
         <div className={styles.brand}>
           <h1 className={styles.title}>Morning digest</h1>
@@ -239,7 +251,7 @@ export function DigestView({
           <p className={styles.emptyTitle}>Nothing ran while you were away.</p>
         </div>
           ) : (
-        <div className={styles.list}>
+        <div className={styles.list} data-return-scroll="">
           {summary.groups.map((group) => (
             <section
               key={group.bucket}
@@ -280,6 +292,7 @@ export function DigestView({
                       key={run.threadId}
                       className={styles.row}
                       data-digest-row={run.threadId}
+                      data-return-row={run.threadId}
                       data-bucket={group.bucket}
                       data-thread-unavailable={missing ? "" : undefined}
                     >
@@ -288,7 +301,12 @@ export function DigestView({
                           type="button"
                           className={styles.rowSelect}
                           aria-label={`Select thread: ${run.title}`}
-                          onClick={() => onSelectThread(run.threadId)}
+                          onClick={() =>
+                            onSelectThread(
+                              run.threadId,
+                              originFromRowKey(rootRef.current, run.threadId),
+                            )
+                          }
                         />
                       )}
                       <div className={styles.rowBody}>

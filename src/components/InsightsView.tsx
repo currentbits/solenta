@@ -1,11 +1,19 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  originFromRowKey,
+  useViewRestore,
+  type ThreadOpenOrigin,
+  type ViewReturnState,
+} from "../viewReturn";
 import { formatRelativeAge } from "../format";
 import type { FailureMode } from "../shared/ipc";
 import styles from "./InsightsView.module.css";
 
 export interface InsightsViewProps {
   loadFailureModes: () => Promise<FailureMode[]>;
-  onSelectThread: (id: string) => void;
+  onSelectThread: (id: string, origin?: ThreadOpenOrigin) => void;
+  restore?: ViewReturnState | null;
+  onRestoreApplied?: () => void;
   /** Live sidebar ids. Omitted means the list is still loading — treat rows as openable. */
   existingThreadIds?: Iterable<string>;
 }
@@ -17,6 +25,8 @@ export function InsightsView({
   loadFailureModes,
   onSelectThread,
   existingThreadIds,
+  restore = null,
+  onRestoreApplied,
 }: InsightsViewProps) {
   const [modes, setModes] = useState<FailureMode[]>([]);
   const [loading, setLoading] = useState(false);
@@ -55,13 +65,15 @@ export function InsightsView({
 
   // ponytail: manual refresh only, add a subscription if staleness becomes visible
   const empty = !loading && !error && modes.length === 0;
+  const rootRef = useRef<HTMLElement>(null);
+  useViewRestore(!loading || modes.length > 0, restore, rootRef, onRestoreApplied);
   const liveThreadIds = useMemo(() => {
     if (existingThreadIds == null) return null;
     return new Set(existingThreadIds);
   }, [existingThreadIds]);
 
   return (
-    <main className={styles.main} data-insights="">
+    <main className={styles.main} data-insights="" ref={rootRef}>
       <header className={styles.header}>
         <h1 className={styles.title}>Insights</h1>
         <button
@@ -95,7 +107,7 @@ export function InsightsView({
           </p>
         </div>
       ) : (
-        <div className={styles.list}>
+        <div className={styles.list} data-return-scroll="">
           {error && (
             <p className={styles.hint} role="alert">
               {error}
@@ -145,11 +157,13 @@ export function InsightsView({
                     const missing =
                       liveThreadIds != null &&
                       !liveThreadIds.has(offender.threadId);
+                    const rowKey = `${mode.id}:${offender.threadId}`;
                     return (
                       <div
                         key={`${offender.threadId}:${offender.at}:${offender.kind}`}
                         className={styles.row}
                         data-insights-offender={offender.threadId}
+                        data-return-row={rowKey}
                         data-thread-unavailable={missing ? "" : undefined}
                       >
                         {missing ? null : (
@@ -157,7 +171,12 @@ export function InsightsView({
                             type="button"
                             className={styles.rowSelect}
                             aria-label={`Select thread: ${offender.threadTitle}`}
-                            onClick={() => onSelectThread(offender.threadId)}
+                            onClick={() =>
+                              onSelectThread(
+                                offender.threadId,
+                                originFromRowKey(rootRef.current, rowKey),
+                              )
+                            }
                           />
                         )}
                         <div className={styles.rowBody}>

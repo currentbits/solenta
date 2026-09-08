@@ -1485,3 +1485,161 @@ describe("Activity and Kanban in-view project scope (#944)", () => {
     }
   });
 });
+
+describe("Return to source view (#942)", () => {
+  it("restores Planboard project and sort via Back to Planboard", async () => {
+    const pLedger = project({
+      id: "p-ledger",
+      slug: "acme/ledger",
+      path: "/tmp/ledger",
+    });
+    const pBilling = project({
+      id: "p-billing",
+      slug: "acme/billing",
+      path: "/tmp/billing",
+    });
+    const tPlan = thread({
+      id: "t-plan",
+      projectId: "p-billing",
+      title: "live billing plan",
+      planSteps: [{ step: "keep going", status: "doing" }],
+    });
+    const fake = createFakeCoder({
+      projects: [pLedger, pBilling],
+      threads: [tPlan],
+      details: { "t-plan": detail({ thread: tPlan }) },
+      issueList: { ok: true, issues: [] },
+    });
+    const m = await boot(fake);
+    try {
+      await m.flush();
+      const nav = m.query('[data-view-nav="planboard"]');
+      assert.ok(nav);
+      await m.click(nav as HTMLElement);
+      await m.flush();
+      const projectSelect = m.query(
+        'select[aria-label="Project"]',
+      ) as HTMLSelectElement;
+      await m.change(projectSelect, "p-billing");
+      await m.flush();
+      const sort = m.query("[data-plan-sort]") as HTMLSelectElement;
+      await m.change(sort, "number-asc");
+      const live = m.query("[data-thread-plan='t-plan'] button");
+      assert.ok(live, "live plan");
+      await m.click(live as HTMLElement);
+      await m.flush();
+      assert.equal(m.query("[data-planboard]"), null);
+      const back = m.query('[data-return-to="planboard"]') as HTMLButtonElement | null;
+      assert.ok(back, "Back to Planboard");
+      assert.equal(back.type, "button");
+      const starts = fake.of("runs.start").length;
+      await m.click(back);
+      await m.flush();
+      assert.ok(m.query("[data-planboard]"), "returned to Planboard");
+      const again = m.query("[data-plan-sort]") as HTMLSelectElement | null;
+      assert.ok(again);
+      assert.equal(again.value, "number-asc");
+      const projectAgain = m.query(
+        'select[aria-label="Project"]',
+      ) as HTMLSelectElement;
+      assert.equal(projectAgain.value, "p-billing");
+      assert.equal(fake.of("runs.start").length, starts, "Back must not start a run");
+    } finally {
+      m.unmount();
+    }
+  });
+
+  it("offers Back to Activity and returns to the originating row", async () => {
+    const tLedger = thread({
+      id: "t-ledger",
+      title: "Ship ledger",
+    });
+    const tBilling = thread({
+      id: "t-billing",
+      title: "New billing thread",
+    });
+    const fake = createFakeCoder({
+      threads: [tLedger, tBilling],
+      details: {
+        "t-ledger": detail({ thread: tLedger }),
+        "t-billing": detail({ thread: tBilling }),
+      },
+    });
+    const m = await boot(fake);
+    try {
+      await m.flush();
+      await m.click(m.query('[data-view-nav="activity"]') as HTMLElement);
+      await m.flush();
+      const row = m.query('button[aria-label="Select thread: New billing thread"]');
+      assert.ok(row);
+      await m.click(row as HTMLElement);
+      await m.flush();
+      const back = m.query('[data-return-to="activity"]') as HTMLButtonElement | null;
+      assert.ok(back, "Back to Activity");
+      await m.click(back);
+      await m.flush();
+      assert.ok(m.query("[data-activity]"));
+      assert.equal(
+        m.container.ownerDocument.activeElement?.getAttribute("aria-label"),
+        "Select thread: New billing thread",
+      );
+    } finally {
+      m.unmount();
+    }
+  });
+
+  it("keeps Usage range and metric when switching Pulse reports", async () => {
+    const fake = createFakeCoder();
+    const m = await boot(fake);
+    try {
+      await m.flush();
+      await expandAgents(m);
+      const pulse = m.query('[data-panel-tab="pulse"]');
+      assert.ok(pulse, "Pulse tab");
+      await m.click(pulse as HTMLElement);
+      await m.flush();
+      const usageNav = m.query('[data-view-nav="usage"]');
+      assert.ok(usageNav, "Usage row");
+      await m.click(usageNav as HTMLElement);
+      await m.flush();
+      await inAct(async () => {
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      await m.flush();
+      assert.ok(m.query("[data-usage]"), "usage view");
+      await m.click(m.query('[data-usage-range="30"]') as HTMLElement);
+      await m.click(m.query('[data-usage-metric="tokens"]') as HTMLElement);
+      const insightsNav = m.query('[data-view-nav="insights"]');
+      assert.ok(insightsNav, "Insights row stays on Pulse");
+      await m.click(insightsNav as HTMLElement);
+      await m.flush();
+      assert.ok(m.query("[data-insights]"));
+      await m.click(m.query('[data-view-nav="usage"]') as HTMLElement);
+      await m.flush();
+      assert.equal(m.query("[data-usage]")?.getAttribute("data-range"), "30");
+      assert.equal(m.query("[data-usage]")?.getAttribute("data-metric"), "tokens");
+    } finally {
+      m.unmount();
+    }
+  });
+
+  it("does not offer Back after a sidebar thread click", async () => {
+    const t1 = thread({ id: "t-side", title: "sidebar thread" });
+    const fake = createFakeCoder({
+      threads: [t1],
+      details: { "t-side": detail({ thread: t1 }) },
+    });
+    const m = await boot(fake);
+    try {
+      await m.flush();
+      const row = m.query('button[aria-label="Select thread: sidebar thread"]');
+      assert.ok(row);
+      await m.click(row as HTMLElement);
+      await m.flush();
+      assert.equal(m.query("[data-return-to]"), null);
+    } finally {
+      m.unmount();
+    }
+  });
+});

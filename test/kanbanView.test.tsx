@@ -84,6 +84,14 @@ describe("KanbanView", () => {
     assert.ok(working.textContent?.includes("Working"));
     assert.ok(working.textContent?.includes("1"));
     assert.ok(working.textContent?.includes("working card"));
+    assert.equal(
+      working.querySelector("[data-return-scroll]")?.getAttribute("data-return-scroll"),
+      "working",
+    );
+    assert.equal(
+      idle.querySelector("[data-return-scroll]")?.getAttribute("data-return-scroll"),
+      "idle",
+    );
     assert.ok(idle.textContent?.includes("idle card"));
     assert.ok(done.textContent?.includes("done card"));
     assert.ok(failed.textContent?.includes("failed card"));
@@ -93,13 +101,17 @@ describe("KanbanView", () => {
 
   it("selects the thread and leaves the board when a card is clicked", async () => {
     let selected: string | null = null;
+    let scrollKey: string | undefined;
+    let rowIndex: number | undefined;
     const m = await mount(
       <KanbanView
         threads={[thread({ id: "t-click", title: "click me", status: "idle" })]}
         projects={[project]}
         providers={providers}
-        onSelectThread={(id) => {
+        onSelectThread={(id, origin) => {
           selected = id;
+          scrollKey = origin?.scrollKey;
+          rowIndex = origin?.rowIndex;
         }}
       />,
     );
@@ -107,6 +119,8 @@ describe("KanbanView", () => {
     assert.ok(select, "card select button");
     await m.click(select);
     assert.equal(selected, "t-click");
+    assert.equal(scrollKey, "idle");
+    assert.equal(rowIndex, 0);
     m.unmount();
   });
 

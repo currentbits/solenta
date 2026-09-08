@@ -1,4 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  originFromRowKey,
+  useViewRestore,
+  type ThreadOpenOrigin,
+  type ViewReturnState,
+} from "../viewReturn";
 import { formatRelativeAge } from "../format";
 import {
   badgeLabels,
@@ -44,7 +50,9 @@ export interface PlanboardViewProps {
    * tests, which keeps that section off those boards.
    */
   threads?: ThreadInfo[];
-  onSelectThread?: (id: string) => void;
+  onSelectThread?: (id: string, origin?: ThreadOpenOrigin) => void;
+  restore?: ViewReturnState | null;
+  onRestoreApplied?: () => void;
   /**
    * Start a thread on a Todo issue and move it to plan:doing. Omitted by
    * existing tests, which keeps the button off those boards.
@@ -76,6 +84,8 @@ export function PlanboardView({
   onSelectThread,
   onStartTask,
   initialProjectId,
+  restore = null,
+  onRestoreApplied,
   agentProfiles,
   defaultOrchestratorProfileId,
   providers,
@@ -103,9 +113,10 @@ export function PlanboardView({
   /** Orchestrator lead agent; empty = inherit from the selected thread. */
   const [agentProfileId, setAgentProfileId] = useState("");
   /** Column ordering; "updated" is the long-standing default. */
-  const [sort, setSort] = useState<PlanSort>("updated");
+  const [sort, setSort] = useState<PlanSort>(restore?.sort ?? "updated");
   /** Local find over the already-loaded issue list (#945). */
-  const [query, setQuery] = useState("");
+  const [query, setQuery] = useState(restore?.query ?? "");
+  const rootRef = useRef<HTMLElement>(null);
   const loadGen = useRef(0);
   const projectRef = useRef<ProjectInfo | null>(null);
   /** Project that produced the cards currently on screen. */
@@ -299,8 +310,15 @@ export function PlanboardView({
 
   const clearSearch = useCallback(() => setQuery(""), []);
 
+  useViewRestore(
+    plans.length > 0 || !loading,
+    restore,
+    rootRef,
+    onRestoreApplied,
+  );
+
   return (
-    <main className={styles.main} data-planboard="">
+    <main className={styles.main} data-planboard="" ref={rootRef}>
       <header className={styles.chrome}>
         <div className={styles.header}>
           <h1 className={styles.title}>Planboard</h1>
@@ -560,17 +578,27 @@ export function PlanboardView({
             <span>Thread plans</span>
             <span className={styles.count}>{plans.length}</span>
           </header>
-          <div className={styles.plansBody}>
+          <div className={styles.plansBody} data-return-scroll="">
             {plans.map((thread) => (
               <div
                 key={thread.id}
                 className={styles.planCard}
                 data-thread-plan={thread.id}
+                data-return-row={thread.id}
               >
                 <button
                   type="button"
                   className={styles.planTitle}
-                  onClick={() => onSelectThread?.(thread.id)}
+                  onClick={() =>
+                    onSelectThread?.(
+                      thread.id,
+                      originFromRowKey(rootRef.current, thread.id, {
+                        projectId: project?.id ?? null,
+                        sort,
+                        query,
+                      }),
+                    )
+                  }
                   disabled={!onSelectThread}
                   title={`Open ${thread.title}`}
                 >

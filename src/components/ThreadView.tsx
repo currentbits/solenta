@@ -68,6 +68,10 @@ import { TEACH_AUTONOMY_LABELS } from "../teach";
 import type { TeachAutonomy } from "../shared/ipc";
 import type { WorkflowSaveInput } from "../useCoder";
 import {
+  RETURN_VIEW_LABEL,
+  type ReturnableView,
+} from "../viewReturn";
+import {
   annotateHunkLines,
   commentGutterLabel,
   commentLineRef,
@@ -741,6 +745,12 @@ interface ThreadViewProps {
   handoffSource?: ThreadInfo | null;
   /** Select another thread (provenance chip → source). */
   onSelectThread?: (id: string) => void;
+  /**
+   * Report/board the user left to open this thread (#942). Back restores
+   * that view; omitted when the thread was opened from the sidebar.
+   */
+  returnToView?: ReturnableView | null;
+  onReturnToView?: () => void;
   /**
    * Same-task siblings (best-of-N / forks) for the divergence compare
    * (issue #393). Resolved in App so this pane is not passed the full list.
@@ -4208,6 +4218,39 @@ function DivergenceCard({
   );
 }
 
+function ReturnToViewButton({
+  view,
+  onClick,
+}: {
+  view: ReturnableView;
+  onClick: () => void;
+}) {
+  const label = `Back to ${RETURN_VIEW_LABEL[view]}`;
+  return (
+    <button
+      type="button"
+      className={styles.btn}
+      data-return-to={view}
+      aria-label={label}
+      onClick={onClick}
+    >
+      {label}
+    </button>
+  );
+}
+
+function returnToHeader(
+  view: ReturnableView | null | undefined,
+  onClick: (() => void) | undefined,
+) {
+  if (!view || !onClick) return null;
+  return (
+    <header className={styles.header} data-thread-header="">
+      <ReturnToViewButton view={view} onClick={onClick} />
+    </header>
+  );
+}
+
 /**
  * memo'd: only the OPEN thread's stream should re-render this pane. Four other
  * threads streaming in the sidebar used to re-render it every 700ms each
@@ -4330,6 +4373,8 @@ export const ThreadView = memo(function ThreadView({
   onDismissSuggestion,
   handoffSource = null,
   onSelectThread,
+  returnToView = null,
+  onReturnToView,
   comparePeers = EMPTY_COMPARE_PEERS,
   onPeekThread,
   onModelPickerOpen,
@@ -5694,6 +5739,7 @@ export const ThreadView = memo(function ThreadView({
     if (detailError) {
       return (
         <main className={styles.main}>
+          {returnToHeader(returnToView, onReturnToView)}
           <div className={styles.empty}>
             <div className={styles.emptyGlyph} aria-hidden="true">
               <svg
@@ -5728,6 +5774,7 @@ export const ThreadView = memo(function ThreadView({
     }
     return (
       <main className={styles.main}>
+        {returnToHeader(returnToView, onReturnToView)}
         <div className={styles.empty}>
           <div className={styles.emptyGlyph} aria-hidden="true">
             <svg
@@ -5882,6 +5929,12 @@ export const ThreadView = memo(function ThreadView({
       ) : null}
       <header className={styles.header} data-thread-header="">
         <div className={styles.headerLead}>
+          {returnToView && onReturnToView ? (
+            <ReturnToViewButton
+              view={returnToView}
+              onClick={onReturnToView}
+            />
+          ) : null}
           <div className={styles.breadcrumb}>
           {onCreateThread ? (
             <button

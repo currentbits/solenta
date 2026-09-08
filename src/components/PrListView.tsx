@@ -1,4 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  originFromRowKey,
+  useViewRestore,
+  type ThreadOpenOrigin,
+  type ViewReturnState,
+} from "../viewReturn";
 import { formatRelativeAge } from "../format";
 import {
   allPrsEmpty,
@@ -33,7 +39,9 @@ export interface PrListViewProps {
     projectPath: string,
     opts?: ListPrsOptions,
   ) => Promise<ListPrsResult>;
-  onSelectThread: (id: string) => void;
+  onSelectThread: (id: string, origin?: ThreadOpenOrigin) => void;
+  restore?: ViewReturnState | null;
+  onRestoreApplied?: () => void;
   onCheckoutPr?: (input: {
     projectId: string;
     prNumber: number;
@@ -49,6 +57,8 @@ export function PrListView({
   onSelectThread,
   onCheckoutPr,
   github: githubProp,
+  restore = null,
+  onRestoreApplied,
 }: PrListViewProps) {
   const [results, setResults] = useState<Map<string, ListPrsResult>>(
     () => new Map(),
@@ -63,8 +73,11 @@ export function PrListView({
   const [checkoutErrors, setCheckoutErrors] = useState<Map<string, string>>(
     () => new Map(),
   );
-  const [query, setQuery] = useState("");
-  const [projectFilter, setProjectFilter] = useState("");
+  const [query, setQuery] = useState(restore?.query ?? "");
+  const [projectFilter, setProjectFilter] = useState(
+    restore?.projectFilter ?? "",
+  );
+  const rootRef = useRef<HTMLElement>(null);
   const [loadingMore, setLoadingMore] = useState<string | null>(null);
   const loadGen = useRef(0);
   const github = githubProp !== undefined ? githubProp : discoveredGithub;
@@ -239,9 +252,10 @@ export function PrListView({
     setQuery("");
     setProjectFilter("");
   };
+  useViewRestore(!loading || loadedCount > 0, restore, rootRef, onRestoreApplied);
 
   return (
-    <main className={styles.main} data-pr-list="">
+    <main className={styles.main} data-pr-list="" ref={rootRef}>
       <header className={styles.header}>
         <h1 className={styles.title}>Pull requests</h1>
         <button
@@ -354,7 +368,7 @@ export function PrListView({
             : null}
         </div>
       ) : (
-        <div className={styles.list}>
+        <div className={styles.list} data-return-scroll="">
           {filtered.map((group) => {
             if (group.ok && group.prs.length === 0 && query.trim()) return null;
             return (
@@ -397,11 +411,13 @@ export function PrListView({
                   const checkoutErr = checkoutErrors.get(checkoutKey);
                   const githubBlocked = github != null && github.ready === false;
                   const showCheckout = Boolean(onCheckoutPr) && !matched;
+                  const rowKey = `${group.project.id}:${pr.number}`;
                   return (
                     <div
                       key={`${group.project.id}-${pr.number}`}
                       className={styles.row}
                       data-pr-row={pr.number}
+                      data-return-row={rowKey}
                     >
                       <button
                         type="button"
@@ -409,7 +425,14 @@ export function PrListView({
                         disabled={!matched}
                         aria-label={`Select thread for PR #${pr.number}`}
                         onClick={() => {
-                          if (matched) onSelectThread(matched.id);
+                          if (!matched) return;
+                          onSelectThread(
+                            matched.id,
+                            originFromRowKey(rootRef.current, rowKey, {
+                              query,
+                              projectFilter,
+                            }),
+                          );
                         }}
                       />
                       <div className={styles.rowBody}>

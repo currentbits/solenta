@@ -85,6 +85,8 @@ import type {
   UsageReport,
   ProviderUsage,
   FleetEvidence,
+  DigestResult,
+  FailureMode,
   WorkLogItem,
   WorkflowTemplateInfo,
   GcScanResult,
@@ -260,6 +262,12 @@ export interface FakeOptions {
   simulator?: "unsupported" | "attached";
   /** Override speech.status (default: missing / no model). */
   speechStatus?: SpeechStatus;
+  /** Override digest.list (default: empty window). */
+  digest?: DigestResult;
+  /** Override insights.failureModes (default: none). */
+  insights?: FailureMode[];
+  /** Override usage.byDay (default: empty ledger). */
+  usage?: UsageReport;
 }
 
 /** Idle terminal session for the harness; no shell exists under jsdom. */
@@ -2616,7 +2624,12 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
       },
     },
     usage: {
-      byDay: () => rec("usage.byDay", [], { byDay: {}, threadsByDay: {} } as UsageReport),
+      byDay: () =>
+        rec(
+          "usage.byDay",
+          [],
+          opts.usage ?? ({ byDay: {}, threadsByDay: {} } as UsageReport),
+        ),
       providerLimits: () => rec("usage.providerLimits", [], [] as ProviderUsage[]),
     },
     fleet: {
@@ -2628,6 +2641,25 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
           prs: [],
           notes: [],
         } as FleetEvidence),
+    },
+    insights: {
+      failureModes: () =>
+        rec("insights.failureModes", [], opts.insights ?? []),
+    },
+    digest: {
+      list: (input?: unknown) =>
+        rec(
+          "digest.list",
+          [input],
+          opts.digest ??
+            ({
+              sinceMs: Date.now() - 12 * 60 * 60 * 1000,
+              generatedAt: Date.now(),
+              runs: [],
+            } as DigestResult),
+        ),
+      markSeen: (input?: unknown) =>
+        rec("digest.markSeen", [input], { seenAt: Date.now() }),
     },
     runs: {
       start: (input: unknown) => rec("runs.start", [input], { runId: "r1" }),

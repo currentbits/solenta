@@ -1,4 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  originFromRowKey,
+  useViewRestore,
+  type ThreadOpenOrigin,
+  type ViewReturnState,
+} from "../viewReturn";
 import { activityKindLabel, groupActivityByDay } from "../activity";
 import { formatRelativeAge } from "../format";
 import type { ActivityItem, ProjectInfo } from "../shared/ipc";
@@ -13,8 +19,10 @@ export interface ActivityViewProps {
   /** Sidebar project scope: only show this project's activity. Null/omitted shows all. */
   projectScope?: string | null;
   listActivity: () => Promise<ActivityItem[]>;
-  onSelectThread: (id: string) => void;
+  onSelectThread: (id: string, origin?: ThreadOpenOrigin) => void;
   onProjectScopeChange?: (id: string | null) => void;
+  restore?: ViewReturnState | null;
+  onRestoreApplied?: () => void;
   /** Live sidebar ids. Omitted means the list is still loading — treat rows as openable. */
   existingThreadIds?: Iterable<string>;
 }
@@ -26,6 +34,8 @@ export function ActivityView({
   onSelectThread,
   onProjectScopeChange,
   existingThreadIds,
+  restore = null,
+  onRestoreApplied,
 }: ActivityViewProps) {
   const [items, setItems] = useState<ActivityItem[]>([]);
   const [loading, setLoading] = useState(false);
@@ -85,9 +95,11 @@ export function ActivityView({
   const showLoading = loading && !hasLastSuccess && !error;
   const initialError = Boolean(error && !hasLastSuccess);
   const scope = projectScopeLabel(projects, projectScope);
+  const rootRef = useRef<HTMLElement>(null);
+  useViewRestore(hasLastSuccess, restore, rootRef, onRestoreApplied);
 
   return (
-    <main className={styles.main} data-activity="">
+    <main className={styles.main} data-activity="" ref={rootRef}>
       <header className={styles.header}>
         <h1 className={styles.title}>Activity</h1>
         <div className={styles.controls}>
@@ -174,7 +186,7 @@ export function ActivityView({
           ) : null}
         </div>
           ) : (
-        <div className={styles.list}>
+        <div className={styles.list} data-return-scroll="">
           {groups.map((group) => (
             <section
               key={group.key}
@@ -192,6 +204,7 @@ export function ActivityView({
                     key={item.id}
                     className={styles.row}
                     data-activity-row={item.id}
+                    data-return-row={item.id}
                     data-thread-unavailable={missing ? "" : undefined}
                   >
                     {missing ? null : (
@@ -199,7 +212,14 @@ export function ActivityView({
                         type="button"
                         className={styles.rowSelect}
                         aria-label={`Select thread: ${item.threadTitle}`}
-                        onClick={() => onSelectThread(item.threadId)}
+                        onClick={() =>
+                          onSelectThread(
+                            item.threadId,
+                            originFromRowKey(rootRef.current, item.id, {
+                              projectId: projectScope ?? null,
+                            }),
+                          )
+                        }
                       />
                     )}
                     <div className={styles.rowBody}>

@@ -172,6 +172,8 @@ function view(props: {
   onDismissSuggestion?: (s: WorkSuggestion) => void | Promise<void>;
   revealMessageId?: string | null;
   onSelectThread?: (id: string) => void;
+  returnToView?: "planboard" | "kanban" | "activity" | "digest" | "prs" | "insights";
+  onReturnToView?: () => void;
   onStartRun?: (
     prompt: string,
     threadId?: string,
@@ -236,6 +238,8 @@ function view(props: {
       onDismissSuggestion={props.onDismissSuggestion}
       revealMessageId={props.revealMessageId}
       onSelectThread={props.onSelectThread}
+      returnToView={props.returnToView}
+      onReturnToView={props.onReturnToView}
       onPickDirectory={props.onPickDirectory}
       onListSnapWindows={props.onListSnapWindows}
     />
@@ -319,6 +323,18 @@ describe("ThreadView empty states", () => {
       onRetryDetail: () => {},
     });
     assert.ok(withRetry.includes("Retry"), "retry action must be offered");
+  });
+
+  it("keeps Back to Activity on a missing thread so return is still possible (#942)", () => {
+    const html = render({
+      detail: null,
+      detailError: "thread gone",
+      returnToView: "activity",
+      onReturnToView: () => {},
+    });
+    assert.ok(html.includes("Back to Activity"));
+    assert.ok(html.includes('data-return-to="activity"'));
+    assert.ok(html.includes('type="button"'));
   });
 
   it("shows the start prompt when the open thread has no messages", () => {
@@ -845,6 +861,32 @@ describe("ThreadView interactive structure", () => {
 });
 
 describe("ThreadView mounted interactions", () => {
+  it("Back to Planboard is a button that does not start a run (#942)", async () => {
+    let started = 0;
+    let returned = 0;
+    const m = await mount(
+      view({
+        onStartRun: () => {
+          started += 1;
+        },
+        returnToView: "planboard",
+        onReturnToView: () => {
+          returned += 1;
+        },
+      }),
+    );
+    const back = m.query('[data-return-to="planboard"]') as HTMLButtonElement | null;
+    assert.ok(back, "back control");
+    assert.equal(back.type, "button");
+    assert.equal(back.getAttribute("aria-label"), "Back to Planboard");
+    back.focus();
+    assert.equal(m.container.ownerDocument.activeElement, back);
+    await m.click(back);
+    assert.equal(returned, 1);
+    assert.equal(started, 0, "return must not submit a prompt");
+    m.unmount();
+  });
+
   it("expands a tool card on click to show tool input", async () => {
     const m = await mount(
       view({

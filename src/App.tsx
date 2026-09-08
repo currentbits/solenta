@@ -54,6 +54,12 @@ import type {
 } from "./shared/ipc";
 import styles from "./App.module.css";
 import { syncTheme } from "./theme";
+import {
+  isReturnableView,
+  validProjectId,
+  type ThreadOpenOrigin,
+  type ViewReturnState,
+} from "./viewReturn";
 
 const EMPTY_FORECAST: ConflictForecast = { pairs: [], computedAt: 0 };
 const EMPTY_AGENT_PROFILES: AgentProfile[] = [];
@@ -419,14 +425,52 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
 
   const viewRef = useRef(view);
   viewRef.current = view;
-  /** Last report the user left for a thread, so Activity/Kanban keep in-view scope (#944). */
-  const returnToReportRef = useRef<"activity" | "kanban" | null>(null);
+  const planboardProjectIdRef = useRef(planboardProjectId);
+  planboardProjectIdRef.current = planboardProjectId;
+  const kanbanProjectIdRef = useRef(kanbanProjectId);
+  kanbanProjectIdRef.current = kanbanProjectId;
+  const activityProjectIdRef = useRef(activityProjectId);
+  activityProjectIdRef.current = activityProjectId;
+  const projectsRef = useRef(projects);
+  projectsRef.current = projects;
+  /**
+   * One session-only return destination (#942). Replaces the Activity/Kanban
+   * in-view latch from #944: opening a thread from a report/board captures
+   * view + project + row, and Back (or the same nav item) restores it.
+   */
+  const [returnTo, setReturnTo] = useState<ViewReturnState | null>(null);
+  const returnToRef = useRef(returnTo);
+  returnToRef.current = returnTo;
+  const [viewRestore, setViewRestore] = useState<ViewReturnState | null>(null);
+  const clearViewRestore = useCallback(() => setViewRestore(null), []);
 
   const handleSelectThread = useCallback(
-    (id: string) => {
+    (id: string, origin?: ThreadOpenOrigin) => {
       const current = viewRef.current;
-      if (current === "activity" || current === "kanban") {
-        returnToReportRef.current = current;
+      if (isReturnableView(current)) {
+        const projectId =
+          origin?.projectId !== undefined
+            ? origin.projectId
+            : current === "planboard"
+              ? planboardProjectIdRef.current
+              : current === "kanban"
+                ? kanbanProjectIdRef.current
+                : current === "activity"
+                  ? activityProjectIdRef.current
+                  : null;
+        setReturnTo({
+          view: current,
+          projectId,
+          sort: origin?.sort,
+          query: origin?.query,
+          projectFilter: origin?.projectFilter,
+          rowKey: origin?.rowKey ?? id,
+          rowIndex: origin?.rowIndex ?? 0,
+          scrollTop: origin?.scrollTop ?? 0,
+          scrollKey: origin?.scrollKey,
+        });
+      } else if (current !== "thread") {
+        setReturnTo(null);
       }
       setView("thread");
       setDrawer(null);
@@ -452,53 +496,94 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
   // stays identical, so the handlers below are stable and the list-derived
   // ones (handoffSource, rosterKey) collapse the churning array to a value
   // that moves when the thing the pane cares about moves.
-  const openKanban = useCallback((pid?: string | null) => {
-    const returning =
-      viewRef.current === "thread" && returnToReportRef.current === "kanban";
-    if (!returning) setKanbanProjectId(pid ?? null);
-    returnToReportRef.current = null;
-    setView("kanban");
-  }, []);
   // Unscoped (#597) means "the project I am in": land the board on the
   // selected thread's project instead of the first project (#207). A scalar
   // dep keeps the handler identity stable across thread-list churn.
   const selectedThreadProjectId =
     threads.find((t) => t.id === selectedThreadId)?.projectId ?? null;
+  const selectedThreadProjectIdRef = useRef(selectedThreadProjectId);
+  selectedThreadProjectIdRef.current = selectedThreadProjectId;
+
+  const consumeReturn = useCallback((viewName: ViewReturnState["view"]) => {
+    const dest = returnToRef.current;
+    const returning =
+      viewRef.current === "thread" && dest?.view === viewName;
+    if (!returning) {
+      setViewRestore(null);
+      setReturnTo(null);
+      return null;
+    }
+    setViewRestore(dest);
+    setReturnTo(null);
+    return dest;
+  }, []);
+
+  const openKanban = useCallback((pid?: string | null) => {
+    const dest = consumeReturn("kanban");
+    if (dest) {
+      setKanbanProjectId(
+        validProjectId(dest.projectId, projectsRef.current),
+      );
+    } else {
+      setKanbanProjectId(pid ?? null);
+    }
+    setView("kanban");
+  }, [consumeReturn]);
   const openPlanboard = useCallback(
     (pid?: string | null) => {
-      setPlanboardProjectId(pid ?? selectedThreadProjectId);
+      const dest = consumeReturn("planboard");
+      if (dest) {
+        setPlanboardProjectId(
+          validProjectId(dest.projectId, projectsRef.current) ??
+            selectedThreadProjectIdRef.current,
+        );
+      } else {
+        setPlanboardProjectId(pid ?? selectedThreadProjectIdRef.current);
+      }
       setView("planboard");
     },
-    [selectedThreadProjectId],
+    [consumeReturn],
   );
   const openPrs = useCallback(() => {
+    consumeReturn("prs");
     setView("prs");
     setDrawer(null);
-  }, []);
+  }, [consumeReturn]);
   const openAutomations = useCallback(() => {
     setRepeatDraft(null);
+    setReturnTo(null);
+    setViewRestore(null);
     setView("automations");
     setDrawer(null);
   }, []);
   const openActivity = useCallback((pid?: string | null) => {
-    const returning =
-      viewRef.current === "thread" && returnToReportRef.current === "activity";
-    if (!returning) setActivityProjectId(pid ?? null);
-    returnToReportRef.current = null;
+    const dest = consumeReturn("activity");
+    if (dest) {
+      setActivityProjectId(
+        validProjectId(dest.projectId, projectsRef.current),
+      );
+    } else {
+      setActivityProjectId(pid ?? null);
+    }
     setView("activity");
-  }, []);
+  }, [consumeReturn]);
   const openUsage = useCallback(() => {
+    setReturnTo(null);
+    setViewRestore(null);
     setView("usage");
     setDrawer(null);
   }, []);
   const openFleet = useCallback(() => {
+    setReturnTo(null);
+    setViewRestore(null);
     setView("fleet");
     setDrawer(null);
   }, []);
   const openInsights = useCallback(() => {
+    consumeReturn("insights");
     setView("insights");
     setDrawer(null);
-  }, []);
+  }, [consumeReturn]);
   const loadFailureModes = useCallback(
     () => api.insights.failureModes(),
     [api],
@@ -509,9 +594,27 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     [api],
   );
   const openDigest = useCallback(() => {
+    consumeReturn("digest");
     setView("digest");
     setDrawer(null);
-  }, []);
+  }, [consumeReturn]);
+  const handleReturnToView = useCallback(() => {
+    const dest = returnToRef.current;
+    if (!dest) return;
+    if (dest.view === "planboard") openPlanboard();
+    else if (dest.view === "kanban") openKanban();
+    else if (dest.view === "activity") openActivity();
+    else if (dest.view === "digest") openDigest();
+    else if (dest.view === "prs") openPrs();
+    else if (dest.view === "insights") openInsights();
+  }, [
+    openPlanboard,
+    openKanban,
+    openActivity,
+    openDigest,
+    openPrs,
+    openInsights,
+  ]);
   const openSettings = useCallback((pane?: SettingsPane) => {
     setSettingsPane(pane ?? "general");
     setSettingsOpen(true);
@@ -1466,6 +1569,8 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
               onSelectThread={handleSelectThread}
               onProjectScopeChange={setActivityProjectId}
               existingThreadIds={liveThreadIds}
+              restore={viewRestore?.view === "activity" ? viewRestore : null}
+              onRestoreApplied={clearViewRestore}
             />
           ) : view === "usage" ? (
             <UsageView
@@ -1490,6 +1595,8 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
               loadFailureModes={loadFailureModes}
               onSelectThread={handleSelectThread}
               existingThreadIds={liveThreadIds}
+              restore={viewRestore?.view === "insights" ? viewRestore : null}
+              onRestoreApplied={clearViewRestore}
             />
           ) : view === "digest" ? (
             <DigestView
@@ -1498,6 +1605,8 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
               markSeen={markDigestSeen}
               onSelectThread={handleSelectThread}
               existingThreadIds={liveThreadIds}
+              restore={viewRestore?.view === "digest" ? viewRestore : null}
+              onRestoreApplied={clearViewRestore}
             />
           ) : view === "prs" ? (
             <PrListView
@@ -1506,6 +1615,8 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
               listPrs={listPrs}
               onSelectThread={handleSelectThread}
               onCheckoutPr={handleCheckoutPr}
+              restore={viewRestore?.view === "prs" ? viewRestore : null}
+              onRestoreApplied={clearViewRestore}
             />
           ) : view === "automations" ? (
             <AutomationsView
@@ -1535,6 +1646,8 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
               listPrs={listPrs}
               threads={threads}
               onSelectThread={handleSelectThread}
+              restore={viewRestore?.view === "planboard" ? viewRestore : null}
+              onRestoreApplied={clearViewRestore}
               // Stay on the board after a start (#207): the card moves to In
               // progress here, and the new thread is in the sidebar anyway.
               onStartTask={handleCreateThreadFromIssue}
@@ -1552,6 +1665,8 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
               providers={providers}
               onSelectThread={handleSelectThread}
               onProjectScopeChange={setKanbanProjectId}
+              restore={viewRestore?.view === "kanban" ? viewRestore : null}
+              onRestoreApplied={clearViewRestore}
               onCreateThread={handleCreateThreadPlain}
               autoSettleAfterDays={
                 settings == null ? undefined : settings.autoSettleAfterDays
@@ -1567,6 +1682,8 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
           quotaDemo ? async () => demoProviderLimits() : listProviderLimits
         }
         quotaDemo={quotaDemo}
+        returnToView={returnTo?.view ?? null}
+        onReturnToView={returnTo ? handleReturnToView : undefined}
         detail={visibleDetail}
         detailError={selectedThreadId ? detailError : null}
         onRetryDetail={retryDetail}

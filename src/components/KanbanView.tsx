@@ -1,4 +1,10 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  originFromRowKey,
+  useViewRestore,
+  type ThreadOpenOrigin,
+  type ViewReturnState,
+} from "../viewReturn";
 import { isKanbanEmpty, kanbanColumns } from "../kanban";
 import {
   AUTO_SETTLE_AFTER_DAYS,
@@ -26,8 +32,10 @@ export interface KanbanViewProps {
   /** Sidebar project scope: only show this project's threads. Null/omitted shows all. */
   projectScope?: string | null;
   providers: ProviderInfo[];
-  onSelectThread: (id: string) => void;
+  onSelectThread: (id: string, origin?: ThreadOpenOrigin) => void;
   onProjectScopeChange?: (id: string | null) => void;
+  restore?: ViewReturnState | null;
+  onRestoreApplied?: () => void;
   onCreateThread?: () => void;
   autoSettleAfterDays?: number | null;
   autoSettleOnMerge?: boolean;
@@ -41,6 +49,8 @@ export function KanbanView({
   providers,
   onSelectThread,
   onProjectScopeChange,
+  restore = null,
+  onRestoreApplied,
   onCreateThread,
   autoSettleAfterDays,
   autoSettleOnMerge,
@@ -86,9 +96,11 @@ export function KanbanView({
 
   const slugFor = (thread: ThreadInfo): string =>
     projects.find((p) => p.id === thread.projectId)?.slug ?? "unknown";
+  const rootRef = useRef<HTMLElement>(null);
+  useViewRestore(true, restore, rootRef, onRestoreApplied);
 
   return (
-    <main className={styles.main} data-kanban="">
+    <main className={styles.main} data-kanban="" ref={rootRef}>
       <header className={styles.header}>
         <h1 className={styles.title}>Kanban</h1>
         <div className={styles.controls}>
@@ -145,20 +157,28 @@ export function KanbanView({
                 <span>{column.title}</span>
                 <span className={styles.count}>{column.threads.length}</span>
               </header>
-              <div className={styles.columnBody}>
+              <div className={styles.columnBody} data-return-scroll={column.id}>
                 {column.threads.map((thread) => (
-                  <ThreadCard
-                    key={thread.id}
-                    thread={thread}
-                    slug={slugFor(thread)}
-                    providers={providers}
-                    active={false}
-                    now={now}
-                    onSelect={(id) => onSelectThread(id)}
-                    wait={waitStates.get(thread.id) ?? null}
-                    conflictForecast={conflictForecast}
-                    threadTitles={threadTitles}
-                  />
+                  <div key={thread.id} data-return-row={thread.id}>
+                    <ThreadCard
+                      thread={thread}
+                      slug={slugFor(thread)}
+                      providers={providers}
+                      active={false}
+                      now={now}
+                      onSelect={(id) =>
+                        onSelectThread(
+                          id,
+                          originFromRowKey(rootRef.current, id, {
+                            projectId: projectScope ?? null,
+                          }),
+                        )
+                      }
+                      wait={waitStates.get(thread.id) ?? null}
+                      conflictForecast={conflictForecast}
+                      threadTitles={threadTitles}
+                    />
+                  </div>
                 ))}
               </div>
             </section>

@@ -255,6 +255,77 @@ describe("ActivityView", () => {
     m.unmount();
   });
 
+  it("restores focus to the originating row, or the nearest remaining row (#942)", async () => {
+    const m = await mount(
+      <ActivityView
+        projects={[p1, p2]}
+        listActivity={async () => [
+          item({
+            id: "t1:done:1",
+            threadId: "t1",
+            kind: "done",
+            threadTitle: "Ship ledger",
+          }),
+          item({
+            id: "t2:created:1",
+            threadId: "t2",
+            projectId: "p2",
+            kind: "created",
+            threadTitle: "New billing thread",
+          }),
+        ]}
+        onSelectThread={() => {}}
+        restore={{
+          view: "activity",
+          projectId: null,
+          rowKey: "t2:created:1",
+          rowIndex: 1,
+          scrollTop: 0,
+        }}
+      />,
+    );
+    await m.flush();
+    assert.equal(
+      m.container.ownerDocument.activeElement?.getAttribute("aria-label"),
+      "Select thread: New billing thread",
+    );
+    m.unmount();
+
+    const gone = await mount(
+      <ActivityView
+        projects={[p1, p2]}
+        listActivity={async () => [
+          item({
+            id: "t1:done:1",
+            threadId: "t1",
+            kind: "done",
+            threadTitle: "Ship ledger",
+          }),
+          item({
+            id: "t3:failed:1",
+            threadId: "t3",
+            kind: "failed",
+            threadTitle: "Old fail",
+          }),
+        ]}
+        onSelectThread={() => {}}
+        restore={{
+          view: "activity",
+          projectId: null,
+          rowKey: "t2:created:1",
+          rowIndex: 1,
+          scrollTop: 0,
+        }}
+      />,
+    );
+    await gone.flush();
+    assert.equal(
+      gone.container.ownerDocument.activeElement?.getAttribute("aria-label"),
+      "Select thread: Old fail",
+    );
+    gone.unmount();
+  });
+
   it("renders the empty state when there is no activity", async () => {
     const m = await mount(
       <ActivityView
