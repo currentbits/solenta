@@ -37,6 +37,7 @@ const orchcommands = require("./orchcommands.js");
 const cliCommands = require("./cliCommands.js");
 const ask = require("./ask.js");
 const btw = require("./btw.js");
+const { heartbeatLane } = require("./mergeQueue.js");
 const {
   getClaudeMcpArgs,
   getCodexMcpArgs,
@@ -689,6 +690,7 @@ function tryReadCodeIndex(userDataPath, repoRoot) {
  * @param {number} [opts.tickMs]
  * @param {typeof setInterval} [opts.setIntervalFn]
  * @param {typeof clearInterval} [opts.clearIntervalFn]
+ * @param {() => number} [opts.now] - injectable clock (lane heartbeat, #346)
  * @param {string} [opts.userDataPath] - for memory auto-record
  * @param {() => { running: boolean, adopted: boolean, port: number | null }} [opts.getMemoryStatus]
  * @param {(opts: object) => Promise<{ text: string, source: string } | null>} [opts.askComplete] - Ask mode seam (issue #392)
@@ -703,6 +705,7 @@ function createRunner(opts) {
     tickMs = 700,
     setIntervalFn = setInterval,
     clearIntervalFn = clearInterval,
+    now: nowFn = () => Date.now(),
     userDataPath = "",
     getMemoryStatus: getMemStatus = getMemoryStatus,
     askComplete = ask.completeAsk,
