@@ -248,7 +248,6 @@ function killProcessGroup(pid, platform = process.platform) {
  *   spawn?: typeof spawn,
  *   env?: NodeJS.ProcessEnv,
  *   project?: { remoteHost?: string, remotePath?: string, path?: string } | null,
- *   env?: Record<string, string>,
  * }} [opts]
  */
 function start(threadId, root, script, opts = {}) {
@@ -261,16 +260,15 @@ function start(threadId, root, script, opts = {}) {
   const platform = opts.platform || process.platform;
   const spawnFn = opts.spawn || spawn;
   const project = opts.project || { path: root };
+  const extraEnv = {
+    ...(opts.env && typeof opts.env === "object" ? opts.env : {}),
+  };
   // WSL-side only — do not wrap ssh remotes (would change macOS behaviour).
   const wsl = wslTarget(project, platform);
   const raw = { bin: "npm", args: ["run", script] };
   let wrapped = wsl
-    ? wrapCommand(project, raw.bin, raw.args, platform)
+    ? wrapCommand(project, raw.bin, raw.args, platform, extraEnv)
     : { bin: raw.bin, args: [...raw.args] };
-
-  const extraEnv = {
-    ...(opts.env && typeof opts.env === "object" ? opts.env : {}),
-  };
   const command = scriptCommand(root, script) || script;
   const rewritten = rewriteChromiumScriptBody(command, extraEnv);
   if (rewritten !== command && looksLikeProcessWrapper(command)) {
@@ -284,7 +282,7 @@ function start(threadId, root, script, opts = {}) {
     const binDir = join(launchRoot, "node_modules", ".bin");
     extraEnv.PATH = `${binDir}${delimiter}${extraEnv.PATH || process.env.PATH || ""}`;
     if (wsl) {
-      wrapped = wrapCommand(project, "sh", ["-c", rewritten], platform);
+      wrapped = wrapCommand(project, "sh", ["-c", rewritten], platform, extraEnv);
     } else if (platform === "win32") {
       wrapped = { bin: "cmd.exe", args: ["/d", "/s", "/c", rewritten] };
     } else {

@@ -200,7 +200,8 @@ function resolveProjectIcon(project) {
 }
 
 /**
- * PORT overlay from a claimed merge-queue lane (#346).
+ * PORT overlay from a claimed merge-queue lane (#346). Missing
+ * mergeQueue.js is not an error — this tree may land isolation first.
  *
  * @param {{ lane?: { n?: number, port?: number, portBase?: number } } | null | undefined} thread
  * @returns {Record<string, string>}
