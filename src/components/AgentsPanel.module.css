@@ -1011,13 +1011,25 @@
   background: var(--overlay-soft);
 }
 
-.lanePort {
+.lanePort,
+.lanePath,
+.laneBranch {
   font-family: var(--mono);
   font-size: 11.5px;
   color: var(--text-dim);
 }
 
-.laneChip[data-lane-current="true"] .lanePort {
+.lanePath,
+.laneBranch {
+  max-width: 14em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.laneChip[data-lane-current="true"] .lanePort,
+.laneChip[data-lane-current="true"] .lanePath,
+.laneChip[data-lane-current="true"] .laneBranch {
   color: var(--text-muted);
 }
 

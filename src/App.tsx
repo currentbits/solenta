@@ -268,6 +268,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     listLanes,
     previewLane,
     restorePreview,
+    recycleWedgedLanes,
     setSpotlight,
     spotlightLane,
     heartbeatLane,
@@ -1786,6 +1787,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         listLanes={listLanes}
         previewLane={previewLane}
         restorePreview={restorePreview}
+        recycleWedgedLanes={recycleWedgedLanes}
         setSpotlight={setSpotlight}
         spotlightLane={spotlightLane}
         listDevScripts={listDevScripts}

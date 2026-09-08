@@ -23,6 +23,7 @@ import type {
   MergeLaneClaim,
   MergeLaneInfo,
   MergeLanePreview,
+  MergeLaneRecycle,
   MergeLaneRestore,
   MergeSpotlight,
   McpCatalogEntry,
@@ -295,6 +296,9 @@ interface AgentsPanelProps {
     lane: number;
   }) => Promise<MergeLanePreview>;
   restorePreview?: (input: { projectId: string }) => Promise<MergeLaneRestore>;
+  recycleWedgedLanes?: (input: {
+    projectId: string;
+  }) => Promise<MergeLaneRecycle[]>;
   spotlight?: boolean;
   setSpotlight?: (input: {
     projectId: string;
@@ -1860,6 +1864,7 @@ export function MergeQueueCard({
   listLanes,
   previewLane,
   restorePreview,
+  recycleWedgedLanes,
   spotlight,
   setSpotlight,
   spotlightLane,
@@ -1874,6 +1879,9 @@ export function MergeQueueCard({
     lane: number;
   }) => Promise<MergeLanePreview>;
   restorePreview: (input: { projectId: string }) => Promise<MergeLaneRestore>;
+  recycleWedgedLanes: (input: {
+    projectId: string;
+  }) => Promise<MergeLaneRecycle[]>;
   spotlight?: boolean;
   setSpotlight?: (input: {
     projectId: string;
@@ -1960,6 +1968,24 @@ export function MergeQueueCard({
             >
               lane {row.n}
               <span className={styles.lanePort}>PORT {row.port}</span>
+              {row.path ? (
+                <span
+                  className={styles.lanePath}
+                  data-lane-path=""
+                  title={row.path}
+                >
+                  {row.path}
+                </span>
+              ) : null}
+              {row.branch ? (
+                <span
+                  className={styles.laneBranch}
+                  data-lane-branch=""
+                  title={row.branch}
+                >
+                  {row.branch}
+                </span>
+              ) : null}
             </span>
           ))}
         </div>
@@ -2034,6 +2060,22 @@ export function MergeQueueCard({
         >
           Restore
         </button>
+        {lanes.length > 0 ? (
+          <button
+            type="button"
+            className={styles.gitBtn}
+            data-lane-recycle=""
+            disabled={busy}
+            onClick={() =>
+              void run(async () => {
+                await recycleWedgedLanes({ projectId });
+                await refresh();
+              })
+            }
+          >
+            Recycle wedged
+          </button>
+        ) : null}
         {setSpotlight ? (
           <label className={styles.gitHint} data-lane-spotlight-label="">
             <input
@@ -2099,6 +2141,7 @@ export function GitTab({
   listLanes,
   previewLane,
   restorePreview,
+  recycleWedgedLanes,
   spotlight,
   setSpotlight,
   spotlightLane,
@@ -2124,6 +2167,9 @@ export function GitTab({
     lane: number;
   }) => Promise<MergeLanePreview>;
   restorePreview?: (input: { projectId: string }) => Promise<MergeLaneRestore>;
+  recycleWedgedLanes?: (input: {
+    projectId: string;
+  }) => Promise<MergeLaneRecycle[]>;
   spotlight?: boolean;
   setSpotlight?: (input: {
     projectId: string;
@@ -2324,7 +2370,12 @@ export function GitTab({
         />
       ),
       lanes:
-        remote || !claimLane || !listLanes || !previewLane || !restorePreview
+        remote ||
+        !claimLane ||
+        !listLanes ||
+        !previewLane ||
+        !restorePreview ||
+        !recycleWedgedLanes
           ? null
           : (
             <MergeQueueCard
@@ -2335,6 +2386,7 @@ export function GitTab({
               listLanes={listLanes}
               previewLane={previewLane}
               restorePreview={restorePreview}
+              recycleWedgedLanes={recycleWedgedLanes}
               spotlight={project?.spotlight === true}
               setSpotlight={setSpotlight}
               spotlightLane={spotlightLane}
@@ -3617,6 +3669,7 @@ export const AgentsPanel = memo(function AgentsPanel({
   listLanes,
   previewLane,
   restorePreview,
+  recycleWedgedLanes,
   setSpotlight,
   spotlightLane,
   onCollapse,
@@ -3753,6 +3806,7 @@ export const AgentsPanel = memo(function AgentsPanel({
           listLanes={listLanes}
           previewLane={previewLane}
           restorePreview={restorePreview}
+          recycleWedgedLanes={recycleWedgedLanes}
           spotlight={project?.spotlight === true}
           setSpotlight={setSpotlight}
           spotlightLane={spotlightLane}

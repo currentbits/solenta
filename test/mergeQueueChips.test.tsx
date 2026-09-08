@@ -1,6 +1,7 @@
 /**
- * Lead-facing merge-queue chips (#346): claim a numbered lane, preview it
- * onto the main checkout, restore. Show lane n and PORT. Promote stays
+ * Lead-facing merge-queue chips (#346 / #1115): claim a numbered lane,
+ * preview it onto the main checkout, restore, recycle wedged lanes.
+ * Chips show lane n, PORT, path, and branch. Promote stays
  * git.mergeWorktree (not on this card).
  *
  * Run: node --import=./test/support/render.mjs --test test/mergeQueueChips.test.tsx
@@ -13,6 +14,7 @@ import type {
   MergeLaneClaim,
   MergeLaneInfo,
   MergeLanePreview,
+  MergeLaneRecycle,
   MergeLaneRestore,
   MergeSpotlight,
 } from "../src/shared/ipc";
@@ -42,6 +44,7 @@ function card(opts: {
     lane: number;
   }) => Promise<MergeLanePreview>;
   restore?: (input: { projectId: string }) => Promise<MergeLaneRestore>;
+  recycle?: (input: { projectId: string }) => Promise<MergeLaneRecycle[]>;
   spotlight?: boolean;
   setSpotlight?: (input: {
     projectId: string;
@@ -92,6 +95,9 @@ function card(opts: {
       restorePreview={
         opts.restore ?? (async () => ({ restored: true, sha: "abc" }))
       }
+      recycleWedgedLanes={
+        opts.recycle ?? (async () => [])
+      }
       spotlight={opts.spotlight}
       setSpotlight={opts.setSpotlight}
       spotlightLane={opts.spotlightLane}
@@ -124,12 +130,12 @@ describe("MergeQueueCard (#346)", () => {
     m.unmount();
   });
 
-  it("lists claimed lanes with lane n and PORT", async () => {
+  it("lists claimed lanes with lane n, PORT, path, and branch", async () => {
     const m = await mount(
       card({
         lanes: [
-          lane({ n: 1, port: 3001, threadId: "t1" }),
-          lane({ n: 3, port: 3003, threadId: "t9" }),
+          lane({ n: 1, port: 3001, threadId: "t1", path: "/tmp/lane-1", branch: "lane/1" }),
+          lane({ n: 3, port: 3003, threadId: "t9", path: "/tmp/lane-3", branch: "lane/3" }),
         ],
       }),
     );
@@ -139,8 +145,12 @@ describe("MergeQueueCard (#346)", () => {
     assert.ok(one && three, "both lane chips");
     assert.match((one!.textContent || "").replace(/\s+/g, " "), /lane 1/);
     assert.match((one!.textContent || "").replace(/\s+/g, " "), /PORT 3001/);
+    assert.match((one!.textContent || "").replace(/\s+/g, " "), /\/tmp\/lane-1/);
+    assert.match((one!.textContent || "").replace(/\s+/g, " "), /lane\/1/);
     assert.match((three!.textContent || "").replace(/\s+/g, " "), /lane 3/);
     assert.match((three!.textContent || "").replace(/\s+/g, " "), /PORT 3003/);
+    assert.match((three!.textContent || "").replace(/\s+/g, " "), /\/tmp\/lane-3/);
+    assert.match((three!.textContent || "").replace(/\s+/g, " "), /lane\/3/);
     assert.equal(one!.getAttribute("data-lane-current"), "true");
     assert.equal(three!.getAttribute("data-lane-current"), null);
     assert.equal(m.query("[data-lane-claim]"), null);
@@ -187,6 +197,47 @@ describe("MergeQueueCard (#346)", () => {
     assert.ok(restoreBtn, "Restore chip");
     await m.click(restoreBtn);
     assert.deepEqual(restores, [{ projectId: "p1" }]);
+    m.unmount();
+  });
+
+  it("omits path and branch on the chip when listLanes returns null", async () => {
+    const m = await mount(
+      card({
+        lanes: [lane({ path: null, branch: null })],
+      }),
+    );
+    await m.flush();
+    const chip = m.query("[data-lane-chip='1']");
+    assert.ok(chip, "lane chip");
+    const text = (chip!.textContent || "").replace(/\s+/g, " ");
+    assert.match(text, /lane 1/);
+    assert.match(text, /PORT 3001/);
+    assert.equal(m.query("[data-lane-path]"), null);
+    assert.equal(m.query("[data-lane-branch]"), null);
+    m.unmount();
+  });
+
+  it("recycles wedged lanes via recycleWedgedLanes and refreshes the list", async () => {
+    const recycles: { projectId: string }[] = [];
+    let lanes = [lane()];
+    const m = await mount(
+      card({
+        lanes,
+        list: async () => lanes,
+        recycle: async (input) => {
+          recycles.push(input);
+          lanes = [];
+          return [{ n: 1, threadId: "t1" }];
+        },
+      }),
+    );
+    await m.flush();
+    const recycleBtn = m.query("[data-lane-recycle]");
+    assert.ok(recycleBtn, "Recycle chip");
+    await m.click(recycleBtn);
+    assert.deepEqual(recycles, [{ projectId: "p1" }]);
+    await m.flush();
+    assert.equal(m.query("[data-lane-chip='1']"), null);
     m.unmount();
   });
 

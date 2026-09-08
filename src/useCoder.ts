@@ -30,6 +30,7 @@ import type {
   MergeLaneClaim,
   MergeLaneInfo,
   MergeLanePreview,
+  MergeLaneRecycle,
   MergeLaneRestore,
   MergeSpotlight,
   McpCatalogEntry,
@@ -595,6 +596,10 @@ export interface UseCoderResult {
   }) => Promise<MergeLanePreview>;
   /** Undo a lane preview on the project checkout. */
   restorePreview: (input: { projectId: string }) => Promise<MergeLaneRestore>;
+  /** Tear down wedged lanes. Does not close issues or move main. */
+  recycleWedgedLanes: (input: {
+    projectId: string;
+  }) => Promise<MergeLaneRecycle[]>;
   /** Per-repo Spotlight opt-in (#250 stretch). */
   setSpotlight: (input: {
     projectId: string;
@@ -3010,34 +3015,6 @@ export function useCoder(): UseCoderResult {
     }
   }, [api]);
 
-  const claimLane = useCallback(
-    async (input: { threadId: string }) => {
-      return api.mergeQueue.claimLane(input);
-    },
-    [api],
-  );
-
-  const listLanes = useCallback(
-    async (input: { projectId: string }) => {
-      return api.mergeQueue.listLanes(input);
-    },
-    [api],
-  );
-
-  const previewLane = useCallback(
-    async (input: { projectId: string; lane: number }) => {
-      return api.mergeQueue.previewLane(input);
-    },
-    [api],
-  );
-
-  const restorePreview = useCallback(
-    async (input: { projectId: string }) => {
-      return api.mergeQueue.restorePreview(input);
-    },
-    [api],
-  );
-
   const listCheckpoints = useCallback(
     async (threadId: string) => {
       return api.git.listCheckpoints({ threadId });
@@ -3186,6 +3163,13 @@ export function useCoder(): UseCoderResult {
   const restorePreview = useCallback(
     async (input: { projectId: string }) => {
       return api.mergeQueue.restorePreview(input);
+    },
+    [api],
+  );
+
+  const recycleWedgedLanes = useCallback(
+    async (input: { projectId: string }) => {
+      return api.mergeQueue.recycleWedgedLanes(input);
     },
     [api],
   );
@@ -3745,6 +3729,7 @@ export function useCoder(): UseCoderResult {
     listLanes,
     previewLane,
     restorePreview,
+    recycleWedgedLanes,
     setSpotlight,
     spotlightLane,
     heartbeatLane,
