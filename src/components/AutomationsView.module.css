@@ -90,12 +90,26 @@
   box-shadow: var(--focus-ring);
 }
 
+.select:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
 .hourInput {
   width: 72px;
 }
 
+.formActions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.formActions .action {
+  height: 30px;
+}
+
 .submit {
-  align-self: flex-start;
   display: inline-flex;
   align-items: center;
   height: 30px;
@@ -197,6 +211,20 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.prompt {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.4;
+  color: var(--text-muted);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 4;
+  line-clamp: 4;
+  overflow: hidden;
 }
 
 .rowActions {

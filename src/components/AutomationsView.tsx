@@ -245,22 +245,46 @@ export function AutomationsView({
   const [hour, setHour] = useState("9");
   const [formError, setFormError] = useState<string | null>(null);
   const [confirmId, setConfirmId] = useState<string | null>(null);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const savingRef = useRef(false);
   const [rowError, setRowError] = useState<{
     id: string;
     message: string;
   } | null>(null);
-  const [creating, setCreating] = useState(false);
-  const creatingRef = useRef(false);
   const [now] = useState(() => Date.now());
 
   useEffect(() => {
     if (!draft) return;
+    setEditingId(null);
     setName(draft.name);
     setProjectId(draft.projectId);
     setPrompt(draft.prompt);
     setProvider(draft.provider);
     setModel(draft.model ?? "");
   }, [draft]);
+
+  const fillFrom = (auto: AutomationInfo) => {
+    setEditingId(auto.id);
+    setName(auto.name);
+    setProjectId(auto.projectId);
+    setPrompt(auto.prompt);
+    setProvider(auto.provider);
+    setModel(auto.model ?? "");
+    setPreset(auto.preset);
+    setHour(auto.hour != null ? String(auto.hour) : "9");
+    setFormError(null);
+  };
+
+  const clearEdit = () => {
+    setEditingId(null);
+    setName("");
+    setPrompt("");
+    setModel("");
+    setPreset("hourly");
+    setHour("9");
+    setFormError(null);
+  };
 
   /**
    * Row actions are fire-and-forget from an onClick, so a rejection has to
@@ -293,9 +317,10 @@ export function AutomationsView({
   /**
    * Click and Enter both call submit() on this form. A useState flag is too
    * late for a same-tick double submit, so the ref is the real lock (#941).
+   * Create and edit share this lock so a pending write cannot start twice.
    */
   const submit = async () => {
-    if (creatingRef.current) return;
+    if (savingRef.current) return;
     const error = createFormError({
       name,
       projectId,
@@ -308,30 +333,43 @@ export function AutomationsView({
       setFormError(error);
       return;
     }
-    creatingRef.current = true;
-    setCreating(true);
+    savingRef.current = true;
+    setSaving(true);
     setFormError(null);
     try {
-      await onCreate({
-        name: name.trim(),
-        projectId,
-        prompt,
-        provider,
-        model: model.trim() || null,
-        preset,
-        hour: needsHour ? Number(hour) : null,
-        enabled: true,
-      });
-      setName("");
-      setPrompt("");
-      setModel("");
+      if (editingId) {
+        await onUpdate({
+          id: editingId,
+          name: name.trim(),
+          prompt,
+          provider,
+          model: model.trim() || null,
+          preset,
+          hour: needsHour ? Number(hour) : null,
+        });
+        clearEdit();
+      } else {
+        await onCreate({
+          name: name.trim(),
+          projectId,
+          prompt,
+          provider,
+          model: model.trim() || null,
+          preset,
+          hour: needsHour ? Number(hour) : null,
+          enabled: true,
+        });
+        setName("");
+        setPrompt("");
+        setModel("");
+      }
     } catch (err) {
       setFormError(
         err instanceof Error && err.message ? err.message : String(err),
       );
     } finally {
-      creatingRef.current = false;
-      setCreating(false);
+      savingRef.current = false;
+      setSaving(false);
     }
   };
 
@@ -368,6 +406,12 @@ export function AutomationsView({
               onChange={(e) => setProjectId(e.target.value)}
               name="projectId"
               aria-label="Project"
+              disabled={Boolean(editingId)}
+              title={
+                editingId
+                  ? "Project stays with this automation"
+                  : undefined
+              }
             >
               {projects.length === 0 ? (
                 <option value="">No projects</option>
@@ -411,6 +455,9 @@ export function AutomationsView({
                 data-automation-model=""
               >
                 <option value="">Default</option>
+                {model && !providerModels.includes(model) ? (
+                  <option value={model}>{model}</option>
+                ) : null}
                 {providerModels.map((m) => (
                   <option key={m} value={m}>
                     {m}
@@ -476,14 +523,36 @@ export function AutomationsView({
             {formError}
           </p>
         ) : null}
-        <button
-          type="submit"
-          className={styles.submit}
-          disabled={creating}
-          aria-busy={creating || undefined}
-        >
-          {creating ? "Adding…" : "Add automation"}
-        </button>
+        <div className={styles.formActions}>
+          {editingId ? (
+            <button
+              type="button"
+              className={styles.action}
+              data-automation-cancel=""
+              disabled={saving}
+              onClick={() => {
+                if (savingRef.current) return;
+                clearEdit();
+              }}
+            >
+              Cancel
+            </button>
+          ) : null}
+          <button
+            type="submit"
+            className={styles.submit}
+            disabled={saving}
+            aria-busy={saving || undefined}
+          >
+            {saving
+              ? editingId
+                ? "Saving…"
+                : "Adding…"
+              : editingId
+                ? "Save"
+                : "Add automation"}
+          </button>
+        </div>
       </form>
 
       {automations.length === 0 ? (
@@ -529,6 +598,11 @@ export function AutomationsView({
                     </span>
                   ) : null}
                 </div>
+                {auto.prompt ? (
+                  <p className={styles.prompt} data-automation-prompt="">
+                    {auto.prompt}
+                  </p>
+                ) : null}
                 {loadRuns ? (
                   <AutomationRunHistory
                     automation={auto}
@@ -564,6 +638,19 @@ export function AutomationsView({
                     }}
                   >
                     Run now
+                  </button>
+                  <button
+                    type="button"
+                    className={styles.action}
+                    data-automation-edit=""
+                    title="Edit"
+                    disabled={saving}
+                    onClick={() => {
+                      if (savingRef.current) return;
+                      fillFrom(auto);
+                    }}
+                  >
+                    Edit
                   </button>
                   <button
                     type="button"

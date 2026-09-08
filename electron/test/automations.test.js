@@ -151,6 +151,62 @@ describe("automation CRUD + scheduler", () => {
     assert.equal(services.listAutomations(store).length, 0);
   });
 
+  it("prompt and model updates keep id and nextRunAt", () => {
+    const created = services.addAutomation(store, {
+      projectId: "p1",
+      name: "Nightly review",
+      prompt: "review the repo",
+      provider: "claude",
+      model: null,
+      preset: "daily",
+      hour: 9,
+    });
+    const pinned = created.nextRunAt + 86_400_000;
+    store.setAutomations([
+      { ...store.getAutomation(created.id), nextRunAt: pinned },
+    ]);
+    store.saveNow();
+
+    const updated = services.updateAutomation(store, {
+      id: created.id,
+      prompt: "review harder",
+      model: "opus",
+    });
+    assert.equal(updated.id, created.id);
+    assert.equal(updated.nextRunAt, pinned);
+    assert.equal(updated.prompt, "review harder");
+    assert.equal(updated.model, "opus");
+    assert.equal(updated.enabled, true);
+    assert.equal(updated.projectId, "p1");
+    assert.equal(services.listAutomations(store).length, 1);
+  });
+
+  it("schedule changes recompute nextRunAt", () => {
+    const created = services.addAutomation(store, {
+      projectId: "p1",
+      name: "Hourly",
+      prompt: "go",
+      provider: "claude",
+      preset: "hourly",
+    });
+    const pinned = Date.now() + 99 * 86_400_000;
+    store.setAutomations([
+      { ...store.getAutomation(created.id), nextRunAt: pinned },
+    ]);
+    store.saveNow();
+
+    const updated = services.updateAutomation(store, {
+      id: created.id,
+      preset: "daily",
+      hour: 9,
+    });
+    assert.equal(updated.id, created.id);
+    assert.notEqual(updated.nextRunAt, pinned);
+    assert.ok(updated.nextRunAt < pinned);
+    assert.equal(updated.preset, "daily");
+    assert.equal(updated.hour, 9);
+  });
+
   it("rejects a create without a name or hour", () => {
     assert.throws(
       () =>
@@ -297,6 +353,26 @@ describe("automation CRUD + scheduler", () => {
     );
     return store.getThread(threadId);
   }
+
+  it("updating an automation keeps existing thread links", async () => {
+    const created = services.addAutomation(store, {
+      projectId: "p1",
+      name: "Sweep",
+      prompt: "go",
+      provider: "claude",
+      preset: "hourly",
+    });
+    const thread = await fireAuto(created.id);
+    assert.equal(thread.automationId, created.id);
+
+    const updated = services.updateAutomation(store, {
+      id: created.id,
+      prompt: "go farther",
+    });
+    assert.equal(updated.id, created.id);
+    assert.equal(store.getThread(thread.id).automationId, created.id);
+    assert.equal(services.listAutomations(store).length, 1);
+  });
 
   it("retains only the newest MAX threads per automation and drops their messages", async () => {
     const created = services.addAutomation(store, {

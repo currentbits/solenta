@@ -1,5 +1,6 @@
 /**
- * AutomationsView: rows, toggle, create form validation, pending create.
+ * AutomationsView: rows, toggle, create form validation, in-place edit (#937),
+ * pending create (#941).
  * Run: npm run test:renderer
  */
 import assert from "node:assert/strict";
@@ -52,6 +53,14 @@ function auto(
     lastError: null,
     ...over,
   };
+}
+
+function deferred() {
+  let resolve!: () => void;
+  const promise = new Promise<void>((r) => {
+    resolve = r;
+  });
+  return { promise, resolve };
 }
 
 describe("AutomationsView", () => {
@@ -613,12 +622,319 @@ describe("AutomationsView", () => {
     assert.equal(m.query("[data-form-error]"), null);
     m.unmount();
   });
-});
 
-function deferred() {
-  let resolve!: () => void;
-  const promise = new Promise<void>((r) => {
-    resolve = r;
+  it("shows the current prompt on the row before editing", async () => {
+    const m = await mount(
+      <AutomationsView
+        automations={[
+          auto({
+            id: "a1",
+            name: "Nightly review",
+            prompt: "Review the ledger nightly",
+          }),
+        ]}
+        projects={[p1]}
+        providers={providers}
+        onCreate={() => {}}
+        onUpdate={() => {}}
+        onRemove={() => {}}
+        onRunNow={() => {}}
+      />,
+    );
+    const shown = m.query('[data-automation-prompt=""]');
+    assert.ok(shown, "prompt is visible on the row");
+    assert.equal(shown.textContent, "Review the ledger nightly");
+    m.unmount();
   });
-  return { promise, resolve };
-}
+
+  it("Edit populates the existing form and keeps the project fixed", async () => {
+    const m = await mount(
+      <AutomationsView
+        automations={[
+          auto({
+            id: "a1",
+            name: "Nightly review",
+            prompt: "Review the ledger",
+            provider: "claude",
+            model: "opus",
+            preset: "daily",
+            hour: 9,
+          }),
+        ]}
+        projects={[p1]}
+        providers={providers}
+        onCreate={() => {}}
+        onUpdate={() => {}}
+        onRemove={() => {}}
+        onRunNow={() => {}}
+      />,
+    );
+    await m.click(m.query('[data-automation-edit=""]'));
+    const name = m.query(
+      '[data-automation-create] [name="name"]',
+    ) as HTMLInputElement | null;
+    const prompt = m.query(
+      '[data-automation-create] [name="prompt"]',
+    ) as HTMLTextAreaElement | null;
+    const project = m.query(
+      '[data-automation-create] [name="projectId"]',
+    ) as HTMLSelectElement | null;
+    const provider = m.query(
+      '[data-automation-create] [name="provider"]',
+    ) as HTMLSelectElement | null;
+    const model = m.query("[data-automation-model]") as HTMLInputElement | null;
+    const preset = m.query(
+      '[data-automation-create] [name="preset"]',
+    ) as HTMLSelectElement | null;
+    const hour = m.query(
+      '[data-automation-create] [name="hour"]',
+    ) as HTMLInputElement | null;
+    assert.ok(name && prompt && project && provider && model && preset && hour);
+    assert.equal(name.value, "Nightly review");
+    assert.equal(prompt.value, "Review the ledger");
+    assert.equal(project.value, "p1");
+    assert.equal(project.disabled, true, "project stays fixed while editing");
+    assert.equal(provider.value, "claude");
+    assert.equal(model.value, "opus");
+    assert.equal(preset.value, "daily");
+    assert.equal(hour.value, "9");
+    const submit = m.query(
+      "[data-automation-create] button[type=submit]",
+    ) as HTMLButtonElement | null;
+    assert.ok(submit);
+    assert.equal(submit.textContent, "Save");
+    assert.ok(m.query('[data-automation-cancel=""]'), "Cancel is available");
+    m.unmount();
+  });
+
+  it("Save updates the same automation and omits enabled and projectId", async () => {
+    const created: unknown[] = [];
+    const updates: Array<Record<string, unknown>> = [];
+    const m = await mount(
+      <AutomationsView
+        automations={[
+          auto({
+            id: "a1",
+            name: "Hourly",
+            prompt: "do work",
+            enabled: false,
+            model: null,
+          }),
+        ]}
+        projects={[p1]}
+        providers={providers}
+        onCreate={(input) => {
+          created.push(input);
+        }}
+        onUpdate={(input) => {
+          updates.push(input);
+        }}
+        onRemove={() => {}}
+        onRunNow={() => {}}
+      />,
+    );
+    await m.click(m.query('[data-automation-edit=""]'));
+    await m.type(m.query('[data-automation-create] [name="name"]'), "Hourly v2");
+    await m.type(
+      m.query('[data-automation-create] [name="prompt"]'),
+      "do better work",
+    );
+    await m.type(m.query("[data-automation-model]"), "claude-opus-4-6");
+    await m.click(m.query("[data-automation-create] button[type=submit]"));
+    assert.equal(created.length, 0, "edit must not create another automation");
+    assert.equal(updates.length, 1);
+    assert.equal(updates[0].id, "a1");
+    assert.equal(updates[0].name, "Hourly v2");
+    assert.equal(updates[0].prompt, "do better work");
+    assert.equal(updates[0].model, "claude-opus-4-6");
+    assert.equal(updates[0].preset, "hourly");
+    assert.equal(updates[0].hour, null);
+    assert.equal(
+      Object.prototype.hasOwnProperty.call(updates[0], "enabled"),
+      false,
+      "enabled stays whatever it was",
+    );
+    assert.equal(
+      Object.prototype.hasOwnProperty.call(updates[0], "projectId"),
+      false,
+      "project stays fixed",
+    );
+    const name = m.query(
+      '[data-automation-create] [name="name"]',
+    ) as HTMLInputElement | null;
+    const submit = m.query(
+      "[data-automation-create] button[type=submit]",
+    ) as HTMLButtonElement | null;
+    assert.ok(name && submit);
+    assert.equal(name.value, "", "form returns to create after save");
+    assert.equal(submit.textContent, "Add automation");
+    m.unmount();
+  });
+
+  it("Cancel discards edits and does not call onUpdate", async () => {
+    const updates: unknown[] = [];
+    const m = await mount(
+      <AutomationsView
+        automations={[auto({ id: "a1", name: "Hourly", prompt: "do work" })]}
+        projects={[p1]}
+        providers={providers}
+        onCreate={() => {}}
+        onUpdate={(input) => {
+          updates.push(input);
+        }}
+        onRemove={() => {}}
+        onRunNow={() => {}}
+      />,
+    );
+    await m.click(m.query('[data-automation-edit=""]'));
+    await m.type(m.query('[data-automation-create] [name="name"]'), "Nope");
+    await m.click(m.query('[data-automation-cancel=""]'));
+    assert.equal(updates.length, 0);
+    const name = m.query(
+      '[data-automation-create] [name="name"]',
+    ) as HTMLInputElement | null;
+    const submit = m.query(
+      "[data-automation-create] button[type=submit]",
+    ) as HTMLButtonElement | null;
+    assert.ok(name && submit);
+    assert.equal(name.value, "");
+    assert.equal(submit.textContent, "Add automation");
+    assert.equal(m.query('[data-automation-cancel=""]'), null);
+    m.unmount();
+  });
+
+  it("failed save keeps edits and retries through onUpdate", async () => {
+    const updates: unknown[] = [];
+    let fail = true;
+    const m = await mount(
+      <AutomationsView
+        automations={[auto({ id: "a1", name: "Hourly", prompt: "do work" })]}
+        projects={[p1]}
+        providers={providers}
+        onCreate={() => {}}
+        onUpdate={async (input) => {
+          updates.push(input);
+          if (fail) {
+            fail = false;
+            throw new Error("disk full");
+          }
+        }}
+        onRemove={() => {}}
+        onRunNow={() => {}}
+      />,
+    );
+    await m.click(m.query('[data-automation-edit=""]'));
+    await m.type(
+      m.query('[data-automation-create] [name="prompt"]'),
+      "revised prompt",
+    );
+    await m.click(m.query("[data-automation-create] button[type=submit]"));
+    assert.equal(updates.length, 1);
+    assert.ok(
+      (m.query("[data-form-error]")?.textContent || "").includes("disk full"),
+      "save error is visible",
+    );
+    const prompt = m.query(
+      '[data-automation-create] [name="prompt"]',
+    ) as HTMLTextAreaElement | null;
+    const submit = m.query(
+      "[data-automation-create] button[type=submit]",
+    ) as HTMLButtonElement | null;
+    assert.ok(prompt && submit);
+    assert.equal(prompt.value, "revised prompt");
+    assert.equal(submit.textContent, "Save", "still in edit mode so retry works");
+    await m.click(submit);
+    assert.equal(updates.length, 2);
+    assert.equal((updates[1] as { prompt: string }).prompt, "revised prompt");
+    assert.equal(prompt.value, "", "successful retry clears the form");
+    assert.equal(m.query("[data-form-error]"), null);
+    m.unmount();
+  });
+
+  it("schedule edits send the new preset and the row shows the next run", async () => {
+    const updates: Array<Record<string, unknown>> = [];
+    const hourly = auto({
+      id: "a1",
+      name: "Hourly",
+      prompt: "do work",
+      preset: "hourly",
+      hour: null,
+    });
+    const nextRunAt = new Date(2026, 5, 11, 9, 0, 0).getTime();
+    const m = await mount(
+      <AutomationsView
+        automations={[hourly]}
+        projects={[p1]}
+        providers={providers}
+        onCreate={() => {}}
+        onUpdate={(input) => {
+          updates.push(input);
+        }}
+        onRemove={() => {}}
+        onRunNow={() => {}}
+      />,
+    );
+    await m.click(m.query('[data-automation-edit=""]'));
+    await m.change(m.query('[data-automation-create] [name="preset"]'), "daily");
+    await m.click(m.query("[data-automation-create] button[type=submit]"));
+    assert.equal(updates.length, 1);
+    assert.equal(updates[0].id, "a1");
+    assert.equal(updates[0].preset, "daily");
+    assert.equal(updates[0].hour, 9);
+
+    await m.rerender(
+      <AutomationsView
+        automations={[
+          { ...hourly, preset: "daily", hour: 9, nextRunAt },
+        ]}
+        projects={[p1]}
+        providers={providers}
+        onCreate={() => {}}
+        onUpdate={(input) => {
+          updates.push(input);
+        }}
+        onRemove={() => {}}
+        onRunNow={() => {}}
+      />,
+    );
+    assert.ok(m.text().includes("daily at 9:00"));
+    m.unmount();
+  });
+
+  it("does not submit a pending save twice", async () => {
+    const updates: unknown[] = [];
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const m = await mount(
+      <AutomationsView
+        automations={[auto({ id: "a1", name: "Hourly", prompt: "do work" })]}
+        projects={[p1]}
+        providers={providers}
+        onCreate={() => {}}
+        onUpdate={async (input) => {
+          updates.push(input);
+          await gate;
+        }}
+        onRemove={() => {}}
+        onRunNow={() => {}}
+      />,
+    );
+    await m.click(m.query('[data-automation-edit=""]'));
+    const submit = m.query(
+      "[data-automation-create] button[type=submit]",
+    ) as HTMLButtonElement | null;
+    assert.ok(submit);
+    await m.click(submit);
+    assert.equal(updates.length, 1);
+    assert.equal(submit.disabled, true);
+    await m.click(submit);
+    assert.equal(updates.length, 1, "second submit is ignored while pending");
+    release();
+    await m.flush();
+    assert.equal(submit.disabled, false);
+    assert.equal(submit.textContent, "Add automation");
+    m.unmount();
+  });
+});
