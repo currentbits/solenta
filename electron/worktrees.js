@@ -3068,19 +3068,40 @@ async function listPrsRaw(projectPath, opts) {
   }
 }
 
+const PR_LIST_DEFAULT_LIMIT = 50;
+const PR_LIST_MAX_LIMIT = 200;
+
+/**
+ * Clamp a UI `listPrs` page size. `listPrsRaw` extraArgs stay caller-owned
+ * (Fleet uses `--limit 100`) and are not passed through here.
+ *
+ * @param {unknown} value
+ * @returns {number}
+ */
+function clampPrListLimit(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n < 1) return PR_LIST_DEFAULT_LIMIT;
+  return Math.min(PR_LIST_MAX_LIMIT, Math.floor(n));
+}
+
 /**
  * Open PRs for a project checkout. Never throws: missing gh, a non-GitHub
  * remote, or auth failure come back as `{ ok: false, reason }` so the UI
  * can render a per-project error row.
  *
  * @param {string} projectPath
- * @returns {Promise<{ ok: true, prs: ReturnType<typeof parsePrListItem>[] } | { ok: false, reason: string }>}
+ * @param {{ limit?: number }} [opts]
+ * @returns {Promise<{ ok: true, prs: ReturnType<typeof parsePrListItem>[], complete: boolean, limit: number } | { ok: false, reason: string }>}
  */
-async function listPrs(projectPath) {
-  const raw = await listPrsRaw(projectPath);
+async function listPrs(projectPath, opts) {
+  const limit = clampPrListLimit(opts && opts.limit);
+  const raw = await listPrsRaw(projectPath, {
+    extraArgs: ["--limit", String(limit)],
+  });
   if (!raw.ok) return raw;
   try {
-    return { ok: true, prs: raw.prs.map(parsePrListItem) };
+    const prs = raw.prs.map(parsePrListItem);
+    return { ok: true, prs, complete: prs.length < limit, limit };
   } catch (err) {
     return {
       ok: false,

@@ -5297,7 +5297,7 @@ function buildDevCoder(): CoderApi {
       },
       async listPrs(projectPath: string) {
         const project = projects.find((p) => p.path === projectPath);
-        if (!project) return { ok: true, prs: [] };
+        if (!project) return { ok: true, prs: [], complete: true, limit: 50 };
         const prs = threads
           .filter(
             (t) =>
@@ -5312,7 +5312,7 @@ function buildDevCoder(): CoderApi {
             state: (t.prState ?? "OPEN") as "OPEN" | "CLOSED" | "MERGED",
             headRefName: t.branch ?? "",
           }));
-        return { ok: true, prs };
+        return { ok: true, prs, complete: true, limit: prs.length };
       },
       async checkoutPr(input: { projectId: string; prNumber: number }) {
         const project = projects.find((p) => p.id === input.projectId);

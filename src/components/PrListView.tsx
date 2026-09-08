@@ -2,15 +2,19 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { formatRelativeAge } from "../format";
 import {
   allPrsEmpty,
+  filterPrGroups,
   formatPrDiff,
   groupPrsByProject,
   matchThreadForPr,
+  PR_LIST_MAX_LIMIT,
+  PR_LIST_PAGE_SIZE,
   prUpdatedMs,
 } from "../prList";
 import { forgeReadiness } from "../sourceControl";
 import type {
   CheckoutPrResult,
   CoderApi,
+  ListPrsOptions,
   ListPrsResult,
   ProjectInfo,
   SourceControlDiscovery,
@@ -21,7 +25,10 @@ import styles from "./PrListView.module.css";
 export interface PrListViewProps {
   projects: ProjectInfo[];
   threads: ThreadInfo[];
-  listPrs: (projectPath: string) => Promise<ListPrsResult>;
+  listPrs: (
+    projectPath: string,
+    opts?: ListPrsOptions,
+  ) => Promise<ListPrsResult>;
   onSelectThread: (id: string) => void;
   onCheckoutPr?: (input: {
     projectId: string;
@@ -52,6 +59,9 @@ export function PrListView({
   const [checkoutErrors, setCheckoutErrors] = useState<Map<string, string>>(
     () => new Map(),
   );
+  const [query, setQuery] = useState("");
+  const [projectFilter, setProjectFilter] = useState("");
+  const [loadingMore, setLoadingMore] = useState<string | null>(null);
   const loadGen = useRef(0);
   const github = githubProp !== undefined ? githubProp : discoveredGithub;
 
@@ -136,12 +146,65 @@ export function PrListView({
     [listPrs],
   );
 
+  const loadMore = useCallback(
+    async (project: ProjectInfo) => {
+      if (loadingMore) return;
+      const current = results.get(project.id);
+      const currentLimit =
+        current && current.ok
+          ? (current.limit ?? PR_LIST_PAGE_SIZE)
+          : PR_LIST_PAGE_SIZE;
+      if (currentLimit >= PR_LIST_MAX_LIMIT) return;
+      const limit = Math.min(PR_LIST_MAX_LIMIT, currentLimit + PR_LIST_PAGE_SIZE);
+      setLoadingMore(project.id);
+      try {
+        const result = await listPrs(project.path, { limit });
+        setResults((prev) => {
+          const next = new Map(prev);
+          next.set(project.id, result);
+          return next;
+        });
+        setNow(Date.now());
+      } finally {
+        setLoadingMore(null);
+      }
+    },
+    [listPrs, loadingMore, results],
+  );
+
   const groups = useMemo(
     () => groupPrsByProject(projects, results),
     [projects, results],
   );
-  const empty = !loading && allPrsEmpty(groups);
+  const scoped = useMemo(
+    () => filterPrGroups(groups, { projectId: projectFilter || null }),
+    [groups, projectFilter],
+  );
+  const filtered = useMemo(
+    () => filterPrGroups(scoped, { query }),
+    [scoped, query],
+  );
+  const loadedCount = scoped.reduce(
+    (n, group) => n + (group.ok ? group.prs.length : 0),
+    0,
+  );
+  const matchCount = filtered.reduce(
+    (n, group) => n + (group.ok ? group.prs.length : 0),
+    0,
+  );
+  const incomplete = scoped.some((group) => group.ok && !group.complete);
+  const filtering = Boolean(query.trim() || projectFilter);
+  const sourceEmpty = allPrsEmpty(groups);
+  const hasVisibleError = filtered.some((group) => !group.ok);
+  const noMatch =
+    !loading && !sourceEmpty && filtering && matchCount === 0 && !hasVisibleError;
+  const empty = !loading && sourceEmpty;
   const noProjects = projects.length === 0 && !loading;
+
+  const resetFilters = () => {
+    setQuery("");
+    setProjectFilter("");
+  };
 
   return (
     <main className={styles.main} data-pr-list="">
@@ -158,6 +221,61 @@ export function PrListView({
         </button>
       </header>
 
+      <div className={styles.toolbar}>
+        <input
+          type="search"
+          className={styles.search}
+          data-pr-search=""
+          placeholder="Search number, title, or branch"
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Escape" && query) {
+              event.preventDefault();
+              setQuery("");
+            }
+          }}
+          aria-label="Search pull requests"
+        />
+        <select
+          className={styles.projectFilter}
+          data-pr-project-filter=""
+          value={projectFilter}
+          onChange={(event) => setProjectFilter(event.target.value)}
+          aria-label="Filter by project"
+        >
+          <option value="">All projects</option>
+          {projects.map((project) => (
+            <option key={project.id} value={project.id}>
+              {project.slug}
+            </option>
+          ))}
+        </select>
+        <span className={styles.count} aria-live="polite">
+          {filtering ? `${matchCount} of ${loadedCount}` : `${loadedCount}`}
+        </span>
+        {filtering ? (
+          <button
+            type="button"
+            className={styles.reset}
+            onClick={resetFilters}
+          >
+            Reset
+          </button>
+        ) : null}
+      </div>
+
+      {query.trim() && incomplete ? (
+        <p
+          className={styles.partial}
+          data-pr-partial-search=""
+          aria-live="polite"
+        >
+          Searching the first {loadedCount} loaded pull requests. More may
+          exist.
+        </p>
+      ) : null}
+
       {loading && results.size === 0 ? (
         <p className={styles.hint} aria-live="polite">
           Loading pull requests…
@@ -169,14 +287,48 @@ export function PrListView({
             Open pull requests across your projects will show up here.
           </p>
         </div>
+      ) : noMatch ? (
+        <div className={styles.empty} data-pr-no-match="">
+          <p className={styles.emptyTitle}>No matching pull requests</p>
+          <p className={styles.emptyHint}>
+            {incomplete
+              ? "No matches in the loaded subset. Load more or clear the search."
+              : "Try another number, title, branch, or project."}
+          </p>
+          {incomplete
+            ? scoped
+                .filter(
+                  (group) =>
+                    group.ok &&
+                    !group.complete &&
+                    group.limit < PR_LIST_MAX_LIMIT,
+                )
+                .map((group) => (
+                  <button
+                    key={group.project.id}
+                    type="button"
+                    className={styles.retry}
+                    data-pr-load-more=""
+                    disabled={loadingMore === group.project.id}
+                    onClick={() => void loadMore(group.project)}
+                  >
+                    {loadingMore === group.project.id
+                      ? "Loading…"
+                      : `Load more in ${group.project.slug}`}
+                  </button>
+                ))
+            : null}
+        </div>
       ) : (
         <div className={styles.list}>
-          {groups.map((group) => (
-            <section
-              key={group.project.id}
-              className={styles.group}
-              data-pr-group={group.project.slug}
-            >
+          {filtered.map((group) => {
+            if (group.ok && group.prs.length === 0 && query.trim()) return null;
+            return (
+              <section
+                key={group.project.id}
+                className={styles.group}
+                data-pr-group={group.project.slug}
+              >
               <h2 className={styles.groupHeader}>{group.project.slug}</h2>
               {!group.ok ? (
                 <div className={styles.errorRow} data-pr-error="">
@@ -291,8 +443,33 @@ export function PrListView({
                   );
                 })
               )}
-            </section>
-          ))}
+              {group.ok && !group.complete ? (
+                <div className={styles.moreRow}>
+                  <p className={styles.moreHint}>
+                    Showing {group.limit} loaded pull requests. More may exist.
+                  </p>
+                  {group.limit < PR_LIST_MAX_LIMIT ? (
+                    <button
+                      type="button"
+                      className={styles.retry}
+                      data-pr-load-more=""
+                      disabled={loadingMore === group.project.id}
+                      onClick={() => void loadMore(group.project)}
+                    >
+                      {loadingMore === group.project.id
+                        ? "Loading…"
+                        : "Load more"}
+                    </button>
+                  ) : (
+                    <p className={styles.moreHint}>
+                      Showing the first {PR_LIST_MAX_LIMIT} open pull requests.
+                    </p>
+                  )}
+                </div>
+              ) : null}
+              </section>
+            );
+          })}
         </div>
       )}
     </main>

@@ -1605,8 +1605,8 @@ const IPC_HANDLERS = {
     await runRetention(ctx);
     return info;
   },
-  "git:listPrs": async (_ctx, projectPath) => {
-    return listPrs(projectPath);
+  "git:listPrs": async (_ctx, projectPath, opts) => {
+    return listPrs(projectPath, opts);
   },
   "git:checkoutPr": async (ctx, input) => {
     return checkoutPr({

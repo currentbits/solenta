@@ -1988,9 +1988,25 @@ export interface PrListItem {
   updatedAt?: string;
 }
 
+/** Optional page for `git.listPrs`. Absent limit keeps the historic 50-row page. */
+export interface ListPrsOptions {
+  /** `gh pr list --limit`. Clamped to 1–200 by the main-process helper. */
+  limit?: number;
+}
+
 /** Per-project listPrs result. Failures stay in-band so the UI can retry. */
 export type ListPrsResult =
-  | { ok: true; prs: PrListItem[] }
+  | {
+      ok: true;
+      prs: PrListItem[];
+      /**
+       * False when this page filled the requested limit, so more open PRs
+       * may exist. Absent on older callers / fixtures: treat as complete.
+       */
+      complete?: boolean;
+      /** Requested `gh pr list --limit` for this page. */
+      limit?: number;
+    }
   | { ok: false; reason: string };
 
 /**
@@ -4198,7 +4214,7 @@ export interface CoderApi {
      * missing gh / non-GitHub remotes / auth: those come back as
      * `{ ok: false, reason }`.
      */
-    listPrs(projectPath: string): Promise<ListPrsResult>;
+    listPrs(projectPath: string, opts?: ListPrsOptions): Promise<ListPrsResult>;
     /**
      * Check out a GitHub PR into a new worktree thread, or return the
      * existing one when this project already has that PR bound. Never

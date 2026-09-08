@@ -53,6 +53,7 @@ import type {
   PlanStatus,
   SetPlanStatusResult,
   ListIssuesResult,
+  ListPrsOptions,
   ListPrsResult,
   CheckoutPrResult,
   PrChecksResult,
@@ -544,7 +545,10 @@ export interface UseCoderResult {
   /** Squash-merge the selected thread's current OPEN PR. */
   prMerge: (opts?: { ciWorkflowApproved?: boolean }) => Promise<PrInfo>;
   /** Open PRs for a project checkout (`gh pr list`). Failures are in-band. */
-  listPrs: (projectPath: string) => Promise<ListPrsResult>;
+  listPrs: (
+    projectPath: string,
+    opts?: ListPrsOptions,
+  ) => Promise<ListPrsResult>;
   /** Check out a PR into a worktree thread. Failures are in-band. */
   checkoutPr: (input: {
     projectId: string;
@@ -2944,8 +2948,8 @@ export function useCoder(): UseCoderResult {
   }, [api, selectedThreadId, applyThreadUpdate]);
 
   const listPrs = useCallback(
-    async (projectPath: string) => {
-      return api.git.listPrs(projectPath);
+    async (projectPath: string, opts?: ListPrsOptions) => {
+      return api.git.listPrs(projectPath, opts);
     },
     [api],
   );

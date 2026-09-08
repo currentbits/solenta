@@ -2724,10 +2724,12 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
           branch: "b",
           created: false,
         } as PrInfo),
-      listPrs: (projectPath: string) =>
-        rec("git.listPrs", [projectPath], {
+      listPrs: (projectPath: string, opts?: unknown) =>
+        rec("git.listPrs", [projectPath, opts], {
           ok: true,
           prs: [],
+          complete: true,
+          limit: 50,
         } as ListPrsResult),
       checkoutPr: (input: unknown) => {
         const i = input as { projectId: string; prNumber: number };
