@@ -670,6 +670,16 @@ describe("SkillsTab MCP servers", () => {
     m.unmount();
   });
 
+  async function openLocalCommand(
+    m: Awaited<ReturnType<typeof mount>>,
+  ): Promise<void> {
+    const disclosure = m
+      .queryAll("summary")
+      .find((s) => s.textContent?.includes("Local command"));
+    assert.ok(disclosure, "Local command disclosure must render");
+    await m.click(disclosure ?? null);
+  }
+
   it("adds a server through saveMcpServer, not saveSettings", async () => {
     const saved: McpServerSaveInput[] = [];
     const settingsPatches: Partial<AppSettings>[] = [];
@@ -699,6 +709,155 @@ describe("SkillsTab MCP servers", () => {
       "saveSettings must not receive mcpServers",
     );
     assert.ok(m.text().includes("team-tools"), "new row must render");
+    m.unmount();
+  });
+
+  it("saves a quoted script path and spaced label as one argv element each (#1139)", async () => {
+    const saved: McpServerSaveInput[] = [];
+    const m = await mount(
+      <Harness onSaveMcpServer={(p) => saved.push(p)} />,
+    );
+    await openLocalCommand(m);
+    await m.type(m.query('input[aria-label="MCP server name"]'), "local-tools");
+    await m.type(m.query('input[aria-label="MCP command"]'), "node");
+    await m.type(
+      m.query('input[aria-label="MCP command arguments"]'),
+      '"/tmp/My Tools/server.mjs" --label "hello world"',
+    );
+    await m.click(m.byText("Add local server"));
+
+    assert.equal(saved.length, 1, "saveMcpServer must fire once");
+    assert.deepEqual(saved[0], {
+      name: "local-tools",
+      transport: "stdio",
+      command: "node",
+      args: ["/tmp/My Tools/server.mjs", "--label", "hello world"],
+      enabled: false,
+      trusted: false,
+    });
+    m.unmount();
+  });
+
+  it("accepts a JSON string array in the local arguments field", async () => {
+    const saved: McpServerSaveInput[] = [];
+    const m = await mount(
+      <Harness onSaveMcpServer={(p) => saved.push(p)} />,
+    );
+    await openLocalCommand(m);
+    await m.type(m.query('input[aria-label="MCP server name"]'), "json-tools");
+    await m.type(m.query('input[aria-label="MCP command"]'), "node");
+    await m.type(
+      m.query('input[aria-label="MCP command arguments"]'),
+      '["/tmp/My Tools/server.mjs", "--label", "hello world"]',
+    );
+    await m.click(m.byText("Add local server"));
+
+    assert.equal(saved.length, 1);
+    assert.deepEqual(saved[0]?.args, [
+      "/tmp/My Tools/server.mjs",
+      "--label",
+      "hello world",
+    ]);
+    m.unmount();
+  });
+
+  it("keeps the local draft and shows an error when quoting is malformed", async () => {
+    const saved: McpServerSaveInput[] = [];
+    const m = await mount(
+      <Harness onSaveMcpServer={(p) => saved.push(p)} />,
+    );
+    await openLocalCommand(m);
+    await m.type(m.query('input[aria-label="MCP server name"]'), "local-tools");
+    await m.type(m.query('input[aria-label="MCP command"]'), "node");
+    await m.type(
+      m.query('input[aria-label="MCP command arguments"]'),
+      '"/tmp/My Tools/server.mjs',
+    );
+    await m.click(m.byText("Add local server"));
+
+    assert.equal(saved.length, 0, "malformed quoting must not save");
+    assert.match(m.text(), /unclosed quote/i);
+    assert.equal(
+      (m.query('input[aria-label="MCP server name"]') as HTMLInputElement)
+        .value,
+      "local-tools",
+    );
+    assert.equal(
+      (m.query('input[aria-label="MCP command"]') as HTMLInputElement).value,
+      "node",
+    );
+    assert.equal(
+      (m.query('input[aria-label="MCP command arguments"]') as HTMLInputElement)
+        .value,
+      '"/tmp/My Tools/server.mjs',
+    );
+    m.unmount();
+  });
+
+  it("shows a local quoting error inside the Local command disclosure", async () => {
+    const saved: McpServerSaveInput[] = [];
+    const m = await mount(
+      <Harness onSaveMcpServer={(p) => saved.push(p)} />,
+    );
+    await openLocalCommand(m);
+    await m.type(m.query('input[aria-label="MCP server name"]'), "local-tools");
+    await m.type(m.query('input[aria-label="MCP command"]'), "node");
+    await m.type(
+      m.query('input[aria-label="MCP command arguments"]'),
+      '"/tmp/My Tools/server.mjs',
+    );
+    await m.click(m.byText("Add local server"));
+
+    assert.equal(saved.length, 0, "malformed quoting must not save");
+    const localDetails = m
+      .queryAll("details")
+      .find((el) =>
+        Array.from(el.querySelectorAll("summary")).some((s) =>
+          s.textContent?.includes("Local command"),
+        ),
+      );
+    assert.ok(localDetails, "Local command disclosure must render");
+    const localAlert = localDetails.querySelector('[role="alert"]');
+    assert.ok(
+      localAlert,
+      "quoting error must render inside the Local command disclosure",
+    );
+    assert.match(localAlert.textContent ?? "", /unclosed quote/i);
+    const addServer = m.byText("Add server");
+    assert.ok(addServer, "HTTP Add server button must still render");
+    assert.equal(
+      addServer.previousElementSibling?.getAttribute("role") === "alert",
+      false,
+      "quoting error must not sit above the HTTP Add server button",
+    );
+    assert.equal(
+      (m.query('input[aria-label="MCP command arguments"]') as HTMLInputElement)
+        .value,
+      '"/tmp/My Tools/server.mjs',
+      "draft arguments must stay",
+    );
+    m.unmount();
+  });
+
+  it("trust still enables a local server after quoted args parse", async () => {
+    const saved: McpServerSaveInput[] = [];
+    const m = await mount(
+      <Harness onSaveMcpServer={(p) => saved.push(p)} />,
+    );
+    await openLocalCommand(m);
+    await m.type(m.query('input[aria-label="MCP server name"]'), "trusted-tools");
+    await m.type(m.query('input[aria-label="MCP command"]'), "node");
+    await m.type(
+      m.query('input[aria-label="MCP command arguments"]'),
+      '"/tmp/My Tools/server.mjs"',
+    );
+    await m.click(m.query('input[aria-label="Trust local MCP command"]'));
+    await m.click(m.byText("Add local server"));
+
+    assert.equal(saved.length, 1);
+    assert.deepEqual(saved[0]?.args, ["/tmp/My Tools/server.mjs"]);
+    assert.equal(saved[0]?.trusted, true);
+    assert.equal(saved[0]?.enabled, true);
     m.unmount();
   });
 

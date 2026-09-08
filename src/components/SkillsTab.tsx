@@ -36,6 +36,7 @@ import {
   formatSkillTokens,
 } from "./SkillsSections";
 import styles from "./SkillsTab.module.css";
+import { parseMcpArgv } from "../parseMcpArgv";
 
 export { formatSkillTokens };
 
@@ -259,6 +260,7 @@ export function SkillsTab({
 
   const [mcpBusy, setMcpBusy] = useState(false);
   const [mcpError, setMcpError] = useState<string | null>(null);
+  const [mcpErrorScope, setMcpErrorScope] = useState<"http" | "local">("http");
   const [mcpName, setMcpName] = useState("");
   const [mcpUrl, setMcpUrl] = useState("");
   const [mcpToken, setMcpToken] = useState("");
@@ -423,7 +425,10 @@ export function SkillsTab({
     };
   }, [detectHarnessSources]);
 
-  const runMcp = async (fn: () => Promise<void>): Promise<boolean> => {
+  const runMcp = async (
+    fn: () => Promise<void>,
+    scope: "http" | "local" = "http",
+  ): Promise<boolean> => {
     setMcpBusy(true);
     setMcpError(null);
     try {
@@ -431,7 +436,10 @@ export function SkillsTab({
       if (mountedRef.current) await reloadMcp();
       return true;
     } catch (err) {
-      if (mountedRef.current) setMcpError(errorMessage(err));
+      if (mountedRef.current) {
+        setMcpErrorScope(scope);
+        setMcpError(errorMessage(err));
+      }
       return false;
     } finally {
       if (mountedRef.current) setMcpBusy(false);
@@ -440,6 +448,7 @@ export function SkillsTab({
 
   const handleAddMcp = async () => {
     setMcpError(null);
+    setMcpErrorScope("http");
     const name = mcpName.trim();
     const url = mcpUrl.trim();
     const token = mcpToken.trim();
@@ -484,6 +493,7 @@ export function SkillsTab({
 
   const handleAddLocalMcp = async () => {
     setMcpError(null);
+    setMcpErrorScope("local");
     const name = mcpName.trim();
     const command = mcpCommand.trim();
     if (!MCP_NAME_RE.test(name)) {
@@ -502,10 +512,12 @@ export function SkillsTab({
       setMcpError("Command is required");
       return;
     }
-    const args = mcpArgs
-      .split(/\s+/)
-      .map((a) => a.trim())
-      .filter(Boolean);
+    const parsed = parseMcpArgv(mcpArgs);
+    if (!parsed.ok) {
+      setMcpError(parsed.error);
+      return;
+    }
+    const args = parsed.args;
     const trusted = mcpTrustLocal;
     const ok = await runMcp(async () => {
       await saveMcpServer({
@@ -516,7 +528,7 @@ export function SkillsTab({
         enabled: trusted,
         trusted,
       });
-    });
+    }, "local");
     if (!mountedRef.current || !ok) return;
     setMcpName("");
     setMcpCommand("");
@@ -957,6 +969,7 @@ export function SkillsTab({
           mcpCatalog={mcpCatalog}
           mcpBusy={mcpBusy}
           mcpError={mcpError}
+          mcpErrorScope={mcpErrorScope}
           mcpImportError={mcpPreview ? null : mcpImportError}
           mcpName={mcpName}
           mcpUrl={mcpUrl}
@@ -1124,6 +1137,7 @@ function McpServersSection({
   mcpCatalog,
   mcpBusy,
   mcpError,
+  mcpErrorScope,
   mcpImportError,
   mcpName,
   mcpUrl,
@@ -1155,6 +1169,7 @@ function McpServersSection({
   mcpCatalog: McpCatalogEntry[];
   mcpBusy: boolean;
   mcpError: string | null;
+  mcpErrorScope: "http" | "local";
   mcpImportError: string | null;
   mcpName: string;
   mcpUrl: string;
@@ -1258,7 +1273,7 @@ function McpServersSection({
           onChange={(e) => onToken(e.target.value)}
           aria-label="MCP bearer token"
         />
-        {mcpError && (
+        {mcpError && mcpErrorScope !== "local" && (
           <p className={styles.formError} role="alert">
             {mcpError}
           </p>
@@ -1284,11 +1299,16 @@ function McpServersSection({
             <input
               type="text"
               className={styles.input}
-              placeholder="Arguments (optional)"
+              placeholder='"/tmp/My Tools/server.mjs" --label "hello world"'
               value={mcpArgs}
               onChange={(e) => onArgs(e.target.value)}
               aria-label="MCP command arguments"
+              aria-describedby="mcp-args-format"
             />
+            <p className={styles.formHint} id="mcp-args-format">
+              One argument per quoted token, or a JSON string array. Spaces
+              inside quotes are kept. No shell expansion.
+            </p>
             <label className={styles.checkLabel}>
               <input
                 type="checkbox"
@@ -1299,6 +1319,11 @@ function McpServersSection({
               />
               Trust this local command
             </label>
+            {mcpError && mcpErrorScope === "local" && (
+              <p className={styles.formError} role="alert">
+                {mcpError}
+              </p>
+            )}
             <button
               type="button"
               className={styles.ghostBtn}

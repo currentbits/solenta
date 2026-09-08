@@ -318,6 +318,12 @@
   font-family: inherit;
 }
 
+.formHint {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
 .formError {
   margin: 0;
   font-size: 12px;
