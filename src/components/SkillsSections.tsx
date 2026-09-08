@@ -121,6 +121,143 @@ export function CoverageMeter({ skill }: { skill: SkillInfo }) {
   );
 }
 
+function skillSourceLabel(skill: SkillInfo): string {
+  if (skill.provenance === "project") return "Project";
+  if (skill.provenance === "curated") {
+    return skill.origin?.sourceLabel || "Catalog";
+  }
+  return skill.origin?.sourceLabel || "User";
+}
+
+export function InstalledSkillRow({
+  skill,
+  expanded,
+  busy,
+  confirmRemove,
+  onToggle,
+  onAskRemove,
+  onConfirmRemove,
+  onCancelRemove,
+}: {
+  skill: SkillInfo;
+  expanded: boolean;
+  busy: boolean;
+  confirmRemove: string | null;
+  onToggle: () => void;
+  onAskRemove: (key: string) => void;
+  onConfirmRemove: (skill: SkillInfo) => void;
+  onCancelRemove: () => void;
+}) {
+  const key = `${skill.source}:${skill.name}`;
+  const drifted =
+    skill.provenance !== "project" && skill.missingFrom.length > 0;
+  const readOnly =
+    skill.provenance === "project" || skill.source === "project";
+  const hintId = `skill-remove-${key}`;
+  const panelId = `skill-detail-${key}`;
+  const status =
+    skill.provenance === "project"
+      ? "Project"
+      : drifted
+        ? "Drift"
+        : skill.provenance === "curated"
+          ? "Catalog"
+          : null;
+
+  return (
+    <li
+      className={styles.row}
+      data-skill={key}
+      data-skill-origin={skill.provenance}
+      data-expanded={expanded ? "" : undefined}
+    >
+      <button
+        type="button"
+        className={styles.rowToggle}
+        data-skill-toggle=""
+        aria-expanded={expanded}
+        aria-controls={panelId}
+        onClick={() => onToggle()}
+      >
+        <span className={styles.rowMain}>
+          <span className={styles.rowName}>{skill.name}</span>
+          {skill.description && (
+            <span className={styles.rowDetail}>{skill.description}</span>
+          )}
+        </span>
+        {status && (
+          <span className={styles.rowSide}>
+            {status === "Drift" ? (
+              <span className={styles.drift} data-drift>
+                Drift
+              </span>
+            ) : status === "Project" ? (
+              <span className={`${styles.badge} ${styles.badgeProject}`}>
+                Project
+              </span>
+            ) : (
+              <span className={`${styles.badge} ${styles.badgeBuiltin}`}>
+                Catalog
+              </span>
+            )}
+          </span>
+        )}
+      </button>
+      {expanded && (
+        <div className={styles.rowExpand} id={panelId}>
+          {skill.provenance !== "project" && <CoverageMeter skill={skill} />}
+          <span className={styles.tokens} data-tokens>
+            {formatSkillTokens(skill.bytes)}
+          </span>
+          <span className={styles.rowDetail} data-skill-source>
+            {skillSourceLabel(skill)}
+          </span>
+          {drifted && (
+            <span className={styles.rowDetail} data-skill-missing>
+              Missing {formatTargetList(skill.missingFrom)}
+            </span>
+          )}
+          {!readOnly &&
+            (confirmRemove === key ? (
+              <>
+                <span id={hintId} className={styles.confirmHint}>
+                  Removes from all providers
+                </span>
+                <button
+                  type="button"
+                  className={styles.dangerBtn}
+                  disabled={busy}
+                  aria-describedby={hintId}
+                  onClick={() => onConfirmRemove(skill)}
+                >
+                  Confirm
+                </button>
+                <button
+                  type="button"
+                  className={styles.ghostBtn}
+                  disabled={busy}
+                  onClick={() => onCancelRemove()}
+                >
+                  Cancel
+                </button>
+              </>
+            ) : (
+              <button
+                type="button"
+                className={styles.ghostBtn}
+                disabled={busy}
+                aria-label={`Remove ${skill.name}`}
+                onClick={() => onAskRemove(key)}
+              >
+                Remove
+              </button>
+            ))}
+        </div>
+      )}
+    </li>
+  );
+}
+
 export function CuratedSkillsSection({
   catalog,
   loading,
@@ -236,165 +373,6 @@ export function CuratedSkillsSection({
           })}
         </ul>
       )}
-    </section>
-  );
-}
-
-export function AddedSkillsSection({
-  skills,
-  loading,
-  error,
-  busy,
-  hasDrift,
-  confirmRemove,
-  onSync,
-  onAskRemove,
-  onConfirmRemove,
-  onCancelRemove,
-}: {
-  skills: SkillInfo[];
-  loading: boolean;
-  error: string | null;
-  busy: boolean;
-  hasDrift: boolean;
-  confirmRemove: string | null;
-  onSync: () => void;
-  onAskRemove: (key: string) => void;
-  onConfirmRemove: (skill: SkillInfo) => void;
-  onCancelRemove: () => void;
-}) {
-  return (
-    <section
-      className={styles.subSection}
-      aria-label="Added skills"
-      data-skill-section="added"
-    >
-      <div className={styles.sectionHead}>
-        <div className={styles.sectionLabel}>Added skills</div>
-        <button
-          type="button"
-          className={styles.ghostBtn}
-          disabled={busy || !hasDrift}
-          aria-label="Sync missing skills"
-          title={
-            hasDrift
-              ? "Copy missing skills into every provider"
-              : "Nothing to sync"
-          }
-          onClick={() => onSync()}
-        >
-          Sync
-        </button>
-      </div>
-      {error && (
-        <p className={styles.formError} role="alert">
-          {error}
-        </p>
-      )}
-      {loading && skills.length === 0 ? (
-        <p className={styles.empty}>Loading…</p>
-      ) : skills.length === 0 && !error ? (
-        <p className={styles.empty}>Use Add skill to import or write one.</p>
-      ) : (
-        <ul className={styles.list}>
-          {skills.map((skill) => {
-            const key = `${skill.source}:${skill.name}`;
-            const drifted = skill.missingFrom.length > 0;
-            const hintId = `skill-remove-${key}`;
-            return (
-              <li key={key} className={styles.row} data-skill={key}>
-                <div className={styles.rowMain}>
-                  <span className={styles.rowName}>{skill.name}</span>
-                  {skill.description && (
-                    <span className={styles.rowDetail}>{skill.description}</span>
-                  )}
-                </div>
-                <div className={styles.rowSide}>
-                  <CoverageMeter skill={skill} />
-                  <span className={styles.tokens} data-tokens>
-                    {formatSkillTokens(skill.bytes)}
-                  </span>
-                  {drifted && (
-                    <span className={styles.drift} data-drift>
-                      Drift
-                    </span>
-                  )}
-                  {confirmRemove === key ? (
-                    <>
-                      <span id={hintId} className={styles.confirmHint}>
-                        Removes from all providers
-                      </span>
-                      <button
-                        type="button"
-                        className={styles.dangerBtn}
-                        disabled={busy}
-                        aria-describedby={hintId}
-                        onClick={() => onConfirmRemove(skill)}
-                      >
-                        Confirm
-                      </button>
-                      <button
-                        type="button"
-                        className={styles.ghostBtn}
-                        disabled={busy}
-                        onClick={() => onCancelRemove()}
-                      >
-                        Cancel
-                      </button>
-                    </>
-                  ) : (
-                    <button
-                      type="button"
-                      className={styles.ghostBtn}
-                      disabled={busy}
-                      aria-label={`Remove ${skill.name}`}
-                      onClick={() => onAskRemove(key)}
-                    >
-                      Remove
-                    </button>
-                  )}
-                </div>
-              </li>
-            );
-          })}
-        </ul>
-      )}
-    </section>
-  );
-}
-
-export function ProjectSkillsSection({ skills }: { skills: SkillInfo[] }) {
-  if (skills.length === 0) return null;
-  return (
-    <section
-      className={styles.subSection}
-      aria-label="Project skills"
-      data-skill-section="project"
-    >
-      <div className={styles.sectionLabel}>Project skills</div>
-      <ul className={styles.list}>
-        {skills.map((skill) => {
-          const key = `${skill.source}:${skill.name}`;
-          return (
-            <li key={key} className={styles.row} data-skill={key}>
-              <div className={styles.rowMain}>
-                <span className={styles.rowName}>{skill.name}</span>
-                {skill.description && (
-                  <span className={styles.rowDetail}>{skill.description}</span>
-                )}
-              </div>
-              <div className={styles.rowSide}>
-                <span className={`${styles.badge} ${styles.badgeProject}`}>
-                  Project
-                </span>
-                <span className={styles.tokens} data-tokens>
-                  {formatSkillTokens(skill.bytes)}
-                </span>
-              </div>
-            </li>
-          );
-        })}
-      </ul>
     </section>
   );
 }

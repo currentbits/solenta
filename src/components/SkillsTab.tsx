@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type {
   AppSettings,
   McpCatalogEntry,
@@ -14,6 +14,8 @@ import type {
   SkillInstallResult,
   SkillInfo,
   SkillPreviewImportInput,
+  SkillProvenance,
+  SkillTarget,
   SkillWrite,
   HarnessSourceId,
   HarnessSourceInfo,
@@ -24,17 +26,26 @@ import type {
 import {
   AddSkillSection,
   AddedMcpsSection,
-  AddedSkillsSection,
   CuratedMcpsSection,
   CuratedSkillsSection,
   HarnessImportPreviewPanel,
   HarnessImportSection,
+  InstalledSkillRow,
   McpImportPreviewPanel,
-  ProjectSkillsSection,
   SkillImportPreviewPanel,
   SkillInstallResultPanel,
   formatSkillTokens,
 } from "./SkillsSections";
+import {
+  PROVIDER_FILTERS,
+  SOURCE_FILTERS,
+  filterInstalledSkills,
+  providerFilterCount,
+  skillKey,
+  sourceFilterCount,
+  toggleSetValue,
+  type SkillsView,
+} from "./skillsLibrary";
 import styles from "./SkillsTab.module.css";
 import { parseMcpArgv } from "../parseMcpArgv";
 
@@ -290,6 +301,17 @@ export function SkillsTab({
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   /** Inline remove confirm: row key of the skill asking. */
   const [confirmRemove, setConfirmRemove] = useState<string | null>(null);
+  const [view, setView] = useState<SkillsView>("library");
+  const [libraryQuery, setLibraryQuery] = useState("");
+  const [sourceFilters, setSourceFilters] = useState<Set<SkillProvenance>>(
+    () => new Set(),
+  );
+  const [providerFilters, setProviderFilters] = useState<Set<SkillTarget>>(
+    () => new Set(),
+  );
+  const [expandedKeys, setExpandedKeys] = useState<Set<string>>(
+    () => new Set(),
+  );
 
   const [preview, setPreview] = useState<SkillImportPreview | null>(null);
   const [installResult, setInstallResult] = useState<SkillInstallResult | null>(
@@ -318,9 +340,20 @@ export function SkillsTab({
   harnessDiscardFnRef.current = discardHarnessImport;
   const importLockRef = useRef(false);
   const generationRef = useRef(0);
+  const skillsGenRef = useRef(0);
   const discardedRef = useRef(new Set<string>());
   const discardFnRef = useRef(discardSkillImport);
   discardFnRef.current = discardSkillImport;
+  const catalogRequestedRef = useRef(false);
+  const mcpRequestedRef = useRef(false);
+  const harnessRequestedRef = useRef(false);
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+  const scrollByView = useRef<Record<SkillsView, number>>({
+    library: 0,
+    catalog: 0,
+    mcp: 0,
+    add: 0,
+  });
 
   const discardOnce = (previewId: string | null | undefined) => {
     if (!previewId || discardedRef.current.has(previewId)) return;
@@ -358,19 +391,22 @@ export function SkillsTab({
   }, []);
 
   const reloadSkills = useCallback(async () => {
+    const gen = ++skillsGenRef.current;
     setSkillsLoading(true);
     try {
       const list = await listSkills(
         projectPath ? { projectPath } : undefined,
       );
-      if (!mountedRef.current) return;
+      if (!mountedRef.current || gen !== skillsGenRef.current) return;
       setSkills(list);
       setSkillsError(null);
     } catch (err) {
-      if (!mountedRef.current) return;
+      if (!mountedRef.current || gen !== skillsGenRef.current) return;
       setSkillsError(errorMessage(err));
     } finally {
-      if (mountedRef.current) setSkillsLoading(false);
+      if (mountedRef.current && gen === skillsGenRef.current) {
+        setSkillsLoading(false);
+      }
     }
   }, [listSkills, projectPath]);
 
@@ -403,15 +439,22 @@ export function SkillsTab({
     }
   }, [listMcpServers, listMcpCatalog]);
 
-  const reloadAll = useCallback(async () => {
-    await Promise.all([reloadSkills(), reloadCatalog(), reloadMcp()]);
+  const reloadVisible = useCallback(async () => {
+    const jobs = [reloadSkills()];
+    if (catalogRequestedRef.current) jobs.push(reloadCatalog());
+    if (mcpRequestedRef.current) jobs.push(reloadMcp());
+    await Promise.all(jobs);
   }, [reloadSkills, reloadCatalog, reloadMcp]);
 
   useEffect(() => {
-    void reloadAll();
-  }, [reloadAll]);
+    setSkills([]);
+    setExpandedKeys(new Set());
+    setConfirmRemove(null);
+    void reloadSkills();
+  }, [reloadSkills]);
 
-  useEffect(() => {
+  const loadHarnessSources = useCallback(() => {
+    harnessRequestedRef.current = true;
     let cancelled = false;
     void detectHarnessSources()
       .then((rows) => {
@@ -424,6 +467,42 @@ export function SkillsTab({
       cancelled = true;
     };
   }, [detectHarnessSources]);
+
+  const switchView = useCallback((next: SkillsView) => {
+    setView((current) => {
+      if (current === next) return current;
+      if (scrollRef.current) {
+        scrollByView.current[current] = scrollRef.current.scrollTop;
+      }
+      return next;
+    });
+  }, []);
+
+  useLayoutEffect(() => {
+    if (scrollRef.current) {
+      scrollRef.current.scrollTop = scrollByView.current[view];
+    }
+  }, [view]);
+
+  useEffect(() => {
+    if (view === "catalog" && !catalogRequestedRef.current) {
+      catalogRequestedRef.current = true;
+      void reloadCatalog();
+    }
+    if (view === "mcp" && !mcpRequestedRef.current) {
+      mcpRequestedRef.current = true;
+      void reloadMcp();
+    }
+    if (view === "add" && !harnessRequestedRef.current) {
+      return loadHarnessSources();
+    }
+    return undefined;
+  }, [view, reloadCatalog, reloadMcp, loadHarnessSources]);
+
+  useEffect(() => {
+    if (!harnessRequestedRef.current) return;
+    return loadHarnessSources();
+  }, [projectPath, loadHarnessSources]);
 
   const runMcp = async (
     fn: () => Promise<void>,
@@ -695,6 +774,7 @@ export function SkillsTab({
       setSkillDescription("");
       setSkillBody("");
       setStatusMessage(null);
+      switchView("library");
       await reloadSkills();
     } catch (err) {
       if (mountedRef.current) setSkillFormError(errorMessage(err));
@@ -831,7 +911,8 @@ export function SkillsTab({
       setReplace(false);
       setTrusted(false);
       setInstallResult(result);
-      await reloadAll();
+      switchView("library");
+      await reloadVisible();
       if (!mountedRef.current || gen !== generationRef.current) return;
       setStatusMessage(installStatusMessage(result));
     } catch (err) {
@@ -937,7 +1018,7 @@ export function SkillsTab({
           plugins: result.plugins,
         });
       }
-      await reloadAll();
+      await reloadVisible();
       if (!mountedRef.current || gen !== generationRef.current) return;
       setStatusMessage(harnessStatusMessage(result));
     } catch (err) {
@@ -955,177 +1036,393 @@ export function SkillsTab({
     }
   };
 
-  const addedSkills = skills.filter((s) => s.provenance === "added");
-  const projectSkills = skills.filter((s) => s.provenance === "project");
+  const visibleSkills = filterInstalledSkills(skills, {
+    query: libraryQuery,
+    sources: sourceFilters,
+    providers: providerFilters,
+  }).slice()
+    .sort((a, b) => a.name.localeCompare(b.name) || a.source.localeCompare(b.source));
   const hasDrift = skills.some(
     (s) => s.provenance !== "project" && s.missingFrom.length > 0,
   );
 
-  return (
-    <div className={styles.root}>
-      <div className={styles.scroll}>
-        <McpServersSection
-          mcpServers={mcpServers}
-          mcpCatalog={mcpCatalog}
-          mcpBusy={mcpBusy}
-          mcpError={mcpError}
-          mcpErrorScope={mcpErrorScope}
-          mcpImportError={mcpPreview ? null : mcpImportError}
-          mcpName={mcpName}
-          mcpUrl={mcpUrl}
-          mcpToken={mcpToken}
-          mcpCommand={mcpCommand}
-          mcpArgs={mcpArgs}
-          mcpTrustLocal={mcpTrustLocal}
-          mcpJson={mcpJson}
-          mcpGithub={mcpGithub}
-          onName={setMcpName}
-          onUrl={setMcpUrl}
-          onToken={setMcpToken}
-          onCommand={setMcpCommand}
-          onArgs={setMcpArgs}
-          onTrustLocal={setMcpTrustLocal}
-          onJson={setMcpJson}
-          onGithub={setMcpGithub}
-          onAdd={() => void handleAddMcp()}
-          onAddLocal={() => void handleAddLocalMcp()}
-          onToggle={(name, enabled) => void handleToggleMcp(name, enabled)}
-          onRemove={(name) => void handleRemoveMcp(name)}
-          onTrust={(server) => void handleTrustMcp(server)}
-          onCatalogInstall={(id) => void handleMcpCatalogInstall(id)}
-          onImportFile={() => void handleMcpImportFile()}
-          onPreviewJson={() => void handleMcpPreviewJson()}
-          onPreviewGithub={() => void handleMcpPreviewGithub()}
+  const skillPreview = (
+    <>
+      {installResult && <SkillInstallResultPanel result={installResult} />}
+      {preview && (
+        <SkillImportPreviewPanel
+          preview={preview}
+          selected={selected}
+          replace={replace}
+          trusted={trusted}
+          busy={skillBusy}
+          error={importError}
+          onToggle={(name) => {
+            setSelected((prev) => {
+              const next = new Set(prev);
+              if (next.has(name)) next.delete(name);
+              else next.add(name);
+              return next;
+            });
+          }}
+          onReplace={setReplace}
+          onTrust={setTrusted}
+          onInstall={() => void handleInstallPreview()}
+          onCancel={() => void handleDiscardPreview()}
         />
-        {mcpPreview && (
-          <McpImportPreviewPanel
-            preview={mcpPreview}
-            selected={mcpSelected}
-            replace={mcpReplace}
-            trusted={mcpTrustImport}
-            busy={mcpBusy}
-            error={mcpImportError}
-            onToggle={(name) => {
-              setMcpSelected((prev) => {
-                const next = new Set(prev);
-                if (next.has(name)) next.delete(name);
-                else next.add(name);
-                return next;
-              });
-            }}
-            onReplace={setMcpReplace}
-            onTrust={setMcpTrustImport}
-            onInstall={() => void handleInstallMcpPreview()}
-            onCancel={() => void handleDiscardMcpPreview()}
-          />
-        )}
+      )}
+    </>
+  );
 
-        <section className={styles.section} aria-label="Skills">
-          <p
-            className={styles.syncNote}
-            aria-live="polite"
-            data-empty={statusMessage ? undefined : ""}
-          >
-            {statusMessage ?? ""}
+  const libraryState = (() => {
+    if (skillsLoading && skills.length === 0) {
+      return <p className={styles.empty}>Loading…</p>;
+    }
+    if (skillsError && skills.length === 0) {
+      return (
+        <div className={styles.downWrap}>
+          <p className={styles.formError} role="alert">
+            {skillsError}
           </p>
-          <HarnessImportSection
-            sources={harnessSources}
-            busy={skillBusy}
-            error={harnessPreview ? null : harnessError}
-            onScan={(id) => void handleHarnessScan(id)}
-          />
-          {harnessPreview && (
-            <HarnessImportPreviewPanel
-              preview={harnessPreview}
-              selected={harnessSelected}
-              replace={harnessReplace}
-              trusted={harnessTrust}
-              pluginTrusted={harnessPluginTrust}
+          <button
+            type="button"
+            className={styles.ghostBtn}
+            onClick={() => void reloadSkills()}
+          >
+            Retry
+          </button>
+        </div>
+      );
+    }
+    if (skills.length === 0) {
+      return (
+        <p className={styles.empty}>
+          No installed skills. Use Add skill to import or write one.
+        </p>
+      );
+    }
+    if (visibleSkills.length === 0) {
+      return (
+        <p className={styles.empty}>
+          {libraryQuery.trim()
+            ? "No skills match this search."
+            : "No skills match these filters."}
+        </p>
+      );
+    }
+    return (
+      <ul className={styles.list} data-skill-section="installed">
+        {visibleSkills.map((skill) => {
+          const key = skillKey(skill);
+          return (
+            <InstalledSkillRow
+              key={key}
+              skill={skill}
+              expanded={expandedKeys.has(key)}
               busy={skillBusy}
-              error={harnessError}
-              onToggle={(id) => {
-                setHarnessSelected((prev) => {
-                  const next = new Set(prev);
-                  if (next.has(id)) next.delete(id);
-                  else next.add(id);
-                  return next;
-                });
-              }}
-              onReplace={setHarnessReplace}
-              onTrust={setHarnessTrust}
-              onPluginTrust={setHarnessPluginTrust}
-              onSelectRemaining={() =>
-                setHarnessSelected(new Set(harnessRemainingIds(harnessPreview)))
+              confirmRemove={confirmRemove}
+              onToggle={() =>
+                setExpandedKeys((current) => toggleSetValue(current, key))
               }
-              onSelectAll={() =>
-                setHarnessSelected(new Set(harnessItemIds(harnessPreview)))
-              }
-              onInstall={() => void handleInstallHarness()}
-              onCancel={() => handleDiscardHarness()}
+              onAskRemove={setConfirmRemove}
+              onConfirmRemove={(row) => void handleRemoveSkill(row)}
+              onCancelRemove={() => setConfirmRemove(null)}
             />
-          )}
-          <CuratedSkillsSection
-            catalog={catalog}
-            loading={catalogLoading}
-            error={catalogError}
-            skills={skills}
-            busy={skillBusy}
-            onInstall={handleCatalogInstall}
+          );
+        })}
+      </ul>
+    );
+  })();
+
+  return (
+    <div className={styles.root} data-skills-view={view}>
+      <div className={styles.toolbar} data-skills-toolbar="">
+        <div className={styles.toolbarRow}>
+          <input
+            type="search"
+            className={styles.searchInput}
+            placeholder="Search installed skills"
+            value={libraryQuery}
+            onChange={(e) => setLibraryQuery(e.target.value)}
+            aria-label="Search installed skills"
           />
-          <AddedSkillsSection
-            skills={addedSkills}
-            loading={skillsLoading}
-            error={skillsError}
-            busy={skillBusy}
-            hasDrift={hasDrift}
-            confirmRemove={confirmRemove}
-            onSync={() => void handleSync()}
-            onAskRemove={setConfirmRemove}
-            onConfirmRemove={(skill) => void handleRemoveSkill(skill)}
-            onCancelRemove={() => setConfirmRemove(null)}
-          />
-          <ProjectSkillsSection skills={projectSkills} />
-          <AddSkillSection
-            busy={skillBusy}
-            githubUrl={githubUrl}
-            skillName={skillName}
-            skillDescription={skillDescription}
-            skillBody={skillBody}
-            formError={skillFormError}
-            importError={preview ? null : importError}
-            onGithubUrl={setGithubUrl}
-            onImportFile={handleImportFile}
-            onPreviewGithub={handlePreviewGithub}
-            onSkillName={setSkillName}
-            onSkillDescription={setSkillDescription}
-            onSkillBody={setSkillBody}
-            onAddSkill={() => void handleAddSkill()}
-          />
-          {installResult && (
-            <SkillInstallResultPanel result={installResult} />
-          )}
-          {preview && (
-            <SkillImportPreviewPanel
-              preview={preview}
-              selected={selected}
-              replace={replace}
-              trusted={trusted}
+          <span className={styles.count} data-skills-count="">
+            {skillsLoading && skills.length === 0
+              ? "…"
+              : `${visibleSkills.length}/${skills.length}`}
+          </span>
+          <button
+            type="button"
+            className={styles.ghostBtn}
+            data-skills-view-btn="add"
+            aria-pressed={view === "add"}
+            aria-label="Add skill"
+            onClick={() => switchView("add")}
+          >
+            Add skill
+          </button>
+        </div>
+        <div className={styles.toolbarRow}>
+          <button
+            type="button"
+            className={styles.viewBtn}
+            data-skills-view-btn="library"
+            aria-pressed={view === "library"}
+            onClick={() => switchView("library")}
+          >
+            Installed
+          </button>
+          <button
+            type="button"
+            className={styles.viewBtn}
+            data-skills-view-btn="catalog"
+            aria-pressed={view === "catalog"}
+            aria-label="Browse catalog"
+            onClick={() => switchView("catalog")}
+          >
+            Browse catalog
+          </button>
+          <button
+            type="button"
+            className={styles.viewBtn}
+            data-skills-view-btn="mcp"
+            aria-pressed={view === "mcp"}
+            aria-label="MCP servers"
+            onClick={() => switchView("mcp")}
+          >
+            MCP servers
+          </button>
+          <button
+            type="button"
+            className={styles.ghostBtn}
+            disabled={skillBusy || !hasDrift}
+            aria-label="Sync missing skills"
+            title={
+              hasDrift
+                ? "Copy missing skills into every provider"
+                : "Nothing to sync"
+            }
+            onClick={() => void handleSync()}
+          >
+            Sync
+          </button>
+        </div>
+        <div className={styles.filterRow} data-source-filters="">
+          {SOURCE_FILTERS.map((filter) => {
+            const count = sourceFilterCount(skills, filter.id, {
+              query: libraryQuery,
+              providers: providerFilters,
+            });
+            const on = sourceFilters.has(filter.id);
+            return (
+              <button
+                key={filter.id}
+                type="button"
+                className={styles.filterChip}
+                data-source-filter={filter.id}
+                data-on={on ? "true" : "false"}
+                aria-pressed={on}
+                aria-label={`${filter.label} source filter, ${count}`}
+                onClick={() =>
+                  setSourceFilters((prev) => toggleSetValue(prev, filter.id))
+                }
+              >
+                {filter.label} {count}
+              </button>
+            );
+          })}
+        </div>
+        <div className={styles.filterRow} data-provider-filters="">
+          {PROVIDER_FILTERS.map((filter) => {
+            const count = providerFilterCount(skills, filter.id, {
+              query: libraryQuery,
+              sources: sourceFilters,
+            });
+            const on = providerFilters.has(filter.id);
+            return (
+              <button
+                key={filter.id}
+                type="button"
+                className={styles.filterChip}
+                data-provider-filter={filter.id}
+                data-on={on ? "true" : "false"}
+                aria-pressed={on}
+                aria-label={`${filter.label} provider filter, ${count}`}
+                onClick={() =>
+                  setProviderFilters((prev) => toggleSetValue(prev, filter.id))
+                }
+              >
+                {filter.label} {count}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+      <div className={styles.scroll} data-skills-scroll="" ref={scrollRef}>
+        <p
+          className={styles.syncNote}
+          aria-live="polite"
+          data-empty={statusMessage ? undefined : ""}
+        >
+          {statusMessage ?? ""}
+        </p>
+        {skillsError && skills.length > 0 && (
+          <div className={styles.downWrap}>
+            <p className={styles.formError} role="alert">
+              {skillsError}
+            </p>
+            <button
+              type="button"
+              className={styles.ghostBtn}
+              onClick={() => void reloadSkills()}
+            >
+              Retry
+            </button>
+          </div>
+        )}
+        {skillPreview}
+        {view === "library" && (
+          <section className={styles.section} aria-label="Installed skills">
+            {libraryState}
+          </section>
+        )}
+        {view === "catalog" && (
+          <section className={styles.section} aria-label="Browse catalog">
+            <CuratedSkillsSection
+              catalog={catalog}
+              loading={catalogLoading}
+              error={catalogError}
+              skills={skills}
               busy={skillBusy}
-              error={importError}
-              onToggle={(name) => {
-                setSelected((prev) => {
-                  const next = new Set(prev);
-                  if (next.has(name)) next.delete(name);
-                  else next.add(name);
-                  return next;
-                });
-              }}
-              onReplace={setReplace}
-              onTrust={setTrusted}
-              onInstall={() => void handleInstallPreview()}
-              onCancel={() => void handleDiscardPreview()}
+              onInstall={handleCatalogInstall}
             />
-          )}
+            {catalogError && (
+              <button
+                type="button"
+                className={styles.ghostBtn}
+                onClick={() => void reloadCatalog()}
+              >
+                Retry
+              </button>
+            )}
+          </section>
+        )}
+        {view === "mcp" && (
+          <>
+            <McpServersSection
+              mcpServers={mcpServers}
+              mcpCatalog={mcpCatalog}
+              mcpBusy={mcpBusy}
+              mcpError={mcpError}
+              mcpErrorScope={mcpErrorScope}
+              mcpImportError={mcpPreview ? null : mcpImportError}
+              mcpName={mcpName}
+              mcpUrl={mcpUrl}
+              mcpToken={mcpToken}
+              mcpCommand={mcpCommand}
+              mcpArgs={mcpArgs}
+              mcpTrustLocal={mcpTrustLocal}
+              mcpJson={mcpJson}
+              mcpGithub={mcpGithub}
+              onName={setMcpName}
+              onUrl={setMcpUrl}
+              onToken={setMcpToken}
+              onCommand={setMcpCommand}
+              onArgs={setMcpArgs}
+              onTrustLocal={setMcpTrustLocal}
+              onJson={setMcpJson}
+              onGithub={setMcpGithub}
+              onAdd={() => void handleAddMcp()}
+              onAddLocal={() => void handleAddLocalMcp()}
+              onToggle={(name, enabled) => void handleToggleMcp(name, enabled)}
+              onRemove={(name) => void handleRemoveMcp(name)}
+              onTrust={(server) => void handleTrustMcp(server)}
+              onCatalogInstall={(id) => void handleMcpCatalogInstall(id)}
+              onImportFile={() => void handleMcpImportFile()}
+              onPreviewJson={() => void handleMcpPreviewJson()}
+              onPreviewGithub={() => void handleMcpPreviewGithub()}
+            />
+            {mcpPreview && (
+              <McpImportPreviewPanel
+                preview={mcpPreview}
+                selected={mcpSelected}
+                replace={mcpReplace}
+                trusted={mcpTrustImport}
+                busy={mcpBusy}
+                error={mcpImportError}
+                onToggle={(name) => {
+                  setMcpSelected((prev) => {
+                    const next = new Set(prev);
+                    if (next.has(name)) next.delete(name);
+                    else next.add(name);
+                    return next;
+                  });
+                }}
+                onReplace={setMcpReplace}
+                onTrust={setMcpTrustImport}
+                onInstall={() => void handleInstallMcpPreview()}
+                onCancel={() => void handleDiscardMcpPreview()}
+              />
+            )}
+          </>
+        )}
+        <section
+          className={styles.section}
+          aria-label="Add skill"
+          hidden={view !== "add"}
+        >
+            <HarnessImportSection
+              sources={harnessSources}
+              busy={skillBusy}
+              error={harnessPreview ? null : harnessError}
+              onScan={(id) => void handleHarnessScan(id)}
+            />
+            {harnessPreview && (
+              <HarnessImportPreviewPanel
+                preview={harnessPreview}
+                selected={harnessSelected}
+                replace={harnessReplace}
+                trusted={harnessTrust}
+                pluginTrusted={harnessPluginTrust}
+                busy={skillBusy}
+                error={harnessError}
+                onToggle={(id) => {
+                  setHarnessSelected((prev) => {
+                    const next = new Set(prev);
+                    if (next.has(id)) next.delete(id);
+                    else next.add(id);
+                    return next;
+                  });
+                }}
+                onReplace={setHarnessReplace}
+                onTrust={setHarnessTrust}
+                onPluginTrust={setHarnessPluginTrust}
+                onSelectRemaining={() =>
+                  setHarnessSelected(new Set(harnessRemainingIds(harnessPreview)))
+                }
+                onSelectAll={() =>
+                  setHarnessSelected(new Set(harnessItemIds(harnessPreview)))
+                }
+                onInstall={() => void handleInstallHarness()}
+                onCancel={() => handleDiscardHarness()}
+              />
+            )}
+            <AddSkillSection
+              busy={skillBusy}
+              githubUrl={githubUrl}
+              skillName={skillName}
+              skillDescription={skillDescription}
+              skillBody={skillBody}
+              formError={skillFormError}
+              importError={preview ? null : importError}
+              onGithubUrl={setGithubUrl}
+              onImportFile={handleImportFile}
+              onPreviewGithub={handlePreviewGithub}
+              onSkillName={setSkillName}
+              onSkillDescription={setSkillDescription}
+              onSkillBody={setSkillBody}
+              onAddSkill={() => void handleAddSkill()}
+            />
         </section>
       </div>
     </div>
@@ -1200,22 +1497,20 @@ function McpServersSection({
   const added = mcpServers.filter((s) => s.provenance !== "curated");
   return (
     <section className={styles.section} aria-label="MCP servers">
-      <div className={styles.sectionLabel}>Built-in MCP servers</div>
-      <ul className={styles.list}>
-        {BUILTIN_MCPS.map((s) => (
-          <li key={s.name} className={styles.row}>
-            <div className={styles.rowMain}>
-              <span className={styles.rowName}>{s.name}</span>
-              <span className={styles.rowDetail}>{s.blurb}</span>
-            </div>
-            <div className={styles.rowSide}>
-              <span className={`${styles.badge} ${styles.badgeBuiltin}`}>
-                Built-in
-              </span>
-            </div>
-          </li>
-        ))}
-      </ul>
+      <div
+        className={styles.builtinBlock}
+        data-mcp-section="builtin"
+        aria-label="Built-in MCP servers"
+      >
+        <div className={styles.sectionLabel}>Built-in MCP servers</div>
+        <p className={styles.builtinLine}>
+          {BUILTIN_MCPS.map((s) => `${s.name} · ${s.blurb}`).join(" · ")}
+          {" · "}
+          <span className={`${styles.badge} ${styles.badgeBuiltin}`}>
+            Built-in
+          </span>
+        </p>
+      </div>
       <CuratedMcpsSection
         catalog={mcpCatalog}
         busy={mcpBusy}

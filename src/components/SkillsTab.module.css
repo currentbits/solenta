@@ -2,14 +2,101 @@
   display: flex;
   flex-direction: column;
   flex: 1;
+  min-width: 0;
   min-height: 0;
   container-type: inline-size;
 }
 
+.toolbar {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 14px 8px;
+  border-bottom: 1px solid var(--border-soft);
+  background: var(--bg);
+  min-width: 0;
+}
+
+.toolbarRow,
+.filterRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.searchInput {
+  flex: 1 1 140px;
+  min-width: 0;
+  min-height: 32px;
+  box-sizing: border-box;
+  padding: 6px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--card);
+  color: var(--text);
+  font-size: 13px;
+  outline: none;
+}
+
+.searchInput::placeholder {
+  color: var(--text-dim);
+}
+
+.searchInput:focus {
+  border-color: var(--blue-border);
+}
+
+.searchInput:focus-visible,
+.viewBtn:focus-visible,
+.filterChip:focus-visible,
+.rowToggle:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.count {
+  flex: 0 0 auto;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
+}
+
+.viewBtn,
+.filterChip {
+  flex: 0 1 auto;
+  min-width: 0;
+  min-height: 28px;
+  padding: 0 8px;
+  border-radius: 6px;
+  border: 1px solid var(--border-soft);
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 550;
+}
+
+.viewBtn:hover,
+.filterChip:hover {
+  color: var(--text);
+  background: var(--card-hover);
+}
+
+.viewBtn[aria-pressed="true"],
+.filterChip[data-on="true"] {
+  color: var(--text);
+  border-color: var(--border);
+  background: var(--card);
+}
+
 .scroll {
   flex: 1;
+  min-width: 0;
   min-height: 0;
   overflow-y: auto;
+  overflow-x: hidden;
   padding: 6px 14px 16px;
   display: flex;
   flex-direction: column;
@@ -80,6 +167,66 @@
   border-bottom: 1px solid var(--border-soft);
   background: transparent;
   color: var(--text);
+}
+
+.row[data-skill] {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0;
+  padding: 0;
+}
+
+.rowToggle {
+  display: flex;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  width: 100%;
+  min-width: 0;
+  margin: 0;
+  padding: 8px 2px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.rowToggle:hover {
+  background: var(--card-hover);
+}
+
+.rowExpand {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+  min-width: 0;
+  padding: 0 2px 8px;
+}
+
+.builtinBlock {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.builtinLine {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-muted);
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.downWrap {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  min-width: 0;
 }
 
 .row:last-child {
