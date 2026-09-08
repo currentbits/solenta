@@ -12,7 +12,7 @@
 import assert from "node:assert/strict";
 import { describe, it, afterEach } from "node:test";
 import { inAct, mount, unmountAll } from "./support/dom.ts";
-import { MemoryTab } from "../src/components/MemoryTab";
+import { MemoryTab, resetMemoryTabSession } from "../src/components/MemoryTab";
 import type {
   AgentConfigDoctorReport,
   AgentConfigPreview,
@@ -101,7 +101,34 @@ function tab(
   );
 }
 
-afterEach(unmountAll);
+afterEach(() => {
+  resetMemoryTabSession();
+  unmountAll();
+});
+
+async function expandCard(m: Awaited<ReturnType<typeof mount>>) {
+  const toggle = m.query("[data-memory-toggle]");
+  assert.ok(toggle, "memory row toggle must exist");
+  await m.click(toggle);
+}
+
+async function openDoctor(m: Awaited<ReturnType<typeof mount>>) {
+  const summary = m.query("[data-config-doctor] summary");
+  assert.ok(summary, "config doctor disclosure must exist");
+  await m.click(summary);
+}
+
+async function openMap(m: Awaited<ReturnType<typeof mount>>) {
+  const summary = m.query("[data-code-map] summary");
+  assert.ok(summary, "code map disclosure must exist");
+  await m.click(summary);
+}
+
+async function openReview(m: Awaited<ReturnType<typeof mount>>) {
+  const chip = m.query("[data-review-open]");
+  assert.ok(chip, "review chip must exist");
+  await m.click(chip);
+}
 
 describe("MemoryTab list", () => {
   it("renders file:line citations on the card", async () => {
@@ -116,6 +143,7 @@ describe("MemoryTab list", () => {
         }),
       ]),
     );
+    await expandCard(m);
     const chips = m.queryAll("[data-citations] span");
     assert.equal(chips.length, 2, "each citation must render as its own chip");
     assert.equal(chips[0]?.textContent, "src/auth.ts:12");
@@ -170,8 +198,13 @@ describe("MemoryTab list", () => {
       "recentMemory must be scoped to the selected project",
     );
     assert.ok(
-      m.queryAll('[title="coder"]').length > 0,
-      "the entry's project must be visible on the card",
+      m.queryAll('[class*="filterLabel"]').some((el) => el.textContent === "coder"),
+      "the project scope belongs in the toolbar, not on every row",
+    );
+    assert.equal(
+      m.query("[data-memory-list] [class*='projectTag']"),
+      null,
+      "matching project must not repeat on each row",
     );
     m.unmount();
   });
@@ -199,7 +232,7 @@ describe("MemoryTab list", () => {
   it("shows an empty state rather than a blank panel", async () => {
     const m = await mount(tab({ recent: async () => [] }));
     assert.ok(
-      m.text().includes("No recent memories"),
+      m.text().includes("No memories in this project"),
       `expected an empty state, got: ${m.text().slice(0, 120)}`,
     );
     m.unmount();
@@ -225,8 +258,7 @@ describe("MemoryTab card interaction", () => {
   /** Expand the one card and return the mounted tab. */
   async function expanded(stubs: Stubs = {}) {
     const m = await mount(tab(stubs));
-    const toggle = m.query("button");
-    await m.click(toggle);
+    await expandCard(m);
     return m;
   }
 
@@ -379,10 +411,8 @@ describe("MemoryTab wiring the reviewer's mutations exposed", () => {
     const calls = newCalls();
     const rows = [entry({ id: "a" }), entry({ id: "b", title: "Second" })];
     const m = await mount(tab({}, calls, rows));
-    const toggles = m.queryAll("button").filter((b) =>
-      (b.textContent || "").includes("Second"),
-    );
-    await m.click(toggles[0]);
+    const toggles = m.queryAll("[data-memory-toggle]");
+    await m.click(toggles[1]);
     assert.deepEqual(calls.get, [{ id: "b" }], "must fetch the expanded entry");
     m.unmount();
   });
@@ -390,7 +420,7 @@ describe("MemoryTab wiring the reviewer's mutations exposed", () => {
   it("carries edits to the BODY, not just the title", async () => {
     const calls = newCalls();
     const m = await mount(tab({}, calls));
-    await m.click(m.query("button"));
+    await expandCard(m);
     await m.click(m.byText("Edit"));
     await m.type(m.query('textarea[aria-label="Edit body"]'), "rewritten body");
     await m.click(m.byText("Save correction"));
@@ -404,7 +434,7 @@ describe("MemoryTab wiring the reviewer's mutations exposed", () => {
 
   it("offers a way out of an edit", async () => {
     const m = await mount(tab());
-    await m.click(m.query("button"));
+    await expandCard(m);
     await m.click(m.byText("Edit"));
     assert.ok(m.byText("Cancel"), "an edit form with no Cancel is a trap");
     m.unmount();
@@ -414,7 +444,7 @@ describe("MemoryTab wiring the reviewer's mutations exposed", () => {
     // docs/ISSUES.md records this as a decision, and MemoryTab carries a
     // comment saying it is what silently destroyed mid-edit text.
     const m = await mount(tab());
-    const toggle = () => m.query("button");
+    const toggle = () => m.query("[data-memory-toggle]");
     await m.click(toggle());
     await m.click(m.byText("Edit"));
     await m.type(m.query('input[aria-label="Edit title"]'), "half-typed");
@@ -431,9 +461,7 @@ describe("MemoryTab wiring the reviewer's mutations exposed", () => {
     // Nothing exercised that through the component.
     const rows = [entry({ id: "a" }), entry({ id: "b", title: "Second" })];
     const m = await mount(tab({}, newCalls(), rows));
-    const cardToggles = m
-      .queryAll("button")
-      .filter((b) => (b.textContent || "").match(/Never use em dashes|Second/));
+    const cardToggles = m.queryAll("[data-memory-toggle]");
     await m.click(cardToggles[0]);
     await m.click(m.byText("Edit"));
     await m.type(m.query('input[aria-label="Edit title"]'), "draft for A");
@@ -450,6 +478,7 @@ describe("MemoryTab wiring the reviewer's mutations exposed", () => {
   it("can store a strategy entry from the form", async () => {
     const calls = newCalls();
     const m = await mount(tab({}, calls));
+    await m.click(m.byText("Add memory"));
     await m.change(m.query('select[aria-label="Memory type"]'), "strategy");
     await m.type(m.query('input[placeholder="Title"]'), "When merging, stash by path");
     await m.type(
@@ -469,6 +498,7 @@ describe("MemoryTab wiring the reviewer's mutations exposed", () => {
   it("scopes a newly stored memory to the current project", async () => {
     const calls = newCalls();
     const m = await mount(tab({}, calls));
+    await m.click(m.byText("Add memory"));
     await m.type(m.query('input[placeholder="Title"]'), "New convention");
     await m.type(
       m.query('textarea[placeholder="What should future sessions know?"]'),
@@ -516,6 +546,7 @@ describe("MemoryTab wiring the reviewer's mutations exposed", () => {
       m.query('input[placeholder="Search shared memory..."]'),
       "search is the primary way to reach memory",
     );
+    await m.click(m.byText("Add memory"));
     assert.ok(
       m.query('input[placeholder="Title"]'),
       "the store form must be usable",
@@ -575,6 +606,8 @@ describe("MemoryTab config doctor", () => {
         }}
       />,
     );
+    assert.deepEqual(linted, []);
+    await openDoctor(m);
     assert.deepEqual(linted, ["p1"]);
     const card = m.query("[data-config-doctor]");
     assert.ok(card, "doctor card must render");
@@ -609,6 +642,7 @@ describe("MemoryTab config doctor", () => {
         }}
       />,
     );
+    await openDoctor(m);
     await m.click(m.byText("Preview"));
     assert.ok(m.query("[data-config-preview]"));
     assert.ok(m.text().includes("# generated"));
@@ -696,6 +730,7 @@ describe("MemoryTab config doctor project switch #1136", () => {
       }),
     };
     const m = await mount(doctorTab("proj-a", handlers));
+    await openDoctor(m);
     await m.click(m.byText("Preview"));
     assert.ok(m.text().includes("# generated-A"));
     await m.rerender(doctorTab("proj-b", handlers));
@@ -722,6 +757,7 @@ describe("MemoryTab config doctor project switch #1136", () => {
       },
     };
     const m = await mount(doctorTab("proj-a", handlers));
+    await openDoctor(m);
     await m.click(m.byText("Preview"));
     await m.click(m.byText("Write AGENTS.md"));
     assert.ok(m.byText("Confirm write"));
@@ -757,6 +793,7 @@ describe("MemoryTab config doctor project switch #1136", () => {
       }),
     };
     const m = await mount(doctorTab("proj-a", handlers));
+    await openDoctor(m);
     await m.rerender(doctorTab("proj-b", handlers));
     await inAct(async () => {
       held.resolve(REPORT_A);
@@ -780,6 +817,7 @@ describe("MemoryTab config doctor project switch #1136", () => {
       }),
     };
     const m = await mount(doctorTab("proj-a", handlers));
+    await openDoctor(m);
     await m.click(m.byText("Preview"));
     await m.rerender(doctorTab("proj-b", handlers));
     await inAct(async () => {
@@ -805,6 +843,7 @@ describe("MemoryTab config doctor project switch #1136", () => {
       },
     };
     const m = await mount(doctorTab("proj-a", handlers));
+    await openDoctor(m);
     await m.click(m.byText("Preview"));
     await m.click(m.byText("Write AGENTS.md"));
     await m.rerender(doctorTab("proj-b", handlers));
@@ -832,6 +871,7 @@ describe("MemoryTab config doctor project switch #1136", () => {
       },
     };
     const m = await mount(doctorTab("proj-a", handlers));
+    await openDoctor(m);
     await m.click(m.byText("Preview"));
     await m.click(m.byText("Write AGENTS.md"));
     await m.click(m.byText("Confirm write"));
@@ -929,6 +969,7 @@ describe("MemoryTab review queue", () => {
         }}
       />,
     );
+    await openReview(m);
     const card = m.query("[data-review-queue]");
     assert.ok(card, "queue card must render");
     assert.ok(
@@ -978,6 +1019,7 @@ describe("MemoryTab review queue", () => {
         }}
       />,
     );
+    await openReview(m);
     const line = m.query("[data-review-activity]");
     assert.ok(line, "activity line must render");
     assert.equal(
@@ -1016,6 +1058,7 @@ describe("MemoryTab review queue", () => {
     );
     const card = m.query("[data-review-queue]");
     assert.ok(card, "activity-only card must still render");
+    await openReview(m);
     assert.equal(m.query("[data-needs-your-call]"), null);
     assert.equal(
       m.query("[data-review-activity]")?.textContent,
@@ -1056,6 +1099,7 @@ describe("MemoryTab review queue", () => {
         }
       />,
     );
+    await openReview(m);
     const text = m.text();
     assert.equal(text.includes("Near dupe secret title"), false);
     assert.equal(text.includes("Aging run secret title"), false);
@@ -1103,6 +1147,8 @@ describe("MemoryTab code map", () => {
       />,
     );
     await m.flush();
+    assert.deepEqual(calls, []);
+    await openMap(m);
     assert.deepEqual(calls, [{ projectId: "p1" }]);
     assert.ok(m.query("[data-code-map]"));
     assert.match(m.text(), /Code map/);
@@ -1135,6 +1181,7 @@ describe("MemoryTab code map", () => {
     await m.flush();
     assert.ok(m.query("[data-code-map]"));
     assert.match(m.text(), /Memory server is not running/);
+    await openMap(m);
     assert.match(m.text(), /src\//);
     m.unmount();
   });
@@ -1231,6 +1278,7 @@ describe("MemoryTab code map", () => {
       return pendingB.promise;
     };
     const m = await mount(mapTab("proj-a", load));
+    await openMap(m);
     const onA = m.query("[data-code-map]")?.textContent ?? "";
     assert.equal(showsA(onA), true, "A's map must load first");
     await m.rerender(mapTab("proj-b", load));
@@ -1258,6 +1306,7 @@ describe("MemoryTab code map", () => {
       return pendingB.promise;
     };
     const m = await mount(mapTab("proj-a", load));
+    await openMap(m);
     await m.click(m.byText("alpha/"));
     assert.equal(
       (m.query("[data-code-map]")?.textContent ?? "").includes("Kernel.ts"),
@@ -1287,6 +1336,7 @@ describe("MemoryTab code map", () => {
       return pendingB.promise;
     };
     const m = await mount(mapTab("proj-a", load));
+    await openMap(m);
     await m.rerender(mapTab("proj-b", load));
     pendingA.resolve(wikiA);
     await m.flush();
@@ -1307,6 +1357,7 @@ describe("MemoryTab code map", () => {
       return pendingB.promise;
     };
     const m = await mount(mapTab("proj-a", load));
+    await openMap(m);
     assert.equal(showsA(m.query("[data-code-map]")?.textContent ?? ""), true);
     await m.rerender(mapTab("proj-b", load));
     assert.equal(showsA(m.query("[data-code-map]")?.textContent ?? ""), false);
@@ -1386,10 +1437,148 @@ describe("MemoryTab inspector layout", () => {
       scroll.querySelector("[data-review-queue]"),
       "review queue scrolls with the list",
     );
+    const list = scroll.querySelector("[data-memory-list]");
+    const secondary = scroll.querySelector("[data-memory-secondary]");
+    assert.ok(list, "memories must be in the scroll pane");
+    assert.ok(secondary, "secondary tools must be in the scroll pane");
+    assert.ok(
+      Boolean(
+        list.compareDocumentPosition(secondary) & Node.DOCUMENT_POSITION_FOLLOWING,
+      ),
+      "memories must render above map/doctor/review",
+    );
+    await m.click(m.byText("Add memory"));
     assert.ok(
       scroll.querySelector('input[placeholder="Title"]'),
       "the remember form must stay reachable inside the scroll",
     );
+    m.unmount();
+  });
+});
+
+describe("MemoryTab browsing #1123", () => {
+  it("does not fetch map or doctor detail until those disclosures open", async () => {
+    const maps: string[] = [];
+    const lints: string[] = [];
+    const m = await mount(
+      <MemoryTab
+        projectSlug="coder"
+        projectId="p1"
+        searchMemory={async () => []}
+        recentMemory={async () => [entry()]}
+        getMemory={async (input) => entry({ id: input.id })}
+        updateMemory={async () => ({ id: "x" })}
+        removeMemory={async () => {}}
+        storeMemory={async () => ({ id: "x" })}
+        loadCodeMap={async (input) => {
+          maps.push(input.projectId);
+          return {
+            projectId: input.projectId,
+            updatedAt: Date.now(),
+            fileCount: 0,
+            symbolCount: 0,
+            modules: [],
+            dependencies: [],
+          };
+        }}
+        lintAgentConfig={async (input) => {
+          lints.push(input.projectId);
+          return SAMPLE_REPORT;
+        }}
+      />,
+    );
+    await m.flush();
+    assert.deepEqual(maps, []);
+    assert.deepEqual(lints, []);
+    assert.ok(m.query("[data-memory-list]"));
+    m.unmount();
+  });
+
+  it("forwards type when the type filter changes", async () => {
+    const calls = newCalls();
+    const m = await mount(tab({}, calls));
+    await m.flush();
+    await m.change(m.query('select[aria-label="Filter memory type"]'), "convention");
+    await m.flush();
+    const typed = calls.recent.at(-1) as { type?: string };
+    assert.equal(typed.type, "convention");
+    m.unmount();
+  });
+
+  it("loads older pages without dropping or duplicating ids", async () => {
+    const seen: Array<{ offset?: number }> = [];
+    const page1 = Array.from({ length: 20 }, (_, i) =>
+      entry({ id: `p1-${i}`, title: `New ${i}` }),
+    );
+    const page2 = [
+      entry({ id: "oldest", title: "Oldest reachable without search" }),
+    ];
+    const m = await mount(
+      <MemoryTab
+        projectSlug="coder"
+        searchMemory={async () => []}
+        recentMemory={async (input) => {
+          seen.push({ offset: input?.offset });
+          return input?.offset ? page2 : page1;
+        }}
+        getMemory={async (input) => entry({ id: input.id })}
+        updateMemory={async () => ({ id: "x" })}
+        removeMemory={async () => {}}
+        storeMemory={async () => ({ id: "x" })}
+      />,
+    );
+    await m.flush();
+    assert.match(m.text(), /20 loaded/);
+    await m.click(m.byText("Load older memories"));
+    await m.flush();
+    assert.ok(
+      seen.some((call) => call.offset === 20),
+      "load more must request the next offset",
+    );
+    assert.ok(m.text().includes("Oldest reachable without search"));
+    assert.match(m.text(), /21 loaded/);
+    const ids = m.queryAll("[data-memory-toggle]").map((el) => el.textContent);
+    assert.equal(new Set(ids).size, ids.length, "no duplicate rows after load more");
+    m.unmount();
+  });
+
+  it("explains the three-character search minimum instead of leaving stale hits", async () => {
+    let searched = 0;
+    const m = await mount(
+      <MemoryTab
+        projectSlug="coder"
+        searchMemory={async () => {
+          searched += 1;
+          return [entry({ id: "hit", title: "Search hit only" })];
+        }}
+        recentMemory={async () => [entry({ title: "Recent row" })]}
+        getMemory={async (input) => entry({ id: input.id })}
+        updateMemory={async () => ({ id: "x" })}
+        removeMemory={async () => {}}
+        storeMemory={async () => ({ id: "x" })}
+      />,
+    );
+    await m.type(
+      m.query('input[aria-label="Search shared memory"]'),
+      "ab",
+    );
+    await m.flush();
+    assert.equal(searched, 0);
+    assert.match(m.text(), /Type 3 or more characters to search/);
+    assert.ok(m.text().includes("Recent row"));
+    m.unmount();
+  });
+
+  it("asks for an explicit discard before a project change drops edit text", async () => {
+    const m = await mount(tab());
+    await expandCard(m);
+    await m.click(m.byText("Edit"));
+    await m.type(m.query('input[aria-label="Edit title"]'), "half-typed");
+    await m.rerender(tab({}, newCalls(), [entry()], "other-project"));
+    assert.ok(m.byText("Discard and switch"));
+    assert.ok(m.query('input[aria-label="Edit title"]'));
+    await m.click(m.byText("Discard and switch"));
+    assert.equal(m.query('input[aria-label="Edit title"]'), null);
     m.unmount();
   });
 });

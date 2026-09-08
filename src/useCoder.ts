@@ -706,10 +706,13 @@ export interface UseCoderResult {
   searchMemory: (input: {
     query: string;
     project?: string;
+    type?: MemoryEntryInfo["type"];
   }) => Promise<MemoryEntryInfo[]>;
   recentMemory: (input?: {
     limit?: number;
+    offset?: number;
     project?: string;
+    type?: MemoryEntryInfo["type"];
   }) => Promise<MemoryEntryInfo[]>;
   getMemory: (input: { id: string }) => Promise<MemoryEntryInfo>;
   updateMemory: (input: {
@@ -727,6 +730,7 @@ export interface UseCoderResult {
   }) => Promise<{ id: string }>;
   maintenanceMemory: (input?: {
     project?: string;
+    summary?: boolean;
   }) => Promise<MemoryMaintenanceReport>;
   resolveMemory: (input: {
     id: number;
@@ -3358,29 +3362,37 @@ export function useCoder(): UseCoderResult {
   );
 
   const searchMemory = useCallback(
-    async (input: { query: string; project?: string }) => {
+    async (input: {
+      query: string;
+      project?: string;
+      type?: MemoryEntryInfo["type"];
+    }) => {
       return api.memory.search(input);
     },
     [api],
   );
 
   const recentMemory = useCallback(
-    async (input?: { limit?: number; project?: string }) => {
+    async (input?: {
+      limit?: number;
+      offset?: number;
+      project?: string;
+      type?: MemoryEntryInfo["type"];
+    }) => {
       const wantLimit =
         input?.limit != null && input.limit > 0 ? Math.floor(input.limit) : 20;
+      const offset =
+        input?.offset != null && input.offset > 0 ? Math.floor(input.offset) : 0;
       const project =
         input?.project != null && input.project !== ""
           ? input.project
           : undefined;
-      // Electron proxy may still ignore project on recent. Over-fetch so a
-      // client-side filter can still surface project rows buried past limit 20.
-      // The server canonicalizes the project key (display slugs like
-      // "owner/repo" and cwd paths both map to the repo-root basename), so it
-      // is authoritative: a client-side equality filter here would compare the
-      // canonical key against the raw display slug and drop every row.
+      const type = input?.type;
       const list = await api.memory.recent({
         limit: wantLimit,
+        ...(offset > 0 ? { offset } : {}),
         ...(project ? { project } : {}),
+        ...(type ? { type } : {}),
       });
       return list.slice(0, wantLimit);
     },
@@ -3422,7 +3434,7 @@ export function useCoder(): UseCoderResult {
   );
 
   const maintenanceMemory = useCallback(
-    async (input?: { project?: string }) => {
+    async (input?: { project?: string; summary?: boolean }) => {
       return api.memory.maintenance(input);
     },
     [api],

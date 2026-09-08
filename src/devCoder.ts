@@ -2382,6 +2382,7 @@ function buildDevCoder(): CoderApi {
       async search(input: {
         query: string;
         project?: string;
+        type?: MemoryEntryInfo["type"];
       }): Promise<MemoryEntryInfo[]> {
         const q = input.query.trim().toLowerCase();
         if (!q) return [];
@@ -2392,25 +2393,35 @@ function buildDevCoder(): CoderApi {
         if (input.project != null && input.project !== "") {
           rows = rows.filter((row) => row.project === input.project);
         }
+        if (input.type) {
+          rows = rows.filter((row) => row.type === input.type);
+        }
         rows = [...rows].sort((a, b) =>
-          a.updatedAt < b.updatedAt ? 1 : a.updatedAt > b.updatedAt ? -1 : 0,
+          a.createdAt < b.createdAt ? 1 : a.createdAt > b.createdAt ? -1 : a.id < b.id ? 1 : a.id > b.id ? -1 : 0,
         );
         return rows.map(toListEntry);
       },
       async recent(input?: {
         limit?: number;
+        offset?: number;
         project?: string;
+        type?: MemoryEntryInfo["type"];
       }): Promise<MemoryEntryInfo[]> {
         const limit =
           input?.limit != null && input.limit > 0 ? Math.floor(input.limit) : 20;
+        const offset =
+          input?.offset != null && input.offset > 0 ? Math.floor(input.offset) : 0;
         let rows = [...memoryEntries];
         if (input?.project != null && input.project !== "") {
           rows = rows.filter((row) => row.project === input.project);
         }
+        if (input?.type) {
+          rows = rows.filter((row) => row.type === input.type);
+        }
         rows = rows.sort((a, b) =>
-          a.updatedAt < b.updatedAt ? 1 : a.updatedAt > b.updatedAt ? -1 : 0,
+          a.createdAt < b.createdAt ? 1 : a.createdAt > b.createdAt ? -1 : a.id < b.id ? 1 : a.id > b.id ? -1 : 0,
         );
-        return rows.slice(0, limit).map(toListEntry);
+        return rows.slice(offset, offset + limit).map(toListEntry);
       },
       async get(input: { id: string }): Promise<MemoryEntryInfo> {
         const row = memoryEntries.find((e) => e.id === input.id);

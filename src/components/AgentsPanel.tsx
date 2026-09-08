@@ -195,10 +195,13 @@ interface AgentsPanelProps {
   searchMemory: (input: {
     query: string;
     project?: string;
+    type?: MemoryEntryInfo["type"];
   }) => Promise<MemoryEntryInfo[]>;
   recentMemory: (input?: {
     limit?: number;
+    offset?: number;
     project?: string;
+    type?: MemoryEntryInfo["type"];
   }) => Promise<MemoryEntryInfo[]>;
   getMemory: (input: { id: string }) => Promise<MemoryEntryInfo>;
   updateMemory: (input: {
@@ -215,6 +218,7 @@ interface AgentsPanelProps {
   }) => Promise<{ id: string }>;
   maintenanceMemory?: (input?: {
     project?: string;
+    summary?: boolean;
   }) => Promise<MemoryMaintenanceReport>;
   resolveMemory?: (input: {
     id: number;

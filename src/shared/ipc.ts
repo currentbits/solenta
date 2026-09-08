@@ -3094,6 +3094,8 @@ export interface MemoryEntryInfo {
   updatedAt: string;
   /** file:line / thread / commit evidence. Empty when the writer cited none. */
   citations?: MemoryCitation[];
+  /** Writer provenance (mcp/rest/app). Shown on expand when present. */
+  source?: string | null;
 }
 
 export type MemoryReviewResolution = "update" | "invalidate" | "noop";
@@ -3300,8 +3302,17 @@ export interface CoderApi {
    * "Memory server is not running." when it is unavailable.
    */
   memory: {
-    search(input: { query: string; project?: string }): Promise<MemoryEntryInfo[]>;
-    recent(input?: { limit?: number; project?: string }): Promise<MemoryEntryInfo[]>;
+    search(input: {
+      query: string;
+      project?: string;
+      type?: MemoryEntryInfo["type"];
+    }): Promise<MemoryEntryInfo[]>;
+    recent(input?: {
+      limit?: number;
+      offset?: number;
+      project?: string;
+      type?: MemoryEntryInfo["type"];
+    }): Promise<MemoryEntryInfo[]>;
     get(input: { id: string }): Promise<MemoryEntryInfo>;
     store(input: {
       type: MemoryEntryInfo["type"];
@@ -3318,7 +3329,10 @@ export interface CoderApi {
     /** Permanently removes an entry and its dependents (vectors, mentions, queue rows). */
     remove(input: { id: string }): Promise<void>;
     /** Open review queue, near-dupes, aging runs, trust. */
-    maintenance(input?: { project?: string }): Promise<MemoryMaintenanceReport>;
+    maintenance(input?: {
+      project?: string;
+      summary?: boolean;
+    }): Promise<MemoryMaintenanceReport>;
     /** Adjudicate one review_queue row. */
     resolve(input: {
       id: number;

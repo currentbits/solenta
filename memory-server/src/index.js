@@ -237,6 +237,7 @@ export function buildServer(memory, opts = {}) {
         query: z.string().min(1),
         project: z.string().optional(),
         agent: z.string().optional().describe('Only return entries written by this agent'),
+        type: entryType.optional(),
         limit: z.number().int().positive().max(100).optional(),
       },
     },
@@ -302,6 +303,7 @@ export function buildServer(memory, opts = {}) {
       description: 'Newest live memory entries (excerpt form). Limit max 50.',
       inputSchema: {
         limit: z.number().int().positive().max(50).optional(),
+        offset: z.number().int().min(0).optional(),
         project: z.string().optional(),
         type: entryType.optional(),
       },
@@ -474,10 +476,12 @@ async function handleApi(req, res, url, memory) {
   try {
     if (req.method === 'GET' && url.pathname === '/api/recent') {
       const limit = url.searchParams.get('limit')
+      const offset = url.searchParams.get('offset')
       const project = url.searchParams.get('project') ?? undefined
       const type = url.searchParams.get('type') ?? undefined
       const result = memory.recent({
         limit: limit != null ? Number(limit) : undefined,
+        offset: offset != null ? Number(offset) : undefined,
         project,
         type,
       })
@@ -489,11 +493,13 @@ async function handleApi(req, res, url, memory) {
       const query = url.searchParams.get('query') ?? ''
       const project = url.searchParams.get('project') ?? undefined
       const agent = url.searchParams.get('agent') ?? undefined
+      const type = url.searchParams.get('type') ?? undefined
       const limit = url.searchParams.get('limit')
       const result = await memory.search({
         query,
         project,
         agent,
+        type,
         limit: limit != null ? Number(limit) : undefined,
       })
       sendJson(res, 200, result.map(toApiRow))
@@ -656,7 +662,11 @@ async function handleApi(req, res, url, memory) {
 
     if (req.method === 'GET' && url.pathname === '/api/maintenance') {
       const project = url.searchParams.get('project') ?? undefined
-      sendJson(res, 200, memory.maintenance({ project }))
+      const summary = url.searchParams.get('summary')
+      sendJson(res, 200, memory.maintenance({
+        project,
+        summary: summary === '1' || summary === 'true',
+      }))
       return true
     }
 
