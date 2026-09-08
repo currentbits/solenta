@@ -4124,12 +4124,11 @@ function threadSummaries(store) {
  * @param {import('./store').Store} store
  * @param {{ query?: string }} [input]
  */
-function searchThreads(store, input) {
+async function searchThreads(store, input) {
   const query =
     input && input.query != null ? String(input.query) : "";
-  return store
-    .searchThreads(query)
-    .filter((t) => !(t && t.memoryConsolidate === true));
+  const hits = await store.searchThreads(query);
+  return hits.filter((t) => !(t && t.memoryConsolidate === true));
 }
 
 /**
