@@ -208,6 +208,9 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     promoteBtw,
     requestTeachReview,
     deleteThread,
+    trashedThreads,
+    restoreThread,
+    purgeThread,
     removeProject,
     setupWorktree,
     mergeWorktree,
@@ -336,6 +339,8 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
   const [onboardingForceOpen, setOnboardingForceOpen] = useState(false);
   /** Synara-style undo toast after an immediate archive (single or bulk clear). */
   const [archiveToastIds, setArchiveToastIds] = useState<string[] | null>(null);
+  /** Undo toast after moving a thread to Recently deleted (#940). */
+  const [deleteToastId, setDeleteToastId] = useState<string | null>(null);
   /**
    * Error toast after projects.remove rejects. Title is t3-shaped:
    * Failed to remove "slug", plus the reason — swallowing it left the user
@@ -734,7 +739,10 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         const id = selectedThreadId;
         if (!id) return;
         setRemoveFailMessage(null);
-        if (await setArchived(true, id)) setArchiveToastIds([id]);
+        if (await setArchived(true, id)) {
+          setDeleteToastId(null);
+          setArchiveToastIds([id]);
+        }
       } else {
         setArchiveToastIds(null);
         await setArchived(false);
@@ -755,7 +763,10 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
       for (const id of ids) {
         if (await setArchived(true, id)) archived.push(id);
       }
-      if (archived.length > 0) setArchiveToastIds(archived);
+      if (archived.length > 0) {
+        setDeleteToastId(null);
+        setArchiveToastIds(archived);
+      }
     },
     [setArchived],
   );
@@ -772,6 +783,24 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
       await setArchived(false, id);
     }
   }, [archiveToastIds, setArchived]);
+
+  const handleDeleteThread = useCallback(async () => {
+    const id = selectedThreadId;
+    if (!id) return;
+    setArchiveToastIds(null);
+    if (await deleteThread()) setDeleteToastId(id);
+  }, [selectedThreadId, deleteThread]);
+
+  const dismissDeleteToast = useCallback(() => {
+    setDeleteToastId(null);
+  }, []);
+
+  const undoDelete = useCallback(async () => {
+    if (!deleteToastId) return;
+    const id = deleteToastId;
+    setDeleteToastId(null);
+    await restoreThread(id);
+  }, [deleteToastId, restoreThread]);
 
   const handleRemoveProject = useCallback(
     async (projectId: string) => {
@@ -1343,6 +1372,9 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         onRenameThread={handleRenameThread}
         onSetArchived={handleRowArchived}
         onClearSettled={handleClearSettled}
+        trashedThreads={trashedThreads}
+        onRestoreThread={(id) => void restoreThread(id)}
+        onPurgeThread={(id) => void purgeThread(id)}
         onFork={handleRowFork}
         conflictForecast={forecast}
             />
@@ -1531,7 +1563,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         onDismissBtw={handleDismissBtw}
         onPromoteBtw={handlePromoteBtw}
         defaultWorktree={settings?.defaultWorktree ?? false}
-        onDeleteThread={deleteThread}
+        onDeleteThread={handleDeleteThread}
         changesOpen={changesOpen}
         changesNonce={changesNonce}
         onCloseChanges={closeChanges}
@@ -1747,6 +1779,14 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
             }
             onUndo={() => void undoArchive()}
             onDismiss={dismissArchiveToast}
+          />
+        )}
+        {deleteToastId && (
+          <ArchiveToast
+            key={`delete-${deleteToastId}`}
+            message="Deleted"
+            onUndo={() => void undoDelete()}
+            onDismiss={dismissDeleteToast}
           />
         )}
         {removeFailMessage && (

@@ -1905,6 +1905,7 @@ function createRunner(opts) {
   function maybeDrainQueued(threadId) {
     const thread = store.getThread(threadId);
     if (!thread || thread.status === "working") return;
+    if (services.isTrashed(thread)) return;
     // A persisted plan card is a mode switch, not a message. Hold the
     // type-ahead until the user approves or keeps planning so a queued
     // "implement it" does not run still in plan mode (issue #707).
@@ -7526,6 +7527,9 @@ function createRunner(opts) {
     if (!thread) {
       throw new Error(`Unknown thread: ${threadId}`);
     }
+    if (services.isTrashed(thread)) {
+      throw new Error("Cannot start a run on a deleted thread");
+    }
 
     // Machine-delivered turns increment autoTurns in flushOrchNotices.
     // Anything else (user send, retry, verify fix) is a human in the loop.
@@ -8171,7 +8175,12 @@ function createRunner(opts) {
 
   function refreshQuotaWait(threadId) {
     const thread = store.getThread(threadId);
-    if (!thread || thread.status !== "quota-wait" || !thread.quotaWaitUntil) {
+    if (
+      !thread ||
+      services.isTrashed(thread) ||
+      thread.status !== "quota-wait" ||
+      !thread.quotaWaitUntil
+    ) {
       cancelQuotaWake(threadId);
       return;
     }
