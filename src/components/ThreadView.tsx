@@ -437,7 +437,7 @@ interface ThreadViewProps {
     prompt: string,
     threadId?: string,
     attachments?: AttachmentInfo[],
-    opts?: { fromNotice?: boolean },
+    opts?: { fromNotice?: boolean; steer?: boolean },
   ) => void | Promise<void>;
   /**
    * Edit-and-resubmit (#254): rewind to just before messageId, then start
@@ -1303,6 +1303,11 @@ const UserMessageBlock = memo(function UserMessageBlock({
             </button>
           )}
           <div className={styles.userBubble}>
+            {message.steer && (
+              <div className={styles.steerLabel} data-steer-label="">
+                Steered
+              </div>
+            )}
             {message.text}
             {message.attachments && message.attachments.length > 0 && (
               <TranscriptAttachments
@@ -5145,8 +5150,11 @@ export const ThreadView = memo(function ThreadView({
   );
 
   const handleComposerSend = useCallback(
-    (prompt: string, messageAttachments?: AttachmentInfo[]) =>
-      onStartRun(prompt, undefined, messageAttachments),
+    (
+      prompt: string,
+      messageAttachments?: AttachmentInfo[],
+      opts?: { steer?: boolean },
+    ) => onStartRun(prompt, undefined, messageAttachments, opts),
     [onStartRun],
   );
 
@@ -7157,7 +7165,9 @@ export const ThreadView = memo(function ThreadView({
           isArchived
             ? "Unarchive to continue this thread"
             : isWorking
-              ? "Queue a follow-up, or /btw a side question…"
+              ? providers.find((p) => p.id === thread.provider)?.supportsSteer
+                ? "Queue a follow-up, steer the live turn, or /btw a side question…"
+                : "Queue a follow-up, or /btw a side question…"
               : thread.ask
                 ? "Ask about this repo…"
                 : undefined

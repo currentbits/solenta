@@ -767,6 +767,46 @@
   flex-shrink: 0;
 }
 
+.steerToggle {
+  display: inline-flex;
+  height: 28px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.steerToggle button {
+  height: 100%;
+  padding: 0 10px;
+  border: 0;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.steerToggle button + button {
+  border-left: 1px solid var(--border);
+}
+
+.steerToggle button[aria-pressed="true"] {
+  background: var(--blue-soft);
+  color: var(--info-fg-strong);
+}
+
+.steerToggle button:hover:not([aria-pressed="true"]) {
+  background: var(--card-hover);
+  color: var(--text);
+}
+
+.steerToggle button:focus-visible {
+  outline: none;
+  box-shadow:
+    0 0 0 2px var(--card),
+    0 0 0 4px var(--focus-ring-color);
+}
+
 .viewMenu {
   left: auto;
   right: 0;

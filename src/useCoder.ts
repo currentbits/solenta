@@ -267,12 +267,13 @@ export interface UseCoderResult {
   /**
    * Start a run, or queue the prompt when that thread is already working:
    * the queued text is delivered at the run's terminal (issue #92).
+   * Pass `steer: true` to inject into the live turn instead (issue #156).
    */
   startRun: (
     prompt: string,
     threadId?: string,
     attachments?: AttachmentInfo[],
-    opts?: { fromNotice?: boolean },
+    opts?: { fromNotice?: boolean; steer?: boolean },
   ) => Promise<void>;
   /**
    * Edit-and-resubmit (#254): rewind the transcript to just before
@@ -1523,7 +1524,7 @@ export function useCoder(): UseCoderResult {
       prompt: string,
       targetThreadId?: string,
       attachments?: AttachmentInfo[],
-      opts?: { fromNotice?: boolean },
+      opts?: { fromNotice?: boolean; steer?: boolean },
     ) => {
       const threadId = targetThreadId ?? selectedThreadId;
       if (!threadId) return;
@@ -1571,9 +1572,60 @@ export function useCoder(): UseCoderResult {
       // Busy thread: hold the prompt instead of bouncing off the backend's
       // "run already active" (issue #92). Append lives in setQueued so two
       // mid-run sends cannot race-replace each other across the IPC hop.
+      // Steer (issue #156) injects into the live process instead; if the
+      // run just landed, fall back to queueing.
       if (
         threadsRef.current.find((t) => t.id === threadId)?.status === "working"
       ) {
+        if (opts?.steer) {
+          try {
+            await api.runs.steer({ threadId, prompt, attachments });
+          } catch (err) {
+            const msg = errorMessage(err);
+            if (!/no live run/i.test(msg) && !/not accepting input/i.test(msg)) {
+              setError({ scope: "run", message: msg });
+              throw err;
+            }
+            try {
+              const updated = await api.threads.setQueued({
+                threadId,
+                prompt,
+                attachments,
+              });
+              applyThreads(
+                threadsRef.current.map((t) =>
+                  t.id === updated.id ? updated : t,
+                ),
+              );
+              setDetail((prev) =>
+                prev && prev.thread.id === updated.id
+                  ? { ...prev, thread: updated }
+                  : prev,
+              );
+              setError(null);
+            } catch (queueErr) {
+              setError({ scope: "run", message: errorMessage(queueErr) });
+              throw queueErr;
+            }
+            return;
+          }
+          // Steer already landed. A refresh miss must not look like
+          // undelivered work: Composer would keep the draft and send again.
+          try {
+            const d = await api.threads.get(threadId);
+            if (selectedRef.current !== threadId) return;
+            setDetail(d);
+            applyThreads(
+              threadsRef.current.map((t) =>
+                t.id === d.thread.id ? d.thread : t,
+              ),
+            );
+            setError(null);
+          } catch (err) {
+            setError({ scope: "run", message: errorMessage(err) });
+          }
+          return;
+        }
         try {
           const updated = await api.threads.setQueued({
             threadId,

@@ -37,7 +37,6 @@ const orchcommands = require("./orchcommands.js");
 const cliCommands = require("./cliCommands.js");
 const ask = require("./ask.js");
 const btw = require("./btw.js");
-const { heartbeatLane } = require("./mergeQueue.js");
 const {
   getClaudeMcpArgs,
   getCodexMcpArgs,
@@ -715,9 +714,7 @@ function createRunner(opts) {
     // Null until main has finished simulator crash recovery, so it is resolved
     // per call rather than captured.
     getIosSimulator = () => null,
-    now: nowOpt,
   } = opts;
-  const nowFn = typeof nowOpt === "function" ? nowOpt : () => Date.now();
 
   /**
    * @type {Map<string, object>}
@@ -2634,7 +2631,7 @@ function createRunner(opts) {
    * @param {string | null} [runId]
    * @param {object | null} [tool]
    * @param {{ kind: string, path: string, name: string }[] | null} [attachments]
-   * @param {{ fromThread?: { id: string, title?: string } | null, thinking?: boolean, fromNotice?: boolean }} [extra]
+   * @param {{ fromThread?: { id: string, title?: string } | null, thinking?: boolean, fromNotice?: boolean, steer?: boolean }} [extra]
    */
   function appendMessage(
     threadId,
@@ -2645,7 +2642,7 @@ function createRunner(opts) {
     attachments = null,
     extra = null,
   ) {
-    /** @type {{ id: string, role: string, text: string, createdAt: number, runId?: string, tool?: object, attachments?: object[], fromThread?: { id: string, title: string }, thinking?: boolean, fromNotice?: boolean }} */
+    /** @type {{ id: string, role: string, text: string, createdAt: number, runId?: string, tool?: object, attachments?: object[], fromThread?: { id: string, title: string }, thinking?: boolean, fromNotice?: boolean, steer?: boolean }} */
     const msg = {
       id: randomUUID(),
       role,
@@ -2657,6 +2654,7 @@ function createRunner(opts) {
     if (attachments && attachments.length) msg.attachments = attachments;
     if (extra && extra.thinking) msg.thinking = true;
     if (extra && extra.fromNotice === true) msg.fromNotice = true;
+    if (extra && extra.steer === true) msg.steer = true;
     if (extra && extra.fromThread && extra.fromThread.id) {
       msg.fromThread = {
         id: String(extra.fromThread.id),
@@ -8203,6 +8201,52 @@ function createRunner(opts) {
   }
 
   /**
+   * Inject guidance into a live turn (issue #156). Writes a user line to
+   * the running CLI's stdin and appends a `steer: true` user row on the
+   * current runId — not a second run, not a queued follow-up.
+   * @param {{ threadId: string, prompt: string, attachments?: object[] }} input
+   * @returns {Promise<{ runId: string }>}
+   */
+  async function steerRun(input) {
+    const threadId = input && input.threadId;
+    const prompt = String((input && input.prompt) || "").trim();
+    if (!threadId) throw new Error("threadId is required");
+    if (!prompt) throw new Error("prompt is required");
+    const thread = store.getThread(threadId);
+    if (!thread) throw new Error(`Unknown thread: ${threadId}`);
+    const entry = active.get(threadId);
+    if (!entry || entry.stopping) {
+      throw new Error("No live run to steer");
+    }
+    const provider = resolveProvider(thread);
+    const providerEntry = getProvider(provider);
+    if (!providerEntry || providerEntry.supportsSteer !== true) {
+      const name = (providerEntry && providerEntry.name) || provider;
+      throw new Error(`${name} cannot steer a live turn`);
+    }
+    if (!entry.handle || typeof entry.handle.send !== "function") {
+      throw new Error("Live process is not accepting input");
+    }
+    const attachments = sanitizeAttachments(input.attachments);
+    const sent = entry.handle.send(prompt + attachmentPromptSection(attachments));
+    if (!sent) {
+      throw new Error("Live process is not accepting input");
+    }
+    appendMessage(
+      threadId,
+      "user",
+      prompt,
+      entry.runId,
+      null,
+      attachments,
+      { steer: true },
+    );
+    store.save();
+    pushDetail(threadId, entry.claudeState || null);
+    return { runId: entry.runId };
+  }
+
+  /**
    * @param {{ threadId: string, cascadeCrew?: boolean }} input
    * @param {Set<string>} [seen] - internal: crew cascade cycle guard
    */
@@ -8580,6 +8624,7 @@ function createRunner(opts) {
 
   return {
     startRun,
+    steerRun,
     startBtw,
     cancelBtw,
     promoteBtw,

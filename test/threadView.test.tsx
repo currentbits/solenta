@@ -100,6 +100,7 @@ function msg(over: Partial<ChatMessage> & Pick<ChatMessage, "role" | "text">): C
     fromThread: over.fromThread,
     attachments: over.attachments,
     thinking: over.thinking,
+    steer: over.steer,
   };
 }
 
@@ -771,6 +772,31 @@ describe("ThreadView content structure", () => {
     });
     assert.ok(html.includes("hi"), "user message still present");
     assert.ok(html.includes("fix the centre pane"), "header title still present");
+  });
+
+  it("labels a steered user row without treating it as a queued follow-up", () => {
+    const html = render({
+      detail: detail({
+        messages: [
+          msg({ id: "u1", role: "user", text: "do the thing", createdAt: 1 }),
+          msg({
+            id: "u2",
+            role: "user",
+            text: "stop that, do X instead",
+            createdAt: 2,
+            runId: "run-1",
+            steer: true,
+          }),
+        ],
+      }),
+    });
+    assert.ok(html.includes("data-steer-label"), "steered row must be labeled");
+    assert.ok(html.includes("Steered"));
+    assert.ok(html.includes("stop that, do X instead"));
+    assert.ok(
+      !html.includes("data-queued-followup"),
+      "steer is not the queued-follow-up strip",
+    );
   });
 });
 

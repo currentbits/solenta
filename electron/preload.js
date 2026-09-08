@@ -191,6 +191,7 @@ const IPC_CHANNELS = Object.freeze([
   { ns: "digest", method: "list" },
   { ns: "digest", method: "markSeen" },
   { ns: "runs", method: "start" },
+  { ns: "runs", method: "steer" },
   { ns: "runs", method: "startWorkflow" },
   { ns: "runs", method: "retryWorkflowAgent" },
   { ns: "runs", method: "distill" },

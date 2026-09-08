@@ -60,12 +60,14 @@ describe("providers registry", () => {
     const claude = getProvider("claude");
     assert.equal(claude.kind, "claude-stream");
     assert.equal(claude.supportsResume, true);
+    assert.equal(claude.supportsSteer, true);
     assert.ok(claude.models.includes("claude-opus-5"));
     assert.ok(claude.models.includes("claude-haiku-4-5"));
 
     const codex = getProvider("codex");
     assert.equal(codex.kind, "codex-json");
     assert.equal(codex.supportsResume, true);
+    assert.equal(codex.supportsSteer, undefined);
     assert.equal(codex.sessionPinsModel, true);
     assert.ok(codex.models.includes("gpt-5.5"));
     assert.ok(codex.models.includes("gpt-6-astra"));
@@ -433,6 +435,19 @@ describe("providers registry", () => {
     assert.equal(list.find((p) => p.id === "cursor").available, false);
     assert.equal(list.find((p) => p.id === "muse").available, false);
     assert.ok(!list.some((p) => p.id === "simulate"));
+  });
+
+  it("listProviders advertises supportsSteer only for Claude", () => {
+    const which = () => null;
+    const list = listProviders({ which, env: {}, includeSimulate: true });
+    assert.equal(list.find((p) => p.id === "claude").supportsSteer, true);
+    for (const id of ["codex", "grok", "opencode", "kimi", "cursor", "muse", "simulate"]) {
+      assert.equal(
+        list.find((p) => p.id === id).supportsSteer,
+        false,
+        `${id} must not advertise live-turn steering`,
+      );
+    }
   });
 
   it("listProviders includes simulate only when CODER_SIMULATE=1", () => {

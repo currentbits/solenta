@@ -14,6 +14,7 @@ import { useState } from "react";
 import { mount, unmountAll, inAct } from "./support/dom.ts";
 import { Composer } from "../src/components/Composer";
 import {
+  setComposerBusyAction,
   setLastReasoningEffort,
   setTranscriptViewMode,
   setVerboseToolCards,
@@ -56,6 +57,7 @@ const CLAUDE_WITH_INFO: ProviderInfo = {
   ],
   efforts: ["low", "medium", "high", "xhigh", "max"],
   permissionModes: ["default", "acceptEdits", "plan", "bypassPermissions"],
+  supportsSteer: true,
 };
 
 const CODEX: ProviderInfo = {
@@ -145,6 +147,7 @@ const WORKFLOWS: WorkflowTemplateInfo[] = [
 
 interface Harness {
   sends: string[];
+  steers: boolean[];
   builds: { prompt: string; templateId: string }[];
   modes: PermissionMode[];
   providerSets: { provider?: string; model?: string | null }[];
@@ -165,6 +168,7 @@ interface Harness {
 function makeHarness(provider = "claude"): Harness {
   return {
     sends: [],
+    steers: [],
     builds: [],
     modes: [],
     providerSets: [],
@@ -250,8 +254,9 @@ function composer(
       hasWorktree={over.hasWorktree ?? true}
       disabled={over.disabled ?? false}
       busy={over.busy ?? false}
-      onSend={(prompt) => {
+      onSend={(prompt, _attachments, opts) => {
         harness.sends.push(prompt);
+        harness.steers.push(opts?.steer === true);
       }}
       onBuild={(prompt, templateId) => {
         harness.builds.push({ prompt, templateId });
@@ -432,6 +437,7 @@ afterEach(() => {
   unmountAll();
   setTranscriptViewMode("normal");
   setVerboseToolCards(false);
+  setComposerBusyAction("queue");
   restoreSpeechMedia();
   delete (window as { coder?: unknown }).coder;
 });
@@ -1924,6 +1930,63 @@ describe("Composer while a run is active (busy)", () => {
     m.unmount();
   });
 
+  it("offers Queue or Steer on a steer-capable provider", async () => {
+    const h = makeHarness();
+    const m = await mount(composer(h, { busy: true }));
+    const queue = m.query('[data-steer-action="queue"]') as HTMLButtonElement;
+    const steer = m.query('[data-steer-action="steer"]') as HTMLButtonElement;
+    assert.ok(queue, "Queue must be offered mid-run");
+    assert.ok(steer, "Steer must be offered on Claude");
+    assert.equal(queue.getAttribute("aria-pressed"), "true");
+    assert.equal(steer.getAttribute("aria-pressed"), "false");
+
+    await m.type(m.query("textarea"), "keep going that way");
+    await m.click(m.query('button[aria-label="Send"]'));
+    assert.deepEqual(h.sends, ["keep going that way"]);
+    assert.deepEqual(h.steers, [false], "Queue is the default send");
+
+    await m.type(m.query("textarea"), "no, do X instead");
+    await m.click(steer);
+    assert.equal(steer.getAttribute("aria-pressed"), "true");
+    await m.click(m.query('button[aria-label="Send"]'));
+    assert.deepEqual(h.sends, ["keep going that way", "no, do X instead"]);
+    assert.deepEqual(h.steers, [false, true]);
+    m.unmount();
+  });
+
+  it("hides Steer when the provider cannot take stdin mid-turn", async () => {
+    const h = makeHarness("codex");
+    const m = await mount(composer(h, { busy: true, provider: "codex" }));
+    assert.equal(m.query("[data-steer-toggle]"), null);
+    await m.type(m.query("textarea"), "follow up");
+    await m.click(m.query('button[aria-label="Send"]'));
+    assert.deepEqual(h.sends, ["follow up"]);
+    assert.deepEqual(h.steers, [false]);
+    m.unmount();
+  });
+
+  it("⌘⇧Enter always steers when the provider can", async () => {
+    const h = makeHarness();
+    const m = await mount(composer(h, { busy: true }));
+    const ta = m.query("textarea") as HTMLTextAreaElement;
+    await m.type(ta, "redirect now");
+    await inAct(() => {
+      ta.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: "Enter",
+          metaKey: true,
+          shiftKey: true,
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+    });
+    await m.flush();
+    assert.deepEqual(h.sends, ["redirect now"]);
+    assert.deepEqual(h.steers, [true]);
+    m.unmount();
+  });
+
   it("still locks what cannot be queued", async () => {
     const h = makeHarness();
     const m = await mount(composer(h, { busy: true }));
@@ -2690,6 +2753,7 @@ describe("Composer keyboard hints (issue #364)", () => {
     const hints = m.query("[data-kbd-hints]");
     assert.ok(hints);
     assert.match(hints!.textContent || "", /⌘Enter queue/);
+    assert.match(hints!.textContent || "", /⌘⇧Enter steer/);
     assert.match(hints!.textContent || "", /Esc stop/);
     m.unmount();
   });

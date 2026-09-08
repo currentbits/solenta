@@ -103,13 +103,16 @@ import {
   type TranscriptViewMode,
 } from "../focusView";
 import {
+  getComposerBusyAction,
   getLastReasoningEffort,
   getPasteCardsEnabled,
   getTranscriptViewMode,
+  setComposerBusyAction,
   setLastReasoningEffort,
   setTranscriptViewMode,
   useComposerVimEnabled,
   useTranscriptViewMode,
+  type ComposerBusyAction,
 } from "../uiPrefs";
 import {
   INITIAL_VIM,
@@ -216,8 +219,12 @@ interface ComposerProps {
    * Controls that only make sense between runs stay locked.
    */
   busy?: boolean;
-  /** Single session turn (send arrow + ⌘Enter). */
-  onSend: (prompt: string, attachments?: AttachmentInfo[]) => void | Promise<void>;
+  /** Single session turn (send arrow + ⌘Enter). While busy, `steer: true` injects into the live turn. */
+  onSend: (
+    prompt: string,
+    attachments?: AttachmentInfo[],
+    opts?: { steer?: boolean },
+  ) => void | Promise<void>;
   /**
    * Text pushed back toward the draft from outside (a cancelled queued
    * follow-up, issue #364). Applied at most once, and only onto an EMPTY
@@ -535,6 +542,9 @@ export const Composer = memo(function Composer({
   const liveThreadIdRef = useRef(threadId);
   liveThreadIdRef.current = threadId;
   const [sending, setSending] = useState(false);
+  const [busyAction, setBusyAction] = useState<ComposerBusyAction>(
+    getComposerBusyAction,
+  );
   const [localError, setLocalError] = useState<string | null>(null);
   const hasSpeech = Boolean(coderSpeech());
   const [speech, setSpeech] = useState<SpeechStatus | null>(null);
@@ -1098,6 +1108,7 @@ export const Composer = memo(function Composer({
   const sessionLocked = Boolean(sessionId);
   const providerName = providerDisplayName(provider, providers);
   const currentProviderInfo = providers.find((p) => p.id === provider);
+  const canSteer = Boolean(busy && currentProviderInfo?.supportsSteer);
   const providerRows = buildProviderRows(
     providers,
     provider,
@@ -1454,8 +1465,23 @@ export const Composer = memo(function Composer({
         await onDelegate(delegation.provider, delegation.task);
         return;
       }
-      await onSend(prompt, attachments.length ? attachments : undefined);
+      await onSend(
+        prompt,
+        attachments.length ? attachments : undefined,
+        canSteer && busyAction === "steer" ? { steer: true } : undefined,
+      );
     }, "Failed to start run");
+  };
+
+  const submitSteer = () => {
+    if (!canSend) return;
+    void runAction(async (prompt) => {
+      await onSend(
+        prompt,
+        attachments.length ? attachments : undefined,
+        { steer: true },
+      );
+    }, "Failed to steer");
   };
 
   const submitBtw = () => {
@@ -1637,6 +1663,12 @@ export const Composer = memo(function Composer({
     ) {
       e.preventDefault();
       submitBtw();
+      return;
+    }
+    if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === "Enter") {
+      e.preventDefault();
+      if (canSteer) submitSteer();
+      else submitSend();
       return;
     }
     if ((e.metaKey || e.ctrlKey || e.shiftKey) && e.key === "Enter") {
@@ -2195,7 +2227,7 @@ export const Composer = memo(function Composer({
           hidden
         />
         <div ref={hintsRef} className={styles.hints} data-kbd-hints="" hidden>
-          {`⌘Enter ${busy ? "queue" : "send"} · ⌥Enter side question · ⌘S stash${busy ? " · Esc stop" : ""}${vimEnabled ? ` · VIM ${vimMode}` : ""}`}
+          {`⌘Enter ${canSteer && busyAction === "steer" ? "steer" : busy ? "queue" : "send"} · ⌥Enter side question · ⌘S stash${canSteer ? " · ⌘⇧Enter steer" : ""}${busy ? " · Esc stop" : ""}${vimEnabled ? ` · VIM ${vimMode}` : ""}`}
         </div>
         <div className={styles.controls}>
           <div className={styles.pills}>
@@ -3159,6 +3191,39 @@ export const Composer = memo(function Composer({
             )}
           </div>
           <div className={styles.sendCluster}>
+          {canSteer && (
+            <div
+              className={styles.steerToggle}
+              role="group"
+              aria-label="Follow-up while this run is live"
+              data-steer-toggle=""
+            >
+              <button
+                type="button"
+                aria-pressed={busyAction === "queue"}
+                data-steer-action="queue"
+                title="Queue for when this run lands (⌘Enter)"
+                onClick={() => {
+                  setBusyAction("queue");
+                  setComposerBusyAction("queue");
+                }}
+              >
+                Queue
+              </button>
+              <button
+                type="button"
+                aria-pressed={busyAction === "steer"}
+                data-steer-action="steer"
+                title="Steer the live turn (⌘Enter). ⌘⇧Enter always steers."
+                onClick={() => {
+                  setBusyAction("steer");
+                  setComposerBusyAction("steer");
+                }}
+              >
+                Steer
+              </button>
+            </div>
+          )}
           <div className={styles.modeWrap} data-transcript-view="">
             <button
               type="button"
@@ -3235,11 +3300,15 @@ export const Composer = memo(function Composer({
             className={styles.send}
             aria-label="Send"
             disabled={!canSend}
-            data-queues={busy ? "" : undefined}
+            data-queues={busy && !(canSteer && busyAction === "steer") ? "" : undefined}
             title={
-              busy
-                ? "Queue for when this run lands (⌘Enter). ⌥Enter asks a side question."
-                : "Send (⌘Enter). ⌥Enter asks a side question."
+              canSteer && busyAction === "steer"
+                ? "Steer the live turn (⌘Enter). ⌘⇧Enter also steers."
+                : busy
+                  ? canSteer
+                    ? "Queue for when this run lands (⌘Enter). ⌘⇧Enter steers."
+                    : "Queue for when this run lands (⌘Enter). ⌥Enter asks a side question."
+                  : "Send (⌘Enter). ⌥Enter asks a side question."
             }
             onClick={() => submitSend()}
           >

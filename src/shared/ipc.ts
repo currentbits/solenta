@@ -1126,6 +1126,12 @@ export interface ChatMessage {
    * "Not delivered" events stay unset so they remain human retries.
    */
   fromNotice?: boolean;
+  /**
+   * Mid-turn steering (issue #156). Set on the user row `runs.steer`
+   * appends onto the current runId. Not a new turn and not a queued
+   * follow-up; the transcript paints a Steered label.
+   */
+  steer?: boolean;
 }
 
 /** Cumulative session usage across turns of a thread. */
@@ -2210,6 +2216,12 @@ export interface ProviderInfo {
    * The composer hides the Search pill when this is missing or false.
    */
   supportsSearch?: boolean;
+  /**
+   * True when a live turn can take mid-run guidance on stdin (issue #156).
+   * Claude stream-json does; one-shot `-p` / `exec --json` CLIs do not.
+   * The composer hides Steer when this is missing or false.
+   */
+  supportsSteer?: boolean;
   /**
    * Permission modes this adapter actually honours (issue #177). The composer
    * only offers these instead of silently ignoring a pick. Missing means the
@@ -4040,6 +4052,18 @@ export interface CoderApi {
        * does not reset the auto-turn cap or look like a new human prompt.
        */
       fromNotice?: boolean;
+    }): Promise<{ runId: string }>;
+    /**
+     * Inject guidance into a live turn (issue #156). The provider must
+     * advertise `supportsSteer` (Claude stream-json stdin). Appends a
+     * user row on the current runId with `steer: true` — not a second
+     * run, not a queued follow-up. Rejects when no live run, the
+     * process is stopping, or the CLI cannot take stdin.
+     */
+    steer(input: {
+      threadId: string;
+      prompt: string;
+      attachments?: AttachmentInfo[];
     }): Promise<{ runId: string }>;
     /**
      * Starts an orchestrated multi-phase workflow run (the Build action)

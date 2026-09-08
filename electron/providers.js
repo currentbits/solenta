@@ -64,6 +64,9 @@ const { posixQuote } = require("./ssh.js");
  *   config.toml flip in kimi.js); absent means buildArgs emits the flag
  * @property {boolean} [supportsSearch] - CLI accepts `-c web_search=live`
  *   (live web search). Absent/false hides the composer Search pill.
+ * @property {boolean} [supportsSteer] - live process accepts a second stdin
+ *   user message as mid-turn guidance (Claude `--input-format stream-json`).
+ *   Absent/false keeps the composer queue-only while a run is active.
  * @property {Array<"default"|"acceptEdits"|"plan"|"bypassPermissions">} permissionModes
  *   Modes this adapter actually honours (changes argv / CLI behaviour).
  *   The composer only offers these; setPermissionMode rejects the rest.
@@ -210,6 +213,11 @@ const PROVIDERS = [
     binEnv: "CODER_CLAUDE_BIN",
     defaultBin: "claude",
     supportsResume: true,
+    // Interactive stream-json stdin: a second user line is mid-turn
+    // guidance (docs: "providing guidance to the model while it is
+    // processing a request"). Codex exec --json and one-shot -p CLIs
+    // have no equivalent, so they stay queue-only.
+    supportsSteer: true,
     models: [
       "claude-fable-5",
       "claude-opus-5",
@@ -1647,6 +1655,7 @@ function listProviders(opts = {}) {
       modelInfo: (entry.modelInfo || []).map((m) => ({ ...m })),
       efforts: (entry.efforts || []).slice(),
       supportsSearch: entry.supportsSearch === true,
+      supportsSteer: entry.supportsSteer === true,
       permissionModes: honouredPermissionModes(entry),
     };
     out.push(info);
@@ -1662,6 +1671,7 @@ function listProviders(opts = {}) {
       modelInfo: [],
       efforts: [],
       supportsSearch: false,
+      supportsSteer: false,
       permissionModes: honouredPermissionModes(SIMULATE_ENTRY),
     });
   }
