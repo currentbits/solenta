@@ -124,6 +124,12 @@ function retireAgent(ctx, threadId) {
   if (typeof ctx.runner.disposeClaudeSession === "function") {
     ctx.runner.disposeClaudeSession(threadId);
   }
+  // #315: leftover npm run dev is its own process group, not the CLI's.
+  try {
+    devservers.stop(threadId);
+  } catch {
+    // no sidecar
+  }
 }
 
 /**

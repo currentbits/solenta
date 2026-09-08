@@ -65,6 +65,7 @@ const { wrapCommand } = require("./ssh.js");
 const { wslTarget } = require("./wsl.js");
 const { resolveSandbox } = require("./sandbox.js");
 const { killTree } = require("./proc.js");
+const { stop: stopDevServer } = require("./devservers.js");
 const {
   runVerifyCommand,
   buildFixPrompt,
@@ -704,7 +705,6 @@ function createRunner(opts) {
     tickMs = 700,
     setIntervalFn = setInterval,
     clearIntervalFn = clearInterval,
-    now: nowFn = () => Date.now(),
     userDataPath = "",
     getMemoryStatus: getMemStatus = getMemoryStatus,
     askComplete = ask.completeAsk,
@@ -8262,6 +8262,15 @@ function createRunner(opts) {
     const crew = cascadeCrew
       ? await stopCrew(String(threadId), seen)
       : { stopped: 0, traced: false };
+    // #315: Solenta-managed `npm run dev` is its own process group, so
+    // killTree on the agent CLI never reaches it. Stop it here for both
+    // live and idle threads. Crew workers keep their own servers unless
+    // stopCrew walked them above.
+    try {
+      stopDevServer(String(threadId));
+    } catch {
+      // no sidecar
+    }
     if (crew.stopped > 0) {
       const own = active.get(threadId);
       appendMessage(

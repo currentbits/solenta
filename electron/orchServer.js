@@ -29,6 +29,7 @@ const {
   planboardNoteFor,
   refreshWorkerSnapshot,
 } = require("./services.js");
+const { stop: stopDevServer } = require("./devservers.js");
 const {
   decideCrossThreadSend,
   attributedPrompt,
@@ -366,6 +367,12 @@ function createToolHandlers(deps) {
   function retireAgent(threadId) {
     if (typeof runner.disposeClaudeSession === "function") {
       runner.disposeClaudeSession(threadId);
+    }
+    // #315: same sidecar cleanup as ipc.retireAgent.
+    try {
+      stopDevServer(threadId);
+    } catch {
+      // no sidecar
     }
   }
 
