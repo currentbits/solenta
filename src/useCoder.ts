@@ -83,6 +83,7 @@ import type {
   ThreadSummaryInfo,
   CrewTaskView,
   CrewIntegration,
+  MergeLaneBeat,
   UpdateStatus,
   UsageReport,
   VerifyResult,

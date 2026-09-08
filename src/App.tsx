@@ -22,7 +22,7 @@ import { UsageView, type UsageReportControls } from "./components/UsageView";
 import { FleetView } from "./components/FleetView";
 import { DigestView } from "./components/DigestView";
 import { AgentsPanel } from "./components/AgentsPanel";
-import { ClaimedLanesHeartbeat } from "./components/LaneHeartbeat";
+import { ClaimedLanesHeartbeat, LaneHeartbeat } from "./components/LaneHeartbeat";
 import {
   SettingsModal,
   type SettingsPane,
@@ -333,7 +333,6 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     updateAutomation,
     removeAutomation,
     runAutomationNow,
-    loading,
   } = useCoder();
 
   useEffect(() => {
@@ -1720,6 +1719,11 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
             </div>
           ) : (
           <ErrorBoundary pane="Agents panel">
+            <LaneHeartbeat
+              threadId={selectedThreadId}
+              claimed={Boolean(visibleDetail?.thread.lane)}
+              heartbeatLane={heartbeatLane}
+            />
             <AgentsPanel
         onCollapse={narrow ? undefined : collapseAgents}
         workflow={visibleDetail?.workflow ?? null}

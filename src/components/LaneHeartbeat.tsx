@@ -1,14 +1,8 @@
 import { useEffect } from "react";
+import type { MergeLaneBeat } from "../shared/ipc";
 
 /** How often the lead UI stamps a claimed lane while it is on screen. */
 export const LANE_HEARTBEAT_MS = 15_000;
-
-type LaneBeat = {
-  n: number;
-  port: number;
-  claimedAt: number;
-  lastBeat: number;
-};
 
 type HeartbeatProject = {
   id: string;
@@ -29,7 +23,7 @@ export function LaneHeartbeat({
   claimed: boolean;
   heartbeatLane: (input: {
     threadId: string;
-  }) => Promise<LaneBeat | null>;
+  }) => Promise<MergeLaneBeat | null>;
 }) {
   useEffect(() => {
     if (!threadId || !claimed) return;
@@ -60,7 +54,7 @@ export function ClaimedLanesHeartbeat({
   listLanes: (input: { projectId: string }) => Promise<{ threadId: string }[]>;
   heartbeatLane: (input: {
     threadId: string;
-  }) => Promise<LaneBeat | null>;
+  }) => Promise<MergeLaneBeat | null>;
 }) {
   const localIds = projects
     .filter((p) => p.id && !p.remoteHost)

@@ -19,6 +19,7 @@ const { runKimi, materializeKimiHome, deployKimiGuardrailOverlay } = kimiParse;
 const { materializeGrokHome } = require("./grok.js");
 const cursorParse = require("./cursor.js");
 const { runCursor, materializeCursorHome } = cursorParse;
+const { heartbeatLane } = require("./mergeQueue.js");
 const {
   materializeCursorPinPlugin,
   cursorPinPluginDir,
@@ -711,7 +712,9 @@ function createRunner(opts) {
     // Null until main has finished simulator crash recovery, so it is resolved
     // per call rather than captured.
     getIosSimulator = () => null,
+    now: nowOpt,
   } = opts;
+  const nowFn = typeof nowOpt === "function" ? nowOpt : () => Date.now();
 
   /**
    * @type {Map<string, object>}
@@ -7965,6 +7968,14 @@ function createRunner(opts) {
       { touch: true },
     );
 
+    if (thread.lane) {
+      try {
+        heartbeatLane({ store, threadId, now: nowFn() });
+      } catch {
+        // never break a run for a lane stamp
+      }
+    }
+
     // A creation-time worktree starts on the placeholder branch
     // coder/new-thread-<id>; once the first prompt promotes the title, the
     // branch follows (T3-style). Best-effort: never throws, never blocks.
@@ -8529,10 +8540,33 @@ function createRunner(opts) {
     }
   }
 
+  /**
+   * Reset lastBeat on every active lane thread so the 30-minute watchdog
+   * does not recycle a live run. Idle / wedged lanes are left alone.
+   * @param {{ now?: number }} [opts]
+   */
+  function heartbeatActiveLanes(opts) {
+    const at = opts && opts.now != null ? opts.now : nowFn();
+    for (const threadId of active.keys()) {
+      const live = store.getThread(threadId);
+      if (!live || !live.lane) continue;
+      try {
+        heartbeatLane({ store, threadId, now: at });
+      } catch {
+        // never break the runner
+      }
+    }
+  }
+
   // Native timer (not setIntervalFn): tests replace that hook for sim ticks.
   const stallTimer = setInterval(() => {
     try {
       checkStalls();
+    } catch {
+      // never break the runner
+    }
+    try {
+      heartbeatActiveLanes();
     } catch {
       // never break the runner
     }
@@ -8569,6 +8603,7 @@ function createRunner(opts) {
     deliverNotice,
     appendInbound,
     checkStalls,
+    heartbeatActiveLanes,
     drainQueued,
     refreshDetail,
   };

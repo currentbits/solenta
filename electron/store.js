@@ -1178,6 +1178,11 @@ function normalizeIntegrationLanded(raw) {
   return { at, sha, via };
 }
 
+/**
+ * Crew merge-queue thread ids (#346). Omitted when empty.
+ * @param {unknown} raw
+ * @returns {string[] | undefined}
+ */
 function normalizeMergeQueue(raw) {
   if (!Array.isArray(raw) || raw.length === 0) return undefined;
   const out = [];
