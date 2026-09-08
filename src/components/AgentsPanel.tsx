@@ -20,6 +20,10 @@ import type {
   DevServerState,
   Hypothesis,
   LocalServerInfo,
+  MergeLaneClaim,
+  MergeLaneInfo,
+  MergeLanePreview,
+  MergeLaneRestore,
   McpCatalogEntry,
   McpImportPreview,
   McpInstallRequest,
@@ -282,6 +286,14 @@ interface AgentsPanelProps {
   onFork?: (
     opts?: { provider?: string; model?: string | null },
   ) => void | Promise<void | ThreadInfo | null>;
+  /** Merge-queue lanes (#346). Absent hides the Environment Lanes card. */
+  claimLane?: (input: { threadId: string }) => Promise<MergeLaneClaim>;
+  listLanes?: (input: { projectId: string }) => Promise<MergeLaneInfo[]>;
+  previewLane?: (input: {
+    projectId: string;
+    lane: number;
+  }) => Promise<MergeLanePreview>;
+  restorePreview?: (input: { projectId: string }) => Promise<MergeLaneRestore>;
   /** Wide-window Hide control. Absent on the narrow drawer (issue #645). */
   onCollapse?: () => void;
 }
@@ -1815,6 +1827,201 @@ function CheckpointsCard({
   );
 }
 
+function laneFromClaim(
+  threadId: string,
+  claimed: MergeLaneClaim,
+): MergeLaneInfo {
+  return {
+    n: claimed.n,
+    threadId,
+    port: claimed.port,
+    path: claimed.path,
+    branch: claimed.branch,
+    claimedAt: Date.now(),
+    lastBeat: Date.now(),
+  };
+}
+
+export function MergeQueueCard({
+  threadId,
+  projectId,
+  remote,
+  claimLane,
+  listLanes,
+  previewLane,
+  restorePreview,
+}: {
+  threadId: string | null;
+  projectId: string | null;
+  remote?: boolean;
+  claimLane: (input: { threadId: string }) => Promise<MergeLaneClaim>;
+  listLanes: (input: { projectId: string }) => Promise<MergeLaneInfo[]>;
+  previewLane: (input: {
+    projectId: string;
+    lane: number;
+  }) => Promise<MergeLanePreview>;
+  restorePreview: (input: { projectId: string }) => Promise<MergeLaneRestore>;
+}) {
+  const [lanes, setLanes] = useState<MergeLaneInfo[]>([]);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const refresh = useCallback(async () => {
+    if (!projectId) {
+      setLanes([]);
+      return;
+    }
+    try {
+      setLanes(await listLanes({ projectId }));
+      setError(null);
+    } catch (err) {
+      const msg =
+        err instanceof Error && err.message
+          ? err.message
+          : "Failed to load lanes";
+      setError(msg);
+    }
+  }, [projectId, listLanes]);
+
+  useEffect(() => {
+    void refresh();
+  }, [refresh, threadId]);
+
+  if (remote || !projectId) return null;
+
+  const mine = threadId
+    ? lanes.find((row) => row.threadId === threadId)
+    : undefined;
+
+  const run = async (fn: () => Promise<void>) => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      await fn();
+      setError(null);
+    } catch (err) {
+      const msg =
+        err instanceof Error && err.message ? err.message : "Lane action failed";
+      setError(msg);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <section className={styles.gitCard} data-lanes="">
+      <div className={styles.gitCardLabel}>
+        <svg {...LABEL_ICON_PROPS} className={styles.labelIcon}>
+          <path d="M3 4.5h6.5" />
+          <path d="M3 8h10" />
+          <path d="M3 11.5h6.5" />
+          <circle cx="12.5" cy="4.5" r="1.4" />
+          <circle cx="12.5" cy="11.5" r="1.4" />
+        </svg>
+        Lanes
+      </div>
+      {lanes.length > 0 ? (
+        <div className={styles.laneRow} data-lane-list="">
+          {lanes.map((row) => (
+            <span
+              key={`${row.n}:${row.threadId}`}
+              className={styles.laneChip}
+              data-lane-chip={String(row.n)}
+              data-lane-current={
+                row.threadId === threadId ? "true" : undefined
+              }
+            >
+              lane {row.n}
+              <span className={styles.lanePort}>PORT {row.port}</span>
+            </span>
+          ))}
+        </div>
+      ) : (
+        <p className={styles.gitHint} data-lanes-empty="">
+          No claimed lanes
+        </p>
+      )}
+      <div className={styles.gitActions}>
+        {threadId && !mine ? (
+          <button
+            type="button"
+            className={styles.gitBtn}
+            data-lane-claim=""
+            disabled={busy}
+            onClick={() =>
+              void run(async () => {
+                const claimed = await claimLane({ threadId });
+                try {
+                  const next = await listLanes({ projectId });
+                  if (next.some((row) => row.n === claimed.n)) {
+                    setLanes(next);
+                    return;
+                  }
+                } catch {
+                  // Keep the claim receipt when list is stale or empty.
+                }
+                setLanes((prev) => {
+                  const rest = prev.filter(
+                    (row) => row.threadId !== threadId && row.n !== claimed.n,
+                  );
+                  return [...rest, laneFromClaim(threadId, claimed)].sort(
+                    (a, b) => a.n - b.n,
+                  );
+                });
+              })
+            }
+          >
+            Claim lane
+          </button>
+        ) : null}
+        {lanes.map((row) => (
+          <button
+            key={`preview-${row.n}`}
+            type="button"
+            className={styles.gitBtn}
+            data-lane-preview={String(row.n)}
+            disabled={busy}
+            onClick={() =>
+              void run(async () => {
+                await previewLane({ projectId, lane: row.n });
+              })
+            }
+          >
+            Preview {row.n}
+          </button>
+        ))}
+        <button
+          type="button"
+          className={styles.gitBtn}
+          data-lane-restore=""
+          disabled={busy}
+          onClick={() =>
+            void run(async () => {
+              await restorePreview({ projectId });
+            })
+          }
+        >
+          Restore
+        </button>
+      </div>
+      {error ? (
+        <div className={styles.cardError} role="alert" data-lane-error="">
+          <span className={styles.cardErrorText}>{error}</span>
+          <button
+            type="button"
+            className={styles.cardErrorDismiss}
+            onClick={() => setError(null)}
+            aria-label="Dismiss error"
+            title="Dismiss error"
+          >
+            ×
+          </button>
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
 export function GitTab({
   thread,
   project,
@@ -1839,6 +2046,10 @@ export function GitTab({
   prsActive,
   providers = [],
   onFork,
+  claimLane,
+  listLanes,
+  previewLane,
+  restorePreview,
 }: {
   thread: ThreadInfo | null;
   project: ProjectInfo | null;
@@ -1854,6 +2065,13 @@ export function GitTab({
   gitPull?: (threadId: string) => Promise<GitPullResult>;
   /** threads:summaries passthrough powering the Recap card. */
   listThreadSummaries?: () => Promise<ThreadSummaryInfo[]>;
+  claimLane?: (input: { threadId: string }) => Promise<MergeLaneClaim>;
+  listLanes?: (input: { projectId: string }) => Promise<MergeLaneInfo[]>;
+  previewLane?: (input: {
+    projectId: string;
+    lane: number;
+  }) => Promise<MergeLanePreview>;
+  restorePreview?: (input: { projectId: string }) => Promise<MergeLaneRestore>;
   listDevScripts: (threadId: string) => Promise<string[]>;
   startDevServer: (threadId: string, script: string) => Promise<DevServerState>;
   stopDevServer: (threadId: string) => Promise<DevServerState>;
@@ -2044,6 +2262,20 @@ export function GitTab({
           onViewChanges={onViewChanges}
         />
       ),
+      lanes:
+        remote || !claimLane || !listLanes || !previewLane || !restorePreview
+          ? null
+          : (
+            <MergeQueueCard
+              threadId={thread?.id ?? null}
+              projectId={project?.id ?? null}
+              remote={remote}
+              claimLane={claimLane}
+              listLanes={listLanes}
+              previewLane={previewLane}
+              restorePreview={restorePreview}
+            />
+          ),
       display: <DisplayPrefsCard />,
       remote: remote ? (
         <section className={styles.gitCard} data-remote-unavailable="">
@@ -3317,6 +3549,10 @@ export const AgentsPanel = memo(function AgentsPanel({
   onOpenInsights,
   onOpenDigest,
   onFork,
+  claimLane,
+  listLanes,
+  previewLane,
+  restorePreview,
   onCollapse,
 }: AgentsPanelProps) {
   const [tab, setTab] = useState<PanelTab>(() =>
@@ -3447,6 +3683,10 @@ export const AgentsPanel = memo(function AgentsPanel({
           onOpenPrs={onOpenPrs}
           prsActive={activeView === "prs"}
           providers={providers}
+          claimLane={claimLane}
+          listLanes={listLanes}
+          previewLane={previewLane}
+          restorePreview={restorePreview}
           onFork={onFork}
         />
       ) : tab === "memory" ? (

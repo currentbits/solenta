@@ -983,6 +983,44 @@
   min-width: 0;
 }
 
+.laneRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.laneChip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 10px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 550;
+}
+
+.laneChip[data-lane-current="true"] {
+  color: var(--text);
+  border-color: var(--text-muted);
+  background: var(--overlay-soft);
+}
+
+.lanePort {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--text-dim);
+}
+
+.laneChip[data-lane-current="true"] .lanePort {
+  color: var(--text-muted);
+}
+
 .gitBtn {
   display: inline-flex;
   align-items: center;

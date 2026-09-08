@@ -1,0 +1,205 @@
+/**
+ * Lead-facing merge-queue chips (#346): claim a numbered lane, preview it
+ * onto the main checkout, restore. Show lane n and PORT. Promote stays
+ * git.mergeWorktree (not on this card).
+ *
+ * Run: node --import=./test/support/render.mjs --test test/mergeQueueChips.test.tsx
+ */
+import assert from "node:assert/strict";
+import { describe, it } from "node:test";
+import { mount } from "./support/dom.ts";
+import { MergeQueueCard } from "../src/components/AgentsPanel";
+import type {
+  MergeLaneClaim,
+  MergeLaneInfo,
+  MergeLanePreview,
+  MergeLaneRestore,
+} from "../src/shared/ipc";
+
+function lane(over: Partial<MergeLaneInfo> = {}): MergeLaneInfo {
+  return {
+    n: 1,
+    threadId: "t1",
+    port: 3001,
+    path: "/tmp/lane-1",
+    branch: "lane/1",
+    claimedAt: 1,
+    lastBeat: 1,
+    ...over,
+  };
+}
+
+function card(opts: {
+  threadId?: string | null;
+  projectId?: string | null;
+  remote?: boolean;
+  lanes?: MergeLaneInfo[];
+  claim?: (input: { threadId: string }) => Promise<MergeLaneClaim>;
+  list?: (input: { projectId: string }) => Promise<MergeLaneInfo[]>;
+  preview?: (input: {
+    projectId: string;
+    lane: number;
+  }) => Promise<MergeLanePreview>;
+  restore?: (input: { projectId: string }) => Promise<MergeLaneRestore>;
+}) {
+  let lanes = opts.lanes ?? [];
+  return (
+    <MergeQueueCard
+      threadId={opts.threadId === undefined ? "t1" : opts.threadId}
+      projectId={opts.projectId === undefined ? "p1" : opts.projectId}
+      remote={opts.remote}
+      claimLane={
+        opts.claim ??
+        (async (input) => {
+          const claimed = {
+            n: 1,
+            port: 3001,
+            path: "/tmp/lane-1",
+            branch: "lane/1",
+          };
+          lanes = [
+            lane({
+              n: claimed.n,
+              port: claimed.port,
+              threadId: input.threadId,
+              path: claimed.path,
+              branch: claimed.branch,
+            }),
+          ];
+          return claimed;
+        })
+      }
+      listLanes={opts.list ?? (async () => lanes)}
+      previewLane={
+        opts.preview ??
+        (async (input) => ({
+          lane: input.lane,
+          sha: "abc",
+          files: ["src/a.ts"],
+          path: "/tmp/repo",
+        }))
+      }
+      restorePreview={
+        opts.restore ?? (async () => ({ restored: true, sha: "abc" }))
+      }
+    />
+  );
+}
+
+describe("MergeQueueCard (#346)", () => {
+  it("claims a numbered lane and shows lane n and PORT", async () => {
+    const claims: { threadId: string }[] = [];
+    const m = await mount(
+      card({
+        lanes: [],
+        claim: async (input) => {
+          claims.push(input);
+          return { n: 2, port: 3002, path: "/tmp/lane-2", branch: "lane/2" };
+        },
+        list: async () => [],
+      }),
+    );
+    await m.flush();
+    const claimBtn = m.query("[data-lane-claim]");
+    assert.ok(claimBtn, "Claim chip is present when the thread has no lane");
+    await m.click(claimBtn);
+    assert.deepEqual(claims, [{ threadId: "t1" }]);
+    const chip = m.query("[data-lane-chip='2']");
+    assert.ok(chip, "claimed lane chip");
+    assert.match((chip!.textContent || "").replace(/\s+/g, " "), /lane 2/);
+    assert.match((chip!.textContent || "").replace(/\s+/g, " "), /PORT 3002/);
+    m.unmount();
+  });
+
+  it("lists claimed lanes with lane n and PORT", async () => {
+    const m = await mount(
+      card({
+        lanes: [
+          lane({ n: 1, port: 3001, threadId: "t1" }),
+          lane({ n: 3, port: 3003, threadId: "t9" }),
+        ],
+      }),
+    );
+    await m.flush();
+    const one = m.query("[data-lane-chip='1']");
+    const three = m.query("[data-lane-chip='3']");
+    assert.ok(one && three, "both lane chips");
+    assert.match((one!.textContent || "").replace(/\s+/g, " "), /lane 1/);
+    assert.match((one!.textContent || "").replace(/\s+/g, " "), /PORT 3001/);
+    assert.match((three!.textContent || "").replace(/\s+/g, " "), /lane 3/);
+    assert.match((three!.textContent || "").replace(/\s+/g, " "), /PORT 3003/);
+    assert.equal(one!.getAttribute("data-lane-current"), "true");
+    assert.equal(three!.getAttribute("data-lane-current"), null);
+    assert.equal(m.query("[data-lane-claim]"), null);
+    m.unmount();
+  });
+
+  it("previews a lane onto the main checkout", async () => {
+    const previews: { projectId: string; lane: number }[] = [];
+    const m = await mount(
+      card({
+        lanes: [lane()],
+        preview: async (input) => {
+          previews.push(input);
+          return {
+            lane: input.lane,
+            sha: "def",
+            files: ["src/a.ts"],
+            path: "/tmp/repo",
+          };
+        },
+      }),
+    );
+    await m.flush();
+    const previewBtn = m.query("[data-lane-preview='1']");
+    assert.ok(previewBtn, "Preview chip");
+    await m.click(previewBtn);
+    assert.deepEqual(previews, [{ projectId: "p1", lane: 1 }]);
+    m.unmount();
+  });
+
+  it("restores the main checkout after a preview", async () => {
+    const restores: { projectId: string }[] = [];
+    const m = await mount(
+      card({
+        lanes: [lane()],
+        restore: async (input) => {
+          restores.push(input);
+          return { restored: true, sha: "abc" };
+        },
+      }),
+    );
+    await m.flush();
+    const restoreBtn = m.query("[data-lane-restore]");
+    assert.ok(restoreBtn, "Restore chip");
+    await m.click(restoreBtn);
+    assert.deepEqual(restores, [{ projectId: "p1" }]);
+    m.unmount();
+  });
+
+  it("does not offer promote or mergeWorktree", async () => {
+    const m = await mount(card({ lanes: [lane()] }));
+    await m.flush();
+    assert.equal(m.query("[data-lane-promote]"), null);
+    assert.equal(m.query("[data-merge-worktree]"), null);
+    const labels = (m.text() || "").toLowerCase();
+    assert.ok(!labels.includes("promote"));
+    assert.ok(!labels.includes("merge worktree"));
+    m.unmount();
+  });
+
+  it("is hidden on a remote project", async () => {
+    const m = await mount(card({ remote: true, lanes: [lane()] }));
+    await m.flush();
+    assert.equal(m.query("[data-lanes]"), null);
+    assert.equal(m.query("[data-lane-claim]"), null);
+    m.unmount();
+  });
+
+  it("is hidden without a project", async () => {
+    const m = await mount(card({ projectId: null }));
+    await m.flush();
+    assert.equal(m.query("[data-lanes]"), null);
+    m.unmount();
+  });
+});

@@ -39,6 +39,7 @@ const {
   previewLane,
   restorePreview,
   recycleWedgedLanes,
+  laneEnv,
   heartbeatLane,
 } = require("./mergeQueue.js");
 const devservers = require("./devservers.js");
@@ -1840,12 +1841,20 @@ const IPC_HANDLERS = {
   "devserver:start": async (ctx, input) => {
     const threadId = input && input.threadId;
     const script = input && input.script;
-    const { root } = resolveDevServerRoot(ctx, threadId);
+    const { root, thread } = resolveDevServerRoot(ctx, threadId);
     const allowed = devservers.detectScripts(root);
     if (!script || !allowed.includes(script)) {
       throw new Error(script ? `Unknown script: ${script}` : "Unknown script");
     }
-    return devservers.start(threadId, root, script);
+    const n = thread && thread.lane && Number(thread.lane.n);
+    const port = thread && thread.lane && Number(thread.lane.port);
+    const portBase =
+      Number.isInteger(n) && Number.isInteger(port) && port > n
+        ? port - n
+        : undefined;
+    const env =
+      Number.isInteger(n) && n > 0 ? laneEnv(n, portBase) : undefined;
+    return devservers.start(threadId, root, script, env ? { env } : {});
   },
   "devserver:stop": async (ctx, input) => {
     const threadId = input && input.threadId;

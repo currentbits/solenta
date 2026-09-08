@@ -23,14 +23,14 @@ import type {
   GitSyncInfo,
   GitRepoInfo,
   GitPullResult,
+  FetchIssueResult,
+  CreateIssueResult,
+  LocalServerInfo,
   MergeLaneBeat,
   MergeLaneClaim,
   MergeLaneInfo,
   MergeLanePreview,
   MergeLaneRestore,
-  FetchIssueResult,
-  CreateIssueResult,
-  LocalServerInfo,
   McpCatalogEntry,
   McpImportPreview,
   McpInstallRequest,
@@ -83,7 +83,6 @@ import type {
   ThreadSummaryInfo,
   CrewTaskView,
   CrewIntegration,
-  MergeLaneBeat,
   UpdateStatus,
   UsageReport,
   VerifyResult,
@@ -2999,6 +2998,34 @@ export function useCoder(): UseCoderResult {
       // Best-effort staleness fix; keep the boot list on failure.
     }
   }, [api]);
+
+  const claimLane = useCallback(
+    async (input: { threadId: string }) => {
+      return api.mergeQueue.claimLane(input);
+    },
+    [api],
+  );
+
+  const listLanes = useCallback(
+    async (input: { projectId: string }) => {
+      return api.mergeQueue.listLanes(input);
+    },
+    [api],
+  );
+
+  const previewLane = useCallback(
+    async (input: { projectId: string; lane: number }) => {
+      return api.mergeQueue.previewLane(input);
+    },
+    [api],
+  );
+
+  const restorePreview = useCallback(
+    async (input: { projectId: string }) => {
+      return api.mergeQueue.restorePreview(input);
+    },
+    [api],
+  );
 
   const listCheckpoints = useCallback(
     async (threadId: string) => {
