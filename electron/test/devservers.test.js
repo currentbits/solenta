@@ -223,4 +223,73 @@ describe("start spawn shape", () => {
     assert.equal(calls[0].opts.cwd, "C:\\repo");
     stop("t-win");
   });
+
+  it("prepends the per-lane Electron stub to PATH for an electron script", () => {
+    const root = tmpDir();
+    fs.writeFileSync(
+      path.join(root, "package.json"),
+      JSON.stringify({ scripts: { electron: "electron ." } }),
+    );
+    const dataDir = path.join(root, "dev-homes", "thr-el");
+    const calls = [];
+    start("t-el", root, "electron", {
+      platform: "darwin",
+      env: {
+        SOLENTA_DATA_DIR: dataDir,
+        SOLENTA_APP_NAME: "Acme · thr-el",
+        SOLENTA_THREAD_ID: "thr-el",
+      },
+      spawn: (bin, args, opts) => {
+        calls.push({ bin, args, opts });
+        return fakeNpmChild();
+      },
+    });
+    assert.equal(calls.length, 1);
+    const shimDir = path.join(dataDir, "bin");
+    assert.ok(String(calls[0].opts.env.PATH).startsWith(`${shimDir}${path.delimiter}`));
+    assert.ok(
+      fs.existsSync(path.join(dataDir, "Electron.app", "Contents", "Info.plist")),
+    );
+    stop("t-el");
+  });
+
+  it("start() runs a rewritten concurrently script so inner electron gets --user-data-dir", () => {
+    const { isolationEnv, chromiumUserDataDir } = require("../worktreeEnv.js");
+    const root = tmpDir();
+    const body = 'concurrently "vite" "electron ."';
+    fs.writeFileSync(
+      path.join(root, "package.json"),
+      JSON.stringify({ scripts: { dev: body } }),
+    );
+    const env = isolationEnv({
+      threadId: "thr-wrap",
+      userDataPath: root,
+      platform: "darwin",
+    });
+    const profile = chromiumUserDataDir(env);
+    const calls = [];
+    start("t-wrap", root, "dev", {
+      platform: "darwin",
+      env,
+      spawn: (bin, args, opts) => {
+        calls.push({ bin, args, opts });
+        return fakeNpmChild();
+      },
+    });
+    assert.equal(calls.length, 1);
+    const joined = [calls[0].bin, ...(calls[0].args || [])].join(" ");
+    assert.ok(
+      joined.includes(`--user-data-dir=${profile}`),
+      "inner electron must see the lane chrome-profile",
+    );
+    assert.ok(joined.includes("electron"), "must still launch electron");
+    assert.ok(joined.includes("vite"), "must still launch vite");
+    assert.equal(
+      (calls[0].args || []).includes("--user-data-dir") ||
+        (calls[0].args || []).some((a) => String(a) === `--user-data-dir=${profile}`),
+      false,
+      "flag must not be a trailing npm extra arg (concurrently would swallow it)",
+    );
+    stop("t-wrap");
+  });
 });

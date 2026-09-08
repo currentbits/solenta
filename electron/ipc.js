@@ -39,9 +39,9 @@ const {
   previewLane,
   restorePreview,
   recycleWedgedLanes,
-  laneEnv,
   heartbeatLane,
 } = require("./mergeQueue.js");
+const { spawnEnvForDevServer, laneEnvExtra } = require("./worktreeEnv.js");
 const devservers = require("./devservers.js");
 const terminal = require("./terminal.js");
 const preview = require("./preview.js");
@@ -1841,20 +1841,20 @@ const IPC_HANDLERS = {
   "devserver:start": async (ctx, input) => {
     const threadId = input && input.threadId;
     const script = input && input.script;
-    const { root, thread } = resolveDevServerRoot(ctx, threadId);
+    const { root, project, thread } = resolveDevServerRoot(ctx, threadId);
     const allowed = devservers.detectScripts(root);
     if (!script || !allowed.includes(script)) {
       throw new Error(script ? `Unknown script: ${script}` : "Unknown script");
     }
-    const n = thread && thread.lane && Number(thread.lane.n);
-    const port = thread && thread.lane && Number(thread.lane.port);
-    const portBase =
-      Number.isInteger(n) && Number.isInteger(port) && port > n
-        ? port - n
-        : undefined;
-    const env =
-      Number.isInteger(n) && n > 0 ? laneEnv(n, portBase) : undefined;
-    return devservers.start(threadId, root, script, env ? { env } : {});
+    return devservers.start(threadId, root, script, {
+      project,
+      env: spawnEnvForDevServer({
+        project,
+        thread,
+        userDataPath: ctx.userDataPath,
+        extra: laneEnvExtra(thread),
+      }),
+    });
   },
   "devserver:stop": async (ctx, input) => {
     const threadId = input && input.threadId;

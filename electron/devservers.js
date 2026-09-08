@@ -7,6 +7,12 @@ const path = require("node:path");
 const spawn = require("cross-spawn");
 const { wrapCommand } = require("./ssh.js");
 const { wslTarget } = require("./wsl.js");
+const {
+  withChromiumUserDataDir,
+  rewriteChromiumScriptBody,
+  looksLikeProcessWrapper,
+  electronIdentityEnv,
+} = require("./worktreeEnv.js");
 
 const PREFERRED_SCRIPTS = ["dev", "start", "serve"];
 const RING_LIMIT = 50;
@@ -66,6 +72,28 @@ function detectScripts(root) {
     return scriptsFromPackageJson(JSON.parse(raw));
   } catch {
     return [];
+  }
+}
+
+/**
+ * Body of `scripts[name]` in package.json at `root`, or "".
+ *
+ * @param {string} root
+ * @param {string} script
+ * @returns {string}
+ */
+function scriptCommand(root, script) {
+  try {
+    if (!root || !script) return "";
+    const raw = fs.readFileSync(path.join(root, "package.json"), "utf8");
+    const pkg = JSON.parse(raw);
+    const value =
+      pkg && pkg.scripts && typeof pkg.scripts === "object"
+        ? pkg.scripts[script]
+        : "";
+    return typeof value === "string" ? value : "";
+  } catch {
+    return "";
   }
 }
 
@@ -218,6 +246,7 @@ function killProcessGroup(pid, platform = process.platform) {
  * @param {{
  *   platform?: NodeJS.Platform,
  *   spawn?: typeof spawn,
+ *   env?: NodeJS.ProcessEnv,
  *   project?: { remoteHost?: string, remotePath?: string, path?: string } | null,
  * }} [opts]
  */
@@ -234,16 +263,48 @@ function start(threadId, root, script, opts = {}) {
   // WSL-side only — do not wrap ssh remotes (would change macOS behaviour).
   const wsl = wslTarget(project, platform);
   const raw = { bin: "npm", args: ["run", script] };
-  const wrapped = wsl
+  let wrapped = wsl
     ? wrapCommand(project, raw.bin, raw.args, platform)
-    : raw;
+    : { bin: raw.bin, args: [...raw.args] };
 
+  const extraEnv = {
+    ...(opts.env && typeof opts.env === "object" ? opts.env : {}),
+  };
+  const command = scriptCommand(root, script) || script;
+  const rewritten = rewriteChromiumScriptBody(command, extraEnv);
+  if (rewritten !== command && looksLikeProcessWrapper(command)) {
+    const posix = Boolean(wsl) || platform !== "win32";
+    const join = posix ? path.posix.join.bind(path.posix) : path.join;
+    const delimiter = posix ? ":" : ";";
+    const launchRoot =
+      wsl && project && typeof project.remotePath === "string" && project.remotePath
+        ? project.remotePath
+        : root;
+    const binDir = join(launchRoot, "node_modules", ".bin");
+    extraEnv.PATH = `${binDir}${delimiter}${extraEnv.PATH || process.env.PATH || ""}`;
+    if (wsl) {
+      wrapped = wrapCommand(project, "sh", ["-c", rewritten], platform);
+    } else if (platform === "win32") {
+      wrapped = { bin: "cmd.exe", args: ["/d", "/s", "/c", rewritten] };
+    } else {
+      wrapped = { bin: "sh", args: ["-c", rewritten] };
+    }
+  } else {
+    wrapped.args = withChromiumUserDataDir(wrapped.args, extraEnv, command);
+  }
+  Object.assign(
+    extraEnv,
+    electronIdentityEnv(extraEnv, command, {
+      platform,
+      path: extraEnv.PATH,
+    }),
+  );
   let child;
   try {
     child = spawnFn(wrapped.bin, wrapped.args, {
       cwd: wsl ? undefined : root,
       detached: true,
-      env: process.env,
+      env: { ...process.env, ...extraEnv },
       stdio: ["ignore", "pipe", "pipe"],
     });
   } catch (err) {
