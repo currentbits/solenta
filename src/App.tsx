@@ -175,6 +175,8 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     retryWorkflowAgent,
     saveWorkflow,
     removeWorkflow,
+    refreshWorkflows,
+    workflowListError,
     stopRun,
     setPermissionMode,
     respondPermission,
@@ -1562,6 +1564,8 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         onRetryWorkflowAgent={retryWorkflowAgent}
         onSaveWorkflow={saveWorkflow}
         onRemoveWorkflow={removeWorkflow}
+        workflowListError={workflowListError}
+        onRetryWorkflows={refreshWorkflows}
         onStopRun={stopRun}
         onResumeQuotaWait={
           selectedThreadId
@@ -1852,6 +1856,8 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
           initialDraft={workflowDraft}
           onSave={saveWorkflow}
           onRemove={removeWorkflow}
+          listError={workflowListError}
+          onRetryList={refreshWorkflows}
         />
         <SettingsModal
           open={settingsOpen}

@@ -20,6 +20,10 @@ interface WorkflowsModalProps {
   initialDraft?: DistilledWorkflow | null;
   onSave: (template: WorkflowSaveInput) => Promise<WorkflowTemplateInfo>;
   onRemove: (id: string) => Promise<void>;
+  /** Successful write, failed workflows.list. Distinct from a save/remove error. */
+  listError?: string | null;
+  /** Retry the list read only; must not replay the acknowledged write. */
+  onRetryList?: () => void | Promise<void>;
 }
 
 type Draft = {
@@ -71,6 +75,8 @@ export function WorkflowsModal({
   initialDraft = null,
   onSave,
   onRemove,
+  listError = null,
+  onRetryList,
 }: WorkflowsModalProps) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [draft, setDraft] = useState<Draft | null>(null);
@@ -559,7 +565,23 @@ export function WorkflowsModal({
                 </div>
 
                 <footer className={styles.footer}>
-                  {error ? (
+                  {listError ? (
+                    <div className={styles.errorInline} role="status">
+                      <span>{listError}</span>
+                      {onRetryList ? (
+                        <button
+                          type="button"
+                          className={styles.btn}
+                          onClick={() => {
+                            void Promise.resolve(onRetryList()).catch(() => {});
+                          }}
+                          disabled={saving}
+                        >
+                          Retry list
+                        </button>
+                      ) : null}
+                    </div>
+                  ) : error ? (
                     <div className={styles.errorInline} role="alert">
                       {error}
                     </div>

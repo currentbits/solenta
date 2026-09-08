@@ -458,6 +458,8 @@ interface ThreadViewProps {
   onRetryWorkflowAgent?: (agentId: string) => void | Promise<void>;
   onSaveWorkflow: (template: WorkflowSaveInput) => Promise<WorkflowTemplateInfo>;
   onRemoveWorkflow: (id: string) => Promise<void>;
+  workflowListError?: string | null;
+  onRetryWorkflows?: () => void | Promise<void>;
   onStopRun: () => void | Promise<void>;
   /** Resume a parked quota-wait now (#462). */
   onResumeQuotaWait?: () => void | Promise<void>;
@@ -4220,6 +4222,8 @@ export const ThreadView = memo(function ThreadView({
   onRetryWorkflowAgent,
   onSaveWorkflow,
   onRemoveWorkflow,
+  workflowListError = null,
+  onRetryWorkflows,
   onStopRun,
   onResumeQuotaWait,
   onSetQuotaWaitAutoResume,
@@ -7033,6 +7037,8 @@ export const ThreadView = memo(function ThreadView({
         onSetWebSearch={onSetWebSearch}
         onSaveWorkflow={onSaveWorkflow}
         onRemoveWorkflow={onRemoveWorkflow}
+        workflowListError={workflowListError}
+        onRetryWorkflows={onRetryWorkflows}
         sessionId={thread.sessionId}
         hasWorktree={hasWorktree}
         disabled={isArchived}

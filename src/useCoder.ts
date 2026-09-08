@@ -164,6 +164,19 @@ export type WorkflowSaveInput = Omit<WorkflowTemplateInfo, "id" | "builtin"> & {
   id?: string;
 };
 
+function upsertWorkflow(
+  list: WorkflowTemplateInfo[],
+  saved: WorkflowTemplateInfo,
+): WorkflowTemplateInfo[] {
+  const idx = list.findIndex((w) => w.id === saved.id);
+  if (idx >= 0) {
+    const next = list.slice();
+    next[idx] = saved;
+    return next;
+  }
+  return [...list, saved];
+}
+
 function resolveApi(): CoderApi {
   return resolveCoderApi();
 }
@@ -291,12 +304,17 @@ export interface UseCoderResult {
   startWorkflowRun: (prompt: string, templateId?: string) => Promise<void>;
   /** Re-spawn a failed workflow phase agent after the run ended (#825 / #830). */
   retryWorkflowAgent: (agentId: string) => Promise<void>;
-  /** Persist a workflow template; refreshes the list. Saving a builtin creates a copy. */
+  /**
+   * Persist a workflow template. The returned row is authoritative even when
+   * the follow-up list refresh fails (#1138). Saving a builtin creates a copy.
+   */
   saveWorkflow: (template: WorkflowSaveInput) => Promise<WorkflowTemplateInfo>;
-  /** Remove a non-builtin template; refreshes the list. */
+  /** Remove a non-builtin template. Success stands even if list refresh fails. */
   removeWorkflow: (id: string) => Promise<void>;
   /** Reload workflows.list() into state. */
   refreshWorkflows: () => Promise<void>;
+  /** Failed workflows.list after a successful save/remove, or a manual retry. */
+  workflowListError: string | null;
   refreshAutomations: () => Promise<void>;
   addAutomation: (input: AutomationWrite) => Promise<AutomationInfo>;
   updateAutomation: (
@@ -795,6 +813,9 @@ export function useCoder(): UseCoderResult {
   );
   const [providers, setProviders] = useState<ProviderInfo[]>([]);
   const [workflows, setWorkflows] = useState<WorkflowTemplateInfo[]>([]);
+  const [workflowListError, setWorkflowListError] = useState<string | null>(
+    null,
+  );
   const [automations, setAutomations] = useState<AutomationInfo[]>([]);
   const [selectedThreadId, setSelectedThreadId] = useState<string | null>(
     () => bootSnapshot?.selectedThreadId ?? null,
@@ -1619,8 +1640,16 @@ export function useCoder(): UseCoderResult {
   );
 
   const refreshWorkflows = useCallback(async () => {
-    const list = await api.workflows.list();
-    setWorkflows(list);
+    try {
+      const list = await api.workflows.list();
+      setWorkflows(list);
+      setWorkflowListError(null);
+    } catch (err) {
+      setWorkflowListError(
+        `The workflow list failed to refresh: ${errorMessage(err)}`,
+      );
+      throw err;
+    }
   }, [api]);
 
   const refreshAutomations = useCallback(async () => {
@@ -1720,8 +1749,18 @@ export function useCoder(): UseCoderResult {
 
   const saveWorkflow = useCallback(
     async (template: WorkflowSaveInput) => {
+      setWorkflowListError(null);
       const saved = await api.workflows.save(template);
-      await refreshWorkflows();
+      // Adopt the write immediately. A later list rejection must not hide
+      // the new id or the next Save will create another template (#1138).
+      setWorkflows((prev) => upsertWorkflow(prev, saved));
+      try {
+        await refreshWorkflows();
+      } catch (err) {
+        setWorkflowListError(
+          `Saved, but the list failed to refresh: ${errorMessage(err)}`,
+        );
+      }
       return saved;
     },
     [api, refreshWorkflows],
@@ -1729,8 +1768,16 @@ export function useCoder(): UseCoderResult {
 
   const removeWorkflow = useCallback(
     async (workflowId: string) => {
+      setWorkflowListError(null);
       await api.workflows.remove({ id: workflowId });
-      await refreshWorkflows();
+      setWorkflows((prev) => prev.filter((w) => w.id !== workflowId));
+      try {
+        await refreshWorkflows();
+      } catch (err) {
+        setWorkflowListError(
+          `Removed, but the list failed to refresh: ${errorMessage(err)}`,
+        );
+      }
     },
     [api, refreshWorkflows],
   );
@@ -3602,6 +3649,7 @@ export function useCoder(): UseCoderResult {
     threads,
     providers,
     workflows,
+    workflowListError,
     automations,
     selectedThreadId,
     selectThread,

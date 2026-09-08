@@ -202,6 +202,8 @@ interface ComposerProps {
   onSetWebSearch?: (webSearch: boolean) => void | Promise<void>;
   onSaveWorkflow: (template: WorkflowSaveInput) => Promise<WorkflowTemplateInfo>;
   onRemoveWorkflow: (id: string) => Promise<void>;
+  workflowListError?: string | null;
+  onRetryWorkflows?: () => void | Promise<void>;
   /** Provider session id (short form shown in meta). */
   sessionId: string | null;
   /** Whether a worktree has been set up. */
@@ -432,6 +434,8 @@ export const Composer = memo(function Composer({
   onSetWebSearch,
   onSaveWorkflow,
   onRemoveWorkflow,
+  workflowListError = null,
+  onRetryWorkflows,
   sessionId,
   hasWorktree,
   disabled = false,
@@ -3342,6 +3346,8 @@ export const Composer = memo(function Composer({
           return saved;
         }}
         onRemove={onRemoveWorkflow}
+        listError={workflowListError}
+        onRetryList={onRetryWorkflows}
       />
     </div>
   );
