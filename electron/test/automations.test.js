@@ -557,6 +557,36 @@ describe("automation CRUD + scheduler", () => {
     );
   });
 
+  it("listAutomationRuns ignores a same-id thread on another project", async () => {
+    store.setProjects([
+      ...store.getProjects(),
+      { id: "p2", slug: "acme/other", name: "other", path: tmpDir },
+    ]);
+    store.saveNow();
+    const created = services.addAutomation(store, {
+      projectId: "p1",
+      name: "Sweep",
+      prompt: "go",
+      provider: "claude",
+      preset: "hourly",
+    });
+    const mine = await fireAuto(created.id);
+    const stray = services.createThread(store, {
+      projectId: "p2",
+      title: "Sweep",
+      automationId: created.id,
+    });
+    const listed = listAutomationRuns(store, created.id);
+    assert.deepEqual(
+      listed.runs.map((r) => r.threadId),
+      [mine.id],
+    );
+    assert.equal(
+      listed.runs.some((r) => r.threadId === stray.id),
+      false,
+    );
+  });
+
   it("listAutomationRuns keeps association after rename", async () => {
     const created = services.addAutomation(store, {
       projectId: "p1",

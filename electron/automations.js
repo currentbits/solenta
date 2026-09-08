@@ -182,8 +182,9 @@ async function runAutomation(ctx, auto, now, opts) {
 
 /**
  * Retained run threads for one automation, newest first (issue #938).
- * Linkage is the typed `automationId` stamp, never the thread title.
- * Bounded by existing per-automation retention; does not start a run.
+ * Linkage is the typed `automationId` stamp plus the automation's
+ * projectId, never the thread title. Bounded by existing per-automation
+ * retention; does not start a run.
  *
  * @param {import("./store").Store} store
  * @param {string} automationId
@@ -203,7 +204,11 @@ function listAutomationRuns(store, automationId) {
     .getThreads()
     .map((t, i) => ({ t, i }))
     .filter(
-      ({ t }) => t && t.automationId === id && t.memoryConsolidate !== true,
+      ({ t }) =>
+        t &&
+        t.automationId === id &&
+        t.projectId === auto.projectId &&
+        t.memoryConsolidate !== true,
     );
   indexed.sort((a, b) => b.t.createdAt - a.t.createdAt || b.i - a.i);
   const runs = indexed.map(({ t }) => ({
