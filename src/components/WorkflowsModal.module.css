@@ -48,9 +48,13 @@
   line-height: 1;
 }
 
-.close:hover {
+.close:hover:not(:disabled) {
   background: var(--overlay-hover);
   color: var(--text);
+}
+
+.close:disabled {
+  opacity: 0.45;
 }
 
 .body {
@@ -89,9 +93,13 @@
   background: transparent;
 }
 
-.listItem:hover {
+.listItem:hover:not(:disabled) {
   background: var(--overlay-hover);
   color: var(--text);
+}
+
+.listItem:disabled {
+  opacity: 0.45;
 }
 
 .listItem[data-active="true"] {
@@ -358,6 +366,29 @@
 .btnPrimary:hover:not(:disabled) {
   filter: brightness(1.08);
   color: var(--info-fg-strong);
+}
+
+.btnDanger {
+  border-color: var(--danger-border);
+  background: var(--danger-soft);
+  color: var(--danger-fg);
+}
+
+.btnDanger:hover:not(:disabled) {
+  filter: brightness(1.08);
+}
+
+.discardBar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.discardMsg {
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
 }
 
 .btn:disabled,
