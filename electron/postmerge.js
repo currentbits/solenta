@@ -223,34 +223,67 @@ const completedIssues = new Set();
  * @param {{ completeIssue?: Function }} [deps]
  * @returns {Promise<object | null>}
  */
+/**
+ * Included worker issue IDs stored on integration receipts (#947).
+ * Receipts only — do not parse worker transcripts.
+ *
+ * @param {object | null | undefined} thread
+ * @returns {number[]}
+ */
+function includedIssueIdsFromReceipts(thread) {
+  const ids = [];
+  const receipts = Array.isArray(thread && thread.integrationReceipts)
+    ? thread.integrationReceipts
+    : [];
+  for (const r of receipts) {
+    if (!r || typeof r !== "object") continue;
+    const own = normalizeIssueNumber(r.issueNumber);
+    if (own && !ids.includes(own)) ids.push(own);
+    if (!Array.isArray(r.includedIssueIds)) continue;
+    for (const raw of r.includedIssueIds) {
+      const n = normalizeIssueNumber(raw);
+      if (n && !ids.includes(n)) ids.push(n);
+    }
+  }
+  return ids;
+}
+
 async function completeThreadIssue(store, threadId, deps) {
   const thread = store.getThread(threadId);
   if (!thread) return null;
-  const issueNumber =
+  const own =
     issueNumberFromThread(store, thread) ||
     firstPromptIssueNumber(store, thread);
-  if (!issueNumber) return null;
+  const numbers = [];
+  if (own) numbers.push(own);
+  for (const n of includedIssueIdsFromReceipts(thread)) {
+    if (!numbers.includes(n)) numbers.push(n);
+  }
+  if (!numbers.length) return null;
   const project = store.getProject(thread.projectId);
   if (!project || !project.path || project.remoteHost) return null;
-
-  const key = `${thread.projectId}:${issueNumber}`;
-  if (completedIssues.has(key)) return null;
-  completedIssues.add(key);
 
   const complete =
     (deps && deps.completeIssue) || require("./issues.js").completeIssue;
   const pr = thread.prNumber ? ` (PR #${thread.prNumber})` : "";
-  const res = await complete(project.path, issueNumber, {
-    comment: `Landed from Solenta thread "${thread.title}"${pr}. Closed on merge.`,
-  });
-  if (!res || !res.ok) {
-    completedIssues.delete(key);
-    return res || null;
+  let last = null;
+  for (const issueNumber of numbers) {
+    const key = `${thread.projectId}:${issueNumber}`;
+    if (completedIssues.has(key)) continue;
+    completedIssues.add(key);
+    const res = await complete(project.path, issueNumber, {
+      comment: `Landed from Solenta thread "${thread.title}"${pr}. Closed on merge.`,
+    });
+    if (!res || !res.ok) {
+      completedIssues.delete(key);
+      return res || null;
+    }
+    last = res;
+    if (res.skipped) continue;
+    appendEvent(store, thread.id, `Planboard: #${issueNumber} moved to Done.`);
   }
-  if (res.skipped) return res;
-  appendEvent(store, thread.id, `Planboard: #${issueNumber} moved to Done.`);
   store.save();
-  return res;
+  return last;
 }
 
 /**

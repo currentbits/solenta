@@ -6,6 +6,7 @@
  */
 
 const fs = require("node:fs");
+const path = require("node:path");
 const {
   gitTry,
   mergeWorktree,
@@ -17,7 +18,57 @@ const {
 
 /**
  * @param {unknown} raw
- * @returns {Array<{ workerId: string, sourceSha: string, leadId: string, leadShaAfter: string, at: number }>}
+ * @returns {number | null}
+ */
+function issueId(raw) {
+  const n = Number(raw);
+  return Number.isInteger(n) && n > 0 ? n : null;
+}
+
+/**
+ * @param {unknown} raw
+ * @returns {number[]}
+ */
+function uniqueIssueIds(raw) {
+  if (!Array.isArray(raw)) return [];
+  const out = [];
+  for (const item of raw) {
+    const n = issueId(item);
+    if (n && !out.includes(n)) out.push(n);
+  }
+  return out;
+}
+
+/**
+ * Stored issueNumber only — do not parse transcripts (#947).
+ * @param {object | null | undefined} thread
+ * @returns {number | null}
+ */
+function storedIssueNumber(thread) {
+  return issueId(thread && thread.issueNumber);
+}
+
+/**
+ * This thread's stored issue plus nested receipt IDs.
+ * @param {object | null | undefined} thread
+ * @returns {number[]}
+ */
+function includedIssueIdsFrom(thread) {
+  const ids = [];
+  const own = storedIssueNumber(thread);
+  if (own) ids.push(own);
+  for (const r of normalizeReceipts(thread && thread.integrationReceipts)) {
+    if (r.issueNumber && !ids.includes(r.issueNumber)) ids.push(r.issueNumber);
+    for (const n of r.includedIssueIds || []) {
+      if (!ids.includes(n)) ids.push(n);
+    }
+  }
+  return ids;
+}
+
+/**
+ * @param {unknown} raw
+ * @returns {Array<{ workerId: string, sourceSha: string, leadId: string, leadShaAfter: string, at: number, issueNumber: number | null, includedIssueIds: number[] }>}
  */
 function normalizeReceipts(raw) {
   if (!Array.isArray(raw)) return [];
@@ -35,6 +86,8 @@ function normalizeReceipts(raw) {
       leadShaAfter:
         typeof r.leadShaAfter === "string" ? r.leadShaAfter.trim() : "",
       at: typeof r.at === "number" && Number.isFinite(r.at) ? r.at : 0,
+      issueNumber: issueId(r.issueNumber),
+      includedIssueIds: uniqueIssueIds(r.includedIssueIds),
     });
   }
   return out;
@@ -89,8 +142,78 @@ function worktreeLive(cwd) {
 
 /**
  * @param {object} store
+ * @param {string} intoPath
+ * @returns {object | null}
+ */
+function threadOwningPath(store, intoPath) {
+  if (!intoPath) return null;
+  const resolved = path.resolve(intoPath);
+  return (
+    store.getThreads().find((t) => {
+      if (!t || !t.worktreePath) return false;
+      try {
+        return path.resolve(t.worktreePath) === resolved;
+      } catch {
+        return false;
+      }
+    }) || null
+  );
+}
+
+/**
+ * intoPath pointing at another checkout (a lead worktree) is staging.
+ * No intoPath, or intoPath === the project checkout, is a final land.
+ *
+ * @param {string | null | undefined} intoPath
+ * @param {string} projectPath
+ * @returns {"integrated" | "final"}
+ */
+function classifyMergeLanding(intoPath, projectPath) {
+  if (!intoPath || !projectPath) return "final";
+  try {
+    if (path.resolve(intoPath) === path.resolve(projectPath)) return "final";
+  } catch {
+    return "integrated";
+  }
+  return "integrated";
+}
+
+/**
+ * Record a worker→lead receipt on the thread that owns intoPath.
+ * Issue IDs come from stored thread.issueNumber and nested receipts only.
+ *
+ * @param {object} store
+ * @param {{ worker: object, targetPath: string, intoPath: string }} opts
+ * @returns {object | null}
+ */
+function recordWorkerIntegration(store, opts) {
+  const worker = opts && opts.worker;
+  const intoPath = opts && opts.intoPath;
+  const targetPath = opts && opts.targetPath;
+  if (!worker || !intoPath) return null;
+  const lead = threadOwningPath(store, intoPath);
+  if (!lead) return null;
+  const live = store.getThread(worker.id) || worker;
+  const sourceSha = revParse(live.worktreePath);
+  if (!sourceSha) return null;
+  const own = storedIssueNumber(live);
+  const receipt = {
+    workerId: live.id,
+    sourceSha,
+    leadId: lead.id,
+    leadShaAfter: revParse(targetPath) || "",
+    at: Date.now(),
+    issueNumber: own,
+    includedIssueIds: includedIssueIdsFrom(live),
+  };
+  recordReceipt(store, lead, receipt);
+  return receipt;
+}
+
+/**
+ * @param {object} store
  * @param {object} lead
- * @param {{ workerId: string, sourceSha: string, leadId: string, leadShaAfter: string, at: number }} receipt
+ * @param {{ workerId: string, sourceSha: string, leadId: string, leadShaAfter: string, at: number, issueNumber?: number | null, includedIssueIds?: number[] }} receipt
  */
 function recordReceipt(store, lead, receipt) {
   const current = store.getThread(lead.id) || lead;
@@ -99,7 +222,7 @@ function recordReceipt(store, lead, receipt) {
     (r) =>
       !(r.workerId === receipt.workerId && r.sourceSha === receipt.sourceSha),
   );
-  next.push(receipt);
+  next.push(...normalizeReceipts([receipt]));
   store.updateThread(lead.id, { integrationReceipts: next });
   store.save();
 }
@@ -403,4 +526,7 @@ module.exports = {
   crewIntegration,
   normalizeReceipts,
   normalizeLanded,
+  classifyMergeLanding,
+  recordWorkerIntegration,
+  includedIssueIdsFrom,
 };

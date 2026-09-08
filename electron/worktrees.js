@@ -844,6 +844,7 @@ function cleanupWorktree(opts) {
   const updated = store.updateThread(thread.id, {
     worktreePath: null,
     branch: null,
+    lane: undefined,
   });
   store.save();
 
@@ -1298,15 +1299,33 @@ function mergeWorktree(opts) {
   }
   if (mergeError) throw mergeError;
 
-  // Staging (#954 integrateWorker) records a receipt here, before cleanup
-  // erases the worker's worktreePath/branch. Landing the lead itself (no
-  // intoPath) with receipts marks the combined result Landed.
+  // Classify from the target contract, not from "squash succeeded" (#947).
+  // intoPath → another checkout is integration; no intoPath (or the project
+  // checkout itself) is a final land.
+  const { classifyMergeLanding, recordWorkerIntegration } = require("./crewIntegration.js");
+  const landing = classifyMergeLanding(intoPath, project.path);
+
+  // Staging records a receipt here, before cleanup erases the worker's
+  // worktreePath/branch. Landing the lead itself (final) with receipts
+  // marks the combined result Landed.
   if (typeof opts.afterMerge === "function") {
     opts.afterMerge({ thread, target, branch });
   }
-  if (!intoPath) {
-    const receipts = Array.isArray(thread.integrationReceipts)
-      ? thread.integrationReceipts
+  if (landing === "integrated") {
+    try {
+      recordWorkerIntegration(store, {
+        worker: store.getThread(threadId) || thread,
+        targetPath: target,
+        intoPath,
+      });
+    } catch {
+      // receipt is best-effort; the squash already succeeded
+    }
+  }
+  if (landing === "final") {
+    const live = store.getThread(thread.id) || thread;
+    const receipts = Array.isArray(live.integrationReceipts)
+      ? live.integrationReceipts
       : [];
     if (receipts.length) {
       const sha = gitTry(target, ["rev-parse", "HEAD"]);
@@ -1321,10 +1340,9 @@ function mergeWorktree(opts) {
     }
   }
 
-  // The work is on the default branch now: close its planboard issue (#632).
+  // Close planboard issues only on a final land (#632 / #947).
   // Fire-and-forget — a gh hiccup must not fail a merge that succeeded.
-  // Worker→lead staging skips this; #947 owns issue closure on final land.
-  if (opts.skipIssueComplete !== true) {
+  if (landing === "final" && opts.skipIssueComplete !== true) {
     try {
       void require("./postmerge.js")
         .completeThreadIssue(store, threadId)

@@ -1152,6 +1152,13 @@ function normalizeIntegrationReceipts(raw) {
     const sourceSha = typeof r.sourceSha === "string" ? r.sourceSha.trim() : "";
     const leadId = typeof r.leadId === "string" ? r.leadId.trim() : "";
     if (!workerId || !sourceSha || !leadId) continue;
+    const included = [];
+    if (Array.isArray(r.includedIssueIds)) {
+      for (const raw of r.includedIssueIds) {
+        const n = normalizeIssueNumber(raw);
+        if (n && !included.includes(n)) included.push(n);
+      }
+    }
     out.push({
       workerId,
       sourceSha,
@@ -1159,6 +1166,8 @@ function normalizeIntegrationReceipts(raw) {
       leadShaAfter:
         typeof r.leadShaAfter === "string" ? r.leadShaAfter.trim() : "",
       at: typeof r.at === "number" && Number.isFinite(r.at) ? r.at : 0,
+      issueNumber: normalizeIssueNumber(r.issueNumber),
+      includedIssueIds: included,
     });
   }
   return out.length ? out : undefined;
@@ -1179,7 +1188,7 @@ function normalizeIntegrationLanded(raw) {
 }
 
 /**
- * Crew merge-queue thread ids (#346). Omitted when empty.
+ * Serialized crew merge-queue thread ids (#346). Omitted when empty.
  * @param {unknown} raw
  * @returns {string[] | undefined}
  */
