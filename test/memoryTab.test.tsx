@@ -11,11 +11,12 @@
  */
 import assert from "node:assert/strict";
 import { describe, it, afterEach } from "node:test";
-import { mount, unmountAll } from "./support/dom.ts";
+import { inAct, mount, unmountAll } from "./support/dom.ts";
 import { MemoryTab } from "../src/components/MemoryTab";
 import type {
   AgentConfigDoctorReport,
   AgentConfigPreview,
+  AgentConfigWriteResult,
   MemoryEntryInfo,
   MemoryMaintenanceReport,
   ProjectCodeMap,
@@ -616,6 +617,237 @@ describe("MemoryTab config doctor", () => {
     await m.click(m.byText("Confirm write"));
     assert.deepEqual(written, ["p1"]);
     assert.ok(m.query("[data-config-wrote]"));
+    m.unmount();
+  });
+});
+
+const REPORT_A: AgentConfigDoctorReport = {
+  ...SAMPLE_REPORT,
+  projectId: "proj-a",
+  grade: "D",
+  score: 42,
+};
+const REPORT_B: AgentConfigDoctorReport = {
+  ...SAMPLE_REPORT,
+  projectId: "proj-b",
+  grade: "B",
+  score: 80,
+  files: [
+    {
+      ...SAMPLE_REPORT.files[0]!,
+      path: "CLAUDE.md",
+      grade: "B",
+      score: 80,
+    },
+  ],
+};
+const PREVIEW_A: AgentConfigPreview = {
+  projectId: "proj-a",
+  files: [{ path: "AGENTS.md", content: "# generated-A\n", exists: true }],
+};
+const PREVIEW_B: AgentConfigPreview = {
+  projectId: "proj-b",
+  files: [{ path: "CLAUDE.md", content: "# generated-B\n", exists: true }],
+};
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((r) => {
+    resolve = r;
+  });
+  return { promise, resolve };
+}
+
+function doctorTab(
+  projectId: "proj-a" | "proj-b",
+  handlers: {
+    lint: (input: { projectId: string }) => Promise<AgentConfigDoctorReport>;
+    preview: (input: { projectId: string }) => Promise<AgentConfigPreview>;
+    write: (input: { projectId: string }) => Promise<AgentConfigWriteResult>;
+  },
+) {
+  return (
+    <MemoryTab
+      projectSlug={projectId === "proj-a" ? "alpha" : "beta"}
+      projectId={projectId}
+      searchMemory={async () => []}
+      recentMemory={async () => []}
+      getMemory={async (input) => entry({ id: input.id })}
+      updateMemory={async () => ({ id: "x" })}
+      removeMemory={async () => {}}
+      storeMemory={async () => ({ id: "x" })}
+      lintAgentConfig={handlers.lint}
+      previewAgentConfig={handlers.preview}
+      writeAgentConfig={handlers.write}
+    />
+  );
+}
+
+describe("MemoryTab config doctor project switch #1136", () => {
+  it("drops A's preview when the same card is shown for B", async () => {
+    const handlers = {
+      lint: async (input: { projectId: string }) =>
+        input.projectId === "proj-a" ? REPORT_A : REPORT_B,
+      preview: async (input: { projectId: string }) =>
+        input.projectId === "proj-a" ? PREVIEW_A : PREVIEW_B,
+      write: async (input: { projectId: string }) => ({
+        projectId: input.projectId,
+        written: ["AGENTS.md"],
+      }),
+    };
+    const m = await mount(doctorTab("proj-a", handlers));
+    await m.click(m.byText("Preview"));
+    assert.ok(m.text().includes("# generated-A"));
+    await m.rerender(doctorTab("proj-b", handlers));
+    assert.ok(
+      !m.query("[data-config-preview]"),
+      "B must not keep A's generated files on screen",
+    );
+    assert.equal(m.text().includes("# generated-A"), false);
+    assert.ok(m.text().includes("B 80"), "B should lint as itself");
+    assert.ok(m.byText("Preview"), "writing is not available until B is previewed");
+    m.unmount();
+  });
+
+  it("disarms confirmation so Confirm write cannot target B", async () => {
+    const written: string[] = [];
+    const handlers = {
+      lint: async (input: { projectId: string }) =>
+        input.projectId === "proj-a" ? REPORT_A : REPORT_B,
+      preview: async (input: { projectId: string }) =>
+        input.projectId === "proj-a" ? PREVIEW_A : PREVIEW_B,
+      write: async (input: { projectId: string }) => {
+        written.push(input.projectId);
+        return { projectId: input.projectId, written: ["AGENTS.md"] };
+      },
+    };
+    const m = await mount(doctorTab("proj-a", handlers));
+    await m.click(m.byText("Preview"));
+    await m.click(m.byText("Write AGENTS.md"));
+    assert.ok(m.byText("Confirm write"));
+    assert.ok(
+      m.byText("Confirm write")?.textContent?.includes("alpha"),
+      `confirmation must name the bound project, got: ${m.byText("Confirm write")?.textContent}`,
+    );
+    await m.rerender(doctorTab("proj-b", handlers));
+    assert.ok(
+      !m.byText("Confirm write"),
+      "A's armed confirm must not survive on B",
+    );
+    await m.click(m.byText("Write from memory"));
+    assert.equal(written.length, 0, "first B click is a fresh confirmation");
+    assert.ok(
+      m.byText("Confirm write")?.textContent?.includes("beta"),
+      `B confirmation must name B, got: ${m.byText("Confirm write")?.textContent}`,
+    );
+    assert.deepEqual(written, []);
+    m.unmount();
+  });
+
+  it("ignores A's deferred lint after the card is showing B", async () => {
+    const held = deferred<AgentConfigDoctorReport>();
+    const handlers = {
+      lint: async (input: { projectId: string }) =>
+        input.projectId === "proj-a" ? held.promise : REPORT_B,
+      preview: async (input: { projectId: string }) =>
+        input.projectId === "proj-a" ? PREVIEW_A : PREVIEW_B,
+      write: async (input: { projectId: string }) => ({
+        projectId: input.projectId,
+        written: ["AGENTS.md"],
+      }),
+    };
+    const m = await mount(doctorTab("proj-a", handlers));
+    await m.rerender(doctorTab("proj-b", handlers));
+    await inAct(async () => {
+      held.resolve(REPORT_A);
+    });
+    await m.flush();
+    assert.equal(m.text().includes("D 42"), false);
+    assert.ok(m.text().includes("B 80"));
+    m.unmount();
+  });
+
+  it("ignores A's deferred preview after the card is showing B", async () => {
+    const held = deferred<AgentConfigPreview>();
+    const handlers = {
+      lint: async (input: { projectId: string }) =>
+        input.projectId === "proj-a" ? REPORT_A : REPORT_B,
+      preview: async (input: { projectId: string }) =>
+        input.projectId === "proj-a" ? held.promise : PREVIEW_B,
+      write: async (input: { projectId: string }) => ({
+        projectId: input.projectId,
+        written: ["AGENTS.md"],
+      }),
+    };
+    const m = await mount(doctorTab("proj-a", handlers));
+    await m.click(m.byText("Preview"));
+    await m.rerender(doctorTab("proj-b", handlers));
+    await inAct(async () => {
+      held.resolve(PREVIEW_A);
+    });
+    await m.flush();
+    assert.ok(!m.query("[data-config-preview]"));
+    assert.equal(m.text().includes("# generated-A"), false);
+    assert.ok(m.text().includes("B 80"));
+    m.unmount();
+  });
+
+  it("does not restore A's preview or confirm when returning A→B→A", async () => {
+    const written: string[] = [];
+    const handlers = {
+      lint: async (input: { projectId: string }) =>
+        input.projectId === "proj-a" ? REPORT_A : REPORT_B,
+      preview: async (input: { projectId: string }) =>
+        input.projectId === "proj-a" ? PREVIEW_A : PREVIEW_B,
+      write: async (input: { projectId: string }) => {
+        written.push(input.projectId);
+        return { projectId: input.projectId, written: ["AGENTS.md"] };
+      },
+    };
+    const m = await mount(doctorTab("proj-a", handlers));
+    await m.click(m.byText("Preview"));
+    await m.click(m.byText("Write AGENTS.md"));
+    await m.rerender(doctorTab("proj-b", handlers));
+    await m.rerender(doctorTab("proj-a", handlers));
+    assert.ok(!m.query("[data-config-preview]"));
+    assert.ok(!m.byText("Confirm write"));
+    assert.equal(m.text().includes("# generated-A"), false);
+    assert.ok(m.byText("Write from memory"));
+    assert.deepEqual(written, []);
+    m.unmount();
+  });
+
+  it("keeps A's completed write on A without painting it onto B", async () => {
+    const held = deferred<AgentConfigWriteResult>();
+    const written: string[] = [];
+    const handlers = {
+      lint: async (input: { projectId: string }) =>
+        input.projectId === "proj-a" ? REPORT_A : REPORT_B,
+      preview: async (input: { projectId: string }) =>
+        input.projectId === "proj-a" ? PREVIEW_A : PREVIEW_B,
+      write: async (input: { projectId: string }) => {
+        written.push(input.projectId);
+        if (input.projectId === "proj-a") return held.promise;
+        return { projectId: input.projectId, written: ["CLAUDE.md"] };
+      },
+    };
+    const m = await mount(doctorTab("proj-a", handlers));
+    await m.click(m.byText("Preview"));
+    await m.click(m.byText("Write AGENTS.md"));
+    await m.click(m.byText("Confirm write"));
+    await m.rerender(doctorTab("proj-b", handlers));
+    await inAct(async () => {
+      held.resolve({ projectId: "proj-a", written: ["AGENTS.md"] });
+    });
+    await m.flush();
+    assert.deepEqual(written, ["proj-a"]);
+    assert.ok(
+      !m.query("[data-config-wrote]"),
+      "A's write must not appear as B's status",
+    );
+    await m.rerender(doctorTab("proj-a", handlers));
+    assert.ok(m.query("[data-config-wrote]"));
+    assert.ok(m.text().includes("Wrote AGENTS.md"));
     m.unmount();
   });
 });

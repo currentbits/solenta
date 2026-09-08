@@ -256,13 +256,20 @@ function CodeMapCard({
   );
 }
 
+function projectLabelOf(slug: string | null | undefined, projectId: string): string {
+  const base = slug?.split("/").filter(Boolean).pop();
+  return base || projectId;
+}
+
 function ConfigDoctorCard({
   projectId,
+  projectLabel,
   lintAgentConfig,
   previewAgentConfig,
   writeAgentConfig,
 }: {
   projectId: string;
+  projectLabel: string;
   lintAgentConfig: (input: {
     projectId: string;
   }) => Promise<AgentConfigDoctorReport>;
@@ -282,6 +289,10 @@ function ConfigDoctorCard({
   const [confirmWrite, setConfirmWrite] = useState(false);
   const [wrote, setWrote] = useState<string[] | null>(null);
   const mounted = useRef(true);
+  /** Bumped on project change so A's in-flight lint/preview cannot paint B. */
+  const epochRef = useRef(0);
+  const liveProjectRef = useRef(projectId);
+  const wroteByProject = useRef<Record<string, string[]>>({});
 
   useEffect(() => {
     mounted.current = true;
@@ -290,20 +301,37 @@ function ConfigDoctorCard({
     };
   }, []);
 
+  useEffect(() => {
+    epochRef.current += 1;
+    liveProjectRef.current = projectId;
+    setPreview(null);
+    setConfirmWrite(false);
+    setReport(null);
+    setError(null);
+    setBusy(false);
+    setWrote(wroteByProject.current[projectId] ?? null);
+  }, [projectId]);
+
+  const stillThisProject = (epoch: number, forProject: string) =>
+    mounted.current &&
+    epochRef.current === epoch &&
+    liveProjectRef.current === forProject;
+
   const loadLint = useCallback(async () => {
+    const epoch = epochRef.current;
+    const forProject = projectId;
     setBusy(true);
     setError(null);
-    setWrote(null);
     try {
-      const next = await lintAgentConfig({ projectId });
-      if (!mounted.current) return;
+      const next = await lintAgentConfig({ projectId: forProject });
+      if (!stillThisProject(epoch, forProject)) return;
       setReport(next);
     } catch (err) {
-      if (!mounted.current) return;
+      if (!stillThisProject(epoch, forProject)) return;
       setError(errorMessage(err));
       setReport(null);
     } finally {
-      if (mounted.current) setBusy(false);
+      if (stillThisProject(epoch, forProject)) setBusy(false);
     }
   }, [lintAgentConfig, projectId]);
 
@@ -313,18 +341,20 @@ function ConfigDoctorCard({
 
   const onPreview = async () => {
     if (!previewAgentConfig) return;
+    const epoch = epochRef.current;
+    const forProject = projectId;
     setBusy(true);
     setError(null);
     try {
-      const next = await previewAgentConfig({ projectId });
-      if (!mounted.current) return;
+      const next = await previewAgentConfig({ projectId: forProject });
+      if (!stillThisProject(epoch, forProject)) return;
       setPreview(next);
       setConfirmWrite(false);
     } catch (err) {
-      if (!mounted.current) return;
+      if (!stillThisProject(epoch, forProject)) return;
       setError(errorMessage(err));
     } finally {
-      if (mounted.current) setBusy(false);
+      if (stillThisProject(epoch, forProject)) setBusy(false);
     }
   };
 
@@ -334,22 +364,26 @@ function ConfigDoctorCard({
       setConfirmWrite(true);
       return;
     }
+    const forProject = projectId;
     setBusy(true);
     setError(null);
     try {
-      const result = await writeAgentConfig({ projectId });
-      if (!mounted.current) return;
+      const result = await writeAgentConfig({ projectId: forProject });
+      wroteByProject.current[forProject] = result.written;
+      if (!mounted.current || liveProjectRef.current !== forProject) return;
       setWrote(result.written);
       setConfirmWrite(false);
       setPreview(null);
-      const next = await lintAgentConfig({ projectId });
-      if (!mounted.current) return;
+      const next = await lintAgentConfig({ projectId: forProject });
+      if (!mounted.current || liveProjectRef.current !== forProject) return;
       setReport(next);
     } catch (err) {
-      if (!mounted.current) return;
+      if (!mounted.current || liveProjectRef.current !== forProject) return;
       setError(errorMessage(err));
     } finally {
-      if (mounted.current) setBusy(false);
+      if (mounted.current && liveProjectRef.current === forProject) {
+        setBusy(false);
+      }
     }
   };
 
@@ -357,7 +391,11 @@ function ConfigDoctorCard({
   const considered = report?.memory.considered ?? 0;
 
   return (
-    <section className={styles.section} data-config-doctor="">
+    <section
+      className={styles.section}
+      data-config-doctor=""
+      data-config-project={projectId}
+    >
       <div className={styles.sectionHead}>
         <h2 className={styles.sectionTitle}>Config doctor</h2>
         {report ? (
@@ -374,16 +412,22 @@ function ConfigDoctorCard({
           {error}
         </p>
       ) : null}
+      <p className={styles.doctorMeta} data-config-target="">
+        {projectLabel}
+        {report
+          ? ` · ${
+              report.files.length === 0
+                ? "No AGENTS.md or CLAUDE.md"
+                : `${report.files.length} file${report.files.length === 1 ? "" : "s"}`
+            }${
+              considered > 0
+                ? ` · ${report.memory.covered}/${considered} memory`
+                : ""
+            }`
+          : ""}
+      </p>
       {report ? (
         <>
-          <p className={styles.doctorMeta}>
-            {report.files.length === 0
-              ? "No AGENTS.md or CLAUDE.md"
-              : `${report.files.length} file${report.files.length === 1 ? "" : "s"}`}
-            {considered > 0
-              ? ` · ${report.memory.covered}/${considered} memory`
-              : ""}
-          </p>
           {report.files.length > 0 ? (
             <ul className={styles.doctorFiles}>
               {report.files.map((file) => (
@@ -437,7 +481,7 @@ function ConfigDoctorCard({
             onClick={() => void onWrite()}
           >
             {confirmWrite
-              ? "Confirm write"
+              ? `Confirm write to ${projectLabel}`
               : preview
                 ? `Write ${preview.files.map((f) => f.path).join(", ")}`
                 : "Write from memory"}
@@ -949,6 +993,7 @@ export function MemoryTab({
         {lintAgentConfig && projectId ? (
           <ConfigDoctorCard
             projectId={projectId}
+            projectLabel={projectLabelOf(projectSlug, projectId)}
             lintAgentConfig={lintAgentConfig}
             previewAgentConfig={previewAgentConfig}
             writeAgentConfig={writeAgentConfig}

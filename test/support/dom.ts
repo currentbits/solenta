@@ -347,7 +347,7 @@ export async function mount(element: ReactElement): Promise<Mounted> {
     },
     flush,
     rerender: async (element) => {
-      await act(async () => {
+      act(() => {
         root.render(element);
       });
       await flush();
