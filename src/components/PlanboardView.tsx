@@ -20,6 +20,10 @@ import type {
 } from "../shared/ipc";
 import styles from "./PlanboardView.module.css";
 
+function rejectReason(err: unknown, fallback: string): string {
+  return err instanceof Error && err.message ? err.message : fallback;
+}
+
 /** How the Planboard's Start task button creates its thread. */
 export type ThreadStartMode = "default" | "plain" | "worktree" | "orchestrator";
 
@@ -104,17 +108,28 @@ export function PlanboardView({
     if (!project) return;
     const gen = ++loadGen.current;
     setLoading(true);
-    // Issues and PRs load together; a PR-list failure only costs the meter.
-    const [res, prRes] = await Promise.all([
-      listIssues(project.path),
-      listPrs ? listPrs(project.path) : Promise.resolve(null),
-    ]);
-    // Drop a stale response if the selector moved on meanwhile.
-    if (gen !== loadGen.current) return;
-    setResult(res);
-    setPrs(prRes);
-    setLoading(false);
-    setNow(Date.now());
+    try {
+      // Issues and PRs load together; a PR-list failure only costs the meter.
+      const [res, prRes] = await Promise.all([
+        listIssues(project.path).catch((err) => ({
+          ok: false as const,
+          reason: rejectReason(err, "Couldn't load the plan"),
+        })),
+        listPrs
+          ? listPrs(project.path).catch((err) => ({
+              ok: false as const,
+              reason: rejectReason(err, "Couldn't load review load"),
+            }))
+          : Promise.resolve(null),
+      ]);
+      // Drop a stale response if the selector moved on meanwhile.
+      if (gen !== loadGen.current) return;
+      setResult(res);
+      setPrs(prRes);
+      setNow(Date.now());
+    } finally {
+      if (gen === loadGen.current) setLoading(false);
+    }
   }, [project, listIssues, listPrs]);
 
   useEffect(() => {
@@ -143,26 +158,35 @@ export function PlanboardView({
       const orchProfile = orchAgentRows.find(
         (r) => r.id === resolvedOrchId && !r.disabled,
       );
-      const res = await onStartTask({
-        projectId: project.id,
-        projectPath: project.path,
-        ref: String(issueNumber),
-        mode: startMode,
-        ...(orchProfile ? { agentProfileId: orchProfile.id } : {}),
-      });
-      setStarting(null);
-      if (!res.ok) {
-        setStartNote(`#${issueNumber}: ${res.reason}`);
-        return;
+      try {
+        const res = await onStartTask({
+          projectId: project.id,
+          projectPath: project.path,
+          ref: String(issueNumber),
+          mode: startMode,
+          ...(orchProfile ? { agentProfileId: orchProfile.id } : {}),
+        });
+        if (!res.ok) {
+          setStartNote(`#${issueNumber}: ${res.reason}`);
+          return;
+        }
+        if (res.warning) {
+          setStartNote(`#${issueNumber}: ${res.warning}`);
+        } else {
+          // We stay on the board (#207), so say the start actually happened.
+          setStartNote(`#${issueNumber}: thread started`);
+        }
+        // Card moved to In progress on GitHub; pull the board back in sync.
+        // A rejected start is ambiguous (timeout may have applied), so do not
+        // refresh or retry the mutation from this path.
+        void load();
+      } catch (err) {
+        setStartNote(
+          `#${issueNumber}: ${rejectReason(err, "Couldn't start task")}`,
+        );
+      } finally {
+        setStarting(null);
       }
-      if (res.warning) {
-        setStartNote(`#${issueNumber}: ${res.warning}`);
-      } else {
-        // We stay on the board (#207), so say the start actually happened.
-        setStartNote(`#${issueNumber}: thread started`);
-      }
-      // Card moved to In progress on GitHub; pull the board back in sync.
-      void load();
     },
     [
       onStartTask,

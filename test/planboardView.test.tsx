@@ -482,6 +482,95 @@ describe("PlanboardView", () => {
     m.unmount();
   });
 
+  it("surfaces a rejected listIssues load and re-enables Refresh (#1132)", async () => {
+    const m = await mount(
+      <PlanboardView
+        projects={projects}
+        listIssues={async () => {
+          throw new Error("request timed out");
+        }}
+      />,
+    );
+    await m.flush();
+    assert.ok(m.query("[data-planboard-error]"), "scoped load error");
+    assert.ok(m.text().includes("request timed out"));
+    assert.ok(!m.text().includes("Loading plan"));
+    const refresh = m.byText("Refresh") as HTMLButtonElement | null;
+    assert.ok(refresh);
+    assert.equal(refresh.disabled, false);
+    m.unmount();
+  });
+
+  it("drops a stale rejected load when the project changes (#1132)", async () => {
+    let rejectLedger: (err: Error) => void = () => {};
+    let resolveSite: (result: ListIssuesResult) => void = () => {};
+    const m = await mount(
+      <PlanboardView
+        projects={projects}
+        listIssues={(path) => {
+          if (path === "/tmp/ledger") {
+            return new Promise<ListIssuesResult>((_, reject) => {
+              rejectLedger = reject;
+            });
+          }
+          return new Promise<ListIssuesResult>((resolve) => {
+            resolveSite = resolve;
+          });
+        }}
+      />,
+    );
+    const select = m.query("select") as HTMLSelectElement | null;
+    assert.ok(select, "project selector");
+    await inAct(() => {
+      select.value = "p2";
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    await inAct(async () => {
+      rejectLedger(new Error("stale timeout"));
+      resolveSite(okResult);
+      await Promise.resolve();
+    });
+    await m.flush();
+    assert.ok(m.query('[data-plan-issue="1"]'), "new project's cards");
+    assert.ok(!m.text().includes("stale timeout"), "stale reject must not land");
+    const refresh = m.byText("Refresh") as HTMLButtonElement | null;
+    assert.equal(refresh?.disabled, false);
+    m.unmount();
+  });
+
+  it("restores Start task after onStartTask rejects and does not retry (#1132)", async () => {
+    let starts = 0;
+    let loads = 0;
+    const m = await mount(
+      <PlanboardView
+        projects={projects}
+        listIssues={async () => {
+          loads += 1;
+          return okResult;
+        }}
+        onStartTask={async () => {
+          starts += 1;
+          throw new Error("disconnected");
+        }}
+      />,
+    );
+    await m.flush();
+    const button = m.query('[data-plan-start="1"]') as HTMLButtonElement | null;
+    assert.ok(button, "Start task on the Todo card");
+    await inAct(() => button.click());
+    await m.flush();
+    assert.equal(starts, 1, "must not auto-retry a rejected start");
+    assert.equal(loads, 1, "must not refresh after an ambiguous start rejection");
+    const note = m.query("[data-plan-start-note]");
+    assert.ok(note, "failure note");
+    assert.ok(note.textContent?.includes("disconnected"));
+    const start = m.query('[data-plan-start="1"]') as HTMLButtonElement | null;
+    assert.ok(start);
+    assert.equal(start.disabled, false, "Start task usable after rejection");
+    assert.ok(!start.textContent?.includes("Starting"));
+    m.unmount();
+  });
+
   it("Start task does not apply an unavailable settings default (#725)", async () => {
     const calls: Array<Record<string, unknown>> = [];
     const m = await mount(
@@ -588,6 +677,66 @@ describe("PlanboardView review-load meter (#402)", () => {
     );
     const meter = m.query("[data-review-load]");
     assert.equal(meter?.getAttribute("data-review-load"), "busy");
+    m.unmount();
+  });
+
+  it("shows issue cards and re-enables Refresh when listPrs rejects (#1132)", async () => {
+    const m = await mount(
+      <PlanboardView
+        projects={projects}
+        listIssues={async () => okResult}
+        listPrs={async () => {
+          throw new Error("request timed out");
+        }}
+      />,
+    );
+    await m.flush();
+    assert.ok(m.query('[data-plan-column="todo"]'), "board still renders");
+    assert.ok(m.query('[data-plan-issue="1"]'), "successful issue cards stay visible");
+    assert.equal(m.query("[data-review-load]"), null, "meter stays off on reject");
+    assert.ok(!m.text().includes("Loading plan"));
+    const refresh = m.byText("Refresh") as HTMLButtonElement | null;
+    assert.ok(refresh, "Refresh present");
+    assert.equal(refresh.disabled, false, "Refresh usable after optional PR reject");
+    m.unmount();
+  });
+
+  it("clears Refresh after a rejected refresh without hiding cards (#1132)", async () => {
+    let prCalls = 0;
+    const m = await mount(
+      <PlanboardView
+        projects={projects}
+        listIssues={async () => okResult}
+        listPrs={async () => {
+          prCalls += 1;
+          if (prCalls === 1) {
+            return {
+              ok: true,
+              prs: [
+                {
+                  number: 11,
+                  title: "a",
+                  url: "https://github.com/acme/ledger/pull/11",
+                  state: "OPEN",
+                  headRefName: "coder/a",
+                  additions: 10,
+                  deletions: 1,
+                },
+              ],
+            };
+          }
+          throw new Error("disconnected");
+        }}
+      />,
+    );
+    await m.flush();
+    assert.ok(m.query("[data-review-load]"), "meter on first success");
+    await m.click(m.byText("Refresh"));
+    await m.flush();
+    assert.ok(m.query('[data-plan-issue="1"]'), "cards survive rejected PR refresh");
+    assert.equal(m.query("[data-review-load]"), null);
+    const refresh = m.byText("Refresh") as HTMLButtonElement | null;
+    assert.equal(refresh?.disabled, false);
     m.unmount();
   });
 

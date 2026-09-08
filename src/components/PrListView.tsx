@@ -22,6 +22,10 @@ import type {
 } from "../shared/ipc";
 import styles from "./PrListView.module.css";
 
+function rejectReason(err: unknown, fallback: string): string {
+  return err instanceof Error && err.message ? err.message : fallback;
+}
+
 export interface PrListViewProps {
   projects: ProjectInfo[];
   threads: ThreadInfo[];
@@ -68,16 +72,29 @@ export function PrListView({
   const loadAll = useCallback(async () => {
     const gen = ++loadGen.current;
     setLoading(true);
-    const entries = await Promise.all(
-      projects.map(async (project) => {
-        const result = await listPrs(project.path);
-        return [project.id, result] as const;
-      }),
-    );
-    if (gen !== loadGen.current) return;
-    setResults(new Map(entries));
-    setLoading(false);
-    setNow(Date.now());
+    try {
+      const entries = await Promise.all(
+        projects.map(async (project) => {
+          try {
+            const result = await listPrs(project.path);
+            return [project.id, result] as const;
+          } catch (err) {
+            return [
+              project.id,
+              {
+                ok: false as const,
+                reason: rejectReason(err, "Couldn't load PR data"),
+              },
+            ] as const;
+          }
+        }),
+      );
+      if (gen !== loadGen.current) return;
+      setResults(new Map(entries));
+      setNow(Date.now());
+    } finally {
+      if (gen === loadGen.current) setLoading(false);
+    }
   }, [projects, listPrs]);
 
   useEffect(() => {
@@ -126,6 +143,12 @@ export function PrListView({
             return next;
           });
         }
+      } catch (err) {
+        setCheckoutErrors((prev) => {
+          const next = new Map(prev);
+          next.set(key, rejectReason(err, "Checkout failed"));
+          return next;
+        });
       } finally {
         setCheckingOut(null);
       }
@@ -135,13 +158,24 @@ export function PrListView({
 
   const retryProject = useCallback(
     async (project: ProjectInfo) => {
-      const result = await listPrs(project.path);
-      setResults((prev) => {
-        const next = new Map(prev);
-        next.set(project.id, result);
-        return next;
-      });
-      setNow(Date.now());
+      try {
+        const result = await listPrs(project.path);
+        setResults((prev) => {
+          const next = new Map(prev);
+          next.set(project.id, result);
+          return next;
+        });
+        setNow(Date.now());
+      } catch (err) {
+        setResults((prev) => {
+          const next = new Map(prev);
+          next.set(project.id, {
+            ok: false,
+            reason: rejectReason(err, "Couldn't load PR data"),
+          });
+          return next;
+        });
+      }
     },
     [listPrs],
   );
@@ -332,7 +366,12 @@ export function PrListView({
               <h2 className={styles.groupHeader}>{group.project.slug}</h2>
               {!group.ok ? (
                 <div className={styles.errorRow} data-pr-error="">
-                  <span>Couldn&apos;t load PR data</span>
+                  <span>
+                    Couldn&apos;t load PR data
+                    {group.reason && group.reason !== "unknown"
+                      ? ` (${group.reason})`
+                      : ""}
+                  </span>
                   <button
                     type="button"
                     className={styles.retry}

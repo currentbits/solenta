@@ -241,6 +241,119 @@ describe("PrListView", () => {
     m.unmount();
   });
 
+  it("keeps a sibling project's PRs when one listPrs rejects on load (#1132)", async () => {
+    const m = await mount(
+      <PrListView
+        projects={[p1, p2]}
+        threads={[]}
+        listPrs={async (projectPath) => {
+          if (projectPath === p2.path) throw new Error("request timed out");
+          return { ok: true, prs: [pr({ number: 11, title: "Ledger fix" })] };
+        }}
+        onSelectThread={() => {}}
+      />,
+    );
+    await m.flush();
+    assert.ok(m.text().includes("Ledger fix"), "successful project stays visible");
+    assert.ok(m.query('[data-pr-group="acme/billing"] [data-pr-error]'), "failed project error");
+    assert.ok(m.text().includes("request timed out"), "scoped rejection reason");
+    assert.ok(!m.text().includes("Loading pull requests"), "not stuck loading");
+    const refresh = m.byText("Refresh") as HTMLButtonElement | null;
+    assert.ok(refresh, "Refresh present");
+    assert.equal(refresh.disabled, false, "Refresh usable after a sibling reject");
+    m.unmount();
+  });
+
+  it("clears Refresh after a rejected refresh and keeps prior rows (#1132)", async () => {
+    let calls = 0;
+    const m = await mount(
+      <PrListView
+        projects={[p1, p2]}
+        threads={[]}
+        listPrs={async (projectPath) => {
+          calls += 1;
+          if (calls > 2 && projectPath === p2.path) {
+            throw new Error("disconnected");
+          }
+          if (projectPath === p1.path) {
+            return { ok: true, prs: [pr({ number: 11, title: "Ledger fix" })] };
+          }
+          return { ok: true, prs: [pr({ number: 22, title: "Billing fix" })] };
+        }}
+        onSelectThread={() => {}}
+      />,
+    );
+    await m.flush();
+    assert.ok(m.text().includes("Billing fix"));
+    await m.click(m.byText("Refresh"));
+    await m.flush();
+    assert.ok(m.text().includes("Ledger fix"), "successful refresh rows remain");
+    assert.ok(m.query('[data-pr-group="acme/billing"] [data-pr-error]'), "failed refresh is scoped");
+    assert.ok(m.text().includes("disconnected"));
+    const refresh = m.byText("Refresh") as HTMLButtonElement | null;
+    assert.equal(refresh?.disabled, false, "Refresh re-enabled after rejected refresh");
+    m.unmount();
+  });
+
+  it("keeps Retry usable when a per-project retry rejects (#1132)", async () => {
+    let calls = 0;
+    const m = await mount(
+      <PrListView
+        projects={[p1, p2]}
+        threads={[]}
+        listPrs={async (projectPath) => {
+          if (projectPath === p2.path) {
+            return { ok: true, prs: [pr({ number: 22, title: "Billing fix" })] };
+          }
+          calls += 1;
+          if (calls === 1) return { ok: false, reason: "auth" };
+          throw new Error("retry timed out");
+        }}
+        onSelectThread={() => {}}
+      />,
+    );
+    await m.flush();
+    assert.ok(m.text().includes("Billing fix"));
+    await m.click(m.byText("Retry"));
+    await m.flush();
+    assert.ok(m.text().includes("Billing fix"), "sibling rows survive a rejected retry");
+    assert.ok(m.text().includes("retry timed out"), "retry rejection is visible");
+    const retry = m.byText("Retry") as HTMLButtonElement | null;
+    assert.ok(retry, "Retry still present");
+    assert.equal(retry.disabled, false);
+    const refresh = m.byText("Refresh") as HTMLButtonElement | null;
+    assert.equal(refresh?.disabled, false);
+    m.unmount();
+  });
+
+  it("restores Check out and shows a row error when checkout rejects (#1132)", async () => {
+    const m = await mount(
+      <PrListView
+        projects={[p1]}
+        threads={[]}
+        listPrs={async () => ({
+          ok: true,
+          prs: [pr({ number: 8, title: "Inbound" })],
+        })}
+        onSelectThread={() => {}}
+        onCheckoutPr={async () => {
+          throw new Error("socket closed");
+        }}
+      />,
+    );
+    await m.flush();
+    await m.click(m.query("[data-pr-checkout-btn]"));
+    await m.flush();
+    const err = m.query("[data-pr-checkout-error]");
+    assert.ok(err, "checkout rejection lands on the row");
+    assert.ok(err.textContent?.includes("socket closed"));
+    const btn = m.query("[data-pr-checkout-btn]") as HTMLButtonElement | null;
+    assert.ok(btn);
+    assert.equal(btn.disabled, false, "Check out usable after rejection");
+    assert.ok(!btn.textContent?.includes("Checking out"));
+    m.unmount();
+  });
+
   it("renders the all-empty state when every project has no PRs", async () => {
     const m = await mount(
       <PrListView

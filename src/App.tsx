@@ -1103,7 +1103,15 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
       mode?: ThreadStartMode;
       agentProfileId?: string;
     }) => {
-      const fetched = await fetchIssue(input.projectPath, input.ref);
+      let fetched;
+      try {
+        fetched = await fetchIssue(input.projectPath, input.ref);
+      } catch (err) {
+        return {
+          ok: false as const,
+          reason: err instanceof Error ? err.message : String(err),
+        };
+      }
       if (!fetched.ok) return fetched;
       const issue = fetched.issue;
       let thread;
@@ -1190,11 +1198,20 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
       }
       // The run is live either way, so a failed label move is a warning,
       // not a failure: say so instead of pretending the card moved.
-      const moved = await setIssuePlanStatus(
-        input.projectPath,
-        issue.number,
-        "doing",
-      );
+      let moved;
+      try {
+        moved = await setIssuePlanStatus(
+          input.projectPath,
+          issue.number,
+          "doing",
+        );
+      } catch (err) {
+        const reason = err instanceof Error ? err.message : String(err);
+        return {
+          ok: true as const,
+          warning: `plan:doing not set (${reason})`,
+        };
+      }
       return moved.ok
         ? { ok: true as const }
         : { ok: true as const, warning: `plan:doing not set (${moved.reason})` };
@@ -1214,7 +1231,15 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
 
   const handleCheckoutPr = useCallback(
     async (input: { projectId: string; prNumber: number }) => {
-      const result = await checkoutPr(input);
+      let result;
+      try {
+        result = await checkoutPr(input);
+      } catch (err) {
+        return {
+          ok: false as const,
+          reason: err instanceof Error ? err.message : String(err),
+        };
+      }
       if (!result.ok) return result;
       setView("thread");
       setRevealThreadId(result.thread.id);
