@@ -4,6 +4,7 @@ import {
   badgeLabels,
   formatLineCount,
   isPlanEmpty,
+  issueMatchesQuery,
   issueUpdatedMs,
   planColumns,
   reviewLoad,
@@ -103,6 +104,8 @@ export function PlanboardView({
   const [agentProfileId, setAgentProfileId] = useState("");
   /** Column ordering; "updated" is the long-standing default. */
   const [sort, setSort] = useState<PlanSort>("updated");
+  /** Local find over the already-loaded issue list (#945). */
+  const [query, setQuery] = useState("");
   const loadGen = useRef(0);
   const projectRef = useRef<ProjectInfo | null>(null);
   /** Project that produced the cards currently on screen. */
@@ -249,10 +252,26 @@ export function PlanboardView({
       ? startNote.text
       : null;
 
-  const columns = useMemo(
-    () => planColumns(result && result.ok ? result.issues : [], sort),
-    [result, sort],
-  );
+  const trimmedQuery = query.trim();
+  const searching = trimmedQuery.length > 0;
+  const { columns, columnTotals, totalCount, visibleCount, unfilteredEmpty } =
+    useMemo(() => {
+      const issues = result && result.ok ? result.issues : [];
+      const unfiltered = planColumns(issues, sort);
+      const filtered = searching
+        ? issues.filter((issue) => issueMatchesQuery(issue, trimmedQuery))
+        : issues;
+      const next = searching ? planColumns(filtered, sort) : unfiltered;
+      const totals: Record<string, number> = {};
+      for (const column of unfiltered) totals[column.id] = column.issues.length;
+      return {
+        columns: next,
+        columnTotals: totals,
+        totalCount: issues.length,
+        visibleCount: filtered.length,
+        unfilteredEmpty: isPlanEmpty(unfiltered),
+      };
+    }, [result, sort, searching, trimmedQuery]);
   // Review-load meter: open non-draft PRs consume the human review budget.
   const review = useMemo(
     () => (prs && prs.ok ? reviewLoad(prs.prs) : null),
@@ -272,36 +291,88 @@ export function PlanboardView({
     [threads, project],
   );
   const empty =
-    result?.ok === true && isPlanEmpty(columns) && plans.length === 0;
+    result?.ok === true &&
+    unfilteredEmpty &&
+    plans.length === 0 &&
+    !searching;
+  const noMatch = searching && result?.ok === true && visibleCount === 0;
+
+  const clearSearch = useCallback(() => setQuery(""), []);
 
   return (
     <main className={styles.main} data-planboard="">
-      <header className={styles.header}>
-        <h1 className={styles.title}>Planboard</h1>
-        {review ? (
-          <span
-            className={styles.reviewLoad}
-            data-review-load={review.level}
-            title="Open, non-draft PRs awaiting human review and their combined size — the reviewer is the bottleneck, not the agents"
-          >
-            Review load: {review.openPrs} PR{review.openPrs === 1 ? "" : "s"} ·{" "}
-            {formatLineCount(review.totalLines)} lines
-          </span>
-        ) : null}
-        <div className={styles.controls}>
-          {projects.length > 0 ? (
-            <select
-              className={styles.projectSelect}
-              value={project?.id ?? ""}
-              onChange={(e) => setProjectId(e.target.value)}
-              aria-label="Project"
+      <header className={styles.chrome}>
+        <div className={styles.header}>
+          <h1 className={styles.title}>Planboard</h1>
+          {review ? (
+            <span
+              className={styles.reviewLoad}
+              data-review-load={review.level}
+              title="Open, non-draft PRs awaiting human review and their combined size — the reviewer is the bottleneck, not the agents"
             >
-              {projects.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.slug}
-                </option>
-              ))}
-            </select>
+              Review load: {review.openPrs} PR{review.openPrs === 1 ? "" : "s"} ·{" "}
+              {formatLineCount(review.totalLines)} lines
+            </span>
+          ) : null}
+          <div className={styles.primaryControls} data-plan-primary="">
+            {projects.length > 0 ? (
+              <select
+                className={styles.projectSelect}
+                value={project?.id ?? ""}
+                onChange={(e) => setProjectId(e.target.value)}
+                aria-label="Project"
+              >
+                {projects.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.slug}
+                  </option>
+                ))}
+              </select>
+            ) : null}
+            <input
+              type="search"
+              className={styles.search}
+              data-plan-search=""
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Escape" && query) {
+                  e.preventDefault();
+                  clearSearch();
+                }
+              }}
+              placeholder="Find issues by title or number"
+              aria-label="Find issues by title or number"
+            />
+            <button
+              type="button"
+              className={styles.refresh}
+              onClick={() => void load()}
+              disabled={loading || !project}
+              title="Refresh"
+            >
+              Refresh
+            </button>
+          </div>
+        </div>
+        <div className={styles.secondaryControls} data-plan-secondary="">
+          {searching ? (
+            <span
+              className={styles.searchCount}
+              data-plan-search-count=""
+              aria-live="polite"
+            >
+              {visibleCount} of {totalCount}
+            </span>
+          ) : null}
+          {searching ? (
+            <button
+              type="button"
+              className={styles.clearSearch}
+              onClick={clearSearch}
+            >
+              Clear search
+            </button>
           ) : null}
           {onStartTask ? (
             <select
@@ -355,15 +426,6 @@ export function PlanboardView({
             <option value="created-desc">Sort: Newest added</option>
             <option value="created-asc">Sort: Oldest added</option>
           </select>
-          <button
-            type="button"
-            className={styles.refresh}
-            onClick={() => void load()}
-            disabled={loading || !project}
-            title="Refresh"
-          >
-            Refresh
-          </button>
         </div>
       </header>
 
@@ -405,6 +467,21 @@ export function PlanboardView({
             plan:todo, plan:doing, and plan:done.
           </p>
         </div>
+      ) : noMatch ? (
+        <div className={styles.empty} data-plan-no-match="">
+          <p className={styles.emptyTitle}>No matching issues</p>
+          <p className={styles.emptyHint}>
+            Try another title or issue number. Thread plans below are not
+            searched.
+          </p>
+          <button
+            type="button"
+            className={styles.retry}
+            onClick={clearSearch}
+          >
+            Clear search
+          </button>
+        </div>
       ) : (
         <div className={styles.columns}>
           {columns.map((column) => (
@@ -415,7 +492,11 @@ export function PlanboardView({
             >
               <header className={styles.columnHeader}>
                 <span>{column.title}</span>
-                <span className={styles.count}>{column.issues.length}</span>
+                <span className={styles.count}>
+                  {searching
+                    ? `${column.issues.length}/${columnTotals[column.id] ?? 0}`
+                    : column.issues.length}
+                </span>
               </header>
               <div className={styles.columnBody}>
                 {column.issues.map((issue) => {

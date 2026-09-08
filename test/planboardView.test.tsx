@@ -978,3 +978,165 @@ describe("PlanboardView review-load meter (#402)", () => {
     m.unmount();
   });
 });
+
+describe("PlanboardView issue search (#945)", () => {
+  function manyIssues(): ListIssuesResult {
+    const issues = Array.from({ length: 60 }, (_, i) => {
+      const number = i + 1;
+      const column =
+        number % 3 === 1 ? "todo" : number % 3 === 2 ? "doing" : "done";
+      return {
+        number,
+        title:
+          number === 42
+            ? "Restore AUTH session"
+            : number === 7
+              ? "Quiet backlog card"
+              : `Issue ${number}`,
+        url: `https://github.com/acme/ledger/issues/${number}`,
+        state: column === "done" ? ("CLOSED" as const) : ("OPEN" as const),
+        labels:
+          column === "todo"
+            ? ["plan:todo"]
+            : column === "doing"
+              ? ["plan:doing"]
+              : [],
+        updatedAt: `2026-03-${String((number % 28) + 1).padStart(2, "0")}T00:00:00Z`,
+      };
+    });
+    return { ok: true, issues };
+  }
+
+  it("filters loaded cards by case-insensitive title or #number across statuses", async () => {
+    let loads = 0;
+    const m = await mount(
+      <PlanboardView
+        projects={projects}
+        listIssues={async () => {
+          loads += 1;
+          return manyIssues();
+        }}
+      />,
+    );
+    const search = m.query("[data-plan-search]") as HTMLInputElement | null;
+    assert.ok(search, "labelled native search");
+    assert.equal(search.type, "search");
+    assert.equal(search.getAttribute("aria-label"), "Find issues by title or number");
+    assert.equal(loads, 1);
+
+    await m.type(search, "auth session");
+    assert.ok(m.query('[data-plan-issue="42"]'));
+    assert.equal(m.queryAll("[data-plan-issue]").length, 1);
+    assert.ok(
+      m.query('[data-plan-column="done"] [data-plan-issue="42"]'),
+      "title match across statuses",
+    );
+    assert.ok(m.text().includes("1 of 60"), "visible/total while searching");
+    assert.equal(loads, 1, "search stays local");
+
+    await m.type(search, "#7");
+    assert.ok(m.query('[data-plan-issue="7"]'));
+    assert.equal(m.queryAll("[data-plan-issue]").length, 1);
+    assert.ok(m.query('[data-plan-column="todo"] [data-plan-issue="7"]'));
+
+    await m.type(search, "42");
+    assert.ok(m.query('[data-plan-issue="42"]'));
+    assert.equal(m.queryAll("[data-plan-issue]").length, 1);
+    m.unmount();
+  });
+
+  it("clears back to every row and the original column order", async () => {
+    const result = manyIssues();
+    const m = await mount(
+      <PlanboardView projects={projects} listIssues={async () => result} />,
+    );
+    const before = Array.from(m.queryAll("[data-plan-issue]")).map((el) =>
+      el.getAttribute("data-plan-issue"),
+    );
+    await m.type(m.query("[data-plan-search]"), "auth");
+    assert.equal(m.queryAll("[data-plan-issue]").length, 1);
+    await m.click(m.byText("Clear search"));
+    const after = Array.from(m.queryAll("[data-plan-issue]")).map((el) =>
+      el.getAttribute("data-plan-issue"),
+    );
+    assert.deepEqual(after, before);
+    assert.equal(
+      (m.query("[data-plan-search]") as HTMLInputElement).value,
+      "",
+    );
+    m.unmount();
+  });
+
+  it("no-match copy is not the empty-plan state and can be cleared", async () => {
+    const m = await mount(
+      <PlanboardView
+        projects={projects}
+        listIssues={async () => manyIssues()}
+        threads={[
+          thread({
+            id: "t-plan",
+            projectId: "p1",
+            title: "live agent plan",
+            planSteps: [{ step: "keep going", status: "doing" }],
+          }),
+        ]}
+      />,
+    );
+    await m.type(m.query("[data-plan-search]"), "zzz-missing");
+    assert.ok(m.query("[data-plan-no-match]"), "distinct no-match");
+    assert.ok(m.text().includes("No matching issues"));
+    assert.ok(!m.text().includes("Nothing on the plan yet"));
+    const plans = m.query("[data-thread-plans]");
+    assert.ok(plans, "live agent plans stay visible");
+    assert.ok(plans.textContent?.includes("Thread plans"));
+    assert.ok(plans.textContent?.includes("live agent plan"));
+    await m.click(m.query("[data-plan-no-match] button"));
+    assert.equal(m.query("[data-plan-no-match]"), null);
+    assert.ok(m.query('[data-plan-issue="42"]'));
+    m.unmount();
+  });
+
+  it("Start task still works on a filtered Todo card", async () => {
+    const started: string[] = [];
+    const m = await mount(
+      <PlanboardView
+        projects={projects}
+        listIssues={async () => manyIssues()}
+        onStartTask={async (input) => {
+          started.push(input.ref);
+          return { ok: true as const };
+        }}
+      />,
+    );
+    await m.type(m.query("[data-plan-search]"), "Quiet backlog");
+    const start = m.query('[data-plan-start="7"]') as HTMLButtonElement | null;
+    assert.ok(start, "Start task remains on the filtered card");
+    await m.click(start);
+    assert.deepEqual(started, ["7"]);
+    m.unmount();
+  });
+
+  it("keeps project, search, and Refresh on the primary row", async () => {
+    const m = await mount(
+      <PlanboardView
+        projects={projects}
+        listIssues={async () => okResult}
+        onStartTask={async () => ({ ok: true as const })}
+      />,
+    );
+    const primary = m.query("[data-plan-primary]");
+    const secondary = m.query("[data-plan-secondary]");
+    assert.ok(primary, "primary controls");
+    assert.ok(secondary, "wrapping secondary launch row");
+    assert.ok(primary.querySelector("[data-plan-search]"));
+    assert.ok(primary.querySelector('select[aria-label="Project"]'));
+    assert.ok(primary.querySelector("button")?.textContent?.includes("Refresh"));
+    assert.ok(secondary.querySelector("[data-plan-start-mode]"));
+    assert.ok(secondary.querySelector("[data-plan-sort]"));
+    const search = m.query("[data-plan-search]") as HTMLInputElement;
+    search.focus();
+    assert.equal(m.container.ownerDocument.activeElement, search);
+    await m.pressFocused("Escape");
+    m.unmount();
+  });
+});

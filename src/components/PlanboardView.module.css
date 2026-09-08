@@ -6,16 +6,22 @@
   background: var(--bg);
 }
 
+.chrome {
+  flex-shrink: 0;
+  min-width: 0;
+  background: var(--bg-elevated);
+  border-bottom: 1px solid var(--border);
+}
+
 .header {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 16px;
   padding: 0 24px;
-  border-bottom: 1px solid var(--border);
-  background: var(--bg-elevated);
-  flex-shrink: 0;
+  min-width: 0;
   height: 56px;
+  border-bottom: 1px solid var(--border-soft);
 }
 
 .title {
@@ -47,21 +53,83 @@
   border-color: var(--danger);
 }
 
-.controls {
+.primaryControls {
   display: flex;
   align-items: center;
+  justify-content: flex-end;
   gap: 8px;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.secondaryControls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 8px 24px;
 }
 
 .projectSelect,
 .startMode,
-.sort {
+.sort,
+.search,
+.clearSearch {
   padding: 5px 8px;
   border-radius: var(--radius-sm);
   border: 1px solid var(--border);
   background: var(--card);
   color: var(--text);
   font-size: 12.5px;
+}
+
+.projectSelect {
+  flex: 0 1 180px;
+  min-width: 0;
+}
+
+.search {
+  flex: 1 1 160px;
+  min-width: 0;
+  max-width: 280px;
+  height: 28px;
+  box-sizing: border-box;
+  padding: 0 10px;
+  outline: none;
+}
+
+.search::placeholder {
+  color: var(--text-dim);
+}
+
+.search:focus-visible,
+.projectSelect:focus-visible,
+.startMode:focus-visible,
+.sort:focus-visible,
+.clearSearch:focus-visible {
+  border-color: var(--blue-border);
+  box-shadow: var(--focus-ring);
+}
+
+.searchCount {
+  flex-shrink: 0;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.clearSearch {
+  flex-shrink: 0;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.startMode,
+.sort {
+  min-width: 0;
+  max-width: 100%;
 }
 
 .refresh,
@@ -74,10 +142,12 @@
   font-size: 12.5px;
   font-weight: 500;
   cursor: pointer;
+  flex-shrink: 0;
 }
 
 .refresh:hover:not(:disabled),
-.retry:hover {
+.retry:hover,
+.clearSearch:hover {
   background: var(--card-hover);
 }
 

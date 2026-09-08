@@ -103,6 +103,21 @@ export function isPlanEmpty(columns: readonly PlanColumn[]): boolean {
 }
 
 /**
+ * Local Planboard find (#945): case-insensitive title substring, or an
+ * exact issue number typed as 123 or #123. Blank query matches everything.
+ */
+export function issueMatchesQuery(
+  issue: Pick<PlanIssue, "number" | "title">,
+  query: string,
+): boolean {
+  const q = query.trim();
+  if (!q) return true;
+  const numeric = q.startsWith("#") ? q.slice(1) : q;
+  if (/^\d+$/.test(numeric)) return issue.number === Number(numeric);
+  return issue.title.toLowerCase().includes(q.toLowerCase());
+}
+
+/**
  * Review-load meter (issue #402): an orchestrator that parallelizes agents
  * manufactures review bottleneck, so the planboard shows how much human
  * review capacity the open PR queue already consumes.
