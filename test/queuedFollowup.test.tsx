@@ -1054,6 +1054,106 @@ describe("queued follow-up (issue #92 / #314)", () => {
     await m.flush();
     m.unmount();
   });
+
+  it("keeps both items after a rejected remove, then retries (issue #1144)", async () => {
+    const { fake, m } = await bootQueuedPair();
+    const orig = fake.api.threads.setQueued.bind(fake.api.threads);
+    let rejectNext = true;
+    fake.api.threads.setQueued = (input) => {
+      if (rejectNext && (input as { replace?: boolean }).replace) {
+        rejectNext = false;
+        fake.calls.push({ channel: "threads.setQueued", args: [input] });
+        return Promise.reject(new Error("queue write failed"));
+      }
+      return orig(input);
+    };
+
+    const first = m.query('[data-queued-item="0"]');
+    assert.ok(first, "two queued thoughts must render as items");
+    const remove = first.querySelector("button[data-remove-queued]");
+    assert.ok(remove, "a multi-item queue must offer remove");
+    await m.click(remove);
+
+    const items = m.queryAll("[data-queued-item]");
+    assert.equal(items.length, 2, "a rejected remove must not drop the item");
+    assert.match(items[0]!.textContent || "", /first thought/);
+    assert.match(items[1]!.textContent || "", /second thought/);
+    const err = m.query("[data-queued-write-error]");
+    assert.ok(err, "a rejected persist must show a retryable error on the strip");
+    assert.match(err.textContent || "", /queue write failed/);
+
+    const stillFirst = m.query('[data-queued-item="0"]');
+    await m.click(stillFirst!.querySelector("button[data-remove-queued]"));
+
+    const replaceCalls = fake
+      .of("threads.setQueued")
+      .filter((c) => (c.args[0] as { replace?: boolean }).replace === true);
+    assert.equal(replaceCalls.length, 2, "retry must write again");
+    assert.deepEqual(replaceCalls[1]!.args[0], {
+      threadId: "t-busy",
+      prompt: "second thought",
+      attachments: [QUEUED_SHOT],
+      replace: true,
+      items: ["second thought"],
+    });
+    const strip = m.query("[data-queued-prompt]");
+    assert.ok(strip, "the remaining thought stays queued");
+    assert.match(strip!.textContent || "", /second thought/);
+    assert.ok(
+      !/first thought/.test(strip!.textContent || ""),
+      "the removed thought must leave the strip",
+    );
+    assert.equal(
+      m.query("[data-queued-write-error]"),
+      null,
+      "a successful retry clears the persist error",
+    );
+    m.unmount();
+  });
+
+  it("does not start a second remove while a replace is pending (issue #1144)", async () => {
+    const { fake, m } = await bootQueuedPair();
+    const orig = fake.api.threads.setQueued.bind(fake.api.threads);
+    let release!: (run: () => ReturnType<typeof orig>) => void;
+    const gate = new Promise<() => ReturnType<typeof orig>>((resolve) => {
+      release = resolve;
+    });
+    fake.api.threads.setQueued = (input) => {
+      fake.calls.push({ channel: "threads.setQueued", args: [input] });
+      return gate.then((run) => run());
+    };
+
+    const remove = m.query('[data-queued-item="0"] button[data-remove-queued]');
+    assert.ok(remove);
+    await m.click(remove);
+    await m.click(remove);
+
+    assert.equal(
+      fake
+        .of("threads.setQueued")
+        .filter((c) => (c.args[0] as { replace?: boolean }).replace === true)
+        .length,
+      1,
+      "a second Remove while the first replace is in flight must not write again",
+    );
+    const removeBtn = m.query(
+      '[data-queued-item="0"] button[data-remove-queued]',
+    ) as HTMLButtonElement | null;
+    assert.ok(removeBtn);
+    assert.equal(removeBtn.disabled, true, "Remove must lock while a write is pending");
+
+    await inAct(() => {
+      release(() => orig({
+        threadId: "t-busy",
+        prompt: "second thought",
+        attachments: [QUEUED_SHOT],
+        replace: true,
+        items: ["second thought"],
+      }));
+    });
+    await m.flush();
+    m.unmount();
+  });
 });
 
 describe("side question /btw during a run (issue #471)", () => {

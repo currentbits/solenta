@@ -4365,15 +4365,20 @@ export const ThreadView = memo(function ThreadView({
   const [queuedEditError, setQueuedEditError] = useState<string | null>(null);
   const queuedEditSavingRef = useRef(false);
   const queuedWriteInFlight = useRef(false);
+  const queuedWriteGen = useRef(0);
   const [queuedWritePending, setQueuedWritePending] = useState(false);
   const [queuedWriteError, setQueuedWriteError] = useState<string | null>(null);
   // The edit is bound to the blob it was seeded from: a thread switch or a
-  // drained/cancelled queue ends it.
+  // drained/cancelled queue ends it. Bump writeGen so a late reject cannot
+  // lock or error a different thread's strip (#1144).
   useEffect(() => {
     setEditingQueued(null);
     queuedEditSavingRef.current = false;
     setQueuedEditSaving(false);
     setQueuedEditError(null);
+    queuedWriteGen.current += 1;
+    queuedWriteInFlight.current = false;
+    setQueuedWritePending(false);
     setQueuedWriteError(null);
   }, [detail?.thread.id, queuedPrompt == null]);
   const [notesOpen, setNotesOpen] = useState(false);
@@ -4793,18 +4798,22 @@ export const ThreadView = memo(function ThreadView({
     const next = items.join("\n\n");
     if (next === queuedPrompt || !onEditQueued) return;
     queuedWriteInFlight.current = true;
+    const gen = queuedWriteGen.current;
     setQueuedWritePending(true);
     setQueuedWriteError(null);
     void Promise.resolve(onEditQueued(next, items))
       .then(() => {
+        if (gen !== queuedWriteGen.current) return;
         setQueuedWriteError(null);
       })
       .catch((err: unknown) => {
+        if (gen !== queuedWriteGen.current) return;
         setQueuedWriteError(
           err instanceof Error && err.message ? err.message : String(err),
         );
       })
       .finally(() => {
+        if (gen !== queuedWriteGen.current) return;
         queuedWriteInFlight.current = false;
         setQueuedWritePending(false);
       });
