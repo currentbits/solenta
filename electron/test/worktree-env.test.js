@@ -666,3 +666,4 @@ describe("Electron display-name stretch (#250)", () => {
     assert.equal(fs.existsSync("/tmp/solenta-dev-homes/thr-r/Electron.app"), false);
   });
 });
+
