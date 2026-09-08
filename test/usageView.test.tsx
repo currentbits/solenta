@@ -506,4 +506,92 @@ describe("UsageView", () => {
     assert.ok(again.text().includes("Fix the cache"), "thread rows still listed");
     again.unmount();
   });
+
+  it("shows an initial load error with retry, not a successful empty report (#1133)", async () => {
+    let calls = 0;
+    const m = await mount(
+      <UsageView
+        loadUsage={async () => {
+          calls += 1;
+          throw new Error("store locked");
+        }}
+      />,
+    );
+    await m.flush();
+    assert.equal(calls, 1);
+    assert.ok(m.query("[data-usage-error]"), "error marker");
+    assert.ok(m.query('[role="alert"]'), "error uses role=alert");
+    assert.ok(m.text().includes("store locked"));
+    assert.ok(m.byText("Retry"), "initial failure offers retry");
+    assert.equal(m.query("[data-usage-empty]"), null, "must not look like a loaded empty report");
+    assert.equal(m.query("[data-usage-totals]"), null, "must not invent a $0 report");
+    assert.ok(!m.text().includes("No usage in this range"));
+    const refresh = m.byText("Refresh");
+    assert.ok(refresh, "refresh control");
+    assert.equal((refresh as HTMLButtonElement).disabled, false, "loading control recovers");
+    m.unmount();
+  });
+
+  it("keeps the last report after a failed refresh and recovers on retry (#1133)", async () => {
+    let calls = 0;
+    const first: UsageReport = { byDay: sampleData(), threadsByDay: {} };
+    const laterDay = daysAgo(0);
+    const second: UsageReport = {
+      byDay: {
+        [laterDay]: {
+          claude: {
+            sonnet: entry({
+              costUsd: 9,
+              inputTokens: 400,
+              outputTokens: 80,
+              turns: 2,
+            }),
+          },
+        },
+      },
+      threadsByDay: {},
+    };
+    const m = await mount(
+      <UsageView
+        loadUsage={async () => {
+          calls += 1;
+          if (calls === 1) return first;
+          if (calls === 2) throw new Error("store locked");
+          return second;
+        }}
+      />,
+    );
+    await m.flush();
+    assert.ok(m.text().includes("$2.50"), "first load");
+    assert.equal(m.query("[data-usage-error]"), null);
+    assert.equal(m.query("[data-usage-stale]"), null);
+
+    await m.click(m.byText("Refresh"));
+    assert.ok(m.text().includes("$2.50"), "failed refresh must keep last spend");
+    assert.ok(!m.text().includes("No usage in this range"), "must not erase into empty");
+    assert.ok(m.query("[data-usage-error]"), "refresh failure is visible");
+    assert.ok(m.query('[role="alert"]')?.textContent?.includes("store locked"));
+    assert.ok(m.query("[data-usage-stale]"), "stale/last-success marker");
+    assert.match(m.text(), /stale/i);
+    assert.equal(m.query("[data-usage]")?.getAttribute("data-range"), "7");
+    assert.equal(m.query("[data-usage]")?.getAttribute("data-metric"), "cost");
+    const refresh = m.byText("Refresh") as HTMLButtonElement;
+    assert.equal(refresh.disabled, false, "refresh re-enables after failure");
+
+    await m.click(m.query('[data-usage-range="30"]'));
+    assert.equal(m.query("[data-usage]")?.getAttribute("data-range"), "30");
+    assert.ok(m.text().includes("$12.50"), "range change still filters last success");
+    assert.ok(m.query("[data-usage-stale]"), "other range must not look freshly current");
+    assert.ok(m.query("[data-usage-error]"), "error stays while last success is shown");
+
+    await m.click(m.query('[data-usage-range="7"]'));
+    await m.click(refresh);
+    assert.ok(m.text().includes("$9.00"), "successful retry updates the report");
+    assert.ok(!m.text().includes("$2.50"), "previous spend is replaced");
+    assert.equal(m.query("[data-usage-error]"), null, "success clears the error");
+    assert.equal(m.query("[data-usage-stale]"), null, "success clears stale");
+    assert.equal(m.query("[data-usage]")?.getAttribute("data-range"), "7");
+    assert.equal(m.query("[data-usage]")?.getAttribute("data-metric"), "cost");
+    m.unmount();
+  });
 });

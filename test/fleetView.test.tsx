@@ -61,6 +61,53 @@ const emptyEvidence: FleetEvidence = {
   notes: [],
 };
 
+function sampleEvidence(title: string, costUsd: number): FleetEvidence {
+  const now = Date.now();
+  const day = 24 * 60 * 60 * 1000;
+  return {
+    collectedAt: now,
+    durabilityWindowDays: 14,
+    threads: [
+      {
+        threadId: title === "Ship ledger" ? "t-ship" : "t-csp",
+        projectId: "p1",
+        title,
+        provider: "claude",
+        model: "sonnet",
+        createdAt: now - 2 * day,
+        endedAt: now - day,
+        activeMs: HOUR,
+        costUsd,
+        inputTokens: 100,
+        outputTokens: 50,
+        turns: 2,
+        linesAdded: 40,
+        linesSurviving: 32,
+        feltSavedMs: null,
+        durabilityMeasurable: false,
+      },
+    ],
+    prs: [
+      {
+        projectId: "p1",
+        number: title === "Ship ledger" ? 12 : 13,
+        url: `https://github.com/acme/nebula/pull/${title === "Ship ledger" ? 12 : 13}`,
+        title,
+        headRefName: title === "Ship ledger" ? "coder/t-ship" : "coder/t-csp",
+        state: "MERGED",
+        createdAt: now - 2 * day,
+        mergedAt: now - day,
+        closedAt: now - day,
+        additions: 40,
+        deletions: 2,
+        firstReviewAt: now - Math.floor(1.5 * day),
+        threadId: title === "Ship ledger" ? "t-ship" : "t-csp",
+      },
+    ],
+    notes: [],
+  };
+}
+
 describe("FleetReport", () => {
   it("renders provider rows with cost, merge rate, and active vs wall", async () => {
     const m = await mount(
@@ -378,6 +425,80 @@ describe("FleetView", () => {
     assert.ok(m.text().includes("store locked"));
     assert.ok(m.query('[role="alert"]'), "error uses role=alert");
     assert.equal(m.query("[data-fleet-report]"), null);
+    m.unmount();
+  });
+
+  it("shows an initial load error with retry, not a successful empty report (#1133)", async () => {
+    let calls = 0;
+    const m = await mount(
+      <FleetView
+        loadEvidence={async () => {
+          calls += 1;
+          throw new Error("store locked");
+        }}
+      />,
+    );
+    await m.flush();
+    assert.equal(calls, 1);
+    assert.ok(m.query("[data-fleet-error]"), "error marker");
+    assert.ok(m.query('[role="alert"]'), "error uses role=alert");
+    assert.ok(m.text().includes("store locked"));
+    assert.ok(m.byText("Retry"), "initial failure offers retry");
+    assert.equal(m.query("[data-fleet-empty]"), null, "must not look like a loaded empty report");
+    assert.equal(m.query("[data-fleet-report]"), null);
+    const refresh = m.byText("Refresh");
+    assert.ok(refresh, "refresh control");
+    assert.equal((refresh as HTMLButtonElement).disabled, false, "loading control recovers");
+    m.unmount();
+  });
+
+  it("keeps the last report after a failed refresh and recovers on retry (#1133)", async () => {
+    let calls = 0;
+    const first = sampleEvidence("Ship ledger", 4.25);
+    const second = sampleEvidence("Tighten CSP", 9);
+    const m = await mount(
+      <FleetView
+        loadEvidence={async () => {
+          calls += 1;
+          if (calls === 1) return first;
+          if (calls === 2) throw new Error("store locked");
+          return second;
+        }}
+      />,
+    );
+    await m.flush();
+    assert.ok(m.query("[data-fleet-report]"), "first load");
+    assert.ok(m.text().includes("Ship ledger"));
+    assert.ok(m.text().includes("$4.25"));
+    assert.equal(m.query("[data-fleet-error]"), null);
+    assert.equal(m.query("[data-fleet-stale]"), null);
+
+    await m.click(m.byText("Refresh"));
+    assert.ok(m.query("[data-fleet-report]"), "failed refresh must keep last report");
+    assert.ok(m.text().includes("Ship ledger"), "last evidence stays");
+    assert.ok(m.text().includes("$4.25"));
+    assert.ok(m.query("[data-fleet-error]"), "refresh failure is visible");
+    assert.ok(m.query('[role="alert"]')?.textContent?.includes("store locked"));
+    assert.ok(m.query("[data-fleet-stale]"), "stale/last-success marker");
+    assert.match(m.text(), /stale/i);
+    assert.equal(m.query("[data-fleet]")?.getAttribute("data-range"), "7");
+    const refresh = m.byText("Refresh") as HTMLButtonElement;
+    assert.equal(refresh.disabled, false, "refresh re-enables after failure");
+
+    await m.click(m.query('[data-fleet-range="30"]'));
+    assert.equal(m.query("[data-fleet]")?.getAttribute("data-range"), "30");
+    assert.ok(m.text().includes("Ship ledger"), "range change still uses last success");
+    assert.ok(m.query("[data-fleet-stale]"), "other range must not look freshly current");
+    assert.ok(m.query("[data-fleet-error]"), "error stays while last success is shown");
+
+    await m.click(m.query('[data-fleet-range="7"]'));
+    await m.click(refresh);
+    assert.ok(m.text().includes("Tighten CSP"), "successful retry updates the report");
+    assert.ok(m.text().includes("$9.00"));
+    assert.ok(!m.text().includes("Ship ledger"), "previous evidence is replaced");
+    assert.equal(m.query("[data-fleet-error]"), null, "success clears the error");
+    assert.equal(m.query("[data-fleet-stale]"), null, "success clears stale");
+    assert.equal(m.query("[data-fleet]")?.getAttribute("data-range"), "7");
     m.unmount();
   });
 });

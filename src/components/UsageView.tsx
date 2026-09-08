@@ -114,6 +114,8 @@ export function UsageView({
 }: UsageViewProps) {
   const [report, setReport] = useState<UsageReport>(EMPTY_REPORT);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [hasLastSuccess, setHasLastSuccess] = useState(false);
   const [range, setRangeState] = useState<UsageRange>(
     () => reportControls?.range ?? 7,
   );
@@ -156,6 +158,7 @@ export function UsageView({
   const loadAll = useCallback(async () => {
     const gen = ++loadGen.current;
     setLoading(true);
+    setError(null);
     try {
       const next = await loadUsage();
       if (gen !== loadGen.current) return;
@@ -171,10 +174,15 @@ export function UsageView({
           ? next.threadsByDay
           : {};
       setReport({ byDay, threadsByDay });
+      setHasLastSuccess(true);
       setNow(Date.now());
-    } catch {
+    } catch (err) {
       if (gen !== loadGen.current) return;
-      setReport(EMPTY_REPORT);
+      const msg =
+        err instanceof Error && err.message
+          ? err.message
+          : "Failed to load usage";
+      setError(msg);
     } finally {
       if (gen === loadGen.current) setLoading(false);
     }
@@ -191,7 +199,9 @@ export function UsageView({
     () => summarizeUsage(report, range, new Date(now)),
     [report, range, now],
   );
-  const empty = !loading && summary.providers.length === 0;
+  const rangeEmpty = summary.providers.length === 0;
+  const showLoading = loading && !hasLastSuccess && !error;
+  const initialError = Boolean(error && !hasLastSuccess);
 
   const providers = useMemo(() => {
     return summary.providers.slice().sort((a, b) => {
@@ -313,18 +323,46 @@ export function UsageView({
         </div>
       ) : null}
 
-      {loading && summary.providers.length === 0 && Object.keys(report.byDay).length === 0 ? (
+      {showLoading ? (
         <p className={styles.hint} aria-live="polite">
           Loading usage…
         </p>
-      ) : empty ? (
-        <div className={styles.empty} data-usage-empty="">
-          <p className={styles.emptyTitle}>No usage in this range</p>
-          <p className={styles.emptyHint}>
-            Token and cost totals from runs will show up here.
+      ) : initialError ? (
+        <div className={styles.empty} data-usage-error="">
+          <p className={styles.emptyTitle}>Could not load usage</p>
+          <p className={styles.emptyHint} role="alert">
+            {error}
           </p>
+          <button
+            type="button"
+            className={styles.retry}
+            onClick={() => void loadAll()}
+            disabled={loading}
+            title="Retry"
+          >
+            Retry
+          </button>
         </div>
       ) : (
+        <>
+          {error ? (
+            <div className={styles.refreshStatus} data-usage-error="">
+              <p className={styles.hint} role="alert">
+                {error}
+              </p>
+              <p className={styles.hint} data-usage-stale="" data-stale="">
+                Last successful report · stale
+              </p>
+            </div>
+          ) : null}
+          {rangeEmpty ? (
+            <div className={styles.empty} data-usage-empty="">
+              <p className={styles.emptyTitle}>No usage in this range</p>
+              <p className={styles.emptyHint}>
+                Token and cost totals from runs will show up here.
+              </p>
+            </div>
+          ) : (
         <div className={styles.body}>
           <section className={styles.totals} data-usage-totals="">
             <p className={styles.totalValue}>{totalLabel}</p>
@@ -531,6 +569,8 @@ export function UsageView({
             </table>
           </section>
         </div>
+          )}
+        </>
       )}
     </main>
   );
