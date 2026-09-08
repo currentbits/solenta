@@ -822,11 +822,10 @@
   display: grid;
   place-items: center;
   flex-shrink: 0;
-  box-shadow: 0 2px 8px var(--blue-border);
+  box-shadow: none;
   transition:
     background-color 0.12s ease,
-    transform 0.12s ease,
-    box-shadow 0.12s ease;
+    transform 0.12s ease;
 }
 
 .send:hover:not(:disabled) {

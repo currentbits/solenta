@@ -65,7 +65,7 @@
 .headerDivider {
   width: 1px;
   height: 16px;
-  background: var(--border);
+  background: var(--border-soft);
   flex-shrink: 0;
   margin: 0 2px;
 }
@@ -811,11 +811,15 @@ a.btn {
 }
 
 /* Tool call cards. Compound selector so this beats .card's padding at
-   equal source order. */
+   equal source order. Ungrouped tools share the bare type treatment —
+   fill and outline already live on the page, not a nested tile. */
 .card.toolCard {
   padding: 0;
   overflow: hidden;
   max-width: 100%;
+  background: none;
+  border: none;
+  border-radius: 0;
 }
 
 /* Expanded group rows: same disclosure, no tile. */
@@ -1517,10 +1521,10 @@ button.diffLineGutter:focus-visible {
 }
 
 .card {
-  background: var(--card);
-  border: 1px solid transparent;
-  border-radius: var(--radius);
-  padding: 12px 14px;
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  padding: 2px 0;
 }
 
 .cardHeader {
@@ -1841,9 +1845,9 @@ button.diffLineGutter:focus-visible {
   gap: 12px;
   margin: -6px auto 4px;
   padding: 7px 8px 7px 12px;
-  border-radius: var(--radius);
+  border-radius: 0;
   border-left: 2px solid var(--blue-border);
-  background: var(--card);
+  background: none;
   font-size: 12px;
   color: var(--text-muted);
 }
@@ -2796,6 +2800,7 @@ button.diffLineGutter:focus-visible {
   gap: 12px;
   padding: 10px 12px;
   border-radius: var(--radius);
+  border: none;
   background: var(--blue-soft);
   color: var(--info-fg-strong);
   font-size: 12.5px;
@@ -2833,7 +2838,8 @@ button.diffLineGutter:focus-visible {
   margin-top: 8px;
   padding: 10px 12px;
   border-radius: var(--radius);
-  background: var(--card);
+  background: var(--overlay-soft);
+  border: none;
   color: var(--text-muted);
   font-size: 12.5px;
   min-width: 0;
