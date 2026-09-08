@@ -24,6 +24,7 @@ import type {
   MergeLaneInfo,
   MergeLanePreview,
   MergeLaneRestore,
+  MergeSpotlight,
   McpCatalogEntry,
   McpImportPreview,
   McpInstallRequest,
@@ -294,6 +295,15 @@ interface AgentsPanelProps {
     lane: number;
   }) => Promise<MergeLanePreview>;
   restorePreview?: (input: { projectId: string }) => Promise<MergeLaneRestore>;
+  spotlight?: boolean;
+  setSpotlight?: (input: {
+    projectId: string;
+    enabled: boolean;
+  }) => Promise<MergeSpotlight>;
+  spotlightLane?: (input: {
+    projectId: string;
+    lane: number;
+  }) => Promise<MergeLanePreview>;
   /** Wide-window Hide control. Absent on the narrow drawer (issue #645). */
   onCollapse?: () => void;
 }
@@ -1850,6 +1860,9 @@ export function MergeQueueCard({
   listLanes,
   previewLane,
   restorePreview,
+  spotlight,
+  setSpotlight,
+  spotlightLane,
 }: {
   threadId: string | null;
   projectId: string | null;
@@ -1861,10 +1874,24 @@ export function MergeQueueCard({
     lane: number;
   }) => Promise<MergeLanePreview>;
   restorePreview: (input: { projectId: string }) => Promise<MergeLaneRestore>;
+  spotlight?: boolean;
+  setSpotlight?: (input: {
+    projectId: string;
+    enabled: boolean;
+  }) => Promise<MergeSpotlight>;
+  spotlightLane?: (input: {
+    projectId: string;
+    lane: number;
+  }) => Promise<MergeLanePreview>;
 }) {
   const [lanes, setLanes] = useState<MergeLaneInfo[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [spotlightOn, setSpotlightOn] = useState(Boolean(spotlight));
+
+  useEffect(() => {
+    setSpotlightOn(Boolean(spotlight));
+  }, [spotlight]);
 
   const refresh = useCallback(async () => {
     if (!projectId) {
@@ -1983,7 +2010,11 @@ export function MergeQueueCard({
             disabled={busy}
             onClick={() =>
               void run(async () => {
-                await previewLane({ projectId, lane: row.n });
+                if (spotlightOn && spotlightLane) {
+                  await spotlightLane({ projectId, lane: row.n });
+                } else {
+                  await previewLane({ projectId, lane: row.n });
+                }
               })
             }
           >
@@ -2003,6 +2034,24 @@ export function MergeQueueCard({
         >
           Restore
         </button>
+        {setSpotlight ? (
+          <label className={styles.gitHint} data-lane-spotlight-label="">
+            <input
+              type="checkbox"
+              data-lane-spotlight=""
+              checked={spotlightOn}
+              disabled={busy}
+              onChange={(e) =>
+                void run(async () => {
+                  const enabled = e.target.checked;
+                  await setSpotlight({ projectId, enabled });
+                  setSpotlightOn(enabled);
+                })
+              }
+            />
+            Spotlight
+          </label>
+        ) : null}
       </div>
       {error ? (
         <div className={styles.cardError} role="alert" data-lane-error="">
@@ -2050,6 +2099,9 @@ export function GitTab({
   listLanes,
   previewLane,
   restorePreview,
+  spotlight,
+  setSpotlight,
+  spotlightLane,
 }: {
   thread: ThreadInfo | null;
   project: ProjectInfo | null;
@@ -2072,6 +2124,15 @@ export function GitTab({
     lane: number;
   }) => Promise<MergeLanePreview>;
   restorePreview?: (input: { projectId: string }) => Promise<MergeLaneRestore>;
+  spotlight?: boolean;
+  setSpotlight?: (input: {
+    projectId: string;
+    enabled: boolean;
+  }) => Promise<MergeSpotlight>;
+  spotlightLane?: (input: {
+    projectId: string;
+    lane: number;
+  }) => Promise<MergeLanePreview>;
   listDevScripts: (threadId: string) => Promise<string[]>;
   startDevServer: (threadId: string, script: string) => Promise<DevServerState>;
   stopDevServer: (threadId: string) => Promise<DevServerState>;
@@ -2274,6 +2335,9 @@ export function GitTab({
               listLanes={listLanes}
               previewLane={previewLane}
               restorePreview={restorePreview}
+              spotlight={project?.spotlight === true}
+              setSpotlight={setSpotlight}
+              spotlightLane={spotlightLane}
             />
           ),
       display: <DisplayPrefsCard />,
@@ -3553,6 +3617,8 @@ export const AgentsPanel = memo(function AgentsPanel({
   listLanes,
   previewLane,
   restorePreview,
+  setSpotlight,
+  spotlightLane,
   onCollapse,
 }: AgentsPanelProps) {
   const [tab, setTab] = useState<PanelTab>(() =>
@@ -3687,6 +3753,9 @@ export const AgentsPanel = memo(function AgentsPanel({
           listLanes={listLanes}
           previewLane={previewLane}
           restorePreview={restorePreview}
+          spotlight={project?.spotlight === true}
+          setSpotlight={setSpotlight}
+          spotlightLane={spotlightLane}
           onFork={onFork}
         />
       ) : tab === "memory" ? (

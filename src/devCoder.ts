@@ -5666,6 +5666,18 @@ function buildDevCoder(): CoderApi {
       async restorePreview(_input: { projectId: string }) {
         return { restored: false };
       },
+      async setSpotlight(input: { projectId: string; enabled: boolean }) {
+        return { spotlight: input.enabled === true };
+      },
+      async spotlightLane(input: { projectId: string; lane: number }) {
+        return {
+          lane: input.lane,
+          sha: "demo",
+          files: [],
+          path: "/tmp/project",
+          spotlight: true,
+        };
+      },
       async recycleWedgedLanes(_input: { projectId: string }) {
         return [];
       },

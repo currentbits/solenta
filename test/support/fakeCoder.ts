@@ -2869,6 +2869,29 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
         }),
       restorePreview: (input: unknown) =>
         rec("mergeQueue.restorePreview", [input], { restored: false }),
+      setSpotlight: (input: unknown) =>
+        rec("mergeQueue.setSpotlight", [input], {
+          spotlight: Boolean(
+            input &&
+              typeof input === "object" &&
+              "enabled" in input &&
+              (input as { enabled?: unknown }).enabled,
+          ),
+        }),
+      spotlightLane: (input: unknown) =>
+        rec("mergeQueue.spotlightLane", [input], {
+          lane:
+            input &&
+            typeof input === "object" &&
+            "lane" in input &&
+            typeof (input as { lane?: unknown }).lane === "number"
+              ? (input as { lane: number }).lane
+              : 1,
+          sha: "abc",
+          files: [],
+          path: "/tmp/project",
+          spotlight: true,
+        }),
       recycleWedgedLanes: (input: unknown) =>
         rec("mergeQueue.recycleWedgedLanes", [input], []),
       heartbeatLane: (input: unknown) =>

@@ -223,6 +223,72 @@ function laneEnv(n, portBase) {
 }
 
 /**
+ * Shared PORT for the one Spotlight server at the project checkout.
+ * Distinct from per-lane ports (portBase + n).
+ * @param {unknown} [portBase]
+ */
+function spotlightEnv(portBase) {
+  const base = portBase == null ? DEFAULT_PORT_BASE : Number(portBase);
+  if (!Number.isInteger(base) || base < 1) {
+    throw new Error("portBase must be a positive integer");
+  }
+  return {
+    PORT: String(base),
+    SOLENTA_SPOTLIGHT: "1",
+  };
+}
+
+/**
+ * Per-repo Spotlight opt-in (#250 stretch). true persists; false deletes.
+ * @param {object} opts
+ * @param {import('./store').Store} opts.store
+ * @param {string} opts.projectId
+ * @param {boolean} opts.enabled
+ */
+function setSpotlight(opts) {
+  const store = opts && opts.store;
+  const project = store.getProject(opts.projectId);
+  if (!project) throw new Error(`Unknown project: ${opts && opts.projectId}`);
+  const enabled = opts.enabled === true;
+  patchProject(store, project.id, {
+    spotlight: enabled ? true : undefined,
+  });
+  return { spotlight: enabled };
+}
+
+/**
+ * Hot-swap the selected lane onto main. Composes restorePreview (when
+ * another lane is mirrored) then previewLane. Does not close issues.
+ * @param {object} opts
+ * @param {import('./store').Store} opts.store
+ * @param {string} opts.projectId
+ * @param {number} opts.lane
+ * @param {string[]} [opts.buildOutputDirs]
+ */
+function spotlightLane(opts) {
+  const store = opts && opts.store;
+  const project = store.getProject(opts && opts.projectId);
+  if (!project || !project.path) {
+    throw new Error(`Unknown project: ${opts && opts.projectId}`);
+  }
+  if (project.spotlight !== true) {
+    throw new Error("Spotlight is off for this project");
+  }
+  const n = Number(opts.lane);
+  const current = project.mergePreview;
+  if (current && Number(current.lane) !== n) {
+    restorePreview({ store, projectId: project.id });
+  }
+  const previewed = previewLane({
+    store,
+    projectId: project.id,
+    lane: n,
+    buildOutputDirs: opts.buildOutputDirs,
+  });
+  return { ...previewed, spotlight: true };
+}
+
+/**
  * @param {unknown} raw
  * @returns {{ n: number, port: number, claimedAt: number, lastBeat: number } | null}
  */
@@ -639,6 +705,9 @@ module.exports = {
   listLanes,
   lanePort,
   laneEnv,
+  spotlightEnv,
+  setSpotlight,
+  spotlightLane,
   heartbeatLane,
   previewLane,
   restorePreview,

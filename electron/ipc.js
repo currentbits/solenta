@@ -39,6 +39,9 @@ const {
   previewLane,
   restorePreview,
   recycleWedgedLanes,
+  spotlightEnv,
+  setSpotlight,
+  spotlightLane,
   heartbeatLane,
 } = require("./mergeQueue.js");
 const { spawnEnvForDevServer, laneEnvExtra } = require("./worktreeEnv.js");
@@ -1772,6 +1775,20 @@ const IPC_HANDLERS = {
       now: input && input.now,
     });
   },
+  "mergeQueue:setSpotlight": async (ctx, input) => {
+    return setSpotlight({
+      store: ctx.store,
+      projectId: input && input.projectId,
+      enabled: input && input.enabled,
+    });
+  },
+  "mergeQueue:spotlightLane": async (ctx, input) => {
+    return spotlightLane({
+      store: ctx.store,
+      projectId: input && input.projectId,
+      lane: input && input.lane,
+    });
+  },
   "vibeKanban:preview": async (ctx, input) => {
     return vibeKanban.preview(ctx.store, input || {});
   },
@@ -1842,17 +1859,32 @@ const IPC_HANDLERS = {
     const threadId = input && input.threadId;
     const script = input && input.script;
     const { root, project, thread } = resolveDevServerRoot(ctx, threadId);
-    const allowed = devservers.detectScripts(root);
+    const spotlightOn = Boolean(project && project.spotlight === true);
+    const startRoot = spotlightOn && project.path ? project.path : root;
+    const allowed = devservers.detectScripts(startRoot);
     if (!script || !allowed.includes(script)) {
       throw new Error(script ? `Unknown script: ${script}` : "Unknown script");
     }
-    return devservers.start(threadId, root, script, {
+    const n = thread && thread.lane && Number(thread.lane.n);
+    const port = thread && thread.lane && Number(thread.lane.port);
+    const portBase =
+      Number.isInteger(n) && Number.isInteger(port) && port > n
+        ? port - n
+        : undefined;
+    if (spotlightOn && Number.isInteger(n) && n > 0) {
+      spotlightLane({
+        store: ctx.store,
+        projectId: project.id,
+        lane: n,
+      });
+    }
+    return devservers.start(threadId, startRoot, script, {
       project,
       env: spawnEnvForDevServer({
         project,
         thread,
         userDataPath: ctx.userDataPath,
-        extra: laneEnvExtra(thread),
+        extra: spotlightOn ? spotlightEnv(portBase) : laneEnvExtra(thread),
       }),
     });
   },

@@ -200,6 +200,8 @@ export const IPC_CHANNELS = [
   { ns: "mergeQueue", method: "restorePreview" },
   { ns: "mergeQueue", method: "recycleWedgedLanes" },
   { ns: "mergeQueue", method: "heartbeatLane" },
+  { ns: "mergeQueue", method: "setSpotlight" },
+  { ns: "mergeQueue", method: "spotlightLane" },
   { ns: "issues", method: "fetch" },
   { ns: "issues", method: "list" },
   { ns: "issues", method: "setPlanStatus" },

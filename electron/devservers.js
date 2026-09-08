@@ -248,6 +248,7 @@ function killProcessGroup(pid, platform = process.platform) {
  *   spawn?: typeof spawn,
  *   env?: NodeJS.ProcessEnv,
  *   project?: { remoteHost?: string, remotePath?: string, path?: string } | null,
+ *   env?: Record<string, string>,
  * }} [opts]
  */
 function start(threadId, root, script, opts = {}) {

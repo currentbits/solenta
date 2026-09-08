@@ -31,6 +31,7 @@ import type {
   MergeLaneInfo,
   MergeLanePreview,
   MergeLaneRestore,
+  MergeSpotlight,
   McpCatalogEntry,
   McpImportPreview,
   McpInstallRequest,
@@ -594,6 +595,16 @@ export interface UseCoderResult {
   }) => Promise<MergeLanePreview>;
   /** Undo a lane preview on the project checkout. */
   restorePreview: (input: { projectId: string }) => Promise<MergeLaneRestore>;
+  /** Per-repo Spotlight opt-in (#250 stretch). */
+  setSpotlight: (input: {
+    projectId: string;
+    enabled: boolean;
+  }) => Promise<MergeSpotlight>;
+  /** Hot-swap a claimed lane onto the project checkout via preview/restore. */
+  spotlightLane: (input: {
+    projectId: string;
+    lane: number;
+  }) => Promise<MergeLanePreview>;
   /** Stamp lastBeat on a claimed lane. Does not recycle or close issues. */
   heartbeatLane: (input: {
     threadId: string;
@@ -3179,6 +3190,26 @@ export function useCoder(): UseCoderResult {
     [api],
   );
 
+  const setSpotlight = useCallback(
+    async (input: { projectId: string; enabled: boolean }) => {
+      const result = await api.mergeQueue.setSpotlight(input);
+      try {
+        setProjects(await api.projects.list());
+      } catch {
+        // Keep the local checkbox; list refresh is best-effort.
+      }
+      return result;
+    },
+    [api],
+  );
+
+  const spotlightLane = useCallback(
+    async (input: { projectId: string; lane: number }) => {
+      return api.mergeQueue.spotlightLane(input);
+    },
+    [api],
+  );
+
   const heartbeatLane = useCallback(
     async (input: { threadId: string; now?: number }) => {
       return api.mergeQueue.heartbeatLane(input);
@@ -3714,6 +3745,8 @@ export function useCoder(): UseCoderResult {
     listLanes,
     previewLane,
     restorePreview,
+    setSpotlight,
+    spotlightLane,
     heartbeatLane,
     listDevScripts,
     startDevServer,

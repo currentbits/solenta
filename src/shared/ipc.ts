@@ -70,6 +70,12 @@ export interface ProjectInfo {
    */
   quickActions?: ProjectQuickAction[];
   /**
+   * Conductor Spotlight (#250 stretch). When true, one heavy app instance
+   * at the project checkout hot-swaps which claimed lane it serves.
+   * Absent = off.
+   */
+  spotlight?: boolean;
+  /**
    * Last sleep-time memory consolidation fire (issue #722). Absent = never run.
    * Host-stamped; not a user-editable project field.
    */
@@ -1849,6 +1855,12 @@ export interface MergeLanePreview {
   sha: string;
   files: string[];
   path: string;
+  /** Set when the mirror was applied through Spotlight (#250 stretch). */
+  spotlight?: boolean;
+}
+
+export interface MergeSpotlight {
+  spotlight: boolean;
 }
 
 export interface MergeLaneRestore {
@@ -4251,10 +4263,10 @@ export interface CoderApi {
     gcClean(input: GcCleanInput): Promise<GcCleanResult>;
   };
   /**
-   * Local merge-queue lanes (#346 / #1114). Claim a numbered worktree,
-   * preview it onto the project checkout, restore, recycle a wedged lane,
-   * or heartbeat a claimed lane. Promote stays `git.mergeWorktree`
-   * (human-only). These methods do not close issues.
+   * Local merge-queue lanes (#346 / #1114 / #250). Claim a numbered
+   * worktree, preview it onto the project checkout, restore, recycle a
+   * wedged lane, heartbeat, or opt into Spotlight. Promote stays
+   * `git.mergeWorktree` (human-only). These methods do not close issues.
    */
   mergeQueue: {
     claimLane(input: { threadId: string }): Promise<MergeLaneClaim>;
@@ -4271,6 +4283,19 @@ export interface CoderApi {
       threadId: string;
       now?: number;
     }): Promise<MergeLaneBeat | null>;
+    /** Per-repo Spotlight opt-in. false deletes the key. */
+    setSpotlight(input: {
+      projectId: string;
+      enabled: boolean;
+    }): Promise<MergeSpotlight>;
+    /**
+     * Hot-swap a claimed lane onto the project checkout. Composes
+     * restorePreview + previewLane. Does not close issues.
+     */
+    spotlightLane(input: {
+      projectId: string;
+      lane: number;
+    }): Promise<MergeLanePreview>;
   };
   issues: {
     /**
