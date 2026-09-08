@@ -617,7 +617,7 @@
   margin-top: 8px;
   padding: 10px 12px 12px;
   border-radius: 6px;
-  border: 1px solid var(--border);
+  border: 1px solid transparent;
   background: var(--bg-elevated);
 }
 
@@ -718,6 +718,6 @@
   word-break: break-word;
   color: var(--text);
   background: var(--card);
-  border: 1px solid var(--border);
+  border: 1px solid transparent;
   border-radius: 6px;
 }

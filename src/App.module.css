@@ -32,7 +32,7 @@
   height: 100%;
   padding-top: 13px;
   background: var(--bg-elevated);
-  border-left: 1px solid var(--border);
+  border-left: 1px solid var(--border-soft);
 }
 
 .agentsToggle {
@@ -130,7 +130,7 @@
     justify-content: space-between;
     gap: 8px;
     padding: 8px 12px;
-    border-bottom: 1px solid var(--border);
+    border-bottom: 1px solid var(--border-soft);
     background: var(--bg-elevated);
   }
 
@@ -194,7 +194,7 @@
     justify-content: space-between;
     gap: 8px;
     padding: 8px 12px;
-    border-bottom: 1px solid var(--border);
+    border-bottom: 1px solid var(--border-soft);
     background: var(--bg-elevated);
   }
 

@@ -5,8 +5,10 @@
   --panel: #10151f;
   --card: #171d29;
   --card-hover: #1d2534;
-  --border: #232b3b;
-  --border-soft: #1b2230;
+  /* Controls (buttons, inputs, popovers) use --border.
+     Structural seams and in-page grouping use --border-soft. */
+  --border: #1f2736;
+  --border-soft: #181e2a;
   --text: #e8ecf4;
   /* ~8.5:1 on --card (AAA at ≤12px). Was #8b95a8 ~5.6:1. */
   --text-muted: #b0b8c6;

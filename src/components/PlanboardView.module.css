@@ -10,7 +10,7 @@
   flex-shrink: 0;
   min-width: 0;
   background: var(--bg-elevated);
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid var(--border-soft);
 }
 
 .header {
@@ -349,7 +349,7 @@
   min-height: 0;
   max-height: 40%;
   flex-shrink: 0;
-  border-top: 1px solid var(--border);
+  border-top: 1px solid var(--border-soft);
   background: var(--bg-elevated);
 }
 

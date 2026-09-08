@@ -150,7 +150,7 @@
   height: 100%;
   padding: 0 10px;
   border: none;
-  border-left: 1px solid var(--border);
+  border-left: 1px solid var(--border-soft);
   background: transparent;
   color: var(--text-muted);
   font: inherit;
@@ -183,7 +183,7 @@
   height: 100%;
   padding: 0 10px;
   border: none;
-  border-left: 1px solid var(--border);
+  border-left: 1px solid var(--border-soft);
   border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
   background: var(--btn-primary-bg);
   color: var(--text-on-accent);

@@ -274,7 +274,7 @@
 
 .card[data-expanded="true"] {
   background: var(--card);
-  border-color: var(--border);
+  border-color: transparent;
 }
 
 .cardToggle {
