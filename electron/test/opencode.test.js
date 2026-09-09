@@ -411,6 +411,45 @@ describe("opencode provider registry", () => {
     assert.equal(args[args.indexOf("-s") + 1], "ses_x");
     assert.equal(args[args.indexOf("-m") + 1], listed);
   });
+
+  it("buildArgs: -f after run and before the trailing prompt (issue #176)", () => {
+    const entry = getProvider("opencode");
+    const img = "/tmp/shot.png";
+    const notes = "/tmp/notes.txt";
+    const args = entry.buildArgs({
+      prompt: "look",
+      files: [img, notes],
+      sessionId: "ses_x",
+    });
+    const runIdx = args.indexOf("run");
+    const fIdx = args.indexOf("-f");
+    const formatIdx = args.indexOf("--format");
+    assert.equal(args[args.length - 1], "look");
+    assert.ok(runIdx >= 0, `expected run in ${JSON.stringify(args)}`);
+    assert.ok(fIdx > runIdx, `-f must sit after run: ${JSON.stringify(args)}`);
+    assert.ok(
+      fIdx < formatIdx,
+      `-f must sit before --format so yargs array cannot swallow the prompt: ${JSON.stringify(args)}`,
+    );
+    assert.ok(
+      fIdx < args.length - 1,
+      `-f must sit before the trailing prompt: ${JSON.stringify(args)}`,
+    );
+    const attached = [];
+    for (let i = fIdx + 1; i < args.length; i++) {
+      if (String(args[i]).startsWith("-")) break;
+      attached.push(args[i]);
+    }
+    assert.deepEqual(attached, [img, notes]);
+    assert.ok(
+      !args.some((a) => /sk-|api[_-]?key/i.test(String(a))),
+      `tokens must not appear in argv: ${JSON.stringify(args)}`,
+    );
+
+    const bare = entry.buildArgs({ prompt: "look" });
+    assert.ok(!bare.includes("-f"));
+    assert.equal(bare[bare.length - 1], "look");
+  });
 });
 
 describe("opencode runner integration", () => {
@@ -696,5 +735,82 @@ describe("opencode runner integration", () => {
     assert.equal(msgs.find((m) => m.role === "tool").tool.name, "Read");
     const argv = JSON.parse(fs.readFileSync(argvFile, "utf8"));
     assert.ok(argv.includes("--thinking"));
+  });
+
+  it("passes image and file attachments via -f, folders via prompt text (issue #176)", async () => {
+    const prevKey = process.env.OPENCODE_API_KEY;
+    process.env.OPENCODE_API_KEY = "secret-opencode-token";
+    try {
+      const thread = store.getThreads()[0];
+      const image = path.join(tmpDir, "pic.png");
+      const notes = path.join(tmpDir, "notes.txt");
+      const folder = path.join(tmpDir, "specs");
+      fs.writeFileSync(image, "x");
+      fs.writeFileSync(notes, "hello");
+      fs.mkdirSync(folder);
+
+      await runner.startRun({
+        threadId: thread.id,
+        prompt: "look at these",
+        attachments: [
+          { kind: "image", path: image, name: "pic.png" },
+          { kind: "file", path: notes, name: "notes.txt" },
+          { kind: "folder", path: folder, name: "specs" },
+        ],
+      });
+      await waitFor(() => store.getThread(thread.id).status === "done");
+
+      const userMsg = store.getMessages(thread.id).find((m) => m.role === "user");
+      assert.equal(userMsg.text, "look at these");
+      assert.deepEqual(userMsg.attachments, [
+        { kind: "image", path: image, name: "pic.png" },
+        { kind: "file", path: notes, name: "notes.txt" },
+        { kind: "folder", path: folder, name: "specs" },
+      ]);
+
+      const argv = JSON.parse(fs.readFileSync(argvFile, "utf8"));
+      const runIdx = argv.indexOf("run");
+      const fIdx = argv.indexOf("-f");
+      const formatIdx = argv.indexOf("--format");
+      const last = argv[argv.length - 1];
+      assert.ok(runIdx >= 0, `expected run in ${JSON.stringify(argv)}`);
+      assert.ok(fIdx > runIdx, `-f must sit after run: ${JSON.stringify(argv)}`);
+      assert.ok(
+        fIdx < formatIdx,
+        `-f must sit before --format so yargs array cannot swallow the prompt: ${JSON.stringify(argv)}`,
+      );
+      assert.ok(
+        fIdx < argv.length - 1,
+        `-f must sit before the trailing prompt: ${JSON.stringify(argv)}`,
+      );
+      const attached = [];
+      for (let i = fIdx + 1; i < argv.length; i++) {
+        if (String(argv[i]).startsWith("-")) break;
+        attached.push(argv[i]);
+      }
+      assert.deepEqual(attached, [image, notes]);
+      assert.equal(typeof last, "string");
+      assert.ok(last.includes("look at these"));
+      assert.ok(
+        last.includes(`- Folder: ${folder}`),
+        "folders stay in the prompt-path section (no CLI folder flag)",
+      );
+      assert.ok(
+        !last.includes(`- Image: ${image}`),
+        "images must not be stuffed into the prompt when -f is used",
+      );
+      assert.ok(
+        !last.includes(`- File: ${notes}`),
+        "files must not be stuffed into the prompt when -f is used",
+      );
+      assert.ok(
+        !argv.includes("secret-opencode-token"),
+        `tokens must not appear in argv: ${JSON.stringify(argv)}`,
+      );
+      assert.ok(!last.includes("secret-opencode-token"));
+    } finally {
+      if (prevKey === undefined) delete process.env.OPENCODE_API_KEY;
+      else process.env.OPENCODE_API_KEY = prevKey;
+    }
   });
 });

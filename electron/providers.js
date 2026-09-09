@@ -78,6 +78,7 @@ const { posixQuote } = require("./ssh.js");
  *   model?: string | null,
  *   reasoningEffort?: string | null,
  *   webSearch?: boolean,
+ *   files?: string[],
  * }) => string[]} buildArgs
  */
 
@@ -628,9 +629,32 @@ const PROVIDERS = [
      * Resume via -s <sessionID>; model override via -m provider/model.
      * `--thinking` so `type: "reasoning"` parts land on stdout (issue #751).
      * Prompt is the last argv element.
+     * Live `opencode run --help` (1.17.12): `-f, --file` is a yargs array
+     * of files to attach. Sit it after `run` and before `--format` so the
+     * array cannot swallow the trailing prompt. Folders stay in the
+     * prompt-path section (no folder flag).
      */
-    buildArgs({ prompt, sessionId, model, reasoningEffort, permissionMode }) {
-      const args = ["run", "--format", "json", "--thinking"];
+    buildArgs({
+      prompt,
+      sessionId,
+      model,
+      reasoningEffort,
+      permissionMode,
+      files,
+    }) {
+      const args = ["run"];
+      const paths = [];
+      if (Array.isArray(files)) {
+        for (const p of files) {
+          if (typeof p === "string" && p) paths.push(p);
+        }
+      }
+      // `-f, --file` is a yargs array. Sit it after run and before the
+      // next flag so FILE... cannot swallow the prompt.
+      if (paths.length) {
+        args.push("-f", ...paths);
+      }
+      args.push("--format", "json", "--thinking");
       if (sessionId) {
         args.push("-s", String(sessionId));
       }

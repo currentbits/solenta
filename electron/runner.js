@@ -5616,8 +5616,9 @@ function createRunner(opts) {
    * @param {string} prompt
    * @param {string} runId
    * @param {import('./providers').ProviderEntry} providerEntry
+   * @param {string[]} [files] - image/file paths for native `-f` (issue #176)
    */
-  function startOpencodeRun(threadId, prompt, runId, providerEntry) {
+  function startOpencodeRun(threadId, prompt, runId, providerEntry, files) {
     const thread = store.getThread(threadId);
     const project = store.getProject(thread.projectId);
     if (!project) {
@@ -5672,6 +5673,7 @@ function createRunner(opts) {
       model: thread.model || null,
       reasoningEffort: thread.reasoningEffort || null,
       webSearch: thread.webSearch === true,
+      files,
     });
     /** @type {NodeJS.ProcessEnv | undefined} */
     let opencodeEnv;
@@ -8027,9 +8029,21 @@ function createRunner(opts) {
     }
     const leadSlash =
       slashExpanded || rawPrompt.trimStart().startsWith("/");
+    // OpenCode `run -f` attaches image/file paths natively (issue #176).
+    // Folders stay in the prompt-path section: the CLI has no folder flag.
+    const nativeFiles =
+      provider === "opencode"
+        ? attachments
+            .filter((a) => a.kind === "image" || a.kind === "file")
+            .map((a) => a.path)
+        : [];
+    const promptAttachments =
+      provider === "opencode"
+        ? attachments.filter((a) => a.kind === "folder")
+        : attachments;
     const dispatchPrompt =
       (leadSlash ? cliPrompt : prefix + cliPrompt) +
-      attachmentPromptSection(attachments) +
+      attachmentPromptSection(promptAttachments) +
       (leadSlash ? prefix : "") +
       services.planboardNoteFor(projectForGate && projectForGate.path) +
       services.selfIdNoteFor(
@@ -8090,7 +8104,13 @@ function createRunner(opts) {
       return startKimiRun(threadId, dispatchPrompt, runId, entryDef);
     }
     if (entryDef.kind === "opencode-json") {
-      return startOpencodeRun(threadId, dispatchPrompt, runId, entryDef);
+      return startOpencodeRun(
+        threadId,
+        dispatchPrompt,
+        runId,
+        entryDef,
+        nativeFiles,
+      );
     }
     if (entryDef.kind === "cursor-stream") {
       return startCursorRun(threadId, dispatchPrompt, runId, entryDef);
