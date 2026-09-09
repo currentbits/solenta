@@ -88,10 +88,16 @@ describe("codexWorkspaceWritableRoots (#847)", () => {
     assert.equal(typeof codexWorkspaceWritableRoots, "function");
   });
 
-  it("is empty for a standalone checkout whose .git lives in cwd", () => {
+  it("grants the in-cwd .git dir so Codex's carve-out does not block commits (#1160)", () => {
     const repo = path.join(tmp, "solo");
     initRepo(repo);
-    assert.deepEqual(codexWorkspaceWritableRoots(repo), []);
+    const gitDir = absGit(repo, "--git-dir");
+    const roots = codexWorkspaceWritableRoots(repo);
+    assert.deepEqual(roots, [gitDir]);
+    assert.ok(
+      isInside(fs.realpathSync(repo), gitDir),
+      "fixture must be a standalone checkout (.git inside cwd)",
+    );
   });
 
   it("is empty when cwd is missing", () => {
@@ -145,6 +151,25 @@ describe("codexWorkspaceWriteArgs (#847)", () => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "coder-codex-args-"));
   after(() => fs.rmSync(tmp, { recursive: true, force: true }));
   afterEach(() => resetCodexGhAuthOkForTests());
+
+  it("emits writable_roots for a standalone checkout under workspace-write (#1160)", () => {
+    const repo = path.join(tmp, "solo-args");
+    initRepo(repo);
+    const gitDir = absGit(repo, "--git-dir");
+    setCodexGhAuthOkForTests(false);
+    const args = codexWorkspaceWriteArgs({
+      cwd: repo,
+      permissionMode: "default",
+      allowNetwork: false,
+    });
+    const value = writableRootsArg(args);
+    assert.ok(value, `expected writable_roots, got ${JSON.stringify(args)}`);
+    assert.ok(
+      value.includes(`"${gitDir.replace(/\\/g, "\\\\")}"`) ||
+        value.includes(`"${gitDir}"`),
+      `expected gitdir in ${value}`,
+    );
+  });
 
   it("emits writable_roots for a linked worktree under workspace-write without network", () => {
     const repo = path.join(tmp, "main");

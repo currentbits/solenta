@@ -709,6 +709,34 @@ describe("runner codex provider", () => {
     assert.ok(joined.includes(gitDir), joined);
   });
 
+  it("workspace-write grants standalone .git metadata (#1160)", async () => {
+    process.env.CODER_FAKE_CODEX_SCENARIO = "success";
+    const repo = store.getProjects()[0].path;
+    git(repo, ["config", "user.email", "test@example.com"]);
+    git(repo, ["config", "user.name", "Test"]);
+    fs.writeFileSync(path.join(repo, "README.md"), "hello\n");
+    git(repo, ["add", "README.md"]);
+    git(repo, ["commit", "-m", "init"]);
+    if (fs.existsSync(argvFile)) fs.unlinkSync(argvFile);
+    const thread = store.getThreads()[0];
+    await runner.startRun({ threadId: thread.id, prompt: "commit me" });
+    await waitFor(() => store.getThread(thread.id).status === "done");
+    const argv = JSON.parse(fs.readFileSync(argvFile, "utf8"));
+    const gitDir = execFileSync(
+      "git",
+      ["rev-parse", "--path-format=absolute", "--git-dir"],
+      { cwd: repo, encoding: "utf8" },
+    ).trim();
+    const joined = argv.join(" ");
+    assert.ok(
+      argv.some((a) =>
+        String(a).startsWith("sandbox_workspace_write.writable_roots="),
+      ),
+      joined,
+    );
+    assert.ok(joined.includes(gitDir), joined);
+  });
+
   it("omits GitHub proxy flags when sandbox gh cannot authenticate (#848)", async () => {
     const { setCodexGhAuthOkForTests } = require("../codexWorkspaceWrite.js");
     setCodexGhAuthOkForTests(false);
@@ -810,6 +838,12 @@ describe("runner codex provider", () => {
     assert.ok(
       !argv.includes("--sandbox"),
       "codex exec resume rejects --sandbox (issue #795)",
+    );
+    assert.ok(
+      argv.some((a) =>
+        String(a).startsWith("sandbox_workspace_write.writable_roots="),
+      ),
+      `resume must still pass writable_roots (#1160): ${JSON.stringify(argv)}`,
     );
     const last = argv[argv.length - 1];
     assert.equal(

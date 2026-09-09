@@ -284,6 +284,8 @@ describe("merge issue lifecycle (#947)", () => {
       projectId: project.id,
       workerThreadId: worker.id,
       approved: true,
+      expectedPath: leadWt.worktreePath,
+      expectedBranch: leadWt.branch,
     });
     await drain();
 

@@ -82,9 +82,13 @@ describe("thread_merge", () => {
       projectId: project.id,
       workerThreadId: worker.id,
       approved: true,
+      expectedPath: leadWt.worktreePath,
+      expectedBranch: leadWt.branch,
     });
 
     assert.equal(res.merged, true);
+    assert.equal(res.intoPath, fs.realpathSync(leadWt.worktreePath));
+    assert.equal(res.into, leadWt.branch);
     // The lead's worktree has the worker's file...
     assert.ok(fs.existsSync(path.join(leadWt.worktreePath, "worker.txt")));
     // ...and main does not: a lead on a branch must not push work onto main.
@@ -121,17 +125,80 @@ describe("thread_merge", () => {
   it("merges into the project checkout once the user has approved", async () => {
     workOn(worker, "worker.txt", "worker\n");
     store.updateThread(worker.id, { status: "done" });
+    const alias = path.join(tmpDir, "checkout-alias");
+    fs.symlinkSync(project.path, alias, "junction");
 
     const res = await handlers.thread_merge({
       threadId: lead.id,
       projectId: project.id,
       workerThreadId: worker.id,
       approved: true,
+      expectedPath: alias,
+      expectedBranch: "main",
     });
 
     assert.equal(res.merged, true);
+    assert.equal(res.intoPath, fs.realpathSync(project.path));
+    assert.equal(res.into, "main");
     assert.ok(fs.existsSync(path.join(project.path, "worker.txt")));
   });
+
+  for (const separateDefaultCheckout of [true, false]) {
+    it(`keeps a checkout lead on its approved branch (separate main checkout: ${separateDefaultCheckout})`, async () => {
+      workOn(worker, "worker.txt", "worker\n");
+      store.updateThread(worker.id, { status: "done", baseBranch: "main" });
+      git(project.path, ["switch", "-c", "coder/sidebar-consistency"]);
+      const release = path.join(tmpDir, "release-build");
+      if (separateDefaultCheckout) {
+        git(project.path, ["worktree", "add", release, "main"]);
+      }
+      const mainBefore = git(project.path, ["rev-parse", "main"]);
+
+      const res = await handlers.thread_merge({
+        threadId: lead.id,
+        projectId: project.id,
+        workerThreadId: worker.id,
+        approved: true,
+        expectedPath: project.path,
+        expectedBranch: "coder/sidebar-consistency",
+      });
+
+      assert.equal(git(project.path, ["branch", "--show-current"]), "coder/sidebar-consistency");
+      assert.ok(fs.existsSync(path.join(project.path, "worker.txt")));
+      assert.equal(git(project.path, ["rev-parse", "main"]), mainBefore);
+      assert.ok(!fs.existsSync(path.join(release, "worker.txt")));
+      assert.equal(res.intoPath, fs.realpathSync(project.path));
+      assert.equal(res.into, "coder/sidebar-consistency");
+    });
+  }
+
+  for (const mismatch of ["path", "branch", "missing", "detached"]) {
+    it(`refuses a ${mismatch} destination before writing or cleaning up`, async () => {
+      const wt = workOn(worker, "worker.txt", "worker\n");
+      store.updateThread(worker.id, { status: "done" });
+      fs.writeFileSync(path.join(wt.worktreePath, "pending.txt"), "keep draft\n");
+      if (mismatch === "detached") git(project.path, ["checkout", "--detach"]);
+      const before = git(project.path, ["rev-parse", "HEAD"]);
+      const workerBefore = git(wt.worktreePath, ["rev-parse", "HEAD"]);
+      const destination = mismatch === "missing" ? {} : {
+        expectedPath: mismatch === "path" ? wt.worktreePath : project.path,
+        expectedBranch: mismatch === "branch" ? "coder/approved" : "main",
+      };
+      await assert.rejects(() => handlers.thread_merge({
+        threadId: lead.id,
+        projectId: project.id,
+        workerThreadId: worker.id,
+        approved: true,
+        ...destination,
+      }), /destination|expectedPath|detached/i);
+
+      assert.equal(git(project.path, ["rev-parse", "HEAD"]), before);
+      assert.equal(git(wt.worktreePath, ["rev-parse", "HEAD"]), workerBefore);
+      assert.equal(git(wt.worktreePath, ["status", "--porcelain"]), "?? pending.txt");
+      assert.equal(store.getThread(worker.id).worktreePath, wt.worktreePath);
+      assert.ok(!fs.existsSync(path.join(project.path, "worker.txt")));
+    });
+  }
 
   it("ignores approved:true on a machine-delivered turn", async () => {
     // The worker-finished notice wakes the lead on an auto turn: the user has
@@ -192,6 +259,8 @@ describe("thread_merge", () => {
       threadId: worker.id,
       projectId: project.id,
       workerThreadId: sub.id,
+      expectedPath: subLeadWt.worktreePath,
+      expectedBranch: subLeadWt.branch,
     });
 
     assert.equal(res.merged, true);
@@ -215,6 +284,8 @@ describe("thread_merge", () => {
         projectId: project.id,
         workerThreadId: id,
         approved: true,
+        expectedPath: leadWt.worktreePath,
+        expectedBranch: leadWt.branch,
       });
       assert.equal(res.merged, true);
     }

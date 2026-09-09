@@ -1,15 +1,18 @@
 "use strict";
 
 /**
- * Extra Codex `-c` flags for `workspace-write` so a linked worktree can
- * commit (#847) and a Planboard session can reach GitHub (#848) without
- * opening the whole network.
+ * Extra Codex `-c` flags for `workspace-write` so `git add`/`git commit`
+ * work (#847, #1160) and a Planboard session can reach GitHub (#848)
+ * without opening the whole network.
  *
- * `codex exec --sandbox workspace-write` only allows writes in cwd. A
- * Solenta managed worktree's `.git` file points at
- * `<main>/.git/worktrees/<id>`, so `git add`/`git commit` fail with
- * EPERM on index.lock until `sandbox_workspace_write.writable_roots`
- * covers that gitdir plus the shared object/ref/reflog stores.
+ * Codex workspace-write allows writes in cwd, then carves `.git` and the
+ * resolved `gitdir:` target out as read-only. A standalone checkout's
+ * `.git` is inside cwd, so `git add` fails with EPERM on index.lock
+ * unless that gitdir is listed as its own writable root. A Solenta
+ * managed worktree's `.git` file points at `<main>/.git/worktrees/<id>`,
+ * so the same flag must cover that gitdir plus the shared object/ref/
+ * reflog stores. Listing those paths as writable_roots overrides the
+ * carve-out on macOS without granting sibling worktrees.
  *
  * `sandbox_workspace_write.network_access` only opens the seatbelt gate.
  * `features.network_proxy` then allowlists api.github.com, github.com, and
@@ -72,10 +75,12 @@ function existingDir(p) {
 }
 
 /**
- * Extra writable roots for a linked worktree. Empty when `.git` already
- * lives inside cwd (standalone checkout) so workspace-write covers it.
+ * Extra writable roots so Codex's `.git` / `gitdir:` carve-out does not
+ * block `git add`/`git commit`.
  *
- * Grants this worktree's gitdir plus the shared object/ref/reflog stores.
+ * Always grants this checkout's gitdir, even when it lives inside cwd:
+ * workspace-write does not cover `.git` there. For a linked worktree,
+ * also grants the shared object/ref/reflog stores under the common dir.
  * Does not grant the whole common dir (sibling worktrees live there).
  *
  * @param {string | null | undefined} cwd
@@ -101,20 +106,22 @@ function codexWorkspaceWritableRoots(cwd) {
   const commonPath = realpathOrResolve(
     path.resolve(dir, String(common.stdout || "")),
   );
-  const cwdPath = realpathOrResolve(dir);
-  if (isInside(cwdPath, gitDirPath) && isInside(cwdPath, commonPath)) {
-    return [];
-  }
   /** @type {string[]} */
   const roots = [];
-  if (!isInside(cwdPath, gitDirPath)) {
-    const d = existingDir(gitDirPath);
-    if (d) roots.push(d);
-  }
-  if (!isInside(cwdPath, commonPath)) {
+  /**
+   * @param {string} p
+   */
+  const addDir = (p) => {
+    const d = existingDir(p);
+    if (d && !roots.includes(d)) roots.push(d);
+  };
+  addDir(gitDirPath);
+  // Linked worktree: objects/refs/logs live in the common dir, not in
+  // this gitdir. Standalone: gitdir === common, so those subs are already
+  // covered and must not be listed separately.
+  if (!isInside(gitDirPath, commonPath)) {
     for (const sub of ["objects", "refs", "logs"]) {
-      const d = existingDir(path.join(commonPath, sub));
-      if (d) roots.push(d);
+      addDir(path.join(commonPath, sub));
     }
   }
   return roots;

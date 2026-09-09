@@ -1405,6 +1405,11 @@ describe("orch-server HTTP", () => {
       params: {},
     });
     assert.equal(list.status, 200);
+    const mergeSchema = list.body.result.tools.find((t) => t.name === "thread_merge").inputSchema;
+    for (const field of ["expectedPath", "expectedBranch"]) {
+      assert.equal(mergeSchema.properties[field].type, "string");
+      assert.ok(mergeSchema.required.includes(field));
+    }
     const names = list.body.result.tools.map((t) => t.name).sort();
     assert.deepEqual(names, [
       "ask_user",
