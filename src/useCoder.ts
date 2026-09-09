@@ -2057,6 +2057,7 @@ export function useCoder(): UseCoderResult {
         setError(null);
       } catch (err) {
         setError({ scope: "run", message: errorMessage(err) });
+        throw err;
       }
     },
     [api, applyThreads],
