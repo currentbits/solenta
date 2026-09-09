@@ -66,6 +66,10 @@ describe("decideMuseGuardrail", () => {
         .decision,
       "deny",
     );
+    assert.equal(
+      decideMuseGuardrail({ ...payload, toolName: "bash" }).decision,
+      "deny",
+    );
   });
 
   it("CODER_GUARDRAILS=off allows a would-be deny", () => {

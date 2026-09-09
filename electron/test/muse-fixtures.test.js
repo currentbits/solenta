@@ -28,4 +28,13 @@ describe("muse fixtures", () => {
     const help = fs.readFileSync(path.join(DIR, "help.txt"), "utf8");
     assert.match(help, /exec|json|session/i);
   });
+
+  it("spark-tools.jsonl is JSONL with a tool start and result", () => {
+    const rows = readJsonl("spark-tools.jsonl");
+    assert.ok(rows.length >= 1);
+    assert.ok(
+      rows.some((o) => o.payload_type === "task.lifecycle.side_effect_intent"),
+    );
+    assert.ok(rows.some((o) => o.payload_type === "tool.result"));
+  });
 });

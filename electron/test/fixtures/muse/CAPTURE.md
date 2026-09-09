@@ -50,9 +50,12 @@ Also present, not the session id: `payload.run_stream.id` (run),
 - echo-tools lines: 13
 - echo-tools contains tool start/result: **no**
 - spark-hello.jsonl: **not captured** (`META_API_KEY` unset)
+- spark-tools.jsonl: compact replay of live Spark field paths
+  (this host has no `muse login` / `META_API_KEY`; do not treat
+  crate types as the contract)
 
-`--provider echo` does not run tools. Both prompts produced the same
-13 payload types; the tools prompt was echoed as text:
+`--provider echo` does not run tools. Both echo prompts produced the
+same 13 payload types; the tools prompt was echoed as text:
 
 - `runtime.command.accepted`
 - `session.run.linked`
@@ -68,9 +71,24 @@ Assistant text is `payload.text` on `run.output.delta` and
 `run.terminal.completed`. Terminal kind is `payload.terminal`
 (`"completed"` here).
 
-**Tool-name aliases: not captured.** Stop before Task 6 tool-card tests.
-Do not copy the `muse-codes` crate. Recapture with Spark (or another
-provider that actually calls tools) before writing tool extractors.
+Live Spark tool-use (not echo) adds:
+
+- Tool **start**: `payload_type` `task.lifecycle.side_effect_intent`
+  when `payload.event.operation` is `tool:<name>` and
+  `payload.event.idempotency_key` is `tool:<call_id>`. Echo's
+  `operation` is `model.unknown.response`, not a tool.
+- Tool **result**: `payload_type` `tool.result` with
+  `payload.call_id` (pairs with the start call_id),
+  `payload.correlation_facts.tool_name`,
+  `payload.correlation_facts.outcome` (`success` / `failure`),
+  `payload.text`. Optional `payload.edit_facts.path` on file tools.
+  `tool.result` has no `task_id`.
+- No thinking payload on the observed stream.
+- No usage/token fields on the observed stream.
+
+**Tool-name aliases from that capture:** `write_file`, `read_file`
+(already in `MUSE_TOOL_ALIAS`). `bash` is also observed on the live
+wire as `correlation_facts.tool_name`.
 
 ## Hooks file shape
 

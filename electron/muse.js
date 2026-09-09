@@ -360,7 +360,8 @@ function extractAssistantText(obj) {
 }
 
 /**
- * echo-hello.jsonl / echo-tools.jsonl have no thinking payload.
+ * echo-hello.jsonl / echo-tools.jsonl / spark-tools.jsonl have no thinking
+ * payload. Unknown objects return null.
  * @param {object} obj
  * @returns {string | null}
  */
@@ -370,13 +371,71 @@ function extractThinking(obj) {
 }
 
 /**
- * echo-hello.jsonl / echo-tools.jsonl have no tool start/result.
- * Unknown objects return null; do not invent a Spark tool shape.
+ * Tool start/result from spark-tools.jsonl (live Spark field paths).
+ *
+ * Start: payload_type task.lifecycle.side_effect_intent when
+ * payload.event.operation is "tool:<name>" and
+ * payload.event.idempotency_key is "tool:<call_id>".
+ * Echo's model.unknown.response operation is not a tool.
+ *
+ * Result: payload_type tool.result with payload.call_id (pairs with the
+ * start call_id) and payload.correlation_facts.tool_name. Record ids
+ * restart per session; ingestTool keys cards with toolCardKey(stream.id,
+ * call_id).
+ *
+ * echo-hello.jsonl / echo-tools.jsonl have neither shape.
+ * Unknown objects return null.
  * @param {object} obj
- * @returns {{ phase: string, id: string, name: string, input?: unknown, output?: unknown } | null}
+ * @returns {{ phase: string, id: string, name: string, input?: unknown, output?: unknown, isError?: boolean } | null}
  */
 function extractToolEvent(obj) {
   if (!obj || typeof obj !== "object") return null;
+  const payload = obj.payload;
+  if (!payload || typeof payload !== "object") return null;
+
+  if (obj.payload_type === "task.lifecycle.side_effect_intent") {
+    const event = payload.event;
+    if (!event || typeof event !== "object") return null;
+    const operation =
+      typeof event.operation === "string" ? event.operation : "";
+    if (!operation.startsWith("tool:")) return null;
+    const name = operation.slice(5);
+    const key =
+      typeof event.idempotency_key === "string" ? event.idempotency_key : "";
+    if (!key.startsWith("tool:")) return null;
+    const id = key.slice(5);
+    if (!id || !name) return null;
+    return { phase: "start", id, name };
+  }
+
+  if (obj.payload_type === "tool.result") {
+    const id = typeof payload.call_id === "string" ? payload.call_id : "";
+    const facts = payload.correlation_facts;
+    const name =
+      facts && typeof facts === "object" && typeof facts.tool_name === "string"
+        ? facts.tool_name
+        : "";
+    if (!id || !name) return null;
+    const outcome =
+      facts && typeof facts.outcome === "string" ? facts.outcome : "";
+    const output = typeof payload.text === "string" ? payload.text : "";
+    const edit = payload.edit_facts;
+    const input =
+      edit && typeof edit === "object" && typeof edit.path === "string" && edit.path
+        ? edit.path
+        : undefined;
+    /** @type {{ phase: string, id: string, name: string, output: string, isError: boolean, input?: string }} */
+    const end = {
+      phase: "end",
+      id,
+      name,
+      output,
+      isError: outcome === "failure",
+    };
+    if (input) end.input = input;
+    return end;
+  }
+
   return null;
 }
 

@@ -25,6 +25,7 @@ const MUSE_TOOL_ALIAS = {
   shell_command: "Bash",
   run_terminal_command: "Bash",
   run_shell_command: "Bash",
+  bash: "Bash",
   write_file: "Write",
   edit_file: "Edit",
   read_file: "Read",

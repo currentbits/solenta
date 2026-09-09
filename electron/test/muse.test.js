@@ -1,8 +1,9 @@
 "use strict";
 
 /**
- * Muse Code runner (#873). Fake CLI replays echo-hello.jsonl.
- * Echo has no tool start/result — no tool-card scenario.
+ * Muse Code runner (#873 / #1154). Fake CLI replays echo-hello.jsonl
+ * and spark-tools.jsonl. Echo has no tool start/result; spark-tools
+ * emits stream-scoped tool cards.
  */
 
 const { describe, it, beforeEach, afterEach } = require("node:test");
@@ -18,7 +19,9 @@ const { createRunner } = require("../runner.js");
 const { writeFakeBin } = require("./support/fakeBin.js");
 
 const ECHO_HELLO = path.join(__dirname, "fixtures", "muse", "echo-hello.jsonl");
+const SPARK_TOOLS = path.join(__dirname, "fixtures", "muse", "spark-tools.jsonl");
 const ECHO_SESSION_ID = "01a06856-a922-7ec0-a75a-aa6eab933dff";
+const SPARK_SESSION_ID = "01a08590-c0de-7000-8000-00000000c0de";
 const ECHO_TEXT =
   "echo: Reply with the single word hello and do not use tools.";
 
@@ -233,6 +236,33 @@ describe("muse runner integration", () => {
     );
     assert.ok(!argv.includes("--yolo"));
     assert.ok(!argv.includes("--approval-mode"));
+  });
+
+  it("tools: replays spark-tools.jsonl into stream-scoped tool cards", async () => {
+    process.env.CODER_FAKE_MUSE_FIXTURE = SPARK_TOOLS;
+    process.env.CODER_FAKE_MUSE_SCENARIO = "success";
+    const thread = store.getThreads()[0];
+    await runner.startRun({ threadId: thread.id, prompt: "use tools" });
+    await waitFor(() => store.getThread(thread.id).status === "done");
+
+    assert.equal(store.getThread(thread.id).sessionId, SPARK_SESSION_ID);
+
+    const tools = store
+      .getMessages(thread.id)
+      .filter((m) => m.role === "tool");
+    assert.equal(tools.length, 2);
+    const names = tools.map((m) => m.tool && m.tool.name).sort();
+    assert.deepEqual(names, ["read_file", "write_file"]);
+    for (const t of tools) {
+      assert.ok(t.tool);
+      assert.equal(t.tool.done, true);
+      assert.equal(t.tool.id.startsWith(`${SPARK_SESSION_ID}:`), true);
+      assert.notEqual(t.tool.id, t.tool.id.split(":")[1]);
+    }
+    const write = tools.find((m) => m.tool.name === "write_file");
+    assert.match(String(write.tool.output || ""), /wrote 6 bytes/i);
+    const read = tools.find((m) => m.tool.name === "read_file");
+    assert.match(String(read.tool.output || ""), /hello/);
   });
 
   it("fails the run when the overlay throws", async () => {
