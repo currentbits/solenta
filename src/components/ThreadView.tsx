@@ -525,7 +525,7 @@ interface ThreadViewProps {
   onRepeatSchedule?: () => void;
   /** Distill this thread into a workflow draft for review (#285). */
   onDistillWorkflow?: () => void;
-  /** Save scratch notes for a thread (header notes editor, issue #194). */
+  /** Save scratch notes for a thread (header notes editor, issues #194 / #935). */
   onSetNotes?: (threadId: string, notes: string) => void | Promise<void>;
   /** Turn spec mode on for a thread that has no spec yet (issue #269). */
   onStartSpec?: (threadId: string) => void | Promise<void>;
@@ -4343,9 +4343,19 @@ export const ThreadView = memo(function ThreadView({
   }, [detail?.thread.id, queuedPrompt == null]);
   const [notesOpen, setNotesOpen] = useState(false);
   const [notesDraft, setNotesDraft] = useState("");
+  const [notesError, setNotesError] = useState<string | null>(null);
+  const [notesSaving, setNotesSaving] = useState(false);
   const notesOpenRef = useRef(false);
-  /** Thread the open panel belongs to, plus the value it was seeded with. */
+  const notesDraftRef = useRef("");
+  notesDraftRef.current = notesDraft;
+  /** Thread ids with an in-flight setNotes write. */
+  const notesSavingIdsRef = useRef(new Set<string>());
+  /** Thread the open panel belongs to, plus the last confirmed saved value. */
   const notesSourceRef = useRef<{ id: string; saved: string } | null>(null);
+  /** Failed (or in-flight outgoing) drafts keyed by thread id (#935). */
+  const notesFailedRef = useRef<Record<string, { draft: string; error: string }>>(
+    {},
+  );
   /**
    * Provenance chip dismissed for this open (not persisted). Reset when the
    * open thread changes.
@@ -5195,9 +5205,86 @@ export const ThreadView = memo(function ThreadView({
     [detail, onFork, onSelectThread, onStartRun],
   );
 
+  const rememberFailedNotes = (threadId: string, draft: string, error: string) => {
+    notesFailedRef.current = {
+      ...notesFailedRef.current,
+      [threadId]: { draft, error },
+    };
+  };
+
+  const forgetFailedNotes = (threadId: string) => {
+    if (!(threadId in notesFailedRef.current)) return;
+    const next = { ...notesFailedRef.current };
+    delete next[threadId];
+    notesFailedRef.current = next;
+  };
+
+  const persistNotes = async (
+    threadId: string,
+    notes: string,
+    closeOnSuccess: boolean,
+  ) => {
+    const session = notesSourceRef.current;
+    const applySuccess = () => {
+      const held = notesFailedRef.current[threadId];
+      if (!held || held.draft === notes) forgetFailedNotes(threadId);
+      const open = notesSourceRef.current;
+      if (open?.id !== threadId || notesDraftRef.current.trim() !== notes) {
+        return;
+      }
+      // Same text is now confirmed; an unchanged close must not rewrite.
+      notesSourceRef.current = { id: threadId, saved: notes };
+      if (closeOnSuccess && open === session) {
+        notesOpenRef.current = false;
+        notesSourceRef.current = null;
+        setNotesOpen(false);
+        setNotesError(null);
+      }
+    };
+    if (!onSetNotes) {
+      applySuccess();
+      return;
+    }
+    if (notesSavingIdsRef.current.has(threadId)) return;
+    notesSavingIdsRef.current.add(threadId);
+    if (notesSourceRef.current?.id === threadId) {
+      setNotesSaving(true);
+      setNotesError(null);
+    }
+    try {
+      await onSetNotes(threadId, notes);
+      applySuccess();
+    } catch (err) {
+      const message =
+        err instanceof Error && err.message ? err.message : String(err);
+      const held = notesFailedRef.current[threadId];
+      if (!held || held.draft === notes) {
+        rememberFailedNotes(threadId, notes, message);
+      }
+      if (
+        notesSourceRef.current?.id === threadId &&
+        notesOpenRef.current &&
+        notesDraftRef.current.trim() === notes
+      ) {
+        setNotesError(message);
+      }
+    } finally {
+      notesSavingIdsRef.current.delete(threadId);
+      if (notesSourceRef.current?.id === threadId) {
+        setNotesSaving(false);
+      }
+    }
+  };
+
   useEffect(() => {
     const id = detail?.thread.id ?? null;
     if (id !== prevThreadId.current) {
+      const source = notesSourceRef.current;
+      const outgoingDraft = notesDraft.trim();
+      const wasOpen = notesOpenRef.current;
+      const alreadySaving = source
+        ? notesSavingIdsRef.current.has(source.id)
+        : false;
       prevThreadId.current = id;
       stickToBottom.current = true;
       setMenuOpen(false);
@@ -5207,18 +5294,22 @@ export const ThreadView = memo(function ThreadView({
       renamingRef.current = false;
       // Flush the outgoing thread's dirty draft (⌘J/K and any other
       // programmatic select skip the textarea blur). Write to the thread
-      // we were editing, not the newly selected one.
-      const source = notesSourceRef.current;
-      if (notesOpenRef.current && source) {
-        const trimmed = notesDraft.trim();
-        if (trimmed !== source.saved) {
-          void onSetNotes?.(source.id, trimmed);
+      // we were editing, not the newly selected one. Keep a failed draft
+      // keyed by that source id so reopen-after-navigate can retry (#935).
+      if (wasOpen && source && outgoingDraft !== source.saved) {
+        rememberFailedNotes(source.id, outgoingDraft, "");
+        if (!alreadySaving) {
+          void persistNotes(source.id, outgoingDraft, false);
         }
       }
       notesOpenRef.current = false;
       notesSourceRef.current = null;
       setNotesOpen(false);
-      setNotesDraft(detail?.thread.notes ?? "");
+      setNotesSaving(false);
+      setNotesError(null);
+      const incoming = detail?.thread.notes ?? "";
+      notesDraftRef.current = incoming;
+      setNotesDraft(incoming);
       setHandoffBannerDismissed(false);
       setRestoreConfirm(null);
       setRestorePending(false);
@@ -5685,18 +5776,32 @@ export const ThreadView = memo(function ThreadView({
     void onRenameThread?.(next);
   };
 
+  // Close/discard only after a confirmed write or Escape (#935). A rejected
+  // persist keeps the editor open with the typed draft and a retry.
   const closeNotes = (save: boolean) => {
     if (!notesOpenRef.current) return;
-    notesOpenRef.current = false;
-    notesSourceRef.current = null;
-    const next = notesDraft.trim();
-    setNotesOpen(false);
+    const sourceId = notesSourceRef.current?.id ?? thread.id;
+    if (notesSavingIdsRef.current.has(sourceId)) return;
     if (!save) {
+      notesOpenRef.current = false;
+      notesSourceRef.current = null;
+      setNotesOpen(false);
       setNotesDraft(thread.notes);
+      setNotesError(null);
+      forgetFailedNotes(sourceId);
       return;
     }
-    if (next === thread.notes) return;
-    void onSetNotes?.(thread.id, next);
+    const next = notesDraft.trim();
+    const confirmed = notesSourceRef.current?.saved ?? thread.notes;
+    if (next === confirmed) {
+      notesOpenRef.current = false;
+      notesSourceRef.current = null;
+      setNotesOpen(false);
+      setNotesError(null);
+      forgetFailedNotes(sourceId);
+      return;
+    }
+    void persistNotes(sourceId, next, true);
   };
 
   const toggleNotes = () => {
@@ -5704,7 +5809,13 @@ export const ThreadView = memo(function ThreadView({
       closeNotes(true);
       return;
     }
-    setNotesDraft(thread.notes);
+    const held = notesFailedRef.current[thread.id];
+    const nextDraft = held?.draft ?? thread.notes;
+    notesDraftRef.current = nextDraft;
+    setNotesDraft(nextDraft);
+    setNotesError(held?.error ? held.error : null);
+    const pending = notesSavingIdsRef.current.has(thread.id);
+    setNotesSaving(pending);
     notesOpenRef.current = true;
     notesSourceRef.current = { id: thread.id, saved: thread.notes };
     setNotesOpen(true);
@@ -6150,7 +6261,11 @@ export const ThreadView = memo(function ThreadView({
             autoFocus
             placeholder="Scratch notes - why this is snoozed, what to do next…"
             value={notesDraft}
-            onChange={(e) => setNotesDraft(e.target.value)}
+            disabled={notesSaving}
+            onChange={(e) => {
+              setNotesDraft(e.target.value);
+              if (notesError) setNotesError(null);
+            }}
             onBlur={() => closeNotes(true)}
             onKeyDown={(e) => {
               if (e.key === "Escape") {
@@ -6159,6 +6274,29 @@ export const ThreadView = memo(function ThreadView({
               }
             }}
           />
+          {notesError ? (
+            <div className={styles.notesSaveError}>
+              <span
+                className={styles.permissionGuardrail}
+                data-thread-notes-error=""
+              >
+                {notesError}
+              </span>
+              <button
+                type="button"
+                className={styles.retryBtn}
+                data-thread-notes-retry=""
+                disabled={notesSaving}
+                onMouseDown={(e) => {
+                  // Keep blur from starting a second persist before this click.
+                  e.preventDefault();
+                }}
+                onClick={() => closeNotes(true)}
+              >
+                Retry
+              </button>
+            </div>
+          ) : null}
         </div>
       )}
 
