@@ -756,9 +756,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
   }, []);
 
   const handleSetNotes = useCallback(
-    (threadId: string, notes: string) => {
-      void setNotes(threadId, notes);
-    },
+    (threadId: string, notes: string) => setNotes(threadId, notes),
     [setNotes],
   );
 
