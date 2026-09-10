@@ -26,7 +26,7 @@ const PROVIDERS: ProviderInfo[] = [
   },
 ];
 
-/** Codex catalog snapshot for issue #1167: Spark is text-only, Astra is vision. */
+/** Codex catalog snapshot: Spark is text-only, Astra is vision (#1167). */
 const CODEX: ProviderInfo = {
   id: "codex",
   name: "Codex",
@@ -39,6 +39,7 @@ const CODEX: ProviderInfo = {
       label: "GPT-6-Astra",
       description: "flagship",
       vendor: "OpenAI",
+      recommended: true,
       inputModalities: ["text", "image"],
     },
     {
@@ -51,6 +52,7 @@ const CODEX: ProviderInfo = {
   ],
   efforts: [],
 };
+const CODEX_PROVIDERS: ProviderInfo[] = [CODEX];
 
 const WORKFLOWS: WorkflowTemplateInfo[] = [
   {
@@ -118,6 +120,29 @@ async function dispatchDrop(
   });
 }
 
+async function pasteImage(el: Element | null) {
+  assert.ok(el, "paste target must exist");
+  const file = new File([Uint8Array.from([1])], "pic.png", {
+    type: "image/png",
+  });
+  const ev = new Event("paste", { bubbles: true, cancelable: true });
+  Object.defineProperty(ev, "clipboardData", {
+    value: {
+      items: [
+        {
+          kind: "file",
+          type: "image/png",
+          getAsFile: () => file,
+        },
+      ],
+      getData: () => "",
+    },
+  });
+  await inAct(() => {
+    el.dispatchEvent(ev);
+  });
+}
+
 function composer(
   harness: Harness,
   over: {
@@ -131,6 +156,7 @@ function composer(
     provider?: string;
     model?: string | null;
     providers?: ProviderInfo[];
+    onPick?: (opts?: { includeImages?: boolean }) => Promise<AttachmentInfo[]>;
   } = {},
 ) {
   const picks = over.picks ?? [];
@@ -161,7 +187,9 @@ function composer(
       }}
       onBuild={() => {}}
       onPickAttachments={
-        over.withPicker === false ? undefined : async () => picks
+        over.withPicker === false
+          ? undefined
+          : (over.onPick ?? (async () => picks))
       }
       onSaveAttachmentImage={
         over.onSaveImage ??
@@ -176,6 +204,14 @@ function composer(
 }
 
 afterEach(unmountAll);
+
+/** jsdom has no Electron preload, so isWebMode() is true unless a coder bridge exists. */
+function installNativeBridge(): () => void {
+  (window as unknown as { coder: object }).coder = {};
+  return () => {
+    delete (window as unknown as { coder?: unknown }).coder;
+  };
+}
 
 describe("Composer attachments", () => {
   it("hides the attach button when no picker is provided (web mode)", async () => {
@@ -420,6 +456,176 @@ describe("Composer attachments", () => {
     );
     m.unmount();
   });
+
+  it("keeps the attach button on Codex Spark but refuses a picked image (#1169)", async () => {
+    const restore = installNativeBridge();
+    try {
+      const h: Harness = { sends: [] };
+      const pickOpts: { includeImages?: boolean }[] = [];
+      const m = await mount(
+        composer(h, {
+          provider: "codex",
+          model: "gpt-5.3-codex-spark",
+          providers: CODEX_PROVIDERS,
+          onPick: async (opts) => {
+            pickOpts.push(opts ?? {});
+            return [IMAGE, FILE];
+          },
+        }),
+      );
+      const attach = m.query('button[aria-label="Attach files or folders"]');
+      assert.ok(attach, "Spark still needs the paperclip for files/folders");
+      await m.click(attach);
+      assert.equal(
+        pickOpts[0]?.includeImages,
+        false,
+        "native picker must omit the Images filter on Spark",
+      );
+      assert.equal(
+        m.query('[data-attachment-kind="image"]'),
+        null,
+        "Spark must not attach a picked image",
+      );
+      assert.ok(
+        m.query('[data-attachment-kind="file"]'),
+        "Spark can still attach a file path",
+      );
+      m.unmount();
+    } finally {
+      restore();
+    }
+  });
+
+  it("hides the attach button on Codex Spark in web mode (#1172)", async () => {
+    const h: Harness = { sends: [] };
+    const m = await mount(
+      composer(h, {
+        provider: "codex",
+        model: "gpt-5.3-codex-spark",
+        providers: CODEX_PROVIDERS,
+        onPick: async () => [FILE],
+      }),
+    );
+    const attach = m.query('button[aria-label="Attach files or folders"]');
+    m.unmount();
+    assert.equal(
+      attach,
+      null,
+      "web picker is image-only, so Spark has nothing to attach",
+    );
+  });
+
+  it("keeps the attach button on Codex Astra in web mode (#1172)", async () => {
+    const h: Harness = { sends: [] };
+    const m = await mount(
+      composer(h, {
+        provider: "codex",
+        model: "gpt-6-astra",
+        providers: CODEX_PROVIDERS,
+        onPick: async () => [IMAGE],
+      }),
+    );
+    assert.ok(
+      m.query('button[aria-label="Attach files or folders"]'),
+      "Astra still picks images in the browser",
+    );
+    m.unmount();
+  });
+
+  it("keeps image attach on Codex Astra", async () => {
+    const h: Harness = { sends: [] };
+    const pickOpts: { includeImages?: boolean }[] = [];
+    const m = await mount(
+      composer(h, {
+        provider: "codex",
+        model: "gpt-6-astra",
+        providers: CODEX_PROVIDERS,
+        onPick: async (opts) => {
+          pickOpts.push(opts ?? {});
+          return [IMAGE];
+        },
+      }),
+    );
+    const attach = m.query('button[aria-label="Attach files or folders"]');
+    assert.ok(attach, "Astra still takes images");
+    await m.click(attach);
+    assert.notEqual(
+      pickOpts[0]?.includeImages,
+      false,
+      "Astra must still offer the Images filter",
+    );
+    assert.ok(
+      m.query('[data-attachment-kind="image"]'),
+      "Astra must still attach a picked image",
+    );
+    m.unmount();
+  });
+
+  it("does not pin an incoming screenshot on Codex Spark", async () => {
+    const h: Harness = { sends: [] };
+    const consumed: number[] = [];
+    const m = await mount(
+      composer(h, {
+        provider: "codex",
+        model: "gpt-5.3-codex-spark",
+        providers: CODEX_PROVIDERS,
+        incoming: [IMAGE],
+        onIncomingConsumed: () => consumed.push(1),
+      }),
+    );
+    await m.flush();
+    assert.equal(
+      m.query('[data-attachment-kind="image"]'),
+      null,
+      "Spark cannot take a screenshot chip",
+    );
+    assert.equal(consumed.length, 1, "incoming payload is still consumed");
+    m.unmount();
+  });
+
+  it("ignores a dropped image on Codex Spark but keeps a dropped file", async () => {
+    const h: Harness = { sends: [] };
+    const m = await mount(
+      composer(h, {
+        provider: "codex",
+        model: "gpt-5.3-codex-spark",
+        providers: CODEX_PROVIDERS,
+        onDrop: async () => [IMAGE, FILE],
+      }),
+    );
+    const image = new File([Uint8Array.from([1])], "pic.png", {
+      type: "image/png",
+    });
+    const file = new File(["# notes"], "notes.md", { type: "text/markdown" });
+    await dispatchDrop(m.query("textarea"), [image, file]);
+    await m.flush();
+    assert.equal(m.query('[data-attachment-kind="image"]'), null);
+    assert.ok(
+      m.query('[data-attachment-kind="file"]'),
+      "Spark can still take a file path",
+    );
+    m.unmount();
+  });
+
+  it("ignores a pasted image on Codex Spark", async () => {
+    const h: Harness = { sends: [] };
+    const m = await mount(
+      composer(h, {
+        provider: "codex",
+        model: "gpt-5.3-codex-spark",
+        providers: CODEX_PROVIDERS,
+        savedImage: IMAGE,
+      }),
+    );
+    await pasteImage(m.query("textarea"));
+    await m.flush();
+    assert.equal(
+      m.query('[data-attachment-kind="image"]'),
+      null,
+      "Spark must not attach a clipboard image",
+    );
+    m.unmount();
+  });
 });
 
 describe("Composer image attach gated by Codex inputModalities (#1167)", () => {
@@ -435,17 +641,22 @@ describe("Composer image attach gated by Codex inputModalities (#1167)", () => {
   };
 
   it("keeps the attach button on Spark so files and folders still pick", async () => {
-    const h: Harness = { sends: [] };
-    const m = await mount(composer(h, { ...spark, picks: [FOLDER] }));
-    const btn = m.query('button[aria-label="Attach files or folders"]');
-    assert.ok(btn, "Spark must keep the paperclip for file/folder attach");
-    await m.click(btn);
-    await m.flush();
-    assert.ok(
-      m.query('[data-attachment-kind="folder"]'),
-      "Spark must still attach a folder",
-    );
-    m.unmount();
+    const restore = installNativeBridge();
+    try {
+      const h: Harness = { sends: [] };
+      const m = await mount(composer(h, { ...spark, picks: [FOLDER] }));
+      const btn = m.query('button[aria-label="Attach files or folders"]');
+      assert.ok(btn, "Spark must keep the paperclip for file/folder attach");
+      await m.click(btn);
+      await m.flush();
+      assert.ok(
+        m.query('[data-attachment-kind="folder"]'),
+        "Spark must still attach a folder",
+      );
+      m.unmount();
+    } finally {
+      restore();
+    }
   });
 
   it("does not pin an incoming screenshot on Spark", async () => {
@@ -469,22 +680,27 @@ describe("Composer image attach gated by Codex inputModalities (#1167)", () => {
   });
 
   it("does not pin a picked image on Spark but keeps a folder from the same pick", async () => {
-    const h: Harness = { sends: [] };
-    const m = await mount(
-      composer(h, { ...spark, picks: [IMAGE, FOLDER] }),
-    );
-    await m.click(m.query('button[aria-label="Attach files or folders"]'));
-    await m.flush();
-    assert.equal(
-      m.query('[data-attachment-kind="image"]'),
-      null,
-      "picked images must not pin on Spark",
-    );
-    assert.ok(
-      m.query('[data-attachment-kind="folder"]'),
-      "mixed pick must keep the folder on Spark",
-    );
-    m.unmount();
+    const restore = installNativeBridge();
+    try {
+      const h: Harness = { sends: [] };
+      const m = await mount(
+        composer(h, { ...spark, picks: [IMAGE, FOLDER] }),
+      );
+      await m.click(m.query('button[aria-label="Attach files or folders"]'));
+      await m.flush();
+      assert.equal(
+        m.query('[data-attachment-kind="image"]'),
+        null,
+        "picked images must not pin on Spark",
+      );
+      assert.ok(
+        m.query('[data-attachment-kind="folder"]'),
+        "mixed pick must keep the folder on Spark",
+      );
+      m.unmount();
+    } finally {
+      restore();
+    }
   });
 
   it("does not pin a pasted image on Spark", async () => {

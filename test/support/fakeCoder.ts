@@ -3388,7 +3388,12 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
       },
     },
     attachments: {
-      pick: () => rec("attachments.pick", [], { attachments: [] }),
+      pick: (input?: unknown) =>
+        rec(
+          "attachments.pick",
+          input == null ? [] : [input],
+          { attachments: [] },
+        ),
       fromPaths: (input: unknown) =>
         rec(
           "attachments.fromPaths",

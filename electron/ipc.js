@@ -1522,11 +1522,15 @@ const IPC_HANDLERS = {
     }
     return { dataUrl: mediaProtocol.toolImageUrl(name) };
   },
-  "attachments:pick": async (ctx) => {
+  "attachments:pick": async (ctx, input) => {
     if (!ctx.dialog || typeof ctx.dialog.showOpenDialog !== "function") {
       throw new Error("Attachment picker is not available in this mode");
     }
-    return { attachments: await attachments.pickAttachments(ctx.dialog) };
+    return {
+      attachments: await attachments.pickAttachments(ctx.dialog, {
+        includeImages: !input || input.includeImages !== false,
+      }),
+    };
   },
   "attachments:fromPaths": async (ctx, input) => {
     return {

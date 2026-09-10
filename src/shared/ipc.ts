@@ -2155,6 +2155,8 @@ export interface ModelInfo {
    * Snapshot of the vendor catalog's input_modalities. Codex Spark is
    * `["text"]` only; Astra/Sol/Terra/Luna/5.5 are `["text","image"]`.
    * Absent means allow images (Default, custom ids, other providers).
+   * Native refuses image attach but keeps the paperclip for files/folders.
+   * Web pick is image-only, so the paperclip hides on text-only models.
    */
   inputModalities?: Array<"text" | "image">;
 }
@@ -4507,8 +4509,12 @@ export interface CoderApi {
   attachments: {
     /**
      * Native picker for files, images, and folders (multi-select).
+     * Pass `includeImages: false` on text-only models so the dialog
+     * omits the Images filter (files/folders still pick).
      */
-    pick(): Promise<{ attachments: AttachmentInfo[] }>;
+    pick(input?: {
+      includeImages?: boolean;
+    }): Promise<{ attachments: AttachmentInfo[] }>;
     /**
      * Classify absolute paths (e.g. resolved from a drag-drop) as image,
      * file, or folder via statSync; missing / relative / non-file paths skip.

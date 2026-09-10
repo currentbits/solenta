@@ -42,6 +42,7 @@ import {
   effortDisplayLabel,
   effortHint,
   effortsForModel,
+  supportsImagesForModel,
   providerDetail,
   effortOptions,
   firstSelectableIndex,
@@ -54,7 +55,6 @@ import {
   rowKey,
   showReasoningControl,
   stepHighlightIndex,
-  supportsImagesForModel,
   type ModelRow,
   type ProfileRow,
 } from "../modelPicker";
@@ -96,6 +96,7 @@ import { scrollChildIntoNearestView } from "../scrollNearest";
 import { teachPermissionAllowed } from "../teach";
 import type { ThreadTeach } from "../shared/ipc";
 import { useFileDrop } from "../useFileDrop";
+import { isWebMode } from "../shared/wire";
 import {
   cycleTranscriptViewMode,
   TRANSCRIPT_VIEW_HINTS,
@@ -266,9 +267,13 @@ interface ComposerProps {
   onClearReply?: () => void;
   /**
    * File/image/folder picker for attachments. Absent hides the attach button
-   * (tests / shells that do not wire one).
+   * (tests / shells that do not wire one). `includeImages: false` on
+   * text-only models so the native dialog omits the Images filter. Web pick
+   * is image-only, so the paperclip also hides when the model refuses images.
    */
-  onPickAttachments?: () => Promise<AttachmentInfo[]>;
+  onPickAttachments?: (opts?: {
+    includeImages?: boolean;
+  }) => Promise<AttachmentInfo[]>;
   /** Persist a pasted image; returns its attachment or null when rejected. */
   onSaveAttachmentImage?: (dataUrl: string) => Promise<AttachmentInfo | null>;
   /** Thumbnail data URL for an attached image; null when unavailable. */
@@ -1723,7 +1728,7 @@ export const Composer = memo(function Composer({
 
   const pickAttachments = () => {
     if (!onPickAttachments || disabled || sending) return;
-    onPickAttachments()
+    onPickAttachments({ includeImages: canAttachImages })
       .then(addAttachments)
       .catch((err) => {
         const msg =
@@ -1741,10 +1746,9 @@ export const Composer = memo(function Composer({
       (item) => item.kind === "file" && item.type.startsWith("image/"),
     );
     if (items.length > 0 && onSaveAttachmentImage) {
-      if (!canAttachImages) {
-        e.preventDefault();
-        return;
-      }
+      // Refuse the image but do not preventDefault: a mixed clipboard
+      // still pastes its text. preventDefault would swallow that too.
+      if (!canAttachImages) return;
       e.preventDefault();
       for (const item of items) {
         const blob = item.getAsFile();
@@ -2252,7 +2256,7 @@ export const Composer = memo(function Composer({
         </div>
         <div className={styles.controls}>
           <div className={styles.pills}>
-            {onPickAttachments && !ask && (
+            {onPickAttachments && !ask && (canAttachImages || !isWebMode()) && (
               <button
                 type="button"
                 className={styles.pill}

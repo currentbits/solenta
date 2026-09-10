@@ -165,6 +165,34 @@ describe("providers registry", () => {
     assert.equal(spark.vendor, "Meta");
   });
 
+  it("marks Codex Spark text-only; Astra/Sol/Terra/Luna/5.5 take images (#1167)", () => {
+    // Live ~/.codex/models_cache.json (client 0.153.4): Spark
+    // input_modalities is ["text"]; the others are ["text","image"].
+    // Do not invent image support for Spark. Cursor gpt-5.4-mini-* ids
+    // are a different catalog. Codex gpt-5.4-mini (if still listed) stays
+    // unset — do not invent true or false.
+    const codex = getProvider("codex");
+    const byId = Object.fromEntries(
+      (codex.modelInfo || []).map((m) => [m.id, m]),
+    );
+    assert.ok(
+      !(byId["gpt-5.3-codex-spark"].inputModalities || []).includes("image"),
+      "Spark input_modalities are text-only (#1167)",
+    );
+    for (const id of [
+      "gpt-6-astra",
+      "gpt-5.6-sol",
+      "gpt-5.6-terra",
+      "gpt-5.6-luna",
+      "gpt-5.5",
+    ]) {
+      assert.ok(
+        (byId[id].inputModalities || []).includes("image"),
+        `${id} lists text+image`,
+      );
+    }
+  });
+
   it("every provider model has matching modelInfo in the same order with non-empty fields", () => {
     // Gate for the picker: models[i] and modelInfo[i] must be the same id in
     // the same order, and label/description/vendor must be non-empty strings.

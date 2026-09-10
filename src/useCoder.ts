@@ -143,7 +143,7 @@ async function filesToAttachments(
   return out;
 }
 
-/** ponytail: web mode can only attach images, not folders. Native picker allows folders; `<input type=file>` cannot. */
+/** ponytail: web mode can only attach images, not folders. Native picker allows folders; `<input type=file>` cannot. Text-only models hide the paperclip in web (#1172) instead of opening this picker. */
 function pickWebImageFiles(): Promise<File[]> {
   return new Promise((resolve) => {
     const input = document.createElement("input");
@@ -535,7 +535,9 @@ export interface UseCoderResult {
   /** Data URL for one image a tool returned; null when it is gone. */
   loadToolImage: (name: string) => Promise<string | null>;
   /** Native file/image/folder picker, or a web <input type=file> for images. */
-  pickAttachments: () => Promise<AttachmentInfo[]>;
+  pickAttachments: (opts?: {
+    includeImages?: boolean;
+  }) => Promise<AttachmentInfo[]>;
   /** Persist a pasted image for the selected thread; null when rejected. */
   saveAttachmentImage: (dataUrl: string) => Promise<AttachmentInfo | null>;
   /** Data URL for one attached image; null when it is gone. */
@@ -2973,12 +2975,17 @@ export function useCoder(): UseCoderResult {
     [api, selectedThreadId],
   );
 
-  const pickAttachments = useCallback(async () => {
+  const pickAttachments = useCallback(async (opts?: {
+    includeImages?: boolean;
+  }) => {
+    if (opts?.includeImages === false && isWebMode()) return [];
     if (isWebMode()) {
       if (!selectedThreadId) return [];
       return filesToAttachments(await pickWebImageFiles(), saveAttachmentImage);
     }
-    const result = await api.attachments.pick();
+    const result = await api.attachments.pick({
+      includeImages: opts?.includeImages !== false,
+    });
     return result.attachments;
   }, [api, saveAttachmentImage, selectedThreadId]);
 

@@ -359,7 +359,9 @@ export function initialHighlightIndex(
 /**
  * Whether the composer may attach images for this model.
  * Only an explicit `inputModalities` list that omits `"image"` hides
- * them (Codex Spark). Absent means allow, including Default and custom ids.
+ * them (Codex Spark). Native keeps the paperclip so files/folders still
+ * pick. Web pick is image-only, so the paperclip hides there. Absent
+ * means allow, including Default and custom ids.
  */
 export function supportsImagesForModel(
   provider: ProviderInfo | undefined | null,

@@ -150,6 +150,41 @@ describe("attachments module", () => {
       "relative paths must not read",
     );
   });
+
+  it("omits the Images filter when includeImages is false (#1169)", async () => {
+    let shown;
+    await attachments.pickAttachments(
+      {
+        showOpenDialog: async (opts) => {
+          shown = opts;
+          return { canceled: true };
+        },
+      },
+      { includeImages: false },
+    );
+    assert.deepEqual(
+      (shown.filters || []).map((f) => f.name),
+      ["All Files"],
+      "text-only models must not offer the native Images filter",
+    );
+  });
+
+  it("drops picked images when includeImages is false (#1169)", async () => {
+    const png = path.join(tmpDir, "shot.png");
+    const txt = path.join(tmpDir, "notes.txt");
+    fs.writeFileSync(png, "x");
+    fs.writeFileSync(txt, "x");
+    const out = await attachments.pickAttachments(
+      {
+        showOpenDialog: async () => ({
+          canceled: false,
+          filePaths: [png, txt],
+        }),
+      },
+      { includeImages: false },
+    );
+    assert.deepEqual(out, [{ kind: "file", path: txt, name: "notes.txt" }]);
+  });
 });
 
 describe("runner attachments", () => {

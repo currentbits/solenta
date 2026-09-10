@@ -16,6 +16,7 @@ import {
   effortDisplayLabel,
   effortHint,
   effortsForModel,
+  supportsImagesForModel,
   effortOptions,
   firstSelectableIndex,
   initialHighlightIndex,
@@ -26,7 +27,6 @@ import {
   sessionSwitchWarning,
   showReasoningControl,
   stepHighlightIndex,
-  supportsImagesForModel,
 } from "../src/modelPicker";
 
 function provider(over: Partial<ProviderInfo> = {}): ProviderInfo {
@@ -441,6 +441,7 @@ describe("supportsImagesForModel", () => {
         label: "Astra",
         description: "flagship",
         vendor: "OpenAI",
+        recommended: true,
         inputModalities: ["text", "image"],
       },
       {
@@ -461,10 +462,12 @@ describe("supportsImagesForModel", () => {
 
   it("allows images for Default, custom ids, missing field, and other providers", () => {
     assert.equal(supportsImagesForModel(codex, null), true);
+    assert.equal(supportsImagesForModel(codex, "custom-not-in-catalog"), true);
     assert.equal(supportsImagesForModel(codex, "custom-id"), true);
     assert.equal(supportsImagesForModel(undefined, "gpt-5.3-codex-spark"), true);
     const claude = provider();
     assert.equal(supportsImagesForModel(claude, "claude-opus-5"), true);
+    assert.equal(supportsImagesForModel(undefined, "x"), true);
   });
 });
 

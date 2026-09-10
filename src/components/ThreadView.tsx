@@ -650,7 +650,9 @@ interface ThreadViewProps {
   /** Loads an image a tool returned (ToolCallInfo.images) as a data URL. */
   onLoadImage?: (name: string) => Promise<string | null>;
   /** Native file/image/folder picker for composer attachments (Electron only). */
-  onPickAttachments?: () => Promise<AttachmentInfo[]>;
+  onPickAttachments?: (opts?: {
+    includeImages?: boolean;
+  }) => Promise<AttachmentInfo[]>;
   /** Persist a pasted image; returns its attachment or null when rejected. */
   onSaveAttachmentImage?: (dataUrl: string) => Promise<AttachmentInfo | null>;
   /** Loads one attached image (absolute path) as a data URL. */

@@ -75,19 +75,26 @@ function classifyPaths(paths) {
 /**
  * Native picker (files + images + folders, multi-select). Returns classified picks.
  * @param {{ showOpenDialog: (opts: object) => Promise<{ canceled: boolean, filePaths?: string[] }> }} dialog
+ * @param {{ includeImages?: boolean }} [opts] - false omits the Images filter
+ *   (text-only models). Files and folders still pick.
  */
-async function pickAttachments(dialog) {
+async function pickAttachments(dialog, opts = {}) {
+  const filters = [{ name: "All Files", extensions: ["*"] }];
+  if (opts.includeImages !== false) {
+    filters.push({ name: "Images", extensions: IMAGE_EXTS.slice() });
+  }
   const result = await dialog.showOpenDialog({
     properties: ["openFile", "openDirectory", "multiSelections"],
-    filters: [
-      { name: "All Files", extensions: ["*"] },
-      { name: "Images", extensions: IMAGE_EXTS.slice() },
-    ],
+    filters,
   });
   if (result.canceled || !result.filePaths || result.filePaths.length === 0) {
     return [];
   }
-  return classifyPaths(result.filePaths);
+  const classified = classifyPaths(result.filePaths);
+  if (opts.includeImages === false) {
+    return classified.filter((a) => a.kind !== "image");
+  }
+  return classified;
 }
 
 /**
