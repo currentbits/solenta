@@ -334,6 +334,30 @@ function notifyThreadComplete(thread) {
   n.show();
 }
 
+/**
+ * Desktop ping when an external MCP pairing wants to start a task (#157).
+ * Click focuses the window and selects that thread.
+ * @param {{ title?: string, body?: string, threadId?: string }} event
+ */
+function notifyPairingLaunch(event) {
+  if (typeof Notification !== "function") return;
+  if (Notification.isSupported && !Notification.isSupported()) return;
+  const n = new Notification({
+    title: (event && event.title) || "Solenta pairing",
+    body: (event && event.body) || "wants to start a task",
+  });
+  const threadId = event && event.threadId;
+  if (threadId) {
+    n.on("click", () => {
+      const win = focusMainWindow();
+      if (win && win.webContents && !win.webContents.isDestroyed()) {
+        win.webContents.send("thread:select", threadId);
+      }
+    });
+  }
+  n.show();
+}
+
 // Guest <webview> for the Browser pane (issue #155). Strip node/preload
 // and refuse any partition that is not solenta-preview:<threadId>. The app
 // window itself still never navigates to the web (links.js above).
@@ -636,6 +660,8 @@ app.whenReady().then(async () => {
       artifactStore ? artifactStore.cleanup() : Promise.resolve(),
     getIosSimulator: currentIosSimulator,
     log: (msg) => console.warn(msg),
+    getOrchStatus: () =>
+      orchServer ? orchServer.getStatus() : { running: false, port: null },
   });
   // Recently deleted expiry (#940): reclaim after restart even if the
   // renderer has not listed threads yet.
@@ -773,6 +799,7 @@ app.whenReady().then(async () => {
     broadcast,
     log: (msg) => console.warn(msg),
     getIosSimulator: currentIosSimulator,
+    notify: notifyPairingLaunch,
   });
   try {
     await orchServer.start();
