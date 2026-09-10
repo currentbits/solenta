@@ -325,3 +325,32 @@ describe("edit project icon (#610)", () => {
     m.unmount();
   });
 });
+
+describe("EditProjectModal focus trap (#916)", () => {
+  it("opening the dialog moves focus inside; Tab stays inside", async () => {
+    const p1 = project({ id: "p1", name: "ledger", path: "/tmp/ledger" });
+    const m = await mount(
+      <EditProjectModal
+        project={p1}
+        onClose={() => {}}
+        onSubmit={async (input) => input}
+      />,
+    );
+    const dialog = m.query('[role="dialog"]') as HTMLElement | null;
+    assert.ok(dialog, "edit-project dialog");
+    assert.ok(
+      dialog.contains(document.activeElement),
+      "opening the dialog must move focus inside it",
+    );
+    await m.pressFocused("Tab");
+    const first = document.activeElement as HTMLElement;
+    assert.ok(dialog.contains(first), "Tab stays inside");
+    assert.notEqual(first, dialog, "Tab moves to a focusable inside the dialog");
+    await m.pressFocused("Tab");
+    assert.ok(
+      dialog.contains(document.activeElement),
+      "second Tab stays inside",
+    );
+    m.unmount();
+  });
+});

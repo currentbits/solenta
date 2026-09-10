@@ -159,3 +159,25 @@ describe("keyboard sheet vim section heading (#822)", () => {
     m.unmount();
   });
 });
+
+describe("keyboard sheet focus trap (#916)", () => {
+  it("opening the sheet moves focus inside; Tab stays inside", async () => {
+    const m = await mount(<KeyboardSheet open onClose={() => {}} />);
+    const dialog = m.query('[role="dialog"]') as HTMLElement | null;
+    assert.ok(dialog, "keyboard sheet dialog");
+    assert.ok(
+      dialog.contains(document.activeElement),
+      "opening the dialog must move focus inside it",
+    );
+    await m.pressFocused("Tab");
+    const first = document.activeElement as HTMLElement;
+    assert.ok(dialog.contains(first), "Tab stays inside");
+    assert.notEqual(first, dialog, "Tab moves to a focusable inside the dialog");
+    await m.pressFocused("Tab");
+    assert.ok(
+      dialog.contains(document.activeElement),
+      "second Tab stays inside",
+    );
+    m.unmount();
+  });
+});

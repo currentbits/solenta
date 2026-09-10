@@ -1,5 +1,6 @@
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { useEscapeClose } from "../useEscapeClose";
+import { useModalFocus } from "../useModalFocus";
 import type {
   ProjectInfo,
   ProjectQuickAction,
@@ -55,12 +56,14 @@ export function EditProjectModal({
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const dialogRef = useRef<HTMLDivElement>(null);
   const handleClose = useCallback(() => {
     if (pending) return;
     onClose();
   }, [onClose, pending]);
 
   useEscapeClose(true, handleClose);
+  useModalFocus(true, dialogRef);
 
   const host = remoteHost.trim();
   const rpath = remotePath.trim();
@@ -135,10 +138,12 @@ export function EditProjectModal({
       onClick={handleClose}
     >
       <div
+        ref={dialogRef}
         className={styles.modal}
         role="dialog"
         aria-modal="true"
         aria-labelledby="edit-project-title"
+        tabIndex={-1}
         onClick={(e) => e.stopPropagation()}
       >
         <div className={styles.header}>

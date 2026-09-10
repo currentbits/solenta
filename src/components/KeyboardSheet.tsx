@@ -1,6 +1,7 @@
-import { useCallback } from "react";
+import { useCallback, useRef } from "react";
 import { useComposerVimEnabled } from "../uiPrefs";
 import { useEscapeClose } from "../useEscapeClose";
+import { useModalFocus } from "../useModalFocus";
 import styles from "./KeyboardSheet.module.css";
 
 interface ShortcutRow {
@@ -76,8 +77,10 @@ interface KeyboardSheetProps {
 
 export function KeyboardSheet({ open, onClose }: KeyboardSheetProps) {
   const composerVim = useComposerVimEnabled();
+  const dialogRef = useRef<HTMLDivElement>(null);
   const handleClose = useCallback(() => onClose(), [onClose]);
   useEscapeClose(open, handleClose);
+  useModalFocus(open, dialogRef);
   if (!open) return null;
 
   return (
@@ -90,10 +93,12 @@ export function KeyboardSheet({ open, onClose }: KeyboardSheetProps) {
       }}
     >
       <div
+        ref={dialogRef}
         className={styles.sheet}
         role="dialog"
         aria-modal="true"
         aria-label="Keyboard shortcuts"
+        tabIndex={-1}
         onMouseDown={(e) => e.stopPropagation()}
       >
         <header className={styles.header}>

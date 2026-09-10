@@ -10,6 +10,7 @@ import { describe, it } from "node:test";
 import { mount } from "./support/dom.ts";
 import { createFakeCoder, installFakeCoder } from "./support/fakeCoder.ts";
 import App from "../src/App";
+import { OnboardingModal } from "../src/components/onboarding/OnboardingModal";
 
 async function boot(
   fake: ReturnType<typeof createFakeCoder>,
@@ -131,6 +132,43 @@ describe("Onboarding wizard (#628)", () => {
       stepId(m),
       "welcome",
       "relaunch must start on the welcome step",
+    );
+    m.unmount();
+  });
+});
+
+describe("OnboardingModal focus trap (#916)", () => {
+  it("opening the wizard moves focus inside; Tab stays inside", async () => {
+    const m = await mount(
+      <OnboardingModal
+        open
+        onClose={() => {}}
+        onFinish={() => {}}
+        providers={[]}
+        refreshProviders={async () => {}}
+        projects={[]}
+        onAddProject={() => {}}
+        settings={null}
+        onSaveSettings={async () => ({
+          dailyBudgetUsd: null,
+          autoSettleAfterDays: 3,
+        })}
+      />,
+    );
+    const dialog = m.query("[data-onboarding]") as HTMLElement | null;
+    assert.ok(dialog, "onboarding dialog");
+    assert.ok(
+      dialog.contains(document.activeElement),
+      "opening the dialog must move focus inside it",
+    );
+    await m.pressFocused("Tab");
+    const first = document.activeElement as HTMLElement;
+    assert.ok(dialog.contains(first), "Tab stays inside");
+    assert.notEqual(first, dialog, "Tab moves to a focusable inside the dialog");
+    await m.pressFocused("Tab");
+    assert.ok(
+      dialog.contains(document.activeElement),
+      "second Tab stays inside",
     );
     m.unmount();
   });
