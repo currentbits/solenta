@@ -3,6 +3,7 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const { randomUUID } = require("node:crypto");
+const { normalizeMessagePins } = require("./messagePins.js");
 const { expandUserPath } = require("./fsBrowse.js");
 const {
   getProvider,
@@ -658,6 +659,7 @@ function createThread(store, input) {
     snoozedUntil: null,
     snoozedAt: null,
     notes: "",
+    messagePins: [],
     tags: [],
     verifyCommand: null,
     verify: null,
@@ -2228,6 +2230,29 @@ function setNotes(store, input) {
   }
   const notes = String(input.notes ?? "").trim().slice(0, THREAD_NOTES_MAX);
   const patch = { notes };
+  const updated = store.updateThread(threadId, patch);
+  store.save();
+  return updated ? { ...updated } : { ...thread, ...patch };
+}
+
+/**
+ * Replace the per-thread transcript bookmark list (issue #1217).
+ * Deduped by messageId, capped, excerpts/labels truncated. Empty array
+ * clears. Never bumps updatedAt. Does not copy message bodies.
+ *
+ * @param {import('./store').Store} store
+ * @param {{ threadId: string, pins: unknown }} input
+ */
+function setMessagePins(store, input) {
+  const { threadId } = input;
+  const thread = store.getThread(threadId);
+  if (!thread) {
+    throw new Error(`Unknown thread: ${threadId}`);
+  }
+  if (!Array.isArray(input.pins)) {
+    throw new Error(`pins must be an array (got ${JSON.stringify(input.pins)})`);
+  }
+  const patch = { messagePins: normalizeMessagePins(input.pins) };
   const updated = store.updateThread(threadId, patch);
   store.save();
   return updated ? { ...updated } : { ...thread, ...patch };
@@ -5481,6 +5506,7 @@ module.exports = {
   setCrossThreadInbound,
   setQuotaWaitAutoResume,
   setNotes,
+  setMessagePins,
   setBaseBranch,
   refreshWorkerSnapshot,
   setFeltEstimate,

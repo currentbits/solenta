@@ -76,6 +76,7 @@ import type {
   ThreadDetail,
   ThreadPatch,
   ThreadInfo,
+  ThreadMessagePin,
   TrashedThreadInfo,
   ThreadSummaryInfo,
   CrewTaskView,
@@ -96,6 +97,7 @@ import type {
   GcScanResult,
   WebhookTestResult,
 } from "../../src/shared/ipc";
+import { normalizeMessagePins } from "../../src/messagePins";
 import { buildActivity } from "../../src/activity";
 import { DEV_MCP_CATALOG, devMcpCatalogRows } from "../../src/devCoder.ts";
 import {
@@ -178,6 +180,7 @@ export function thread(over: Partial<ThreadInfo> = {}): ThreadInfo {
     muted: false,
     ejected: false,
     notes: "",
+    messagePins: [],
     tags: [],
     queued: null,
     pinnedAt: null,
@@ -2341,6 +2344,28 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
           notes: String(i.notes ?? "").trim().slice(0, 2000),
         };
         threads = threads.map((t) => (t.id === i.threadId ? next : t));
+        return Promise.resolve(next);
+      },
+      /** Honest pins: normalize, never bump updatedAt. */
+      setMessagePins: (input: unknown) => {
+        const i = input as { threadId: string; pins: ThreadMessagePin[] };
+        calls.push({ channel: "threads.setMessagePins", args: [input] });
+        const existing = threads.find((t) => t.id === i.threadId);
+        if (!existing) {
+          return Promise.reject(new Error(`Unknown thread: ${i.threadId}`));
+        }
+        if (!Array.isArray(i.pins)) {
+          return Promise.reject(
+            new Error(`pins must be an array (got ${JSON.stringify(i.pins)})`),
+          );
+        }
+        const next: ThreadInfo = {
+          ...existing,
+          messagePins: normalizeMessagePins(i.pins),
+        };
+        threads = threads.map((t) => (t.id === i.threadId ? next : t));
+        const d = details[i.threadId];
+        if (d) details[i.threadId] = { ...d, thread: next };
         return Promise.resolve(next);
       },
       setBaseBranch: (input: unknown) => {

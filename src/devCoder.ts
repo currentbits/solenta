@@ -94,6 +94,7 @@ import type {
   SpeechStatus,
   ThreadDetail,
   ThreadInfo,
+  ThreadMessagePin,
   TrashedThreadInfo,
   CrewTaskView,
   CrewIntegration,
@@ -110,6 +111,7 @@ import type {
   VibeKanbanImportResult,
 } from "./shared/ipc";
 import { SPEC_ARTIFACTS, SPEC_DIR } from "./shared/ipc";
+import { normalizeMessagePins } from "./messagePins";
 import { buildActivity } from "./activity.ts";
 import { mockData } from "./mockData.ts";
 import {
@@ -2102,6 +2104,7 @@ function buildDevCoder(): CoderApi {
       muted: false,
       ejected: false,
       notes: "",
+      messagePins: [],
       tags: [],
       queued: null,
       verifyCommand: null,
@@ -4116,6 +4119,14 @@ function buildDevCoder(): CoderApi {
       async setNotes(input: { threadId: string; notes: string }) {
         return patchThread(input.threadId, {
           notes: String(input.notes ?? "").trim().slice(0, 2000),
+        });
+      },
+      async setMessagePins(input: {
+        threadId: string;
+        pins: ThreadMessagePin[];
+      }) {
+        return patchThread(input.threadId, {
+          messagePins: normalizeMessagePins(input.pins),
         });
       },
       async setBaseBranch(input: {

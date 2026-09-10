@@ -58,12 +58,31 @@ import type {
   SpecStage,
   ThreadDetail,
   ThreadInfo,
+  ThreadMessagePin,
   BtwCard as BtwCardInfo,
   WorkLogItem,
   WorkSuggestion,
   WorkflowTemplateInfo,
 } from "../shared/ipc";
-import { SPEC_ARTIFACTS, THREAD_NOTES_MAX, FELT_ESTIMATE_BUCKETS_MS } from "../shared/ipc";
+import {
+  SPEC_ARTIFACTS,
+  THREAD_NOTES_MAX,
+  THREAD_MESSAGE_PINS_MAX,
+  THREAD_MESSAGE_PIN_LABEL_MAX,
+  FELT_ESTIMATE_BUCKETS_MS,
+} from "../shared/ipc";
+import {
+  isPinAvailable,
+  labelMessagePin,
+  pinDisplayText,
+  pinMessage,
+  pinsOf,
+  unpinMessage,
+} from "../messagePins";
+import {
+  nearestScrollTop,
+  offsetTopWithin,
+} from "../scrollNearest";
 import { resolveCoderApi } from "../coderApi";
 import { TEACH_AUTONOMY_LABELS } from "../teach";
 import type { TeachAutonomy } from "../shared/ipc";
@@ -548,6 +567,11 @@ interface ThreadViewProps {
   onDistillWorkflow?: () => void;
   /** Save scratch notes for a thread (header notes editor, issues #194 / #935). */
   onSetNotes?: (threadId: string, notes: string) => void | Promise<void>;
+  /** Replace the per-thread transcript bookmark list (issue #1217). */
+  onSetMessagePins?: (
+    threadId: string,
+    pins: ThreadMessagePin[],
+  ) => void | Promise<void>;
   /** Turn spec mode on for a thread that has no spec yet (issue #269). */
   onStartSpec?: (threadId: string) => void | Promise<void>;
   /** Leave spec mode without approving remaining stages (issue #500). */
@@ -1182,6 +1206,8 @@ const UserMessageBlock = memo(function UserMessageBlock({
   onCancelConfirm,
   onLoadAttachmentImage,
   onSelectThread,
+  pinned = false,
+  onTogglePin,
 }: {
   message: ChatMessage;
   canEdit: boolean;
@@ -1192,6 +1218,8 @@ const UserMessageBlock = memo(function UserMessageBlock({
   onCancelConfirm?: () => void;
   onLoadAttachmentImage?: (path: string) => Promise<string | null>;
   onSelectThread?: (id: string) => void;
+  pinned?: boolean;
+  onTogglePin?: () => void;
 }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(message.text);
@@ -1347,6 +1375,23 @@ const UserMessageBlock = memo(function UserMessageBlock({
           </div>
         </div>
       </div>
+      {onTogglePin && (
+        <footer className={styles.msgMeta}>
+          <span className={styles.msgActions}>
+            <button
+              type="button"
+              className={styles.msgAction}
+              data-msg-pin=""
+              aria-pressed={pinned}
+              aria-label={pinned ? "Unpin message" : "Pin message"}
+              title={pinned ? "Unpin this message" : "Pin this message"}
+              onClick={onTogglePin}
+            >
+              {pinned ? "Unpin" : "Pin"}
+            </button>
+          </span>
+        </footer>
+      )}
     </article>
   );
 });
@@ -1440,6 +1485,8 @@ const MessageBlock = memo(function MessageBlock({
   onSelectThread,
   onReply,
   onWaitWhat,
+  pinned = false,
+  onTogglePin,
 }: {
   message: ChatMessage;
   autoExpandTool: boolean;
@@ -1465,6 +1512,8 @@ const MessageBlock = memo(function MessageBlock({
   onSelectThread?: (id: string) => void;
   onReply?: (message: ChatMessage) => void;
   onWaitWhat?: (message: ChatMessage) => void;
+  pinned?: boolean;
+  onTogglePin?: () => void;
 }) {
   // Latch at mount; see ToolCallCard for why.
   const [entered] = useState(Boolean(animateIn));
@@ -1499,6 +1548,8 @@ const MessageBlock = memo(function MessageBlock({
         onCancelConfirm={onCancelConfirm}
         onLoadAttachmentImage={onLoadAttachmentImage}
         onSelectThread={onSelectThread}
+        pinned={pinned}
+        onTogglePin={onTogglePin}
       />
     );
   }
@@ -1548,9 +1599,23 @@ const MessageBlock = memo(function MessageBlock({
       {provenance && <ProvenanceStrip prov={provenance} text={message.text} />}
       <footer className={styles.msgMeta}>
         <span>{metaLine}</span>
-        {!streaming && message.text.trim() && (onReply || onWaitWhat) && (
+        {(onTogglePin ||
+          (!streaming && message.text.trim() && (onReply || onWaitWhat))) && (
           <span className={styles.msgActions}>
-            {onReply && (
+            {onTogglePin && (
+              <button
+                type="button"
+                className={styles.msgAction}
+                data-msg-pin=""
+                aria-pressed={pinned}
+                aria-label={pinned ? "Unpin message" : "Pin message"}
+                title={pinned ? "Unpin this message" : "Pin this message"}
+                onClick={onTogglePin}
+              >
+                {pinned ? "Unpin" : "Pin"}
+              </button>
+            )}
+            {!streaming && onReply && message.text.trim() && (
               <button
                 type="button"
                 className={styles.msgAction}
@@ -1561,7 +1626,7 @@ const MessageBlock = memo(function MessageBlock({
                 Reply
               </button>
             )}
-            {onWaitWhat && (
+            {!streaming && onWaitWhat && message.text.trim() && (
               <button
                 type="button"
                 className={styles.msgAction}
@@ -4397,6 +4462,7 @@ export const ThreadView = memo(function ThreadView({
   onRepeatSchedule,
   onDistillWorkflow,
   onSetNotes,
+  onSetMessagePins,
   onStartSpec,
   onStopSpec,
   onReviewSpec,
@@ -4542,6 +4608,22 @@ export const ThreadView = memo(function ThreadView({
   const notesFailedRef = useRef<Record<string, { draft: string; error: string }>>(
     {},
   );
+  const [pinDraft, setPinDraft] = useState<ThreadMessagePin[] | null>(null);
+  const [pinError, setPinError] = useState<string | null>(null);
+  const [pinSaving, setPinSaving] = useState(false);
+  const [pinLabelId, setPinLabelId] = useState<string | null>(null);
+  const [pinLabelDraft, setPinLabelDraft] = useState("");
+  const [jumpMessageId, setJumpMessageId] = useState<string | null>(null);
+  const pinDraftRef = useRef<ThreadMessagePin[] | null>(null);
+  pinDraftRef.current = pinDraft;
+  const pinWriteGenRef = useRef<Record<string, number>>({});
+  const pinInFlightRef = useRef<Record<string, number>>({});
+  const pinFailedRef = useRef<
+    Record<string, { pins: ThreadMessagePin[]; error: string }>
+  >({});
+  const pinPendingRef = useRef<Record<string, ThreadMessagePin[]>>({});
+  const currentThreadIdRef = useRef<string | null>(detail?.thread.id ?? null);
+  currentThreadIdRef.current = detail?.thread.id ?? null;
   /**
    * Provenance chip dismissed for this open (not persisted). Reset when the
    * open thread changes.
@@ -4727,14 +4809,15 @@ export const ThreadView = memo(function ThreadView({
     initialWindowStart(timeline.length),
   );
   const pendingPrepend = useRef<number | null>(null);
+  const revealTargetId = revealMessageId || jumpMessageId;
 
   const revealIndex = useMemo(() => {
-    if (!revealMessageId) return -1;
+    if (!revealTargetId) return -1;
     return timeline.findIndex(
       (entry) =>
-        entry.kind === "message" && entry.message.id === revealMessageId,
+        entry.kind === "message" && entry.message.id === revealTargetId,
     );
-  }, [timeline, revealMessageId]);
+  }, [timeline, revealTargetId]);
 
   const start = clampWindowStart(
     ensureVisibleStart(
@@ -5617,6 +5700,70 @@ export const ThreadView = memo(function ThreadView({
     }
   };
 
+  const rememberFailedPins = (
+    threadId: string,
+    pins: ThreadMessagePin[],
+    error: string,
+  ) => {
+    pinFailedRef.current = {
+      ...pinFailedRef.current,
+      [threadId]: { pins, error },
+    };
+  };
+
+  const forgetFailedPins = (threadId: string) => {
+    if (!(threadId in pinFailedRef.current)) return;
+    const next = { ...pinFailedRef.current };
+    delete next[threadId];
+    pinFailedRef.current = next;
+  };
+
+  const persistPins = async (threadId: string, pins: ThreadMessagePin[]) => {
+    const gen = (pinWriteGenRef.current[threadId] ?? 0) + 1;
+    pinWriteGenRef.current[threadId] = gen;
+    pinPendingRef.current[threadId] = pins;
+    pinInFlightRef.current[threadId] =
+      (pinInFlightRef.current[threadId] ?? 0) + 1;
+    if (currentThreadIdRef.current === threadId) {
+      setPinSaving(true);
+      setPinError(null);
+    }
+    try {
+      if (!onSetMessagePins) return;
+      await onSetMessagePins(threadId, pins);
+      if (pinWriteGenRef.current[threadId] !== gen) return;
+      forgetFailedPins(threadId);
+      delete pinPendingRef.current[threadId];
+      if (currentThreadIdRef.current === threadId) {
+        const held = pinDraftRef.current;
+        if (!held || JSON.stringify(held) === JSON.stringify(pins)) {
+          pinDraftRef.current = null;
+          setPinDraft(null);
+        }
+        setPinError(null);
+      }
+    } catch (err) {
+      if (pinWriteGenRef.current[threadId] !== gen) return;
+      const message =
+        err instanceof Error && err.message ? err.message : String(err);
+      rememberFailedPins(threadId, pins, message);
+      if (currentThreadIdRef.current === threadId) {
+        setPinError(message);
+      }
+    } finally {
+      pinInFlightRef.current[threadId] = Math.max(
+        0,
+        (pinInFlightRef.current[threadId] ?? 1) - 1,
+      );
+      if (
+        currentThreadIdRef.current === threadId &&
+        (pinInFlightRef.current[threadId] ?? 0) === 0
+      ) {
+        setPinSaving(false);
+      }
+    }
+  };
+
   useEffect(() => {
     const id = detail?.thread.id ?? null;
     if (id !== prevThreadId.current) {
@@ -5651,6 +5798,20 @@ export const ThreadView = memo(function ThreadView({
       const incoming = detail?.thread.notes ?? "";
       notesDraftRef.current = incoming;
       setNotesDraft(incoming);
+      const incomingId = id ?? "";
+      const incomingPins =
+        pinPendingRef.current[incomingId] ??
+        pinFailedRef.current[incomingId]?.pins ??
+        null;
+      pinDraftRef.current = incomingPins;
+      setPinDraft(incomingPins);
+      setPinError(pinFailedRef.current[incomingId]?.error ?? null);
+      setPinSaving(
+        incomingId ? (pinInFlightRef.current[incomingId] ?? 0) > 0 : false,
+      );
+      setPinLabelId(null);
+      setPinLabelDraft("");
+      setJumpMessageId(null);
       setHandoffBannerDismissed(false);
       setRestoreConfirm(null);
       setRestorePending(false);
@@ -5921,6 +6082,26 @@ export const ThreadView = memo(function ThreadView({
     detail?.thread.id,
   ]);
 
+  useLayoutEffect(() => {
+    if (!revealTargetId) return;
+    const container = bodyRef.current;
+    if (!container) return;
+    const child = container.querySelector(
+      `[data-message-id="${revealTargetId.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"]`,
+    );
+    if (!(child instanceof HTMLElement)) return;
+    stickToBottom.current = false;
+    forceStick.current = false;
+    const next = nearestScrollTop(
+      { scrollTop: container.scrollTop, clientHeight: container.clientHeight },
+      {
+        offsetTop: offsetTopWithin(container, child),
+        offsetHeight: child.offsetHeight,
+      },
+    );
+    if (next !== container.scrollTop) container.scrollTop = next;
+  }, [revealTargetId, start, timeline.length]);
+
   /**
    * Content can grow after paint with no React state change (images, syntax
    * highlight, webfonts). Observe the scroll body and its children so a
@@ -6076,6 +6257,40 @@ export const ThreadView = memo(function ThreadView({
   }
 
   const { thread } = detail;
+  const savedPins = pinsOf(thread);
+  const displayPins = pinDraft ?? pinFailedRef.current[thread.id]?.pins ?? savedPins;
+  const pinnedIds = new Set(displayPins.map((p) => p.messageId));
+  const messageIds = new Set(detail.messages.map((m) => m.id));
+  const applyPins = (next: ThreadMessagePin[]) => {
+    pinDraftRef.current = next;
+    pinPendingRef.current[thread.id] = next;
+    setPinDraft(next);
+    setPinError(null);
+    void persistPins(thread.id, next);
+  };
+  const handleTogglePin = (message: ChatMessage) => {
+    if (!onSetMessagePins) return;
+    if (pinnedIds.has(message.id)) {
+      applyPins(unpinMessage(displayPins, message.id));
+      return;
+    }
+    if (displayPins.length >= THREAD_MESSAGE_PINS_MAX) {
+      setPinError(`Pin limit reached (${THREAD_MESSAGE_PINS_MAX})`);
+      return;
+    }
+    applyPins(pinMessage(displayPins, { messageId: message.id, text: message.text }));
+  };
+  const handleJumpPin = (pin: ThreadMessagePin) => {
+    if (!isPinAvailable(pin, messageIds)) return;
+    stickToBottom.current = false;
+    forceStick.current = false;
+    setJumpMessageId(pin.messageId);
+  };
+  const commitPinLabel = (messageId: string, raw: string) => {
+    applyPins(labelMessagePin(displayPins, messageId, raw));
+    setPinLabelId(null);
+    setPinLabelDraft("");
+  };
   const projectSlug = project?.slug ?? "project";
   const newThreadLabel = `New thread in ${projectSlug}`;
   const headerCommands: Array<{ id: string; name: string; command: string }> =
@@ -6291,6 +6506,7 @@ export const ThreadView = memo(function ThreadView({
               className={styles.iconBtn}
               data-thread-notes-btn=""
               data-has-notes={thread.notes ? "true" : undefined}
+              data-has-pins={displayPins.length ? String(displayPins.length) : undefined}
               data-active={notesOpen ? "true" : undefined}
               aria-expanded={notesOpen}
               aria-label="Thread notes"
@@ -6606,6 +6822,118 @@ export const ThreadView = memo(function ThreadView({
         </div>
       </header>
       {worktree.banner}
+
+      {(displayPins.length > 0 || pinError) && (
+        <div className={styles.notesPanel} data-thread-pins="">
+          <div className={styles.pinsHeader}>Pins</div>
+          {displayPins.length > 0 ? (
+            <ul className={styles.pinsList}>
+              {displayPins.map((pin) => {
+                const available = isPinAvailable(pin, messageIds);
+                const labeling = pinLabelId === pin.messageId;
+                return (
+                  <li
+                    key={pin.messageId}
+                    className={styles.pinRow}
+                    data-thread-pin={pin.messageId}
+                    data-pin-stale={available ? undefined : ""}
+                  >
+                    {labeling ? (
+                      <input
+                        className={styles.pinLabelInput}
+                        data-thread-pin-label-input=""
+                        aria-label="Pin label"
+                        value={pinLabelDraft}
+                        autoFocus
+                        maxLength={THREAD_MESSAGE_PIN_LABEL_MAX}
+                        onChange={(e) => setPinLabelDraft(e.target.value)}
+                        onBlur={() => commitPinLabel(pin.messageId, pinLabelDraft)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") {
+                            e.preventDefault();
+                            commitPinLabel(pin.messageId, pinLabelDraft);
+                          } else if (e.key === "Escape") {
+                            e.preventDefault();
+                            setPinLabelId(null);
+                            setPinLabelDraft("");
+                          }
+                        }}
+                      />
+                    ) : (
+                      <button
+                        type="button"
+                        className={styles.pinJump}
+                        data-thread-pin-jump=""
+                        disabled={!available}
+                        title={
+                          available
+                            ? "Jump to this message"
+                            : "This message is no longer in the transcript"
+                        }
+                        onClick={() => handleJumpPin(pin)}
+                      >
+                        {pinDisplayText(pin)}
+                        {available ? "" : " (unavailable)"}
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      className={styles.msgAction}
+                      data-thread-pin-label=""
+                      aria-label="Label pin"
+                      onMouseDown={(e) => e.preventDefault()}
+                      onClick={() => {
+                        setPinLabelId(pin.messageId);
+                        setPinLabelDraft(pin.label ?? "");
+                      }}
+                    >
+                      Label
+                    </button>
+                    <button
+                      type="button"
+                      className={styles.msgAction}
+                      data-thread-pin-unpin=""
+                      aria-label="Unpin message"
+                      onMouseDown={(e) => e.preventDefault()}
+                      onClick={() =>
+                        applyPins(unpinMessage(displayPins, pin.messageId))
+                      }
+                    >
+                      Unpin
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          ) : null}
+          {pinError ? (
+            <div className={styles.notesSaveError}>
+              <span
+                className={styles.permissionGuardrail}
+                data-thread-pins-error=""
+              >
+                {pinError}
+              </span>
+              <button
+                type="button"
+                className={styles.retryBtn}
+                data-thread-pins-retry=""
+                disabled={pinSaving}
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => {
+                  const retryPins =
+                    pinDraft ??
+                    pinFailedRef.current[thread.id]?.pins ??
+                    displayPins;
+                  void persistPins(thread.id, retryPins);
+                }}
+              >
+                Retry
+              </button>
+            </div>
+          ) : null}
+        </div>
+      )}
 
       {notesOpen && onSetNotes && (
         <div className={styles.notesPanel} data-thread-notes-panel="">
@@ -6926,6 +7254,12 @@ export const ThreadView = memo(function ThreadView({
                 )}
                 {!runCollapsed && !focusHidden && (
                   <>
+                    <div
+                      data-message-id={entry.message.id}
+                      data-revealed-message={
+                        revealTargetId === entry.message.id ? "" : undefined
+                      }
+                    >
                     <MessageBlock
                       message={entry.message}
                       autoExpandTool={
@@ -6938,6 +7272,15 @@ export const ThreadView = memo(function ThreadView({
                       onLoadImage={onLoadImage}
                       onLoadAttachmentImage={onLoadAttachmentImage}
                       onSelectThread={onSelectThread}
+                      pinned={pinnedIds.has(entry.message.id)}
+                      onTogglePin={
+                        onSetMessagePins &&
+                        (entry.message.role === "user" ||
+                          entry.message.role === "assistant") &&
+                        !entry.message.thinking
+                          ? () => handleTogglePin(entry.message)
+                          : undefined
+                      }
                       eventActionLabel={
                         isOverflowSurface
                           ? "Fork to fresh context"
@@ -7002,6 +7345,7 @@ export const ThreadView = memo(function ThreadView({
                           : undefined
                       }
                     />
+                    </div>
                     {bar && (
                       <>
                         <ReviewBarStrip
