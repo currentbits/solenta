@@ -1234,4 +1234,104 @@ describe("runner codex provider", () => {
     const search = tools.find((m) => m.tool.name === "WebSearch");
     assert.match(search.text, /codex exec json/);
   });
+
+  it("passes image attachments via exec -i, not prompt text (#176)", async () => {
+    process.env.CODER_FAKE_CODEX_SCENARIO = "success";
+    const thread = store.getThreads()[0];
+    services.setProvider(store, { threadId: thread.id, model: "gpt-6-astra" });
+    const image = path.join(tmpDir, "shot.png");
+    const folder = path.join(tmpDir, "specs");
+    const notes = path.join(tmpDir, "notes.txt");
+    fs.writeFileSync(image, "x");
+    fs.writeFileSync(notes, "hello");
+    fs.mkdirSync(folder);
+    if (fs.existsSync(argvFile)) fs.unlinkSync(argvFile);
+
+    await runner.startRun({
+      threadId: thread.id,
+      prompt: "look at these",
+      attachments: [
+        { kind: "image", path: image, name: "shot.png" },
+        { kind: "folder", path: folder, name: "specs" },
+        { kind: "file", path: notes, name: "notes.txt" },
+      ],
+    });
+    await waitFor(() => store.getThread(thread.id).status === "done");
+
+    const argv = JSON.parse(fs.readFileSync(argvFile, "utf8"));
+    const execIdx = argv.indexOf("exec");
+    assert.ok(execIdx >= 0, `expected exec in ${JSON.stringify(argv)}`);
+    const iIdx = argv.indexOf("-i");
+    assert.ok(
+      iIdx > execIdx,
+      `-i must sit after exec: ${JSON.stringify(argv)}`,
+    );
+    assert.ok(
+      iIdx < argv.length - 1,
+      `-i must sit before trailing prompt: ${JSON.stringify(argv)}`,
+    );
+    assert.equal(argv[iIdx + 1], image);
+    assert.ok(
+      String(argv[iIdx + 2] || "").startsWith("-"),
+      `a flag must follow -i so FILE... cannot swallow the prompt: ${JSON.stringify(argv)}`,
+    );
+    const last = argv[argv.length - 1];
+    assert.equal(typeof last, "string");
+    assert.ok(last.includes("look at these"));
+    assert.ok(
+      !last.includes(image),
+      "vision models must not stuff the image path into the prompt",
+    );
+    assert.ok(last.includes(`- Folder: ${folder}`));
+    assert.ok(last.includes(`- File: ${notes}`));
+    assert.ok(
+      !argv.some((a) => String(a).includes("CODER_MCP_TOKEN")),
+      `token leaked into argv: ${JSON.stringify(argv)}`,
+    );
+
+    const userMsg = store
+      .getMessages(thread.id)
+      .find((m) => m.role === "user");
+    assert.equal(userMsg.text, "look at these");
+    assert.deepEqual(userMsg.attachments, [
+      { kind: "image", path: image, name: "shot.png" },
+      { kind: "folder", path: folder, name: "specs" },
+      { kind: "file", path: notes, name: "notes.txt" },
+    ]);
+  });
+
+  it("Spark stays text-only: no -i, image path stays in the prompt (#176 / #1167)", async () => {
+    process.env.CODER_FAKE_CODEX_SCENARIO = "success";
+    const thread = store.getThreads()[0];
+    services.setProvider(store, {
+      threadId: thread.id,
+      model: "gpt-5.3-codex-spark",
+    });
+    const image = path.join(tmpDir, "spark.png");
+    fs.writeFileSync(image, "x");
+    if (fs.existsSync(argvFile)) fs.unlinkSync(argvFile);
+
+    await runner.startRun({
+      threadId: thread.id,
+      prompt: "what is this",
+      attachments: [{ kind: "image", path: image, name: "spark.png" }],
+    });
+    await waitFor(() => store.getThread(thread.id).status === "done");
+
+    const argv = JSON.parse(fs.readFileSync(argvFile, "utf8"));
+    assert.ok(
+      !argv.includes("-i"),
+      `Spark must not get -i: ${JSON.stringify(argv)}`,
+    );
+    const last = argv[argv.length - 1];
+    assert.ok(last.includes("what is this"));
+    assert.ok(
+      last.includes(`- Image: ${image}`),
+      "text-only Spark still lists the image as a prompt path",
+    );
+    assert.ok(
+      !argv.some((a) => String(a).includes("CODER_MCP_TOKEN")),
+      `token leaked into argv: ${JSON.stringify(argv)}`,
+    );
+  });
 });

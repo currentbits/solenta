@@ -320,6 +320,79 @@ describe("providers registry", () => {
     assert.equal(resume[resume.length - 1], "p3");
   });
 
+  it("buildArgs: Codex -i images after exec, before prompt; Spark is text-only (#176)", () => {
+    const entry = getProvider("codex");
+    const imgA = "/tmp/a.png";
+    const imgB = "/tmp/b.png";
+    const astra = entry.buildArgs({
+      prompt: "look",
+      model: "gpt-6-astra",
+      images: [imgA, imgB],
+    });
+    assert.equal(astra[0], "exec");
+    const iIdx = astra.indexOf("-i");
+    assert.ok(iIdx > 0, `expected -i after exec: ${JSON.stringify(astra)}`);
+    assert.ok(
+      iIdx < astra.length - 1,
+      `-i must sit before trailing prompt: ${JSON.stringify(astra)}`,
+    );
+    assert.equal(astra[iIdx + 1], imgA);
+    assert.equal(astra[iIdx + 2], imgB);
+    assert.ok(
+      String(astra[iIdx + 3] || "").startsWith("-"),
+      `image paths must be followed by a flag so FILE... cannot swallow the prompt: ${JSON.stringify(astra)}`,
+    );
+    assert.equal(astra[astra.length - 1], "look");
+    assert.ok(!String(astra[astra.length - 1]).includes(imgA));
+
+    const resume = entry.buildArgs({
+      prompt: "again",
+      sessionId: "sess-codex-9",
+      model: "gpt-5.6-sol",
+      images: [imgA],
+    });
+    assert.equal(resume[0], "exec");
+    assert.equal(resume[1], "resume");
+    const resumeI = resume.indexOf("-i");
+    assert.ok(resumeI > resume.indexOf("exec"));
+    assert.equal(resume[resumeI + 1], imgA);
+    assert.ok(resumeI < resume.length - 1);
+    assert.equal(resume[resume.length - 1], "again");
+
+    const spark = entry.buildArgs({
+      prompt: "look",
+      model: "gpt-5.3-codex-spark",
+      images: [imgA],
+    });
+    assert.ok(
+      !spark.includes("-i"),
+      `Spark is text-only and must not get -i: ${JSON.stringify(spark)}`,
+    );
+    assert.equal(spark[spark.length - 1], "look");
+    assert.ok(!spark.includes(imgA));
+
+    const sparkInfo = entry.modelInfo.find((m) => m.id === "gpt-5.3-codex-spark");
+    assert.ok(sparkInfo);
+    assert.ok(
+      !(sparkInfo.inputModalities || []).includes("image"),
+      "Spark input_modalities are text-only (#1167)",
+    );
+    for (const id of [
+      "gpt-6-astra",
+      "gpt-5.6-sol",
+      "gpt-5.6-terra",
+      "gpt-5.6-luna",
+      "gpt-5.5",
+    ]) {
+      const info = entry.modelInfo.find((m) => m.id === id);
+      assert.ok(info, id);
+      assert.ok(
+        (info.inputModalities || []).includes("image"),
+        `${id} lists text+image`,
+      );
+    }
+  });
+
   it("buildArgs: grok claude-stream and opencode-json shapes", () => {
     const grokArgs = getProvider("grok").buildArgs({
       prompt: "hello",

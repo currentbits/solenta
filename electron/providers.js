@@ -81,6 +81,7 @@ const { posixQuote } = require("./ssh.js");
  *   model?: string | null,
  *   reasoningEffort?: string | null,
  *   webSearch?: boolean,
+ *   images?: string[],
  *   files?: string[],
  * }) => string[]} buildArgs
  */
@@ -142,6 +143,27 @@ function honouredEfforts(entry, modelId) {
   const info = (entry.modelInfo || []).find((m) => m.id === modelId);
   if (info && Array.isArray(info.efforts)) return info.efforts.slice();
   return providerEfforts;
+}
+
+const CODEX_TEXT_IMAGE = ["text", "image"];
+const CODEX_TEXT_ONLY = ["text"];
+
+/**
+ * Whether `codex exec -i` is legal for this model. Spark's catalog
+ * input_modalities are text-only (#176 / #1167). Default / unknown ids
+ * follow Astra (vision).
+ * @param {string | null | undefined} modelId
+ * @returns {boolean}
+ */
+function codexModelAcceptsImages(modelId) {
+  const id = modelId == null || modelId === "" ? "" : String(modelId);
+  if (!id) return true;
+  const entry = PROVIDERS.find((p) => p.id === "codex");
+  const info = ((entry && entry.modelInfo) || []).find((m) => m.id === id);
+  if (info && Array.isArray(info.inputModalities)) {
+    return info.inputModalities.includes("image");
+  }
+  return id !== "gpt-5.3-codex-spark";
 }
 
 /**
@@ -332,7 +354,7 @@ const PROVIDERS = [
         vendor: "OpenAI",
         recommended: true,
         efforts: CODEX_SOL_TERRA_EFFORTS.slice(),
-        inputModalities: ["text", "image"],
+        inputModalities: CODEX_TEXT_IMAGE.slice(),
       },
       {
         id: "gpt-5.6-sol",
@@ -340,7 +362,7 @@ const PROVIDERS = [
         description: "Reliable agentic workhorse for everyday tasks.",
         vendor: "OpenAI",
         efforts: CODEX_SOL_TERRA_EFFORTS.slice(),
-        inputModalities: ["text", "image"],
+        inputModalities: CODEX_TEXT_IMAGE.slice(),
       },
       {
         id: "gpt-5.6-terra",
@@ -348,7 +370,7 @@ const PROVIDERS = [
         description: "Balanced agentic coding model for everyday work.",
         vendor: "OpenAI",
         efforts: CODEX_SOL_TERRA_EFFORTS.slice(),
-        inputModalities: ["text", "image"],
+        inputModalities: CODEX_TEXT_IMAGE.slice(),
       },
       {
         id: "gpt-5.6-luna",
@@ -356,7 +378,7 @@ const PROVIDERS = [
         description: "Fast and affordable agentic coding model.",
         vendor: "OpenAI",
         efforts: CODEX_LUNA_EFFORTS.slice(),
-        inputModalities: ["text", "image"],
+        inputModalities: CODEX_TEXT_IMAGE.slice(),
       },
       {
         id: "gpt-5.5",
@@ -365,7 +387,7 @@ const PROVIDERS = [
           "Proven previous-generation model for coding and general work.",
         vendor: "OpenAI",
         efforts: CODEX_55_EFFORTS.slice(),
-        inputModalities: ["text", "image"],
+        inputModalities: CODEX_TEXT_IMAGE.slice(),
       },
       {
         id: "gpt-5.4-mini",
@@ -374,6 +396,7 @@ const PROVIDERS = [
           "Small, fast, and cost-efficient model for simpler coding tasks.",
         vendor: "OpenAI",
         efforts: CODEX_55_EFFORTS.slice(),
+        inputModalities: CODEX_TEXT_IMAGE.slice(),
       },
       {
         id: "gpt-5.3-codex-spark",
@@ -382,7 +405,7 @@ const PROVIDERS = [
         vendor: "OpenAI",
         efforts: CODEX_55_EFFORTS.slice(),
         // Live cache input_modalities is ["text"] only. Do not invent images.
-        inputModalities: ["text"],
+        inputModalities: CODEX_TEXT_ONLY.slice(),
       },
     ],
     // Union of per-model lists (fallback for Default / custom ids).
@@ -400,16 +423,23 @@ const PROVIDERS = [
       reasoningEffort,
       webSearch,
       permissionMode,
+      images,
     }) {
       const args = sessionId
-        ? [
-            "exec",
-            "resume",
-            String(sessionId),
-            "--json",
-            "--skip-git-repo-check",
-          ]
-        : ["exec", "--json", "--skip-git-repo-check"];
+        ? ["exec", "resume", String(sessionId)]
+        : ["exec"];
+      // `-i, --image <FILE>...` is greedy. Sit it after exec (and resume
+      // id) and before the next flag so FILE... cannot swallow the prompt.
+      if (codexModelAcceptsImages(model)) {
+        const paths = [];
+        if (Array.isArray(images)) {
+          for (const p of images) {
+            if (typeof p === "string" && p) paths.push(p);
+          }
+        }
+        if (paths.length) args.push("-i", ...paths);
+      }
+      args.push("--json", "--skip-git-repo-check");
       if (model) {
         args.push("-m", String(model));
       }
@@ -1736,6 +1766,7 @@ module.exports = {
   clearWhichCache,
   listProviders,
   honouredEfforts,
+  codexModelAcceptsImages,
   probeCatalogCli,
   catalogCliProbeStarted,
   resetCatalogCliCache,
