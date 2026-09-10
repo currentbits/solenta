@@ -4989,11 +4989,19 @@ async function maybeCreateCheckpoint(store, threadId) {
 
     const n = (await countCheckpointCommits(cwd)) + 1;
     const message = `${CHECKPOINT_SUBJECT_PREFIX}${n}`;
+    let lastId = "";
+    try {
+      const msgs = store.getMessages(threadId);
+      const last = msgs.length ? msgs[msgs.length - 1] : null;
+      lastId = last && last.id ? String(last.id) : "";
+    } catch {
+      // Trailer is optional; a store glitch must not skip the git commit.
+    }
 
     const add = await gitTryAsync(cwd, ["add", "-A"]);
     if (!add.ok) return null;
 
-    const commit = await gitTryAsync(cwd, [
+    const commitArgs = [
       "-c",
       "user.email=solenta@local",
       "-c",
@@ -5001,7 +5009,14 @@ async function maybeCreateCheckpoint(store, threadId) {
       "commit",
       "-m",
       message,
-    ]);
+    ];
+    if (lastId) {
+      // Body trailer, not the subject: listCheckpoints / parseCheckpointTurn
+      // read %s only. Restore uses this to keep the turn that produced the
+      // commit (git %ct is 1s; the assistant often shares that second).
+      commitArgs.push("-m", `Solenta-Message-Id: ${lastId}`);
+    }
+    const commit = await gitTryAsync(cwd, commitArgs);
     if (!commit.ok) return null;
 
     const rev = await gitTryAsync(cwd, ["rev-parse", "HEAD"]);
@@ -5066,8 +5081,54 @@ async function listCheckpoints(opts) {
   return out;
 }
 
+const MESSAGE_ID_TRAILER = /^Solenta-Message-Id:\s+(\S+)/m;
+
 /**
- * Hard-reset the thread WORKTREE to a prior checkpoint sha.
+ * @param {string} cwd
+ * @param {string} sha
+ * @returns {Promise<string | null>}
+ */
+async function readCheckpointMessageId(cwd, sha) {
+  const body = await gitTryAsync(cwd, ["log", "-1", "--format=%b", sha]);
+  if (!body.ok) return null;
+  const m = String(body.stdout || "").match(MESSAGE_ID_TRAILER);
+  return m ? m[1] : null;
+}
+
+/**
+ * Drop messages after the checkpoint turn. Prefer the body trailer written
+ * at commit time; old checkpoints fall back to createdAt vs git %ct, with
+ * +999ms slack so the assistant that shares the committer second is kept.
+ *
+ * @param {import('./store').Store} store
+ * @param {string} threadId
+ * @param {string | null} keepMessageId
+ * @param {number} checkpointAt
+ * @returns {number} messages dropped
+ */
+function rewindTranscriptToCheckpoint(store, threadId, keepMessageId, checkpointAt) {
+  const msgs = store.getMessages(threadId);
+  if (keepMessageId) {
+    const idx = msgs.findIndex((m) => m && m.id === keepMessageId);
+    if (idx >= 0) {
+      const next = msgs[idx + 1];
+      if (!next) return 0;
+      return store.truncateFromMessage(threadId, next.id);
+    }
+  }
+  const slackEnd = Number(checkpointAt) + 999;
+  const dropIdx = msgs.findIndex((m) => {
+    const t = Number(m && m.createdAt);
+    return Number.isFinite(t) && t > slackEnd;
+  });
+  if (dropIdx < 0) return 0;
+  return store.truncateFromMessage(threadId, msgs[dropIdx].id);
+}
+
+/**
+ * Hard-reset the thread WORKTREE to a prior checkpoint sha and rewind the
+ * transcript to that turn (issue #149). CLI sessions cannot be rewound, so
+ * sessionId is cleared and replayContext is set — same as threads.rewind.
  * Guards (in order): unknown thread → run active → no worktree → sha not ours.
  * A dirty worktree is checkpointed first so the reset never eats uncommitted work.
  *
@@ -5076,6 +5137,9 @@ async function listCheckpoints(opts) {
  * @param {string} opts.threadId
  * @param {string} opts.sha
  * @param {(threadId: string) => boolean} [opts.isRunning]
+ * @param {boolean} [opts.rewindConversation] default true; false when
+ *   threads.rewind already truncated (restoreFiles).
+ * @param {() => unknown} [opts.cleanupRunArtifacts]
  * @returns {Promise<void>}
  */
 async function restoreCheckpoint(opts) {
@@ -5126,6 +5190,25 @@ async function restoreCheckpoint(opts) {
     throw new Error(
       tailErr(reset.stderr || reset.combined, "git reset --hard failed"),
     );
+  }
+
+  // Files first: a failed reset must not leave a truncated transcript.
+  // rewindThread(restoreFiles) already cut the transcript, so skip.
+  if (opts.rewindConversation === false) return;
+
+  const keepId = await readCheckpointMessageId(thread.worktreePath, match.sha);
+  rewindTranscriptToCheckpoint(store, threadId, keepId, match.at);
+  store.updateThread(threadId, {
+    sessionId: null,
+    replayContext: true,
+  });
+  // Reset is already on disk. Debounced save() would leave a crash window
+  // with files rewound and the old transcript resurrected.
+  store.saveNow();
+  if (typeof opts.cleanupRunArtifacts === "function") {
+    Promise.resolve()
+      .then(() => opts.cleanupRunArtifacts())
+      .catch(() => {});
   }
 }
 

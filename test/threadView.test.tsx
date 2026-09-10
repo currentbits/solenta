@@ -1462,7 +1462,8 @@ describe("ThreadView review bar", () => {
     assert.ok(copy.includes("turn 1") || copy.includes("Turn 1"));
     assert.ok(copy.includes("sha-tur"), "confirm names short sha");
     assert.ok(
-      copy.includes("resets the worktree") &&
+      copy.includes("resets the worktree and the conversation") &&
+        copy.includes("Later messages") &&
         copy.includes("main repository is not touched"),
     );
 

@@ -3980,7 +3980,8 @@ export interface CoderApi {
      *    seeded with a digest of the retained tail;
      *  - with `restoreFiles`, hard-resets the WORKTREE to the checkpoint of
      *    the last RETAINED turn (turn N = the Nth user message that survives),
-     *    via the same guarded path as `git.restoreCheckpoint`.
+     *    via the same guarded path as `git.restoreCheckpoint` but with
+     *    conversation rewind skipped (this method already truncated).
      *
      * Usage history (`usageByThread`, spend) is NEVER rewritten: that money
      * was really spent.
@@ -4358,10 +4359,14 @@ export interface CoderApi {
      * auto-commits in the thread's WORKTREE ("coder-checkpoint: turn N").
      * Never fires on the main repo, never when the worktree is clean.
      * listCheckpoints returns newest-first; empty for threads without a
-     * worktree. restoreCheckpoint hard-resets the WORKTREE to the given sha;
-     * rejects while a run is active, when the worktree is missing, or when
-     * the sha is not one of this thread's checkpoints (never an arbitrary
-     * reset target). The renderer confirms destructively BEFORE calling.
+     * worktree. restoreCheckpoint hard-resets the WORKTREE to the given sha
+     * and truncates the transcript to that turn (issue #149): later messages
+     * and their work-log items are dropped, sessionId is cleared, and
+     * replayContext is set so the next turn starts a fresh CLI session seeded
+     * with the surviving tail. Rejects while a run is active, when the
+     * worktree is missing, or when the sha is not one of this thread's
+     * checkpoints (never an arbitrary reset target). The renderer confirms
+     * destructively BEFORE calling.
      */
     listCheckpoints(input: { threadId: string }): Promise<CheckpointInfo[]>;
     restoreCheckpoint(input: { threadId: string; sha: string }): Promise<void>;

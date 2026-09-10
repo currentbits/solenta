@@ -2941,7 +2941,7 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
        * Hard-reset worktree to a thread-owned sha. Production guards:
        * run active, missing worktree, unknown sha. Truncates later
        * (newer) checkpoints from the list so a subsequent list matches
-       * a real reset.
+       * a real reset, and rewinds the transcript (issue #149).
        */
       restoreCheckpoint: (input: unknown) => {
         const i = input as { threadId: string; sha: string };
@@ -2975,6 +2975,30 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
         // Keep the restored checkpoint and older ones; drop newer (earlier
         // indices in newest-first order).
         checkpoints[i.threadId] = list.slice(idx);
+        const match = list[idx]!;
+        const d = details[i.threadId];
+        if (d) {
+          const slackEnd = match.at + 999;
+          const dropIdx = d.messages.findIndex(
+            (m) => Number.isFinite(m.createdAt) && m.createdAt > slackEnd,
+          );
+          if (dropIdx >= 0) {
+            const droppedRuns = new Set(
+              d.messages
+                .slice(dropIdx)
+                .map((m) => m.runId)
+                .filter((r): r is string => !!r),
+            );
+            d.messages = d.messages.slice(0, dropIdx);
+            d.workLog = d.workLog.filter(
+              (w) => !w.runId || !droppedRuns.has(w.runId),
+            );
+          }
+          const next = { ...t, sessionId: null, replayContext: true };
+          threads = threads.map((x) => (x.id === i.threadId ? next : x));
+          d.thread = next;
+          for (const cb of detailSubs) cb(d);
+        }
         return Promise.resolve(undefined);
       },
       syncInfo: (input: unknown) =>

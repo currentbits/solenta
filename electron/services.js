@@ -3966,6 +3966,7 @@ async function rewindThread(store, input, opts) {
         threadId,
         sha: match.sha,
         isRunning: opts && opts.isRunning,
+        rewindConversation: false,
       });
       restoredSha = match.sha;
     }

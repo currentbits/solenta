@@ -3425,8 +3425,11 @@ export function useCoder(): UseCoderResult {
   const restoreCheckpoint = useCallback(
     async (threadId: string, sha: string) => {
       await api.git.restoreCheckpoint({ threadId, sha });
+      // Transcript is now shorter than what we hold. Restore starts no run,
+      // so nothing else would repair the open detail (issue #149).
+      reloadDetail(threadId);
     },
-    [api],
+    [api, reloadDetail],
   );
 
   const runStats = useCallback(
