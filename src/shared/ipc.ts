@@ -4142,6 +4142,12 @@ export interface CoderApi {
        * does not reset the auto-turn cap or look like a new human prompt.
        */
       fromNotice?: boolean;
+      /**
+       * Skip folding a leftover queued follow-up into this prompt
+       * (issue #1203). Retry turn must pass this so the failed prompt
+       * is the only text sent; Send now of the leftover stays separate.
+       */
+      fromQueue?: boolean;
     }): Promise<{ runId: string }>;
     /**
      * Inject guidance into a live turn (issue #156). The provider must

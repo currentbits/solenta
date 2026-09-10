@@ -446,7 +446,7 @@ interface ThreadViewProps {
     prompt: string,
     threadId?: string,
     attachments?: AttachmentInfo[],
-    opts?: { fromNotice?: boolean; steer?: boolean },
+    opts?: { fromNotice?: boolean; steer?: boolean; fromQueue?: boolean },
   ) => void | Promise<void>;
   /**
    * Edit-and-resubmit (#254): rewind to just before messageId, then start
@@ -5100,7 +5100,10 @@ export const ThreadView = memo(function ThreadView({
       retrySend.text,
       undefined,
       retrySend.attachments,
-      retrySend.fromNotice ? { fromNotice: true } : undefined,
+      {
+        fromQueue: true,
+        ...(retrySend.fromNotice ? { fromNotice: true } : {}),
+      },
     );
   }, [
     retrySend,
