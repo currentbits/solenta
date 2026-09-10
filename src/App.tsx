@@ -269,6 +269,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     listCheckpoints,
     restoreCheckpoint,
     runStats,
+    fetchTurnDiff,
     conflictForecast,
     listLocalServers,
     revealInFinder,
@@ -1863,6 +1864,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         terminalApi={terminal}
         onPanesNeedRoom={collapseAgentsForPanes}
         runStats={runStats}
+        onFetchTurnDiff={fetchTurnDiff}
         restoreCheckpoint={restoreCheckpoint}
         onFetchDiff={fetchDiff}
         onFetchReviewContext={fetchReviewContext}

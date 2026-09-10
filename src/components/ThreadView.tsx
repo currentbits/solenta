@@ -106,6 +106,10 @@ import {
 } from "../toolGroups";
 import { RunArtifacts } from "./RunArtifacts";
 import {
+  TurnDiffPanel,
+  type DiffViewMode,
+} from "./TurnDiffPanel";
+import {
   clampWindowStart,
   ensureVisibleStart,
   extendWindowStart,
@@ -607,6 +611,8 @@ interface ThreadViewProps {
   onPanesNeedRoom?: () => void;
   /** Per-checkpoint-pair shortstat for review bars. */
   runStats?: (threadId: string) => Promise<RunStatInfo[]>;
+  /** Checkpoint-to-checkpoint patch for a turn's Review panel (#148). */
+  onFetchTurnDiff?: (threadId: string, sha: string) => Promise<DiffResult>;
   /** Hard-reset the worktree to a checkpoint (Undo confirm). */
   restoreCheckpoint?: (threadId: string, sha: string) => Promise<void>;
   onFetchDiff: () => Promise<DiffResult>;
@@ -1575,11 +1581,13 @@ const MessageBlock = memo(function MessageBlock({
 function ReviewBarStrip({
   bar,
   isWorking,
+  expanded = false,
   onReview,
   onUndo,
 }: {
   bar: ReviewBar;
   isWorking: boolean;
+  expanded?: boolean;
   onReview: () => void;
   onUndo: () => void;
 }) {
@@ -1612,10 +1620,11 @@ function ReviewBarStrip({
           type="button"
           className={styles.reviewBtn}
           data-review-open=""
-          title="Review changes"
+          title={expanded ? "Hide this turn's diff" : "Review this turn"}
+          aria-expanded={expanded}
           onClick={onReview}
         >
-          Review
+          {expanded ? "Hide" : "Review"}
         </button>
       </div>
     </div>
@@ -4344,6 +4353,7 @@ export const ThreadView = memo(function ThreadView({
   terminalApi,
   onPanesNeedRoom,
   runStats,
+  onFetchTurnDiff,
   restoreCheckpoint,
   onFetchDiff,
   onFetchReviewContext,
@@ -4471,6 +4481,12 @@ export const ThreadView = memo(function ThreadView({
    */
   const [handoffBannerDismissed, setHandoffBannerDismissed] = useState(false);
   const [runStatList, setRunStatList] = useState<RunStatInfo[]>([]);
+  const [openTurnSha, setOpenTurnSha] = useState<string | null>(null);
+  const [turnDiffMode, setTurnDiffMode] = useState<DiffViewMode>("unified");
+  const openThreadId = detail?.thread.id ?? null;
+  useEffect(() => {
+    setOpenTurnSha(null);
+  }, [openThreadId]);
   const [restoreConfirm, setRestoreConfirm] = useState<ReviewBar | null>(null);
   const [restorePending, setRestorePending] = useState(false);
   const [restoreError, setRestoreError] = useState<string | null>(null);
@@ -6873,17 +6889,38 @@ export const ThreadView = memo(function ThreadView({
                       }
                     />
                     {bar && (
-                      <ReviewBarStrip
-                        bar={bar}
-                        isWorking={isWorking}
-                        onReview={() => onViewChanges?.()}
-                        onUndo={() => {
-                          if (!bar.undoSha || isWorking || restorePending)
-                            return;
-                          setRestoreError(null);
-                          setRestoreConfirm(bar);
-                        }}
-                      />
+                      <>
+                        <ReviewBarStrip
+                          bar={bar}
+                          isWorking={isWorking}
+                          expanded={openTurnSha === bar.sha}
+                          onReview={() => {
+                            if (onFetchTurnDiff) {
+                              setOpenTurnSha((prev) =>
+                                prev === bar.sha ? null : bar.sha,
+                              );
+                              return;
+                            }
+                            onViewChanges?.();
+                          }}
+                          onUndo={() => {
+                            if (!bar.undoSha || isWorking || restorePending)
+                              return;
+                            setRestoreError(null);
+                            setRestoreConfirm(bar);
+                          }}
+                        />
+                        {openTurnSha === bar.sha && onFetchTurnDiff ? (
+                          <TurnDiffPanel
+                            threadId={detail.thread.id}
+                            sha={bar.sha}
+                            turn={bar.turn}
+                            mode={turnDiffMode}
+                            onModeChange={setTurnDiffMode}
+                            onFetch={onFetchTurnDiff}
+                          />
+                        ) : null}
+                      </>
                     )}
                   </>
                 )}

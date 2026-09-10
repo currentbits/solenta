@@ -5561,6 +5561,17 @@ function buildDevCoder(): CoderApi {
           return [];
         }
       },
+      async turnDiff(input: { threadId: string; sha: string }): Promise<DiffResult> {
+        try {
+          const detail = details.get(input.threadId);
+          if (!detail || !detail.thread.worktreePath) return { ...EMPTY_DIFF };
+          const list = checkpointsByThread.get(input.threadId) || [];
+          if (!list.some((c) => c.sha === input.sha)) return { ...EMPTY_DIFF };
+          return fakeDiff(detail.thread);
+        } catch {
+          return { ...EMPTY_DIFF };
+        }
+      },
       async conflictForecast(input: {
         projectId: string;
       }): Promise<ConflictForecast> {

@@ -26,6 +26,7 @@ const {
   listCheckpoints,
   restoreCheckpoint,
   runStats,
+  turnDiff,
   conflictForecast,
   gcScan,
   gcClean,
@@ -1898,6 +1899,13 @@ const IPC_HANDLERS = {
     return runStats({
       store: ctx.store,
       threadId: input && input.threadId,
+    });
+  },
+  "git:turnDiff": async (ctx, input) => {
+    return turnDiff({
+      store: ctx.store,
+      threadId: input && input.threadId,
+      sha: input && input.sha,
     });
   },
   "git:conflictForecast": async (ctx, input) => {
