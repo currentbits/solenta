@@ -67,7 +67,7 @@ describe("providers registry", () => {
     const codex = getProvider("codex");
     assert.equal(codex.kind, "codex-json");
     assert.equal(codex.supportsResume, true);
-    assert.equal(codex.supportsSteer, false);
+    assert.equal(codex.supportsSteer, true);
     assert.equal(codex.sessionPinsModel, true);
     assert.ok(codex.models.includes("gpt-5.5"));
     assert.ok(codex.models.includes("gpt-6-astra"));
@@ -353,6 +353,15 @@ describe("providers registry", () => {
       "resume path should match fresh skip-git flag",
     );
     assert.equal(resume[resume.length - 1], "p3");
+    const blob = fresh.join("\0");
+    assert.equal(
+      blob.includes("on-request"),
+      false,
+      "exec --json stays never-policy; interactive on-request is app-server JSON-RPC only",
+    );
+    assert.equal(blob.includes("approval_policy"), false);
+    assert.equal(fresh.includes("app-server"), false);
+    assert.equal(resume.join("\0").includes("on-request"), false);
   });
 
   it("buildArgs: Codex -i images after exec, before prompt; Spark is text-only (#176)", () => {
@@ -570,11 +579,12 @@ describe("providers registry", () => {
     assert.deepEqual(astra.inputModalities, ["text", "image"]);
   });
 
-  it("listProviders advertises supportsSteer only for Claude", () => {
+  it("listProviders advertises supportsSteer for Claude and Codex", () => {
     const which = () => null;
     const list = listProviders({ which, env: {}, includeSimulate: true });
     assert.equal(list.find((p) => p.id === "claude").supportsSteer, true);
-    for (const id of ["codex", "grok", "opencode", "kimi", "cursor", "muse", "simulate"]) {
+    assert.equal(list.find((p) => p.id === "codex").supportsSteer, true);
+    for (const id of ["grok", "opencode", "kimi", "cursor", "muse", "simulate"]) {
       assert.equal(
         list.find((p) => p.id === id).supportsSteer,
         false,

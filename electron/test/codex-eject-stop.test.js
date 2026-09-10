@@ -80,6 +80,7 @@ function writeHangingFakeCodex(dir) {
 "use strict";
 const fs = require("fs");
 const path = require("path");
+const readline = require("readline");
 const argv = process.argv.slice(1);
 if (process.env.CODER_FAKE_CODEX_ARGV_FILE) {
   fs.writeFileSync(
@@ -88,41 +89,44 @@ if (process.env.CODER_FAKE_CODEX_ARGV_FILE) {
     "utf8",
   );
 }
-function sessionKey() {
+function sessionKeyFromArgv() {
   const i = argv.indexOf("resume");
   if (i >= 0 && argv[i + 1]) return String(argv[i + 1]);
   return "fresh";
 }
-const key = sessionKey();
-const pidsDir = process.env.CODER_FAKE_CODEX_PIDS_DIR;
-if (pidsDir) {
-  fs.mkdirSync(pidsDir, { recursive: true });
-  fs.writeFileSync(path.join(pidsDir, key), String(process.pid));
-}
-if (process.env.CODER_FAKE_CODEX_PID_FILE) {
-  fs.writeFileSync(process.env.CODER_FAKE_CODEX_PID_FILE, String(process.pid));
-}
-function emit(obj) {
-  process.stdout.write(JSON.stringify(obj) + "\\n");
-}
-const lockPath =
-  process.env.CODER_FAKE_CODEX_LOCK_FILE ||
-  (process.env.CODER_FAKE_CODEX_LOCK_DIR
-    ? path.join(process.env.CODER_FAKE_CODEX_LOCK_DIR, key + ".lock")
-    : "");
+let key = sessionKeyFromArgv();
+let lockPath = "";
 let lockFd = null;
-if (lockPath) {
+function writePid(k) {
+  const pidsDir = process.env.CODER_FAKE_CODEX_PIDS_DIR;
+  if (pidsDir) {
+    fs.mkdirSync(pidsDir, { recursive: true });
+    fs.writeFileSync(path.join(pidsDir, k), String(process.pid));
+  }
+  if (process.env.CODER_FAKE_CODEX_PID_FILE) {
+    fs.writeFileSync(process.env.CODER_FAKE_CODEX_PID_FILE, String(process.pid));
+  }
+}
+function takeLock(k) {
+  lockPath =
+    process.env.CODER_FAKE_CODEX_LOCK_FILE ||
+    (process.env.CODER_FAKE_CODEX_LOCK_DIR
+      ? path.join(process.env.CODER_FAKE_CODEX_LOCK_DIR, k + ".lock")
+      : "");
+  if (!lockPath) return true;
   try {
     fs.mkdirSync(path.dirname(lockPath), { recursive: true });
     lockFd = fs.openSync(lockPath, "wx");
     fs.writeSync(lockFd, String(process.pid));
+    return true;
   } catch {
     process.stderr.write(
       "Error: thread/resume: thread/resume failed: thread " +
-        key +
+        k +
         " already has an active writer (code -32600)\\n",
     );
     process.exit(2);
+    return false;
   }
 }
 function releaseLock() {
@@ -139,22 +143,70 @@ process.on("SIGTERM", () => {
   releaseLock();
   process.exit(0);
 });
-if (process.env.CODER_FAKE_CODEX_RESUME_FILE && argv.includes("resume")) {
-  fs.writeFileSync(
-    process.env.CODER_FAKE_CODEX_RESUME_FILE,
-    JSON.stringify({ ok: true, argv: argv }),
-    "utf8",
-  );
-  emit({ type: "thread.started", thread_id: key });
-  emit({
-    type: "item.completed",
-    item: { id: "item-msg-1", type: "agent_message", text: "cli resume" },
-  });
-  emit({ type: "turn.completed", usage: { input_tokens: 1, output_tokens: 1 } });
-  process.exit(0);
+function emit(obj) {
+  process.stdout.write(JSON.stringify(obj) + "\\n");
 }
-emit({ type: "thread.started", thread_id: key === "fresh" ? "codex-sess-hang" : key });
-setInterval(() => {}, 500);
+function send(obj) {
+  process.stdout.write(JSON.stringify(obj) + "\\n");
+}
+if (!argv.includes("app-server")) {
+  writePid(key);
+  takeLock(key);
+  if (process.env.CODER_FAKE_CODEX_RESUME_FILE && argv.includes("resume")) {
+    fs.writeFileSync(
+      process.env.CODER_FAKE_CODEX_RESUME_FILE,
+      JSON.stringify({ ok: true, argv: argv }),
+      "utf8",
+    );
+    emit({ type: "thread.started", thread_id: key });
+    emit({
+      type: "item.completed",
+      item: { id: "item-msg-1", type: "agent_message", text: "cli resume" },
+    });
+    emit({ type: "turn.completed", usage: { input_tokens: 1, output_tokens: 1 } });
+    process.exit(0);
+  }
+  emit({ type: "thread.started", thread_id: key === "fresh" ? "codex-sess-hang" : key });
+  setInterval(() => {}, 500);
+} else {
+  if (process.env.CODER_FAKE_CODEX_PID_FILE) {
+    fs.writeFileSync(process.env.CODER_FAKE_CODEX_PID_FILE, String(process.pid));
+  }
+  const rl = readline.createInterface({ input: process.stdin });
+  rl.on("line", (line) => {
+    let msg;
+    try { msg = JSON.parse(line); } catch { return; }
+    if (msg.method === "initialize") {
+      send({ jsonrpc: "2.0", id: msg.id, result: { userAgent: "fake-hang" } });
+      return;
+    }
+    if (msg.method === "initialized") return;
+    if (msg.method === "thread/start" || msg.method === "thread/resume") {
+      key =
+        (msg.params && msg.params.threadId) ||
+        (msg.method === "thread/start" ? "codex-sess-hang" : key);
+      writePid(key);
+      takeLock(key);
+      send({ jsonrpc: "2.0", id: msg.id, result: { thread: { id: key } } });
+      send({ jsonrpc: "2.0", method: "thread/started", params: { thread: { id: key } } });
+      return;
+    }
+    if (msg.method === "turn/start") {
+      send({ jsonrpc: "2.0", id: msg.id, result: { turn: { id: "turn-hang", status: "inProgress", items: [] } } });
+      send({ jsonrpc: "2.0", method: "turn/started", params: { threadId: key, turn: { id: "turn-hang" } } });
+      return;
+    }
+    if (msg.method === "turn/interrupt") {
+      send({ jsonrpc: "2.0", id: msg.id, result: {} });
+      return;
+    }
+    if (msg.method === "thread/unsubscribe") {
+      send({ jsonrpc: "2.0", id: msg.id, result: { status: "unsubscribed" } });
+      releaseLock();
+      process.exit(0);
+    }
+  });
+}
 `,
   );
 }

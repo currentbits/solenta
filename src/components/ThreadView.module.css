@@ -2540,6 +2540,16 @@ button.diffLineGutter:focus-visible {
   background: var(--input-fill);
 }
 
+.permissionCommand[readonly] {
+  resize: none;
+  cursor: default;
+}
+
+.permissionCommand[readonly]:hover,
+.permissionCommand[readonly]:focus {
+  border-color: transparent;
+}
+
 .permissionEdited {
   margin-left: 8px;
   padding: 1px 7px;

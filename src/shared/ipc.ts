@@ -1541,6 +1541,17 @@ export interface PendingPermissionInfo {
    */
   command?: string | null;
   /**
+   * False when the provider cannot honour an edited command (Codex
+   * item/commandExecution/requestApproval: Accept runs the proposed
+   * string). Default true when `command` is set.
+   */
+  commandEditable?: boolean;
+  /**
+   * False hides Accept all (Codex `availableDecisions` omitted
+   * `acceptForSession`). Default true.
+   */
+  acceptAlways?: boolean;
+  /**
    * Present when the agent is asking the user a question (AskUserQuestion):
    * render an option picker instead of the generic allow/deny prompt and
    * answer via respondPermission's `answers`.
@@ -3671,9 +3682,11 @@ export interface CoderApi {
     setPermissionMode(input: { threadId: string; mode: PermissionMode }): Promise<ThreadInfo>;
     /**
      * Answer the pending permission prompt (ThreadDetail.pendingPermission).
-     * For claude this is the live control_request. For other providers in
-     * plan mode it is the persisted pendingPlan card (issue #707). Rejects
-     * when nothing is pending; the updated detail arrives via thread:updated.
+     * For claude this is the live control_request. For Codex it is an
+     * app-server JSON-RPC ServerRequest (issue #1171); `updatedCommand` is
+     * ignored. For other providers in plan mode it is the persisted
+     * pendingPlan card (issue #707). Rejects when nothing is pending; the
+     * updated detail arrives via thread:updated.
      */
     respondPermission(input: {
       threadId: string;

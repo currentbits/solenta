@@ -13,7 +13,14 @@ const {
   OUTPUT_TRUNCATE,
 } = require("./claude.js");
 const codexParse = require("./codex.js");
-const { runCodex } = codexParse;
+const { runCodexAppServerTurn } = require("./codex-appserver.js");
+const {
+  classifyServerRequest,
+  pendingFromCommand,
+  mapSolentaDecision,
+  unsupportedError,
+  DECISION_CANCEL,
+} = require("./codexApprovals.js");
 const kimiParse = require("./kimi.js");
 const { runKimi, materializeKimiHome, deployKimiGuardrailOverlay } = kimiParse;
 const { materializeGrokHome } = require("./grok.js");
@@ -32,6 +39,7 @@ const {
   snapPermissionMode,
   sessionIdForResume,
   codexModelAcceptsImages,
+  honouredEfforts,
 } = require("./providers.js");
 const { codexWorkspaceWriteArgs } = require("./codexWorkspaceWrite.js");
 const orchcommands = require("./orchcommands.js");
@@ -712,6 +720,7 @@ function createRunner(opts) {
     searchMemory = null,
     bootstrapMemory = null,
     runAgentFn = runAgent,
+    runCodexFn = runCodexAppServerTurn,
     // Null until main has finished simulator crash recovery, so it is resolved
     // per call rather than captured.
     getIosSimulator = () => null,
@@ -2223,7 +2232,11 @@ function createRunner(opts) {
    */
   function getPendingPermission(threadId) {
     const e = active.get(threadId);
-    if (e && e.kind === "claude" && Array.isArray(e.pendingPermissions)) {
+    if (
+      e &&
+      (e.kind === "claude" || e.kind === "codex") &&
+      Array.isArray(e.pendingPermissions)
+    ) {
       const p = e.pendingPermissions[0];
       if (p) {
         return {
@@ -2231,7 +2244,10 @@ function createRunner(opts) {
           toolName: p.toolName,
           summary: p.summary,
           input: p.input,
-          command: extractCommand(p.rawInput),
+          command:
+            p.command !== undefined ? p.command : extractCommand(p.rawInput),
+          commandEditable: p.commandEditable !== false,
+          acceptAlways: p.acceptAlways !== false,
           questions: questionInfo(p.toolName, p.rawInput),
           plan: planText(p.toolName, p.rawInput),
           guardrail: p.guardrail || null,
@@ -2288,18 +2304,193 @@ function createRunner(opts) {
     return normalizeQuestions(rawInput && rawInput.questions);
   }
 
+  function replyCodexJsonRpc(e, id, result) {
+    if (e.handle && typeof e.handle.respondJsonRpc === "function") {
+      e.handle.respondJsonRpc(id, result);
+      return;
+    }
+    throw new Error("Codex run has no JSON-RPC reply path");
+  }
+
+  function replyCodexJsonRpcError(e, id, error) {
+    if (e.handle && typeof e.handle.respondJsonRpcError === "function") {
+      e.handle.respondJsonRpcError(id, error);
+      return;
+    }
+    throw new Error("Codex run has no JSON-RPC reply path");
+  }
+
+  function cancelCodexServerRequests(entry) {
+    if (!entry || entry.kind !== "codex") return;
+    const pending = Array.isArray(entry.pendingPermissions)
+      ? entry.pendingPermissions.splice(0)
+      : [];
+    if (entry.handle && typeof entry.handle.cancelOutstanding === "function") {
+      try {
+        entry.handle.cancelOutstanding(DECISION_CANCEL);
+      } catch {
+        // ignore
+      }
+      return;
+    }
+    for (const p of pending) {
+      try {
+        replyCodexJsonRpc(entry, p.rpcId !== undefined ? p.rpcId : p.id, {
+          decision: DECISION_CANCEL,
+        });
+      } catch {
+        // ignore
+      }
+    }
+  }
+
+  /**
+   * Inbound Codex app-server ServerRequest (issue #1171). Command
+   * kind=command becomes pendingPermission; unknown methods fail closed.
+   * #1170 attaches this to the long-lived JSON-RPC session. Exec --json
+   * never emits these.
+   *
+   * @param {string} threadId
+   * @param {{ id?: unknown, method?: string, params?: unknown }} msg
+   * @returns {boolean} true if this request is handled (replied or queued)
+   */
+  function handleCodexServerRequest(threadId, msg) {
+    const e = active.get(threadId);
+    const id = msg && Object.prototype.hasOwnProperty.call(msg, "id") ? msg.id : undefined;
+    const method = msg && typeof msg.method === "string" ? msg.method : "";
+    if (!e || e.kind !== "codex" || e.stopping || !e.handle) {
+      return false;
+    }
+    if (id === undefined || id === null) return false;
+
+    const classified = classifyServerRequest(method, msg && msg.params);
+    if (classified.action !== "command") {
+      try {
+        replyCodexJsonRpcError(
+          e,
+          id,
+          unsupportedError(classified.method, classified.reason),
+        );
+      } catch {
+        return false;
+      }
+      return true;
+    }
+
+    const pending = pendingFromCommand(id, msg && msg.params);
+    let inputStr = pending.input;
+    try {
+      inputStr = truncate(pending.input, INPUT_TRUNCATE);
+    } catch {
+      inputStr = pending.input;
+    }
+    pending.input = inputStr;
+
+    /** @type {{ decision: string, rule: string | null, reason: string } | null} */
+    let verdict = null;
+    try {
+      const live = store.getThread(threadId);
+      const worktreePath = (live && live.worktreePath) || null;
+      verdict = classifyTool({
+        toolName: "command",
+        input: pending.rawInput,
+        worktreePath,
+      });
+    } catch {
+      verdict = null;
+    }
+
+    if (verdict && verdict.decision === "deny") {
+      const rule = verdict.rule || "policy";
+      const reason = verdict.reason || "blocked";
+      try {
+        replyCodexJsonRpc(e, id, {
+          decision: mapSolentaDecision("deny", pending.availableDecisions),
+        });
+      } catch {
+        return false;
+      }
+      appendMessage(
+        threadId,
+        "event",
+        `Guardrail blocked command: ${rule}: ${reason}`,
+        e.runId,
+      );
+      store.save();
+      pushDetail(threadId, e.codexState || null);
+      return true;
+    }
+
+    if (verdict && verdict.decision === "ask") {
+      pending.guardrail = {
+        rule: verdict.rule,
+        reason: verdict.reason,
+      };
+    }
+
+    if (!Array.isArray(e.pendingPermissions)) e.pendingPermissions = [];
+    e.pendingPermissions.push(pending);
+    if (e.pendingPermissions.length === 1) {
+      store.updateThread(threadId, { awaitingInput: true }, { touch: true });
+      pushThreadsChanged();
+    }
+    store.save();
+    pushDetail(threadId, e.codexState || null);
+    return true;
+  }
+
+  function respondCodexPermission(e, threadId, input) {
+    const { requestId, decision } = input || {};
+    if (!Array.isArray(e.pendingPermissions)) {
+      throw new Error("Permission request no longer pending");
+    }
+    const idx = e.pendingPermissions.findIndex((p) => p.id === requestId);
+    if (idx < 0) {
+      throw new Error("Permission request no longer pending");
+    }
+    const pending = e.pendingPermissions[idx];
+    e.pendingPermissions.splice(idx, 1);
+    const mapped = mapSolentaDecision(decision, pending.availableDecisions);
+    replyCodexJsonRpc(
+      e,
+      pending.rpcId !== undefined ? pending.rpcId : pending.id,
+      { decision: mapped },
+    );
+    const label =
+      decision === "deny"
+        ? `Denied: ${pending.summary}`
+        : decision === "allowAlways"
+          ? `Allowed for session: ${pending.summary}`
+          : `Allowed: ${pending.summary}`;
+    appendMessage(threadId, "event", label, e.runId);
+    if (e.pendingPermissions.length === 0) {
+      store.updateThread(threadId, { awaitingInput: false });
+    }
+    store.save();
+    pushDetail(threadId, e.codexState || null);
+    pushThreadsChanged();
+  }
+
   /**
    * Answer a pending permission prompt. For question prompts, `answers`
    * (question text -> chosen label) rides back as updatedInput.answers.
    * `updatedCommand` (#509) replaces the shell command in updatedInput;
    * allow-always after an edit keys the session rule on the edited prefix.
+   * Codex JSON-RPC ignores `updatedCommand` (the reply cannot rewrite the
+   * command).
    * @param {{ threadId: string, requestId: string, decision: "allow" | "allowAlways" | "deny", answers?: Record<string, string>, updatedCommand?: string }} input
    */
   function respondPermission(input) {
     const { threadId, requestId, decision, answers, updatedCommand } =
       input || {};
     const e = active.get(threadId);
-    if (!e || e.kind !== "claude" || !e.handle) {
+    if (!e || !e.handle) {
+      return respondPersistedPlan(threadId, requestId, decision);
+    }
+    if (e.kind === "codex") {
+      return respondCodexPermission(e, threadId, input);
+    }
+    if (e.kind !== "claude") {
       return respondPersistedPlan(threadId, requestId, decision);
     }
     const idx = e.pendingPermissions.findIndex((p) => p.id === requestId);
@@ -4527,12 +4718,13 @@ function createRunner(opts) {
   }
 
   /**
-   * Start a Codex JSONL session turn.
+   * Start a Codex interactive turn over a private app-server (#1170).
+   * Workflow / ask / commitmsg stay on `runCodex` exec --json.
    * @param {string} threadId
    * @param {string} prompt
    * @param {string} runId
    * @param {import('./providers').ProviderEntry} providerEntry
-   * @param {string[]} [images] - absolute paths for `exec -i` (issue #176)
+   * @param {string[]} [images] - absolute paths for UserInput localImage
    */
   function startCodexRun(threadId, prompt, runId, providerEntry, images) {
     const thread = store.getThread(threadId);
@@ -4582,20 +4774,18 @@ function createRunner(opts) {
 
     const localCwd = thread.worktreePath || project.path;
     const binary = resolveBin(providerEntry);
-    const args = providerEntry.buildArgs({
-      prompt,
-      sessionId: resumeId,
-      permissionMode: thread.permissionMode || "default",
-      model: thread.model || null,
-      reasoningEffort: thread.reasoningEffort || null,
-      webSearch: thread.webSearch === true,
-      images,
-    });
-    // MCP / Planboard -c must be `codex exec` / `exec resume` options, not
-    // global `codex -c` before exec. Resume has its own -c parser; flags
-    // before `exec` are dropped, so approval_policy=never comes back and
-    // first-party MCP (thread_send, memory_*) dies with "requires approval,
-    // but approval policy is never" (#846 live miss on GPT resume).
+    // Private per-turn app-server. Do not use the user-global daemon
+    // (writer lock with Codex Desktop). Prompt is turn/start input, not argv.
+    const args = ["app-server", "--listen", "stdio://"];
+    const effortLevel = thread.reasoningEffort || null;
+    const allowedEffort = honouredEfforts(providerEntry, thread.model || null);
+    if (effortLevel && allowedEffort.includes(String(effortLevel))) {
+      args.push("-c", `model_reasoning_effort=${effortLevel}`);
+    }
+    if (thread.webSearch === true) {
+      args.push("-c", "web_search=live");
+    }
+    // MCP / Planboard -c sit after `app-server` (same values as exec).
     // Bearer tokens ride the child's env, never argv (issue #125).
     const planboardNote = services.planboardNoteFor(localCwd, {
       provider: thread.provider,
@@ -4612,7 +4802,7 @@ function createRunner(opts) {
         projectId: thread.projectId,
       }),
     ];
-    if (codexExecConfig.length) insertBeforeLast(args, codexExecConfig);
+    if (codexExecConfig.length) args.push(...codexExecConfig);
     /** @type {Record<string, string>} */
     const codexMcpEnv = { ...getCodexMcpEnv() };
     // #813: isolated CODEX_HOME PreToolUse. Local overlay stays on this
@@ -4624,11 +4814,11 @@ function createRunner(opts) {
       try {
         const dest = deployCodexGuardrailOverlay({ project, threadId });
         if (dest) {
-          insertBeforeLast(args, [
+          args.push(
             "-c",
             "features.hooks=true",
             "--dangerously-bypass-hook-trust",
-          ]);
+          );
           codexWrapEnv = {
             CODEX_HOME: dest,
             SOLENTA_WORKTREE: project.remotePath || localCwd,
@@ -4644,11 +4834,11 @@ function createRunner(opts) {
           process.env.CODEX_HOME ||
           path.join(require("node:os").homedir(), ".codex");
         materializeCodexGuardrailHome({ dest, sourceHome });
-        insertBeforeLast(args, [
+        args.push(
           "-c",
           "features.hooks=true",
           "--dangerously-bypass-hook-trust",
-        ]);
+        );
         codexMcpEnv.CODEX_HOME = dest;
         codexMcpEnv.SOLENTA_WORKTREE = localCwd;
       } catch {
@@ -4667,6 +4857,11 @@ function createRunner(opts) {
       codexState,
       runUsage,
       sessionId: resumeId,
+      /**
+       * App-server ServerRequests awaiting a user decision (issue #1171).
+       * Empty on exec --json; filled when #1170 attaches JSON-RPC.
+       */
+      pendingPermissions: [],
     };
     Object.defineProperty(entry, "workflow", {
       get() {
@@ -4824,11 +5019,22 @@ function createRunner(opts) {
       sawTerminalUsage = true;
     }
 
-    const handle = runCodex({
+    const nativeImages =
+      Array.isArray(images) && codexModelAcceptsImages(thread.model)
+        ? images.filter((p) => typeof p === "string" && p)
+        : [];
+    const handle = runCodexFn({
       binary: spawn.binary,
       args: spawn.args,
       cwd: spawn.cwd,
       envExtra: codexMcpEnv,
+      prompt,
+      images: nativeImages,
+      sessionId: resumeId,
+      model: thread.model || null,
+      reasoningEffort: thread.reasoningEffort || null,
+      permissionMode: thread.permissionMode || "default",
+      onServerRequest: (req) => handleCodexServerRequest(threadId, req),
       onEvent: (ev) => {
         if (!guard()) return;
 
@@ -8035,9 +8241,9 @@ function createRunner(opts) {
     }
     const leadSlash =
       slashExpanded || rawPrompt.trimStart().startsWith("/");
-    // Codex vision models take images via `exec -i` (#176). Spark is
-    // text-only (#1167) so its images stay in the prompt-path list, as
-    // do folders/files (no native flag).
+    // Codex vision models take images as app-server UserInput localImage
+    // (#1170 / #176). Spark is text-only (#1167) so its images stay in
+    // the prompt-path list, as do folders/files (no native flag).
     const nativeImages =
       provider === "codex" &&
       codexModelAcceptsImages(dispatchThread.model)
@@ -8274,7 +8480,9 @@ function createRunner(opts) {
       throw new Error("Live process is not accepting input");
     }
     const attachments = sanitizeAttachments(input.attachments);
-    const sent = entry.handle.send(prompt + attachmentPromptSection(attachments));
+    const sent = await Promise.resolve(
+      entry.handle.send(prompt + attachmentPromptSection(attachments)),
+    );
     if (!sent) {
       throw new Error("Live process is not accepting input");
     }
@@ -8360,6 +8568,7 @@ function createRunner(opts) {
         entry.kind === "ask") &&
       entry.handle
     ) {
+      if (entry.kind === "codex") cancelCodexServerRequests(entry);
       try {
         entry.handle.kill();
       } catch {
@@ -8704,6 +8913,7 @@ function createRunner(opts) {
     toWorkflowView,
     resolveProvider,
     getPendingPermission,
+    handleCodexServerRequest,
     respondPermission,
     askUser,
     clearQuestion,

@@ -334,14 +334,13 @@ const PROVIDERS = [
     supportsResume: true,
     // exec resume hydrates model from the rollout; -m does not switch it.
     sessionPinsModel: true,
-    // exec --json has no mid-turn user channel (issue #1164 / #156).
-    // Prompt is argv (or stdin drained once as the initial prompt /
-    // `<stdin>` block). CLI 0.153.4: `codex exec` is non-interactive;
-    // `-i` is --image; `codex queue` is follow-up-after-idle. Astra
-    // send_user_message_async / clock is persist-mode desktop
-    // (model → user), not exec stdin. app-server turn/steer is a
-    // different protocol. Do not fake by kill+resume.
-    supportsSteer: false,
+    // Interactive turns use a private `codex app-server` and `turn/steer`
+    // (#1170). Workflow / ask / commitmsg stay on exec --json (no send).
+    // Do not fake steer by kill+resume. Queue remains the idle follow-up.
+    supportsSteer: true,
+    // Interactive app-server uses approvalPolicy on-request (#1208).
+    // Do not flip exec AskForApproval to on-request: workflow / ask /
+    // commitmsg stay runCodex exec --json with never-policy.
     // Snapshot of ~/.codex/models_cache.json visibility=list (client 0.153.4,
     // 2026-09-09). Astra is the flagship (priority 1); Sol is the 5.6
     // workhorse. gpt-5.4 / gpt-5.4-mini are retired and omitted.

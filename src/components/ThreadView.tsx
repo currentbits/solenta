@@ -2583,6 +2583,10 @@ type PermissionRespond = (
  * Approving sends the edited command, not the original. Non-command tools
  * (Edit/Write/…) keep the JSON preview. Same component the inbox (#291)
  * should reuse — the IPC already accepts updatedCommand.
+ *
+ * Codex command asks set commandEditable=false: the JSON-RPC reply cannot
+ * rewrite the command (issue #1171). Accept all hides when acceptAlways
+ * is false.
  */
 function PermissionPrompt({
   pending,
@@ -2592,12 +2596,14 @@ function PermissionPrompt({
   onRespond: PermissionRespond;
 }) {
   const original = pending.command ?? null;
-  const editable = original !== null;
+  const hasCommand = original !== null;
+  const editable = hasCommand && pending.commandEditable !== false;
+  const acceptAlways = pending.acceptAlways !== false;
   const [command, setCommand] = useState(original ?? "");
   const [sent, setSent] = useState(false);
   const edited =
-    original !== null && command.trim() !== original.trim();
-  const empty = original !== null && command.trim() === "";
+    editable && original !== null && command.trim() !== original.trim();
+  const empty = editable && command.trim() === "";
 
   const answer = (decision: PermissionDecision) => {
     if (sent) return;
@@ -2632,7 +2638,7 @@ function PermissionPrompt({
           ⚠ {pending.guardrail.reason} ({pending.guardrail.rule})
         </div>
       ) : null}
-      {editable ? (
+      {hasCommand ? (
         <>
           <textarea
             className={`${styles.permissionInput} ${styles.permissionCommand}`}
@@ -2643,7 +2649,10 @@ function PermissionPrompt({
             spellCheck={false}
             autoComplete="off"
             autoCorrect="off"
-            onChange={(ev) => setCommand(ev.target.value)}
+            readOnly={!editable}
+            onChange={(ev) => {
+              if (editable) setCommand(ev.target.value);
+            }}
           />
           {edited ? (
             <div className={styles.permissionWas} data-permission-was="">
@@ -2673,14 +2682,16 @@ function PermissionPrompt({
         >
           Accept
         </button>
-        <button
-          type="button"
-          className={styles.permissionAllow}
-          disabled={sent || empty}
-          onClick={() => answer("allowAlways")}
-        >
-          Accept all
-        </button>
+        {acceptAlways ? (
+          <button
+            type="button"
+            className={styles.permissionAllow}
+            disabled={sent || empty}
+            onClick={() => answer("allowAlways")}
+          >
+            Accept all
+          </button>
+        ) : null}
         <button
           type="button"
           className={styles.permissionDeny}

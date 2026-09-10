@@ -64,40 +64,7 @@ function eventTexts(store, threadId) {
 }
 
 async function writeFakeCodex(dir) {
-  const filePath = path.join(dir, "fake-codex");
-  return writeFakeBin(
-    filePath,
-    `#!/usr/bin/env node
-"use strict";
-const fs = require("fs");
-if (process.env.CODER_FAKE_CODEX_ARGV_FILE) {
-  fs.writeFileSync(
-    process.env.CODER_FAKE_CODEX_ARGV_FILE,
-    JSON.stringify(process.argv.slice(1)),
-    "utf8",
-  );
-}
-const scenario = process.env.CODER_FAKE_CODEX_SCENARIO || "success";
-function emit(obj) {
-  process.stdout.write(JSON.stringify(obj) + "\\n");
-}
-if (scenario === "writer-lock") {
-  process.stderr.write(${JSON.stringify(WRITER_LOCK_STDERR)} + "\\n");
-  process.exit(1);
-}
-if (scenario === "hang") {
-  setInterval(() => {}, 1000);
-  return;
-}
-emit({ type: "thread.started", thread_id: "codex-sess-001" });
-emit({
-  type: "item.completed",
-  item: { id: "item-msg-1", type: "agent_message", text: "Hello from codex" },
-});
-emit({ type: "turn.completed", usage: { input_tokens: 4, output_tokens: 2 } });
-process.exit(0);
-`,
-  );
+  return require("./support/fakeCodexCli.js").writeFakeCodexBin(dir, writeFakeBin);
 }
 
 describe("looksWriterLock", () => {
@@ -153,6 +120,7 @@ describe("Codex writer-lock auto-continue (#950)", () => {
     argvFile = path.join(tmpDir, "argv.json");
     process.env.CODER_CODEX_BIN = fakeCodex;
     process.env.CODER_FAKE_CODEX_ARGV_FILE = argvFile;
+    process.env.CODER_FAKE_CODEX_RPC_FILE = path.join(tmpDir, "rpc.jsonl");
     process.env.CODER_FAKE_CODEX_SCENARIO = "writer-lock";
 
     store = new Store(path.join(tmpDir, "store.json"));
@@ -204,6 +172,7 @@ describe("Codex writer-lock auto-continue (#950)", () => {
     else process.env.CODER_FAKE_CODEX_SCENARIO = prevScenario;
     if (prevArgvFile === undefined) delete process.env.CODER_FAKE_CODEX_ARGV_FILE;
     else process.env.CODER_FAKE_CODEX_ARGV_FILE = prevArgvFile;
+    delete process.env.CODER_FAKE_CODEX_RPC_FILE;
     if (prevGrokMcpDisable === undefined) {
       delete process.env.CODER_GROK_MCP_DISABLE;
     } else process.env.CODER_GROK_MCP_DISABLE = prevGrokMcpDisable;
@@ -272,12 +241,34 @@ describe("Codex writer-lock auto-continue (#950)", () => {
     store.saveNow();
     await runner.startRun({ threadId: worker2.id, prompt: "second worker" });
     await waitFor(() => store.getThread(worker2.id).status === "done");
-    await waitFor(() => fs.existsSync(argvFile));
+    await waitFor(() => {
+      const f = process.env.CODER_FAKE_CODEX_RPC_FILE;
+      if (!f || !fs.existsSync(f)) return false;
+      const rpc = fs
+        .readFileSync(f, "utf8")
+        .trim()
+        .split("\n")
+        .filter(Boolean)
+        .map((l) => {
+          try {
+            return JSON.parse(l);
+          } catch {
+            return null;
+          }
+        });
+      return rpc.some((m) => m && m.method === "thread/resume");
+    });
     const argv = JSON.parse(fs.readFileSync(argvFile, "utf8"));
-    const execIdx = argv.indexOf("exec");
-    assert.ok(execIdx >= 0, JSON.stringify(argv));
-    assert.equal(argv[execIdx + 1], "resume");
-    assert.equal(argv[execIdx + 2], "01a072f7-10e0-7fd2-b691-7d481327516f");
+    assert.ok(argv.includes("app-server"), JSON.stringify(argv));
+    const rpc = fs
+      .readFileSync(process.env.CODER_FAKE_CODEX_RPC_FILE, "utf8")
+      .trim()
+      .split("\n")
+      .filter(Boolean)
+      .map((l) => JSON.parse(l));
+    const resume = rpc.find((m) => m.method === "thread/resume");
+    assert.ok(resume, JSON.stringify(rpc));
+    assert.equal(resume.params.threadId, "01a072f7-10e0-7fd2-b691-7d481327516f");
     await waitFor(() =>
       userTexts(store, lead.id).some((t) => t.includes("[orchestration]")),
     );
@@ -287,9 +278,23 @@ describe("Codex writer-lock auto-continue (#950)", () => {
     process.env.CODER_FAKE_CODEX_SCENARIO = "success";
     const lead = orch();
     await runner.startRun({ threadId: lead.id, prompt: "human turn" });
-    await waitFor(() => fs.existsSync(argvFile));
+    await waitFor(() => {
+      const f = process.env.CODER_FAKE_CODEX_RPC_FILE;
+      if (!f || !fs.existsSync(f)) return false;
+      return /thread\/resume/.test(fs.readFileSync(f, "utf8"));
+    });
     const argv = JSON.parse(fs.readFileSync(argvFile, "utf8"));
-    assert.ok(argv.includes("resume"), JSON.stringify(argv));
+    assert.ok(argv.includes("app-server"), JSON.stringify(argv));
+    const rpc = fs
+      .readFileSync(process.env.CODER_FAKE_CODEX_RPC_FILE, "utf8")
+      .trim()
+      .split("\n")
+      .filter(Boolean)
+      .map((l) => JSON.parse(l));
+    assert.ok(
+      rpc.some((m) => m.method === "thread/resume"),
+      JSON.stringify(rpc),
+    );
     await waitFor(() => store.getThread(lead.id).status === "done");
   });
 

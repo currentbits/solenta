@@ -223,6 +223,34 @@ describe("PermissionPrompt (#509)", () => {
     assert.equal(spy.calls[0].decision, "deny");
   });
 
+  it("read-only command (Codex) keeps the textarea and does not send updatedCommand (#1171)", async () => {
+    const { m, spy } = mountView({
+      ...bashPending,
+      requestId: "req-codex-1",
+      toolName: "command",
+      commandEditable: false,
+    });
+    const view = await m;
+    const ta = view.query(
+      "[data-permission-command]",
+    ) as HTMLTextAreaElement | null;
+    assert.ok(ta);
+    assert.equal(ta.readOnly, true);
+    await view.click(view.byText("Accept"));
+    assert.equal(spy.calls[0].decision, "allow");
+    assert.equal(spy.calls[0].updatedCommand, undefined);
+  });
+
+  it("hides Accept all when acceptAlways is false (#1171)", async () => {
+    const { m } = mountView({
+      ...bashPending,
+      acceptAlways: false,
+    });
+    const view = await m;
+    assert.ok(view.byText("Accept"));
+    assert.ok(!view.text().includes("Accept all"));
+  });
+
   it("non-command tools keep the JSON preview and do not send updatedCommand", async () => {
     const { m, spy } = mountView(editPending);
     const view = await m;

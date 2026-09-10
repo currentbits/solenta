@@ -61,31 +61,7 @@ function eventTexts(store, threadId) {
 }
 
 async function writeFakeCodex(dir) {
-  const filePath = path.join(dir, "fake-codex");
-  return writeFakeBin(
-    filePath,
-    `#!/usr/bin/env node
-"use strict";
-const fs = require("fs");
-if (process.env.CODER_FAKE_CODEX_ARGV_FILE) {
-  fs.writeFileSync(
-    process.env.CODER_FAKE_CODEX_ARGV_FILE,
-    JSON.stringify(process.argv.slice(1)),
-    "utf8",
-  );
-}
-function emit(obj) {
-  process.stdout.write(JSON.stringify(obj) + "\\n");
-}
-emit({ type: "thread.started", thread_id: "codex-sess-fresh" });
-emit({
-  type: "item.completed",
-  item: { id: "item-msg-1", type: "agent_message", text: "Hello from codex" },
-});
-emit({ type: "turn.completed", usage: { input_tokens: 4, output_tokens: 2 } });
-process.exit(0);
-`,
-  );
+  return require("./support/fakeCodexCli.js").writeFakeCodexBin(dir, writeFakeBin);
 }
 
 describe("thread.ejected persist (#554)", () => {
@@ -264,14 +240,12 @@ describe("ejected Codex lead does not resume (#554)", () => {
     await runner.startRun({ threadId: orch.id, prompt: "human turn" });
     await waitFor(() => fs.existsSync(argvFile));
     const argv = JSON.parse(fs.readFileSync(argvFile, "utf8"));
-    const execIdx = argv.indexOf("exec");
-    assert.ok(execIdx >= 0, JSON.stringify(argv));
-    assert.notEqual(argv[execIdx + 1], "resume", JSON.stringify(argv));
+    assert.ok(argv.includes("app-server"), JSON.stringify(argv));
     assert.equal(argv.includes(EJECTED_SESSION), false, JSON.stringify(argv));
     await waitFor(() => store.getThread(orch.id).status === "done");
     const after = store.getThread(orch.id);
     assert.equal(after.ejected, false);
-    assert.equal(after.sessionId, "codex-sess-fresh");
+    assert.equal(after.sessionId, "codex-sess-001");
   });
 });
 
