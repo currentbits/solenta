@@ -153,7 +153,10 @@ function view(props: {
   restoreCheckpoint?: (threadId: string, sha: string) => Promise<void>;
   onLoadImage?: (name: string) => Promise<string | null>;
   onLoadAttachmentImage?: (path: string) => Promise<string | null>;
-  onDropAttachmentFiles?: (files: File[]) => Promise<AttachmentInfo[]>;
+  onDropAttachmentFiles?: (
+    files: File[],
+    folders?: import("../src/dropFiles").DroppedFolder[],
+  ) => Promise<AttachmentInfo[]>;
   onResolvePaths?: (
     paths: string[],
   ) => Promise<Array<{ path: string; abs: string | null }>>;

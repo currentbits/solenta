@@ -91,7 +91,11 @@ import {
   type SlashCommand,
 } from "../slashCommands";
 import { WorkflowsModal } from "./WorkflowsModal";
-import { DROP_OVERLAY_MESSAGE, DROP_REJECT_MESSAGE } from "../dropFiles";
+import {
+  DROP_OVERLAY_MESSAGE,
+  DROP_REJECT_MESSAGE,
+  type DroppedFolder,
+} from "../dropFiles";
 import { scrollChildIntoNearestView } from "../scrollNearest";
 import { teachPermissionAllowed } from "../teach";
 import type { ThreadTeach } from "../shared/ipc";
@@ -280,8 +284,12 @@ interface ComposerProps {
   onLoadAttachmentImage?: (path: string) => Promise<string | null>;
   /**
    * Classify drag-dropped files into attachments. Absent disables drop.
+   * `folders` is the webkitGetAsEntry walk (web); native ignores it.
    */
-  onDropAttachmentFiles?: (files: File[]) => Promise<AttachmentInfo[]>;
+  onDropAttachmentFiles?: (
+    files: File[],
+    folders?: DroppedFolder[],
+  ) => Promise<AttachmentInfo[]>;
   /**
    * Attachments arriving from outside the composer (Browser pane screenshot,
    * issue #155). Consumed into the pending chips, then onIncomingAttachmentsConsumed.
@@ -1774,10 +1782,10 @@ export const Composer = memo(function Composer({
   };
 
   const acceptDroppedFiles = useCallback(
-    async (files: File[]) => {
+    async (files: File[], folders?: DroppedFolder[]) => {
       if (!onDropAttachmentFiles || disabled || sending) return;
       try {
-        const items = await onDropAttachmentFiles(files);
+        const items = await onDropAttachmentFiles(files, folders);
         const accepted = canAttachImages
           ? items
           : items.filter((a) => a.kind !== "image");

@@ -36,6 +36,10 @@ const EXT_BY_MEDIA = {
 
 /** Refuse to base64 a huge file into an IPC reply / store-bound thumbnail. */
 const MAX_IMAGE_BYTES = 20 * 1024 * 1024;
+const MAX_FILE_BYTES = MAX_IMAGE_BYTES;
+const MAX_FOLDER_BYTES = 100 * 1024 * 1024;
+const MAX_FOLDER_FILES = 1000;
+const THREAD_ID_RE = /^[A-Za-z0-9_-]+$/;
 
 /**
  * Classify absolute paths as image, file, or folder. Images keep their
@@ -125,11 +129,58 @@ function savePng(userDataPath, threadId, buf) {
   }
 }
 
-function saveImage(userDataPath, threadId, dataUrl) {
+function validThreadId(threadId) {
   const tid = String(threadId || "");
   // Thread ids are UUIDs; anything else is a caller trying to escape the
   // attachments dir with `..`, a separator, or a Windows drive/stream colon.
-  if (!userDataPath || !/^[A-Za-z0-9_-]+$/.test(tid)) return null;
+  return THREAD_ID_RE.test(tid) ? tid : null;
+}
+
+function threadDir(userDataPath, tid) {
+  return path.join(userDataPath, DIR_NAME, tid);
+}
+
+function decodeDataUrl(dataUrl, maxBytes) {
+  const m = /^data:(?:[a-z]+\/[a-z0-9.+-]+)?;base64,(.*)$/is.exec(
+    String(dataUrl || ""),
+  );
+  if (!m) return null;
+  let buf;
+  try {
+    buf = Buffer.from(m[1], "base64");
+  } catch {
+    return null;
+  }
+  if (!buf.length || buf.length > maxBytes) return null;
+  return buf;
+}
+
+function safeBaseName(name) {
+  const raw = String(name || "");
+  if (!raw || raw.includes("\0") || raw.includes("/") || raw.includes("\\")) {
+    return null;
+  }
+  if (raw === "." || raw === ".." || raw.includes("..")) return null;
+  if (path.basename(raw) !== raw) return null;
+  return raw;
+}
+
+function relPathParts(rel) {
+  const raw = String(rel || "").replace(/\\/g, "/");
+  if (!raw || raw.startsWith("/") || raw.includes("\0")) return null;
+  const parts = raw.split("/").filter((p) => p !== "");
+  if (!parts.length || parts.some((p) => p === "." || p === "..")) return null;
+  return parts;
+}
+
+function isInside(root, candidate) {
+  const rel = path.relative(path.resolve(root), path.resolve(candidate));
+  return rel !== "" && !rel.startsWith("..") && !path.isAbsolute(rel);
+}
+
+function saveImage(userDataPath, threadId, dataUrl) {
+  const tid = validThreadId(threadId);
+  if (!userDataPath || !tid) return null;
   const m = /^data:([a-z]+\/[a-z0-9.+-]+);base64,(.*)$/is.exec(
     String(dataUrl || ""),
   );
@@ -146,6 +197,85 @@ function saveImage(userDataPath, threadId, dataUrl) {
     fs.writeFileSync(full, buf);
     return { kind: "image", path: full, name };
   } catch {
+    return null;
+  }
+}
+
+/**
+ * Persist a non-image File (web picker/drop) under
+ * userData/attachments/<threadId>/. Display name stays the original basename.
+ * @returns {{ kind: "file", path: string, name: string } | null}
+ */
+function saveFile(userDataPath, threadId, name, dataUrl) {
+  const tid = validThreadId(threadId);
+  const base = safeBaseName(name);
+  if (!userDataPath || !tid || !base) return null;
+  const buf = decodeDataUrl(dataUrl, MAX_FILE_BYTES);
+  if (!buf) return null;
+  const dir = threadDir(userDataPath, tid);
+  try {
+    fs.mkdirSync(dir, { recursive: true });
+    const stored = `${Date.now()}-${randomUUID().slice(0, 8)}-${base}`;
+    const full = path.join(dir, stored);
+    if (!isInside(dir, full)) return null;
+    fs.writeFileSync(full, buf);
+    return { kind: "file", path: full, name: base };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Persist a directory tree from a web directory entry / File System Access
+ * pick under userData/attachments/<threadId>/<name>-<id>/. Returns
+ * kind=folder so Spark/Astra get the same chip native classifyPaths produces.
+ * @param {string} userDataPath
+ * @param {unknown} threadId
+ * @param {unknown} name
+ * @param {unknown} files
+ * @returns {{ kind: "folder", path: string, name: string } | null}
+ */
+function saveFolder(userDataPath, threadId, name, files) {
+  const tid = validThreadId(threadId);
+  const folderName = safeBaseName(name);
+  if (!userDataPath || !tid || !folderName || !Array.isArray(files)) return null;
+  if (files.length > MAX_FOLDER_FILES) return null;
+
+  const planned = [];
+  let total = 0;
+  for (const entry of files) {
+    const parts = relPathParts(entry && entry.relativePath);
+    if (!parts) return null;
+    const buf = decodeDataUrl(entry && entry.dataUrl, MAX_FILE_BYTES);
+    if (!buf) return null;
+    total += buf.length;
+    if (total > MAX_FOLDER_BYTES) return null;
+    planned.push({ parts, buf });
+  }
+
+  const parent = threadDir(userDataPath, tid);
+  const dest = path.join(parent, `${folderName}-${randomUUID().slice(0, 8)}`);
+  if (!isInside(parent, dest) && path.resolve(dest) !== path.resolve(parent)) {
+    return null;
+  }
+  try {
+    fs.mkdirSync(dest, { recursive: true });
+    for (const { parts, buf } of planned) {
+      const full = path.join(dest, ...parts);
+      if (!isInside(dest, full)) {
+        fs.rmSync(dest, { recursive: true, force: true });
+        return null;
+      }
+      fs.mkdirSync(path.dirname(full), { recursive: true });
+      fs.writeFileSync(full, buf);
+    }
+    return { kind: "folder", path: dest, name: folderName };
+  } catch {
+    try {
+      fs.rmSync(dest, { recursive: true, force: true });
+    } catch {
+      // ignore cleanup failure
+    }
     return null;
   }
 }
@@ -190,6 +320,8 @@ module.exports = {
   classifyPaths,
   pickAttachments,
   saveImage,
+  saveFile,
+  saveFolder,
   savePng,
   readImage,
   resolveImageFile,

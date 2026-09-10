@@ -181,7 +181,7 @@ import {
   type FocusTurnSummary,
 } from "../focusView";
 import { useRunDurationEnabled, useTranscriptViewMode } from "../uiPrefs";
-import { DROP_OVERLAY_MESSAGE } from "../dropFiles";
+import { DROP_OVERLAY_MESSAGE, type DroppedFolder } from "../dropFiles";
 import { Composer } from "./Composer";
 import { repoRelativeDir } from "../mention";
 import { createDoubleOptionTracker } from "../appsnapHotkey";
@@ -658,7 +658,10 @@ interface ThreadViewProps {
   /** Loads one attached image (absolute path) as a data URL. */
   onLoadAttachmentImage?: (path: string) => Promise<string | null>;
   /** Classify drag-dropped files into attachments. */
-  onDropAttachmentFiles?: (files: File[]) => Promise<AttachmentInfo[]>;
+  onDropAttachmentFiles?: (
+    files: File[],
+    folders?: DroppedFolder[],
+  ) => Promise<AttachmentInfo[]>;
   /** Embedded Browser pane (issue #155). Absent hides screenshot-to-composer. */
   preview?: CoderApi["preview"] | null;
   /** Desktop-only iOS Simulator pane (#248). */

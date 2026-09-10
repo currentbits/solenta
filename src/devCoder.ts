@@ -6261,6 +6261,20 @@ function buildDevCoder(): CoderApi {
       async saveImage(_input: { threadId: string; dataUrl: string }) {
         return { attachment: null };
       },
+      async saveFile(_input: {
+        threadId: string;
+        name: string;
+        dataUrl: string;
+      }) {
+        return { attachment: null };
+      },
+      async saveFolder(_input: {
+        threadId: string;
+        name: string;
+        files: Array<{ relativePath: string; dataUrl: string }>;
+      }) {
+        return { attachment: null };
+      },
       async readImage(_input: { path: string }) {
         return { dataUrl: null };
       },

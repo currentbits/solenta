@@ -105,6 +105,7 @@ import {
 } from "./threadPatch";
 import { parseBtwCommand } from "./btw";
 import { parseFeedbackCommand } from "./feedback";
+import type { DroppedFolder } from "./dropFiles";
 import type { ProviderUsage } from "./shared/ipc";
 import {
   loadBootSnapshot,
@@ -129,15 +130,36 @@ function readFileAsDataUrl(file: File): Promise<string | null> {
   });
 }
 
+const WEB_IMAGE_EXTS = new Set([
+  "png",
+  "jpg",
+  "jpeg",
+  "gif",
+  "webp",
+  "bmp",
+  "svg",
+]);
+
+function isWebImageFile(file: File): boolean {
+  if (file.type.startsWith("image/")) return true;
+  const ext = file.name.split(".").pop()?.toLowerCase() ?? "";
+  return WEB_IMAGE_EXTS.has(ext);
+}
+
 async function filesToAttachments(
   files: File[],
-  save: (dataUrl: string) => Promise<AttachmentInfo | null>,
+  save: {
+    image: (dataUrl: string) => Promise<AttachmentInfo | null>;
+    file: (name: string, dataUrl: string) => Promise<AttachmentInfo | null>;
+  },
 ): Promise<AttachmentInfo[]> {
   const out: AttachmentInfo[] = [];
   for (const file of files) {
     const dataUrl = await readFileAsDataUrl(file);
     if (!dataUrl) continue;
-    const attachment = await save(dataUrl);
+    const attachment = isWebImageFile(file)
+      ? await save.image(dataUrl)
+      : await save.file(file.name, dataUrl);
     if (attachment) out.push(attachment);
   }
   return out;
@@ -544,9 +566,13 @@ export interface UseCoderResult {
   loadAttachmentImage: (path: string) => Promise<string | null>;
   /**
    * Classify drag-dropped files as attachments. Native resolves absolute
-   * paths via the Electron preload; web reads each File as a data URL.
+   * paths via the Electron preload; web reads each File as a data URL
+   * and walks directory entries into saveFolder.
    */
-  dropAttachmentFiles: (files: File[]) => Promise<AttachmentInfo[]>;
+  dropAttachmentFiles: (
+    files: File[],
+    folders?: DroppedFolder[],
+  ) => Promise<AttachmentInfo[]>;
   /** Push the selected thread's branch to origin. */
   pushBranch: () => Promise<{ remote: string; branch: string }>;
   /** Open (or re-return) a GitHub PR for the selected thread's branch. */
@@ -2946,6 +2972,23 @@ export function useCoder(): UseCoderResult {
     [api, selectedThreadId],
   );
 
+  const saveAttachmentFile = useCallback(
+    async (name: string, dataUrl: string) => {
+      if (!selectedThreadId) return null;
+      try {
+        const result = await api.attachments.saveFile({
+          threadId: selectedThreadId,
+          name,
+          dataUrl,
+        });
+        return result.attachment;
+      } catch {
+        return null;
+      }
+    },
+    [api, selectedThreadId],
+  );
+
   const pickDirectory = useCallback(async () => {
     try {
       return await api.projects.pickDirectory();
@@ -2981,13 +3024,16 @@ export function useCoder(): UseCoderResult {
     if (opts?.includeImages === false && isWebMode()) return [];
     if (isWebMode()) {
       if (!selectedThreadId) return [];
-      return filesToAttachments(await pickWebImageFiles(), saveAttachmentImage);
+      return filesToAttachments(await pickWebImageFiles(), {
+        image: saveAttachmentImage,
+        file: saveAttachmentFile,
+      });
     }
     const result = await api.attachments.pick({
       includeImages: opts?.includeImages !== false,
     });
     return result.attachments;
-  }, [api, saveAttachmentImage, selectedThreadId]);
+  }, [api, saveAttachmentFile, saveAttachmentImage, selectedThreadId]);
 
   const loadAttachmentImage = useCallback(
     async (path: string) => {
@@ -3002,26 +3048,51 @@ export function useCoder(): UseCoderResult {
   );
 
   const dropAttachmentFiles = useCallback(
-    async (files: File[]) => {
+    async (files: File[], folders?: DroppedFolder[]) => {
       // Absolute paths of dropped Files (including Finder directories)
       // exist only behind the Electron preload (webUtils). Web/dev
-      // bridges fall back to saveImage, which cannot attach folders.
+      // bridges persist bytes via saveImage / saveFile / saveFolder.
       const pathOf = api.attachments.droppedFilePath;
-      if (!pathOf) return filesToAttachments(files, saveAttachmentImage);
-      const paths = files
-        .map((file) => {
+      if (pathOf) {
+        const paths = files
+          .map((file) => {
+            try {
+              return pathOf(file);
+            } catch {
+              return "";
+            }
+          })
+          .filter((p) => p.length > 0);
+        if (!paths.length) return [];
+        const result = await api.attachments.fromPaths({ paths });
+        return result.attachments;
+      }
+      const out: AttachmentInfo[] = [];
+      if (folders?.length && selectedThreadId) {
+        for (const folder of folders) {
           try {
-            return pathOf(file);
+            const result = await api.attachments.saveFolder({
+              threadId: selectedThreadId,
+              name: folder.name,
+              files: folder.files,
+            });
+            if (result.attachment) out.push(result.attachment);
           } catch {
-            return "";
+            // skip a folder that the host refused
           }
-        })
-        .filter((p) => p.length > 0);
-      if (!paths.length) return [];
-      const result = await api.attachments.fromPaths({ paths });
-      return result.attachments;
+        }
+      }
+      const folderNames = new Set((folders ?? []).map((folder) => folder.name));
+      const loose = files.filter((file) => !folderNames.has(file.name));
+      out.push(
+        ...(await filesToAttachments(loose, {
+          image: saveAttachmentImage,
+          file: saveAttachmentFile,
+        })),
+      );
+      return out;
     },
-    [api, saveAttachmentImage],
+    [api, saveAttachmentFile, saveAttachmentImage, selectedThreadId],
   );
 
   const pushBranch = useCallback(async () => {

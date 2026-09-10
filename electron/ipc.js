@@ -1546,6 +1546,26 @@ const IPC_HANDLERS = {
       ),
     };
   },
+  "attachments:saveFile": async (ctx, input) => {
+    return {
+      attachment: attachments.saveFile(
+        ctx.userDataPath,
+        input && input.threadId,
+        input && input.name,
+        input && input.dataUrl,
+      ),
+    };
+  },
+  "attachments:saveFolder": async (ctx, input) => {
+    return {
+      attachment: attachments.saveFolder(
+        ctx.userDataPath,
+        input && input.threadId,
+        input && input.name,
+        input && input.files,
+      ),
+    };
+  },
   "attachments:readImage": async (ctx, input) => {
     const filePath = input && input.path;
     const resolved = await attachments.resolveImageFile(filePath);

@@ -151,6 +151,92 @@ describe("attachments module", () => {
     );
   });
 
+  it("saves a non-image file under userData as kind file", () => {
+    const dataUrl = `data:text/markdown;base64,${Buffer.from("# hi").toString("base64")}`;
+    const saved = attachments.saveFile(tmpDir, "t1", "notes.md", dataUrl);
+    assert.ok(saved, "saveFile must accept a markdown data URL");
+    assert.equal(saved.kind, "file");
+    assert.equal(saved.name, "notes.md");
+    assert.ok(saved.path.startsWith(path.join(tmpDir, "attachments", "t1")));
+    assert.equal(fs.readFileSync(saved.path, "utf8"), "# hi");
+  });
+
+  it("refuses saveFile thread ids that escape the attachments dir", () => {
+    const dataUrl = `data:text/plain;base64,${Buffer.from("x").toString("base64")}`;
+    for (const tid of ["../../escaped", "..", "a/b", "a\\b", "C:evil", ""]) {
+      assert.equal(
+        attachments.saveFile(tmpDir, tid, "notes.md", dataUrl),
+        null,
+        `threadId ${JSON.stringify(tid)} must be refused`,
+      );
+    }
+    assert.deepEqual(fs.readdirSync(tmpDir), []);
+  });
+
+  it("saves a folder tree under userData as kind folder", () => {
+    const saved = attachments.saveFolder(tmpDir, "t1", "specs", [
+      {
+        relativePath: "a.md",
+        dataUrl: `data:text/markdown;base64,${Buffer.from("# a").toString("base64")}`,
+      },
+      {
+        relativePath: "nested/b.txt",
+        dataUrl: `data:text/plain;base64,${Buffer.from("b").toString("base64")}`,
+      },
+    ]);
+    assert.ok(saved, "saveFolder must persist a directory tree");
+    assert.equal(saved.kind, "folder");
+    assert.equal(saved.name, "specs");
+    assert.ok(saved.path.startsWith(path.join(tmpDir, "attachments", "t1")));
+    assert.equal(fs.readFileSync(path.join(saved.path, "a.md"), "utf8"), "# a");
+    assert.equal(
+      fs.readFileSync(path.join(saved.path, "nested", "b.txt"), "utf8"),
+      "b",
+    );
+  });
+
+  it("saves an empty folder as kind folder", () => {
+    const saved = attachments.saveFolder(tmpDir, "t1", "empty", []);
+    assert.ok(saved, "empty directory pick must still be a folder chip");
+    assert.equal(saved.kind, "folder");
+    assert.equal(saved.name, "empty");
+    assert.ok(fs.statSync(saved.path).isDirectory());
+  });
+
+  it("refuses saveFolder traversal in thread id, name, or relative paths", () => {
+    const okFile = {
+      relativePath: "a.txt",
+      dataUrl: `data:text/plain;base64,${Buffer.from("a").toString("base64")}`,
+    };
+    assert.equal(attachments.saveFolder(tmpDir, "../t1", "specs", [okFile]), null);
+    assert.equal(
+      attachments.saveFolder(tmpDir, "t1", "../escape", [okFile]),
+      null,
+    );
+    const escaped = attachments.saveFolder(tmpDir, "t1", "specs", [
+      {
+        relativePath: "../outside.txt",
+        dataUrl: `data:text/plain;base64,${Buffer.from("no").toString("base64")}`,
+      },
+      {
+        relativePath: "/abs.txt",
+        dataUrl: `data:text/plain;base64,${Buffer.from("no").toString("base64")}`,
+      },
+    ]);
+    assert.equal(escaped, null, "traversal relative paths must refuse the save");
+    const attachRoot = path.join(tmpDir, "attachments");
+    if (fs.existsSync(attachRoot)) {
+      const walk = (dir) => {
+        for (const name of fs.readdirSync(dir)) {
+          assert.notEqual(name, "outside.txt");
+          const full = path.join(dir, name);
+          if (fs.statSync(full).isDirectory()) walk(full);
+        }
+      };
+      walk(attachRoot);
+    }
+  });
+
   it("omits the Images filter when includeImages is false (#1169)", async () => {
     let shown;
     await attachments.pickAttachments(

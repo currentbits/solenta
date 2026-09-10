@@ -240,6 +240,10 @@ export interface FakeOptions {
   issueSetPlanStatus?: SetPlanStatusResult;
   /** Override attachments.saveImage result (default: { attachment: null }). */
   saveImage?: (input: unknown) => { attachment: AttachmentInfo | null };
+  /** Override attachments.saveFile result (default: { attachment: null }). */
+  saveFile?: (input: unknown) => { attachment: AttachmentInfo | null };
+  /** Override attachments.saveFolder result (default: { attachment: null }). */
+  saveFolder?: (input: unknown) => { attachment: AttachmentInfo | null };
   /** Override attachments.fromPaths result (default: { attachments: [] }). */
   fromPaths?: (input: unknown) => { attachments: AttachmentInfo[] };
   /** Override attachments.listWindows (default: none). */
@@ -3405,6 +3409,18 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
           "attachments.saveImage",
           [input],
           opts.saveImage?.(input) ?? { attachment: null },
+        ),
+      saveFile: (input: unknown) =>
+        rec(
+          "attachments.saveFile",
+          [input],
+          opts.saveFile?.(input) ?? { attachment: null },
+        ),
+      saveFolder: (input: unknown) =>
+        rec(
+          "attachments.saveFolder",
+          [input],
+          opts.saveFolder?.(input) ?? { attachment: null },
         ),
       readImage: (input: unknown) =>
         rec("attachments.readImage", [input], { dataUrl: null }),

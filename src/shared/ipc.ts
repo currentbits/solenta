@@ -4530,6 +4530,25 @@ export interface CoderApi {
       dataUrl: string;
     }): Promise<{ attachment: AttachmentInfo | null }>;
     /**
+     * Persist a non-image file under userData/attachments/<threadId>.
+     * null when the payload is empty, too large, or the thread id is invalid.
+     */
+    saveFile(input: {
+      threadId: string;
+      name: string;
+      dataUrl: string;
+    }): Promise<{ attachment: AttachmentInfo | null }>;
+    /**
+     * Persist a directory tree under userData/attachments/<threadId> and
+     * return a kind=folder chip. Web File System Access / directory-entry
+     * drops use this because the browser has no absolute path for the folder.
+     */
+    saveFolder(input: {
+      threadId: string;
+      name: string;
+      files: Array<{ relativePath: string; dataUrl: string }>;
+    }): Promise<{ attachment: AttachmentInfo | null }>;
+    /**
      * One attached image as an img src. Desktop replies with a solenta-media://
      * URL; web replies with a data URL. null when the path is missing, not an
      * image, or too large.
@@ -4551,7 +4570,7 @@ export interface CoderApi {
     /**
      * Electron-only (preload, webUtils.getPathForFile): absolute path of a
      * drag-dropped File, including Finder directories. Absent on web/dev
-     * bridges, which fall back to saveImage (images only).
+     * bridges, which persist bytes via saveImage / saveFile / saveFolder.
      */
     droppedFilePath?(file: File): string;
   };

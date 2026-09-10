@@ -149,7 +149,10 @@ function composer(
     picks?: AttachmentInfo[];
     withPicker?: boolean;
     savedImage?: AttachmentInfo | null;
-    onDrop?: (files: File[]) => Promise<AttachmentInfo[]>;
+    onDrop?: (
+      files: File[],
+      folders?: import("../src/dropFiles").DroppedFolder[],
+    ) => Promise<AttachmentInfo[]>;
     incoming?: AttachmentInfo[];
     onIncomingConsumed?: () => void;
     onSaveImage?: (dataUrl: string) => Promise<AttachmentInfo | null>;
