@@ -1,5 +1,6 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { persistWebToken, resolveWebToken, webNavigation } from "../coderApi";
+import { useModalFocus } from "../useModalFocus";
 import styles from "./SettingsModal.module.css";
 
 /**
@@ -10,6 +11,7 @@ import styles from "./SettingsModal.module.css";
  */
 export function WebTokenGate() {
   const [token, setToken] = useState("");
+  const dialogRef = useRef<HTMLDivElement>(null);
   const [open] = useState(() => {
     try {
       return !resolveWebToken();
@@ -17,6 +19,7 @@ export function WebTokenGate() {
       return true;
     }
   });
+  useModalFocus(open, dialogRef);
 
   if (!open) return null;
 
@@ -34,10 +37,12 @@ export function WebTokenGate() {
       data-web-token-gate=""
     >
       <div
+        ref={dialogRef}
         className={styles.modal}
         role="dialog"
         aria-modal="true"
         aria-labelledby="web-token-title"
+        tabIndex={-1}
       >
         <div className={styles.header}>
           <h2 id="web-token-title" className={styles.title}>

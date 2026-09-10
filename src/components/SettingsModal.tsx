@@ -33,6 +33,7 @@ import type {
 } from "../shared/ipc";
 import { syncTheme, type ThemePreference } from "../theme";
 import { useEscapeClose } from "../useEscapeClose";
+import { useModalFocus } from "../useModalFocus";
 import styles from "./SettingsModal.module.css";
 import { WorktreeGcSection } from "./WorktreeGcSection";
 import { VibeKanbanSection } from "./VibeKanbanSection";
@@ -429,7 +430,9 @@ export function SettingsModal({
     onClose();
   }, [onClose]);
 
+  const dialogRef = useRef<HTMLDivElement>(null);
   useEscapeClose(open, handleClose);
+  useModalFocus(open, dialogRef);
 
   useEffect(() => {
     if (!open || !isSettingsPane(initialPane)) return;
@@ -862,11 +865,13 @@ export function SettingsModal({
       }}
     >
       <div
+        ref={dialogRef}
         className={styles.settingsModal}
         role="dialog"
         aria-modal="true"
         aria-label="Settings"
         data-settings=""
+        tabIndex={-1}
         onMouseDown={(e) => e.stopPropagation()}
       >
         <header className={styles.header}>

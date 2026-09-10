@@ -1941,3 +1941,25 @@ describe("SettingsModal default orchestrator profile (#725)", () => {
     m.unmount();
   });
 });
+
+describe("SettingsModal focus trap (#916)", () => {
+  it("opening the dialog moves focus inside; Tab stays inside", async () => {
+    const m = await mount(modal());
+    const dialog = m.query("[data-settings]") as HTMLElement | null;
+    assert.ok(dialog, "settings dialog");
+    assert.ok(
+      dialog.contains(document.activeElement),
+      "opening the dialog must move focus inside it",
+    );
+    await m.pressFocused("Tab");
+    const first = document.activeElement as HTMLElement;
+    assert.ok(dialog.contains(first), "Tab stays inside");
+    assert.notEqual(first, dialog, "Tab moves to a focusable inside the dialog");
+    await m.pressFocused("Tab");
+    assert.ok(
+      dialog.contains(document.activeElement),
+      "second Tab stays inside",
+    );
+    m.unmount();
+  });
+});
