@@ -208,6 +208,7 @@
   max-width: min(320px, 92vw);
   margin: 0;
   padding: 10px;
+  outline: none;
   border-radius: 12px;
   border: 1px solid var(--border);
   background: var(--bg-elevated);

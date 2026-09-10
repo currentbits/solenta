@@ -387,7 +387,6 @@ function ImageLightbox({
 }) {
   const dialogRef = useRef<HTMLDivElement>(null);
   const [zoomed, setZoomed] = useState(false);
-  const dialogRef = useRef<HTMLDivElement>(null);
   useEscapeClose(true, onClose);
   useModalFocus(true, dialogRef);
   return (
@@ -4483,8 +4482,6 @@ export const ThreadView = memo(function ThreadView({
   const rewindDialogRef = useRef<HTMLDivElement>(null);
   const [rewindRestoreFiles, setRewindRestoreFiles] = useState(false);
   const [rewindPending, setRewindPending] = useState(false);
-  const rewindDialogRef = useRef<HTMLDivElement>(null);
-  const reviewUndoDialogRef = useRef<HTMLDivElement>(null);
   /** Header context breakdown; `/context` pins this open. */
   const [contextOpen, setContextOpen] = useState(false);
   /** Provider account quotas; `/usage` opens this even with no ring. */
@@ -4563,7 +4560,6 @@ export const ThreadView = memo(function ThreadView({
   >([]);
   const [snapError, setSnapError] = useState<string | null>(null);
   const [snapBusy, setSnapBusy] = useState(false);
-  const snapDialogRef = useRef<HTMLDivElement>(null);
   const [layoutThreadId, setLayoutThreadId] = useState<string | null>(threadId);
   const [layout, setLayout] = useState<LayoutNode>(() =>
     hydratePaneLayout(threadId, { openDiff: changesOpen }).layout,

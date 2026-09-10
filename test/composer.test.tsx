@@ -1159,6 +1159,76 @@ describe("Composer drill-down picker", () => {
     m.unmount();
   });
 
+  it("opening the model picker moves focus inside; Tab stays inside; Escape restores", async () => {
+    const h = makeHarness();
+    const m = await mount(composer(h, { provider: "claude", model: null }));
+    const trigger = m.query('button[aria-label^="Model:"]') as HTMLButtonElement;
+    await m.click(trigger);
+
+    const dialog = m.query(
+      '[role="dialog"][aria-label="Model picker"]',
+    ) as HTMLElement | null;
+    assert.ok(dialog, "model picker");
+    assert.ok(
+      dialog.contains(document.activeElement),
+      "opening the dialog must move focus inside it",
+    );
+    assert.notEqual(document.activeElement, trigger);
+
+    const before = m.query('[data-highlighted="true"]')?.textContent;
+    await m.pressFocused("ArrowDown");
+    assert.notEqual(
+      m.query('[data-highlighted="true"]')?.textContent,
+      before,
+      "arrows must still move the listbox highlight",
+    );
+
+    await m.pressFocused("Enter");
+    assert.ok(
+      m.query('[role="listbox"][aria-label="Model"]'),
+      "Enter must still drill from the listbox",
+    );
+    const search = m.query('input[aria-label="Search models"]') as HTMLElement | null;
+    assert.ok(search, "drill focuses search");
+    assert.ok(
+      dialog.contains(document.activeElement),
+      "focus stays inside after drill",
+    );
+
+    await m.pressFocused("Tab");
+    const first = document.activeElement as HTMLElement;
+    assert.ok(dialog.contains(first), "Tab stays inside");
+    assert.notEqual(first, trigger, "Tab must not land back on the trigger");
+    assert.notEqual(
+      first,
+      search,
+      "Tab must move off search onto another control inside the popover",
+    );
+
+    await m.pressFocused("Escape");
+    assert.ok(
+      m.query('[role="listbox"][aria-label="Provider"]'),
+      "Escape must still step back a level",
+    );
+    assert.equal(
+      m.query('[role="listbox"][aria-label="Model"]'),
+      null,
+      "and leave the model level",
+    );
+
+    await m.pressFocused("Escape");
+    assert.equal(
+      m.query('[role="dialog"][aria-label="Model picker"]'),
+      null,
+      "Escape at the provider list closes the picker",
+    );
+    assert.ok(
+      document.activeElement === trigger,
+      `Escape restores the composer trigger (got ${document.activeElement?.tagName})`,
+    );
+    m.unmount();
+  });
+
   it("drills in highlighting the model the thread is on, not Default", async () => {
     // B3: the comment claimed this while the code sent every drill-in to row 0,
     // so the detail pane described Default while aria-selected sat elsewhere.

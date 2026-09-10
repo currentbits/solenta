@@ -59,6 +59,7 @@ import {
   type ProfileRow,
 } from "../modelPicker";
 import { useEscapeClose } from "../useEscapeClose";
+import { useModalFocus } from "../useModalFocus";
 import { ProviderMark } from "./ProviderMark";
 import { applyMention, getMentionQuery, type MentionQuery } from "../mention";
 import { ArchiveToast } from "./ArchiveToast";
@@ -911,12 +912,14 @@ export const Composer = memo(function Composer({
   const attachWrapRef = useRef<HTMLDivElement>(null);
   const modelWrapRef = useRef<HTMLDivElement>(null);
   const modelTriggerRef = useRef<HTMLButtonElement>(null);
+  const modelPopoverRef = useRef<HTMLDivElement>(null);
   const effortWrapRef = useRef<HTMLDivElement>(null);
   const modelListRef = useRef<HTMLUListElement>(null);
   const modelSearchRef = useRef<HTMLInputElement>(null);
   const providerListRef = useRef<HTMLUListElement>(null);
   const buildWrapRef = useRef<HTMLDivElement>(null);
   const bestOfNWrapRef = useRef<HTMLDivElement>(null);
+  const bestOfNPopoverRef = useRef<HTMLDivElement>(null);
   const modelListId = useId();
 
   /** @-mention popup state; `mention` null means closed. */
@@ -1387,6 +1390,11 @@ export const Composer = memo(function Composer({
     setViewOpen(false);
   }, [modelOpen, closeModelPicker]);
   useEscapeClose(anyMenuOpen, closeAllMenus);
+  // Listbox timeout already focuses the provider/model list on open and
+  // drill; takeFocus would steal that, and restore would fight
+  // closeModelPicker / Escape-back.
+  useModalFocus(modelOpen, modelPopoverRef, false);
+  useModalFocus(bestOfNOpen, bestOfNPopoverRef);
 
   const popupOpen = anyMenuOpen || mentionOpen || commandOpen || manageOpen;
   useEffect(() => {
@@ -2509,6 +2517,7 @@ export const Composer = memo(function Composer({
               </button>
               {modelOpen && (
                 <div
+                  ref={modelPopoverRef}
                   className={styles.modelPopover}
                   role="dialog"
                   aria-label="Model picker"
@@ -2579,6 +2588,7 @@ export const Composer = memo(function Composer({
                             <button
                               type="button"
                               className={styles.providerRow}
+                              tabIndex={-1}
                               data-highlighted={
                                 index === providerIndex ? "true" : undefined
                               }
@@ -2612,6 +2622,7 @@ export const Composer = memo(function Composer({
                             <button
                               type="button"
                               className={styles.providerRow}
+                              tabIndex={-1}
                               data-selected={row.current ? "true" : undefined}
                               data-highlighted={
                                 index + profileRows.length === providerIndex
@@ -2755,6 +2766,7 @@ export const Composer = memo(function Composer({
                             <button
                               type="button"
                               className={styles.modelRow}
+                              tabIndex={-1}
                               // The list scrolls (26 rows in a 240px box) and
                               // opens focused, so arrow keys are the first
                               // affordance. Scroll the list only: scrollIntoView
@@ -3204,9 +3216,11 @@ export const Composer = memo(function Composer({
                 </button>
                 {bestOfNOpen && (
                   <div
+                    ref={bestOfNPopoverRef}
                     className={styles.bestOfNPopover}
                     role="dialog"
                     aria-label="Best of N"
+                    tabIndex={-1}
                     data-best-of-n-popover=""
                   >
                     <p className={styles.bestOfNHint}>

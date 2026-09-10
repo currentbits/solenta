@@ -199,6 +199,53 @@ async function openBestOfN(
 }
 
 describe("Best of N popover", () => {
+  it("opening Best of N moves focus inside; Tab stays inside; Escape restores", async () => {
+    const m = await mount(composer());
+    const trigger = m.query("[data-best-of-n]") as HTMLButtonElement;
+    const ta = m.query("textarea");
+    assert.ok(ta, "composer textarea");
+    await m.type(ta, "compare this");
+    // jsdom click does not focus; a real click would. Seed the trigger so
+    // useModalFocus restores it the way a pointer open does.
+    trigger.focus();
+    await m.click(trigger);
+    const dialog = m.query("[data-best-of-n-popover]") as HTMLElement | null;
+    assert.ok(dialog, "popover");
+    assert.ok(
+      dialog.contains(document.activeElement),
+      "opening the dialog must move focus inside it",
+    );
+    assert.notEqual(document.activeElement, trigger);
+
+    await m.pressFocused("Tab");
+    const first = document.activeElement as HTMLElement;
+    assert.ok(dialog.contains(first), "Tab stays inside");
+    assert.equal(first.tagName, "INPUT");
+
+    await m.pressFocused("Tab");
+    const second = document.activeElement as HTMLElement;
+    assert.ok(dialog.contains(second), "second Tab stays inside");
+    assert.notEqual(second, first);
+
+    await m.pressFocused("Tab");
+    const third = document.activeElement as HTMLElement;
+    assert.ok(dialog.contains(third), "third Tab stays inside");
+
+    await m.pressFocused("Tab");
+    assert.ok(
+      document.activeElement === first,
+      "Tab wraps inside the dialog",
+    );
+
+    await m.pressFocused("Escape");
+    assert.equal(m.query("[data-best-of-n-popover]"), null);
+    assert.ok(
+      document.activeElement === trigger,
+      `Escape restores the composer trigger (got ${document.activeElement?.tagName})`,
+    );
+    m.unmount();
+  });
+
   it("stays disabled when the composer is empty or a run is active", async () => {
     const empty = await mount(composer());
     const emptyBtn = empty.query("[data-best-of-n]") as HTMLButtonElement;
