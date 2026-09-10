@@ -214,7 +214,13 @@ import { DROP_OVERLAY_MESSAGE, type DroppedFolder } from "../dropFiles";
 import { Composer } from "./Composer";
 import { repoRelativeDir } from "../mention";
 import { createDoubleOptionTracker } from "../appsnapHotkey";
-import type { ReplyTarget } from "../replyContext";
+import {
+  captureCiteFromSelection,
+  citeBodyFromSelection,
+  makeReplyTarget,
+  replySourceUnavailable,
+  type ReplyTarget,
+} from "../replyContext";
 import { waitWhatPrompt } from "../waitWhat";
 import { Markdown } from "./Markdown";
 import { sessionImagePathsFromMessages } from "../sessionImages";
@@ -1490,9 +1496,11 @@ const MessageBlock = memo(function MessageBlock({
   onLoadAttachmentImage,
   onSelectThread,
   onReply,
+  onCiteSelection,
   onWaitWhat,
   pinned = false,
   onTogglePin,
+  threadId = null,
 }: {
   message: ChatMessage;
   autoExpandTool: boolean;
@@ -1517,9 +1525,11 @@ const MessageBlock = memo(function MessageBlock({
   provenance?: MessageProvenance | null;
   onSelectThread?: (id: string) => void;
   onReply?: (message: ChatMessage) => void;
+  onCiteSelection?: (target: ReplyTarget) => void;
   onWaitWhat?: (message: ChatMessage) => void;
   pinned?: boolean;
   onTogglePin?: () => void;
+  threadId?: string | null;
 }) {
   // Latch at mount; see ToolCallCard for why.
   const [entered] = useState(Boolean(animateIn));
@@ -1593,8 +1603,13 @@ const MessageBlock = memo(function MessageBlock({
     <article
       className={`${styles.message}${entered ? ` ${styles.streamIn}` : ""}`}
       data-stream-in={entered ? "" : undefined}
+      data-msg={message.id}
+      data-thread={threadId ?? undefined}
+      data-streaming={streaming ? "" : undefined}
     >
-      <Markdown text={message.text} />
+      <div data-cite-body="">
+        <Markdown text={message.text} />
+      </div>
       {streaming && (
         <span
           className={styles.streamCaret}
@@ -1606,7 +1621,9 @@ const MessageBlock = memo(function MessageBlock({
       <footer className={styles.msgMeta}>
         <span>{metaLine}</span>
         {(onTogglePin ||
-          (!streaming && message.text.trim() && (onReply || onWaitWhat))) && (
+          (!streaming &&
+            message.text.trim() &&
+            (onReply || onCiteSelection || onWaitWhat))) && (
           <span className={styles.msgActions}>
             {onTogglePin && (
               <button
@@ -1630,6 +1647,29 @@ const MessageBlock = memo(function MessageBlock({
                 onClick={() => onReply(message)}
               >
                 Reply
+              </button>
+            )}
+            {!streaming && onCiteSelection && threadId && message.text.trim() && (
+              <button
+                type="button"
+                className={styles.msgAction}
+                data-msg-cite=""
+                title="Quote the selected text as context for the next send (⌘⇧C)"
+                onClick={(e) => {
+                  const article = e.currentTarget.closest("[data-msg]");
+                  const citeBody = article?.querySelector("[data-cite-body]");
+                  if (!(citeBody instanceof Element)) return;
+                  const target = captureCiteFromSelection({
+                    selection: window.getSelection(),
+                    messageId: message.id,
+                    threadId,
+                    sourceText: message.text,
+                    citeBody,
+                  });
+                  if (target) onCiteSelection(target);
+                }}
+              >
+                Cite
               </button>
             )}
             {!streaming && onWaitWhat && message.text.trim() && (
@@ -4576,7 +4616,16 @@ export const ThreadView = memo(function ThreadView({
     screenshotHandoffThreadId.current = threadId;
     screenshotHandoffGen.current += 1;
   }
-  const [replyTo, setReplyTo] = useState<ReplyTarget | null>(null);
+  const [replyByThread, setReplyByThread] = useState<
+    Record<string, ReplyTarget>
+  >({});
+  const replyTo = threadId ? (replyByThread[threadId] ?? null) : null;
+  const replySourceGone = replyTo
+    ? replySourceUnavailable(
+        replyTo,
+        detail?.messages.find((m) => m.id === replyTo.messageId),
+      )
+    : false;
   const [snapOpen, setSnapOpen] = useState(false);
   const snapDialogRef = useRef<HTMLDivElement>(null);
   const [snapWindows, setSnapWindows] = useState<
@@ -4659,8 +4708,7 @@ export const ThreadView = memo(function ThreadView({
     initialWindowStart(timeline.length),
   );
   const pendingPrepend = useRef<number | null>(null);
-  const revealTargetId = revealMessageId || jumpMessageId;
-
+  const revealTargetId = revealMessageId ?? jumpMessageId;
   const revealIndex = useMemo(() => {
     if (!revealTargetId) return -1;
     return timeline.findIndex(
@@ -4681,6 +4729,7 @@ export const ThreadView = memo(function ThreadView({
   if (threadId !== windowThreadId) {
     setWindowThreadId(threadId);
     setWindowStart(start);
+    setJumpMessageId(null);
   } else if (start < windowStart) {
     setWindowStart(start);
   }
@@ -4757,6 +4806,16 @@ export const ThreadView = memo(function ThreadView({
       }
     }
   });
+
+  useLayoutEffect(() => {
+    if (!revealTargetId) return;
+    const root = bodyRef.current;
+    if (!root) return;
+    const el = Array.from(root.querySelectorAll("[data-msg]")).find(
+      (node) => node.getAttribute("data-msg") === revealTargetId,
+    );
+    el?.scrollIntoView({ block: "nearest" });
+  }, [revealTargetId, start]);
 
   /** Run duration per runId, for assistant-message meta footers. Opt-in. */
   const showRunDuration = useRunDurationEnabled();
@@ -5285,9 +5344,33 @@ export const ThreadView = memo(function ThreadView({
     [onStartRun],
   );
 
-  const handleReply = useCallback((message: ChatMessage) => {
-    setReplyTo({ messageId: message.id, text: message.text });
+  const storeReply = useCallback((target: ReplyTarget) => {
+    const tid = target.threadId;
+    if (!tid) return;
+    setReplyByThread((prev) => ({ ...prev, [tid]: target }));
   }, []);
+
+  const handleReply = useCallback(
+    (message: ChatMessage) => {
+      if (!threadId) return;
+      const target = makeReplyTarget({
+        messageId: message.id,
+        threadId,
+        text: message.text,
+        kind: "message",
+        sourceText: message.text,
+      });
+      if (target) storeReply(target);
+    },
+    [threadId, storeReply],
+  );
+
+  const handleCiteSelection = useCallback(
+    (target: ReplyTarget) => {
+      storeReply(target);
+    },
+    [storeReply],
+  );
 
   const handleWaitWhat = useCallback(
     (message: ChatMessage) => {
@@ -5295,6 +5378,47 @@ export const ThreadView = memo(function ThreadView({
     },
     [onStartRun],
   );
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.defaultPrevented) return;
+      if (!(e.metaKey || e.ctrlKey) || !e.shiftKey) return;
+      if (e.key.toLowerCase() !== "c") return;
+      const t = e.target;
+      if (
+        t instanceof HTMLTextAreaElement ||
+        t instanceof HTMLInputElement ||
+        (t instanceof HTMLElement && t.isContentEditable)
+      ) {
+        return;
+      }
+      const sel = window.getSelection();
+      const citeBody = citeBodyFromSelection(sel);
+      if (!citeBody) return;
+      const article = citeBody.closest("[data-msg]");
+      if (!(article instanceof HTMLElement)) return;
+      if (article.hasAttribute("data-streaming")) return;
+      const messageId = article.getAttribute("data-msg");
+      const originThreadId = article.getAttribute("data-thread");
+      if (!messageId || !originThreadId) return;
+      const message = detail?.messages.find((row) => row.id === messageId);
+      if (!message || message.role !== "assistant" || !message.text.trim()) {
+        return;
+      }
+      const target = captureCiteFromSelection({
+        selection: sel,
+        messageId,
+        threadId: originThreadId,
+        sourceText: message.text,
+        citeBody,
+      });
+      if (!target) return;
+      e.preventDefault();
+      storeReply(target);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [detail?.messages, storeReply]);
 
   const pickMentionFolder = useCallback(async () => {
     if (!onPickDirectory) return null;
@@ -7204,9 +7328,15 @@ export const ThreadView = memo(function ThreadView({
                       provenance={
                         provenanceById.get(entry.message.id) ?? null
                       }
+                      threadId={threadId}
                       onReply={
                         entry.message.role === "assistant"
                           ? handleReply
+                          : undefined
+                      }
+                      onCiteSelection={
+                        entry.message.role === "assistant"
+                          ? handleCiteSelection
                           : undefined
                       }
                       onWaitWhat={
@@ -7795,7 +7925,20 @@ export const ThreadView = memo(function ThreadView({
           onPickDirectory ? pickMentionFolder : undefined
         }
         replyTo={replyTo}
-        onClearReply={() => setReplyTo(null)}
+        onClearReply={() => {
+          if (!threadId) return;
+          setReplyByThread((prev) => {
+            if (!(threadId in prev)) return prev;
+            const next = { ...prev };
+            delete next[threadId];
+            return next;
+          });
+        }}
+        onRevealReply={() => {
+          if (!replyTo || replySourceGone) return;
+          setJumpMessageId(replyTo.messageId);
+        }}
+        replySourceUnavailable={replySourceGone}
         onPickAttachments={onPickAttachments}
         onPickFolderAttachments={onPickFolderAttachments}
         onSaveAttachmentImage={onSaveAttachmentImage}
