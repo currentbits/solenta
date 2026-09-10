@@ -130,6 +130,7 @@ export const IPC_CHANNELS = [
   { ns: "threads", method: "setCrossThreadInbound" },
   { ns: "threads", method: "setQuotaWaitAutoResume" },
   { ns: "threads", method: "setNotes" },
+  { ns: "threads", method: "setMessagePins" },
   { ns: "threads", method: "setBaseBranch" },
   { ns: "threads", method: "refreshWorkerSnapshot" },
   { ns: "threads", method: "setFeltEstimate" },
