@@ -1,20 +1,20 @@
 import { useRef, useState } from "react";
-import { persistWebToken, resolveWebToken, webNavigation } from "../coderApi";
+import { needsWebTokenGate, persistWebToken, webNavigation } from "../coderApi";
 import { useModalFocus } from "../useModalFocus";
 import styles from "./SettingsModal.module.css";
 
 /**
- * Visual token gate for Solenta Web. Hidden when a token already resolves
- * (query param or persisted); submitting persists via the same
- * persistWebToken path boot.tsx's gate uses and reloads so the wire
- * client picks it up.
+ * Visual token gate for Solenta Web. Open only when needsWebTokenGate()
+ * is true (production web, no token). Vite DEV and a resolved token
+ * both stay closed. Submitting persists via the same persistWebToken
+ * path boot.tsx's gate uses and reloads so the wire client picks it up.
  */
 export function WebTokenGate() {
   const [token, setToken] = useState("");
   const dialogRef = useRef<HTMLDivElement>(null);
   const [open] = useState(() => {
     try {
-      return !resolveWebToken();
+      return needsWebTokenGate();
     } catch {
       return true;
     }

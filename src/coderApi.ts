@@ -51,10 +51,17 @@ export function resolveWebToken(
   return storage.getItem(WEB_TOKEN_KEY);
 }
 
-/** Vite DEV build flag, injectable so the DEV branches are testable (the
- *  esbuild test harness pins import.meta.env.DEV falsy). */
+/** Vite DEV build flag. The esbuild test harness pins import.meta.env.DEV
+ *  falsy, so tests that need the `npm run dev:browser` path replace
+ *  `devBuild.isDev` (same seam style as webNavigation.reload). */
+export const devBuild = {
+  isDev(): boolean {
+    return Boolean(import.meta.env?.DEV);
+  },
+};
+
 export function isDevBuild(): boolean {
-  return Boolean(import.meta.env?.DEV);
+  return devBuild.isDev();
 }
 
 export function needsWebTokenGate(isDev: boolean = isDevBuild()): boolean {
