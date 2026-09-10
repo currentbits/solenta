@@ -67,7 +67,7 @@ describe("providers registry", () => {
     const codex = getProvider("codex");
     assert.equal(codex.kind, "codex-json");
     assert.equal(codex.supportsResume, true);
-    assert.equal(codex.supportsSteer, undefined);
+    assert.equal(codex.supportsSteer, false);
     assert.equal(codex.sessionPinsModel, true);
     assert.ok(codex.models.includes("gpt-5.5"));
     assert.ok(codex.models.includes("gpt-6-astra"));

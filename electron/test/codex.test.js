@@ -132,6 +132,14 @@ async function main() {
     return;
   }
 
+  // Live exec --json turn with no stdin channel (issue #1164).
+  if (scenario === "hang") {
+    emit({ type: "thread.started", thread_id: "codex-sess-hang" });
+    await delay(30000);
+    process.exit(1);
+    return;
+  }
+
   if (scenario === "writer-lock") {
     process.stderr.write(
       "2026-09-06T06:31:14.326054Z ERROR codex_core::session: failed to initialize thread persistence: thread-store conflict: thread 01a072f7-10e0-7fd2-b691-7d481327516f already has an active writer\\n" +
@@ -1233,6 +1241,22 @@ describe("runner codex provider", () => {
 
     const search = tools.find((m) => m.tool.name === "WebSearch");
     assert.match(search.text, /codex exec json/);
+  });
+
+  it("steerRun rejects on a live Codex exec --json turn (#1164)", async () => {
+    process.env.CODER_FAKE_CODEX_SCENARIO = "hang";
+    const thread = store.getThreads()[0];
+    await runner.startRun({ threadId: thread.id, prompt: "work" });
+    await waitFor(() => runner.isRunning(thread.id));
+    await assert.rejects(
+      () => runner.steerRun({ threadId: thread.id, prompt: "nudge mid-turn" }),
+      /cannot steer a live turn/i,
+    );
+    assert.equal(
+      store.getMessages(thread.id).some((m) => m.steer === true),
+      false,
+      "rejected steer must not append a steer user row",
+    );
   });
 
   it("passes image attachments via exec -i, not prompt text (#176)", async () => {

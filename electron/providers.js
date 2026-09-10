@@ -69,7 +69,8 @@ const { posixQuote } = require("./ssh.js");
  *   (live web search). Absent/false hides the composer Search pill.
  * @property {boolean} [supportsSteer] - live process accepts a second stdin
  *   user message as mid-turn guidance (Claude `--input-format stream-json`).
- *   Absent/false keeps the composer queue-only while a run is active.
+ *   Codex exec --json is explicit false (issue #1164). Absent/false keeps
+ *   the composer queue-only while a run is active.
  * @property {Array<"default"|"acceptEdits"|"plan"|"bypassPermissions">} permissionModes
  *   Modes this adapter actually honours (changes argv / CLI behaviour).
  *   The composer only offers these; setPermissionMode rejects the rest.
@@ -333,6 +334,14 @@ const PROVIDERS = [
     supportsResume: true,
     // exec resume hydrates model from the rollout; -m does not switch it.
     sessionPinsModel: true,
+    // exec --json has no mid-turn user channel (issue #1164 / #156).
+    // Prompt is argv (or stdin drained once as the initial prompt /
+    // `<stdin>` block). CLI 0.153.4: `codex exec` is non-interactive;
+    // `-i` is --image; `codex queue` is follow-up-after-idle. Astra
+    // send_user_message_async / clock is persist-mode desktop
+    // (model → user), not exec stdin. app-server turn/steer is a
+    // different protocol. Do not fake by kill+resume.
+    supportsSteer: false,
     // Snapshot of ~/.codex/models_cache.json visibility=list (client 0.153.2,
     // 2026-09-04). Astra is the flagship (priority 1); Sol is the 5.6
     // workhorse. gpt-5.4 is retired (upgrade → terra) and omitted.

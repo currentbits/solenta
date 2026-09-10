@@ -2237,8 +2237,9 @@ export interface ProviderInfo {
   supportsSearch?: boolean;
   /**
    * True when a live turn can take mid-run guidance on stdin (issue #156).
-   * Claude stream-json does; one-shot `-p` / `exec --json` CLIs do not.
-   * The composer hides Steer when this is missing or false.
+   * Claude stream-json does; one-shot `-p` / `exec --json` CLIs do not
+   * (Codex: issue #1164). The composer hides Steer when this is missing
+   * or false.
    */
   supportsSteer?: boolean;
   /**

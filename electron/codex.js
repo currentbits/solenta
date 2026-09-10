@@ -24,7 +24,8 @@ const STDERR_TAIL_CHARS = 64 * 1024;
  * @param {(ev: object) => void} opts.onEvent - raw parsed JSONL event
  * @param {(info: { code: number | null, stderr: string }) => void} opts.onExit
  * @param {(err: Error) => void} [opts.onError]
- * @returns {{ kill: () => void }}
+ * @returns {{ kill: () => void }} kill only — no send(); stdin is ignored
+ *   because exec --json has no mid-turn user channel (issue #1164)
  */
 function runCodex(opts) {
   const {
@@ -85,6 +86,8 @@ function runCodex(opts) {
       args,
       agentSpawnOptions({
         cwd,
+        // exec --json is one-shot: prompt is argv. stdin is not a second
+        // user-message channel (issue #1164).
         stdio: ["ignore", "pipe", "pipe"],
         env: envExtra ? { ...process.env, ...envExtra } : undefined,
       }),
