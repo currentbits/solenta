@@ -11,6 +11,7 @@ import {
   createFakeCoder,
   installFakeCoder,
   project,
+  thread,
 } from "./support/fakeCoder.ts";
 import App from "../src/App";
 import { ThreadView } from "../src/components/ThreadView";
@@ -142,9 +143,15 @@ describe("Onboarding first-thread step", () => {
       !m.query("[data-onboarding-provider-select]"),
       "a single real provider is not a select",
     );
-    assert.ok(
-      m.query("[data-onboarding-example]")?.textContent,
+    assert.match(
+      m.query("[data-onboarding-example]")?.textContent ?? "",
+      /Look at this project/,
       "example prompt must be visible",
+    );
+    assert.match(
+      m.text(),
+      /press Send when you are ready/,
+      "copy must not claim that writing alone sends",
     );
     const docs = m.query("[data-onboarding-docs]");
     assert.ok(docs, "one docs link");
@@ -326,6 +333,60 @@ describe("Onboarding first-thread step", () => {
     m.unmount();
   });
 
+  it("does not inherit the selected thread provider; retry creates once", async () => {
+    const fail: Record<string, Error> = {
+      "threads.setProvider": new Error("provider save failed"),
+    };
+    const fake = createFakeCoder({
+      settings: { onboardingSeen: false },
+      threads: [thread({ id: "t1", provider: "grok" })],
+      providers: [
+        prov("claude", "Claude Code", true),
+        prov("grok", "Grok", true),
+      ],
+      fail,
+    });
+    const m = await boot(fake);
+    await gotoTour(m);
+
+    await m.click(m.query("[data-onboarding-create-thread]"));
+    assert.equal(fake.of("threads.create").length, 1);
+    const setCalls = fake.of("threads.setProvider");
+    assert.equal(setCalls.length, 1, "no inherit setProvider before onboarding");
+    const firstSet = setCalls[0]!.args[0] as {
+      threadId?: string;
+      provider?: string;
+    };
+    assert.equal(firstSet.threadId, "t-new");
+    assert.equal(firstSet.provider, "claude");
+    assert.ok(
+      m.query("[data-onboarding-first-error]"),
+      "failed onboarding setProvider must stay on the wizard",
+    );
+
+    delete fail["threads.setProvider"];
+    await m.click(m.query("[data-onboarding-create-thread]"));
+    assert.equal(
+      fake.of("threads.create").length,
+      1,
+      "retry after setProvider fail must not create a second thread",
+    );
+    assert.equal(fake.of("threads.setProvider").length, 2);
+    for (const call of fake.of("threads.setProvider")) {
+      const input = call.args[0] as { provider?: string };
+      assert.equal(
+        input.provider,
+        "claude",
+        "must not inherit grok from the selected thread",
+      );
+    }
+    assert.equal(fake.of("runs.start").length, 0);
+    const card = m.query('[data-thread-card="t-new"]');
+    assert.ok(card, "reused thread must be selected after retry");
+    assert.ok(card.hasAttribute("data-active"));
+    m.unmount();
+  });
+
   it("pending create blocks skip, back, and a second create", async () => {
     const fake = createFakeCoder({ settings: { onboardingSeen: false } });
     const origCreate = fake.api.threads.create.bind(fake.api.threads);
@@ -350,7 +411,7 @@ describe("Onboarding first-thread step", () => {
     assert.equal(create.disabled, true, "Create disables while pending");
     assert.equal(skip.disabled, true, "Skip disables while pending");
     assert.equal(back.disabled, true, "Back disables while pending");
-    assert.equal(next.disabled, true, "Finish disables while pending");
+    assert.equal(next.disabled, true, "Do this later disables while pending");
     await m.click(create);
     assert.ok(release, "create must have started");
     release();
@@ -386,11 +447,18 @@ describe("Onboarding first-thread step", () => {
       | HTMLElement
       | null;
     assert.ok(addDialog, "add-project dialog must open");
+    const backdrop = m.query(
+      "[data-onboarding-backdrop]",
+    ) as HTMLElement | null;
+    assert.ok(backdrop, "onboarding backdrop stays mounted while suspended");
     assert.ok(
-      m.query("[data-onboarding-backdrop]")?.hasAttribute(
-        "data-onboarding-suspended",
-      ),
+      backdrop.hasAttribute("data-onboarding-suspended"),
       "onboarding must suspend while add-project is open",
+    );
+    assert.equal(
+      getComputedStyle(backdrop).display,
+      "none",
+      "display:grid must not override hidden while add-project is open",
     );
     addDialog.focus();
     await m.pressFocused("Escape");

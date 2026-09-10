@@ -40,9 +40,10 @@ describe("Onboarding wizard", () => {
       m.query("[data-onboarding-progress]")?.textContent?.trim(),
       "Step 1 of 3",
     );
-    assert.ok(
-      m.query("[data-onboarding-benefit]")?.textContent,
-      "first step must show benefit copy",
+    assert.match(
+      m.query("[data-onboarding-benefit]")?.textContent ?? "",
+      /share project context/,
+      "first step must keep the shared-memory product line",
     );
     m.unmount();
   });
@@ -86,8 +87,12 @@ describe("Onboarding wizard", () => {
     );
     assert.equal(
       next.textContent?.trim(),
-      "Finish",
-      "Next must read Finish on the last step",
+      "Do this later",
+      "last-step footer is secondary Do this later, not Finish",
+    );
+    assert.ok(
+      m.query("[data-onboarding-create-thread]"),
+      "Create first thread is the last-step primary action",
     );
 
     await m.click(back);
@@ -223,7 +228,6 @@ describe("OnboardingModal focus trap", () => {
           </button>
           <OnboardingModal
             open={open}
-            onClose={() => setOpen(false)}
             onFinish={() => setOpen(false)}
             providers={[]}
             refreshProviders={async () => {}}

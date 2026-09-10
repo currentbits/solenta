@@ -7,6 +7,10 @@
   background: var(--scrim);
 }
 
+.backdrop[hidden] {
+  display: none;
+}
+
 .sheet {
   width: min(440px, calc(100vw - 32px));
   max-height: min(80vh, 560px);

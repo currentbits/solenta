@@ -337,6 +337,7 @@ export interface UseCoderResult {
       ask?: boolean;
       issueNumber?: number | null;
       baseBranch?: string | null;
+      inheritProvider?: boolean;
     },
   ) => Promise<ThreadInfo | null>;
   /**
@@ -1553,6 +1554,7 @@ export function useCoder(): UseCoderResult {
         ask?: boolean;
         issueNumber?: number | null;
         baseBranch?: string | null;
+        inheritProvider?: boolean;
       },
     ) => {
       const pid = projectId ?? selectedProjectId;
@@ -1593,7 +1595,7 @@ export function useCoder(): UseCoderResult {
         setError({ scope: "run", message: errorMessage(err) });
         return null;
       }
-      if (inheritFrom) {
+      if (opts?.inheritProvider !== false && inheritFrom) {
         const needsProvider = inheritFrom.provider !== t.provider;
         const needsModel = inheritFrom.model !== t.model;
         if (needsProvider || needsModel) {

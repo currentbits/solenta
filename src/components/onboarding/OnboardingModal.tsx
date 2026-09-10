@@ -15,7 +15,6 @@ export type RefreshProviders = (
   options?: { throwOnError?: boolean },
 ) => Promise<void>;
 
-/** Shared contract for every onboarding step. Follow-up workers fill the bodies. */
 export interface OnboardingStepProps {
   providers: ProviderInfo[];
   refreshProviders: RefreshProviders;
@@ -37,7 +36,8 @@ const CONTENT_STEPS = [
   {
     id: "cli",
     title: "Agent",
-    benefit: "Solenta runs AI coding agents against your project. Connect one CLI and you can start a thread.",
+    benefit:
+      "Your agents share project context, so each conversation starts with what the last one learned. Connect one agent, add a project, and start a first task.",
     Component: CliStep,
   },
   {
@@ -66,18 +66,14 @@ interface OnboardingModalProps extends OnboardingStepProps {
   open: boolean;
   /** Hide chrome and drop Escape/focus while a nested dialog (add project) is open. */
   suspended?: boolean;
-  onClose: () => void;
   onFinish: () => void | Promise<void>;
 }
 
 export function OnboardingModal({
   open,
   suspended = false,
-  onClose: _onClose,
   onFinish,
   onCreateFirstThread,
-  firstThreadPending = false,
-  firstThreadError = null,
   ...stepProps
 }: OnboardingModalProps) {
   const [index, setIndex] = useState(0);
@@ -87,7 +83,7 @@ export function OnboardingModal({
   const busyRef = useRef(false);
   const dialogRef = useRef<HTMLDivElement>(null);
   const active = open && !suspended;
-  const pending = busy || firstThreadPending;
+  const pending = busy;
 
   const persistFinish = useCallback(async () => {
     if (busyRef.current) return;
@@ -166,7 +162,7 @@ export function OnboardingModal({
     onGoToCli: () => goTo("cli"),
     onGoToSetup: () => goTo("setup"),
     firstThreadPending: pending,
-    firstThreadError: firstThreadError ?? createError,
+    firstThreadError: createError,
   };
 
   return (
@@ -191,10 +187,7 @@ export function OnboardingModal({
       >
         <header className={styles.header}>
           <div className={styles.heading}>
-            <p
-              className={styles.progress}
-              data-onboarding-progress=""
-            >
+            <p className={styles.progress} data-onboarding-progress="">
               Step {stepNumber} of 3
             </p>
             <h2 className={styles.title}>{content?.title ?? stepId}</h2>
@@ -249,19 +242,33 @@ export function OnboardingModal({
             Back
           </button>
           <span className={styles.footerSpacer} />
-          <button
-            type="button"
-            className={`${styles.btn} ${styles.btnPrimary}`}
-            data-onboarding-next=""
-            disabled={pending}
-            onClick={() => {
-              if (pending) return;
-              if (isLast) void persistFinish();
-              else setIndex((i) => Math.min(STEP_IDS.length - 1, i + 1));
-            }}
-          >
-            {isLast ? "Finish" : "Next"}
-          </button>
+          {isLast ? (
+            <button
+              type="button"
+              className={styles.btn}
+              data-onboarding-next=""
+              disabled={pending}
+              onClick={() => {
+                if (pending) return;
+                void persistFinish();
+              }}
+            >
+              Do this later
+            </button>
+          ) : (
+            <button
+              type="button"
+              className={`${styles.btn} ${styles.btnPrimary}`}
+              data-onboarding-next=""
+              disabled={pending}
+              onClick={() => {
+                if (pending) return;
+                setIndex((i) => Math.min(STEP_IDS.length - 1, i + 1));
+              }}
+            >
+              Next
+            </button>
+          )}
         </footer>
       </div>
     </div>

@@ -141,7 +141,7 @@ export default function TourStep({
         {EXAMPLE_PROMPT}
       </p>
       <p className={styles.stepBody}>
-        Suggestion only. Nothing is sent until you write in the composer.
+        Write your task, then press Send when you are ready.
       </p>
 
       <button
