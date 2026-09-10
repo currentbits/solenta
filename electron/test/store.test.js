@@ -171,7 +171,7 @@ describe("Store", () => {
     assert.equal(store.getThread("t1").sessionId, "sess-3");
   });
 
-  it("first sessionId assignment snapshots the thread model for Codex eject", () => {
+  it("first sessionId assignment snapshots the thread model for Codex eject and resume", () => {
     const store = new Store(filePath);
     store.setThreads([
       { id: "t1", model: "gpt-5.6-sol", sessionId: null },
