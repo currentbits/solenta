@@ -2390,7 +2390,11 @@ function revertFile(opts) {
 
 const LS_FILES_CAP = 20000;
 const LIST_FILES_RESULT = 20;
+const LIST_FILES_RESULT_MAX = 80;
 const LS_FILES_TTL_MS = 5000;
+const SEARCH_FILES_RESULT = 50;
+const SEARCH_FILES_TIMEOUT_MS = 8000;
+const SEARCH_QUERY_MAX = 200;
 
 /**
  * Last `git ls-files` result, so a burst of @-mention keystrokes filters an
@@ -2462,6 +2466,7 @@ function directoriesFromFiles(files) {
  * @param {import('./store').Store} opts.store
  * @param {string} opts.threadId
  * @param {string} [opts.query]
+ * @param {number} [opts.limit]
  * @returns {Promise<{ files: string[] }>}
  */
 async function listFiles(opts) {
@@ -2482,7 +2487,53 @@ async function listFiles(opts) {
     const bDir = b.endsWith("/") ? 0 : 1;
     return aDir - bDir;
   });
-  return { files: matched.slice(0, LIST_FILES_RESULT) };
+  const rawLimit = Number(opts.limit);
+  const limit =
+    Number.isFinite(rawLimit) && rawLimit > 0
+      ? Math.min(Math.floor(rawLimit), LIST_FILES_RESULT_MAX)
+      : LIST_FILES_RESULT;
+  return { files: matched.slice(0, limit) };
+}
+
+/**
+ * Fixed-string content search in the thread cwd (`git grep`). Exit 1 (no
+ * hits) is empty, not an error. Scoped to the active worktree / checkout.
+ *
+ * @param {object} opts
+ * @param {import('./store').Store} opts.store
+ * @param {string} opts.threadId
+ * @param {string} [opts.query]
+ * @returns {Promise<{ hits: Array<{ path: string, line: number, text: string }> }>}
+ */
+async function searchFiles(opts) {
+  const { store, threadId } = opts;
+  const query = String(opts.query || "").slice(0, SEARCH_QUERY_MAX);
+  if (!query.trim()) return { hits: [] };
+  const { cwd } = threadGitCwd(store, threadId);
+  const out = await gitTryAsync(
+    cwd,
+    ["grep", "-n", "-I", "-i", "-F", "-e", query],
+    { timeout: SEARCH_FILES_TIMEOUT_MS, raw: true },
+  );
+  if (!out.ok) {
+    const code = out.error && out.error.code;
+    if (code === 1) return { hits: [] };
+    if (out.timedOut) throw new Error("file search timed out");
+    throw new Error(tailErr(out.stderr || out.combined, "git grep failed"));
+  }
+  const hits = [];
+  for (const line of String(out.stdout || "").split("\n")) {
+    if (!line) continue;
+    const m = line.match(/^(.*):(\d+):(.*)$/);
+    if (!m) continue;
+    hits.push({
+      path: m[1],
+      line: Number(m[2]),
+      text: m[3].slice(0, 200),
+    });
+    if (hits.length >= SEARCH_FILES_RESULT) break;
+  }
+  return { hits };
 }
 
 /**
@@ -6223,6 +6274,7 @@ module.exports = {
   commit,
   revertFile,
   listFiles,
+  searchFiles,
   directoriesFromFiles,
   listChangedPaths,
   mergeWorktree,

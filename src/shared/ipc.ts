@@ -4484,12 +4484,28 @@ export interface CoderApi {
   };
   files: {
     /**
-     * Repo-relative paths for the composer's @-mention popup: tracked plus
-     * untracked (gitignored excluded), plus directory prefixes (trailing
-     * slash), substring-filtered, top 20. Uses the thread's worktree when
-     * bound, else the project checkout.
+     * Repo-relative paths for the composer's @-mention popup and the file
+     * palette: tracked plus untracked (gitignored excluded), plus directory
+     * prefixes (trailing slash), substring-filtered. Default cap 20 (mentions);
+     * pass `limit` for the palette. Uses the thread's worktree when bound,
+     * else the project checkout.
      */
-    list(input: { threadId: string; query?: string }): Promise<{ files: string[] }>;
+    list(input: {
+      threadId: string;
+      query?: string;
+      /** Cap (default 20, max 80). Palette file search asks for more. */
+      limit?: number;
+    }): Promise<{ files: string[] }>;
+    /**
+     * Fixed-string content search (`git grep`) in the thread worktree or
+     * project checkout. Empty query → no hits. Unknown thread rejects.
+     */
+    search(input: {
+      threadId: string;
+      query: string;
+    }): Promise<{
+      hits: Array<{ path: string; line: number; text: string }>;
+    }>;
     /**
      * One image a tool produced. Desktop replies with a solenta-media:// URL
      * (no base64 on the main thread); web replies with a data URL. null when

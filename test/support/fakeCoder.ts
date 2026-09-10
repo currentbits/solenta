@@ -3352,9 +3352,28 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
       list: (input: unknown) => {
         const q = ((input as { query?: string }).query ?? "").toLowerCase();
         const all = ["src/App.tsx", "src/main.tsx", "README.md", "package.json"];
+        const cap = Math.min(
+          Math.max(Number((input as { limit?: number }).limit) || 20, 1),
+          80,
+        );
         return rec("files.list", [input], {
-          files: all.filter((f) => !q || f.toLowerCase().includes(q)),
+          files: all
+            .filter((f) => !q || f.toLowerCase().includes(q))
+            .slice(0, cap),
         });
+      },
+      search: (input: unknown) => {
+        const q = ((input as { query?: string }).query ?? "").toLowerCase();
+        const hits = [
+          { path: "src/App.tsx", line: 1, text: "export function App" },
+          { path: "README.md", line: 1, text: "# demo" },
+        ].filter(
+          (h) =>
+            !q ||
+            h.path.toLowerCase().includes(q) ||
+            h.text.toLowerCase().includes(q),
+        );
+        return rec("files.search", [input], { hits });
       },
       image: (input: unknown) =>
         rec("files.image", [input], { dataUrl: null }),

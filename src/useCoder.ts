@@ -601,8 +601,12 @@ export interface UseCoderResult {
   revertFile: (path: string, status: string) => Promise<{ path: string }>;
   /** Draft a commit message with the thread's provider (never commits). */
   suggestCommitMessage: () => Promise<{ message: string }>;
-  /** File paths for the composer @-mention popup. */
-  listFiles: (query: string) => Promise<string[]>;
+  /** File paths for the composer @-mention popup and the file palette. */
+  listFiles: (query: string, opts?: { limit?: number }) => Promise<string[]>;
+  /** Fixed-string content search in the selected thread's project. */
+  searchFileContents: (query: string) => Promise<
+    Array<{ path: string; line: number; text: string }>
+  >;
   /** Native folder picker for @-mention browse. */
   pickDirectory: () => Promise<string | null>;
   /** AppSnap window list. */
@@ -2999,11 +3003,25 @@ export function useCoder(): UseCoderResult {
   }, [api, selectedThreadId]);
 
   const listFiles = useCallback(
-    async (query: string) => {
+    async (query: string, opts?: { limit?: number }) => {
       if (!selectedThreadId) return [];
       const threadId = selectedThreadId;
-      const result = await api.files.list({ threadId, query });
+      const result = await api.files.list({
+        threadId,
+        query,
+        limit: opts?.limit,
+      });
       return result.files;
+    },
+    [api, selectedThreadId],
+  );
+
+  const searchFileContents = useCallback(
+    async (query: string) => {
+      if (!selectedThreadId || !query.trim()) return [];
+      const threadId = selectedThreadId;
+      const result = await api.files.search({ threadId, query });
+      return result.hits;
     },
     [api, selectedThreadId],
   );
@@ -4098,6 +4116,7 @@ export function useCoder(): UseCoderResult {
     revertFile,
     suggestCommitMessage,
     listFiles,
+    searchFileContents,
     pickDirectory,
     listSnapWindows,
     captureSnapWindow,
