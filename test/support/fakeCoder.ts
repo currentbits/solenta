@@ -327,6 +327,10 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
   const automationRuns = opts.automationRuns ?? {};
   const details = opts.details ?? {};
   const fail = opts.fail ?? {};
+  const rewindRestore: Record<
+    string,
+    { messages: ThreadDetail["messages"]; workLog: ThreadDetail["workLog"]; thread: ThreadInfo }
+  > = {};
   /** Mutable per-thread checkpoint lists (newest-first). */
   const checkpoints: Record<string, CheckpointInfo[]> = {
     ...(opts.checkpoints ?? {}),
@@ -2616,9 +2620,10 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
       rewind: (input: unknown) => {
         const i = input as {
           threadId: string;
-          messageId: string;
-          prompt: string;
+          messageId?: string;
+          prompt?: string;
           restoreFiles?: boolean;
+          undo?: boolean;
         };
         calls.push({ channel: "threads.rewind", args: [input] });
         const err = fail["threads.rewind"];
@@ -2633,6 +2638,25 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
             new Error("Cannot rewind while a run is active"),
           );
         }
+        if (i.undo === true) {
+          const snap = rewindRestore[i.threadId];
+          const d = details[i.threadId];
+          if (snap && d) {
+            d.messages = snap.messages.slice();
+            d.workLog = snap.workLog.slice();
+            d.thread = { ...snap.thread };
+            threads = threads.map((t) =>
+              t.id === i.threadId ? d.thread : t,
+            );
+            delete rewindRestore[i.threadId];
+          }
+          const row = threads.find((t) => t.id === i.threadId) || existing;
+          return Promise.resolve({
+            thread: row,
+            droppedMessages: 0,
+            restoredSha: null,
+          } satisfies RewindResult);
+        }
         if (!String(i.prompt ?? "").trim()) {
           return Promise.reject(new Error("Prompt cannot be empty"));
         }
@@ -2643,6 +2667,11 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
             new Error(`Not a user message: ${i.messageId}`),
           );
         }
+        rewindRestore[i.threadId] = {
+          messages: d.messages.slice(),
+          workLog: (d.workLog ?? []).slice(),
+          thread: { ...existing },
+        };
         const dropped = d.messages.slice(at);
         d.messages = d.messages.slice(0, at);
         const next: ThreadInfo = {
@@ -2803,7 +2832,12 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
         rec("digest.markSeen", [input], { seenAt: Date.now() }),
     },
     runs: {
-      start: (input: unknown) => rec("runs.start", [input], { runId: "r1" }),
+      start: (input: unknown) =>
+        rec("runs.start", [input], { runId: "r1" }).then((value) => {
+          const threadId = (input as { threadId?: string }).threadId;
+          if (threadId) delete rewindRestore[threadId];
+          return value;
+        }),
       steer: (input: unknown) => rec("runs.steer", [input], { runId: "r1" }),
       startWorkflow: (input: unknown) =>
         rec("runs.startWorkflow", [input], { runId: "r2" }),

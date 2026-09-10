@@ -5346,8 +5346,9 @@ export const ThreadView = memo(function ThreadView({
       );
       setRewindConfirm(null);
     } catch {
-      // Parent surfaces rejections via the runError banner.
-      setRewindConfirm(null);
+      // Parent surfaces rejections via the runError banner. Keep the
+      // editor and confirm so a rejected start is not a committed rewind
+      // (#1202): retry or cancel from here.
     } finally {
       setRewindPending(false);
     }

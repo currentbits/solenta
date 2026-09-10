@@ -1778,6 +1778,51 @@ describe("ThreadView nested dialog focus", () => {
     m.unmount();
   });
 
+  it("keeps confirm and editor open when rewind-and-resubmit rejects", async () => {
+    const m = await mount(
+      view({
+        onRewindAndResubmit: async () => {
+          throw new Error("Daily budget reached");
+        },
+        detail: detail({
+          messages: [
+            msg({
+              id: "u1",
+              role: "user",
+              text: "first prompt",
+              createdAt: 10,
+            }),
+            msg({
+              id: "a1",
+              role: "assistant",
+              text: "reply",
+              createdAt: 20,
+            }),
+          ],
+        }),
+      }),
+    );
+    await m.click(m.query('[data-edit-message="u1"]') as HTMLElement);
+    await m.flush();
+    await m.type(
+      m.query('[data-edit-textarea="u1"]') as HTMLElement,
+      "edited draft",
+    );
+    await m.click(m.query('[data-edit-resubmit="u1"]') as HTMLElement);
+    await m.flush();
+    await m.click(m.query("[data-rewind-confirm-submit]") as HTMLElement);
+    await m.flush();
+
+    assert.ok(
+      m.query("[data-rewind-confirm]"),
+      "rejected start must not close confirm",
+    );
+    const ta = m.query('[data-edit-textarea="u1"]') as HTMLTextAreaElement | null;
+    assert.ok(ta, "editor stays mounted");
+    assert.equal(ta!.value, "edited draft");
+    m.unmount();
+  });
+
   it("opening appsnap moves focus out of the composer; Tab stays inside including the window list; Escape restores", async () => {
     const m = await mount(
       view({

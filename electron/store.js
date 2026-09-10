@@ -82,6 +82,7 @@ const EMPTY = {
   workLogByThread: {},
   usageByThread: {},
   runArtifactsByThread: {},
+  rewindRestoreByThread: {},
   workflowTemplates: [],
   spendByDay: {},
   usageByDay: {},
@@ -1596,6 +1597,9 @@ class Store {
         `[store] encrypted ${this._secretsMigrated} plaintext credential(s) at rest`,
       );
     }
+    if (this.recoverDanglingRewind()) {
+      this._recoveredOnLoad = true;
+    }
     if (this._recoveredOnLoad) {
       this.save();
     }
@@ -2415,6 +2419,12 @@ class Store {
           ? parsed.usageByThread
           : {},
       runArtifactsByThread: normalizeRunArtifactsByThread(parsed.runArtifactsByThread),
+      rewindRestoreByThread:
+        parsed.rewindRestoreByThread &&
+        typeof parsed.rewindRestoreByThread === "object" &&
+        !Array.isArray(parsed.rewindRestoreByThread)
+          ? parsed.rewindRestoreByThread
+          : {},
       workflowTemplates: Array.isArray(parsed.workflowTemplates)
         ? parsed.workflowTemplates.map(migrateTemplateKimiModels)
         : [],
@@ -3001,6 +3011,97 @@ class Store {
       ),
     );
     return dropped.length;
+  }
+
+  /**
+   * Snapshot taken just before a rewind, so a rejected start can put the
+   * tail back (#1202). Not part of ThreadInfo; listThreads must not send it.
+   * @param {string} threadId
+   * @returns {object | null}
+   */
+  getRewindRestore(threadId) {
+    const map = this.data.rewindRestoreByThread;
+    if (!map || typeof map !== "object") return null;
+    return map[threadId] || null;
+  }
+
+  /**
+   * @param {string} threadId
+   * @param {object | null} snap
+   */
+  setRewindRestore(threadId, snap) {
+    if (!this.data.rewindRestoreByThread || typeof this.data.rewindRestoreByThread !== "object") {
+      this.data.rewindRestoreByThread = {};
+    }
+    if (snap == null) {
+      delete this.data.rewindRestoreByThread[threadId];
+    } else {
+      this.data.rewindRestoreByThread[threadId] = snap;
+    }
+    this.markDirty();
+  }
+
+  /**
+   * Drop a pending rewind restore handle without applying it. Call when a
+   * run has been accepted so a later undo cannot resurrect the tail.
+   * @param {string} threadId
+   */
+  clearRewindRestore(threadId) {
+    this.setRewindRestore(threadId, null);
+  }
+
+  /**
+   * Put the pre-rewind transcript, work-log, artifacts, and session fields
+   * back. Caller owns saveNow / file restore.
+   * @param {string} threadId
+   * @param {object} snap
+   */
+  applyRewindRestore(threadId, snap) {
+    if (!snap || typeof snap !== "object") return;
+    if (Array.isArray(snap.messages)) this.setMessages(threadId, snap.messages);
+    if (Array.isArray(snap.workLog)) this.setWorkLog(threadId, snap.workLog);
+    if (Array.isArray(snap.artifacts)) this.setRunArtifacts(threadId, snap.artifacts);
+    this.updateThread(threadId, {
+      sessionId: snap.sessionId != null ? snap.sessionId : null,
+      replayContext: snap.replayContext === true,
+      ...(snap.status != null ? { status: snap.status } : {}),
+      lastError: snap.lastError != null ? snap.lastError : null,
+      lastErrorKind: snap.lastErrorKind != null ? snap.lastErrorKind : null,
+      runStartedAt: snap.runStartedAt != null ? snap.runStartedAt : null,
+    });
+  }
+
+  /**
+   * Crash/reload recovery for #1202: an idle thread with a restore handle
+   * and no new run yet must not keep a truncated shard. Working threads
+   * keep the handle (start accepted). If the transcript grew past the
+   * retained count, a run already appended — drop the handle.
+   * @returns {boolean}
+   */
+  recoverDanglingRewind() {
+    const map = this.data.rewindRestoreByThread;
+    if (!map || typeof map !== "object") return false;
+    let recovered = false;
+    for (const threadId of Object.keys(map)) {
+      const snap = map[threadId];
+      const thread = this.getThread(threadId);
+      if (!thread || thread.status === "working") continue;
+      const currentLen = this.getMessages(threadId).length;
+      if (
+        snap &&
+        typeof snap.retainedCount === "number" &&
+        currentLen !== snap.retainedCount
+      ) {
+        delete map[threadId];
+        recovered = true;
+        continue;
+      }
+      this.applyRewindRestore(threadId, snap);
+      delete map[threadId];
+      recovered = true;
+    }
+    if (recovered) this.markDirty();
+    return recovered;
   }
 
   /**
@@ -4012,6 +4113,7 @@ function cloneEmpty() {
     workLogByThread: {},
     usageByThread: {},
     runArtifactsByThread: {},
+    rewindRestoreByThread: {},
     workflowTemplates: [],
     spendByDay: {},
     usageByDay: {},
