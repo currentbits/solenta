@@ -263,6 +263,8 @@ const SAVE_DEBOUNCE_MAX_MS = SAVE_DEBOUNCE_MS;
 
 /** Per-thread transcript files live next to coder-store.json (#225). */
 const MESSAGES_DIR = "messages";
+/** Per-thread work-log files live next to coder-store.json (#1204). */
+const WORKLOGS_DIR = "worklogs";
 
 /**
  * Per-thread transcript retention (issue #89). Caps still bound RAM and the
@@ -1423,12 +1425,19 @@ function recoverInterruptedRuns(store, data) {
     // can stay done:false forever if the process dies before
     // completeWorkLogStep. Mutate data.workLogByThread in place —
     // store.data is not assigned yet during _readFile (#824 / #182).
+    // Nested item.done writes do not trip the work-log proxy, so mark
+    // the thread dirty or the healed rows never reach worklogs/<id>.json.
     const items =
       data.workLogByThread && data.workLogByThread[t.id];
     if (Array.isArray(items)) {
+      let closed = false;
       for (const item of items) {
-        if (item && item.done === false) item.done = true;
+        if (item && item.done === false) {
+          item.done = true;
+          closed = true;
+        }
       }
+      if (closed) store._markWorkLogDirty(t.id);
     }
     recovered = true;
   }
@@ -1520,10 +1529,10 @@ function writeAtomicSync(filePath, contents, seq) {
  * An unreadable main file is renamed to *.corrupt-<ts> (never discarded)
  * and a sibling *.bak (last good snapshot from a prior successful load)
  * is tried before falling back to empty. Transcripts live in
- * messages/<threadId>.json and a flush writes only dirty shards plus the
- * small envelope. Atomic save: write tmp, fsync, then rename. Debounced
- * flushes (save()) write off the event loop; saveNow() is the synchronous
- * exit/shutdown/test path.
+ * messages/<threadId>.json and work logs in worklogs/<threadId>.json.
+ * A flush writes only dirty shards plus the small envelope. Atomic save:
+ * write tmp, fsync, then rename. Debounced flushes (save()) write off the
+ * event loop; saveNow() is the synchronous exit/shutdown/test path.
  */
 class Store {
   /**
@@ -1564,6 +1573,13 @@ class Store {
     this._deletedMessageIds = new Set();
     this._inflightShardIds = null;
     this._inflightDeletedIds = null;
+    this._workLogShards = new Set();
+    this._dirtyWorkLogIds = new Set();
+    this._deletedWorkLogIds = new Set();
+    this._inflightWorkLogIds = null;
+    this._inflightDeletedWorkLogIds = null;
+    this._inlineWorkLogIds = new Set();
+    this._workLogsSplit = true;
     this._atomicSeq = 0;
     this._searchGen = 0;
     this._searchWorker = null;
@@ -1802,6 +1818,13 @@ class Store {
   }
 
   /**
+   * @returns {string}
+   */
+  _workLogsDir() {
+    return path.join(path.dirname(this.filePath), WORKLOGS_DIR);
+  }
+
+  /**
    * @param {string} threadId
    * @returns {string}
    */
@@ -1811,6 +1834,18 @@ class Store {
       throw new Error("invalid thread id for shard path");
     }
     return path.join(this._messagesDir(), `${fileId}.json`);
+  }
+
+  /**
+   * @param {string} threadId
+   * @returns {string}
+   */
+  _workLogPath(threadId) {
+    const fileId = encodeThreadFileId(threadId);
+    if (!fileId) {
+      throw new Error("invalid thread id for shard path");
+    }
+    return path.join(this._workLogsDir(), `${fileId}.json`);
   }
 
   _scanMessageShards() {
@@ -1825,6 +1860,21 @@ class Store {
       if (!name.endsWith(".json")) continue;
       const id = decodeThreadFileId(name.slice(0, -".json".length));
       if (id) this._messageShards.add(id);
+    }
+  }
+
+  _scanWorkLogShards() {
+    this._workLogShards = new Set();
+    let names;
+    try {
+      names = fs.readdirSync(this._workLogsDir());
+    } catch {
+      return;
+    }
+    for (const name of names) {
+      if (!name.endsWith(".json")) continue;
+      const id = decodeThreadFileId(name.slice(0, -".json".length));
+      if (id) this._workLogShards.add(id);
     }
   }
 
@@ -1847,6 +1897,26 @@ class Store {
     this._dirtyMessageIds.delete(threadId);
     this._messageShards.delete(threadId);
     this._messagesRaw.delete(threadId);
+  }
+
+  /**
+   * @param {string} threadId
+   */
+  _markWorkLogDirty(threadId) {
+    if (!isSafeThreadId(threadId)) return;
+    this._dirtyWorkLogIds.add(threadId);
+    this._deletedWorkLogIds.delete(threadId);
+    this._workLogShards.add(threadId);
+  }
+
+  /**
+   * @param {string} threadId
+   */
+  _markWorkLogDeleted(threadId) {
+    if (!isSafeThreadId(threadId)) return;
+    this._deletedWorkLogIds.add(threadId);
+    this._dirtyWorkLogIds.delete(threadId);
+    this._workLogShards.delete(threadId);
   }
 
   /**
@@ -1882,7 +1952,10 @@ class Store {
    * later mutations land in a follow-up write. Pass `{ clear: false }` when
    * the caller will drop only the ids that actually landed.
    * @param {{ clear?: boolean }} [opts]
-   * @returns {{ writes: Array<{ id: string, json: string }>, deleted: string[] }}
+   * @returns {{
+   *   writes: Array<{ id: string, json: string, dest: string, kind: "messages" | "worklogs" }>,
+   *   deleted: Array<{ id: string, dest: string, kind: "messages" | "worklogs" }>,
+   * }}
    */
   _snapshotDirtyShards(opts = {}) {
     const writes = [];
@@ -1899,12 +1972,53 @@ class Store {
           json = this._messagesLazy.raw.slice(r.start, r.end);
         }
       }
-      if (json != null) writes.push({ id, json });
+      if (json != null) {
+        writes.push({
+          id,
+          json,
+          dest: this._messagePath(id),
+          kind: "messages",
+        });
+      }
     }
-    const deleted = [...this._deletedMessageIds].filter(isSafeThreadId);
+    const workLogs =
+      this.data &&
+      this.data.workLogByThread &&
+      typeof this.data.workLogByThread === "object"
+        ? this.data.workLogByThread
+        : null;
+    for (const id of this._dirtyWorkLogIds) {
+      if (this._deletedWorkLogIds.has(id) || !isSafeThreadId(id)) continue;
+      const items = workLogs ? workLogs[id] : undefined;
+      writes.push({
+        id,
+        json: JSON.stringify(Array.isArray(items) ? items : []),
+        dest: this._workLogPath(id),
+        kind: "worklogs",
+      });
+    }
+    const deleted = [];
+    for (const id of this._deletedMessageIds) {
+      if (!isSafeThreadId(id)) continue;
+      deleted.push({
+        id,
+        dest: this._messagePath(id),
+        kind: "messages",
+      });
+    }
+    for (const id of this._deletedWorkLogIds) {
+      if (!isSafeThreadId(id)) continue;
+      deleted.push({
+        id,
+        dest: this._workLogPath(id),
+        kind: "worklogs",
+      });
+    }
     if (opts.clear !== false) {
       this._dirtyMessageIds.clear();
       this._deletedMessageIds.clear();
+      this._dirtyWorkLogIds.clear();
+      this._deletedWorkLogIds.clear();
     }
     return { writes, deleted };
   }
@@ -2005,6 +2119,130 @@ class Store {
   }
 
   /**
+   * @param {string} threadId
+   * @returns {string | null}
+   */
+  _readWorkLogFile(threadId) {
+    if (!this._workLogShards.has(threadId) || !isSafeThreadId(threadId)) {
+      return null;
+    }
+    try {
+      return fs.readFileSync(this._workLogPath(threadId), "utf8");
+    } catch (err) {
+      if (err && err.code === "ENOENT") this._workLogShards.delete(threadId);
+      return null;
+    }
+  }
+
+  /**
+   * Load worklogs/<id>.json over the envelope map. Existing shards win
+   * against a leftover inline copy (interrupted migrate). Keeps arrays in
+   * memory — activity and crash recovery need them, and a 500-row cap is
+   * small compared to transcripts.
+   * @param {object} data
+   */
+  _adoptWorkLogs(data) {
+    const map =
+      data.workLogByThread &&
+      typeof data.workLogByThread === "object" &&
+      !Array.isArray(data.workLogByThread)
+        ? data.workLogByThread
+        : {};
+    this._inlineWorkLogIds = new Set(Object.keys(map));
+    this._scanWorkLogShards();
+    for (const id of [...this._workLogShards]) {
+      const raw = this._readWorkLogFile(id);
+      if (raw == null) continue;
+      let val;
+      try {
+        val = JSON.parse(raw);
+      } catch {
+        val = [];
+      }
+      if (!Array.isArray(val)) val = [];
+      map[id] = val;
+    }
+    data.workLogByThread = map;
+    this._attachWorkLogProxy(data);
+    this._workLogsSplit = this._inlineWorkLogIds.size === 0;
+  }
+
+  /**
+   * @param {object} data
+   */
+  _attachWorkLogProxy(data) {
+    const store = this;
+    const target =
+      data.workLogByThread &&
+      typeof data.workLogByThread === "object" &&
+      !Array.isArray(data.workLogByThread)
+        ? data.workLogByThread
+        : {};
+    data.workLogByThread = new Proxy(target, {
+      set(t, prop, value) {
+        if (typeof prop !== "string") return Reflect.set(t, prop, value);
+        t[prop] = value;
+        store._markWorkLogDirty(prop);
+        return true;
+      },
+      deleteProperty(t, prop) {
+        if (typeof prop !== "string") return Reflect.deleteProperty(t, prop);
+        delete t[prop];
+        store._markWorkLogDeleted(prop);
+        return true;
+      },
+    });
+  }
+
+  /**
+   * Split inline workLogByThread onto worklogs/<id>.json. Existing shard
+   * files win unless that id was mutated this load (crash-recovery close).
+   * Envelope is stripped only after every legacy key was written or already
+   * had a winning shard.
+   * @param {object} data
+   * @returns {boolean} true if the envelope should drop the inline map
+   */
+  _migrateInlineWorkLogs(data) {
+    const ids = [...this._inlineWorkLogIds];
+    if (ids.length === 0) {
+      this._workLogsSplit = true;
+      return false;
+    }
+    let complete = true;
+    for (const id of ids) {
+      if (!isSafeThreadId(id)) {
+        complete = false;
+        continue;
+      }
+      const dirty = this._dirtyWorkLogIds.has(id);
+      if (this._workLogShards.has(id) && !dirty) continue;
+      const items =
+        data.workLogByThread &&
+        Object.prototype.hasOwnProperty.call(data.workLogByThread, id)
+          ? data.workLogByThread[id]
+          : [];
+      try {
+        writeAtomicSync(
+          this._workLogPath(id),
+          JSON.stringify(Array.isArray(items) ? items : []),
+          ++this._atomicSeq,
+        );
+        this._workLogShards.add(id);
+        this._dirtyWorkLogIds.delete(id);
+      } catch {
+        complete = false;
+      }
+    }
+    if (!complete) {
+      this._workLogsSplit = false;
+      return false;
+    }
+    this._inlineWorkLogIds.clear();
+    this._workLogsSplit = true;
+    return true;
+  }
+
+  /**
    * Append one message without hydrating a still-lazy transcript. Crash
    * recovery uses this so a force-quit does not JSON.parse in-flight runs.
    * @param {string} threadId
@@ -2091,25 +2329,33 @@ class Store {
   }
 
   /**
-   * Envelope only: transcripts live in messages/<id>.json.
+   * Envelope only: transcripts live in messages/<id>.json, work logs in
+   * worklogs/<id>.json. A still-inline legacy workLogByThread rides along
+   * until the shard split completes.
    * @param {object} [data]
    * @returns {string}
    */
   _serialize(data) {
     const src = data || this.data;
     // Secret fields are sealed in the JSON payload only; in-memory settings
-    // stay plaintext (#543). stringifyStore skips data.messagesByThread, so
-    // the shallow copy never touches the lazy proxy.
+    // stay plaintext (#543). stringifyStore skips data.messagesByThread and
+    // data.workLogByThread, so the shallow copy never walks those maps.
     const settings = this._secrets.concealSettings(src.settings);
     const payload = settings === src.settings ? src : { ...src, settings };
+    const workLogs = this._workLogsSplit
+      ? {}
+      : src.workLogByThread && typeof src.workLogByThread === "object"
+        ? src.workLogByThread
+        : {};
     if (this._messagesLazy && this._messagesLazy.raw) {
       return stringifyStore(
         payload,
         this._messagesHydrated,
         this._messagesLazy,
+        workLogs,
       );
     }
-    return stringifyStore(payload, {}, null);
+    return stringifyStore(payload, {}, null, workLogs);
   }
 
   /**
@@ -2120,6 +2366,8 @@ class Store {
    */
   _readFile(filePath) {
     this._messagesLazy = null;
+    this._workLogsSplit = false;
+    this._inlineWorkLogIds = new Set();
     const raw = fs.readFileSync(filePath, "utf8");
     const { parsed, split } = this._parseStoreJson(raw);
     const threads = Array.isArray(parsed.threads)
@@ -2185,13 +2433,16 @@ class Store {
     ensureWorkflowTemplates(data);
     this._scanMessageShards();
     this._adoptMessages(data, useLazy ? split : null);
+    this._adoptWorkLogs(data);
     this._recoveredOnLoad = recoverInterruptedRuns(this, data) || hadSpaces;
     if (revealed.migrated > 0) {
       this._secretsMigrated = revealed.migrated;
       this._recoveredOnLoad = true;
     }
     try {
-      if (this._migrateInlineMessages(data, filePath)) {
+      const messagesMigrated = this._migrateInlineMessages(data, filePath);
+      const workLogsMigrated = this._migrateInlineWorkLogs(data);
+      if (messagesMigrated || workLogsMigrated) {
         try {
           writeAtomicSync(
             this.filePath,
@@ -2274,6 +2525,7 @@ class Store {
     const data = cloneEmpty();
     this._messagesHydrated = data.messagesByThread;
     this._attachMessagesProxy(data);
+    this._adoptWorkLogs(data);
     return data;
   }
 
@@ -2295,9 +2547,9 @@ class Store {
 
   /**
    * Mark dirty and coalesce writes. The envelope is small; each flush
-   * stringifies only dirty message shards plus the envelope and writes
-   * tmp-then-rename off the event loop. Callers that need the bytes on
-   * disk right now use saveNow().
+   * stringifies only dirty message/work-log shards plus the envelope and
+   * writes tmp-then-rename off the event loop. Callers that need the bytes
+   * on disk right now use saveNow().
    */
   save() {
     this.markDirty();
@@ -2333,14 +2585,25 @@ class Store {
     this._dirty = false;
     const gen = this._writeGen;
     const snapshot = this._snapshotDirtyShards();
-    this._inflightShardIds = new Set(snapshot.writes.map((w) => w.id));
-    this._inflightDeletedIds = new Set(snapshot.deleted);
+    this._inflightShardIds = new Set(
+      snapshot.writes.filter((w) => w.kind === "messages").map((w) => w.id),
+    );
+    this._inflightDeletedIds = new Set(
+      snapshot.deleted.filter((d) => d.kind === "messages").map((d) => d.id),
+    );
+    this._inflightWorkLogIds = new Set(
+      snapshot.writes.filter((w) => w.kind === "worklogs").map((w) => w.id),
+    );
+    this._inflightDeletedWorkLogIds = new Set(
+      snapshot.deleted.filter((d) => d.kind === "worklogs").map((d) => d.id),
+    );
     const payload = this._serialize();
     const envelopeTmp = `${this.filePath}.${process.pid}.${++this._atomicSeq}.tmp`;
     const shardTmps = snapshot.writes.map((w) => ({
       id: w.id,
-      dest: this._messagePath(w.id),
-      tmp: `${this._messagePath(w.id)}.${process.pid}.${++this._atomicSeq}.tmp`,
+      kind: w.kind,
+      dest: w.dest,
+      tmp: `${w.dest}.${process.pid}.${++this._atomicSeq}.tmp`,
       json: w.json,
     }));
     this._flushPromise = (async () => {
@@ -2348,8 +2611,9 @@ class Store {
         await fs.promises.mkdir(path.dirname(this.filePath), {
           recursive: true,
         });
-        if (shardTmps.length > 0) {
-          await fs.promises.mkdir(this._messagesDir(), { recursive: true });
+        const dirs = new Set(shardTmps.map((s) => path.dirname(s.dest)));
+        for (const dir of dirs) {
+          await fs.promises.mkdir(dir, { recursive: true });
         }
         const writeTmp = async (tmp, contents) => {
           const handle = await fs.promises.open(tmp, "w");
@@ -2372,30 +2636,40 @@ class Store {
         // does. Follow-up flushes pick up the envelope-only mutation.
         if (this._writeGen === gen) {
           const failedDeletes = [];
-          for (const id of snapshot.deleted) {
+          for (const d of snapshot.deleted) {
             try {
-              fs.unlinkSync(this._messagePath(id));
+              fs.unlinkSync(d.dest);
             } catch {
-              if (fs.existsSync(this._messagePath(id))) failedDeletes.push(id);
+              if (fs.existsSync(d.dest)) failedDeletes.push(d);
             }
           }
           for (const s of shardTmps) {
             fs.renameSync(s.tmp, s.dest);
-            this._messageShards.add(s.id);
+            if (s.kind === "worklogs") this._workLogShards.add(s.id);
+            else this._messageShards.add(s.id);
           }
           if (failedDeletes.length === 0) {
             fs.renameSync(envelopeTmp, this.filePath);
           } else {
             this._dirty = true;
-            for (const id of failedDeletes) this._deletedMessageIds.add(id);
+            for (const d of failedDeletes) {
+              if (d.kind === "worklogs") this._deletedWorkLogIds.add(d.id);
+              else this._deletedMessageIds.add(d.id);
+            }
           }
         }
         // else: stale payload; the tmp unlinks below discard it.
       } catch (err) {
         if (this._writeGen === gen) {
           this._dirty = true;
-          for (const w of snapshot.writes) this._dirtyMessageIds.add(w.id);
-          for (const id of snapshot.deleted) this._deletedMessageIds.add(id);
+          for (const w of snapshot.writes) {
+            if (w.kind === "worklogs") this._dirtyWorkLogIds.add(w.id);
+            else this._dirtyMessageIds.add(w.id);
+          }
+          for (const d of snapshot.deleted) {
+            if (d.kind === "worklogs") this._deletedWorkLogIds.add(d.id);
+            else this._deletedMessageIds.add(d.id);
+          }
           console.error(
             `[store] async flush failed (will retry): ${err && err.message}`,
           );
@@ -2407,6 +2681,8 @@ class Store {
         }
         this._inflightShardIds = null;
         this._inflightDeletedIds = null;
+        this._inflightWorkLogIds = null;
+        this._inflightDeletedWorkLogIds = null;
         this._flushing = false;
         this._flushPromise = null;
         if (this._dirty) this._scheduleFlush();
@@ -2439,7 +2715,7 @@ class Store {
     // Invalidate any in-flight async commit before touching files. The async
     // rename loop is synchronous, so it cannot interleave with this method.
     this._writeGen += 1;
-    // Replay deletes first, then writes so a later setMessages wins.
+    // Replay deletes first, then writes so a later setMessages/setWorkLog wins.
     if (this._inflightDeletedIds) {
       for (const id of this._inflightDeletedIds) {
         if (!this._dirtyMessageIds.has(id)) this._markMessagesDeleted(id);
@@ -2450,34 +2726,56 @@ class Store {
         if (!this._deletedMessageIds.has(id)) this._markMessagesDirty(id);
       }
     }
+    if (this._inflightDeletedWorkLogIds) {
+      for (const id of this._inflightDeletedWorkLogIds) {
+        if (!this._dirtyWorkLogIds.has(id)) this._markWorkLogDeleted(id);
+      }
+    }
+    if (this._inflightWorkLogIds) {
+      for (const id of this._inflightWorkLogIds) {
+        if (!this._deletedWorkLogIds.has(id)) this._markWorkLogDirty(id);
+      }
+    }
     const snapshot = this._snapshotDirtyShards({ clear: false });
+    const shardKey = (row) => `${row.kind}:${row.id}`;
     const landedDeletes = new Set();
     const landedWrites = new Set();
     try {
-      for (const id of snapshot.deleted) {
+      for (const d of snapshot.deleted) {
         try {
-          fs.unlinkSync(this._messagePath(id));
-          landedDeletes.add(id);
+          fs.unlinkSync(d.dest);
+          landedDeletes.add(shardKey(d));
         } catch {
-          if (!fs.existsSync(this._messagePath(id))) landedDeletes.add(id);
+          if (!fs.existsSync(d.dest)) landedDeletes.add(shardKey(d));
         }
       }
       for (const w of snapshot.writes) {
-        writeAtomicSync(this._messagePath(w.id), w.json, ++this._atomicSeq);
-        this._messageShards.add(w.id);
-        landedWrites.add(w.id);
+        writeAtomicSync(w.dest, w.json, ++this._atomicSeq);
+        if (w.kind === "worklogs") this._workLogShards.add(w.id);
+        else this._messageShards.add(w.id);
+        landedWrites.add(shardKey(w));
       }
       const deletesPending = snapshot.deleted.some(
-        (id) => !landedDeletes.has(id),
+        (d) => !landedDeletes.has(shardKey(d)),
       );
       if (!deletesPending) {
         writeAtomicSync(this.filePath, this._serialize(), ++this._atomicSeq);
       }
-      for (const id of landedWrites) this._dirtyMessageIds.delete(id);
-      for (const id of landedDeletes) this._deletedMessageIds.delete(id);
+      for (const w of snapshot.writes) {
+        if (!landedWrites.has(shardKey(w))) continue;
+        if (w.kind === "worklogs") this._dirtyWorkLogIds.delete(w.id);
+        else this._dirtyMessageIds.delete(w.id);
+      }
+      for (const d of snapshot.deleted) {
+        if (!landedDeletes.has(shardKey(d))) continue;
+        if (d.kind === "worklogs") this._deletedWorkLogIds.delete(d.id);
+        else this._deletedMessageIds.delete(d.id);
+      }
       if (
         this._dirtyMessageIds.size === 0 &&
-        this._deletedMessageIds.size === 0
+        this._deletedMessageIds.size === 0 &&
+        this._dirtyWorkLogIds.size === 0 &&
+        this._deletedWorkLogIds.size === 0
       ) {
         this._dirty = false;
         if (this._exitHookArmed) {
@@ -2489,8 +2787,16 @@ class Store {
         this.markDirty();
       }
     } catch (err) {
-      for (const id of landedWrites) this._dirtyMessageIds.delete(id);
-      for (const id of landedDeletes) this._deletedMessageIds.delete(id);
+      for (const w of snapshot.writes) {
+        if (!landedWrites.has(shardKey(w))) continue;
+        if (w.kind === "worklogs") this._dirtyWorkLogIds.delete(w.id);
+        else this._dirtyMessageIds.delete(w.id);
+      }
+      for (const d of snapshot.deleted) {
+        if (!landedDeletes.has(shardKey(d))) continue;
+        if (d.kind === "worklogs") this._deletedWorkLogIds.delete(d.id);
+        else this._deletedMessageIds.delete(d.id);
+      }
       this._dirty = true;
       this.markDirty();
       throw err;
