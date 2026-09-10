@@ -11,106 +11,228 @@ import SetupStep from "./SetupStep";
 import TourStep from "./TourStep";
 import styles from "./OnboardingModal.module.css";
 
+export type RefreshProviders = (
+  options?: { throwOnError?: boolean },
+) => Promise<void>;
+
 /** Shared contract for every onboarding step. Follow-up workers fill the bodies. */
 export interface OnboardingStepProps {
   providers: ProviderInfo[];
-  refreshProviders: () => Promise<void>;
+  refreshProviders: RefreshProviders;
   projects: ProjectInfo[];
   onAddProject: () => void;
   settings: AppSettings | null;
   onSaveSettings: (patch: Partial<AppSettings>) => Promise<AppSettings>;
+  onCreateFirstThread?: (input: {
+    projectId: string;
+    provider: string;
+  }) => Promise<void>;
+  onGoToCli?: () => void;
+  onGoToSetup?: () => void;
+  firstThreadPending?: boolean;
+  firstThreadError?: string | null;
 }
 
 const CONTENT_STEPS = [
-  { id: "cli", title: "Agent CLIs", Component: CliStep },
-  { id: "setup", title: "Project & defaults", Component: SetupStep },
-  { id: "tour", title: "Tour", Component: TourStep },
+  {
+    id: "cli",
+    title: "Agent",
+    benefit: "Solenta runs AI coding agents against your project. Connect one CLI and you can start a thread.",
+    Component: CliStep,
+  },
+  {
+    id: "setup",
+    title: "Project",
+    benefit: "Add the folder the agent should work in. One project is enough.",
+    Component: SetupStep,
+  },
+  {
+    id: "tour",
+    title: "First thread",
+    benefit: "Open a thread, then write the first task yourself.",
+    Component: TourStep,
+  },
 ] as const;
 
-const STEP_IDS = ["welcome", ...CONTENT_STEPS.map((s) => s.id)] as const;
+const STEP_IDS = CONTENT_STEPS.map((s) => s.id);
 
 type StepId = (typeof STEP_IDS)[number];
 
-function titleFor(id: StepId): string {
-  if (id === "welcome") return "Welcome to Solenta";
-  const found = CONTENT_STEPS.find((s) => s.id === id);
-  return found ? found.title : id;
+function failMessage(err: unknown, fallback: string): string {
+  return err instanceof Error && err.message ? err.message : fallback;
 }
 
 interface OnboardingModalProps extends OnboardingStepProps {
   open: boolean;
+  /** Hide chrome and drop Escape/focus while a nested dialog (add project) is open. */
+  suspended?: boolean;
   onClose: () => void;
-  onFinish: () => void;
+  onFinish: () => void | Promise<void>;
 }
 
 export function OnboardingModal({
   open,
-  onClose,
+  suspended = false,
+  onClose: _onClose,
   onFinish,
+  onCreateFirstThread,
+  firstThreadPending = false,
+  firstThreadError = null,
   ...stepProps
 }: OnboardingModalProps) {
   const [index, setIndex] = useState(0);
+  const [busy, setBusy] = useState(false);
+  const [persistError, setPersistError] = useState<string | null>(null);
+  const [createError, setCreateError] = useState<string | null>(null);
+  const busyRef = useRef(false);
   const dialogRef = useRef<HTMLDivElement>(null);
-  const handleFinish = useCallback(() => onFinish(), [onFinish]);
-  useEscapeClose(open, handleFinish);
-  useModalFocus(open, dialogRef);
+  const active = open && !suspended;
+  const pending = busy || firstThreadPending;
+
+  const persistFinish = useCallback(async () => {
+    if (busyRef.current) return;
+    busyRef.current = true;
+    setBusy(true);
+    setPersistError(null);
+    try {
+      await onFinish();
+    } catch (err) {
+      setPersistError(failMessage(err, "Could not save onboarding progress"));
+    } finally {
+      busyRef.current = false;
+      setBusy(false);
+    }
+  }, [onFinish]);
+
+  const handleEscape = useCallback(() => {
+    void persistFinish();
+  }, [persistFinish]);
+
+  useEscapeClose(active && !pending, handleEscape);
+  useModalFocus(active, dialogRef);
 
   useEffect(() => {
-    if (open) setIndex(0);
+    if (open) {
+      setIndex(0);
+      setPersistError(null);
+      setCreateError(null);
+    }
   }, [open]);
+
+  const goTo = useCallback((id: StepId) => {
+    if (busyRef.current) return;
+    const next = STEP_IDS.indexOf(id);
+    if (next >= 0) setIndex(next);
+  }, []);
+
+  const handleCreateFirstThread = useCallback(
+    async (input: { projectId: string; provider: string }) => {
+      if (busyRef.current || !onCreateFirstThread) return;
+      busyRef.current = true;
+      setBusy(true);
+      setPersistError(null);
+      setCreateError(null);
+      try {
+        await onCreateFirstThread(input);
+        try {
+          await onFinish();
+        } catch (err) {
+          setPersistError(
+            failMessage(err, "Could not save onboarding progress"),
+          );
+        }
+      } catch (err) {
+        setCreateError(failMessage(err, "Could not create thread"));
+      } finally {
+        busyRef.current = false;
+        setBusy(false);
+      }
+    },
+    [onCreateFirstThread, onFinish],
+  );
 
   if (!open) return null;
 
-  const stepId: StepId = STEP_IDS[index] ?? "welcome";
+  const stepId: StepId = STEP_IDS[index] ?? "cli";
   const isFirst = index === 0;
   const isLast = index === STEP_IDS.length - 1;
   const content = CONTENT_STEPS.find((s) => s.id === stepId);
+  const stepNumber = index + 1;
+  const passed: OnboardingStepProps = {
+    ...stepProps,
+    onCreateFirstThread: onCreateFirstThread
+      ? handleCreateFirstThread
+      : undefined,
+    onGoToCli: () => goTo("cli"),
+    onGoToSetup: () => goTo("setup"),
+    firstThreadPending: pending,
+    firstThreadError: firstThreadError ?? createError,
+  };
 
   return (
     <div
       className={styles.backdrop}
       role="presentation"
-      onMouseDown={(e) => {
-        if (e.target === e.currentTarget) onClose();
-      }}
+      hidden={suspended}
+      data-onboarding-backdrop=""
+      data-onboarding-suspended={suspended ? "" : undefined}
     >
       <div
         ref={dialogRef}
         className={styles.sheet}
         role="dialog"
         aria-modal="true"
-        aria-label="Welcome to Solenta"
+        aria-label={`Solenta onboarding, step ${stepNumber} of 3`}
+        aria-hidden={suspended || undefined}
+        inert={suspended ? true : undefined}
         tabIndex={-1}
         data-onboarding=""
-        tabIndex={-1}
         onMouseDown={(e) => e.stopPropagation()}
       >
         <header className={styles.header}>
-          <h2 className={styles.title}>{titleFor(stepId)}</h2>
+          <div className={styles.heading}>
+            <p
+              className={styles.progress}
+              data-onboarding-progress=""
+            >
+              Step {stepNumber} of 3
+            </p>
+            <h2 className={styles.title}>{content?.title ?? stepId}</h2>
+          </div>
           <button
             type="button"
             className={styles.skip}
             data-onboarding-skip=""
-            onClick={onFinish}
+            disabled={pending}
+            onClick={() => void persistFinish()}
           >
-            Skip tour
+            Skip
           </button>
         </header>
         <div className={styles.body} data-onboarding-step={stepId}>
-          {stepId === "welcome" ? (
-            <div className={styles.welcome}>
-              <p>
-                Solenta is a desk for threads of AI coding agents. Run them in
-                parallel as workers in isolated git worktrees, then review the
-                diffs and merge from one place.
-              </p>
-              <p>
-                This short tour checks your agent CLIs, adds a project, and
-                shows what the app can do.
-              </p>
-            </div>
-          ) : content ? (
-            <content.Component {...stepProps} />
+          {content ? (
+            <p className={styles.lead} data-onboarding-benefit="">
+              {content.benefit}
+            </p>
+          ) : null}
+          {content ? <content.Component {...passed} /> : null}
+          {persistError ? (
+            <p
+              className={styles.persistError}
+              role="alert"
+              data-onboarding-persist-error=""
+            >
+              {persistError}
+              <button
+                type="button"
+                className={styles.btn}
+                data-onboarding-persist-retry=""
+                disabled={pending}
+                onClick={() => void persistFinish()}
+              >
+                Retry save
+              </button>
+            </p>
           ) : null}
         </div>
         <footer className={styles.footer}>
@@ -118,30 +240,23 @@ export function OnboardingModal({
             type="button"
             className={styles.btn}
             data-onboarding-back=""
-            disabled={isFirst}
-            onClick={() => setIndex((i) => Math.max(0, i - 1))}
+            disabled={isFirst || pending}
+            onClick={() => {
+              if (pending) return;
+              setIndex((i) => Math.max(0, i - 1));
+            }}
           >
             Back
           </button>
-          <div
-            className={styles.dots}
-            data-onboarding-dots=""
-            aria-hidden="true"
-          >
-            {STEP_IDS.map((id, i) => (
-              <span
-                key={id}
-                className={styles.dot}
-                data-current={i === index ? "true" : undefined}
-              />
-            ))}
-          </div>
+          <span className={styles.footerSpacer} />
           <button
             type="button"
             className={`${styles.btn} ${styles.btnPrimary}`}
             data-onboarding-next=""
+            disabled={pending}
             onClick={() => {
-              if (isLast) onFinish();
+              if (pending) return;
+              if (isLast) void persistFinish();
               else setIndex((i) => Math.min(STEP_IDS.length - 1, i + 1));
             }}
           >

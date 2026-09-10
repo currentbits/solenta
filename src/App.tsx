@@ -381,6 +381,12 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     null,
   );
   const [addPathOpen, setAddPathOpen] = useState(false);
+  const createdFirstThreadRef = useRef<{
+    id: string;
+    projectId: string;
+    provider: string;
+  } | null>(null);
+  const [firstThreadError, setFirstThreadError] = useState<string | null>(null);
   const [editProjectId, setEditProjectId] = useState<string | null>(null);
   const [view, setView] = useState<AppView>(() => {
     if (typeof window === "undefined") return "thread";
@@ -1401,15 +1407,62 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     setAddPathOpen(true);
   }, []);
 
-  const finishOnboarding = useCallback(() => {
+  const finishOnboarding = useCallback(async () => {
+    await saveSettings({ onboardingSeen: true });
     setOnboardingDismissed(true);
     setOnboardingForceOpen(false);
-    void saveSettings({ onboardingSeen: true });
+    setFirstThreadError(null);
   }, [saveSettings]);
+
+  const handleCreateFirstThread = useCallback(
+    async (input: { projectId: string; provider: string }) => {
+      setFirstThreadError(null);
+      let threadId = createdFirstThreadRef.current?.id ?? null;
+      if (!threadId) {
+        let thread;
+        try {
+          thread = await createThread("New Thread", input.projectId);
+        } catch (err) {
+          const message =
+            err instanceof Error && err.message
+              ? err.message
+              : "Could not create thread";
+          setFirstThreadError(message);
+          throw err instanceof Error ? err : new Error(message);
+        }
+        if (!thread) {
+          const message = "Could not create thread";
+          setFirstThreadError(message);
+          throw new Error(message);
+        }
+        threadId = thread.id;
+      }
+      createdFirstThreadRef.current = {
+        id: threadId,
+        projectId: input.projectId,
+        provider: input.provider,
+      };
+      try {
+        await setProvider({ threadId, provider: input.provider });
+      } catch (err) {
+        const message =
+          err instanceof Error && err.message
+            ? err.message
+            : "Could not set the thread agent";
+        setFirstThreadError(message);
+        throw err instanceof Error ? err : new Error(message);
+      }
+      setView("thread");
+      setRevealThreadId(threadId);
+    },
+    [createThread, setProvider],
+  );
 
   const showOnboarding = useCallback(() => {
     setSettingsOpen(false);
     setOnboardingForceOpen(true);
+    createdFirstThreadRef.current = null;
+    setFirstThreadError(null);
   }, []);
 
   const onboardingOpen =
@@ -2065,7 +2118,10 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         />
         <OnboardingModal
           open={onboardingOpen}
-          onClose={finishOnboarding}
+          suspended={addPathOpen}
+          onClose={() => {
+            void finishOnboarding();
+          }}
           onFinish={finishOnboarding}
           providers={providers}
           refreshProviders={refreshProviders}
@@ -2073,6 +2129,8 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
           onAddProject={handleAddProject}
           settings={settings}
           onSaveSettings={saveSettings}
+          onCreateFirstThread={handleCreateFirstThread}
+          firstThreadError={firstThreadError}
         />
         {archiveToastIds && (
           <ArchiveToast
