@@ -1,7 +1,8 @@
 # Onboarding: reach the first useful conversation
 
-Status: implemented with three Grok workers, reviewed, awaiting integration.
-Planboard: [#1250](https://github.com/currentbits/solenta/issues/1250), plan:doing.
+Status: implemented with three Grok workers, reviewed, and integrated into
+`coder/onboarding-first-task` at `4d0ba1d6` after user approval.
+Planboard: [#1250](https://github.com/currentbits/solenta/issues/1250), closed, plan:done.
 
 ## Goal and evidence
 
@@ -10,11 +11,11 @@ where they can write and send their first task. A completed useful response is
 the activation goal; dismissing onboarding is only setup completion. This is a
 code-based assessment, not a measured conversion or retention claim.
 
-The current four-screen flow starts with an introduction, presents every CLI,
-asks for worktree/delegation/budget defaults, then ends with seven feature cards
-and a generic Finish button. It never creates a first thread. CLI detection
-checks installation, not authentication. Provider refresh errors are swallowed.
-The onboarding and add-project dialogs both listen for Escape.
+The previous four-screen flow started with an introduction, presented every CLI,
+asked for worktree/delegation/budget defaults, then ended with seven feature cards
+and a generic Finish button. It never created a first thread. CLI detection
+checks installation, not authentication. Provider refresh errors were swallowed.
+The onboarding and add-project dialogs both listened for Escape.
 
 ## Implementation plan
 
