@@ -7,6 +7,10 @@
   background: var(--scrim);
 }
 
+.backdrop[hidden] {
+  display: none;
+}
+
 .sheet {
   width: min(440px, calc(100vw - 32px));
   max-height: min(80vh, 560px);
@@ -30,6 +34,22 @@
   flex-shrink: 0;
 }
 
+.heading {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.progress {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+
 .title {
   margin: 0;
   font-size: 15px;
@@ -43,9 +63,13 @@
   border-radius: var(--radius-sm);
 }
 
-.skip:hover {
+.skip:hover:not(:disabled) {
   background: var(--card);
   color: var(--text);
+}
+
+.skip:disabled {
+  opacity: 0.55;
 }
 
 .body {
@@ -55,14 +79,8 @@
   padding: 16px;
 }
 
-.welcome {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-
-.welcome p {
-  margin: 0;
+.lead {
+  margin: 0 0 10px;
   font-size: 13px;
   line-height: 1.5;
   color: var(--text-muted);
@@ -96,23 +114,8 @@
   flex-shrink: 0;
 }
 
-.dots {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
+.footerSpacer {
   flex: 1;
-}
-
-.dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--border);
-}
-
-.dot[data-current="true"] {
-  background: var(--blue);
 }
 
 .btn {
@@ -132,6 +135,10 @@
 .btn:hover:not(:disabled) {
   color: var(--text);
   background: var(--card-hover);
+}
+
+.btn:disabled {
+  opacity: 0.55;
 }
 
 .btnPrimary {
@@ -333,43 +340,61 @@ fieldset.setupSection:disabled {
   color: var(--danger-fg);
 }
 
-/* TourStep */
-.tourGrid {
-  list-style: none;
+.persistError {
   margin: 8px 0 0;
-  padding: 0;
-  display: grid;
-  grid-template-columns: 1fr 1fr;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
   gap: 8px;
+  font-size: 12px;
+  color: var(--danger-fg);
 }
 
-.tourCard {
+/* First-thread step */
+.choice {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  min-width: 0;
+  gap: 6px;
+}
+
+.choiceLabel {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-muted);
+}
+
+.choiceValue {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text);
+}
+
+.suggestion {
+  margin: 0;
   padding: 8px 10px;
   border-radius: var(--radius-sm);
   border: 1px solid var(--border);
   background: var(--card);
-}
-
-.tourCardTitle {
-  margin: 0;
-  font-size: 12px;
-  font-weight: 600;
+  font-size: 13px;
+  line-height: 1.45;
   color: var(--text);
 }
 
-.tourCardBody {
-  margin: 0;
-  font-size: 11.5px;
-  line-height: 1.4;
-  color: var(--text-muted);
+.textLink {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--blue);
+  font-size: 13px;
+  text-decoration: none;
+}
+
+.textLink:hover:not(:disabled) {
+  text-decoration: underline;
 }
 
 .tourCardLink {
-  margin-top: auto;
+  margin-top: 4px;
   align-self: flex-start;
   font-size: 11px;
   color: var(--blue);
@@ -378,4 +403,11 @@ fieldset.setupSection:disabled {
 
 .tourCardLink:hover {
   text-decoration: underline;
+}
+
+@media (max-width: 480px) {
+  .sheet {
+    width: calc(100vw - 16px);
+    max-height: min(90vh, 640px);
+  }
 }

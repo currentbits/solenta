@@ -20,7 +20,11 @@ import {
 } from "./support/fakeCoder.ts";
 import App from "../src/App";
 import { GitTab } from "../src/components/AgentsPanel";
-import type { CheckpointInfo, ThreadInfo } from "../src/shared/ipc";
+import type {
+  CheckpointInfo,
+  DevServerState,
+  ThreadInfo,
+} from "../src/shared/ipc";
 import { expandAgents } from "./support/expandAgents.ts";
 
 const NOW = Date.now();
@@ -441,6 +445,8 @@ describe("App checkpoints wiring (round 50)", () => {
   });
 });
 
+const idleDev: DevServerState = { running: false };
+
 async function mountGitTab(over: {
   checkpoints?: CheckpointInfo[];
   restoreCheckpoint?: (threadId: string, sha: string) => Promise<void>;
@@ -455,6 +461,10 @@ async function mountGitTab(over: {
       listCheckpoints={async () => cps}
       restoreCheckpoint={over.restoreCheckpoint ?? (async () => {})}
       listLocalServers={async () => []}
+      listDevScripts={async () => []}
+      startDevServer={async () => idleDev}
+      stopDevServer={async () => idleDev}
+      devServerStatus={async () => idleDev}
     />,
   );
   await m.flush();
