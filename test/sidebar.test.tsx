@@ -1353,6 +1353,118 @@ describe("Sidebar remove + edit project (scope menu)", () => {
     assert.equal(m.query('[data-remove-confirm="p2"]'), null);
     m.unmount();
   });
+
+  it("Escape dismisses the remove confirm without removing", async () => {
+    await clearSidebarStorage();
+    const removed: string[] = [];
+    const m = await mount(
+      sidebar(removeThreads, {
+        projects: [p1, p2],
+        onRemoveProject: (id) => {
+          removed.push(id);
+        },
+      }),
+    );
+    await openScopeMenu(m);
+    await m.click(m.query('[data-project-remove="p2"]')!);
+    const dialog = m.query('[data-remove-confirm="p2"]');
+    assert.ok(dialog, "confirm must open");
+    await m.press(dialog, "Escape");
+    assert.ok(
+      !m.query('[data-remove-confirm="p2"]'),
+      "Escape must dismiss the confirm",
+    );
+    assert.deepEqual(removed, []);
+    m.unmount();
+  });
+
+  it("opening remove confirm moves focus inside; Tab stays inside", async () => {
+    await clearSidebarStorage();
+    const removed: string[] = [];
+    const m = await mount(
+      sidebar(removeThreads, {
+        projects: [p1, p2],
+        onRemoveProject: (id) => {
+          removed.push(id);
+        },
+      }),
+    );
+    await openScopeMenu(m);
+    const opener = m.query('[data-project-remove="p2"]') as HTMLElement;
+    assert.ok(opener, "remove opener");
+    opener.focus();
+    await m.click(opener);
+    const dialog = m.query('[data-remove-confirm="p2"]') as HTMLElement | null;
+    assert.ok(dialog, "destructive confirm dialog must open");
+    assert.ok(
+      dialog.contains(document.activeElement),
+      "opening the dialog must move focus inside it",
+    );
+
+    await m.pressFocused("Tab");
+    const first = document.activeElement as HTMLElement;
+    assert.ok(dialog.contains(first), "Tab stays inside");
+    assert.equal(first.tagName, "BUTTON");
+
+    await m.pressFocused("Tab");
+    const second = document.activeElement as HTMLElement;
+    assert.ok(dialog.contains(second), "second Tab stays inside");
+    assert.notEqual(second, first);
+
+    await m.pressFocused("Tab");
+    assert.equal(document.activeElement, first, "Tab wraps inside the dialog");
+
+    await m.pressFocused("Escape");
+    assert.equal(m.query('[data-remove-confirm="p2"]'), null);
+    assert.deepEqual(removed, []);
+    m.unmount();
+  });
+
+  it("Escape is ignored while remove is in flight; Tab stays inside", async () => {
+    await clearSidebarStorage();
+    let resolveRemove!: () => void;
+    const held = new Promise<void>((resolve) => {
+      resolveRemove = resolve;
+    });
+    const calls: string[] = [];
+    const m = await mount(
+      sidebar(removeThreads, {
+        projects: [p1, p2],
+        onRemoveProject: (id) => {
+          calls.push(id);
+          return held;
+        },
+      }),
+    );
+    await openScopeMenu(m);
+    await m.click(m.query('[data-project-remove="p2"]')!);
+    await m.click(m.query('[data-remove-confirm-submit="p2"]')!);
+    await m.flush();
+    const dialog = m.query('[data-remove-confirm="p2"]') as HTMLElement | null;
+    assert.ok(dialog, "confirm stays mounted while remove is pending");
+    assert.deepEqual(calls, ["p2"]);
+
+    await m.pressFocused("Escape");
+    assert.ok(
+      m.query('[data-remove-confirm="p2"]'),
+      "Escape is inert while removePending",
+    );
+    assert.deepEqual(calls, ["p2"]);
+
+    await m.pressFocused("Tab");
+    assert.ok(
+      dialog.contains(document.activeElement),
+      "Tab stays inside while pending",
+    );
+
+    await inAct(async () => {
+      resolveRemove();
+      await Promise.resolve();
+    });
+    await m.flush();
+    assert.equal(m.query('[data-remove-confirm="p2"]'), null);
+    m.unmount();
+  });
 });
 
 describe("Sidebar unread indicators", () => {

@@ -83,6 +83,7 @@ import {
   type WaitState,
 } from "../waiting";
 import { useEscapeClose } from "../useEscapeClose";
+import { useModalFocus } from "../useModalFocus";
 import {
   flatVisibleThreadIds,
   formatBatchSettleFeedback,
@@ -1498,6 +1499,13 @@ export const Sidebar = memo(function Sidebar({
   useEscapeClose(issueFormFor != null && !issuePending, closeIssueForm);
   const [removeConfirmId, setRemoveConfirmId] = useState<string | null>(null);
   const [removePending, setRemovePending] = useState(false);
+  const closeRemoveConfirm = useCallback(() => {
+    if (removePending) return;
+    setRemoveConfirmId(null);
+  }, [removePending]);
+  useEscapeClose(removeConfirmId != null && !removePending, closeRemoveConfirm);
+  const removeConfirmRef = useRef<HTMLDivElement>(null);
+  useModalFocus(removeConfirmId != null, removeConfirmRef);
   const [projectScope, setProjectScope] = useState<string | null>(() =>
     loadStored(SCOPE_KEY),
   );
@@ -3126,21 +3134,19 @@ export const Sidebar = memo(function Sidebar({
           ).length;
           const threadWord = count === 1 ? "thread" : "threads";
           const title = `Remove project ${confirmProject.slug} and delete its ${count} ${threadWord}?`;
-          const closeConfirm = () => {
-            if (removePending) return;
-            setRemoveConfirmId(null);
-          };
           return (
             <div
               className={styles.removeConfirmOverlay}
               role="presentation"
-              onClick={closeConfirm}
+              onClick={closeRemoveConfirm}
             >
               <div
+                ref={removeConfirmRef}
                 className={styles.removeConfirm}
                 role="dialog"
                 aria-modal="true"
                 aria-labelledby="remove-project-title"
+                tabIndex={-1}
                 data-remove-confirm={confirmProject.id}
                 onClick={(e) => e.stopPropagation()}
               >
@@ -3197,7 +3203,7 @@ export const Sidebar = memo(function Sidebar({
                     type="button"
                     className={styles.removeConfirmCancel}
                     disabled={removePending}
-                    onClick={closeConfirm}
+                    onClick={closeRemoveConfirm}
                   >
                     Cancel
                   </button>
