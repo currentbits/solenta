@@ -1943,7 +1943,13 @@ describe("Store", () => {
       const envelope = JSON.parse(fs.readFileSync(filePath, "utf8"));
       assert.deepEqual(envelope.messagesByThread, {});
       assert.equal(JSON.stringify(envelope).includes(CANARY), false);
-      assert.ok(envelope.workLogByThread["t-small"]);
+      assert.deepEqual(envelope.workLogByThread, {});
+      assert.equal(
+        JSON.parse(
+          fs.readFileSync(path.join(tmpDir, "worklogs", "t-small.json"), "utf8"),
+        )[0].label,
+        "kept",
+      );
       assert.equal(
         JSON.parse(fs.readFileSync(shardPath("t-big"), "utf8"))[0].tool.input,
         CANARY,
@@ -2158,7 +2164,13 @@ describe("Store", () => {
       store.saveNow();
       const envelope = JSON.parse(fs.readFileSync(filePath, "utf8"));
       assert.deepEqual(envelope.messagesByThread, {});
-      assert.equal(envelope.workLogByThread.t1[0].label, "step");
+      assert.deepEqual(envelope.workLogByThread, {});
+      assert.deepEqual(
+        JSON.parse(
+          fs.readFileSync(path.join(tmpDir, "worklogs", "t1.json"), "utf8"),
+        ),
+        [{ id: "w1", label: "step", done: false, timestamp: 4 }],
+      );
       assert.deepEqual(JSON.parse(fs.readFileSync(shardPath("t1"), "utf8")), [
         { id: "m1", role: "user", text: "hi", createdAt: 3 },
       ]);
@@ -2578,6 +2590,257 @@ describe("Store", () => {
       const envelope = JSON.parse(fs.readFileSync(filePath, "utf8"));
       assert.deepEqual(envelope.messagesByThread, {});
       assert.ok(fs.readFileSync(`${filePath}.bak`, "utf8").includes(CANARY));
+    });
+  });
+
+  describe("sharded work logs (#1204)", () => {
+    function workLogShardPath(id) {
+      return path.join(tmpDir, "worklogs", `${id}.json`);
+    }
+
+    function workLogItems(n, prefix = "w") {
+      const items = [];
+      for (let i = 0; i < n; i++) {
+        items.push({
+          id: `${prefix}${i}`,
+          runId: "r",
+          label: "step",
+          done: true,
+          timestamp: i,
+        });
+      }
+      return items;
+    }
+
+    function writeInlineWorkLogs() {
+      fs.writeFileSync(
+        filePath,
+        JSON.stringify({
+          projects: [],
+          threads: [
+            {
+              id: "t-live",
+              projectId: "p1",
+              title: "Live",
+              status: "idle",
+              createdAt: 1,
+              updatedAt: 2,
+              archived: false,
+            },
+            {
+              id: "t-arch",
+              projectId: "p1",
+              title: "Archived",
+              status: "idle",
+              createdAt: 1,
+              updatedAt: 2,
+              archived: true,
+            },
+          ],
+          messagesByThread: {},
+          workLogByThread: {
+            "t-live": workLogItems(3, "live"),
+            "t-arch": workLogItems(3, "arch"),
+          },
+        }),
+        "utf8",
+      );
+    }
+
+    it("splits inline work logs into per-thread files and strips the envelope", () => {
+      writeInlineWorkLogs();
+      const store = new Store(filePath);
+      assert.equal(store.getWorkLog("t-live")[0].id, "live0");
+      assert.equal(store.getWorkLog("t-arch")[2].id, "arch2");
+      const envelope = JSON.parse(fs.readFileSync(filePath, "utf8"));
+      assert.deepEqual(envelope.workLogByThread, {});
+      assert.equal(
+        JSON.parse(fs.readFileSync(workLogShardPath("t-live"), "utf8")).length,
+        3,
+      );
+      assert.equal(
+        JSON.parse(fs.readFileSync(workLogShardPath("t-arch"), "utf8"))[0].id,
+        "arch0",
+      );
+    });
+
+    it("does not rewrite a clean or archived shard when another thread appends", () => {
+      writeInlineWorkLogs();
+      const store = new Store(filePath);
+      const archivedBefore = fs.readFileSync(workLogShardPath("t-arch"), "utf8");
+      store.appendWorkLog("t-live", {
+        id: "live-new",
+        runId: "r",
+        label: "next",
+        done: false,
+        timestamp: 9,
+      });
+      store.saveNow();
+      assert.equal(
+        fs.readFileSync(workLogShardPath("t-arch"), "utf8"),
+        archivedBefore,
+      );
+      assert.equal(
+        JSON.parse(fs.readFileSync(workLogShardPath("t-live"), "utf8")).at(-1)
+          .id,
+        "live-new",
+      );
+    });
+
+    it("removeThread deletes the work-log shard so reload does not resurrect it", () => {
+      writeInlineWorkLogs();
+      const store = new Store(filePath);
+      store.setThreads(store.getThreads().filter((t) => t.id !== "t-live"));
+      store.removeThread("t-live");
+      store.saveNow();
+      assert.equal(fs.existsSync(workLogShardPath("t-live")), false);
+      assert.equal(fs.existsSync(workLogShardPath("t-arch")), true);
+      const reloaded = new Store(filePath);
+      assert.deepEqual(reloaded.getWorkLog("t-live"), []);
+      assert.equal(reloaded.getWorkLog("t-arch").length, 3);
+    });
+
+    it("closes in-flight work-log rows from a shard on crash recovery", () => {
+      fs.mkdirSync(path.join(tmpDir, "worklogs"), { recursive: true });
+      fs.writeFileSync(
+        workLogShardPath("t-wf"),
+        JSON.stringify([
+          {
+            id: "wl-open",
+            runId: "r",
+            label: "Plan agent 1 retrying",
+            done: false,
+            timestamp: 1,
+          },
+        ]),
+      );
+      fs.writeFileSync(
+        filePath,
+        JSON.stringify({
+          projects: [],
+          threads: [
+            {
+              id: "t-wf",
+              projectId: "p1",
+              title: "Workflow",
+              status: "working",
+              createdAt: 1,
+              updatedAt: 2,
+              runStartedAt: 3,
+            },
+          ],
+          messagesByThread: {},
+          workLogByThread: {},
+        }),
+        "utf8",
+      );
+      const store = new Store(filePath);
+      assert.equal(store.getThread("t-wf").status, "failed");
+      assert.equal(store.getWorkLog("t-wf")[0].done, true);
+      store.saveNow();
+      const onDisk = JSON.parse(
+        fs.readFileSync(workLogShardPath("t-wf"), "utf8"),
+      );
+      assert.equal(onDisk[0].done, true);
+      const envelope = JSON.parse(fs.readFileSync(filePath, "utf8"));
+      assert.deepEqual(envelope.workLogByThread, {});
+    });
+
+    it("a 600×500 fixture appends one row without rewriting the map", () => {
+      const THREADS = 600;
+      const ITEMS = MAX_WORKLOG_ITEMS_PER_THREAD;
+      const itemsJson = JSON.stringify(workLogItems(ITEMS));
+      const dir = path.join(tmpDir, "worklogs");
+      fs.mkdirSync(dir, { recursive: true });
+      const threads = [];
+      for (let i = 0; i < THREADS; i++) {
+        const id = `t-${i}`;
+        fs.writeFileSync(path.join(dir, `${id}.json`), itemsJson);
+        threads.push({
+          id,
+          projectId: "p1",
+          title: `T${i}`,
+          status: "idle",
+          createdAt: 1,
+          updatedAt: 2,
+          archived: i !== 0,
+        });
+      }
+      fs.writeFileSync(
+        filePath,
+        JSON.stringify({
+          projects: [],
+          threads,
+          messagesByThread: {},
+          workLogByThread: {},
+        }),
+        "utf8",
+      );
+      const store = new Store(filePath);
+      const archivedPath = workLogShardPath("t-1");
+      const archivedBefore = fs.readFileSync(archivedPath, "utf8");
+
+      store.appendWorkLog("t-0", {
+        id: "w-new",
+        runId: "r",
+        label: "live",
+        done: false,
+        timestamp: 999,
+      });
+
+      let workLogStringifyBytes = 0;
+      const orig = JSON.stringify;
+      JSON.stringify = (value, ...rest) => {
+        const s = orig(value, ...rest);
+        if (
+          Array.isArray(value) &&
+          value.length > 0 &&
+          value[0] &&
+          typeof value[0] === "object" &&
+          "label" in value[0] &&
+          "done" in value[0]
+        ) {
+          workLogStringifyBytes += s.length;
+        }
+        return s;
+      };
+      let serializeMs = 0;
+      let envelopeBytes = 0;
+      try {
+        const t0 = performance.now();
+        const envelope = store._serialize();
+        serializeMs = performance.now() - t0;
+        envelopeBytes = Buffer.byteLength(envelope);
+        store.saveNow();
+      } finally {
+        JSON.stringify = orig;
+      }
+
+      assert.ok(
+        envelopeBytes < 2_000_000,
+        `envelope was ${envelopeBytes} bytes; work logs must not ride along`,
+      );
+      assert.ok(
+        serializeMs < 20,
+        `envelope stringify took ${serializeMs.toFixed(2)}ms; expected empty-workLog ballpark`,
+      );
+      assert.ok(
+        workLogStringifyBytes < 200_000,
+        `stringified ${workLogStringifyBytes} work-log bytes; expected one thread (~one cap)`,
+      );
+      assert.equal(
+        fs.readFileSync(archivedPath, "utf8"),
+        archivedBefore,
+        "archived work-log shard must not be rewritten",
+      );
+
+      const live = JSON.parse(fs.readFileSync(workLogShardPath("t-0"), "utf8"));
+      assert.equal(live.at(-1).id, "w-new");
+      assert.ok(Buffer.byteLength(orig(live)) < 200_000);
+
+      const envelope = JSON.parse(fs.readFileSync(filePath, "utf8"));
+      assert.deepEqual(envelope.workLogByThread, {});
+      assert.equal(JSON.stringify(envelope).includes("w-new"), false);
     });
   });
 
