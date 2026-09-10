@@ -3333,9 +3333,94 @@ function createRunner(opts) {
   }
 
   /**
+   * True when this launch must not spawn: Stop already ran, a newer run
+   * replaced us, the thread is gone, archived, or in Recently deleted.
+   * #1228: first-turn prefetch used to sit outside `active`.
+   */
+  function launchWasCancelled(threadId, runId) {
+    const entry = active.get(threadId);
+    if (!entry || entry.runId !== runId || entry.stopping) return true;
+    const thread = store.getThread(threadId);
+    if (!thread || thread.archived || services.isTrashed(thread)) return true;
+    return false;
+  }
+
+  /**
+   * Finish a cancelled pre-spawn launch. stopRun may already have cleared
+   * us; this is the post-await path for archive / delete / gone. A newer
+   * run on the same thread is left alone.
+   */
+  function settleCancelledLaunch(threadId, runId) {
+    const entry = active.get(threadId);
+    if (entry && entry.runId !== runId) return;
+    if (entry) {
+      if (entry.kind === "generic" || entry.kind === "real") {
+        completeWorkLogStep(threadId, entry.startingId);
+        completeWorkLogStep(threadId, entry.respondingId);
+      } else if (
+        entry.kind === "claude" ||
+        entry.kind === "codex" ||
+        entry.kind === "kimi" ||
+        entry.kind === "opencode" ||
+        entry.kind === "cursor" ||
+        entry.kind === "muse" ||
+        entry.kind === "preparing"
+      ) {
+        completeWorkLogStep(threadId, entry.startingId);
+        completeWorkLogStep(threadId, entry.workingId);
+      } else if (
+        (entry.kind === "sim" || entry.kind === "workflow") &&
+        entry.phaseItemIds
+      ) {
+        for (const id of entry.phaseItemIds.values()) {
+          completeWorkLogStep(threadId, id);
+        }
+      }
+      clearRun(threadId);
+    }
+    const thread = store.getThread(threadId);
+    if (!thread || thread.status !== "working") return;
+    appendMessage(threadId, "event", "Run stopped", runId);
+    appendDoneWorkLog(threadId, runId, "Run stopped");
+    store.updateThread(
+      threadId,
+      { status: "idle", runStartedAt: null, stoppedAt: Date.now() },
+      { touch: true },
+    );
+    store.save();
+    pushDetail(threadId, lastWorkflowByThread.get(threadId) || null);
+    pushThreadsChanged();
+  }
+
+  function abortIfCancelled(threadId, runId) {
+    if (!launchWasCancelled(threadId, runId)) return false;
+    settleCancelledLaunch(threadId, runId);
+    return true;
+  }
+
+  /**
+   * Upgrade the preparing `active` entry in place. No second active.set:
+   * Stop holds the same object and sets `stopping` on it.
+   * @returns {object | null}
+   */
+  function claimPreparingRun(threadId, runId, fields) {
+    if (launchWasCancelled(threadId, runId)) return null;
+    const existing = active.get(threadId);
+    if (!existing || existing.runId !== runId) return null;
+    Object.assign(existing, fields);
+    return existing;
+  }
+
+  function stampPreparingSteps(threadId, runId, steps) {
+    const pending = active.get(threadId);
+    if (pending && pending.runId === runId) Object.assign(pending, steps);
+  }
+
+  /**
    * Start a simulated multi-phase @coder/core ticker run.
    */
   function startSimulatedRun(threadId, prompt, runId, name) {
+    if (abortIfCancelled(threadId, runId)) return { runId };
     const workflow = core.createWorkflow({
       id: runId,
       name,
@@ -3406,20 +3491,24 @@ function createRunner(opts) {
       }
     }, tickMs);
 
-    const entry = {
+    const entry = claimPreparingRun(threadId, runId, {
       kind: "sim",
       timer,
-      runId,
       phaseItemIds,
       phaseSettled,
-    };
+    });
+    if (!entry) {
+      clearIntervalFn(timer);
+      settleCancelledLaunch(threadId, runId);
+      return { runId };
+    }
     Object.defineProperty(entry, "workflow", {
       get() {
         return current;
       },
       enumerable: true,
+      configurable: true,
     });
-    active.set(threadId, entry);
 
     return { runId };
   }
@@ -3428,6 +3517,7 @@ function createRunner(opts) {
    * Start a real generic agent child-process run (CODER_AGENT_CMD).
    */
   function startGenericRun(threadId, prompt, runId, name) {
+    if (abortIfCancelled(threadId, runId)) return { runId };
     const thread = store.getThread(threadId);
     const project = store.getProject(thread.projectId);
     if (!project) {
@@ -3449,6 +3539,7 @@ function createRunner(opts) {
 
     const startingId = beginWorkLogStep(threadId, runId, "Starting agent");
     const respondingId = beginWorkLogStep(threadId, runId, "Agent responding");
+    stampPreparingSteps(threadId, runId, { startingId, respondingId });
 
     store.save();
     pushThreadsChanged();
@@ -3464,22 +3555,25 @@ function createRunner(opts) {
 
     const localCwd = thread.worktreePath || project.path;
 
-    const entry = {
+    const entry = claimPreparingRun(threadId, runId, {
       kind: "generic",
-      runId,
-      stopping: false,
-      handle: null,
       startingId,
       respondingId,
       realState,
-    };
+    });
+    if (!entry) {
+      completeWorkLogStep(threadId, startingId);
+      completeWorkLogStep(threadId, respondingId);
+      settleCancelledLaunch(threadId, runId);
+      return { runId };
+    }
     Object.defineProperty(entry, "workflow", {
       get() {
         return realState;
       },
       enumerable: true,
+      configurable: true,
     });
-    active.set(threadId, entry);
 
     function guard() {
       const e = active.get(threadId);
@@ -3539,6 +3633,7 @@ function createRunner(opts) {
     const spawn = crossing
       ? resolveSpawn(project, command, [...args, String(prompt ?? "")], localCwd)
       : { binary: command, args, cwd: localCwd };
+    if (abortIfCancelled(threadId, runId)) return { runId };
     const handle = runAgentFn({
       command: spawn.binary,
       args: spawn.args,
@@ -3632,6 +3727,7 @@ function createRunner(opts) {
    * @param {import('./providers').ProviderEntry} [providerEntry]
    */
   async function startClaudeRun(threadId, prompt, runId, providerEntry) {
+    if (abortIfCancelled(threadId, runId)) return { runId };
     const thread = store.getThread(threadId);
     const project = store.getProject(thread.projectId);
     if (!project) {
@@ -3648,6 +3744,7 @@ function createRunner(opts) {
 
     const startingId = beginWorkLogStep(threadId, runId, "Starting agent");
     const workingId = beginWorkLogStep(threadId, runId, "Agent working");
+    stampPreparingSteps(threadId, runId, { startingId, workingId });
 
     store.save();
     pushThreadsChanged();
@@ -4010,6 +4107,7 @@ function createRunner(opts) {
           pushDetail(threadId, claudeState);
           pushThreadsChanged();
           notifyRunTerminal(threadId, "failed", failure.text);
+          clearRun(threadId);
           return { runId };
         }
       } else {
@@ -4027,11 +4125,9 @@ function createRunner(opts) {
     }
     const spawn = resolveSpawn(project, binary, args, localCwd);
 
-    const entry = {
+    if (abortIfCancelled(threadId, runId)) return { runId };
+    const entry = claimPreparingRun(threadId, runId, {
       kind: "claude",
-      runId,
-      stopping: false,
-      handle: null,
       startingId,
       workingId,
       claudeState,
@@ -4044,14 +4140,20 @@ function createRunner(opts) {
        * Ephemeral: dies with the run entry; a killed CLI cannot be answered.
        */
       pendingPermissions: [],
-    };
+    });
+    if (!entry) {
+      completeWorkLogStep(threadId, startingId);
+      completeWorkLogStep(threadId, workingId);
+      settleCancelledLaunch(threadId, runId);
+      return { runId };
+    }
     Object.defineProperty(entry, "workflow", {
       get() {
         return claudeState;
       },
       enumerable: true,
+      configurable: true,
     });
-    active.set(threadId, entry);
 
     function guard() {
       const e = active.get(threadId);
@@ -4665,6 +4767,7 @@ function createRunner(opts) {
      * path in onExit when a reused kept-alive process was already dying.
      */
     function spawnForTurn() {
+      if (launchWasCancelled(threadId, runId)) return;
       if (interactive) {
         const sess = {
           handle: null,
@@ -4719,6 +4822,7 @@ function createRunner(opts) {
       if (own && own.runId === runId) own.handle = handle;
     }
 
+    if (abortIfCancelled(threadId, runId)) return { runId };
     if (interactive && prevSess && prevAlive && prevSess.key === sessionKey) {
       // Same params, live process: deliver the turn on its stdin. Background
       // tasks from earlier turns keep running; the CLI reports their
@@ -4776,6 +4880,7 @@ function createRunner(opts) {
    * @param {string[]} [images] - absolute paths for UserInput localImage
    */
   function startCodexRun(threadId, prompt, runId, providerEntry, images) {
+    if (abortIfCancelled(threadId, runId)) return { runId };
     const thread = store.getThread(threadId);
     const project = store.getProject(thread.projectId);
     if (!project) {
@@ -4791,6 +4896,7 @@ function createRunner(opts) {
 
     const startingId = beginWorkLogStep(threadId, runId, "Starting agent");
     const workingId = beginWorkLogStep(threadId, runId, "Agent working");
+    stampPreparingSteps(threadId, runId, { startingId, workingId });
 
     store.save();
     pushThreadsChanged();
@@ -4896,11 +5002,9 @@ function createRunner(opts) {
     }
     const spawn = resolveSpawn(project, binary, args, localCwd, codexWrapEnv);
 
-    const entry = {
+    if (abortIfCancelled(threadId, runId)) return { runId };
+    const entry = claimPreparingRun(threadId, runId, {
       kind: "codex",
-      runId,
-      stopping: false,
-      handle: null,
       startingId,
       workingId,
       codexState,
@@ -4911,14 +5015,20 @@ function createRunner(opts) {
        * Empty on exec --json; filled when #1170 attaches JSON-RPC.
        */
       pendingPermissions: [],
-    };
+    });
+    if (!entry) {
+      completeWorkLogStep(threadId, startingId);
+      completeWorkLogStep(threadId, workingId);
+      settleCancelledLaunch(threadId, runId);
+      return { runId };
+    }
     Object.defineProperty(entry, "workflow", {
       get() {
         return codexState;
       },
       enumerable: true,
+      configurable: true,
     });
-    active.set(threadId, entry);
 
     function guard() {
       const e = active.get(threadId);
@@ -5072,6 +5182,7 @@ function createRunner(opts) {
       Array.isArray(images) && codexModelAcceptsImages(thread.model)
         ? images.filter((p) => typeof p === "string" && p)
         : [];
+    if (abortIfCancelled(threadId, runId)) return { runId };
     const handle = runCodexFn({
       binary: spawn.binary,
       args: spawn.args,
@@ -5352,6 +5463,7 @@ function createRunner(opts) {
    * @param {import('./providers').ProviderEntry} providerEntry
    */
   function startKimiRun(threadId, prompt, runId, providerEntry) {
+    if (abortIfCancelled(threadId, runId)) return { runId };
     const thread = store.getThread(threadId);
     const project = store.getProject(thread.projectId);
     if (!project) {
@@ -5367,6 +5479,7 @@ function createRunner(opts) {
 
     const startingId = beginWorkLogStep(threadId, runId, "Starting agent");
     const workingId = beginWorkLogStep(threadId, runId, "Agent working");
+    stampPreparingSteps(threadId, runId, { startingId, workingId });
 
     store.save();
     pushThreadsChanged();
@@ -5415,23 +5528,27 @@ function createRunner(opts) {
       webSearch: thread.webSearch === true,
     });
 
-    const entry = {
+    if (abortIfCancelled(threadId, runId)) return { runId };
+    const entry = claimPreparingRun(threadId, runId, {
       kind: "kimi",
-      runId,
-      stopping: false,
-      handle: null,
       startingId,
       workingId,
       kimiState,
       runUsage,
-    };
+    });
+    if (!entry) {
+      completeWorkLogStep(threadId, startingId);
+      completeWorkLogStep(threadId, workingId);
+      settleCancelledLaunch(threadId, runId);
+      return { runId };
+    }
     Object.defineProperty(entry, "workflow", {
       get() {
         return kimiState;
       },
       enumerable: true,
+      configurable: true,
     });
-    active.set(threadId, entry);
 
     function guard() {
       const e = active.get(threadId);
@@ -5640,6 +5757,7 @@ function createRunner(opts) {
     }
     const spawn = resolveSpawn(project, binary, args, localCwd, kimiEnv);
 
+    if (abortIfCancelled(threadId, runId)) return { runId };
     const handle = runKimi({
       binary: spawn.binary,
       args: spawn.args,
@@ -5881,6 +5999,7 @@ function createRunner(opts) {
    * @param {string[]} [files] - image/file paths for native `-f` (issue #176)
    */
   function startOpencodeRun(threadId, prompt, runId, providerEntry, files) {
+    if (abortIfCancelled(threadId, runId)) return { runId };
     const thread = store.getThread(threadId);
     const project = store.getProject(thread.projectId);
     if (!project) {
@@ -5896,6 +6015,7 @@ function createRunner(opts) {
 
     const startingId = beginWorkLogStep(threadId, runId, "Starting agent");
     const workingId = beginWorkLogStep(threadId, runId, "Agent working");
+    stampPreparingSteps(threadId, runId, { startingId, workingId });
 
     store.save();
     pushThreadsChanged();
@@ -5968,23 +6088,27 @@ function createRunner(opts) {
     }
     const spawn = resolveSpawn(project, binary, args, localCwd, opencodeEnv);
 
-    const entry = {
+    if (abortIfCancelled(threadId, runId)) return { runId };
+    const entry = claimPreparingRun(threadId, runId, {
       kind: "opencode",
-      runId,
-      stopping: false,
-      handle: null,
       startingId,
       workingId,
       opencodeState,
       runUsage,
-    };
+    });
+    if (!entry) {
+      completeWorkLogStep(threadId, startingId);
+      completeWorkLogStep(threadId, workingId);
+      settleCancelledLaunch(threadId, runId);
+      return { runId };
+    }
     Object.defineProperty(entry, "workflow", {
       get() {
         return opencodeState;
       },
       enumerable: true,
+      configurable: true,
     });
-    active.set(threadId, entry);
 
     function guard() {
       const e = active.get(threadId);
@@ -6069,6 +6193,7 @@ function createRunner(opts) {
 
     completeWorkLogStep(threadId, startingId);
 
+    if (abortIfCancelled(threadId, runId)) return { runId };
     const handle = runOpencode({
       binary: spawn.binary,
       args: spawn.args,
@@ -6354,6 +6479,7 @@ function createRunner(opts) {
    * @param {import('./providers').ProviderEntry} providerEntry
    */
   function startCursorRun(threadId, prompt, runId, providerEntry) {
+    if (abortIfCancelled(threadId, runId)) return { runId };
     const thread = store.getThread(threadId);
     const project = store.getProject(thread.projectId);
     if (!project) {
@@ -6369,6 +6495,7 @@ function createRunner(opts) {
 
     const startingId = beginWorkLogStep(threadId, runId, "Starting agent");
     const workingId = beginWorkLogStep(threadId, runId, "Agent working");
+    stampPreparingSteps(threadId, runId, { startingId, workingId });
 
     store.save();
     pushThreadsChanged();
@@ -6488,23 +6615,27 @@ function createRunner(opts) {
     }
     const spawn = resolveSpawn(project, binary, args, localCwd, cursorWrapEnv);
 
-    const entry = {
+    if (abortIfCancelled(threadId, runId)) return { runId };
+    const entry = claimPreparingRun(threadId, runId, {
       kind: "cursor",
-      runId,
-      stopping: false,
-      handle: null,
       startingId,
       workingId,
       cursorState,
       runUsage,
-    };
+    });
+    if (!entry) {
+      completeWorkLogStep(threadId, startingId);
+      completeWorkLogStep(threadId, workingId);
+      settleCancelledLaunch(threadId, runId);
+      return { runId };
+    }
     Object.defineProperty(entry, "workflow", {
       get() {
         return cursorState;
       },
       enumerable: true,
+      configurable: true,
     });
-    active.set(threadId, entry);
 
     function guard() {
       const e = active.get(threadId);
@@ -6610,6 +6741,7 @@ function createRunner(opts) {
 
     completeWorkLogStep(threadId, startingId);
 
+    if (abortIfCancelled(threadId, runId)) return { runId };
     const handle = runCursor({
       binary: spawn.binary,
       args: spawn.args,
@@ -6879,6 +7011,7 @@ function createRunner(opts) {
    * @param {import('./providers').ProviderEntry} providerEntry
    */
   async function startMuseRun(threadId, prompt, runId, providerEntry) {
+    if (abortIfCancelled(threadId, runId)) return { runId };
     const thread = store.getThread(threadId);
     const project = store.getProject(thread.projectId);
     if (!project) {
@@ -6894,6 +7027,7 @@ function createRunner(opts) {
 
     const startingId = beginWorkLogStep(threadId, runId, "Starting agent");
     const workingId = beginWorkLogStep(threadId, runId, "Agent working");
+    stampPreparingSteps(threadId, runId, { startingId, workingId });
 
     store.save();
     pushThreadsChanged();
@@ -6965,6 +7099,7 @@ function createRunner(opts) {
         pushDetail(threadId, museState);
         store.save();
         pushThreadsChanged();
+        clearRun(threadId);
         return { runId };
       }
     } else if (crossesBoundary(project)) {
@@ -6987,6 +7122,7 @@ function createRunner(opts) {
         pushDetail(threadId, museState);
         store.save();
         pushThreadsChanged();
+        clearRun(threadId);
         return { runId };
       }
     } else {
@@ -6995,23 +7131,27 @@ function createRunner(opts) {
 
     const spawn = resolveSpawn(project, binary, args, localCwd, museEnv);
 
-    const entry = {
+    if (abortIfCancelled(threadId, runId)) return { runId };
+    const entry = claimPreparingRun(threadId, runId, {
       kind: "muse",
-      runId,
-      stopping: false,
-      handle: null,
       startingId,
       workingId,
       museState,
       runUsage,
-    };
+    });
+    if (!entry) {
+      completeWorkLogStep(threadId, startingId);
+      completeWorkLogStep(threadId, workingId);
+      settleCancelledLaunch(threadId, runId);
+      return { runId };
+    }
     Object.defineProperty(entry, "workflow", {
       get() {
         return museState;
       },
       enumerable: true,
+      configurable: true,
     });
-    active.set(threadId, entry);
 
     function guard() {
       const e = active.get(threadId);
@@ -7181,6 +7321,7 @@ function createRunner(opts) {
 
     completeWorkLogStep(threadId, startingId);
 
+    if (abortIfCancelled(threadId, runId)) return { runId };
     const handle = runMuse({
       binary: spawn.binary,
       args: spawn.args,
@@ -8313,7 +8454,7 @@ function createRunner(opts) {
         : nativeImages.length
           ? attachments.filter((a) => a.kind !== "image")
           : attachments;
-    const dispatchPrompt =
+    const promptPrefix =
       (leadSlash ? cliPrompt : prefix + cliPrompt) +
       attachmentPromptSection(promptAttachments) +
       (leadSlash ? prefix : "") +
@@ -8345,16 +8486,32 @@ function createRunner(opts) {
         userDataPath && repoRoot
           ? tryReadCodeIndex(userDataPath, repoRoot)
           : null,
-      ) +
-      (await ask.prefetchBootstrapNote({
-        userDataPath,
-        projectPath:
-          dispatchThread.worktreePath ||
-          (projectForGate && projectForGate.path) ||
-          "",
-        firstTurn: !dispatchThread.sessionId,
-        bootstrapMemory,
-      }));
+      );
+
+    const pendingEntry = {
+      kind: "preparing",
+      runId,
+      stopping: false,
+      handle: {
+        kill() {
+          pendingEntry.stopping = true;
+        },
+      },
+    };
+    active.set(threadId, pendingEntry);
+
+    const bootNote = await ask.prefetchBootstrapNote({
+      userDataPath,
+      projectPath:
+        dispatchThread.worktreePath ||
+        (projectForGate && projectForGate.path) ||
+        "",
+      firstTurn: !dispatchThread.sessionId,
+      bootstrapMemory,
+    });
+    if (abortIfCancelled(threadId, runId)) return { runId };
+
+    const dispatchPrompt = promptPrefix + bootNote;
 
     const name = workflowNameFromThreadId(threadId);
 
@@ -8615,7 +8772,8 @@ function createRunner(opts) {
         entry.kind === "cursor" ||
         entry.kind === "muse" ||
         entry.kind === "real" ||
-        entry.kind === "ask") &&
+        entry.kind === "ask" ||
+        entry.kind === "preparing") &&
       entry.handle
     ) {
       if (entry.kind === "codex") cancelCodexServerRequests(entry);
@@ -8636,10 +8794,12 @@ function createRunner(opts) {
       entry.kind === "kimi" ||
       entry.kind === "opencode" ||
       entry.kind === "cursor" ||
-      entry.kind === "muse"
+      entry.kind === "muse" ||
+      entry.kind === "preparing"
     ) {
       completeWorkLogStep(threadId, entry.startingId);
       completeWorkLogStep(threadId, entry.workingId);
+      completeWorkLogStep(threadId, entry.respondingId);
     } else if (
       (entry.kind === "sim" || entry.kind === "workflow") &&
       entry.phaseItemIds
@@ -8766,6 +8926,7 @@ function createRunner(opts) {
     for (const threadId of [...active.keys()]) {
       const entry = active.get(threadId);
       const runId = entry && entry.runId ? entry.runId : null;
+      if (entry) entry.stopping = true;
       if (entry && entry.kind === "workflow") {
         workflowEngine.stopWorkflowEntry(entry);
       } else if (
@@ -8778,10 +8939,10 @@ function createRunner(opts) {
           entry.kind === "cursor" ||
           entry.kind === "muse" ||
           entry.kind === "real" ||
-          entry.kind === "ask") &&
+          entry.kind === "ask" ||
+          entry.kind === "preparing") &&
         entry.handle
       ) {
-        entry.stopping = true;
         try {
           entry.handle.kill();
         } catch {
