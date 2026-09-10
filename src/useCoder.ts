@@ -806,10 +806,12 @@ export interface UseCoderResult {
   /** Relaunch into a staged update. */
   applyUpdate: () => Promise<void>;
   /**
-   * Re-fetch providers.list() into state. Cheap and silent: fixes the
-   * boot-only fetch going stale when a CLI is installed mid-session.
+   * Re-fetch providers.list() into state. Cheap and silent by default: fixes
+   * the boot-only fetch going stale when a CLI is installed mid-session.
+   * Pass `{ throwOnError: true }` to surface a list failure (onboarding
+   * Recheck); the previous list is still kept.
    */
-  refreshProviders: () => Promise<void>;
+  refreshProviders: (opts?: { throwOnError?: boolean }) => Promise<void>;
   projectById: Map<string, ProjectInfo>;
   /** Thin memory passthroughs; callers hold list/search state locally. */
   searchMemory: (input: {
@@ -3396,13 +3398,17 @@ export function useCoder(): UseCoderResult {
     [api, applyThreadUpdate],
   );
 
-  const refreshProviders = useCallback(async () => {
-    try {
-      setProviders(await api.providers.list());
-    } catch {
-      // Best-effort staleness fix; keep the boot list on failure.
-    }
-  }, [api]);
+  const refreshProviders = useCallback(
+    async (opts?: { throwOnError?: boolean }) => {
+      try {
+        setProviders(await api.providers.list());
+      } catch (err) {
+        // Best-effort staleness fix; keep the boot list on failure.
+        if (opts?.throwOnError) throw err;
+      }
+    },
+    [api],
+  );
 
   const listCheckpoints = useCallback(
     async (threadId: string) => {
