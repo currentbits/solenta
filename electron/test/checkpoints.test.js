@@ -30,6 +30,34 @@ function git(cwd, args) {
   }).trim();
 }
 
+function sleep(ms) {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+function appendTurn(store, threadId, n, createdAt) {
+  store.appendMessage(threadId, {
+    id: `u${n}`,
+    role: "user",
+    text: `turn ${n}`,
+    runId: `r${n}`,
+    createdAt,
+  });
+  store.appendMessage(threadId, {
+    id: `a${n}`,
+    role: "assistant",
+    text: `ok${n}`,
+    runId: `r${n}`,
+    createdAt: createdAt + 1,
+  });
+  store.appendWorkLog(threadId, {
+    id: `w${n}`,
+    runId: `r${n}`,
+    label: `turn ${n}`,
+    done: true,
+    timestamp: createdAt,
+  });
+}
+
 async function loadCore() {
   return import(pathToFileURL(path.join(__dirname, "../../core/dist/index.js")).href);
 }
@@ -495,6 +523,122 @@ describe("listCheckpoints / restoreCheckpoint", () => {
       "",
       "nothing to save → no commit on top of turn 2",
     );
+  });
+
+  it("stamps Solenta-Message-Id on the checkpoint body (issue #149)", async () => {
+    fx = await makeWorktreeFixture();
+    appendTurn(fx.store, fx.thread.id, 1, Date.now());
+    fs.writeFileSync(path.join(fx.worktreePath, "a.txt"), "one\n");
+    const c1 = await maybeCreateCheckpoint(fx.store, fx.thread.id);
+    assert.ok(c1 && c1.sha);
+    assert.equal(c1.message, `${CHECKPOINT_SUBJECT_PREFIX}1`);
+    const body = git(fx.worktreePath, ["log", "-1", "--format=%b", c1.sha]);
+    assert.match(body, /Solenta-Message-Id:\s*a1/);
+  });
+
+  it("restore truncates later turns, work-log, and the provider session", async () => {
+    fx = await makeWorktreeFixture();
+    const file = path.join(fx.worktreePath, "tracked.txt");
+    fx.store.updateThread(fx.thread.id, { sessionId: "sess-live" });
+
+    appendTurn(fx.store, fx.thread.id, 1, Date.now());
+    fs.writeFileSync(file, "v1\n");
+    const c1 = await maybeCreateCheckpoint(fx.store, fx.thread.id);
+    assert.ok(c1 && c1.sha);
+
+    appendTurn(fx.store, fx.thread.id, 2, Date.now());
+    fs.writeFileSync(file, "v2\n");
+    await maybeCreateCheckpoint(fx.store, fx.thread.id);
+
+    appendTurn(fx.store, fx.thread.id, 3, Date.now());
+    fx.store.saveNow();
+
+    await restoreCheckpoint({
+      store: fx.store,
+      threadId: fx.thread.id,
+      sha: c1.sha,
+    });
+
+    assert.equal(fs.readFileSync(file, "utf8"), "v1\n");
+    assert.deepEqual(
+      fx.store.getMessages(fx.thread.id).map((m) => m.id),
+      ["u1", "a1"],
+    );
+    assert.deepEqual(
+      fx.store.getWorkLog(fx.thread.id).map((w) => w.id),
+      ["w1"],
+    );
+    const persisted = fx.store.getThread(fx.thread.id);
+    assert.equal(persisted.sessionId, null);
+    assert.equal(persisted.replayContext, true);
+  });
+
+  it("rewindConversation:false leaves the transcript and session alone", async () => {
+    fx = await makeWorktreeFixture();
+    const file = path.join(fx.worktreePath, "tracked.txt");
+    fx.store.updateThread(fx.thread.id, { sessionId: "sess-keep" });
+    appendTurn(fx.store, fx.thread.id, 1, Date.now());
+    fs.writeFileSync(file, "v1\n");
+    const c1 = await maybeCreateCheckpoint(fx.store, fx.thread.id);
+    appendTurn(fx.store, fx.thread.id, 2, Date.now());
+    fs.writeFileSync(file, "v2\n");
+    await maybeCreateCheckpoint(fx.store, fx.thread.id);
+
+    await restoreCheckpoint({
+      store: fx.store,
+      threadId: fx.thread.id,
+      sha: c1.sha,
+      rewindConversation: false,
+    });
+
+    assert.equal(fs.readFileSync(file, "utf8"), "v1\n");
+    assert.deepEqual(
+      fx.store.getMessages(fx.thread.id).map((m) => m.id),
+      ["u1", "a1", "u2", "a2"],
+    );
+    assert.equal(fx.store.getThread(fx.thread.id).sessionId, "sess-keep");
+    assert.notEqual(fx.store.getThread(fx.thread.id).replayContext, true);
+  });
+
+  it("legacy checkpoint without a message-id trailer still rewinds by time", async () => {
+    fx = await makeWorktreeFixture();
+    const wt = fx.worktreePath;
+    const file = path.join(wt, "tracked.txt");
+    fx.store.updateThread(fx.thread.id, { sessionId: "sess-legacy" });
+
+    appendTurn(fx.store, fx.thread.id, 1, Date.now());
+    fs.writeFileSync(file, "v1\n");
+    git(wt, ["add", "-A"]);
+    git(wt, [
+      "-c",
+      "user.email=solenta@local",
+      "-c",
+      "user.name=Solenta",
+      "commit",
+      "-m",
+      `${CHECKPOINT_SUBJECT_PREFIX}1`,
+    ]);
+    const c1Sha = git(wt, ["rev-parse", "HEAD"]);
+
+    await sleep(1100);
+    appendTurn(fx.store, fx.thread.id, 2, Date.now());
+    fs.writeFileSync(file, "v2\n");
+    await maybeCreateCheckpoint(fx.store, fx.thread.id);
+    fx.store.saveNow();
+
+    await restoreCheckpoint({
+      store: fx.store,
+      threadId: fx.thread.id,
+      sha: c1Sha,
+    });
+
+    assert.equal(fs.readFileSync(file, "utf8"), "v1\n");
+    assert.deepEqual(
+      fx.store.getMessages(fx.thread.id).map((m) => m.id),
+      ["u1", "a1"],
+    );
+    assert.equal(fx.store.getThread(fx.thread.id).sessionId, null);
+    assert.equal(fx.store.getThread(fx.thread.id).replayContext, true);
   });
 });
 
