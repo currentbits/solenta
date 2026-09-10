@@ -191,6 +191,7 @@ function makeCtx(deps) {
     cleanupRunArtifacts: deps.cleanupRunArtifacts,
     getIosSimulator,
     log: deps.log,
+    confirmApplyUpdate: deps.confirmApplyUpdate,
     getOrchStatus:
       typeof deps.getOrchStatus === "function"
         ? deps.getOrchStatus
@@ -999,7 +1000,11 @@ const IPC_HANDLERS = {
     }
     return status;
   },
-  "app:applyUpdate": async () => {
+  "app:applyUpdate": async (ctx) => {
+    if (typeof ctx.confirmApplyUpdate === "function") {
+      const ok = await ctx.confirmApplyUpdate();
+      if (!ok) return;
+    }
     updater.applyUpdate();
   },
   "app:feedback": async (ctx, input) => {

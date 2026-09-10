@@ -479,6 +479,9 @@ function validateQuotaFailover(raw) {
  * quotaWaitAutoResume: only an explicit false turns auto-resume off, so
  * absent/junk keeps Claude's default (continue when the usage limit resets).
  *
+ * confirmQuitWithActiveWork: only an explicit false opts out of the
+ * accidental-quit dialog (issue #1195). Absent/junk keeps the confirm.
+ *
  * prDiffCapLines: absent/junk → DEFAULT_PR_DIFF_CAP_LINES (400); only an
  * explicit null disables the PR-size cap (issue #402).
  *
@@ -515,6 +518,7 @@ function normalizeSettings(raw) {
     agentsPanelRememberLast: false,
     stayAwake: "agent",
     quotaWaitAutoResume: true,
+    confirmQuitWithActiveWork: true,
     prDiffCapLines: DEFAULT_PR_DIFF_CAP_LINES,
     agentProfiles: [],
     defaultOrchestratorProfileId: null,
@@ -644,6 +648,9 @@ function normalizeSettings(raw) {
   settings.quotaWaitAutoResume =
     /** @type {{ quotaWaitAutoResume?: unknown }} */ (obj)
       .quotaWaitAutoResume !== false;
+  settings.confirmQuitWithActiveWork =
+    /** @type {{ confirmQuitWithActiveWork?: unknown }} */ (obj)
+      .confirmQuitWithActiveWork !== false;
   settings.autoSettleOnMerge =
     /** @type {{ autoSettleOnMerge?: unknown }} */ (obj).autoSettleOnMerge !==
     false;
@@ -3280,6 +3287,7 @@ class Store {
       agentsPanelRememberLast: n.agentsPanelRememberLast,
       stayAwake: n.stayAwake,
       quotaWaitAutoResume: n.quotaWaitAutoResume,
+      confirmQuitWithActiveWork: n.confirmQuitWithActiveWork,
       prDiffCapLines: n.prDiffCapLines,
       agentProfiles: n.agentProfiles,
       defaultOrchestratorProfileId: n.defaultOrchestratorProfileId,
@@ -3528,6 +3536,13 @@ class Store {
         throw new Error("quotaWaitAutoResume must be a boolean");
       }
       this.data.settings.quotaWaitAutoResume = v;
+    }
+    if (Object.prototype.hasOwnProperty.call(patch, "confirmQuitWithActiveWork")) {
+      const v = patch.confirmQuitWithActiveWork;
+      if (typeof v !== "boolean") {
+        throw new Error("confirmQuitWithActiveWork must be a boolean");
+      }
+      this.data.settings.confirmQuitWithActiveWork = v;
     }
     if (Object.prototype.hasOwnProperty.call(patch, "linearApiKey")) {
       const v = patch.linearApiKey;

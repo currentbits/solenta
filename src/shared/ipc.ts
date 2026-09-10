@@ -2551,6 +2551,12 @@ export interface AppSettings {
    */
   quotaWaitAutoResume: boolean;
   /**
+   * Confirm before a user-initiated quit that would stop live agents,
+   * questions/approvals, or managed terminal/server sessions (issue #1195).
+   * Default on; only an explicit false opts out.
+   */
+  confirmQuitWithActiveWork: boolean;
+  /**
    * PR size cap in changed lines (additions + deletions vs the base branch),
    * enforced when a PR is created from the app (issue #402, DORA small
    * batches as a product default). Default 400; null disables the cap.

@@ -8869,6 +8869,16 @@ function createRunner(opts) {
     return active.has(threadId);
   }
 
+  /** Thread ids with a live run. Warm idle provider processes are not listed. */
+  function listActiveThreadIds() {
+    return [...active.keys()];
+  }
+
+  /** In-flight side questions (btw). Killed by stopAll, so they count as work. */
+  function listActiveBtwCount() {
+    return btwActive.size;
+  }
+
   function activeRunId(threadId) {
     const entry = active.get(String(threadId));
     return entry && typeof entry.runId === "string" ? entry.runId : null;
@@ -9124,6 +9134,8 @@ function createRunner(opts) {
     refreshAllQuotaWaits,
     getActiveWorkflow,
     isRunning,
+    listActiveThreadIds,
+    listActiveBtwCount,
     activeRunId,
     isAutoTurn,
     stopAll,
