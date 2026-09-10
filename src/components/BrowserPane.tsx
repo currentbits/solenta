@@ -54,7 +54,14 @@ export function BrowserPane({
   preview?: PreviewApi | null;
   devServerStatus?: (threadId: string) => Promise<DevServerState>;
   listLocalServers?: (threadId: string) => Promise<LocalServerInfo[]>;
-  onAttachScreenshot?: (dataUrl: string) => void | Promise<void>;
+  /**
+   * Persist a screenshot. `originThreadId` is the thread that started the
+   * capture so a parent save already in flight cannot attach to another draft.
+   */
+  onAttachScreenshot?: (
+    dataUrl: string,
+    originThreadId: string,
+  ) => void | Promise<void>;
 }) {
   const webviewRef = useRef<HTMLElement | null>(null);
   const [bound, setBound] = useState(false);
@@ -67,6 +74,12 @@ export function BrowserPane({
   const [busy, setBusy] = useState(false);
   const [capturing, setCapturing] = useState(false);
   const autoLoaded = useRef<string | null>(null);
+  const threadIdRef = useRef(threadId);
+  const captureGenRef = useRef(0);
+  if (threadIdRef.current !== threadId) {
+    threadIdRef.current = threadId;
+    captureGenRef.current += 1;
+  }
 
   const applySnap = useCallback((snap: PreviewSnapshot | null | undefined) => {
     if (!snap) return;
@@ -105,7 +118,14 @@ export function BrowserPane({
     setAddress("");
     setDraft("");
     setError(null);
+    setCapturing(false);
   }, [threadId]);
+
+  useEffect(() => {
+    return () => {
+      captureGenRef.current += 1;
+    };
+  }, []);
 
   useEffect(() => {
     const el = webviewRef.current;
@@ -213,16 +233,23 @@ export function BrowserPane({
 
   const onScreenshot = async () => {
     if (!preview || !onAttachScreenshot) return;
+    const originThreadId = threadId;
+    const generation = captureGenRef.current;
+    const isLive = () =>
+      originThreadId === threadIdRef.current &&
+      generation === captureGenRef.current;
     setCapturing(true);
     setError(null);
     try {
-      const shot = await preview.screenshot({ threadId });
+      const shot = await preview.screenshot({ threadId: originThreadId });
+      if (!isLive()) return;
       applySnap(shot);
-      await onAttachScreenshot(shot.dataUrl);
+      await onAttachScreenshot(shot.dataUrl, originThreadId);
     } catch (err) {
+      if (!isLive()) return;
       setError(err instanceof Error ? err.message : String(err));
     } finally {
-      setCapturing(false);
+      if (isLive()) setCapturing(false);
     }
   };
 

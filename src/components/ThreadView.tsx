@@ -4549,9 +4549,18 @@ export const ThreadView = memo(function ThreadView({
       cancelled = true;
     };
   }, [onListCliCommands, project?.path, threadId]);
-  const [incomingAttachments, setIncomingAttachments] = useState<
-    AttachmentInfo[]
-  >([]);
+  const [incomingHandoff, setIncomingHandoff] = useState<{
+    threadId: string;
+    items: AttachmentInfo[];
+  } | null>(null);
+  // #1206: bump during render so A→B→A cannot revive a save that
+  // resolves between the new render and the reset effect.
+  const screenshotHandoffGen = useRef(0);
+  const screenshotHandoffThreadId = useRef(threadId);
+  if (screenshotHandoffThreadId.current !== threadId) {
+    screenshotHandoffThreadId.current = threadId;
+    screenshotHandoffGen.current += 1;
+  }
   const [replyTo, setReplyTo] = useState<ReplyTarget | null>(null);
   const [snapOpen, setSnapOpen] = useState(false);
   const snapDialogRef = useRef<HTMLDivElement>(null);
@@ -4573,6 +4582,12 @@ export const ThreadView = memo(function ThreadView({
     setLayout(hydrated.layout);
     setFocusedId(hydrated.focusId);
   }
+  const browserPaneOpen = hasPaneType(layout, "browser");
+  const wasBrowserPaneOpen = useRef(browserPaneOpen);
+  if (wasBrowserPaneOpen.current && !browserPaneOpen) {
+    screenshotHandoffGen.current += 1;
+  }
+  wasBrowserPaneOpen.current = browserPaneOpen;
 
   const sessionImages = useMemo(
     () => sessionImagePathsFromMessages(detail?.messages ?? []),
@@ -5288,27 +5303,61 @@ export const ThreadView = memo(function ThreadView({
     }
   }, [onListSnapWindows]);
 
+  const isLiveScreenshotHandoff = (
+    originThreadId: string | null,
+    generation: number,
+  ) =>
+    originThreadId != null &&
+    originThreadId === screenshotHandoffThreadId.current &&
+    generation === screenshotHandoffGen.current;
+
+  const deliverIncomingAttachment = (
+    originThreadId: string,
+    generation: number,
+    att: AttachmentInfo,
+  ) => {
+    if (!isLiveScreenshotHandoff(originThreadId, generation)) return;
+    setIncomingHandoff({ threadId: originThreadId, items: [att] });
+  };
+
+  const attachBrowserScreenshot = useCallback(
+    async (dataUrl: string, originThreadId: string) => {
+      if (!onSaveAttachmentImage) return;
+      const generation = screenshotHandoffGen.current;
+      const att = await onSaveAttachmentImage(dataUrl);
+      if (!att) return;
+      deliverIncomingAttachment(originThreadId, generation, att);
+    },
+    [onSaveAttachmentImage],
+  );
+
   const captureAppSnap = useCallback(
     async (sourceId: string) => {
       if (!onCaptureSnapWindow) return;
+      const originThreadId = screenshotHandoffThreadId.current;
+      const generation = screenshotHandoffGen.current;
       setSnapBusy(true);
       setSnapError(null);
       try {
         const att = await onCaptureSnapWindow(sourceId);
-        if (att) {
-          setIncomingAttachments([att]);
+        if (!isLiveScreenshotHandoff(originThreadId, generation)) return;
+        if (att && originThreadId) {
+          deliverIncomingAttachment(originThreadId, generation, att);
           setSnapOpen(false);
-        } else {
+        } else if (!att) {
           setSnapError("Could not capture that window");
         }
       } catch (err) {
+        if (!isLiveScreenshotHandoff(originThreadId, generation)) return;
         setSnapError(
           err instanceof Error && err.message
             ? err.message
             : "Failed to capture the window",
         );
       } finally {
-        setSnapBusy(false);
+        if (isLiveScreenshotHandoff(originThreadId, generation)) {
+          setSnapBusy(false);
+        }
       }
     },
     [onCaptureSnapWindow],
@@ -5528,7 +5577,10 @@ export const ThreadView = memo(function ThreadView({
       setSyncRefreshNonce(0);
       setCopiedThreadId(false);
       setLightbox(null);
-      setIncomingAttachments([]);
+      setIncomingHandoff(null);
+      setSnapOpen(false);
+      setSnapBusy(false);
+      setSnapError(null);
       if (copyFlashTimer.current != null) {
         clearTimeout(copyFlashTimer.current);
         copyFlashTimer.current = null;
@@ -6532,12 +6584,7 @@ export const ThreadView = memo(function ThreadView({
                 devServerStatus={devServerStatus}
                 listLocalServers={listLocalServers}
                 onAttachScreenshot={
-                  onSaveAttachmentImage
-                    ? async (dataUrl) => {
-                        const att = await onSaveAttachmentImage(dataUrl);
-                        if (att) setIncomingAttachments([att]);
-                      }
-                    : undefined
+                  onSaveAttachmentImage ? attachBrowserScreenshot : undefined
                 }
               />
             );
@@ -7424,8 +7471,9 @@ export const ThreadView = memo(function ThreadView({
         onSaveAttachmentImage={onSaveAttachmentImage}
         onLoadAttachmentImage={onLoadAttachmentImage}
         onDropAttachmentFiles={onDropAttachmentFiles}
-        incomingAttachments={incomingAttachments}
-        onIncomingAttachmentsConsumed={() => setIncomingAttachments([])}
+        incomingAttachments={incomingHandoff?.items}
+        incomingAttachmentThreadId={incomingHandoff?.threadId ?? null}
+        onIncomingAttachmentsConsumed={() => setIncomingHandoff(null)}
         onSlashAction={handleSlashAction}
         cliCommands={cliCommands}
         onStopRun={onStopRun}
