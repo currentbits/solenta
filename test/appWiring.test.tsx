@@ -493,6 +493,76 @@ describe("App archive undo toast wiring", () => {
   });
 });
 
+describe("App delete undo toast wiring (#940)", () => {
+  it("deletes through the real UI and Undo restores the captured id", async () => {
+    const target = thread({
+      id: "t-to-delete",
+      title: "thread marked for delete undo",
+      projectId: "p1",
+    });
+    const keeper = thread({
+      id: "t-stays",
+      title: "keeper stays visible",
+      projectId: "p1",
+      updatedAt: (target.updatedAt ?? Date.now()) - 1000,
+    });
+    const fake = createFakeCoder({
+      projects: [project({ id: "p1" })],
+      threads: [target, keeper],
+      details: {
+        "t-to-delete": detail({ thread: target }),
+        "t-stays": detail({ thread: keeper }),
+      },
+    });
+    const m = await boot(fake);
+
+    const menuBtn = m
+      .queryAll("button")
+      .find(
+        (b) =>
+          b.getAttribute("aria-label") === "Thread actions" &&
+          !b.hasAttribute("data-more-btn"),
+      );
+    assert.ok(menuBtn, "Thread actions menu must be present on the open thread");
+    await m.click(menuBtn as HTMLElement);
+
+    const deleteItem = m
+      .queryAll("button")
+      .find((b) => (b.textContent || "").includes("Delete thread"));
+    assert.ok(deleteItem, "Delete thread menu item must exist");
+    await m.click(deleteItem as HTMLElement);
+
+    const confirm = m
+      .queryAll("button")
+      .find((b) => (b.textContent || "").trim() === "Confirm");
+    assert.ok(confirm, "delete confirm must be present");
+    assert.ok(
+      m.text().includes("Move to Recently deleted?"),
+      "confirm copy must mention Recently deleted, not permanent wipe",
+    );
+    await m.click(confirm as HTMLElement);
+
+    const deletedCalls = fake.of("threads.delete");
+    assert.ok(deletedCalls.length >= 1, "delete must hit threads.delete");
+    assert.deepEqual(
+      deletedCalls[deletedCalls.length - 1]!.args[0],
+      { threadId: "t-to-delete" },
+    );
+
+    assert.ok(m.text().includes("Deleted"), "App-level toast must appear after delete");
+    const undo = m.byText("Undo");
+    assert.ok(undo, "toast Undo control must be present");
+    await m.click(undo!);
+
+    const restored = fake
+      .of("threads.restore")
+      .map((c) => c.args[0] as { threadId: string })
+      .find((a) => a.threadId === "t-to-delete");
+    assert.ok(restored, "Undo must call threads.restore for the captured id");
+    m.unmount();
+  });
+});
+
 describe("App reasoning-effort wiring", () => {
   const claude = {
     id: "claude",
@@ -654,7 +724,10 @@ describe("App remove-project wiring (round 41)", () => {
       "Cancel must not call projects.remove",
     );
 
-    await m.click(m.query("[data-scope-trigger]"));
+    // Cancel leaves the scope menu open so Escape can restore the opener.
+    if (!m.query("[data-scope-menu]")) {
+      await m.click(m.query("[data-scope-trigger]"));
+    }
     await m.click(m.query('[data-project-remove="p-drop"]'));
     await m.click(m.query('[data-remove-confirm-submit="p-drop"]'));
     await m.flush();
@@ -1248,6 +1321,396 @@ describe("App planboard wiring (#207)", () => {
         provider: "claude",
         model: "claude-sonnet-4",
       });
+    } finally {
+      m.unmount();
+    }
+  });
+});
+
+describe("Activity and Kanban in-view project scope (#944)", () => {
+  async function openScopeAndView(
+    m: Awaited<ReturnType<typeof mount>>,
+    projectId: string,
+    view: "activity" | "kanban",
+  ): Promise<void> {
+    const trigger = m.query("[data-scope-trigger]");
+    assert.ok(trigger, "sidebar scope trigger");
+    await m.click(trigger as HTMLElement);
+    await m.flush();
+    const item = m.query(`[data-scope-item="${projectId}"]`);
+    assert.ok(item, `scope item ${projectId}`);
+    await m.click(item as HTMLElement);
+    await m.flush();
+    const nav = m.query(`[data-view-nav="${view}"]`);
+    assert.ok(nav, `${view} nav`);
+    await m.click(nav as HTMLElement);
+    await m.flush();
+  }
+
+  it("opens Activity from a sidebar project and can switch to All projects", async () => {
+    const pLedger = project({
+      id: "p-ledger",
+      slug: "acme/ledger",
+      path: "/tmp/ledger",
+    });
+    const pBilling = project({
+      id: "p-billing",
+      slug: "acme/billing",
+      path: "/tmp/billing",
+    });
+    const tLedger = thread({
+      id: "t-ledger",
+      projectId: "p-ledger",
+      title: "Ship ledger",
+    });
+    const tBilling = thread({
+      id: "t-billing",
+      projectId: "p-billing",
+      title: "New billing thread",
+    });
+    const fake = createFakeCoder({
+      projects: [pLedger, pBilling],
+      threads: [tLedger, tBilling],
+      details: {
+        "t-ledger": detail({ thread: tLedger }),
+        "t-billing": detail({ thread: tBilling }),
+      },
+    });
+    const m = await boot(fake);
+    try {
+      await m.flush();
+      await openScopeAndView(m, "p-billing", "activity");
+      const pane = m.query("[data-activity]");
+      assert.ok(pane, "activity view");
+      const select = m.query('select[aria-label="Project"]') as HTMLSelectElement | null;
+      assert.ok(select);
+      assert.equal(select.value, "p-billing");
+      assert.ok(pane.textContent?.includes("New billing thread"));
+      assert.ok(!pane.textContent?.includes("Ship ledger"));
+
+      await m.change(select, "");
+      assert.ok(pane.textContent?.includes("New billing thread"));
+      assert.ok(pane.textContent?.includes("Ship ledger"));
+    } finally {
+      m.unmount();
+    }
+  });
+
+  it("keeps an open Activity scope when the sidebar filter changes", async () => {
+    const pLedger = project({
+      id: "p-ledger",
+      slug: "acme/ledger",
+      path: "/tmp/ledger",
+    });
+    const pBilling = project({
+      id: "p-billing",
+      slug: "acme/billing",
+      path: "/tmp/billing",
+    });
+    const tLedger = thread({
+      id: "t-ledger",
+      projectId: "p-ledger",
+      title: "Ship ledger",
+    });
+    const tBilling = thread({
+      id: "t-billing",
+      projectId: "p-billing",
+      title: "New billing thread",
+    });
+    const fake = createFakeCoder({
+      projects: [pLedger, pBilling],
+      threads: [tLedger, tBilling],
+      details: {
+        "t-ledger": detail({ thread: tLedger }),
+        "t-billing": detail({ thread: tBilling }),
+      },
+    });
+    const m = await boot(fake);
+    try {
+      await m.flush();
+      await openScopeAndView(m, "p-billing", "activity");
+      const trigger = m.query("[data-scope-trigger]");
+      assert.ok(trigger);
+      await m.click(trigger as HTMLElement);
+      await m.flush();
+      await m.click(m.query('[data-scope-item="p-ledger"]') as HTMLElement);
+      await m.flush();
+
+      const select = m.query('select[aria-label="Project"]') as HTMLSelectElement | null;
+      assert.ok(select);
+      assert.equal(select.value, "p-billing", "sidebar must not rewrite an open report");
+      const pane = m.query("[data-activity]");
+      assert.ok(pane);
+      assert.ok(pane.textContent?.includes("New billing thread"));
+      assert.ok(!pane.textContent?.includes("Ship ledger"));
+    } finally {
+      m.unmount();
+    }
+  });
+
+  it("preserves Activity scope after opening a thread and returning (#944)", async () => {
+    const pLedger = project({
+      id: "p-ledger",
+      slug: "acme/ledger",
+      path: "/tmp/ledger",
+    });
+    const pBilling = project({
+      id: "p-billing",
+      slug: "acme/billing",
+      path: "/tmp/billing",
+    });
+    const tLedger = thread({
+      id: "t-ledger",
+      projectId: "p-ledger",
+      title: "Ship ledger",
+    });
+    const tBilling = thread({
+      id: "t-billing",
+      projectId: "p-billing",
+      title: "New billing thread",
+    });
+    const fake = createFakeCoder({
+      projects: [pLedger, pBilling],
+      threads: [tLedger, tBilling],
+      details: {
+        "t-ledger": detail({ thread: tLedger }),
+        "t-billing": detail({ thread: tBilling }),
+      },
+    });
+    const m = await boot(fake);
+    try {
+      await m.flush();
+      await openScopeAndView(m, "p-billing", "activity");
+      const select = m.query('select[aria-label="Project"]') as HTMLSelectElement;
+      await m.change(select, "");
+      assert.ok(m.text().includes("Ship ledger"));
+
+      const row = m.query('button[aria-label="Select thread: Ship ledger"]');
+      assert.ok(row, "activity row");
+      await m.click(row as HTMLElement);
+      await m.flush();
+      assert.equal(m.query("[data-activity]"), null, "left for the thread");
+
+      const nav = m.query('[data-view-nav="activity"]');
+      assert.ok(nav);
+      await m.click(nav as HTMLElement);
+      await m.flush();
+
+      const again = m.query('select[aria-label="Project"]') as HTMLSelectElement | null;
+      assert.ok(again);
+      assert.equal(
+        again.value,
+        "",
+        "returning via Activity nav must keep the in-view All projects choice",
+      );
+      assert.ok(m.text().includes("Ship ledger"));
+      assert.ok(m.text().includes("New billing thread"));
+    } finally {
+      m.unmount();
+    }
+  });
+
+  it("opens Kanban from a sidebar project and can switch to All projects", async () => {
+    const pLedger = project({
+      id: "p-ledger",
+      slug: "acme/ledger",
+      path: "/tmp/ledger",
+    });
+    const pBilling = project({
+      id: "p-billing",
+      slug: "acme/billing",
+      path: "/tmp/billing",
+    });
+    const fake = createFakeCoder({
+      projects: [pLedger, pBilling],
+      threads: [
+        thread({
+          id: "t-ledger",
+          projectId: "p-ledger",
+          title: "Ship ledger",
+          status: "idle",
+        }),
+        thread({
+          id: "t-billing",
+          projectId: "p-billing",
+          title: "New billing thread",
+          status: "idle",
+        }),
+      ],
+    });
+    const m = await boot(fake);
+    try {
+      await m.flush();
+      await openScopeAndView(m, "p-billing", "kanban");
+      const pane = m.query("[data-kanban]");
+      assert.ok(pane, "kanban view");
+      const select = m.query('select[aria-label="Project"]') as HTMLSelectElement | null;
+      assert.ok(select);
+      assert.equal(select.value, "p-billing");
+      assert.ok(pane.textContent?.includes("New billing thread"));
+      assert.ok(!pane.textContent?.includes("Ship ledger"));
+
+      await m.change(select, "");
+      assert.ok(pane.textContent?.includes("New billing thread"));
+      assert.ok(pane.textContent?.includes("Ship ledger"));
+    } finally {
+      m.unmount();
+    }
+  });
+});
+
+describe("Return to source view (#942)", () => {
+  it("restores Planboard project and sort via Back to Planboard", async () => {
+    const pLedger = project({
+      id: "p-ledger",
+      slug: "acme/ledger",
+      path: "/tmp/ledger",
+    });
+    const pBilling = project({
+      id: "p-billing",
+      slug: "acme/billing",
+      path: "/tmp/billing",
+    });
+    const tPlan = thread({
+      id: "t-plan",
+      projectId: "p-billing",
+      title: "live billing plan",
+      planSteps: [{ step: "keep going", status: "doing" }],
+    });
+    const fake = createFakeCoder({
+      projects: [pLedger, pBilling],
+      threads: [tPlan],
+      details: { "t-plan": detail({ thread: tPlan }) },
+      issueList: { ok: true, issues: [] },
+    });
+    const m = await boot(fake);
+    try {
+      await m.flush();
+      const nav = m.query('[data-view-nav="planboard"]');
+      assert.ok(nav);
+      await m.click(nav as HTMLElement);
+      await m.flush();
+      const projectSelect = m.query(
+        'select[aria-label="Project"]',
+      ) as HTMLSelectElement;
+      await m.change(projectSelect, "p-billing");
+      await m.flush();
+      const sort = m.query("[data-plan-sort]") as HTMLSelectElement;
+      await m.change(sort, "number-asc");
+      const live = m.query("[data-thread-plan='t-plan'] button");
+      assert.ok(live, "live plan");
+      await m.click(live as HTMLElement);
+      await m.flush();
+      assert.equal(m.query("[data-planboard]"), null);
+      const back = m.query('[data-return-to="planboard"]') as HTMLButtonElement | null;
+      assert.ok(back, "Back to Planboard");
+      assert.equal(back.type, "button");
+      const starts = fake.of("runs.start").length;
+      await m.click(back);
+      await m.flush();
+      assert.ok(m.query("[data-planboard]"), "returned to Planboard");
+      const again = m.query("[data-plan-sort]") as HTMLSelectElement | null;
+      assert.ok(again);
+      assert.equal(again.value, "number-asc");
+      const projectAgain = m.query(
+        'select[aria-label="Project"]',
+      ) as HTMLSelectElement;
+      assert.equal(projectAgain.value, "p-billing");
+      assert.equal(fake.of("runs.start").length, starts, "Back must not start a run");
+    } finally {
+      m.unmount();
+    }
+  });
+
+  it("offers Back to Activity and returns to the originating row", async () => {
+    const tLedger = thread({
+      id: "t-ledger",
+      title: "Ship ledger",
+    });
+    const tBilling = thread({
+      id: "t-billing",
+      title: "New billing thread",
+    });
+    const fake = createFakeCoder({
+      threads: [tLedger, tBilling],
+      details: {
+        "t-ledger": detail({ thread: tLedger }),
+        "t-billing": detail({ thread: tBilling }),
+      },
+    });
+    const m = await boot(fake);
+    try {
+      await m.flush();
+      await m.click(m.query('[data-view-nav="activity"]') as HTMLElement);
+      await m.flush();
+      const row = m.query('button[aria-label="Select thread: New billing thread"]');
+      assert.ok(row);
+      await m.click(row as HTMLElement);
+      await m.flush();
+      const back = m.query('[data-return-to="activity"]') as HTMLButtonElement | null;
+      assert.ok(back, "Back to Activity");
+      await m.click(back);
+      await m.flush();
+      assert.ok(m.query("[data-activity]"));
+      assert.equal(
+        m.container.ownerDocument.activeElement?.getAttribute("aria-label"),
+        "Select thread: New billing thread",
+      );
+    } finally {
+      m.unmount();
+    }
+  });
+
+  it("keeps Usage range and metric when switching Pulse reports", async () => {
+    const fake = createFakeCoder();
+    const m = await boot(fake);
+    try {
+      await m.flush();
+      await expandAgents(m);
+      const pulse = m.query('[data-panel-tab="pulse"]');
+      assert.ok(pulse, "Pulse tab");
+      await m.click(pulse as HTMLElement);
+      await m.flush();
+      const usageNav = m.query('[data-view-nav="usage"]');
+      assert.ok(usageNav, "Usage row");
+      await m.click(usageNav as HTMLElement);
+      await m.flush();
+      await inAct(async () => {
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      await m.flush();
+      assert.ok(m.query("[data-usage]"), "usage view");
+      await m.click(m.query('[data-usage-range="30"]') as HTMLElement);
+      await m.click(m.query('[data-usage-metric="tokens"]') as HTMLElement);
+      const insightsNav = m.query('[data-view-nav="insights"]');
+      assert.ok(insightsNav, "Insights row stays on Pulse");
+      await m.click(insightsNav as HTMLElement);
+      await m.flush();
+      assert.ok(m.query("[data-insights]"));
+      await m.click(m.query('[data-view-nav="usage"]') as HTMLElement);
+      await m.flush();
+      assert.equal(m.query("[data-usage]")?.getAttribute("data-range"), "30");
+      assert.equal(m.query("[data-usage]")?.getAttribute("data-metric"), "tokens");
+    } finally {
+      m.unmount();
+    }
+  });
+
+  it("does not offer Back after a sidebar thread click", async () => {
+    const t1 = thread({ id: "t-side", title: "sidebar thread" });
+    const fake = createFakeCoder({
+      threads: [t1],
+      details: { "t-side": detail({ thread: t1 }) },
+    });
+    const m = await boot(fake);
+    try {
+      await m.flush();
+      const row = m.query('button[aria-label="Select thread: sidebar thread"]');
+      assert.ok(row);
+      await m.click(row as HTMLElement);
+      await m.flush();
+      assert.equal(m.query("[data-return-to]"), null);
     } finally {
       m.unmount();
     }

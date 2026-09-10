@@ -13,6 +13,7 @@ const {
   parsePrListJson,
   isUnknownJsonField,
   listPrs,
+  listPrsRaw,
 } = require("../worktrees.js");
 const { writeFakeBin } = require("./support/fakeBin.js");
 
@@ -178,5 +179,114 @@ describe("async conversion regression (#228)", () => {
     }
     // The write flows still call this one synchronously on purpose.
     assert.equal(worktrees.defaultBranch.constructor.name, "Function");
+  });
+});
+
+describe("listPrs completeness and limit", () => {
+  let tmp;
+  let repo;
+  let prevGh;
+  let argsPath;
+
+  function installCountingGh(total) {
+    argsPath = path.join(tmp, "gh-args.json");
+    const bin = writeFakeBin(
+      path.join(tmp, "fake-gh-limit"),
+      `#!/usr/bin/env node
+"use strict";
+const fs = require("fs");
+const args = process.argv.slice(2);
+fs.writeFileSync(${JSON.stringify(argsPath)}, JSON.stringify(args));
+if (args[0] !== "pr" || args[1] !== "list") {
+  process.stderr.write("unhandled " + JSON.stringify(args) + "\\n");
+  process.exit(2);
+}
+const limitIdx = args.lastIndexOf("--limit");
+const limit = limitIdx >= 0 ? Number(args[limitIdx + 1]) : 30;
+const n = Math.min(${total}, Number.isFinite(limit) ? limit : 30);
+const rows = [];
+for (let i = 1; i <= n; i++) {
+  rows.push({
+    number: i,
+    title: "PR " + i,
+    url: "https://github.com/acme/demo/pull/" + i,
+    state: "OPEN",
+    headRefName: "feat/" + i,
+  });
+}
+process.stdout.write(JSON.stringify(rows) + "\\n");
+`,
+    );
+    process.env.CODER_GH_BIN = bin;
+  }
+
+  beforeEach(() => {
+    tmp = fs.mkdtempSync(path.join(os.tmpdir(), "coder-listprs-limit-"));
+    repo = path.join(tmp, "repo");
+    fs.mkdirSync(repo);
+    git(repo, ["init", "-q", "-b", "main"]);
+    git(repo, ["config", "user.email", "t@example.com"]);
+    git(repo, ["config", "user.name", "t"]);
+    fs.writeFileSync(path.join(repo, "a.txt"), "1");
+    git(repo, ["add", "."]);
+    git(repo, ["commit", "-qm", "init"]);
+    git(repo, ["remote", "add", "origin", "https://github.com/acme/demo.git"]);
+    prevGh = process.env.CODER_GH_BIN;
+  });
+
+  afterEach(() => {
+    if (prevGh == null) delete process.env.CODER_GH_BIN;
+    else process.env.CODER_GH_BIN = prevGh;
+    fs.rmSync(tmp, { recursive: true, force: true });
+  });
+
+  it("defaults to --limit 50 and reports a complete short page", async () => {
+    installCountingGh(12);
+    const result = await listPrs(repo);
+    assert.equal(result.ok, true);
+    assert.equal(result.prs.length, 12);
+    assert.equal(result.complete, true);
+    assert.equal(result.limit, 50);
+    const args = JSON.parse(fs.readFileSync(argsPath, "utf8"));
+    const limitIdx = args.lastIndexOf("--limit");
+    assert.equal(args[limitIdx + 1], "50");
+  });
+
+  it("marks a full default page as incomplete", async () => {
+    installCountingGh(75);
+    const result = await listPrs(repo);
+    assert.equal(result.ok, true);
+    assert.equal(result.prs.length, 50);
+    assert.equal(result.complete, false);
+    assert.equal(result.limit, 50);
+  });
+
+  it("honours an explicit listPrs limit and stays bounded", async () => {
+    installCountingGh(75);
+    const page = await listPrs(repo, { limit: 100 });
+    assert.equal(page.ok, true);
+    assert.equal(page.prs.length, 75);
+    assert.equal(page.complete, true);
+    assert.equal(page.limit, 100);
+    const args = JSON.parse(fs.readFileSync(argsPath, "utf8"));
+    assert.equal(args[args.lastIndexOf("--limit") + 1], "100");
+
+    const clamped = await listPrs(repo, { limit: 999 });
+    assert.equal(clamped.ok, true);
+    assert.equal(clamped.limit, 200);
+    const clampedArgs = JSON.parse(fs.readFileSync(argsPath, "utf8"));
+    assert.equal(clampedArgs[clampedArgs.lastIndexOf("--limit") + 1], "200");
+  });
+
+  it("leaves an explicit listPrsRaw extraArgs limit alone", async () => {
+    installCountingGh(120);
+    const raw = await listPrsRaw(repo, {
+      extraArgs: ["--state", "all", "--limit", "100"],
+    });
+    assert.equal(raw.ok, true);
+    assert.equal(raw.prs.length, 100);
+    assert.equal("complete" in raw, false);
+    const args = JSON.parse(fs.readFileSync(argsPath, "utf8"));
+    assert.deepEqual(args.slice(-4), ["--state", "all", "--limit", "100"]);
   });
 });

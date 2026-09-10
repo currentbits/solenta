@@ -6,6 +6,7 @@ const { randomUUID } = require("node:crypto");
 const { expandUserPath } = require("./fsBrowse.js");
 const {
   getProvider,
+  ejectCommand,
   knownProviderIds,
   listProviders,
   honouredEfforts,
@@ -885,10 +886,11 @@ const PLANBOARD_NOTE =
   "\n\n[Planboard] This workspace tracks project plans as GitHub issues. " +
   "For multi-step work, record and maintain your plan/roadmap/issues as " +
   "GitHub issues in this repo's origin using the coder-threads tools " +
-  "issue_create, issue_list, issue_set_plan, and issue_complete " +
-  "(status labels plan:todo, plan:doing, plan:done). Do not use `gh` " +
-  "for these writes: host-side tools keep the board in sync even when a " +
-  "sandbox cannot authenticate to GitHub. " +
+  "issue_create, issue_list, issue_set_plan, issue_complete, and " +
+  "issue_comment (status labels plan:todo, plan:doing, plan:done). " +
+  "issue_comment appends a comment without changing plan:* or closing. " +
+  "Do not use `gh` for these writes: host-side tools keep the board in " +
+  "sync even when a sandbox cannot authenticate to GitHub. " +
   "Skip this for trivial tasks. Your own todo list is mirrored onto the " +
   "board as live steps, so keep it current instead of filing issues for " +
   "individual steps.";
@@ -1301,6 +1303,10 @@ function forkThread(store, input) {
  * Shared by orchServer's thread_fork tool and the runner's pendingFork
  * dispatch so the two definitions of "a worker" cannot drift apart. Starting
  * the run is the caller's job: services must not depend on the runner.
+ * Worktree workers record the lead's committed HEAD (`leadSnapshotSha`)
+ * at fork time so lazy materialization can start from that exact SHA
+ * even if the lead advances (issue #948). That start ref is not
+ * `baseBranch` (the merge/PR destination).
  *
  * @param {any} store
  * @param {{ threadId: string, provider?: string, model?: string | null, pool?: string, worktree?: boolean }} input
@@ -1334,27 +1340,40 @@ function forkWorkerThread(store, input, forkImpl = forkThread) {
   } else if (Object.prototype.hasOwnProperty.call(input, "model")) {
     forkInput.model = input.model;
   }
-  const fork = forkImpl(store, forkInput);
-
-  const patch = { orchWorker: true };
-  if (resolved && resolved.fromPool && resolved.alias) {
-    patch.poolAlias = resolved.alias;
-  }
   const source = store.getThread(input.threadId);
-  const projectId = fork.projectId ?? (source ? source.projectId : null);
+  const projectId = source ? source.projectId : null;
   const project =
     typeof store.getProject === "function" && projectId != null
       ? store.getProject(projectId)
       : null;
   // Ask workers stay in the checkout — a worktree would burn the isolation
   // Ask exists to avoid (issue #392).
-  const sourceAsk = Boolean(source && source.ask) || Boolean(fork.ask);
-  if (input.worktree !== false && !sourceAsk && canHostWorktree(project)) {
-    patch.pendingWorktree = true;
+  const sourceAsk = Boolean(source && source.ask);
+  const wantsWorktree =
+    input.worktree !== false && !sourceAsk && canHostWorktree(project);
+
+  /** @type {{ sha: string, branch: string | null, dirty: boolean } | null} */
+  let snapshot = null;
+  if (wantsWorktree) {
+    const { captureLeadSnapshot } = require("./worktrees.js");
+    snapshot = captureLeadSnapshot(store, source);
   }
-  store.updateThread(fork.id, patch);
+
+  const fork = forkImpl(store, forkInput);
+
+  const patch = { orchWorker: true };
+  if (resolved && resolved.fromPool && resolved.alias) {
+    patch.poolAlias = resolved.alias;
+  }
+  if (wantsWorktree && snapshot) {
+    patch.pendingWorktree = true;
+    patch.leadSnapshotSha = snapshot.sha;
+    patch.leadSnapshotBranch = snapshot.branch;
+    if (snapshot.dirty) patch.leadSnapshotDirty = true;
+  }
+  const updated = store.updateThread(fork.id, patch);
   store.save();
-  return fork;
+  return updated ? { ...updated } : { ...fork, ...patch };
 }
 
 /**
@@ -1453,6 +1472,18 @@ function setProvider(store, input) {
     );
   } else if (modelProvided) {
     patch.model = normalizeModelForProvider(nextEntry, input.model);
+    // Providers with sessionPinsModel (exec --json ignores -m) drop the
+    // session so the next send is a fresh run with the chosen model
+    // (#1020). Interactive Codex app-server does not: turn/start.model
+    // overrides subsequent turns (live-verified 2026-09-10).
+    if (
+      thread.sessionId &&
+      patch.model !== thread.model &&
+      nextEntry &&
+      nextEntry.sessionPinsModel === true
+    ) {
+      patch.sessionId = null;
+    }
     const nextEfforts = honouredEfforts(nextEntry, patch.model);
     if (
       thread.reasoningEffort != null &&
@@ -1930,6 +1961,76 @@ function setTags(store, input) {
 }
 
 /**
+ * Recategorize a thread onto another project (issue #737). Never bumps
+ * updatedAt: the move is bookkeeping. Same-project is a no-op even when
+ * the thread could not otherwise move.
+ *
+ * Worktree-backed threads (worktreePath set) refuse: merge/cleanup use
+ * store.getProject(thread.projectId).path as the git destination, so a
+ * moved row would operate on repo B while the directory still belongs
+ * to repo A. The worktree is left untouched.
+ *
+ * Active runs (working / quota-wait) refuse: a live runner callback can
+ * write the old sessionId back after the patch.
+ *
+ * A permitted move drops cwd/session and git/GitHub bindings that would
+ * still name the source repo. pendingWorktree stays so first-run
+ * materialize uses the destination project. Crew workers (orchWorker /
+ * leadSnapshotSha) refuse: resolveWorktreeStart uses that SHA exclusively
+ * and would look it up in repo B. Dropping sessionId sets replayContext
+ * so the next turn digests this thread's retained tail (same as rewind).
+ *
+ * @param {import('./store').Store} store
+ * @param {{ threadId: string, projectId: string }} input
+ */
+function setThreadProject(store, input) {
+  const { threadId, projectId } = input;
+  const thread = store.getThread(threadId);
+  if (!thread) {
+    throw new Error(`Unknown thread: ${threadId}`);
+  }
+  const id = projectId != null ? String(projectId) : "";
+  if (!id) {
+    throw new Error("projectId is required");
+  }
+  const project = store.getProject(id);
+  if (!project) {
+    throw new Error(`Unknown project: ${id}`);
+  }
+  if (thread.projectId === id) {
+    return { ...thread };
+  }
+  if (thread.worktreePath) {
+    throw new Error("Cannot move a thread that has a worktree");
+  }
+  if (thread.orchWorker || thread.leadSnapshotSha) {
+    throw new Error("Cannot move a crew worker");
+  }
+  if (thread.status === "working" || thread.status === "quota-wait") {
+    throw new Error("Cannot move a thread while a run is active");
+  }
+  const patch = {
+    projectId: id,
+    sessionId: null,
+    replayContext: true,
+    branch: null,
+    baseBranch: null,
+    prNumber: null,
+    prUrl: null,
+    prState: null,
+    prMergeable: null,
+    issueNumber: null,
+    lane: undefined,
+    leadSnapshotSha: null,
+    leadSnapshotBranch: null,
+    leadSnapshotDirty: undefined,
+  };
+  const updated = store.updateThread(threadId, patch);
+  store.save();
+  return updated ? { ...updated } : { ...thread, ...patch };
+}
+
+/**
  * Mute/unmute desktop notifications for one thread (issue #87). Notification
  * only: no run-state or visibility effect, and never bumps updatedAt.
  *
@@ -1946,6 +2047,116 @@ function setMuted(store, input) {
   const updated = store.updateThread(threadId, patch);
   store.save();
   return updated ? { ...updated } : { ...thread, ...patch };
+}
+
+/**
+ * Best-effort clipboard write. Missing electron (tests, web) is a no-op.
+ * @param {string} text
+ */
+function defaultClipboardWrite(text) {
+  try {
+    const { clipboard } = require("electron");
+    if (clipboard && typeof clipboard.writeText === "function") {
+      clipboard.writeText(text);
+    }
+  } catch {
+    // no clipboard in this process
+  }
+}
+
+/**
+ * Copy the raw-CLI resume command and, when $TERMINAL is set, run it.
+ * Reclaim (ejected: false) never copies. Clipboard still succeeds if the
+ * terminal spawn throws.
+ *
+ * @param {import('./store').Store} store
+ * @param {object} thread
+ * @param {{
+ *   writeText?: (text: string) => void,
+ *   env?: NodeJS.ProcessEnv,
+ *   spawn?: typeof import('node:child_process').spawn,
+ * } | null | undefined} opts
+ */
+function copyEjectCommand(store, thread, opts) {
+  const project = store.getProject(thread.projectId);
+  const cwd = thread.worktreePath || (project && project.path) || "";
+  const { command } = ejectCommand({
+    provider: thread.provider,
+    sessionId: thread.sessionId,
+    cwd,
+    model: thread.model,
+    sessionStartModel: thread.sessionStartModel,
+  });
+  const writeText =
+    opts && typeof opts.writeText === "function"
+      ? opts.writeText
+      : defaultClipboardWrite;
+  writeText(command);
+
+  const env = (opts && opts.env) || process.env;
+  const term = String((env && env.TERMINAL) || "").trim();
+  if (!term) return;
+  const spawnFn =
+    opts && typeof opts.spawn === "function"
+      ? opts.spawn
+      : require("node:child_process").spawn;
+  const runnable = command.split("\n")[0];
+  try {
+    const child = spawnFn(term, ["-e", "sh", "-c", runnable], {
+      detached: true,
+      stdio: "ignore",
+    });
+    if (child && typeof child.unref === "function") child.unref();
+  } catch {
+    // command is still on the clipboard
+  }
+}
+
+/**
+ * Mark a thread ejected so Solenta will not resume its provider session
+ * (issue #554). The sessionId stays on the row for the raw CLI. Never
+ * bumps updatedAt: eject is ownership, not activity. Eject copies the
+ * per-provider resume command and optionally runs it in $TERMINAL.
+ *
+ * Reclaim (`ejected: false`) re-reads the known provider session for
+ * this sessionId and appends turns that happened outside Solenta
+ * (#433 reader: Codex rollout, Claude ~/.claude/projects jsonl, Grok
+ * chat_history.jsonl, Cursor agent-transcripts jsonl, OpenCode
+ * opencode.db / JSON fallback, Kimi sessions/<wd>/<id>/agents/main/wire.jsonl,
+ * Muse sessions/YYYY/MM/DD/<id>/session.jsonl).
+ *
+ * @param {import('./store').Store} store
+ * @param {{ threadId: string, ejected: boolean, home?: string }} input
+ * @param {{
+ *   writeText?: (text: string) => void,
+ *   env?: NodeJS.ProcessEnv,
+ *   spawn?: typeof import('node:child_process').spawn,
+ * } | null | undefined} [opts]
+ */
+function setEjected(store, input, opts) {
+  const { threadId, ejected } = input;
+  const thread = store.getThread(threadId);
+  if (!thread) {
+    throw new Error(`Unknown thread: ${threadId}`);
+  }
+  const patch = { ejected: ejected === true };
+  const updated = store.updateThread(threadId, patch);
+  const next = updated ? { ...updated } : { ...thread, ...patch };
+  if (ejected === true) {
+    try {
+      copyEjectCommand(store, next, opts);
+    } catch {
+      // ejected is persisted; clipboard / $TERMINAL is best-effort
+    }
+  } else {
+    const { absorbSessionTurns } = require("./cli-sessions.js");
+    absorbSessionTurns(store, next, {
+      home: input && input.home,
+      cwd: specCwd(store, next),
+    });
+  }
+  store.save();
+  return store.getThread(threadId) || next;
 }
 
 /**
@@ -2058,6 +2269,70 @@ function setBaseBranch(store, input) {
     retargetWorktreeBase({ store, thread, baseName: name });
   }
   const patch = { baseBranch: name };
+  const updated = store.updateThread(threadId, patch);
+  store.save();
+  return updated ? { ...updated } : { ...thread, ...patch };
+}
+
+/**
+ * Retarget an idle orchestration worker onto the lead's current committed
+ * HEAD (#1110). Updates `leadSnapshotSha` only — never `baseBranch`.
+ * Materialized worktrees reuse retargetWorktreeBase / #775 rebase-onto
+ * from the previous snapshot. Dirty lead edits are noted, never copied.
+ *
+ * @param {import('./store').Store} store
+ * @param {{ threadId: string }} input
+ */
+function refreshWorkerSnapshot(store, input) {
+  const threadId = input && input.threadId;
+  const thread = store.getThread(threadId);
+  if (!thread) {
+    throw new Error(`Unknown thread: ${threadId}`);
+  }
+  if (thread.status === "working") {
+    throw new Error("Cannot refresh a running worker. Wait until it is idle.");
+  }
+  if (!thread.orchWorker) {
+    throw new Error("Refresh is only for orchestration workers.");
+  }
+  const pending = thread.pendingWorktree === true;
+  const live = Boolean(thread.worktreePath);
+  if (!pending && !live) {
+    throw new Error("Refresh is only for worktree workers.");
+  }
+
+  const lead = thread.handoffFrom
+    ? store.getThread(thread.handoffFrom)
+    : null;
+  const {
+    captureLeadSnapshot,
+    retargetWorktreeBase,
+  } = require("./worktrees.js");
+  const snapshot = captureLeadSnapshot(store, lead);
+
+  if (live) {
+    const fromRef =
+      typeof thread.leadSnapshotSha === "string"
+        ? thread.leadSnapshotSha.trim()
+        : "";
+    if (!fromRef) {
+      throw new Error(
+        "This orchestration worker has no recorded lead snapshot. Refusing to fall back to main.",
+      );
+    }
+    retargetWorktreeBase({
+      store,
+      thread,
+      fromRef,
+      ontoRef: snapshot.sha,
+    });
+  }
+
+  const patch = {
+    leadSnapshotSha: snapshot.sha,
+    leadSnapshotBranch: snapshot.branch,
+    leadSnapshotDirty: snapshot.dirty === true,
+  };
   const updated = store.updateThread(threadId, patch);
   store.save();
   return updated ? { ...updated } : { ...thread, ...patch };
@@ -3712,6 +3987,34 @@ async function rewindThread(store, input, opts) {
 const THREAD_STILL_HAS_WORKTREE =
   "Thread still has a worktree. Merge or delete it in the Git tab first.";
 
+/** Bounded restore window for manual deletion (#940). */
+const TRASH_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+
+/**
+ * @param {object | null | undefined} thread
+ * @returns {boolean}
+ */
+function isTrashed(thread) {
+  return Boolean(thread && Number.isFinite(thread.trashedAt));
+}
+
+/**
+ * @param {object | null | undefined} thread
+ * @param {number} now
+ * @returns {boolean}
+ */
+function isTrashExpired(thread, now) {
+  return isTrashed(thread) && thread.trashedAt + TRASH_TTL_MS <= now;
+}
+
+/**
+ * @param {{ now?: number } | null | undefined} opts
+ * @returns {number}
+ */
+function trashNow(opts) {
+  return opts && Number.isFinite(opts.now) ? opts.now : Date.now();
+}
+
 /**
  * Drop a thread and every *ByThread map entry (messages, work log, usage).
  * Does not save; caller owns durability so bulk callers can save once.
@@ -3720,6 +4023,80 @@ const THREAD_STILL_HAS_WORKTREE =
  */
 function purgeThread(store, threadId) {
   store.removeThread(threadId);
+}
+
+/**
+ * Manual deletion: hide the thread in Recently deleted for TRASH_TTL_MS.
+ * Same active-run / worktree guards as deleteThread. Does not prune images
+ * or run artifacts — restore still needs them. Programmatic callers that
+ * must drop a thread immediately (create rollback, worker orphans, project
+ * removal) keep using deleteThread / purgeThread.
+ * @param {import('./store').Store} store
+ * @param {{ threadId: string }} input
+ * @param {{ isRunning?: (threadId: string) => boolean, getIosSimulator?: () => object | null, now?: number, log?: (msg: string) => void }} [opts]
+ */
+function trashThread(store, input, opts) {
+  const { threadId } = input;
+  const thread = store.getThread(threadId);
+  if (!thread) {
+    throw new Error(`Unknown thread: ${threadId}`);
+  }
+  if (opts && typeof opts.isRunning === "function" && opts.isRunning(threadId)) {
+    throw new Error("Cannot delete thread while a run is active");
+  }
+  if (thread.worktreePath) {
+    throw new Error(THREAD_STILL_HAS_WORKTREE);
+  }
+  if (isTrashed(thread)) {
+    return {
+      thread: { ...thread },
+      expiresAt: thread.trashedAt + TRASH_TTL_MS,
+    };
+  }
+  const now = trashNow(opts);
+  const updated = store.updateThread(threadId, { trashedAt: now });
+  store.saveNow();
+  void scheduleSimulatorRelease(opts, "releaseThread", { threadId });
+  const row = updated || { ...thread, trashedAt: now };
+  return { thread: { ...row }, expiresAt: now + TRASH_TTL_MS };
+}
+
+/**
+ * Restore a trashed thread to the same id and history. Does not start a
+ * run, drain the queue, or fire an expired quota timer.
+ * @param {import('./store').Store} store
+ * @param {{ threadId: string }} input
+ * @param {{ now?: number, cleanupRunArtifacts?: () => unknown, log?: (msg: string) => void }} [opts]
+ */
+function restoreThread(store, input, opts) {
+  const { threadId } = input;
+  const thread = store.getThread(threadId);
+  if (!thread) {
+    throw new Error(`Unknown thread: ${threadId}`);
+  }
+  const now = trashNow(opts);
+  if (!isTrashed(thread)) {
+    throw new Error("Thread is not in Recently deleted");
+  }
+  if (isTrashExpired(thread, now)) {
+    purgeThread(store, threadId);
+    store.saveNow();
+    void scheduleImagePruneFromStore(store);
+    scheduleArtifactCleanup(opts);
+    throw new Error("Recently deleted window expired");
+  }
+  if (!store.getProject(thread.projectId)) {
+    throw new Error("Cannot restore: project is no longer available");
+  }
+  const patch = { trashedAt: null };
+  if (thread.status === "quota-wait") {
+    patch.status = "idle";
+    patch.quotaWaitUntil = null;
+  }
+  const updated = store.updateThread(threadId, patch);
+  store.saveNow();
+  const row = updated || { ...thread, ...patch };
+  return decorateThread(store, row);
 }
 
 /**
@@ -3747,6 +4124,54 @@ function deleteThread(store, input, opts) {
   void scheduleImagePruneFromStore(store);
   scheduleArtifactCleanup(opts);
   void scheduleSimulatorRelease(opts, "releaseThread", { threadId });
+}
+
+/**
+ * Reclaim expired Recently deleted rows. Safe to call on boot and list.
+ * @param {import('./store').Store} store
+ * @param {{ now?: number, cleanupRunArtifacts?: () => unknown, log?: (msg: string) => void }} [opts]
+ * @returns {number} number of threads purged
+ */
+function expireTrashedThreads(store, opts) {
+  const now = trashNow(opts);
+  const ids = store
+    .getThreads()
+    .filter((t) => isTrashExpired(t, now))
+    .map((t) => t.id);
+  if (ids.length === 0) return 0;
+  for (const id of ids) purgeThread(store, id);
+  store.saveNow();
+  void scheduleImagePruneFromStore(store);
+  scheduleArtifactCleanup(opts);
+  return ids.length;
+}
+
+/**
+ * Unexpired Recently deleted rows, newest first.
+ * @param {import('./store').Store} store
+ * @param {{ now?: number }} [opts]
+ */
+function listTrashed(store, opts) {
+  const now = trashNow(opts);
+  /** @type {object[]} */
+  const out = [];
+  for (const t of store.getThreads()) {
+    if (!isTrashed(t) || isTrashExpired(t, now)) continue;
+    const project = store.getProject(t.projectId);
+    out.push({
+      id: t.id,
+      title: t.title,
+      projectId: t.projectId,
+      projectSlug: project ? project.slug : null,
+      projectMissing: !project,
+      trashedAt: t.trashedAt,
+      expiresAt: t.trashedAt + TRASH_TTL_MS,
+    });
+  }
+  out.sort(
+    (a, b) => b.trashedAt - a.trashedAt || String(a.id).localeCompare(String(b.id)),
+  );
+  return out;
 }
 
 /**
@@ -3872,6 +4297,7 @@ function listThreads(store) {
     // Sleep-time consolidation is a system job (issue #722): keep the
     // runner thread, but never show it in the sidebar.
     if (t && t.memoryConsolidate === true) continue;
+    if (isTrashed(t)) continue;
     const prev = prevRows && prevRows.get(t);
     if (prev) {
       rows.set(t, prev);
@@ -3895,7 +4321,7 @@ function listThreads(store) {
 function threadSummaries(store) {
   return store
     .getThreads()
-    .filter((t) => !(t && t.memoryConsolidate === true))
+    .filter((t) => !(t && t.memoryConsolidate === true) && !isTrashed(t))
     .map((t) => {
       const last = store.getLastAssistantMessage(t.id);
       return {
@@ -3923,12 +4349,13 @@ function threadSummaries(store) {
  * @param {import('./store').Store} store
  * @param {{ query?: string }} [input]
  */
-function searchThreads(store, input) {
+async function searchThreads(store, input) {
   const query =
     input && input.query != null ? String(input.query) : "";
-  return store
-    .searchThreads(query)
-    .filter((t) => !(t && t.memoryConsolidate === true));
+  const hits = await store.searchThreads(query);
+  return hits.filter(
+    (t) => !(t && t.memoryConsolidate === true) && !isTrashed(t),
+  );
 }
 
 /**
@@ -3955,7 +4382,7 @@ function searchThreads(store, input) {
 function getThreadDetail(store, threadId, workflow = null, opts) {
   const markVisited = !opts || opts.markVisited !== false;
   const thread = store.getThread(threadId);
-  if (!thread) {
+  if (!thread || isTrashed(thread)) {
     throw new Error(`Unknown thread: ${threadId}`);
   }
   if (markVisited) {
@@ -5040,6 +5467,7 @@ module.exports = {
   setSettled,
   setPinned,
   setTags,
+  setThreadProject,
   setQueued,
   takeQueued,
   addBtw,
@@ -5048,10 +5476,12 @@ module.exports = {
   promoteBtw,
   setSnoozed,
   setMuted,
+  setEjected,
   setCrossThreadInbound,
   setQuotaWaitAutoResume,
   setNotes,
   setBaseBranch,
+  refreshWorkerSnapshot,
   setFeltEstimate,
   setVerifyCommand,
   runVerifyNow,
@@ -5060,6 +5490,12 @@ module.exports = {
   rewindThread,
   clearSettledOnActivity,
   deleteThread,
+  trashThread,
+  restoreThread,
+  expireTrashedThreads,
+  listTrashed,
+  isTrashed,
+  TRASH_TTL_MS,
   purgeThread,
   THREAD_STILL_HAS_WORKTREE,
   listThreads,

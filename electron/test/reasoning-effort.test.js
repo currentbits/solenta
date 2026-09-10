@@ -1236,15 +1236,9 @@ emit({
         argv.includes("model_reasoning_effort=high"),
         `runner must pass effort into codex argv, got ${JSON.stringify(argv)}`,
       );
-      const last = argv[argv.length - 1];
-      assert.equal(
-        typeof last,
-        "string",
-        `runner prompt must stay last after effort inject: ${JSON.stringify(argv)}`,
-      );
       assert.ok(
-        last.includes(prompt),
-        `last argv token must contain the runner prompt sentinel: ${JSON.stringify(argv)}`,
+        argv.includes("app-server"),
+        `interactive Codex is app-server, got ${JSON.stringify(argv)}`,
       );
     } finally {
       if (runner) runner.stopAll();

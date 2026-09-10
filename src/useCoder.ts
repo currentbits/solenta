@@ -7,6 +7,7 @@ import type {
   AppStatus,
   AttachmentInfo,
   AutomationInfo,
+  AutomationRunsResult,
   AutomationWrite,
   CheckpointInfo,
   CoderApi,
@@ -26,6 +27,13 @@ import type {
   FetchIssueResult,
   CreateIssueResult,
   LocalServerInfo,
+  MergeLaneBeat,
+  MergeLaneClaim,
+  MergeLaneInfo,
+  MergeLanePreview,
+  MergeLaneRecycle,
+  MergeLaneRestore,
+  MergeSpotlight,
   McpCatalogEntry,
   McpImportPreview,
   McpInstallRequest,
@@ -46,6 +54,7 @@ import type {
   PlanStatus,
   SetPlanStatusResult,
   ListIssuesResult,
+  ListPrsOptions,
   ListPrsResult,
   CheckoutPrResult,
   PrChecksResult,
@@ -54,6 +63,7 @@ import type {
   ProjectUpdateInput,
   ProviderInfo,
   ReasoningEffort,
+  CliSessionCandidate,
   CliSlashCommand,
   SkillCatalogEntry,
   SkillImportPreview,
@@ -63,6 +73,11 @@ import type {
   SkillPreviewImportInput,
   SkillTarget,
   SkillWrite,
+  HarnessSourceId,
+  HarnessSourceInfo,
+  HarnessImportPreview,
+  HarnessInstallRequest,
+  HarnessInstallResult,
   SimulatorStatus,
   SpecArtifact,
   StayAwakeMode,
@@ -70,7 +85,9 @@ import type {
   ThreadDetail,
   ThreadInfo,
   ThreadSummaryInfo,
+  TrashedThreadInfo,
   CrewTaskView,
+  CrewIntegration,
   UpdateStatus,
   UsageReport,
   VerifyResult,
@@ -88,6 +105,7 @@ import {
 } from "./threadPatch";
 import { parseBtwCommand } from "./btw";
 import { parseFeedbackCommand } from "./feedback";
+import type { DroppedFolder } from "./dropFiles";
 import type { ProviderUsage } from "./shared/ipc";
 import {
   loadBootSnapshot,
@@ -112,27 +130,54 @@ function readFileAsDataUrl(file: File): Promise<string | null> {
   });
 }
 
+/** Same extensions native classifyPaths treats as kind=image. */
+const WEB_IMAGE_EXTS = new Set([
+  "png",
+  "jpg",
+  "jpeg",
+  "gif",
+  "webp",
+  "bmp",
+  "svg",
+]);
+
+function isWebImageFile(file: File): boolean {
+  const dot = file.name.lastIndexOf(".");
+  const ext = dot >= 0 ? file.name.slice(dot + 1).toLowerCase() : "";
+  if (ext) return WEB_IMAGE_EXTS.has(ext);
+  return file.type.toLowerCase().startsWith("image/");
+}
+
 async function filesToAttachments(
   files: File[],
-  save: (dataUrl: string) => Promise<AttachmentInfo | null>,
+  save: {
+    image: (dataUrl: string) => Promise<AttachmentInfo | null>;
+    file: (name: string, dataUrl: string) => Promise<AttachmentInfo | null>;
+  },
 ): Promise<AttachmentInfo[]> {
   const out: AttachmentInfo[] = [];
   for (const file of files) {
     const dataUrl = await readFileAsDataUrl(file);
     if (!dataUrl) continue;
-    const attachment = await save(dataUrl);
+    const attachment = isWebImageFile(file)
+      ? await save.image(dataUrl)
+      : await save.file(file.name, dataUrl);
     if (attachment) out.push(attachment);
   }
   return out;
 }
 
-/** ponytail: web mode can only attach images, not folders. Native picker allows folders; `<input type=file>` cannot. */
-function pickWebImageFiles(): Promise<File[]> {
+/**
+ * Web file picker. No accept and no webkitdirectory: folders are a
+ * separate chip (showDirectoryPicker / saveFolder). No `accept=image/*`
+ * so Spark can attach text files (#1173). Composer still drops kind=image
+ * on text-only models.
+ */
+function pickWebFiles(): Promise<File[]> {
   return new Promise((resolve) => {
     const input = document.createElement("input");
     input.type = "file";
     input.multiple = true;
-    input.accept = "image/*";
     let settled = false;
     const finish = (files: File[]) => {
       if (settled) return;
@@ -146,9 +191,76 @@ function pickWebImageFiles(): Promise<File[]> {
   });
 }
 
+type WebFolderFile = { relativePath: string; dataUrl: string };
+
+type WebDirEntry = {
+  kind: string;
+  getFile?: () => Promise<File>;
+  entries?: () => AsyncIterableIterator<[string, WebDirEntry]>;
+};
+
+type WebDirHandle = {
+  name: string;
+  entries: () => AsyncIterableIterator<[string, WebDirEntry]>;
+};
+
+async function readDirectoryHandle(
+  handle: WebDirHandle,
+  prefix = "",
+): Promise<WebFolderFile[]> {
+  const out: WebFolderFile[] = [];
+  for await (const [name, entry] of handle.entries()) {
+    if (entry.kind === "file" && entry.getFile) {
+      const file = await entry.getFile();
+      const dataUrl = await readFileAsDataUrl(file);
+      if (dataUrl) out.push({ relativePath: `${prefix}${name}`, dataUrl });
+      continue;
+    }
+    if (entry.kind === "directory" && typeof entry.entries === "function") {
+      const nestedEntries = entry.entries.bind(entry);
+      out.push(
+        ...(await readDirectoryHandle(
+          { name, entries: nestedEntries },
+          `${prefix}${name}/`,
+        )),
+      );
+    }
+  }
+  return out;
+}
+
+async function pickWebFolder(): Promise<{
+  name: string;
+  files: WebFolderFile[];
+} | null> {
+  const picker = (
+    window as Window & { showDirectoryPicker?: () => Promise<WebDirHandle> }
+  ).showDirectoryPicker;
+  if (typeof picker !== "function") return null;
+  try {
+    const handle = await picker();
+    return { name: handle.name, files: await readDirectoryHandle(handle) };
+  } catch {
+    return null;
+  }
+}
+
 export type WorkflowSaveInput = Omit<WorkflowTemplateInfo, "id" | "builtin"> & {
   id?: string;
 };
+
+function upsertWorkflow(
+  list: WorkflowTemplateInfo[],
+  saved: WorkflowTemplateInfo,
+): WorkflowTemplateInfo[] {
+  const idx = list.findIndex((w) => w.id === saved.id);
+  if (idx >= 0) {
+    const next = list.slice();
+    next[idx] = saved;
+    return next;
+  }
+  return [...list, saved];
+}
 
 function resolveApi(): CoderApi {
   return resolveCoderApi();
@@ -240,11 +352,13 @@ export interface UseCoderResult {
   /**
    * Start a run, or queue the prompt when that thread is already working:
    * the queued text is delivered at the run's terminal (issue #92).
+   * Pass `steer: true` to inject into the live turn instead (issue #156).
    */
   startRun: (
     prompt: string,
     threadId?: string,
     attachments?: AttachmentInfo[],
+    opts?: { fromNotice?: boolean; steer?: boolean },
   ) => Promise<void>;
   /**
    * Edit-and-resubmit (#254): rewind the transcript to just before
@@ -259,12 +373,18 @@ export interface UseCoderResult {
   ) => Promise<void>;
   /** Follow-ups waiting for a run to land, keyed by thread id. */
   queued: Record<string, QueuedMessage>;
-  /** Drop a thread's queued follow-up. Defaults to the selected thread. */
-  cancelQueued: (threadId?: string) => void;
+  /** Drop a thread's queued follow-up. Defaults to the selected thread.
+   *  Resolves true once the host clear lands; false if there was nothing
+   *  to drop or the persist rejected (overlay restored). */
+  cancelQueued: (threadId?: string) => Promise<boolean>;
   /** Re-send a queued prompt after a delivery failure (issue #314). */
   retryQueued: (threadId?: string) => void;
   /** Replace a thread's queued follow-up text in place (issue #364 / #809). */
-  editQueued: (prompt: string, threadId?: string, items?: string[]) => void;
+  editQueued: (
+    prompt: string,
+    threadId?: string,
+    items?: string[],
+  ) => Promise<void>;
   /** Fetch a GitHub or Linear issue for a project checkout. */
   fetchIssue: (
     projectPath: string,
@@ -277,12 +397,17 @@ export interface UseCoderResult {
   startWorkflowRun: (prompt: string, templateId?: string) => Promise<void>;
   /** Re-spawn a failed workflow phase agent after the run ended (#825 / #830). */
   retryWorkflowAgent: (agentId: string) => Promise<void>;
-  /** Persist a workflow template; refreshes the list. Saving a builtin creates a copy. */
+  /**
+   * Persist a workflow template. The returned row is authoritative even when
+   * the follow-up list refresh fails (#1138). Saving a builtin creates a copy.
+   */
   saveWorkflow: (template: WorkflowSaveInput) => Promise<WorkflowTemplateInfo>;
-  /** Remove a non-builtin template; refreshes the list. */
+  /** Remove a non-builtin template. Success stands even if list refresh fails. */
   removeWorkflow: (id: string) => Promise<void>;
   /** Reload workflows.list() into state. */
   refreshWorkflows: () => Promise<void>;
+  /** Failed workflows.list after a successful save/remove, or a manual retry. */
+  workflowListError: string | null;
   refreshAutomations: () => Promise<void>;
   addAutomation: (input: AutomationWrite) => Promise<AutomationInfo>;
   updateAutomation: (
@@ -290,6 +415,8 @@ export interface UseCoderResult {
   ) => Promise<AutomationInfo>;
   removeAutomation: (id: string) => Promise<void>;
   runAutomationNow: (id: string) => Promise<AutomationInfo>;
+  /** Retained run threads for one automation; does not start a run. */
+  listAutomationRuns: (id: string) => Promise<AutomationRunsResult>;
   stopRun: () => Promise<void>;
   /** Sticky permission mode. Pass threadId to target a fork, not the open thread. */
   setPermissionMode: (
@@ -351,7 +478,10 @@ export interface UseCoderResult {
   setSnoozed: (threadId: string, until: number | null) => Promise<void>;
   /** Replace a thread's user-defined tags. Does not require selection. */
   setTags: (threadId: string, tags: string[]) => Promise<void>;
+  /** Recategorize a thread onto another project. Does not require selection. */
+  setThreadProject: (threadId: string, projectId: string) => Promise<void>;
   setMuted: (threadId: string, muted: boolean) => Promise<void>;
+  setEjected: (threadId: string, ejected: boolean) => Promise<void>;
   setCrossThreadInbound: (
     threadId: string,
     policy: "accept" | "queue-only" | "refuse",
@@ -367,6 +497,8 @@ export interface UseCoderResult {
   setNotes: (threadId: string, notes: string) => Promise<void>;
   /** Change the recorded merge/PR base after create (#187). */
   setBaseBranch: (threadId: string, baseBranch: string | null) => Promise<void>;
+  /** Retarget an idle worker onto the lead's current committed HEAD. */
+  refreshWorkerSnapshot: (threadId: string) => Promise<void>;
   /**
    * Resolve a suggested-work chip (issue #550). Updates the thread from the
    * returned ThreadInfo. status is never "open" — chips do not reopen.
@@ -424,8 +556,14 @@ export interface UseCoderResult {
   promoteBtw: (threadId: string, id: string) => Promise<void>;
   /** Ask the agent to review the human's TODO(human) fills. Starts a run. */
   requestTeachReview: (threadId: string) => Promise<void>;
-  /** Permanently delete the selected thread (after caller confirms). */
-  deleteThread: () => Promise<void>;
+  /** Move the selected thread to Recently deleted (after caller confirms). */
+  deleteThread: () => Promise<boolean>;
+  /** Recently deleted rows for the restore list. */
+  trashedThreads: TrashedThreadInfo[];
+  /** Restore a Recently deleted thread. Returns true on success. */
+  restoreThread: (threadId: string) => Promise<boolean>;
+  /** Permanently delete a live or trashed thread. */
+  purgeThread: (threadId: string) => Promise<boolean>;
   /**
    * Remove a project ENTRY and its threads' history (after caller confirms).
    * Repo on disk is never touched. On success refreshes projects + threads;
@@ -481,17 +619,25 @@ export interface UseCoderResult {
   ) => Promise<void>;
   /** Data URL for one image a tool returned; null when it is gone. */
   loadToolImage: (name: string) => Promise<string | null>;
-  /** Native file/image/folder picker, or a web <input type=file> for images. */
-  pickAttachments: () => Promise<AttachmentInfo[]>;
+  /** Native file/image/folder picker, or a web <input type=file> for files. */
+  pickAttachments: (opts?: {
+    includeImages?: boolean;
+  }) => Promise<AttachmentInfo[]>;
+  /** Web-only folder pick via showDirectoryPicker; persists through saveFolder. */
+  pickFolderAttachments: () => Promise<AttachmentInfo[]>;
   /** Persist a pasted image for the selected thread; null when rejected. */
   saveAttachmentImage: (dataUrl: string) => Promise<AttachmentInfo | null>;
   /** Data URL for one attached image; null when it is gone. */
   loadAttachmentImage: (path: string) => Promise<string | null>;
   /**
    * Classify drag-dropped files as attachments. Native resolves absolute
-   * paths via the Electron preload; web reads each File as a data URL.
+   * paths via the Electron preload; web reads each File as a data URL
+   * (saveImage / saveFile) and walks directory entries into saveFolder.
    */
-  dropAttachmentFiles: (files: File[]) => Promise<AttachmentInfo[]>;
+  dropAttachmentFiles: (
+    files: File[],
+    folders?: DroppedFolder[],
+  ) => Promise<AttachmentInfo[]>;
   /** Push the selected thread's branch to origin. */
   pushBranch: () => Promise<{ remote: string; branch: string }>;
   /** Open (or re-return) a GitHub PR for the selected thread's branch. */
@@ -509,7 +655,10 @@ export interface UseCoderResult {
   /** Squash-merge the selected thread's current OPEN PR. */
   prMerge: (opts?: { ciWorkflowApproved?: boolean }) => Promise<PrInfo>;
   /** Open PRs for a project checkout (`gh pr list`). Failures are in-band. */
-  listPrs: (projectPath: string) => Promise<ListPrsResult>;
+  listPrs: (
+    projectPath: string,
+    opts?: ListPrsOptions,
+  ) => Promise<ListPrsResult>;
   /** Check out a PR into a worktree thread. Failures are in-band. */
   checkoutPr: (input: {
     projectId: string;
@@ -538,6 +687,14 @@ export interface UseCoderResult {
   listCrewTasks: (
     threadId: string,
   ) => Promise<{ rootThreadId: string; tasks: CrewTaskView[] }>;
+  /** Lead Integration view (#954 / #982). */
+  crewIntegration: (threadId: string) => Promise<CrewIntegration>;
+  /** Squash a crew worker onto the lead worktree (#954). */
+  integrateWorker: (
+    leadThreadId: string,
+    workerThreadId: string,
+    opts?: { ciWorkflowApproved?: boolean },
+  ) => Promise<{ noop: boolean; merged: boolean }>;
   /** Worktree checkpoints for a thread (newest-first). */
   listCheckpoints: (threadId: string) => Promise<CheckpointInfo[]>;
   /** Hard-reset the thread worktree to a checkpoint sha. */
@@ -560,6 +717,36 @@ export interface UseCoderResult {
   gitRepoInfo: (threadId: string) => Promise<GitRepoInfo>;
   /** `git pull --ff-only` for a thread root. Never rejects. */
   gitPull: (threadId: string) => Promise<GitPullResult>;
+  /** Claim the next free numbered merge-queue lane (#346). */
+  claimLane: (input: { threadId: string }) => Promise<MergeLaneClaim>;
+  /** Claimed merge-queue lanes for a project (#346 / #1114). */
+  listLanes: (input: { projectId: string }) => Promise<MergeLaneInfo[]>;
+  /** Mirror a lane onto the project checkout. */
+  previewLane: (input: {
+    projectId: string;
+    lane: number;
+  }) => Promise<MergeLanePreview>;
+  /** Undo a lane preview on the project checkout. */
+  restorePreview: (input: { projectId: string }) => Promise<MergeLaneRestore>;
+  /** Tear down wedged lanes. Does not close issues or move main. */
+  recycleWedgedLanes: (input: {
+    projectId: string;
+  }) => Promise<MergeLaneRecycle[]>;
+  /** Per-repo Spotlight opt-in (#250 stretch). */
+  setSpotlight: (input: {
+    projectId: string;
+    enabled: boolean;
+  }) => Promise<MergeSpotlight>;
+  /** Hot-swap a claimed lane onto the project checkout via preview/restore. */
+  spotlightLane: (input: {
+    projectId: string;
+    lane: number;
+  }) => Promise<MergeLanePreview>;
+  /** Stamp lastBeat on a claimed lane. Does not recycle or close issues. */
+  heartbeatLane: (input: {
+    threadId: string;
+    now?: number;
+  }) => Promise<MergeLaneBeat | null>;
   /** Runnable package.json scripts (dev/start/serve) at the thread root. */
   listDevScripts: (threadId: string) => Promise<string[]>;
   /** Start the thread's npm dev script. */
@@ -631,10 +818,13 @@ export interface UseCoderResult {
   searchMemory: (input: {
     query: string;
     project?: string;
+    type?: MemoryEntryInfo["type"];
   }) => Promise<MemoryEntryInfo[]>;
   recentMemory: (input?: {
     limit?: number;
+    offset?: number;
     project?: string;
+    type?: MemoryEntryInfo["type"];
   }) => Promise<MemoryEntryInfo[]>;
   getMemory: (input: { id: string }) => Promise<MemoryEntryInfo>;
   updateMemory: (input: {
@@ -652,6 +842,7 @@ export interface UseCoderResult {
   }) => Promise<{ id: string }>;
   maintenanceMemory: (input?: {
     project?: string;
+    summary?: boolean;
   }) => Promise<MemoryMaintenanceReport>;
   resolveMemory: (input: {
     id: number;
@@ -698,9 +889,31 @@ export interface UseCoderResult {
     input: SkillInstallRequest,
   ) => Promise<SkillInstallResult>;
   discardSkillImport: (input: { previewId: string }) => Promise<void>;
+  detectHarnessSources: () => Promise<HarnessSourceInfo[]>;
+  previewHarnessImport: (input: {
+    source: HarnessSourceId;
+    projectPath?: string;
+  }) => Promise<HarnessImportPreview>;
+  installHarnessImport: (
+    input: HarnessInstallRequest,
+  ) => Promise<HarnessInstallResult>;
+  discardHarnessImport: (input: { previewId: string }) => Promise<void>;
   listCliCommands: (input?: {
     projectPath?: string;
   }) => Promise<CliSlashCommand[]>;
+  /** Codex / Grok / Claude / Cursor / OpenCode / Kimi / Muse CLI sessions on disk. */
+  listCliSessions: (input?: {
+    provider?: "codex" | "grok" | "claude" | "cursor" | "opencode" | "kimi" | "muse";
+  }) => Promise<CliSessionCandidate[]>;
+  /**
+   * Import one listed CLI session as a Solenta thread in projectId.
+   * Selects the thread the same way createThread does.
+   */
+  importCliSession: (input: {
+    sessionId: string;
+    projectId: string;
+    provider?: "codex" | "grok" | "claude" | "cursor" | "opencode" | "kimi" | "muse";
+  }) => Promise<ThreadInfo>;
   /** Full-content thread search (titles + message text); Sidebar owns debounce/state. */
   searchThreads: (input: { query: string }) => Promise<ThreadInfo[]>;
   /** Load another thread's transcript without marking it visited (#393). */
@@ -718,8 +931,12 @@ export function useCoder(): UseCoderResult {
   const [threads, setThreads] = useState<ThreadInfo[]>(
     () => bootSnapshot?.threads ?? [],
   );
+  const [trashedThreads, setTrashedThreads] = useState<TrashedThreadInfo[]>([]);
   const [providers, setProviders] = useState<ProviderInfo[]>([]);
   const [workflows, setWorkflows] = useState<WorkflowTemplateInfo[]>([]);
+  const [workflowListError, setWorkflowListError] = useState<string | null>(
+    null,
+  );
   const [automations, setAutomations] = useState<AutomationInfo[]>([]);
   const [selectedThreadId, setSelectedThreadId] = useState<string | null>(
     () => bootSnapshot?.selectedThreadId ?? null,
@@ -823,6 +1040,14 @@ export function useCoder(): UseCoderResult {
     [api],
   );
 
+  const refreshTrashed = useCallback(() => {
+    if (typeof api.threads.listTrashed !== "function") return;
+    void api.threads
+      .listTrashed()
+      .then((rows) => setTrashedThreads(Array.isArray(rows) ? rows : []))
+      .catch(() => {});
+  }, [api]);
+
   const applyThreads = useCallback((next: ThreadInfo[]) => {
     const reconciled = reconcileThreadList(threadsRef.current, next);
     if (reconciled === threadsRef.current) return;
@@ -831,19 +1056,30 @@ export function useCoder(): UseCoderResult {
   }, []);
 
   const cancelQueued = useCallback(
-    (threadId?: string) => {
+    (threadId?: string): Promise<boolean> => {
       const id = threadId ?? selectedRef.current;
-      if (!id) return;
+      if (!id) return Promise.resolve(false);
       const held = threadsRef.current.find((t) => t.id === id);
-      if (!held?.queued) return;
+      if (!held?.queued) return Promise.resolve(false);
       applyThreads(
         threadsRef.current.map((t) =>
           t.id === id ? { ...t, queued: null } : t,
         ),
       );
-      void api.threads.setQueued({ threadId: id, prompt: null }).catch((err) => {
-        setError({ scope: "run", message: errorMessage(err) });
-      });
+      return api.threads
+        .setQueued({ threadId: id, prompt: null })
+        .then(() => true)
+        .catch((err) => {
+          setError({ scope: "run", message: errorMessage(err) });
+          // Host still has the prompt — put the overlay back. Do not
+          // setQueued the old payload: that appends and duplicates.
+          applyThreads(
+            threadsRef.current.map((t) =>
+              t.id === id ? { ...t, queued: held.queued } : t,
+            ),
+          );
+          return false;
+        });
     },
     [api, applyThreads],
   );
@@ -862,8 +1098,10 @@ export function useCoder(): UseCoderResult {
         ),
       );
       void (async () => {
+        let cleared = false;
         try {
           await api.threads.setQueued({ threadId: id, prompt: null });
+          cleared = true;
           await api.runs.start({
             threadId: id,
             prompt: pending.prompt,
@@ -871,22 +1109,30 @@ export function useCoder(): UseCoderResult {
           });
         } catch (err) {
           // A failed retry must not eat the prompt — that is the loss this
-          // issue exists to kill. Put it back, with the new error on it.
-          setError({ scope: "run", message: errorMessage(err) });
-          await api.threads
-            .setQueued({
-              threadId: id,
-              prompt: pending.prompt,
-              attachments: pending.attachments,
-            })
-            .catch(() => null);
-          // setQueued clears the stored error (a fresh queue is not a failed
-          // one), so the reason lives on the local row until the next attempt.
+          // issue exists to kill. Re-enqueue only if the host actually
+          // dropped it: setQueued appends, so compensating a failed clear
+          // duplicates prompt and attachments (issue #925).
+          const message = errorMessage(err);
+          setError({ scope: "run", message });
+          let queued: QueuedMessage = { ...pending, error: message };
+          if (cleared) {
+            try {
+              const updated = await api.threads.setQueued({
+                threadId: id,
+                prompt: pending.prompt,
+                attachments: pending.attachments,
+              });
+              if (updated.queued) {
+                queued = { ...updated.queued, error: message };
+              }
+            } catch {
+              // Keep the in-memory payload; a second restore miss must not
+              // eat the prompt the user still has locally.
+            }
+          }
           applyThreads(
             threadsRef.current.map((t) =>
-              t.id === id
-                ? { ...t, queued: { ...pending, error: errorMessage(err) } }
-                : t,
+              t.id === id ? { ...t, queued } : t,
             ),
           );
         }
@@ -896,32 +1142,31 @@ export function useCoder(): UseCoderResult {
   );
 
   const editQueued = useCallback(
-    (prompt: string, threadId?: string, items?: string[]) => {
+    async (prompt: string, threadId?: string, items?: string[]) => {
       const id = threadId ?? selectedRef.current;
       if (!id) return;
       const held = threadsRef.current.find((t) => t.id === id);
       if (!held?.queued) return;
-      void api.threads
-        .setQueued({
+      try {
+        const updated = await api.threads.setQueued({
           threadId: id,
           prompt,
           attachments: held.queued.attachments,
           replace: true,
           ...(items ? { items } : {}),
-        })
-        .then((updated) => {
-          applyThreads(
-            threadsRef.current.map((t) => (t.id === updated.id ? updated : t)),
-          );
-          setDetail((prev) =>
-            prev && prev.thread.id === updated.id
-              ? { ...prev, thread: updated }
-              : prev,
-          );
-        })
-        .catch((err) => {
-          setError({ scope: "run", message: errorMessage(err) });
         });
+        applyThreads(
+          threadsRef.current.map((t) => (t.id === updated.id ? updated : t)),
+        );
+        setDetail((prev) =>
+          prev && prev.thread.id === updated.id
+            ? { ...prev, thread: updated }
+            : prev,
+        );
+      } catch (err) {
+        setError({ scope: "run", message: errorMessage(err) });
+        throw err;
+      }
     },
     [api, applyThreads],
   );
@@ -1049,6 +1294,7 @@ export function useCoder(): UseCoderResult {
           if (threadsListGen.current === loadGen) {
             applyThreads(list);
           }
+          refreshTrashed();
           const source =
             threadsListGen.current === loadGen ? list : threadsRef.current;
           const preferred =
@@ -1075,6 +1321,7 @@ export function useCoder(): UseCoderResult {
     unsubChanged = api.on("threads:changed", (next) => {
       threadsListGen.current += 1;
       applyThreads(next);
+      refreshTrashed();
       // Import (and any other main-process mint) can add projects without
       // going through projects.add. Refresh so the sidebar sees them.
       if (typeof api.projects?.list === "function") {
@@ -1163,7 +1410,7 @@ export function useCoder(): UseCoderResult {
       unsubSimulator?.();
       window.clearInterval(statusHandle);
     };
-  }, [api, applyThreads, refreshStatus, reloadDetail]);
+  }, [api, applyThreads, refreshStatus, reloadDetail, refreshTrashed]);
 
   // Load ThreadDetail when selection changes. threads.get stamps lastVisitedAt
   // (select = visit); merge the returned row into the list so the sidebar
@@ -1417,6 +1664,7 @@ export function useCoder(): UseCoderResult {
       prompt: string,
       targetThreadId?: string,
       attachments?: AttachmentInfo[],
+      opts?: { fromNotice?: boolean; steer?: boolean },
     ) => {
       const threadId = targetThreadId ?? selectedThreadId;
       if (!threadId) return;
@@ -1464,9 +1712,60 @@ export function useCoder(): UseCoderResult {
       // Busy thread: hold the prompt instead of bouncing off the backend's
       // "run already active" (issue #92). Append lives in setQueued so two
       // mid-run sends cannot race-replace each other across the IPC hop.
+      // Steer (issue #156) injects into the live process instead; if the
+      // run just landed, fall back to queueing.
       if (
         threadsRef.current.find((t) => t.id === threadId)?.status === "working"
       ) {
+        if (opts?.steer) {
+          try {
+            await api.runs.steer({ threadId, prompt, attachments });
+          } catch (err) {
+            const msg = errorMessage(err);
+            if (!/no live run/i.test(msg) && !/not accepting input/i.test(msg)) {
+              setError({ scope: "run", message: msg });
+              throw err;
+            }
+            try {
+              const updated = await api.threads.setQueued({
+                threadId,
+                prompt,
+                attachments,
+              });
+              applyThreads(
+                threadsRef.current.map((t) =>
+                  t.id === updated.id ? updated : t,
+                ),
+              );
+              setDetail((prev) =>
+                prev && prev.thread.id === updated.id
+                  ? { ...prev, thread: updated }
+                  : prev,
+              );
+              setError(null);
+            } catch (queueErr) {
+              setError({ scope: "run", message: errorMessage(queueErr) });
+              throw queueErr;
+            }
+            return;
+          }
+          // Steer already landed. A refresh miss must not look like
+          // undelivered work: Composer would keep the draft and send again.
+          try {
+            const d = await api.threads.get(threadId);
+            if (selectedRef.current !== threadId) return;
+            setDetail(d);
+            applyThreads(
+              threadsRef.current.map((t) =>
+                t.id === d.thread.id ? d.thread : t,
+              ),
+            );
+            setError(null);
+          } catch (err) {
+            setError({ scope: "run", message: errorMessage(err) });
+          }
+          return;
+        }
         try {
           const updated = await api.threads.setQueued({
             threadId,
@@ -1490,7 +1789,12 @@ export function useCoder(): UseCoderResult {
         return;
       }
       try {
-        await api.runs.start({ threadId, prompt, attachments });
+        await api.runs.start({
+          threadId,
+          prompt,
+          attachments,
+          ...(opts?.fromNotice ? { fromNotice: true } : {}),
+        });
         const d = await api.threads.get(threadId);
         if (selectedRef.current !== threadId) return;
         setDetail(d);
@@ -1539,8 +1843,16 @@ export function useCoder(): UseCoderResult {
   );
 
   const refreshWorkflows = useCallback(async () => {
-    const list = await api.workflows.list();
-    setWorkflows(list);
+    try {
+      const list = await api.workflows.list();
+      setWorkflows(list);
+      setWorkflowListError(null);
+    } catch (err) {
+      setWorkflowListError(
+        `The workflow list failed to refresh: ${errorMessage(err)}`,
+      );
+      throw err;
+    }
   }, [api]);
 
   const refreshAutomations = useCallback(async () => {
@@ -1586,6 +1898,13 @@ export function useCoder(): UseCoderResult {
       }
     },
     [api, refreshAutomations],
+  );
+
+  const listAutomationRuns = useCallback(
+    async (automationId: string) => {
+      return api.automations.listRuns({ id: automationId });
+    },
+    [api],
   );
 
   const startWorkflowRun = useCallback(
@@ -1640,8 +1959,18 @@ export function useCoder(): UseCoderResult {
 
   const saveWorkflow = useCallback(
     async (template: WorkflowSaveInput) => {
+      setWorkflowListError(null);
       const saved = await api.workflows.save(template);
-      await refreshWorkflows();
+      // Adopt the write immediately. A later list rejection must not hide
+      // the new id or the next Save will create another template (#1138).
+      setWorkflows((prev) => upsertWorkflow(prev, saved));
+      try {
+        await refreshWorkflows();
+      } catch (err) {
+        setWorkflowListError(
+          `Saved, but the list failed to refresh: ${errorMessage(err)}`,
+        );
+      }
       return saved;
     },
     [api, refreshWorkflows],
@@ -1649,8 +1978,16 @@ export function useCoder(): UseCoderResult {
 
   const removeWorkflow = useCallback(
     async (workflowId: string) => {
+      setWorkflowListError(null);
       await api.workflows.remove({ id: workflowId });
-      await refreshWorkflows();
+      setWorkflows((prev) => prev.filter((w) => w.id !== workflowId));
+      try {
+        await refreshWorkflows();
+      } catch (err) {
+        setWorkflowListError(
+          `Removed, but the list failed to refresh: ${errorMessage(err)}`,
+        );
+      }
     },
     [api, refreshWorkflows],
   );
@@ -1947,10 +2284,51 @@ export function useCoder(): UseCoderResult {
     [api, applyThreads],
   );
 
+  const setThreadProject = useCallback(
+    async (threadId: string, projectId: string) => {
+      try {
+        const thread = await api.threads.setThreadProject({
+          threadId,
+          projectId,
+        });
+        applyThreads(
+          threadsRef.current.map((t) => (t.id === thread.id ? thread : t)),
+        );
+        setDetail((prev) =>
+          prev && prev.thread.id === thread.id
+            ? { ...prev, thread }
+            : prev,
+        );
+        setError(null);
+      } catch (err) {
+        setError({ scope: "run", message: errorMessage(err) });
+      }
+    },
+    [api, applyThreads],
+  );
+
   const setMuted = useCallback(
     async (threadId: string, muted: boolean) => {
       try {
         const thread = await api.threads.setMuted({ threadId, muted });
+        applyThreads(
+          threadsRef.current.map((t) => (t.id === thread.id ? thread : t)),
+        );
+        setDetail((prev) =>
+          prev && prev.thread.id === thread.id ? { ...prev, thread } : prev,
+        );
+        setError(null);
+      } catch (err) {
+        setError({ scope: "run", message: errorMessage(err) });
+      }
+    },
+    [api, applyThreads],
+  );
+
+  const setEjected = useCallback(
+    async (threadId: string, ejected: boolean) => {
+      try {
+        const thread = await api.threads.setEjected({ threadId, ejected });
         applyThreads(
           threadsRef.current.map((t) => (t.id === thread.id ? thread : t)),
         );
@@ -2071,6 +2449,25 @@ export function useCoder(): UseCoderResult {
     async (threadId: string, baseBranch: string | null) => {
       try {
         const thread = await api.threads.setBaseBranch({ threadId, baseBranch });
+        applyThreads(
+          threadsRef.current.map((t) => (t.id === thread.id ? thread : t)),
+        );
+        setDetail((prev) =>
+          prev && prev.thread.id === thread.id ? { ...prev, thread } : prev,
+        );
+        setError(null);
+      } catch (err) {
+        setError({ scope: "run", message: errorMessage(err) });
+        throw err;
+      }
+    },
+    [api, applyThreads],
+  );
+
+  const refreshWorkerSnapshot = useCallback(
+    async (threadId: string) => {
+      try {
+        const thread = await api.threads.refreshWorkerSnapshot({ threadId });
         applyThreads(
           threadsRef.current.map((t) => (t.id === thread.id ? thread : t)),
         );
@@ -2367,22 +2764,69 @@ export function useCoder(): UseCoderResult {
   );
 
   const deleteThread = useCallback(async () => {
-    if (!selectedThreadId) return;
+    if (!selectedThreadId) return false;
     const threadId = selectedThreadId;
     try {
       await api.threads.delete({ threadId });
       const list = await api.threads.list();
       applyThreads(list);
+      refreshTrashed();
       if (selectedRef.current === threadId) {
         const nextId = nextVisibleThreadId(list, threadId);
         setSelectedThreadId(nextId);
         setDetail(null);
       }
       setError(null);
+      return true;
     } catch (err) {
       setError({ scope: "run", message: errorMessage(err) });
+      return false;
     }
-  }, [api, selectedThreadId, applyThreads]);
+  }, [api, selectedThreadId, applyThreads, refreshTrashed]);
+
+  const restoreThread = useCallback(
+    async (threadId: string) => {
+      const id = String(threadId ?? "");
+      if (!id) return false;
+      try {
+        const thread = await api.threads.restore({ threadId: id });
+        const list = await api.threads.list();
+        applyThreads(list);
+        refreshTrashed();
+        setSelectedThreadId(thread.id);
+        setError(null);
+        return true;
+      } catch (err) {
+        setError({ scope: "run", message: errorMessage(err) });
+        return false;
+      }
+    },
+    [api, applyThreads, refreshTrashed],
+  );
+
+  const purgeThread = useCallback(
+    async (threadId: string) => {
+      const id = String(threadId ?? "");
+      if (!id) return false;
+      try {
+        await api.threads.purge({ threadId: id });
+        const list = await api.threads.list();
+        applyThreads(list);
+        refreshTrashed();
+        if (selectedRef.current === id) {
+          const nextId = nextVisibleThreadId(list, id);
+          setSelectedThreadId(nextId);
+          setDetail(null);
+        }
+        setError(null);
+        return true;
+      } catch (err) {
+        setError({ scope: "run", message: errorMessage(err) });
+        return false;
+      }
+    },
+    [api, applyThreads, refreshTrashed],
+  );
 
   const removeProject = useCallback(
     async (projectId: string) => {
@@ -2617,6 +3061,23 @@ export function useCoder(): UseCoderResult {
     [api, selectedThreadId],
   );
 
+  const saveAttachmentFile = useCallback(
+    async (name: string, dataUrl: string) => {
+      if (!selectedThreadId) return null;
+      try {
+        const result = await api.attachments.saveFile({
+          threadId: selectedThreadId,
+          name,
+          dataUrl,
+        });
+        return result.attachment;
+      } catch {
+        return null;
+      }
+    },
+    [api, selectedThreadId],
+  );
+
   const pickDirectory = useCallback(async () => {
     try {
       return await api.projects.pickDirectory();
@@ -2646,14 +3107,37 @@ export function useCoder(): UseCoderResult {
     [api, selectedThreadId],
   );
 
-  const pickAttachments = useCallback(async () => {
+  const pickAttachments = useCallback(async (opts?: {
+    includeImages?: boolean;
+  }) => {
     if (isWebMode()) {
       if (!selectedThreadId) return [];
-      return filesToAttachments(await pickWebImageFiles(), saveAttachmentImage);
+      return filesToAttachments(await pickWebFiles(), {
+        image: saveAttachmentImage,
+        file: saveAttachmentFile,
+      });
     }
-    const result = await api.attachments.pick();
+    const result = await api.attachments.pick({
+      includeImages: opts?.includeImages !== false,
+    });
     return result.attachments;
-  }, [api, saveAttachmentImage, selectedThreadId]);
+  }, [api, saveAttachmentFile, saveAttachmentImage, selectedThreadId]);
+
+  const pickFolderAttachments = useCallback(async () => {
+    if (!selectedThreadId) return [];
+    const picked = await pickWebFolder();
+    if (!picked) return [];
+    try {
+      const result = await api.attachments.saveFolder({
+        threadId: selectedThreadId,
+        name: picked.name,
+        files: picked.files,
+      });
+      return result.attachment ? [result.attachment] : [];
+    } catch {
+      return [];
+    }
+  }, [api, selectedThreadId]);
 
   const loadAttachmentImage = useCallback(
     async (path: string) => {
@@ -2668,26 +3152,51 @@ export function useCoder(): UseCoderResult {
   );
 
   const dropAttachmentFiles = useCallback(
-    async (files: File[]) => {
+    async (files: File[], folders?: DroppedFolder[]) => {
       // Absolute paths of dropped Files (including Finder directories)
       // exist only behind the Electron preload (webUtils). Web/dev
-      // bridges fall back to saveImage, which cannot attach folders.
+      // bridges persist bytes via saveImage / saveFile / saveFolder.
       const pathOf = api.attachments.droppedFilePath;
-      if (!pathOf) return filesToAttachments(files, saveAttachmentImage);
-      const paths = files
-        .map((file) => {
+      if (pathOf) {
+        const paths = files
+          .map((file) => {
+            try {
+              return pathOf(file);
+            } catch {
+              return "";
+            }
+          })
+          .filter((p) => p.length > 0);
+        if (!paths.length) return [];
+        const result = await api.attachments.fromPaths({ paths });
+        return result.attachments;
+      }
+      const out: AttachmentInfo[] = [];
+      if (folders?.length && selectedThreadId) {
+        for (const folder of folders) {
           try {
-            return pathOf(file);
+            const result = await api.attachments.saveFolder({
+              threadId: selectedThreadId,
+              name: folder.name,
+              files: folder.files,
+            });
+            if (result.attachment) out.push(result.attachment);
           } catch {
-            return "";
+            // skip a folder that the host refused
           }
-        })
-        .filter((p) => p.length > 0);
-      if (!paths.length) return [];
-      const result = await api.attachments.fromPaths({ paths });
-      return result.attachments;
+        }
+      }
+      const folderNames = new Set((folders ?? []).map((folder) => folder.name));
+      const loose = files.filter((file) => !folderNames.has(file.name));
+      out.push(
+        ...(await filesToAttachments(loose, {
+          image: saveAttachmentImage,
+          file: saveAttachmentFile,
+        })),
+      );
+      return out;
     },
-    [api, saveAttachmentImage],
+    [api, saveAttachmentFile, saveAttachmentImage, selectedThreadId],
   );
 
   const pushBranch = useCallback(async () => {
@@ -2781,8 +3290,8 @@ export function useCoder(): UseCoderResult {
   }, [api, selectedThreadId, applyThreadUpdate]);
 
   const listPrs = useCallback(
-    async (projectPath: string) => {
-      return api.git.listPrs(projectPath);
+    async (projectPath: string, opts?: ListPrsOptions) => {
+      return api.git.listPrs(projectPath, opts);
     },
     [api],
   );
@@ -2859,6 +3368,36 @@ export function useCoder(): UseCoderResult {
       return api.threads.crewTasks({ threadId });
     },
     [api],
+  );
+
+  const crewIntegration = useCallback(
+    async (threadId: string) => {
+      return api.threads.crewIntegration({ threadId });
+    },
+    [api],
+  );
+
+  const integrateWorker = useCallback(
+    async (
+      leadThreadId: string,
+      workerThreadId: string,
+      opts?: { ciWorkflowApproved?: boolean },
+    ) => {
+      const result = await api.git.integrateWorker({
+        leadThreadId,
+        workerThreadId,
+        ciWorkflowApproved: opts?.ciWorkflowApproved,
+      });
+      if (selectedRef.current === leadThreadId) {
+        const d = await api.threads.get(leadThreadId);
+        if (selectedRef.current === leadThreadId) {
+          applyThreadUpdate(d.thread);
+          setDetail(d);
+        }
+      }
+      return result;
+    },
+    [api, applyThreadUpdate],
   );
 
   const refreshProviders = useCallback(
@@ -2997,6 +3536,68 @@ export function useCoder(): UseCoderResult {
     [api],
   );
 
+  const claimLane = useCallback(
+    async (input: { threadId: string }) => {
+      return api.mergeQueue.claimLane(input);
+    },
+    [api],
+  );
+
+  const listLanes = useCallback(
+    async (input: { projectId: string }) => {
+      return api.mergeQueue.listLanes(input);
+    },
+    [api],
+  );
+
+  const previewLane = useCallback(
+    async (input: { projectId: string; lane: number }) => {
+      return api.mergeQueue.previewLane(input);
+    },
+    [api],
+  );
+
+  const restorePreview = useCallback(
+    async (input: { projectId: string }) => {
+      return api.mergeQueue.restorePreview(input);
+    },
+    [api],
+  );
+
+  const recycleWedgedLanes = useCallback(
+    async (input: { projectId: string }) => {
+      return api.mergeQueue.recycleWedgedLanes(input);
+    },
+    [api],
+  );
+
+  const setSpotlight = useCallback(
+    async (input: { projectId: string; enabled: boolean }) => {
+      const result = await api.mergeQueue.setSpotlight(input);
+      try {
+        setProjects(await api.projects.list());
+      } catch {
+        // Keep the local checkbox; list refresh is best-effort.
+      }
+      return result;
+    },
+    [api],
+  );
+
+  const spotlightLane = useCallback(
+    async (input: { projectId: string; lane: number }) => {
+      return api.mergeQueue.spotlightLane(input);
+    },
+    [api],
+  );
+
+  const heartbeatLane = useCallback(
+    async (input: { threadId: string; now?: number }) => {
+      return api.mergeQueue.heartbeatLane(input);
+    },
+    [api],
+  );
+
   const startDevServer = useCallback(
     async (threadId: string, script: string) => {
       return api.devserver.start({ threadId, script });
@@ -3103,29 +3704,37 @@ export function useCoder(): UseCoderResult {
   );
 
   const searchMemory = useCallback(
-    async (input: { query: string; project?: string }) => {
+    async (input: {
+      query: string;
+      project?: string;
+      type?: MemoryEntryInfo["type"];
+    }) => {
       return api.memory.search(input);
     },
     [api],
   );
 
   const recentMemory = useCallback(
-    async (input?: { limit?: number; project?: string }) => {
+    async (input?: {
+      limit?: number;
+      offset?: number;
+      project?: string;
+      type?: MemoryEntryInfo["type"];
+    }) => {
       const wantLimit =
         input?.limit != null && input.limit > 0 ? Math.floor(input.limit) : 20;
+      const offset =
+        input?.offset != null && input.offset > 0 ? Math.floor(input.offset) : 0;
       const project =
         input?.project != null && input.project !== ""
           ? input.project
           : undefined;
-      // Electron proxy may still ignore project on recent. Over-fetch so a
-      // client-side filter can still surface project rows buried past limit 20.
-      // The server canonicalizes the project key (display slugs like
-      // "owner/repo" and cwd paths both map to the repo-root basename), so it
-      // is authoritative: a client-side equality filter here would compare the
-      // canonical key against the raw display slug and drop every row.
+      const type = input?.type;
       const list = await api.memory.recent({
         limit: wantLimit,
+        ...(offset > 0 ? { offset } : {}),
         ...(project ? { project } : {}),
+        ...(type ? { type } : {}),
       });
       return list.slice(0, wantLimit);
     },
@@ -3167,7 +3776,7 @@ export function useCoder(): UseCoderResult {
   );
 
   const maintenanceMemory = useCallback(
-    async (input?: { project?: string }) => {
+    async (input?: { project?: string; summary?: boolean }) => {
       return api.memory.maintenance(input);
     },
     [api],
@@ -3316,11 +3925,67 @@ export function useCoder(): UseCoderResult {
     [api],
   );
 
+  const detectHarnessSources = useCallback(async () => {
+    return api.harness.detectSources();
+  }, [api]);
+
+  const previewHarnessImport = useCallback(
+    async (input: { source: HarnessSourceId; projectPath?: string }) => {
+      return api.harness.previewImport(input);
+    },
+    [api],
+  );
+
+  const installHarnessImport = useCallback(
+    async (input: HarnessInstallRequest) => {
+      return api.harness.installImport(input);
+    },
+    [api],
+  );
+
+  const discardHarnessImport = useCallback(
+    async (input: { previewId: string }) => {
+      return api.harness.discardImport(input);
+    },
+    [api],
+  );
+
   const listCliCommands = useCallback(
     async (input?: { projectPath?: string }) => {
       return api.skills.commands(input);
     },
     [api],
+  );
+
+  const listCliSessions = useCallback(
+    async (input?: {
+      provider?: "codex" | "grok" | "claude" | "cursor" | "opencode" | "kimi" | "muse";
+    }) => {
+      return api.threads.listCliSessions(input);
+    },
+    [api],
+  );
+
+  const importCliSession = useCallback(
+    async (input: {
+      sessionId: string;
+      projectId: string;
+      provider?: "codex" | "grok" | "claude" | "cursor" | "opencode" | "kimi" | "muse";
+    }) => {
+      const t = await api.threads.importCliSession({
+        sessionId: input.sessionId,
+        projectId: input.projectId,
+        ...(input.provider ? { provider: input.provider } : {}),
+      });
+      const next = threadsRef.current.some((x) => x.id === t.id)
+        ? threadsRef.current.map((x) => (x.id === t.id ? t : x))
+        : [t, ...threadsRef.current];
+      applyThreads(next);
+      selectedRef.current = t.id;
+      setSelectedThreadId(t.id);
+      return t;
+    },
+    [api, applyThreads],
   );
 
   const searchThreads = useCallback(
@@ -3342,6 +4007,7 @@ export function useCoder(): UseCoderResult {
     threads,
     providers,
     workflows,
+    workflowListError,
     automations,
     selectedThreadId,
     selectThread,
@@ -3374,6 +4040,7 @@ export function useCoder(): UseCoderResult {
     updateAutomation,
     removeAutomation,
     runAutomationNow,
+    listAutomationRuns,
     stopRun,
     setPermissionMode,
     respondPermission,
@@ -3386,13 +4053,16 @@ export function useCoder(): UseCoderResult {
     setPinned,
     setSnoozed,
     setTags,
+    setThreadProject,
     setMuted,
+    setEjected,
     setCrossThreadInbound,
     setQuotaWaitAutoResume,
     resumeQuotaWait,
     renameThread,
     setNotes,
     setBaseBranch,
+    refreshWorkerSnapshot,
     resolveSuggestion,
     setFeltEstimate,
     startSpec,
@@ -3409,6 +4079,9 @@ export function useCoder(): UseCoderResult {
     promoteBtw,
     requestTeachReview,
     deleteThread,
+    trashedThreads,
+    restoreThread,
+    purgeThread,
     removeProject,
     setupWorktree,
     mergeWorktree,
@@ -3429,6 +4102,7 @@ export function useCoder(): UseCoderResult {
     openWorkspacePath,
     loadToolImage,
     pickAttachments,
+    pickFolderAttachments,
     saveAttachmentImage,
     loadAttachmentImage,
     dropAttachmentFiles,
@@ -3450,6 +4124,8 @@ export function useCoder(): UseCoderResult {
     markDigestSeen,
     listThreadSummaries,
     listCrewTasks,
+    crewIntegration,
+    integrateWorker,
     listCheckpoints,
     restoreCheckpoint,
     runStats,
@@ -3461,6 +4137,14 @@ export function useCoder(): UseCoderResult {
     gitFetch,
     gitRepoInfo,
     gitPull,
+    claimLane,
+    listLanes,
+    previewLane,
+    restorePreview,
+    recycleWedgedLanes,
+    setSpotlight,
+    spotlightLane,
+    heartbeatLane,
     listDevScripts,
     startDevServer,
     stopDevServer,
@@ -3515,7 +4199,13 @@ export function useCoder(): UseCoderResult {
     previewSkillImport,
     installSkillImport,
     discardSkillImport,
+    detectHarnessSources,
+    previewHarnessImport,
+    installHarnessImport,
+    discardHarnessImport,
     listCliCommands,
+    listCliSessions,
+    importCliSession,
     searchThreads,
     peekThread,
   };

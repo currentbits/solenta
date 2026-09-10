@@ -548,6 +548,225 @@ describe("services", () => {
     );
   });
 
+  it("setThreadProject recategorizes without bumping updatedAt (#737)", async () => {
+    const thread = await makeThread("move-project");
+    store.updateThread(thread.id, {
+      updatedAt: 1_700_000_000_000,
+      sessionId: "sess-1",
+    });
+    const destRepo = path.join(tmpDir, "dest-project");
+    fs.mkdirSync(destRepo);
+    git(destRepo, ["init"]);
+    const dest = await services.addProject(store, destRepo);
+
+    const updated = services.setThreadProject(store, {
+      threadId: thread.id,
+      projectId: dest.id,
+    });
+    assert.equal(updated.projectId, dest.id);
+    assert.equal(updated.updatedAt, 1_700_000_000_000);
+    assert.equal(
+      updated.sessionId,
+      null,
+      "cwd-bound session cannot resume in the new project",
+    );
+    assert.equal(updated.replayContext, true);
+    assert.equal(store.getThread(thread.id).projectId, dest.id);
+
+    const same = services.setThreadProject(store, {
+      threadId: thread.id,
+      projectId: dest.id,
+    });
+    assert.equal(same.projectId, dest.id);
+    assert.equal(same.sessionId, null);
+  });
+
+  it("setThreadProject rejects a worktree-backed thread without touching it (#737)", async () => {
+    const thread = await makeThread("move-worktree");
+    store.updateThread(thread.id, {
+      worktreePath: "/tmp/wt",
+      sessionId: "sess-wt",
+      branch: "coder/foo",
+      updatedAt: 1_700_000_000_000,
+    });
+    const destRepo = path.join(tmpDir, "dest-wt");
+    fs.mkdirSync(destRepo);
+    git(destRepo, ["init"]);
+    const dest = await services.addProject(store, destRepo);
+    assert.throws(
+      () =>
+        services.setThreadProject(store, {
+          threadId: thread.id,
+          projectId: dest.id,
+        }),
+      /Cannot move a thread that has a worktree/,
+    );
+    const still = store.getThread(thread.id);
+    assert.equal(still.projectId, thread.projectId);
+    assert.equal(still.worktreePath, "/tmp/wt");
+    assert.equal(still.sessionId, "sess-wt");
+    assert.equal(still.branch, "coder/foo");
+    assert.equal(still.updatedAt, 1_700_000_000_000);
+
+    const same = services.setThreadProject(store, {
+      threadId: thread.id,
+      projectId: thread.projectId,
+    });
+    assert.equal(same.worktreePath, "/tmp/wt");
+    assert.equal(same.projectId, thread.projectId);
+  });
+
+  it("setThreadProject rejects an active run without touching it (#737)", async () => {
+    const thread = await makeThread("move-working");
+    store.updateThread(thread.id, {
+      status: "working",
+      sessionId: "sess-live",
+    });
+    const destRepo = path.join(tmpDir, "dest-working");
+    fs.mkdirSync(destRepo);
+    git(destRepo, ["init"]);
+    const dest = await services.addProject(store, destRepo);
+    assert.throws(
+      () =>
+        services.setThreadProject(store, {
+          threadId: thread.id,
+          projectId: dest.id,
+        }),
+      /Cannot move a thread while a run is active/,
+    );
+    const still = store.getThread(thread.id);
+    assert.equal(still.projectId, thread.projectId);
+    assert.equal(still.status, "working");
+    assert.equal(still.sessionId, "sess-live");
+
+    store.updateThread(thread.id, { status: "quota-wait" });
+    assert.throws(
+      () =>
+        services.setThreadProject(store, {
+          threadId: thread.id,
+          projectId: dest.id,
+        }),
+      /Cannot move a thread while a run is active/,
+    );
+    assert.equal(store.getThread(thread.id).projectId, thread.projectId);
+
+    const same = services.setThreadProject(store, {
+      threadId: thread.id,
+      projectId: thread.projectId,
+    });
+    assert.equal(same.status, "quota-wait");
+  });
+
+  it("setThreadProject strips old-repo bindings on a permitted move (#737)", async () => {
+    const thread = await makeThread("move-strip");
+    store.updateThread(thread.id, {
+      updatedAt: 1_700_000_000_000,
+      sessionId: "sess-1",
+      branch: "coder/leftover",
+      baseBranch: "main",
+      prNumber: 42,
+      prUrl: "https://github.com/acme/ledger/pull/42",
+      prState: "OPEN",
+      issueNumber: 7,
+      pendingWorktree: true,
+    });
+    const destRepo = path.join(tmpDir, "dest-strip");
+    fs.mkdirSync(destRepo);
+    git(destRepo, ["init"]);
+    const dest = await services.addProject(store, destRepo);
+    const updated = services.setThreadProject(store, {
+      threadId: thread.id,
+      projectId: dest.id,
+    });
+    assert.equal(updated.projectId, dest.id);
+    assert.equal(updated.updatedAt, 1_700_000_000_000);
+    assert.equal(updated.sessionId, null);
+    assert.equal(updated.branch, null);
+    assert.equal(updated.baseBranch, null);
+    assert.equal(updated.prNumber, null);
+    assert.equal(updated.prUrl, null);
+    assert.equal(updated.prState, null);
+    assert.equal(updated.issueNumber, null);
+    assert.equal(
+      updated.pendingWorktree,
+      true,
+      "unmaterialized worktree retargets to the destination",
+    );
+    assert.equal(
+      updated.replayContext,
+      true,
+      "dropped sessionId still prefixes the retained tail on the next turn",
+    );
+  });
+
+  it("setThreadProject rejects a pending crew worker without touching it (#737)", async () => {
+    const thread = await makeThread("move-worker");
+    store.updateThread(thread.id, {
+      orchWorker: true,
+      pendingWorktree: true,
+      leadSnapshotSha: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      leadSnapshotBranch: "main",
+      sessionId: "sess-w",
+      updatedAt: 1_700_000_000_000,
+    });
+    const destRepo = path.join(tmpDir, "dest-worker");
+    fs.mkdirSync(destRepo);
+    git(destRepo, ["init"]);
+    const dest = await services.addProject(store, destRepo);
+    assert.throws(
+      () =>
+        services.setThreadProject(store, {
+          threadId: thread.id,
+          projectId: dest.id,
+        }),
+      /Cannot move a crew worker/,
+    );
+    const still = store.getThread(thread.id);
+    assert.equal(still.projectId, thread.projectId);
+    assert.equal(still.orchWorker, true);
+    assert.equal(
+      still.leadSnapshotSha,
+      "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    );
+    assert.equal(still.pendingWorktree, true);
+    assert.equal(still.sessionId, "sess-w");
+
+    const same = services.setThreadProject(store, {
+      threadId: thread.id,
+      projectId: thread.projectId,
+    });
+    assert.equal(same.orchWorker, true);
+    assert.equal(same.projectId, thread.projectId);
+  });
+
+  it("setThreadProject rejects unknown thread or project (#737)", async () => {
+    const thread = await makeThread("move-reject");
+    assert.throws(
+      () =>
+        services.setThreadProject(store, {
+          threadId: "missing",
+          projectId: thread.projectId,
+        }),
+      /Unknown thread: missing/,
+    );
+    assert.throws(
+      () =>
+        services.setThreadProject(store, {
+          threadId: thread.id,
+          projectId: "no-such",
+        }),
+      /Unknown project: no-such/,
+    );
+    assert.throws(
+      () =>
+        services.setThreadProject(store, {
+          threadId: thread.id,
+          projectId: "",
+        }),
+      /projectId is required/,
+    );
+  });
+
   it("setQueued appends on a second call, clears on prompt null, does not bump updatedAt", async () => {
     const thread = await makeThread("queued-append");
     store.updateThread(thread.id, { updatedAt: 1_700_000_000_000 });
@@ -1348,6 +1567,11 @@ describe("forkWorkerThread", () => {
     // addProject requires a real work tree (`git rev-parse`), not just a
     // `.git` directory. canHostWorktree still keys off `.git` existing.
     git(repo, ["init"]);
+    git(repo, ["config", "user.email", "test@example.com"]);
+    git(repo, ["config", "user.name", "Test"]);
+    fs.writeFileSync(path.join(repo, "README.md"), "hello\n");
+    git(repo, ["add", "README.md"]);
+    git(repo, ["commit", "-m", "init"]);
     project = await services.addProject(store, repo);
   });
 

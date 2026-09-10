@@ -9,6 +9,13 @@
  * Listing is for the composer palette. Expansion is for the runner: the
  * transcript keeps the raw `/name`, the CLI sees the expanded prompt.
  *
+ * Plugin commands: Claude via installed_plugins.json; Cursor via
+ * collectCursorPluginRoots (plugins/local/<name> plus installed.json
+ * user cache hashes); Codex via enabled
+ * `[plugins."name@marketplace"]` cache version dirs plus plugins/
+ * children except cache and marketplaces. Marketplace cache trees are
+ * never copied. Listing never executes plugin files.
+ *
  * Orchestration verbs (`/handoff` `/advisor` `/committee`) stay in
  * orchcommands.js — they never expand as skills even if a SKILL.md exists.
  */
@@ -17,6 +24,11 @@ const fs = require("node:fs");
 const path = require("node:path");
 const os = require("node:os");
 const { parseSkillMarkdown, SKILL_DIRS } = require("./skills.js");
+const {
+  collectCursorPluginRoots,
+  collectCodexPluginRoots,
+} = require("./pluginRoots.js");
+const { readPluginManifest } = require("./pluginManifest.js");
 
 /** Runner intercepts these; a same-named skill must not steal the send. */
 const ORCH_TOKENS = new Set(["handoff", "advisor", "committee"]);
@@ -168,59 +180,6 @@ function scanCommandDir(baseDir, rel = "") {
 }
 
 /**
- * @param {string} pluginRoot
- * @returns {{ name: string, skillDirs: string[], commandDirs: string[] }}
- */
-function readPluginManifest(pluginRoot) {
-  const candidates = [
-    path.join(pluginRoot, ".claude-plugin", "plugin.json"),
-    path.join(pluginRoot, "plugin.json"),
-  ];
-  /** @type {Record<string, unknown>} */
-  let json = {};
-  for (const file of candidates) {
-    const raw = readFile(file);
-    if (!raw) continue;
-    try {
-      json = JSON.parse(raw);
-      break;
-    } catch {
-      json = {};
-    }
-  }
-  const name =
-    typeof json.name === "string" && /^[a-z0-9-]+$/i.test(json.name.trim())
-      ? json.name.trim().toLowerCase()
-      : path.basename(pluginRoot).toLowerCase();
-
-  const skillDirs = [];
-  if (Array.isArray(json.skills)) {
-    for (const entry of json.skills) {
-      if (typeof entry === "string" && entry.trim()) {
-        skillDirs.push(path.resolve(pluginRoot, entry.trim()));
-      }
-    }
-  } else {
-    skillDirs.push(path.join(pluginRoot, "skills"));
-    skillDirs.push(path.join(pluginRoot, ".claude", "skills"));
-  }
-
-  const commandDirs = [];
-  if (Array.isArray(json.commands)) {
-    for (const entry of json.commands) {
-      if (typeof entry === "string" && entry.trim()) {
-        commandDirs.push(path.resolve(pluginRoot, entry.trim()));
-      }
-    }
-  } else {
-    commandDirs.push(path.join(pluginRoot, "commands"));
-    commandDirs.push(path.join(pluginRoot, ".claude", "commands"));
-  }
-
-  return { name, skillDirs, commandDirs };
-}
-
-/**
  * @param {NodeJS.ProcessEnv} [env]
  * @returns {string[]}
  */
@@ -255,6 +214,24 @@ function pluginInstallPaths(env = process.env) {
     }
   }
   return out;
+}
+
+/**
+ * @param {NodeJS.ProcessEnv} [env]
+ * @returns {string}
+ */
+function cursorHome(env = process.env) {
+  if (env && env.CURSOR_HOME) return env.CURSOR_HOME;
+  return path.join(homeDir(env), ".cursor");
+}
+
+/**
+ * @param {NodeJS.ProcessEnv} [env]
+ * @returns {string}
+ */
+function codexHome(env = process.env) {
+  if (env && env.CODEX_HOME) return env.CODEX_HOME;
+  return path.join(homeDir(env), ".codex");
 }
 
 /**
@@ -352,8 +329,9 @@ function listInvocableCommands(opts = {}) {
     }
   }
 
-  for (const pluginRoot of pluginInstallPaths(env)) {
+  const addPluginRoot = (pluginRoot) => {
     const manifest = readPluginManifest(pluginRoot);
+    if (!manifest) return;
     const prefix = manifest.name;
     for (const dir of manifest.skillDirs) {
       for (const skill of scanSkillDir(dir)) {
@@ -367,6 +345,15 @@ function listInvocableCommands(opts = {}) {
         if (prefix) addCommand(`/${prefix}:${cmd.name}`, cmd);
       }
     }
+  };
+  for (const pluginRoot of pluginInstallPaths(env)) {
+    addPluginRoot(pluginRoot);
+  }
+  for (const pluginRoot of collectCursorPluginRoots(cursorHome(env))) {
+    addPluginRoot(pluginRoot);
+  }
+  for (const pluginRoot of collectCodexPluginRoots(codexHome(env))) {
+    addPluginRoot(pluginRoot);
   }
 
   return [...byName.values()];
@@ -449,4 +436,6 @@ module.exports = {
   expandInvocableCommand,
   listPaletteCommands,
   commandHint,
+  pluginInstallPaths,
+  readPluginManifest,
 };

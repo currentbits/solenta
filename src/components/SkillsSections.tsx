@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import type {
   McpCatalogEntry,
   McpImportPreview,
@@ -9,6 +10,12 @@ import type {
   SkillInfo,
   SkillPluginExtra,
   SkillTarget,
+  HarnessSourceInfo,
+  HarnessImportPreview,
+  HarnessSkillRow,
+  HarnessCommandRow,
+  HarnessMcpRow,
+  HarnessTextRow,
 } from "../shared/ipc";
 import styles from "./SkillsTab.module.css";
 
@@ -111,6 +118,143 @@ export function CoverageMeter({ skill }: { skill: SkillInfo }) {
     >
       {coverageLabel(skill)}
     </span>
+  );
+}
+
+function skillSourceLabel(skill: SkillInfo): string {
+  if (skill.provenance === "project") return "Project";
+  if (skill.provenance === "curated") {
+    return skill.origin?.sourceLabel || "Catalog";
+  }
+  return skill.origin?.sourceLabel || "User";
+}
+
+export function InstalledSkillRow({
+  skill,
+  expanded,
+  busy,
+  confirmRemove,
+  onToggle,
+  onAskRemove,
+  onConfirmRemove,
+  onCancelRemove,
+}: {
+  skill: SkillInfo;
+  expanded: boolean;
+  busy: boolean;
+  confirmRemove: string | null;
+  onToggle: () => void;
+  onAskRemove: (key: string) => void;
+  onConfirmRemove: (skill: SkillInfo) => void;
+  onCancelRemove: () => void;
+}) {
+  const key = `${skill.source}:${skill.name}`;
+  const drifted =
+    skill.provenance !== "project" && skill.missingFrom.length > 0;
+  const readOnly =
+    skill.provenance === "project" || skill.source === "project";
+  const hintId = `skill-remove-${key}`;
+  const panelId = `skill-detail-${key}`;
+  const status =
+    skill.provenance === "project"
+      ? "Project"
+      : drifted
+        ? "Drift"
+        : skill.provenance === "curated"
+          ? "Catalog"
+          : null;
+
+  return (
+    <li
+      className={styles.row}
+      data-skill={key}
+      data-skill-origin={skill.provenance}
+      data-expanded={expanded ? "" : undefined}
+    >
+      <button
+        type="button"
+        className={styles.rowToggle}
+        data-skill-toggle=""
+        aria-expanded={expanded}
+        aria-controls={panelId}
+        onClick={() => onToggle()}
+      >
+        <span className={styles.rowMain}>
+          <span className={styles.rowName}>{skill.name}</span>
+          {skill.description && (
+            <span className={styles.rowDetail}>{skill.description}</span>
+          )}
+        </span>
+        {status && (
+          <span className={styles.rowSide}>
+            {status === "Drift" ? (
+              <span className={styles.drift} data-drift>
+                Drift
+              </span>
+            ) : status === "Project" ? (
+              <span className={`${styles.badge} ${styles.badgeProject}`}>
+                Project
+              </span>
+            ) : (
+              <span className={`${styles.badge} ${styles.badgeBuiltin}`}>
+                Catalog
+              </span>
+            )}
+          </span>
+        )}
+      </button>
+      {expanded && (
+        <div className={styles.rowExpand} id={panelId}>
+          {skill.provenance !== "project" && <CoverageMeter skill={skill} />}
+          <span className={styles.tokens} data-tokens>
+            {formatSkillTokens(skill.bytes)}
+          </span>
+          <span className={styles.rowDetail} data-skill-source>
+            {skillSourceLabel(skill)}
+          </span>
+          {drifted && (
+            <span className={styles.rowDetail} data-skill-missing>
+              Missing {formatTargetList(skill.missingFrom)}
+            </span>
+          )}
+          {!readOnly &&
+            (confirmRemove === key ? (
+              <>
+                <span id={hintId} className={styles.confirmHint}>
+                  Removes from all providers
+                </span>
+                <button
+                  type="button"
+                  className={styles.dangerBtn}
+                  disabled={busy}
+                  aria-describedby={hintId}
+                  onClick={() => onConfirmRemove(skill)}
+                >
+                  Confirm
+                </button>
+                <button
+                  type="button"
+                  className={styles.ghostBtn}
+                  disabled={busy}
+                  onClick={() => onCancelRemove()}
+                >
+                  Cancel
+                </button>
+              </>
+            ) : (
+              <button
+                type="button"
+                className={styles.ghostBtn}
+                disabled={busy}
+                aria-label={`Remove ${skill.name}`}
+                onClick={() => onAskRemove(key)}
+              >
+                Remove
+              </button>
+            ))}
+        </div>
+      )}
+    </li>
   );
 }
 
@@ -229,165 +373,6 @@ export function CuratedSkillsSection({
           })}
         </ul>
       )}
-    </section>
-  );
-}
-
-export function AddedSkillsSection({
-  skills,
-  loading,
-  error,
-  busy,
-  hasDrift,
-  confirmRemove,
-  onSync,
-  onAskRemove,
-  onConfirmRemove,
-  onCancelRemove,
-}: {
-  skills: SkillInfo[];
-  loading: boolean;
-  error: string | null;
-  busy: boolean;
-  hasDrift: boolean;
-  confirmRemove: string | null;
-  onSync: () => void;
-  onAskRemove: (key: string) => void;
-  onConfirmRemove: (skill: SkillInfo) => void;
-  onCancelRemove: () => void;
-}) {
-  return (
-    <section
-      className={styles.subSection}
-      aria-label="Added skills"
-      data-skill-section="added"
-    >
-      <div className={styles.sectionHead}>
-        <div className={styles.sectionLabel}>Added skills</div>
-        <button
-          type="button"
-          className={styles.ghostBtn}
-          disabled={busy || !hasDrift}
-          aria-label="Sync missing skills"
-          title={
-            hasDrift
-              ? "Copy missing skills into every provider"
-              : "Nothing to sync"
-          }
-          onClick={() => onSync()}
-        >
-          Sync
-        </button>
-      </div>
-      {error && (
-        <p className={styles.formError} role="alert">
-          {error}
-        </p>
-      )}
-      {loading && skills.length === 0 ? (
-        <p className={styles.empty}>Loading…</p>
-      ) : skills.length === 0 && !error ? (
-        <p className={styles.empty}>Use Add skill to import or write one.</p>
-      ) : (
-        <ul className={styles.list}>
-          {skills.map((skill) => {
-            const key = `${skill.source}:${skill.name}`;
-            const drifted = skill.missingFrom.length > 0;
-            const hintId = `skill-remove-${key}`;
-            return (
-              <li key={key} className={styles.row} data-skill={key}>
-                <div className={styles.rowMain}>
-                  <span className={styles.rowName}>{skill.name}</span>
-                  {skill.description && (
-                    <span className={styles.rowDetail}>{skill.description}</span>
-                  )}
-                </div>
-                <div className={styles.rowSide}>
-                  <CoverageMeter skill={skill} />
-                  <span className={styles.tokens} data-tokens>
-                    {formatSkillTokens(skill.bytes)}
-                  </span>
-                  {drifted && (
-                    <span className={styles.drift} data-drift>
-                      Drift
-                    </span>
-                  )}
-                  {confirmRemove === key ? (
-                    <>
-                      <span id={hintId} className={styles.confirmHint}>
-                        Removes from all providers
-                      </span>
-                      <button
-                        type="button"
-                        className={styles.dangerBtn}
-                        disabled={busy}
-                        aria-describedby={hintId}
-                        onClick={() => onConfirmRemove(skill)}
-                      >
-                        Confirm
-                      </button>
-                      <button
-                        type="button"
-                        className={styles.ghostBtn}
-                        disabled={busy}
-                        onClick={() => onCancelRemove()}
-                      >
-                        Cancel
-                      </button>
-                    </>
-                  ) : (
-                    <button
-                      type="button"
-                      className={styles.ghostBtn}
-                      disabled={busy}
-                      aria-label={`Remove ${skill.name}`}
-                      onClick={() => onAskRemove(key)}
-                    >
-                      Remove
-                    </button>
-                  )}
-                </div>
-              </li>
-            );
-          })}
-        </ul>
-      )}
-    </section>
-  );
-}
-
-export function ProjectSkillsSection({ skills }: { skills: SkillInfo[] }) {
-  if (skills.length === 0) return null;
-  return (
-    <section
-      className={styles.subSection}
-      aria-label="Project skills"
-      data-skill-section="project"
-    >
-      <div className={styles.sectionLabel}>Project skills</div>
-      <ul className={styles.list}>
-        {skills.map((skill) => {
-          const key = `${skill.source}:${skill.name}`;
-          return (
-            <li key={key} className={styles.row} data-skill={key}>
-              <div className={styles.rowMain}>
-                <span className={styles.rowName}>{skill.name}</span>
-                {skill.description && (
-                  <span className={styles.rowDetail}>{skill.description}</span>
-                )}
-              </div>
-              <div className={styles.rowSide}>
-                <span className={`${styles.badge} ${styles.badgeProject}`}>
-                  Project
-                </span>
-                <span className={styles.tokens} data-tokens>
-                  {formatSkillTokens(skill.bytes)}
-                </span>
-              </div>
-            </li>
-          );
-        })}
-      </ul>
     </section>
   );
 }
@@ -1022,6 +1007,368 @@ export function SkillInstallResultPanel({
           ))}
         </div>
       ))}
+    </section>
+  );
+}
+
+export function HarnessImportSection({
+  sources,
+  busy,
+  error,
+  onScan,
+}: {
+  sources: HarnessSourceInfo[];
+  busy: boolean;
+  error: string | null;
+  onScan: (id: HarnessSourceInfo["id"]) => void;
+}) {
+  return (
+    <section
+      className={styles.subSection}
+      aria-label="Import from other tools"
+      data-harness-import
+    >
+      <div className={styles.sectionLabel}>Import from other tools</div>
+      <p className={styles.rowDetail}>
+        One-way copy of skills, slash commands, MCP servers, memories, and
+        instruction files. Provider homes stay on disk.      </p>
+      <div className={styles.addActions}>
+        {sources.map((source) => (
+          <button
+            key={source.id}
+            type="button"
+            className={styles.ghostBtn}
+            disabled={busy || !source.present}
+            data-harness-source={source.id}
+            aria-label={`Import from ${source.label}`}
+            onClick={() => onScan(source.id)}
+          >
+            {source.label}
+          </button>
+        ))}
+      </div>
+      {error && (
+        <p className={styles.formError} role="alert">
+          {error}
+        </p>
+      )}
+    </section>
+  );
+}
+
+function HarnessCheckRow({
+  id,
+  name,
+  detail,
+  alreadyImported,
+  extra,
+  selected,
+  busy,
+  onToggle,
+}: {
+  id: string;
+  name: string;
+  detail?: string;
+  alreadyImported: boolean;
+  extra?: string;
+  selected: ReadonlySet<string>;
+  busy: boolean;
+  onToggle: (id: string) => void;
+}) {
+  return (
+    <li className={styles.checkRow}>
+      <label className={styles.checkLabel}>
+        <input
+          type="checkbox"
+          checked={selected.has(id)}
+          disabled={busy}
+          aria-label={`Select ${name}`}
+          onChange={() => onToggle(id)}
+        />
+        <span className={styles.rowMain}>
+          <span className={styles.rowName}>{name}</span>
+          {detail && <span className={styles.rowDetail}>{detail}</span>}
+        </span>
+      </label>
+      {alreadyImported && <span className={styles.drift}>Already imported</span>}
+      {extra && <span className={styles.drift}>{extra}</span>}
+    </li>
+  );
+}
+
+export function HarnessImportPreviewPanel({
+  preview,
+  selected,
+  replace,
+  trusted,
+  pluginTrusted,
+  busy,
+  error,
+  onToggle,
+  onReplace,
+  onTrust,
+  onPluginTrust,
+  onSelectRemaining,
+  onSelectAll,
+  onInstall,
+  onCancel,
+}: {
+  preview: HarnessImportPreview;
+  selected: ReadonlySet<string>;
+  replace: boolean;
+  trusted: boolean;
+  pluginTrusted: boolean;
+  busy: boolean;
+  error: string | null;
+  onToggle: (id: string) => void;
+  onReplace: (value: boolean) => void;
+  onTrust: (value: boolean) => void;
+  onPluginTrust: (value: boolean) => void;
+  onSelectRemaining: () => void;
+  onSelectAll: () => void;
+  onInstall: () => void;
+  onCancel: () => void;
+}) {
+  const selectedMcp = preview.mcp.filter((s) => selected.has(s.id));
+  const needsTrust = selectedMcp.some((s) => s.requiresTrust);
+  const hasPlugins = (preview.plugins || []).length > 0;
+  const hasCollision = [
+    ...preview.skills,
+    ...preview.commands,
+    ...preview.mcp,
+  ].some((row) => selected.has(row.id) && row.alreadyImported);
+  const canInstall =
+    selected.size > 0 &&
+    (!hasCollision || replace) &&
+    (!needsTrust || trusted) &&
+    (!hasPlugins || pluginTrusted);
+  function section<T extends { id: string }>(
+    label: string,
+    rows: T[],
+    render: (row: T) => ReactNode,
+  ) {
+    if (!rows.length) return null;
+    return (
+      <>
+        <div className={styles.formLabel}>{label}</div>
+        <ul className={styles.checkList}>{rows.map(render)}</ul>
+      </>
+    );
+  }
+
+  return (
+    <section
+      className={styles.preview}
+      aria-label="Harness import preview"
+      data-harness-preview
+    >
+      <div className={styles.formLabel}>Import from {preview.source.label}</div>
+      <div className={styles.addActions}>
+        <button
+          type="button"
+          className={styles.ghostBtn}
+          disabled={busy}
+          onClick={() => onSelectRemaining()}
+        >
+          Import remaining
+        </button>
+        <button
+          type="button"
+          className={styles.ghostBtn}
+          disabled={busy}
+          onClick={() => onSelectAll()}
+        >
+          Import all
+        </button>
+      </div>
+      {section("Skills", preview.skills, (skill: HarnessSkillRow) => (
+        <HarnessCheckRow
+          key={skill.id}
+          id={skill.id}
+          name={skill.name}
+          detail={skill.description || skill.origin}
+          alreadyImported={skill.alreadyImported}
+          selected={selected}
+          busy={busy}
+          onToggle={onToggle}
+        />
+      ))}
+      {section("Commands", preview.commands, (cmd: HarnessCommandRow) => (
+        <HarnessCheckRow
+          key={cmd.id}
+          id={cmd.id}
+          name={`/${cmd.name}`}
+          detail={
+            cmd.description ||
+            (cmd.origin === "project"
+              ? "project command"
+              : cmd.origin === "plugin"
+                ? "plugin command"
+                : "user command")
+          }
+          alreadyImported={cmd.alreadyImported}
+          selected={selected}
+          busy={busy}
+          onToggle={onToggle}
+        />
+      ))}      {section("MCP servers", preview.mcp, (server: HarnessMcpRow) => (
+        <HarnessCheckRow
+          key={server.id}
+          id={server.id}
+          name={server.name}
+          detail={
+            server.transport === "stdio"
+              ? `${server.transport} · ${server.command || ""}`
+              : `${server.transport} · ${server.url || ""}`
+          }
+          alreadyImported={server.alreadyImported}
+          extra={server.requiresTrust ? "Needs trust" : undefined}
+          selected={selected}
+          busy={busy}
+          onToggle={onToggle}
+        />
+      ))}
+      {section("Memories", preview.memories, (row: HarnessTextRow) => (
+        <HarnessCheckRow
+          key={row.id}
+          id={row.id}
+          name={row.title}
+          detail={row.excerpt}
+          alreadyImported={row.alreadyImported}
+          selected={selected}
+          busy={busy}
+          onToggle={onToggle}
+        />
+      ))}
+      {section("Instructions", preview.instructions, (row: HarnessTextRow) => (
+        <HarnessCheckRow
+          key={row.id}
+          id={row.id}
+          name={row.title}
+          detail={row.excerpt}
+          alreadyImported={row.alreadyImported}
+          selected={selected}
+          busy={busy}
+          onToggle={onToggle}
+        />
+      ))}
+      {preview.settings && (
+        <>
+          <div className={styles.formLabel}>Settings</div>
+          <ul className={styles.checkList}>
+            <HarnessCheckRow
+              id={preview.settings.id}
+              name={preview.settings.title}
+              detail={preview.settings.summary}
+              alreadyImported={preview.settings.alreadyImported}
+              selected={selected}
+              busy={busy}
+              onToggle={onToggle}
+            />
+          </ul>
+        </>
+      )}
+      {preview.warnings.length > 0 && (
+        <ul className={styles.warnList}>
+          {preview.warnings.map((warning) => (
+            <li key={warning} className={styles.pathWrap}>
+              {warning}
+            </li>
+          ))}
+        </ul>
+      )}
+      {hasCollision && (
+        <label className={styles.checkLabel}>
+          <input
+            type="checkbox"
+            checked={replace}
+            disabled={busy}
+            aria-label="Replace existing items"
+            onChange={(e) => onReplace(e.target.checked)}
+          />
+          Replace existing items
+        </label>
+      )}
+      {hasPlugins && (
+        <div className={styles.pluginBlock}>
+          <p className={styles.pluginNote}>
+            Recognized provider extras can be activated after explicit trust.
+            Unsupported extras remain inactive.
+          </p>
+          {groupPlugins(preview.plugins || []).map(([provider, extras]) => (
+            <div key={provider} className={styles.pluginGroup}>
+              <div className={styles.pluginProvider}>{provider}</div>
+              {extras.map((extra) => (
+                <div key={`${extra.provider}:${extra.label}`}>
+                  <div className={styles.rowDetail}>
+                    {extra.label} · {extra.activation.status}
+                  </div>
+                  {extra.executableFiles.length > 0 && (
+                    <ul className={styles.warnList}>
+                      {extra.executableFiles.map((file, index) => (
+                        <li
+                          key={`${extra.provider}:${extra.label}:${index}:${file}`}
+                          className={styles.pathWrap}
+                        >
+                          {file}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              ))}
+            </div>
+          ))}
+        </div>
+      )}
+      {needsTrust && (
+        <label className={styles.checkLabel}>
+          <input
+            type="checkbox"
+            checked={trusted}
+            disabled={busy}
+            aria-label="Trust local MCP commands"
+            onChange={(e) => onTrust(e.target.checked)}
+          />
+          Trust local MCP commands. Preview did not execute them.
+        </label>
+      )}
+      {hasPlugins && (
+        <label className={styles.checkLabel}>
+          <input
+            type="checkbox"
+            checked={pluginTrusted}
+            disabled={busy}
+            aria-label="I trust this package and understand it may include executable instructions or hooks."
+            onChange={(e) => onPluginTrust(e.target.checked)}
+          />
+          I trust this package and understand it may include executable
+          instructions or hooks.
+        </label>
+      )}
+      {error && (
+        <p className={styles.formError} role="alert">
+          {error}
+        </p>
+      )}
+      <div className={styles.addActions}>
+        <button
+          type="button"
+          className={styles.ghostBtn}
+          disabled={busy || !canInstall}
+          onClick={() => onInstall()}
+        >
+          {busy ? "Importing…" : "Import selected"}
+        </button>
+        <button
+          type="button"
+          className={styles.ghostBtn}
+          disabled={busy}
+          onClick={() => onCancel()}
+        >
+          Cancel
+        </button>
+      </div>
     </section>
   );
 }

@@ -285,6 +285,7 @@ export function FleetView({ loadEvidence }: FleetViewProps) {
   const [evidence, setEvidence] = useState<FleetEvidence>(EMPTY_EVIDENCE);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [hasLastSuccess, setHasLastSuccess] = useState(false);
   const [range, setRange] = useState<(typeof FLEET_RANGES)[number]>(7);
   const [now, setNow] = useState(() => Date.now());
   const loadGen = useRef(0);
@@ -301,6 +302,7 @@ export function FleetView({ loadEvidence }: FleetViewProps) {
           ? next
           : EMPTY_EVIDENCE,
       );
+      setHasLastSuccess(true);
       setNow(Date.now());
     } catch (err) {
       if (gen !== loadGen.current) return;
@@ -325,11 +327,10 @@ export function FleetView({ loadEvidence }: FleetViewProps) {
     () => summarizeFleet(evidence, range, now),
     [evidence, range, now],
   );
-  const empty =
-    !loading &&
-    !error &&
-    summary.providers.length === 0 &&
-    summary.threads.length === 0;
+  const rangeEmpty =
+    summary.providers.length === 0 && summary.threads.length === 0;
+  const showLoading = loading && !hasLastSuccess && !error;
+  const initialError = Boolean(error && !hasLastSuccess);
 
   return (
     <main className={styles.main} data-fleet="" data-range={range}>
@@ -362,30 +363,51 @@ export function FleetView({ loadEvidence }: FleetViewProps) {
         </div>
       </header>
 
-      {loading && summary.providers.length === 0 && summary.threads.length === 0 && !error ? (
+      {showLoading ? (
         <p className={styles.hint} aria-live="polite" data-fleet-loading="">
           Loading fleet…
         </p>
-      ) : empty ? (
-        <div className={styles.empty} data-fleet-empty="">
-          <FleetNotes notes={summary.notes} />
-          <p className={styles.emptyTitle}>No fleet data in this range</p>
-          <p className={styles.emptyHint}>
-            Merge rate, review tax, and cost per merged PR show up here once
-            threads and pull requests land.
-          </p>
-        </div>
-      ) : error &&
-        summary.providers.length === 0 &&
-        summary.threads.length === 0 ? (
+      ) : initialError ? (
         <div className={styles.empty} data-fleet-error="">
           <p className={styles.emptyTitle}>Could not load fleet</p>
           <p className={styles.emptyHint} role="alert">
             {error}
           </p>
+          <button
+            type="button"
+            className={styles.retry}
+            onClick={() => void loadAll()}
+            disabled={loading}
+            title="Retry"
+          >
+            Retry
+          </button>
         </div>
       ) : (
-        <FleetReport summary={summary} />
+        <>
+          {error ? (
+            <div className={styles.refreshStatus} data-fleet-error="">
+              <p className={styles.hint} role="alert">
+                {error}
+              </p>
+              <p className={styles.hint} data-fleet-stale="" data-stale="">
+                Last successful report · stale
+              </p>
+            </div>
+          ) : null}
+          {rangeEmpty ? (
+            <div className={styles.empty} data-fleet-empty="">
+              <FleetNotes notes={summary.notes} />
+              <p className={styles.emptyTitle}>No fleet data in this range</p>
+              <p className={styles.emptyHint}>
+                Merge rate, review tax, and cost per merged PR show up here once
+                threads and pull requests land.
+              </p>
+            </div>
+          ) : (
+            <FleetReport summary={summary} />
+          )}
+        </>
       )}
     </main>
   );

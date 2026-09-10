@@ -108,6 +108,45 @@ describe("image IPC replies (issue #145)", () => {
     });
   });
 
+  it("attachments:saveFile and saveFolder handlers persist under userData", async () => {
+    await withStubbedElectron(async () => {
+      for (const m of ["../ipc.js", "../attachments.js"]) {
+        delete require.cache[require.resolve(m)];
+      }
+      const { IPC_HANDLERS } = require("../ipc.js");
+      const file = await IPC_HANDLERS["attachments:saveFile"](
+        { userDataPath: tmp },
+        {
+          threadId: "t1",
+          name: "notes.md",
+          dataUrl: `data:text/markdown;base64,${Buffer.from("# hi").toString("base64")}`,
+        },
+      );
+      assert.equal(file.attachment.kind, "file");
+      assert.equal(fs.readFileSync(file.attachment.path, "utf8"), "# hi");
+
+      const folder = await IPC_HANDLERS["attachments:saveFolder"](
+        { userDataPath: tmp },
+        {
+          threadId: "t1",
+          name: "specs",
+          files: [
+            {
+              relativePath: "nested/a.txt",
+              dataUrl: `data:text/plain;base64,${Buffer.from("a").toString("base64")}`,
+            },
+          ],
+        },
+      );
+      assert.equal(folder.attachment.kind, "folder");
+      assert.equal(folder.attachment.name, "specs");
+      assert.equal(
+        fs.readFileSync(path.join(folder.attachment.path, "nested", "a.txt"), "utf8"),
+        "a",
+      );
+    });
+  });
+
   it("missing or traversal names return null", async () => {
     await withStubbedElectron(async () => {
       delete require.cache[require.resolve("../ipc.js")];

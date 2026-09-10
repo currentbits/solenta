@@ -510,6 +510,7 @@ describe("runner simulated mode", () => {
     await waitFor(() => orchNoticeMessages(store, orch.id).length > 0);
     const notice = orchNoticeMessages(store, orch.id)[0];
     assert.equal(notice.role, "user");
+    assert.equal(notice.fromNotice, true);
     assert.match(notice.text, /\[orchestration\]/);
     assert.match(notice.text, new RegExp(worker.id));
     assert.match(notice.text, /Worker A/);
@@ -566,6 +567,7 @@ describe("runner simulated mode", () => {
       assert.match(last.text, /^\[orchestration\]/);
       assert.match(last.text, new RegExp(worker.id));
       assert.match(last.text, /Not delivered: Daily budget reached/);
+      assert.equal(last.fromNotice, true);
       // Never silently started anyway.
       assert.equal(msgs.filter((m) => m.role === "user").length, 0);
     } finally {
@@ -620,6 +622,7 @@ describe("runner simulated mode", () => {
       assert.match(last.text, new RegExp(worker.id));
       assert.match(last.text, /Not delivered: Orchestration budget reached/);
       assert.match(last.text, /\$1\.00 of \$1\.00/);
+      assert.equal(last.fromNotice, true);
       // The daily cap is unset: only the per-orchestration ceiling bit, and
       // the wake-up never silently started anyway.
       assert.equal(msgs.filter((m) => m.role === "user").length, 0);

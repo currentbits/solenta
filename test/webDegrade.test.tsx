@@ -227,6 +227,312 @@ describe("web mode attachments", () => {
     assert.ok(m.text().includes("shot.png"));
     m.unmount();
   });
+
+  it("drop on composer saves a markdown file over saveFile, not saveImage", async () => {
+    const saved: AttachmentInfo = {
+      kind: "file",
+      path: "/tmp/attachments/t-web-md/notes.md",
+      name: "notes.md",
+    };
+    const fake = createFakeCoder({
+      threads: [thread({ id: "t-web-md", title: "web md drop" })],
+      saveFile: () => ({ attachment: saved }),
+    });
+    const m = await boot(fake);
+    dropCoder();
+    assert.equal(isWebMode(), true, "deleting window.coder must flip isWebMode()");
+
+    const textarea = m.query("textarea");
+    assert.ok(textarea, "selected thread must expose the composer");
+
+    const file = new File(["# notes"], "notes.md", { type: "text/markdown" });
+    await inAct(() => {
+      const ev = new Event("drop", { bubbles: true, cancelable: true });
+      Object.defineProperty(ev, "dataTransfer", { value: { files: [file] } });
+      textarea.dispatchEvent(ev);
+    });
+    await m.flush();
+
+    assert.equal(
+      fake.of("attachments.saveImage").length,
+      0,
+      "markdown must not go through saveImage",
+    );
+    const calls = fake.of("attachments.saveFile");
+    assert.ok(calls.length > 0, "drop must call attachments.saveFile");
+    const input = calls[calls.length - 1].args[0] as {
+      threadId: string;
+      name: string;
+      dataUrl: string;
+    };
+    assert.equal(input.threadId, "t-web-md");
+    assert.equal(input.name, "notes.md");
+    assert.ok(input.dataUrl.startsWith("data:"), "saveFile must receive a data: URL");
+    assert.ok(
+      m.query('[data-attachment-kind="file"]'),
+      "returned file must surface as a composer chip",
+    );
+    m.unmount();
+  });
+
+  it("web paperclip file input has no accept and no webkitdirectory", async () => {
+    const inputs: HTMLInputElement[] = [];
+    const orig = document.createElement.bind(document);
+    document.createElement = ((tag: string, options?: ElementCreationOptions) => {
+      const el = orig(tag, options);
+      if (String(tag).toLowerCase() === "input") {
+        inputs.push(el as HTMLInputElement);
+      }
+      return el;
+    }) as typeof document.createElement;
+
+    const fake = createFakeCoder({
+      threads: [thread({ id: "t-web-pick", title: "web pick" })],
+    });
+    const m = await boot(fake);
+    dropCoder();
+    try {
+      const btn = m.query('button[aria-label="Attach files or folders"]');
+      assert.ok(btn, "web paperclip must stay");
+      await m.click(btn);
+      await m.flush();
+      const input = inputs.find((el) => el.type === "file");
+      assert.ok(input, "paperclip must open <input type=file>");
+      assert.equal(
+        input.accept,
+        "",
+        "web picker must not be image-only (issue #1173)",
+      );
+      assert.equal(
+        Boolean(input.webkitdirectory),
+        false,
+        "must not use webkitdirectory (flattens folders into files)",
+      );
+      assert.equal(input.multiple, true);
+    } finally {
+      document.createElement = orig;
+      m.unmount();
+    }
+  });
+
+  it("web paperclip pick of a text file calls saveFile and shows a chip", async () => {
+    const saved: AttachmentInfo = {
+      kind: "file",
+      path: "/tmp/attachments/t-web-pick-file/notes.md",
+      name: "notes.md",
+    };
+    const fake = createFakeCoder({
+      threads: [thread({ id: "t-web-pick-file", title: "web pick file" })],
+      saveFile: () => ({ attachment: saved }),
+    });
+    const m = await boot(fake);
+    dropCoder();
+
+    const inputs: HTMLInputElement[] = [];
+    const orig = document.createElement.bind(document);
+    document.createElement = ((tagName: string, options?: ElementCreationOptions) => {
+      const el = orig(tagName, options);
+      if (tagName === "input") inputs.push(el as HTMLInputElement);
+      return el;
+    }) as typeof document.createElement;
+
+    try {
+      const btn = m.query('button[aria-label="Attach files or folders"]');
+      assert.ok(btn, "web mode must show the paperclip once files can attach");
+      await m.click(btn);
+      const input = inputs.find((el) => el.type === "file");
+      assert.ok(input, "paperclip must open one file input");
+      const file = new File(["# notes"], "notes.md", { type: "text/markdown" });
+      Object.defineProperty(input, "files", { value: [file] });
+      await inAct(() => {
+        input.dispatchEvent(new Event("change"));
+      });
+      await m.flush();
+      const calls = fake.of("attachments.saveFile");
+      assert.ok(calls.length > 0, "picked text file must call saveFile");
+      assert.ok(
+        m.query('[data-attachment-kind="file"]'),
+        "picked markdown must surface as a file chip",
+      );
+    } finally {
+      document.createElement = orig;
+      m.unmount();
+    }
+  });
+
+  it("web paperclip Folder uses showDirectoryPicker and saveFolder", async () => {
+    const saved: AttachmentInfo = {
+      kind: "folder",
+      path: "/tmp/attachments/t-web-folder/specs",
+      name: "specs",
+    };
+    const fake = createFakeCoder({
+      threads: [thread({ id: "t-web-folder", title: "web folder" })],
+      saveFolder: () => ({ attachment: saved }),
+    });
+    const nested = new File(["# a"], "a.md", { type: "text/markdown" });
+    const picker = async () => ({
+      kind: "directory" as const,
+      name: "specs",
+      entries: async function* () {
+        yield [
+          "a.md",
+          {
+            kind: "file" as const,
+            getFile: async () => nested,
+          },
+        ] as const;
+      },
+    });
+    (
+      window as unknown as { showDirectoryPicker: typeof picker }
+    ).showDirectoryPicker = picker;
+
+    const m = await boot(fake);
+    dropCoder();
+    try {
+      const btn = m.query('button[aria-label="Attach files or folders"]');
+      assert.ok(btn, "web paperclip must stay");
+      await m.click(btn);
+      await m.flush();
+      const folderItem = m.byText("Folder");
+      assert.ok(folderItem, "web paperclip must offer Folder when showDirectoryPicker exists");
+      await m.click(folderItem);
+      await m.flush();
+
+      const calls = fake.of("attachments.saveFolder");
+      assert.ok(calls.length > 0, "Folder pick must call attachments.saveFolder");
+      const input = calls[calls.length - 1].args[0] as {
+        threadId: string;
+        name: string;
+        files: Array<{ relativePath: string; dataUrl: string }>;
+      };
+      assert.equal(input.threadId, "t-web-folder");
+      assert.equal(input.name, "specs");
+      assert.equal(input.files.length, 1);
+      assert.equal(input.files[0].relativePath, "a.md");
+      assert.ok(
+        input.files[0].dataUrl.startsWith("data:"),
+        "folder files must be data URLs",
+      );
+      assert.ok(
+        m.query('[data-attachment-kind="folder"]'),
+        "returned folder must surface as a composer chip",
+      );
+      assert.ok(m.text().includes("specs"));
+    } finally {
+      delete (window as unknown as { showDirectoryPicker?: unknown })
+        .showDirectoryPicker;
+      m.unmount();
+    }
+  });
+
+  it("web directory drop walks webkitGetAsEntry and saves a folder chip", async () => {
+    const saved: AttachmentInfo = {
+      kind: "folder",
+      path: "/tmp/attachments/t-web-dir/fixtures",
+      name: "fixtures",
+    };
+    const fake = createFakeCoder({
+      threads: [thread({ id: "t-web-dir", title: "web dir drop" })],
+      saveFolder: () => ({ attachment: saved }),
+      saveFile: () => ({
+        attachment: {
+          kind: "file",
+          path: "/tmp/attachments/t-web-dir/a.md",
+          name: "a.md",
+        },
+      }),
+    });
+    const m = await boot(fake);
+    dropCoder();
+    assert.equal(isWebMode(), true, "deleting window.coder must flip isWebMode()");
+
+    const host = m.query("[data-thread-drop]");
+    assert.ok(host, "open thread must be the drop target");
+
+    const nested = new File(["# a"], "a.md", { type: "text/markdown" });
+    const dir = new File([], "fixtures", { type: "" });
+    let sent = false;
+    const children = [
+      {
+        isDirectory: false,
+        isFile: true,
+        name: "a.md",
+        file: (success: (f: File) => void) => success(nested),
+      },
+    ];
+    await inAct(() => {
+      const ev = new Event("drop", { bubbles: true, cancelable: true });
+      Object.defineProperty(ev, "dataTransfer", {
+        value: {
+          files: [dir],
+          items: [
+            {
+              kind: "file",
+              type: "",
+              getAsFile: () => dir,
+              webkitGetAsEntry: () => ({
+                isDirectory: true,
+                isFile: false,
+                name: "fixtures",
+                createReader: () => ({
+                  readEntries: (success: (entries: unknown[]) => void) => {
+                    if (sent) {
+                      success([]);
+                      return;
+                    }
+                    sent = true;
+                    success(children);
+                  },
+                }),
+              }),
+            },
+          ],
+          types: ["Files"],
+        },
+      });
+      host.dispatchEvent(ev);
+    });
+    await m.flush();
+
+    assert.equal(
+      fake.of("attachments.saveFile").length,
+      0,
+      "directory drop must not flatten into file chips",
+    );
+    assert.equal(
+      fake.of("attachments.fromPaths").length,
+      0,
+      "web drop has no absolute path for the live folder",
+    );
+    const calls = fake.of("attachments.saveFolder");
+    assert.ok(calls.length > 0, "web directory drop must call attachments.saveFolder");
+    const input = calls[calls.length - 1].args[0] as {
+      threadId: string;
+      name: string;
+      files: Array<{ relativePath: string; dataUrl: string }>;
+    };
+    assert.equal(input.threadId, "t-web-dir");
+    assert.equal(input.name, "fixtures");
+    assert.equal(input.files.length, 1);
+    assert.equal(input.files[0].relativePath, "a.md");
+    assert.ok(
+      input.files[0].dataUrl.startsWith("data:"),
+      "folder files must be data URLs",
+    );
+    assert.ok(
+      m.query('[data-attachment-kind="folder"]'),
+      "returned folder must surface as a chip",
+    );
+    assert.equal(
+      m.query('[data-attachment-kind="file"]'),
+      null,
+      "nested files stay inside the folder chip",
+    );
+    assert.ok(m.text().includes("fixtures"));
+    m.unmount();
+  });
 });
 
 describe("native drop path resolution (issue #469)", () => {

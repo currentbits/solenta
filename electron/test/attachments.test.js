@@ -150,6 +150,210 @@ describe("attachments module", () => {
       "relative paths must not read",
     );
   });
+
+  it("saves a non-image file under userData as kind file (#1173)", () => {
+    const bytes = Buffer.from("hello notes");
+    const dataUrl = `data:text/plain;base64,${bytes.toString("base64")}`;
+    const saved = attachments.saveFile(tmpDir, "t1", "notes.txt", dataUrl);
+    assert.ok(saved, "saveFile must accept a text data URL");
+    assert.equal(saved.kind, "file");
+    assert.equal(saved.name, "notes.txt");
+    assert.ok(saved.path.startsWith(path.join(tmpDir, "attachments", "t1")));
+    assert.equal(fs.readFileSync(saved.path).toString(), "hello notes");
+    assert.notEqual(
+      path.basename(saved.path),
+      "notes.txt",
+      "stored basename must be unique so two notes.txt do not collide",
+    );
+    assert.match(path.basename(saved.path), /notes\.txt$/);
+  });
+
+  it("saveFile accepts charset in the data URL and a markdown name", () => {
+    const bytes = Buffer.from("# spec");
+    const dataUrl = `data:text/markdown;charset=utf-8;base64,${bytes.toString("base64")}`;
+    const saved = attachments.saveFile(tmpDir, "t1", "spec.md", dataUrl);
+    assert.ok(saved);
+    assert.equal(saved.kind, "file");
+    assert.equal(saved.name, "spec.md");
+    assert.equal(fs.readFileSync(saved.path).toString(), "# spec");
+  });
+
+  it("refuses saveFile thread ids that escape the attachments dir", () => {
+    const dataUrl = `data:text/plain;base64,${Buffer.from("x").toString("base64")}`;
+    for (const tid of [
+      "../../escaped",
+      "..",
+      "a/b",
+      "a\\b",
+      path.join(tmpDir, "abs"),
+      "C:evil",
+      "t1\0",
+      "",
+    ]) {
+      assert.equal(
+        attachments.saveFile(tmpDir, tid, "notes.md", dataUrl),
+        null,
+        `threadId ${JSON.stringify(tid)} must be refused`,
+      );
+    }
+    assert.deepEqual(
+      fs.readdirSync(tmpDir),
+      [],
+      "nothing may be written outside a valid thread dir",
+    );
+  });
+
+  it("saveFile refuses a path-like name", () => {
+    const dataUrl = `data:text/plain;base64,${Buffer.from("x").toString("base64")}`;
+    assert.equal(
+      attachments.saveFile(tmpDir, "t1", "../../etc/passwd", dataUrl),
+      null,
+    );
+  });
+
+  it("saveFile rejects empty, non-data, and oversize payloads", () => {
+    assert.equal(
+      attachments.saveFile(tmpDir, "t1", "notes.txt", "not a data url"),
+      null,
+    );
+    assert.equal(
+      attachments.saveFile(
+        tmpDir,
+        "t1",
+        "empty.txt",
+        `data:text/plain;base64,${Buffer.alloc(0).toString("base64")}`,
+      ),
+      null,
+      "empty files must be refused like empty images",
+    );
+    const huge = Buffer.alloc(attachments.MAX_IMAGE_BYTES + 1, 1);
+    assert.equal(
+      attachments.saveFile(
+        tmpDir,
+        "t1",
+        "huge.bin",
+        `data:application/octet-stream;base64,${huge.toString("base64")}`,
+      ),
+      null,
+    );
+    assert.equal(
+      attachments.saveImage(tmpDir, "t1", "data:text/plain;base64,aGk="),
+      null,
+      "saveImage must stay image-only",
+    );
+  });
+
+
+  it("saves a folder tree under userData as kind folder", () => {
+    const saved = attachments.saveFolder(tmpDir, "t1", "specs", [
+      {
+        relativePath: "a.md",
+        dataUrl: `data:text/markdown;base64,${Buffer.from("# a").toString("base64")}`,
+      },
+      {
+        relativePath: "nested/b.txt",
+        dataUrl: `data:text/plain;base64,${Buffer.from("b").toString("base64")}`,
+      },
+    ]);
+    assert.ok(saved, "saveFolder must persist a directory tree");
+    assert.equal(saved.kind, "folder");
+    assert.equal(saved.name, "specs");
+    assert.ok(saved.path.startsWith(path.join(tmpDir, "attachments", "t1")));
+    assert.equal(fs.readFileSync(path.join(saved.path, "a.md"), "utf8"), "# a");
+    assert.equal(
+      fs.readFileSync(path.join(saved.path, "nested", "b.txt"), "utf8"),
+      "b",
+    );
+  });
+
+  it("saves an empty folder as kind folder", () => {
+    const saved = attachments.saveFolder(tmpDir, "t1", "empty", []);
+    assert.ok(saved, "empty directory pick must still be a folder chip");
+    assert.equal(saved.kind, "folder");
+    assert.equal(saved.name, "empty");
+    assert.ok(fs.statSync(saved.path).isDirectory());
+  });
+
+  it("refuses saveFolder traversal in thread id, name, or relative paths", () => {
+    const okFile = {
+      relativePath: "a.txt",
+      dataUrl: `data:text/plain;base64,${Buffer.from("a").toString("base64")}`,
+    };
+    assert.equal(attachments.saveFolder(tmpDir, "../t1", "specs", [okFile]), null);
+    assert.equal(
+      attachments.saveFolder(tmpDir, "t1", "../escape", [okFile]),
+      null,
+    );
+    const escaped = attachments.saveFolder(tmpDir, "t1", "specs", [
+      {
+        relativePath: "../outside.txt",
+        dataUrl: `data:text/plain;base64,${Buffer.from("no").toString("base64")}`,
+      },
+      {
+        relativePath: "/abs.txt",
+        dataUrl: `data:text/plain;base64,${Buffer.from("no").toString("base64")}`,
+      },
+    ]);
+    assert.equal(escaped, null, "traversal relative paths must refuse the save");
+    const attachRoot = path.join(tmpDir, "attachments");
+    if (fs.existsSync(attachRoot)) {
+      const walk = (dir) => {
+        const names = [];
+        for (const ent of fs.readdirSync(dir, { withFileTypes: true })) {
+          const full = path.join(dir, ent.name);
+          names.push(full);
+          if (ent.isDirectory()) names.push(...walk(full));
+        }
+        return names;
+      };
+      for (const full of walk(attachRoot)) {
+        assert.ok(
+          full.startsWith(attachRoot),
+          `must not write outside attachments: ${full}`,
+        );
+        assert.ok(
+          !full.includes(`${path.sep}outside.txt`) && !full.endsWith("abs.txt"),
+          `traversal file must not land on disk: ${full}`,
+        );
+      }
+    }
+    assert.equal(fs.existsSync(path.join(tmpDir, "outside.txt")), false);
+  });
+
+  it("omits the Images filter when includeImages is false (#1169)", async () => {
+    let shown;
+    await attachments.pickAttachments(
+      {
+        showOpenDialog: async (opts) => {
+          shown = opts;
+          return { canceled: true };
+        },
+      },
+      { includeImages: false },
+    );
+    assert.deepEqual(
+      (shown.filters || []).map((f) => f.name),
+      ["All Files"],
+      "text-only models must not offer the native Images filter",
+    );
+  });
+
+  it("drops picked images when includeImages is false (#1169)", async () => {
+    const png = path.join(tmpDir, "shot.png");
+    const txt = path.join(tmpDir, "notes.txt");
+    fs.writeFileSync(png, "x");
+    fs.writeFileSync(txt, "x");
+    const out = await attachments.pickAttachments(
+      {
+        showOpenDialog: async () => ({
+          canceled: false,
+          filePaths: [png, txt],
+        }),
+      },
+      { includeImages: false },
+    );
+    assert.deepEqual(out, [{ kind: "file", path: txt, name: "notes.txt" }]);
+  });
 });
 
 describe("runner attachments", () => {

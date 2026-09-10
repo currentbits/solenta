@@ -9,25 +9,73 @@ import {
   DROP_OVERLAY_MESSAGE,
   DROP_REJECT_MESSAGE,
   filesFromDataTransfer,
+  foldersFromDataTransfer,
   isFileDrag,
 } from "../src/dropFiles";
 
+if (typeof FileReader === "undefined") {
+  (globalThis as unknown as { FileReader: typeof FileReader }).FileReader = class {
+    result: string | null = null;
+    onload: (() => void) | null = null;
+    onerror: (() => void) | null = null;
+    readAsDataURL(blob: Blob) {
+      this.result = `data:${blob.type || "application/octet-stream"};base64,`;
+      this.onload?.();
+    }
+  } as unknown as typeof FileReader;
+}
+
+function fileEntry(file: File) {
+  return {
+    isDirectory: false as const,
+    isFile: true as const,
+    name: file.name,
+    file: (success: (f: File) => void) => success(file),
+  };
+}
+
+function dirEntry(
+  name: string,
+  children: Array<ReturnType<typeof fileEntry> | ReturnType<typeof dirEntry>>,
+) {
+  return {
+    isDirectory: true as const,
+    isFile: false as const,
+    name,
+    createReader: () => {
+      let sent = false;
+      return {
+        readEntries: (success: (entries: unknown[]) => void) => {
+          if (sent) {
+            success([]);
+            return;
+          }
+          sent = true;
+          success(children);
+        },
+      };
+    },
+  };
+}
+
 function item(
   file: File | null,
-  over: { kind?: string; directory?: boolean } = {},
+  over: {
+    kind?: string;
+    directory?: boolean;
+    entry?: ReturnType<typeof fileEntry> | ReturnType<typeof dirEntry> | null;
+  } = {},
 ) {
   return {
     kind: over.kind ?? "file",
     type: file?.type ?? "",
     getAsFile: () => file,
-    webkitGetAsEntry: () =>
-      file
-        ? {
-            isDirectory: Boolean(over.directory),
-            isFile: !over.directory,
-            name: file.name,
-          }
-        : null,
+    webkitGetAsEntry: () => {
+      if (over.entry !== undefined) return over.entry;
+      if (!file) return null;
+      if (over.directory) return dirEntry(file.name, []);
+      return fileEntry(file);
+    },
   };
 }
 
@@ -100,6 +148,81 @@ describe("filesFromDataTransfer", () => {
     assert.deepEqual(
       out.map((f) => f.name),
       ["shot.png", "fixtures"],
+    );
+  });
+});
+
+describe("foldersFromDataTransfer", () => {
+  it("walks webkitGetAsEntry directories via createReader, not FileList", async () => {
+    const nested = new File(["# a"], "a.md", { type: "text/markdown" });
+    const inner = new File(["b"], "b.txt", { type: "text/plain" });
+    const folder = new File([], "fixtures", { type: "" });
+    const out = await foldersFromDataTransfer(
+      dt({
+        files: [],
+        items: [
+          item(folder, {
+            directory: true,
+            entry: dirEntry("fixtures", [
+              fileEntry(nested),
+              dirEntry("nested", [fileEntry(inner)]),
+            ]),
+          }),
+        ],
+      }),
+    );
+    assert.equal(out.length, 1);
+    assert.equal(out[0].name, "fixtures");
+    assert.deepEqual(
+      out[0].files.map((f) => f.relativePath),
+      ["a.md", "nested/b.txt"],
+    );
+    assert.ok(out[0].files.every((f) => f.dataUrl.startsWith("data:")));
+  });
+
+  it("does not flatten a dropped directory into loose files", async () => {
+    const nested = new File(["# a"], "a.md", { type: "text/markdown" });
+    const folder = new File([], "specs", { type: "" });
+    const transfer = dt({
+      files: [nested],
+      items: [
+        item(folder, {
+          directory: true,
+          entry: dirEntry("specs", [fileEntry(nested)]),
+        }),
+      ],
+    });
+    const files = filesFromDataTransfer(transfer);
+    const folders = await foldersFromDataTransfer(transfer);
+    assert.deepEqual(
+      files.map((f) => f.name),
+      ["specs"],
+      "FileList still exposes the directory File for native droppedFilePath",
+    );
+    assert.equal(folders.length, 1);
+    assert.equal(folders[0].name, "specs");
+    assert.equal(folders[0].files.length, 1);
+    assert.equal(folders[0].files[0].relativePath, "a.md");
+  });
+
+  it("keeps a sibling file next to a walked folder", async () => {
+    const notes = new File(["# notes"], "notes.md", { type: "text/markdown" });
+    const nested = new File(["# a"], "a.md", { type: "text/markdown" });
+    const folder = new File([], "specs", { type: "" });
+    const out = await foldersFromDataTransfer(
+      dt({
+        items: [
+          item(notes),
+          item(folder, {
+            directory: true,
+            entry: dirEntry("specs", [fileEntry(nested)]),
+          }),
+        ],
+      }),
+    );
+    assert.deepEqual(
+      out.map((f) => f.name),
+      ["specs"],
     );
   });
 });

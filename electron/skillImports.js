@@ -70,6 +70,12 @@ const PLUGIN_MARKERS = [
     defaultLabel: "Claude plugin",
   },
   {
+    rel: ".cursor-plugin/plugin.json",
+    provider: "cursor",
+    kind: "cursor-plugin",
+    defaultLabel: "Cursor plugin",
+  },
+  {
     rel: ".codex-plugin/plugin.json",
     provider: "codex",
     kind: "codex-plugin",

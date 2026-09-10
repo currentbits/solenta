@@ -27,7 +27,9 @@ const {
   renameThread,
   listThreads,
   planboardNoteFor,
+  refreshWorkerSnapshot,
 } = require("./services.js");
+const { stop: stopDevServer } = require("./devservers.js");
 const {
   decideCrossThreadSend,
   attributedPrompt,
@@ -113,11 +115,18 @@ const INSTRUCTIONS =
   "over a document (plan.md, contract.md) is to COMMIT it on your branch and " +
   "send the peer a `branch:path` ref in the task note or peer message. The peer " +
   "reads it with `git show <branch>:<path>`. Chat history is not a hand-off. " +
+  "refresh_worker_snapshot retargets an idle orchestration worker you forked " +
+  "onto your current committed HEAD (leadSnapshotSha only; never baseBranch). " +
+  "Nothing auto-refreshes — call it explicitly. Uncommitted lead edits are " +
+  "not copied. Running workers, worktree:false workers, and independent " +
+  "threads are refused. " +
   "When this project's origin is GitHub, issue_list, issue_create, " +
-  "issue_set_plan, and issue_complete write Planboard issues on that origin " +
-  "(plan:todo, plan:doing, plan:done). They run on the host, not through " +
-  "sandboxed gh, and there is no repo argument: writes stay on this thread's " +
-  "origin. The tools are omitted when the origin is not GitHub.";
+  "issue_set_plan, issue_complete, and issue_comment write Planboard issues " +
+  "on that origin (plan:todo, plan:doing, plan:done). They run on the host, " +
+  "not through sandboxed gh, and there is no repo argument: writes stay on " +
+  "this thread's origin. issue_comment posts a comment without changing " +
+  "labels or closing the issue. The tools are omitted when the origin is " +
+  "not GitHub.";
 
 function timingSafeEqualString(a, b) {
   const bufferA = Buffer.from(a);
@@ -361,6 +370,12 @@ function createToolHandlers(deps) {
     if (typeof runner.disposeClaudeSession === "function") {
       runner.disposeClaudeSession(threadId);
     }
+    // #315: same sidecar cleanup as ipc.retireAgent.
+    try {
+      stopDevServer(threadId);
+    } catch {
+      // no sidecar
+    }
   }
 
   function broadcastThreadsChanged() {
@@ -379,6 +394,7 @@ function createToolHandlers(deps) {
     return store
       .getThreads()
       .filter((t) => String(t.projectId || "") === pid)
+      .filter((t) => !Number.isFinite(t && t.trashedAt))
       .map((t) => {
         const project = projectOf(t);
         return {
@@ -570,15 +586,43 @@ function createToolHandlers(deps) {
         args,
         self.worktreePath
           ? "Merging a worker onto your branch"
-          : "Merging a worker onto the project's default branch",
+          : "Merging a worker onto your project checkout's current branch",
+      );
+    }
+    // Match the runner's cwd selection. Omitting intoPath invokes Git-tab
+    // base/default-branch routing, which can select a different checkout.
+    const intoPath = self.worktreePath || projectOf(self)?.path;
+    if (!intoPath) throw new Error("Merge destination checkout is unavailable.");
+    if (
+      typeof args.expectedPath !== "string" || !path.isAbsolute(args.expectedPath) ||
+      typeof args.expectedBranch !== "string" || !args.expectedBranch.trim()
+    ) {
+      throw new Error(
+        "thread_merge requires expectedPath (absolute session checkout path) and " +
+        "expectedBranch naming the destination the user approved. Verify your cwd " +
+        "and current Git branch before asking for approval.",
+      );
+    }
+    const { mergeWorktree, gitTry } = require("./worktrees.js");
+    const destinationPath = fs.realpathSync(intoPath);
+    const current = gitTry(intoPath, ["symbolic-ref", "--quiet", "--short", "HEAD"]);
+    const destinationBranch = current.ok ? current.stdout.trim() : "";
+    if (
+      fs.realpathSync(args.expectedPath) !== destinationPath ||
+      !destinationBranch || args.expectedBranch !== destinationBranch
+    ) {
+      throw new Error(
+        `Merge destination mismatch: approved ${args.expectedPath} on ${args.expectedBranch}; ` +
+        `actual ${destinationPath} on ${destinationBranch || "detached or unavailable HEAD"}. ` +
+        "Nothing was merged. Restore the approved destination, or ask the user " +
+        "before changing it. Do not substitute the actual destination automatically.",
       );
     }
     const branch = worker.branch ?? null;
-    const { mergeWorktree } = require("./worktrees.js");
     mergeWorktree({
       store,
       threadId: worker.id,
-      intoPath: self.worktreePath || undefined,
+      intoPath,
       broadcast,
     });
     if (userDataPath) {
@@ -593,7 +637,8 @@ function createToolHandlers(deps) {
     return {
       merged: true,
       branch,
-      into: self.worktreePath ? self.branch ?? null : "project checkout",
+      into: destinationBranch,
+      intoPath: destinationPath,
     };
   }
 
@@ -1051,10 +1096,46 @@ function createToolHandlers(deps) {
     });
   }
 
+  async function issue_comment(args) {
+    const thread = requireOwnThread(args);
+    const { commentIssue } = require("./issues.js");
+    return commentIssue(
+      originPathOf(thread),
+      args && args.number,
+      args && args.body,
+    );
+  }
+
   async function issue_list(args) {
     const thread = requireOwnThread(args);
     const { listIssues } = require("./issues.js");
     return listIssues(originPathOf(thread));
+  }
+
+  /**
+   * Explicit lead-driven refresh onto the current committed snapshot (#1112).
+   * Ownership matches git.integrateWorker: caller must be the worker's
+   * handoffFrom. The rebase / pending-SHA work is services.refreshWorkerSnapshot.
+   */
+  async function refresh_worker_snapshot(args) {
+    const self = requireOwnThread(args);
+    const worker = store.getThread(args.workerThreadId);
+    if (!worker) {
+      throw new Error(`Unknown thread: ${args.workerThreadId}`);
+    }
+    assertSameProject(worker, args.projectId);
+    if (String(worker.handoffFrom || "") !== String(self.id)) {
+      throw new Error(
+        `Worker ${worker.id} is not this lead's worker (handoffFrom mismatch)`,
+      );
+    }
+    const refresh =
+      typeof deps.refreshWorkerSnapshot === "function"
+        ? deps.refreshWorkerSnapshot
+        : refreshWorkerSnapshot;
+    const updated = refresh(store, { threadId: worker.id });
+    broadcastThreadsChanged();
+    return updated;
   }
 
   async function preview(args) {
@@ -1107,9 +1188,11 @@ function createToolHandlers(deps) {
     task_release,
     peer_send,
     preview,
+    refresh_worker_snapshot,
     issue_create,
     issue_set_plan,
     issue_complete,
+    issue_comment,
     issue_list,
   };
 }
@@ -1180,9 +1263,14 @@ function buildMcpServer(sdk, handlers, opts = {}) {
         "YOUR OWN (stated at the end of your prompt); the worker must be one " +
         "you forked. Call this once you have checked a worker's result — " +
         "until you do, its commits exist only on its own branch and nothing " +
-        "else can see them. When you are working in a worktree the merge " +
-        "lands on YOUR branch; with no worktree of your own it COMMITS TO THE " +
-        "DEFAULT BRANCH. Both are the user's decision: report the worker's " +
+        "else can see them. The destination is your thread worktree, or the " +
+        "project checkout when you have no managed worktree, on its current " +
+        "branch. Verify your session cwd and Git branch and include that exact " +
+        "path and branch in the approval question. Pass them as expectedPath " +
+        "and expectedBranch; a mismatch refuses before any writes. Never replace " +
+        "an approved destination with a different one to bypass a refusal. " +
+        "The result reports the actual intoPath and branch (into). " +
+        "Merging is the user's decision: report the worker's " +
         "branch and what it changed, ask whether to merge or open a PR " +
         "(thread_pr), and pass approved:true only in the turn their answer " +
         "starts. Several workers finished? Ask once, naming the order you " +
@@ -1195,6 +1283,8 @@ function buildMcpServer(sdk, handlers, opts = {}) {
         threadId: z.string().min(1),
         projectId: z.string().min(1),
         workerThreadId: z.string().min(1),
+        expectedPath: z.string().min(1),
+        expectedBranch: z.string().min(1),
         approved: z.boolean().optional(),
       },
     },
@@ -1582,6 +1672,29 @@ function buildMcpServer(sdk, handlers, opts = {}) {
   );
 
   server.registerTool(
+    "refresh_worker_snapshot",
+    {
+      description:
+        "Retarget an idle orchestration worker you forked onto your current " +
+        "committed HEAD. Updates leadSnapshotSha only — never baseBranch " +
+        "(the Merge/PR destination). Nothing auto-refreshes; call this " +
+        "explicitly. Uncommitted lead edits are not copied. threadId and " +
+        "projectId are YOUR OWN; workerThreadId must be a worker whose " +
+        "handoffFrom is you (same ownership as git.integrateWorker). " +
+        "Refuses running workers, worktree:false workers, and independent " +
+        "threads. A materialized worker rebases its unique commits from the " +
+        "old snapshot onto the new one; a pending worker only rewrites the " +
+        "recorded SHA.",
+      inputSchema: {
+        threadId: z.string().min(1),
+        projectId: z.string().min(1),
+        workerThreadId: z.string().min(1),
+      },
+    },
+    async (args) => json(await handlers.refresh_worker_snapshot(args)),
+  );
+
+  server.registerTool(
     "peer_send",
     {
       description:
@@ -1666,6 +1779,24 @@ function buildMcpServer(sdk, handlers, opts = {}) {
         },
       },
       async (args) => json(await handlers.issue_complete(args)),
+    );
+    server.registerTool(
+      "issue_comment",
+      {
+        description:
+          "Post a comment on an existing GitHub Planboard issue on THIS " +
+          "thread's project origin without changing plan:* labels or closing " +
+          "it. Closed issues remain commentable. There is no repo argument: " +
+          "writes stay on the bound origin. projectId is YOUR OWN project id " +
+          "(stated at the end of your prompt); the thread must belong to it.",
+        inputSchema: {
+          threadId: z.string().min(1),
+          projectId: z.string().min(1),
+          number: z.number().int().positive(),
+          body: z.string().min(1),
+        },
+      },
+      async (args) => json(await handlers.issue_comment(args)),
     );
   }
 

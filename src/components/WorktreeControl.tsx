@@ -15,6 +15,7 @@ import {
   parseConflictFiles,
   type ConflictResolveInput,
 } from "../conflictResolve";
+import { mergeOntoLabel, sourceSnapshotLabel } from "../crewIntegration";
 import { useEscapeClose } from "../useEscapeClose";
 import styles from "./WorktreeControl.module.css";
 
@@ -28,6 +29,8 @@ export interface WorktreeControlProps {
   onMergeWorktree: (opts?: {
     ciWorkflowApproved?: boolean;
   }) => Promise<unknown>;
+  /** Crew worker: jump to the lead Integration view (#954). */
+  onOpenCrewLead?: (leadId: string) => void;
   onRemoveWorktree: (force?: boolean) => Promise<unknown>;
   onStartRun?: (prompt: string, threadId?: string) => void | Promise<void>;
   conflictContext?: (threadId: string) => Promise<ConflictContext>;
@@ -36,6 +39,13 @@ export interface WorktreeControlProps {
   listBaseBranches?: () => Promise<{ defaultBranch: string; branches: string[] }>;
   /** Persist a new merge/PR base, or null to clear to the repo default. */
   onSetBaseBranch?: (baseBranch: string | null) => Promise<unknown>;
+  /**
+   * orchWorker threads: open the lead's Integration section instead of
+   * treating this header Merge as crew staging (issue #982).
+   */
+  onOpenCrewIntegration?: (leadThreadId: string) => void;
+  /** Retarget this idle worker onto the lead's current committed HEAD. */
+  onRefreshWorkerSnapshot?: () => Promise<unknown>;
 }
 
 export interface WorktreeChrome {
@@ -105,12 +115,15 @@ export function useWorktreeChrome(
     isWorking,
     onSetupWorktree,
     onMergeWorktree,
+    onOpenCrewLead,
     onRemoveWorktree,
     onStartRun,
     conflictContext,
     onOpenWorktree,
     listBaseBranches,
     onSetBaseBranch,
+    onOpenCrewIntegration,
+    onRefreshWorkerSnapshot,
   } = props;
 
   const [gitAction, setGitAction] = useState<GitAction>(null);
@@ -129,6 +142,7 @@ export function useWorktreeChrome(
   const [pendingMergeRetry, setPendingMergeRetry] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [copiedPath, setCopiedPath] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   const sawWorkingRef = useRef(false);
   const onMergeRef = useRef(onMergeWorktree);
   onMergeRef.current = onMergeWorktree;
@@ -136,7 +150,7 @@ export function useWorktreeChrome(
   const copyTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const hasWorktree = Boolean(thread?.worktreePath);
-  const busy = isWorking || gitAction != null || resolving;
+  const busy = isWorking || gitAction != null || resolving || refreshing;
   const visible = Boolean(thread && !project?.remoteHost);
 
   useEffect(() => {
@@ -216,6 +230,36 @@ export function useWorktreeChrome(
       } else {
         setCardError(classified.text);
       }
+    }
+  };
+
+  const handleRefreshSnapshot = async () => {
+    if (!onRefreshWorkerSnapshot || busy) return;
+    setRefreshing(true);
+    setCardError(null);
+    setConflictMessage(null);
+    try {
+      await onRefreshWorkerSnapshot();
+    } catch (err) {
+      const msg =
+        err instanceof Error && err.message
+          ? err.message
+          : "Could not refresh snapshot";
+      const classified = classifyGitError(msg);
+      if (classified.kind === "dirty") setDirtyMessage(classified.text);
+      else if (
+        classified.kind === "rebase-conflict" ||
+        classified.kind === "conflict"
+      ) {
+        setConflictKind(
+          classified.kind === "rebase-conflict" ? "rebase" : "merge",
+        );
+        setConflictMessage(classified.text);
+      } else {
+        setCardError(classified.text);
+      }
+    } finally {
+      setRefreshing(false);
     }
   };
 
@@ -341,7 +385,57 @@ export function useWorktreeChrome(
   const resolveLabel =
     pendingMergeRetry && isWorking ? "Resolving…" : "Starting…";
 
+  const openLead =
+    thread.handoffFrom && (onOpenCrewIntegration || onOpenCrewLead)
+      ? () => {
+          const id = thread.handoffFrom!;
+          if (onOpenCrewIntegration) onOpenCrewIntegration(id);
+          else onOpenCrewLead?.(id);
+        }
+      : null;
+
+  const leadPointer = openLead ? (
+      <button
+        type="button"
+        className={styles.leadLink}
+        data-crew-integration-lead=""
+        data-crew-lead=""
+        onClick={openLead}
+      >
+        Crew integration on lead
+      </button>
+    ) : null;
+
+  const startSnapshot = thread.leadSnapshotSha ? (
+    <span
+      className={styles.snapshot}
+      data-start-snapshot=""
+      title={`Started from ${thread.leadSnapshotBranch || "lead"} ${thread.leadSnapshotSha}`}
+    >
+      from {sourceSnapshotLabel(thread.leadSnapshotBranch, thread.leadSnapshotSha)}
+    </span>
+  ) : null;
+  const startDirty = thread.leadSnapshotDirty ? (
+    <span className={styles.snapshotDirty} data-start-snapshot-dirty="">
+      inherits committed work only
+    </span>
+  ) : null;
+  const refreshSnapshot =
+    onRefreshWorkerSnapshot && thread.orchWorker ? (
+      <button
+        type="button"
+        className={styles.leadLink}
+        data-refresh-snapshot=""
+        disabled={busy}
+        title="Retarget this worker onto the lead's current committed HEAD. Uncommitted lead edits are not copied."
+        onClick={() => void handleRefreshSnapshot()}
+      >
+        {refreshing ? "Refreshing…" : "Refresh snapshot"}
+      </button>
+    ) : null;
+
   const toolbar = hasWorktree ? (
+    <div className={styles.toolbarCluster}>
     <div className={styles.group} data-worktree-control="ready">
       <div className={styles.metaWrap} ref={menuRef}>
         <button
@@ -462,6 +556,19 @@ export function useWorktreeChrome(
                 )}
               </>
             )}
+            {openLead ? (
+              <button
+                type="button"
+                className={styles.menuItem}
+                role="menuitem"
+                onClick={() => {
+                  setMenuOpen(false);
+                  openLead();
+                }}
+              >
+                Crew integration on lead
+              </button>
+            ) : null}
             <button
               type="button"
               className={`${styles.menuItem} ${styles.menuItemDanger}`}
@@ -483,6 +590,11 @@ export function useWorktreeChrome(
         className={styles.merge}
         data-worktree-merge=""
         disabled={busy}
+        title={
+          thread.handoffFrom
+            ? `${mergeOntoLabel(thread.baseBranch)}. Crew staging is on the lead Integration section.`
+            : mergeOntoLabel(thread.baseBranch)
+        }
         onClick={() => void runAction("merge", () => onMergeWorktree())}
       >
         {mergePending ? (
@@ -491,11 +603,17 @@ export function useWorktreeChrome(
             Merging…
           </>
         ) : (
-          "Merge worktree"
+          mergeOntoLabel(thread.baseBranch)
         )}
       </button>
     </div>
+    {startSnapshot}
+    {startDirty}
+    {refreshSnapshot}
+    {leadPointer}
+    </div>
   ) : (
+    <div className={styles.toolbarCluster}>
     <button
       type="button"
       className={styles.setup}
@@ -517,6 +635,10 @@ export function useWorktreeChrome(
         </>
       )}
     </button>
+    {startSnapshot}
+    {startDirty}
+    {refreshSnapshot}
+    </div>
   );
 
   const banner = (

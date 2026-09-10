@@ -18,6 +18,7 @@ import type {
   AppStatus,
   AttachmentInfo,
   AutomationInfo,
+  AutomationRunsResult,
   UpdateStatus,
   CheckpointInfo,
   CoderApi,
@@ -63,13 +64,20 @@ import type {
   SkillInfo,
   SkillPreviewImportInput,
   SkillTarget,
+  HarnessSourceId,
+  HarnessImportPreview,
+  HarnessInstallRequest,
+  HarnessInstallResult,
   SpaceInfo,
   StayAwakeStatus,
   ThreadDetail,
   ThreadPatch,
   ThreadInfo,
+  TrashedThreadInfo,
   ThreadSummaryInfo,
   CrewTaskView,
+  CrewIntegration,
+  CrewIntegrationReceipt,
   RewindResult,
   SimulatorCapabilitySnapshot,
   SimulatorDeviceInfo,
@@ -78,6 +86,8 @@ import type {
   UsageReport,
   ProviderUsage,
   FleetEvidence,
+  DigestResult,
+  FailureMode,
   WorkLogItem,
   WorkflowTemplateInfo,
   GcScanResult,
@@ -163,6 +173,7 @@ export function thread(over: Partial<ThreadInfo> = {}): ThreadInfo {
     // Round 49: null unless created by threads.fork.
     handoffFrom: null,
     muted: false,
+    ejected: false,
     notes: "",
     tags: [],
     queued: null,
@@ -203,6 +214,8 @@ export interface FakeOptions {
   providers?: ProviderInfo[];
   workflows?: WorkflowTemplateInfo[];
   automations?: AutomationInfo[];
+  /** Per-automation retained runs for automations.listRuns. */
+  automationRuns?: Record<string, AutomationRunsResult>;
   details?: Record<string, ThreadDetail>;
   status?: AppStatus;
   /** Override app.checkUpdate result (default: disabled / unstamped). */
@@ -227,6 +240,10 @@ export interface FakeOptions {
   issueSetPlanStatus?: SetPlanStatusResult;
   /** Override attachments.saveImage result (default: { attachment: null }). */
   saveImage?: (input: unknown) => { attachment: AttachmentInfo | null };
+  /** Override attachments.saveFile result (default: { attachment: null }). */
+  saveFile?: (input: unknown) => { attachment: AttachmentInfo | null };
+  /** Override attachments.saveFolder result (default: { attachment: null }). */
+  saveFolder?: (input: unknown) => { attachment: AttachmentInfo | null };
   /** Override attachments.fromPaths result (default: { attachments: [] }). */
   fromPaths?: (input: unknown) => { attachments: AttachmentInfo[] };
   /** Override attachments.listWindows (default: none). */
@@ -250,6 +267,12 @@ export interface FakeOptions {
   simulator?: "unsupported" | "attached";
   /** Override speech.status (default: missing / no model). */
   speechStatus?: SpeechStatus;
+  /** Override digest.list (default: empty window). */
+  digest?: DigestResult;
+  /** Override insights.failureModes (default: none). */
+  insights?: FailureMode[];
+  /** Override usage.byDay (default: empty ledger). */
+  usage?: UsageReport;
 }
 
 /** Idle terminal session for the harness; no shell exists under jsdom. */
@@ -271,6 +294,11 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
   let projects = opts.projects ?? [project()];
   let spaces = opts.spaces ?? [];
   let threads = opts.threads ?? [thread()];
+  const trashed = new Map<
+    string,
+    TrashedThreadInfo & { thread: ThreadInfo }
+  >();
+  const TRASH_TTL_MS = 7 * 24 * 60 * 60 * 1000;
   let nextSpaceId = 1;
   const providers =
     opts.providers ??
@@ -287,6 +315,7 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
     ] as ProviderInfo[]);
   const workflows = opts.workflows ?? [];
   let automations = opts.automations ?? [];
+  const automationRuns = opts.automationRuns ?? {};
   const details = opts.details ?? {};
   const fail = opts.fail ?? {};
   /** Mutable per-thread checkpoint lists (newest-first). */
@@ -454,6 +483,49 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
       { provider: "commands", label: "Commands", status: "covered" },
     ];
   }
+
+  function cannedHarnessPreview(source: HarnessSourceId): HarnessImportPreview {
+    const labels = {
+      claude: "Claude Code",
+      cursor: "Cursor",
+      codex: "Codex",
+    } as const;
+    return {
+      previewId: "h".repeat(32),
+      source: { id: source, label: labels[source] },
+      skills: [
+        {
+          id: "skill:house-style",
+          name: "house-style",
+          description: "Imported house style",
+          origin: "skills",
+          bytes: 80,
+          alreadyImported: false,
+          warnings: [],
+        },
+      ],
+      commands: source === "claude" || source === "codex"
+        ? [
+            {
+              id: "command:user:draft",
+              name: "draft",
+              description: "Draft a changelog",
+              origin: "user" as const,
+              bytes: 40,
+              alreadyImported: false,
+            },
+          ]
+        : [],
+      mcp: [],
+      memories: [],
+      instructions: [],
+      settings: null,
+      plugins: [],
+      warnings: [],
+    };
+  }
+
+  let pendingHarnessPreview: HarnessImportPreview | null = null;
   let skillsState: SkillInfo[] = [
     {
       name: "review-pr",
@@ -1239,6 +1311,72 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
       discardImport: (input: { previewId: string }) =>
         rec("skills.discardImport", [input], undefined),
     },
+    harness: {
+      detectSources: () =>
+        rec("harness.detectSources", [], [
+          { id: "claude" as const, label: "Claude Code", present: true },
+          { id: "cursor" as const, label: "Cursor", present: false },
+          { id: "codex" as const, label: "Codex", present: false },
+        ]),
+      previewImport: (input: { source: HarnessSourceId; projectPath?: string }) => {
+        pendingHarnessPreview = cannedHarnessPreview(input.source);
+        return rec("harness.previewImport", [input], pendingHarnessPreview);
+      },
+      installImport: (input: HarnessInstallRequest) => {
+        if (
+          !pendingHarnessPreview ||
+          pendingHarnessPreview.previewId !== input.previewId
+        ) {
+          calls.push({ channel: "harness.installImport", args: [input] });
+          return Promise.reject(new Error("Import preview is invalid"));
+        }
+        const installedIn = [...ALL_SKILL_TARGETS];
+        const skills: HarnessInstallResult["skills"] = [];
+        const commands: HarnessInstallResult["commands"] = [];
+        for (const id of input.selected) {
+          if (id.startsWith("command:")) {
+            commands.push({
+              name: id.replace(/^command:(?:user|project|plugin):/, ""),
+              status: "installed",
+            });
+            continue;
+          }
+          if (!id.startsWith("skill:")) continue;
+          const name = id.slice("skill:".length);
+          skillsState = [
+            ...skillsState.filter(
+              (s) => !(s.name === name && s.source !== "project"),
+            ),
+            {
+              name,
+              description: name,
+              source: "claude",
+              installedIn,
+              missingFrom: [],
+              bytes: 80,
+              provenance: "added",
+            },
+          ];
+          skills.push({ name, status: "installed" });
+        }
+        pendingHarnessPreview = null;
+        return rec("harness.installImport", [input], {
+          skills,
+          commands,
+          mcp: [],
+          memories: [],
+          instructions: [],
+          settings: null,
+          plugins: [],
+        } satisfies HarnessInstallResult);
+      },
+      discardImport: (input: { previewId: string }) => {
+        if (pendingHarnessPreview?.previewId === input.previewId) {
+          pendingHarnessPreview = null;
+        }
+        return rec("harness.discardImport", [input], undefined);
+      },
+    },
     providers: { list: () => rec("providers.list", [], providers) },
     sourceControl: {
       discover: (input?: { rescan?: boolean }) =>
@@ -1341,6 +1479,19 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
           automations = automations.map((a) => (a.id === id ? updated : a));
         }
         return rec("automations.runNow", [input], updated);
+      },
+      listRuns: (input: unknown) => {
+        const id = String((input as { id?: string } | null)?.id ?? "");
+        const existing = automations.find((a) => a.id === id);
+        if (!existing) {
+          throw new Error(`Unknown automation: ${id}`);
+        }
+        const listed = automationRuns[id] ?? {
+          automationId: id,
+          runs: [],
+          retentionLimitReached: false,
+        };
+        return rec("automations.listRuns", [input], listed);
       },
     },
     projects: {
@@ -1582,6 +1733,26 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
             tasks: [] as CrewTaskView[],
           },
         ),
+      crewIntegration: (input: { threadId: string }) =>
+        rec(
+          "threads.crewIntegration",
+          [input],
+          {
+            leadThreadId: input.threadId,
+            leadBranch: null,
+            leadWorktreePath: null,
+            missingLeadWorktree: true,
+            finalTarget: "main",
+            finalAction: "merge" as const,
+            combinedFiles: [],
+            leadHeadSha: null,
+            leadVerify: null,
+            verifyStale: false,
+            landed: false,
+            workers: [],
+            receipts: [],
+          } as CrewIntegration,
+        ),
       search: (input: unknown) => rec("threads.search", [input], [] as ThreadInfo[]),
       create: (input: unknown) => {
         const createdAt = Date.now();
@@ -1637,6 +1808,35 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
         });
         threads = [t, ...threads.filter((x) => x.id !== t.id)];
         return rec("threads.create", [input], t);
+      },
+      listCliSessions: (input?: unknown) =>
+        rec("threads.listCliSessions", input == null ? [] : [input], []),
+      importCliSession: (input: unknown) => {
+        const i = input as {
+          sessionId: string;
+          projectId: string;
+          provider?: "codex" | "grok" | "claude" | "cursor" | "opencode" | "kimi" | "muse";
+        };
+        const createdAt = Date.now();
+        const t = thread({
+          id: `t-cli-${i.sessionId}`,
+          projectId: i.projectId,
+          provider:
+            i.provider === "grok" ||
+            i.provider === "claude" ||
+            i.provider === "cursor" ||
+            i.provider === "opencode" ||
+            i.provider === "kimi" ||
+            i.provider === "muse"
+              ? i.provider
+              : "codex",
+          sessionId: i.sessionId,
+          createdAt,
+          updatedAt: createdAt,
+          lastVisitedAt: createdAt,
+        });
+        threads = [t, ...threads.filter((x) => x.id !== t.id)];
+        return rec("threads.importCliSession", [input], t);
       },
       /**
        * Production stamps lastVisitedAt inside threads.get (select = visit)
@@ -1855,6 +2055,66 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
         threads = threads.map((t) => (t.id === i.threadId ? next : t));
         return rec("threads.setTags", [input], next);
       },
+      /**
+       * Honest recategorize (issue #737). Same-project no-op. Worktree and
+       * active runs reject. Permitted moves drop cwd/session and git/GitHub
+       * bindings; pendingWorktree retargets.
+       */
+      setThreadProject: (input: unknown) => {
+        const i = input as { threadId: string; projectId: string };
+        const existing = threads.find((t) => t.id === i.threadId);
+        if (!existing) {
+          calls.push({ channel: "threads.setThreadProject", args: [input] });
+          return Promise.reject(new Error(`Unknown thread: ${i.threadId}`));
+        }
+        const id = i.projectId != null ? String(i.projectId) : "";
+        if (!id) {
+          calls.push({ channel: "threads.setThreadProject", args: [input] });
+          return Promise.reject(new Error("projectId is required"));
+        }
+        const dest = projects.find((p) => p.id === id);
+        if (!dest) {
+          calls.push({ channel: "threads.setThreadProject", args: [input] });
+          return Promise.reject(new Error(`Unknown project: ${id}`));
+        }
+        if (existing.projectId === id) {
+          return rec("threads.setThreadProject", [input], existing);
+        }
+        if (existing.worktreePath) {
+          calls.push({ channel: "threads.setThreadProject", args: [input] });
+          return Promise.reject(
+            new Error("Cannot move a thread that has a worktree"),
+          );
+        }
+        if (existing.orchWorker || existing.leadSnapshotSha) {
+          calls.push({ channel: "threads.setThreadProject", args: [input] });
+          return Promise.reject(new Error("Cannot move a crew worker"));
+        }
+        if (
+          existing.status === "working" ||
+          existing.status === "quota-wait"
+        ) {
+          calls.push({ channel: "threads.setThreadProject", args: [input] });
+          return Promise.reject(
+            new Error("Cannot move a thread while a run is active"),
+          );
+        }
+        const next: ThreadInfo = {
+          ...existing,
+          projectId: id,
+          sessionId: null,
+          replayContext: true,
+          branch: null,
+          baseBranch: null,
+          prNumber: null,
+          prUrl: null,
+          prState: null,
+          prMergeable: null,
+          issueNumber: null,
+        };
+        threads = threads.map((t) => (t.id === i.threadId ? next : t));
+        return rec("threads.setThreadProject", [input], next);
+      },
       setQuotaWaitAutoResume: (input: unknown) => {
         const i = input as { threadId: string; enabled: boolean | null };
         calls.push({ channel: "threads.setQuotaWaitAutoResume", args: [input] });
@@ -1881,6 +2141,17 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
         const base =
           threads.find((t) => t.id === i.threadId) ?? thread({ id: i.threadId });
         const next: ThreadInfo = { ...base, muted: i.muted === true };
+        threads = threads.some((t) => t.id === i.threadId)
+          ? threads.map((t) => (t.id === i.threadId ? next : t))
+          : [next, ...threads];
+        return Promise.resolve(next);
+      },
+      setEjected: (input: unknown) => {
+        const i = input as { threadId: string; ejected: boolean };
+        calls.push({ channel: "threads.setEjected", args: [input] });
+        const base =
+          threads.find((t) => t.id === i.threadId) ?? thread({ id: i.threadId });
+        const next: ThreadInfo = { ...base, ejected: i.ejected === true };
         threads = threads.some((t) => t.id === i.threadId)
           ? threads.map((t) => (t.id === i.threadId ? next : t))
           : [next, ...threads];
@@ -2082,6 +2353,31 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
         const next: ThreadInfo = {
           ...existing,
           baseBranch: i.baseBranch ? String(i.baseBranch).trim() || null : null,
+        };
+        threads = threads.map((t) => (t.id === i.threadId ? next : t));
+        return Promise.resolve(next);
+      },
+      refreshWorkerSnapshot: (input: unknown) => {
+        const i = input as { threadId: string };
+        calls.push({ channel: "threads.refreshWorkerSnapshot", args: [input] });
+        const existing = threads.find((t) => t.id === i.threadId);
+        if (!existing) {
+          return Promise.reject(new Error(`Unknown thread: ${i.threadId}`));
+        }
+        if (existing.status === "working") {
+          return Promise.reject(
+            new Error("Cannot refresh a running worker. Wait until it is idle."),
+          );
+        }
+        if (!existing.orchWorker) {
+          return Promise.reject(
+            new Error("Refresh is only for orchestration workers."),
+          );
+        }
+        const next: ThreadInfo = {
+          ...existing,
+          leadSnapshotSha: "refreshed0000000000000000000000000000000",
+          leadSnapshotDirty: false,
         };
         threads = threads.map((t) => (t.id === i.threadId ? next : t));
         return Promise.resolve(next);
@@ -2382,7 +2678,58 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
             at: Date.now(),
           },
         ),
-      delete: (input: unknown) => rec("threads.delete", [input], undefined),
+      delete: (input: unknown) =>
+        rec("threads.delete", [input], undefined).then((v) => {
+          const id = (input as { threadId: string }).threadId;
+          const found = threads.find((t) => t.id === id);
+          if (found) {
+            const now = Date.now();
+            const proj = projects.find((p) => p.id === found.projectId);
+            trashed.set(id, {
+              id,
+              title: found.title,
+              projectId: found.projectId,
+              projectSlug: proj?.slug ?? null,
+              projectMissing: !proj,
+              trashedAt: now,
+              expiresAt: now + TRASH_TTL_MS,
+              thread: found,
+            });
+            threads = threads.filter((t) => t.id !== id);
+          }
+          return v;
+        }),
+      restore: (input: unknown) => {
+        const id = (input as { threadId: string }).threadId;
+        const row = trashed.get(id);
+        if (!row) {
+          calls.push({ channel: "threads.restore", args: [input] });
+          return Promise.reject(new Error("Thread is not in Recently deleted"));
+        }
+        if (row.projectMissing) {
+          calls.push({ channel: "threads.restore", args: [input] });
+          return Promise.reject(
+            new Error("Cannot restore: project is no longer available"),
+          );
+        }
+        threads = [row.thread, ...threads];
+        trashed.delete(id);
+        return rec("threads.restore", [input], { ...row.thread });
+      },
+      purge: (input: unknown) =>
+        rec("threads.purge", [input], undefined).then((v) => {
+          const id = (input as { threadId: string }).threadId;
+          trashed.delete(id);
+          threads = threads.filter((t) => t.id !== id);
+          delete details[id];
+          return v;
+        }),
+      listTrashed: () =>
+        rec(
+          "threads.listTrashed",
+          [],
+          [...trashed.values()].map(({ thread: _thread, ...row }) => row),
+        ),
     },
     activity: {
       list: () => {
@@ -2398,7 +2745,12 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
       },
     },
     usage: {
-      byDay: () => rec("usage.byDay", [], { byDay: {}, threadsByDay: {} } as UsageReport),
+      byDay: () =>
+        rec(
+          "usage.byDay",
+          [],
+          opts.usage ?? ({ byDay: {}, threadsByDay: {} } as UsageReport),
+        ),
       providerLimits: () => rec("usage.providerLimits", [], [] as ProviderUsage[]),
     },
     fleet: {
@@ -2411,8 +2763,28 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
           notes: [],
         } as FleetEvidence),
     },
+    insights: {
+      failureModes: () =>
+        rec("insights.failureModes", [], opts.insights ?? []),
+    },
+    digest: {
+      list: (input?: unknown) =>
+        rec(
+          "digest.list",
+          [input],
+          opts.digest ??
+            ({
+              sinceMs: Date.now() - 12 * 60 * 60 * 1000,
+              generatedAt: Date.now(),
+              runs: [],
+            } as DigestResult),
+        ),
+      markSeen: (input?: unknown) =>
+        rec("digest.markSeen", [input], { seenAt: Date.now() }),
+    },
     runs: {
       start: (input: unknown) => rec("runs.start", [input], { runId: "r1" }),
+      steer: (input: unknown) => rec("runs.steer", [input], { runId: "r1" }),
       startWorkflow: (input: unknown) =>
         rec("runs.startWorkflow", [input], { runId: "r2" }),
       retryWorkflowAgent: (input: unknown) =>
@@ -2479,6 +2851,18 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
           message: "feat: suggested message",
         }),
       mergeWorktree: (input: unknown) => rec("git.mergeWorktree", [input], thread()),
+      integrateWorker: (input: unknown) =>
+        rec("git.integrateWorker", [input], {
+          noop: true,
+          merged: false,
+          receipt: {
+            workerId: "",
+            sourceSha: "",
+            leadId: "",
+            leadShaAfter: "",
+            at: 0,
+          } as CrewIntegrationReceipt,
+        }),
       conflictContext: (input: unknown) =>
         rec("git.conflictContext", [input], {
           files: [],
@@ -2511,10 +2895,12 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
           branch: "b",
           created: false,
         } as PrInfo),
-      listPrs: (projectPath: string) =>
-        rec("git.listPrs", [projectPath], {
+      listPrs: (projectPath: string, opts?: unknown) =>
+        rec("git.listPrs", [projectPath, opts], {
           ok: true,
           prs: [],
+          complete: true,
+          limit: 50,
         } as ListPrsResult),
       checkoutPr: (input: unknown) => {
         const i = input as { projectId: string; prNumber: number };
@@ -2636,6 +3022,53 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
         }));
         return rec("git.runStats", [input], derived);
       },
+    },
+    mergeQueue: {
+      claimLane: (input: unknown) =>
+        rec("mergeQueue.claimLane", [input], {
+          n: 1,
+          port: 3001,
+          path: "/tmp/lane-1",
+          branch: "lane/1",
+        }),
+      listLanes: (input: unknown) =>
+        rec("mergeQueue.listLanes", [input], []),
+      previewLane: (input: unknown) =>
+        rec("mergeQueue.previewLane", [input], {
+          lane: 1,
+          sha: "abc",
+          files: [],
+          path: "/tmp/project",
+        }),
+      restorePreview: (input: unknown) =>
+        rec("mergeQueue.restorePreview", [input], { restored: false }),
+      setSpotlight: (input: unknown) =>
+        rec("mergeQueue.setSpotlight", [input], {
+          spotlight: Boolean(
+            input &&
+              typeof input === "object" &&
+              "enabled" in input &&
+              (input as { enabled?: unknown }).enabled,
+          ),
+        }),
+      spotlightLane: (input: unknown) =>
+        rec("mergeQueue.spotlightLane", [input], {
+          lane:
+            input &&
+            typeof input === "object" &&
+            "lane" in input &&
+            typeof (input as { lane?: unknown }).lane === "number"
+              ? (input as { lane: number }).lane
+              : 1,
+          sha: "abc",
+          files: [],
+          path: "/tmp/project",
+          spotlight: true,
+        }),
+      recycleWedgedLanes: (input: unknown) =>
+        rec("mergeQueue.recycleWedgedLanes", [input], []),
+      heartbeatLane: (input: unknown) =>
+        rec("mergeQueue.heartbeatLane", [input], null),
     },
     speech: {
       status: () =>
@@ -2959,7 +3392,12 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
       },
     },
     attachments: {
-      pick: () => rec("attachments.pick", [], { attachments: [] }),
+      pick: (input?: unknown) =>
+        rec(
+          "attachments.pick",
+          input == null ? [] : [input],
+          { attachments: [] },
+        ),
       fromPaths: (input: unknown) =>
         rec(
           "attachments.fromPaths",
@@ -2971,6 +3409,18 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
           "attachments.saveImage",
           [input],
           opts.saveImage?.(input) ?? { attachment: null },
+        ),
+      saveFile: (input: unknown) =>
+        rec(
+          "attachments.saveFile",
+          [input],
+          opts.saveFile?.(input) ?? { attachment: null },
+        ),
+      saveFolder: (input: unknown) =>
+        rec(
+          "attachments.saveFolder",
+          [input],
+          opts.saveFolder?.(input) ?? { attachment: null },
         ),
       readImage: (input: unknown) =>
         rec("attachments.readImage", [input], { dataUrl: null }),

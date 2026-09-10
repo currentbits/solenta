@@ -6,9 +6,11 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
   allPrsEmpty,
+  filterPrGroups,
   formatPrDiff,
   groupPrsByProject,
   matchThreadForPr,
+  prMatchesQuery,
   prUpdatedMs,
 } from "../src/prList.ts";
 import type {
@@ -179,5 +181,101 @@ describe("formatPrDiff / prUpdatedMs", () => {
     assert.equal(ms, Date.parse("2026-08-12T18:00:00Z"));
     assert.equal(prUpdatedMs(pr({ number: 1 })), null);
     assert.equal(prUpdatedMs(pr({ number: 1, updatedAt: "nope" })), null);
+  });
+});
+
+describe("prMatchesQuery", () => {
+  it("matches #number, title substring, and branch", () => {
+    const row = pr({
+      number: 1134,
+      title: "Make the PR view searchable",
+      headRefName: "coder/pr-search",
+    });
+    assert.equal(prMatchesQuery(row, "#1134"), true);
+    assert.equal(prMatchesQuery(row, "1134"), true);
+    assert.equal(prMatchesQuery(row, "searchable"), true);
+    assert.equal(prMatchesQuery(row, "PR-SEARCH"), true);
+    assert.equal(prMatchesQuery(row, "  coder/pr-search  "), true);
+    assert.equal(prMatchesQuery(row, "billing"), false);
+  });
+
+  it("treats a blank query as a match", () => {
+    assert.equal(prMatchesQuery(pr({ number: 1 }), ""), true);
+    assert.equal(prMatchesQuery(pr({ number: 1 }), "   "), true);
+  });
+});
+
+describe("filterPrGroups", () => {
+  const groups = groupPrsByProject(
+    [p1, p2],
+    new Map([
+      [
+        "p1",
+        {
+          ok: true,
+          prs: [
+            pr({ number: 11, title: "Ledger search", headRefName: "feat/ledger" }),
+            pr({ number: 99, title: "Unrelated row", headRefName: "feat/old" }),
+          ],
+        },
+      ],
+      [
+        "p2",
+        {
+          ok: true,
+          prs: [pr({ number: 22, title: "Billing fix", headRefName: "feat/bill" })],
+        },
+      ],
+    ]),
+  );
+
+  it("narrows to one project and the matching rows", () => {
+    const filtered = filterPrGroups(groups, { query: "ledger", projectId: "p1" });
+    assert.equal(filtered.length, 1);
+    assert.equal(filtered[0].project.id, "p1");
+    assert.equal(filtered[0].ok, true);
+    if (filtered[0].ok) {
+      assert.deepEqual(
+        filtered[0].prs.map((row) => row.number),
+        [11],
+      );
+    }
+  });
+
+  it("keeps a failed repository visible when it is in scope", () => {
+    const mixed = groupPrsByProject(
+      [p1, p2],
+      new Map([
+        ["p1", { ok: false, reason: "auth" }],
+        ["p2", { ok: true, prs: [pr({ number: 22 })] }],
+      ]),
+    );
+    const filtered = filterPrGroups(mixed, { query: "22" });
+    assert.equal(filtered.length, 2);
+    assert.equal(filtered[0].ok, false);
+    assert.equal(filtered[1].ok, true);
+    if (filtered[1].ok) assert.equal(filtered[1].prs[0].number, 22);
+  });
+});
+
+describe("groupPrsByProject completeness", () => {
+  it("forwards complete/limit and treats missing complete as true", () => {
+    const groups = groupPrsByProject(
+      [p1, p2],
+      new Map([
+        ["p1", { ok: true, prs: [pr({ number: 1 })], complete: false, limit: 50 }],
+        ["p2", { ok: true, prs: [pr({ number: 2 })] }],
+      ]),
+    );
+    assert.equal(groups[0].ok, true);
+    if (groups[0].ok) {
+      assert.equal(groups[0].complete, false);
+      assert.equal(groups[0].limit, 50);
+    }
+    assert.equal(groups[1].ok, true);
+    if (groups[1].ok) {
+      assert.equal(groups[1].complete, true);
+      assert.equal(groups[1].limit, 1);
+    }
   });
 });

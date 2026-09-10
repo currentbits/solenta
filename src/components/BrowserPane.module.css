@@ -15,7 +15,7 @@
   flex-shrink: 0;
   height: 36px;
   padding: 0 8px;
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid var(--border-soft);
   background: var(--bg-elevated);
 }
 

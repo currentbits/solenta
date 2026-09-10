@@ -14,6 +14,7 @@ const path = require("node:path");
 const { posixQuote } = require("./ssh.js");
 const { copyGuardrailRuntime } = require("./guardrail-hook-core.js");
 const { guardrailsEnabled } = require("./guardrails.js");
+const { ensurePrivateWriterLockDir } = require("./codexWriterLock.js");
 const {
   remoteOverlayDest,
   probeRemoteHome,
@@ -50,12 +51,24 @@ function materializeCodexGuardrailHome(opts) {
       names = [];
     }
     for (const name of names) {
-      if (!name || name === "hooks.json" || name !== path.basename(name)) {
+      // hooks.json is Solenta's PreToolUse (#813). thread-writer-locks is
+      // Codex's single-writer flock dir: sharing it with ~/.codex means
+      // Desktop (or another CLI) blocks Solenta resume (#950).
+      if (
+        !name ||
+        name === "hooks.json" ||
+        name === "thread-writer-locks" ||
+        name !== path.basename(name)
+      ) {
         continue;
       }
       linkOrSkip(path.join(sourceHome, name), path.join(dest, name));
     }
   }
+
+  // Skip above does not repair overlays that already symlink this dir
+  // onto ~/.codex (#1226). Always replace that leftover with a real dir.
+  ensurePrivateWriterLockDir(dest);
 
   const hookDir = path.join(dest, "solenta-hooks");
   copyGuardrailRuntime(hookDir);

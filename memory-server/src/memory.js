@@ -151,6 +151,12 @@ function clampLimit(value, fallback, max = MAX_LIMIT) {
   return Math.max(1, Math.min(Math.trunc(n ?? fallback), max))
 }
 
+function clampOffset(value) {
+  const n = Number(value)
+  if (!Number.isFinite(n) || n <= 0) return 0
+  return Math.trunc(n)
+}
+
 function excerptFromBody(body, maxChars = 240) {
   const text = String(body ?? '')
   if (text.length <= maxChars) return text
@@ -1031,7 +1037,7 @@ export class Memory {
   }
 
   /**
-   * @param {{ query: string, project?: string, agent?: string, limit?: number }} opts
+   * @param {{ query: string, project?: string, agent?: string, limit?: number, type?: string }} opts
    */
   async search(opts) {
     const query = cleanText('query', opts.query)
@@ -1040,6 +1046,10 @@ export class Memory {
     const project = canonicalProject(rawProject)
     const root = resolveVerifyRoot(rawProject)
     const agent = cleanOptional(opts.agent)
+    const type = opts.type ? cleanText('type', opts.type) : null
+    if (type && !ENTRY_TYPES.has(type)) {
+      throw new Error(`invalid type '${type}'`)
+    }
     const wantLimit = clampLimit(opts.limit, DEFAULT_SEARCH_LIMIT)
     const excerptTokens = Math.min(64, SEARCH_EXCERPT_TOKENS)
     const fetchLimit = Math.max(wantLimit * 4, 40)
@@ -1060,18 +1070,23 @@ export class Memory {
                AND ${liveSql('e')}
                AND ${projectScopeSql('e')}
                AND (? IS NULL OR e.agent = ?)
+               AND (? IS NULL OR e.type = ?)
              ORDER BY score DESC
              LIMIT ?`,
           )
-          .all(excerptTokens, match, project, project, agent, agent, fetchLimit)
+          .all(excerptTokens, match, project, project, agent, agent, type, type, fetchLimit)
       } catch (err) {
         console.error('FTS search failed (non-fatal):', err)
         ftsRows = []
       }
     }
 
-    const graphRows = this.graphSearch(query, project, agent)
-    const vectorRows = await this.vectorSearch(query, project, agent)
+    const graphRows = this.graphSearch(query, project, agent).filter(
+      (r) => !type || r.type === type,
+    )
+    const vectorRows = (await this.vectorSearch(query, project, agent)).filter(
+      (r) => !type || r.type === type,
+    )
 
     // If no retriever found anything, empty.
     if (ftsRows.length === 0 && graphRows.length === 0 && vectorRows.length === 0) return []
@@ -1491,10 +1506,11 @@ export class Memory {
 
   /**
    * Newest live entries (excerpt form).
-   * @param {{ limit?: number, project?: string, type?: string }} opts
+   * @param {{ limit?: number, offset?: number, project?: string, type?: string }} opts
    */
   recent(opts = {}) {
     const limit = clampLimit(opts.limit, 20, RECENT_MAX)
+    const offset = clampOffset(opts.offset)
     const rawProject = cleanOptional(opts.project)
     const project = canonicalProject(rawProject)
     const root = resolveVerifyRoot(rawProject)
@@ -1510,10 +1526,10 @@ export class Memory {
          WHERE ${liveSql()}
            AND ${projectScopeSql()}
            AND (? IS NULL OR type = ?)
-         ORDER BY created_at DESC
-         LIMIT ?`,
+         ORDER BY created_at DESC, id DESC
+         LIMIT ? OFFSET ?`,
       )
-      .all(project, project, type, type, limit)
+      .all(project, project, type, type, limit, offset)
 
     return this.decorateEntries(rows, root).map((r) => ({
       id: r.id,
@@ -1773,11 +1789,12 @@ export class Memory {
 
   /**
    * Read-only consolidation report for memory_maintenance.
-   * @param {{ project?: string, now?: number }} [opts]
+   * @param {{ project?: string, now?: number, summary?: boolean }} [opts]
    */
   maintenance(opts = {}) {
     const project = canonicalProject(cleanOptional(opts.project))
     const now = opts.now ?? Date.now()
+    const summary = opts.summary === true
     const agingCutoff = new Date(now - AGING_RUN_DAYS * 86_400_000).toISOString()
 
     const queueScope = `AND (? IS NULL OR a.project = ? OR b.project = ?)`
@@ -1795,6 +1812,54 @@ export class Memory {
     const oldestAgeDays = queueStats?.oldest
       ? Math.floor((now - Date.parse(queueStats.oldest)) / 86_400_000)
       : 0
+
+    const weekAgo = new Date(now - AUTO_RESOLVE_DAYS * 86_400_000).toISOString()
+    const autoRows = this.db
+      .prepare(
+        `SELECT q.resolution, q.detail
+         FROM review_queue q
+         JOIN entries a ON a.id = q.entry_a
+         JOIN entries b ON b.id = q.entry_b
+         WHERE q.resolved_at IS NOT NULL
+           AND q.resolved_at >= ?
+           AND q.detail LIKE '${AUTO_RESOLVE_PREFIX}%'
+           ${queueScope}`,
+      )
+      .all(weekAgo, project, project, project)
+    const byRule = {}
+    let invalidated = 0
+    let kept = 0
+    let last7Days = 0
+    for (const r of autoRows) {
+      const rule = autoResolveRule(r.detail)
+      if (!rule) continue
+      last7Days += 1
+      byRule[rule] = (byRule[rule] || 0) + 1
+      if (r.resolution === 'invalidate') invalidated += 1
+      else kept += 1
+    }
+    const autoResolved = {
+      last7Days,
+      invalidated,
+      kept,
+      byRule,
+    }
+
+    if (summary) {
+      return {
+        queue: {
+          open,
+          oldestAgeDays,
+          items: [],
+          instruction: 'Resolve open items with memory_resolve {id, resolution}.',
+        },
+        autoResolved,
+        nearDupes: [],
+        agingRuns: [],
+        fatConventions: [],
+        trust: { agents: [], suspect: [] },
+      }
+    }
 
     const openItems = this.db
       .prepare(
@@ -1892,32 +1957,6 @@ export class Memory {
     const agents = agentTrust(this.db)
     const suspect = agents.filter((a) => a.trust < TRUST_SUSPECT)
 
-    const weekAgo = new Date(now - AUTO_RESOLVE_DAYS * 86_400_000).toISOString()
-    const autoRows = this.db
-      .prepare(
-        `SELECT q.resolution, q.detail
-         FROM review_queue q
-         JOIN entries a ON a.id = q.entry_a
-         JOIN entries b ON b.id = q.entry_b
-         WHERE q.resolved_at IS NOT NULL
-           AND q.resolved_at >= ?
-           AND q.detail LIKE '${AUTO_RESOLVE_PREFIX}%'
-           ${queueScope}`,
-      )
-      .all(weekAgo, project, project, project)
-    const byRule = {}
-    let invalidated = 0
-    let kept = 0
-    let last7Days = 0
-    for (const r of autoRows) {
-      const rule = autoResolveRule(r.detail)
-      if (!rule) continue
-      last7Days += 1
-      byRule[rule] = (byRule[rule] || 0) + 1
-      if (r.resolution === 'invalidate') invalidated += 1
-      else kept += 1
-    }
-
     return {
       queue: {
         open,
@@ -1925,12 +1964,7 @@ export class Memory {
         items: openItems,
         instruction: 'Resolve open items with memory_resolve {id, resolution}.',
       },
-      autoResolved: {
-        last7Days,
-        invalidated,
-        kept,
-        byRule,
-      },
+      autoResolved,
       // nearDupes / agingRuns / fatConventions stay in the report for MCP
       // agents and the consolidation pass. The Memory tab does not render
       // them — no new manual UI for work automation already handles.

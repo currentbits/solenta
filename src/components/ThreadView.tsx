@@ -68,6 +68,10 @@ import { TEACH_AUTONOMY_LABELS } from "../teach";
 import type { TeachAutonomy } from "../shared/ipc";
 import type { WorkflowSaveInput } from "../useCoder";
 import {
+  RETURN_VIEW_LABEL,
+  type ReturnableView,
+} from "../viewReturn";
+import {
   annotateHunkLines,
   commentGutterLabel,
   commentLineRef,
@@ -111,8 +115,9 @@ import {
   failedWorkflowRetryAgentId,
   isWorkflowLastRun,
   lastUserMessage,
+  retryActionTitle,
   retryAnchorEventId,
-  retryButtonTitle,
+  retryTarget,
 } from "../retryTurn";
 import {
   isEditableUserMessage,
@@ -158,6 +163,7 @@ import {
 import { formatElapsed } from "../format";
 import { liveWorkingLabel } from "../workingLabel";
 import { useEscapeClose } from "../useEscapeClose";
+import { useModalFocus } from "../useModalFocus";
 import {
   comparePeerLabel,
   compareSteps,
@@ -176,7 +182,7 @@ import {
   type FocusTurnSummary,
 } from "../focusView";
 import { useRunDurationEnabled, useTranscriptViewMode } from "../uiPrefs";
-import { DROP_OVERLAY_MESSAGE } from "../dropFiles";
+import { DROP_OVERLAY_MESSAGE, type DroppedFolder } from "../dropFiles";
 import { Composer } from "./Composer";
 import { repoRelativeDir } from "../mention";
 import { createDoubleOptionTracker } from "../appsnapHotkey";
@@ -379,14 +385,18 @@ function ImageLightbox({
   alt: string;
   onClose: () => void;
 }) {
+  const dialogRef = useRef<HTMLDivElement>(null);
   const [zoomed, setZoomed] = useState(false);
   useEscapeClose(true, onClose);
+  useModalFocus(true, dialogRef);
   return (
     <div
+      ref={dialogRef}
       className={styles.lightbox}
       role="dialog"
       aria-modal="true"
       aria-label={alt || "Image"}
+      tabIndex={-1}
       data-image-lightbox=""
       onClick={onClose}
     >
@@ -436,6 +446,7 @@ interface ThreadViewProps {
     prompt: string,
     threadId?: string,
     attachments?: AttachmentInfo[],
+    opts?: { fromNotice?: boolean; steer?: boolean },
   ) => void | Promise<void>;
   /**
    * Edit-and-resubmit (#254): rewind to just before messageId, then start
@@ -456,6 +467,8 @@ interface ThreadViewProps {
   onRetryWorkflowAgent?: (agentId: string) => void | Promise<void>;
   onSaveWorkflow: (template: WorkflowSaveInput) => Promise<WorkflowTemplateInfo>;
   onRemoveWorkflow: (id: string) => Promise<void>;
+  workflowListError?: string | null;
+  onRetryWorkflows?: () => void | Promise<void>;
   onStopRun: () => void | Promise<void>;
   /** Resume a parked quota-wait now (#462). */
   onResumeQuotaWait?: () => void | Promise<void>;
@@ -474,7 +487,10 @@ interface ThreadViewProps {
   /** Re-send a queued prompt after a delivery failure. */
   onRetryQueued?: () => void;
   /** Replace the queued follow-up's text (edit in the strip, issue #364 / #809). */
-  onEditQueued?: (prompt: string, items?: string[]) => void;
+  onEditQueued?: (
+    prompt: string,
+    items?: string[],
+  ) => void | Promise<void>;
   /**
    * Text a cancelled queue pushed back toward the composer (issue #364).
    * Passed through to Composer, which applies it only onto an empty draft.
@@ -639,13 +655,20 @@ interface ThreadViewProps {
   /** Loads an image a tool returned (ToolCallInfo.images) as a data URL. */
   onLoadImage?: (name: string) => Promise<string | null>;
   /** Native file/image/folder picker for composer attachments (Electron only). */
-  onPickAttachments?: () => Promise<AttachmentInfo[]>;
+  onPickAttachments?: (opts?: {
+    includeImages?: boolean;
+  }) => Promise<AttachmentInfo[]>;
+  /** Web folder pick (showDirectoryPicker → saveFolder). */
+  onPickFolderAttachments?: () => Promise<AttachmentInfo[]>;
   /** Persist a pasted image; returns its attachment or null when rejected. */
   onSaveAttachmentImage?: (dataUrl: string) => Promise<AttachmentInfo | null>;
   /** Loads one attached image (absolute path) as a data URL. */
   onLoadAttachmentImage?: (path: string) => Promise<string | null>;
   /** Classify drag-dropped files into attachments. */
-  onDropAttachmentFiles?: (files: File[]) => Promise<AttachmentInfo[]>;
+  onDropAttachmentFiles?: (
+    files: File[],
+    folders?: DroppedFolder[],
+  ) => Promise<AttachmentInfo[]>;
   /** Embedded Browser pane (issue #155). Absent hides screenshot-to-composer. */
   preview?: CoderApi["preview"] | null;
   /** Desktop-only iOS Simulator pane (#248). */
@@ -679,6 +702,8 @@ interface ThreadViewProps {
   onMergeWorktree?: (opts?: {
     ciWorkflowApproved?: boolean;
   }) => Promise<unknown>;
+  /** Crew worker: open the lead Integration view instead of merging here. */
+  onOpenCrewLead?: (leadId: string) => void;
   onRemoveWorktree?: (force?: boolean) => Promise<unknown>;
   /** Local branches for the post-create stacked-base picker (#187). */
   listBaseBranches?: (
@@ -693,6 +718,12 @@ interface ThreadViewProps {
   conflictContext?: (threadId: string) => Promise<ConflictContext>;
   /** Open the thread worktree in the configured editor. */
   onOpenWorktree?: () => void | Promise<void>;
+  /** orchWorker: jump to the lead Integration section (issue #982). */
+  onOpenCrewIntegration?: (leadThreadId: string) => void;
+  /** Retarget this idle worker onto the lead's current committed HEAD. */
+  onRefreshWorkerSnapshot?: (
+    threadId: string,
+  ) => void | Promise<void>;
   /** Run the project's setup command or a named quick action (issue #153). */
   onRunCommand?: (
     threadId: string,
@@ -726,6 +757,12 @@ interface ThreadViewProps {
   handoffSource?: ThreadInfo | null;
   /** Select another thread (provenance chip → source). */
   onSelectThread?: (id: string) => void;
+  /**
+   * Report/board the user left to open this thread (#942). Back restores
+   * that view; omitted when the thread was opened from the sidebar.
+   */
+  returnToView?: ReturnableView | null;
+  onReturnToView?: () => void;
   /**
    * Same-task siblings (best-of-N / forks) for the divergence compare
    * (issue #393). Resolved in App so this pane is not passed the full list.
@@ -1288,6 +1325,11 @@ const UserMessageBlock = memo(function UserMessageBlock({
             </button>
           )}
           <div className={styles.userBubble}>
+            {message.steer && (
+              <div className={styles.steerLabel} data-steer-label="">
+                Steered
+              </div>
+            )}
             {message.text}
             {message.attachments && message.attachments.length > 0 && (
               <TranscriptAttachments
@@ -2546,6 +2588,10 @@ type PermissionRespond = (
  * Approving sends the edited command, not the original. Non-command tools
  * (Edit/Write/…) keep the JSON preview. Same component the inbox (#291)
  * should reuse — the IPC already accepts updatedCommand.
+ *
+ * Codex command asks set commandEditable=false: the JSON-RPC reply cannot
+ * rewrite the command (issue #1171). Accept all hides when acceptAlways
+ * is false.
  */
 function PermissionPrompt({
   pending,
@@ -2555,12 +2601,14 @@ function PermissionPrompt({
   onRespond: PermissionRespond;
 }) {
   const original = pending.command ?? null;
-  const editable = original !== null;
+  const hasCommand = original !== null;
+  const editable = hasCommand && pending.commandEditable !== false;
+  const acceptAlways = pending.acceptAlways !== false;
   const [command, setCommand] = useState(original ?? "");
   const [sent, setSent] = useState(false);
   const edited =
-    original !== null && command.trim() !== original.trim();
-  const empty = original !== null && command.trim() === "";
+    editable && original !== null && command.trim() !== original.trim();
+  const empty = editable && command.trim() === "";
 
   const answer = (decision: PermissionDecision) => {
     if (sent) return;
@@ -2595,7 +2643,7 @@ function PermissionPrompt({
           ⚠ {pending.guardrail.reason} ({pending.guardrail.rule})
         </div>
       ) : null}
-      {editable ? (
+      {hasCommand ? (
         <>
           <textarea
             className={`${styles.permissionInput} ${styles.permissionCommand}`}
@@ -2606,7 +2654,10 @@ function PermissionPrompt({
             spellCheck={false}
             autoComplete="off"
             autoCorrect="off"
-            onChange={(ev) => setCommand(ev.target.value)}
+            readOnly={!editable}
+            onChange={(ev) => {
+              if (editable) setCommand(ev.target.value);
+            }}
           />
           {edited ? (
             <div className={styles.permissionWas} data-permission-was="">
@@ -2636,14 +2687,16 @@ function PermissionPrompt({
         >
           Accept
         </button>
-        <button
-          type="button"
-          className={styles.permissionAllow}
-          disabled={sent || empty}
-          onClick={() => answer("allowAlways")}
-        >
-          Accept all
-        </button>
+        {acceptAlways ? (
+          <button
+            type="button"
+            className={styles.permissionAllow}
+            disabled={sent || empty}
+            onClick={() => answer("allowAlways")}
+          >
+            Accept all
+          </button>
+        ) : null}
         <button
           type="button"
           className={styles.permissionDeny}
@@ -4188,6 +4241,39 @@ function DivergenceCard({
   );
 }
 
+function ReturnToViewButton({
+  view,
+  onClick,
+}: {
+  view: ReturnableView;
+  onClick: () => void;
+}) {
+  const label = `Back to ${RETURN_VIEW_LABEL[view]}`;
+  return (
+    <button
+      type="button"
+      className={styles.btn}
+      data-return-to={view}
+      aria-label={label}
+      onClick={onClick}
+    >
+      {label}
+    </button>
+  );
+}
+
+function returnToHeader(
+  view: ReturnableView | null | undefined,
+  onClick: (() => void) | undefined,
+) {
+  if (!view || !onClick) return null;
+  return (
+    <header className={styles.header} data-thread-header="">
+      <ReturnToViewButton view={view} onClick={onClick} />
+    </header>
+  );
+}
+
 /**
  * memo'd: only the OPEN thread's stream should re-render this pane. Four other
  * threads streaming in the sidebar used to re-render it every 700ms each
@@ -4210,6 +4296,8 @@ export const ThreadView = memo(function ThreadView({
   onRetryWorkflowAgent,
   onSaveWorkflow,
   onRemoveWorkflow,
+  workflowListError = null,
+  onRetryWorkflows,
   onStopRun,
   onResumeQuotaWait,
   onSetQuotaWaitAutoResume,
@@ -4273,6 +4361,7 @@ export const ThreadView = memo(function ThreadView({
   onOpenWorkspacePath,
   onLoadImage,
   onPickAttachments,
+  onPickFolderAttachments,
   onSaveAttachmentImage,
   onLoadAttachmentImage,
   onDropAttachmentFiles,
@@ -4289,11 +4378,14 @@ export const ThreadView = memo(function ThreadView({
   gitFetch,
   onSetupWorktree,
   onMergeWorktree,
+  onOpenCrewLead,
   onRemoveWorktree,
   listBaseBranches,
   onSetBaseBranch,
   conflictContext,
   onOpenWorktree,
+  onOpenCrewIntegration,
+  onRefreshWorkerSnapshot,
   onRunCommand,
   runError = null,
   onDismissRunError,
@@ -4305,6 +4397,8 @@ export const ThreadView = memo(function ThreadView({
   onDismissSuggestion,
   handoffSource = null,
   onSelectThread,
+  returnToView = null,
+  onReturnToView,
   comparePeers = EMPTY_COMPARE_PEERS,
   onPeekThread,
   onModelPickerOpen,
@@ -4336,10 +4430,25 @@ export const ThreadView = memo(function ThreadView({
   /** Inline edit of a queued follow-up item (issue #364 / #780). */
   const [editingQueued, setEditingQueued] = useState<number | null>(null);
   const [queuedEditDraft, setQueuedEditDraft] = useState("");
+  const [queuedEditSaving, setQueuedEditSaving] = useState(false);
+  const [queuedEditError, setQueuedEditError] = useState<string | null>(null);
+  const queuedEditSavingRef = useRef(false);
+  const queuedWriteInFlight = useRef(false);
+  const queuedWriteGen = useRef(0);
+  const [queuedWritePending, setQueuedWritePending] = useState(false);
+  const [queuedWriteError, setQueuedWriteError] = useState<string | null>(null);
   // The edit is bound to the blob it was seeded from: a thread switch or a
-  // drained/cancelled queue ends it.
+  // drained/cancelled queue ends it. Bump writeGen so a late reject cannot
+  // lock or error a different thread's strip (#1144).
   useEffect(() => {
     setEditingQueued(null);
+    queuedEditSavingRef.current = false;
+    setQueuedEditSaving(false);
+    setQueuedEditError(null);
+    queuedWriteGen.current += 1;
+    queuedWriteInFlight.current = false;
+    setQueuedWritePending(false);
+    setQueuedWriteError(null);
   }, [detail?.thread.id, queuedPrompt == null]);
   const [notesOpen, setNotesOpen] = useState(false);
   const [notesDraft, setNotesDraft] = useState("");
@@ -4365,10 +4474,12 @@ export const ThreadView = memo(function ThreadView({
   const [restoreConfirm, setRestoreConfirm] = useState<ReviewBar | null>(null);
   const [restorePending, setRestorePending] = useState(false);
   const [restoreError, setRestoreError] = useState<string | null>(null);
+  const reviewUndoDialogRef = useRef<HTMLDivElement>(null);
   const [rewindConfirm, setRewindConfirm] = useState<{
     messageId: string;
     prompt: string;
   } | null>(null);
+  const rewindDialogRef = useRef<HTMLDivElement>(null);
   const [rewindRestoreFiles, setRewindRestoreFiles] = useState(false);
   const [rewindPending, setRewindPending] = useState(false);
   /** Header context breakdown; `/context` pins this open. */
@@ -4443,6 +4554,7 @@ export const ThreadView = memo(function ThreadView({
   >([]);
   const [replyTo, setReplyTo] = useState<ReplyTarget | null>(null);
   const [snapOpen, setSnapOpen] = useState(false);
+  const snapDialogRef = useRef<HTMLDivElement>(null);
   const [snapWindows, setSnapWindows] = useState<
     Array<{ id: string; name: string }>
   >([]);
@@ -4760,28 +4872,91 @@ export const ThreadView = memo(function ThreadView({
   const queuedItems = queuedThoughts(queuedPrompt, queuedItemsProp);
 
   const writeQueuedItems = (items: string[]) => {
+    if (queuedWriteInFlight.current || queuedEditSavingRef.current) return;
     if (items.length === 0) {
       onCancelQueued?.();
       return;
     }
     const next = items.join("\n\n");
-    if (next !== queuedPrompt) onEditQueued?.(next, items);
+    if (next === queuedPrompt || !onEditQueued) return;
+    queuedWriteInFlight.current = true;
+    const gen = queuedWriteGen.current;
+    setQueuedWritePending(true);
+    setQueuedWriteError(null);
+    void Promise.resolve(onEditQueued(next, items))
+      .then(() => {
+        if (gen !== queuedWriteGen.current) return;
+        setQueuedWriteError(null);
+      })
+      .catch((err: unknown) => {
+        if (gen !== queuedWriteGen.current) return;
+        setQueuedWriteError(
+          err instanceof Error && err.message ? err.message : String(err),
+        );
+      })
+      .finally(() => {
+        if (gen !== queuedWriteGen.current) return;
+        queuedWriteInFlight.current = false;
+        setQueuedWritePending(false);
+      });
+  };
+
+  const closeQueuedEdit = () => {
+    if (queuedEditSavingRef.current) return;
+    setEditingQueued(null);
+    setQueuedEditError(null);
+  };
+
+  const persistQueuedEdit = async (prompt: string, items?: string[]) => {
+    if (!onEditQueued) {
+      setEditingQueued(null);
+      setQueuedEditError(null);
+      return;
+    }
+    if (queuedEditSavingRef.current || queuedWriteInFlight.current) return;
+    queuedEditSavingRef.current = true;
+    setQueuedEditSaving(true);
+    setQueuedEditError(null);
+    try {
+      await onEditQueued(prompt, items);
+      setEditingQueued(null);
+      setQueuedEditError(null);
+    } catch (err) {
+      setQueuedEditError(
+        err instanceof Error && err.message ? err.message : String(err),
+      );
+    } finally {
+      queuedEditSavingRef.current = false;
+      setQueuedEditSaving(false);
+    }
   };
 
   // Empty save means cancel: editing must never blank the queue (#364).
+  // Close the editor only after the write lands so a rejected persist
+  // keeps the revised draft (#926).
   const saveQueuedEdit = () => {
+    if (queuedEditSavingRef.current || queuedWriteInFlight.current) return;
     const text = queuedEditDraft.trim();
     const index = editingQueued;
-    setEditingQueued(null);
-    if (!text || queuedPrompt == null || index == null) return;
-    if (queuedItems.length <= 1) {
-      if (text !== queuedPrompt) onEditQueued?.(text);
+    if (!text || queuedPrompt == null || index == null) {
+      closeQueuedEdit();
       return;
     }
-    if (text === queuedItems[index]) return;
+    if (queuedItems.length <= 1) {
+      if (text === queuedPrompt) {
+        closeQueuedEdit();
+        return;
+      }
+      void persistQueuedEdit(text);
+      return;
+    }
+    if (text === queuedItems[index]) {
+      closeQueuedEdit();
+      return;
+    }
     const next = queuedItems.slice();
     next[index] = text;
-    writeQueuedItems(next);
+    void persistQueuedEdit(next.join("\n\n"), next);
   };
 
   /** Header context ring; null hides it (unknown window or no measured turn). */
@@ -4823,6 +4998,7 @@ export const ThreadView = memo(function ThreadView({
     isWorking,
     onSetupWorktree: onSetupWorktree ?? (async () => {}),
     onMergeWorktree: onMergeWorktree ?? (async () => {}),
+    onOpenCrewLead,
     onRemoveWorktree: onRemoveWorktree ?? (async () => {}),
     onStartRun,
     conflictContext,
@@ -4840,11 +5016,17 @@ export const ThreadView = memo(function ThreadView({
         ? (baseBranch) =>
             Promise.resolve(onSetBaseBranch(detail.thread.id, baseBranch))
         : undefined,
+    onOpenCrewIntegration,
+    onRefreshWorkerSnapshot:
+      onRefreshWorkerSnapshot && detail?.thread
+        ? () =>
+            Promise.resolve(onRefreshWorkerSnapshot(detail.thread.id))
+        : undefined,
   });
 
-  /** Last user text + event card id that carries the Retry turn control. */
-  const retryUser = useMemo(
-    () => (detail ? lastUserMessage(detail.messages) : null),
+  /** Prompt Retry turn will re-send, plus the event card that carries it. */
+  const retrySend = useMemo(
+    () => (detail ? retryTarget(detail.messages) : null),
     [detail],
   );
   const retryEventId = useMemo(
@@ -4889,9 +5071,23 @@ export const ThreadView = memo(function ThreadView({
     const last = detail.messages[detail.messages.length - 1];
     return last?.role === "event" && !last.thinking ? last.id : null;
   }, [detail]);
+  // Writer-lock (#953): hide Retry so it cannot resume the same locked
+  // session. No replacement button; wait, then send. /fork is the hatch
+  // (#554 eject-to-terminal is unimplemented).
+  const writerLockEventId = useMemo(() => {
+    if (
+      !detail ||
+      detail.thread.status !== "failed" ||
+      detail.thread.lastErrorKind !== "writer-lock"
+    ) {
+      return null;
+    }
+    const last = detail.messages[detail.messages.length - 1];
+    return last?.role === "event" && !last.thinking ? last.id : null;
+  }, [detail]);
   const retryTitle = useMemo(
-    () => (retryUser ? retryButtonTitle(retryUser.text) : ""),
-    [retryUser],
+    () => (retrySend ? retryActionTitle(retrySend) : ""),
+    [retrySend],
   );
   const handleRetry = useCallback(() => {
     if (isWorking) return;
@@ -4899,10 +5095,15 @@ export const ThreadView = memo(function ThreadView({
       if (onRetryWorkflowAgent) void onRetryWorkflowAgent(workflowRetryAgentId);
       return;
     }
-    if (!retryUser) return;
-    void onStartRun(retryUser.text, undefined, retryUser.attachments);
+    if (!retrySend) return;
+    void onStartRun(
+      retrySend.text,
+      undefined,
+      retrySend.attachments,
+      retrySend.fromNotice ? { fromNotice: true } : undefined,
+    );
   }, [
-    retryUser,
+    retrySend,
     isWorking,
     onStartRun,
     workflowRetryAgentId,
@@ -4959,6 +5160,7 @@ export const ThreadView = memo(function ThreadView({
   }, [rewindPending]);
 
   useEscapeClose(Boolean(rewindConfirm) && !rewindPending, handleRewindCancel);
+  useModalFocus(Boolean(rewindConfirm), rewindDialogRef);
 
   const handleSlashRewind = useCallback(() => {
     if (isWorking || rewindPending) return;
@@ -5040,8 +5242,11 @@ export const ThreadView = memo(function ThreadView({
   );
 
   const handleComposerSend = useCallback(
-    (prompt: string, messageAttachments?: AttachmentInfo[]) =>
-      onStartRun(prompt, undefined, messageAttachments),
+    (
+      prompt: string,
+      messageAttachments?: AttachmentInfo[],
+      opts?: { steer?: boolean },
+    ) => onStartRun(prompt, undefined, messageAttachments, opts),
     [onStartRun],
   );
 
@@ -5133,6 +5338,7 @@ export const ThreadView = memo(function ThreadView({
   }, [onListSnapWindows, isArchived, openAppSnap]);
 
   useEscapeClose(snapOpen && !snapBusy, () => setSnapOpen(false));
+  useModalFocus(snapOpen, snapDialogRef);
 
   /**
    * Fork one thread per selected provider or profile, then start the same
@@ -5494,6 +5700,10 @@ export const ThreadView = memo(function ThreadView({
   useEscapeClose(restoreConfirm != null && !restorePending, () => {
     setRestoreConfirm(null);
   });
+  useModalFocus(
+    restoreConfirm != null && Boolean(restoreConfirm.undoSha),
+    reviewUndoDialogRef,
+  );
 
   const pinIfStuck = () => {
     const el = bodyRef.current;
@@ -5653,6 +5863,7 @@ export const ThreadView = memo(function ThreadView({
     if (detailError) {
       return (
         <main className={styles.main}>
+          {returnToHeader(returnToView, onReturnToView)}
           <div className={styles.empty}>
             <div className={styles.emptyGlyph} aria-hidden="true">
               <svg
@@ -5687,6 +5898,7 @@ export const ThreadView = memo(function ThreadView({
     }
     return (
       <main className={styles.main}>
+        {returnToHeader(returnToView, onReturnToView)}
         <div className={styles.empty}>
           <div className={styles.emptyGlyph} aria-hidden="true">
             <svg
@@ -5861,6 +6073,12 @@ export const ThreadView = memo(function ThreadView({
       ) : null}
       <header className={styles.header} data-thread-header="">
         <div className={styles.headerLead}>
+          {returnToView && onReturnToView ? (
+            <ReturnToViewButton
+              view={returnToView}
+              onClick={onReturnToView}
+            />
+          ) : null}
           <div className={styles.breadcrumb}>
           {onCreateThread ? (
             <button
@@ -6055,7 +6273,7 @@ export const ThreadView = memo(function ThreadView({
                 {deleteConfirm ? (
                   <div className={styles.menuConfirm}>
                     <p className={styles.menuConfirmText}>
-                      Delete permanently? This removes all messages.
+                      Move to Recently deleted? You can restore for 7 days.
                     </p>
                     <div className={styles.menuConfirmActions}>
                       <button
@@ -6524,9 +6742,16 @@ export const ThreadView = memo(function ThreadView({
               entry.message.role === "event" &&
               upgradeEventId != null &&
               entry.message.id === upgradeEventId;
+            const isWriterLockSurface =
+              !isOverflowSurface &&
+              !isUpgradeSurface &&
+              entry.message.role === "event" &&
+              writerLockEventId != null &&
+              entry.message.id === writerLockEventId;
             const isRetrySurface =
               !isOverflowSurface &&
               !isUpgradeSurface &&
+              !isWriterLockSurface &&
               entry.message.role === "event" &&
               retryEventId != null &&
               entry.message.id === retryEventId;
@@ -6867,6 +7092,14 @@ export const ThreadView = memo(function ThreadView({
                       {queuedError}
                     </span>
                   ) : null}
+                  {queuedWriteError ? (
+                    <span
+                      className={styles.permissionGuardrail}
+                      data-queued-write-error=""
+                    >
+                      {queuedWriteError}
+                    </span>
+                  ) : null}
                 </div>
                 <ul className={styles.queuedList}>
                   {queuedItems.map((item, i) => (
@@ -6883,11 +7116,14 @@ export const ThreadView = memo(function ThreadView({
                             rows={2}
                             autoFocus
                             data-edit-queued-input=""
-                            onChange={(e) => setQueuedEditDraft(e.target.value)}
+                            onChange={(e) => {
+                              setQueuedEditDraft(e.target.value);
+                              if (queuedEditError) setQueuedEditError(null);
+                            }}
                             onKeyDown={(e) => {
                               if (e.key === "Escape") {
                                 e.preventDefault();
-                                setEditingQueued(null);
+                                closeQueuedEdit();
                               }
                               if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
                                 e.preventDefault();
@@ -6895,11 +7131,20 @@ export const ThreadView = memo(function ThreadView({
                               }
                             }}
                           />
+                          {queuedEditError ? (
+                            <span
+                              className={styles.permissionGuardrail}
+                              data-queued-edit-error=""
+                            >
+                              {queuedEditError}
+                            </span>
+                          ) : null}
                           <div className={styles.queuedActions}>
                             <button
                               type="button"
                               className={styles.retryBtn}
                               onClick={saveQueuedEdit}
+                              disabled={queuedEditSaving}
                               data-save-queued-edit=""
                             >
                               Save
@@ -6907,7 +7152,8 @@ export const ThreadView = memo(function ThreadView({
                             <button
                               type="button"
                               className={styles.stopBtn}
-                              onClick={() => setEditingQueued(null)}
+                              onClick={closeQueuedEdit}
+                              disabled={queuedEditSaving}
                             >
                               Cancel
                             </button>
@@ -6925,6 +7171,7 @@ export const ThreadView = memo(function ThreadView({
                                 type="button"
                                 className={styles.retryBtn}
                                 aria-label="Move queued follow-up up"
+                                disabled={queuedWritePending}
                                 onClick={() =>
                                   writeQueuedItems(
                                     swapQueuedItem(queuedItems, i, -1),
@@ -6940,6 +7187,7 @@ export const ThreadView = memo(function ThreadView({
                                 type="button"
                                 className={styles.retryBtn}
                                 aria-label="Move queued follow-up down"
+                                disabled={queuedWritePending}
                                 onClick={() =>
                                   writeQueuedItems(
                                     swapQueuedItem(queuedItems, i, 1),
@@ -6954,6 +7202,7 @@ export const ThreadView = memo(function ThreadView({
                               <button
                                 type="button"
                                 className={styles.retryBtn}
+                                disabled={queuedWritePending}
                                 onClick={() => {
                                   setQueuedEditDraft(item);
                                   setEditingQueued(i);
@@ -6966,6 +7215,7 @@ export const ThreadView = memo(function ThreadView({
                             <button
                               type="button"
                               className={styles.stopBtn}
+                              disabled={queuedWritePending}
                               onClick={() =>
                                 writeQueuedItems(
                                   queuedItems.filter((_, j) => j !== i),
@@ -7014,11 +7264,14 @@ export const ThreadView = memo(function ThreadView({
                   rows={2}
                   autoFocus
                   data-edit-queued-input=""
-                  onChange={(e) => setQueuedEditDraft(e.target.value)}
+                  onChange={(e) => {
+                    setQueuedEditDraft(e.target.value);
+                    if (queuedEditError) setQueuedEditError(null);
+                  }}
                   onKeyDown={(e) => {
                     if (e.key === "Escape") {
                       e.preventDefault();
-                      setEditingQueued(null);
+                      closeQueuedEdit();
                     }
                     if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
                       e.preventDefault();
@@ -7026,11 +7279,20 @@ export const ThreadView = memo(function ThreadView({
                     }
                   }}
                 />
+                {queuedEditError ? (
+                  <span
+                    className={styles.permissionGuardrail}
+                    data-queued-edit-error=""
+                  >
+                    {queuedEditError}
+                  </span>
+                ) : null}
                 <div className={styles.queuedActions}>
                   <button
                     type="button"
                     className={styles.retryBtn}
                     onClick={saveQueuedEdit}
+                    disabled={queuedEditSaving}
                     data-save-queued-edit=""
                   >
                     Save
@@ -7038,7 +7300,8 @@ export const ThreadView = memo(function ThreadView({
                   <button
                     type="button"
                     className={styles.stopBtn}
-                    onClick={() => setEditingQueued(null)}
+                    onClick={closeQueuedEdit}
+                    disabled={queuedEditSaving}
                   >
                     Cancel
                   </button>
@@ -7125,6 +7388,8 @@ export const ThreadView = memo(function ThreadView({
         onSetWebSearch={onSetWebSearch}
         onSaveWorkflow={onSaveWorkflow}
         onRemoveWorkflow={onRemoveWorkflow}
+        workflowListError={workflowListError}
+        onRetryWorkflows={onRetryWorkflows}
         sessionId={thread.sessionId}
         hasWorktree={hasWorktree}
         disabled={isArchived}
@@ -7133,7 +7398,9 @@ export const ThreadView = memo(function ThreadView({
           isArchived
             ? "Unarchive to continue this thread"
             : isWorking
-              ? "Queue a follow-up, or /btw a side question…"
+              ? providers.find((p) => p.id === thread.provider)?.supportsSteer
+                ? "Queue a follow-up, steer the live turn, or /btw a side question…"
+                : "Queue a follow-up, or /btw a side question…"
               : thread.ask
                 ? "Ask about this repo…"
                 : undefined
@@ -7153,6 +7420,7 @@ export const ThreadView = memo(function ThreadView({
         replyTo={replyTo}
         onClearReply={() => setReplyTo(null)}
         onPickAttachments={onPickAttachments}
+        onPickFolderAttachments={onPickFolderAttachments}
         onSaveAttachmentImage={onSaveAttachmentImage}
         onLoadAttachmentImage={onLoadAttachmentImage}
         onDropAttachmentFiles={onDropAttachmentFiles}
@@ -7171,10 +7439,12 @@ export const ThreadView = memo(function ThreadView({
 
       {snapOpen && (
         <div
+          ref={snapDialogRef}
           className={styles.confirmOverlay}
           role="dialog"
           aria-modal="true"
           aria-labelledby="appsnap-title"
+          tabIndex={-1}
           data-appsnap=""
           onClick={() => {
             if (!snapBusy) setSnapOpen(false);
@@ -7257,10 +7527,12 @@ export const ThreadView = memo(function ThreadView({
           }}
         >
           <div
+            ref={rewindDialogRef}
             className={styles.confirmDialog}
             role="dialog"
             aria-modal="true"
             aria-labelledby="rewind-title"
+            tabIndex={-1}
             data-rewind-confirm={rewindConfirm.messageId}
             onClick={(e) => e.stopPropagation()}
           >
@@ -7318,10 +7590,12 @@ export const ThreadView = memo(function ThreadView({
           }}
         >
           <div
+            ref={reviewUndoDialogRef}
             className={styles.confirmDialog}
             role="dialog"
             aria-modal="true"
             aria-labelledby="review-undo-title"
+            tabIndex={-1}
             data-review-undo-confirm={restoreConfirm.undoSha}
             onClick={(e) => e.stopPropagation()}
           >

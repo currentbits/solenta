@@ -434,10 +434,15 @@ function pushCodexFirstPartyApproval(args, s) {
  * is why GPT follow-up turns lost thread_send. Same scope as Claude
  * `--allowedTools=mcp__<name>__*`: only our servers, never a user-registered
  * endpoint.
+ *
+ * HTTP URLs use boundSolentaMcpUrl: coder-memory gets `?project=` and
+ * coder-threads gets `?projectId=` so orchServer publishes Planboard
+ * issue_* tools (#927 / #1163). A path-only bind still omits issue_*.
  * @returns {string[]}
  */
 function getCodexMcpArgs(opts = {}) {
   const projectPath = opts.projectPath ? String(opts.projectPath) : "";
+  const projectId = opts.projectId ? String(opts.projectId) : "";
   /** @type {string[]} */
   const args = [];
   for (const s of activeServers()) {
@@ -474,7 +479,9 @@ function getCodexMcpArgs(opts = {}) {
     }
     args.push(
       "-c",
-      `mcp_servers.${s.name}.url="${tomlEscape(boundCoderMemoryUrl(s.url, s.name, projectPath))}"`,
+      `mcp_servers.${s.name}.url="${tomlEscape(
+        boundSolentaMcpUrl(s.url, s.name, { projectPath, projectId }),
+      )}"`,
     );
     if (s.token) {
       args.push(
@@ -596,11 +603,15 @@ function resolveKimiMcpPath(env = process.env) {
 function withQuery(url, query) {
   if (!query) return url;
   const u = new URL(url);
+  let added = false;
   for (const [k, v] of Object.entries(query)) {
     if (v == null || v === "") continue;
     u.searchParams.set(k, String(v));
+    added = true;
   }
-  return u.toString();
+  // Leave the original string alone when nothing bound: URL.toString()
+  // percent-encodes quotes and would fight tomlEscape on Codex -c values.
+  return added ? u.toString() : url;
 }
 
 /**

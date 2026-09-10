@@ -376,6 +376,7 @@ function makeArtifactStore(deps = {}) {
     feltEstimate: null,
     replayContext: false,
     muted: false,
+    ejected: false,
     notes: "",
     queued: null,
     verifyCommand: null,

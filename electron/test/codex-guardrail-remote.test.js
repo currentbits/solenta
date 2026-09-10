@@ -176,30 +176,78 @@ if (marker) {
   }), "utf8");
 }
 
-emit({ type: "thread.started", thread_id: "codex-gr-ssh" });
-emit({
-  type: "item.started",
-  item: {
-    id: "item-cmd-deny",
-    type: "command_execution",
-    command: tool.input.command,
+const events = [
+  { type: "thread.started", thread_id: "codex-gr-ssh" },
+  {
+    type: "item.started",
+    item: {
+      id: "item-cmd-deny",
+      type: "command_execution",
+      command: tool.input.command,
+    },
   },
-});
-emit({
-  type: "item.completed",
-  item: {
-    id: "item-cmd-deny",
-    type: "command_execution",
-    command: tool.input.command,
-    aggregated_output: blocked ? (hook.reason || "blocked") : "executed",
-    exit_code: blocked ? 1 : 0,
+  {
+    type: "item.completed",
+    item: {
+      id: "item-cmd-deny",
+      type: "command_execution",
+      command: tool.input.command,
+      aggregated_output: blocked ? (hook.reason || "blocked") : "executed",
+      exit_code: blocked ? 1 : 0,
+    },
   },
-});
-emit({
-  type: "turn.completed",
-  usage: { input_tokens: 1, output_tokens: 1 },
-});
-process.exit(0);
+  { type: "turn.completed", usage: { input_tokens: 1, output_tokens: 1 } },
+];
+if (!argv.includes("app-server")) {
+  for (const ev of events) emit(ev);
+  process.exit(0);
+} else {
+  const readline = require("readline");
+  function send(obj) { process.stdout.write(JSON.stringify(obj) + "\\n"); }
+  const rl = readline.createInterface({ input: process.stdin });
+  rl.on("line", (line) => {
+    let msg; try { msg = JSON.parse(line); } catch { return; }
+    if (msg.method === "initialize") {
+      send({ jsonrpc: "2.0", id: msg.id, result: {} });
+      return;
+    }
+    if (msg.method === "initialized") return;
+    if (msg.method === "thread/start" || msg.method === "thread/resume") {
+      send({ jsonrpc: "2.0", id: msg.id, result: { thread: { id: "codex-gr-ssh" } } });
+      send({ jsonrpc: "2.0", method: "thread/started", params: { thread: { id: "codex-gr-ssh" } } });
+      return;
+    }
+    if (msg.method === "turn/start") {
+      send({ jsonrpc: "2.0", id: msg.id, result: { turn: { id: "turn-1", status: "inProgress", items: [] } } });
+      send({
+        jsonrpc: "2.0",
+        method: "item/started",
+        params: {
+          item: { type: "commandExecution", id: "item-cmd-deny", command: tool.input.command },
+        },
+      });
+      send({
+        jsonrpc: "2.0",
+        method: "item/completed",
+        params: {
+          item: {
+            type: "commandExecution",
+            id: "item-cmd-deny",
+            command: tool.input.command,
+            aggregatedOutput: blocked ? (hook.reason || "blocked") : "executed",
+            exitCode: blocked ? 1 : 0,
+          },
+        },
+      });
+      send({ jsonrpc: "2.0", method: "turn/completed", params: { turn: { id: "turn-1", status: "completed" } } });
+      return;
+    }
+    if (msg.method === "thread/unsubscribe") {
+      send({ jsonrpc: "2.0", id: msg.id, result: { status: "unsubscribed" } });
+      process.exit(0);
+    }
+  });
+}
 `,
   );
 }

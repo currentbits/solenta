@@ -10,6 +10,7 @@
   text-align: center;
   background: var(--bg);
   color: var(--text);
+  outline: none;
 }
 
 .title {

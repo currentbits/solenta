@@ -9,7 +9,6 @@
  */
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import * as React from "react";
 import { inAct, mount } from "./support/dom.ts";
 import {
   createFakeCoder,
@@ -291,79 +290,6 @@ describe("App checkpoints wiring (round 50)", () => {
     m.unmount();
   });
 
-  it("restore failure surfaces error without crashing", async () => {
-    const middle = threeCheckpoints()[1]!;
-    const backendMsg = "Cannot restore a checkpoint while a run is active";
-    const fake = makeFake({
-      fail: {
-        "git.restoreCheckpoint": new Error(backendMsg),
-      },
-    });
-    const m = await boot(fake);
-    await selectThread(m, "checkpoint source thread");
-    await openGitTab(m);
-
-    await m.click(
-      m.query(`[data-checkpoint-restore="${middle.sha}"]`) as HTMLElement,
-    );
-    await m.flush();
-    await m.click(m.query("[data-restore-confirm-submit]") as HTMLElement);
-    await m.flush();
-
-    const err = m.query("[data-checkpoint-error]");
-    assert.ok(err, "error surface after failed restore");
-    assert.ok(
-      (err!.textContent || "").includes(backendMsg),
-      `error must show backend string, got: ${err!.textContent}`,
-    );
-    m.unmount();
-  });
-
-  it("working thread disables restore; click records nothing", async () => {
-    const working = thread({
-      id: "t-cp-source",
-      title: "checkpoint source thread",
-      status: "working",
-      worktreePath: "/tmp/wt/checkpoint-source",
-      branch: "feat/cp",
-      updatedAt: NOW + 1000,
-      runStartedAt: NOW,
-    });
-    const fake = makeFake({ sourceRow: working });
-    const m = await boot(fake);
-    await selectThread(m, "checkpoint source thread");
-    await openGitTab(m);
-
-    const btns = m.queryAll("[data-checkpoint-restore]");
-    assert.ok(btns.length >= 1, "restore buttons still rendered");
-    for (const b of btns) {
-      assert.equal(
-        (b as HTMLButtonElement).disabled,
-        true,
-        "restore disabled while working",
-      );
-      assert.equal(
-        b.getAttribute("title"),
-        "Cannot restore a checkpoint while a run is active",
-      );
-    }
-    // Click despite disabled — synthetic click may still fire handlers if we
-    // don't guard; our onClick returns early when disabled.
-    await m.click(btns[0] as HTMLElement);
-    await m.flush();
-    assert.equal(
-      fake.of("git.restoreCheckpoint").length,
-      0,
-      "working restore click must not hit the channel",
-    );
-    assert.equal(
-      m.queryAll("[data-restore-confirm]").length,
-      0,
-      "confirm must not open while working",
-    );
-    m.unmount();
-  });
-
   it("Escape dismisses the restore confirm without restoring", async () => {
     const cps = threeCheckpoints();
     const middle = cps[1]!;
@@ -441,6 +367,79 @@ describe("App checkpoints wiring (round 50)", () => {
       fake.of("git.restoreCheckpoint").length,
       0,
       "Escape must not restore",
+    );
+    m.unmount();
+  });
+
+  it("restore failure surfaces error without crashing", async () => {
+    const middle = threeCheckpoints()[1]!;
+    const backendMsg = "Cannot restore a checkpoint while a run is active";
+    const fake = makeFake({
+      fail: {
+        "git.restoreCheckpoint": new Error(backendMsg),
+      },
+    });
+    const m = await boot(fake);
+    await selectThread(m, "checkpoint source thread");
+    await openGitTab(m);
+
+    await m.click(
+      m.query(`[data-checkpoint-restore="${middle.sha}"]`) as HTMLElement,
+    );
+    await m.flush();
+    await m.click(m.query("[data-restore-confirm-submit]") as HTMLElement);
+    await m.flush();
+
+    const err = m.query("[data-checkpoint-error]");
+    assert.ok(err, "error surface after failed restore");
+    assert.ok(
+      (err!.textContent || "").includes(backendMsg),
+      `error must show backend string, got: ${err!.textContent}`,
+    );
+    m.unmount();
+  });
+
+  it("working thread disables restore; click records nothing", async () => {
+    const working = thread({
+      id: "t-cp-source",
+      title: "checkpoint source thread",
+      status: "working",
+      worktreePath: "/tmp/wt/checkpoint-source",
+      branch: "feat/cp",
+      updatedAt: NOW + 1000,
+      runStartedAt: NOW,
+    });
+    const fake = makeFake({ sourceRow: working });
+    const m = await boot(fake);
+    await selectThread(m, "checkpoint source thread");
+    await openGitTab(m);
+
+    const btns = m.queryAll("[data-checkpoint-restore]");
+    assert.ok(btns.length >= 1, "restore buttons still rendered");
+    for (const b of btns) {
+      assert.equal(
+        (b as HTMLButtonElement).disabled,
+        true,
+        "restore disabled while working",
+      );
+      assert.equal(
+        b.getAttribute("title"),
+        "Cannot restore a checkpoint while a run is active",
+      );
+    }
+    // Click despite disabled — synthetic click may still fire handlers if we
+    // don't guard; our onClick returns early when disabled.
+    await m.click(btns[0] as HTMLElement);
+    await m.flush();
+    assert.equal(
+      fake.of("git.restoreCheckpoint").length,
+      0,
+      "working restore click must not hit the channel",
+    );
+    assert.equal(
+      m.queryAll("[data-restore-confirm]").length,
+      0,
+      "confirm must not open while working",
     );
     m.unmount();
   });

@@ -1,4 +1,11 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import type {
   DistilledWorkflow,
   ProviderInfo,
@@ -7,6 +14,7 @@ import type {
 } from "../shared/ipc";
 import type { WorkflowSaveInput } from "../useCoder";
 import { useEscapeClose } from "../useEscapeClose";
+import { useModalFocus } from "../useModalFocus";
 import styles from "./WorkflowsModal.module.css";
 
 interface WorkflowsModalProps {
@@ -20,6 +28,10 @@ interface WorkflowsModalProps {
   initialDraft?: DistilledWorkflow | null;
   onSave: (template: WorkflowSaveInput) => Promise<WorkflowTemplateInfo>;
   onRemove: (id: string) => Promise<void>;
+  /** Successful write, failed workflows.list. Distinct from a save/remove error. */
+  listError?: string | null;
+  /** Retry the list read only; must not replay the acknowledged write. */
+  onRetryList?: () => void | Promise<void>;
 }
 
 type Draft = {
@@ -62,6 +74,50 @@ function emptyDraft(providers: ProviderInfo[]): Draft {
   };
 }
 
+const NEW_DRAFT_KEY = "__new__";
+
+function samePhase(a: WorkflowPhaseSpec, b: WorkflowPhaseSpec): boolean {
+  return (
+    a.name === b.name &&
+    a.agentCount === b.agentCount &&
+    a.instruction === b.instruction &&
+    a.provider === b.provider &&
+    a.model === b.model
+  );
+}
+
+function cloneDraft(draft: Draft): Draft {
+  return {
+    ...draft,
+    phases: draft.phases.map((p) => ({ ...p })),
+  };
+}
+
+function sameDraft(a: Draft, b: Draft): boolean {
+  return (
+    a.sourceId === b.sourceId &&
+    a.name === b.name &&
+    a.builtin === b.builtin &&
+    a.phases.length === b.phases.length &&
+    a.phases.every((p, i) => samePhase(p, b.phases[i]!))
+  );
+}
+
+function draftKey(draft: Draft, isNew: boolean): string {
+  if (isNew || !draft.sourceId) return NEW_DRAFT_KEY;
+  return draft.sourceId;
+}
+
+function draftIsDirty(
+  draft: Draft,
+  isNew: boolean,
+  source: WorkflowTemplateInfo | null,
+  providers: ProviderInfo[],
+): boolean {
+  if (isNew || !source) return !sameDraft(draft, emptyDraft(providers));
+  return !sameDraft(draft, draftFromTemplate(source));
+}
+
 export function WorkflowsModal({
   open,
   onClose,
@@ -71,27 +127,73 @@ export function WorkflowsModal({
   initialDraft = null,
   onSave,
   onRemove,
+  listError = null,
+  onRetryList,
 }: WorkflowsModalProps) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [draft, setDraft] = useState<Draft | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [confirmDiscard, setConfirmDiscard] = useState(false);
   const [isNew, setIsNew] = useState(false);
   const wasOpen = useRef(false);
+  const sessionRef = useRef(0);
+  const skipStashRef = useRef(false);
+  const draftsByKey = useRef(new Map<string, Draft>());
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const keepEditingRef = useRef<HTMLButtonElement>(null);
+  const draftRef = useRef(draft);
+  const isNewRef = useRef(isNew);
+  const selectedIdRef = useRef(selectedId);
+  const savingRef = useRef(saving);
+  const confirmDiscardRef = useRef(confirmDiscard);
+  draftRef.current = draft;
+  isNewRef.current = isNew;
+  selectedIdRef.current = selectedId;
+  savingRef.current = saving;
+  confirmDiscardRef.current = confirmDiscard;
 
-  // Reset selection only when the modal opens (not on every workflows refresh).
+  const selected = useMemo(
+    () => workflows.find((w) => w.id === selectedId) ?? null,
+    [workflows, selectedId],
+  );
+
+  const currentDirty = useCallback(() => {
+    const current = draftRef.current;
+    if (!current) return false;
+    const source =
+      workflows.find((w) => w.id === selectedIdRef.current) ?? null;
+    return draftIsDirty(current, isNewRef.current, source, providers);
+  }, [providers, workflows]);
+
+  const stashCurrent = useCallback(() => {
+    const current = draftRef.current;
+    if (!current) return;
+    const key = draftKey(current, isNewRef.current);
+    if (currentDirty()) {
+      draftsByKey.current.set(key, cloneDraft(current));
+    } else {
+      draftsByKey.current.delete(key);
+    }
+  }, [currentDirty]);
+
+  // Restore a session when the modal opens. Parent close keeps this
+  // component mounted, so in-flight save/delete callbacks stay live.
   useEffect(() => {
     if (!open) {
+      if (!skipStashRef.current) stashCurrent();
+      skipStashRef.current = false;
       wasOpen.current = false;
       return;
     }
     if (wasOpen.current) return;
     wasOpen.current = true;
+    sessionRef.current += 1;
     setError(null);
     setConfirmDelete(false);
+    setConfirmDiscard(false);
     setSaving(false);
-    setIsNew(false);
     if (initialDraft) {
       setSelectedId(null);
       setDraft({
@@ -110,39 +212,73 @@ export function WorkflowsModal({
       null;
     if (preferred) {
       setSelectedId(preferred.id);
-      setDraft(draftFromTemplate(preferred));
+      setDraft(
+        draftsByKey.current.get(preferred.id) ?? draftFromTemplate(preferred),
+      );
+      setIsNew(false);
     } else {
       setSelectedId(null);
-      setDraft(emptyDraft(providers));
+      setDraft(draftsByKey.current.get(NEW_DRAFT_KEY) ?? emptyDraft(providers));
       setIsNew(true);
     }
-  }, [open, initialSelectedId, initialDraft, workflows, providers]);
+  }, [open, initialSelectedId, initialDraft, workflows, providers, stashCurrent]);
 
-  // Shared Escape handler (same semantics as inline: close when open).
+  const requestClose = useCallback(() => {
+    if (savingRef.current) return;
+    if (confirmDiscardRef.current) {
+      setConfirmDiscard(false);
+      return;
+    }
+    if (currentDirty()) {
+      setConfirmDiscard(true);
+      return;
+    }
+    onClose();
+  }, [currentDirty, onClose]);
+
+  const discardAndClose = () => {
+    const current = draftRef.current;
+    if (current) {
+      draftsByKey.current.delete(draftKey(current, isNewRef.current));
+    }
+    skipStashRef.current = true;
+    setConfirmDiscard(false);
+    onClose();
+  };
+
+  useLayoutEffect(() => {
+    if (confirmDiscard) keepEditingRef.current?.focus();
+  }, [confirmDiscard]);
+
+  // Shared Escape handler (same pending/dirty policy as header and footer).
   // Composer disables its own Escape while this modal is open via manageOpen.
-  useEscapeClose(open, onClose);
-
-  const selected = useMemo(
-    () => workflows.find((w) => w.id === selectedId) ?? null,
-    [workflows, selectedId],
-  );
+  useEscapeClose(open, requestClose);
+  useModalFocus(open, dialogRef);
 
   if (!open) return null;
 
   const pickTemplate = (t: WorkflowTemplateInfo) => {
+    if (saving) return;
+    if (!isNew && selectedId === t.id) return;
+    stashCurrent();
     setSelectedId(t.id);
-    setDraft(draftFromTemplate(t));
+    setDraft(draftsByKey.current.get(t.id) ?? draftFromTemplate(t));
     setIsNew(false);
     setError(null);
     setConfirmDelete(false);
+    setConfirmDiscard(false);
   };
 
   const startNew = () => {
+    if (saving) return;
+    if (isNew) return;
+    stashCurrent();
     setSelectedId(null);
-    setDraft(emptyDraft(providers));
+    setDraft(draftsByKey.current.get(NEW_DRAFT_KEY) ?? emptyDraft(providers));
     setIsNew(true);
     setError(null);
     setConfirmDelete(false);
+    setConfirmDiscard(false);
   };
 
   const updatePhase = (index: number, patch: Partial<WorkflowPhaseSpec>) => {
@@ -189,8 +325,11 @@ export function WorkflowsModal({
 
   const save = async () => {
     if (!draft || saving) return;
+    const started = sessionRef.current;
+    const startedKey = draftKey(draft, isNew);
     setSaving(true);
     setError(null);
+    setConfirmDiscard(false);
     try {
       const payload: WorkflowSaveInput = {
         name: draft.name,
@@ -201,18 +340,22 @@ export function WorkflowsModal({
         payload.id = draft.sourceId;
       }
       const saved = await onSave(payload);
+      if (sessionRef.current !== started) return;
+      draftsByKey.current.delete(startedKey);
+      draftsByKey.current.delete(saved.id);
       setSelectedId(saved.id);
       setDraft(draftFromTemplate(saved));
       setIsNew(false);
       setConfirmDelete(false);
     } catch (err) {
+      if (sessionRef.current !== started) return;
       const msg =
         err instanceof Error && err.message
           ? err.message
           : "Failed to save workflow";
       setError(msg);
     } finally {
-      setSaving(false);
+      if (sessionRef.current === started) setSaving(false);
     }
   };
 
@@ -222,28 +365,39 @@ export function WorkflowsModal({
       setConfirmDelete(true);
       return;
     }
+    const started = sessionRef.current;
+    const removedId = selected.id;
     setSaving(true);
     setError(null);
     try {
-      await onRemove(selected.id);
+      await onRemove(removedId);
+      if (sessionRef.current !== started) return;
+      draftsByKey.current.delete(removedId);
       setConfirmDelete(false);
-      const remaining = workflows.filter((w) => w.id !== selected.id);
+      const remaining = workflows.filter((w) => w.id !== removedId);
       const next = remaining[0] ?? null;
       if (next) {
         setSelectedId(next.id);
-        setDraft(draftFromTemplate(next));
+        setDraft(
+          draftsByKey.current.get(next.id) ?? draftFromTemplate(next),
+        );
         setIsNew(false);
       } else {
-        startNew();
+        setSelectedId(null);
+        setDraft(
+          draftsByKey.current.get(NEW_DRAFT_KEY) ?? emptyDraft(providers),
+        );
+        setIsNew(true);
       }
     } catch (err) {
+      if (sessionRef.current !== started) return;
       const msg =
         err instanceof Error && err.message
           ? err.message
           : "Failed to remove workflow";
       setError(msg);
     } finally {
-      setSaving(false);
+      if (sessionRef.current === started) setSaving(false);
     }
   };
 
@@ -252,14 +406,16 @@ export function WorkflowsModal({
       className={styles.backdrop}
       role="presentation"
       onMouseDown={(e) => {
-        if (e.target === e.currentTarget) onClose();
+        if (e.target === e.currentTarget) requestClose();
       }}
     >
       <div
+        ref={dialogRef}
         className={styles.modal}
         role="dialog"
         aria-modal="true"
         aria-label="Manage workflows"
+        tabIndex={-1}
         onMouseDown={(e) => e.stopPropagation()}
       >
         <header className={styles.header}>
@@ -267,7 +423,8 @@ export function WorkflowsModal({
           <button
             type="button"
             className={styles.close}
-            onClick={onClose}
+            onClick={requestClose}
+            disabled={saving}
             aria-label="Close"
             title="Close"
           >
@@ -286,6 +443,7 @@ export function WorkflowsModal({
                   data-active={
                     !isNew && selectedId === t.id ? "true" : undefined
                   }
+                  disabled={saving}
                   onClick={() => pickTemplate(t)}
                 >
                   <span className={styles.listName}>{t.name}</span>
@@ -559,7 +717,23 @@ export function WorkflowsModal({
                 </div>
 
                 <footer className={styles.footer}>
-                  {error ? (
+                  {listError ? (
+                    <div className={styles.errorInline} role="status">
+                      <span>{listError}</span>
+                      {onRetryList ? (
+                        <button
+                          type="button"
+                          className={styles.btn}
+                          onClick={() => {
+                            void Promise.resolve(onRetryList()).catch(() => {});
+                          }}
+                          disabled={saving}
+                        >
+                          Retry list
+                        </button>
+                      ) : null}
+                    </div>
+                  ) : error ? (
                     <div className={styles.errorInline} role="alert">
                       {error}
                     </div>
@@ -567,22 +741,54 @@ export function WorkflowsModal({
                     <div className={styles.errorInline} />
                   )}
                   <div className={styles.footerActions}>
-                    <button
-                      type="button"
-                      className={styles.btn}
-                      onClick={onClose}
-                      disabled={saving}
-                    >
-                      Cancel
-                    </button>
-                    <button
-                      type="button"
-                      className={`${styles.btn} ${styles.btnPrimary}`}
-                      onClick={() => void save()}
-                      disabled={saving}
-                    >
-                      {saving ? "Saving…" : "Save"}
-                    </button>
+                    {confirmDiscard ? (
+                      <div
+                        className={styles.discardBar}
+                        role="alertdialog"
+                        aria-label="Discard unsaved changes"
+                        data-wf-discard=""
+                      >
+                        <span className={styles.discardMsg}>
+                          Discard unsaved changes?
+                        </span>
+                        <button
+                          ref={keepEditingRef}
+                          type="button"
+                          className={styles.btn}
+                          data-wf-keep-editing=""
+                          onClick={() => setConfirmDiscard(false)}
+                        >
+                          Keep editing
+                        </button>
+                        <button
+                          type="button"
+                          className={`${styles.btn} ${styles.btnDanger}`}
+                          data-wf-discard-confirm=""
+                          onClick={discardAndClose}
+                        >
+                          Discard
+                        </button>
+                      </div>
+                    ) : (
+                      <>
+                        <button
+                          type="button"
+                          className={styles.btn}
+                          onClick={requestClose}
+                          disabled={saving}
+                        >
+                          Cancel
+                        </button>
+                        <button
+                          type="button"
+                          className={`${styles.btn} ${styles.btnPrimary}`}
+                          onClick={() => void save()}
+                          disabled={saving}
+                        >
+                          {saving ? "Saving…" : "Save"}
+                        </button>
+                      </>
+                    )}
                   </div>
                 </footer>
               </>

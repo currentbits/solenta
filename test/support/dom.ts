@@ -70,6 +70,11 @@ export interface Mounted {
   ): Promise<void>;
   /** Let pending promises and effects settle. */
   flush(): Promise<void>;
+  /**
+   * Render a new element into the same root. AgentsPanel updates MemoryTab
+   * props without a React key; tests that change projectId must do the same.
+   */
+  rerender(element: ReactElement): Promise<void>;
   unmount(): void;
 }
 
@@ -341,6 +346,12 @@ export async function mount(element: ReactElement): Promise<Mounted> {
       await flush();
     },
     flush,
+    rerender: async (element) => {
+      act(() => {
+        root.render(element);
+      });
+      await flush();
+    },
     unmount: () => {
       act(() => {
         root.unmount();

@@ -494,14 +494,9 @@ emit({
         `runner must pass -c web_search=live, got ${JSON.stringify(argv)}`,
       );
       assert.equal(argv[argv.indexOf("web_search=live") - 1], "-c");
-      const last = argv[argv.length - 1];
       assert.ok(
-        String(last).startsWith(prompt),
-        `runner prompt must stay last after live search: ${JSON.stringify(argv)}`,
-      );
-      assert.ok(
-        last.includes(prompt),
-        `last argv token must contain the sentinel ${prompt}, got ${JSON.stringify(argv)}`,
+        argv.includes("app-server"),
+        `interactive Codex is app-server, got ${JSON.stringify(argv)}`,
       );
     } finally {
       if (runner) runner.stopAll();

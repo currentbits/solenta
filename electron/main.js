@@ -38,6 +38,7 @@ const {
 } = require("./memory-sup.js");
 const { createOrchServer } = require("./orchServer.js");
 const { createPrStateRefresher, createRetentionSweeper } = require("./worktrees.js");
+const { createWedgedLaneWatchdog } = require("./mergeQueue.js");
 const { killAll: killAllDevServers } = require("./devservers.js");
 const { killAll: killAllTerminals } = require("./terminal.js");
 const { startScheduler } = require("./automations.js");
@@ -116,6 +117,9 @@ let prStateRefresher = null;
 
 /** @type {ReturnType<typeof createRetentionSweeper> | null} */
 let retentionSweeper = null;
+
+/** @type {ReturnType<typeof createWedgedLaneWatchdog> | null} */
+let wedgedLaneWatchdog = null;
 
 /** @type {ReturnType<typeof startScheduler> | null} */
 let automationScheduler = null;
@@ -633,6 +637,14 @@ app.whenReady().then(async () => {
     getIosSimulator: currentIosSimulator,
     log: (msg) => console.warn(msg),
   });
+  // Recently deleted expiry (#940): reclaim after restart even if the
+  // renderer has not listed threads yet.
+  const { expireTrashedThreads } = require("./services.js");
+  expireTrashedThreads(store, {
+    cleanupRunArtifacts: () =>
+      artifactStore ? artifactStore.cleanup() : Promise.resolve(),
+    log: (msg) => console.warn(msg),
+  });
   // Renderer may already have mounted against empty state; this is the
   // signal that invoke channels will answer (#618).
   broadcast("boot:ready");
@@ -732,6 +744,13 @@ app.whenReady().then(async () => {
     startupDelayMs: 15_000,
   });
   retentionSweeper.start();
+
+  // #346 wedged-lane watchdog: recycle lanes whose heartbeat is older
+  // than 30 minutes. Live runs beat from the runner; the lead UI beats
+  // a claimed lane while it is selected. Without those beats this
+  // interval would kill in-use lanes. Does not close issues.
+  wedgedLaneWatchdog = createWedgedLaneWatchdog({ store });
+  wedgedLaneWatchdog.start();
 
   automationScheduler = startScheduler({ store, runner, broadcast });
   autoDispatch = startAutoDispatch({ store, runner, broadcast });
@@ -836,6 +855,14 @@ function teardownServices() {
       // ignore
     }
     retentionSweeper = null;
+  }
+  if (wedgedLaneWatchdog) {
+    try {
+      wedgedLaneWatchdog.stop();
+    } catch {
+      // ignore
+    }
+    wedgedLaneWatchdog = null;
   }
   if (automationScheduler) {
     try {

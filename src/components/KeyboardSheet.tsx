@@ -99,6 +99,7 @@ export function KeyboardSheet({ open, onClose }: KeyboardSheetProps) {
         aria-modal="true"
         aria-label="Keyboard shortcuts"
         tabIndex={-1}
+        data-keyboard-sheet-dialog=""
         onMouseDown={(e) => e.stopPropagation()}
       >
         <header className={styles.header}>

@@ -412,4 +412,76 @@ describe("ThreadView / palette actions", () => {
       "rewind confirm opened for the last user message",
     );
   });
+
+  it("/rewind moves focus out of the composer; Tab stays inside; Escape restores", async () => {
+    const resubmits: string[] = [];
+    const m = await mountView({
+      onRewindAndResubmit: async (messageId) => {
+        resubmits.push(messageId);
+      },
+    });
+    const composer = textarea(m);
+    await acceptSlash(m, "/rewind");
+    await m.flush();
+    const dialog = m.query("[data-rewind-confirm]") as HTMLElement | null;
+    assert.ok(dialog, "rewind confirm");
+    assert.ok(
+      dialog.contains(document.activeElement),
+      "opening the dialog must move focus inside it",
+    );
+    assert.notEqual(document.activeElement, composer);
+
+    await m.pressFocused("Tab");
+    const first = document.activeElement as HTMLElement;
+    assert.ok(dialog.contains(first), "Tab stays inside");
+
+    await m.pressFocused("Tab");
+    const second = document.activeElement as HTMLElement;
+    assert.ok(dialog.contains(second), "second Tab stays inside");
+    assert.notEqual(second, first);
+
+    await m.pressFocused("Tab");
+    const third = document.activeElement as HTMLElement;
+    assert.ok(dialog.contains(third), "third Tab stays inside");
+    assert.notEqual(third, first);
+    assert.notEqual(third, second);
+
+    await m.pressFocused("Tab");
+    assert.equal(document.activeElement, first, "Tab wraps inside the dialog");
+
+    await m.pressFocused("Escape");
+    assert.equal(m.query("[data-rewind-confirm]"), null);
+    assert.equal(document.activeElement, composer, "Escape restores composer focus");
+    assert.deepEqual(resubmits, [], "Escape must not resubmit");
+  });
+
+  it("/rewind Escape is ignored while resubmit is in flight", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const m = await mountView({
+      onRewindAndResubmit: async () => {
+        await gate;
+      },
+    });
+    await acceptSlash(m, "/rewind");
+    await m.click(m.query("[data-rewind-confirm-submit]") as HTMLElement);
+    assert.ok(m.query("[data-rewind-confirm]"), "confirm stays while pending");
+    assert.equal(
+      (m.query("[data-rewind-confirm-submit]") as HTMLButtonElement).disabled,
+      true,
+    );
+    await inAct(() => {
+      document.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "Escape", bubbles: true }),
+      );
+    });
+    assert.ok(
+      m.query("[data-rewind-confirm]"),
+      "Escape must not dismiss while rewind is in flight",
+    );
+    release();
+    await m.flush();
+  });
 });

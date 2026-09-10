@@ -80,6 +80,18 @@ describe("classifyClaudeResultError (#549)", () => {
     );
   });
 
+  it("does not treat Codex writer-lock stderr as a lost Claude session (#953)", () => {
+    const stderr = [
+      "2026-09-06T06:31:14.326054Z ERROR codex_core::session: failed to initialize thread persistence: thread-store conflict: thread 01a072f7-10e0-7fd2-b691-7d481327516f already has an active writer",
+      "2026-09-06T06:31:14.326548Z ERROR codex_core::session: Failed to create session: thread-store conflict: thread 01a072f7-10e0-7fd2-b691-7d481327516f already has an active writer",
+      "Error: thread/resume: thread/resume failed: thread 01a072f7-10e0-7fd2-b691-7d481327516f already has an active writer (code -32600)",
+    ].join("\n");
+    const out = classifyClaudeResultError({ errors: [], stderr });
+    assert.equal(out.kind, "fail");
+    assert.equal(out.sessionLost, false);
+    assert.doesNotMatch(out.text, /Session reset/i);
+  });
+
   it("falls back to Run error when there is no CLI text", () => {
     const out = classifyClaudeResultError({
       errors: [],

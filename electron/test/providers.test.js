@@ -9,6 +9,7 @@ const {
   resolveBin,
   isBinAvailable,
   listProviders,
+  sessionIdForResume,
 } = require("../providers.js");
 
 describe("providers registry", () => {
@@ -59,22 +60,32 @@ describe("providers registry", () => {
     const claude = getProvider("claude");
     assert.equal(claude.kind, "claude-stream");
     assert.equal(claude.supportsResume, true);
+    assert.equal(claude.supportsSteer, true);
     assert.ok(claude.models.includes("claude-opus-5"));
     assert.ok(claude.models.includes("claude-haiku-4-5"));
 
     const codex = getProvider("codex");
     assert.equal(codex.kind, "codex-json");
     assert.equal(codex.supportsResume, true);
+    assert.equal(codex.supportsSteer, true);
+    assert.equal(codex.sessionPinsModel, undefined);
     assert.ok(codex.models.includes("gpt-5.5"));
     assert.ok(codex.models.includes("gpt-6-astra"));
     assert.ok(codex.models.includes("gpt-5.6-sol"));
     assert.ok(codex.models.includes("gpt-5.6-terra"));
     assert.ok(codex.models.includes("gpt-5.3-codex-spark"));
+    assert.equal(codex.models.includes("gpt-5.4-mini"), false);
     assert.ok(codex.models.length >= 5);
     const astra = codex.modelInfo.find((m) => m.id === "gpt-6-astra");
     assert.equal(astra.recommended, true);
+    assert.equal(astra.contextTokens, 272_000);
     const sol = codex.modelInfo.find((m) => m.id === "gpt-5.6-sol");
     assert.equal(sol.recommended, undefined);
+    assert.equal(sol.contextTokens, 272_000);
+    const codexSpark = codex.modelInfo.find(
+      (m) => m.id === "gpt-5.3-codex-spark",
+    );
+    assert.equal(codexSpark.contextTokens, 128_000);
 
     const grok = getProvider("grok");
     assert.equal(grok.kind, "claude-stream");
@@ -159,6 +170,34 @@ describe("providers registry", () => {
     assert.equal(spark.recommended, true);
     assert.equal(spark.contextTokens, 1_048_576);
     assert.equal(spark.vendor, "Meta");
+  });
+
+  it("marks Codex Spark text-only; Astra/Sol/Terra/Luna/5.5 take images (#1167)", () => {
+    // Live ~/.codex/models_cache.json (client 0.153.4): Spark
+    // input_modalities is ["text"]; the others are ["text","image"].
+    // Do not invent image support for Spark. Cursor gpt-5.4-mini-* ids
+    // are a different catalog. Codex gpt-5.4-mini (if still listed) stays
+    // unset — do not invent true or false.
+    const codex = getProvider("codex");
+    const byId = Object.fromEntries(
+      (codex.modelInfo || []).map((m) => [m.id, m]),
+    );
+    assert.ok(
+      !(byId["gpt-5.3-codex-spark"].inputModalities || []).includes("image"),
+      "Spark input_modalities are text-only (#1167)",
+    );
+    for (const id of [
+      "gpt-6-astra",
+      "gpt-5.6-sol",
+      "gpt-5.6-terra",
+      "gpt-5.6-luna",
+      "gpt-5.5",
+    ]) {
+      assert.ok(
+        (byId[id].inputModalities || []).includes("image"),
+        `${id} lists text+image`,
+      );
+    }
   });
 
   it("every provider model has matching modelInfo in the same order with non-empty fields", () => {
@@ -314,6 +353,88 @@ describe("providers registry", () => {
       "resume path should match fresh skip-git flag",
     );
     assert.equal(resume[resume.length - 1], "p3");
+    const blob = fresh.join("\0");
+    assert.equal(
+      blob.includes("on-request"),
+      false,
+      "exec --json stays never-policy; interactive on-request is app-server JSON-RPC only",
+    );
+    assert.equal(blob.includes("approval_policy"), false);
+    assert.equal(fresh.includes("app-server"), false);
+    assert.equal(resume.join("\0").includes("on-request"), false);
+  });
+
+  it("buildArgs: Codex -i images after exec, before prompt; Spark is text-only (#176)", () => {
+    const entry = getProvider("codex");
+    const imgA = "/tmp/a.png";
+    const imgB = "/tmp/b.png";
+    const astra = entry.buildArgs({
+      prompt: "look",
+      model: "gpt-6-astra",
+      images: [imgA, imgB],
+    });
+    assert.equal(astra[0], "exec");
+    const iIdx = astra.indexOf("-i");
+    assert.ok(iIdx > 0, `expected -i after exec: ${JSON.stringify(astra)}`);
+    assert.ok(
+      iIdx < astra.length - 1,
+      `-i must sit before trailing prompt: ${JSON.stringify(astra)}`,
+    );
+    assert.equal(astra[iIdx + 1], imgA);
+    assert.equal(astra[iIdx + 2], imgB);
+    assert.ok(
+      String(astra[iIdx + 3] || "").startsWith("-"),
+      `image paths must be followed by a flag so FILE... cannot swallow the prompt: ${JSON.stringify(astra)}`,
+    );
+    assert.equal(astra[astra.length - 1], "look");
+    assert.ok(!String(astra[astra.length - 1]).includes(imgA));
+
+    const resume = entry.buildArgs({
+      prompt: "again",
+      sessionId: "sess-codex-9",
+      model: "gpt-5.6-sol",
+      images: [imgA],
+    });
+    assert.equal(resume[0], "exec");
+    assert.equal(resume[1], "resume");
+    const resumeI = resume.indexOf("-i");
+    assert.ok(resumeI > resume.indexOf("exec"));
+    assert.equal(resume[resumeI + 1], imgA);
+    assert.ok(resumeI < resume.length - 1);
+    assert.equal(resume[resume.length - 1], "again");
+
+    const spark = entry.buildArgs({
+      prompt: "look",
+      model: "gpt-5.3-codex-spark",
+      images: [imgA],
+    });
+    assert.ok(
+      !spark.includes("-i"),
+      `Spark is text-only and must not get -i: ${JSON.stringify(spark)}`,
+    );
+    assert.equal(spark[spark.length - 1], "look");
+    assert.ok(!spark.includes(imgA));
+
+    const sparkInfo = entry.modelInfo.find((m) => m.id === "gpt-5.3-codex-spark");
+    assert.ok(sparkInfo);
+    assert.ok(
+      !(sparkInfo.inputModalities || []).includes("image"),
+      "Spark input_modalities are text-only (#1167)",
+    );
+    for (const id of [
+      "gpt-6-astra",
+      "gpt-5.6-sol",
+      "gpt-5.6-terra",
+      "gpt-5.6-luna",
+      "gpt-5.5",
+    ]) {
+      const info = entry.modelInfo.find((m) => m.id === id);
+      assert.ok(info, id);
+      assert.ok(
+        (info.inputModalities || []).includes("image"),
+        `${id} lists text+image`,
+      );
+    }
   });
 
   it("buildArgs: grok claude-stream and opencode-json shapes", () => {
@@ -433,6 +554,45 @@ describe("providers registry", () => {
     assert.ok(!list.some((p) => p.id === "simulate"));
   });
 
+  it("Codex snapshots inputModalities from the live cache (issue #1167)", () => {
+    const codex = getProvider("codex");
+    const byId = Object.fromEntries(codex.modelInfo.map((m) => [m.id, m]));
+    assert.deepEqual(byId["gpt-6-astra"].inputModalities, ["text", "image"]);
+    assert.deepEqual(byId["gpt-5.6-sol"].inputModalities, ["text", "image"]);
+    assert.deepEqual(byId["gpt-5.6-terra"].inputModalities, ["text", "image"]);
+    assert.deepEqual(byId["gpt-5.6-luna"].inputModalities, ["text", "image"]);
+    assert.deepEqual(byId["gpt-5.5"].inputModalities, ["text", "image"]);
+    assert.deepEqual(byId["gpt-5.3-codex-spark"].inputModalities, ["text"]);
+    // Retired gpt-5.4-mini is not in the live list; do not invent image support.
+    if (byId["gpt-5.4-mini"]) {
+      assert.equal(byId["gpt-5.4-mini"].inputModalities, undefined);
+    }
+
+    const listed = listProviders({
+      which: () => null,
+      env: {},
+      includeSimulate: false,
+    }).find((p) => p.id === "codex");
+    const spark = listed.modelInfo.find((m) => m.id === "gpt-5.3-codex-spark");
+    const astra = listed.modelInfo.find((m) => m.id === "gpt-6-astra");
+    assert.deepEqual(spark.inputModalities, ["text"]);
+    assert.deepEqual(astra.inputModalities, ["text", "image"]);
+  });
+
+  it("listProviders advertises supportsSteer for Claude and Codex", () => {
+    const which = () => null;
+    const list = listProviders({ which, env: {}, includeSimulate: true });
+    assert.equal(list.find((p) => p.id === "claude").supportsSteer, true);
+    assert.equal(list.find((p) => p.id === "codex").supportsSteer, true);
+    for (const id of ["grok", "opencode", "kimi", "cursor", "muse", "simulate"]) {
+      assert.equal(
+        list.find((p) => p.id === id).supportsSteer,
+        false,
+        `${id} must not advertise live-turn steering`,
+      );
+    }
+  });
+
   it("listProviders includes simulate only when CODER_SIMULATE=1", () => {
     const which = () => null;
     const without = listProviders({
@@ -497,5 +657,84 @@ describe("providers registry", () => {
     available = false;
     const b = listProviders({ which, env: {}, includeSimulate: false });
     assert.equal(b.find((p) => p.id === "claude").available, false);
+  });
+});
+
+describe("sessionIdForResume (#1020)", () => {
+  const codex = getProvider("codex");
+  const claude = getProvider("claude");
+
+  it("keeps Codex resume across a model-only change (turn/start.model sticks)", () => {
+    const thread = {
+      sessionId: "sess-sol",
+      model: "gpt-6-astra",
+      ejected: false,
+    };
+    assert.equal(
+      sessionIdForResume(codex, thread, { model: "gpt-5.6-sol" }),
+      "sess-sol",
+    );
+    assert.equal(
+      sessionIdForResume(codex, thread, { model: "gpt-6-astra" }),
+      "sess-sol",
+    );
+  });
+
+  it("keeps Claude resume across a model-only change", () => {
+    assert.equal(
+      sessionIdForResume(
+        claude,
+        { sessionId: "sess-1", model: "claude-sonnet-5" },
+        { model: "claude-opus-5" },
+      ),
+      "sess-1",
+    );
+  });
+
+  it("never resumes an ejected thread", () => {
+    assert.equal(
+      sessionIdForResume(
+        codex,
+        { sessionId: "sess-sol", model: "gpt-6-astra", ejected: true },
+        { model: "gpt-6-astra" },
+      ),
+      null,
+    );
+  });
+
+  it("keeps Codex resume when picker differs from sessionStartModel (turn/start.model)", () => {
+    // Interactive app-server honors turn/start.model. sessionPinsModel is
+    // unset, so a picker switch keeps the session. exec resume still
+    // hydrates the original rollout; ejectCommand notes that separately.
+    assert.equal(
+      sessionIdForResume(
+        codex,
+        {
+          sessionId: "sess-sol",
+          model: "gpt-6-astra",
+          sessionStartModel: "gpt-5.6-sol",
+          ejected: false,
+        },
+        { model: "gpt-6-astra" },
+      ),
+      "sess-sol",
+    );
+  });
+
+  it("sessionPinsModel providers skip resume when picker differs from sessionStartModel", () => {
+    const pinned = { ...codex, sessionPinsModel: true };
+    assert.equal(
+      sessionIdForResume(
+        pinned,
+        {
+          sessionId: "sess-sol",
+          model: "gpt-6-astra",
+          sessionStartModel: "gpt-5.6-sol",
+          ejected: false,
+        },
+        { model: "gpt-6-astra" },
+      ),
+      null,
+    );
   });
 });

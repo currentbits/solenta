@@ -82,7 +82,7 @@ export function AddProjectPathModal({
     onClose();
   }, [onClose, pending]);
 
-  useEscapeClose(true, handleClose);
+  useEscapeClose(!pending, handleClose);
   useModalFocus(true, dialogRef);
 
   const host = remoteHost.trim();
@@ -181,6 +181,7 @@ export function AddProjectPathModal({
         aria-modal="true"
         aria-labelledby="add-project-path-title"
         tabIndex={-1}
+        data-add-project-path-dialog=""
         onClick={(e) => e.stopPropagation()}
       >
         <div className={styles.header}>

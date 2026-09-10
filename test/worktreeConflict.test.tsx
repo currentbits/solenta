@@ -77,6 +77,7 @@ function chrome(opts: {
   conflictContext?: (threadId: string) => Promise<ConflictResolveInput>;
   listBaseBranches?: () => Promise<{ defaultBranch: string; branches: string[] }>;
   onSetBaseBranch?: (baseBranch: string | null) => Promise<unknown>;
+  onRefreshWorkerSnapshot?: () => Promise<unknown>;
 }) {
   return (
     <WorktreeControl
@@ -90,6 +91,7 @@ function chrome(opts: {
       conflictContext={opts.conflictContext}
       listBaseBranches={opts.listBaseBranches}
       onSetBaseBranch={opts.onSetBaseBranch}
+      onRefreshWorkerSnapshot={opts.onRefreshWorkerSnapshot}
     />
   );
 }
@@ -103,7 +105,7 @@ describe("worktree conflict resolve (#163)", () => {
         },
       }),
     );
-    await m.click(m.byText("Merge worktree"));
+    await m.click(m.query("[data-worktree-merge]"));
     assert.ok(m.text().includes("README.md"));
     assert.equal(m.query("[data-conflict-resolve]"), null);
     assert.ok(m.byText("Merge again"));
@@ -133,7 +135,7 @@ describe("worktree conflict resolve (#163)", () => {
     }
 
     const m = await mount(<Harness />);
-    await m.click(m.byText("Merge worktree"));
+    await m.click(m.query("[data-worktree-merge]"));
     assert.equal(merges, 1);
     const resolveBtn = m.query("[data-conflict-resolve]");
     assert.ok(resolveBtn, "Let the agent resolve is on the conflict banner");
@@ -178,7 +180,7 @@ describe("worktree conflict resolve (#163)", () => {
     }
 
     const m = await mount(<Harness />);
-    await m.click(m.byText("Merge worktree"));
+    await m.click(m.query("[data-worktree-merge]"));
     await m.click(m.query("[data-conflict-resolve]"));
     assert.equal(prompts.length, 1);
     await m.click(m.byText("Dismiss"));
@@ -402,6 +404,111 @@ describe("rebase conflict card (#777)", () => {
     assert.match(dirty!.textContent || "", /README\.md/);
     assert.equal(m.query("[data-worktree-banner='conflict']"), null);
     assert.equal(m.query("[data-worktree-banner='error']"), null);
+    m.unmount();
+  });
+});
+
+describe("worker start snapshot (#948)", () => {
+  it("shows the source branch and short SHA separately from the merge destination", async () => {
+    const m = await mount(
+      chrome({
+        thread: thread({
+          orchWorker: true,
+          handoffFrom: "lead",
+          leadSnapshotSha: "abcdef1234567890",
+          leadSnapshotBranch: "coder/lead",
+          baseBranch: null,
+        }),
+      }),
+    );
+    const source = m.query("[data-start-snapshot]");
+    assert.ok(source, "start snapshot label");
+    assert.match(source!.textContent || "", /coder\/lead/);
+    assert.match(source!.textContent || "", /abcdef1/);
+    const dest = m.query("[data-stacked-base]");
+    assert.ok(dest);
+    assert.equal((dest!.textContent || "").trim(), "repo default");
+    m.unmount();
+  });
+
+  it("says the worker inherits committed work only when the lead was dirty", async () => {
+    const m = await mount(
+      chrome({
+        thread: thread({
+          orchWorker: true,
+          handoffFrom: "lead",
+          leadSnapshotSha: "abcdef1234567890",
+          leadSnapshotBranch: "coder/lead",
+          leadSnapshotDirty: true,
+        }),
+      }),
+    );
+    const note = m.query("[data-start-snapshot-dirty]");
+    assert.ok(note);
+    assert.match(note!.textContent || "", /inherits committed work only/i);
+    m.unmount();
+  });
+
+  it("shows the recorded snapshot before the worktree is materialized", async () => {
+    const m = await mount(
+      chrome({
+        thread: thread({
+          worktreePath: null,
+          branch: null,
+          orchWorker: true,
+          pendingWorktree: true,
+          handoffFrom: "lead",
+          leadSnapshotSha: "abcdef1234567890",
+          leadSnapshotBranch: "coder/lead",
+        }),
+      }),
+    );
+    const source = m.query("[data-start-snapshot]");
+    assert.ok(source);
+    assert.match(source!.textContent || "", /coder\/lead/);
+    assert.match(source!.textContent || "", /abcdef1/);
+    m.unmount();
+  });
+
+  it("offers an explicit refresh onto the lead snapshot when idle", async () => {
+    let calls = 0;
+    const m = await mount(
+      chrome({
+        thread: thread({
+          orchWorker: true,
+          handoffFrom: "lead",
+          leadSnapshotSha: "abcdef1234567890",
+          leadSnapshotBranch: "coder/lead",
+        }),
+        onRefreshWorkerSnapshot: async () => {
+          calls += 1;
+        },
+      }),
+    );
+    const btn = m.query("[data-refresh-snapshot]") as HTMLButtonElement;
+    assert.ok(btn, "refresh snapshot action");
+    assert.equal(btn.disabled, false);
+    await m.click(btn);
+    assert.equal(calls, 1);
+    m.unmount();
+  });
+
+  it("disables refresh while the worker is running", async () => {
+    const m = await mount(
+      chrome({
+        thread: thread({
+          status: "working",
+          orchWorker: true,
+          handoffFrom: "lead",
+          leadSnapshotSha: "abcdef1234567890",
+          leadSnapshotBranch: "coder/lead",
+        }),
+        onRefreshWorkerSnapshot: async () => {},
+      }),
+    );
+    const btn = m.query("[data-refresh-snapshot]") as HTMLButtonElement;
+    assert.ok(btn);
+    assert.equal(btn.disabled, true);
     m.unmount();
   });
 });

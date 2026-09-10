@@ -203,6 +203,7 @@ describe("runner contextTokens accuracy (#317, #704)", () => {
     else process.env.CODER_FAKE_CODEX_SCENARIO = prevCodexScenario;
     if (prevKimiScenario === undefined) delete process.env.CODER_FAKE_KIMI_SCENARIO;
     else process.env.CODER_FAKE_KIMI_SCENARIO = prevKimiScenario;
+    delete process.env.CODER_FAKE_CODEX_EVENTS_FILE;
   });
 
   it("claude result with cache_read includes cache tokens in contextTokens only", async () => {
@@ -249,55 +250,58 @@ process.exit(0);
   });
 
   it("codex token_count captures contextWindow and does not add cumulative totals", async () => {
-    process.env.CODER_CODEX_BIN = writeScript(
+    const eventsFile = path.join(tmpDir, "codex-events.jsonl");
+    fs.writeFileSync(
+      eventsFile,
+      [
+        {
+          type: "item.completed",
+          item: { id: "m1", type: "agent_message", text: "hello" },
+        },
+        {
+          type: "token_count",
+          info: {
+            total_token_usage: {
+              input_tokens: 100,
+              cached_input_tokens: 40,
+              output_tokens: 10,
+              total_tokens: 110,
+            },
+            last_token_usage: {
+              input_tokens: 100,
+              cached_input_tokens: 40,
+              output_tokens: 10,
+              total_tokens: 110,
+            },
+            model_context_window: 258400,
+          },
+        },
+        {
+          type: "token_count",
+          info: {
+            total_token_usage: {
+              input_tokens: 250,
+              cached_input_tokens: 180,
+              output_tokens: 20,
+              total_tokens: 270,
+            },
+            last_token_usage: {
+              input_tokens: 150,
+              cached_input_tokens: 140,
+              output_tokens: 10,
+              total_tokens: 160,
+            },
+            model_context_window: 272000,
+          },
+        },
+      ]
+        .map((ev) => JSON.stringify(ev))
+        .join("\n"),
+    );
+    process.env.CODER_FAKE_CODEX_EVENTS_FILE = eventsFile;
+    process.env.CODER_CODEX_BIN = require("./support/fakeCodexCli.js").writeFakeCodexBin(
       tmpDir,
-      "fake-codex",
-      `#!/usr/bin/env node
-"use strict";
-function emit(obj) { process.stdout.write(JSON.stringify(obj) + "\\n"); }
-emit({ type: "thread.started", thread_id: "codex-sess-ctx" });
-emit({
-  type: "item.completed",
-  item: { id: "m1", type: "agent_message", text: "hello" },
-});
-emit({
-  type: "token_count",
-  info: {
-    total_token_usage: {
-      input_tokens: 100,
-      cached_input_tokens: 40,
-      output_tokens: 10,
-      total_tokens: 110,
-    },
-    last_token_usage: {
-      input_tokens: 100,
-      cached_input_tokens: 40,
-      output_tokens: 10,
-      total_tokens: 110,
-    },
-    model_context_window: 258400,
-  },
-});
-emit({
-  type: "token_count",
-  info: {
-    total_token_usage: {
-      input_tokens: 250,
-      cached_input_tokens: 180,
-      output_tokens: 20,
-      total_tokens: 270,
-    },
-    last_token_usage: {
-      input_tokens: 150,
-      cached_input_tokens: 140,
-      output_tokens: 10,
-      total_tokens: 160,
-    },
-    model_context_window: 272000,
-  },
-});
-process.exit(0);
-`,
+      writeFakeBin,
     );
 
     const project = store.getProjects()[0];

@@ -1,5 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  originFromRowKey,
+  useViewRestore,
+  type ThreadOpenOrigin,
+  type ViewReturnState,
+} from "../viewReturn";
+import {
   digestHeadline,
   formatUsd,
   summarizeDigest,
@@ -12,7 +18,11 @@ export interface DigestViewProps {
   projects: ProjectInfo[];
   loadDigest: (input?: { sinceMs?: number }) => Promise<DigestResult>;
   markSeen: () => Promise<{ seenAt: number }>;
-  onSelectThread: (id: string) => void;
+  onSelectThread: (id: string, origin?: ThreadOpenOrigin) => void;
+  restore?: ViewReturnState | null;
+  onRestoreApplied?: () => void;
+  /** Live sidebar ids. Omitted means the list is still loading — treat rows as openable. */
+  existingThreadIds?: Iterable<string>;
 }
 
 function formatDigestWindow(sinceMs: number, now: number): string {
@@ -56,23 +66,37 @@ export function DigestView({
   loadDigest,
   markSeen,
   onSelectThread,
+  existingThreadIds,
+  restore = null,
+  onRestoreApplied,
 }: DigestViewProps) {
   const [result, setResult] = useState<DigestResult | null>(null);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [ackError, setAckError] = useState<string | null>(null);
+  const [hasLastSuccess, setHasLastSuccess] = useState(false);
+  const [marking, setMarking] = useState(false);
   const [now, setNow] = useState(() => Date.now());
   const loadGen = useRef(0);
 
   const loadAll = useCallback(async () => {
     const gen = ++loadGen.current;
     setLoading(true);
+    setError(null);
+    setAckError(null);
     try {
       const next = await loadDigest();
       if (gen !== loadGen.current) return;
       setResult(next && typeof next === "object" ? next : null);
+      setHasLastSuccess(true);
       setNow(Date.now());
-    } catch {
+    } catch (err) {
       if (gen !== loadGen.current) return;
-      setResult(null);
+      const msg =
+        err instanceof Error && err.message
+          ? err.message
+          : "Failed to load digest";
+      setError(msg);
     } finally {
       if (gen === loadGen.current) setLoading(false);
     }
@@ -86,10 +110,19 @@ export function DigestView({
   }, [loadAll]);
 
   const onMarkReviewed = useCallback(async () => {
+    setMarking(true);
+    setAckError(null);
     try {
       await markSeen();
-    } catch {
+    } catch (err) {
+      const msg =
+        err instanceof Error && err.message
+          ? err.message
+          : "Failed to mark reviewed";
+      setAckError(msg);
       return;
+    } finally {
+      setMarking(false);
     }
     await loadAll();
   }, [markSeen, loadAll]);
@@ -100,25 +133,37 @@ export function DigestView({
     return map;
   }, [projects]);
 
+  const liveThreadIds = useMemo(() => {
+    if (existingThreadIds == null) return null;
+    return new Set(existingThreadIds);
+  }, [existingThreadIds]);
+
   const summary = useMemo(
     () => summarizeDigest(result?.runs ?? []),
     [result],
   );
-  const empty = !loading && (result == null || result.runs.length === 0);
+  const empty = hasLastSuccess && (result == null || result.runs.length === 0);
+  const showLoading = loading && !hasLastSuccess && !error;
+  const initialError = Boolean(error && !hasLastSuccess);
   const windowLabel = result ? formatDigestWindow(result.sinceMs, now) : "";
+  const canMarkReviewed = hasLastSuccess && !loading && !marking;
+  const rootRef = useRef<HTMLElement>(null);
+  useViewRestore(hasLastSuccess, restore, rootRef, onRestoreApplied);
 
   return (
-    <main className={styles.main} data-digest="">
+    <main className={styles.main} data-digest="" ref={rootRef}>
       <header className={styles.header}>
         <div className={styles.brand}>
           <h1 className={styles.title}>Morning digest</h1>
-          <p
-            className={styles.headline}
-            data-digest-headline=""
-            data-wasted={summary.wastedUsd > 0 ? "true" : undefined}
-          >
-            {digestHeadline(summary)}
-          </p>
+          {hasLastSuccess ? (
+            <p
+              className={styles.headline}
+              data-digest-headline=""
+              data-wasted={summary.wastedUsd > 0 ? "true" : undefined}
+            >
+              {digestHeadline(summary)}
+            </p>
+          ) : null}
           {windowLabel ? (
             <p className={styles.window} data-digest-window="">
               {windowLabel}
@@ -139,7 +184,7 @@ export function DigestView({
             type="button"
             className={styles.refresh}
             onClick={() => void onMarkReviewed()}
-            disabled={loading}
+            disabled={!canMarkReviewed}
             title="Mark reviewed"
             data-digest-mark-seen=""
           >
@@ -148,16 +193,65 @@ export function DigestView({
         </div>
       </header>
 
-      {loading && result == null ? (
+      {showLoading ? (
         <p className={styles.hint} aria-live="polite">
           Loading digest…
         </p>
-      ) : empty ? (
+      ) : initialError ? (
+        <div className={styles.empty} data-digest-error="">
+          <p className={styles.emptyTitle}>Could not load digest</p>
+          <p className={styles.emptyHint} role="alert">
+            {error}
+          </p>
+          <button
+            type="button"
+            className={styles.retry}
+            onClick={() => void loadAll()}
+            disabled={loading}
+            title="Retry"
+          >
+            Retry
+          </button>
+        </div>
+      ) : (
+        <>
+          {error || ackError ? (
+            <div
+              className={styles.refreshStatus}
+              data-digest-error={error ? "" : undefined}
+            >
+              {error ? (
+                <>
+                  <p className={styles.hint} role="alert">
+                    {error}
+                  </p>
+                  <p className={styles.hint} data-digest-stale="" data-stale="">
+                    Last successful digest · stale
+                  </p>
+                  <button
+                    type="button"
+                    className={styles.retry}
+                    onClick={() => void loadAll()}
+                    disabled={loading}
+                    title="Retry"
+                  >
+                    Retry
+                  </button>
+                </>
+              ) : null}
+              {ackError ? (
+                <p className={styles.hint} role="alert" data-digest-ack-error="">
+                  {ackError}
+                </p>
+              ) : null}
+            </div>
+          ) : null}
+          {empty ? (
         <div className={styles.empty}>
           <p className={styles.emptyTitle}>Nothing ran while you were away.</p>
         </div>
-      ) : (
-        <div className={styles.list}>
+          ) : (
+        <div className={styles.list} data-return-scroll="">
           {summary.groups.map((group) => (
             <section
               key={group.bucket}
@@ -191,23 +285,39 @@ export function DigestView({
                   const slug =
                     projectSlug.get(run.projectId) ?? run.projectSlug;
                   const check = checkState(run.checks);
+                  const missing =
+                    liveThreadIds != null && !liveThreadIds.has(run.threadId);
                   return (
                     <div
                       key={run.threadId}
                       className={styles.row}
                       data-digest-row={run.threadId}
+                      data-return-row={run.threadId}
                       data-bucket={group.bucket}
+                      data-thread-unavailable={missing ? "" : undefined}
                     >
-                      <button
-                        type="button"
-                        className={styles.rowSelect}
-                        aria-label={`Select thread: ${run.title}`}
-                        onClick={() => onSelectThread(run.threadId)}
-                      />
+                      {missing ? null : (
+                        <button
+                          type="button"
+                          className={styles.rowSelect}
+                          aria-label={`Select thread: ${run.title}`}
+                          onClick={() =>
+                            onSelectThread(
+                              run.threadId,
+                              originFromRowKey(rootRef.current, run.threadId),
+                            )
+                          }
+                        />
+                      )}
                       <div className={styles.rowBody}>
                         <div className={styles.rowTop}>
                           <span className={styles.slug}>{slug}</span>
                           <span className={styles.threadTitle}>{run.title}</span>
+                          {missing ? (
+                            <span className={styles.unavailable}>
+                              Transcript unavailable
+                            </span>
+                          ) : null}
                         </div>
                         <div className={styles.rowMeta}>
                           <span className={styles.reason}>{entry.reason}</span>
@@ -246,6 +356,8 @@ export function DigestView({
             </section>
           ))}
         </div>
+          )}
+        </>
       )}
     </main>
   );

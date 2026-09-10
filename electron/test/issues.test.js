@@ -19,6 +19,7 @@ const {
   setPlanStatus,
   reopenIssue,
   completeIssue,
+  commentIssue,
   createIssue,
 } = require("../issues.js");
 const { writeFakeBin } = require("./support/fakeBin.js");
@@ -830,5 +831,165 @@ process.exit(1);
       reason: "not a GitHub repo",
     });
     assert.deepEqual(calls(), []);
+  });
+});
+
+describe("commentIssue", () => {
+  let tmp;
+  let repo;
+  let prevGh;
+  let callsPath;
+
+  function writeFakeGh(body) {
+    const bin = writeFakeBin(
+      path.join(tmp, "fake-gh"),
+      `#!/usr/bin/env node
+"use strict";
+const fs = require("node:fs");
+const args = process.argv.slice(2);
+const file = ${JSON.stringify(callsPath)};
+const prev = fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, "utf8")) : [];
+prev.push(args);
+fs.writeFileSync(file, JSON.stringify(prev));
+${body}
+`,
+    );
+    process.env.CODER_GH_BIN = bin;
+  }
+
+  function calls() {
+    return fs.existsSync(callsPath)
+      ? JSON.parse(fs.readFileSync(callsPath, "utf8"))
+      : [];
+  }
+
+  beforeEach(() => {
+    tmp = fs.mkdtempSync(path.join(os.tmpdir(), "coder-comment-issue-"));
+    repo = path.join(tmp, "repo");
+    fs.mkdirSync(repo);
+    git(repo, ["init", "-q", "-b", "main"]);
+    git(repo, ["remote", "add", "origin", "https://github.com/acme/demo.git"]);
+    callsPath = path.join(tmp, "gh-calls.json");
+    prevGh = process.env.CODER_GH_BIN;
+    writeFakeGh(`
+if (args[1] === "comment") {
+  process.stdout.write("https://github.com/acme/demo/issues/150#issuecomment-99\\n");
+  process.exit(0);
+}
+if (args[1] === "edit" || args[1] === "close" || args[1] === "reopen") {
+  process.stderr.write("must not change issue state\\n");
+  process.exit(1);
+}
+process.exit(0);
+`);
+  });
+
+  afterEach(() => {
+    if (prevGh == null) delete process.env.CODER_GH_BIN;
+    else process.env.CODER_GH_BIN = prevGh;
+    fs.rmSync(tmp, { recursive: true, force: true });
+  });
+
+  it("posts a comment and returns the comment URL without editing or closing", async () => {
+    assert.deepEqual(await commentIssue(repo, 150, "amendment"), {
+      ok: true,
+      url: "https://github.com/acme/demo/issues/150#issuecomment-99",
+    });
+    const seen = calls();
+    assert.deepEqual(seen, [
+      ["issue", "comment", "150", "--body", "amendment"],
+    ]);
+  });
+
+  it("still comments a closed issue and does not reopen or relabel it", async () => {
+    writeFakeGh(`
+if (args[1] === "comment") {
+  process.stdout.write("https://github.com/acme/demo/issues/154#issuecomment-7\\n");
+  process.exit(0);
+}
+if (args[1] === "edit" || args[1] === "close" || args[1] === "reopen") {
+  process.stderr.write("must not change issue state\\n");
+  process.exit(1);
+}
+process.exit(0);
+`);
+    assert.deepEqual(
+      await commentIssue(repo, 154, "closed tickets still take notes"),
+      {
+        ok: true,
+        url: "https://github.com/acme/demo/issues/154#issuecomment-7",
+      },
+    );
+    const seen = calls();
+    assert.equal(seen.length, 1);
+    assert.equal(seen[0][1], "comment");
+    assert.equal(
+      seen.some((c) => c[1] === "edit" || c[1] === "close" || c[1] === "reopen"),
+      false,
+    );
+  });
+
+  it("maps a missing issue without spawning edit or close", async () => {
+    writeFakeGh(`
+process.stderr.write("GraphQL: Could not resolve to an Issue with the number of 99999.\\n");
+process.exit(1);
+`);
+    assert.deepEqual(await commentIssue(repo, 99999, "nope"), {
+      ok: false,
+      reason: "issue not found",
+    });
+    const seen = calls();
+    assert.equal(seen.length, 1);
+    assert.deepEqual(seen[0], [
+      "issue",
+      "comment",
+      "99999",
+      "--body",
+      "nope",
+    ]);
+  });
+
+  it("rejects an empty or whitespace body without spawning gh", async () => {
+    assert.deepEqual(await commentIssue(repo, 150, ""), {
+      ok: false,
+      reason: "empty comment",
+    });
+    assert.deepEqual(await commentIssue(repo, 150, "   \n\t  "), {
+      ok: false,
+      reason: "empty comment",
+    });
+    assert.deepEqual(await commentIssue(repo, 150, undefined), {
+      ok: false,
+      reason: "empty comment",
+    });
+    assert.deepEqual(calls(), []);
+  });
+
+  it("rejects a bad number without spawning gh", async () => {
+    assert.deepEqual(await commentIssue(repo, 0, "x"), {
+      ok: false,
+      reason: "invalid issue reference",
+    });
+    assert.deepEqual(calls(), []);
+  });
+
+  it("rejects a non-GitHub remote without spawning gh", async () => {
+    git(repo, ["remote", "set-url", "origin", "https://gitlab.com/acme/demo.git"]);
+    assert.deepEqual(await commentIssue(repo, 150, "x"), {
+      ok: false,
+      reason: "not a GitHub repo",
+    });
+    assert.deepEqual(calls(), []);
+  });
+
+  it("reports auth failure and never throws", async () => {
+    writeFakeGh(`
+process.stderr.write("To get started with GitHub CLI, please run: gh auth login\\n");
+process.exit(1);
+`);
+    assert.deepEqual(await commentIssue(repo, 150, "x"), {
+      ok: false,
+      reason: "auth",
+    });
   });
 });

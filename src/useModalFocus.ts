@@ -12,10 +12,15 @@ function focusableIn(root: HTMLElement): HTMLElement[] {
 /**
  * Initial focus, Tab cycle, and restore. Same idea as the context-menu
  * stack in contextMenuFallback: keep keyboard work inside the overlay.
+ *
+ * Pass takeFocus=false when the overlay already owns open-focus (listbox
+ * timeout, drill-in, Escape-back). Still traps Tab; skips root.focus(),
+ * focusin steal, and restore so those do not fight the list or the trigger.
  */
 export function useModalFocus(
   open: boolean,
   containerRef: RefObject<HTMLElement | null>,
+  takeFocus = true,
 ): void {
   useLayoutEffect(() => {
     if (!open) return;
@@ -25,7 +30,7 @@ export function useModalFocus(
       document.activeElement instanceof HTMLElement
         ? document.activeElement
         : null;
-    root.focus();
+    if (takeFocus) root.focus();
 
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "Tab") return;
@@ -47,6 +52,7 @@ export function useModalFocus(
     };
 
     const onFocusIn = (e: FocusEvent) => {
+      if (!root.isConnected) return;
       if (root.contains(e.target as Node)) return;
       e.stopPropagation();
       const items = focusableIn(root);
@@ -54,11 +60,11 @@ export function useModalFocus(
     };
 
     document.addEventListener("keydown", onKey);
-    document.addEventListener("focusin", onFocusIn);
+    if (takeFocus) document.addEventListener("focusin", onFocusIn);
     return () => {
       document.removeEventListener("keydown", onKey);
       document.removeEventListener("focusin", onFocusIn);
-      if (previous?.isConnected) previous.focus();
+      if (takeFocus && previous?.isConnected) previous.focus();
     };
-  }, [open, containerRef]);
+  }, [open, containerRef, takeFocus]);
 }

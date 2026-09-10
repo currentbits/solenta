@@ -3,9 +3,9 @@
 /**
  * Review itinerary extras: finishing-agent note, annotation file, accepted hunks.
  *
- * Run: node --test electron/test/review-itinerary.test.js
+ * Run: node --import=./test/support/render.mjs --experimental-strip-types --test electron/test/review-itinerary.test.js
  */
-const { describe, it, after } = require("node:test");
+const { describe, it, after, beforeEach, afterEach } = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const os = require("node:os");
@@ -20,7 +20,10 @@ const {
   loadReviewContext,
   setReviewAccepted,
 } = require("../reviewItinerary.js");
-const { reviewItineraryNoteFor: fromServices } = require("../services.js");
+const services = require("../services.js");
+const { reviewItineraryNoteFor: fromServices } = services;
+const { Store, SAVE_DEBOUNCE_MS } = require("../store.js");
+const { IPC_HANDLERS } = require("../ipc.js");
 
 const THREAD_ID = "a2db4269-c85d-4822-815d-c03f5d92a395";
 
@@ -120,6 +123,7 @@ describe("annotation + accepted hunks", () => {
       getProject: (id) =>
         id === "p1" ? { id: "p1", path: cwd, remoteHost: null } : null,
       updateThread: (id, patch) => Object.assign(thread, patch),
+      save() {},
     };
     const ctx = loadReviewContext({ store, threadId: "t1", userDataPath: "" });
     assert.deepEqual(ctx.acceptedHunks, ["abc"]);
@@ -195,5 +199,93 @@ describe("annotation + accepted hunks", () => {
       { name: "clip", path: "src/format.ts" },
       { name: "App", path: "src/a.ts" },
     ]);
+  });
+});
+
+function envelopeThread(filePath, threadId) {
+  const data = JSON.parse(fs.readFileSync(filePath, "utf8"));
+  return (data.threads || []).find((t) => t.id === threadId) || null;
+}
+
+async function awaitDebouncedFlush(store) {
+  await new Promise((r) => setTimeout(r, SAVE_DEBOUNCE_MS + 80));
+  await store.flushPending();
+}
+
+describe("git:setReviewAccepted persistence (#936)", () => {
+  let tmpDir;
+  let store;
+  let threadId;
+  let ctx;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "review-accepted-"));
+    store = new Store(path.join(tmpDir, "store.json"));
+    store.setProjects([
+      { id: "p1", slug: "acme/app", name: "app", path: tmpDir },
+    ]);
+    const thread = services.createThread(store, {
+      projectId: "p1",
+      title: "Review",
+    });
+    threadId = thread.id;
+    store.saveNow();
+    assert.equal(store._dirty, false, "precondition: clean after saveNow");
+    assert.equal(store._timer, null, "precondition: no flush armed");
+    ctx = { store };
+  });
+
+  afterEach(async () => {
+    if (store && store._timer) {
+      clearTimeout(store._timer);
+      store._timer = null;
+    }
+    if (store) await store.flushPending();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("checking a hunk schedules a debounced write that reloads", async () => {
+    const updated = await IPC_HANDLERS["git:setReviewAccepted"](ctx, {
+      threadId,
+      hashes: ["reviewed-hunk", "reviewed-hunk"],
+    });
+    assert.deepEqual(updated.reviewAcceptedHunks, ["reviewed-hunk"]);
+    assert.equal(store._dirty, true);
+    assert.ok(store._timer, "must arm the ordinary debounced flush");
+    assert.deepEqual(
+      envelopeThread(store.filePath, threadId).reviewAcceptedHunks,
+      [],
+      "must not write through immediately (saveNow)",
+    );
+
+    await awaitDebouncedFlush(store);
+    const reloaded = new Store(store.filePath);
+    assert.deepEqual(reloaded.getThread(threadId).reviewAcceptedHunks, [
+      "reviewed-hunk",
+    ]);
+  });
+
+  it("unchecking a hunk schedules a debounced write that reloads empty", async () => {
+    store.updateThread(threadId, { reviewAcceptedHunks: ["reviewed-hunk"] });
+    store.saveNow();
+    assert.equal(store._dirty, false);
+    assert.equal(store._timer, null);
+
+    const updated = await IPC_HANDLERS["git:setReviewAccepted"](ctx, {
+      threadId,
+      hashes: [],
+    });
+    assert.deepEqual(updated.reviewAcceptedHunks, []);
+    assert.equal(store._dirty, true);
+    assert.ok(store._timer, "must arm the ordinary debounced flush");
+    assert.deepEqual(
+      envelopeThread(store.filePath, threadId).reviewAcceptedHunks,
+      ["reviewed-hunk"],
+      "must not write through immediately (saveNow)",
+    );
+
+    await awaitDebouncedFlush(store);
+    const reloaded = new Store(store.filePath);
+    assert.deepEqual(reloaded.getThread(threadId).reviewAcceptedHunks, []);
   });
 });

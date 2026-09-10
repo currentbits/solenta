@@ -20,6 +20,12 @@ import type {
   DevServerState,
   Hypothesis,
   LocalServerInfo,
+  MergeLaneClaim,
+  MergeLaneInfo,
+  MergeLanePreview,
+  MergeLaneRecycle,
+  MergeLaneRestore,
+  MergeSpotlight,
   McpCatalogEntry,
   McpImportPreview,
   McpInstallRequest,
@@ -46,9 +52,15 @@ import type {
   SkillPreviewImportInput,
   SkillTarget,
   SkillWrite,
+  HarnessSourceId,
+  HarnessSourceInfo,
+  HarnessImportPreview,
+  HarnessInstallRequest,
+  HarnessInstallResult,
   ThreadInfo,
   ThreadSummaryInfo,
   CrewTaskView,
+  CrewIntegration as CrewIntegrationView,
   VerifyResult,
   WorkflowView,
 } from "../shared/ipc";
@@ -62,6 +74,7 @@ import {
 } from "../format";
 import { contextRing, threadContextWindow } from "../contextRing";
 import { buildWaitStates, waitLabel, type WaitState } from "../waiting";
+import { CrewIntegration } from "./CrewIntegration";
 import { MemoryTab } from "./MemoryTab";
 import { SkillsTab } from "./SkillsTab";
 import {
@@ -146,6 +159,16 @@ interface AgentsPanelProps {
   listCrewTasks?: (
     threadId: string,
   ) => Promise<{ rootThreadId: string; tasks: CrewTaskView[] }>;
+  /** Lead Integration view (#954 / #982). Absent = hide the section. */
+  crewIntegration?: (threadId: string) => Promise<CrewIntegrationView>;
+  /** Squash a worker onto the lead worktree. */
+  onIntegrateWorker?: (workerThreadId: string) => Promise<void>;
+  /** Retarget an idle worker onto the lead's current committed HEAD. */
+  onRefreshWorker?: (workerThreadId: string) => Promise<void>;
+  /** Combined-result verify on the lead. */
+  onVerifyLead?: () => Promise<void>;
+  /** Final Open PR / Merge into target. Separate from worker integrate. */
+  onLandLead?: () => Promise<void>;
   /** Select a thread (team row click). */
   onSelectThread?: (id: string) => void;
   /** Re-spawn a failed workflow phase agent (#825). */
@@ -173,10 +196,13 @@ interface AgentsPanelProps {
   searchMemory: (input: {
     query: string;
     project?: string;
+    type?: MemoryEntryInfo["type"];
   }) => Promise<MemoryEntryInfo[]>;
   recentMemory: (input?: {
     limit?: number;
+    offset?: number;
     project?: string;
+    type?: MemoryEntryInfo["type"];
   }) => Promise<MemoryEntryInfo[]>;
   getMemory: (input: { id: string }) => Promise<MemoryEntryInfo>;
   updateMemory: (input: {
@@ -193,6 +219,7 @@ interface AgentsPanelProps {
   }) => Promise<{ id: string }>;
   maintenanceMemory?: (input?: {
     project?: string;
+    summary?: boolean;
   }) => Promise<MemoryMaintenanceReport>;
   resolveMemory?: (input: {
     id: number;
@@ -240,8 +267,19 @@ interface AgentsPanelProps {
     input: SkillInstallRequest,
   ) => Promise<SkillInstallResult>;
   discardSkillImport: (input: { previewId: string }) => Promise<void>;
+  detectHarnessSources: () => Promise<HarnessSourceInfo[]>;
+  previewHarnessImport: (input: {
+    source: HarnessSourceId;
+    projectPath?: string;
+  }) => Promise<HarnessImportPreview>;
+  installHarnessImport: (
+    input: HarnessInstallRequest,
+  ) => Promise<HarnessInstallResult>;
+  discardHarnessImport: (input: { previewId: string }) => Promise<void>;
   /** Center-pane view, so Pulse/Environment can mark the active destination. */
   activeView?: string;
+  /** Bump to force the Agents tab (worker-header "Crew integration on lead"). */
+  focusAgentsTabNonce?: number;
   onOpenPrs?: () => void;
   onOpenAutomations?: () => void;
   onOpenUsage?: () => void;
@@ -255,6 +293,26 @@ interface AgentsPanelProps {
   onFork?: (
     opts?: { provider?: string; model?: string | null },
   ) => void | Promise<void | ThreadInfo | null>;
+  /** Merge-queue lanes (#346). Absent hides the Environment Lanes card. */
+  claimLane?: (input: { threadId: string }) => Promise<MergeLaneClaim>;
+  listLanes?: (input: { projectId: string }) => Promise<MergeLaneInfo[]>;
+  previewLane?: (input: {
+    projectId: string;
+    lane: number;
+  }) => Promise<MergeLanePreview>;
+  restorePreview?: (input: { projectId: string }) => Promise<MergeLaneRestore>;
+  recycleWedgedLanes?: (input: {
+    projectId: string;
+  }) => Promise<MergeLaneRecycle[]>;
+  spotlight?: boolean;
+  setSpotlight?: (input: {
+    projectId: string;
+    enabled: boolean;
+  }) => Promise<MergeSpotlight>;
+  spotlightLane?: (input: {
+    projectId: string;
+    lane: number;
+  }) => Promise<MergeLanePreview>;
   /** Wide-window Hide control. Absent on the narrow drawer (issue #645). */
   onCollapse?: () => void;
 }
@@ -1788,6 +1846,278 @@ function CheckpointsCard({
   );
 }
 
+function laneFromClaim(
+  threadId: string,
+  claimed: MergeLaneClaim,
+): MergeLaneInfo {
+  return {
+    n: claimed.n,
+    threadId,
+    port: claimed.port,
+    path: claimed.path,
+    branch: claimed.branch,
+    claimedAt: Date.now(),
+    lastBeat: Date.now(),
+  };
+}
+
+export function MergeQueueCard({
+  threadId,
+  projectId,
+  remote,
+  claimLane,
+  listLanes,
+  previewLane,
+  restorePreview,
+  recycleWedgedLanes,
+  spotlight,
+  setSpotlight,
+  spotlightLane,
+}: {
+  threadId: string | null;
+  projectId: string | null;
+  remote?: boolean;
+  claimLane: (input: { threadId: string }) => Promise<MergeLaneClaim>;
+  listLanes: (input: { projectId: string }) => Promise<MergeLaneInfo[]>;
+  previewLane: (input: {
+    projectId: string;
+    lane: number;
+  }) => Promise<MergeLanePreview>;
+  restorePreview: (input: { projectId: string }) => Promise<MergeLaneRestore>;
+  recycleWedgedLanes: (input: {
+    projectId: string;
+  }) => Promise<MergeLaneRecycle[]>;
+  spotlight?: boolean;
+  setSpotlight?: (input: {
+    projectId: string;
+    enabled: boolean;
+  }) => Promise<MergeSpotlight>;
+  spotlightLane?: (input: {
+    projectId: string;
+    lane: number;
+  }) => Promise<MergeLanePreview>;
+}) {
+  const [lanes, setLanes] = useState<MergeLaneInfo[]>([]);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [spotlightOn, setSpotlightOn] = useState(Boolean(spotlight));
+
+  useEffect(() => {
+    setSpotlightOn(Boolean(spotlight));
+  }, [spotlight]);
+
+  const refresh = useCallback(async () => {
+    if (!projectId) {
+      setLanes([]);
+      return;
+    }
+    try {
+      setLanes(await listLanes({ projectId }));
+      setError(null);
+    } catch (err) {
+      const msg =
+        err instanceof Error && err.message
+          ? err.message
+          : "Failed to load lanes";
+      setError(msg);
+    }
+  }, [projectId, listLanes]);
+
+  useEffect(() => {
+    void refresh();
+  }, [refresh, threadId]);
+
+  if (remote || !projectId) return null;
+
+  const mine = threadId
+    ? lanes.find((row) => row.threadId === threadId)
+    : undefined;
+
+  const run = async (fn: () => Promise<void>) => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      await fn();
+      setError(null);
+    } catch (err) {
+      const msg =
+        err instanceof Error && err.message ? err.message : "Lane action failed";
+      setError(msg);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <section className={styles.gitCard} data-lanes="">
+      <div className={styles.gitCardLabel}>
+        <svg {...LABEL_ICON_PROPS} className={styles.labelIcon}>
+          <path d="M3 4.5h6.5" />
+          <path d="M3 8h10" />
+          <path d="M3 11.5h6.5" />
+          <circle cx="12.5" cy="4.5" r="1.4" />
+          <circle cx="12.5" cy="11.5" r="1.4" />
+        </svg>
+        Lanes
+      </div>
+      {lanes.length > 0 ? (
+        <div className={styles.laneRow} data-lane-list="">
+          {lanes.map((row) => (
+            <span
+              key={`${row.n}:${row.threadId}`}
+              className={styles.laneChip}
+              data-lane-chip={String(row.n)}
+              data-lane-current={
+                row.threadId === threadId ? "true" : undefined
+              }
+            >
+              lane {row.n}
+              <span className={styles.lanePort}>PORT {row.port}</span>
+              {row.path ? (
+                <span
+                  className={styles.lanePath}
+                  data-lane-path=""
+                  title={row.path}
+                >
+                  {row.path}
+                </span>
+              ) : null}
+              {row.branch ? (
+                <span
+                  className={styles.laneBranch}
+                  data-lane-branch=""
+                  title={row.branch}
+                >
+                  {row.branch}
+                </span>
+              ) : null}
+            </span>
+          ))}
+        </div>
+      ) : (
+        <p className={styles.gitHint} data-lanes-empty="">
+          No claimed lanes
+        </p>
+      )}
+      <div className={styles.gitActions}>
+        {threadId && !mine ? (
+          <button
+            type="button"
+            className={styles.gitBtn}
+            data-lane-claim=""
+            disabled={busy}
+            onClick={() =>
+              void run(async () => {
+                const claimed = await claimLane({ threadId });
+                try {
+                  const next = await listLanes({ projectId });
+                  if (next.some((row) => row.n === claimed.n)) {
+                    setLanes(next);
+                    return;
+                  }
+                } catch {
+                  // Keep the claim receipt when list is stale or empty.
+                }
+                setLanes((prev) => {
+                  const rest = prev.filter(
+                    (row) => row.threadId !== threadId && row.n !== claimed.n,
+                  );
+                  return [...rest, laneFromClaim(threadId, claimed)].sort(
+                    (a, b) => a.n - b.n,
+                  );
+                });
+              })
+            }
+          >
+            Claim lane
+          </button>
+        ) : null}
+        {lanes.map((row) => (
+          <button
+            key={`preview-${row.n}`}
+            type="button"
+            className={styles.gitBtn}
+            data-lane-preview={String(row.n)}
+            disabled={busy}
+            onClick={() =>
+              void run(async () => {
+                if (spotlightOn && spotlightLane) {
+                  await spotlightLane({ projectId, lane: row.n });
+                } else {
+                  await previewLane({ projectId, lane: row.n });
+                }
+              })
+            }
+          >
+            Preview {row.n}
+          </button>
+        ))}
+        <button
+          type="button"
+          className={styles.gitBtn}
+          data-lane-restore=""
+          disabled={busy}
+          onClick={() =>
+            void run(async () => {
+              await restorePreview({ projectId });
+            })
+          }
+        >
+          Restore
+        </button>
+        {lanes.length > 0 ? (
+          <button
+            type="button"
+            className={styles.gitBtn}
+            data-lane-recycle=""
+            disabled={busy}
+            onClick={() =>
+              void run(async () => {
+                await recycleWedgedLanes({ projectId });
+                await refresh();
+              })
+            }
+          >
+            Recycle wedged
+          </button>
+        ) : null}
+        {setSpotlight ? (
+          <label className={styles.gitHint} data-lane-spotlight-label="">
+            <input
+              type="checkbox"
+              data-lane-spotlight=""
+              checked={spotlightOn}
+              disabled={busy}
+              onChange={(e) =>
+                void run(async () => {
+                  const enabled = e.target.checked;
+                  await setSpotlight({ projectId, enabled });
+                  setSpotlightOn(enabled);
+                })
+              }
+            />
+            Spotlight
+          </label>
+        ) : null}
+      </div>
+      {error ? (
+        <div className={styles.cardError} role="alert" data-lane-error="">
+          <span className={styles.cardErrorText}>{error}</span>
+          <button
+            type="button"
+            className={styles.cardErrorDismiss}
+            onClick={() => setError(null)}
+            aria-label="Dismiss error"
+            title="Dismiss error"
+          >
+            ×
+          </button>
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
 export function GitTab({
   thread,
   project,
@@ -1812,6 +2142,13 @@ export function GitTab({
   prsActive,
   providers = [],
   onFork,
+  claimLane,
+  listLanes,
+  previewLane,
+  restorePreview,
+  recycleWedgedLanes,
+  setSpotlight,
+  spotlightLane,
 }: {
   thread: ThreadInfo | null;
   project: ProjectInfo | null;
@@ -1827,6 +2164,25 @@ export function GitTab({
   gitPull?: (threadId: string) => Promise<GitPullResult>;
   /** threads:summaries passthrough powering the Recap card. */
   listThreadSummaries?: () => Promise<ThreadSummaryInfo[]>;
+  claimLane?: (input: { threadId: string }) => Promise<MergeLaneClaim>;
+  listLanes?: (input: { projectId: string }) => Promise<MergeLaneInfo[]>;
+  previewLane?: (input: {
+    projectId: string;
+    lane: number;
+  }) => Promise<MergeLanePreview>;
+  restorePreview?: (input: { projectId: string }) => Promise<MergeLaneRestore>;
+  recycleWedgedLanes?: (input: {
+    projectId: string;
+  }) => Promise<MergeLaneRecycle[]>;
+  spotlight?: boolean;
+  setSpotlight?: (input: {
+    projectId: string;
+    enabled: boolean;
+  }) => Promise<MergeSpotlight>;
+  spotlightLane?: (input: {
+    projectId: string;
+    lane: number;
+  }) => Promise<MergeLanePreview>;
   listDevScripts: (threadId: string) => Promise<string[]>;
   startDevServer: (threadId: string, script: string) => Promise<DevServerState>;
   stopDevServer: (threadId: string) => Promise<DevServerState>;
@@ -2027,6 +2383,29 @@ export function GitTab({
           onViewChanges={onViewChanges}
         />
       ),
+      lanes:
+        remote ||
+        !claimLane ||
+        !listLanes ||
+        !previewLane ||
+        !restorePreview ||
+        !recycleWedgedLanes
+          ? null
+          : (
+            <MergeQueueCard
+              threadId={thread?.id ?? null}
+              projectId={project?.id ?? null}
+              remote={remote}
+              claimLane={claimLane}
+              listLanes={listLanes}
+              previewLane={previewLane}
+              restorePreview={restorePreview}
+              recycleWedgedLanes={recycleWedgedLanes}
+              spotlight={project?.spotlight === true}
+              setSpotlight={setSpotlight}
+              spotlightLane={spotlightLane}
+            />
+          ),
       display: <DisplayPrefsCard />,
       remote: remote ? (
         <section className={styles.gitCard} data-remote-unavailable="">
@@ -2460,6 +2839,11 @@ export function AgentsContent({
   rosterKey = "",
   listThreadSummaries,
   listCrewTasks,
+  crewIntegration,
+  onIntegrateWorker,
+  onRefreshWorker,
+  onVerifyLead,
+  onLandLead,
   onSelectThread,
   onRetryAgent,
 }: {
@@ -2472,6 +2856,11 @@ export function AgentsContent({
   listCrewTasks?: (
     threadId: string,
   ) => Promise<{ rootThreadId: string; tasks: CrewTaskView[] }>;
+  crewIntegration?: (threadId: string) => Promise<CrewIntegrationView>;
+  onIntegrateWorker?: (workerThreadId: string) => Promise<void>;
+  onRefreshWorker?: (workerThreadId: string) => Promise<void>;
+  onVerifyLead?: () => Promise<void>;
+  onLandLead?: () => Promise<void>;
   onSelectThread?: (id: string) => void;
   onRetryAgent?: (agentId: string) => void;
 }) {
@@ -2552,6 +2941,59 @@ export function AgentsContent({
     };
   }, [thread?.id, listCrewTasks]);
 
+  const [integration, setIntegration] = useState<CrewIntegrationView | null>(
+    null,
+  );
+  const [integrationError, setIntegrationError] = useState<string | null>(
+    null,
+  );
+  const [busyWorkerId, setBusyWorkerId] = useState<string | null>(null);
+  const [busyKind, setBusyKind] = useState<"integrate" | "refresh" | null>(
+    null,
+  );
+  const [verifyingLead, setVerifyingLead] = useState(false);
+  const [landingLead, setLandingLead] = useState(false);
+  useEffect(() => {
+    const isLead = Boolean(
+      thread && summaries?.some((s) => s.handoffFrom === thread.id),
+    );
+    if (!thread || !crewIntegration || !isLead) {
+      setIntegration(null);
+      return;
+    }
+    let cancelled = false;
+    const load = () => {
+      crewIntegration(thread.id)
+        .then((res) => {
+          if (!cancelled) {
+            setIntegration(res);
+            setIntegrationError(null);
+          }
+        })
+        .catch((err) => {
+          if (!cancelled) {
+            setIntegration(null);
+            setIntegrationError(
+              err instanceof Error ? err.message : String(err),
+            );
+          }
+        });
+    };
+    void load();
+    const api = (
+      window as unknown as {
+        coder?: { on?: (channel: "threads:changed", cb: () => void) => () => void };
+      }
+    ).coder;
+    const off = api?.on?.("threads:changed", () => {
+      void load();
+    });
+    return () => {
+      cancelled = true;
+      off?.();
+    };
+  }, [thread?.id, crewIntegration, rosterKey, summaries]);
+
   const crewOwnerTitle = useCallback(
     (threadId: string) => {
       if (thread?.id === threadId) return thread.title;
@@ -2563,9 +3005,11 @@ export function AgentsContent({
 
   // Roles derive from handoffFrom: a thread WITH one is a Worker; a thread
   // another summary points to is an Orchestrator. Neither = plain session.
-  // Done workers fold behind a "N done" toggle so a long orchestration stays
-  // scannable, but the roster never vanishes; failed / idle / working stay
-  // as plain rows.
+  // Live workers stay as plain rows (failed / idle / working). Done workers
+  // fold behind a "N done" toggle while any worker is still live so a long
+  // orchestration stays scannable. When none are live — including ones the
+  // sidebar has settled — list them immediately (no toggle) so an all-done
+  // crew is not an empty Team.
   const [showDoneWorkers, setShowDoneWorkers] = useState(false);
   const team = useMemo(() => {
     if (!thread || !summaries) return null;
@@ -2697,7 +3141,7 @@ export function AgentsContent({
                   onSelect={onSelectThread}
                 />
               ))}
-              {showDoneWorkers &&
+              {(showDoneWorkers || team.workers.length === 0) &&
                 team.doneWorkers.map((w) => (
                   <TeamRow
                     key={w.id}
@@ -2708,7 +3152,7 @@ export function AgentsContent({
                   />
                 ))}
             </ul>
-            {team.doneWorkers.length > 0 && (
+            {team.doneWorkers.length > 0 && team.workers.length > 0 && (
               <button
                 type="button"
                 className={styles.doneToggle}
@@ -2721,6 +3165,100 @@ export function AgentsContent({
               </button>
             )}
           </section>
+          {crewIntegration ? (
+            <CrewIntegration
+              key={thread.id}
+              view={integration}
+              thread={thread}
+              error={integrationError}
+              busyWorkerId={busyWorkerId}
+              busyKind={busyKind}
+              verifying={verifyingLead}
+              finalPending={landingLead}
+              onIntegrate={async (workerId) => {
+                if (!onIntegrateWorker) return;
+                setBusyWorkerId(workerId);
+                setBusyKind("integrate");
+                setIntegrationError(null);
+                try {
+                  await onIntegrateWorker(workerId);
+                  if (crewIntegration) {
+                    setIntegration(await crewIntegration(thread.id));
+                  }
+                } catch (err) {
+                  setIntegrationError(
+                    err instanceof Error ? err.message : String(err),
+                  );
+                } finally {
+                  setBusyWorkerId(null);
+                  setBusyKind(null);
+                }
+              }}
+              onRefreshWorker={
+                onRefreshWorker
+                  ? async (workerId) => {
+                      setBusyWorkerId(workerId);
+                      setBusyKind("refresh");
+                      setIntegrationError(null);
+                      try {
+                        await onRefreshWorker(workerId);
+                        if (crewIntegration) {
+                          setIntegration(await crewIntegration(thread.id));
+                        }
+                      } catch (err) {
+                        setIntegrationError(
+                          err instanceof Error ? err.message : String(err),
+                        );
+                      } finally {
+                        setBusyWorkerId(null);
+                        setBusyKind(null);
+                      }
+                    }
+                  : undefined
+              }
+              onSelectThread={onSelectThread}
+              onVerify={
+                onVerifyLead
+                  ? async () => {
+                      setVerifyingLead(true);
+                      setIntegrationError(null);
+                      try {
+                        await onVerifyLead();
+                        if (crewIntegration) {
+                          setIntegration(await crewIntegration(thread.id));
+                        }
+                      } catch (err) {
+                        setIntegrationError(
+                          err instanceof Error ? err.message : String(err),
+                        );
+                      } finally {
+                        setVerifyingLead(false);
+                      }
+                    }
+                  : undefined
+              }
+              onFinal={
+                onLandLead
+                  ? async () => {
+                      setLandingLead(true);
+                      setIntegrationError(null);
+                      try {
+                        await onLandLead();
+                        if (crewIntegration) {
+                          setIntegration(await crewIntegration(thread.id));
+                        }
+                      } catch (err) {
+                        setIntegrationError(
+                          err instanceof Error ? err.message : String(err),
+                        );
+                      } finally {
+                        setLandingLead(false);
+                      }
+                    }
+                  : undefined
+              }
+            />
+          ) : null}
           <CrewTaskList tasks={crewTasks} ownerTitle={crewOwnerTitle} />
           {subagentSection}
           {hypothesisSection}
@@ -3069,9 +3607,15 @@ export const AgentsPanel = memo(function AgentsPanel({
   rosterKey,
   listThreadSummaries,
   listCrewTasks,
+  crewIntegration,
+  onIntegrateWorker,
+  onRefreshWorker,
+  onVerifyLead,
+  onLandLead,
   onSelectThread,
   onRetryAgent,
   onViewChanges,
+  focusAgentsTabNonce,
   listCheckpoints,
   restoreCheckpoint,
   listLocalServers,
@@ -3119,6 +3663,10 @@ export const AgentsPanel = memo(function AgentsPanel({
   previewSkillImport,
   installSkillImport,
   discardSkillImport,
+  detectHarnessSources,
+  previewHarnessImport,
+  installHarnessImport,
+  discardHarnessImport,
   activeView,
   onOpenPrs,
   onOpenAutomations,
@@ -3127,11 +3675,22 @@ export const AgentsPanel = memo(function AgentsPanel({
   onOpenInsights,
   onOpenDigest,
   onFork,
+  claimLane,
+  listLanes,
+  previewLane,
+  restorePreview,
+  recycleWedgedLanes,
+  setSpotlight,
+  spotlightLane,
   onCollapse,
 }: AgentsPanelProps) {
   const [tab, setTab] = useState<PanelTab>(() =>
     isPulseView(activeView) ? "pulse" : "git",
   );
+
+  useEffect(() => {
+    if (focusAgentsTabNonce && focusAgentsTabNonce > 0) setTab("agents");
+  }, [focusAgentsTabNonce]);
 
   useEffect(() => {
     if (isPulseView(activeView)) setTab("pulse");
@@ -3221,6 +3780,11 @@ export const AgentsPanel = memo(function AgentsPanel({
           rosterKey={rosterKey}
           listThreadSummaries={listThreadSummaries}
           listCrewTasks={listCrewTasks}
+          crewIntegration={crewIntegration}
+          onIntegrateWorker={onIntegrateWorker}
+          onRefreshWorker={onRefreshWorker}
+          onVerifyLead={onVerifyLead}
+          onLandLead={onLandLead}
           onSelectThread={onSelectThread}
           onRetryAgent={onRetryAgent}
         />
@@ -3248,6 +3812,14 @@ export const AgentsPanel = memo(function AgentsPanel({
           onOpenPrs={onOpenPrs}
           prsActive={activeView === "prs"}
           providers={providers}
+          claimLane={claimLane}
+          listLanes={listLanes}
+          previewLane={previewLane}
+          restorePreview={restorePreview}
+          recycleWedgedLanes={recycleWedgedLanes}
+          spotlight={project?.spotlight === true}
+          setSpotlight={setSpotlight}
+          spotlightLane={spotlightLane}
           onFork={onFork}
         />
       ) : tab === "memory" ? (
@@ -3290,6 +3862,10 @@ export const AgentsPanel = memo(function AgentsPanel({
           previewSkillImport={previewSkillImport}
           installSkillImport={installSkillImport}
           discardSkillImport={discardSkillImport}
+          detectHarnessSources={detectHarnessSources}
+          previewHarnessImport={previewHarnessImport}
+          installHarnessImport={installHarnessImport}
+          discardHarnessImport={discardHarnessImport}
         />
       ) : (
         <PulseTab

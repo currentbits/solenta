@@ -19,6 +19,22 @@ export function nearestScrollTop(
   return viewTop;
 }
 
+/**
+ * Child offset relative to `container`'s padding box, including the
+ * container's current scrollTop. Element.offsetTop is relative to
+ * offsetParent, which is NOT the overflow box unless that box is positioned.
+ */
+export function offsetTopWithin(
+  container: HTMLElement,
+  child: HTMLElement,
+): number {
+  return (
+    child.getBoundingClientRect().top -
+    container.getBoundingClientRect().top +
+    container.scrollTop
+  );
+}
+
 export function scrollChildIntoNearestView(
   container: HTMLElement | null,
   child: HTMLElement | null,

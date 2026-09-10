@@ -221,7 +221,42 @@ function parseSkillMarkdown(content) {
  * @param {string} baseDir
  * @returns {Array<{ name: string, description: string, bytes: number }>}
  */
-function scanSkillDir(baseDir) {
+function readSkillDirent(baseDir, d, parseCache) {
+  if (!d.isDirectory() && !d.isSymbolicLink()) return null;
+  // statSync follows the link, so a dangling one just falls into the catch.
+  const file = path.join(baseDir, d.name, "SKILL.md");
+  let bytes;
+  try {
+    const stat = fs.statSync(file);
+    if (!stat.isFile()) return null;
+    bytes = stat.size;
+  } catch {
+    return null;
+  }
+  let real;
+  try {
+    real = fs.realpathSync(file);
+  } catch {
+    real = file;
+  }
+  const cached = parseCache && parseCache.get(real);
+  if (cached) {
+    return { name: d.name, description: cached.description, bytes };
+  }
+  let content;
+  try {
+    content = fs.readFileSync(file, "utf8");
+  } catch {
+    return null;
+  }
+  const parsed = parseSkillMarkdown(content);
+  if (parseCache) {
+    parseCache.set(real, { description: parsed.description, bytes });
+  }
+  return { name: d.name, description: parsed.description, bytes };
+}
+
+function scanSkillDir(baseDir, parseCache) {
   /** @type {Array<{ name: string, description: string, bytes: number }>} */
   const out = [];
   let dirents;
@@ -231,23 +266,34 @@ function scanSkillDir(baseDir) {
     return out;
   }
   for (const d of dirents) {
-    if (!d.isDirectory() && !d.isSymbolicLink()) continue;
-    // statSync follows the link, so a dangling one just falls into the catch.
-    const file = path.join(baseDir, d.name, "SKILL.md");
-    let content;
-    let bytes;
-    try {
-      const stat = fs.statSync(file);
-      if (!stat.isFile()) continue;
-      bytes = stat.size;
-      content = fs.readFileSync(file, "utf8");
-    } catch {
-      continue;
-    }
-    const parsed = parseSkillMarkdown(content);
-    out.push({ name: d.name, description: parsed.description, bytes });
+    const skill = readSkillDirent(baseDir, d, parseCache);
+    if (skill) out.push(skill);
   }
   return out;
+}
+
+const INVENTORY_SLICE_NS = 20_000_000;
+
+function yieldToEventLoop() {
+  return new Promise((resolve) => setImmediate(resolve));
+}
+
+async function forEachSkillDirent(baseDir, parseCache, onSkill) {
+  let dirents;
+  try {
+    dirents = fs.readdirSync(baseDir, { withFileTypes: true });
+  } catch {
+    return;
+  }
+  let sliceStart = process.hrtime.bigint();
+  for (const d of dirents) {
+    const skill = readSkillDirent(baseDir, d, parseCache);
+    if (skill) onSkill(skill);
+    if (process.hrtime.bigint() - sliceStart >= INVENTORY_SLICE_NS) {
+      await yieldToEventLoop();
+      sliceStart = process.hrtime.bigint();
+    }
+  }
 }
 
 /**
@@ -290,11 +336,11 @@ function catalogHas(id) {
  *   },
  * } | null}
  */
-function resolveManagedProvenance(skillDir, userDataPath) {
+function resolveManagedProvenance(skillDir, userDataPath, registry) {
   const marker = readMarkerInstallId(skillDir);
   if (!marker || !userDataPath) return null;
   const { lookupInstall } = require("./skillRegistry.js");
-  const rec = lookupInstall(userDataPath, marker.installId);
+  const rec = lookupInstall(userDataPath, marker.installId, registry);
   if (!rec) return null;
   if (rec.name !== path.basename(skillDir)) return null;
   if (rec.provenance === "curated") {
@@ -346,79 +392,52 @@ function resolveManagedProvenance(skillDir, userDataPath) {
  *   },
  * }>}
  */
-function listSkills(projectPath, env = process.env, userDataPath) {
-  const dirs = SKILL_DIRS(env);
-  const active = new Set(activeSkillTargets(env));
-
-  /**
-   * @type {Map<string, {
-   *   name: string,
-   *   description: string,
-   *   source: SkillTarget,
-   *   installedIn: SkillTarget[],
-   *   missingFrom: SkillTarget[],
-   *   bytes: number,
-   *   provenance: "curated" | "added",
-   *   origin?: {
-   *     catalogId?: string,
-   *     sourceLabel?: string,
-   *     sourceUrl?: string,
-   *     packageId?: string,
-   *     importedAt?: string,
-   *   },
-   * }>}
-   */
-  const byName = new Map();
-  for (const target of SKILL_TARGETS) {
-    for (const skill of scanSkillDir(dirs[target])) {
-      const existing = byName.get(skill.name);
-      const managed = resolveManagedProvenance(
-        path.join(dirs[target], skill.name),
-        userDataPath,
-      );
-      if (!existing) {
-        /** @type {{
-         *   name: string,
-         *   description: string,
-         *   source: SkillTarget,
-         *   installedIn: SkillTarget[],
-         *   missingFrom: SkillTarget[],
-         *   bytes: number,
-         *   provenance: "curated" | "added",
-         *   origin?: {
-         *     catalogId?: string,
-         *     sourceLabel?: string,
-         *     sourceUrl?: string,
-         *     packageId?: string,
-         *     importedAt?: string,
-         *   },
-         * }} */
-        const row = {
-          name: skill.name,
-          description: skill.description,
-          source: target,
-          installedIn: [target],
-          missingFrom: [],
-          bytes: skill.bytes,
-          provenance: managed ? managed.provenance : "added",
-        };
-        if (managed && managed.origin) row.origin = managed.origin;
-        byName.set(skill.name, row);
-      } else {
-        existing.installedIn.push(target);
-        if (
-          managed &&
-          managed.provenance === "curated" &&
-          existing.provenance !== "curated"
-        ) {
-          existing.provenance = "curated";
-          if (managed.origin) existing.origin = managed.origin;
-          else delete existing.origin;
-        }
-      }
-    }
+function ingestScannedSkill(byName, target, skill, skillDir, userDataPath, registry) {
+  const existing = byName.get(skill.name);
+  const managed = resolveManagedProvenance(skillDir, userDataPath, registry);
+  if (!existing) {
+    /** @type {{
+     *   name: string,
+     *   description: string,
+     *   source: SkillTarget,
+     *   installedIn: SkillTarget[],
+     *   missingFrom: SkillTarget[],
+     *   bytes: number,
+     *   provenance: "curated" | "added",
+     *   origin?: {
+     *     catalogId?: string,
+     *     sourceLabel?: string,
+     *     sourceUrl?: string,
+     *     packageId?: string,
+     *     importedAt?: string,
+     *   },
+     * }} */
+    const row = {
+      name: skill.name,
+      description: skill.description,
+      source: target,
+      installedIn: [target],
+      missingFrom: [],
+      bytes: skill.bytes,
+      provenance: managed ? managed.provenance : "added",
+    };
+    if (managed && managed.origin) row.origin = managed.origin;
+    byName.set(skill.name, row);
+    return;
   }
+  existing.installedIn.push(target);
+  if (
+    managed &&
+    managed.provenance === "curated" &&
+    existing.provenance !== "curated"
+  ) {
+    existing.provenance = "curated";
+    if (managed.origin) existing.origin = managed.origin;
+    else delete existing.origin;
+  }
+}
 
+function finishSkillList(byName, active, projectPath, parseCache) {
   const userRows = [];
   for (const row of byName.values()) {
     // A dir a marketplace installed under a name we cannot write (uppercase,
@@ -438,6 +457,7 @@ function listSkills(projectPath, env = process.env, userDataPath) {
   if (project) {
     for (const skill of scanSkillDir(
       path.join(project, ".claude", "skills"),
+      parseCache,
     )) {
       projectRows.push({
         name: skill.name,
@@ -452,6 +472,122 @@ function listSkills(projectPath, env = process.env, userDataPath) {
     projectRows.sort((a, b) => a.name.localeCompare(b.name));
   }
   return [...userRows, ...projectRows];
+}
+
+function beginSkillList(env, userDataPath) {
+  const dirs = SKILL_DIRS(env);
+  const active = new Set(activeSkillTargets(env));
+  const registry =
+    userDataPath && String(userDataPath).trim()
+      ? require("./skillRegistry.js").readRegistry(userDataPath)
+      : null;
+  /** @type {Map<string, { description: string, bytes: number }>} */
+  const parseCache = new Map();
+  /**
+   * @type {Map<string, {
+   *   name: string,
+   *   description: string,
+   *   source: SkillTarget,
+   *   installedIn: SkillTarget[],
+   *   missingFrom: SkillTarget[],
+   *   bytes: number,
+   *   provenance: "curated" | "added",
+   *   origin?: {
+   *     catalogId?: string,
+   *     sourceLabel?: string,
+   *     sourceUrl?: string,
+   *     packageId?: string,
+   *     importedAt?: string,
+   *   },
+   * }>}
+   */
+  const byName = new Map();
+  return { dirs, active, registry, parseCache, byName };
+}
+
+function listSkills(projectPath, env = process.env, userDataPath) {
+  const { dirs, active, registry, parseCache, byName } = beginSkillList(
+    env,
+    userDataPath,
+  );
+  for (const target of SKILL_TARGETS) {
+    for (const skill of scanSkillDir(dirs[target], parseCache)) {
+      ingestScannedSkill(
+        byName,
+        target,
+        skill,
+        path.join(dirs[target], skill.name),
+        userDataPath,
+        registry,
+      );
+    }
+  }
+  return finishSkillList(byName, active, projectPath, parseCache);
+}
+
+/**
+ * Same inventory as listSkills, but yields during directory scans so a
+ * large library cannot monopolize Electron's main thread.
+ */
+async function listSkillsAsync(projectPath, env = process.env, userDataPath) {
+  await yieldToEventLoop();
+  const { dirs, active, registry, parseCache, byName } = beginSkillList(
+    env,
+    userDataPath,
+  );
+  for (const target of SKILL_TARGETS) {
+    let found = 0;
+    await forEachSkillDirent(dirs[target], parseCache, (skill) => {
+      ingestScannedSkill(
+        byName,
+        target,
+        skill,
+        path.join(dirs[target], skill.name),
+        userDataPath,
+        registry,
+      );
+      found += 1;
+    });
+    if (found) await yieldToEventLoop();
+  }
+  return finishSkillList(byName, active, projectPath, parseCache);
+}
+
+/**
+ * Catalog ids that still have a registry-verified copy on disk. Does not
+ * read SKILL.md; listSkills already did that for the Skills list.
+ * @param {NodeJS.ProcessEnv} [env]
+ * @param {string} [userDataPath]
+ * @returns {Set<string>}
+ */
+function installedCatalogIds(env = process.env, userDataPath) {
+  const ids = new Set();
+  if (typeof userDataPath !== "string" || !userDataPath.trim()) return ids;
+  const { readRegistry } = require("./skillRegistry.js");
+  const registry = readRegistry(userDataPath);
+  const dirs = SKILL_DIRS(env);
+  for (const [installId, rec] of Object.entries(registry.installs)) {
+    if (
+      rec.provenance !== "curated" ||
+      !rec.catalogId ||
+      !catalogHas(rec.catalogId)
+    ) {
+      continue;
+    }
+    for (const target of SKILL_TARGETS) {
+      const skillDir = path.join(dirs[target], rec.name);
+      const marker = readMarkerInstallId(skillDir);
+      if (!marker || marker.installId !== installId) continue;
+      try {
+        if (!fs.statSync(path.join(skillDir, "SKILL.md")).isFile()) continue;
+      } catch {
+        continue;
+      }
+      ids.add(rec.catalogId);
+      break;
+    }
+  }
+  return ids;
 }
 
 /**
@@ -554,8 +690,9 @@ function syncSkills(env = process.env) {
 
   /** @type {Map<string, { source: SkillTarget, installedIn: Set<SkillTarget> }>} */
   const byName = new Map();
+  const parseCache = new Map();
   for (const target of SKILL_TARGETS) {
-    for (const skill of scanSkillDir(dirs[target])) {
+    for (const skill of scanSkillDir(dirs[target], parseCache)) {
       // Skip what we could never write back (resolveSkillDir would throw and
       // take the whole sync with it); listSkills reports these as drift-free.
       if (!SKILL_NAME_RE.test(skill.name)) continue;
@@ -600,6 +737,8 @@ module.exports = {
   SKILL_TARGETS,
   parseSkillMarkdown,
   listSkills,
+  listSkillsAsync,
+  installedCatalogIds,
   addSkill,
   removeSkill,
   syncSkills,

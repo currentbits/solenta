@@ -88,6 +88,7 @@ function MarkdownImage({ src, alt }: { src?: string; alt?: string }) {
       src={loaded}
       alt={alt ?? ""}
       title={alt || undefined}
+      tabIndex={0}
     />
   );
 }

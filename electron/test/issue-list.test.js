@@ -107,6 +107,7 @@ describe("planboardNoteFor", () => {
     assert.equal(planboardNoteFor(gh), PLANBOARD_NOTE);
     assert.match(PLANBOARD_NOTE, /plan:todo, plan:doing, plan:done/);
     assert.match(PLANBOARD_NOTE, /issue_create/);
+    assert.match(PLANBOARD_NOTE, /issue_comment/);
     assert.doesNotMatch(PLANBOARD_NOTE, /using `gh`/);
     assert.doesNotMatch(
       PLANBOARD_NOTE,

@@ -78,6 +78,23 @@ describe("parseMcpImportDocument shapes", () => {
     assert.equal(stored.cwd, "/tmp/mcp-ok");
     assert.equal(stored.env.HOME_OVERRIDE, "/tmp/ok");
   });
+
+  it("keeps spaced script paths and argument values as one array element each", () => {
+    const out = parseMcpImportDocument(
+      wrap({
+        worker: {
+          command: "node",
+          args: ["/tmp/My Tools/server.mjs", "--label", "hello world", ""],
+        },
+      }),
+    );
+    assert.deepEqual(out.servers[0].stored.args, [
+      "/tmp/My Tools/server.mjs",
+      "--label",
+      "hello world",
+      "",
+    ]);
+  });
 });
 
 describe("parseMcpImportDocument rejection", () => {

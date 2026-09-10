@@ -9,6 +9,7 @@ import {
   formatLineCount,
   isPlanEmpty,
   issueCreatedMs,
+  issueMatchesQuery,
   issueUpdatedMs,
   planColumns,
   reviewLoad,
@@ -133,6 +134,35 @@ describe("helpers", () => {
   it("isPlanEmpty", () => {
     assert.equal(isPlanEmpty(planColumns([])), true);
     assert.equal(isPlanEmpty(planColumns([issue({ number: 1 })])), false);
+  });
+});
+
+describe("issueMatchesQuery (#945)", () => {
+  const auth = issue({ number: 123, title: "Fix Authentication Timeout" });
+  const other = issue({ number: 12, title: "Smaller card" });
+  const hashed = issue({ number: 945, title: "Find Planboard cards" });
+
+  it("blank or whitespace matches every issue", () => {
+    assert.equal(issueMatchesQuery(auth, ""), true);
+    assert.equal(issueMatchesQuery(auth, "   "), true);
+  });
+
+  it("matches titles case-insensitively by substring", () => {
+    assert.equal(issueMatchesQuery(auth, "authentication"), true);
+    assert.equal(issueMatchesQuery(auth, "FIX AUTH"), true);
+    assert.equal(issueMatchesQuery(auth, "missing"), false);
+    assert.equal(issueMatchesQuery(other, "authentication"), false);
+  });
+
+  it("matches an issue number exactly as 123 or #123", () => {
+    assert.equal(issueMatchesQuery(auth, "123"), true);
+    assert.equal(issueMatchesQuery(auth, "#123"), true);
+    assert.equal(issueMatchesQuery(auth, "  #123  "), true);
+    assert.equal(issueMatchesQuery(other, "123"), false);
+    assert.equal(issueMatchesQuery(auth, "12"), false);
+    assert.equal(issueMatchesQuery(hashed, "945"), true);
+    assert.equal(issueMatchesQuery(hashed, "#945"), true);
+    assert.equal(issueMatchesQuery(hashed, "94"), false);
   });
 });
 

@@ -7,12 +7,19 @@ const {
   isContextOverflow,
   classifyContextOverflow,
   classifyCliUpgrade,
+  classifyWriterLock,
   parseQuotaError,
   quotaWaitEnabled,
   decideQuotaWait,
   formatQuotaWaitClock,
   MAX_WAIT_MS,
 } = require("../quotaWait.js");
+
+const CODEX_WRITER_LOCK_STDERR = [
+  "2026-09-06T06:31:14.326054Z ERROR codex_core::session: failed to initialize thread persistence: thread-store conflict: thread 01a072f7-10e0-7fd2-b691-7d481327516f already has an active writer",
+  "2026-09-06T06:31:14.326548Z ERROR codex_core::session: Failed to create session: thread-store conflict: thread 01a072f7-10e0-7fd2-b691-7d481327516f already has an active writer",
+  "Error: thread/resume: thread/resume failed: thread 01a072f7-10e0-7fd2-b691-7d481327516f already has an active writer (code -32600)",
+].join("\n");
 
 // Tuesday 2026-08-18 10:00 local — afternoon clocks stay same-day.
 const NOW = new Date(2026, 7, 18, 10, 0, 0, 0).getTime();
@@ -126,6 +133,58 @@ describe("classifyCliUpgrade", () => {
     assert.equal(classifyCliUpgrade("You've hit your limit · resets 3pm"), null);
     assert.equal(classifyCliUpgrade("Run error (exit 1): spawn codex ENOENT"), null);
     assert.equal(classifyCliUpgrade(""), null);
+  });
+});
+
+describe("classifyWriterLock", () => {
+  it("matches live Codex writer-lock stderr and keeps a short provider excerpt", () => {
+    const parsed = classifyWriterLock(CODEX_WRITER_LOCK_STDERR);
+    assert.equal(parsed && parsed.kind, "writer-lock");
+    assert.match(
+      parsed.text,
+      /^Codex session is locked by another process\./,
+    );
+    assert.match(parsed.text, /Provider error:/);
+    assert.match(parsed.text, /thread-store conflict/);
+    assert.doesNotMatch(parsed.text, /\u2014/);
+    assert.equal(
+      parsed.text.includes(CODEX_WRITER_LOCK_STDERR),
+      false,
+      "excerpt must not dump the whole event text",
+    );
+    assert.doesNotMatch(parsed.text, /thread\/resume failed/);
+  });
+
+  it("matches the formatRunExitError wrapper, not generic JSON-RPC -32600", () => {
+    const formatted = `Run error (exit 1):\n${CODEX_WRITER_LOCK_STDERR}`;
+    const parsed = classifyWriterLock(formatted);
+    assert.equal(parsed && parsed.kind, "writer-lock");
+    assert.match(parsed.text, /Provider error:[\s\S]*thread-store conflict/);
+
+    assert.equal(classifyWriterLock('{"code":-32600}'), null);
+    assert.equal(classifyWriterLock("JSON-RPC error -32600"), null);
+  });
+
+  it("rejects session-lost, spawn, overflow, and cli-upgrade fixtures", () => {
+    assert.equal(
+      classifyWriterLock("No conversation found with session ID: sess-stale-999"),
+      null,
+    );
+    assert.equal(
+      classifyWriterLock("Run error (exit 1): spawn codex ENOENT"),
+      null,
+    );
+    assert.equal(
+      classifyWriterLock("Run error: context_length_exceeded\nrequest had 250000 tokens"),
+      null,
+    );
+    assert.equal(
+      classifyWriterLock(
+        `{"type":"error","status":400,"error":{"message":"The 'gpt-5.6-sol' model requires a newer version of Codex. Please upgrade to the latest app or CLI and try again."}}`,
+      ),
+      null,
+    );
+    assert.equal(classifyWriterLock(""), null);
   });
 });
 

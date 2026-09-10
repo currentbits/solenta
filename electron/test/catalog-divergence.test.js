@@ -357,7 +357,7 @@ describe("listProviders catalog notes", () => {
         JSON.stringify({
           models: [
             { slug: "gpt-5.5", visibility: "list" },
-            { slug: "gpt-5.4-mini", visibility: "list" },
+            { slug: "gpt-5.3-codex-spark", visibility: "list" },
             { slug: "codex-auto-review", visibility: "hide" },
           ],
         }),
@@ -369,7 +369,10 @@ describe("listProviders catalog notes", () => {
         home,
       });
       const codex = list.find((p) => p.id === "codex");
-      assert.deepEqual(codex.models.slice(0, 2), ["gpt-5.5", "gpt-5.4-mini"]);
+      assert.deepEqual(codex.models.slice(0, 2), [
+        "gpt-5.5",
+        "gpt-5.3-codex-spark",
+      ]);
       assert.ok(codex.models.includes("gpt-6-astra"));
       assert.ok(codex.models.includes("gpt-5.6-sol"));
       const rec = codex.modelInfo.filter((m) => m.recommended).map((m) => m.id);

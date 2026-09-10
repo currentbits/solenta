@@ -44,6 +44,9 @@ jobs:
       - run: npm ci --prefix core
       - run: npm ci --prefix memory-server
       - run: npx vite build
+      - name: Install Codex for the Linux git sandbox proof
+        if: runner.os == 'Linux'
+        run: npm install --global @openai/codex@0.153.4
       - run: npm test
 
   smoke:

@@ -15,7 +15,7 @@
   align-items: stretch;
   gap: 0;
   padding: 0 6px 0 8px;
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid var(--border-soft);
   flex-shrink: 0;
   height: 40px;
 }
@@ -658,7 +658,7 @@
 .connector {
   width: 10px;
   height: 1px;
-  background: var(--border);
+  background: var(--border-soft);
   margin: 0 2px;
 }
 
@@ -886,7 +886,7 @@
   justify-content: space-between;
   gap: 12px;
   padding: 12px 16px;
-  border-top: 1px solid var(--border);
+  border-top: 1px solid var(--border-soft);
   color: var(--text-muted);
   font-size: 12px;
   font-variant-numeric: tabular-nums;
@@ -981,6 +981,56 @@
   flex-wrap: wrap;
   gap: 8px;
   min-width: 0;
+}
+
+.laneRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.laneChip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 10px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 550;
+}
+
+.laneChip[data-lane-current="true"] {
+  color: var(--text);
+  border-color: var(--text-muted);
+  background: var(--overlay-soft);
+}
+
+.lanePort,
+.lanePath,
+.laneBranch {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--text-dim);
+}
+
+.lanePath,
+.laneBranch {
+  max-width: 14em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.laneChip[data-lane-current="true"] .lanePort,
+.laneChip[data-lane-current="true"] .lanePath,
+.laneChip[data-lane-current="true"] .laneBranch {
+  color: var(--text-muted);
 }
 
 .gitBtn {
@@ -1461,7 +1511,7 @@
   white-space: pre-wrap;
   word-break: break-word;
   background: var(--bg);
-  border: 1px solid var(--border);
+  border: 1px solid transparent;
   border-radius: var(--radius-sm);
   padding: 8px;
 }
@@ -1469,7 +1519,7 @@
 .gitStatus {
   flex-shrink: 0;
   padding: 10px 14px;
-  border-top: 1px solid var(--border);
+  border-top: 1px solid var(--border-soft);
   color: var(--text-muted);
   font-size: 12px;
   font-family: var(--mono);

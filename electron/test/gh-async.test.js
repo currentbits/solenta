@@ -105,7 +105,12 @@ process.exit(0);
   it("listPrs does not block the event loop", async () => {
     sleepGh(`process.stdout.write("[]\\n"); process.exit(0);`);
     const result = await assertEventLoopFree(() => listPrs(repo));
-    assert.deepEqual(result, { ok: true, prs: [] });
+    assert.deepEqual(result, {
+      ok: true,
+      prs: [],
+      complete: true,
+      limit: 50,
+    });
   });
 
   it("setPlanStatus does not block the event loop", async () => {

@@ -1,0 +1,292 @@
+/**
+ * Sidebar picker for importing a Grok CLI session into the current project.
+ *
+ * Run: npm run test:renderer -- --test-name-pattern "Grok session import"
+ */
+import assert from "node:assert/strict";
+import { describe, it } from "node:test";
+import * as React from "react";
+import { mount } from "./support/dom";
+import { Sidebar } from "../src/components/Sidebar";
+import type {
+  CliSessionCandidate,
+  ProjectInfo,
+  ProviderInfo,
+  ThreadInfo,
+} from "../src/shared/ipc";
+
+const project: ProjectInfo = {
+  id: "p1",
+  slug: "acme/ledger",
+  name: "ledger",
+  path: "/tmp/ledger",
+};
+
+const providers: ProviderInfo[] = [
+  {
+    id: "grok",
+    name: "Grok",
+    available: true,
+    supportsResume: true,
+    models: [],
+    modelInfo: [],
+    efforts: [],
+  },
+];
+
+const FRESH = Date.now();
+
+const thread: ThreadInfo = {
+  id: "t1",
+  projectId: "p1",
+  title: "existing",
+  branch: null,
+  prNumber: null,
+  prUrl: null,
+  status: "idle",
+  createdAt: FRESH,
+  updatedAt: FRESH,
+  runStartedAt: null,
+  archived: false,
+  settledOverride: null,
+  settledAt: null,
+  pinnedAt: null,
+  snoozedUntil: null,
+  snoozedAt: null,
+  lastVisitedAt: FRESH,
+  prState: null,
+  provider: "claude",
+  model: null,
+  sessionId: null,
+  permissionMode: "default",
+  reasoningEffort: null,
+  worktreePath: null,
+  handoffFrom: null,
+  lastError: null,
+  lastErrorKind: null,
+  tags: [],
+};
+
+const SESSION_A = "01a07579-aaaa-7000-8000-aaaaaaaaaaaa";
+const SESSION_B = "01a07579-bbbb-7000-8000-bbbbbbbbbbbb";
+
+const sessions: CliSessionCandidate[] = [
+  { sessionId: SESSION_A, mtimeMs: FRESH },
+  { sessionId: SESSION_B, mtimeMs: FRESH - 60_000 },
+];
+
+function sidebarProps(over: Partial<React.ComponentProps<typeof Sidebar>> = {}) {
+  return {
+    appName: "Solenta",
+    searchPlaceholder: "Search threads...",
+    projectsHeader: "All projects",
+    projects: [project],
+    threads: [thread],
+    providers,
+    activeThreadId: null as string | null,
+    onSelectThread: () => {},
+    onCreateThread: () => {},
+    onAddProject: () => {},
+    searchThreads: async () => [],
+    ...over,
+  };
+}
+
+describe("Grok session import picker", () => {
+  it("lists sessions and imports the chosen one into the current project", async () => {
+    const listed: unknown[] = [];
+    const imported: unknown[] = [];
+    const selected: string[] = [];
+    const m = await mount(
+      <Sidebar
+        {...sidebarProps({
+          onSelectThread: (id) => selected.push(id),
+          listCliSessions: async (input) => {
+            listed.push(input);
+            return sessions;
+          },
+          importCliSession: async (input) => {
+            imported.push(input);
+            return {
+              ...thread,
+              id: "t-imported",
+              provider: "grok",
+              sessionId: input.sessionId,
+              title: "Imported Grok session",
+            };
+          },
+        })}
+      />,
+    );
+
+    await m.click(m.query("[data-new-thread-caret]"));
+    const openBtn = m.query("[data-import-grok-session]");
+    assert.ok(openBtn, "import item renders when list/import props are set");
+    assert.match(openBtn!.textContent || "", /Import Grok session/i);
+
+    await m.click(openBtn);
+    await m.flush();
+
+    assert.equal(listed.length, 1, "opening the picker lists sessions once");
+    assert.deepEqual(listed[0], { provider: "grok" });
+    const rowA = m.query(`[data-cli-session="${SESSION_A}"]`);
+    const rowB = m.query(`[data-cli-session="${SESSION_B}"]`);
+    assert.ok(rowA, "session A is listed");
+    assert.ok(rowB, "session B is listed");
+
+    await m.click(rowA);
+    await m.flush();
+
+    assert.equal(imported.length, 1);
+    assert.deepEqual(imported[0], {
+      sessionId: SESSION_A,
+      projectId: "p1",
+      provider: "grok",
+    });
+    assert.equal(
+      Object.prototype.hasOwnProperty.call(imported[0] as object, "home"),
+      false,
+      "renderer must not send a home path",
+    );
+    assert.deepEqual(selected, ["t-imported"]);
+    assert.equal(
+      m.query("[data-import-cli-session-modal]"),
+      null,
+      "picker closes after a successful import",
+    );
+
+    m.unmount();
+  });
+
+  it("shows an empty state when no Grok sessions exist", async () => {
+    const m = await mount(
+      <Sidebar
+        {...sidebarProps({
+          listCliSessions: async () => [],
+          importCliSession: async () => thread,
+        })}
+      />,
+    );
+    await m.click(m.query("[data-new-thread-caret]"));
+    await m.click(m.query("[data-import-grok-session]"));
+    await m.flush();
+    const empty = m.query("[data-cli-session-empty]");
+    assert.ok(empty, "empty copy renders");
+    assert.match(empty!.textContent || "", /No Grok CLI sessions/i);
+    m.unmount();
+  });
+
+  it("shows a list error with Retry", async () => {
+    let calls = 0;
+    const m = await mount(
+      <Sidebar
+        {...sidebarProps({
+          listCliSessions: async () => {
+            calls += 1;
+            if (calls === 1) throw new Error("GROK_HOME missing");
+            return sessions;
+          },
+          importCliSession: async () => thread,
+        })}
+      />,
+    );
+    await m.click(m.query("[data-new-thread-caret]"));
+    await m.click(m.query("[data-import-grok-session]"));
+    await m.flush();
+    const error = m.query("[data-cli-session-error]");
+    assert.ok(error);
+    assert.match(error!.textContent || "", /GROK_HOME missing/);
+    await m.click(m.query("[data-cli-session-retry]"));
+    await m.flush();
+    assert.ok(m.query(`[data-cli-session="${SESSION_A}"]`));
+    m.unmount();
+  });
+
+  it("keeps the picker open when import fails", async () => {
+    const m = await mount(
+      <Sidebar
+        {...sidebarProps({
+          listCliSessions: async () => sessions,
+          importCliSession: async () => {
+            throw new Error("Grok session not found");
+          },
+        })}
+      />,
+    );
+    await m.click(m.query("[data-new-thread-caret]"));
+    await m.click(m.query("[data-import-grok-session]"));
+    await m.flush();
+    await m.click(m.query(`[data-cli-session="${SESSION_A}"]`));
+    await m.flush();
+    assert.ok(m.query("[data-import-cli-session-modal]"));
+    const error = m.query("[data-cli-session-error]");
+    assert.ok(error);
+    assert.match(error!.textContent || "", /Grok session not found/);
+    m.unmount();
+  });
+
+  it("does not render the menu item when the optional props are omitted", async () => {
+    const m = await mount(<Sidebar {...sidebarProps()} />);
+    await m.click(m.query("[data-new-thread-caret]"));
+    assert.equal(m.query("[data-import-grok-session]"), null);
+    assert.ok(m.query("[data-new-thread]"), "existing New thread button remains");
+    m.unmount();
+  });
+
+  it("marks already-imported sessions and Import remaining imports the rest", async () => {
+    const imported: unknown[] = [];
+    const selected: string[] = [];
+    const grokThread: ThreadInfo = {
+      ...thread,
+      id: "t-grok",
+      provider: "grok",
+      sessionId: SESSION_A,
+      title: "Imported Grok session",
+    };
+    const m = await mount(
+      <Sidebar
+        {...sidebarProps({
+          threads: [thread, grokThread],
+          onSelectThread: (id) => selected.push(id),
+          listCliSessions: async () => sessions,
+          importCliSession: async (input) => {
+            imported.push(input);
+            return {
+              ...thread,
+              id: `t-${input.sessionId}`,
+              provider: "grok",
+              sessionId: input.sessionId,
+              title: "Imported Grok session",
+            };
+          },
+        })}
+      />,
+    );
+    await m.click(m.query("[data-new-thread-caret]"));
+    await m.click(m.query("[data-import-grok-session]"));
+    await m.flush();
+
+    const rowA = m.query(`[data-cli-session="${SESSION_A}"]`);
+    const rowB = m.query(`[data-cli-session="${SESSION_B}"]`);
+    assert.ok(rowA);
+    assert.ok(rowB);
+    assert.equal(rowA!.hasAttribute("data-cli-session-imported"), true);
+    assert.equal(rowB!.hasAttribute("data-cli-session-imported"), false);
+    assert.match(rowA!.textContent || "", /Imported/);
+
+    const remaining = m.query("[data-cli-session-import-remaining]");
+    assert.ok(remaining);
+    assert.match(remaining!.textContent || "", /Import remaining \(1\)/);
+    await m.click(remaining);
+    await m.flush();
+
+    assert.equal(imported.length, 1);
+    assert.deepEqual(imported[0], {
+      sessionId: SESSION_B,
+      projectId: "p1",
+      provider: "grok",
+    });
+    assert.deepEqual(selected, [`t-${SESSION_B}`]);
+    m.unmount();
+  });
+});

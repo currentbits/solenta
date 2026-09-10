@@ -491,6 +491,106 @@ function resolveStartPoint(repoPath, name) {
   throw new Error(`Unknown base branch: ${want}`);
 }
 
+const MISSING_LEAD_SNAPSHOT =
+  "Could not record the lead's committed snapshot. The worker will not start from main.";
+const MISSING_START_SNAPSHOT =
+  "This orchestration worker has no recorded lead snapshot. Refusing to fall back to main.";
+
+/**
+ * Lead committed HEAD at worker-fork time (#948). Dirty edits are noted,
+ * never copied, stashed, or committed.
+ *
+ * @param {import('./store').Store} store
+ * @param {object | null | undefined} lead
+ * @returns {{ sha: string, branch: string | null, dirty: boolean }}
+ */
+function captureLeadSnapshot(store, lead) {
+  if (!lead) {
+    throw new Error(`${MISSING_LEAD_SNAPSHOT} Unknown lead thread.`);
+  }
+  const project =
+    typeof store.getProject === "function"
+      ? store.getProject(lead.projectId)
+      : null;
+  if (!project || !project.path) {
+    throw new Error(`${MISSING_LEAD_SNAPSHOT} Unknown project for the lead.`);
+  }
+
+  let cwd = project.path;
+  if (lead.worktreePath && fs.existsSync(lead.worktreePath)) {
+    const inside = gitTry(lead.worktreePath, [
+      "rev-parse",
+      "--is-inside-work-tree",
+    ]);
+    if (inside.ok && String(inside.stdout || "").trim() === "true") {
+      cwd = lead.worktreePath;
+    }
+  } else if (typeof lead.branch === "string" && lead.branch.trim()) {
+    const named = gitTry(project.path, [
+      "rev-parse",
+      "--verify",
+      `${lead.branch.trim()}^{commit}`,
+    ]);
+    if (named.ok && String(named.stdout || "").trim()) {
+      return {
+        sha: String(named.stdout).trim(),
+        branch: lead.branch.trim(),
+        dirty: false,
+      };
+    }
+  }
+
+  const head = gitTry(cwd, ["rev-parse", "--verify", "HEAD"]);
+  if (!head.ok || !String(head.stdout || "").trim()) {
+    throw new Error(
+      `${MISSING_LEAD_SNAPSHOT} The lead has no committed HEAD.`,
+    );
+  }
+  const sha = String(head.stdout).trim();
+  const named =
+    (typeof lead.branch === "string" && lead.branch.trim()) ||
+    String(gitTry(cwd, ["branch", "--show-current"]).stdout || "").trim() ||
+    null;
+  const porcelain = gitTry(cwd, ["status", "--porcelain", "-uall"]);
+  const dirty = Boolean(
+    porcelain.ok && String(porcelain.stdout || "").trim(),
+  );
+  return { sha, branch: named, dirty };
+}
+
+/**
+ * Worktree start-point (#948). A recorded lead snapshot is exclusive:
+ * missing or unresolvable SHAs fail instead of falling back to main.
+ * Independent threads still use the stacked base / repo default.
+ *
+ * @param {{ orchWorker?: boolean, leadSnapshotSha?: string | null } | null | undefined} thread
+ * @param {string} projectPath
+ * @returns {string}
+ */
+function resolveWorktreeStart(thread, projectPath) {
+  const snap =
+    thread && typeof thread.leadSnapshotSha === "string"
+      ? thread.leadSnapshotSha.trim()
+      : "";
+  if (snap) {
+    const probe = gitTry(projectPath, [
+      "rev-parse",
+      "--verify",
+      `${snap}^{commit}`,
+    ]);
+    if (!probe.ok || !String(probe.stdout || "").trim()) {
+      throw new Error(
+        `Worker start snapshot ${snap} is missing from the repository. Refusing to fall back to main.`,
+      );
+    }
+    return String(probe.stdout).trim();
+  }
+  if (thread && thread.orchWorker) {
+    throw new Error(MISSING_START_SNAPSHOT);
+  }
+  return resolveStartPoint(projectPath, mergeBaseName(thread, projectPath));
+}
+
 /**
  * Colocated jj detaches git HEAD on every command. Git-tab Merge must
  * not silently switch that checkout onto main (#521 / #770).
@@ -744,6 +844,7 @@ function cleanupWorktree(opts) {
   const updated = store.updateThread(thread.id, {
     worktreePath: null,
     branch: null,
+    lane: undefined,
   });
   store.save();
 
@@ -1027,7 +1128,8 @@ function autoResolveMergeArtifacts(cwd) {
  * worktree, not on main behind the user's back (thread_merge). Git-tab
  * Merge (no intoPath) targets ThreadInfo.baseBranch if set, otherwise the
  * repo default (origin/HEAD → main), not the project checkout's current
- * branch (#187 / #770).
+ * branch (#187 / #770). intoPath staging is not a final land: issues stay
+ * open and a receipt is recorded on the lead (#947).
  *
  * @param {object} opts
  * @param {import('./store').Store} opts.store
@@ -1198,14 +1300,57 @@ function mergeWorktree(opts) {
   }
   if (mergeError) throw mergeError;
 
-  // The work is on the default branch now: close its planboard issue (#632).
+  // Classify from the target contract, not from "squash succeeded" (#947).
+  // intoPath → another checkout is integration; no intoPath (or the project
+  // checkout itself) is a final land.
+  const { classifyMergeLanding, recordWorkerIntegration } = require("./crewIntegration.js");
+  const landing = classifyMergeLanding(intoPath, project.path);
+
+  // Staging records a receipt here, before cleanup erases the worker's
+  // worktreePath/branch. Landing the lead itself (final) with receipts
+  // marks the combined result Landed.
+  if (typeof opts.afterMerge === "function") {
+    opts.afterMerge({ thread, target, branch });
+  }
+  if (landing === "integrated") {
+    try {
+      recordWorkerIntegration(store, {
+        worker: store.getThread(threadId) || thread,
+        targetPath: target,
+        intoPath,
+      });
+    } catch {
+      // receipt is best-effort; the squash already succeeded
+    }
+  }
+  if (landing === "final") {
+    const live = store.getThread(thread.id) || thread;
+    const receipts = Array.isArray(live.integrationReceipts)
+      ? live.integrationReceipts
+      : [];
+    if (receipts.length) {
+      const sha = gitTry(target, ["rev-parse", "HEAD"]);
+      store.updateThread(thread.id, {
+        integrationLanded: {
+          at: Date.now(),
+          sha: sha.ok ? String(sha.stdout || "").trim() || null : null,
+          via: "merge",
+        },
+      });
+      store.save();
+    }
+  }
+
+  // Close planboard issues only on a final land (#632 / #947).
   // Fire-and-forget — a gh hiccup must not fail a merge that succeeded.
-  try {
-    void require("./postmerge.js")
-      .completeThreadIssue(store, threadId)
-      .catch(() => {});
-  } catch {
-    // ignore
+  if (landing === "final" && opts.skipIssueComplete !== true) {
+    try {
+      void require("./postmerge.js")
+        .completeThreadIssue(store, threadId)
+        .catch(() => {});
+    } catch {
+      // ignore
+    }
   }
 
   // (d) Remove worktree + branch, clear thread fields
@@ -1544,10 +1689,7 @@ function setupWorktree(opts) {
   }
 
   try {
-    const start = resolveStartPoint(
-      project.path,
-      mergeBaseName(thread, project.path),
-    );
+    const start = resolveWorktreeStart(thread, project.path);
     gitOut(project.path, ["worktree", "add", "-b", branch, addPath, start]);
   } catch (err) {
     // Verbatim git stderr (#511). Never first-line-only: the lock/disk/
@@ -1595,10 +1737,30 @@ function setupWorktree(opts) {
  * @param {object} opts
  * @param {import('./store').Store} opts.store
  * @param {object} opts.thread
- * @param {string | null} opts.baseName
+ * @param {string | null} [opts.baseName]
+ * @param {string} [opts.fromRef] previous start (lead snapshot SHA on refresh)
+ * @param {string} [opts.ontoRef] new start SHA; never falls back to main
  */
+function resolveCommitOrThrow(repoPath, ref) {
+  const want = String(ref || "").trim();
+  if (!want) {
+    throw new Error(MISSING_START_SNAPSHOT);
+  }
+  const probe = gitTry(repoPath, [
+    "rev-parse",
+    "--verify",
+    `${want}^{commit}`,
+  ]);
+  if (!probe.ok || !String(probe.stdout || "").trim()) {
+    throw new Error(
+      `Worker start snapshot ${want} is missing from the repository. Refusing to fall back to main.`,
+    );
+  }
+  return String(probe.stdout).trim();
+}
+
 function retargetWorktreeBase(opts) {
-  const { store, thread, baseName } = opts;
+  const { store, thread, baseName, fromRef, ontoRef } = opts;
   const wtPath = thread && thread.worktreePath;
   if (!wtPath) return;
 
@@ -1616,11 +1778,15 @@ function retargetWorktreeBase(opts) {
     );
   }
 
-  const startName = baseName || repoDefaultBranch(project.path);
-  const start = resolveStartPoint(project.path, startName);
+  const startName = ontoRef || baseName || repoDefaultBranch(project.path);
+  const start = ontoRef
+    ? resolveCommitOrThrow(project.path, ontoRef)
+    : resolveStartPoint(project.path, startName);
   const oldStartName =
-    recordedBaseBranch(thread) || repoDefaultBranch(project.path);
-  const oldStart = resolveStartPoint(project.path, oldStartName);
+    fromRef || recordedBaseBranch(thread) || repoDefaultBranch(project.path);
+  const oldStart = fromRef
+    ? resolveCommitOrThrow(project.path, fromRef)
+    : resolveStartPoint(project.path, oldStartName);
   const oldSha = gitOut(project.path, [
     "rev-parse",
     "--verify",
@@ -2902,19 +3068,40 @@ async function listPrsRaw(projectPath, opts) {
   }
 }
 
+const PR_LIST_DEFAULT_LIMIT = 50;
+const PR_LIST_MAX_LIMIT = 200;
+
+/**
+ * Clamp a UI `listPrs` page size. `listPrsRaw` extraArgs stay caller-owned
+ * (Fleet uses `--limit 100`) and are not passed through here.
+ *
+ * @param {unknown} value
+ * @returns {number}
+ */
+function clampPrListLimit(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n < 1) return PR_LIST_DEFAULT_LIMIT;
+  return Math.min(PR_LIST_MAX_LIMIT, Math.floor(n));
+}
+
 /**
  * Open PRs for a project checkout. Never throws: missing gh, a non-GitHub
  * remote, or auth failure come back as `{ ok: false, reason }` so the UI
  * can render a per-project error row.
  *
  * @param {string} projectPath
- * @returns {Promise<{ ok: true, prs: ReturnType<typeof parsePrListItem>[] } | { ok: false, reason: string }>}
+ * @param {{ limit?: number }} [opts]
+ * @returns {Promise<{ ok: true, prs: ReturnType<typeof parsePrListItem>[], complete: boolean, limit: number } | { ok: false, reason: string }>}
  */
-async function listPrs(projectPath) {
-  const raw = await listPrsRaw(projectPath);
+async function listPrs(projectPath, opts) {
+  const limit = clampPrListLimit(opts && opts.limit);
+  const raw = await listPrsRaw(projectPath, {
+    extraArgs: ["--limit", String(limit)],
+  });
   if (!raw.ok) return raw;
   try {
-    return { ok: true, prs: raw.prs.map(parsePrListItem) };
+    const prs = raw.prs.map(parsePrListItem);
+    return { ok: true, prs, complete: prs.length < limit, limit };
   } catch (err) {
     return {
       ok: false,
@@ -6026,6 +6213,8 @@ module.exports = {
   listBranches,
   recordedBaseBranch,
   repoDefaultBranch,
+  captureLeadSnapshot,
+  resolveWorktreeStart,
   clearMissingWorktree,
   prepareThreadWorktree,
   gitFailureText,

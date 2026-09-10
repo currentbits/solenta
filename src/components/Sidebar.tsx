@@ -10,12 +10,14 @@ import {
 } from "react";
 import autoAnimate from "@formkit/auto-animate";
 import type {
+  CliSessionCandidate,
   ConflictForecast,
   ProjectInfo,
   ProviderInfo,
   StayAwakeMode,
   StayAwakeStatus,
   ThreadInfo,
+  TrashedThreadInfo,
   UpdateStatus,
 } from "../shared/ipc";
 import {
@@ -53,9 +55,26 @@ import {
   serializeProviderFilter,
   statusFilterLabel,
   tagFilterLabel,
+  threadMatchesFilter,
   type GroupBy,
   type StatusFilter,
 } from "../sidebarFilters";
+import {
+  ACTIVE_SAVED_VIEW_KEY,
+  SAVED_VIEWS_KEY,
+  addSavedView,
+  criteriaEqual,
+  deleteSavedView,
+  parseActiveSavedViewId,
+  parseSavedViews,
+  renameSavedView,
+  savedViewTriggerLabel,
+  savedViewUnavailable,
+  serializeSavedViews,
+  updateSavedView,
+  type SavedView,
+  type SavedViewCriteria,
+} from "../sidebarViews";
 import type { SettingsPane } from "./SettingsModal";
 import { showContextMenu } from "../contextMenu";
 import { buildThreadActionMenuItems } from "../threadActionMenu";
@@ -95,15 +114,27 @@ import {
 } from "../sidebarSelection";
 import { KeyboardSheet } from "./KeyboardSheet";
 import { StayAwakeControl } from "./StayAwakeControl";
+import {
+  ImportCliSessionModal,
+  type CliImportProvider,
+} from "./ImportCliSessionModal";
 import styles from "./Sidebar.module.css";
 
 const TICK_MS = 5000;
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+function formatTrashExpiry(expiresAt: number, now: number): string {
+  const days = Math.max(0, Math.ceil((expiresAt - now) / DAY_MS));
+  if (days <= 0) return "Expires today";
+  return days === 1 ? "Expires in 1d" : `Expires in ${days}d`;
+}
 const SEARCH_DEBOUNCE_MS = 250;
 const MIN_SEARCH_LEN = 2;
 const SCOPE_KEY = "sidebar:projectScope";
 const SNOOZED_OPEN_KEY = "sidebar:snoozedOpen";
 const SETTLED_OPEN_KEY = "sidebar:settledOpen";
-type FilterMenu = "status" | "provider" | "group" | "tag";
+type FilterMenu = "status" | "provider" | "group" | "tag" | "views";
+type ViewEditor = { mode: "save" | "rename"; name: string };
 
 /**
  * t3 list animation: rows glide on lifecycle transitions instead of the
@@ -252,14 +283,25 @@ interface SidebarProps {
   onSetSnoozed?: (threadId: string, until: number | null) => void | Promise<void>;
   /** Replace a thread's user-defined tags (chip editor on the card). */
   onSetTags?: (threadId: string, tags: string[]) => void | Promise<void>;
+  /** Recategorize a thread onto another project (issue #737). */
+  onSetThreadProject?: (
+    threadId: string,
+    projectId: string,
+  ) => void | Promise<void>;
   /** Mute/unmute desktop notifications for one thread. */
   onSetMuted?: (threadId: string, muted: boolean) => void | Promise<void>;
+  /** Eject/reclaim the provider session so the raw CLI can own it (#554). */
+  onSetEjected?: (threadId: string, ejected: boolean) => void | Promise<void>;
   /** Rename a thread from the row menu. */
   onRenameThread?: (threadId: string, title: string) => void | Promise<void>;
   /** Archive a thread (batch toolbar). */
   onSetArchived?: (threadId: string, archived: boolean) => void | Promise<void>;
   /** Clear the settled tail: archive all settled threads (Synara-style, undo via toast). */
   onClearSettled?: (threadIds: string[]) => void | Promise<void>;
+  /** Recently deleted rows (#940). Hidden from the live list. */
+  trashedThreads?: TrashedThreadInfo[];
+  onRestoreThread?: (threadId: string) => void | Promise<void>;
+  onPurgeThread?: (threadId: string) => void | Promise<void>;
   /**
    * Fork / hand off (round 49). Plain call = same harness; provider override
    * is hand-off. Does not require the thread to be selected.
@@ -281,6 +323,19 @@ interface SidebarProps {
     projectPath: string;
     ref: string;
   }) => Promise<{ ok: true } | { ok: false; reason: string }>;
+  /** Codex / Grok / Claude / Cursor / OpenCode / Kimi / Muse CLI sessions on disk. Desktop import picker. */
+  listCliSessions?: (input?: {
+    provider?: CliImportProvider;
+  }) => Promise<CliSessionCandidate[]>;
+  /**
+   * Import one listed CLI session as a Solenta thread in projectId.
+   * Caller selects/reveals the returned thread.
+   */
+  importCliSession?: (input: {
+    sessionId: string;
+    projectId: string;
+    provider?: CliImportProvider;
+  }) => Promise<ThreadInfo>;
   onOpenActivity?: (scopedProjectId?: string | null) => void;
   /**
    * Freshly created thread to reveal (t3: new work must be visible): the
@@ -639,7 +694,9 @@ export const ThreadCard = memo(function ThreadCard({
   onSetPinned,
   onSetSnoozed,
   onSetTags,
+  onSetThreadProject,
   onSetMuted,
+  onSetEjected,
   onRenameThread,
   onFork,
   onToggleSnoozeMenu,
@@ -648,6 +705,7 @@ export const ThreadCard = memo(function ThreadCard({
   showSlug = true,
   conflictForecast = null,
   threadTitles,
+  listMoveProjects,
 }: {
   thread: ThreadInfo;
   slug: string;
@@ -668,7 +726,14 @@ export const ThreadCard = memo(function ThreadCard({
   onSetPinned?: (threadId: string, pinned: boolean) => void | Promise<void>;
   onSetSnoozed?: (threadId: string, until: number | null) => void | Promise<void>;
   onSetTags?: (threadId: string, tags: string[]) => void | Promise<void>;
+  onSetThreadProject?: (
+    threadId: string,
+    projectId: string,
+  ) => void | Promise<void>;
   onSetMuted?: (threadId: string, muted: boolean) => void | Promise<void>;
+  /** Live project list at menu-open time. Stable identity (ref getter). */
+  listMoveProjects?: () => readonly ProjectInfo[];
+  onSetEjected?: (threadId: string, ejected: boolean) => void | Promise<void>;
   onRenameThread?: (threadId: string, title: string) => void | Promise<void>;
   onFork?: (
     threadId: string,
@@ -776,8 +841,12 @@ export const ThreadCard = memo(function ThreadCard({
       void onFork?.(thread.id, { provider: id.slice("handoff:".length) });
     } else if (id === "rename") startRename();
     else if (id === "tags") startTagEdit();
-    else if (id === "mute") void onSetMuted?.(thread.id, true);
+    else if (id.startsWith("project:")) {
+      void onSetThreadProject?.(thread.id, id.slice("project:".length));
+    } else if (id === "mute") void onSetMuted?.(thread.id, true);
     else if (id === "unmute") void onSetMuted?.(thread.id, false);
+    else if (id === "eject") void onSetEjected?.(thread.id, true);
+    else if (id === "reclaim") void onSetEjected?.(thread.id, false);
   };
 
   const openThreadMenu = async (position: { x: number; y: number }) => {
@@ -794,7 +863,10 @@ export const ThreadCard = memo(function ThreadCard({
       showFork: Boolean(onFork),
       showRename: Boolean(onRenameThread),
       showTags: Boolean(onSetTags),
+      showMove: Boolean(onSetThreadProject),
+      projects: listMoveProjects?.() ?? [],
       showMute: Boolean(onSetMuted),
+      showEject: Boolean(onSetEjected),
       showSettle: Boolean(onSetSettled),
     });
     if (items.length === 0) return;
@@ -812,7 +884,7 @@ export const ThreadCard = memo(function ThreadCard({
   };
 
   const hasActions = Boolean(
-    onSetSettled || onSetPinned || onSetSnoozed || onSetTags || onFork || onRenameThread || onSetMuted,
+    onSetSettled || onSetPinned || onSetSnoozed || onSetTags || onSetThreadProject || onFork || onRenameThread || onSetMuted || onSetEjected,
   );
 
   // Card is a non-interactive shell. Stretch select + hover actions are
@@ -976,7 +1048,7 @@ export const ThreadCard = memo(function ThreadCard({
                     </Icon>
                   </button>
                 )}
-                {(onSetSnoozed || onFork || onRenameThread || onSetMuted || onSetSettled || onSetPinned || onSetTags) && (
+                {(onSetSnoozed || onFork || onRenameThread || onSetMuted || onSetEjected || onSetSettled || onSetPinned || onSetTags || onSetThreadProject) && (
                   <button
                     type="button"
                     className={styles.iconBtn}
@@ -1441,21 +1513,46 @@ export const Sidebar = memo(function Sidebar({
   onSetPinned,
   onSetSnoozed,
   onSetTags,
+  onSetThreadProject,
   onSetMuted,
+  onSetEjected,
   onRenameThread,
   onSetArchived,
   onClearSettled,
+  trashedThreads = [],
+  onRestoreThread,
+  onPurgeThread,
   onFork,
   activeView = "thread",
   onOpenKanban,
   onOpenPlanboard,
   onCreateThreadFromIssue,
+  listCliSessions,
+  importCliSession,
   onOpenActivity,
   revealThreadId = null,
   onRevealHandled,
   conflictForecast = null,
 }: SidebarProps) {
-  const [query, setQuery] = useState("");
+  const [savedViews, setSavedViews] = useState<SavedView[]>(() =>
+    parseSavedViews(loadStored(SAVED_VIEWS_KEY)),
+  );
+  const [activeViewId, setActiveViewId] = useState<string | null>(() =>
+    parseActiveSavedViewId(
+      loadStored(ACTIVE_SAVED_VIEW_KEY),
+      parseSavedViews(loadStored(SAVED_VIEWS_KEY)),
+    ),
+  );
+  const [viewEditor, setViewEditor] = useState<ViewEditor | null>(null);
+  const [query, setQuery] = useState(() => {
+    const views = parseSavedViews(loadStored(SAVED_VIEWS_KEY));
+    const id = parseActiveSavedViewId(
+      loadStored(ACTIVE_SAVED_VIEW_KEY),
+      views,
+    );
+    const view = views.find((v) => v.id === id);
+    return view?.criteria.query ?? "";
+  });
   const [now, setNow] = useState(() => Date.now());
   const [updating, setUpdating] = useState(false);
   const [createMenuOpen, setCreateMenuOpen] = useState(false);
@@ -1464,6 +1561,7 @@ export const Sidebar = memo(function Sidebar({
     branches: string[];
   } | null>(null);
   const [scopeMenuOpen, setScopeMenuOpen] = useState(false);
+  const [removeConfirmId, setRemoveConfirmId] = useState<string | null>(null);
   const [filterMenu, setFilterMenu] = useState<FilterMenu | null>(null);
   const [statusFilter, setStatusFilter] = useState<StatusFilter | null>(() =>
     parseStatusFilter(loadStored(STATUS_FILTER_KEY)),
@@ -1478,14 +1576,18 @@ export const Sidebar = memo(function Sidebar({
     parseGroupBy(loadStored(GROUP_BY_KEY)),
   );
   useEscapeClose(
-    createMenuOpen || scopeMenuOpen || filterMenu != null,
+    (createMenuOpen || scopeMenuOpen || filterMenu != null) &&
+      removeConfirmId == null,
     () => {
       setCreateMenuOpen(false);
       setBasePicker(null);
       setScopeMenuOpen(false);
       setFilterMenu(null);
+      setViewEditor(null);
     },
   );
+  const [importCliProvider, setImportCliProvider] =
+    useState<CliImportProvider | null>(null);
   const [issueFormFor, setIssueFormFor] = useState<string | null>(null);
   const [issueRef, setIssueRef] = useState("");
   const [issueError, setIssueError] = useState<string | null>(null);
@@ -1497,7 +1599,6 @@ export const Sidebar = memo(function Sidebar({
     setIssueError(null);
   }, [issuePending]);
   useEscapeClose(issueFormFor != null && !issuePending, closeIssueForm);
-  const [removeConfirmId, setRemoveConfirmId] = useState<string | null>(null);
   const [removePending, setRemovePending] = useState(false);
   const closeRemoveConfirm = useCallback(() => {
     if (removePending) return;
@@ -1515,6 +1616,8 @@ export const Sidebar = memo(function Sidebar({
   const [settledOpen, setSettledOpen] = useState(() =>
     loadFlag(SETTLED_OPEN_KEY, false),
   );
+  const [trashedOpen, setTrashedOpen] = useState(false);
+  const [purgeConfirmId, setPurgeConfirmId] = useState<string | null>(null);
   const [settledVisibleCount, setSettledVisibleCount] = useState(
     SETTLED_TAIL_INITIAL_COUNT,
   );
@@ -1660,23 +1763,26 @@ export const Sidebar = memo(function Sidebar({
     revealThreadId,
   ]);
 
-  // Drop a stale scope if the project was removed.
+  // Drop a stale scope if the project was removed. An active saved view
+  // keeps the criterion so a missing project stays empty, not "all projects".
   useEffect(() => {
+    if (activeViewId != null) return;
     if (projectScope != null && !projectById.has(projectScope)) {
       setProjectScope(null);
       saveStored(SCOPE_KEY, null);
     }
-  }, [projectScope, projectById]);
+  }, [projectScope, projectById, activeViewId]);
 
   const knownTags = useMemo(() => allTags(threads), [threads]);
 
   // Drop a stale tag filter when no thread carries the tag anymore.
   useEffect(() => {
+    if (activeViewId != null) return;
     if (tagFilter != null && !knownTags.includes(tagFilter)) {
       setTagFilter(null);
       saveStored(TAG_FILTER_KEY, null);
     }
-  }, [tagFilter, knownTags]);
+  }, [tagFilter, knownTags, activeViewId]);
 
   useEffect(() => {
     setSettledVisibleCount(SETTLED_TAIL_INITIAL_COUNT);
@@ -1822,6 +1928,9 @@ export const Sidebar = memo(function Sidebar({
 
   const visibleIdsRef = useRef(visibleIds);
   const selectAnchorRef = useRef(selectAnchor);
+  const projectsRef = useRef(projects);
+  projectsRef.current = projects;
+  const listMoveProjects = useCallback(() => projectsRef.current, []);
   useEffect(() => {
     visibleIdsRef.current = visibleIds;
     selectAnchorRef.current = selectAnchor;
@@ -2006,6 +2115,52 @@ export const Sidebar = memo(function Sidebar({
       });
   };
 
+  const persistViews = (next: SavedView[]) => {
+    setSavedViews(next);
+    saveStored(SAVED_VIEWS_KEY, next.length ? serializeSavedViews(next) : null);
+  };
+
+  const persistActiveViewId = (id: string | null) => {
+    setActiveViewId(id);
+    saveStored(ACTIVE_SAVED_VIEW_KEY, id);
+  };
+
+  const applyCriteria = (c: SavedViewCriteria) => {
+    setStatusFilter(c.status);
+    saveStored(STATUS_FILTER_KEY, c.status);
+    setProviderFilter([...c.providers]);
+    saveStored(PROVIDER_FILTER_KEY, serializeProviderFilter(c.providers));
+    setTagFilter(c.tag);
+    saveStored(TAG_FILTER_KEY, c.tag);
+    setProjectScope(c.projectId);
+    saveStored(SCOPE_KEY, c.projectId);
+    setGroupBy(c.groupBy);
+    saveStored(GROUP_BY_KEY, c.groupBy === "none" ? null : c.groupBy);
+    setQuery(c.query);
+    if (c.status === "archived") {
+      setSettledOpen(true);
+      saveFlag(SETTLED_OPEN_KEY, true);
+    }
+  };
+
+  const currentCriteria = useMemo<SavedViewCriteria>(
+    () => ({
+      status: statusFilter,
+      providers: providerFilter,
+      projectId: projectScope,
+      tag: tagFilter,
+      query: query.trim(),
+      groupBy,
+    }),
+    [statusFilter, providerFilter, projectScope, tagFilter, query, groupBy],
+  );
+
+  const activeSavedView =
+    savedViews.find((v) => v.id === activeViewId) ?? null;
+  const viewModified =
+    activeSavedView != null &&
+    !criteriaEqual(activeSavedView.criteria, currentCriteria);
+
   const setScope = (id: string | null) => {
     setProjectScope(id);
     saveStored(SCOPE_KEY, id);
@@ -2048,7 +2203,51 @@ export const Sidebar = memo(function Sidebar({
   const toggleFilterMenu = (menu: FilterMenu) => {
     setCreateMenuOpen(false);
     setScopeMenuOpen(false);
+    setViewEditor(null);
     setFilterMenu((open) => (open === menu ? null : menu));
+  };
+
+  const recallSavedView = (view: SavedView) => {
+    persistActiveViewId(view.id);
+    applyCriteria(view.criteria);
+    setViewEditor(null);
+    setFilterMenu(null);
+  };
+
+  const submitViewEditor = () => {
+    if (!viewEditor) return;
+    if (viewEditor.mode === "save") {
+      const next = addSavedView(savedViews, {
+        name: viewEditor.name,
+        criteria: currentCriteria,
+      });
+      if (next.length === savedViews.length) return;
+      persistViews(next);
+      persistActiveViewId(next[0]!.id);
+      setViewEditor(null);
+      return;
+    }
+    if (!activeSavedView) return;
+    const next = renameSavedView(savedViews, activeSavedView.id, viewEditor.name);
+    persistViews(next);
+    setViewEditor(null);
+  };
+
+  const updateActiveView = () => {
+    if (!activeSavedView || !viewModified) return;
+    persistViews(
+      updateSavedView(savedViews, activeSavedView.id, currentCriteria),
+    );
+    setFilterMenu(null);
+    setViewEditor(null);
+  };
+
+  const deleteActiveView = () => {
+    if (!activeSavedView) return;
+    persistViews(deleteSavedView(savedViews, activeSavedView.id));
+    persistActiveViewId(null);
+    setFilterMenu(null);
+    setViewEditor(null);
   };
 
   const toggleSnoozed = () => {
@@ -2092,9 +2291,12 @@ export const Sidebar = memo(function Sidebar({
         onSetPinned={onSetPinned}
         onSetSnoozed={onSetSnoozed}
         onSetTags={onSetTags}
+        onSetThreadProject={onSetThreadProject}
         onSetMuted={onSetMuted}
+        onSetEjected={onSetEjected}
         onRenameThread={onRenameThread}
         onFork={onFork}
+        listMoveProjects={listMoveProjects}
         nested={
           thread.handoffFrom != null && cardIds.has(thread.handoffFrom)
         }
@@ -2214,6 +2416,40 @@ export const Sidebar = memo(function Sidebar({
       settledTail.length ===
       0;
 
+  const viewUnavailable =
+    activeViewId != null
+      ? savedViewUnavailable(currentCriteria, {
+          projectIds: new Set(projectById.keys()),
+          tags: knownTags,
+          providerIds: new Set(providerOptions.map((p) => p.id)),
+        })
+      : null;
+
+  const keptOutsideFilter = (() => {
+    if (!activeThreadId) return false;
+    if (
+      statusFilter == null &&
+      providerFilter.length === 0 &&
+      tagFilter == null &&
+      projectScope == null
+    ) {
+      return false;
+    }
+    const open = liveById.get(activeThreadId);
+    if (!open) return false;
+    if (!displayThreads.some((t) => t.id === open.id)) return false;
+    return !threadMatchesFilter(
+      open,
+      {
+        status: statusFilter,
+        providers: providerFilter,
+        projectId: projectScope,
+        tag: tagFilter,
+      },
+      waitStates.get(open.id),
+    );
+  })();
+
   return (
     <aside className={styles.sidebar}>
       {!isWebMode() && <div className={styles.dragRegion} />}
@@ -2295,6 +2531,7 @@ export const Sidebar = memo(function Sidebar({
                 onClick={() => {
                   setScopeMenuOpen(false);
                   setFilterMenu(null);
+                  setViewEditor(null);
                   setBasePicker(null);
                   setCreateMenuOpen((open) => !open);
                 }}
@@ -2438,6 +2675,101 @@ export const Sidebar = memo(function Sidebar({
                       From issue
                     </button>
                   )}
+                  {listCliSessions && importCliSession && createProjectId && (
+                    <>
+                      <button
+                        type="button"
+                        className={styles.menuItem}
+                        role="menuitem"
+                        data-import-cli-session={createProjectId}
+                        title="Import a Codex CLI session from disk"
+                        onClick={() => {
+                          setCreateMenuOpen(false);
+                          setImportCliProvider("codex");
+                        }}
+                      >
+                        Import Codex session…
+                      </button>
+                      <button
+                        type="button"
+                        className={styles.menuItem}
+                        role="menuitem"
+                        data-import-grok-session={createProjectId}
+                        title="Import a Grok CLI session from disk"
+                        onClick={() => {
+                          setCreateMenuOpen(false);
+                          setImportCliProvider("grok");
+                        }}
+                      >
+                        Import Grok session…
+                      </button>
+                      <button
+                        type="button"
+                        className={styles.menuItem}
+                        role="menuitem"
+                        data-import-claude-session={createProjectId}
+                        title="Import a Claude Code session from disk"
+                        onClick={() => {
+                          setCreateMenuOpen(false);
+                          setImportCliProvider("claude");
+                        }}
+                      >
+                        Import Claude session…
+                      </button>
+                      <button
+                        type="button"
+                        className={styles.menuItem}
+                        role="menuitem"
+                        data-import-cursor-session={createProjectId}
+                        title="Import a Cursor CLI session from disk"
+                        onClick={() => {
+                          setCreateMenuOpen(false);
+                          setImportCliProvider("cursor");
+                        }}
+                      >
+                        Import Cursor session…
+                      </button>
+                      <button
+                        type="button"
+                        className={styles.menuItem}
+                        role="menuitem"
+                        data-import-opencode-session={createProjectId}
+                        title="Import an OpenCode CLI session from disk"
+                        onClick={() => {
+                          setCreateMenuOpen(false);
+                          setImportCliProvider("opencode");
+                        }}
+                      >
+                        Import OpenCode session…
+                      </button>
+                      <button
+                        type="button"
+                        className={styles.menuItem}
+                        role="menuitem"
+                        data-import-kimi-session={createProjectId}
+                        title="Import a Kimi CLI session from disk"
+                        onClick={() => {
+                          setCreateMenuOpen(false);
+                          setImportCliProvider("kimi");
+                        }}
+                      >
+                        Import Kimi session…
+                      </button>
+                      <button
+                        type="button"
+                        className={styles.menuItem}
+                        role="menuitem"
+                        data-import-muse-session={createProjectId}
+                        title="Import a Muse CLI session from disk"
+                        onClick={() => {
+                          setCreateMenuOpen(false);
+                          setImportCliProvider("muse");
+                        }}
+                      >
+                        Import Muse session…
+                      </button>
+                    </>
+                  )}
                 </div>
               )}
             </span>
@@ -2457,6 +2789,7 @@ export const Sidebar = memo(function Sidebar({
             onClick={() => {
               setCreateMenuOpen(false);
               setFilterMenu(null);
+              setViewEditor(null);
               setScopeMenuOpen((open) => !open);
             }}
           >
@@ -2531,7 +2864,6 @@ export const Sidebar = memo(function Sidebar({
                       title="Remove project"
                       onClick={(e) => {
                         e.stopPropagation();
-                        setScopeMenuOpen(false);
                         setRemoveConfirmId(p.id);
                       }}
                     >
@@ -2571,6 +2903,156 @@ export const Sidebar = memo(function Sidebar({
             <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
           </Icon>
         </button>
+      </div>
+
+      <div className={styles.viewRow}>
+        <span className={styles.filterMenuHost}>
+          <button
+            type="button"
+            className={styles.viewTrigger}
+            data-saved-views-trigger=""
+            data-active={activeSavedView ? "true" : undefined}
+            data-modified={viewModified ? "true" : undefined}
+            aria-haspopup="menu"
+            aria-expanded={filterMenu === "views"}
+            aria-label={
+              activeSavedView
+                ? viewModified
+                  ? `Saved views, ${activeSavedView.name}, modified`
+                  : `Saved views, ${activeSavedView.name}`
+                : "Saved views"
+            }
+            onClick={() => toggleFilterMenu("views")}
+          >
+            <span className={styles.filterTriggerLabel}>
+              {savedViewTriggerLabel(
+                activeSavedView ? { name: activeSavedView.name } : null,
+                viewModified,
+              )}
+            </span>
+            <Icon size={12}>
+              <path d="m6 9 6 6 6-6" />
+            </Icon>
+          </button>
+          {filterMenu === "views" && (
+            <div
+              className={`${styles.menu} ${styles.menuLeft} ${styles.viewMenu}`}
+              role="menu"
+              data-saved-views-menu=""
+            >
+              {savedViews.length === 0 && !viewEditor && (
+                <p className={styles.viewEmpty}>No saved views</p>
+              )}
+              {savedViews.map((view) => (
+                <button
+                  key={view.id}
+                  type="button"
+                  className={styles.menuItem}
+                  role="menuitem"
+                  data-saved-view={view.id}
+                  data-saved-view-label={view.name}
+                  data-selected={
+                    view.id === activeViewId ? "true" : undefined
+                  }
+                  onClick={() => recallSavedView(view)}
+                >
+                  {view.name}
+                  {view.id === activeViewId && !viewModified && (
+                    <span className={styles.filterCheck}>
+                      <Icon size={12}>
+                        <path d="M5 12.5 9 16.5 19 7.5" />
+                      </Icon>
+                    </span>
+                  )}
+                </button>
+              ))}
+              {viewEditor ? (
+                <form
+                  className={styles.viewNameForm}
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    submitViewEditor();
+                  }}
+                >
+                  <input
+                    className={styles.viewNameInput}
+                    data-saved-view-name=""
+                    value={viewEditor.name}
+                    onChange={(e) =>
+                      setViewEditor({ ...viewEditor, name: e.target.value })
+                    }
+                    placeholder="View name"
+                    aria-label="View name"
+                    autoFocus
+                  />
+                  <button
+                    type="submit"
+                    className={styles.viewNameSave}
+                    data-saved-view-save-confirm=""
+                    disabled={viewEditor.name.trim() === ""}
+                  >
+                    Save
+                  </button>
+                </form>
+              ) : (
+                <>
+                  {savedViews.length > 0 && (
+                    <div className={styles.menuSep} />
+                  )}
+                  <button
+                    type="button"
+                    className={styles.menuItem}
+                    role="menuitem"
+                    data-saved-view-save=""
+                    onClick={() =>
+                      setViewEditor({ mode: "save", name: "" })
+                    }
+                  >
+                    Save current as…
+                  </button>
+                  {activeSavedView && viewModified && (
+                    <button
+                      type="button"
+                      className={styles.menuItem}
+                      role="menuitem"
+                      data-saved-view-update=""
+                      onClick={updateActiveView}
+                    >
+                      Update view
+                    </button>
+                  )}
+                  {activeSavedView && (
+                    <button
+                      type="button"
+                      className={styles.menuItem}
+                      role="menuitem"
+                      data-saved-view-rename=""
+                      onClick={() =>
+                        setViewEditor({
+                          mode: "rename",
+                          name: activeSavedView.name,
+                        })
+                      }
+                    >
+                      Rename…
+                    </button>
+                  )}
+                  {activeSavedView && (
+                    <button
+                      type="button"
+                      className={styles.menuItem}
+                      role="menuitem"
+                      data-saved-view-delete=""
+                      onClick={deleteActiveView}
+                    >
+                      Delete view
+                    </button>
+                  )}
+                </>
+              )}
+            </div>
+          )}
+        </span>
       </div>
 
       <div className={styles.filterRow} data-filter-row="">
@@ -2871,6 +3353,24 @@ export const Sidebar = memo(function Sidebar({
         </button>
       </nav>
 
+      {importCliProvider &&
+        listCliSessions &&
+        importCliSession &&
+        createProjectId && (
+          <ImportCliSessionModal
+            projectId={createProjectId}
+            provider={importCliProvider}
+            threads={threads}
+            listCliSessions={listCliSessions}
+            importCliSession={importCliSession}
+            onClose={() => setImportCliProvider(null)}
+            onImported={(imported) => {
+              setImportCliProvider(null);
+              onSelectThread(imported.id);
+            }}
+          />
+        )}
+
       {issueProject && onCreateThreadFromIssue && (
         <form
           className={styles.issueForm}
@@ -2933,6 +3433,19 @@ export const Sidebar = memo(function Sidebar({
           >
             Add project
           </button>
+        )}
+
+        {viewUnavailable && (
+          <p className={styles.emptySearch} data-view-unavailable="">
+            {viewUnavailable.message}
+          </p>
+        )}
+
+        {keptOutsideFilter && (
+          <p className={styles.filterCarveOut} data-filter-carve-out="">
+            The open thread stays visible even when it doesn't match these
+            filters
+          </p>
         )}
 
         {searchInFlight && (
@@ -3108,7 +3621,99 @@ export const Sidebar = memo(function Sidebar({
                 </div>
               )}
 
-              {listEmpty && projects.length > 0 && (
+              {trashedThreads.length > 0 && (
+                <div className={styles.shelf} data-trashed-shelf="">
+                  <div className={styles.shelfHeaderRow}>
+                    <button
+                      type="button"
+                      className={styles.shelfToggle}
+                      data-trashed-shelf-toggle=""
+                      aria-expanded={trashedOpen}
+                      onClick={() => setTrashedOpen((open) => !open)}
+                    >
+                      <span className={styles.shelfLabelSettled}>
+                        {trashedOpen
+                          ? "Recently deleted"
+                          : `Recently deleted (${trashedThreads.length})`}
+                      </span>
+                      <span className={styles.shelfRuleSettled} />
+                      <span
+                        className={styles.shelfChevron}
+                        data-open={trashedOpen}
+                        aria-hidden
+                      >
+                        <Icon size={12}>
+                          <path d="m6 9 6 6 6-6" />
+                        </Icon>
+                      </span>
+                    </button>
+                  </div>
+                  {trashedOpen &&
+                    trashedThreads.map((row) => (
+                      <div
+                        key={row.id}
+                        className={styles.slimRow}
+                        data-trashed-row={row.id}
+                      >
+                        <div className={styles.slimBody}>
+                          <span className={styles.slimTitle}>{row.title}</span>
+                          <span className={styles.slimSlug}>
+                            {row.projectMissing
+                              ? "Project unavailable"
+                              : (row.projectSlug ?? "unknown")}
+                          </span>
+                          <span className={styles.slimSlot}>
+                            <span className={styles.slimAge}>
+                              {formatTrashExpiry(row.expiresAt, now)}
+                            </span>
+                            {onRestoreThread && (
+                              <button
+                                type="button"
+                                className={styles.slimAction}
+                                data-restore-btn={row.id}
+                                disabled={row.projectMissing}
+                                title={
+                                  row.projectMissing
+                                    ? "Cannot restore: project is no longer available"
+                                    : "Restore thread"
+                                }
+                                onClick={() => void onRestoreThread(row.id)}
+                              >
+                                Restore
+                              </button>
+                            )}
+                            {onPurgeThread &&
+                              (purgeConfirmId === row.id ? (
+                                <button
+                                  type="button"
+                                  className={`${styles.slimAction} ${styles.trashPurge}`}
+                                  data-purge-confirm={row.id}
+                                  onClick={() => {
+                                    setPurgeConfirmId(null);
+                                    void onPurgeThread(row.id);
+                                  }}
+                                >
+                                  Confirm
+                                </button>
+                              ) : (
+                                <button
+                                  type="button"
+                                  className={`${styles.slimAction} ${styles.trashPurge}`}
+                                  data-purge-btn={row.id}
+                                  title="Delete permanently"
+                                  onClick={() => setPurgeConfirmId(row.id)}
+                                >
+                                  Delete
+                                </button>
+                              ))}
+                          </span>
+                        </div>
+                      </div>
+                    ))}
+                </div>
+              )}
+
+              {listEmpty && projects.length > 0 && !viewUnavailable && (
                 <p className={styles.emptySearch}>
                   {filtersOn
                     ? "No threads match these filters"

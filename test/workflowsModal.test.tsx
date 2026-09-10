@@ -9,7 +9,8 @@
  */
 import assert from "node:assert/strict";
 import { describe, it, afterEach } from "node:test";
-import { mount, unmountAll } from "./support/dom.ts";
+import { useState } from "react";
+import { inAct, mount, unmountAll } from "./support/dom.ts";
 import { WorkflowsModal } from "../src/components/WorkflowsModal";
 import type {
   ProviderInfo,
@@ -395,6 +396,466 @@ describe("WorkflowsModal structure", () => {
       />,
     );
     assert.equal(m.html().trim(), "", "closed modal must render null");
+    m.unmount();
+  });
+});
+
+function inputValues(m: { queryAll(sel: string): Element[] }): string[] {
+  return m.queryAll("input").map((el) => (el as HTMLInputElement).value);
+}
+
+function closeCountOf(m: { query(sel: string): Element | null }): number {
+  return Number(m.query("[data-close-count]")?.getAttribute("data-close-count"));
+}
+
+function LiveModal({
+  workflows,
+  onSave,
+  onRemove,
+  initialSelectedId = "a",
+}: {
+  workflows: WorkflowTemplateInfo[];
+  onSave?: (t: WorkflowSaveInput) => Promise<WorkflowTemplateInfo>;
+  onRemove?: (id: string) => Promise<void>;
+  initialSelectedId?: string | null;
+}) {
+  const [open, setOpen] = useState(true);
+  const [closeCount, setCloseCount] = useState(0);
+  return (
+    <>
+      <button type="button" data-parent-close="" onClick={() => setOpen(false)}>
+        parent-close
+      </button>
+      <button type="button" data-parent-open="" onClick={() => setOpen(true)}>
+        parent-open
+      </button>
+      <span data-close-count={String(closeCount)} />
+      <WorkflowsModal
+        open={open}
+        onClose={() => {
+          setCloseCount((n) => n + 1);
+          setOpen(false);
+        }}
+        workflows={workflows}
+        providers={providers}
+        initialSelectedId={initialSelectedId}
+        onSave={
+          onSave ??
+          (async (t) =>
+            workflow({
+              id: t.id ?? "wf-new",
+              name: t.name,
+              phases: t.phases,
+              builtin: false,
+            }))
+        }
+        onRemove={onRemove ?? (async () => {})}
+      />
+    </>
+  );
+}
+
+async function mousedownBackdrop(m: {
+  query(sel: string): Element | null;
+}): Promise<void> {
+  const backdrop = m.query('[role="presentation"]');
+  if (!backdrop) throw new Error("backdrop not found");
+  await inAct(() => {
+    backdrop.dispatchEvent(
+      new MouseEvent("mousedown", { bubbles: true, cancelable: true }),
+    );
+  });
+}
+
+describe("WorkflowsModal dirty drafts", () => {
+  it("keeps a dirty name after A → B → A", async () => {
+    const a = workflow({
+      id: "a",
+      name: "Alpha",
+      phases: [phase({ name: "a1" })],
+    });
+    const b = workflow({
+      id: "b",
+      name: "Beta",
+      phases: [phase({ name: "b1" })],
+    });
+    const m = await mount(
+      modal({ workflows: [a, b], initialSelectedId: "a" }),
+    );
+    await m.type(m.query("#wf-name"), "Alpha edited");
+    await m.click(m.byText("Beta"));
+    assert.ok(
+      inputValues(m).includes("b1"),
+      `selecting Beta must load it, got: ${JSON.stringify(inputValues(m))}`,
+    );
+    await m.click(m.byText("Alpha"));
+    assert.ok(
+      inputValues(m).includes("Alpha edited"),
+      `returning to Alpha must restore the dirty name, got: ${JSON.stringify(inputValues(m))}`,
+    );
+    m.unmount();
+  });
+
+  it("keeps a dirty instruction and phase name after A → B → A", async () => {
+    const a = workflow({
+      id: "a",
+      name: "Alpha",
+      phases: [phase({ name: "a1", instruction: "Do the analysis" })],
+    });
+    const b = workflow({
+      id: "b",
+      name: "Beta",
+      phases: [phase({ name: "b1" })],
+    });
+    const m = await mount(
+      modal({ workflows: [a, b], initialSelectedId: "a" }),
+    );
+    const phaseName = m
+      .queryAll("input")
+      .find((el) => (el as HTMLInputElement).value === "a1");
+    assert.ok(phaseName, "phase name field must render");
+    await m.type(phaseName, "a1 edited");
+    await m.type(m.query("textarea"), "Analyze harder");
+    await m.click(m.byText("Beta"));
+    await m.click(m.byText("Alpha"));
+    assert.ok(
+      inputValues(m).includes("a1 edited"),
+      `dirty phase name must survive A→B→A, got: ${JSON.stringify(inputValues(m))}`,
+    );
+    const instruction = m.query("textarea") as HTMLTextAreaElement | null;
+    assert.equal(
+      instruction?.value,
+      "Analyze harder",
+      "dirty instruction must survive A→B→A",
+    );
+    m.unmount();
+  });
+
+  it("keeps a dirty new draft after New → A → New", async () => {
+    const a = workflow({ id: "a", name: "Alpha" });
+    const m = await mount(modal({ workflows: [a], initialSelectedId: "a" }));
+    await m.click(m.byText("New workflow"));
+    await m.type(m.query("#wf-name"), "Brand draft");
+    await m.click(m.byText("Alpha"));
+    await m.click(m.byText("New workflow"));
+    assert.ok(
+      inputValues(m).includes("Brand draft"),
+      `returning to New must restore the dirty name, got: ${JSON.stringify(inputValues(m))}`,
+    );
+    m.unmount();
+  });
+
+  it("asks before closing a dirty editor; Keep editing stays and Discard closes", async () => {
+    const closes: number[] = [];
+    const m = await mount(
+      modal({
+        workflows: [workflow({ id: "a", name: "Alpha" })],
+        initialSelectedId: "a",
+        onClose: () => {
+          closes.push(1);
+        },
+      }),
+    );
+    await m.type(m.query("#wf-name"), "Alpha edited");
+    await m.click(m.byText("Cancel"));
+    assert.equal(closes.length, 0, "dirty Cancel must not close immediately");
+    assert.ok(m.byText("Keep editing"), "must offer to keep the draft");
+    assert.ok(m.byText("Discard"), "must offer an explicit discard");
+    await m.click(m.byText("Keep editing"));
+    assert.equal(closes.length, 0, "Keep editing must stay on the draft");
+    assert.ok(
+      inputValues(m).includes("Alpha edited"),
+      "Keep editing must leave the dirty name in place",
+    );
+    await m.click(m.byText("Cancel"));
+    await m.click(m.byText("Discard"));
+    assert.equal(closes.length, 1, "Discard must close after an explicit choice");
+    m.unmount();
+  });
+
+  it("does not restore a discarded draft when the modal reopens", async () => {
+    const m = await mount(
+      <LiveModal workflows={[workflow({ id: "a", name: "Alpha" })]} />,
+    );
+    await m.type(m.query("#wf-name"), "Alpha edited");
+    await m.click(m.byText("Cancel"));
+    await m.click(m.byText("Discard"));
+    await m.click(m.query("[data-parent-open]"));
+    assert.ok(
+      inputValues(m).includes("Alpha"),
+      `reopen after discard must load the saved name, got: ${JSON.stringify(inputValues(m))}`,
+    );
+    assert.equal(
+      inputValues(m).includes("Alpha edited"),
+      false,
+      "an explicit discard must not come back on the next open",
+    );
+    m.unmount();
+  });
+});
+
+describe("WorkflowsModal close and session lifetime", () => {
+  it("header Close, Escape, backdrop and footer obey one pending and dirty policy", async () => {
+    let finish!: (value: WorkflowTemplateInfo) => void;
+    const a = workflow({ id: "a", name: "Alpha" });
+    const m = await mount(
+      <LiveModal
+        workflows={[a]}
+        onSave={() =>
+          new Promise<WorkflowTemplateInfo>((resolve) => {
+            finish = resolve;
+          })
+        }
+      />,
+    );
+    await m.click(m.byText("Save"));
+    assert.ok(m.byText("Saving…"), "save must be pending");
+
+    await m.click(m.query('[aria-label="Close"]'));
+    assert.equal(closeCountOf(m), 0, "header Close must not close while saving");
+    await m.press(m.query('[aria-label="Close"]'), "Escape");
+    assert.equal(closeCountOf(m), 0, "Escape must not close while saving");
+    await mousedownBackdrop(m);
+    assert.equal(closeCountOf(m), 0, "backdrop must not close while saving");
+    const cancel = m.byText("Cancel") as HTMLButtonElement | null;
+    assert.ok(cancel, "footer Cancel must remain");
+    assert.equal(cancel.disabled, true, "footer Cancel must stay disabled while saving");
+
+    await inAct(() => {
+      finish(a);
+    });
+    await m.flush();
+
+    await m.type(m.query("#wf-name"), "Alpha dirty");
+    const dirtyTriggers = [
+      async () => {
+        await m.click(m.byText("Cancel"));
+      },
+      async () => {
+        await m.click(m.query('[aria-label="Close"]'));
+      },
+      async () => {
+        await m.press(m.query('[aria-label="Close"]'), "Escape");
+      },
+      async () => {
+        await mousedownBackdrop(m);
+      },
+    ];
+    for (const trigger of dirtyTriggers) {
+      await trigger();
+      assert.equal(
+        closeCountOf(m),
+        0,
+        "dirty close must wait for an explicit discard",
+      );
+      assert.ok(m.byText("Keep editing"), "every close path must show discard");
+      await m.click(m.byText("Keep editing"));
+    }
+    m.unmount();
+  });
+
+  it("a late save from a previous session does not replace a newer draft", async () => {
+    let finish!: (value: WorkflowTemplateInfo) => void;
+    const a = workflow({
+      id: "a",
+      name: "Alpha",
+      phases: [phase({ name: "a1" })],
+    });
+    const b = workflow({
+      id: "b",
+      name: "Beta",
+      phases: [phase({ name: "b1" })],
+    });
+    const savedA = workflow({
+      id: "a",
+      name: "Alpha saved",
+      phases: [phase({ name: "a1" })],
+    });
+    const m = await mount(
+      <LiveModal
+        workflows={[a, b]}
+        onSave={() =>
+          new Promise<WorkflowTemplateInfo>((resolve) => {
+            finish = resolve;
+          })
+        }
+      />,
+    );
+    await m.click(m.byText("Save"));
+    await m.click(m.query("[data-parent-close]"));
+    await m.click(m.query("[data-parent-open]"));
+    await m.click(m.byText("Beta"));
+    await m.type(m.query("#wf-name"), "Beta draft");
+    await inAct(() => {
+      finish(savedA);
+    });
+    await m.flush();
+    assert.ok(
+      inputValues(m).includes("Beta draft"),
+      `late save must not wipe B's draft, got: ${JSON.stringify(inputValues(m))}`,
+    );
+    assert.equal(
+      inputValues(m).includes("Alpha saved"),
+      false,
+      "late save must not switch the editor to saved A",
+    );
+    m.unmount();
+  });
+
+  it("a failed save from a previous session does not replace a newer draft", async () => {
+    let fail!: (err: Error) => void;
+    const a = workflow({ id: "a", name: "Alpha" });
+    const b = workflow({ id: "b", name: "Beta" });
+    const m = await mount(
+      <LiveModal
+        workflows={[a, b]}
+        onSave={() =>
+          new Promise<WorkflowTemplateInfo>((_resolve, reject) => {
+            fail = reject;
+          })
+        }
+      />,
+    );
+    await m.click(m.byText("Save"));
+    await m.click(m.query("[data-parent-close]"));
+    await m.click(m.query("[data-parent-open]"));
+    await m.click(m.byText("Beta"));
+    await m.type(m.query("#wf-name"), "Beta draft");
+    await inAct(() => {
+      fail(new Error("host rejected Alpha"));
+    });
+    await m.flush();
+    assert.ok(
+      inputValues(m).includes("Beta draft"),
+      `failed late save must not wipe B, got: ${JSON.stringify(inputValues(m))}`,
+    );
+    assert.equal(
+      m.text().includes("host rejected Alpha"),
+      false,
+      "a stale save error must not land on a later editor session",
+    );
+    m.unmount();
+  });
+
+  it("a failed delete from a previous session does not replace a newer draft", async () => {
+    let fail!: (err: Error) => void;
+    const a = workflow({ id: "a", name: "Alpha" });
+    const b = workflow({ id: "b", name: "Beta" });
+    const m = await mount(
+      <LiveModal
+        workflows={[a, b]}
+        onRemove={() =>
+          new Promise<void>((_resolve, reject) => {
+            fail = reject;
+          })
+        }
+      />,
+    );
+    await m.click(m.byText("Delete"));
+    await m.click(m.byText("Confirm delete"));
+    await m.click(m.query("[data-parent-close]"));
+    await m.click(m.query("[data-parent-open]"));
+    await m.click(m.byText("Beta"));
+    await m.type(m.query("#wf-name"), "Beta draft");
+    await inAct(() => {
+      fail(new Error("host rejected delete"));
+    });
+    await m.flush();
+    assert.ok(
+      inputValues(m).includes("Beta draft"),
+      `failed late delete must not wipe B, got: ${JSON.stringify(inputValues(m))}`,
+    );
+    assert.equal(
+      m.text().includes("host rejected delete"),
+      false,
+      "a stale delete error must not land on a later editor session",
+    );
+    m.unmount();
+  });
+
+  it("a late delete from a previous session does not replace a newer draft", async () => {
+    let finish!: () => void;
+    const a = workflow({ id: "a", name: "Alpha" });
+    const b = workflow({ id: "b", name: "Beta" });
+    const m = await mount(
+      <LiveModal
+        workflows={[a, b]}
+        onRemove={() =>
+          new Promise<void>((resolve) => {
+            finish = resolve;
+          })
+        }
+      />,
+    );
+    await m.click(m.byText("Delete"));
+    await m.click(m.byText("Confirm delete"));
+    await m.click(m.query("[data-parent-close]"));
+    await m.click(m.query("[data-parent-open]"));
+    await m.click(m.byText("Beta"));
+    await m.type(m.query("#wf-name"), "Beta draft");
+    await inAct(() => {
+      finish();
+    });
+    await m.flush();
+    assert.ok(
+      inputValues(m).includes("Beta draft"),
+      `late delete must not wipe B's draft, got: ${JSON.stringify(inputValues(m))}`,
+    );
+    m.unmount();
+  });
+
+  it("moves focus to the discard confirmation", async () => {
+    const m = await mount(
+      modal({
+        workflows: [workflow({ id: "a", name: "Alpha" })],
+        initialSelectedId: "a",
+      }),
+    );
+    await m.type(m.query("#wf-name"), "Alpha edited");
+    await m.click(m.byText("Cancel"));
+    const keep = m.byText("Keep editing") as HTMLElement | null;
+    assert.ok(keep, "discard confirmation must render");
+    assert.equal(
+      document.activeElement,
+      keep,
+      "Keep editing must take focus so discard is keyboard-reachable",
+    );
+    m.unmount();
+  });
+
+  it("saving a builtin still sends the source id so copy-on-save works", async () => {
+    const calls: WorkflowSaveInput[] = [];
+    const built = workflow({
+      id: "built",
+      name: "Builtin ship",
+      builtin: true,
+    });
+    const m = await mount(
+      modal({
+        workflows: [built],
+        initialSelectedId: "built",
+        onSave: async (t) => {
+          calls.push(t);
+          return workflow({
+            id: "copy-1",
+            name: t.name,
+            phases: t.phases,
+            builtin: false,
+          });
+        },
+      }),
+    );
+    await m.click(m.byText("Save"));
+    assert.equal(calls.length, 1, "save must call onSave");
+    assert.equal(
+      calls[0]?.id,
+      "built",
+      "builtin save must send the source id so the host can copy",
+    );
+    assert.ok(
+      inputValues(m).includes("Builtin ship"),
+      "editor must show the saved copy",
+    );
     m.unmount();
   });
 });

@@ -112,6 +112,51 @@ async function main() {
     return;
   }
 
+  // Mid-turn steer (issue #156): first user line starts work without a
+  // result; a second user line is guidance on the same turn.
+  if (scenario === "steer-wait") {
+    emit({ type: "system", subtype: "init", session_id: "sess-steer", model: "m" });
+    let buf = "";
+    let users = 0;
+    process.stdin.on("data", (c) => {
+      buf += c;
+      let nl;
+      while ((nl = buf.indexOf("\\n")) >= 0) {
+        const line = buf.slice(0, nl);
+        buf = buf.slice(nl + 1);
+        if (!line.trim()) continue;
+        let msg;
+        try { msg = JSON.parse(line); } catch { continue; }
+        if (msg.type !== "user") continue;
+        users += 1;
+        if (users === 1) {
+          emit({
+            type: "assistant",
+            message: { content: [{ type: "text", text: "working..." }] },
+          });
+          continue;
+        }
+        emit({
+          type: "assistant",
+          message: { content: [{ type: "text", text: "redirected" }] },
+        });
+        emit({
+          type: "result",
+          subtype: "success",
+          result: "redirected",
+          usage: { input_tokens: 2, output_tokens: 2 },
+          total_cost_usd: 0,
+          num_turns: 1,
+          session_id: "sess-steer",
+        });
+        process.exit(0);
+      }
+    });
+    await delay(30000);
+    process.exit(1);
+    return;
+  }
+
   if (scenario === "success") {
     emit({
       type: "system",
@@ -2381,5 +2426,71 @@ describe("runner claude provider", () => {
     } finally {
       delete process.env.CODER_FAKE_CLAUDE_CTRL_FILE;
     }
+  });
+
+  it("steerRun injects a user line into the live turn on the same runId", async () => {
+    process.env.CODER_FAKE_CLAUDE_SCENARIO = "steer-wait";
+    const stdinFile = path.join(tmpDir, "steer-stdin.jsonl");
+    process.env.CODER_FAKE_CLAUDE_STDIN_FILE = stdinFile;
+
+    const thread = store.getThreads()[0];
+    const { runId } = await runner.startRun({
+      threadId: thread.id,
+      prompt: "do the thing",
+    });
+
+    await waitFor(() =>
+      store
+        .getMessages(thread.id)
+        .some((m) => m.role === "assistant" && m.text === "working..."),
+    );
+
+    const steered = await runner.steerRun({
+      threadId: thread.id,
+      prompt: "stop that, do X instead",
+    });
+    assert.equal(steered.runId, runId);
+
+    await waitFor(() => store.getThread(thread.id).status === "done");
+
+    const msgs = store.getMessages(thread.id);
+    const steerMsg = msgs.find((m) => m.steer === true);
+    assert.ok(steerMsg, "expected a steered user row");
+    assert.equal(steerMsg.role, "user");
+    assert.equal(steerMsg.text, "stop that, do X instead");
+    assert.equal(steerMsg.runId, runId);
+
+    const users = msgs.filter((m) => m.role === "user");
+    assert.equal(users.length, 2, "steer is a second user row, not a new run");
+    assert.equal(users[0].text, "do the thing");
+    assert.equal(users[0].steer, undefined);
+
+    const assistants = msgs.filter((m) => m.role === "assistant");
+    assert.ok(
+      assistants.some((m) => m.text.includes("redirected")),
+      `expected steered continuation, got ${JSON.stringify(assistants.map((m) => m.text))}`,
+    );
+    assert.ok(assistants.every((m) => m.runId === runId));
+
+    const stdin = fs.readFileSync(stdinFile, "utf8");
+    assert.match(stdin, /do the thing/);
+    assert.match(stdin, /stop that, do X instead/);
+    delete process.env.CODER_FAKE_CLAUDE_STDIN_FILE;
+  });
+
+  it("steerRun rejects when no run is live", async () => {
+    const thread = store.getThreads()[0];
+    await assert.rejects(
+      () => runner.steerRun({ threadId: thread.id, prompt: "nudge" }),
+      /no live run/i,
+    );
+  });
+
+  it("steerRun rejects an empty prompt", async () => {
+    const thread = store.getThreads()[0];
+    await assert.rejects(
+      () => runner.steerRun({ threadId: thread.id, prompt: "   " }),
+      /prompt is required/i,
+    );
   });
 });

@@ -553,17 +553,32 @@ process.exit(2);
   it("codex done footer includes non-zero tokens_in and tokens_out from applyUsage", async () => {
     fake = await startCaptureServer(port, TOKEN);
     const prevCodex = process.env.CODER_CODEX_BIN;
-    const bin = path.join(tmpDir, "fake-codex-rec");
     // turn.completed usage must be non-zero so the footer is not all zeros.
-    const body = `#!/usr/bin/env node
-"use strict";
-function emit(o){process.stdout.write(JSON.stringify(o)+"\\n");}
-emit({type:"thread.started",thread_id:"codex-sess-rec"});
-emit({type:"item.completed",item:{id:"m1",type:"agent_message",text:"Hello from codex with usage"}});
-emit({type:"turn.completed",usage:{input_tokens:30,output_tokens:12,total_cost_usd:0.004}});
-process.exit(0);
-`;
-    const resolved = writeFakeBin(bin, body);
+    const eventsFile = path.join(tmpDir, "codex-rec-events.jsonl");
+    fs.writeFileSync(
+      eventsFile,
+      [
+        {
+          type: "item.completed",
+          item: {
+            id: "m1",
+            type: "agent_message",
+            text: "Hello from codex with usage",
+          },
+        },
+        {
+          type: "turn.completed",
+          usage: { input_tokens: 30, output_tokens: 12, total_cost_usd: 0.004 },
+        },
+      ]
+        .map((ev) => JSON.stringify(ev))
+        .join("\n"),
+    );
+    process.env.CODER_FAKE_CODEX_EVENTS_FILE = eventsFile;
+    const resolved = require("./support/fakeCodexCli.js").writeFakeCodexBin(
+      tmpDir,
+      writeFakeBin,
+    );
     process.env.CODER_CODEX_BIN = resolved;
 
     try {
@@ -590,6 +605,7 @@ process.exit(0);
       assert.match(rec.body, /tokens_out=12/);
       assert.match(rec.body, /cost_usd=0\.004/);
     } finally {
+      delete process.env.CODER_FAKE_CODEX_EVENTS_FILE;
       if (prevCodex === undefined) delete process.env.CODER_CODEX_BIN;
       else process.env.CODER_CODEX_BIN = prevCodex;
     }
@@ -614,21 +630,14 @@ describe("codex listed model flows into -m", () => {
 
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "coder-codex-m-"));
     argvFile = path.join(tmpDir, "argv.json");
-    const body = `#!/usr/bin/env node
-"use strict";
-const fs = require("fs");
-if (process.env.CODER_FAKE_CODEX_ARGV_FILE) {
-  fs.writeFileSync(process.env.CODER_FAKE_CODEX_ARGV_FILE, JSON.stringify(process.argv.slice(1)), "utf8");
-}
-function emit(o){process.stdout.write(JSON.stringify(o)+"\\n");}
-emit({type:"thread.started",thread_id:"sess-m"});
-emit({type:"item.completed",item:{id:"1",type:"agent_message",text:"ok"}});
-emit({type:"turn.completed",usage:{input_tokens:1,output_tokens:1}});
-process.exit(0);
-`;
-    const fake = writeFakeBin(path.join(tmpDir, "fake-codex"), body);
+    const rpcFile = path.join(tmpDir, "rpc.jsonl");
+    const fake = require("./support/fakeCodexCli.js").writeFakeCodexBin(
+      tmpDir,
+      writeFakeBin,
+    );
     process.env.CODER_CODEX_BIN = fake;
     process.env.CODER_FAKE_CODEX_ARGV_FILE = argvFile;
+    process.env.CODER_FAKE_CODEX_RPC_FILE = rpcFile;
 
     store = new Store(path.join(tmpDir, "store.json"));
     const core = await loadCore();
@@ -663,16 +672,23 @@ process.exit(0);
     if (prevCodexBin === undefined) delete process.env.CODER_CODEX_BIN;
     else process.env.CODER_CODEX_BIN = prevCodexBin;
     delete process.env.CODER_FAKE_CODEX_ARGV_FILE;
+    delete process.env.CODER_FAKE_CODEX_RPC_FILE;
   });
 
-  it("passes -m <listed model> for codex", async () => {
+  it("passes model on thread/start and turn/start", async () => {
     const thread = store.getThreads()[0];
     assert.equal(thread.model, "gpt-5.5");
     await runner.startRun({ threadId: thread.id, prompt: "hi" });
     await waitFor(() => store.getThread(thread.id).status === "done");
-    const argv = JSON.parse(fs.readFileSync(argvFile, "utf8"));
-    const idx = argv.indexOf("-m");
-    assert.ok(idx >= 0, `expected -m in ${JSON.stringify(argv)}`);
-    assert.equal(argv[idx + 1], "gpt-5.5");
+    const rpc = fs
+      .readFileSync(process.env.CODER_FAKE_CODEX_RPC_FILE, "utf8")
+      .trim()
+      .split("\n")
+      .filter(Boolean)
+      .map((l) => JSON.parse(l));
+    const start = rpc.find((m) => m.method === "thread/start");
+    const turn = rpc.find((m) => m.method === "turn/start");
+    assert.equal(start.params.model, "gpt-5.5");
+    assert.equal(turn.params.model, "gpt-5.5");
   });
 });

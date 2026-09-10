@@ -6,6 +6,7 @@
 // prompt travels in argv (#442).
 const spawn = require("cross-spawn");
 const { killTree, agentSpawnOptions } = require("./proc.js");
+const { harvestToolResult } = require("./tool-images.js");
 
 const SIGKILL_AFTER_MS = 3000;
 // Max stderr retained per child process (tail), for error reporting.
@@ -23,7 +24,8 @@ const STDERR_TAIL_CHARS = 64 * 1024;
  * @param {(ev: object) => void} opts.onEvent - raw parsed JSONL event
  * @param {(info: { code: number | null, stderr: string }) => void} opts.onExit
  * @param {(err: Error) => void} [opts.onError]
- * @returns {{ kill: () => void }}
+ * @returns {{ kill: () => void }} kill only — no send(); stdin is ignored
+ *   because exec --json has no mid-turn user channel (issue #1164)
  */
 function runCodex(opts) {
   const {
@@ -84,6 +86,8 @@ function runCodex(opts) {
       args,
       agentSpawnOptions({
         cwd,
+        // exec --json is one-shot: prompt is argv. stdin is not a second
+        // user-message channel (issue #1164).
         stdio: ["ignore", "pipe", "pipe"],
         env: envExtra ? { ...process.env, ...envExtra } : undefined,
       }),
@@ -410,6 +414,7 @@ function shortSummary(name, value) {
  *   summary?: string,
  *   input?: string,
  *   output?: string | null,
+ *   images?: { mediaType: string, data: string }[],
  *   isError?: boolean,
  *   done?: boolean,
  *   changes?: object[],
@@ -489,16 +494,21 @@ function extractLiveItem(ev) {
       }
     }
     let output = null;
+    /** @type {{ mediaType: string, data: string }[] | undefined} */
+    let images;
     if (item.error && typeof item.error === "object" && item.error.message) {
       output = String(item.error.message);
     } else if (item.result != null) {
+      const harvested = harvestToolResult(item.result);
+      if (harvested.images.length) images = harvested.images;
+      const payload = harvested.images.length
+        ? harvested.redacted
+        : item.result;
       try {
         output =
-          typeof item.result === "string"
-            ? item.result
-            : JSON.stringify(item.result);
+          typeof payload === "string" ? payload : JSON.stringify(payload);
       } catch {
-        output = String(item.result);
+        output = String(payload);
       }
     }
     return {
@@ -509,6 +519,7 @@ function extractLiveItem(ev) {
       summary: shortSummary(name, input),
       input,
       output,
+      ...(images ? { images } : {}),
       isError: status === "failed" || Boolean(item.error),
       done: phase === "completed",
       server,

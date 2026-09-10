@@ -330,6 +330,39 @@ describe("memory-sup supervisor", () => {
         token: "threads-tok",
         userDataPath: tmpDir,
       });
+      // #927 / #1163: coder-threads needs ?projectId= or orchServer omits
+      // issue_*. Path-only bind still leaves that URL bare.
+      const pathOnly = getCodexMcpArgs({ projectPath: "/tmp/alpha-project" });
+      assert.ok(
+        pathOnly.some(
+          (a) =>
+            String(a).includes("mcp_servers.coder-threads.url=") &&
+            !String(a).includes("projectId="),
+        ),
+        `path-only must not invent projectId, got ${JSON.stringify(pathOnly)}`,
+      );
+      const boundThreads = getCodexMcpArgs({
+        projectPath: "/tmp/alpha-project",
+        projectId: "proj-alpha",
+      });
+      const threadsUrl = boundThreads.find(
+        (a) =>
+          typeof a === "string" &&
+          a.startsWith("mcp_servers.coder-threads.url="),
+      );
+      assert.match(
+        String(threadsUrl),
+        /[?&]projectId=proj-alpha/,
+        `expected bound coder-threads url, got ${JSON.stringify(boundThreads)}`,
+      );
+      assert.ok(
+        boundThreads.some(
+          (a) =>
+            String(a).includes("mcp_servers.coder-memory.url=") &&
+            /[?&]project=/.test(String(a)),
+        ),
+        `memory url must keep ?project=, got ${JSON.stringify(boundThreads)}`,
+      );
       const both = getClaudeMcpArgs();
       assert.equal(
         both[1],

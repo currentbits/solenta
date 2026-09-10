@@ -1,5 +1,6 @@
-import { useRef, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { needsWebTokenGate, persistWebToken, webNavigation } from "../coderApi";
+import { useEscapeClose } from "../useEscapeClose";
 import { useModalFocus } from "../useModalFocus";
 import styles from "./SettingsModal.module.css";
 
@@ -12,13 +13,15 @@ import styles from "./SettingsModal.module.css";
 export function WebTokenGate() {
   const [token, setToken] = useState("");
   const dialogRef = useRef<HTMLDivElement>(null);
-  const [open] = useState(() => {
+  const [open, setOpen] = useState(() => {
     try {
       return needsWebTokenGate();
     } catch {
       return true;
     }
   });
+  const handleClose = useCallback(() => setOpen(false), []);
+  useEscapeClose(open, handleClose);
   useModalFocus(open, dialogRef);
 
   if (!open) return null;
@@ -43,6 +46,7 @@ export function WebTokenGate() {
         aria-modal="true"
         aria-labelledby="web-token-title"
         tabIndex={-1}
+        data-web-token-gate-dialog=""
       >
         <div className={styles.header}>
           <h2 id="web-token-title" className={styles.title}>

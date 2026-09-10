@@ -70,6 +70,12 @@ export interface ProjectInfo {
    */
   quickActions?: ProjectQuickAction[];
   /**
+   * Conductor Spotlight (#250 stretch). When true, one heavy app instance
+   * at the project checkout hot-swaps which claimed lane it serves.
+   * Absent = off.
+   */
+  spotlight?: boolean;
+  /**
    * Last sleep-time memory consolidation fire (issue #722). Absent = never run.
    * Host-stamped; not a user-editable project field.
    */
@@ -354,6 +360,23 @@ export interface VibeKanbanImportResult {
   skipped: Array<{ title: string; reason: string }>;
 }
 
+/**
+ * One CLI session on disk (#433 Codex, #972 Grok, #970 Claude, #975 Cursor,
+ * #976 OpenCode). The scan stays on the main process; the renderer cannot
+ * supply a home.
+ * Codex: `CODEX_HOME/sessions/YYYY/MM/DD/rollout-*-<sessionId>.jsonl`.
+ * Grok: `GROK_HOME/sessions/<encoded-cwd>/<sessionId>/chat_history.jsonl`.
+ * Claude: `CLAUDE_CONFIG_DIR/projects/<group>/<sessionId>.jsonl`.
+ * Cursor: `CURSOR_HOME/projects/<group>/agent-transcripts/<id>/<id>.jsonl`.
+ * OpenCode: `OPENCODE_HOME/opencode.db`, or the pre-1.14 JSON tree at
+ * `storage/session/<projectID>/<sessionID>.json` when the db is missing
+ * or has no session table.
+ */
+export interface CliSessionCandidate {
+  sessionId: string;
+  mtimeMs: number;
+}
+
 export type ThreadStatus = "idle" | "working" | "done" | "failed" | "quota-wait";
 
 export type PermissionMode = "default" | "acceptEdits" | "plan" | "bypassPermissions";
@@ -368,6 +391,17 @@ export interface ThreadSandbox {
   reason: string;
 }
 
+/** One row in Recently deleted (#940). Not a live ThreadInfo. */
+export interface TrashedThreadInfo {
+  id: string;
+  title: string;
+  projectId: string;
+  projectSlug: string | null;
+  projectMissing: boolean;
+  trashedAt: number;
+  expiresAt: number;
+}
+
 export interface ThreadInfo {
   id: string;
   projectId: string;
@@ -380,6 +414,18 @@ export interface ThreadInfo {
    * land on that branch instead of main. Locked after the first PR.
    */
   baseBranch?: string | null;
+  /**
+   * Orchestration worker start snapshot (#948). The lead's committed
+   * HEAD at fork time. Separate from `baseBranch` (merge/PR destination).
+   */
+  leadSnapshotSha?: string | null;
+  /** Branch name that owned `leadSnapshotSha` when the worker was forked. */
+  leadSnapshotBranch?: string | null;
+  /**
+   * Lead worktree/checkout had uncommitted edits at fork. The worker
+   * inherits committed HEAD only; those edits are not copied.
+   */
+  leadSnapshotDirty?: boolean;
   prNumber: number | null;
   /** Set alongside prNumber so the badge can link out without calling gh. */
   prUrl: string | null;
@@ -387,7 +433,7 @@ export interface ThreadInfo {
   /** Short reason a run failed ("Run error: ..."), null otherwise. Set when status becomes "failed" or "quota-wait", cleared when a run starts. */
   lastError: string | null;
   /** Semantic kind for the current lastError; null for ordinary failures. */
-  lastErrorKind: "context-overflow" | "cli-upgrade" | null;
+  lastErrorKind: "context-overflow" | "cli-upgrade" | "writer-lock" | null;
   /**
    * Provider quota-wait (#462): epoch ms when the thread will auto-resume.
    * Only meaningful while status is "quota-wait". Distinct from snooze
@@ -514,6 +560,12 @@ export interface ThreadInfo {
    * would otherwise ping (issue #87).
    */
   muted: boolean;
+  /**
+   * Ejected: the raw CLI/Desktop owns this provider session. Solenta must
+   * not `exec resume` the stored sessionId (issue #554). A user send may
+   * start a fresh session. Absent/false on ordinary threads.
+   */
+  ejected: boolean;
   /**
    * Free-text user scratch pad (issue #194). Empty string when unset.
    * Never bumps updatedAt. Purely user-facing: the agent never reads it
@@ -646,6 +698,13 @@ export interface ThreadInfo {
   webSearch?: boolean;
   /** Absolute path of the thread's git worktree, when one was set up. */
   worktreePath: string | null;
+  /** Numbered merge-queue lane (#346). Absent when the thread has no lane. */
+  lane?: MergeLaneBeat | null;
+  /**
+   * Durable worker→lead integrate receipts on an orchestrator lead
+   * (issue #954). Absent on ordinary threads. Survives worker cleanup.
+   */
+  integrationReceipts?: CrewIntegrationReceipt[];
   /**
    * Worktree requested but not yet created — it materializes at first run
    * (lazy, t3-style), so a thread that never runs leaves nothing on disk.
@@ -657,6 +716,12 @@ export interface ThreadInfo {
    * Cleared once that fork happens; later prompts run this thread's own LLM.
    */
   pendingFork?: boolean;
+  /**
+   * True on orchestration workers forked from a lead (issue #30 / #954).
+   * Absent/false on ordinary threads. Header Merge must not silently
+   * retarget these at the lead; the lead Integration view owns staging.
+   */
+  orchWorker?: boolean;
   /**
    * In-session subagents spawned via the Agent tool, tracked by the runner
    * from the CLI stream (issue #21). Newest-last, capped to 20 rows.
@@ -1064,6 +1129,20 @@ export interface ChatMessage {
    * Thinking card.
    */
   thinking?: boolean;
+  /**
+   * Machine-delivered orchestration notice (#951 / #955). Set on the user
+   * row startRun appends for a fromNotice turn, and on the undeliverable
+   * event when flushOrchNotices parks that notice. Retry reads this flag
+   * rather than matching noticePrompt footer text. Verify-fix
+   * "Not delivered" events stay unset so they remain human retries.
+   */
+  fromNotice?: boolean;
+  /**
+   * Mid-turn steering (issue #156). Set on the user row `runs.steer`
+   * appends onto the current runId. Not a new turn and not a queued
+   * follow-up; the transcript paints a Steered label.
+   */
+  steer?: boolean;
 }
 
 /** Cumulative session usage across turns of a thread. */
@@ -1462,6 +1541,17 @@ export interface PendingPermissionInfo {
    */
   command?: string | null;
   /**
+   * False when the provider cannot honour an edited command (Codex
+   * item/commandExecution/requestApproval: Accept runs the proposed
+   * string). Default true when `command` is set.
+   */
+  commandEditable?: boolean;
+  /**
+   * False hides Accept all (Codex `availableDecisions` omitted
+   * `acceptForSession`). Default true.
+   */
+  acceptAlways?: boolean;
+  /**
    * Present when the agent is asking the user a question (AskUserQuestion):
    * render an option picker instead of the generic allow/deny prompt and
    * answer via respondPermission's `answers`.
@@ -1699,6 +1789,72 @@ export interface PostMergeVerify {
   skipReason?: string | null;
 }
 
+/* ------------------------------------------- lead integration (#954) */
+
+/** Worker row on the lead Integration view. */
+export type CrewIntegrationState =
+  | "running"
+  | "ready"
+  | "conflicted"
+  | "integrated"
+  | "landed"
+  | "missing";
+
+/** Durable worker→lead receipt. Survives cleanupWorktree and worker archive. */
+export interface CrewIntegrationReceipt {
+  workerId: string;
+  sourceSha: string;
+  leadId: string;
+  leadShaAfter: string;
+  at: number;
+  /** Stored thread.issueNumber at integrate time; not guessed from transcripts. */
+  issueNumber?: number | null;
+  /** This worker's issue plus nested included IDs. Closed only on final land. */
+  includedIssueIds?: number[];
+}
+
+export interface CrewIntegrationWorkerRow {
+  workerId: string;
+  title: string;
+  taskId: string | null;
+  /** Worker HEAD, #948 snapshot when present, or receipt; null → "unknown". */
+  sourceSha: string | null;
+  /** Lead branch recorded with the start snapshot (#948). */
+  sourceBranch?: string | null;
+  /** Lead was dirty at fork; worker inherited committed work only. */
+  sourceDirty?: boolean;
+  changedFiles: string[];
+  verify: VerifyResult | null;
+  /** Lead branch, not the worker's own base. */
+  destination: string;
+  state: CrewIntegrationState;
+  blocked: boolean;
+  needs: string[];
+  archived: boolean;
+  worktreePath: string | null;
+  missingReason: string | null;
+}
+
+/**
+ * Lead Integration read model (threads.crewIntegration). Not a
+ * ThreadSummaryInfo overload: summaries stay cheap and git-free.
+ */
+export interface CrewIntegration {
+  leadThreadId: string;
+  leadBranch: string | null;
+  leadWorktreePath: string | null;
+  missingLeadWorktree: boolean;
+  finalTarget: string;
+  finalAction: "merge" | "pr";
+  combinedFiles: string[];
+  leadHeadSha: string | null;
+  leadVerify: VerifyResult | null;
+  verifyStale: boolean;
+  landed: boolean;
+  workers: CrewIntegrationWorkerRow[];
+  receipts: CrewIntegrationReceipt[];
+}
+
 /** A TCP listener whose process cwd is the thread worktree or project. */
 export interface LocalServerInfo {
   pid: number;
@@ -1706,6 +1862,55 @@ export interface LocalServerInfo {
   host: string;
   port: number;
   url: string;
+}
+
+/** Numbered merge-queue lane (#346). */
+export interface MergeLaneInfo {
+  n: number;
+  threadId: string;
+  port: number;
+  path: string | null;
+  branch: string | null;
+  claimedAt: number;
+  lastBeat: number;
+}
+
+export interface MergeLaneClaim {
+  n: number;
+  port: number;
+  path: string;
+  branch: string;
+}
+
+export interface MergeLanePreview {
+  lane: number;
+  sha: string;
+  files: string[];
+  path: string;
+  /** Set when the mirror was applied through Spotlight (#250 stretch). */
+  spotlight?: boolean;
+}
+
+export interface MergeSpotlight {
+  spotlight: boolean;
+}
+
+export interface MergeLaneRestore {
+  restored: boolean;
+  sha?: string;
+}
+
+export interface MergeLaneRecycle {
+  n: number;
+  threadId: string;
+}
+
+/** Stamp returned by heartbeatLane. */
+export interface MergeLaneBeat {
+  n: number;
+  port: number;
+  claimedAt: number;
+  lastBeat: number;
 }
 
 /** Per-thread `npm run` dev server started from the Environment tab. */
@@ -1811,9 +2016,25 @@ export interface PrListItem {
   updatedAt?: string;
 }
 
+/** Optional page for `git.listPrs`. Absent limit keeps the historic 50-row page. */
+export interface ListPrsOptions {
+  /** `gh pr list --limit`. Clamped to 1–200 by the main-process helper. */
+  limit?: number;
+}
+
 /** Per-project listPrs result. Failures stay in-band so the UI can retry. */
 export type ListPrsResult =
-  | { ok: true; prs: PrListItem[] }
+  | {
+      ok: true;
+      prs: PrListItem[];
+      /**
+       * False when this page filled the requested limit, so more open PRs
+       * may exist. Absent on older callers / fixtures: treat as complete.
+       */
+      complete?: boolean;
+      /** Requested `gh pr list --limit` for this page. */
+      limit?: number;
+    }
   | { ok: false; reason: string };
 
 /**
@@ -1941,6 +2162,14 @@ export interface ModelInfo {
    * provider list". Empty means this model is not effort-capable.
    */
   efforts?: ReasoningEffort[];
+  /**
+   * Snapshot of the vendor catalog's input_modalities. Codex Spark is
+   * `["text"]` only; Astra/Sol/Terra/Luna/5.5 are `["text","image"]`.
+   * Absent means allow images (Default, custom ids, other providers).
+   * Native refuses image attach but keeps the paperclip for files/folders.
+   * Web pick is image-only, so the paperclip hides on text-only models.
+   */
+  inputModalities?: Array<"text" | "image">;
 }
 
 /**
@@ -2018,6 +2247,13 @@ export interface ProviderInfo {
    */
   supportsSearch?: boolean;
   /**
+   * True when a live turn can take mid-run guidance on stdin (issue #156).
+   * Claude stream-json does; one-shot `-p` / `exec --json` CLIs do not
+   * (Codex: issue #1164). The composer hides Steer when this is missing
+   * or false.
+   */
+  supportsSteer?: boolean;
+  /**
    * Permission modes this adapter actually honours (issue #177). The composer
    * only offers these instead of silently ignoring a pick. Missing means the
    * full set (legacy fixtures); empty means none can be sent.
@@ -2091,6 +2327,30 @@ export interface AutomationWrite {
   preset: AutomationPreset;
   hour?: number | null;
   enabled?: boolean;
+}
+
+/**
+ * One retained automation-run thread (issue #938). Linkage is the
+ * typed `automationId` stamp on the thread, not the title.
+ */
+export interface AutomationRunInfo {
+  threadId: string;
+  /** Thread create time; the fire that minted this run. */
+  startedAt: number;
+  /** Actual thread status. Quota-wait is paused in the UI, not completed. */
+  status: ThreadStatus;
+}
+
+export interface AutomationRunsResult {
+  automationId: string;
+  /** Newest first, bounded by existing per-automation retention. */
+  runs: AutomationRunInfo[];
+  /**
+   * True when retained runs fill the per-automation cap. Older fires may
+   * no longer be retained. Does not prove deletion: the first N fires can
+   * all still exist, and protected rows can keep the list at/over the cap.
+   */
+  retentionLimitReached: boolean;
 }
 
 /**
@@ -2693,6 +2953,103 @@ export interface SkillInstallResult {
   plugins: SkillPluginInstallResult[];
 }
 
+/** Claude Code, Cursor, or Codex home on disk. */
+export type HarnessSourceId = "claude" | "cursor" | "codex";
+
+export interface HarnessSourceInfo {
+  id: HarnessSourceId;
+  label: string;
+  present: boolean;
+}
+
+export interface HarnessSkillRow {
+  id: string;
+  name: string;
+  description: string;
+  origin: string;
+  bytes: number;
+  alreadyImported: boolean;
+  warnings: string[];
+}
+
+/** Custom slash command markdown (`/draft`, `/git:pr`, `/plugin:name`) from Claude or Codex. */
+export interface HarnessCommandRow {
+  id: string;
+  name: string;
+  description: string;
+  origin: "user" | "project" | "plugin";
+  bytes: number;
+  alreadyImported: boolean;
+}
+export interface HarnessMcpRow {
+  id: string;
+  name: string;
+  transport: "http" | "sse" | "stdio";
+  command?: string;
+  args?: string[];
+  url?: string;
+  cwd?: string;
+  envNames: string[];
+  headerNames: string[];
+  hasToken: boolean;
+  hasSecrets: boolean;
+  requiredSecrets: Array<{ id: string; label: string }>;
+  requiresTrust: boolean;
+  collision: boolean;
+  alreadyImported: boolean;
+  warnings: string[];
+}
+
+export interface HarnessTextRow {
+  id: string;
+  title: string;
+  excerpt: string;
+  bytes: number;
+  alreadyImported: boolean;
+}
+
+export interface HarnessSettingsRow {
+  id: string;
+  title: string;
+  summary: string;
+  alreadyImported: boolean;
+}
+
+/** Opaque staged harness import. Never includes secret values or staging paths. */
+export interface HarnessImportPreview {
+  previewId: string;
+  source: { id: HarnessSourceId; label: string };
+  skills: HarnessSkillRow[];
+  commands: HarnessCommandRow[];
+  mcp: HarnessMcpRow[];
+  memories: HarnessTextRow[];
+  instructions: HarnessTextRow[];
+  settings: HarnessSettingsRow | null;
+  plugins: SkillPluginExtra[];
+  warnings: string[];
+}
+
+export interface HarnessInstallRequest {
+  previewId: string;
+  selected: string[];
+  replace: boolean;
+  trustLocal: boolean;
+  trustPluginCode: boolean;
+  projectPath?: string;
+}
+
+export type HarnessItemStatus = "installed" | "replaced" | "skipped" | "stored";
+
+export interface HarnessInstallResult {
+  skills: Array<{ name: string; status: HarnessItemStatus }>;
+  commands: Array<{ name: string; status: HarnessItemStatus }>;
+  mcp: Array<{ name: string; status: HarnessItemStatus }>;
+  memories: Array<{ title: string; status: HarnessItemStatus }>;
+  instructions: Array<{ title: string; status: HarnessItemStatus }>;
+  settings: { status: HarnessItemStatus } | null;
+  plugins: SkillPluginInstallResult[];
+}
+
 /** Payload for skills:add; the skill fans out to every active target. */
 export interface SkillWrite {
   name: string;
@@ -2804,6 +3161,8 @@ export interface MemoryEntryInfo {
   updatedAt: string;
   /** file:line / thread / commit evidence. Empty when the writer cited none. */
   citations?: MemoryCitation[];
+  /** Writer provenance (mcp/rest/app). Shown on expand when present. */
+  source?: string | null;
 }
 
 export type MemoryReviewResolution = "update" | "invalidate" | "noop";
@@ -3010,8 +3369,17 @@ export interface CoderApi {
    * "Memory server is not running." when it is unavailable.
    */
   memory: {
-    search(input: { query: string; project?: string }): Promise<MemoryEntryInfo[]>;
-    recent(input?: { limit?: number; project?: string }): Promise<MemoryEntryInfo[]>;
+    search(input: {
+      query: string;
+      project?: string;
+      type?: MemoryEntryInfo["type"];
+    }): Promise<MemoryEntryInfo[]>;
+    recent(input?: {
+      limit?: number;
+      offset?: number;
+      project?: string;
+      type?: MemoryEntryInfo["type"];
+    }): Promise<MemoryEntryInfo[]>;
     get(input: { id: string }): Promise<MemoryEntryInfo>;
     store(input: {
       type: MemoryEntryInfo["type"];
@@ -3028,7 +3396,10 @@ export interface CoderApi {
     /** Permanently removes an entry and its dependents (vectors, mentions, queue rows). */
     remove(input: { id: string }): Promise<void>;
     /** Open review queue, near-dupes, aging runs, trust. */
-    maintenance(input?: { project?: string }): Promise<MemoryMaintenanceReport>;
+    maintenance(input?: {
+      project?: string;
+      summary?: boolean;
+    }): Promise<MemoryMaintenanceReport>;
     /** Adjudicate one review_queue row. */
     resolve(input: {
       id: number;
@@ -3096,6 +3467,20 @@ export interface CoderApi {
     installImport(input: SkillInstallRequest): Promise<SkillInstallResult>;
     discardImport(input: { previewId: string }): Promise<void>;
   };
+  /**
+   * One-way import from a Claude / Cursor / Codex home. Preview never
+   * executes imported files. Re-run skips items Solenta already has.
+   * Does not import CLI sessions (#433).
+   */
+  harness: {
+    detectSources(): Promise<HarnessSourceInfo[]>;
+    previewImport(input: {
+      source: HarnessSourceId;
+      projectPath?: string;
+    }): Promise<HarnessImportPreview>;
+    installImport(input: HarnessInstallRequest): Promise<HarnessInstallResult>;
+    discardImport(input: { previewId: string }): Promise<void>;
+  };
   providers: {
     list(): Promise<ProviderInfo[]>;
   };
@@ -3120,6 +3505,11 @@ export interface CoderApi {
     remove(input: { id: string }): Promise<void>;
     /** Fire one immediately and recompute nextRunAt. */
     runNow(input: { id: string }): Promise<AutomationInfo>;
+    /**
+     * Retained run threads for one automation, newest first (issue #938).
+     * Does not start a run. Unknown id rejects.
+     */
+    listRuns(input: { id: string }): Promise<AutomationRunsResult>;
   };
   projects: {
     list(): Promise<ProjectInfo[]>;
@@ -3209,6 +3599,12 @@ export interface CoderApi {
       tasks: CrewTaskView[];
     }>;
     /**
+     * Lead Integration view (#954 / #982): destinations, per-worker rows,
+     * receipts. Includes archived workers that still belong to this lead.
+     * Do not overload summaries.
+     */
+    crewIntegration(input: { threadId: string }): Promise<CrewIntegration>;
+    /**
      * Full-content search: matches thread titles, notes, AND message text
      * (case-insensitive substring), newest activity first, max 50. Includes
      * archived threads; the renderer styles them as usual.
@@ -3244,6 +3640,33 @@ export interface CoderApi {
        */
       baseBranch?: string | null;
     }): Promise<ThreadInfo>;
+    /**
+     * List CLI sessions on disk (#433 Codex, #972 Grok, #970 Claude,
+     * #975 Cursor, #976 OpenCode, #1002 Kimi, #1003 Muse).
+     * The scan stays on the main process; the renderer cannot supply a home.
+     * `provider: "grok"` walks GROK_HOME/sessions. `provider: "claude"`
+     * walks CLAUDE_CONFIG_DIR/projects. `provider: "cursor"` walks
+     * CURSOR_HOME/projects. `provider: "opencode"` reads
+     * OPENCODE_HOME/opencode.db, falling back to the pre-1.14 JSON tree
+     * when the db is missing or has no session table.
+     * `provider: "kimi"` walks KIMI_CODE_HOME/sessions.
+     * `provider: "muse"` walks XDG_DATA_HOME/muse/sessions.
+     * Omitted/codex walks CODEX_HOME/sessions.
+     */
+    listCliSessions(input?: {
+      provider?: "codex" | "grok" | "claude" | "cursor" | "opencode" | "kimi" | "muse";
+    }): Promise<CliSessionCandidate[]>;
+    /**
+     * Create a Solenta thread from one listed CLI session.
+     * Transcript comes from that sessionId only. Re-import returns the
+     * existing thread and appends turns added on disk since last import
+     * (dedup sync). Renderer-supplied home paths are ignored.
+     */
+    importCliSession(input: {
+      sessionId: string;
+      projectId: string;
+      provider?: "codex" | "grok" | "claude" | "cursor" | "opencode" | "kimi" | "muse";
+    }): Promise<ThreadInfo>;
     get(id: string): Promise<ThreadDetail>;
     /**
      * Same payload as get, but never stamps lastVisitedAt (issue #393).
@@ -3259,9 +3682,11 @@ export interface CoderApi {
     setPermissionMode(input: { threadId: string; mode: PermissionMode }): Promise<ThreadInfo>;
     /**
      * Answer the pending permission prompt (ThreadDetail.pendingPermission).
-     * For claude this is the live control_request. For other providers in
-     * plan mode it is the persisted pendingPlan card (issue #707). Rejects
-     * when nothing is pending; the updated detail arrives via thread:updated.
+     * For claude this is the live control_request. For Codex it is an
+     * app-server JSON-RPC ServerRequest (issue #1171); `updatedCommand` is
+     * ignored. For other providers in plan mode it is the persisted
+     * pendingPlan card (issue #707). Rejects when nothing is pending; the
+     * updated detail arrives via thread:updated.
      */
     respondPermission(input: {
       threadId: string;
@@ -3336,8 +3761,35 @@ export interface CoderApi {
      * updatedAt; categorization is bookkeeping.
      */
     setTags(input: { threadId: string; tags: string[] }): Promise<ThreadInfo>;
+    /**
+     * Recategorize a thread onto another project (issue #737). Rejects an
+     * unknown thread or project, a worktree-backed thread (the checkout
+     * stays put), a crew worker (leadSnapshotSha is exclusive to the
+     * source repo), and an active run. Same-project is a no-op. Never
+     * bumps updatedAt. A permitted move drops sessionId (and sets
+     * replayContext so the next turn digests the retained tail) plus
+     * git/GitHub bindings that would still name the source repo.
+     */
+    setThreadProject(input: {
+      threadId: string;
+      projectId: string;
+    }): Promise<ThreadInfo>;
     /** Mute/unmute desktop notifications for one thread. Never bumps updatedAt. */
     setMuted(input: { threadId: string; muted: boolean }): Promise<ThreadInfo>;
+    /**
+     * Eject or reclaim a thread's provider session (issue #554). Eject
+     * keeps sessionId but Solenta will not resume it, copies the raw-CLI
+     * resume command, and runs it in $TERMINAL when that env is set.
+     * A running Solenta child is stopped so the writer is released (#960).
+     * Reclaim re-reads the known provider session for that sessionId
+     * (Codex rollout, Claude projects jsonl, Grok chat_history, Cursor
+     * agent-transcripts jsonl, OpenCode opencode.db / JSON fallback,
+     * Kimi wire.jsonl, Muse session.jsonl) and appends turns that
+     * happened outside Solenta (same absorbTurns role+text occurrence
+     * matching as #433). The flag write itself never
+     * bumps updatedAt; appended turns do.
+     */
+    setEjected(input: { threadId: string; ejected: boolean }): Promise<ThreadInfo>;
     /**
      * Per-thread inbound policy for messages from other threads (issue #551).
      * accept / queue-only / refuse. Never bumps updatedAt.
@@ -3370,6 +3822,11 @@ export interface CoderApi {
       threadId: string;
       baseBranch?: string | null;
     }): Promise<ThreadInfo>;
+    /**
+     * Retarget an idle orchestration worker onto the lead's current
+     * committed HEAD. Updates `leadSnapshotSha` only — never `baseBranch`.
+     */
+    refreshWorkerSnapshot(input: { threadId: string }): Promise<ThreadInfo>;
     /**
      * Record the one-tap felt estimate for a finished thread (issue #401).
      * savedMs is a non-negative duration (clamped to FELT_ESTIMATE_MAX_MS);
@@ -3548,7 +4005,9 @@ export interface CoderApi {
      * an allowlist. Any non-empty string of at most 100 characters is accepted
      * and passed to the CLI as-is (Custom... in the picker). A bad id fails
      * at the CLI. Model alone may still be changed between turns for
-     * providers whose sessions tolerate it.
+     * providers whose sessions tolerate it. Codex pins the model on the
+     * session: a model-only change drops sessionId so the next send is a
+     * fresh exec (resume would keep Sol after picking Astra).
      */
     setProvider(input: { threadId: string; provider?: string; model?: string | null }): Promise<ThreadInfo>;
     /**
@@ -3596,11 +4055,26 @@ export interface CoderApi {
       actionId?: string;
     }): Promise<CommandRunResult>;
     /**
-     * Permanently deletes the thread with its messages and work log. Rejects
-     * while a run is active, and rejects when the thread still has a worktree
-     * (merge or delete the worktree in the Git tab first) so no work is lost.
+     * Move an eligible thread to Recently deleted for seven days (#940).
+     * Keeps transcript, notes, and attachment/artifact references. Rejects
+     * while a run is active, and rejects when the thread still has a
+     * worktree (merge or delete the worktree in the Git tab first).
      */
     delete(input: { threadId: string }): Promise<void>;
+    /**
+     * Restore a Recently deleted thread to the same identity. Does not
+     * start a run or drain queued work. Rejects when the parent project
+     * is gone (never silently attaches to another project) or the window
+     * has expired.
+     */
+    restore(input: { threadId: string }): Promise<ThreadInfo>;
+    /**
+     * Permanently delete a thread (live or trashed) with its messages and
+     * work log. Same active-run / worktree guards as the old hard delete.
+     */
+    purge(input: { threadId: string }): Promise<void>;
+    /** Unexpired Recently deleted threads, newest first, with expiry. */
+    listTrashed(): Promise<TrashedThreadInfo[]>;
   };
   activity: {
     /** Cross-thread newest-first feed of created/started/done/failed. */
@@ -3659,6 +4133,24 @@ export interface CoderApi {
      * results. The renderer sends the text unchanged either way.
      */
     start(input: {
+      threadId: string;
+      prompt: string;
+      attachments?: AttachmentInfo[];
+      /**
+       * Machine-delivered orchestration notice (#951 / #955). Retry of a
+       * failed or undeliverable fromNotice turn must pass this so the run
+       * does not reset the auto-turn cap or look like a new human prompt.
+       */
+      fromNotice?: boolean;
+    }): Promise<{ runId: string }>;
+    /**
+     * Inject guidance into a live turn (issue #156). The provider must
+     * advertise `supportsSteer` (Claude stream-json stdin). Appends a
+     * user row on the current runId with `steer: true` — not a second
+     * run, not a queued follow-up. Rejects when no live run, the
+     * process is stopping, or the CLI cannot take stdin.
+     */
+    steer(input: {
       threadId: string;
       prompt: string;
       attachments?: AttachmentInfo[];
@@ -3767,6 +4259,21 @@ export interface CoderApi {
       paths?: string[];
     }): Promise<ThreadInfo>;
     /**
+     * Squash a crew worker onto the lead's isolated worktree (#954 / #982).
+     * Refuses without a lead worktree (never falls through to main).
+     * Records a receipt before cleanup. Same source SHA is a no-op.
+     * Does not land on the final target and does not close issues.
+     */
+    integrateWorker(input: {
+      leadThreadId: string;
+      workerThreadId: string;
+      ciWorkflowApproved?: boolean;
+    }): Promise<{
+      noop: boolean;
+      merged: boolean;
+      receipt: CrewIntegrationReceipt;
+    }>;
+    /**
      * Unmerged files in the thread worktree plus capped conflict-marker
      * snippets (issue #163). The merge is already replayed there.
      */
@@ -3835,7 +4342,7 @@ export interface CoderApi {
      * missing gh / non-GitHub remotes / auth: those come back as
      * `{ ok: false, reason }`.
      */
-    listPrs(projectPath: string): Promise<ListPrsResult>;
+    listPrs(projectPath: string, opts?: ListPrsOptions): Promise<ListPrsResult>;
     /**
      * Check out a GitHub PR into a new worktree thread, or return the
      * existing one when this project already has that PR bound. Never
@@ -3902,6 +4409,41 @@ export interface CoderApi {
      * reports as unblocked candidates; branches are never deleted.
      */
     gcClean(input: GcCleanInput): Promise<GcCleanResult>;
+  };
+  /**
+   * Local merge-queue lanes (#346 / #1114 / #250). Claim a numbered
+   * worktree, preview it onto the project checkout, restore, recycle a
+   * wedged lane, heartbeat, or opt into Spotlight. Promote stays
+   * `git.mergeWorktree` (human-only). These methods do not close issues.
+   */
+  mergeQueue: {
+    claimLane(input: { threadId: string }): Promise<MergeLaneClaim>;
+    listLanes(input: { projectId: string }): Promise<MergeLaneInfo[]>;
+    previewLane(input: {
+      projectId: string;
+      lane: number;
+    }): Promise<MergeLanePreview>;
+    restorePreview(input: { projectId: string }): Promise<MergeLaneRestore>;
+    recycleWedgedLanes(input: {
+      projectId: string;
+    }): Promise<MergeLaneRecycle[]>;
+    heartbeatLane(input: {
+      threadId: string;
+      now?: number;
+    }): Promise<MergeLaneBeat | null>;
+    /** Per-repo Spotlight opt-in. false deletes the key. */
+    setSpotlight(input: {
+      projectId: string;
+      enabled: boolean;
+    }): Promise<MergeSpotlight>;
+    /**
+     * Hot-swap a claimed lane onto the project checkout. Composes
+     * restorePreview + previewLane. Does not close issues.
+     */
+    spotlightLane(input: {
+      projectId: string;
+      lane: number;
+    }): Promise<MergeLanePreview>;
   };
   issues: {
     /**
@@ -3975,14 +4517,20 @@ export interface CoderApi {
   /**
    * Composer attachments: files, images, and folders the user pins to a
    * message. Only absolute paths travel; the agent reads them with its
-   * file tools. pick needs a native dialog, so it rejects in web mode
-   * (the renderer hides the attach button when no Electron bridge is present).
+   * file tools. Native pick uses a dialog (files + folders). Web pick uses
+   * `<input type=file>` for files and showDirectoryPicker for folders,
+   * persisted via saveImage / saveFile / saveFolder because the browser
+   * File is ephemeral.
    */
   attachments: {
     /**
      * Native picker for files, images, and folders (multi-select).
+     * Pass `includeImages: false` on text-only models so the dialog
+     * omits the Images filter (files/folders still pick).
      */
-    pick(): Promise<{ attachments: AttachmentInfo[] }>;
+    pick(input?: {
+      includeImages?: boolean;
+    }): Promise<{ attachments: AttachmentInfo[] }>;
     /**
      * Classify absolute paths (e.g. resolved from a drag-drop) as image,
      * file, or folder via statSync; missing / relative / non-file paths skip.
@@ -3995,6 +4543,27 @@ export interface CoderApi {
     saveImage(input: {
       threadId: string;
       dataUrl: string;
+    }): Promise<{ attachment: AttachmentInfo | null }>;
+    /**
+     * Persist a non-image file under userData/attachments/<threadId>.
+     * null when the payload is empty, too large, or the thread id is invalid.
+     * saveImage still refuses these payloads.
+     */
+    saveFile(input: {
+      threadId: string;
+      name: string;
+      dataUrl: string;
+    }): Promise<{ attachment: AttachmentInfo | null }>;
+    /**
+     * Persist a directory tree under userData/attachments/<threadId> and
+     * return a kind=folder chip. Web File System Access picks and
+     * directory-entry drops use this because the browser has no absolute
+     * path for the live folder.
+     */
+    saveFolder(input: {
+      threadId: string;
+      name: string;
+      files: Array<{ relativePath: string; dataUrl: string }>;
     }): Promise<{ attachment: AttachmentInfo | null }>;
     /**
      * One attached image as an img src. Desktop replies with a solenta-media://
@@ -4018,7 +4587,7 @@ export interface CoderApi {
     /**
      * Electron-only (preload, webUtils.getPathForFile): absolute path of a
      * drag-dropped File, including Finder directories. Absent on web/dev
-     * bridges, which fall back to saveImage (images only).
+     * bridges, which persist bytes via saveImage / saveFile / saveFolder.
      */
     droppedFilePath?(file: File): string;
   };

@@ -275,6 +275,9 @@ const SHELL_TOOLS = new Set([
   "exec_command",
   "run_terminal_command",
   "run_terminal_cmd",
+  // Codex app-server item/commandExecution/requestApproval (#1171).
+  "command",
+  "Command",
 ]);
 
 /** First string field that looks like a path. */

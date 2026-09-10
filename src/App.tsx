@@ -18,10 +18,11 @@ import { PlanboardView, type ThreadStartMode } from "./components/PlanboardView"
 import { AutomationsView } from "./components/AutomationsView";
 import { ActivityView } from "./components/ActivityView";
 import { InsightsView } from "./components/InsightsView";
-import { UsageView } from "./components/UsageView";
+import { UsageView, type UsageReportControls } from "./components/UsageView";
 import { FleetView } from "./components/FleetView";
 import { DigestView } from "./components/DigestView";
 import { AgentsPanel } from "./components/AgentsPanel";
+import { ClaimedLanesHeartbeat, LaneHeartbeat } from "./components/LaneHeartbeat";
 import {
   SettingsModal,
   type SettingsPane,
@@ -53,6 +54,12 @@ import type {
 } from "./shared/ipc";
 import styles from "./App.module.css";
 import { syncTheme } from "./theme";
+import {
+  isReturnableView,
+  validProjectId,
+  type ThreadOpenOrigin,
+  type ViewReturnState,
+} from "./viewReturn";
 
 const EMPTY_FORECAST: ConflictForecast = { pairs: [], computedAt: 0 };
 const EMPTY_AGENT_PROFILES: AgentProfile[] = [];
@@ -150,6 +157,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     workflows,
     selectedThreadId,
     selectThread,
+    loading,
     detail,
     detailError,
     retryDetail,
@@ -173,6 +181,8 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     retryWorkflowAgent,
     saveWorkflow,
     removeWorkflow,
+    refreshWorkflows,
+    workflowListError,
     stopRun,
     setPermissionMode,
     respondPermission,
@@ -185,13 +195,16 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     setPinned,
     setSnoozed,
     setTags,
+    setThreadProject,
     setMuted,
+    setEjected,
     setCrossThreadInbound,
     setQuotaWaitAutoResume,
     resumeQuotaWait,
     renameThread,
     setNotes,
     setBaseBranch,
+    refreshWorkerSnapshot,
     resolveSuggestion,
     setFeltEstimate,
     startSpec,
@@ -208,6 +221,9 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     promoteBtw,
     requestTeachReview,
     deleteThread,
+    trashedThreads,
+    restoreThread,
+    purgeThread,
     removeProject,
     setupWorktree,
     mergeWorktree,
@@ -228,6 +244,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     openWorkspacePath,
     loadToolImage,
     pickAttachments,
+    pickFolderAttachments,
     saveAttachmentImage,
     loadAttachmentImage,
     dropAttachmentFiles,
@@ -247,6 +264,8 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     markDigestSeen,
     listThreadSummaries,
     listCrewTasks,
+    crewIntegration,
+    integrateWorker,
     listCheckpoints,
     restoreCheckpoint,
     runStats,
@@ -258,6 +277,14 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     gitFetch,
     gitRepoInfo,
     gitPull,
+    claimLane,
+    listLanes,
+    previewLane,
+    restorePreview,
+    recycleWedgedLanes,
+    setSpotlight,
+    spotlightLane,
+    heartbeatLane,
     listDevScripts,
     startDevServer,
     stopDevServer,
@@ -311,7 +338,13 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     previewSkillImport,
     installSkillImport,
     discardSkillImport,
+    detectHarnessSources,
+    previewHarnessImport,
+    installHarnessImport,
+    discardHarnessImport,
     listCliCommands,
+    listCliSessions,
+    importCliSession,
     searchThreads,
     peekThread,
     automations,
@@ -319,6 +352,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     updateAutomation,
     removeAutomation,
     runAutomationNow,
+    listAutomationRuns,
   } = useCoder();
 
   useEffect(() => {
@@ -336,6 +370,8 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
   const [onboardingForceOpen, setOnboardingForceOpen] = useState(false);
   /** Synara-style undo toast after an immediate archive (single or bulk clear). */
   const [archiveToastIds, setArchiveToastIds] = useState<string[] | null>(null);
+  /** Undo toast after moving a thread to Recently deleted (#940). */
+  const [deleteToastId, setDeleteToastId] = useState<string | null>(null);
   /**
    * Error toast after projects.remove rejects. Title is t3-shaped:
    * Failed to remove "slug", plus the reason — swallowing it left the user
@@ -362,6 +398,11 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
   const [planboardProjectId, setPlanboardProjectId] = useState<string | null>(null);
   const [kanbanProjectId, setKanbanProjectId] = useState<string | null>(null);
   const [activityProjectId, setActivityProjectId] = useState<string | null>(null);
+  const [usageControls, setUsageControls] = useState<UsageReportControls>({
+    range: 7,
+    metric: "cost",
+    group: "model",
+  });
   const [repeatDraft, setRepeatDraft] = useState<RepeatDraft | null>(null);
   const [workflowDraft, setWorkflowDraft] = useState<DistilledWorkflow | null>(
     null,
@@ -380,6 +421,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
   const [forecast, setForecast] = useState<ConflictForecast>(EMPTY_FORECAST);
   const narrow = useNarrow();
   const [agentsCollapsed, setAgentsCollapsed] = useState(true);
+  const [agentsTabFocus, setAgentsTabFocus] = useState(0);
   const sidebarPaneRef = useRef<HTMLDivElement>(null);
   const agentsPaneRef = useRef<HTMLDivElement>(null);
   const threadsBtnRef = useRef<HTMLButtonElement>(null);
@@ -392,13 +434,72 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
   rememberLastRef.current = settings?.agentsPanelRememberLast === true;
   const hideAgentsRail = agentsCollapsed && !narrow;
 
+  const viewRef = useRef(view);
+  viewRef.current = view;
+  const planboardProjectIdRef = useRef(planboardProjectId);
+  planboardProjectIdRef.current = planboardProjectId;
+  const kanbanProjectIdRef = useRef(kanbanProjectId);
+  kanbanProjectIdRef.current = kanbanProjectId;
+  const activityProjectIdRef = useRef(activityProjectId);
+  activityProjectIdRef.current = activityProjectId;
+  const projectsRef = useRef(projects);
+  projectsRef.current = projects;
+  /**
+   * One session-only return destination (#942). Replaces the Activity/Kanban
+   * in-view latch from #944: opening a thread from a report/board captures
+   * view + project + row, and Back (or the same nav item) restores it.
+   */
+  const [returnTo, setReturnTo] = useState<ViewReturnState | null>(null);
+  const returnToRef = useRef(returnTo);
+  returnToRef.current = returnTo;
+  const [viewRestore, setViewRestore] = useState<ViewReturnState | null>(null);
+  const clearViewRestore = useCallback(() => setViewRestore(null), []);
+
   const handleSelectThread = useCallback(
-    (id: string) => {
+    (id: string, origin?: ThreadOpenOrigin) => {
+      const current = viewRef.current;
+      if (isReturnableView(current)) {
+        const projectId =
+          origin?.projectId !== undefined
+            ? origin.projectId
+            : current === "planboard"
+              ? planboardProjectIdRef.current
+              : current === "kanban"
+                ? kanbanProjectIdRef.current
+                : current === "activity"
+                  ? activityProjectIdRef.current
+                  : null;
+        setReturnTo({
+          view: current,
+          projectId,
+          sort: origin?.sort,
+          query: origin?.query,
+          projectFilter: origin?.projectFilter,
+          rowKey: origin?.rowKey ?? id,
+          rowIndex: origin?.rowIndex ?? 0,
+          scrollTop: origin?.scrollTop ?? 0,
+          scrollKey: origin?.scrollKey,
+        });
+      } else if (current !== "thread") {
+        setReturnTo(null);
+      }
       setView("thread");
       setDrawer(null);
       selectThread(id);
     },
     [selectThread],
+  );
+  const liveThreadIds = useMemo(
+    () => (loading ? undefined : threads.map((t) => t.id)),
+    [loading, threads],
+  );
+  const openCrewIntegration = useCallback(
+    (leadId: string) => {
+      handleSelectThread(leadId);
+      setAgentsCollapsed(false);
+      setAgentsTabFocus((n) => n + 1);
+    },
+    [handleSelectThread],
   );
 
   // The three panes are memo'd (issue #91): a 700ms stream tick must only
@@ -406,47 +507,94 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
   // stays identical, so the handlers below are stable and the list-derived
   // ones (handoffSource, rosterKey) collapse the churning array to a value
   // that moves when the thing the pane cares about moves.
-  const openKanban = useCallback((pid?: string | null) => {
-    setKanbanProjectId(pid ?? null);
-    setView("kanban");
-  }, []);
   // Unscoped (#597) means "the project I am in": land the board on the
   // selected thread's project instead of the first project (#207). A scalar
   // dep keeps the handler identity stable across thread-list churn.
   const selectedThreadProjectId =
     threads.find((t) => t.id === selectedThreadId)?.projectId ?? null;
+  const selectedThreadProjectIdRef = useRef(selectedThreadProjectId);
+  selectedThreadProjectIdRef.current = selectedThreadProjectId;
+
+  const consumeReturn = useCallback((viewName: ViewReturnState["view"]) => {
+    const dest = returnToRef.current;
+    const returning =
+      viewRef.current === "thread" && dest?.view === viewName;
+    if (!returning) {
+      setViewRestore(null);
+      setReturnTo(null);
+      return null;
+    }
+    setViewRestore(dest);
+    setReturnTo(null);
+    return dest;
+  }, []);
+
+  const openKanban = useCallback((pid?: string | null) => {
+    const dest = consumeReturn("kanban");
+    if (dest) {
+      setKanbanProjectId(
+        validProjectId(dest.projectId, projectsRef.current),
+      );
+    } else {
+      setKanbanProjectId(pid ?? null);
+    }
+    setView("kanban");
+  }, [consumeReturn]);
   const openPlanboard = useCallback(
     (pid?: string | null) => {
-      setPlanboardProjectId(pid ?? selectedThreadProjectId);
+      const dest = consumeReturn("planboard");
+      if (dest) {
+        setPlanboardProjectId(
+          validProjectId(dest.projectId, projectsRef.current) ??
+            selectedThreadProjectIdRef.current,
+        );
+      } else {
+        setPlanboardProjectId(pid ?? selectedThreadProjectIdRef.current);
+      }
       setView("planboard");
     },
-    [selectedThreadProjectId],
+    [consumeReturn],
   );
   const openPrs = useCallback(() => {
+    consumeReturn("prs");
     setView("prs");
     setDrawer(null);
-  }, []);
+  }, [consumeReturn]);
   const openAutomations = useCallback(() => {
     setRepeatDraft(null);
+    setReturnTo(null);
+    setViewRestore(null);
     setView("automations");
     setDrawer(null);
   }, []);
   const openActivity = useCallback((pid?: string | null) => {
-    setActivityProjectId(pid ?? null);
+    const dest = consumeReturn("activity");
+    if (dest) {
+      setActivityProjectId(
+        validProjectId(dest.projectId, projectsRef.current),
+      );
+    } else {
+      setActivityProjectId(pid ?? null);
+    }
     setView("activity");
-  }, []);
+  }, [consumeReturn]);
   const openUsage = useCallback(() => {
+    setReturnTo(null);
+    setViewRestore(null);
     setView("usage");
     setDrawer(null);
   }, []);
   const openFleet = useCallback(() => {
+    setReturnTo(null);
+    setViewRestore(null);
     setView("fleet");
     setDrawer(null);
   }, []);
   const openInsights = useCallback(() => {
+    consumeReturn("insights");
     setView("insights");
     setDrawer(null);
-  }, []);
+  }, [consumeReturn]);
   const loadFailureModes = useCallback(
     () => api.insights.failureModes(),
     [api],
@@ -457,9 +605,27 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     [api],
   );
   const openDigest = useCallback(() => {
+    consumeReturn("digest");
     setView("digest");
     setDrawer(null);
-  }, []);
+  }, [consumeReturn]);
+  const handleReturnToView = useCallback(() => {
+    const dest = returnToRef.current;
+    if (!dest) return;
+    if (dest.view === "planboard") openPlanboard();
+    else if (dest.view === "kanban") openKanban();
+    else if (dest.view === "activity") openActivity();
+    else if (dest.view === "digest") openDigest();
+    else if (dest.view === "prs") openPrs();
+    else if (dest.view === "insights") openInsights();
+  }, [
+    openPlanboard,
+    openKanban,
+    openActivity,
+    openDigest,
+    openPrs,
+    openInsights,
+  ]);
   const openSettings = useCallback((pane?: SettingsPane) => {
     setSettingsPane(pane ?? "general");
     setSettingsOpen(true);
@@ -513,11 +679,25 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     [setTags],
   );
 
+  const handleSetThreadProject = useCallback(
+    (threadId: string, projectId: string) => {
+      void setThreadProject(threadId, projectId);
+    },
+    [setThreadProject],
+  );
+
   const handleSetMuted = useCallback(
     (threadId: string, muted: boolean) => {
       void setMuted(threadId, muted);
     },
     [setMuted],
+  );
+
+  const handleSetEjected = useCallback(
+    (threadId: string, ejected: boolean) => {
+      void setEjected(threadId, ejected);
+    },
+    [setEjected],
   );
 
   const handleRenameThread = useCallback(
@@ -710,12 +890,14 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
   // onClick, so cancelQueued's optional threadId would swallow the DOM event
   // and cancel nothing.
   const handleCancelQueued = useCallback(() => {
-    // Non-destructive cancel (#364): hand the discarded text back to the
-    // composer, which applies it only onto an empty draft.
+    // Non-destructive cancel (#364): restore the discarded text onto an
+    // empty composer only after the host clear lands. A rejected clear
+    // keeps the overlay; filling the draft then would duplicate on send.
     const id = selectedThreadId;
     const text = id ? queued[id]?.prompt : null;
-    cancelQueued();
-    if (id && text) setQueuedDraftRestore({ threadId: id, text });
+    void cancelQueued().then((cleared) => {
+      if (cleared && id && text) setQueuedDraftRestore({ threadId: id, text });
+    });
   }, [cancelQueued, selectedThreadId, queued]);
 
   const handleRetryQueued = useCallback(() => {
@@ -724,7 +906,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
 
   const handleEditQueued = useCallback(
     (prompt: string, items?: string[]) => {
-      editQueued(prompt, undefined, items);
+      return editQueued(prompt, undefined, items);
     },
     [editQueued],
   );
@@ -736,7 +918,10 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         const id = selectedThreadId;
         if (!id) return;
         setRemoveFailMessage(null);
-        if (await setArchived(true, id)) setArchiveToastIds([id]);
+        if (await setArchived(true, id)) {
+          setDeleteToastId(null);
+          setArchiveToastIds([id]);
+        }
       } else {
         setArchiveToastIds(null);
         await setArchived(false);
@@ -757,7 +942,10 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
       for (const id of ids) {
         if (await setArchived(true, id)) archived.push(id);
       }
-      if (archived.length > 0) setArchiveToastIds(archived);
+      if (archived.length > 0) {
+        setDeleteToastId(null);
+        setArchiveToastIds(archived);
+      }
     },
     [setArchived],
   );
@@ -774,6 +962,24 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
       await setArchived(false, id);
     }
   }, [archiveToastIds, setArchived]);
+
+  const handleDeleteThread = useCallback(async () => {
+    const id = selectedThreadId;
+    if (!id) return;
+    setArchiveToastIds(null);
+    if (await deleteThread()) setDeleteToastId(id);
+  }, [selectedThreadId, deleteThread]);
+
+  const dismissDeleteToast = useCallback(() => {
+    setDeleteToastId(null);
+  }, []);
+
+  const undoDelete = useCallback(async () => {
+    if (!deleteToastId) return;
+    const id = deleteToastId;
+    setDeleteToastId(null);
+    await restoreThread(id);
+  }, [deleteToastId, restoreThread]);
 
   const handleRemoveProject = useCallback(
     async (projectId: string) => {
@@ -1022,6 +1228,19 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     providers,
   ]);
 
+  const handleImportCliSession = useCallback(
+    async (input: {
+      sessionId: string;
+      projectId: string;
+      provider?: "codex" | "grok" | "claude" | "cursor" | "opencode" | "kimi" | "muse";
+    }) => {
+      const t = await importCliSession(input);
+      setRevealThreadId(t.id);
+      return t;
+    },
+    [importCliSession],
+  );
+
   const handleCreateThreadFromIssue = useCallback(
     async (input: {
       projectId: string;
@@ -1030,7 +1249,15 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
       mode?: ThreadStartMode;
       agentProfileId?: string;
     }) => {
-      const fetched = await fetchIssue(input.projectPath, input.ref);
+      let fetched;
+      try {
+        fetched = await fetchIssue(input.projectPath, input.ref);
+      } catch (err) {
+        return {
+          ok: false as const,
+          reason: err instanceof Error ? err.message : String(err),
+        };
+      }
       if (!fetched.ok) return fetched;
       const issue = fetched.issue;
       let thread;
@@ -1117,11 +1344,20 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
       }
       // The run is live either way, so a failed label move is a warning,
       // not a failure: say so instead of pretending the card moved.
-      const moved = await setIssuePlanStatus(
-        input.projectPath,
-        issue.number,
-        "doing",
-      );
+      let moved;
+      try {
+        moved = await setIssuePlanStatus(
+          input.projectPath,
+          issue.number,
+          "doing",
+        );
+      } catch (err) {
+        const reason = err instanceof Error ? err.message : String(err);
+        return {
+          ok: true as const,
+          warning: `plan:doing not set (${reason})`,
+        };
+      }
       return moved.ok
         ? { ok: true as const }
         : { ok: true as const, warning: `plan:doing not set (${moved.reason})` };
@@ -1141,7 +1377,15 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
 
   const handleCheckoutPr = useCallback(
     async (input: { projectId: string; prNumber: number }) => {
-      const result = await checkoutPr(input);
+      let result;
+      try {
+        result = await checkoutPr(input);
+      } catch (err) {
+        return {
+          ok: false as const,
+          reason: err instanceof Error ? err.message : String(err),
+        };
+      }
       if (!result.ok) return result;
       setView("thread");
       setRevealThreadId(result.thread.id);
@@ -1358,6 +1602,8 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         revealThreadId={revealThreadId}
         onRevealHandled={clearReveal}
         onCreateThreadFromIssue={handleCreateThreadFromIssue}
+        listCliSessions={listCliSessions}
+        importCliSession={handleImportCliSession}
         onAddProject={handleAddProject}
         onRemoveProject={handleRemoveProject}
         onEditProject={setEditProjectId}
@@ -1379,10 +1625,15 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         onSetPinned={handleSetPinned}
         onSetSnoozed={handleSetSnoozed}
         onSetTags={handleSetTags}
+        onSetThreadProject={handleSetThreadProject}
         onSetMuted={handleSetMuted}
+        onSetEjected={handleSetEjected}
         onRenameThread={handleRenameThread}
         onSetArchived={handleRowArchived}
         onClearSettled={handleClearSettled}
+        trashedThreads={trashedThreads}
+        onRestoreThread={(id) => void restoreThread(id)}
+        onPurgeThread={(id) => void purgeThread(id)}
         onFork={handleRowFork}
         conflictForecast={forecast}
             />
@@ -1400,6 +1651,10 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
               projectScope={activityProjectId}
               listActivity={listActivity}
               onSelectThread={handleSelectThread}
+              onProjectScopeChange={setActivityProjectId}
+              existingThreadIds={liveThreadIds}
+              restore={viewRestore?.view === "activity" ? viewRestore : null}
+              onRestoreApplied={clearViewRestore}
             />
           ) : view === "usage" ? (
             <UsageView
@@ -1410,6 +1665,12 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
                   : listProviderLimits
               }
               quotaDemo={quotaDemo}
+              onSelectThread={handleSelectThread}
+              existingThreadIds={
+                loading ? undefined : threads.map((t) => t.id)
+              }
+              reportControls={usageControls}
+              onReportControlsChange={setUsageControls}
             />
           ) : view === "fleet" ? (
             <FleetView loadEvidence={loadFleetEvidence} />
@@ -1417,6 +1678,9 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
             <InsightsView
               loadFailureModes={loadFailureModes}
               onSelectThread={handleSelectThread}
+              existingThreadIds={liveThreadIds}
+              restore={viewRestore?.view === "insights" ? viewRestore : null}
+              onRestoreApplied={clearViewRestore}
             />
           ) : view === "digest" ? (
             <DigestView
@@ -1424,6 +1688,9 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
               loadDigest={listDigest}
               markSeen={markDigestSeen}
               onSelectThread={handleSelectThread}
+              existingThreadIds={liveThreadIds}
+              restore={viewRestore?.view === "digest" ? viewRestore : null}
+              onRestoreApplied={clearViewRestore}
             />
           ) : view === "prs" ? (
             <PrListView
@@ -1432,6 +1699,8 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
               listPrs={listPrs}
               onSelectThread={handleSelectThread}
               onCheckoutPr={handleCheckoutPr}
+              restore={viewRestore?.view === "prs" ? viewRestore : null}
+              onRestoreApplied={clearViewRestore}
             />
           ) : view === "automations" ? (
             <AutomationsView
@@ -1439,6 +1708,9 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
               projects={projects}
               providers={providers}
               draft={repeatDraft}
+              loadRuns={listAutomationRuns}
+              onSelectThread={handleSelectThread}
+              liveThreads={loading ? undefined : threads}
               onCreate={async (input) => {
                 await addAutomation(input);
               }}
@@ -1458,6 +1730,8 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
               listPrs={listPrs}
               threads={threads}
               onSelectThread={handleSelectThread}
+              restore={viewRestore?.view === "planboard" ? viewRestore : null}
+              onRestoreApplied={clearViewRestore}
               // Stay on the board after a start (#207): the card moves to In
               // progress here, and the new thread is in the sidebar anyway.
               onStartTask={handleCreateThreadFromIssue}
@@ -1474,6 +1748,9 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
               projectScope={kanbanProjectId}
               providers={providers}
               onSelectThread={handleSelectThread}
+              onProjectScopeChange={setKanbanProjectId}
+              restore={viewRestore?.view === "kanban" ? viewRestore : null}
+              onRestoreApplied={clearViewRestore}
               onCreateThread={handleCreateThreadPlain}
               autoSettleAfterDays={
                 settings == null ? undefined : settings.autoSettleAfterDays
@@ -1489,6 +1766,8 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
           quotaDemo ? async () => demoProviderLimits() : listProviderLimits
         }
         quotaDemo={quotaDemo}
+        returnToView={returnTo?.view ?? null}
+        onReturnToView={returnTo ? handleReturnToView : undefined}
         detail={visibleDetail}
         detailError={selectedThreadId ? detailError : null}
         onRetryDetail={retryDetail}
@@ -1502,16 +1781,21 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         onStartRun={startRun}
         onSetupWorktree={setupWorktree}
         onMergeWorktree={mergeWorktree}
+        onOpenCrewLead={handleSelectThread}
         onRemoveWorktree={removeWorktree}
         listBaseBranches={listBaseBranches}
         onSetBaseBranch={setBaseBranch}
+        onRefreshWorkerSnapshot={refreshWorkerSnapshot}
         conflictContext={conflictContext}
         onOpenWorktree={openInEditor}
+        onOpenCrewIntegration={openCrewIntegration}
         onRewindAndResubmit={rewindAndResubmit}
         onStartWorkflow={startWorkflowRun}
         onRetryWorkflowAgent={retryWorkflowAgent}
         onSaveWorkflow={saveWorkflow}
         onRemoveWorkflow={removeWorkflow}
+        workflowListError={workflowListError}
+        onRetryWorkflows={refreshWorkflows}
         onStopRun={stopRun}
         onResumeQuotaWait={
           selectedThreadId
@@ -1571,7 +1855,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         onDismissBtw={handleDismissBtw}
         onPromoteBtw={handlePromoteBtw}
         defaultWorktree={settings?.defaultWorktree ?? false}
-        onDeleteThread={deleteThread}
+        onDeleteThread={handleDeleteThread}
         changesOpen={changesOpen}
         changesNonce={changesNonce}
         onCloseChanges={closeChanges}
@@ -1596,6 +1880,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         onOpenWorkspacePath={openWorkspacePath}
         onLoadImage={loadToolImage}
         onPickAttachments={pickAttachments}
+        onPickFolderAttachments={pickFolderAttachments}
         onSaveAttachmentImage={saveAttachmentImage}
         onLoadAttachmentImage={loadAttachmentImage}
         onDropAttachmentFiles={dropAttachmentFiles}
@@ -1628,6 +1913,11 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
           )}
           </ErrorBoundary>
         </div>
+        <ClaimedLanesHeartbeat
+          projects={projects}
+          listLanes={listLanes}
+          heartbeatLane={heartbeatLane}
+        />
         <div
           id="pane-agents"
           ref={agentsPaneRef}
@@ -1670,6 +1960,11 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
             </div>
           ) : (
           <ErrorBoundary pane="Agents panel">
+            <LaneHeartbeat
+              threadId={selectedThreadId}
+              claimed={Boolean(visibleDetail?.thread.lane)}
+              heartbeatLane={heartbeatLane}
+            />
             <AgentsPanel
         onCollapse={narrow ? undefined : collapseAgents}
         workflow={visibleDetail?.workflow ?? null}
@@ -1681,6 +1976,37 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         rosterKey={rosterKey}
         listThreadSummaries={listThreadSummaries}
         listCrewTasks={listCrewTasks}
+        crewIntegration={crewIntegration}
+        onIntegrateWorker={
+          selectedThreadId
+            ? async (workerThreadId: string) => {
+                await integrateWorker(selectedThreadId, workerThreadId);
+              }
+            : undefined
+        }
+        onRefreshWorker={refreshWorkerSnapshot}
+        onVerifyLead={
+          selectedThreadId
+            ? async () => {
+                await runVerify(selectedThreadId);
+              }
+            : undefined
+        }
+        onLandLead={
+          selectedThreadId
+            ? async () => {
+                const view = await crewIntegration(selectedThreadId);
+                if (view.finalAction === "pr") {
+                  await createPr({
+                    title: visibleDetail?.thread.title || "Lead integration",
+                  });
+                  return;
+                }
+                await mergeWorktree();
+              }
+            : undefined
+        }
+        focusAgentsTabNonce={agentsTabFocus}
         onSelectThread={handleSelectThread}
         onViewChanges={openChanges}
         listCheckpoints={listCheckpoints}
@@ -1692,6 +2018,13 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         gitFetch={gitFetch}
         gitRepoInfo={gitRepoInfo}
         gitPull={gitPull}
+        claimLane={claimLane}
+        listLanes={listLanes}
+        previewLane={previewLane}
+        restorePreview={restorePreview}
+        recycleWedgedLanes={recycleWedgedLanes}
+        setSpotlight={setSpotlight}
+        spotlightLane={spotlightLane}
         listDevScripts={listDevScripts}
         startDevServer={startDevServer}
         stopDevServer={stopDevServer}
@@ -1730,6 +2063,10 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         previewSkillImport={previewSkillImport}
         installSkillImport={installSkillImport}
         discardSkillImport={discardSkillImport}
+        detectHarnessSources={detectHarnessSources}
+        previewHarnessImport={previewHarnessImport}
+        installHarnessImport={installHarnessImport}
+        discardHarnessImport={discardHarnessImport}
         activeView={view}
         onOpenPrs={openPrs}
         onOpenAutomations={openAutomations}
@@ -1750,6 +2087,8 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
           initialDraft={workflowDraft}
           onSave={saveWorkflow}
           onRemove={removeWorkflow}
+          listError={workflowListError}
+          onRetryList={refreshWorkflows}
         />
         <SettingsModal
           open={settingsOpen}
@@ -1788,6 +2127,14 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
             }
             onUndo={() => void undoArchive()}
             onDismiss={dismissArchiveToast}
+          />
+        )}
+        {deleteToastId && (
+          <ArchiveToast
+            key={`delete-${deleteToastId}`}
+            message="Deleted"
+            onUndo={() => void undoDelete()}
+            onDismiss={dismissDeleteToast}
           />
         )}
         {removeFailMessage && (

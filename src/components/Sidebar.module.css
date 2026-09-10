@@ -209,6 +209,110 @@
   color: var(--text);
 }
 
+.viewRow {
+  display: flex;
+  align-items: center;
+  margin: 0 8px 4px;
+  flex-shrink: 0;
+}
+
+.viewRow .filterMenuHost {
+  flex: 1;
+  min-width: 0;
+}
+
+.viewTrigger {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  width: 100%;
+  min-width: 0;
+  height: 28px;
+  padding: 0 8px;
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 500;
+  text-align: left;
+}
+
+.viewTrigger:hover {
+  background: var(--card-hover);
+  color: var(--text);
+}
+
+.viewTrigger[data-active="true"] {
+  color: var(--blue);
+}
+
+.viewMenu {
+  min-width: 200px;
+}
+
+.viewEmpty {
+  margin: 0;
+  padding: 8px;
+  color: var(--text-dim);
+  font-size: 12px;
+}
+
+.viewNameForm {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px;
+}
+
+.viewNameInput {
+  flex: 1;
+  min-width: 0;
+  height: 26px;
+  padding: 0 8px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-soft);
+  background: var(--bg-elevated);
+  color: var(--text);
+  font-size: 12px;
+}
+
+.viewNameInput:focus {
+  outline: none;
+  border-color: color-mix(in srgb, var(--blue) 45%, transparent);
+  box-shadow: var(--focus-ring);
+}
+
+.viewNameSave {
+  flex-shrink: 0;
+  height: 26px;
+  padding: 0 8px;
+  border-radius: var(--radius-sm);
+  background: var(--blue-soft);
+  color: var(--blue);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.viewNameSave:disabled {
+  opacity: 0.45;
+}
+
+.menuSep {
+  height: 1px;
+  margin: 4px 6px;
+  background: var(--border-soft);
+}
+
+.filterCarveOut {
+  margin: 4px 8px 8px;
+  padding: 6px 8px;
+  border-radius: var(--radius-sm);
+  background: var(--hover);
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
 .filterRow {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -1165,6 +1269,36 @@
   color: var(--text);
 }
 
+.slimRow[data-trashed-row] {
+  opacity: 0.75;
+  height: auto;
+  min-height: 32px;
+}
+
+.slimRow[data-trashed-row] .slimSlot {
+  gap: 6px;
+  min-width: 0;
+}
+
+.slimRow[data-trashed-row] .slimAction {
+  position: static;
+  opacity: 1;
+}
+
+.slimRow[data-trashed-row] .slimAge,
+.slimRow[data-trashed-row]:hover .slimAge {
+  opacity: 1;
+}
+
+.slimAction:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.trashPurge {
+  color: var(--danger-fg, var(--text-muted));
+}
+
 .showMore {
   align-self: flex-start;
   margin: 2px 8px;
@@ -1539,6 +1673,7 @@
   .iconBtn:active:not(:disabled),
   .viewNavBtn:active,
   .scopeTrigger:active,
+  .viewTrigger:active,
   .filterTrigger:active,
   .caretBtn:active,
   .batchBtn:active {

@@ -5,7 +5,7 @@
  */
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { mount } from "./support/dom.ts";
+import { inAct, mount } from "./support/dom.ts";
 import { Composer } from "../src/components/Composer";
 import { ThreadView } from "../src/components/ThreadView";
 import type {
@@ -199,6 +199,53 @@ async function openBestOfN(
 }
 
 describe("Best of N popover", () => {
+  it("opening Best of N moves focus inside; Tab stays inside; Escape restores", async () => {
+    const m = await mount(composer());
+    const trigger = m.query("[data-best-of-n]") as HTMLButtonElement;
+    const ta = m.query("textarea");
+    assert.ok(ta, "composer textarea");
+    await m.type(ta, "compare this");
+    // jsdom click does not focus; a real click would. Seed the trigger so
+    // useModalFocus restores it the way a pointer open does.
+    trigger.focus();
+    await m.click(trigger);
+    const dialog = m.query("[data-best-of-n-popover]") as HTMLElement | null;
+    assert.ok(dialog, "popover");
+    assert.ok(
+      dialog.contains(document.activeElement),
+      "opening the dialog must move focus inside it",
+    );
+    assert.notEqual(document.activeElement, trigger);
+
+    await m.pressFocused("Tab");
+    const first = document.activeElement as HTMLElement;
+    assert.ok(dialog.contains(first), "Tab stays inside");
+    assert.equal(first.tagName, "INPUT");
+
+    await m.pressFocused("Tab");
+    const second = document.activeElement as HTMLElement;
+    assert.ok(dialog.contains(second), "second Tab stays inside");
+    assert.notEqual(second, first);
+
+    await m.pressFocused("Tab");
+    const third = document.activeElement as HTMLElement;
+    assert.ok(dialog.contains(third), "third Tab stays inside");
+
+    await m.pressFocused("Tab");
+    assert.ok(
+      document.activeElement === first,
+      "Tab wraps inside the dialog",
+    );
+
+    await m.pressFocused("Escape");
+    assert.equal(m.query("[data-best-of-n-popover]"), null);
+    assert.ok(
+      document.activeElement === trigger,
+      `Escape restores the composer trigger (got ${document.activeElement?.tagName})`,
+    );
+    m.unmount();
+  });
+
   it("stays disabled when the composer is empty or a run is active", async () => {
     const empty = await mount(composer());
     const emptyBtn = empty.query("[data-best-of-n]") as HTMLButtonElement;
@@ -355,6 +402,52 @@ describe("Best of N popover", () => {
     assert.ok(
       gone?.querySelector('[data-provider-mark="grok"] svg'),
       "uninstalled profile still shows its harness mark",
+    );
+    m.unmount();
+  });
+
+  it("moves focus out of the composer; Tab stays inside; Escape restores", async () => {
+    const m = await mount(composer());
+    const ta = m.query("textarea");
+    assert.ok(ta, "composer textarea");
+    await m.type(ta, "compare this");
+    const opener = m.query("[data-best-of-n]") as HTMLButtonElement | null;
+    assert.ok(opener, "Best of N trigger");
+    await inAct(() => opener.focus());
+    await m.click(opener);
+    const dialog = m.query("[data-best-of-n-popover]") as HTMLElement | null;
+    assert.ok(dialog, "Best of N popover");
+    assert.ok(
+      dialog.contains(document.activeElement),
+      "opening the dialog must move focus inside it",
+    );
+
+    await m.pressFocused("Tab");
+    const first = document.activeElement as HTMLElement;
+    assert.ok(dialog.contains(first), "Tab stays inside");
+
+    await m.pressFocused("Tab");
+    const second = document.activeElement as HTMLElement;
+    assert.ok(dialog.contains(second), "second Tab stays inside");
+    assert.notEqual(second, first);
+
+    let guard = 0;
+    while (document.activeElement !== first && guard < 20) {
+      await m.pressFocused("Tab");
+      assert.ok(
+        dialog.contains(document.activeElement),
+        "Tab stays inside while wrapping",
+      );
+      guard += 1;
+    }
+    assert.equal(document.activeElement, first, "Tab wraps inside the dialog");
+
+    await m.pressFocused("Escape");
+    assert.equal(m.query("[data-best-of-n-popover]"), null);
+    assert.equal(
+      document.activeElement,
+      opener,
+      "Escape restores the Best of N trigger",
     );
     m.unmount();
   });

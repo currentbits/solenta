@@ -16,6 +16,7 @@ import {
   effortDisplayLabel,
   effortHint,
   effortsForModel,
+  supportsImagesForModel,
   effortOptions,
   firstSelectableIndex,
   initialHighlightIndex,
@@ -424,6 +425,49 @@ describe("effortsForModel", () => {
     assert.deepEqual(effortsForModel(grok, null), grok.efforts);
     assert.deepEqual(effortsForModel(grok, "custom-id"), grok.efforts);
     assert.deepEqual(effortsForModel(undefined, "x"), []);
+  });
+});
+
+describe("supportsImagesForModel", () => {
+  const codex: ProviderInfo = {
+    id: "codex",
+    name: "Codex",
+    available: true,
+    supportsResume: true,
+    models: ["gpt-6-astra", "gpt-5.3-codex-spark"],
+    modelInfo: [
+      {
+        id: "gpt-6-astra",
+        label: "Astra",
+        description: "flagship",
+        vendor: "OpenAI",
+        recommended: true,
+        inputModalities: ["text", "image"],
+      },
+      {
+        id: "gpt-5.3-codex-spark",
+        label: "Spark",
+        description: "fast",
+        vendor: "OpenAI",
+        inputModalities: ["text"],
+      },
+    ],
+    efforts: [],
+  };
+
+  it("hides images only when inputModalities is present and omits image", () => {
+    assert.equal(supportsImagesForModel(codex, "gpt-5.3-codex-spark"), false);
+    assert.equal(supportsImagesForModel(codex, "gpt-6-astra"), true);
+  });
+
+  it("allows images for Default, custom ids, missing field, and other providers", () => {
+    assert.equal(supportsImagesForModel(codex, null), true);
+    assert.equal(supportsImagesForModel(codex, "custom-not-in-catalog"), true);
+    assert.equal(supportsImagesForModel(codex, "custom-id"), true);
+    assert.equal(supportsImagesForModel(undefined, "gpt-5.3-codex-spark"), true);
+    const claude = provider();
+    assert.equal(supportsImagesForModel(claude, "claude-opus-5"), true);
+    assert.equal(supportsImagesForModel(undefined, "x"), true);
   });
 });
 

@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import * as React from "react";
 import { mount } from "./support/dom.ts";
-import { UsageView } from "../src/components/UsageView";
+import { UsageView, type UsageReportControls } from "../src/components/UsageView";
 import type { UsageByDay, UsageEntry, UsageReport, UsageThreadEntry } from "../src/shared/ipc";
 
 function localDayKey(d: Date): string {
@@ -338,6 +338,260 @@ describe("UsageView", () => {
     assert.match(m.text(), /22% used/);
     assert.ok(m.query("[data-usage-totals]"), "local history still present");
     assert.ok(m.text().includes("$2.50"), "local cost still present");
+    m.unmount();
+  });
+
+  it("opens the thread by stable id from the Thread breakdown title", async () => {
+    const picked: string[] = [];
+    const report = richReport();
+    const m = await mount(
+      <UsageView
+        loadUsage={async () => report}
+        onSelectThread={(id) => {
+          picked.push(id);
+        }}
+        existingThreadIds={["th-a", "th-b", "th-k"]}
+      />,
+    );
+    await m.flush();
+    await m.click(m.query('[data-usage-group-btn="thread"]'));
+
+    const openA = m.query('[aria-label="Open thread: Fix the cache"]');
+    assert.ok(openA, "title is an accessible control");
+    await m.click(openA);
+    assert.deepEqual(picked, ["th-a"], "opens by thread id, not title");
+
+    const row = m.query('[data-usage-row="th-a"]');
+    assert.ok(row, "thread row");
+    assert.equal(row.querySelectorAll("button").length, 1, "only the title is a control");
+    assert.equal(
+      row.querySelector("button")?.closest("td"),
+      row.querySelector("td"),
+      "the control lives in the title cell, not the whole row",
+    );
+    m.unmount();
+  });
+
+  it("opens the matching id when two threads share a title", async () => {
+    const today = daysAgo(0);
+    const report: UsageReport = {
+      byDay: {
+        [today]: {
+          claude: {
+            sonnet: entry({
+              costUsd: 3,
+              inputTokens: 200,
+              outputTokens: 40,
+              turns: 2,
+            }),
+          },
+        },
+      },
+      threadsByDay: {
+        [today]: {
+          "th-left": thread({ title: "Same title", costUsd: 2, turns: 1 }),
+          "th-right": thread({
+            title: "Same title",
+            projectId: "proj-2",
+            projectName: "ledger",
+            costUsd: 1,
+            turns: 1,
+          }),
+        },
+      },
+    };
+    const picked: string[] = [];
+    const m = await mount(
+      <UsageView
+        loadUsage={async () => report}
+        onSelectThread={(id) => {
+          picked.push(id);
+        }}
+        existingThreadIds={["th-left", "th-right"]}
+      />,
+    );
+    await m.flush();
+    await m.click(m.query('[data-usage-group-btn="thread"]'));
+    const buttons = m.queryAll('[aria-label="Open thread: Same title"]');
+    assert.equal(buttons.length, 2, "one control per row");
+    await m.click(buttons[0]);
+    await m.click(buttons[1]);
+    assert.deepEqual(picked, ["th-left", "th-right"]);
+    m.unmount();
+  });
+
+  it("keeps a deleted thread visible and does not navigate", async () => {
+    const picked: string[] = [];
+    const m = await mount(
+      <UsageView
+        loadUsage={async () => richReport()}
+        onSelectThread={(id) => {
+          picked.push(id);
+        }}
+        existingThreadIds={["th-a"]}
+      />,
+    );
+    await m.flush();
+    await m.click(m.query('[data-usage-group-btn="thread"]'));
+
+    assert.ok(m.query('[aria-label="Open thread: Fix the cache"]'), "live thread stays openable");
+    assert.equal(
+      m.query('[aria-label="Open thread: Tighten CSP"]'),
+      null,
+      "deleted title is not an action",
+    );
+    const missing = m.query('[data-usage-row="th-b"]');
+    assert.ok(missing, "deleted thread remains for accounting");
+    assert.ok(
+      (missing.textContent ?? "").includes("unavailable"),
+      "explains why it cannot be opened",
+    );
+    assert.equal(missing.querySelector("button"), null, "no broken action");
+    await m.click(missing);
+    assert.deepEqual(picked, []);
+    m.unmount();
+  });
+
+  it("exposes the thread title as a focusable button", async () => {
+    const m = await mount(
+      <UsageView
+        loadUsage={async () => richReport()}
+        onSelectThread={() => {}}
+        existingThreadIds={["th-a", "th-b", "th-k"]}
+      />,
+    );
+    await m.flush();
+    await m.click(m.query('[data-usage-group-btn="thread"]'));
+    const openA = m.query('[aria-label="Open thread: Fix the cache"]');
+    assert.ok(openA, "title control");
+    assert.equal(openA.tagName, "BUTTON", "native button is keyboard-activable");
+    (openA as HTMLElement).focus();
+    await m.pressFocused("Enter");
+    assert.equal(openA.ownerDocument.activeElement, openA, "title keeps focus");
+    m.unmount();
+  });
+
+  it("restores range, metric and Thread breakdown after a remount", async () => {
+    let controls: UsageReportControls = {
+      range: 7,
+      metric: "cost",
+      group: "model",
+    };
+    const render = () =>
+      mount(
+        <UsageView
+          loadUsage={async () => richReport()}
+          reportControls={controls}
+          onReportControlsChange={(next) => {
+            controls = next;
+          }}
+        />,
+      );
+
+    const first = await render();
+    await first.flush();
+    await first.click(first.query('[data-usage-range="30"]'));
+    await first.click(first.query('[data-usage-metric="tokens"]'));
+    await first.click(first.query('[data-usage-group-btn="thread"]'));
+    assert.equal(first.query("[data-usage]")?.getAttribute("data-range"), "30");
+    assert.equal(first.query("[data-usage]")?.getAttribute("data-metric"), "tokens");
+    assert.equal(first.query("[data-usage]")?.getAttribute("data-usage-group"), "thread");
+    first.unmount();
+
+    const again = await render();
+    await again.flush();
+    assert.equal(again.query("[data-usage]")?.getAttribute("data-range"), "30");
+    assert.equal(again.query("[data-usage]")?.getAttribute("data-metric"), "tokens");
+    assert.equal(again.query("[data-usage]")?.getAttribute("data-usage-group"), "thread");
+    assert.ok(again.text().includes("Fix the cache"), "thread rows still listed");
+    again.unmount();
+  });
+
+  it("shows an initial load error with retry, not a successful empty report (#1133)", async () => {
+    let calls = 0;
+    const m = await mount(
+      <UsageView
+        loadUsage={async () => {
+          calls += 1;
+          throw new Error("store locked");
+        }}
+      />,
+    );
+    await m.flush();
+    assert.equal(calls, 1);
+    assert.ok(m.query("[data-usage-error]"), "error marker");
+    assert.ok(m.query('[role="alert"]'), "error uses role=alert");
+    assert.ok(m.text().includes("store locked"));
+    assert.ok(m.byText("Retry"), "initial failure offers retry");
+    assert.equal(m.query("[data-usage-empty]"), null, "must not look like a loaded empty report");
+    assert.equal(m.query("[data-usage-totals]"), null, "must not invent a $0 report");
+    assert.ok(!m.text().includes("No usage in this range"));
+    const refresh = m.byText("Refresh");
+    assert.ok(refresh, "refresh control");
+    assert.equal((refresh as HTMLButtonElement).disabled, false, "loading control recovers");
+    m.unmount();
+  });
+
+  it("keeps the last report after a failed refresh and recovers on retry (#1133)", async () => {
+    let calls = 0;
+    const first: UsageReport = { byDay: sampleData(), threadsByDay: {} };
+    const laterDay = daysAgo(0);
+    const second: UsageReport = {
+      byDay: {
+        [laterDay]: {
+          claude: {
+            sonnet: entry({
+              costUsd: 9,
+              inputTokens: 400,
+              outputTokens: 80,
+              turns: 2,
+            }),
+          },
+        },
+      },
+      threadsByDay: {},
+    };
+    const m = await mount(
+      <UsageView
+        loadUsage={async () => {
+          calls += 1;
+          if (calls === 1) return first;
+          if (calls === 2) throw new Error("store locked");
+          return second;
+        }}
+      />,
+    );
+    await m.flush();
+    assert.ok(m.text().includes("$2.50"), "first load");
+    assert.equal(m.query("[data-usage-error]"), null);
+    assert.equal(m.query("[data-usage-stale]"), null);
+
+    await m.click(m.byText("Refresh"));
+    assert.ok(m.text().includes("$2.50"), "failed refresh must keep last spend");
+    assert.ok(!m.text().includes("No usage in this range"), "must not erase into empty");
+    assert.ok(m.query("[data-usage-error]"), "refresh failure is visible");
+    assert.ok(m.query('[role="alert"]')?.textContent?.includes("store locked"));
+    assert.ok(m.query("[data-usage-stale]"), "stale/last-success marker");
+    assert.match(m.text(), /stale/i);
+    assert.equal(m.query("[data-usage]")?.getAttribute("data-range"), "7");
+    assert.equal(m.query("[data-usage]")?.getAttribute("data-metric"), "cost");
+    const refresh = m.byText("Refresh") as HTMLButtonElement;
+    assert.equal(refresh.disabled, false, "refresh re-enables after failure");
+
+    await m.click(m.query('[data-usage-range="30"]'));
+    assert.equal(m.query("[data-usage]")?.getAttribute("data-range"), "30");
+    assert.ok(m.text().includes("$12.50"), "range change still filters last success");
+    assert.ok(m.query("[data-usage-stale]"), "other range must not look freshly current");
+    assert.ok(m.query("[data-usage-error]"), "error stays while last success is shown");
+
+    await m.click(m.query('[data-usage-range="7"]'));
+    await m.click(refresh);
+    assert.ok(m.text().includes("$9.00"), "successful retry updates the report");
+    assert.ok(!m.text().includes("$2.50"), "previous spend is replaced");
+    assert.equal(m.query("[data-usage-error]"), null, "success clears the error");
+    assert.equal(m.query("[data-usage-stale]"), null, "success clears stale");
+    assert.equal(m.query("[data-usage]")?.getAttribute("data-range"), "7");
+    assert.equal(m.query("[data-usage]")?.getAttribute("data-metric"), "cost");
     m.unmount();
   });
 });

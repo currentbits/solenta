@@ -4,9 +4,24 @@
  * first-level dump of presets, and not an in-card drill-in panel.
  */
 
-import type { ProviderInfo, ThreadInfo } from "./shared/ipc";
+import type { ProjectInfo, ProviderInfo, ThreadInfo } from "./shared/ipc";
 import type { ContextMenuItem } from "./contextMenu";
 import type { SnoozePreset } from "./threadSnooze";
+
+/** Why Move to project… is disabled; null when the move is allowed. */
+export function threadProjectMoveBlockReason(
+  thread: Pick<
+    ThreadInfo,
+    "worktreePath" | "status" | "orchWorker" | "leadSnapshotSha"
+  >,
+): string | null {
+  if (thread.worktreePath) return "Has a worktree in this project";
+  if (thread.orchWorker || thread.leadSnapshotSha) return "Crew worker";
+  if (thread.status === "working" || thread.status === "quota-wait") {
+    return "Run is active";
+  }
+  return null;
+}
 
 export type ThreadActionMenuId =
   | "settle"
@@ -20,8 +35,12 @@ export type ThreadActionMenuId =
   | `handoff:${string}`
   | "rename"
   | "tags"
+  | "move"
+  | `project:${string}`
   | "mute"
-  | "unmute";
+  | "unmute"
+  | "eject"
+  | "reclaim";
 
 export function buildThreadActionMenuItems(input: {
   thread: ThreadInfo;
@@ -35,7 +54,12 @@ export function buildThreadActionMenuItems(input: {
   showFork: boolean;
   showRename: boolean;
   showTags?: boolean;
+  /** Recategorize onto another project (issue #737). */
+  showMove?: boolean;
+  projects?: ReadonlyArray<ProjectInfo>;
   showMute: boolean;
+  /** Eject the provider session so the raw CLI/Desktop can own it (#554). */
+  showEject?: boolean;
   showSettle: boolean;
 }): ContextMenuItem[] {
   const { thread } = input;
@@ -107,12 +131,45 @@ export function buildThreadActionMenuItems(input: {
     });
   }
 
+  if (input.showMove) {
+    const dests = (input.projects ?? []).filter(
+      (p) => p.id !== thread.projectId,
+    );
+    if (dests.length > 0) {
+      const block = threadProjectMoveBlockReason(thread);
+      items.push({
+        id: "move",
+        label: "Move to project…",
+        disabled: Boolean(block),
+        whenLabel: block ?? undefined,
+        separatorBefore: !input.showRename && !input.showTags && items.length > 0,
+        attrs: { "data-move-project": thread.id },
+        children: block
+          ? undefined
+          : dests.map((p) => ({
+              id: `project:${p.id}`,
+              label: p.slug || p.name,
+              attrs: { "data-move-project-id": p.id },
+            })),
+      });
+    }
+  }
+
   if (input.showMute) {
     items.push({
       id: thread.muted ? "unmute" : "mute",
       label: thread.muted ? "Unmute notifications" : "Mute notifications",
       separatorBefore: !input.showRename && items.length > 0,
       attrs: { "data-mute-toggle": thread.id },
+    });
+  }
+
+  if (input.showEject) {
+    items.push({
+      id: thread.ejected ? "reclaim" : "eject",
+      label: thread.ejected ? "Reclaim in Solenta" : "Eject to terminal",
+      separatorBefore: items.length > 0,
+      attrs: { "data-eject-toggle": thread.id },
     });
   }
 

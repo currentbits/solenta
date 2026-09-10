@@ -13,12 +13,20 @@ const {
   OUTPUT_TRUNCATE,
 } = require("./claude.js");
 const codexParse = require("./codex.js");
-const { runCodex } = codexParse;
+const { runCodexAppServerTurn } = require("./codex-appserver.js");
+const {
+  classifyServerRequest,
+  pendingFromCommand,
+  mapSolentaDecision,
+  unsupportedError,
+  DECISION_CANCEL,
+} = require("./codexApprovals.js");
 const kimiParse = require("./kimi.js");
 const { runKimi, materializeKimiHome, deployKimiGuardrailOverlay } = kimiParse;
 const { materializeGrokHome } = require("./grok.js");
 const cursorParse = require("./cursor.js");
 const { runCursor, materializeCursorHome } = cursorParse;
+const { heartbeatLane } = require("./mergeQueue.js");
 const {
   materializeCursorPinPlugin,
   cursorPinPluginDir,
@@ -29,6 +37,9 @@ const {
   isBinAvailable,
   listProviders,
   snapPermissionMode,
+  sessionIdForResume,
+  codexModelAcceptsImages,
+  honouredEfforts,
 } = require("./providers.js");
 const { codexWorkspaceWriteArgs } = require("./codexWorkspaceWrite.js");
 const orchcommands = require("./orchcommands.js");
@@ -63,6 +74,7 @@ const { wrapCommand } = require("./ssh.js");
 const { wslTarget } = require("./wsl.js");
 const { resolveSandbox } = require("./sandbox.js");
 const { killTree } = require("./proc.js");
+const { stop: stopDevServer } = require("./devservers.js");
 const {
   runVerifyCommand,
   buildFixPrompt,
@@ -82,6 +94,12 @@ const {
   materializeCodexGuardrailHome,
   deployCodexGuardrailOverlay,
 } = require("./codex-guardrail.js");
+const {
+  inspectWriterLock,
+  formatWriterLockDiagnosis,
+  releaseWriterLockHolder,
+  killPidTree,
+} = require("./codexWriterLock.js");
 const {
   materializeOpencodeGuardrailDir,
   deployOpencodeGuardrailOverlay,
@@ -109,6 +127,7 @@ const {
 const {
   classifyContextOverflow,
   classifyCliUpgrade,
+  classifyWriterLock,
   decideQuotaWait,
   formatQuotaWaitClock,
   nextQuotaFailover,
@@ -312,6 +331,30 @@ function looksSessionLost(text) {
 }
 
 /**
+ * Codex thread-store single-writer conflict (openai/codex#37403).
+ * Match the explicit conflict text only, never generic JSON-RPC -32600.
+ * Broader than classifyWriterLock: also "live local writer".
+ * @param {unknown} text
+ */
+function looksWriterLock(text) {
+  const s = String(text || "");
+  if (!s) return false;
+  return (
+    classifyWriterLock(s) != null ||
+    /already has a live local writer/i.test(s)
+  );
+}
+
+const CODEX_WRITER_LOCK_COPY =
+  "This Codex session is still owned by another process. Quit Codex Desktop or the other CLI that has it open. The worker notice is waiting and will resume once the session is free.";
+
+const CODEX_EJECTED_COPY =
+  "This Codex session was ejected. Solenta will not resume it. The worker notice is waiting.";
+
+/** Flock can lag Solenta's child exit; one bounded re-flush, no loop. */
+const CODEX_WRITER_RELEASE_MS = 400;
+
+/**
  * Map a claude-stream result event's errors[] (+ optional result/stderr) into
  * a user-facing terminal. Bare `cancelled` is a stop (same idea as stopRun),
  * not a crash. Remaining failures keep the CLI text and drop the adapter
@@ -409,6 +452,23 @@ function trackLiveClaudeChild(child) {
   };
   child.once("exit", drop);
   child.once("error", drop);
+}
+
+/**
+ * Codex app-server pids that may outlive their `active` slot (writer-lock
+ * leftover, killTree lag). Used to tell "ours" from Desktop on inspect.
+ * @type {Set<number>}
+ */
+const liveCodexPids = new Set();
+
+function trackLiveCodexPid(pid) {
+  const n = Number(pid);
+  if (!Number.isInteger(n) || n <= 0) return;
+  liveCodexPids.add(n);
+}
+
+function dropLiveCodexPid(pid) {
+  liveCodexPids.delete(Number(pid));
 }
 
 const ADJECTIVES = [
@@ -662,6 +722,7 @@ function tryReadCodeIndex(userDataPath, repoRoot) {
  * @param {number} [opts.tickMs]
  * @param {typeof setInterval} [opts.setIntervalFn]
  * @param {typeof clearInterval} [opts.clearIntervalFn]
+ * @param {() => number} [opts.now] - injectable clock (lane heartbeat, #346)
  * @param {string} [opts.userDataPath] - for memory auto-record
  * @param {() => { running: boolean, adopted: boolean, port: number | null }} [opts.getMemoryStatus]
  * @param {(opts: object) => Promise<{ text: string, source: string } | null>} [opts.askComplete] - Ask mode seam (issue #392)
@@ -682,6 +743,9 @@ function createRunner(opts) {
     searchMemory = null,
     bootstrapMemory = null,
     runAgentFn = runAgent,
+    runCodexFn = runCodexAppServerTurn,
+    inspectCodexWriterLockFn = inspectWriterLock,
+    killWriterLockPidFn = killPidTree,
     // Null until main has finished simulator crash recovery, so it is resolved
     // per call rather than captured.
     getIosSimulator = () => null,
@@ -1075,6 +1139,87 @@ function createRunner(opts) {
    */
   const autoTurns = new Map();
 
+  /** sessionId -> Date.now() when a Solenta Codex child left `active`. */
+  const recentlyReleasedCodex = new Map();
+  /** threadId -> timeout for one bounded post-release flush. */
+  const codexReleaseFlush = new Map();
+  /** threadId: recovery copy already posted for a parked notice. */
+  const codexParkNotified = new Set();
+
+  function cancelCodexReleaseFlush(threadId) {
+    const timer = codexReleaseFlush.get(threadId);
+    if (!timer) return;
+    clearTimeout(timer);
+    codexReleaseFlush.delete(threadId);
+  }
+
+  function noteCodexRelease(sessionId) {
+    const sid = sessionId != null ? String(sessionId) : "";
+    if (!sid) return;
+    recentlyReleasedCodex.set(sid, Date.now());
+  }
+
+  function scheduleCodexReleaseFlush(threadId) {
+    if (codexReleaseFlush.has(threadId)) return;
+    const timer = setTimeout(() => {
+      codexReleaseFlush.delete(threadId);
+      try {
+        flushOrchNotices(threadId);
+      } catch {
+        // silent
+      }
+    }, CODEX_WRITER_RELEASE_MS);
+    if (typeof timer.unref === "function") timer.unref();
+    codexReleaseFlush.set(threadId, timer);
+  }
+
+  /**
+   * True when another Solenta Codex child still holds this sessionId
+   * (live or shutting down).
+   * @param {string} sessionId
+   * @param {string} exceptThreadId
+   */
+  function codexSessionHeld(sessionId, exceptThreadId) {
+    const sid = String(sessionId || "");
+    if (!sid) return false;
+    for (const [id, entry] of active) {
+      if (id === exceptThreadId) continue;
+      if (!entry || entry.kind !== "codex") continue;
+      if (entry.sessionId && String(entry.sessionId) === sid) return true;
+      const t = store.getThread(id);
+      if (t && t.sessionId && String(t.sessionId) === sid) return true;
+    }
+    return false;
+  }
+
+  /**
+   * Park a machine-delivered Codex wake-up: writer-lock, eject, or a
+   * sibling Solenta child still owns the session. `{ wait: true }` is the
+   * one-shot delay after our own child just released.
+   * @param {object} thread
+   * @returns {{ copy?: string, wait?: boolean } | null}
+   */
+  function parkCodexFromNotice(thread) {
+    if (!thread) return null;
+    if (resolveProvider(thread) !== "codex") return null;
+    if (thread.ejected === true) return { copy: CODEX_EJECTED_COPY };
+    const sid = thread.sessionId ? String(thread.sessionId) : "";
+    if (sid && recentlyReleasedCodex.has(sid)) {
+      const age = Date.now() - recentlyReleasedCodex.get(sid);
+      if (age >= 0 && age < CODEX_WRITER_RELEASE_MS) return { wait: true };
+    }
+    if (sid && codexSessionHeld(sid, thread.id)) {
+      return { copy: CODEX_WRITER_LOCK_COPY };
+    }
+    if (
+      thread.lastErrorKind === "writer-lock" ||
+      looksWriterLock(thread.lastError)
+    ) {
+      return { copy: CODEX_WRITER_LOCK_COPY };
+    }
+    return null;
+  }
+
   /**
    * Append a line to the notice queue. Caller already checked the thread
    * exists. Does not flush.
@@ -1177,8 +1322,32 @@ function createRunner(opts) {
     const notes = orchNotices.get(threadId);
     if (!notes || notes.length === 0) return;
     if (active.has(threadId)) return;
+    const thread = store.getThread(threadId);
+    if (!thread) {
+      orchNotices.delete(threadId);
+      return;
+    }
+    const park = parkCodexFromNotice(thread);
+    if (park) {
+      if (park.wait) {
+        scheduleCodexReleaseFlush(threadId);
+        return;
+      }
+      if (!codexParkNotified.has(threadId)) {
+        codexParkNotified.add(threadId);
+        try {
+          appendMessage(threadId, "event", park.copy);
+          store.save();
+          pushDetail(threadId, lastWorkflowByThread.get(threadId) || null);
+          pushThreadsChanged();
+        } catch {
+          // silent
+        }
+      }
+      return;
+    }
+    codexParkNotified.delete(threadId);
     orchNotices.delete(threadId);
-    if (!store.getThread(threadId)) return;
     const prompt = noticePrompt(notes);
     // Per-orchestration ceiling (issue #67) and consecutive auto-turn cap
     // (issue #277): refuse the wake-up here, not in startRun, so user-sent
@@ -1203,7 +1372,7 @@ function createRunner(opts) {
       // notification (issue #34). A quiet event alone reads as "still going".
       try {
         const reason = err && err.message ? String(err.message) : String(err);
-        appendMessage(threadId, "event", `${prompt}\n\nNot delivered: ${reason}`);
+        appendMessage(threadId, "event", `${prompt}\n\nNot delivered: ${reason}`, null, null, null, { fromNotice: true });
         // A run that raced in after the active guard above owns the status;
         // only an idle orchestrator is really stalled.
         if (!active.has(threadId)) {
@@ -1905,6 +2074,7 @@ function createRunner(opts) {
   function maybeDrainQueued(threadId) {
     const thread = store.getThread(threadId);
     if (!thread || thread.status === "working") return;
+    if (services.isTrashed(thread)) return;
     // A persisted plan card is a mode switch, not a message. Hold the
     // type-ahead until the user approves or keeps planning so a queued
     // "implement it" does not run still in plan mode (issue #707).
@@ -2087,7 +2257,11 @@ function createRunner(opts) {
    */
   function getPendingPermission(threadId) {
     const e = active.get(threadId);
-    if (e && e.kind === "claude" && Array.isArray(e.pendingPermissions)) {
+    if (
+      e &&
+      (e.kind === "claude" || e.kind === "codex") &&
+      Array.isArray(e.pendingPermissions)
+    ) {
       const p = e.pendingPermissions[0];
       if (p) {
         return {
@@ -2095,7 +2269,10 @@ function createRunner(opts) {
           toolName: p.toolName,
           summary: p.summary,
           input: p.input,
-          command: extractCommand(p.rawInput),
+          command:
+            p.command !== undefined ? p.command : extractCommand(p.rawInput),
+          commandEditable: p.commandEditable !== false,
+          acceptAlways: p.acceptAlways !== false,
           questions: questionInfo(p.toolName, p.rawInput),
           plan: planText(p.toolName, p.rawInput),
           guardrail: p.guardrail || null,
@@ -2152,18 +2329,193 @@ function createRunner(opts) {
     return normalizeQuestions(rawInput && rawInput.questions);
   }
 
+  function replyCodexJsonRpc(e, id, result) {
+    if (e.handle && typeof e.handle.respondJsonRpc === "function") {
+      e.handle.respondJsonRpc(id, result);
+      return;
+    }
+    throw new Error("Codex run has no JSON-RPC reply path");
+  }
+
+  function replyCodexJsonRpcError(e, id, error) {
+    if (e.handle && typeof e.handle.respondJsonRpcError === "function") {
+      e.handle.respondJsonRpcError(id, error);
+      return;
+    }
+    throw new Error("Codex run has no JSON-RPC reply path");
+  }
+
+  function cancelCodexServerRequests(entry) {
+    if (!entry || entry.kind !== "codex") return;
+    const pending = Array.isArray(entry.pendingPermissions)
+      ? entry.pendingPermissions.splice(0)
+      : [];
+    if (entry.handle && typeof entry.handle.cancelOutstanding === "function") {
+      try {
+        entry.handle.cancelOutstanding(DECISION_CANCEL);
+      } catch {
+        // ignore
+      }
+      return;
+    }
+    for (const p of pending) {
+      try {
+        replyCodexJsonRpc(entry, p.rpcId !== undefined ? p.rpcId : p.id, {
+          decision: DECISION_CANCEL,
+        });
+      } catch {
+        // ignore
+      }
+    }
+  }
+
+  /**
+   * Inbound Codex app-server ServerRequest (issue #1171). Command
+   * kind=command becomes pendingPermission; unknown methods fail closed.
+   * #1170 attaches this to the long-lived JSON-RPC session. Exec --json
+   * never emits these.
+   *
+   * @param {string} threadId
+   * @param {{ id?: unknown, method?: string, params?: unknown }} msg
+   * @returns {boolean} true if this request is handled (replied or queued)
+   */
+  function handleCodexServerRequest(threadId, msg) {
+    const e = active.get(threadId);
+    const id = msg && Object.prototype.hasOwnProperty.call(msg, "id") ? msg.id : undefined;
+    const method = msg && typeof msg.method === "string" ? msg.method : "";
+    if (!e || e.kind !== "codex" || e.stopping || !e.handle) {
+      return false;
+    }
+    if (id === undefined || id === null) return false;
+
+    const classified = classifyServerRequest(method, msg && msg.params);
+    if (classified.action !== "command") {
+      try {
+        replyCodexJsonRpcError(
+          e,
+          id,
+          unsupportedError(classified.method, classified.reason),
+        );
+      } catch {
+        return false;
+      }
+      return true;
+    }
+
+    const pending = pendingFromCommand(id, msg && msg.params);
+    let inputStr = pending.input;
+    try {
+      inputStr = truncate(pending.input, INPUT_TRUNCATE);
+    } catch {
+      inputStr = pending.input;
+    }
+    pending.input = inputStr;
+
+    /** @type {{ decision: string, rule: string | null, reason: string } | null} */
+    let verdict = null;
+    try {
+      const live = store.getThread(threadId);
+      const worktreePath = (live && live.worktreePath) || null;
+      verdict = classifyTool({
+        toolName: "command",
+        input: pending.rawInput,
+        worktreePath,
+      });
+    } catch {
+      verdict = null;
+    }
+
+    if (verdict && verdict.decision === "deny") {
+      const rule = verdict.rule || "policy";
+      const reason = verdict.reason || "blocked";
+      try {
+        replyCodexJsonRpc(e, id, {
+          decision: mapSolentaDecision("deny", pending.availableDecisions),
+        });
+      } catch {
+        return false;
+      }
+      appendMessage(
+        threadId,
+        "event",
+        `Guardrail blocked command: ${rule}: ${reason}`,
+        e.runId,
+      );
+      store.save();
+      pushDetail(threadId, e.codexState || null);
+      return true;
+    }
+
+    if (verdict && verdict.decision === "ask") {
+      pending.guardrail = {
+        rule: verdict.rule,
+        reason: verdict.reason,
+      };
+    }
+
+    if (!Array.isArray(e.pendingPermissions)) e.pendingPermissions = [];
+    e.pendingPermissions.push(pending);
+    if (e.pendingPermissions.length === 1) {
+      store.updateThread(threadId, { awaitingInput: true }, { touch: true });
+      pushThreadsChanged();
+    }
+    store.save();
+    pushDetail(threadId, e.codexState || null);
+    return true;
+  }
+
+  function respondCodexPermission(e, threadId, input) {
+    const { requestId, decision } = input || {};
+    if (!Array.isArray(e.pendingPermissions)) {
+      throw new Error("Permission request no longer pending");
+    }
+    const idx = e.pendingPermissions.findIndex((p) => p.id === requestId);
+    if (idx < 0) {
+      throw new Error("Permission request no longer pending");
+    }
+    const pending = e.pendingPermissions[idx];
+    e.pendingPermissions.splice(idx, 1);
+    const mapped = mapSolentaDecision(decision, pending.availableDecisions);
+    replyCodexJsonRpc(
+      e,
+      pending.rpcId !== undefined ? pending.rpcId : pending.id,
+      { decision: mapped },
+    );
+    const label =
+      decision === "deny"
+        ? `Denied: ${pending.summary}`
+        : decision === "allowAlways"
+          ? `Allowed for session: ${pending.summary}`
+          : `Allowed: ${pending.summary}`;
+    appendMessage(threadId, "event", label, e.runId);
+    if (e.pendingPermissions.length === 0) {
+      store.updateThread(threadId, { awaitingInput: false });
+    }
+    store.save();
+    pushDetail(threadId, e.codexState || null);
+    pushThreadsChanged();
+  }
+
   /**
    * Answer a pending permission prompt. For question prompts, `answers`
    * (question text -> chosen label) rides back as updatedInput.answers.
    * `updatedCommand` (#509) replaces the shell command in updatedInput;
    * allow-always after an edit keys the session rule on the edited prefix.
+   * Codex JSON-RPC ignores `updatedCommand` (the reply cannot rewrite the
+   * command).
    * @param {{ threadId: string, requestId: string, decision: "allow" | "allowAlways" | "deny", answers?: Record<string, string>, updatedCommand?: string }} input
    */
   function respondPermission(input) {
     const { threadId, requestId, decision, answers, updatedCommand } =
       input || {};
     const e = active.get(threadId);
-    if (!e || e.kind !== "claude" || !e.handle) {
+    if (!e || !e.handle) {
+      return respondPersistedPlan(threadId, requestId, decision);
+    }
+    if (e.kind === "codex") {
+      return respondCodexPermission(e, threadId, input);
+    }
+    if (e.kind !== "claude") {
       return respondPersistedPlan(threadId, requestId, decision);
     }
     const idx = e.pendingPermissions.findIndex((p) => p.id === requestId);
@@ -2497,7 +2849,7 @@ function createRunner(opts) {
    * @param {string | null} [runId]
    * @param {object | null} [tool]
    * @param {{ kind: string, path: string, name: string }[] | null} [attachments]
-   * @param {{ fromThread?: { id: string, title?: string } | null, thinking?: boolean }} [extra]
+   * @param {{ fromThread?: { id: string, title?: string } | null, thinking?: boolean, fromNotice?: boolean, steer?: boolean }} [extra]
    */
   function appendMessage(
     threadId,
@@ -2508,7 +2860,7 @@ function createRunner(opts) {
     attachments = null,
     extra = null,
   ) {
-    /** @type {{ id: string, role: string, text: string, createdAt: number, runId?: string, tool?: object, attachments?: object[], fromThread?: { id: string, title: string }, thinking?: boolean }} */
+    /** @type {{ id: string, role: string, text: string, createdAt: number, runId?: string, tool?: object, attachments?: object[], fromThread?: { id: string, title: string }, thinking?: boolean, fromNotice?: boolean, steer?: boolean }} */
     const msg = {
       id: randomUUID(),
       role,
@@ -2519,6 +2871,8 @@ function createRunner(opts) {
     if (tool) msg.tool = tool;
     if (attachments && attachments.length) msg.attachments = attachments;
     if (extra && extra.thinking) msg.thinking = true;
+    if (extra && extra.fromNotice === true) msg.fromNotice = true;
+    if (extra && extra.steer === true) msg.steer = true;
     if (extra && extra.fromThread && extra.fromThread.id) {
       msg.fromThread = {
         id: String(extra.fromThread.id),
@@ -2588,15 +2942,39 @@ function createRunner(opts) {
    *   parked: boolean,
    *   until?: number,
    *   text: string,
-   *   kind: "context-overflow" | "cli-upgrade" | null
+   *   kind: "context-overflow" | "writer-lock" | "cli-upgrade" | null
    * }}
    */
   function markRunFailed(threadId, errText, runId, extraPatch) {
     const overflow = classifyContextOverflow(errText);
-    const upgrade = overflow ? null : classifyCliUpgrade(errText);
-    const classified = overflow || upgrade;
-    const text = classified ? classified.text : errText;
+    const writerLock = overflow ? null : classifyWriterLock(errText);
+    const upgrade = overflow || writerLock ? null : classifyCliUpgrade(errText);
+    const classified = overflow || writerLock || upgrade;
+    let text = classified ? classified.text : errText;
     const kind = classified ? classified.kind : null;
+    if (writerLock) {
+      const thread = store.getThread(threadId);
+      const overlayHome =
+        userDataPath && threadId
+          ? path.join(userDataPath, "codex-homes", threadId)
+          : "";
+      const overlayExists =
+        overlayHome && require("node:fs").existsSync(overlayHome);
+      const inspect = inspectCodexWriterLockFn({
+        sessionId: (thread && thread.sessionId) || null,
+        errText,
+        codexHome: overlayExists
+          ? overlayHome
+          : process.env.CODEX_HOME ||
+            path.join(require("node:os").homedir(), ".codex"),
+        ourPids: liveCodexPids,
+      });
+      if (releaseWriterLockHolder(inspect, killWriterLockPidFn)) {
+        dropLiveCodexPid(inspect.holderPid);
+      }
+      const diag = formatWriterLockDiagnosis(inspect);
+      if (diag) text = `${text}\n${diag}`;
+    }
     if (!classified) {
       const switched = tryQuotaFailover(threadId, errText, runId, extraPatch);
       if (switched) return { parked: false, failover: true, text, kind: null };
@@ -2941,6 +3319,14 @@ function createRunner(opts) {
     }
     active.delete(threadId);
     const thread = store.getThread(threadId);
+    if (entry.kind === "codex") {
+      if (entry.handle && entry.handle.pid) dropLiveCodexPid(entry.handle.pid);
+      noteCodexRelease(
+        (entry.sessionId != null && entry.sessionId) ||
+          (thread && thread.sessionId) ||
+          null,
+      );
+    }
     if (thread && (thread.stalledAt != null || thread.lastEventAt != null)) {
       store.updateThread(threadId, { stalledAt: null, lastEventAt: null });
     }
@@ -4381,13 +4767,15 @@ function createRunner(opts) {
   }
 
   /**
-   * Start a Codex JSONL session turn.
+   * Start a Codex interactive turn over a private app-server (#1170).
+   * Workflow / ask / commitmsg stay on `runCodex` exec --json.
    * @param {string} threadId
    * @param {string} prompt
    * @param {string} runId
    * @param {import('./providers').ProviderEntry} providerEntry
+   * @param {string[]} [images] - absolute paths for UserInput localImage
    */
-  function startCodexRun(threadId, prompt, runId, providerEntry) {
+  function startCodexRun(threadId, prompt, runId, providerEntry, images) {
     const thread = store.getThread(threadId);
     const project = store.getProject(thread.projectId);
     if (!project) {
@@ -4418,8 +4806,14 @@ function createRunner(opts) {
     /** reasoning item id -> thinking message id */
     /** @type {Map<string, string>} */
     const thinkingMsgById = new Map();
+    const resumeId = sessionIdForResume(
+      providerEntry,
+      thread,
+      store.getUsage(threadId),
+    );
+    const startedFresh = Boolean(thread.sessionId) && !resumeId;
     /** @type {string | null} */
-    let capturedSessionId = thread.sessionId || null;
+    let capturedSessionId = resumeId;
     let sawTerminalUsage = false;
     let finishedFromStream = false;
     /** @type {string | null} */
@@ -4429,19 +4823,18 @@ function createRunner(opts) {
 
     const localCwd = thread.worktreePath || project.path;
     const binary = resolveBin(providerEntry);
-    const args = providerEntry.buildArgs({
-      prompt,
-      sessionId: thread.sessionId || null,
-      permissionMode: thread.permissionMode || "default",
-      model: thread.model || null,
-      reasoningEffort: thread.reasoningEffort || null,
-      webSearch: thread.webSearch === true,
-    });
-    // MCP / Planboard -c must be `codex exec` / `exec resume` options, not
-    // global `codex -c` before exec. Resume has its own -c parser; flags
-    // before `exec` are dropped, so approval_policy=never comes back and
-    // first-party MCP (thread_send, memory_*) dies with "requires approval,
-    // but approval policy is never" (#846 live miss on GPT resume).
+    // Private per-turn app-server. Do not use the user-global daemon
+    // (writer lock with Codex Desktop). Prompt is turn/start input, not argv.
+    const args = ["app-server", "--listen", "stdio://"];
+    const effortLevel = thread.reasoningEffort || null;
+    const allowedEffort = honouredEfforts(providerEntry, thread.model || null);
+    if (effortLevel && allowedEffort.includes(String(effortLevel))) {
+      args.push("-c", `model_reasoning_effort=${effortLevel}`);
+    }
+    if (thread.webSearch === true) {
+      args.push("-c", "web_search=live");
+    }
+    // MCP / Planboard -c sit after `app-server` (same values as exec).
     // Bearer tokens ride the child's env, never argv (issue #125).
     const planboardNote = services.planboardNoteFor(localCwd, {
       provider: thread.provider,
@@ -4449,12 +4842,16 @@ function createRunner(opts) {
     });
     const codexExecConfig = [
       ...codexWorkspaceWriteArgs({
+        cwd: localCwd,
         permissionMode: thread.permissionMode || "default",
         allowNetwork: planboardNote === services.PLANBOARD_NOTE,
       }),
-      ...getCodexMcpArgs({ projectPath: localCwd }),
+      ...getCodexMcpArgs({
+        projectPath: localCwd,
+        projectId: thread.projectId,
+      }),
     ];
-    if (codexExecConfig.length) insertBeforeLast(args, codexExecConfig);
+    if (codexExecConfig.length) args.push(...codexExecConfig);
     /** @type {Record<string, string>} */
     const codexMcpEnv = { ...getCodexMcpEnv() };
     // #813: isolated CODEX_HOME PreToolUse. Local overlay stays on this
@@ -4466,11 +4863,11 @@ function createRunner(opts) {
       try {
         const dest = deployCodexGuardrailOverlay({ project, threadId });
         if (dest) {
-          insertBeforeLast(args, [
+          args.push(
             "-c",
             "features.hooks=true",
             "--dangerously-bypass-hook-trust",
-          ]);
+          );
           codexWrapEnv = {
             CODEX_HOME: dest,
             SOLENTA_WORKTREE: project.remotePath || localCwd,
@@ -4486,11 +4883,11 @@ function createRunner(opts) {
           process.env.CODEX_HOME ||
           path.join(require("node:os").homedir(), ".codex");
         materializeCodexGuardrailHome({ dest, sourceHome });
-        insertBeforeLast(args, [
+        args.push(
           "-c",
           "features.hooks=true",
           "--dangerously-bypass-hook-trust",
-        ]);
+        );
         codexMcpEnv.CODEX_HOME = dest;
         codexMcpEnv.SOLENTA_WORKTREE = localCwd;
       } catch {
@@ -4508,6 +4905,12 @@ function createRunner(opts) {
       workingId,
       codexState,
       runUsage,
+      sessionId: resumeId,
+      /**
+       * App-server ServerRequests awaiting a user decision (issue #1171).
+       * Empty on exec --json; filled when #1170 attaches JSON-RPC.
+       */
+      pendingPermissions: [],
     };
     Object.defineProperty(entry, "workflow", {
       get() {
@@ -4574,6 +4977,7 @@ function createRunner(opts) {
               output: output != null ? output : existing.tool.output,
               isError: Boolean(live.isError),
               done: Boolean(live.done),
+              ...persistToolImages(threadId, live.images),
             },
           });
           if (live.done) {
@@ -4595,6 +4999,7 @@ function createRunner(opts) {
         output,
         isError: Boolean(live.isError),
         done: Boolean(live.done),
+        ...persistToolImages(threadId, live.images),
       };
       const msgId = appendMessage(threadId, "tool", summary, runId, tool);
       toolMsgById.set(id, msgId);
@@ -4663,11 +5068,22 @@ function createRunner(opts) {
       sawTerminalUsage = true;
     }
 
-    const handle = runCodex({
+    const nativeImages =
+      Array.isArray(images) && codexModelAcceptsImages(thread.model)
+        ? images.filter((p) => typeof p === "string" && p)
+        : [];
+    const handle = runCodexFn({
       binary: spawn.binary,
       args: spawn.args,
       cwd: spawn.cwd,
       envExtra: codexMcpEnv,
+      prompt,
+      images: nativeImages,
+      sessionId: resumeId,
+      model: thread.model || null,
+      reasoningEffort: thread.reasoningEffort || null,
+      permissionMode: thread.permissionMode || "default",
+      onServerRequest: (req) => handleCodexServerRequest(threadId, req),
       onEvent: (ev) => {
         if (!guard()) return;
 
@@ -4682,7 +5098,14 @@ function createRunner(opts) {
           const sid = codexParse.extractSessionId(ev);
           if (sid) {
             capturedSessionId = sid;
-            store.updateThread(threadId, { sessionId: sid });
+            const live = active.get(threadId);
+            if (live && live.kind === "codex") live.sessionId = sid;
+            store.updateThread(
+              threadId,
+              startedFresh
+                ? { sessionId: sid, ejected: false }
+                : { sessionId: sid },
+            );
             completeWorkLogStep(threadId, startingId);
             store.save();
             pushDetail(threadId, codexState);
@@ -4833,7 +5256,12 @@ function createRunner(opts) {
         completeWorkLogStep(threadId, e.workingId);
 
         if (capturedSessionId) {
-          store.updateThread(threadId, { sessionId: capturedSessionId });
+          store.updateThread(
+            threadId,
+            startedFresh
+              ? { sessionId: capturedSessionId, ejected: false }
+              : { sessionId: capturedSessionId },
+          );
         }
 
         // If we never saw usage, still count a turn with zero tokens when ok
@@ -4905,6 +5333,7 @@ function createRunner(opts) {
     });
 
     entry.handle = handle;
+    if (handle && handle.pid) trackLiveCodexPid(handle.pid);
     store.save();
     pushDetail(threadId, codexState);
 
@@ -5449,8 +5878,9 @@ function createRunner(opts) {
    * @param {string} prompt
    * @param {string} runId
    * @param {import('./providers').ProviderEntry} providerEntry
+   * @param {string[]} [files] - image/file paths for native `-f` (issue #176)
    */
-  function startOpencodeRun(threadId, prompt, runId, providerEntry) {
+  function startOpencodeRun(threadId, prompt, runId, providerEntry, files) {
     const thread = store.getThread(threadId);
     const project = store.getProject(thread.projectId);
     if (!project) {
@@ -5505,6 +5935,7 @@ function createRunner(opts) {
       model: thread.model || null,
       reasoningEffort: thread.reasoningEffort || null,
       webSearch: thread.webSearch === true,
+      files,
     });
     /** @type {NodeJS.ProcessEnv | undefined} */
     let opencodeEnv;
@@ -7526,6 +7957,19 @@ function createRunner(opts) {
     if (!thread) {
       throw new Error(`Unknown thread: ${threadId}`);
     }
+    if (services.isTrashed(thread)) {
+      throw new Error("Cannot start a run on a deleted thread");
+    }
+    if (
+      resolveProvider(thread) === "codex" &&
+      thread.sessionId &&
+      thread.ejected !== true &&
+      codexSessionHeld(thread.sessionId, threadId)
+    ) {
+      throw new Error(
+        "A Codex session writer is already running for this session in another Solenta thread",
+      );
+    }
 
     // Machine-delivered turns increment autoTurns in flushOrchNotices.
     // Anything else (user send, retry, verify fix) is a human in the loop.
@@ -7740,7 +8184,10 @@ function createRunner(opts) {
         runId,
         null,
         attachments,
-        fromThread ? { fromThread } : null,
+        {
+          ...(fromThread ? { fromThread } : {}),
+          ...(input.fromNotice === true ? { fromNotice: true } : {}),
+        },
       );
     }
 
@@ -7790,6 +8237,14 @@ function createRunner(opts) {
       { touch: true },
     );
 
+    if (thread.lane) {
+      try {
+        heartbeatLane({ store, threadId, now: nowFn() });
+      } catch {
+        // never break a run for a lane stamp
+      }
+    }
+
     // A creation-time worktree starts on the placeholder branch
     // coder/new-thread-<id>; once the first prompt promotes the title, the
     // branch follows (T3-style). Best-effort: never throws, never blocks.
@@ -7836,9 +8291,31 @@ function createRunner(opts) {
     }
     const leadSlash =
       slashExpanded || rawPrompt.trimStart().startsWith("/");
+    // Codex vision models take images as app-server UserInput localImage
+    // (#1170 / #176). Spark is text-only (#1167) so its images stay in
+    // the prompt-path list, as do folders/files (no native flag).
+    const nativeImages =
+      provider === "codex" &&
+      codexModelAcceptsImages(dispatchThread.model)
+        ? attachments.filter((a) => a.kind === "image").map((a) => a.path)
+        : [];
+    // OpenCode `run -f` attaches image/file paths natively (issue #176).
+    // Folders stay in the prompt-path section: the CLI has no folder flag.
+    const nativeFiles =
+      provider === "opencode"
+        ? attachments
+            .filter((a) => a.kind === "image" || a.kind === "file")
+            .map((a) => a.path)
+        : [];
+    const promptAttachments =
+      provider === "opencode"
+        ? attachments.filter((a) => a.kind === "folder")
+        : nativeImages.length
+          ? attachments.filter((a) => a.kind !== "image")
+          : attachments;
     const dispatchPrompt =
       (leadSlash ? cliPrompt : prefix + cliPrompt) +
-      attachmentPromptSection(attachments) +
+      attachmentPromptSection(promptAttachments) +
       (leadSlash ? prefix : "") +
       services.planboardNoteFor(projectForGate && projectForGate.path) +
       services.selfIdNoteFor(
@@ -7893,13 +8370,25 @@ function createRunner(opts) {
       return await startClaudeRun(threadId, dispatchPrompt, runId, entryDef);
     }
     if (entryDef.kind === "codex-json") {
-      return startCodexRun(threadId, dispatchPrompt, runId, entryDef);
+      return startCodexRun(
+        threadId,
+        dispatchPrompt,
+        runId,
+        entryDef,
+        nativeImages,
+      );
     }
     if (entryDef.kind === "kimi-stream") {
       return startKimiRun(threadId, dispatchPrompt, runId, entryDef);
     }
     if (entryDef.kind === "opencode-json") {
-      return startOpencodeRun(threadId, dispatchPrompt, runId, entryDef);
+      return startOpencodeRun(
+        threadId,
+        dispatchPrompt,
+        runId,
+        entryDef,
+        nativeFiles,
+      );
     }
     if (entryDef.kind === "cursor-stream") {
       return startCursorRun(threadId, dispatchPrompt, runId, entryDef);
@@ -8014,7 +8503,55 @@ function createRunner(opts) {
   }
 
   /**
-   * @param {{ threadId: string }} input
+   * Inject guidance into a live turn (issue #156). Writes a user line to
+   * the running CLI's stdin and appends a `steer: true` user row on the
+   * current runId — not a second run, not a queued follow-up.
+   * @param {{ threadId: string, prompt: string, attachments?: object[] }} input
+   * @returns {Promise<{ runId: string }>}
+   */
+  async function steerRun(input) {
+    const threadId = input && input.threadId;
+    const prompt = String((input && input.prompt) || "").trim();
+    if (!threadId) throw new Error("threadId is required");
+    if (!prompt) throw new Error("prompt is required");
+    const thread = store.getThread(threadId);
+    if (!thread) throw new Error(`Unknown thread: ${threadId}`);
+    const entry = active.get(threadId);
+    if (!entry || entry.stopping) {
+      throw new Error("No live run to steer");
+    }
+    const provider = resolveProvider(thread);
+    const providerEntry = getProvider(provider);
+    if (!providerEntry || providerEntry.supportsSteer !== true) {
+      const name = (providerEntry && providerEntry.name) || provider;
+      throw new Error(`${name} cannot steer a live turn`);
+    }
+    if (!entry.handle || typeof entry.handle.send !== "function") {
+      throw new Error("Live process is not accepting input");
+    }
+    const attachments = sanitizeAttachments(input.attachments);
+    const sent = await Promise.resolve(
+      entry.handle.send(prompt + attachmentPromptSection(attachments)),
+    );
+    if (!sent) {
+      throw new Error("Live process is not accepting input");
+    }
+    appendMessage(
+      threadId,
+      "user",
+      prompt,
+      entry.runId,
+      null,
+      attachments,
+      { steer: true },
+    );
+    store.save();
+    pushDetail(threadId, entry.claudeState || null);
+    return { runId: entry.runId };
+  }
+
+  /**
+   * @param {{ threadId: string, cascadeCrew?: boolean }} input
    * @param {Set<string>} [seen] - internal: crew cascade cycle guard
    */
   async function stopRun(input, seen = new Set()) {
@@ -8023,7 +8560,21 @@ function createRunner(opts) {
     // burning tokens and re-wakes the parent through queueOrchNotice. Doing
     // it before this thread's own terminal also means a notice that races in
     // during the kills is stopped again by the run below.
-    const crew = await stopCrew(String(threadId), seen);
+    // Eject (#960) passes cascadeCrew: false — only this session's writer
+    // must be released; the crew keeps running.
+    const cascadeCrew = input.cascadeCrew !== false;
+    const crew = cascadeCrew
+      ? await stopCrew(String(threadId), seen)
+      : { stopped: 0, traced: false };
+    // #315: Solenta-managed `npm run dev` is its own process group, so
+    // killTree on the agent CLI never reaches it. Stop it here for both
+    // live and idle threads. Crew workers keep their own servers unless
+    // stopCrew walked them above.
+    try {
+      stopDevServer(String(threadId));
+    } catch {
+      // no sidecar
+    }
     if (crew.stopped > 0) {
       const own = active.get(threadId);
       appendMessage(
@@ -8067,6 +8618,7 @@ function createRunner(opts) {
         entry.kind === "ask") &&
       entry.handle
     ) {
+      if (entry.kind === "codex") cancelCodexServerRequests(entry);
       try {
         entry.handle.kill();
       } catch {
@@ -8171,7 +8723,12 @@ function createRunner(opts) {
 
   function refreshQuotaWait(threadId) {
     const thread = store.getThread(threadId);
-    if (!thread || thread.status !== "quota-wait" || !thread.quotaWaitUntil) {
+    if (
+      !thread ||
+      services.isTrashed(thread) ||
+      thread.status !== "quota-wait" ||
+      !thread.quotaWaitUntil
+    ) {
       cancelQuotaWake(threadId);
       return;
     }
@@ -8252,6 +8809,11 @@ function createRunner(opts) {
     for (const id of [...quotaTimers.keys()]) {
       cancelQuotaWake(id);
     }
+    for (const id of [...codexReleaseFlush.keys()]) {
+      cancelCodexReleaseFlush(id);
+    }
+    recentlyReleasedCodex.clear();
+    codexParkNotified.clear();
     // Kept-alive Claude sessions (idle between turns): kill + clear timers.
     for (const threadId of [...claudeSessions.keys()]) {
       disposeClaudeSession(threadId);
@@ -8261,6 +8823,10 @@ function createRunner(opts) {
     for (const child of [...liveClaudeChildren]) {
       killTree(child, 3000);
     }
+    for (const pid of [...liveCodexPids]) {
+      killPidTree(pid);
+    }
+    liveCodexPids.clear();
     // Drain any pending session transcript posts before process exit.
     void sessionRecorder.flush();
     // App quit (main.js before-quit): save() only arms a 250 ms unref'd timer,
@@ -8344,10 +8910,33 @@ function createRunner(opts) {
     }
   }
 
+  /**
+   * Reset lastBeat on every active lane thread so the 30-minute watchdog
+   * does not recycle a live run. Idle / wedged lanes are left alone.
+   * @param {{ now?: number }} [opts]
+   */
+  function heartbeatActiveLanes(opts) {
+    const at = opts && opts.now != null ? opts.now : nowFn();
+    for (const threadId of active.keys()) {
+      const live = store.getThread(threadId);
+      if (!live || !live.lane) continue;
+      try {
+        heartbeatLane({ store, threadId, now: at });
+      } catch {
+        // never break the runner
+      }
+    }
+  }
+
   // Native timer (not setIntervalFn): tests replace that hook for sim ticks.
   const stallTimer = setInterval(() => {
     try {
       checkStalls();
+    } catch {
+      // never break the runner
+    }
+    try {
+      heartbeatActiveLanes();
     } catch {
       // never break the runner
     }
@@ -8358,6 +8947,7 @@ function createRunner(opts) {
 
   return {
     startRun,
+    steerRun,
     startBtw,
     cancelBtw,
     promoteBtw,
@@ -8377,6 +8967,7 @@ function createRunner(opts) {
     toWorkflowView,
     resolveProvider,
     getPendingPermission,
+    handleCodexServerRequest,
     respondPermission,
     askUser,
     clearQuestion,
@@ -8384,6 +8975,7 @@ function createRunner(opts) {
     deliverNotice,
     appendInbound,
     checkStalls,
+    heartbeatActiveLanes,
     drainQueued,
     refreshDetail,
   };
@@ -8400,6 +8992,8 @@ module.exports = {
   NOUNS,
   classifyClaudeResultError,
   formatRunExitError,
+  looksWriterLock,
   /** @internal test/diagnostics */
   liveClaudeChildren,
+  liveCodexPids,
 };

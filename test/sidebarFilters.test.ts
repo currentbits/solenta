@@ -59,6 +59,7 @@ function thread(
     snoozedAt: null,
     lastVisitedAt: updatedAt,
     muted: false,
+    ejected: false,
     notes: "",
     tags: [],
     prState: null,
