@@ -1,6 +1,7 @@
 # Onboarding: reach the first useful conversation
 
-Status: implementation in progress with Grok workers.
+Status: implemented with three Grok workers, reviewed, awaiting integration.
+Planboard: [#1250](https://github.com/currentbits/solenta/issues/1250), plan:doing.
 
 ## Goal and evidence
 
@@ -45,7 +46,8 @@ The onboarding and add-project dialogs both listen for Escape.
 ## Ownership
 
 - Grok flow worker: App.tsx, OnboardingModal.tsx, TourStep.tsx, shared onboarding
-  CSS, onboarding.test.tsx, onboardingTour.test.tsx.
+  CSS, onboarding.test.tsx, onboardingTour.test.tsx, and the opt-out from
+  selected-thread provider inheritance in useCoder.ts createThread.
 - Grok agent worker: CliStep.tsx, useCoder.ts refreshProviders only,
   onboardingCli.test.tsx. Coordinate the refresh function type if it changes.
 - Grok project worker: SetupStep.tsx and onboardingSetup.test.tsx only.
@@ -73,3 +75,47 @@ After shipping, evaluate time from first setup to first completed response and
 the share of new users reaching it if suitable opt-in data becomes available.
 No baseline numbers, tracking infrastructure, email campaigns, or guided tours
 are invented for this change.
+
+## Implementation and review evidence
+
+| Area | Grok worker revision |
+| --- | --- |
+| Three-step flow and first-thread handoff | `778482f9` |
+| Agent detection feedback and retry | `161c9c47` |
+| Optional project defaults and budget validation | `c3e38193` |
+
+The reviewed implementation creates a thread only on explicit action. Failed
+agent selection retries the same thread; changing projects targets the newly
+selected project. A failed onboarding completion save retains the created
+thread for retry. The existing thread's provider is not inherited during this
+handoff. No provider run starts automatically.
+
+Final focused verification: **40 onboarding tests passed**, and `npm run build`
+passed (including TypeScript and generated preload checks). The duplicate
+tabIndex in the existing onboarding modal was removed during the rewrite.
+
+```sh
+node --import=./test/support/disable-grok-mcp.mjs --import=./test/support/render.mjs --experimental-strip-types --test test/onboarding.test.tsx test/onboardingCli.test.tsx test/onboardingSetup.test.tsx test/onboardingTour.test.tsx
+npm run build
+```
+
+The full renderer run before the final two retry regressions passed 2,396 of
+2,397 tests. Its sole failure, the Composer model-picker Tab-cycle test, also
+failed independently on unchanged base `5355d91c`. The final retry changes
+were then covered by the 40 passing focused tests and another successful build.
+The existing focus regression was suggested as follow-up to the ongoing #920
+work, rather than changing unrelated Composer behavior here.
+
+Browser checks used an isolated Electron window with the existing devCoder
+fixture as a desktop bridge. All three screens fit at 1120×820 and 390×720.
+Native disclosure keyboard activation and modal focus containment passed.
+Entering an incomplete number did not clear a saved daily budget. The explicit
+first-thread action created exactly one thread in the selected project with
+the selected installed provider, focused the composer, and started zero runs.
+No live account, authentication, provider execution, or user repository was
+used by these browser checks.
+
+A separate pre-existing Vite-development issue was suggested: App renders a
+web-token dialog alongside onboarding despite the DEV exemption at boot,
+causing competing focus traps. Desktop-style fixture checks avoid that extra
+development-only dialog; this change does not alter web authentication.
