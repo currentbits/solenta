@@ -3,20 +3,16 @@ import type { OnboardingStepProps } from "./OnboardingModal";
 import { hintFor } from "./installHints";
 import styles from "./OnboardingModal.module.css";
 
-/** useCoder.refreshProviders accepts this; the step prop type is still zero-arg. */
-type RefreshProviders = (opts?: { throwOnError?: boolean }) => Promise<void>;
+const COPY_FAIL = "Could not copy. Select and copy the command.";
 
 function errorMessage(err: unknown): string {
-  return err instanceof Error && err.message
-    ? err.message
-    : "Could not recheck PATH";
+  return err instanceof Error && err.message ? err.message : "Could not recheck";
 }
 
 export default function CliStep({
   providers,
   refreshProviders,
 }: OnboardingStepProps) {
-  const refresh = refreshProviders as RefreshProviders;
   const [checking, setChecking] = useState(false);
   const [checked, setChecked] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -25,7 +21,6 @@ export default function CliStep({
 
   const rows = providers
     .filter((p) => p.id !== "simulate")
-    .slice()
     .sort((a, b) => Number(b.available) - Number(a.available));
   const anyInstalled = rows.some((p) => p.available);
 
@@ -34,7 +29,7 @@ export default function CliStep({
     setError(null);
     setChecked(false);
     try {
-      await refresh({ throwOnError: true });
+      await refreshProviders({ throwOnError: true });
       setChecked(true);
     } catch (err) {
       setError(errorMessage(err));
@@ -44,7 +39,11 @@ export default function CliStep({
   }
 
   async function copyCommand(id: string, command: string) {
-    if (typeof navigator === "undefined" || !navigator.clipboard) return;
+    if (typeof navigator === "undefined" || !navigator.clipboard) {
+      setCopiedId(null);
+      setCopyError(COPY_FAIL);
+      return;
+    }
     try {
       await navigator.clipboard.writeText(command);
       setCopyError(null);
@@ -52,16 +51,16 @@ export default function CliStep({
       window.setTimeout(() => {
         setCopiedId((cur) => (cur === id ? null : cur));
       }, 1500);
-    } catch (err) {
+    } catch {
       setCopiedId(null);
-      setCopyError(errorMessage(err));
+      setCopyError(COPY_FAIL);
     }
   }
 
   return (
     <div className={styles.step}>
       <div className={styles.stepHead}>
-        <h3 className={styles.stepTitle}>One agent CLI</h3>
+        <h3 className={styles.stepTitle}>One coding agent is enough</h3>
         <button
           type="button"
           className={styles.btn}
@@ -74,9 +73,9 @@ export default function CliStep({
         </button>
       </div>
       <p className={styles.stepBody}>
-        One CLI on PATH is enough. Installed means the binary was found, not
-        that you are signed in. Sign in from that CLI&apos;s terminal; Recheck
-        does not verify a login.
+        Installed means Solenta found the agent on the machine running the
+        app, not that you are signed in. Sign in using a terminal on that
+        machine.
       </p>
       {checking ? (
         <p
@@ -84,7 +83,7 @@ export default function CliStep({
           data-onboarding-cli-status="pending"
           role="status"
         >
-          Checking PATH…
+          Checking…
         </p>
       ) : null}
       {error ? (
@@ -102,7 +101,8 @@ export default function CliStep({
           data-onboarding-cli-status="ok"
           role="status"
         >
-          Checked PATH. Sign-in still happens in the CLI.
+          Installation detected. Sign in using a terminal on the machine
+          running Solenta.
         </p>
       ) : null}
       {copyError ? (
@@ -120,7 +120,7 @@ export default function CliStep({
           data-onboarding-cli-empty=""
           role="status"
         >
-          No detection result. Recheck after a CLI is on your PATH.
+          No detection result. Recheck after you install an agent.
         </p>
       ) : (
         <ul className={styles.cliList}>
@@ -175,7 +175,7 @@ export default function CliStep({
       )}
       {rows.length > 0 && !anyInstalled ? (
         <p className={styles.cliWarning} data-onboarding-cli-warning="" role="status">
-          Copy an install command below, then Recheck. One CLI is enough.
+          Install one agent using its instructions, then Recheck.
         </p>
       ) : null}
     </div>

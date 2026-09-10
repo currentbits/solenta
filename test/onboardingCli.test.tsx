@@ -37,26 +37,24 @@ async function boot(
   return mount(<App />);
 }
 
-/** Works whether the wizard still starts on welcome or already on cli. */
+/** Cli is the first screen. Do not click Next to reach it (that would skip to setup). */
 async function openCli(fake: ReturnType<typeof createFakeCoder>) {
   const m = await boot(fake);
-  for (let i = 0; i < 4; i++) {
-    if (m.query("[data-onboarding-cli-recheck]")) return m;
+  if (!m.query("[data-onboarding-cli-recheck]")) {
     const next = m.query("[data-onboarding-next]");
-    if (!next || (next as HTMLButtonElement).disabled) break;
-    const before = m
-      .query("[data-onboarding-step]")
-      ?.getAttribute("data-onboarding-step");
+    assert.ok(next, "legacy welcome shell only: one Next reaches cli");
     await m.click(next);
-    const after = m
-      .query("[data-onboarding-step]")
-      ?.getAttribute("data-onboarding-step");
-    if (after === before) break;
   }
   assert.ok(
     m.query("[data-onboarding-cli-recheck]"),
-    "must land on the CLI step (welcome→cli or cli-first)",
+    "first-run must show the CLI step without skipping past it",
   );
+  const step = m
+    .query("[data-onboarding-step]")
+    ?.getAttribute("data-onboarding-step");
+  if (step) {
+    assert.equal(step, "cli", "data-onboarding-step must be cli");
+  }
   return m;
 }
 
@@ -74,6 +72,14 @@ describe("Onboarding CLI step (#629)", () => {
       ],
     });
     const m = await openCli(fake);
+    assert.match(
+      m.query("[data-onboarding-step]")?.textContent || "",
+      /One coding agent is enough/,
+    );
+    assert.ok(
+      !/Ready/i.test(m.query("[data-onboarding-step]")?.textContent || ""),
+      "must not use Ready as an authentication claim",
+    );
 
     const claude = m.query('[data-onboarding-cli-row="claude"]');
     const codex = m.query('[data-onboarding-cli-row="codex"]');
@@ -175,9 +181,9 @@ describe("Onboarding CLI step (#629)", () => {
     const m = await openCli(fake);
     const warning = m.query("[data-onboarding-cli-warning]");
     assert.ok(warning, "zero available CLIs must show the warning");
-    assert.ok(
-      (warning.textContent || "").toLowerCase().includes("recheck"),
-      "warning must point at Recheck as the next action",
+    assert.equal(
+      (warning.textContent || "").trim(),
+      "Install one agent using its instructions, then Recheck.",
     );
     assert.ok(
       !m.query("[data-onboarding-cli-empty]"),
@@ -217,8 +223,8 @@ describe("Onboarding CLI step (#629)", () => {
       "must not claim every agent is missing when none were listed",
     );
     assert.ok(
-      !(m.query("[data-onboarding-cli-empty]")?.textContent || "").includes(
-        "all",
+      !/all agents/i.test(
+        m.query("[data-onboarding-cli-empty]")?.textContent || "",
       ),
       "empty copy must not say all agents are missing",
     );
@@ -326,15 +332,38 @@ describe("Onboarding CLI step (#629)", () => {
       ),
       "ok",
     );
-    assert.match(
-      m.query("[data-onboarding-cli-status]")?.textContent || "",
-      /PATH/,
-    );
+    const ok = m.query("[data-onboarding-cli-status]")?.textContent || "";
+    assert.match(ok, /Installation detected/);
+    assert.match(ok, /machine running Solenta/);
     assert.ok(
-      !(m.query("[data-onboarding-cli-status]")?.textContent || "")
-        .toLowerCase()
-        .includes("auth"),
-      "success copy must not claim authentication was verified",
+      !/ready|auth/i.test(ok),
+      "success copy must not claim Ready or that authentication was verified",
+    );
+    m.unmount();
+  });
+
+  it("Copy without a clipboard tells the user to select the command", async () => {
+    const fake = createFakeCoder({
+      settings: { onboardingSeen: false },
+      providers: [prov("claude", "Claude Code", false)],
+    });
+    const m = await openCli(fake);
+    const copy = Array.from(
+      m.query('[data-onboarding-cli-row="claude"]')?.querySelectorAll("button") ??
+        [],
+    ).find((el) => (el.textContent || "").includes("Copy"));
+    assert.ok(copy, "missing claude must offer Copy");
+    await m.click(copy);
+    assert.equal(
+      (m.query("[data-onboarding-cli-copy-error]")?.textContent || "").trim(),
+      "Could not copy. Select and copy the command.",
+    );
+    assert.equal(
+      m.query(
+        '[data-onboarding-cli-row="claude"] [data-onboarding-cli-hint]',
+      )?.textContent,
+      CLAUDE_NPM,
+      "verified install command must stay unchanged",
     );
     m.unmount();
   });
