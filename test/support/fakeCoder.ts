@@ -38,6 +38,10 @@ import type {
   GitPullResult,
   ListPrsResult,
   CheckoutPrResult,
+  PrCommentResult,
+  PrDetail,
+  PrDetailResult,
+  PrTemplateResult,
   LocalServerInfo,
   McpImportPreview,
   McpInstallRequest,
@@ -326,6 +330,10 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
   const automationRuns = opts.automationRuns ?? {};
   const details = opts.details ?? {};
   const fail = opts.fail ?? {};
+  const rewindRestore: Record<
+    string,
+    { messages: ThreadDetail["messages"]; workLog: ThreadDetail["workLog"]; thread: ThreadInfo }
+  > = {};
   /** Mutable per-thread checkpoint lists (newest-first). */
   const checkpoints: Record<string, CheckpointInfo[]> = {
     ...(opts.checkpoints ?? {}),
@@ -344,6 +352,7 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
     agentsPanelRememberLast: false,
     stayAwake: "agent",
     quotaWaitAutoResume: true,
+    confirmQuitWithActiveWork: true,
     prDiffCapLines: 400,
     onboardingSeen: true,
     uiScale: 1,
@@ -899,6 +908,16 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
             );
           }
           next.quotaWaitAutoResume = v;
+        }
+        if (Object.prototype.hasOwnProperty.call(p, "confirmQuitWithActiveWork")) {
+          const v = p.confirmQuitWithActiveWork;
+          if (typeof v !== "boolean") {
+            calls.push({ channel: "settings.set", args: [patch] });
+            return Promise.reject(
+              new Error("confirmQuitWithActiveWork must be a boolean"),
+            );
+          }
+          next.confirmQuitWithActiveWork = v;
         }
         if (Object.prototype.hasOwnProperty.call(p, "prDiffCapLines")) {
           const v = p.prDiffCapLines;
@@ -2626,9 +2645,10 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
       rewind: (input: unknown) => {
         const i = input as {
           threadId: string;
-          messageId: string;
-          prompt: string;
+          messageId?: string;
+          prompt?: string;
           restoreFiles?: boolean;
+          undo?: boolean;
         };
         calls.push({ channel: "threads.rewind", args: [input] });
         const err = fail["threads.rewind"];
@@ -2643,6 +2663,25 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
             new Error("Cannot rewind while a run is active"),
           );
         }
+        if (i.undo === true) {
+          const snap = rewindRestore[i.threadId];
+          const d = details[i.threadId];
+          if (snap && d) {
+            d.messages = snap.messages.slice();
+            d.workLog = snap.workLog.slice();
+            d.thread = { ...snap.thread };
+            threads = threads.map((t) =>
+              t.id === i.threadId ? d.thread : t,
+            );
+            delete rewindRestore[i.threadId];
+          }
+          const row = threads.find((t) => t.id === i.threadId) || existing;
+          return Promise.resolve({
+            thread: row,
+            droppedMessages: 0,
+            restoredSha: null,
+          } satisfies RewindResult);
+        }
         if (!String(i.prompt ?? "").trim()) {
           return Promise.reject(new Error("Prompt cannot be empty"));
         }
@@ -2653,6 +2692,11 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
             new Error(`Not a user message: ${i.messageId}`),
           );
         }
+        rewindRestore[i.threadId] = {
+          messages: d.messages.slice(),
+          workLog: (d.workLog ?? []).slice(),
+          thread: { ...existing },
+        };
         const dropped = d.messages.slice(at);
         d.messages = d.messages.slice(0, at);
         const next: ThreadInfo = {
@@ -2813,7 +2857,12 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
         rec("digest.markSeen", [input], { seenAt: Date.now() }),
     },
     runs: {
-      start: (input: unknown) => rec("runs.start", [input], { runId: "r1" }),
+      start: (input: unknown) =>
+        rec("runs.start", [input], { runId: "r1" }).then((value) => {
+          const threadId = (input as { threadId?: string }).threadId;
+          if (threadId) delete rewindRestore[threadId];
+          return value;
+        }),
       steer: (input: unknown) => rec("runs.steer", [input], { runId: "r1" }),
       startWorkflow: (input: unknown) =>
         rec("runs.startWorkflow", [input], { runId: "r2" }),
@@ -2951,6 +3000,98 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
           prompt: `GitHub pull request #${i.prNumber}: review`,
           thread: t,
         } satisfies CheckoutPrResult);
+      },
+      prTemplate: (input: unknown) =>
+        rec("git.prTemplate", [input], {
+          ok: true,
+          body: "",
+          path: null,
+          templates: [],
+        } as PrTemplateResult),
+      prDetail: (input: unknown) => {
+        const i = input as { prNumber: number };
+        return rec("git.prDetail", [input], {
+          ok: true,
+          pr: {
+            number: i.prNumber,
+            title: `PR #${i.prNumber}`,
+            body: "",
+            url: `https://github.com/acme/demo/pull/${i.prNumber}`,
+            state: "OPEN",
+            isDraft: false,
+            headRefName: `feat/${i.prNumber}`,
+            comments: [],
+          } satisfies PrDetail,
+        } as PrDetailResult);
+      },
+      prEdit: (input: unknown) => {
+        const i = input as { prNumber: number; title?: string; body?: string };
+        return rec("git.prEdit", [input], {
+          ok: true,
+          pr: {
+            number: i.prNumber,
+            title: i.title ?? `PR #${i.prNumber}`,
+            body: i.body ?? "",
+            url: `https://github.com/acme/demo/pull/${i.prNumber}`,
+            state: "OPEN",
+            isDraft: false,
+            headRefName: `feat/${i.prNumber}`,
+            comments: [],
+          } satisfies PrDetail,
+        } as PrDetailResult);
+      },
+      prComment: (input: unknown) =>
+        rec("git.prComment", [input], {
+          ok: true,
+          url: "https://github.com/acme/demo/pull/1#issuecomment-1",
+        } as PrCommentResult),
+      prClose: (input: unknown) => {
+        const i = input as { prNumber: number };
+        return rec("git.prClose", [input], {
+          ok: true,
+          pr: {
+            number: i.prNumber,
+            title: `PR #${i.prNumber}`,
+            body: "",
+            url: `https://github.com/acme/demo/pull/${i.prNumber}`,
+            state: "CLOSED",
+            isDraft: false,
+            headRefName: `feat/${i.prNumber}`,
+            comments: [],
+          } satisfies PrDetail,
+        } as PrDetailResult);
+      },
+      prReady: (input: unknown) => {
+        const i = input as { prNumber: number; undo?: boolean };
+        return rec("git.prReady", [input], {
+          ok: true,
+          pr: {
+            number: i.prNumber,
+            title: `PR #${i.prNumber}`,
+            body: "",
+            url: `https://github.com/acme/demo/pull/${i.prNumber}`,
+            state: "OPEN",
+            isDraft: Boolean(i.undo),
+            headRefName: `feat/${i.prNumber}`,
+            comments: [],
+          } satisfies PrDetail,
+        } as PrDetailResult);
+      },
+      prMergeAt: (input: unknown) => {
+        const i = input as { prNumber: number };
+        return rec("git.prMergeAt", [input], {
+          ok: true,
+          pr: {
+            number: i.prNumber,
+            title: `PR #${i.prNumber}`,
+            body: "",
+            url: `https://github.com/acme/demo/pull/${i.prNumber}`,
+            state: "MERGED",
+            isDraft: false,
+            headRefName: `feat/${i.prNumber}`,
+            comments: [],
+          } satisfies PrDetail,
+        } as PrDetailResult);
       },
       /**
        * Round 50 contract: newest-first; empty without a worktree.
@@ -3492,9 +3633,28 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
       list: (input: unknown) => {
         const q = ((input as { query?: string }).query ?? "").toLowerCase();
         const all = ["src/App.tsx", "src/main.tsx", "README.md", "package.json"];
+        const cap = Math.min(
+          Math.max(Number((input as { limit?: number }).limit) || 20, 1),
+          80,
+        );
         return rec("files.list", [input], {
-          files: all.filter((f) => !q || f.toLowerCase().includes(q)),
+          files: all
+            .filter((f) => !q || f.toLowerCase().includes(q))
+            .slice(0, cap),
         });
+      },
+      search: (input: unknown) => {
+        const q = ((input as { query?: string }).query ?? "").toLowerCase();
+        const hits = [
+          { path: "src/App.tsx", line: 1, text: "export function App" },
+          { path: "README.md", line: 1, text: "# demo" },
+        ].filter(
+          (h) =>
+            !q ||
+            h.path.toLowerCase().includes(q) ||
+            h.text.toLowerCase().includes(q),
+        );
+        return rec("files.search", [input], { hits });
       },
       image: (input: unknown) =>
         rec("files.image", [input], { dataUrl: null }),

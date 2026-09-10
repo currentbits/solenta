@@ -15,8 +15,11 @@ const {
   flushSessionRecord,
   resetSessionRecordForTests,
   mapMessageRole,
+  estimateEntryBytes,
   BATCH_SIZE,
   FLUSH_MS,
+  MAX_PENDING_ENTRIES,
+  MAX_PENDING_BYTES,
 } = require("../session-record.js");
 const { writeFakeBin } = require("./support/fakeBin.js");
 
@@ -341,6 +344,239 @@ describe("session-record unit: queue + POST /api/session", () => {
     await waitFor(() => fake.sessionBodies.length >= 1, { timeoutMs: 3000 });
     assert.equal(fake.sessionBodies[0].role, "system");
     assert.equal(fake.sessionBodies[0].content, "Run stopped");
+  });
+});
+
+describe("session-record unit: bounded export backlog", () => {
+  /** @type {ReturnType<typeof createSessionRecorder>} */
+  let recorder;
+
+  afterEach(async () => {
+    if (recorder) {
+      recorder.dispose();
+      recorder = null;
+    }
+  });
+
+  function entry(content, sessionId = "s1") {
+    return {
+      sessionId,
+      project: "p",
+      threadTitle: "T",
+      agent: "claude",
+      role: "user",
+      content,
+    };
+  }
+
+  function deferredProxy() {
+    /** @type {object[]} */
+    const posted = [];
+    let release = () => {};
+    const gate = new Promise((resolve) => {
+      release = resolve;
+    });
+    const proxy = {
+      session: async (body) => {
+        posted.push(body);
+        await gate;
+      },
+    };
+    return { posted, release: () => release(), proxy };
+  }
+
+  it("caps pending entries including the in-flight batch while the service is slow", async () => {
+    const logs = [];
+    const fake = deferredProxy();
+    recorder = createSessionRecorder({
+      proxy: fake.proxy,
+      flushMs: 60_000,
+      batchSize: 10,
+      maxPendingEntries: 20,
+      maxPendingBytes: 1024 * 1024,
+      log: (m) => logs.push(m),
+    });
+    const n = 80;
+    const enqueued = [];
+    for (let i = 0; i < n; i++) {
+      const content = `msg-${i}`;
+      enqueued.push(content);
+      recorder.recordTranscript([
+        entry(content, `sess-${i % 10}`),
+      ]);
+    }
+    await Promise.resolve();
+    assert.equal(fake.posted.length, 1, "exactly one request starts");
+    assert.equal(recorder.pendingCount, 20);
+    assert.ok(recorder.pendingBytes > 0);
+    assert.ok(recorder.pendingBytes < 1024 * 1024);
+    assert.equal(recorder.droppedCount, n - 20);
+    assert.ok(logs.length >= 1);
+    for (const line of logs) {
+      assert.match(line, /dropped \d+ transcript export/);
+      assert.match(line, /pending=\d+/);
+      assert.doesNotMatch(line, /msg-/);
+    }
+
+    fake.release();
+    await recorder.flush();
+    const postedContents = fake.posted.map((b) => b.content);
+    assert.deepEqual(postedContents, enqueued.slice(0, 20));
+    assert.equal(new Set(postedContents).size, postedContents.length);
+    assert.equal(recorder.pendingCount, 0);
+    assert.equal(recorder.pendingBytes, 0);
+
+    recorder.recordTranscript([entry("after-drain")]);
+    await recorder.flush();
+    assert.equal(fake.posted[fake.posted.length - 1].content, "after-drain");
+    assert.equal(recorder.droppedCount, n - 20);
+  });
+
+  it("rejects one oversize message without keeping it or bypassing the byte budget", async () => {
+    const posted = [];
+    recorder = createSessionRecorder({
+      proxy: { session: async (body) => posted.push(body) },
+      flushMs: 60_000,
+      batchSize: 10,
+      maxPendingEntries: 50,
+      maxPendingBytes: 200,
+      log: () => {},
+    });
+    const huge = "x".repeat(500);
+    recorder.recordTranscript([entry(huge)]);
+    assert.equal(recorder.droppedCount, 1);
+    assert.equal(recorder.pendingCount, 0);
+    assert.equal(recorder.pendingBytes, 0);
+    await recorder.flush();
+    assert.equal(posted.length, 0);
+  });
+
+  it("byte budget drops a later entry even when the count cap still has room", async () => {
+    const posted = [];
+    recorder = createSessionRecorder({
+      proxy: { session: async (body) => posted.push(body) },
+      flushMs: 60_000,
+      batchSize: 10,
+      maxPendingEntries: 50,
+      maxPendingBytes: 400,
+      log: () => {},
+    });
+    const chunk = "y".repeat(80);
+    const bytes = estimateEntryBytes({
+      sessionId: "s1",
+      project: "p",
+      threadTitle: "T",
+      agent: "claude",
+      role: "user",
+      content: chunk,
+    });
+    assert.ok(bytes * 2 <= 400, `two chunks should fit (each ${bytes})`);
+    assert.ok(bytes * 3 > 400, `three chunks should not fit (each ${bytes})`);
+    recorder.recordTranscript([entry(chunk), entry(chunk), entry(chunk)]);
+    assert.equal(recorder.pendingCount, 2);
+    assert.equal(recorder.droppedCount, 1);
+    assert.ok(recorder.pendingBytes <= 400);
+    await recorder.flush();
+    assert.equal(posted.length, 2);
+  });
+
+  it("healthy proxy receives entries in order without duplicates", async () => {
+    const posted = [];
+    recorder = createSessionRecorder({
+      proxy: { session: async (body) => posted.push(body) },
+      flushMs: 60_000,
+      batchSize: 10,
+      maxPendingEntries: 100,
+      maxPendingBytes: 64 * 1024,
+      log: () => {},
+    });
+    const n = 25;
+    const want = [];
+    for (let i = 0; i < n; i++) {
+      const content = `ok-${i}`;
+      want.push(content);
+      recorder.recordTranscript([entry(content)]);
+    }
+    await recorder.flush();
+    assert.deepEqual(
+      posted.map((b) => b.content),
+      want,
+    );
+    assert.equal(new Set(posted.map((b) => b.content)).size, n);
+    assert.equal(recorder.droppedCount, 0);
+    assert.equal(recorder.pendingCount, 0);
+  });
+
+  it("proxy errors release accounting so later records can be admitted", async () => {
+    let fail = true;
+    const posted = [];
+    recorder = createSessionRecorder({
+      proxy: {
+        session: async (body) => {
+          if (fail) throw new Error("timeout");
+          posted.push(body);
+        },
+      },
+      flushMs: 60_000,
+      batchSize: 2,
+      maxPendingEntries: 4,
+      maxPendingBytes: 64 * 1024,
+      log: () => {},
+    });
+    recorder.recordTranscript([
+      entry("a"),
+      entry("b"),
+      entry("c"),
+      entry("d"),
+    ]);
+    await recorder.flush();
+    assert.equal(posted.length, 0);
+    assert.equal(recorder.pendingCount, 0);
+    assert.equal(recorder.pendingBytes, 0);
+
+    fail = false;
+    recorder.recordTranscript([entry("after-error")]);
+    await recorder.flush();
+    assert.equal(posted.length, 1);
+    assert.equal(posted[0].content, "after-error");
+  });
+
+  it("dispose drops queued refs and ignores later records; in-flight remainder is not posted", async () => {
+    const fake = deferredProxy();
+    recorder = createSessionRecorder({
+      proxy: fake.proxy,
+      flushMs: 60_000,
+      batchSize: 8,
+      maxPendingEntries: 8,
+      maxPendingBytes: 64 * 1024,
+      log: () => {},
+    });
+    for (let i = 0; i < 8; i++) {
+      recorder.recordTranscript([entry(`keep-${i}`)]);
+    }
+    await Promise.resolve();
+    assert.equal(fake.posted.length, 1);
+    assert.equal(recorder.pendingCount, 8);
+    recorder.dispose();
+    assert.equal(recorder.pendingCount, 0);
+    assert.equal(recorder.pendingBytes, 0);
+    recorder.recordTranscript([entry("after-dispose")]);
+    assert.equal(recorder.pendingCount, 0);
+    fake.release();
+    await Promise.resolve();
+    await Promise.resolve();
+    assert.ok(fake.posted.length <= 1);
+    assert.equal(
+      fake.posted.filter((b) => b.content === "after-dispose").length,
+      0,
+    );
+  });
+
+  it("default caps are finite and independent of Store history size", () => {
+    assert.equal(MAX_PENDING_ENTRIES, 256);
+    assert.equal(MAX_PENDING_BYTES, 4 * 1024 * 1024);
+    assert.ok(BATCH_SIZE < MAX_PENDING_ENTRIES);
+    assert.ok(FLUSH_MS > 0);
   });
 });
 

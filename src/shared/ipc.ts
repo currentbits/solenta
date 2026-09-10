@@ -2084,6 +2084,58 @@ export type CheckoutPrResult =
     }
   | { ok: false; reason: string };
 
+/** One file from the repo's PULL_REQUEST_TEMPLATE search (issue #154). */
+export interface PrTemplateFile {
+  name: string;
+  path: string;
+  body: string;
+}
+
+/** Repo PR template load. Failures stay in-band. */
+export type PrTemplateResult =
+  | {
+      ok: true;
+      body: string;
+      path: string | null;
+      templates: PrTemplateFile[];
+    }
+  | { ok: false; reason: string };
+
+/** One issue-comment on a PR from `gh pr view --json comments`. */
+export interface PrComment {
+  author: string;
+  body: string;
+  createdAt: string;
+  url?: string;
+}
+
+/** Full PR for the in-app workspace (issue #154). */
+export interface PrDetail {
+  number: number;
+  title: string;
+  body: string;
+  url: string;
+  state: "OPEN" | "CLOSED" | "MERGED";
+  isDraft: boolean;
+  headRefName: string;
+  baseRefName?: string;
+  author?: string;
+  additions?: number;
+  deletions?: number;
+  changedFiles?: number;
+  mergeable?: "MERGEABLE" | "CONFLICTING" | "UNKNOWN";
+  updatedAt?: string;
+  comments: PrComment[];
+}
+
+export type PrDetailResult =
+  | { ok: true; pr: PrDetail }
+  | { ok: false; reason: string };
+
+export type PrCommentResult =
+  | { ok: true; url?: string }
+  | { ok: false; reason: string };
+
 /** A GitHub or Linear issue fetched for thread start. */
 export interface IssueInfo {
   number: number;
@@ -2522,6 +2574,12 @@ export interface AppSettings {
    * Per-thread quotaWaitAutoResume overrides this.
    */
   quotaWaitAutoResume: boolean;
+  /**
+   * Confirm before a user-initiated quit that would stop live agents,
+   * questions/approvals, or managed terminal/server sessions (issue #1195).
+   * Default on; only an explicit false opts out.
+   */
+  confirmQuitWithActiveWork: boolean;
   /**
    * PR size cap in changed lines (additions + deletions vs the base branch),
    * enforced when a PR is created from the app (issue #402, DORA small
@@ -4080,7 +4138,9 @@ export interface CoderApi {
      *
      * Rewind only truncates; it starts nothing. The renderer follows with the
      * usual `runs.start({ prompt })`, which appends the edited text as a new
-     * user message (rewind must NOT append it, or it lands twice).
+     * user message (rewind must NOT append it, or it lands twice). A rejected
+     * start must `rewind({ threadId, undo: true })` so the dropped tail is
+     * not left committed without a run (#1202).
      *
      * What it does:
      *  - drops `messageId` and every message after it from the transcript,
@@ -4103,9 +4163,11 @@ export interface CoderApi {
      */
     rewind(input: {
       threadId: string;
-      messageId: string;
-      prompt: string;
+      messageId?: string;
+      prompt?: string;
       restoreFiles?: boolean;
+      /** Roll back a rewind whose following start was rejected (#1202). */
+      undo?: boolean;
     }): Promise<RewindResult>;
     /**
      * Sets the thread's provider and/or model. A provider change on a
@@ -4471,6 +4533,59 @@ export interface CoderApi {
       prNumber: number;
     }): Promise<CheckoutPrResult>;
     /**
+     * Repo PULL_REQUEST_TEMPLATE files for the create-PR composer.
+     * Local files only; never needs gh. Failures stay in-band.
+     */
+    prTemplate(input: { projectPath: string }): Promise<PrTemplateResult>;
+    /**
+     * Full PR (title, body, comments, draft) for the in-app workspace.
+     * Failures stay in-band like listPrs.
+     */
+    prDetail(input: {
+      projectPath: string;
+      prNumber: number;
+    }): Promise<PrDetailResult>;
+    /**
+     * Rewrite a PR title and/or body via `gh pr edit`. Failures in-band.
+     */
+    prEdit(input: {
+      projectPath: string;
+      prNumber: number;
+      title?: string;
+      body?: string;
+    }): Promise<PrDetailResult>;
+    /**
+     * Post an issue comment on a PR via `gh pr comment`. Failures in-band.
+     */
+    prComment(input: {
+      projectPath: string;
+      prNumber: number;
+      body: string;
+    }): Promise<PrCommentResult>;
+    /**
+     * Close a PR via `gh pr close`. Failures in-band.
+     */
+    prClose(input: {
+      projectPath: string;
+      prNumber: number;
+    }): Promise<PrDetailResult>;
+    /**
+     * Mark a draft ready (`gh pr ready`) or convert back to draft (`--undo`).
+     */
+    prReady(input: {
+      projectPath: string;
+      prNumber: number;
+      undo?: boolean;
+    }): Promise<PrDetailResult>;
+    /**
+     * Squash-merge a listed PR by number (`gh pr merge --squash`). Unlike
+     * prMerge this does not require a bound thread.
+     */
+    prMergeAt(input: {
+      projectPath: string;
+      prNumber: number;
+    }): Promise<PrDetailResult>;
+    /**
      * Checkpoints: after each successful turn that changed files, the runner
      * auto-commits in the thread's WORKTREE ("coder-checkpoint: turn N").
      * Never fires on the main repo, never when the worktree is clean.
@@ -4612,12 +4727,28 @@ export interface CoderApi {
   };
   files: {
     /**
-     * Repo-relative paths for the composer's @-mention popup: tracked plus
-     * untracked (gitignored excluded), plus directory prefixes (trailing
-     * slash), substring-filtered, top 20. Uses the thread's worktree when
-     * bound, else the project checkout.
+     * Repo-relative paths for the composer's @-mention popup and the file
+     * palette: tracked plus untracked (gitignored excluded), plus directory
+     * prefixes (trailing slash), substring-filtered. Default cap 20 (mentions);
+     * pass `limit` for the palette. Uses the thread's worktree when bound,
+     * else the project checkout.
      */
-    list(input: { threadId: string; query?: string }): Promise<{ files: string[] }>;
+    list(input: {
+      threadId: string;
+      query?: string;
+      /** Cap (default 20, max 80). Palette file search asks for more. */
+      limit?: number;
+    }): Promise<{ files: string[] }>;
+    /**
+     * Fixed-string content search (`git grep`) in the thread worktree or
+     * project checkout. Empty query → no hits. Unknown thread rejects.
+     */
+    search(input: {
+      threadId: string;
+      query: string;
+    }): Promise<{
+      hits: Array<{ path: string; line: number; text: string }>;
+    }>;
     /**
      * One image a tool produced. Desktop replies with a solenta-media:// URL
      * (no base64 on the main thread); web replies with a data URL. null when

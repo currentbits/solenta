@@ -3936,8 +3936,68 @@ function renameThread(store, input) {
  * @param {{ isRunning?: (threadId: string) => boolean, cleanupRunArtifacts?: () => unknown, log?: (msg: string) => void }} [opts]
  * @returns {Promise<{ thread: object, droppedMessages: number, restoredSha: string | null }>}
  */
+function cloneRewindValue(value) {
+  try {
+    return structuredClone(value);
+  } catch {
+    return JSON.parse(JSON.stringify(value));
+  }
+}
+
+function clearRewindRestore(store, threadId) {
+  if (!store || typeof store.clearRewindRestore !== "function") return;
+  store.clearRewindRestore(threadId);
+}
+
+/**
+ * Roll a committed rewind back from its restore handle (#1202).
+ * @param {import('./store').Store} store
+ * @param {string} threadId
+ * @param {{ isRunning?: (threadId: string) => boolean, cleanupRunArtifacts?: () => unknown, log?: (msg: string) => void }} [opts]
+ */
+async function undoRewindThread(store, threadId, opts) {
+  const thread = store.getThread(threadId);
+  if (!thread) {
+    throw new Error(`Unknown thread: ${threadId}`);
+  }
+  if (
+    (opts && typeof opts.isRunning === "function" && opts.isRunning(threadId)) ||
+    thread.status === "working"
+  ) {
+    throw new Error("Cannot rewind while a run is active");
+  }
+  const snap = store.getRewindRestore(threadId);
+  if (!snap) {
+    return { thread: { ...thread }, droppedMessages: 0, restoredSha: null };
+  }
+  store.applyRewindRestore(threadId, snap);
+  store.clearRewindRestore(threadId);
+
+  let restoredSha = null;
+  const live = store.getThread(threadId) || thread;
+  if (snap.headSha && live.worktreePath) {
+    // Original HEAD is no longer first-parent reachable after restoreFiles
+    // reset, so listCheckpoints / restoreCheckpoint would reject it.
+    const { gitTryAsync } = require("./worktrees.js");
+    const reset = await gitTryAsync(live.worktreePath, [
+      "reset",
+      "--hard",
+      snap.headSha,
+    ]);
+    if (reset && reset.ok) restoredSha = snap.headSha;
+  }
+
+  store.saveNow();
+  scheduleArtifactCleanup(opts);
+  const next = store.getThread(threadId) || live;
+  return { thread: { ...next }, droppedMessages: 0, restoredSha };
+}
+
 async function rewindThread(store, input, opts) {
   const threadId = input && input.threadId;
+  if (input && input.undo === true) {
+    return undoRewindThread(store, threadId, opts);
+  }
   const messageId = input && input.messageId;
   const thread = store.getThread(threadId);
   if (!thread) {
@@ -3965,6 +4025,33 @@ async function rewindThread(store, input, opts) {
   // Capture before truncate: restoreFiles picks the newest checkpoint at or
   // before this message, not "turn N" (clean turns skip a number).
   const targetAt = Number(msgs[at].createdAt);
+  let headSha = null;
+  if (input.restoreFiles && thread.worktreePath) {
+    const { gitTryAsync } = require("./worktrees.js");
+    const head = await gitTryAsync(thread.worktreePath, [
+      "rev-parse",
+      "--verify",
+      "HEAD",
+    ]);
+    if (head && head.ok) {
+      const sha = String(head.stdout || "").trim();
+      if (/^[0-9a-f]{7,40}$/i.test(sha)) headSha = sha;
+    }
+  }
+
+  store.setRewindRestore(threadId, {
+    messages: cloneRewindValue(msgs),
+    workLog: cloneRewindValue(store.getWorkLog(threadId)),
+    artifacts: cloneRewindValue(store.getRunArtifacts(threadId)),
+    sessionId: thread.sessionId != null ? thread.sessionId : null,
+    replayContext: thread.replayContext === true,
+    status: thread.status,
+    lastError: thread.lastError != null ? thread.lastError : null,
+    lastErrorKind: thread.lastErrorKind != null ? thread.lastErrorKind : null,
+    runStartedAt: thread.runStartedAt != null ? thread.runStartedAt : null,
+    headSha,
+    retainedCount: at,
+  });
 
   const droppedMessages = store.truncateFromMessage(threadId, messageId);
   const updated = store.updateThread(threadId, {
@@ -4217,9 +4304,13 @@ function listTrashed(store, opts) {
  * After metadata is durable on disk, schedules one best-effort
  * `opts.cleanupRunArtifacts()` pass (same contract as deleteThread). Cleanup
  * rejection is logged via `opts.log` and never fails project removal.
+ * Session processes live in the runner Map, not the Store; the IPC
+ * `projects:remove` handler retires each returned id after this succeeds
+ * (issue #1227).
  * @param {import('./store').Store} store
  * @param {{ projectId: string }} input
  * @param {{ isRunning?: (threadId: string) => boolean, getIosSimulator?: () => object | null, cleanupRunArtifacts?: () => unknown, log?: (msg: string) => void }} [opts]
+ * @returns {Promise<{ removedThreadIds: string[] }>}
  */
 async function removeProject(store, input, opts) {
   const projectId =
@@ -4261,6 +4352,7 @@ async function removeProject(store, input, opts) {
     }
   }
 
+  const removedThreadIds = threads.map((thread) => thread.id);
   for (const thread of threads) {
     purgeThread(store, thread.id);
   }
@@ -4269,6 +4361,7 @@ async function removeProject(store, input, opts) {
   void scheduleImagePruneFromStore(store);
   scheduleArtifactCleanup(opts);
   void scheduleSimulatorRelease(opts, "releaseProject", { projectId });
+  return { removedThreadIds };
 }
 
 /**
@@ -5515,6 +5608,7 @@ module.exports = {
   runCommand,
   renameThread,
   rewindThread,
+  clearRewindRestore,
   clearSettledOnActivity,
   deleteThread,
   trashThread,

@@ -39,6 +39,10 @@ import type {
   FetchIssueResult,
   ListIssuesResult,
   CheckoutPrResult,
+  PrCommentResult,
+  PrDetail,
+  PrDetailResult,
+  PrTemplateResult,
   LocalServerInfo,
   MemoryEntryInfo,
   MemoryMaintenanceReport,
@@ -1606,6 +1610,10 @@ function buildDevCoder(): CoderApi {
   let spaces: SpaceInfo[] = [];
   let threads = seedThreads(projects);
   const details = new Map<string, ThreadDetail>();
+  const rewindRestore = new Map<
+    string,
+    { messages: ThreadDetail["messages"]; workLog: ThreadDetail["workLog"]; thread: ThreadInfo }
+  >();
   const trashed = new Map<
     string,
     TrashedThreadInfo & { thread: ThreadInfo; detail?: ThreadDetail }
@@ -1686,6 +1694,7 @@ function buildDevCoder(): CoderApi {
   let agentsPanelRememberLast = false;
   let stayAwake: AppSettings["stayAwake"] = "agent";
   let quotaWaitAutoResume = true;
+  let confirmQuitWithActiveWork = true;
   let otel: OtelSettings = { endpoint: null, headers: {}, claudeMetrics: false };
   let webhook: WebhookSettings = {
     url: null,
@@ -2560,6 +2569,7 @@ function buildDevCoder(): CoderApi {
           agentsPanelRememberLast,
           stayAwake,
           quotaWaitAutoResume,
+          confirmQuitWithActiveWork,
           agentProfiles: agentProfiles.map((p) => ({ ...p })),
           defaultOrchestratorProfileId,
           subagentPool: {
@@ -2708,6 +2718,12 @@ function buildDevCoder(): CoderApi {
           }
           quotaWaitAutoResume = patch.quotaWaitAutoResume;
         }
+        if (Object.prototype.hasOwnProperty.call(patch, "confirmQuitWithActiveWork")) {
+          if (typeof patch.confirmQuitWithActiveWork !== "boolean") {
+            throw new Error("confirmQuitWithActiveWork must be a boolean");
+          }
+          confirmQuitWithActiveWork = patch.confirmQuitWithActiveWork;
+        }
         if (Object.prototype.hasOwnProperty.call(patch, "agentProfiles")) {
           if (!Array.isArray(patch.agentProfiles)) {
             throw new Error("agentProfiles must be an array");
@@ -2812,6 +2828,7 @@ function buildDevCoder(): CoderApi {
           agentsPanelRememberLast,
           stayAwake,
           quotaWaitAutoResume,
+          confirmQuitWithActiveWork,
           agentProfiles: agentProfiles.map((p) => ({ ...p })),
           defaultOrchestratorProfileId,
           subagentPool: {
@@ -3931,6 +3948,17 @@ function buildDevCoder(): CoderApi {
         if (detail.thread.status === "working") {
           throw new Error("Cannot rewind while a run is active");
         }
+        if (input.undo === true) {
+          const snap = rewindRestore.get(input.threadId);
+          if (snap) {
+            detail.messages = snap.messages.slice();
+            detail.workLog = snap.workLog.slice();
+            const restored = patchThread(input.threadId, snap.thread);
+            rewindRestore.delete(input.threadId);
+            return { thread: restored, droppedMessages: 0, restoredSha: null };
+          }
+          return { thread: detail.thread, droppedMessages: 0, restoredSha: null };
+        }
         if (!String(input.prompt ?? "").trim()) {
           throw new Error("Prompt cannot be empty");
         }
@@ -3938,6 +3966,11 @@ function buildDevCoder(): CoderApi {
         if (at < 0 || detail.messages[at]!.role !== "user") {
           throw new Error(`Not a user message: ${input.messageId}`);
         }
+        rewindRestore.set(input.threadId, {
+          messages: detail.messages.slice(),
+          workLog: detail.workLog.slice(),
+          thread: { ...detail.thread },
+        });
         const dropped = detail.messages.slice(at);
         const droppedRuns = new Set(
           dropped.map((m) => m.runId).filter((r): r is string => !!r),
@@ -4553,6 +4586,7 @@ function buildDevCoder(): CoderApi {
         }
 
         assertUnderBudget();
+        rewindRestore.delete(input.threadId);
 
         const prompt = input.prompt.trim();
         const t = now();
@@ -5507,6 +5541,80 @@ function buildDevCoder(): CoderApi {
           thread: t,
         } satisfies CheckoutPrResult;
       },
+      async prTemplate(_input: { projectPath: string }): Promise<PrTemplateResult> {
+        return { ok: true, body: "", path: null, templates: [] };
+      },
+      async prDetail(input: {
+        projectPath: string;
+        prNumber: number;
+      }): Promise<PrDetailResult> {
+        const t = threads.find((x) => x.prNumber === input.prNumber);
+        const pr: PrDetail = {
+          number: input.prNumber,
+          title: t?.title ?? `PR #${input.prNumber}`,
+          body: "",
+          url:
+            t?.prUrl ??
+            `https://github.com/example/repo/pull/${input.prNumber}`,
+          state: (t?.prState ?? "OPEN") as PrDetail["state"],
+          isDraft: false,
+          headRefName: t?.branch ?? `feat/${input.prNumber}`,
+          comments: [],
+        };
+        return { ok: true, pr };
+      },
+      async prEdit(input: {
+        projectPath: string;
+        prNumber: number;
+        title?: string;
+        body?: string;
+      }): Promise<PrDetailResult> {
+        const viewed = await this.prDetail(input);
+        if (!viewed.ok) return viewed;
+        return {
+          ok: true,
+          pr: {
+            ...viewed.pr,
+            title: input.title ?? viewed.pr.title,
+            body: input.body ?? viewed.pr.body,
+          },
+        };
+      },
+      async prComment(_input: {
+        projectPath: string;
+        prNumber: number;
+        body: string;
+      }): Promise<PrCommentResult> {
+        return {
+          ok: true,
+          url: "https://github.com/example/repo/pull/1#issuecomment-1",
+        };
+      },
+      async prClose(input: {
+        projectPath: string;
+        prNumber: number;
+      }): Promise<PrDetailResult> {
+        const viewed = await this.prDetail(input);
+        if (!viewed.ok) return viewed;
+        return { ok: true, pr: { ...viewed.pr, state: "CLOSED" } };
+      },
+      async prReady(input: {
+        projectPath: string;
+        prNumber: number;
+        undo?: boolean;
+      }): Promise<PrDetailResult> {
+        const viewed = await this.prDetail(input);
+        if (!viewed.ok) return viewed;
+        return { ok: true, pr: { ...viewed.pr, isDraft: Boolean(input.undo) } };
+      },
+      async prMergeAt(input: {
+        projectPath: string;
+        prNumber: number;
+      }): Promise<PrDetailResult> {
+        const viewed = await this.prDetail(input);
+        if (!viewed.ok) return viewed;
+        return { ok: true, pr: { ...viewed.pr, state: "MERGED", isDraft: false } };
+      },
       async listCheckpoints(input: { threadId: string }) {
         const detail = details.get(input.threadId);
         if (!detail) throw new Error(`Unknown thread: ${input.threadId}`);
@@ -6319,7 +6427,7 @@ function buildDevCoder(): CoderApi {
       },
     },
     files: {
-      async list(input: { threadId: string; query?: string }) {
+      async list(input: { threadId: string; query?: string; limit?: number }) {
         const q = (input.query ?? "").toLowerCase();
         const all = [
           "src/App.tsx",
@@ -6330,7 +6438,33 @@ function buildDevCoder(): CoderApi {
           "README.md",
           "package.json",
         ];
-        return { files: all.filter((f) => !q || f.toLowerCase().includes(q)) };
+        const cap = Math.min(Math.max(Number(input.limit) || 20, 1), 80);
+        return {
+          files: all
+            .filter((f) => !q || f.toLowerCase().includes(q))
+            .slice(0, cap),
+        };
+      },
+      async search(input: { threadId: string; query: string }) {
+        const q = (input.query ?? "").toLowerCase();
+        if (!q) return { hits: [] };
+        const hits = [
+          {
+            path: "src/App.tsx",
+            line: 12,
+            text: "export function App() {",
+          },
+          {
+            path: "README.md",
+            line: 1,
+            text: "# Solenta",
+          },
+        ].filter(
+          (h) =>
+            h.path.toLowerCase().includes(q) ||
+            h.text.toLowerCase().includes(q),
+        );
+        return { hits };
       },
       async image(_input: { name: string }) {
         return { dataUrl: null };

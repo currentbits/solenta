@@ -1471,6 +1471,39 @@ describe("SettingsModal default provider and quota failover (#711)", () => {
   });
 });
 
+describe("SettingsModal confirm-quit-with-active-work (#1195)", () => {
+  it("saves the ask-before-quit toggle", async () => {
+    const patches: Partial<AppSettings>[] = [];
+    const m = await mount(
+      modal({
+        initialPane: "general",
+        settings: {
+          dailyBudgetUsd: null,
+          autoSettleAfterDays: 3,
+          confirmQuitWithActiveWork: true,
+        } as AppSettings,
+        onSaveSettings: async (patch) => {
+          patches.push(patch);
+          return {
+            dailyBudgetUsd: null,
+            autoSettleAfterDays: 3,
+            confirmQuitWithActiveWork: patch.confirmQuitWithActiveWork !== false,
+          } as AppSettings;
+        },
+      }),
+    );
+    const box = m.query(
+      "[data-confirm-quit-with-active-work]",
+    ) as HTMLInputElement;
+    assert.ok(box, "confirm-quit checkbox");
+    assert.equal(box.checked, true);
+    await m.click(box);
+    assert.equal(patches.length, 1);
+    assert.equal(patches[0].confirmQuitWithActiveWork, false);
+    m.unmount();
+  });
+});
+
 describe("SettingsModal quota-wait auto-resume (#462)", () => {
   it("saves the continue-at-usage-limit toggle", async () => {
     const patches: Partial<AppSettings>[] = [];

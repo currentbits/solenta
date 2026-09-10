@@ -10,6 +10,9 @@ import { PrListView } from "../src/components/PrListView";
 import type {
   CheckoutPrResult,
   ListPrsResult,
+  PrCommentResult,
+  PrDetail,
+  PrDetailResult,
   PrListItem,
   ProjectInfo,
   ThreadInfo,
@@ -578,6 +581,90 @@ describe("PrListView", () => {
     assert.equal(selected, "t-hit");
     assert.ok(m.query('[data-pr-row="5"] [data-pr-checkout-btn]'));
     assert.ok(m.query('[data-pr-row="5"] a'));
+    m.unmount();
+  });
+
+  it("opens an in-app workspace with comment and merge actions", async () => {
+    const comments: string[] = [];
+    const merges: number[] = [];
+    const detail = (over: Partial<PrDetail> = {}): PrDetail => ({
+      number: 11,
+      title: "Ledger fix",
+      body: "from template",
+      url: "https://github.com/acme/ledger/pull/11",
+      state: "OPEN",
+      isDraft: true,
+      headRefName: "feat/11",
+      comments: [],
+      ...over,
+    });
+    let current = detail();
+    const ok = (pr: PrDetail): PrDetailResult => ({ ok: true, pr });
+    const m = await mount(
+      <PrListView
+        projects={[p1]}
+        threads={[thread({ id: "t-hit", prNumber: 11, branch: "feat/11" })]}
+        listPrs={async () => ({
+          ok: true,
+          prs: [pr({ number: 11, title: "Ledger fix", isDraft: true })],
+        })}
+        onSelectThread={() => {}}
+        prDetail={async () => ok(current)}
+        prEdit={async (input) => {
+          current = {
+            ...current,
+            title: input.title ?? current.title,
+            body: input.body ?? current.body,
+          };
+          return ok(current);
+        }}
+        prComment={async (input) => {
+          comments.push(input.body);
+          current = {
+            ...current,
+            comments: [
+              ...current.comments,
+              {
+                author: "me",
+                body: input.body,
+                createdAt: "2026-09-10T12:00:00Z",
+              },
+            ],
+          };
+          return { ok: true, url: current.url } as PrCommentResult;
+        }}
+        prClose={async () => ok({ ...current, state: "CLOSED" })}
+        prReady={async () => {
+          current = { ...current, isDraft: false };
+          return ok(current);
+        }}
+        prMergeAt={async (input) => {
+          merges.push(input.prNumber);
+          current = { ...current, state: "MERGED", isDraft: false };
+          return ok(current);
+        }}
+      />,
+    );
+    await m.flush();
+    await m.click(m.query('[data-pr-row="11"] button'));
+    await m.flush();
+    assert.ok(m.query("[data-pr-workspace]"), "workspace panel");
+    assert.ok(m.text().includes("from template"));
+    assert.ok(m.query("[data-pr-ready]"), "mark ready");
+    assert.ok(m.query("[data-pr-open-thread]"), "matched thread link");
+
+    const box = m.query("[data-pr-comment]") as HTMLTextAreaElement;
+    await m.type(box, "looks good");
+    await m.click(m.query("[data-pr-comment-submit]"));
+    await m.flush();
+    assert.deepEqual(comments, ["looks good"]);
+    assert.ok(m.text().includes("looks good"));
+
+    await m.click(m.query("[data-pr-merge]"));
+    await m.flush();
+    await m.click(m.query("[data-pr-confirm-yes]"));
+    await m.flush();
+    assert.deepEqual(merges, [11]);
     m.unmount();
   });
 });
