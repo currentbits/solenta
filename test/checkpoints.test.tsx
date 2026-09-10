@@ -9,7 +9,7 @@
  */
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { mount } from "./support/dom.ts";
+import { inAct, mount } from "./support/dom.ts";
 import {
   createFakeCoder,
   installFakeCoder,
@@ -19,6 +19,7 @@ import {
   type FakeCoder,
 } from "./support/fakeCoder.ts";
 import App from "../src/App";
+import { GitTab } from "../src/components/AgentsPanel";
 import type { CheckpointInfo, ThreadInfo } from "../src/shared/ipc";
 import { expandAgents } from "./support/expandAgents.ts";
 
@@ -436,6 +437,133 @@ describe("App checkpoints wiring (round 50)", () => {
       0,
       "confirm must not open while working",
     );
+    m.unmount();
+  });
+});
+
+async function mountGitTab(over: {
+  checkpoints?: CheckpointInfo[];
+  restoreCheckpoint?: (threadId: string, sha: string) => Promise<void>;
+} = {}) {
+  const cps = over.checkpoints ?? threeCheckpoints();
+  const s = source();
+  const m = await mount(
+    <GitTab
+      thread={s}
+      project={project()}
+      onViewChanges={() => {}}
+      listCheckpoints={async () => cps}
+      restoreCheckpoint={over.restoreCheckpoint ?? (async () => {})}
+      listLocalServers={async () => []}
+    />,
+  );
+  await m.flush();
+  return m;
+}
+
+describe("GitTab restore confirm focus trap", () => {
+  it("moves focus out of Restore; Tab stays inside; Escape restores", async () => {
+    const restores: string[] = [];
+    const cps = threeCheckpoints();
+    const middle = cps[1]!;
+    const m = await mountGitTab({
+      checkpoints: cps,
+      restoreCheckpoint: async (_threadId, sha) => {
+        restores.push(sha);
+      },
+    });
+    const restoreBtn = m.query(
+      `[data-checkpoint-restore="${middle.sha}"]`,
+    ) as HTMLButtonElement | null;
+    assert.ok(restoreBtn, "Restore on middle checkpoint");
+    restoreBtn.focus();
+    await m.click(restoreBtn);
+    await m.flush();
+
+    const dialog = m.query(
+      `[data-restore-confirm="${middle.sha}"]`,
+    ) as HTMLElement | null;
+    assert.ok(dialog, "confirm dialog open");
+    assert.ok(
+      dialog.contains(document.activeElement),
+      "opening the dialog must move focus inside it",
+    );
+    assert.notEqual(document.activeElement, restoreBtn);
+    assert.ok(
+      restoreBtn.isConnected,
+      "Restore stays mounted under the overlay",
+    );
+
+    await m.pressFocused("Tab");
+    const first = document.activeElement as HTMLElement;
+    assert.ok(dialog.contains(first), "Tab stays inside");
+    assert.equal(first.tagName, "BUTTON");
+
+    await m.pressFocused("Tab");
+    const second = document.activeElement as HTMLElement;
+    assert.ok(dialog.contains(second), "second Tab stays inside");
+    assert.notEqual(second, first);
+
+    await m.pressFocused("Tab");
+    assert.equal(document.activeElement, first, "Tab wraps inside the dialog");
+
+    await m.pressFocused("Escape");
+    assert.equal(m.query("[data-restore-confirm]"), null);
+    assert.equal(
+      document.activeElement,
+      restoreBtn,
+      "Escape restores Restore button",
+    );
+    assert.deepEqual(restores, []);
+    m.unmount();
+  });
+
+  it("Escape is ignored while restore is in flight; Tab stays inside", async () => {
+    let resolveRestore!: () => void;
+    const held = new Promise<void>((resolve) => {
+      resolveRestore = resolve;
+    });
+    const restores: string[] = [];
+    const cps = threeCheckpoints();
+    const middle = cps[1]!;
+    const m = await mountGitTab({
+      checkpoints: cps,
+      restoreCheckpoint: async (_threadId, sha) => {
+        restores.push(sha);
+        return held;
+      },
+    });
+    await m.click(
+      m.query(`[data-checkpoint-restore="${middle.sha}"]`) as HTMLElement,
+    );
+    await m.flush();
+    await m.click(m.query("[data-restore-confirm-submit]") as HTMLElement);
+    await m.flush();
+    const dialog = m.query(
+      `[data-restore-confirm="${middle.sha}"]`,
+    ) as HTMLElement | null;
+    assert.ok(dialog, "confirm stays mounted while restore is pending");
+    assert.deepEqual(restores, [middle.sha]);
+
+    await m.pressFocused("Escape");
+    assert.ok(
+      m.query("[data-restore-confirm]"),
+      "Escape is inert while restorePending",
+    );
+    assert.deepEqual(restores, [middle.sha]);
+
+    await m.pressFocused("Tab");
+    assert.ok(
+      dialog.contains(document.activeElement),
+      "Tab stays inside while pending",
+    );
+
+    await inAct(async () => {
+      resolveRestore();
+      await Promise.resolve();
+    });
+    await m.flush();
+    assert.equal(m.query("[data-restore-confirm]"), null);
     m.unmount();
   });
 });

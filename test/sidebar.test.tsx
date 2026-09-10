@@ -1405,7 +1405,7 @@ describe("Sidebar remove + edit project (scope menu)", () => {
     opener.focus();
     await m.click(opener);
     const dialog = m.query('[data-remove-confirm="p2"]') as HTMLElement | null;
-    assert.ok(dialog, "remove confirm open");
+    assert.ok(dialog, "destructive confirm dialog must open");
     assert.ok(
       dialog.contains(document.activeElement),
       "opening the dialog must move focus inside it",
@@ -1436,31 +1436,7 @@ describe("Sidebar remove + edit project (scope menu)", () => {
     m.unmount();
   });
 
-  it("Escape dismisses the confirm and does not call remove", async () => {
-    await clearSidebarStorage();
-    const removed: string[] = [];
-    const m = await mount(
-      sidebar(removeThreads, {
-        projects: [p1, p2],
-        onRemoveProject: (id) => {
-          removed.push(id);
-        },
-      }),
-    );
-    await openScopeMenu(m);
-    await m.click(m.query('[data-project-remove="p2"]')!);
-    const dialog = m.query('[data-remove-confirm="p2"]');
-    assert.ok(dialog, "destructive confirm dialog must open");
-    await m.press(dialog, "Escape");
-    assert.ok(
-      !m.query('[data-remove-confirm="p2"]'),
-      "Escape must dismiss the confirm",
-    );
-    assert.deepEqual(removed, []);
-    m.unmount();
-  });
-
-  it("Escape is ignored while remove is in flight", async () => {
+  it("Escape is ignored while remove is in flight; Tab stays inside", async () => {
     await clearSidebarStorage();
     let resolveRemove!: () => void;
     const held = new Promise<void>((resolve) => {
@@ -1480,20 +1456,29 @@ describe("Sidebar remove + edit project (scope menu)", () => {
     await m.click(m.query('[data-project-remove="p2"]')!);
     await m.click(m.query('[data-remove-confirm-submit="p2"]')!);
     await m.flush();
+    const dialog = m.query('[data-remove-confirm="p2"]') as HTMLElement | null;
+    assert.ok(dialog, "confirm stays mounted while remove is pending");
     assert.deepEqual(calls, ["p2"]);
-    const dialog = m.query('[data-remove-confirm="p2"]');
-    assert.ok(dialog, "confirm stays open while remove is in flight");
-    await m.press(dialog, "Escape");
+
+    await m.pressFocused("Escape");
     assert.ok(
       m.query('[data-remove-confirm="p2"]'),
-      "Escape must not dismiss while remove is in flight",
+      "Escape is inert while removePending",
     );
+    assert.deepEqual(calls, ["p2"]);
+
+    await m.pressFocused("Tab");
+    assert.ok(
+      dialog.contains(document.activeElement),
+      "Tab stays inside while pending",
+    );
+
     await inAct(async () => {
       resolveRemove();
       await Promise.resolve();
     });
     await m.flush();
-    assert.ok(!m.query('[data-remove-confirm="p2"]'));
+    assert.equal(m.query('[data-remove-confirm="p2"]'), null);
     m.unmount();
   });
 });
