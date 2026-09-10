@@ -294,6 +294,10 @@ describe("next-git-action button", () => {
     assert.equal((btn!.textContent || "").trim(), "Create PR");
     await m.click(btn);
     await m.flush();
+    const submit = m.query("[data-create-pr-submit]");
+    assert.ok(submit, "composer submit");
+    await m.click(submit);
+    await m.flush();
     assert.deepEqual(created, [{ title: "next action" }]);
     assert.deepEqual(pushes, [], "header does not push first; createPr does");
     m.unmount();
@@ -321,6 +325,10 @@ describe("next-git-action button", () => {
     assert.ok(btn, "create-pr action");
     assert.ok(btn!.hasAttribute("data-create-pr"));
     await m.click(btn);
+    await m.flush();
+    const submit = m.query("[data-create-pr-submit]");
+    assert.ok(submit, "composer submit");
+    await m.click(submit);
     await m.flush();
     assert.deepEqual(created, [{ title: "next action" }]);
     m.unmount();
@@ -355,6 +363,8 @@ describe("next-git-action button", () => {
     await m.flush();
     await m.click(m.query('[data-next-git-action="create-pr"]'));
     await m.flush();
+    await m.click(m.query("[data-create-pr-submit]"));
+    await m.flush();
 
     const bar = m.query("[data-pr-oversize]");
     assert.ok(bar, "size-cap refusal shows the split/override bar");
@@ -369,6 +379,8 @@ describe("next-git-action button", () => {
 
     // Override path: retry with allowOversize.
     await m.click(m.query('[data-next-git-action="create-pr"]'));
+    await m.flush();
+    await m.click(m.query("[data-create-pr-submit]"));
     await m.flush();
     await m.click(m.query("[data-pr-create-anyway]"));
     await m.flush();
@@ -393,7 +405,10 @@ describe("next-git-action button", () => {
     await m.flush();
     await m.click(m.query('[data-next-git-action="create-pr"]'));
     await m.flush();
+    await m.click(m.query("[data-create-pr-submit]"));
+    await m.flush();
     assert.equal(m.query("[data-pr-oversize]"), null);
+    assert.ok(m.query("[data-create-pr-error]"), "composer keeps the error");
     m.unmount();
   });
 

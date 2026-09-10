@@ -156,9 +156,17 @@
   border-color: var(--border);
 }
 
+.workspace {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  display: flex;
+}
+
 .list {
   flex: 1;
   min-height: 0;
+  min-width: 0;
   overflow-y: auto;
   padding: 16px 24px 24px;
   display: flex;
@@ -199,6 +207,11 @@
 .row:hover {
   background: var(--card);
   border-color: var(--border);
+}
+
+.row[data-pr-selected] {
+  border-color: var(--blue-border);
+  background: var(--card);
 }
 
 .rowSelect {

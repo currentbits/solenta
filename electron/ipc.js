@@ -74,6 +74,15 @@ const { createSafeCommandRunner } = require("./skillPluginAdapters.js");
 const cliCommands = require("./cliCommands.js");
 const cliSessions = require("./cli-sessions.js");
 const { fetchIssue, listIssues, setPlanStatus, createIssue } = require("./issues.js");
+const {
+  readPrTemplate,
+  viewPrDetail,
+  editPr,
+  commentPr,
+  closePr,
+  readyPr,
+  mergePrAt,
+} = require("./prWorkspace.js");
 const automations = require("./automations.js");
 const { buildActivity } = require("./activity.js");
 const { collectDigest } = require("./digest.js");
@@ -1686,6 +1695,53 @@ const IPC_HANDLERS = {
       worktreeBase: ctx.worktreeBase,
       broadcast: ctx.broadcast,
     });
+  },
+  "git:prTemplate": async (_ctx, input) => {
+    return readPrTemplate(input && input.projectPath);
+  },
+  "git:prDetail": async (_ctx, input) => {
+    return viewPrDetail(input && input.projectPath, input && input.prNumber);
+  },
+  "git:prEdit": async (ctx, input) => {
+    return editPr(
+      input && input.projectPath,
+      {
+        prNumber: input && input.prNumber,
+        title: input && input.title,
+        body: input && input.body,
+      },
+      { store: ctx.store, broadcast: ctx.broadcast },
+    );
+  },
+  "git:prComment": async (_ctx, input) => {
+    return commentPr(input && input.projectPath, {
+      prNumber: input && input.prNumber,
+      body: input && input.body,
+    });
+  },
+  "git:prClose": async (ctx, input) => {
+    return closePr(
+      input && input.projectPath,
+      { prNumber: input && input.prNumber },
+      { store: ctx.store, broadcast: ctx.broadcast },
+    );
+  },
+  "git:prReady": async (ctx, input) => {
+    return readyPr(
+      input && input.projectPath,
+      {
+        prNumber: input && input.prNumber,
+        undo: Boolean(input && input.undo),
+      },
+      { store: ctx.store, broadcast: ctx.broadcast },
+    );
+  },
+  "git:prMergeAt": async (ctx, input) => {
+    return mergePrAt(
+      input && input.projectPath,
+      { prNumber: input && input.prNumber },
+      { store: ctx.store, broadcast: ctx.broadcast },
+    );
   },
   "issues:fetch": async (ctx, input) => {
     const projectPath = input && input.projectPath;
