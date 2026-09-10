@@ -387,6 +387,82 @@ describe("Onboarding first-thread step", () => {
     m.unmount();
   });
 
+  it("retries the same thread when onboardingSeen save fails after create", async () => {
+    const fail: Record<string, Error> = {
+      "settings.set": new Error("disk full"),
+    };
+    const fake = createFakeCoder({
+      settings: { onboardingSeen: false },
+      fail,
+    });
+    const m = await boot(fake);
+    await gotoTour(m);
+
+    await m.click(m.query("[data-onboarding-create-thread]"));
+    assert.equal(fake.of("threads.create").length, 1);
+    assert.ok(
+      m.query("[data-onboarding-persist-error]"),
+      "failed onboardingSeen save must keep the wizard open",
+    );
+
+    await m.click(m.query("[data-onboarding-create-thread]"));
+    assert.equal(
+      fake.of("threads.create").length,
+      1,
+      "Create after persist fail must reuse the thread",
+    );
+    assert.equal(fake.of("runs.start").length, 0);
+    m.unmount();
+  });
+
+  it("creates in the newly selected project after a provider-save fail", async () => {
+    const fail: Record<string, Error> = {
+      "threads.setProvider": new Error("provider save failed"),
+    };
+    const fake = createFakeCoder({
+      settings: { onboardingSeen: false },
+      projects: [
+        project({ id: "p1", name: "repo" }),
+        project({
+          id: "p2",
+          name: "other",
+          slug: "owner/other",
+          path: "/tmp/other",
+        }),
+      ],
+      fail,
+    });
+    const m = await boot(fake);
+    await gotoTour(m);
+
+    await m.click(m.query("[data-onboarding-create-thread]"));
+    assert.equal(fake.of("threads.create").length, 1);
+    const firstCreate = fake.of("threads.create")[0]!.args[0] as {
+      projectId?: string;
+    };
+    assert.equal(firstCreate.projectId, "p1");
+    assert.ok(m.query("[data-onboarding-first-error]"));
+
+    const projectSelect = m.query(
+      "[data-onboarding-project-select]",
+    ) as HTMLSelectElement | null;
+    assert.ok(projectSelect, "multiple projects must use a native select");
+    await m.change(projectSelect, "p2");
+    delete fail["threads.setProvider"];
+    await m.click(m.query("[data-onboarding-create-thread]"));
+
+    const creates = fake.of("threads.create");
+    assert.equal(
+      creates.length,
+      2,
+      "changing project after provider-save fail must create a new thread",
+    );
+    const secondCreate = creates[1]!.args[0] as { projectId?: string };
+    assert.equal(secondCreate.projectId, "p2");
+    assert.equal(fake.of("runs.start").length, 0);
+    m.unmount();
+  });
+
   it("pending create blocks skip, back, and a second create", async () => {
     const fake = createFakeCoder({ settings: { onboardingSeen: false } });
     const origCreate = fake.api.threads.create.bind(fake.api.threads);

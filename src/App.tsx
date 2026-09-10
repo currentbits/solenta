@@ -384,7 +384,6 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
   const createdFirstThreadRef = useRef<{
     id: string;
     projectId: string;
-    provider: string;
   } | null>(null);
   const [editProjectId, setEditProjectId] = useState<string | null>(null);
   const [view, setView] = useState<AppView>(() => {
@@ -1408,13 +1407,18 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
 
   const finishOnboarding = useCallback(async () => {
     await saveSettings({ onboardingSeen: true });
+    createdFirstThreadRef.current = null;
     setOnboardingDismissed(true);
     setOnboardingForceOpen(false);
   }, [saveSettings]);
 
   const handleCreateFirstThread = useCallback(
     async (input: { projectId: string; provider: string }) => {
-      let threadId = createdFirstThreadRef.current?.id ?? null;
+      const existing = createdFirstThreadRef.current;
+      let threadId =
+        existing && existing.projectId === input.projectId
+          ? existing.id
+          : null;
       if (!threadId) {
         const thread = await createThread("New Thread", input.projectId, {
           inheritProvider: false,
@@ -1427,7 +1431,6 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
       createdFirstThreadRef.current = {
         id: threadId,
         projectId: input.projectId,
-        provider: input.provider,
       };
       try {
         await setProvider({ threadId, provider: input.provider });
@@ -1441,7 +1444,6 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
       selectThread(threadId);
       setView("thread");
       setRevealThreadId(threadId);
-      createdFirstThreadRef.current = null;
     },
     [createThread, selectThread, setProvider],
   );
