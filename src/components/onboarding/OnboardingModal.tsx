@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useEscapeClose } from "../../useEscapeClose";
+import { useModalFocus } from "../../useModalFocus";
 import type {
   AppSettings,
   ProjectInfo,
@@ -49,8 +50,10 @@ export function OnboardingModal({
   ...stepProps
 }: OnboardingModalProps) {
   const [index, setIndex] = useState(0);
+  const dialogRef = useRef<HTMLDivElement>(null);
   const handleFinish = useCallback(() => onFinish(), [onFinish]);
   useEscapeClose(open, handleFinish);
+  useModalFocus(open, dialogRef);
 
   useEffect(() => {
     if (open) setIndex(0);
@@ -72,10 +75,12 @@ export function OnboardingModal({
       }}
     >
       <div
+        ref={dialogRef}
         className={styles.sheet}
         role="dialog"
         aria-modal="true"
         aria-label="Welcome to Solenta"
+        tabIndex={-1}
         data-onboarding=""
         onMouseDown={(e) => e.stopPropagation()}
       >
