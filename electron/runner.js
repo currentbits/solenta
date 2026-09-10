@@ -8304,6 +8304,10 @@ function createRunner(opts) {
     const prefix = services.buildHandoffPrefix(thread, (id) =>
       store.getMessages(id),
     );
+    // Start is accepted: a later undo must not resurrect the dropped tail
+    // (#1202). Clear before append so a crash mid-turn cannot roll back a
+    // live run.
+    services.clearRewindRestore(store, threadId);
     if (thread.replayContext) {
       store.updateThread(threadId, { replayContext: false });
     }

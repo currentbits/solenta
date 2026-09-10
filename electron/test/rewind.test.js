@@ -193,13 +193,15 @@ describe("rewindThread (services)", () => {
     );
   });
 
-  it("replayContext persists across reload", async () => {
+  it("committed rewind persists across reload", async () => {
     await services.rewindThread(store, {
       threadId: thread.id,
       messageId: "u2",
       prompt: "edited",
     });
-    // rewindThread saveNow()s; do not flush again so a debounce would fail this.
+    // Start-accepted: drop the restore handle so reload keeps the rewind.
+    services.clearRewindRestore(store, thread.id);
+    store.saveNow();
     const reloaded = new Store(path.join(tmpDir, "store.json"));
     const t = reloaded.getThread(thread.id);
     assert.equal(t.sessionId, null);
@@ -273,6 +275,63 @@ describe("rewindThread (services)", () => {
     // Failed rejects leave the transcript intact.
     assert.equal(store.getMessages(thread.id).length, 6);
     assert.equal(store.getThread(thread.id).sessionId, "sess-before");
+  });
+
+  it("undo restores the dropped tail and persists across reload (#1202)", async () => {
+    await services.rewindThread(store, {
+      threadId: thread.id,
+      messageId: "u2",
+      prompt: "second, edited",
+    });
+    assert.deepEqual(
+      store.getMessages(thread.id).map((m) => m.id),
+      ["u1", "a1"],
+    );
+    assert.equal(store.getThread(thread.id).sessionId, null);
+    assert.equal(store.getThread(thread.id).replayContext, true);
+
+    const undone = await services.rewindThread(store, {
+      threadId: thread.id,
+      undo: true,
+    });
+    assert.equal(undone.droppedMessages, 0);
+    assert.deepEqual(
+      store.getMessages(thread.id).map((m) => m.id),
+      ["u1", "a1", "u2", "a2", "u3", "a3"],
+    );
+    assert.deepEqual(
+      store.getWorkLog(thread.id).map((w) => w.id),
+      ["w1", "w2", "w3", "w0"],
+    );
+    assert.equal(store.getThread(thread.id).sessionId, "sess-before");
+    assert.ok(!store.getThread(thread.id).replayContext);
+
+    const reloaded = new Store(path.join(tmpDir, "store.json"));
+    assert.deepEqual(
+      reloaded.getMessages(thread.id).map((m) => m.id),
+      ["u1", "a1", "u2", "a2", "u3", "a3"],
+    );
+    assert.equal(reloaded.getThread(thread.id).sessionId, "sess-before");
+  });
+
+  it("dangling rewind restore handle is applied on reload while idle (#1202)", async () => {
+    await services.rewindThread(store, {
+      threadId: thread.id,
+      messageId: "u2",
+      prompt: "second, edited",
+    });
+    assert.deepEqual(
+      store.getMessages(thread.id).map((m) => m.id),
+      ["u1", "a1"],
+    );
+
+    const reloaded = new Store(path.join(tmpDir, "store.json"));
+    assert.deepEqual(
+      reloaded.getMessages(thread.id).map((m) => m.id),
+      ["u1", "a1", "u2", "a2", "u3", "a3"],
+      "idle truncated rewind without a run must not survive reload",
+    );
+    assert.equal(reloaded.getThread(thread.id).sessionId, "sess-before");
   });
 
   it("restoreFiles with no worktree returns restoredSha null", async () => {
@@ -542,6 +601,43 @@ describe("restoreFiles resets to the last retained turn", () => {
     assert.deepEqual(
       store.getMessages(thread.id).map((m) => m.id),
       ["u1", "a1"],
+    );
+  });
+
+  it("undo after restoreFiles puts files and transcript back (#1202)", async () => {
+    fx = await makeRewindWorktree();
+    const { store, thread, file } = fx;
+
+    appendTurn(store, thread.id, 1, Date.now());
+    fs.writeFileSync(file, "v1\n");
+    await maybeCreateCheckpoint(store, thread.id);
+    await sleep(1100);
+    appendTurn(store, thread.id, 2, Date.now());
+    await sleep(1100);
+    fs.writeFileSync(file, "v2\n");
+    await maybeCreateCheckpoint(store, thread.id);
+    await sleep(1100);
+    appendTurn(store, thread.id, 3, Date.now());
+    fs.writeFileSync(file, "v3\n");
+    await maybeCreateCheckpoint(store, thread.id);
+    store.saveNow();
+
+    await services.rewindThread(store, {
+      threadId: thread.id,
+      messageId: "u2",
+      prompt: "two, edited",
+      restoreFiles: true,
+    });
+    assert.equal(fs.readFileSync(file, "utf8"), "v1\n");
+
+    await services.rewindThread(store, {
+      threadId: thread.id,
+      undo: true,
+    });
+    assert.equal(fs.readFileSync(file, "utf8"), "v3\n");
+    assert.deepEqual(
+      store.getMessages(thread.id).map((m) => m.id),
+      ["u1", "a1", "u2", "a2", "u3", "a3"],
     );
   });
 

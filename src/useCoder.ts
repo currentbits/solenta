@@ -1838,13 +1838,34 @@ export function useCoder(): UseCoderResult {
         setError({ scope: "run", message: errorMessage(err) });
         throw err;
       }
-      // The transcript we hold is now longer than the stored one. A run push
-      // would repair it, but only if the run starts — so refetch here, or a
-      // failed start leaves dropped messages on screen as if nothing happened.
-      reloadDetail(threadId);
-      await startRun(prompt, threadId, attachments);
+      // Do not refetch between rewind and start: the edited bubble is in
+      // the dropped tail, so a reload unmounts the inline editor. Start
+      // success reloads via startRun; start reject undoes then reloads.
+      try {
+        await startRun(prompt, threadId, attachments);
+      } catch (err) {
+        try {
+          await api.threads.rewind({ threadId, undo: true });
+        } catch {
+          // Keep the start error; undo is best-effort.
+        }
+        try {
+          const d = await api.threads.get(threadId);
+          if (selectedRef.current === threadId) {
+            setDetail(d);
+            applyThreads(
+              threadsRef.current.map((t) =>
+                t.id === d.thread.id ? d.thread : t,
+              ),
+            );
+          }
+        } catch {
+          // Banner already set by startRun.
+        }
+        throw err;
+      }
     },
-    [api, selectedThreadId, startRun, reloadDetail],
+    [api, selectedThreadId, startRun, applyThreads],
   );
 
   const refreshWorkflows = useCallback(async () => {

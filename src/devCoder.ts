@@ -1604,6 +1604,10 @@ function buildDevCoder(): CoderApi {
   let spaces: SpaceInfo[] = [];
   let threads = seedThreads(projects);
   const details = new Map<string, ThreadDetail>();
+  const rewindRestore = new Map<
+    string,
+    { messages: ThreadDetail["messages"]; workLog: ThreadDetail["workLog"]; thread: ThreadInfo }
+  >();
   const trashed = new Map<
     string,
     TrashedThreadInfo & { thread: ThreadInfo; detail?: ThreadDetail }
@@ -3928,6 +3932,17 @@ function buildDevCoder(): CoderApi {
         if (detail.thread.status === "working") {
           throw new Error("Cannot rewind while a run is active");
         }
+        if (input.undo === true) {
+          const snap = rewindRestore.get(input.threadId);
+          if (snap) {
+            detail.messages = snap.messages.slice();
+            detail.workLog = snap.workLog.slice();
+            const restored = patchThread(input.threadId, snap.thread);
+            rewindRestore.delete(input.threadId);
+            return { thread: restored, droppedMessages: 0, restoredSha: null };
+          }
+          return { thread: detail.thread, droppedMessages: 0, restoredSha: null };
+        }
         if (!String(input.prompt ?? "").trim()) {
           throw new Error("Prompt cannot be empty");
         }
@@ -3935,6 +3950,11 @@ function buildDevCoder(): CoderApi {
         if (at < 0 || detail.messages[at]!.role !== "user") {
           throw new Error(`Not a user message: ${input.messageId}`);
         }
+        rewindRestore.set(input.threadId, {
+          messages: detail.messages.slice(),
+          workLog: detail.workLog.slice(),
+          thread: { ...detail.thread },
+        });
         const dropped = detail.messages.slice(at);
         const droppedRuns = new Set(
           dropped.map((m) => m.runId).filter((r): r is string => !!r),
@@ -4542,6 +4562,7 @@ function buildDevCoder(): CoderApi {
         }
 
         assertUnderBudget();
+        rewindRestore.delete(input.threadId);
 
         const prompt = input.prompt.trim();
         const t = now();

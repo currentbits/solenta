@@ -318,6 +318,82 @@ describe("App edit-and-resubmit wiring (issue #254)", () => {
       (alert!.textContent || "").includes("Cannot rewind while a run is active"),
       `banner must show backend string, got: ${alert!.textContent}`,
     );
+    const ta = m.query('[data-edit-textarea="m-u1"]') as HTMLTextAreaElement | null;
+    assert.ok(ta, "editor stays open after a failed rewind");
+    assert.ok(
+      m.query('[data-rewind-confirm="m-u1"]'),
+      "confirm stays so the user can retry or cancel",
+    );
+    m.unmount();
+  });
+
+  it("rejected start restores the dropped tail and keeps the editor (#1202)", async () => {
+    const { row, d } = target();
+    const fake = makeFake(row, d, {
+      "runs.start": new Error(
+        "Daily budget reached ($1.00 of $1.00). Raise or clear the cap in Settings.",
+      ),
+    });
+    const m = await boot(fake);
+    await selectThread(m, "edit resubmit target");
+
+    await m.click(m.query('[data-edit-message="m-u1"]') as HTMLElement);
+    await m.flush();
+    const ta = m.query('[data-edit-textarea="m-u1"]') as HTMLTextAreaElement | null;
+    assert.ok(ta, "inline editor opens");
+    await m.type(ta, "first prompt EDITED");
+    await m.click(m.query('[data-edit-resubmit="m-u1"]') as HTMLElement);
+    await m.flush();
+    await m.click(m.query("[data-rewind-confirm-submit]") as HTMLElement);
+    await m.flush();
+
+    const rewindCalls = fake.of("threads.rewind");
+    assert.ok(rewindCalls.length >= 1, "rewind must run before start");
+    assert.equal(fake.of("runs.start").length, 1, "start is attempted once");
+    const rewindAt = fake.calls.findIndex((c) => c.channel === "threads.rewind");
+    const startAt = fake.calls.findIndex((c) => c.channel === "runs.start");
+    assert.ok(
+      rewindAt >= 0 && startAt > rewindAt,
+      `rewind must precede start, order: ${fake.channels().join(",")}`,
+    );
+
+    const stored = await fake.api.threads.get("t-edit-resubmit");
+    assert.deepEqual(
+      stored.messages.map((msg) => msg.id),
+      ["m-u1", "m-a1", "m-u2", "m-a2"],
+      "host transcript must still have the dropped tail",
+    );
+    assert.ok(
+      m.text().includes("later reply"),
+      "UI must still show messages after the edit target",
+    );
+
+    const editor = m.query('[data-edit-textarea="m-u1"]') as HTMLTextAreaElement | null;
+    assert.ok(editor, "edited draft stays in the inline editor");
+    assert.equal(editor!.value, "first prompt EDITED");
+    assert.ok(
+      m.query('[data-rewind-confirm="m-u1"]'),
+      "confirm stays so the user can retry or cancel",
+    );
+
+    const alert = m.query('[role="alert"]');
+    assert.ok(alert, "error banner after rejected start");
+    assert.ok(
+      (alert!.textContent || "").includes("Daily budget reached"),
+      `banner must show backend string, got: ${alert!.textContent}`,
+    );
+
+    await m.click(m.query("[data-rewind-confirm-cancel]") as HTMLElement);
+    await m.flush();
+    assert.equal(
+      m.queryAll("[data-rewind-confirm]").length,
+      0,
+      "cancel still closes confirm after a rejected start",
+    );
+    assert.ok(
+      m.query('[data-edit-textarea="m-u1"]'),
+      "editor remains after cancel so the draft is not lost",
+    );
     m.unmount();
   });
 
