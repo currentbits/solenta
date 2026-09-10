@@ -163,6 +163,7 @@ import {
 import { formatElapsed } from "../format";
 import { liveWorkingLabel } from "../workingLabel";
 import { useEscapeClose } from "../useEscapeClose";
+import { useModalFocus } from "../useModalFocus";
 import {
   comparePeerLabel,
   compareSteps,
@@ -385,13 +386,17 @@ function ImageLightbox({
   onClose: () => void;
 }) {
   const [zoomed, setZoomed] = useState(false);
+  const dialogRef = useRef<HTMLDivElement>(null);
   useEscapeClose(true, onClose);
+  useModalFocus(true, dialogRef);
   return (
     <div
+      ref={dialogRef}
       className={styles.lightbox}
       role="dialog"
       aria-modal="true"
       aria-label={alt || "Image"}
+      tabIndex={-1}
       data-image-lightbox=""
       onClick={onClose}
     >
@@ -4475,6 +4480,8 @@ export const ThreadView = memo(function ThreadView({
   } | null>(null);
   const [rewindRestoreFiles, setRewindRestoreFiles] = useState(false);
   const [rewindPending, setRewindPending] = useState(false);
+  const rewindDialogRef = useRef<HTMLDivElement>(null);
+  const reviewUndoDialogRef = useRef<HTMLDivElement>(null);
   /** Header context breakdown; `/context` pins this open. */
   const [contextOpen, setContextOpen] = useState(false);
   /** Provider account quotas; `/usage` opens this even with no ring. */
@@ -4552,6 +4559,7 @@ export const ThreadView = memo(function ThreadView({
   >([]);
   const [snapError, setSnapError] = useState<string | null>(null);
   const [snapBusy, setSnapBusy] = useState(false);
+  const snapDialogRef = useRef<HTMLDivElement>(null);
   const [layoutThreadId, setLayoutThreadId] = useState<string | null>(threadId);
   const [layout, setLayout] = useState<LayoutNode>(() =>
     hydratePaneLayout(threadId, { openDiff: changesOpen }).layout,
@@ -5152,6 +5160,7 @@ export const ThreadView = memo(function ThreadView({
   }, [rewindPending]);
 
   useEscapeClose(Boolean(rewindConfirm) && !rewindPending, handleRewindCancel);
+  useModalFocus(Boolean(rewindConfirm), rewindDialogRef);
 
   const handleSlashRewind = useCallback(() => {
     if (isWorking || rewindPending) return;
@@ -5329,6 +5338,7 @@ export const ThreadView = memo(function ThreadView({
   }, [onListSnapWindows, isArchived, openAppSnap]);
 
   useEscapeClose(snapOpen && !snapBusy, () => setSnapOpen(false));
+  useModalFocus(snapOpen, snapDialogRef);
 
   /**
    * Fork one thread per selected provider or profile, then start the same
@@ -5690,6 +5700,10 @@ export const ThreadView = memo(function ThreadView({
   useEscapeClose(restoreConfirm != null && !restorePending, () => {
     setRestoreConfirm(null);
   });
+  useModalFocus(
+    restoreConfirm != null && Boolean(restoreConfirm.undoSha),
+    reviewUndoDialogRef,
+  );
 
   const pinIfStuck = () => {
     const el = bodyRef.current;
@@ -7425,10 +7439,12 @@ export const ThreadView = memo(function ThreadView({
 
       {snapOpen && (
         <div
+          ref={snapDialogRef}
           className={styles.confirmOverlay}
           role="dialog"
           aria-modal="true"
           aria-labelledby="appsnap-title"
+          tabIndex={-1}
           data-appsnap=""
           onClick={() => {
             if (!snapBusy) setSnapOpen(false);
@@ -7511,10 +7527,12 @@ export const ThreadView = memo(function ThreadView({
           }}
         >
           <div
+            ref={rewindDialogRef}
             className={styles.confirmDialog}
             role="dialog"
             aria-modal="true"
             aria-labelledby="rewind-title"
+            tabIndex={-1}
             data-rewind-confirm={rewindConfirm.messageId}
             onClick={(e) => e.stopPropagation()}
           >
@@ -7572,10 +7590,12 @@ export const ThreadView = memo(function ThreadView({
           }}
         >
           <div
+            ref={reviewUndoDialogRef}
             className={styles.confirmDialog}
             role="dialog"
             aria-modal="true"
             aria-labelledby="review-undo-title"
+            tabIndex={-1}
             data-review-undo-confirm={restoreConfirm.undoSha}
             onClick={(e) => e.stopPropagation()}
           >

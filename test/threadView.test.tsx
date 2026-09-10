@@ -182,6 +182,12 @@ function view(props: {
     threadId?: string,
     attachments?: AttachmentInfo[],
   ) => void | Promise<void>;
+  onRewindAndResubmit?: (
+    messageId: string,
+    prompt: string,
+    restoreFiles?: boolean,
+    attachments?: AttachmentInfo[],
+  ) => void | Promise<void>;
   onPickDirectory?: () => Promise<string | null>;
   onListSnapWindows?: () => Promise<Array<{ id: string; name: string }>>;
   queuedPrompt?: string | null;
@@ -201,6 +207,7 @@ function view(props: {
       hasProjects={props.hasProjects ?? true}
       onAddProject={() => {}}
       onStartRun={props.onStartRun ?? (() => {})}
+      onRewindAndResubmit={props.onRewindAndResubmit}
       onStartWorkflow={() => {}}
       onSaveWorkflow={noopSave}
       onRemoveWorkflow={noopAsync}
@@ -1227,6 +1234,57 @@ describe("ThreadView mounted interactions", () => {
     );
     m.unmount();
   });
+
+  it("opening the lightbox moves focus inside; Tab stays inside", async () => {
+    const dataUrl = "data:image/png;base64,AAAA";
+    const m = await mount(
+      view({
+        onLoadImage: async () => dataUrl,
+        detail: detail({
+          messages: [
+            msg({
+              id: "t1",
+              role: "tool",
+              text: "Read: /tmp/shot.png",
+              createdAt: 1,
+              runId: "run-1",
+              tool: {
+                id: "tc1",
+                name: "Read",
+                input: "{}",
+                output: "[image]",
+                done: true,
+                isError: false,
+                images: ["shot.png"],
+              },
+            }),
+          ],
+          workLog: [],
+        }),
+      }),
+    );
+    const lightboxGroup = toolGroupToggle(m);
+    assert.ok(lightboxGroup, "image tool is grouped");
+    await m.click(lightboxGroup);
+    await m.click(m.query("button.toolToggle"));
+    await m.flush();
+    await m.click(m.query("img.toolImage"));
+    const box = m.query("[data-image-lightbox]") as HTMLElement | null;
+    assert.ok(box, "lightbox open");
+    assert.ok(
+      box.contains(document.activeElement),
+      "opening moves focus inside the lightbox",
+    );
+
+    await m.pressFocused("Tab");
+    const first = document.activeElement as HTMLElement;
+    assert.ok(box.contains(first), "Tab stays inside");
+    assert.equal(first.tagName, "BUTTON");
+
+    await m.pressFocused("Tab");
+    assert.equal(document.activeElement, first, "Tab wraps inside the lightbox");
+    m.unmount();
+  });
 });
 
 describe("ThreadView review bar", () => {
@@ -1358,6 +1416,147 @@ describe("ThreadView review bar", () => {
     await m.flush();
     assert.deepEqual(restores, [{ threadId: "t1", sha: "sha-turn-1-aaaaaaaa" }]);
     assert.equal(reviews, 2, "successful undo also opens Changes");
+    m.unmount();
+  });
+
+  it("opening review-undo confirm moves focus inside; Tab stays inside", async () => {
+    const restores: Array<{ threadId: string; sha: string }> = [];
+    const m = await mount(
+      view({
+        detail: twoRunDetail,
+        runStats: async () => twoStats,
+        restoreCheckpoint: async (threadId, sha) => {
+          restores.push({ threadId, sha });
+        },
+      }),
+    );
+    await m.flush();
+    const secondUndo = m.query(
+      "[data-review-bar='run-2'] [data-review-undo]",
+    ) as HTMLButtonElement | null;
+    assert.ok(secondUndo, "Undo on second run");
+    await m.click(secondUndo);
+    await m.flush();
+    const dialog = m.query("[data-review-undo-confirm]") as HTMLElement | null;
+    assert.ok(dialog, "confirm dialog open");
+    assert.ok(
+      dialog.contains(document.activeElement),
+      "opening moves focus inside the dialog",
+    );
+
+    await m.pressFocused("Tab");
+    const first = document.activeElement as HTMLElement;
+    assert.ok(dialog.contains(first), "Tab stays inside");
+    assert.equal(first.tagName, "BUTTON");
+
+    await m.pressFocused("Tab");
+    const second = document.activeElement as HTMLElement;
+    assert.ok(dialog.contains(second), "second Tab stays inside");
+    assert.notEqual(second, first);
+
+    await m.pressFocused("Tab");
+    assert.equal(document.activeElement, first, "Tab wraps inside the dialog");
+    assert.equal(restores.length, 0, "Tab must not restore");
+    m.unmount();
+  });
+});
+
+describe("ThreadView nested dialog focus", () => {
+  it("opening rewind confirm moves focus inside; Tab stays inside", async () => {
+    const rewinds: string[] = [];
+    const m = await mount(
+      view({
+        onRewindAndResubmit: async (messageId) => {
+          rewinds.push(messageId);
+        },
+        detail: detail({
+          messages: [
+            msg({
+              id: "u1",
+              role: "user",
+              text: "first prompt",
+              createdAt: 10,
+            }),
+            msg({
+              id: "a1",
+              role: "assistant",
+              text: "reply",
+              createdAt: 20,
+            }),
+          ],
+        }),
+      }),
+    );
+    const editBtn = m.query('[data-edit-message="u1"]');
+    assert.ok(editBtn, "edit affordance");
+    await m.click(editBtn as HTMLElement);
+    await m.click(m.query('[data-edit-resubmit="u1"]') as HTMLElement);
+    await m.flush();
+    const dialog = m.query("[data-rewind-confirm]") as HTMLElement | null;
+    assert.ok(dialog, "rewind confirm open");
+    assert.ok(
+      dialog.contains(document.activeElement),
+      "opening moves focus inside the dialog",
+    );
+
+    await m.pressFocused("Tab");
+    const first = document.activeElement as HTMLElement;
+    assert.ok(dialog.contains(first), "Tab stays inside");
+
+    await m.pressFocused("Tab");
+    const second = document.activeElement as HTMLElement;
+    assert.ok(dialog.contains(second), "second Tab stays inside");
+    assert.notEqual(second, first);
+
+    await m.pressFocused("Tab");
+    const third = document.activeElement as HTMLElement;
+    assert.ok(dialog.contains(third), "third Tab stays inside");
+    assert.deepEqual(rewinds, []);
+    m.unmount();
+  });
+
+  it("opening appsnap moves focus inside; Tab stays inside including the window list", async () => {
+    const m = await mount(
+      view({
+        onListSnapWindows: async () => [
+          { id: "win-a", name: "Alpha" },
+          { id: "win-b", name: "Beta" },
+        ],
+      }),
+    );
+    await inAct(() => {
+      for (const type of ["keydown", "keyup", "keydown", "keyup"] as const) {
+        window.dispatchEvent(
+          new KeyboardEvent(type, { key: "Alt", bubbles: true }),
+        );
+      }
+    });
+    await m.flush();
+    const dialog = m.query("[data-appsnap]") as HTMLElement | null;
+    assert.ok(dialog, "appsnap overlay open");
+    assert.ok(
+      dialog.contains(document.activeElement),
+      "opening moves focus inside the overlay",
+    );
+    assert.ok(m.query('[data-appsnap-window="win-a"]'), "window list rendered");
+
+    await m.pressFocused("Tab");
+    const first = document.activeElement as HTMLElement;
+    assert.ok(dialog.contains(first), "Tab stays inside");
+    assert.equal(first.getAttribute("data-appsnap-window"), "win-a");
+
+    await m.pressFocused("Tab");
+    const second = document.activeElement as HTMLElement;
+    assert.ok(dialog.contains(second), "second Tab stays inside");
+    assert.equal(second.getAttribute("data-appsnap-window"), "win-b");
+
+    await m.pressFocused("Tab");
+    const third = document.activeElement as HTMLElement;
+    assert.ok(dialog.contains(third), "Cancel stays in the cycle");
+    assert.equal((third.textContent || "").trim(), "Cancel");
+
+    await m.pressFocused("Tab");
+    assert.equal(document.activeElement, first, "Tab wraps including windows");
     m.unmount();
   });
 });

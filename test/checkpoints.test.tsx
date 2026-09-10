@@ -285,6 +285,47 @@ describe("App checkpoints wiring (round 50)", () => {
     m.unmount();
   });
 
+  it("opening restore confirm moves focus inside; Tab stays inside", async () => {
+    const cps = threeCheckpoints();
+    const middle = cps[1]!;
+    const fake = makeFake({ checkpoints: cps });
+    const m = await boot(fake);
+    await selectThread(m, "checkpoint source thread");
+    await openGitTab(m);
+
+    await m.click(
+      m.query(`[data-checkpoint-restore="${middle.sha}"]`) as HTMLElement,
+    );
+    await m.flush();
+    const dialog = m.query(
+      `[data-restore-confirm="${middle.sha}"]`,
+    ) as HTMLElement | null;
+    assert.ok(dialog, "confirm dialog open");
+    assert.ok(
+      dialog.contains(document.activeElement),
+      "opening moves focus inside the dialog",
+    );
+
+    await m.pressFocused("Tab");
+    const first = document.activeElement as HTMLElement;
+    assert.ok(dialog.contains(first), "Tab stays inside");
+    assert.equal(first.tagName, "BUTTON");
+
+    await m.pressFocused("Tab");
+    const second = document.activeElement as HTMLElement;
+    assert.ok(dialog.contains(second), "second Tab stays inside");
+    assert.notEqual(second, first);
+
+    await m.pressFocused("Tab");
+    assert.equal(document.activeElement, first, "Tab wraps inside the dialog");
+    assert.equal(
+      fake.of("git.restoreCheckpoint").length,
+      0,
+      "Tab must not restore",
+    );
+    m.unmount();
+  });
+
   it("restore failure surfaces error without crashing", async () => {
     const middle = threeCheckpoints()[1]!;
     const backendMsg = "Cannot restore a checkpoint while a run is active";

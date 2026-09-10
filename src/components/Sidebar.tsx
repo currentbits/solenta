@@ -102,6 +102,7 @@ import {
   type WaitState,
 } from "../waiting";
 import { useEscapeClose } from "../useEscapeClose";
+import { useModalFocus } from "../useModalFocus";
 import {
   flatVisibleThreadIds,
   formatBatchSettleFeedback,
@@ -1598,6 +1599,8 @@ export const Sidebar = memo(function Sidebar({
   useEscapeClose(issueFormFor != null && !issuePending, closeIssueForm);
   const [removeConfirmId, setRemoveConfirmId] = useState<string | null>(null);
   const [removePending, setRemovePending] = useState(false);
+  const removeConfirmRef = useRef<HTMLDivElement>(null);
+  useModalFocus(removeConfirmId != null, removeConfirmRef);
   const [projectScope, setProjectScope] = useState<string | null>(() =>
     loadStored(SCOPE_KEY),
   );
@@ -3742,10 +3745,12 @@ export const Sidebar = memo(function Sidebar({
               onClick={closeConfirm}
             >
               <div
+                ref={removeConfirmRef}
                 className={styles.removeConfirm}
                 role="dialog"
                 aria-modal="true"
                 aria-labelledby="remove-project-title"
+                tabIndex={-1}
                 data-remove-confirm={confirmProject.id}
                 onClick={(e) => e.stopPropagation()}
               >

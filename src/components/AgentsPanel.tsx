@@ -89,6 +89,7 @@ import {
   groupHypotheses,
 } from "../hypothesisLedger";
 import { useEscapeClose } from "../useEscapeClose";
+import { useModalFocus } from "../useModalFocus";
 import {
   setDivergenceCardEnabled,
   useDivergenceCardEnabled,
@@ -2205,6 +2206,8 @@ export function GitTab({
     null,
   );
   const [restorePending, setRestorePending] = useState(false);
+  const restoreDialogRef = useRef<HTMLDivElement>(null);
+  useModalFocus(restoreConfirm != null, restoreDialogRef);
   const [now, setNow] = useState(() => Date.now());
   const [sync, setSync] = useState<GitSyncInfo | null>(null);
   const [syncing, setSyncing] = useState(false);
@@ -2599,10 +2602,12 @@ export function GitTab({
           }}
         >
           <div
+            ref={restoreDialogRef}
             className={styles.confirmDialog}
             role="dialog"
             aria-modal="true"
             aria-labelledby="restore-checkpoint-title"
+            tabIndex={-1}
             data-restore-confirm={restoreConfirm.sha}
             onClick={(e) => e.stopPropagation()}
           >
