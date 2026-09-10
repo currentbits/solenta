@@ -40,6 +40,7 @@ const WIN32_FILES = [
   "electron/test/cursor-guardrail-hook.test.js",
   "electron/test/codex-guardrail-hook.test.js",
   "electron/test/codex-writer-lock.test.js",
+  "electron/test/codex-writer-lock-inspect.test.js",
   "electron/test/opencode-guardrail-hook.test.js",
   "electron/test/cursor.test.js",
   "electron/test/context-usage.test.js",

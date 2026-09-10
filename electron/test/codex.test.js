@@ -720,6 +720,47 @@ describe("runner codex provider", () => {
     assert.equal(resume.params.threadId, "codex-sess-001");
   });
 
+  it("records lock-holder diagnosis and kills a leftover Solenta child (#1226)", async () => {
+    const killed = [];
+    runner.stopAll();
+    runner = createRunner({
+      store,
+      core,
+      pushFn() {},
+      tickMs: 15,
+      userDataPath: tmpDir,
+      inspectCodexWriterLockFn: () => ({
+        holderPid: 4242,
+        holderCommand: "codex",
+        ours: true,
+        stale: false,
+        lockDirShared: true,
+        lockPath: "/tmp/overlay/thread-writer-locks/codex-sess-001.lock",
+        codexHome: "/tmp/overlay",
+      }),
+      killWriterLockPidFn: (pid) => killed.push(pid),
+    });
+    process.env.CODER_FAKE_CODEX_SCENARIO = "writer-lock";
+    const thread = store.getThreads()[0];
+    store.updateThread(thread.id, { sessionId: "codex-sess-001" });
+    const { runId } = await runner.startRun({
+      threadId: thread.id,
+      prompt: "resume while locked",
+    });
+    await waitFor(() => store.getThread(thread.id).status === "failed");
+    assert.deepEqual(killed, [4242]);
+    const failed = store.getThread(thread.id);
+    assert.equal(failed.lastErrorKind, "writer-lock");
+    assert.equal(failed.sessionId, "codex-sess-001");
+    const events = store
+      .getMessages(thread.id)
+      .filter((m) => m.role === "event" && m.runId === runId);
+    assert.match(events[0].text, /pid 4242/);
+    assert.match(events[0].text, /Solenta Codex child/);
+    assert.match(events[0].text, /CODEX_HOME=\/tmp\/overlay/);
+    assert.match(events[0].text, /symlink/);
+  });
+
   it("classifies stdout-only turn.failed overflow and publishes normalized failure", async () => {
     process.env.CODER_FAKE_CODEX_SCENARIO = "structured-overflow";
     const thread = store.getThreads()[0];

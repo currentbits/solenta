@@ -303,6 +303,7 @@ function createCodexJsonRpcSession(opts) {
     outstandingIds() {
       return [...inbound];
     },
+    pid: child && child.pid,
     kill() {
       if (killed || finished) return;
       killed = true;

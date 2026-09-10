@@ -95,9 +95,31 @@ describe("materializeCodexGuardrailHome", () => {
     );
     const lockDest = path.join(dest, "thread-writer-locks");
     assert.equal(
-      fs.existsSync(lockDest) && fs.lstatSync(lockDest).isSymbolicLink(),
+      fs.lstatSync(lockDest).isSymbolicLink(),
       false,
       "overlay must not share Desktop's writer-lock namespace",
+    );
+    assert.ok(fs.statSync(lockDest).isDirectory());
+  });
+
+  it("replaces a leftover thread-writer-locks symlink with a real directory (#1226)", () => {
+    fs.mkdirSync(path.join(source, "thread-writer-locks"));
+    fs.writeFileSync(
+      path.join(source, "thread-writer-locks", "desktop.lock"),
+      "held\n",
+    );
+    fs.symlinkSync(
+      path.join(source, "thread-writer-locks"),
+      path.join(dest, "thread-writer-locks"),
+    );
+    materializeCodexGuardrailHome({ dest, sourceHome: source });
+    const lockDest = path.join(dest, "thread-writer-locks");
+    assert.equal(fs.lstatSync(lockDest).isSymbolicLink(), false);
+    assert.ok(fs.statSync(lockDest).isDirectory());
+    assert.equal(
+      fs.existsSync(path.join(lockDest, "desktop.lock")),
+      false,
+      "must not keep Desktop's lock files after unlinking the shared dir",
     );
   });
 });

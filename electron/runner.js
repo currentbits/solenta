@@ -95,6 +95,12 @@ const {
   deployCodexGuardrailOverlay,
 } = require("./codex-guardrail.js");
 const {
+  inspectWriterLock,
+  formatWriterLockDiagnosis,
+  releaseWriterLockHolder,
+  killPidTree,
+} = require("./codexWriterLock.js");
+const {
   materializeOpencodeGuardrailDir,
   deployOpencodeGuardrailOverlay,
 } = require("./opencode-guardrail.js");
@@ -448,6 +454,23 @@ function trackLiveClaudeChild(child) {
   child.once("error", drop);
 }
 
+/**
+ * Codex app-server pids that may outlive their `active` slot (writer-lock
+ * leftover, killTree lag). Used to tell "ours" from Desktop on inspect.
+ * @type {Set<number>}
+ */
+const liveCodexPids = new Set();
+
+function trackLiveCodexPid(pid) {
+  const n = Number(pid);
+  if (!Number.isInteger(n) || n <= 0) return;
+  liveCodexPids.add(n);
+}
+
+function dropLiveCodexPid(pid) {
+  liveCodexPids.delete(Number(pid));
+}
+
 const ADJECTIVES = [
   "INTEGER",
   "COPPER",
@@ -721,6 +744,8 @@ function createRunner(opts) {
     bootstrapMemory = null,
     runAgentFn = runAgent,
     runCodexFn = runCodexAppServerTurn,
+    inspectCodexWriterLockFn = inspectWriterLock,
+    killWriterLockPidFn = killPidTree,
     // Null until main has finished simulator crash recovery, so it is resolved
     // per call rather than captured.
     getIosSimulator = () => null,
@@ -2925,8 +2950,31 @@ function createRunner(opts) {
     const writerLock = overflow ? null : classifyWriterLock(errText);
     const upgrade = overflow || writerLock ? null : classifyCliUpgrade(errText);
     const classified = overflow || writerLock || upgrade;
-    const text = classified ? classified.text : errText;
+    let text = classified ? classified.text : errText;
     const kind = classified ? classified.kind : null;
+    if (writerLock) {
+      const thread = store.getThread(threadId);
+      const overlayHome =
+        userDataPath && threadId
+          ? path.join(userDataPath, "codex-homes", threadId)
+          : "";
+      const overlayExists =
+        overlayHome && require("node:fs").existsSync(overlayHome);
+      const inspect = inspectCodexWriterLockFn({
+        sessionId: (thread && thread.sessionId) || null,
+        errText,
+        codexHome: overlayExists
+          ? overlayHome
+          : process.env.CODEX_HOME ||
+            path.join(require("node:os").homedir(), ".codex"),
+        ourPids: liveCodexPids,
+      });
+      if (releaseWriterLockHolder(inspect, killWriterLockPidFn)) {
+        dropLiveCodexPid(inspect.holderPid);
+      }
+      const diag = formatWriterLockDiagnosis(inspect);
+      if (diag) text = `${text}\n${diag}`;
+    }
     if (!classified) {
       const switched = tryQuotaFailover(threadId, errText, runId, extraPatch);
       if (switched) return { parked: false, failover: true, text, kind: null };
@@ -3272,6 +3320,7 @@ function createRunner(opts) {
     active.delete(threadId);
     const thread = store.getThread(threadId);
     if (entry.kind === "codex") {
+      if (entry.handle && entry.handle.pid) dropLiveCodexPid(entry.handle.pid);
       noteCodexRelease(
         (entry.sessionId != null && entry.sessionId) ||
           (thread && thread.sessionId) ||
@@ -5284,6 +5333,7 @@ function createRunner(opts) {
     });
 
     entry.handle = handle;
+    if (handle && handle.pid) trackLiveCodexPid(handle.pid);
     store.save();
     pushDetail(threadId, codexState);
 
@@ -8773,6 +8823,10 @@ function createRunner(opts) {
     for (const child of [...liveClaudeChildren]) {
       killTree(child, 3000);
     }
+    for (const pid of [...liveCodexPids]) {
+      killPidTree(pid);
+    }
+    liveCodexPids.clear();
     // Drain any pending session transcript posts before process exit.
     void sessionRecorder.flush();
     // App quit (main.js before-quit): save() only arms a 250 ms unref'd timer,
@@ -8941,4 +8995,5 @@ module.exports = {
   looksWriterLock,
   /** @internal test/diagnostics */
   liveClaudeChildren,
+  liveCodexPids,
 };

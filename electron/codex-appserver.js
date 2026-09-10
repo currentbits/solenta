@@ -200,6 +200,7 @@ function createCodexAppServerClient(opts) {
     respondJsonRpcError: session.respondJsonRpcError,
     cancelOutstanding: session.cancelOutstanding,
     outstandingIds: session.outstandingIds,
+    pid: session.pid,
     kill: session.kill,
   };
 }
@@ -459,6 +460,7 @@ function runCodexAppServerTurn(opts) {
     kill() {
       void shutdown(1);
     },
+    pid: client && client.pid,
   };
 }
 

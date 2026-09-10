@@ -14,6 +14,7 @@ const path = require("node:path");
 const { posixQuote } = require("./ssh.js");
 const { copyGuardrailRuntime } = require("./guardrail-hook-core.js");
 const { guardrailsEnabled } = require("./guardrails.js");
+const { ensurePrivateWriterLockDir } = require("./codexWriterLock.js");
 const {
   remoteOverlayDest,
   probeRemoteHome,
@@ -64,6 +65,10 @@ function materializeCodexGuardrailHome(opts) {
       linkOrSkip(path.join(sourceHome, name), path.join(dest, name));
     }
   }
+
+  // Skip above does not repair overlays that already symlink this dir
+  // onto ~/.codex (#1226). Always replace that leftover with a real dir.
+  ensurePrivateWriterLockDir(dest);
 
   const hookDir = path.join(dest, "solenta-hooks");
   copyGuardrailRuntime(hookDir);
