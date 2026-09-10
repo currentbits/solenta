@@ -9,6 +9,13 @@ import { mount } from "./support/dom.ts";
 import { CreatePrDialog } from "../src/components/CreatePrDialog";
 import type { PrTemplateResult } from "../src/shared/ipc";
 
+function q(m: { container: HTMLElement }, sel: string): Element | null {
+  return (
+    m.container.querySelector(sel) ??
+    m.container.ownerDocument.body.querySelector(sel)
+  );
+}
+
 describe("CreatePrDialog", () => {
   it("submits title, body, and draft", async () => {
     const submitted: Array<{ title: string; body: string; draft: boolean }> = [];
@@ -20,12 +27,12 @@ describe("CreatePrDialog", () => {
         onClose={() => {}}
       />,
     );
-    const title = m.query("[data-create-pr-title]") as HTMLInputElement;
-    const body = m.query("[data-create-pr-body]") as HTMLTextAreaElement;
+    const title = q(m,"[data-create-pr-title]") as HTMLInputElement;
+    const body = q(m,"[data-create-pr-body]") as HTMLTextAreaElement;
     assert.equal(title.value, "Ship feature");
     await m.type(body, "## What\n\nChanged the thing.");
-    await m.click(m.query("[data-create-pr-draft]"));
-    await m.click(m.query("[data-create-pr-submit]"));
+    await m.click(q(m,"[data-create-pr-draft]"));
+    await m.click(q(m,"[data-create-pr-submit]"));
     assert.deepEqual(submitted, [
       {
         title: "Ship feature",
@@ -59,7 +66,7 @@ describe("CreatePrDialog", () => {
       />,
     );
     await m.flush();
-    const body = m.query("[data-create-pr-body]") as HTMLTextAreaElement;
+    const body = q(m,"[data-create-pr-body]") as HTMLTextAreaElement;
     assert.equal(body.value, "## Summary\n");
     m.unmount();
   });
@@ -84,10 +91,10 @@ describe("CreatePrDialog", () => {
       />,
     );
     await m.flush();
-    const select = m.query("[data-create-pr-template]") as HTMLSelectElement;
+    const select = q(m,"[data-create-pr-template]") as HTMLSelectElement;
     assert.ok(select, "template picker");
     await m.change(select, "/tmp/bug.md");
-    const body = m.query("[data-create-pr-body]") as HTMLTextAreaElement;
+    const body = q(m,"[data-create-pr-body]") as HTMLTextAreaElement;
     assert.equal(body.value, "bug body");
     m.unmount();
   });
@@ -101,11 +108,11 @@ describe("CreatePrDialog", () => {
         onClose={() => {}}
       />,
     );
-    const body = m.query("[data-create-pr-body]") as HTMLTextAreaElement;
+    const body = q(m,"[data-create-pr-body]") as HTMLTextAreaElement;
     await m.type(body, "hello **world**");
-    await m.click(m.query("[data-create-pr-preview]"));
-    assert.ok(m.query("[data-create-pr-preview-body]"));
-    assert.equal(m.query("[data-create-pr-body]"), null);
+    await m.click(q(m,"[data-create-pr-preview]"));
+    assert.ok(q(m,"[data-create-pr-preview-body]"));
+    assert.equal(q(m,"[data-create-pr-body]"), null);
     m.unmount();
   });
 
@@ -119,7 +126,7 @@ describe("CreatePrDialog", () => {
         onClose={() => {}}
       />,
     );
-    const submit = m.query("[data-create-pr-submit]") as HTMLButtonElement;
+    const submit = q(m,"[data-create-pr-submit]") as HTMLButtonElement;
     assert.equal(submit.disabled, true);
     await m.click(submit);
     assert.deepEqual(submitted, []);

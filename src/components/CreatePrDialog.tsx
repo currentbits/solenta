@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { canSubmitPr } from "../prUi";
 import { useEscapeClose } from "../useEscapeClose";
 import { useModalFocus } from "../useModalFocus";
@@ -11,7 +12,10 @@ export interface CreatePrDialogProps {
   loadTemplate?: () => Promise<PrTemplateResult>;
   pending: boolean;
   error?: string | null;
+  oversize?: boolean;
   onSubmit: (input: { title: string; body: string; draft: boolean }) => void;
+  onSplit?: () => void;
+  onCreateAnyway?: () => void;
   onClose: () => void;
 }
 
@@ -20,7 +24,10 @@ export function CreatePrDialog({
   loadTemplate,
   pending,
   error,
+  oversize = false,
   onSubmit,
+  onSplit,
+  onCreateAnyway,
   onClose,
 }: CreatePrDialogProps) {
   const dialogRef = useRef<HTMLDivElement>(null);
@@ -40,12 +47,16 @@ export function CreatePrDialog({
   useEffect(() => {
     if (!loadTemplate) return;
     let live = true;
-    void loadTemplate().then((result) => {
-      if (!live || !result.ok) return;
-      setTemplates(result.templates);
-      setTemplatePath(result.path);
-      setBody((current) => (current.trim() ? current : result.body));
-    });
+    void loadTemplate()
+      .then((result) => {
+        if (!live || !result.ok) return;
+        setTemplates(result.templates);
+        setTemplatePath(result.path);
+        setBody((current) => (current.trim() ? current : result.body));
+      })
+      .catch(() => {
+        // Missing preload method / IPC: leave the body empty so submit still works.
+      });
     return () => {
       live = false;
     };
@@ -56,7 +67,7 @@ export function CreatePrDialog({
 
   const canSubmit = canSubmitPr(title) && !pending;
 
-  return (
+  const node = (
     <div
       className={styles.backdrop}
       role="presentation"
@@ -167,6 +178,27 @@ export function CreatePrDialog({
               {error}
             </p>
           ) : null}
+          {oversize ? (
+            <div className={styles.oversize} data-pr-oversize="">
+              <button
+                type="button"
+                className={styles.secondary}
+                data-pr-split=""
+                onClick={onSplit}
+              >
+                Split into stacked PRs
+              </button>
+              <button
+                type="button"
+                className={styles.primary}
+                data-pr-create-anyway=""
+                disabled={pending}
+                onClick={onCreateAnyway}
+              >
+                Create anyway
+              </button>
+            </div>
+          ) : null}
         </div>
         <div className={styles.actions}>
           <button
@@ -195,4 +227,9 @@ export function CreatePrDialog({
       </div>
     </div>
   );
+
+  // Portal out of the 44px thread header. .shell has container-type and
+  // .threadSlot / PaneWorkspace use overflow:hidden, so a nested
+  // position:fixed composer is clipped and Create PR looks like a no-op.
+  return createPortal(node, document.body);
 }

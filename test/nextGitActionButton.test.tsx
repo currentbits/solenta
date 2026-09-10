@@ -143,6 +143,14 @@ function view(props: {
 
 afterEach(unmountAll);
 
+/** Composer portals to document.body so header overflow cannot clip it. */
+function q(m: { container: HTMLElement }, sel: string): Element | null {
+  return (
+    m.container.querySelector(sel) ??
+    m.container.ownerDocument.body.querySelector(sel)
+  );
+}
+
 describe("next-git-action button", () => {
   it("disables Create PR when GitHub is not ready (#608)", async () => {
     // jsdom (and window.coder) only exist after the first mount.
@@ -265,6 +273,31 @@ describe("next-git-action button", () => {
     m.unmount();
   });
 
+  it("opens the create-PR composer on document.body, not inside the 44px header", async () => {
+    const m = await mount(
+      view({
+        gitSyncInfo: async () => ({ hasUpstream: true, ahead: 0, behind: 0 }),
+        onCreatePr: async () => ({
+          number: 1,
+          url: "https://github.com/acme/repo/pull/1",
+          state: "OPEN",
+          branch: "coder/next-action-abc123",
+          created: true,
+        }),
+      }),
+    );
+    await m.flush();
+    await m.click(m.query('[data-next-git-action="create-pr"]'));
+    await m.flush();
+    const dialog = q(m, "[data-create-pr-dialog]");
+    assert.ok(dialog, "composer");
+    assert.ok(
+      dialog.parentElement === m.container.ownerDocument.body,
+      "portal to body so threadSlot overflow and header height cannot clip it",
+    );
+    m.unmount();
+  });
+
   it("creates a PR on an unpublished worktree without a prior Push", async () => {
     const created: Array<{ title: string }> = [];
     const pushes: string[] = [];
@@ -294,7 +327,7 @@ describe("next-git-action button", () => {
     assert.equal((btn!.textContent || "").trim(), "Create PR");
     await m.click(btn);
     await m.flush();
-    const submit = m.query("[data-create-pr-submit]");
+    const submit = q(m, "[data-create-pr-submit]");
     assert.ok(submit, "composer submit");
     await m.click(submit);
     await m.flush();
@@ -326,7 +359,7 @@ describe("next-git-action button", () => {
     assert.ok(btn!.hasAttribute("data-create-pr"));
     await m.click(btn);
     await m.flush();
-    const submit = m.query("[data-create-pr-submit]");
+    const submit = q(m, "[data-create-pr-submit]");
     assert.ok(submit, "composer submit");
     await m.click(submit);
     await m.flush();
@@ -363,33 +396,35 @@ describe("next-git-action button", () => {
     await m.flush();
     await m.click(m.query('[data-next-git-action="create-pr"]'));
     await m.flush();
-    await m.click(m.query("[data-create-pr-submit]"));
+    await m.click(q(m, "[data-create-pr-submit]"));
     await m.flush();
 
-    const bar = m.query("[data-pr-oversize]");
+    const bar = q(m, "[data-pr-oversize]");
     assert.ok(bar, "size-cap refusal shows the split/override bar");
-    assert.ok(bar!.textContent?.includes("900 lines"));
+    assert.ok(
+      q(m, "[data-create-pr-error]")?.textContent?.includes("900 lines"),
+    );
 
     // Split path: the agent gets the restack prompt, the bar dismisses.
-    await m.click(m.query("[data-pr-split]"));
+    await m.click(q(m, "[data-pr-split]"));
     await m.flush();
     assert.equal(prompts.length, 1);
     assert.ok(prompts[0].includes("stack of smaller"));
-    assert.equal(m.query("[data-pr-oversize]"), null, "bar dismissed");
+    assert.equal(q(m, "[data-pr-oversize]"), null, "bar dismissed");
 
     // Override path: retry with allowOversize.
     await m.click(m.query('[data-next-git-action="create-pr"]'));
     await m.flush();
-    await m.click(m.query("[data-create-pr-submit]"));
+    await m.click(q(m, "[data-create-pr-submit]"));
     await m.flush();
-    await m.click(m.query("[data-pr-create-anyway]"));
+    await m.click(q(m, "[data-pr-create-anyway]"));
     await m.flush();
     assert.deepEqual(calls, [
       { allowOversize: undefined },
       { allowOversize: undefined },
       { allowOversize: true },
     ]);
-    assert.equal(m.query("[data-pr-oversize]"), null, "bar cleared on success");
+    assert.equal(q(m, "[data-pr-oversize]"), null, "bar cleared on success");
     m.unmount();
   });
 
@@ -405,10 +440,10 @@ describe("next-git-action button", () => {
     await m.flush();
     await m.click(m.query('[data-next-git-action="create-pr"]'));
     await m.flush();
-    await m.click(m.query("[data-create-pr-submit]"));
+    await m.click(q(m, "[data-create-pr-submit]"));
     await m.flush();
-    assert.equal(m.query("[data-pr-oversize]"), null);
-    assert.ok(m.query("[data-create-pr-error]"), "composer keeps the error");
+    assert.equal(q(m, "[data-pr-oversize]"), null);
+    assert.ok(q(m, "[data-create-pr-error]"), "composer keeps the error");
     m.unmount();
   });
 

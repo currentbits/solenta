@@ -2174,7 +2174,7 @@ function NextGitActionButton({
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       if (isPrTooLargeMessage(msg)) {
-        setComposerOpen(false);
+        setComposerError(msg);
         setOversizeMsg(msg);
       } else {
         setComposerError(msg);
@@ -2316,7 +2316,7 @@ function NextGitActionButton({
           </button>
         </span>
       ) : null}
-      {oversizeMsg ? (
+      {oversizeMsg && !composerOpen ? (
         <span
           className={styles.oversizeBar}
           data-pr-oversize=""
@@ -2359,7 +2359,14 @@ function NextGitActionButton({
           loadTemplate={loadPrTemplate}
           pending={pending}
           error={composerError}
+          oversize={oversizeMsg != null}
           onSubmit={(input) => void submitPr(input)}
+          onSplit={() => {
+            setComposerOpen(false);
+            setOversizeMsg(null);
+            void onStartRun(splitPrPrompt(providerName));
+          }}
+          onCreateAnyway={() => void createOversizePr()}
           onClose={() => {
             if (pending) return;
             setComposerOpen(false);
