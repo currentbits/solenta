@@ -359,7 +359,7 @@ export interface UseCoderResult {
     prompt: string,
     threadId?: string,
     attachments?: AttachmentInfo[],
-    opts?: { fromNotice?: boolean; steer?: boolean },
+    opts?: { fromNotice?: boolean; steer?: boolean; fromQueue?: boolean },
   ) => Promise<void>;
   /**
    * Edit-and-resubmit (#254): rewind the transcript to just before
@@ -1666,7 +1666,7 @@ export function useCoder(): UseCoderResult {
       prompt: string,
       targetThreadId?: string,
       attachments?: AttachmentInfo[],
-      opts?: { fromNotice?: boolean; steer?: boolean },
+      opts?: { fromNotice?: boolean; steer?: boolean; fromQueue?: boolean },
     ) => {
       const threadId = targetThreadId ?? selectedThreadId;
       if (!threadId) return;
@@ -1796,6 +1796,7 @@ export function useCoder(): UseCoderResult {
           prompt,
           attachments,
           ...(opts?.fromNotice ? { fromNotice: true } : {}),
+          ...(opts?.fromQueue ? { fromQueue: true } : {}),
         });
         const d = await api.threads.get(threadId);
         if (selectedRef.current !== threadId) return;
