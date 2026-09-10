@@ -41,6 +41,7 @@ const { createPrStateRefresher, createRetentionSweeper } = require("./worktrees.
 const { createWedgedLaneWatchdog } = require("./mergeQueue.js");
 const { killAll: killAllDevServers } = require("./devservers.js");
 const { killAll: killAllTerminals } = require("./terminal.js");
+const { awaitPendingKills } = require("./proc.js");
 const { startScheduler } = require("./automations.js");
 const { startAutoDispatch } = require("./autodispatch.js");
 const { startPostMergeScheduler } = require("./postmerge.js");
@@ -806,16 +807,16 @@ installShutdown({
     runAppCleanup({
       log: (msg) => console.warn(msg),
       // Stop active runs and drain session transcript queue before exit.
-      stopRuns() {
+      // Await reaping: killTree's SIGKILL timer is discarded by app.exit (#1232).
+      async stopRuns() {
         if (!runner) return;
         try {
-          runner.stopAll();
+          await runner.stopAll();
         } catch {
           // ignore
         }
         try {
-          // Fire-and-forget flush; stopAll already kicked flush.
-          void runner.flushTranscripts();
+          await runner.flushTranscripts();
         } catch {
           // ignore
         }
@@ -831,7 +832,7 @@ installShutdown({
 });
 
 /** Servers, schedulers, and child processes: last, after runs and the device. */
-function teardownServices() {
+async function teardownServices() {
   if (webServer) {
     try {
       void webServer.close();
@@ -929,12 +930,17 @@ function teardownServices() {
     iosSimulatorStream = null;
   }
   try {
-    killAllDevServers();
+    await killAllDevServers();
   } catch {
     // ignore
   }
   try {
-    killAllTerminals();
+    await killAllTerminals();
+  } catch {
+    // ignore
+  }
+  try {
+    await awaitPendingKills();
   } catch {
     // ignore
   }

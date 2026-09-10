@@ -3,7 +3,14 @@
 const { describe, it, afterEach } = require("node:test");
 const assert = require("node:assert/strict");
 const { EventEmitter } = require("node:events");
+const fs = require("node:fs");
+const os = require("node:os");
+const path = require("node:path");
+const { spawn } = require("node:child_process");
 const { installShutdown, runAppCleanup } = require("../shutdown.js");
+
+const posix = process.platform !== "win32";
+const parentScript = path.join(__dirname, "fixtures", "shutdown-reap-parent.js");
 
 // Handlers land on the real `process` (that is the fix), so every test has to
 // put the default signal disposition back or the runner keeps them for good.
@@ -189,5 +196,169 @@ describe("runAppCleanup", () => {
 
   it("tolerates missing phases", async () => {
     await runAppCleanup({});
+  });
+});
+
+function alive(pid) {
+  if (!pid) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function killLeftover(pid) {
+  if (!pid || !alive(pid)) return;
+  try {
+    process.kill(-pid, "SIGKILL");
+  } catch {
+    try {
+      process.kill(pid, "SIGKILL");
+    } catch {
+      // ignore
+    }
+  }
+}
+
+function runReapParent(env) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "coder-shutdown-reap-"));
+  const heartbeat = path.join(dir, "hb");
+  const pidfile = path.join(dir, "pid");
+  const child = spawn(process.execPath, [parentScript], {
+    env: {
+      ...process.env,
+      HEARTBEAT: heartbeat,
+      PIDFILE: pidfile,
+      GRACE_MS: env.GRACE_MS || "300",
+      ENTRY: env.ENTRY || "before-quit",
+      MODE: env.MODE || "stubborn",
+      THROW_STOP: env.THROW_STOP || "",
+      REPEAT: env.REPEAT || "",
+    },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  return { dir, heartbeat, pidfile, child };
+}
+
+function waitExit(proc) {
+  return new Promise((resolve, reject) => {
+    const t = setTimeout(() => reject(new Error("parent did not exit")), 8000);
+    proc.on("exit", (code, signal) => {
+      clearTimeout(t);
+      resolve({ code, signal });
+    });
+    proc.on("error", (err) => {
+      clearTimeout(t);
+      reject(err);
+    });
+  });
+}
+
+function readPid(pidfile) {
+  try {
+    const n = Number(fs.readFileSync(pidfile, "utf8").trim());
+    return Number.isFinite(n) && n > 0 ? n : 0;
+  } catch {
+    return 0;
+  }
+}
+
+function readHeartbeat(file) {
+  try {
+    return fs.readFileSync(file, "utf8");
+  } catch {
+    return "";
+  }
+}
+
+describe("shutdown reaps owned children before exit (#1232)", { skip: !posix }, () => {
+  async function runCase(env, { afterMs = 400 } = {}) {
+    const fx = runReapParent(env);
+    let childPid = 0;
+    try {
+      const exited = await waitExit(fx.child);
+      childPid = readPid(fx.pidfile);
+      assert.equal(exited.code, 0, "parent must exit 0 after cleanup");
+      const first = readHeartbeat(fx.heartbeat);
+      await new Promise((r) => setTimeout(r, afterMs));
+      const second = readHeartbeat(fx.heartbeat);
+      assert.equal(
+        second,
+        first,
+        "heartbeat must not advance after parent exit (child still executing)",
+      );
+      if (childPid) {
+        assert.equal(alive(childPid), false, "owned child must be dead");
+      }
+      return { fx, childPid, elapsed: null };
+    } finally {
+      killLeftover(childPid);
+      try {
+        fs.rmSync(fx.dir, { recursive: true, force: true });
+      } catch {
+        // ignore
+      }
+    }
+  }
+
+  it("SIGTERM-ignoring child is dead after before-quit, including past the grace deadline", async () => {
+    await runCase({ ENTRY: "before-quit", MODE: "stubborn", GRACE_MS: "300" }, { afterMs: 400 });
+  });
+
+  it("covers the SIGINT entry point", async () => {
+    await runCase({ ENTRY: "SIGINT", MODE: "stubborn", GRACE_MS: "300" }, { afterMs: 400 });
+  });
+
+  it("covers the SIGTERM entry point", async () => {
+    await runCase({ ENTRY: "SIGTERM", MODE: "stubborn", GRACE_MS: "300" }, { afterMs: 400 });
+  });
+
+  it("cooperative children allow prompt exit without the full grace period", async () => {
+    const fx = runReapParent({
+      ENTRY: "before-quit",
+      MODE: "cooperative",
+      GRACE_MS: "2000",
+    });
+    let childPid = 0;
+    const started = Date.now();
+    try {
+      const exited = await waitExit(fx.child);
+      const elapsed = Date.now() - started;
+      childPid = readPid(fx.pidfile);
+      assert.equal(exited.code, 0);
+      assert.ok(
+        elapsed < 1000,
+        `cooperative shutdown took ${elapsed}ms, expected well under 2000ms grace`,
+      );
+      if (childPid) assert.equal(alive(childPid), false);
+    } finally {
+      killLeftover(childPid);
+      try {
+        fs.rmSync(fx.dir, { recursive: true, force: true });
+      } catch {
+        // ignore
+      }
+    }
+  });
+
+  it("repeated quit/signal events still tear down once and exit once", async () => {
+    await runCase(
+      { ENTRY: "before-quit", MODE: "stubborn", GRACE_MS: "300", REPEAT: "1" },
+      { afterMs: 400 },
+    );
+  });
+
+  it("a stopRuns error still reaps remaining owned children then exits", async () => {
+    await runCase(
+      {
+        ENTRY: "SIGINT",
+        MODE: "stubborn",
+        GRACE_MS: "300",
+        THROW_STOP: "1",
+      },
+      { afterMs: 400 },
+    );
   });
 });

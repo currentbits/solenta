@@ -73,7 +73,7 @@ const workflowEngine = require("./workflow.js");
 const { wrapCommand } = require("./ssh.js");
 const { wslTarget } = require("./wsl.js");
 const { resolveSandbox } = require("./sandbox.js");
-const { killTree } = require("./proc.js");
+const { reapTree, awaitPendingKills } = require("./proc.js");
 const { stop: stopDevServer } = require("./devservers.js");
 const {
   runVerifyCommand,
@@ -8746,6 +8746,18 @@ function createRunner(opts) {
   }
 
   function stopAll() {
+    let stopErr;
+    try {
+      return stopAllBody();
+    } catch (err) {
+      stopErr = err;
+    }
+    return awaitPendingKills().then(() => {
+      if (stopErr) throw stopErr;
+    });
+  }
+
+  function stopAllBody() {
     clearInterval(stallTimer);
     for (const entry of btwActive.values()) {
       entry.stopping = true;
@@ -8821,7 +8833,11 @@ function createRunner(opts) {
     // Reap claude children that emitted result (clearRun) then hung: no longer
     // reachable via active Map handles.
     for (const child of [...liveClaudeChildren]) {
-      killTree(child, 3000);
+      try {
+        reapTree(child, 3000);
+      } catch {
+        // ignore
+      }
     }
     for (const pid of [...liveCodexPids]) {
       killPidTree(pid);
@@ -8833,6 +8849,7 @@ function createRunner(opts) {
     // and a SIGTERM never runs the exit hook that flushes it, so the idle
     // marking above would be lost. Put the bytes on disk now.
     store.saveNow();
+    return awaitPendingKills();
   }
 
   /**

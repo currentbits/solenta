@@ -7,6 +7,7 @@ const path = require("node:path");
 const spawn = require("cross-spawn");
 const { wrapCommand } = require("./ssh.js");
 const { wslTarget } = require("./wsl.js");
+const { killTree, reapTree } = require("./proc.js");
 const {
   withChromiumUserDataDir,
   rewriteChromiumScriptBody,
@@ -100,6 +101,7 @@ function scriptCommand(root, script) {
 /**
  * @typedef {{
  *   pid: number,
+ *   child?: import("node:child_process").ChildProcess | null,
  *   script: string,
  *   startedAt: number,
  *   url: string | null,
@@ -113,10 +115,6 @@ function scriptCommand(root, script) {
 
 /** @type {Map<string, DevServerRecord>} */
 const records = new Map();
-
-/** pid → SIGKILL fallback timer, so stop() can drop the record immediately. */
-/** @type {Map<number, NodeJS.Timeout>} */
-const pendingKills = new Map();
 
 /**
  * @param {number} pid
@@ -197,39 +195,14 @@ function toState(rec) {
 }
 
 /**
- * @param {number} pid
- * @param {NodeJS.Platform} [platform]
+ * Ordinary stop: fire-and-forget TERM + unref'd KILL. Final quit uses
+ * reapTree so app.exit cannot discard the escalation timer (#1232).
+ *
+ * @param {import("node:child_process").ChildProcess | null | undefined} child
  */
-function killProcessGroup(pid, platform = process.platform) {
-  if (!pid) return;
-  // Windows has no POSIX process groups; process.kill(-pid) throws and
-  // SIGTERM is terminate. Kill the pid directly instead of failing closed
-  // through the catch.
-  const target = platform === "win32" ? pid : -pid;
-  try {
-    process.kill(target, "SIGTERM");
-  } catch {
-    try {
-      process.kill(pid, "SIGTERM");
-    } catch {
-      // already gone
-    }
-  }
-  if (pendingKills.has(pid)) return;
-  const timer = setTimeout(() => {
-    pendingKills.delete(pid);
-    try {
-      process.kill(target, "SIGKILL");
-    } catch {
-      try {
-        process.kill(pid, "SIGKILL");
-      } catch {
-        // already gone
-      }
-    }
-  }, KILL_FALLBACK_MS);
-  if (typeof timer.unref === "function") timer.unref();
-  pendingKills.set(pid, timer);
+function killServerChild(child) {
+  if (!child) return;
+  killTree(child, KILL_FALLBACK_MS);
 }
 
 /**
@@ -327,6 +300,7 @@ function start(threadId, root, script, opts = {}) {
   /** @type {DevServerRecord} */
   const rec = {
     pid,
+    child,
     script,
     startedAt: Date.now(),
     url: null,
@@ -367,7 +341,7 @@ function start(threadId, root, script, opts = {}) {
 function stop(threadId) {
   const rec = records.get(threadId);
   if (!rec) return { running: false };
-  if (rec.pid) killProcessGroup(rec.pid, rec.platform);
+  killServerChild(rec.child);
   records.delete(threadId);
   return { running: false };
 }
@@ -387,11 +361,14 @@ function status(threadId) {
   return state;
 }
 
-/** Stop every tracked server. Wired into app quit. */
+/** Stop every tracked server. Wired into app quit; awaits SIGKILL. */
 function killAll() {
-  for (const id of [...records.keys()]) {
-    stop(id);
+  const reaps = [];
+  for (const rec of records.values()) {
+    if (rec.child) reaps.push(reapTree(rec.child, KILL_FALLBACK_MS));
   }
+  records.clear();
+  return Promise.allSettled(reaps).then(() => {});
 }
 
 module.exports = {

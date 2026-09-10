@@ -63,22 +63,157 @@ function signalGroup(child, sig) {
 }
 
 /**
+ * @param {import("node:child_process").ChildProcess | null | undefined} child
+ */
+function childExited(child) {
+  return !child || child.exitCode != null || child.signalCode != null;
+}
+
+/**
+ * In-flight TERM→KILL jobs, keyed by the ChildProcess we own. Re-killing the
+ * same child returns the same promise; SIGKILL is skipped once `exit` has
+ * fired so a reused pid is never signalled.
+ * @type {Map<object, { child: object, pid: number, timer: ReturnType<typeof setTimeout> | null, promise: Promise<void>, hold: boolean }>}
+ */
+const jobs = new Map();
+
+/**
+ * SIGTERM the child's process group, then SIGKILL after `sigkillAfterMs`
+ * if this ChildProcess still has not exited. Idempotent per child.
+ *
+ * @param {import("node:child_process").ChildProcess | null | undefined} child
+ * @param {number} sigkillAfterMs
+ */
+function startKill(child, sigkillAfterMs) {
+  if (!child) {
+    return { timer: null, promise: Promise.resolve() };
+  }
+  const existing = jobs.get(child);
+  if (existing) return existing;
+
+  const pidAtStart = child.pid;
+  if (!pidAtStart || childExited(child)) {
+    return { timer: null, promise: Promise.resolve() };
+  }
+
+  signalGroup(child, "SIGTERM");
+
+  /** @type {ReturnType<typeof setTimeout> | null} */
+  let timer = null;
+  let settled = false;
+  /** @type {() => void} */
+  let resolveFn = () => {};
+  const promise = new Promise((resolve) => {
+    resolveFn = resolve;
+  });
+
+  const job = { child, pid: pidAtStart, timer: null, promise, hold: false };
+  jobs.set(child, job);
+
+  function finish() {
+    if (settled) return;
+    settled = true;
+    if (timer) {
+      clearTimeout(timer);
+      timer = null;
+      job.timer = null;
+    }
+    try {
+      child.removeListener("exit", onExit);
+    } catch {
+      // ignore
+    }
+    jobs.delete(child);
+    resolveFn();
+  }
+
+  function onExit() {
+    finish();
+  }
+
+  child.once("exit", onExit);
+  if (childExited(child)) {
+    finish();
+    return job;
+  }
+
+  const delay = Math.max(0, Number(sigkillAfterMs) || 0);
+  timer = setTimeout(() => {
+    // Only the ChildProcess we started killing: skip if it already exited
+    // (pid may have been reused by an unrelated process).
+    if (!childExited(child) && child.pid === pidAtStart) {
+      signalGroup(child, "SIGKILL");
+    }
+    if (childExited(child)) {
+      finish();
+      return;
+    }
+    // Wait for waitpid so callers don't observe a zombie. Bound so a child
+    // that never emits 'exit' cannot hang quit. hasRef() is false inside a
+    // fired timer, so copy hold from the job (reapTree / awaitPendingKills).
+    timer = setTimeout(finish, 250);
+    job.timer = timer;
+    if (!job.hold && typeof timer.unref === "function") timer.unref();
+  }, delay);
+  job.timer = timer;
+  return job;
+}
+
+/**
  * SIGTERM the child's process group, then SIGKILL after `sigkillAfterMs`.
  * Returns the escalation timer so callers can clearTimeout in finish().
+ * Fire-and-forget: the timer is unref'd so ordinary Stop does not hold the
+ * event loop. Final app exit must `reapTree` / `awaitPendingKills` before
+ * `app.exit` — a ref'd timer is discarded by an explicit exit (#1232).
  *
  * @param {import("node:child_process").ChildProcess} child
  * @param {number} sigkillAfterMs
- * @returns {ReturnType<typeof setTimeout>}
+ * @returns {ReturnType<typeof setTimeout> | null}
  */
 function killTree(child, sigkillAfterMs) {
-  signalGroup(child, "SIGTERM");
-  const timer = setTimeout(() => {
-    signalGroup(child, "SIGKILL");
-  }, sigkillAfterMs);
-  // Unref'd like devservers.js: the escalation still fires while the app runs,
-  // but app quit (which kills without clearing the timer) is not held open 3s.
-  if (typeof timer.unref === "function") timer.unref();
-  return timer;
+  const job = startKill(child, sigkillAfterMs);
+  job.hold = false;
+  if (job.timer && typeof job.timer.unref === "function") job.timer.unref();
+  return job.timer;
 }
 
-module.exports = { killTree, agentSpawnOptions, signalGroup };
+/**
+ * Awaitable teardown for shutdown: TERM, wait for exit or the grace
+ * deadline, KILL survivors, then resolve. Already-dead children resolve
+ * immediately. The escalation timer is ref'd so a Node parent with no
+ * other handles still lives long enough to send SIGKILL.
+ *
+ * @param {import("node:child_process").ChildProcess} child
+ * @param {number} sigkillAfterMs
+ * @returns {Promise<void>}
+ */
+function reapTree(child, sigkillAfterMs) {
+  const job = startKill(child, sigkillAfterMs);
+  job.hold = true;
+  if (job.timer && typeof job.timer.ref === "function") job.timer.ref();
+  return job.promise;
+}
+
+/**
+ * Wait for every in-flight killTree/reapTree job. Re-refs escalation
+ * timers so an explicit exit cannot outrun SIGKILL. Never rejects.
+ *
+ * @returns {Promise<void>}
+ */
+function awaitPendingKills() {
+  const waiting = [];
+  for (const job of jobs.values()) {
+    job.hold = true;
+    if (job.timer && typeof job.timer.ref === "function") job.timer.ref();
+    waiting.push(job.promise);
+  }
+  return Promise.allSettled(waiting).then(() => {});
+}
+
+module.exports = {
+  killTree,
+  reapTree,
+  awaitPendingKills,
+  agentSpawnOptions,
+  signalGroup,
+};

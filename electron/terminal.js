@@ -20,6 +20,7 @@
 const spawn = require("cross-spawn");
 const { wrapCommand } = require("./ssh.js");
 const { wslTarget } = require("./wsl.js");
+const { killTree, reapTree } = require("./proc.js");
 
 /** Committed output kept per session. Older text is dropped from the front. */
 const BUFFER_LIMIT = 200_000;
@@ -159,34 +160,14 @@ function emptyState() {
 }
 
 /**
- * @param {number} pid
- * @param {NodeJS.Platform} platform
+ * Ordinary close: fire-and-forget TERM + unref'd KILL. Final quit uses
+ * reapTree so app.exit cannot discard the escalation timer (#1232).
+ *
+ * @param {import("node:child_process").ChildProcess | null | undefined} child
  */
-function killProcessGroup(pid, platform) {
-  if (!pid) return;
-  // Windows has no POSIX process groups; process.kill(-pid) throws there.
-  const target = platform === "win32" ? pid : -pid;
-  try {
-    process.kill(target, "SIGTERM");
-  } catch {
-    try {
-      process.kill(pid, "SIGTERM");
-    } catch {
-      // already gone
-    }
-  }
-  const timer = setTimeout(() => {
-    try {
-      process.kill(target, "SIGKILL");
-    } catch {
-      try {
-        process.kill(pid, "SIGKILL");
-      } catch {
-        // already gone
-      }
-    }
-  }, KILL_FALLBACK_MS);
-  if (typeof timer.unref === "function") timer.unref();
+function killSessionChild(child) {
+  if (!child) return;
+  killTree(child, KILL_FALLBACK_MS);
 }
 
 /**
@@ -329,13 +310,18 @@ function close(threadId) {
   const sess = sessions.get(threadId);
   if (!sess) return emptyState();
   sessions.delete(threadId);
-  if (sess.pid) killProcessGroup(sess.pid, sess.platform);
+  killSessionChild(sess.child);
   return emptyState();
 }
 
-/** Kill every session. Called from the app quit path. */
+/** Kill every session. Called from the app quit path; awaits SIGKILL. */
 function killAll() {
-  for (const threadId of [...sessions.keys()]) close(threadId);
+  const reaps = [];
+  for (const sess of sessions.values()) {
+    if (sess.child) reaps.push(reapTree(sess.child, KILL_FALLBACK_MS));
+  }
+  sessions.clear();
+  return Promise.allSettled(reaps).then(() => {});
 }
 
 module.exports = { open, write, read, close, killAll, BUFFER_LIMIT };
