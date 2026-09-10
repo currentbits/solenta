@@ -499,6 +499,41 @@ describe("queued follow-up (issue #92 / #314)", () => {
     m.unmount();
   });
 
+  it("restores the queued strip when cancel's host clear rejects", async () => {
+    const { fake, m } = await bootOnBusyThread();
+
+    await m.type(m.query("textarea"), "never mind this one");
+    await m.click(m.query('button[aria-label="Send"]'));
+    await m.flush();
+
+    const orig = fake.api.threads.setQueued.bind(fake.api.threads);
+    fake.api.threads.setQueued = (input) => {
+      if ((input as { prompt: string | null }).prompt === null) {
+        fake.calls.push({ channel: "threads.setQueued", args: [input] });
+        return Promise.reject(new Error("queue clear failed"));
+      }
+      return orig(input);
+    };
+
+    await m.click(m.query("button[data-cancel-queued]"));
+    await m.flush();
+
+    const listed = await fake.api.threads.list();
+    const row = listed.find((t) => t.id === "t-busy");
+    assert.equal(
+      row?.queued?.prompt,
+      "never mind this one",
+      "a rejected clear must leave the host queue unchanged",
+    );
+    const strip = m.query("[data-queued-prompt]");
+    assert.ok(strip, "a failed clear must keep the queued strip");
+    assert.match(strip!.textContent || "", /never mind this one/);
+    const alert = m.query('[role="alert"]');
+    assert.ok(alert, "the clear rejection must stay visible");
+    assert.match(alert!.textContent || "", /queue clear failed/);
+    m.unmount();
+  });
+
   it("cancel does not clobber an in-progress composer draft", async () => {
     const { m } = await bootOnBusyThread();
 
