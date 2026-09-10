@@ -58,6 +58,7 @@ import type {
   SpecStage,
   ThreadDetail,
   ThreadInfo,
+  ThreadForkOpts,
   BtwCard as BtwCardInfo,
   WorkLogItem,
   WorkSuggestion,
@@ -138,7 +139,13 @@ import {
 import type { SlashAction, SlashCommand } from "../slashCommands";
 import { ProviderQuotaDialog } from "./ProviderQuota";
 import type { ProviderLimitsLoader } from "../providerUsage";
-import { buildBestOfNEntries } from "../bestOfN";
+import {
+  bestOfNForkOpts,
+  bestOfNIsolationError,
+  buildBestOfNEntries,
+  snapshotFromFork,
+  type IsolatedSnapshot,
+} from "../bestOfN";
 import { createPrPrompt, isPrTooLargeMessage, splitPrPrompt } from "../prUi";
 import {
   blastRadiusLabel,
@@ -733,10 +740,11 @@ interface ThreadViewProps {
   onDismissRunError?: () => void;
   /**
    * Fork / hand off the open thread (round 49). Plain call = same harness;
-   * pass provider for hand-off.
+   * pass provider for hand-off. Best of N passes isolate + a shared start
+   * snapshot (#1223); ordinary Fork does not.
    */
   onFork?: (
-    opts?: { provider?: string; model?: string | null },
+    opts?: ThreadForkOpts,
   ) => void | Promise<void | ThreadInfo | null>;
   /**
    * Start a suggested-work chip as a new thread (issue #550). Caller forks
@@ -5341,11 +5349,12 @@ export const ThreadView = memo(function ThreadView({
   useModalFocus(snapOpen, snapDialogRef);
 
   /**
-   * Fork one thread per selected provider or profile, then start the same
-   * prompt on each new fork. Sequential: a run cannot start until its fork
-   * exists. Failures throw so Composer and the run-error banner both surface
-   * them. Profile forks set effort then permission on the new thread before
-   * the run, same order as pickProfile.
+   * Fork one isolated worktree per selected provider or profile, then start
+   * the same prompt on each new fork (#1223). Isolation and the shared start
+   * snapshot are decided before any candidate starts. Failures throw so
+   * Composer and the run-error banner both surface them. Profile forks set
+   * effort then permission on the new thread before the run, same order as
+   * pickProfile.
    */
   const runBestOfN = useCallback(
     async (selectedIds: string[], prompt: string) => {
@@ -5353,31 +5362,38 @@ export const ThreadView = memo(function ThreadView({
       if (!current || !onFork) {
         throw new Error("Failed to start Best of N");
       }
+      const isolationError = bestOfNIsolationError(current, project);
+      if (isolationError) throw new Error(isolationError);
       const availableIds = providers
         .filter((p) => p.available)
         .map((p) => p.id);
       const plan = buildBestOfNEntries(availableIds, selectedIds, agentProfiles);
       if (typeof plan === "string") throw new Error(plan);
-      const created: string[] = [];
+      const created: { id: string; entry: (typeof plan)[number] }[] = [];
+      let snapshot: IsolatedSnapshot | null = null;
       for (const entry of plan) {
-        const forked =
-          entry.kind === "profile"
-            ? await onFork({
-                provider: entry.provider,
-                model: entry.model,
-              })
-            : await onFork({ provider: entry.provider });
+        const forked = await onFork(bestOfNForkOpts(entry, snapshot));
         if (!forked || typeof forked !== "object" || !forked.id) {
           throw new Error("Failed to fork thread");
         }
-        created.push(forked.id);
+        if (!snapshot) snapshot = snapshotFromFork(forked);
+        created.push({ id: forked.id, entry });
         if (entry.kind === "profile") {
           await onSetReasoningEffort(entry.reasoningEffort, forked.id);
           await onSetPermissionMode(entry.permissionMode, forked.id);
         }
-        await onStartRun(prompt, forked.id);
       }
-      if (created[0]) onSelectThread?.(created[0]);
+      let startError: unknown = null;
+      for (const row of created) {
+        try {
+          await onStartRun(prompt, row.id);
+        } catch (err) {
+          startError = err;
+          break;
+        }
+      }
+      if (created[0]) onSelectThread?.(created[0].id);
+      if (startError) throw startError;
     },
     [
       agentProfiles,
@@ -5387,6 +5403,7 @@ export const ThreadView = memo(function ThreadView({
       onSetPermissionMode,
       onSetReasoningEffort,
       onStartRun,
+      project,
       providers,
     ],
   );
@@ -5394,7 +5411,7 @@ export const ThreadView = memo(function ThreadView({
   /**
    * Delegation command ("@provider task" in the composer): fork the open
    * thread onto the named provider, start the task on the fork, then select
-   * it so the user watches it run. Same fork-then-run sequence as Best of N.
+   * it so the user watches it run. Ordinary hand-off: no isolate flag.
    */
   const runDelegate = useCallback(
     async (providerId: string, task: string) => {
