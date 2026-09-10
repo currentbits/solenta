@@ -1622,6 +1622,90 @@ describe("Composer drill-down picker", () => {
     );
     m.unmount();
   });
+
+  it("moves focus out of the composer; Tab stays inside; Escape restores", async () => {
+    const h = makeHarness();
+    const m = await mount(composer(h, { provider: "claude", model: null }));
+    const opener = m.query('button[aria-label^="Model:"]') as HTMLElement | null;
+    assert.ok(opener, "model trigger");
+    await inAct(() => opener.focus());
+    await m.click(opener);
+    const dialog = m.query('[aria-label="Model picker"]') as HTMLElement | null;
+    assert.ok(dialog, "model picker");
+    assert.ok(
+      dialog.contains(document.activeElement),
+      "opening the dialog must move focus inside it",
+    );
+
+    await m.pressFocused("Tab");
+    const first = document.activeElement as HTMLElement;
+    assert.ok(dialog.contains(first), "Tab stays inside");
+
+    await m.pressFocused("Tab");
+    const second = document.activeElement as HTMLElement;
+    assert.ok(dialog.contains(second), "second Tab stays inside");
+    assert.notEqual(second, first);
+
+    let guard = 0;
+    while (document.activeElement !== first && guard < 40) {
+      await m.pressFocused("Tab");
+      assert.ok(
+        dialog.contains(document.activeElement),
+        "Tab stays inside while wrapping",
+      );
+      guard += 1;
+    }
+    assert.equal(document.activeElement, first, "Tab wraps inside the dialog");
+
+    await m.pressFocused("Escape");
+    assert.equal(m.query('[aria-label="Model picker"]'), null);
+    assert.equal(
+      document.activeElement,
+      opener,
+      "Escape restores the model trigger",
+    );
+    m.unmount();
+  });
+
+  it("keeps Tab inside after provider drill-in; Escape restores", async () => {
+    const h = makeHarness();
+    const m = await mount(composer(h, { provider: "claude", model: null }));
+    const opener = m.query('button[aria-label^="Model:"]') as HTMLElement | null;
+    assert.ok(opener, "model trigger");
+    await inAct(() => opener.focus());
+    await m.click(opener);
+    const dialog = m.query('[aria-label="Model picker"]') as HTMLElement | null;
+    assert.ok(dialog, "model picker");
+    assert.ok(
+      dialog.contains(document.activeElement),
+      "opening the dialog must move focus inside it",
+    );
+
+    assert.ok(await openProvider(m, "Claude Code"), "drill into a provider");
+    assert.ok(
+      dialog.contains(document.activeElement),
+      "opening the dialog must move focus inside it",
+    );
+    await m.pressFocused("Tab");
+    assert.ok(
+      dialog.contains(document.activeElement),
+      "Tab stays inside after drill-in",
+    );
+
+    await m.pressFocused("Escape");
+    assert.ok(
+      m.query('[role="listbox"][aria-label="Provider"]'),
+      "Escape steps back to providers",
+    );
+    await m.pressFocused("Escape");
+    assert.equal(m.query('[aria-label="Model picker"]'), null);
+    assert.equal(
+      document.activeElement,
+      opener,
+      "Escape restores the model trigger",
+    );
+    m.unmount();
+  });
 });
 
 describe("Composer model list search", () => {

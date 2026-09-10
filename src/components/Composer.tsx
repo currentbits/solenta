@@ -1390,9 +1390,9 @@ export const Composer = memo(function Composer({
     setViewOpen(false);
   }, [modelOpen, closeModelPicker]);
   useEscapeClose(anyMenuOpen, closeAllMenus);
-  // Listbox timeout already focuses the provider/model list on open and
-  // drill; takeFocus would steal that, and restore would fight
-  // closeModelPicker / Escape-back.
+  // Popovers, not aria-modal. Listbox timeout already focuses the
+  // provider/model list on open and drill; takeFocus would steal that,
+  // and restore would fight closeModelPicker / Escape-back.
   useModalFocus(modelOpen, modelPopoverRef, false);
   useModalFocus(bestOfNOpen, bestOfNPopoverRef);
 
@@ -2522,6 +2522,7 @@ export const Composer = memo(function Composer({
                   role="dialog"
                   aria-label="Model picker"
                   id={modelListId}
+                  tabIndex={-1}
                 >
                   <div className={styles.modelPopoverLeft}>
                     {drillProvider ? (
@@ -3220,8 +3221,8 @@ export const Composer = memo(function Composer({
                     className={styles.bestOfNPopover}
                     role="dialog"
                     aria-label="Best of N"
-                    tabIndex={-1}
                     data-best-of-n-popover=""
+                    tabIndex={-1}
                   >
                     <p className={styles.bestOfNHint}>
                       Each selection forks a new thread
