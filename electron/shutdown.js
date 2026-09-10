@@ -55,6 +55,10 @@ async function runAppCleanup(phases) {
  * is prevented and this owns the exit. Every entry point shares one cleanup
  * promise and exits exactly once, including when cleanup rejects.
  *
+ * Optional confirmQuit runs only on before-quit (menu, shortcut, window
+ * close that called app.quit). Cancel must return before cleanup starts.
+ * SIGINT/SIGTERM skip it so OS termination never waits on UI.
+ *
  * @param {{
  *   app: {
  *     on: (event: string, listener: (event?: { preventDefault?: () => void }) => void) => void,
@@ -63,10 +67,17 @@ async function runAppCleanup(phases) {
  *   exit?: (code: number) => void,
  *   cleanup: () => void | Promise<void>,
  *   log?: (message: string) => void,
+ *   confirmQuit?: () => boolean | Promise<boolean>,
  * }} opts
  * @returns {() => Promise<void>} shutdown, for tests
  */
-function installShutdown({ app, exit, cleanup, log = (m) => console.warn(m) }) {
+function installShutdown({
+  app,
+  exit,
+  cleanup,
+  log = (m) => console.warn(m),
+  confirmQuit,
+}) {
   // app.exit is immediate and skips before-quit/will-quit, unlike app.quit():
   // by the time we call it the cleanup this module owns has already run.
   const exitProcess =
@@ -108,11 +119,33 @@ function installShutdown({ app, exit, cleanup, log = (m) => console.warn(m) }) {
     void shutdown().then(() => exitOnce(0));
   }
 
+  let confirming = false;
+
   app.on("before-quit", (event) => {
     // Electron would tear the process down while the cleanup is still on its
     // first await; hold the quit and own the exit instead.
     if (event && typeof event.preventDefault === "function") {
       event.preventDefault();
+    }
+    if (cleanupPromise) return;
+    // User-initiated quit can ask first. Signals skip this and must never
+    // wait on a dialog (#1195).
+    if (typeof confirmQuit === "function") {
+      if (confirming) return;
+      confirming = true;
+      void Promise.resolve()
+        .then(() => confirmQuit())
+        .then(
+          (ok) => {
+            if (ok) shutdownThenExit();
+            else confirming = false;
+          },
+          (err) => {
+            if (log) log(`shutdown: confirm failed: ${reason(err)}`);
+            shutdownThenExit();
+          },
+        );
+      return;
     }
     shutdownThenExit();
   });
@@ -122,6 +155,7 @@ function installShutdown({ app, exit, cleanup, log = (m) => console.warn(m) }) {
   // then process.exit(0)s immediately). Do not switch that script to quit.
   process.on("SIGINT", shutdownThenExit);
   process.on("SIGTERM", shutdownThenExit);
+  shutdown.isActive = () => cleanupPromise != null;
   return shutdown;
 }
 

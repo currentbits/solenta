@@ -59,7 +59,7 @@ const PANE_META: Record<
     label: "General",
     hint: "Notifications, the welcome tour, and this build.",
     keywords:
-      "notifications tour welcome update version build channel nightly prod felt estimate time saved webhook slack discord ntfy push phone agents panel sidebar collapse remember last",
+      "notifications tour welcome update version build channel nightly prod felt estimate time saved webhook slack discord ntfy push phone agents panel sidebar collapse remember last quit confirm accidental close",
   },
   threads: {
     label: "Threads",
@@ -2077,6 +2077,34 @@ export function SettingsModal({
               <p className={styles.note}>
                 Only fires while the window is in the background. Mute a
                 single noisy thread from its snooze menu in the sidebar.
+              </p>
+            </div>
+            <div className={styles.field}>
+              <label className={styles.fieldRow}>
+                <input
+                  type="checkbox"
+                  data-confirm-quit-with-active-work=""
+                  checked={settings?.confirmQuitWithActiveWork !== false}
+                  disabled={saving || settings == null}
+                  onChange={(e) => {
+                    setError(null);
+                    void onSaveSettings({
+                      confirmQuitWithActiveWork: e.target.checked,
+                    }).catch((err) => {
+                      setError(
+                        err instanceof Error && err.message
+                          ? err.message
+                          : "Failed to save settings",
+                      );
+                    });
+                  }}
+                />
+                <span>Ask before quitting while work is running</span>
+              </label>
+              <p className={styles.note}>
+                Cmd/Ctrl+Q, the Quit menu, and closing the last window on
+                Windows or Linux show what will stop. macOS window close
+                still hides the app.
               </p>
             </div>
             <div className={styles.field} data-webhook-settings="">

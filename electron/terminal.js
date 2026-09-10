@@ -338,4 +338,13 @@ function killAll() {
   for (const threadId of [...sessions.keys()]) close(threadId);
 }
 
-module.exports = { open, write, read, close, killAll, BUFFER_LIMIT };
+/** Thread ids whose shell is still alive. Dead sessions do not count. */
+function listLive() {
+  const ids = [];
+  for (const [id, sess] of sessions) {
+    if (sess && !sess.dead && isAlive(sess.pid)) ids.push(id);
+  }
+  return ids;
+}
+
+module.exports = { open, write, read, close, killAll, listLive, BUFFER_LIMIT };
