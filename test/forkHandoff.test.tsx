@@ -164,6 +164,11 @@ describe("App fork / hand-off wiring (round 49)", () => {
       false,
       "plain Fork must not pass a provider override",
     );
+    assert.equal(
+      Object.prototype.hasOwnProperty.call(arg, "isolate"),
+      false,
+      "plain Fork must not isolate a worktree",
+    );
 
     // Selection moves to the new thread (createThread-style).
     assert.ok(
@@ -478,6 +483,67 @@ describe("App fork / hand-off wiring (round 49)", () => {
       Object.prototype.hasOwnProperty.call(arg, "provider"),
       false,
     );
+    assert.equal(
+      Object.prototype.hasOwnProperty.call(arg, "isolate"),
+      false,
+      "Environment Fork must not isolate a worktree",
+    );
+    m.unmount();
+  });
+
+  it("Best of N forks with isolate and reuses the first snapshot (#1223)", async () => {
+    const d = decoy();
+    const s = source();
+    const fake = createFakeCoder({
+      projects: [
+        project({ id: "p1", slug: "acme/one", name: "one", path: "/tmp/one" }),
+      ],
+      providers,
+      threads: [d, s],
+      details: {
+        "t-decoy": detail({ thread: d }),
+        "t-source-fork": detail({ thread: s }),
+      },
+    });
+    const m = await boot(fake);
+    await selectThread(m, "source handoff thread");
+
+    const ta = m.query("textarea");
+    assert.ok(ta, "composer textarea");
+    await m.type(ta, "race this");
+    const trigger = m.query("[data-best-of-n]") as HTMLButtonElement | null;
+    assert.ok(trigger, "Best of N trigger");
+    await m.click(trigger);
+    await m.click(m.query('input[data-best-of-n-provider="claude"]') as HTMLElement);
+    await m.click(m.query('input[data-best-of-n-provider="grok"]') as HTMLElement);
+    await m.click(m.query("[data-best-of-n-run]") as HTMLElement);
+    await m.flush();
+
+    const forks = fake.of("threads.fork");
+    assert.equal(forks.length, 2, "one fork per candidate");
+    const first = forks[0]!.args[0] as {
+      threadId: string;
+      isolate?: boolean;
+      provider?: string;
+      leadSnapshotSha?: string;
+    };
+    const second = forks[1]!.args[0] as {
+      isolate?: boolean;
+      provider?: string;
+      leadSnapshotSha?: string;
+    };
+    assert.equal(first.threadId, "t-source-fork");
+    assert.equal(first.isolate, true);
+    assert.equal(second.isolate, true);
+    assert.ok(first.provider);
+    assert.ok(second.provider);
+    assert.notEqual(first.provider, second.provider);
+    assert.equal(
+      second.leadSnapshotSha,
+      "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "second candidate reuses the first fork's recorded start",
+    );
+    assert.equal(fake.of("runs.start").length, 2);
     m.unmount();
   });
 });

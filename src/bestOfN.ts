@@ -1,11 +1,28 @@
 import type {
   AgentProfile,
   PermissionMode,
+  ProjectInfo,
   ProviderInfo,
   ReasoningEffort,
+  ThreadForkOpts,
+  ThreadInfo,
 } from "./shared/ipc";
 
 const BEST_OF_N_TOO_FEW = "Select at least two installed providers";
+
+export const BEST_OF_N_ISOLATE_ASK =
+  "Cannot isolate this fork: Ask threads stay in the shared checkout.";
+export const BEST_OF_N_ISOLATE_REMOTE =
+  "Cannot isolate this fork: remote projects cannot host git worktrees.";
+export const BEST_OF_N_ISOLATE_NO_GIT =
+  "Cannot isolate this fork: the project is not a local git repository.";
+
+/** Committed start snapshot shared by every candidate in a Best of N race. */
+export type IsolatedSnapshot = {
+  sha: string;
+  branch: string | null;
+  dirty?: boolean;
+};
 
 /** One Best of N fork: a bare provider override, or a full saved profile. */
 export type BestOfNEntry =
@@ -67,4 +84,66 @@ export function buildBestOfNEntries(
 export function providerVendor(provider: ProviderInfo): string {
   const info = provider.modelInfo[0];
   return info?.vendor ?? "";
+}
+
+/**
+ * Preflight for Best of N isolation (#1223). Returns a user-facing error
+ * when the project cannot host independent candidate worktrees. Service
+ * forkThread(isolate: true) repeats the same checks fail-closed.
+ */
+export function bestOfNIsolationError(
+  thread: Pick<ThreadInfo, "ask"> | null | undefined,
+  project: Pick<ProjectInfo, "remoteHost" | "path" | "scm"> | null | undefined,
+): string | null {
+  if (thread?.ask) return BEST_OF_N_ISOLATE_ASK;
+  if (!project || !project.path) return BEST_OF_N_ISOLATE_NO_GIT;
+  if (project.remoteHost) return BEST_OF_N_ISOLATE_REMOTE;
+  if (project.scm?.support === "unsupported") {
+    return `Cannot isolate this fork: ${
+      project.scm.detail || "this checkout does not support git worktrees."
+    }`;
+  }
+  return null;
+}
+
+/** Fork options for one Best of N candidate. Isolation is required. */
+export function bestOfNForkOpts(
+  entry: BestOfNEntry,
+  snapshot?: IsolatedSnapshot | null,
+): ThreadForkOpts {
+  const opts: ThreadForkOpts = {
+    isolate: true,
+    provider: entry.provider,
+  };
+  if (entry.kind === "profile") opts.model = entry.model;
+  if (snapshot && snapshot.sha) {
+    opts.leadSnapshotSha = snapshot.sha;
+    opts.leadSnapshotBranch = snapshot.branch;
+    if (snapshot.dirty) opts.leadSnapshotDirty = true;
+  }
+  return opts;
+}
+
+/** Pull a reusable start snapshot off an isolated fork's return value. */
+export function snapshotFromFork(
+  thread: Pick<
+    ThreadInfo,
+    "leadSnapshotSha" | "leadSnapshotBranch" | "leadSnapshotDirty"
+  > | null | undefined,
+): IsolatedSnapshot | null {
+  const sha =
+    thread && typeof thread.leadSnapshotSha === "string"
+      ? thread.leadSnapshotSha.trim()
+      : "";
+  if (!sha) return null;
+  return {
+    sha,
+    branch:
+      thread &&
+      typeof thread.leadSnapshotBranch === "string" &&
+      thread.leadSnapshotBranch.trim()
+        ? thread.leadSnapshotBranch.trim()
+        : null,
+    dirty: thread?.leadSnapshotDirty === true,
+  };
 }

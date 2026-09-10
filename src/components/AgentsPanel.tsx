@@ -57,6 +57,7 @@ import type {
   HarnessImportPreview,
   HarnessInstallRequest,
   HarnessInstallResult,
+  ThreadForkOpts,
   ThreadInfo,
   ThreadSummaryInfo,
   CrewTaskView,
@@ -291,7 +292,7 @@ interface AgentsPanelProps {
    * provider for hand-off. Absent hides the Environment Fork card.
    */
   onFork?: (
-    opts?: { provider?: string; model?: string | null },
+    opts?: ThreadForkOpts,
   ) => void | Promise<void | ThreadInfo | null>;
   /** Merge-queue lanes (#346). Absent hides the Environment Lanes card. */
   claimLane?: (input: { threadId: string }) => Promise<MergeLaneClaim>;
@@ -595,7 +596,7 @@ export function ForkCard({
   thread: ThreadInfo | null;
   providers: ProviderInfo[];
   onFork: (
-    opts?: { provider?: string; model?: string | null },
+    opts?: ThreadForkOpts,
   ) => void | Promise<void | ThreadInfo | null>;
 }) {
   const menuRef = useRef<HTMLDivElement>(null);
@@ -2196,7 +2197,7 @@ export function GitTab({
   prsActive?: boolean;
   providers?: ProviderInfo[];
   onFork?: (
-    opts?: { provider?: string; model?: string | null },
+    opts?: ThreadForkOpts,
   ) => void | Promise<void | ThreadInfo | null>;
 }) {
   const [checkpoints, setCheckpoints] = useState<CheckpointInfo[]>([]);
