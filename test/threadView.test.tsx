@@ -3429,6 +3429,358 @@ describe("ThreadView reply-as-context and wait-what (#381)", () => {
   });
 });
 
+function textNodesOf(root: Node): Text[] {
+  const out: Text[] = [];
+  const walk = (node: Node) => {
+    if (node.nodeType === 3) out.push(node as Text);
+    for (const child of Array.from(node.childNodes)) walk(child);
+  };
+  walk(root);
+  return out;
+}
+
+function selectNeedle(root: Element, needle: string): void {
+  for (const node of textNodesOf(root)) {
+    const idx = node.data.indexOf(needle);
+    if (idx < 0) continue;
+    const range = document.createRange();
+    range.setStart(node, idx);
+    range.setEnd(node, idx + needle.length);
+    const sel = window.getSelection();
+    sel?.removeAllRanges();
+    sel?.addRange(range);
+    return;
+  }
+  throw new Error(`needle not in tree: ${needle}`);
+}
+
+function selectAcross(startEl: Element, endEl: Element): void {
+  const startNodes = textNodesOf(startEl);
+  const endNodes = textNodesOf(endEl);
+  assert.ok(startNodes[0], "start card has text");
+  assert.ok(endNodes[0], "end card has text");
+  const range = document.createRange();
+  range.setStart(startNodes[0], 0);
+  const endText = endNodes[0];
+  range.setEnd(endText, Math.min(4, endText.data.length));
+  const sel = window.getSelection();
+  sel?.removeAllRanges();
+  sel?.addRange(range);
+}
+
+describe("ThreadView cite selection (#1218)", () => {
+  const longAnswer =
+    "Keep this intro. Alpha needs a fix. Bravo is also wrong. Ignore the outro.";
+
+  it("Cites only the selected sentences and leaves the draft unsent", async () => {
+    const sent: string[] = [];
+    const m = await mount(
+      view({
+        onStartRun: (prompt) => {
+          sent.push(prompt);
+        },
+        detail: detail({
+          messages: [
+            msg({ id: "a1", role: "assistant", text: longAnswer, createdAt: 20 }),
+          ],
+        }),
+      }),
+    );
+    const ta = m.container.querySelector("textarea");
+    assert.ok(ta);
+    await m.type(ta, "please correct those two");
+    const body = m.query("[data-cite-body]");
+    assert.ok(body, "assistant body is selectable");
+    selectNeedle(body, "Alpha needs a fix. Bravo is also wrong.");
+    await m.click(m.query("[data-msg-cite]"));
+    const chip = m.query("[data-reply-chip]");
+    assert.ok(chip, "cite chip appears");
+    assert.match(chip.textContent ?? "", /Alpha needs a fix/);
+    assert.match(chip.textContent ?? "", /Bravo is also wrong/);
+    assert.ok(
+      !chip.textContent?.includes("Keep this intro"),
+      "intro stays out of the quote",
+    );
+    assert.ok(
+      !chip.textContent?.includes("Ignore the outro"),
+      "outro stays out of the quote",
+    );
+    assert.equal((ta as HTMLTextAreaElement).value, "please correct those two");
+    assert.equal(sent.length, 0, "Cite must not send");
+  });
+
+  it("rejects an empty selection and a range that spans cards", async () => {
+    const m = await mount(
+      view({
+        detail: detail({
+          messages: [
+            msg({
+              id: "a1",
+              role: "assistant",
+              text: "First card sentence.",
+              createdAt: 20,
+            }),
+            msg({
+              id: "a2",
+              role: "assistant",
+              text: "Second card sentence.",
+              createdAt: 21,
+            }),
+          ],
+        }),
+      }),
+    );
+    await m.click(m.query("[data-msg-cite]"));
+    assert.equal(m.query("[data-reply-chip]"), null, "empty selection is rejected");
+
+    const bodies = m.queryAll("[data-cite-body]");
+    assert.equal(bodies.length, 2);
+    selectAcross(bodies[0]!, bodies[1]!);
+    await m.click(m.query("[data-msg-cite]"));
+    assert.equal(
+      m.query("[data-reply-chip]"),
+      null,
+      "spanning two cards cannot cite",
+    );
+
+    const replyBtn = m.query("[data-msg-reply]");
+    assert.ok(replyBtn);
+    const startNodes = textNodesOf(bodies[0]!);
+    assert.ok(startNodes[0]);
+    const range = document.createRange();
+    range.setStart(startNodes[0], 0);
+    range.setEnd(replyBtn, 0);
+    const sel = window.getSelection();
+    sel?.removeAllRanges();
+    sel?.addRange(range);
+    await m.click(m.query("[data-msg-cite]"));
+    assert.equal(
+      m.query("[data-reply-chip]"),
+      null,
+      "a range that includes message chrome cannot cite",
+    );
+  });
+
+  it("quotes visible markdown words, not a raw source slice", async () => {
+    const m = await mount(
+      view({
+        detail: detail({
+          messages: [
+            msg({
+              id: "a1",
+              role: "assistant",
+              text: "Intro. The **wrong** default is used. Outro.",
+              createdAt: 20,
+            }),
+          ],
+        }),
+      }),
+    );
+    const body = m.query("[data-cite-body]");
+    assert.ok(body);
+    selectNeedle(body, "wrong");
+    const after = Array.from(body.querySelectorAll("p, li, code, span"))
+      .map((el) => el)
+      .find((el) => (el.textContent ?? "").includes("default is used"));
+    const wrong = body.querySelector("strong, b");
+    if (wrong?.firstChild && after) {
+      let startNode: Text | null = null;
+      let endNode: Text | null = null;
+      for (const node of textNodesOf(body)) {
+        if (node.data.includes("wrong")) startNode = node;
+        if (node.data.includes("default is used")) endNode = node;
+      }
+      if (startNode && endNode) {
+        const range = document.createRange();
+        range.setStart(startNode, startNode.data.indexOf("wrong"));
+        const endIdx = endNode.data.indexOf("default is used") + "default is used".length;
+        range.setEnd(endNode, endIdx);
+        const sel = window.getSelection();
+        sel?.removeAllRanges();
+        sel?.addRange(range);
+      }
+    }
+    await m.click(m.query("[data-msg-cite]"));
+    const chip = m.query("[data-reply-chip]");
+    assert.ok(chip);
+    assert.match(chip.textContent ?? "", /wrong/);
+    assert.ok(
+      !chip.textContent?.includes("**"),
+      "visible selection must not become a raw markdown slice",
+    );
+  });
+
+  it("keeps the quote on its source thread and does not apply a delayed cite to another", async () => {
+    const longA = detail({
+      thread: thread({ id: "t-a", title: "alpha" }),
+      messages: [
+        msg({ id: "a1", role: "assistant", text: longAnswer, createdAt: 20 }),
+      ],
+    });
+    const otherB = detail({
+      thread: thread({ id: "t-b", title: "beta" }),
+      messages: [
+        msg({
+          id: "b1",
+          role: "assistant",
+          text: "Unrelated other thread answer.",
+          createdAt: 20,
+        }),
+      ],
+    });
+
+    function SwitchHarness() {
+      const [open, setOpen] = useState<"a" | "b">("a");
+      return (
+        <div>
+          <button type="button" data-open-b="" onClick={() => setOpen("b")}>
+            b
+          </button>
+          <button type="button" data-open-a="" onClick={() => setOpen("a")}>
+            a
+          </button>
+          {view({ detail: open === "a" ? longA : otherB })}
+        </div>
+      );
+    }
+
+    const m = await mount(<SwitchHarness />);
+    const body = m.query("[data-cite-body]");
+    assert.ok(body);
+    selectNeedle(body, "Alpha needs a fix. Bravo is also wrong.");
+    await m.click(m.query("[data-msg-cite]"));
+    assert.ok(m.query("[data-reply-chip]"));
+    await m.click(m.query("[data-open-b]"));
+    assert.equal(
+      m.query("[data-reply-chip]"),
+      null,
+      "quote must not follow the user onto another thread",
+    );
+    const otherCite = m.query("[data-msg-cite]");
+    assert.ok(otherCite);
+    await m.click(otherCite);
+    assert.equal(
+      m.query("[data-reply-chip]"),
+      null,
+      "empty/stale selection cannot cite the new thread",
+    );
+    await m.click(m.query("[data-open-a]"));
+    const chip = m.query("[data-reply-chip]");
+    assert.ok(chip, "quote stays with the source thread draft");
+    assert.match(chip.textContent ?? "", /Alpha needs a fix/);
+  });
+
+  it("jumps to an earlier source message and stays readable when it is gone", async () => {
+    const early = msg({
+      id: "early-a",
+      role: "assistant",
+      text: longAnswer,
+      createdAt: 0,
+    });
+    const longDetail = detail({
+      thread: thread({ id: "t-long" }),
+      messages: [early, ...bulkMessages(500)],
+    });
+    const other = detail({
+      thread: thread({ id: "t-other", title: "other" }),
+      messages: [
+        msg({ id: "z1", role: "assistant", text: "other", createdAt: 1 }),
+      ],
+    });
+    const gone = detail({
+      thread: thread({ id: "t-long" }),
+      messages: bulkMessages(500),
+    });
+
+    function JumpHarness() {
+      const [mode, setMode] = useState<"cite" | "other" | "back" | "gone">(
+        "cite",
+      );
+      const open =
+        mode === "other" ? other : mode === "gone" ? gone : longDetail;
+      return (
+        <div>
+          <button type="button" data-go-other="" onClick={() => setMode("other")}>
+            other
+          </button>
+          <button type="button" data-go-back="" onClick={() => setMode("back")}>
+            back
+          </button>
+          <button type="button" data-go-gone="" onClick={() => setMode("gone")}>
+            gone
+          </button>
+          {view({
+            detail: open,
+            revealMessageId: mode === "cite" ? "early-a" : null,
+          })}
+        </div>
+      );
+    }
+
+    const m = await mount(<JumpHarness />);
+    assert.ok(m.query('[data-msg="early-a"]'), "source starts visible");
+    const body = m.query('[data-msg="early-a"] [data-cite-body]');
+    assert.ok(body);
+    selectNeedle(body, "Alpha needs a fix. Bravo is also wrong.");
+    await m.click(m.query("[data-msg-cite]"));
+    await m.click(m.query("[data-go-other]"));
+    await m.click(m.query("[data-go-back]"));
+    assert.equal(
+      m.query('[data-msg="early-a"]'),
+      null,
+      "tail window hides the earlier source after a round-trip",
+    );
+    const sourceBtn = m.query("[data-reply-source]");
+    assert.ok(sourceBtn);
+    await m.click(sourceBtn);
+    assert.ok(
+      m.query('[data-msg="early-a"]'),
+      "source control must open earlier history",
+    );
+
+    await m.click(m.query("[data-go-gone]"));
+    const chip = m.query("[data-reply-chip]");
+    assert.ok(chip);
+    assert.match(chip.textContent ?? "", /Alpha needs a fix/);
+    assert.equal(chip.getAttribute("data-reply-source"), "unavailable");
+    await m.click(m.query("[data-reply-source]"));
+    assert.equal(
+      m.query('[data-msg="early-a"]'),
+      null,
+      "unavailable source does not jump",
+    );
+  });
+
+  it("lets a keyboard user cite the current selection", async () => {
+    const m = await mount(
+      view({
+        detail: detail({
+          messages: [
+            msg({ id: "a1", role: "assistant", text: longAnswer, createdAt: 20 }),
+          ],
+        }),
+      }),
+    );
+    const body = m.query("[data-cite-body]");
+    assert.ok(body);
+    selectNeedle(body, "Alpha needs a fix. Bravo is also wrong.");
+    await inAct(() => {
+      window.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: "c",
+          metaKey: true,
+          shiftKey: true,
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+    });
+    const chip = m.query("[data-reply-chip]");
+    assert.ok(chip, "Mod+Shift+C cites the selection");
+    assert.match(chip.textContent ?? "", /Alpha needs a fix/);
+  });
+});
+
 describe("ThreadView Focus / Summary mode (issue #461)", () => {
   const settledTools = () =>
     detail({

@@ -1173,12 +1173,37 @@
   color: var(--text-muted);
 }
 
-.replyChipText {
+.replyChipText,
+.replyChipSource {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   color: var(--text-dim);
+}
+
+.replyChipSource {
+  flex: 1;
+  border: none;
+  background: transparent;
+  padding: 0;
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
+}
+
+.replyChipSource:disabled {
+  cursor: default;
+}
+
+.replyChipTruncated {
+  flex-shrink: 0;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.replyChip[data-reply-source="unavailable"] .replyChipSource {
+  font-style: italic;
 }
 
 .pasteCardList {

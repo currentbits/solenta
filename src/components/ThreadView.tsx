@@ -44,7 +44,6 @@ import type {
   PrInfo,
   PrTemplateResult,
   PendingPermissionInfo,
-  PendingQuestion,
   PermissionDecision,
   PermissionMode,
   CliSlashCommand,
@@ -126,6 +125,9 @@ import {
   type ToolGroup,
 } from "../toolGroups";
 import { RunArtifacts } from "./RunArtifacts";
+import { QuestionPrompt } from "./QuestionPrompt";
+import { formatQuestionAnswer } from "../questionAnswer";
+import { supportsImagesForModel } from "../modelPicker";
 import {
   TurnDiffPanel,
   type DiffViewMode,
@@ -212,7 +214,13 @@ import { DROP_OVERLAY_MESSAGE, type DroppedFolder } from "../dropFiles";
 import { Composer } from "./Composer";
 import { repoRelativeDir } from "../mention";
 import { createDoubleOptionTracker } from "../appsnapHotkey";
-import type { ReplyTarget } from "../replyContext";
+import {
+  captureCiteFromSelection,
+  citeBodyFromSelection,
+  makeReplyTarget,
+  replySourceUnavailable,
+  type ReplyTarget,
+} from "../replyContext";
 import { waitWhatPrompt } from "../waitWhat";
 import { Markdown } from "./Markdown";
 import { sessionImagePathsFromMessages } from "../sessionImages";
@@ -1488,9 +1496,11 @@ const MessageBlock = memo(function MessageBlock({
   onLoadAttachmentImage,
   onSelectThread,
   onReply,
+  onCiteSelection,
   onWaitWhat,
   pinned = false,
   onTogglePin,
+  threadId = null,
 }: {
   message: ChatMessage;
   autoExpandTool: boolean;
@@ -1515,9 +1525,11 @@ const MessageBlock = memo(function MessageBlock({
   provenance?: MessageProvenance | null;
   onSelectThread?: (id: string) => void;
   onReply?: (message: ChatMessage) => void;
+  onCiteSelection?: (target: ReplyTarget) => void;
   onWaitWhat?: (message: ChatMessage) => void;
   pinned?: boolean;
   onTogglePin?: () => void;
+  threadId?: string | null;
 }) {
   // Latch at mount; see ToolCallCard for why.
   const [entered] = useState(Boolean(animateIn));
@@ -1591,8 +1603,13 @@ const MessageBlock = memo(function MessageBlock({
     <article
       className={`${styles.message}${entered ? ` ${styles.streamIn}` : ""}`}
       data-stream-in={entered ? "" : undefined}
+      data-msg={message.id}
+      data-thread={threadId ?? undefined}
+      data-streaming={streaming ? "" : undefined}
     >
-      <Markdown text={message.text} />
+      <div data-cite-body="">
+        <Markdown text={message.text} />
+      </div>
       {streaming && (
         <span
           className={styles.streamCaret}
@@ -1604,7 +1621,9 @@ const MessageBlock = memo(function MessageBlock({
       <footer className={styles.msgMeta}>
         <span>{metaLine}</span>
         {(onTogglePin ||
-          (!streaming && message.text.trim() && (onReply || onWaitWhat))) && (
+          (!streaming &&
+            message.text.trim() &&
+            (onReply || onCiteSelection || onWaitWhat))) && (
           <span className={styles.msgActions}>
             {onTogglePin && (
               <button
@@ -1628,6 +1647,29 @@ const MessageBlock = memo(function MessageBlock({
                 onClick={() => onReply(message)}
               >
                 Reply
+              </button>
+            )}
+            {!streaming && onCiteSelection && threadId && message.text.trim() && (
+              <button
+                type="button"
+                className={styles.msgAction}
+                data-msg-cite=""
+                title="Quote the selected text as context for the next send (⌘⇧C)"
+                onClick={(e) => {
+                  const article = e.currentTarget.closest("[data-msg]");
+                  const citeBody = article?.querySelector("[data-cite-body]");
+                  if (!(citeBody instanceof Element)) return;
+                  const target = captureCiteFromSelection({
+                    selection: window.getSelection(),
+                    messageId: message.id,
+                    threadId,
+                    sourceText: message.text,
+                    citeBody,
+                  });
+                  if (target) onCiteSelection(target);
+                }}
+              >
+                Cite
               </button>
             )}
             {!streaming && onWaitWhat && message.text.trim() && (
@@ -2444,203 +2486,7 @@ function NextGitActionButton({
   );
 }
 
-/**
- * Answer text for a persisted question card (issue #647). The agent's turn is
- * already over, so this is an ordinary user message — and it repeats the
- * question, because on a session that could not resume it is the only record
- * of what was being answered.
- */
-export function formatQuestionAnswer(answers: Record<string, string>): string {
-  const lines = Object.entries(answers)
-    .filter(([, picked]) => picked)
-    .map(([question, picked]) => `${question}\n→ ${picked}`);
-  return lines.length ? `Answering your question:\n\n${lines.join("\n\n")}` : "";
-}
-
-/**
- * Option picker for an agent question. Options answer with a click or the 1-9
- * keys; a lone single-select question submits immediately, everything else
- * collects picks and submits together. Free text via "Other".
- *
- * Two sources feed the same card (issue #647): claude's blocking
- * AskUserQuestion permission prompt, where answering resumes the live run, and
- * the persisted thread.pendingQuestion left behind by grok/kimi, where
- * answering is simply the next message. Hence callbacks rather than a
- * pendingPermission — the picker does not care which one it is driving.
- */
-function QuestionPrompt({
-  questions,
-  onAnswer,
-  onDismiss,
-}: {
-  questions: PendingQuestion[];
-  onAnswer: (answers: Record<string, string>) => void | Promise<void>;
-  onDismiss: () => void | Promise<void>;
-}) {
-  const [picked, setPicked] = useState<Record<number, string[]>>({});
-  const [other, setOther] = useState<Record<number, string>>({});
-  const [sent, setSent] = useState(false);
-
-  const answerFor = useCallback(
-    (i: number): string => {
-      const parts = [...(picked[i] ?? [])];
-      const extra = (other[i] ?? "").trim();
-      if (extra) parts.push(extra);
-      return parts.join(", ");
-    },
-    [picked, other],
-  );
-  const allAnswered = questions.every((_, i) => answerFor(i) !== "");
-  // A lone single-select question answers straight from the click/keypress.
-  const instant = questions.length === 1 && !questions[0].multiSelect;
-
-  const submit = useCallback(
-    (override?: { index: number; label: string }) => {
-      if (sent) return;
-      const answers: Record<string, string> = {};
-      questions.forEach((q, i) => {
-        answers[q.question] =
-          override && override.index === i ? override.label : answerFor(i);
-      });
-      setSent(true);
-      void onAnswer(answers);
-    },
-    [sent, questions, answerFor, onAnswer],
-  );
-
-  const choose = useCallback(
-    (qi: number, label: string) => {
-      if (instant) {
-        submit({ index: qi, label });
-        return;
-      }
-      setPicked((prev) => {
-        const cur = prev[qi] ?? [];
-        const next = questions[qi].multiSelect
-          ? cur.includes(label)
-            ? cur.filter((l) => l !== label)
-            : [...cur, label]
-          : [label];
-        return { ...prev, [qi]: next };
-      });
-    },
-    [instant, questions, submit],
-  );
-
-  // 1-9 pick an option of the first unanswered question; Enter submits.
-  useEffect(() => {
-    const onKey = (ev: KeyboardEvent) => {
-      const t = ev.target as HTMLElement | null;
-      if (
-        t &&
-        (t.tagName === "INPUT" ||
-          t.tagName === "TEXTAREA" ||
-          t.isContentEditable)
-      ) {
-        return;
-      }
-      if (ev.metaKey || ev.ctrlKey || ev.altKey) return;
-      if (ev.key === "Enter") {
-        if (allAnswered) {
-          ev.preventDefault();
-          submit();
-        }
-        return;
-      }
-      const n = Number(ev.key);
-      if (!Number.isInteger(n) || n < 1) return;
-      let qi = questions.findIndex((_, i) => answerFor(i) === "");
-      if (qi < 0) qi = questions.length - 1;
-      const opt = questions[qi]?.options[n - 1];
-      if (!opt) return;
-      ev.preventDefault();
-      choose(qi, opt.label);
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [questions, answerFor, allAnswered, choose, submit]);
-
-  return (
-    <div
-      className={styles.permissionCard}
-      role="alertdialog"
-      aria-label="Agent question"
-    >
-      {questions.map((q, qi) => (
-        <div key={qi} className={styles.questionBlock}>
-          <div className={styles.permissionHead}>
-            {q.header && (
-              <span className={styles.questionChip}>{q.header}</span>
-            )}
-            {q.question}
-          </div>
-          <div className={styles.questionOptions}>
-            {q.options.map((opt, oi) => {
-              const isPicked = (picked[qi] ?? []).includes(opt.label);
-              return (
-                <button
-                  key={oi}
-                  type="button"
-                  className={styles.questionOption}
-                  data-picked={isPicked || undefined}
-                  onClick={() => choose(qi, opt.label)}
-                >
-                  <span className={styles.questionKey}>{oi + 1}</span>
-                  <span className={styles.questionText}>
-                    <span className={styles.questionLabel}>{opt.label}</span>
-                    {opt.description && (
-                      <span className={styles.questionDesc}>
-                        {opt.description}
-                      </span>
-                    )}
-                  </span>
-                </button>
-              );
-            })}
-            <input
-              type="text"
-              className={styles.questionOther}
-              placeholder="Other…"
-              value={other[qi] ?? ""}
-              onChange={(ev) =>
-                setOther((prev) => ({ ...prev, [qi]: ev.target.value }))
-              }
-              onKeyDown={(ev) => {
-                if (ev.key === "Enter" && answerFor(qi) !== "" && allAnswered) {
-                  ev.preventDefault();
-                  submit();
-                }
-              }}
-            />
-          </div>
-        </div>
-      ))}
-      <div className={styles.permissionActions}>
-        {(!instant || (other[0] ?? "").trim() !== "") && (
-          <button
-            type="button"
-            className={styles.permissionAllow}
-            disabled={!allAnswered || sent}
-            onClick={() => submit()}
-          >
-            Answer
-          </button>
-        )}
-        <button
-          type="button"
-          className={styles.permissionDeny}
-          disabled={sent}
-          onClick={() => {
-            setSent(true);
-            void onDismiss();
-          }}
-        >
-          Dismiss
-        </button>
-      </div>
-    </div>
-  );
-}
+export { formatQuestionAnswer } from "../questionAnswer";
 
 /**
  * Plan approval (ExitPlanMode): the plan rendered as markdown in the prompt
@@ -4770,7 +4616,16 @@ export const ThreadView = memo(function ThreadView({
     screenshotHandoffThreadId.current = threadId;
     screenshotHandoffGen.current += 1;
   }
-  const [replyTo, setReplyTo] = useState<ReplyTarget | null>(null);
+  const [replyByThread, setReplyByThread] = useState<
+    Record<string, ReplyTarget>
+  >({});
+  const replyTo = threadId ? (replyByThread[threadId] ?? null) : null;
+  const replySourceGone = replyTo
+    ? replySourceUnavailable(
+        replyTo,
+        detail?.messages.find((m) => m.id === replyTo.messageId),
+      )
+    : false;
   const [snapOpen, setSnapOpen] = useState(false);
   const snapDialogRef = useRef<HTMLDivElement>(null);
   const [snapWindows, setSnapWindows] = useState<
@@ -4853,8 +4708,7 @@ export const ThreadView = memo(function ThreadView({
     initialWindowStart(timeline.length),
   );
   const pendingPrepend = useRef<number | null>(null);
-  const revealTargetId = revealMessageId || jumpMessageId;
-
+  const revealTargetId = revealMessageId ?? jumpMessageId;
   const revealIndex = useMemo(() => {
     if (!revealTargetId) return -1;
     return timeline.findIndex(
@@ -4875,6 +4729,7 @@ export const ThreadView = memo(function ThreadView({
   if (threadId !== windowThreadId) {
     setWindowThreadId(threadId);
     setWindowStart(start);
+    setJumpMessageId(null);
   } else if (start < windowStart) {
     setWindowStart(start);
   }
@@ -4951,6 +4806,16 @@ export const ThreadView = memo(function ThreadView({
       }
     }
   });
+
+  useLayoutEffect(() => {
+    if (!revealTargetId) return;
+    const root = bodyRef.current;
+    if (!root) return;
+    const el = Array.from(root.querySelectorAll("[data-msg]")).find(
+      (node) => node.getAttribute("data-msg") === revealTargetId,
+    );
+    el?.scrollIntoView({ block: "nearest" });
+  }, [revealTargetId, start]);
 
   /** Run duration per runId, for assistant-message meta footers. Opt-in. */
   const showRunDuration = useRunDurationEnabled();
@@ -5479,9 +5344,33 @@ export const ThreadView = memo(function ThreadView({
     [onStartRun],
   );
 
-  const handleReply = useCallback((message: ChatMessage) => {
-    setReplyTo({ messageId: message.id, text: message.text });
+  const storeReply = useCallback((target: ReplyTarget) => {
+    const tid = target.threadId;
+    if (!tid) return;
+    setReplyByThread((prev) => ({ ...prev, [tid]: target }));
   }, []);
+
+  const handleReply = useCallback(
+    (message: ChatMessage) => {
+      if (!threadId) return;
+      const target = makeReplyTarget({
+        messageId: message.id,
+        threadId,
+        text: message.text,
+        kind: "message",
+        sourceText: message.text,
+      });
+      if (target) storeReply(target);
+    },
+    [threadId, storeReply],
+  );
+
+  const handleCiteSelection = useCallback(
+    (target: ReplyTarget) => {
+      storeReply(target);
+    },
+    [storeReply],
+  );
 
   const handleWaitWhat = useCallback(
     (message: ChatMessage) => {
@@ -5489,6 +5378,47 @@ export const ThreadView = memo(function ThreadView({
     },
     [onStartRun],
   );
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.defaultPrevented) return;
+      if (!(e.metaKey || e.ctrlKey) || !e.shiftKey) return;
+      if (e.key.toLowerCase() !== "c") return;
+      const t = e.target;
+      if (
+        t instanceof HTMLTextAreaElement ||
+        t instanceof HTMLInputElement ||
+        (t instanceof HTMLElement && t.isContentEditable)
+      ) {
+        return;
+      }
+      const sel = window.getSelection();
+      const citeBody = citeBodyFromSelection(sel);
+      if (!citeBody) return;
+      const article = citeBody.closest("[data-msg]");
+      if (!(article instanceof HTMLElement)) return;
+      if (article.hasAttribute("data-streaming")) return;
+      const messageId = article.getAttribute("data-msg");
+      const originThreadId = article.getAttribute("data-thread");
+      if (!messageId || !originThreadId) return;
+      const message = detail?.messages.find((row) => row.id === messageId);
+      if (!message || message.role !== "assistant" || !message.text.trim()) {
+        return;
+      }
+      const target = captureCiteFromSelection({
+        selection: sel,
+        messageId,
+        threadId: originThreadId,
+        sourceText: message.text,
+        citeBody,
+      });
+      if (!target) return;
+      e.preventDefault();
+      storeReply(target);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [detail?.messages, storeReply]);
 
   const pickMentionFolder = useCallback(async () => {
     if (!onPickDirectory) return null;
@@ -6302,6 +6232,20 @@ export const ThreadView = memo(function ThreadView({
   }
 
   const { thread } = detail;
+  const remoteQuestionFiles = Boolean(project?.remoteHost);
+  const questionAttach = {
+    threadId: thread.id,
+    allowAttachments: Boolean(onPickAttachments) && !remoteQuestionFiles,
+    remoteUnsupported: remoteQuestionFiles,
+    includeImages: supportsImagesForModel(
+      providers.find((p) => p.id === thread.provider),
+      thread.model,
+    ),
+    onPickAttachments,
+    onSaveAttachmentImage,
+    onLoadAttachmentImage,
+    onDropAttachmentFiles,
+  };
   const savedPins = pinsOf(thread);
   const displayPins = pinDraft ?? pinFailedRef.current[thread.id]?.pins ?? savedPins;
   const pinnedIds = new Set(displayPins.map((p) => p.messageId));
@@ -7384,9 +7328,15 @@ export const ThreadView = memo(function ThreadView({
                       provenance={
                         provenanceById.get(entry.message.id) ?? null
                       }
+                      threadId={threadId}
                       onReply={
                         entry.message.role === "assistant"
                           ? handleReply
+                          : undefined
+                      }
+                      onCiteSelection={
+                        entry.message.role === "assistant"
+                          ? handleCiteSelection
                           : undefined
                       }
                       onWaitWhat={
@@ -7520,24 +7470,28 @@ export const ThreadView = memo(function ThreadView({
         */}
         {!detail.pendingPermission && thread.pendingQuestion ? (
           <QuestionPrompt
-            key={thread.pendingQuestion.id}
+            key={`${thread.id}:${thread.pendingQuestion.id}`}
+            requestId={thread.pendingQuestion.id}
             questions={thread.pendingQuestion.questions}
-            onAnswer={(answers) => {
+            onAnswer={async (answers, attachments) => {
               // The Answer button gates on every question being answered, so
               // an empty text means nothing was picked — never start a turn
-              // with an empty prompt.
+              // with an empty prompt. Paths in the answer values keep
+              // file-only submits valid (issue #1219).
               const text = formatQuestionAnswer(answers);
-              if (text) void onStartRun(text);
+              if (text) await onStartRun(text, undefined, attachments);
             }}
             onDismiss={() => onClearQuestion()}
+            {...questionAttach}
           />
         ) : null}
 
         {detail.pendingPermission?.questions?.length ? (
           <QuestionPrompt
-            key={detail.pendingPermission.requestId}
+            key={`${thread.id}:${detail.pendingPermission.requestId}`}
+            requestId={detail.pendingPermission.requestId}
             questions={detail.pendingPermission.questions}
-            onAnswer={(answers) =>
+            onAnswer={async (answers) =>
               onRespondPermission(
                 detail.pendingPermission!.requestId,
                 "allow",
@@ -7547,6 +7501,7 @@ export const ThreadView = memo(function ThreadView({
             onDismiss={() =>
               onRespondPermission(detail.pendingPermission!.requestId, "deny")
             }
+            {...questionAttach}
           />
         ) : detail.pendingPermission?.plan ? (
           <PlanPrompt
@@ -7970,7 +7925,20 @@ export const ThreadView = memo(function ThreadView({
           onPickDirectory ? pickMentionFolder : undefined
         }
         replyTo={replyTo}
-        onClearReply={() => setReplyTo(null)}
+        onClearReply={() => {
+          if (!threadId) return;
+          setReplyByThread((prev) => {
+            if (!(threadId in prev)) return prev;
+            const next = { ...prev };
+            delete next[threadId];
+            return next;
+          });
+        }}
+        onRevealReply={() => {
+          if (!replyTo || replySourceGone) return;
+          setJumpMessageId(replyTo.messageId);
+        }}
+        replySourceUnavailable={replySourceGone}
         onPickAttachments={onPickAttachments}
         onPickFolderAttachments={onPickFolderAttachments}
         onSaveAttachmentImage={onSaveAttachmentImage}

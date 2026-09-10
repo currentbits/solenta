@@ -799,6 +799,35 @@ describe("runner grok provider (claude-stream path)", () => {
     assert.equal(store.getThread(thread.id).awaitingInput, false);
   });
 
+  it("persisted question follow-up can carry attachments (#1219)", async () => {
+    process.env.CODER_FAKE_GROK_SCENARIO = "ask-question";
+    const thread = store.getThreads()[0];
+    await runner.startRun({ threadId: thread.id, prompt: "land the branch" });
+    await waitFor(() => store.getThread(thread.id).status === "done");
+    assert.ok(store.getThread(thread.id).pendingQuestion);
+
+    const logFile = path.join(tmpDir, "app.log");
+    fs.writeFileSync(logFile, "boom");
+    process.env.CODER_FAKE_GROK_SCENARIO = "success";
+    await runner.startRun({
+      threadId: thread.id,
+      prompt:
+        "Answering your question:\n\nMerge or open a PR?\n→ Merge\nFile: " +
+        logFile,
+      attachments: [{ kind: "file", path: logFile, name: "app.log" }],
+    });
+    await waitFor(() => store.getThread(thread.id).status === "done");
+    assert.equal(store.getThread(thread.id).pendingQuestion, null);
+    const users = store
+      .getMessages(thread.id)
+      .filter((m) => m.role === "user");
+    const last = users[users.length - 1];
+    assert.match(last.text, /File: /);
+    assert.deepEqual(last.attachments, [
+      { kind: "file", path: logFile, name: "app.log" },
+    ]);
+  });
+
   it("clearQuestion dismisses the card without answering (#647)", async () => {
     process.env.CODER_FAKE_GROK_SCENARIO = "ask-question";
     const thread = store.getThreads()[0];

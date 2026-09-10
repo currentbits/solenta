@@ -89,6 +89,29 @@ describe("normalizeQuestions", () => {
     assert.equal(many.length, 8);
   });
 
+  it("keeps customAnswer only when the agent sets it false", () => {
+    const usual = normalizeQuestions([
+      { question: "A", options: [{ label: "Yes" }] },
+    ]);
+    assert.equal(usual[0].customAnswer, undefined);
+    const choice = normalizeQuestions([
+      {
+        question: "A",
+        customAnswer: false,
+        options: [{ label: "Yes" }, { label: "No" }],
+      },
+    ]);
+    assert.equal(choice[0].customAnswer, false);
+    const yes = normalizeQuestions([
+      {
+        question: "A",
+        customAnswer: true,
+        options: [{ label: "Yes" }],
+      },
+    ]);
+    assert.equal(yes[0].customAnswer, undefined);
+  });
+
   it("coerces non-string labels away rather than rendering [object Object]", () => {
     assert.equal(
       normalizeQuestions([
