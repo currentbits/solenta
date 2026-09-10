@@ -14,6 +14,7 @@ const {
 const { normalizeAcceptedHunks } = require("./reviewItinerary.js");
 const { normalizeBtwCards } = require("./btw.js");
 const { normalizePendingQuestion } = require("./questions.js");
+const { normalizeMessagePins } = require("./messagePins.js");
 const { getDefaultSecrets } = require("./secrets.js");
 const {
   splitMessagesByThread,
@@ -1303,6 +1304,8 @@ function migrateThread(t) {
     ejected: t.ejected === true,
     // Per-thread user scratch pad (issue #194): absent → empty.
     notes: typeof t.notes === "string" ? t.notes : "",
+    // Transcript bookmarks (issue #1217): absent/invalid → none.
+    messagePins: normalizeMessagePins(t.messagePins),
     // User-defined tags (issue #789): absent/invalid → none.
     tags: Array.isArray(t.tags)
       ? t.tags.filter((x) => typeof x === "string" && x.trim() !== "")

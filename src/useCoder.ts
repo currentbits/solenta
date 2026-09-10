@@ -87,6 +87,7 @@ import type {
   StayAwakeStatus,
   ThreadDetail,
   ThreadInfo,
+  ThreadMessagePin,
   ThreadSummaryInfo,
   TrashedThreadInfo,
   CrewTaskView,
@@ -499,6 +500,11 @@ export interface UseCoderResult {
   renameThread: (threadId: string, title: string) => Promise<void>;
   /** Save scratch notes on a thread (header editor, issue #194). */
   setNotes: (threadId: string, notes: string) => Promise<void>;
+  /** Replace the per-thread transcript bookmark list (issue #1217). */
+  setMessagePins: (
+    threadId: string,
+    pins: ThreadMessagePin[],
+  ) => Promise<void>;
   /** Change the recorded merge/PR base after create (#187). */
   setBaseBranch: (threadId: string, baseBranch: string | null) => Promise<void>;
   /** Retarget an idle worker onto the lead's current committed HEAD. */
@@ -2509,6 +2515,28 @@ export function useCoder(): UseCoderResult {
     [api, applyThreads],
   );
 
+  const setMessagePins = useCallback(
+    async (
+      threadId: string,
+      pins: ThreadMessagePin[],
+    ) => {
+      try {
+        const thread = await api.threads.setMessagePins({ threadId, pins });
+        applyThreads(
+          threadsRef.current.map((t) => (t.id === thread.id ? thread : t)),
+        );
+        setDetail((prev) =>
+          prev && prev.thread.id === thread.id ? { ...prev, thread } : prev,
+        );
+        setError(null);
+      } catch (err) {
+        setError({ scope: "run", message: errorMessage(err) });
+        throw err;
+      }
+    },
+    [api, applyThreads],
+  );
+
   const setBaseBranch = useCallback(
     async (threadId: string, baseBranch: string | null) => {
       try {
@@ -4216,6 +4244,7 @@ export function useCoder(): UseCoderResult {
     resumeQuotaWait,
     renameThread,
     setNotes,
+    setMessagePins,
     setBaseBranch,
     refreshWorkerSnapshot,
     resolveSuggestion,

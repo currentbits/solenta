@@ -582,6 +582,14 @@ export interface ThreadInfo {
    */
   notes: string;
   /**
+   * User-selected transcript bookmarks (issue #1217). Stable message IDs
+   * plus a bounded excerpt/optional label. Empty/absent when unset. Never
+   * bumps updatedAt. Purely user-facing: the agent never reads them.
+   * A pin whose messageId is gone (rewind, overflow, delete) stays listed
+   * as unavailable — it must not retarget another message.
+   */
+  messagePins?: ThreadMessagePin[];
+  /**
    * User-defined categorization labels (issue #789). Lowercase, trimmed,
    * deduped; empty array when unset. Never bumps updatedAt. Purely
    * user-facing: the agent never reads them. Sidebar groups/filters on these.
@@ -868,6 +876,22 @@ export interface ThreadSpec {
 
 /** Cap for ThreadInfo.notes / threads.setNotes (issue #194). */
 export const THREAD_NOTES_MAX = 2000;
+
+/** Per-thread transcript bookmarks (issue #1217). Mirror electron/messagePins.js. */
+export const THREAD_MESSAGE_PINS_MAX = 20;
+export const THREAD_MESSAGE_PIN_EXCERPT_MAX = 120;
+export const THREAD_MESSAGE_PIN_LABEL_MAX = 80;
+
+/** One user-selected transcript bookmark. Identity is messageId, never position. */
+export interface ThreadMessagePin {
+  messageId: string;
+  /** Bounded excerpt captured at pin time. Not the full body. */
+  excerpt: string;
+  /** Optional short user label. Absent/empty falls back to excerpt. */
+  label?: string;
+  /** Epoch ms when the pin was added. */
+  pinnedAt: number;
+}
 
 /**
  * One-tap estimate of how much time a finished thread saved the user
@@ -3948,6 +3972,15 @@ export interface CoderApi {
      * THREAD_NOTES_MAX, empty string clears. Never bumps updatedAt.
      */
     setNotes(input: { threadId: string; notes: string }): Promise<ThreadInfo>;
+    /**
+     * Replace the per-thread transcript bookmark list (issue #1217).
+     * Deduped by messageId, capped, excerpts/labels truncated. Never
+     * bumps updatedAt. Does not copy message bodies.
+     */
+    setMessagePins(input: {
+      threadId: string;
+      pins: ThreadMessagePin[];
+    }): Promise<ThreadInfo>;
     /**
      * Change the recorded merge/PR base after create (#187). Empty/null
      * clears to the repo default. Must be a local branch. Refused after

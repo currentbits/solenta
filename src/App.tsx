@@ -209,6 +209,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     resumeQuotaWait,
     renameThread,
     setNotes,
+    setMessagePins,
     setBaseBranch,
     refreshWorkerSnapshot,
     resolveSuggestion,
@@ -782,6 +783,14 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
   const handleSetNotes = useCallback(
     (threadId: string, notes: string) => setNotes(threadId, notes),
     [setNotes],
+  );
+
+  const handleSetMessagePins = useCallback(
+    (
+      threadId: string,
+      pins: import("./shared/ipc").ThreadMessagePin[],
+    ) => setMessagePins(threadId, pins),
+    [setMessagePins],
   );
 
   const handleSetFeltEstimate = useCallback(
@@ -1940,6 +1949,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         onRepeatSchedule={handleRepeatSchedule}
         onDistillWorkflow={handleDistillWorkflow}
         onSetNotes={handleSetNotes}
+        onSetMessagePins={handleSetMessagePins}
         onSetFeltEstimate={
           // Opt-in (#401): no handler, no card. ThreadView already hides it.
           settings?.feltEstimatePrompt ? handleSetFeltEstimate : undefined

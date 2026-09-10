@@ -818,6 +818,11 @@ const IPC_HANDLERS = {
     ctx.broadcast("threads:changed", services.listThreads(ctx.store));
     return updated;
   },
+  "threads:setMessagePins": async (ctx, input) => {
+    const updated = services.setMessagePins(ctx.store, input);
+    ctx.broadcast("threads:changed", services.listThreads(ctx.store));
+    return updated;
+  },
   "threads:setBaseBranch": async (ctx, input) => {
     const updated = services.setBaseBranch(ctx.store, input);
     ctx.broadcast("threads:changed", services.listThreads(ctx.store));
