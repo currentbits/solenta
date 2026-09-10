@@ -1,7 +1,7 @@
 # Onboarding: reach the first useful conversation
 
-Status: implemented with three Grok workers, reviewed, awaiting integration.
-Planboard: [#1250](https://github.com/currentbits/solenta/issues/1250), plan:doing.
+Status: implemented with three Grok workers, reviewed, and landed on origin/main.
+Planboard: [#1250](https://github.com/currentbits/solenta/issues/1250), closed, plan:done.
 
 ## Goal and evidence
 
