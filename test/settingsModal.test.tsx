@@ -1999,3 +1999,67 @@ describe("SettingsModal focus trap", () => {
     m.unmount();
   });
 });
+
+describe("SettingsModal integrations", () => {
+  afterEach(() => {
+    delete (window as unknown as { coder?: unknown }).coder;
+  });
+
+  it("shows the MCP URL and mints a pairing with copy-ready JSON", async () => {
+    const created: unknown[] = [];
+    (window as unknown as { coder: { pairing: unknown } }).coder = {
+      pairing: {
+        list: async () => ({
+          pairings: [],
+          server: {
+            running: true,
+            port: 7422,
+            url: "http://127.0.0.1:7422/mcp",
+          },
+        }),
+        create: async (input: unknown) => {
+          created.push(input);
+          return {
+            pairing: {
+              id: "pair-1",
+              name: "Claude Desktop",
+              tokenPrefix: "abcd1234",
+              capabilities: ["read", "launch"],
+              projectIds: null,
+              expiresAt: Date.now() + 86400000,
+              createdAt: Date.now(),
+              lastUsedAt: null,
+              revokedAt: null,
+              requireApproval: true,
+              managedWorktree: true,
+              launchesPerHour: 30,
+              readsPerMinute: 120,
+            },
+            token: "tokentoken",
+            url: "http://127.0.0.1:7422/mcp",
+            claudeDesktopJson: '{"mcpServers":{"solenta":{}}}',
+            pairingPrompt: "Connect to Solenta",
+          };
+        },
+        revoke: async () => ({}),
+      },
+    };
+    const m = await mount(modal({ initialPane: "integrations" }));
+    await m.flush();
+    assert.ok(
+      m.text().includes("Listening at http://127.0.0.1:7422/mcp"),
+      `expected server url, got: ${m.text()}`,
+    );
+    await m.click(m.query("[data-pairing-create]") as HTMLElement);
+    await m.flush();
+    assert.equal(created.length, 1);
+    assert.ok(m.query("[data-pairing-reveal]"), "token reveal");
+    assert.ok(
+      m.text().includes("tokentoken"),
+      `expected token once, got: ${m.text()}`,
+    );
+    assert.ok(m.query("[data-copy-claude-json]"), "copy JSON");
+    assert.ok(m.query("[data-copy-pairing-prompt]"), "copy prompt");
+    m.unmount();
+  });
+});

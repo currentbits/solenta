@@ -64,6 +64,7 @@ import type {
   WorkflowTemplateInfo,
 } from "../shared/ipc";
 import { SPEC_ARTIFACTS, THREAD_NOTES_MAX, FELT_ESTIMATE_BUCKETS_MS } from "../shared/ipc";
+import { resolveCoderApi } from "../coderApi";
 import { TEACH_AUTONOMY_LABELS } from "../teach";
 import type { TeachAutonomy } from "../shared/ipc";
 import type { WorkflowSaveInput } from "../useCoder";
@@ -2724,6 +2725,72 @@ function PermissionPrompt({
  * from its todo list, plus the plan it had approved. Unlike PlanPrompt this
  * outlives the approval — it is what the thread intends to do, at a glance.
  */
+function ExternalApprovalCard({ thread }: { thread: ThreadInfo }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const prompt = String(thread.pendingExternalPrompt || "").trim();
+  const label = thread.pairingLabel || "An external MCP client";
+
+  const act = async (kind: "approve" | "reject") => {
+    setBusy(true);
+    setError(null);
+    try {
+      const api = resolveCoderApi();
+      if (kind === "approve") await api.pairing.approve({ threadId: thread.id });
+      else await api.pairing.reject({ threadId: thread.id });
+    } catch (err) {
+      setError(err instanceof Error && err.message ? err.message : String(err));
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div
+      className={styles.planCard}
+      data-external-approval=""
+      data-page-block=""
+    >
+      <div className={styles.planCardHead}>
+        <span className={styles.planCardTitle}>Pairing launch</span>
+      </div>
+      <p className={styles.planProgress}>
+        {label} wants to start this task. It will run in a managed worktree
+        after you approve.
+      </p>
+      {prompt ? (
+        <pre className={styles.planBody} data-external-prompt="">
+          {prompt}
+        </pre>
+      ) : null}
+      {error ? (
+        <p className={styles.pairingError} role="alert">
+          {error}
+        </p>
+      ) : null}
+      <div className={styles.permissionActions}>
+        <button
+          type="button"
+          className={styles.permissionAllow}
+          data-external-approve=""
+          disabled={busy}
+          onClick={() => void act("approve")}
+        >
+          Approve
+        </button>
+        <button
+          type="button"
+          className={styles.permissionDeny}
+          data-external-reject=""
+          disabled={busy}
+          onClick={() => void act("reject")}
+        >
+          Don&apos;t run
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function PlanCard({ thread }: { thread: ThreadInfo }) {
   const steps = thread.planSteps ?? [];
   // No steps yet means the prose IS the overview, so it starts expanded.
@@ -7005,6 +7072,10 @@ export const ThreadView = memo(function ThreadView({
             onStopSpec={onStopSpec}
             onSpecArtifact={onSpecArtifact}
           />
+        ) : null}
+
+        {thread.pendingExternalApproval ? (
+          <ExternalApprovalCard thread={thread} />
         ) : null}
 
         {thread.ask ? (

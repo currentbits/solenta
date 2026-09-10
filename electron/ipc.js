@@ -67,6 +67,7 @@ const {
 } = require("./mcp.js");
 const mcpCatalog = require("./mcpCatalog.js");
 const mcpImports = require("./mcpImports.js");
+const pairing = require("./pairing.js");
 const skills = require("./skills.js");
 const skillCatalog = require("./skillCatalog.js");
 const skillImports = require("./skillImports.js");
@@ -179,6 +180,10 @@ function makeCtx(deps) {
     cleanupRunArtifacts: deps.cleanupRunArtifacts,
     getIosSimulator,
     log: deps.log,
+    getOrchStatus:
+      typeof deps.getOrchStatus === "function"
+        ? deps.getOrchStatus
+        : () => ({ running: false, port: null }),
     transport: "desktop",
   };
 }
@@ -1208,6 +1213,43 @@ const IPC_HANDLERS = {
       userDataPath: ctx.userDataPath,
       previewId: input && input.previewId,
     });
+  },
+  "pairing:list": async (ctx) => {
+    return pairing.listPairings(ctx.userDataPath, {
+      getOrchStatus: ctx.getOrchStatus,
+    });
+  },
+  "pairing:create": async (ctx, input) => {
+    return pairing.createPairing(ctx.userDataPath, input || {}, {
+      getOrchStatus: ctx.getOrchStatus,
+    });
+  },
+  "pairing:revoke": async (ctx, input) => {
+    const id = input && typeof input.id === "string" ? input.id : "";
+    return pairing.revokePairing(ctx.userDataPath, id);
+  },
+  "pairing:approve": async (ctx, input) => {
+    const threadId =
+      input && typeof input.threadId === "string" ? input.threadId : "";
+    return pairing.approveExternalRun(
+      {
+        store: ctx.store,
+        runner: ctx.runner,
+        broadcast: ctx.broadcast,
+      },
+      threadId,
+    );
+  },
+  "pairing:reject": async (ctx, input) => {
+    const threadId =
+      input && typeof input.threadId === "string" ? input.threadId : "";
+    return pairing.rejectExternalRun(
+      {
+        store: ctx.store,
+        broadcast: ctx.broadcast,
+      },
+      threadId,
+    );
   },
   // "Send test" in Settings (issue #167). The renderer cannot POST these
   // itself — Slack/Discord/ntfy answer no CORS preflight — and a typo'd or

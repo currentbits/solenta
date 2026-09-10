@@ -1558,6 +1558,78 @@ describe("orch-server HTTP", () => {
       await new Promise((r) => blocker.close(r));
     }
   });
+
+  it("pairing token lists a scoped external tool surface, not thread_fork", async () => {
+    const pairingMod = require("../pairing.js");
+    const { orch } = await startOrch();
+    const st = orch.getStatus();
+    const minted = pairingMod.createPairing(tmpDir, {
+      name: "Claude Desktop",
+      projectIds: ["p1"],
+      capabilities: ["read", "launch"],
+    });
+    const init = {
+      jsonrpc: "2.0",
+      id: 1,
+      method: "initialize",
+      params: {
+        protocolVersion: "2025-03-26",
+        capabilities: {},
+        clientInfo: { name: "test", version: "0" },
+      },
+    };
+    const viaPairing = await mcpPost(st.port, minted.token, init);
+    assert.equal(viaPairing.status, 200);
+    assert.equal(viaPairing.body.result.serverInfo.name, "solenta");
+
+    const list = await mcpPost(st.port, minted.token, {
+      jsonrpc: "2.0",
+      id: 2,
+      method: "tools/list",
+      params: {},
+    });
+    assert.equal(list.status, 200);
+    const names = list.body.result.tools.map((t) => t.name).sort();
+    assert.deepEqual(names, [
+      "projects_list",
+      "task_launch",
+      "task_list",
+      "task_status",
+    ]);
+  });
+
+  it("pairing token cannot call thread_fork and cannot see out-of-scope projects", async () => {
+    const pairingMod = require("../pairing.js");
+    const { orch } = await startOrch();
+    const st = orch.getStatus();
+    const minted = pairingMod.createPairing(tmpDir, {
+      name: "scoped",
+      projectIds: ["p1"],
+    });
+    const fork = await mcpPost(st.port, minted.token, {
+      jsonrpc: "2.0",
+      id: 3,
+      method: "tools/call",
+      params: {
+        name: "thread_fork",
+        arguments: { threadId: "t1", projectId: "p1", prompt: "x" },
+      },
+    });
+    assert.equal(fork.status, 200);
+    const forkErr = fork.body && fork.body.result && fork.body.result.isError;
+    assert.equal(forkErr, true);
+
+    const projects = await mcpPost(st.port, minted.token, {
+      jsonrpc: "2.0",
+      id: 4,
+      method: "tools/call",
+      params: { name: "projects_list", arguments: {} },
+    });
+    assert.equal(projects.status, 200);
+    const text = projects.body.result.content[0].text;
+    const parsed = JSON.parse(text);
+    assert.deepEqual(parsed.map((p) => p.id), ["p1"]);
+  });
 });
 
 describe("orch-server provider injection", () => {
