@@ -38,6 +38,10 @@ import type {
   GitPullResult,
   ListPrsResult,
   CheckoutPrResult,
+  PrCommentResult,
+  PrDetail,
+  PrDetailResult,
+  PrTemplateResult,
   LocalServerInfo,
   McpImportPreview,
   McpInstallRequest,
@@ -2926,6 +2930,98 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
           prompt: `GitHub pull request #${i.prNumber}: review`,
           thread: t,
         } satisfies CheckoutPrResult);
+      },
+      prTemplate: (input: unknown) =>
+        rec("git.prTemplate", [input], {
+          ok: true,
+          body: "",
+          path: null,
+          templates: [],
+        } as PrTemplateResult),
+      prDetail: (input: unknown) => {
+        const i = input as { prNumber: number };
+        return rec("git.prDetail", [input], {
+          ok: true,
+          pr: {
+            number: i.prNumber,
+            title: `PR #${i.prNumber}`,
+            body: "",
+            url: `https://github.com/acme/demo/pull/${i.prNumber}`,
+            state: "OPEN",
+            isDraft: false,
+            headRefName: `feat/${i.prNumber}`,
+            comments: [],
+          } satisfies PrDetail,
+        } as PrDetailResult);
+      },
+      prEdit: (input: unknown) => {
+        const i = input as { prNumber: number; title?: string; body?: string };
+        return rec("git.prEdit", [input], {
+          ok: true,
+          pr: {
+            number: i.prNumber,
+            title: i.title ?? `PR #${i.prNumber}`,
+            body: i.body ?? "",
+            url: `https://github.com/acme/demo/pull/${i.prNumber}`,
+            state: "OPEN",
+            isDraft: false,
+            headRefName: `feat/${i.prNumber}`,
+            comments: [],
+          } satisfies PrDetail,
+        } as PrDetailResult);
+      },
+      prComment: (input: unknown) =>
+        rec("git.prComment", [input], {
+          ok: true,
+          url: "https://github.com/acme/demo/pull/1#issuecomment-1",
+        } as PrCommentResult),
+      prClose: (input: unknown) => {
+        const i = input as { prNumber: number };
+        return rec("git.prClose", [input], {
+          ok: true,
+          pr: {
+            number: i.prNumber,
+            title: `PR #${i.prNumber}`,
+            body: "",
+            url: `https://github.com/acme/demo/pull/${i.prNumber}`,
+            state: "CLOSED",
+            isDraft: false,
+            headRefName: `feat/${i.prNumber}`,
+            comments: [],
+          } satisfies PrDetail,
+        } as PrDetailResult);
+      },
+      prReady: (input: unknown) => {
+        const i = input as { prNumber: number; undo?: boolean };
+        return rec("git.prReady", [input], {
+          ok: true,
+          pr: {
+            number: i.prNumber,
+            title: `PR #${i.prNumber}`,
+            body: "",
+            url: `https://github.com/acme/demo/pull/${i.prNumber}`,
+            state: "OPEN",
+            isDraft: Boolean(i.undo),
+            headRefName: `feat/${i.prNumber}`,
+            comments: [],
+          } satisfies PrDetail,
+        } as PrDetailResult);
+      },
+      prMergeAt: (input: unknown) => {
+        const i = input as { prNumber: number };
+        return rec("git.prMergeAt", [input], {
+          ok: true,
+          pr: {
+            number: i.prNumber,
+            title: `PR #${i.prNumber}`,
+            body: "",
+            url: `https://github.com/acme/demo/pull/${i.prNumber}`,
+            state: "MERGED",
+            isDraft: false,
+            headRefName: `feat/${i.prNumber}`,
+            comments: [],
+          } satisfies PrDetail,
+        } as PrDetailResult);
       },
       /**
        * Round 50 contract: newest-first; empty without a worktree.

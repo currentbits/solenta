@@ -58,7 +58,10 @@ import type {
   ListPrsResult,
   CheckoutPrResult,
   PrChecksResult,
+  PrCommentResult,
+  PrDetailResult,
   PrInfo,
+  PrTemplateResult,
   ProjectInfo,
   ProjectUpdateInput,
   ProviderInfo,
@@ -669,6 +672,37 @@ export interface UseCoderResult {
     projectId: string;
     prNumber: number;
   }) => Promise<CheckoutPrResult>;
+  /** Repo PULL_REQUEST_TEMPLATE files. Failures are in-band. */
+  prTemplate: (projectPath: string) => Promise<PrTemplateResult>;
+  /** Full PR for the in-app workspace. Failures are in-band. */
+  prDetail: (input: {
+    projectPath: string;
+    prNumber: number;
+  }) => Promise<PrDetailResult>;
+  prEdit: (input: {
+    projectPath: string;
+    prNumber: number;
+    title?: string;
+    body?: string;
+  }) => Promise<PrDetailResult>;
+  prComment: (input: {
+    projectPath: string;
+    prNumber: number;
+    body: string;
+  }) => Promise<PrCommentResult>;
+  prClose: (input: {
+    projectPath: string;
+    prNumber: number;
+  }) => Promise<PrDetailResult>;
+  prReady: (input: {
+    projectPath: string;
+    prNumber: number;
+    undo?: boolean;
+  }) => Promise<PrDetailResult>;
+  prMergeAt: (input: {
+    projectPath: string;
+    prNumber: number;
+  }) => Promise<PrDetailResult>;
   /** Issues for a project checkout (`gh issue list`). Failures are in-band. */
   listIssues: (projectPath: string) => Promise<ListIssuesResult>;
   /** Move an issue's plan:* label (Planboard). Failures are in-band. */
@@ -3320,6 +3354,68 @@ export function useCoder(): UseCoderResult {
     [api],
   );
 
+  const prTemplate = useCallback(
+    async (projectPath: string) => {
+      return api.git.prTemplate({ projectPath });
+    },
+    [api],
+  );
+
+  const prDetail = useCallback(
+    async (input: { projectPath: string; prNumber: number }) => {
+      return api.git.prDetail(input);
+    },
+    [api],
+  );
+
+  const prEdit = useCallback(
+    async (input: {
+      projectPath: string;
+      prNumber: number;
+      title?: string;
+      body?: string;
+    }) => {
+      return api.git.prEdit(input);
+    },
+    [api],
+  );
+
+  const prComment = useCallback(
+    async (input: {
+      projectPath: string;
+      prNumber: number;
+      body: string;
+    }) => {
+      return api.git.prComment(input);
+    },
+    [api],
+  );
+
+  const prClose = useCallback(
+    async (input: { projectPath: string; prNumber: number }) => {
+      return api.git.prClose(input);
+    },
+    [api],
+  );
+
+  const prReady = useCallback(
+    async (input: {
+      projectPath: string;
+      prNumber: number;
+      undo?: boolean;
+    }) => {
+      return api.git.prReady(input);
+    },
+    [api],
+  );
+
+  const prMergeAt = useCallback(
+    async (input: { projectPath: string; prNumber: number }) => {
+      return api.git.prMergeAt(input);
+    },
+    [api],
+  );
+
   const checkoutPr = useCallback(
     async (input: { projectId: string; prNumber: number }) => {
       const result = await api.git.checkoutPr(input);
@@ -4152,6 +4248,13 @@ export function useCoder(): UseCoderResult {
     prMerge,
     listPrs,
     checkoutPr,
+    prTemplate,
+    prDetail,
+    prEdit,
+    prComment,
+    prClose,
+    prReady,
+    prMergeAt,
     listIssues,
     setIssuePlanStatus,
     createIssue,

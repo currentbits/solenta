@@ -1741,6 +1741,30 @@ describe("worktrees", () => {
       );
     });
 
+    it("createPr passes --draft when draft is true", async () => {
+      const { statePath } = preparePrFixture({
+        store,
+        thread,
+        worktreeBase,
+        repo,
+        tmpDir,
+      });
+      await createPr({
+        store,
+        threadId: thread.id,
+        title: "WIP",
+        body: "",
+        draft: true,
+        broadcast: () => {},
+      });
+      const state = JSON.parse(fs.readFileSync(statePath, "utf8"));
+      const createCall = state.calls.find(
+        (c) => c[0] === "pr" && c[1] === "create",
+      );
+      assert.ok(createCall.includes("--draft"));
+      assert.equal(state.prs[Object.keys(state.prs)[0]].draft, true);
+    });
+
     it("createPr with baseBranch=feature uses that --base (#187)", async () => {
       git(repo, ["checkout", "-b", "stacked-base"]);
       fs.writeFileSync(path.join(repo, "schema.txt"), "schema\n");

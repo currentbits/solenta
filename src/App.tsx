@@ -261,6 +261,13 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     prMerge,
     listPrs,
     checkoutPr,
+    prTemplate,
+    prDetail,
+    prEdit,
+    prComment,
+    prClose,
+    prReady,
+    prMergeAt,
     listIssues,
     setIssuePlanStatus,
     createIssue,
@@ -1789,6 +1796,12 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
               listPrs={listPrs}
               onSelectThread={handleSelectThread}
               onCheckoutPr={handleCheckoutPr}
+              prDetail={prDetail}
+              prEdit={prEdit}
+              prComment={prComment}
+              prClose={prClose}
+              prReady={prReady}
+              prMergeAt={prMergeAt}
               restore={viewRestore?.view === "prs" ? viewRestore : null}
               onRestoreApplied={clearViewRestore}
             />
@@ -1982,6 +1995,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         listLocalServers={listLocalServers}
         onPush={pushBranch}
         onCreatePr={createPr}
+        onPrTemplate={prTemplate}
         onPrChecks={prChecks}
         onPrMerge={prMerge}
         gitSyncInfo={gitSyncInfo}
