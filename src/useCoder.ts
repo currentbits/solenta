@@ -113,6 +113,7 @@ import {
   saveBootSnapshot,
   saveCachedThreadDetail,
 } from "./bootSnapshot";
+import { createThreadDetailCache } from "./threadDetailCache";
 
 const STATUS_POLL_MS = 60_000;
 /** Debounce on the localStorage boot-snapshot writes (#364). */
@@ -963,8 +964,8 @@ export function useCoder(): UseCoderResult {
   const prevStatusRef = useRef<Map<string, ThreadInfo["status"]>>(new Map());
   /** Open detail, for merging streamed tails (thread:updated is a ThreadPatch). */
   const detailRef = useRef<ThreadDetail | null>(null);
-  /** Details fetched this session, so a switch back paints instantly (#364). */
-  const detailCacheRef = useRef<Map<string, ThreadDetail>>(new Map());
+  /** Bounded recent details so a switch back paints instantly (#364 / #1225). */
+  const detailCacheRef = useRef(createThreadDetailCache());
   /** Threads with a full-detail refetch in flight, so pushes can't storm it. */
   const refetchRef = useRef<Set<string>>(new Set());
   /** Last thread:updated seq per thread; a gap means pushes were dropped. */
@@ -1051,6 +1052,7 @@ export function useCoder(): UseCoderResult {
   const applyThreads = useCallback((next: ThreadInfo[]) => {
     const reconciled = reconcileThreadList(threadsRef.current, next);
     if (reconciled === threadsRef.current) return;
+    detailCacheRef.current.retain(new Set(reconciled.map((t) => t.id)));
     threadsRef.current = reconciled;
     setThreads(reconciled);
   }, []);
@@ -2848,6 +2850,7 @@ export function useCoder(): UseCoderResult {
         ]);
         setProjects(nextProjects);
         applyThreads(list);
+        detailCacheRef.current.dropProject(pid);
         // Match deleteThread: only hand off when the selected thread was the
         // one that just vanished (here: lived in the removed project).
         if (openBelongs && openId != null && selectedRef.current === openId) {
