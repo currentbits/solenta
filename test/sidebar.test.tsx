@@ -1363,6 +1363,31 @@ describe("Sidebar remove + edit project (scope menu)", () => {
     assert.equal(m.query('[data-remove-confirm="p2"]'), null);
     m.unmount();
   });
+
+  it("opening the remove-project confirm moves focus inside it; Tab stays inside", async () => {
+    await clearSidebarStorage();
+    const m = await mount(
+      sidebar(removeThreads, {
+        projects: [p1, p2],
+        onRemoveProject: () => {},
+      }),
+    );
+    await openScopeMenu(m);
+    await m.click(m.query('[data-project-remove="p2"]')!);
+    await m.flush();
+    const dialog = m.query('[data-remove-confirm="p2"]') as HTMLElement | null;
+    assert.ok(dialog, "confirm dialog");
+    assert.ok(
+      dialog.contains(document.activeElement),
+      "opening the dialog must move focus inside it",
+    );
+    await m.pressFocused("Tab");
+    assert.ok(
+      dialog.contains(document.activeElement),
+      "Tab stays inside",
+    );
+    m.unmount();
+  });
 });
 
 describe("Sidebar unread indicators", () => {

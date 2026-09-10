@@ -182,6 +182,12 @@ function view(props: {
     threadId?: string,
     attachments?: AttachmentInfo[],
   ) => void | Promise<void>;
+  onRewindAndResubmit?: (
+    messageId: string,
+    prompt: string,
+    restoreFiles?: boolean,
+    attachments?: AttachmentInfo[],
+  ) => void | Promise<void>;
   onPickDirectory?: () => Promise<string | null>;
   onListSnapWindows?: () => Promise<Array<{ id: string; name: string }>>;
   queuedPrompt?: string | null;
@@ -201,6 +207,7 @@ function view(props: {
       hasProjects={props.hasProjects ?? true}
       onAddProject={() => {}}
       onStartRun={props.onStartRun ?? (() => {})}
+      onRewindAndResubmit={props.onRewindAndResubmit}
       onStartWorkflow={() => {}}
       onSaveWorkflow={noopSave}
       onRemoveWorkflow={noopAsync}
@@ -1227,6 +1234,127 @@ describe("ThreadView mounted interactions", () => {
     );
     m.unmount();
   });
+
+  it("opening the image lightbox moves focus inside it; Tab stays inside", async () => {
+    const dataUrl = "data:image/png;base64,AAAA";
+    const m = await mount(
+      view({
+        onLoadImage: async () => dataUrl,
+        detail: detail({
+          messages: [
+            msg({
+              id: "t1",
+              role: "tool",
+              text: "Read: /tmp/shot.png",
+              createdAt: 1,
+              runId: "run-1",
+              tool: {
+                id: "tc1",
+                name: "Read",
+                input: "{}",
+                output: "[image]",
+                done: true,
+                isError: false,
+                images: ["shot.png"],
+              },
+            }),
+          ],
+          workLog: [],
+        }),
+      }),
+    );
+    const lightboxGroup = toolGroupToggle(m);
+    assert.ok(lightboxGroup, "image tool is grouped");
+    await m.click(lightboxGroup);
+    await m.click(m.query("button.toolToggle"));
+    await m.flush();
+    await m.click(m.query("img.toolImage"));
+    await m.flush();
+    const dialog = m.query("[data-image-lightbox]") as HTMLElement | null;
+    assert.ok(dialog, "lightbox dialog");
+    assert.ok(
+      dialog.contains(document.activeElement),
+      "opening the dialog must move focus inside it",
+    );
+    await m.pressFocused("Tab");
+    assert.ok(
+      dialog.contains(document.activeElement),
+      "Tab stays inside",
+    );
+    m.unmount();
+  });
+
+  it("opening the rewind confirm moves focus inside it; Tab stays inside", async () => {
+    const m = await mount(
+      view({
+        onRewindAndResubmit: async () => {},
+        detail: detail({
+          messages: [
+            msg({
+              id: "u1",
+              role: "user",
+              text: "first prompt",
+              createdAt: 10,
+            }),
+            msg({
+              id: "a1",
+              role: "assistant",
+              text: "reply",
+              createdAt: 20,
+            }),
+          ],
+        }),
+      }),
+    );
+    const editBtn = m.query('[data-edit-message="u1"]');
+    assert.ok(editBtn, "edit affordance");
+    await m.click(editBtn as HTMLElement);
+    await m.flush();
+    await m.click(m.query('[data-edit-resubmit="u1"]') as HTMLElement);
+    await m.flush();
+    const dialog = m.query("[data-rewind-confirm]") as HTMLElement | null;
+    assert.ok(dialog, "rewind confirm");
+    assert.ok(
+      dialog.contains(document.activeElement),
+      "opening the dialog must move focus inside it",
+    );
+    await m.pressFocused("Tab");
+    assert.ok(
+      dialog.contains(document.activeElement),
+      "Tab stays inside",
+    );
+    m.unmount();
+  });
+
+  it("opening the appsnap dialog moves focus inside it; Tab stays inside", async () => {
+    const m = await mount(
+      view({
+        onListSnapWindows: async () => [{ id: "w1", name: "Finder" }],
+      }),
+    );
+    await m.flush();
+    await inAct(() => {
+      window.dispatchEvent(
+        new KeyboardEvent("keyup", { key: "Alt", bubbles: true }),
+      );
+      window.dispatchEvent(
+        new KeyboardEvent("keyup", { key: "Alt", bubbles: true }),
+      );
+    });
+    await m.flush();
+    const dialog = m.query("[data-appsnap]") as HTMLElement | null;
+    assert.ok(dialog, "appsnap dialog");
+    assert.ok(
+      dialog.contains(document.activeElement),
+      "opening the dialog must move focus inside it",
+    );
+    await m.pressFocused("Tab");
+    assert.ok(
+      dialog.contains(document.activeElement),
+      "Tab stays inside",
+    );
+    m.unmount();
+  });
 });
 
 describe("ThreadView review bar", () => {
@@ -1358,6 +1486,35 @@ describe("ThreadView review bar", () => {
     await m.flush();
     assert.deepEqual(restores, [{ threadId: "t1", sha: "sha-turn-1-aaaaaaaa" }]);
     assert.equal(reviews, 2, "successful undo also opens Changes");
+    m.unmount();
+  });
+
+  it("opening the review-undo confirm moves focus inside it; Tab stays inside", async () => {
+    const m = await mount(
+      view({
+        detail: twoRunDetail,
+        runStats: async () => twoStats,
+        restoreCheckpoint: async () => {},
+      }),
+    );
+    await m.flush();
+    const secondUndo = m.query(
+      "[data-review-bar='run-2'] [data-review-undo]",
+    ) as HTMLButtonElement | null;
+    assert.ok(secondUndo, "Undo on second run");
+    await m.click(secondUndo);
+    await m.flush();
+    const dialog = m.query("[data-review-undo-confirm]") as HTMLElement | null;
+    assert.ok(dialog, "confirm dialog");
+    assert.ok(
+      dialog.contains(document.activeElement),
+      "opening the dialog must move focus inside it",
+    );
+    await m.pressFocused("Tab");
+    assert.ok(
+      dialog.contains(document.activeElement),
+      "Tab stays inside",
+    );
     m.unmount();
   });
 });
