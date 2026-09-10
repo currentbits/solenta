@@ -1300,6 +1300,30 @@ describe("Sidebar remove + edit project (scope menu)", () => {
     m.unmount();
   });
 
+  it("Escape dismisses the remove confirm without removing", async () => {
+    await clearSidebarStorage();
+    const removed: string[] = [];
+    const m = await mount(
+      sidebar(removeThreads, {
+        projects: [p1, p2],
+        onRemoveProject: (id) => {
+          removed.push(id);
+        },
+      }),
+    );
+    await openScopeMenu(m);
+    await m.click(m.query('[data-project-remove="p2"]')!);
+    const dialog = m.query('[data-remove-confirm="p2"]');
+    assert.ok(dialog, "confirm must open");
+    await m.press(dialog, "Escape");
+    assert.ok(
+      !m.query('[data-remove-confirm="p2"]'),
+      "Escape must dismiss the confirm",
+    );
+    assert.deepEqual(removed, []);
+    m.unmount();
+  });
+
   it("singular thread count wording", async () => {
     await clearSidebarStorage();
     const m = await mount(

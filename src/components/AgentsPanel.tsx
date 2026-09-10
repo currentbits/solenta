@@ -2206,6 +2206,14 @@ export function GitTab({
     null,
   );
   const [restorePending, setRestorePending] = useState(false);
+  const closeRestoreConfirm = useCallback(() => {
+    if (restorePending) return;
+    setRestoreConfirm(null);
+  }, [restorePending]);
+  useEscapeClose(
+    restoreConfirm != null && !restorePending,
+    closeRestoreConfirm,
+  );
   const restoreDialogRef = useRef<HTMLDivElement>(null);
   useModalFocus(restoreConfirm != null, restoreDialogRef);
   const [now, setNow] = useState(() => Date.now());
@@ -2348,15 +2356,6 @@ export function GitTab({
       setRestorePending(false);
     }
   };
-
-  const closeRestoreConfirm = useCallback(() => {
-    if (restorePending) return;
-    setRestoreConfirm(null);
-  }, [restorePending]);
-  useEscapeClose(
-    restoreConfirm != null && !restorePending,
-    closeRestoreConfirm,
-  );
 
   const remote = Boolean(project?.remoteHost);
   const defaultOrder = isDefaultEnvSectionOrder(order);
