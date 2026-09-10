@@ -535,12 +535,18 @@ describe("App Retry turn wiring (round 48)", () => {
     const arg = starts[starts.length - 1]!.args[0] as {
       threadId: string;
       prompt: string;
+      fromQueue?: boolean;
     };
     assert.equal(arg.threadId, "t-failed-retry");
     assert.equal(
       arg.prompt,
       "fix the sidebar chip for PR freshness",
       "must re-send LAST user message, not the first",
+    );
+    assert.equal(
+      arg.fromQueue,
+      true,
+      "Retry turn must skip takeQueued so a leftover follow-up is not folded in (#1203)",
     );
     m.unmount();
   });
@@ -951,9 +957,15 @@ describe("App Retry turn wiring (round 48)", () => {
     const arg = starts[0]!.args[0] as {
       prompt: string;
       fromNotice?: boolean;
+      fromQueue?: boolean;
     };
     assert.equal(arg.prompt, "now fix the sidebar chip");
     assert.equal(arg.fromNotice, undefined);
+    assert.equal(
+      arg.fromQueue,
+      true,
+      "human Retry turn must skip takeQueued (#1203)",
+    );
     m.unmount();
   });
 
@@ -1269,9 +1281,15 @@ describe("App Retry turn fromNotice flag (#955)", () => {
     const arg = starts[0]!.args[0] as {
       prompt: string;
       fromNotice?: boolean;
+      fromQueue?: boolean;
     };
     assert.equal(arg.prompt, "now fix the sidebar chip");
     assert.equal(arg.fromNotice, undefined);
+    assert.equal(
+      arg.fromQueue,
+      true,
+      "human Retry turn must skip takeQueued (#1203)",
+    );
     m.unmount();
   });
 });

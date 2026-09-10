@@ -232,7 +232,8 @@ describe("App checkpoints wiring (round 50)", () => {
       `confirm names short sha, got: ${copy}`,
     );
     assert.ok(
-      copy.includes("resets the worktree") &&
+      copy.includes("resets the worktree and the conversation") &&
+        copy.includes("Later messages") &&
         copy.includes("main repository is not touched"),
       "destructive body present",
     );
@@ -286,6 +287,98 @@ describe("App checkpoints wiring (round 50)", () => {
       m.queryAll(`[data-checkpoint="${cps[0]!.sha}"]`).length,
       0,
       "newest (turn 3) must be gone after restore of middle",
+    );
+    m.unmount();
+  });
+
+  it("restore of middle drops later transcript turns from the open thread", async () => {
+    const cps = threeCheckpoints();
+    const s = source();
+    const d = decoy();
+    const fake = createFakeCoder({
+      projects: [project()],
+      threads: [d, s],
+      details: {
+        "t-decoy": detail({ thread: d }),
+        [s.id]: detail({
+          thread: { ...s, sessionId: "sess-live" },
+          messages: [
+            {
+              id: "u1",
+              role: "user",
+              text: "TURN_1_USER",
+              createdAt: NOW - 190_000,
+              runId: "r1",
+            },
+            {
+              id: "a1",
+              role: "assistant",
+              text: "TURN_1_ASSISTANT",
+              createdAt: NOW - 189_000,
+              runId: "r1",
+            },
+            {
+              id: "u2",
+              role: "user",
+              text: "TURN_2_USER",
+              createdAt: NOW - 130_000,
+              runId: "r2",
+            },
+            {
+              id: "a2",
+              role: "assistant",
+              text: "TURN_2_ASSISTANT",
+              createdAt: NOW - 129_000,
+              runId: "r2",
+            },
+            {
+              id: "u3",
+              role: "user",
+              text: "TURN_3_USER",
+              createdAt: NOW - 70_000,
+              runId: "r3",
+            },
+            {
+              id: "a3",
+              role: "assistant",
+              text: "TURN_3_ASSISTANT",
+              createdAt: NOW - 69_000,
+              runId: "r3",
+            },
+          ],
+        }),
+      },
+      checkpoints: { [s.id]: cps },
+    });
+    const m = await boot(fake);
+    await selectThread(m, "checkpoint source thread");
+    await m.flush();
+    assert.ok(
+      (m.html() || "").includes("TURN_3_USER"),
+      "later turn visible before restore",
+    );
+
+    await openGitTab(m);
+    const middle = cps[1]!;
+    await m.click(
+      m.query(`[data-checkpoint-restore="${middle.sha}"]`) as HTMLElement,
+    );
+    await m.flush();
+    await m.click(m.query("[data-restore-confirm-submit]") as HTMLElement);
+    await m.flush();
+
+    const html = m.html() || "";
+    assert.ok(html.includes("TURN_1_USER"), "kept turn 1");
+    assert.ok(html.includes("TURN_2_USER"), "kept turn 2");
+    assert.equal(
+      html.includes("TURN_3_USER"),
+      false,
+      "dropped turn 3 user",
+    );
+    assert.equal(
+      html.includes("TURN_3_ASSISTANT"),
+      false,
+      "dropped turn 3 assistant",
     );
     m.unmount();
   });
@@ -606,6 +699,77 @@ describe("fakeCoder restore truncates later checkpoints", () => {
       [2, 1],
     );
     assert.equal(after[0]!.sha, cps[1]!.sha);
+  });
+
+  it("restore of middle drops later transcript turns (issue #149)", async () => {
+    const cps = threeCheckpoints();
+    const sourceRow = source();
+    const fake = createFakeCoder({
+      projects: [project()],
+      threads: [sourceRow],
+      details: {
+        "t-cp-source": detail({
+          thread: { ...sourceRow, sessionId: "sess-live" },
+          messages: [
+            {
+              id: "u1",
+              role: "user",
+              text: "TURN_1_USER",
+              createdAt: NOW - 190_000,
+              runId: "r1",
+            },
+            {
+              id: "a1",
+              role: "assistant",
+              text: "TURN_1_ASSISTANT",
+              createdAt: NOW - 189_000,
+              runId: "r1",
+            },
+            {
+              id: "u2",
+              role: "user",
+              text: "TURN_2_USER",
+              createdAt: NOW - 130_000,
+              runId: "r2",
+            },
+            {
+              id: "a2",
+              role: "assistant",
+              text: "TURN_2_ASSISTANT",
+              createdAt: NOW - 129_000,
+              runId: "r2",
+            },
+            {
+              id: "u3",
+              role: "user",
+              text: "TURN_3_USER",
+              createdAt: NOW - 70_000,
+              runId: "r3",
+            },
+            {
+              id: "a3",
+              role: "assistant",
+              text: "TURN_3_ASSISTANT",
+              createdAt: NOW - 69_000,
+              runId: "r3",
+            },
+          ],
+        }),
+      },
+      checkpoints: { "t-cp-source": cps },
+    });
+
+    await fake.api.git.restoreCheckpoint({
+      threadId: "t-cp-source",
+      sha: cps[1]!.sha,
+    });
+    const d = await fake.api.threads.get("t-cp-source");
+    assert.deepEqual(
+      d.messages.map((m) => m.id),
+      ["u1", "a1", "u2", "a2"],
+    );
+    assert.equal(d.thread.sessionId, null);
+    assert.equal(d.thread.replayContext, true);
   });
 });
 

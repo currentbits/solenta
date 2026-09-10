@@ -676,17 +676,29 @@ function serializeMessages(hydrated, lazy) {
 /**
  * JSON.stringify a store data object without hydrating lazy messages.
  *
+ * Skips `workLogByThread` on `data` so a live append cannot stringify every
+ * thread's work log (#1204). Pass `workLogs` only for a still-inline legacy
+ * envelope; after the shard split the envelope keeps `{}`.
+ * `usageByThread` / `runArtifactsByThread` stay in the envelope today
+ * (small); if they grow, persist them the same dirty-key way as work logs
+ * rather than copying the full maps back into this payload.
+ *
  * @param {object} data
  * @param {Record<string, unknown>} hydrated
  * @param {{ raw: string, ranges: Map<string, {start:number, end:number}>, intact?: boolean } | null | undefined} lazy
+ * @param {Record<string, unknown> | null | undefined} [workLogs]
  * @returns {string}
  */
-function stringifyStore(data, hydrated, lazy) {
+function stringifyStore(data, hydrated, lazy, workLogs) {
   const payload = {};
   for (const key of Object.keys(data)) {
-    if (key === "messagesByThread") continue;
+    if (key === "messagesByThread" || key === "workLogByThread") continue;
     payload[key] = data[key];
   }
+  payload.workLogByThread =
+    workLogs && typeof workLogs === "object" && !Array.isArray(workLogs)
+      ? workLogs
+      : {};
   if (!lazy || !lazy.raw) {
     payload.messagesByThread = hydrated || {};
     return JSON.stringify(payload);

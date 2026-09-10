@@ -497,6 +497,15 @@ export interface ThreadInfo {
    */
   pendingPlan?: PendingPlanCard | null;
   /**
+   * External MCP pairing that launched this thread (#157). Null/absent on
+   * ordinary in-app threads. `pendingExternalApproval` means the run has
+   * not started; Approve in the thread view calls pairing.approve.
+   */
+  pairingId?: string | null;
+  pairingLabel?: string | null;
+  pendingExternalApproval?: boolean;
+  pendingExternalPrompt?: string | null;
+  /**
    * Epoch ms of the last stream event the provider CLI produced on the active
    * run (issue #314). Absent/null until the run emits anything. Feeds the turn
    * watchdog; a run whose CLI hangs keeps runStartedAt but stops moving this.
@@ -2733,6 +2742,60 @@ export type McpServerDefinition =
   | McpServerRemoteDefinition
   | McpServerStdioDefinition;
 
+/** Capability a pairing token may grant (#157). `read` is always present. */
+export type PairingCapability = "read" | "launch" | "steer" | "read_all";
+
+/** Public pairing row. The raw token is never stored here. */
+export interface PairingInfo {
+  id: string;
+  name: string;
+  tokenPrefix: string;
+  capabilities: PairingCapability[];
+  /** Null means every current project. */
+  projectIds: string[] | null;
+  expiresAt: number | null;
+  createdAt: number;
+  lastUsedAt: number | null;
+  revokedAt: number | null;
+  requireApproval: boolean;
+  managedWorktree: boolean;
+  launchesPerHour: number;
+  readsPerMinute: number;
+  expired?: boolean;
+}
+
+export interface PairingServerInfo {
+  running: boolean;
+  port: number | null;
+  url: string | null;
+}
+
+export interface PairingList {
+  pairings: PairingInfo[];
+  server: PairingServerInfo;
+}
+
+export interface PairingCreateInput {
+  name: string;
+  projectIds?: string[] | null;
+  capabilities?: PairingCapability[];
+  /** Lifetime in ms. null/0 = no expiry. Omit for the 30-day default. */
+  ttlMs?: number | null;
+  requireApproval?: boolean;
+  managedWorktree?: boolean;
+  launchesPerHour?: number;
+  readsPerMinute?: number;
+}
+
+/** Returned once at mint. `token` is not persisted and is not listed later. */
+export interface PairingCreated {
+  pairing: PairingInfo;
+  token: string;
+  url: string | null;
+  claudeDesktopJson: string | null;
+  pairingPrompt: string | null;
+}
+
 /** Whole-definition upsert input. Omitted secrets preserve existing values. */
 export type McpServerSaveInput =
   | {
@@ -3451,6 +3514,20 @@ export interface CoderApi {
     discardImport(input: { previewId: string }): Promise<void>;
   };
   /**
+   * External MCP pairing (#157). Mint a scoped, expiring token so Claude
+   * Desktop (or another MCP client) can launch and track Solenta tasks
+   * against the loopback orchestrator. The raw token is returned only from
+   * `create`. Approve/reject gate runs that pairing launched with
+   * requireApproval (the default).
+   */
+  pairing: {
+    list(): Promise<PairingList>;
+    create(input: PairingCreateInput): Promise<PairingCreated>;
+    revoke(input: { id: string }): Promise<PairingInfo>;
+    approve(input: { threadId: string }): Promise<unknown>;
+    reject(input: { threadId: string }): Promise<ThreadInfo>;
+  };
+  /**
    * Agent skills on disk (SKILL.md files). A skill is installed once and
    * mirrored into every active provider skills dir; list merges those into
    * one row per skill (plus read-only rows from <project>/.claude/skills).
@@ -3986,7 +4063,8 @@ export interface CoderApi {
      *    seeded with a digest of the retained tail;
      *  - with `restoreFiles`, hard-resets the WORKTREE to the checkpoint of
      *    the last RETAINED turn (turn N = the Nth user message that survives),
-     *    via the same guarded path as `git.restoreCheckpoint`.
+     *    via the same guarded path as `git.restoreCheckpoint` but with
+     *    conversation rewind skipped (this method already truncated).
      *
      * Usage history (`usageByThread`, spend) is NEVER rewritten: that money
      * was really spent.
@@ -4148,6 +4226,12 @@ export interface CoderApi {
        * does not reset the auto-turn cap or look like a new human prompt.
        */
       fromNotice?: boolean;
+      /**
+       * Skip folding a leftover queued follow-up into this prompt
+       * (issue #1203). Retry turn must pass this so the failed prompt
+       * is the only text sent; Send now of the leftover stays separate.
+       */
+      fromQueue?: boolean;
     }): Promise<{ runId: string }>;
     /**
      * Inject guidance into a live turn (issue #156). The provider must
@@ -4364,10 +4448,14 @@ export interface CoderApi {
      * auto-commits in the thread's WORKTREE ("coder-checkpoint: turn N").
      * Never fires on the main repo, never when the worktree is clean.
      * listCheckpoints returns newest-first; empty for threads without a
-     * worktree. restoreCheckpoint hard-resets the WORKTREE to the given sha;
-     * rejects while a run is active, when the worktree is missing, or when
-     * the sha is not one of this thread's checkpoints (never an arbitrary
-     * reset target). The renderer confirms destructively BEFORE calling.
+     * worktree. restoreCheckpoint hard-resets the WORKTREE to the given sha
+     * and truncates the transcript to that turn (issue #149): later messages
+     * and their work-log items are dropped, sessionId is cleared, and
+     * replayContext is set so the next turn starts a fresh CLI session seeded
+     * with the surviving tail. Rejects while a run is active, when the
+     * worktree is missing, or when the sha is not one of this thread's
+     * checkpoints (never an arbitrary reset target). The renderer confirms
+     * destructively BEFORE calling.
      */
     listCheckpoints(input: { threadId: string }): Promise<CheckpointInfo[]>;
     restoreCheckpoint(input: { threadId: string; sha: string }): Promise<void>;
@@ -4394,6 +4482,13 @@ export interface CoderApi {
      * has no worktree or checkpoints. Never rejects.
      */
     runStats(input: { threadId: string }): Promise<RunStatInfo[]>;
+    /**
+     * Checkpoint-to-checkpoint patch for one turn (#148). Same pairing as
+     * runStats: N vs N-1 (first vs its parent). `sha` must be one of this
+     * thread's checkpoints. Never rejects: missing worktree / unknown sha /
+     * git failure return an empty DiffResult.
+     */
+    turnDiff(input: { threadId: string; sha: string }): Promise<DiffResult>;
     /**
      * Predicted merge conflicts between the project's active worktree threads
      * (#249), computed with `git merge-tree` before anyone merges. Read-only

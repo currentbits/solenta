@@ -1395,8 +1395,8 @@ function createRunner(opts) {
   }
 
   /**
-   * Failed worker (or any failed terminal) queues a notice and delivers
-   * whatever was waiting on this thread. Never throws.
+   * Failed worker (or any failed terminal) queues a notice. Never throws.
+   * Does not drain a leftover follow-up (issue #1203).
    * @param {string} threadId
    */
   function afterFailedTurn(threadId) {
@@ -1415,7 +1415,6 @@ function createRunner(opts) {
       // silent
     }
     sweepDoneWorkers(threadId);
-    maybeDrainQueued(threadId);
   }
 
   /**
@@ -2017,10 +2016,15 @@ function createRunner(opts) {
     // Verify restamps status "working"; skip so we don't start the queued
     // prompt on top of the gate. The verify settle path drains instead.
     // A parked quota-wait is not a terminal — don't drain onto it.
+    // Failed and user-stopped turns must not auto-start a leftover
+    // follow-up as if the work landed (issue #1203).
     const settled = store.getThread(threadId);
     if (
-      !settled ||
-      (settled.status !== "quota-wait" && settled.quotaFailoverPending !== true)
+      status !== "failed" &&
+      status !== "stopped" &&
+      (!settled ||
+        (settled.status !== "quota-wait" &&
+          settled.quotaFailoverPending !== true))
     ) {
       maybeDrainQueued(threadId);
     }
@@ -8845,13 +8849,13 @@ function createRunner(opts) {
       );
     } else {
       // Sim stop skips notifyRunTerminal; still deliver notices that
-      // queued while this thread was an orchestrator mid-run.
+      // queued while this thread was an orchestrator mid-run. Do not
+      // drain a leftover follow-up (issue #1203).
       try {
         flushOrchNotices(threadId);
       } catch {
         // silent
       }
-      maybeDrainQueued(threadId);
     }
   }
 

@@ -64,6 +64,7 @@ import type {
   WorkflowTemplateInfo,
 } from "../shared/ipc";
 import { SPEC_ARTIFACTS, THREAD_NOTES_MAX, FELT_ESTIMATE_BUCKETS_MS } from "../shared/ipc";
+import { resolveCoderApi } from "../coderApi";
 import { TEACH_AUTONOMY_LABELS } from "../teach";
 import type { TeachAutonomy } from "../shared/ipc";
 import type { WorkflowSaveInput } from "../useCoder";
@@ -105,6 +106,10 @@ import {
   type ToolGroup,
 } from "../toolGroups";
 import { RunArtifacts } from "./RunArtifacts";
+import {
+  TurnDiffPanel,
+  type DiffViewMode,
+} from "./TurnDiffPanel";
 import {
   clampWindowStart,
   ensureVisibleStart,
@@ -446,7 +451,7 @@ interface ThreadViewProps {
     prompt: string,
     threadId?: string,
     attachments?: AttachmentInfo[],
-    opts?: { fromNotice?: boolean; steer?: boolean },
+    opts?: { fromNotice?: boolean; steer?: boolean; fromQueue?: boolean },
   ) => void | Promise<void>;
   /**
    * Edit-and-resubmit (#254): rewind to just before messageId, then start
@@ -607,6 +612,8 @@ interface ThreadViewProps {
   onPanesNeedRoom?: () => void;
   /** Per-checkpoint-pair shortstat for review bars. */
   runStats?: (threadId: string) => Promise<RunStatInfo[]>;
+  /** Checkpoint-to-checkpoint patch for a turn's Review panel (#148). */
+  onFetchTurnDiff?: (threadId: string, sha: string) => Promise<DiffResult>;
   /** Hard-reset the worktree to a checkpoint (Undo confirm). */
   restoreCheckpoint?: (threadId: string, sha: string) => Promise<void>;
   onFetchDiff: () => Promise<DiffResult>;
@@ -1575,11 +1582,13 @@ const MessageBlock = memo(function MessageBlock({
 function ReviewBarStrip({
   bar,
   isWorking,
+  expanded = false,
   onReview,
   onUndo,
 }: {
   bar: ReviewBar;
   isWorking: boolean;
+  expanded?: boolean;
   onReview: () => void;
   onUndo: () => void;
 }) {
@@ -1612,10 +1621,11 @@ function ReviewBarStrip({
           type="button"
           className={styles.reviewBtn}
           data-review-open=""
-          title="Review changes"
+          title={expanded ? "Hide this turn's diff" : "Review this turn"}
+          aria-expanded={expanded}
           onClick={onReview}
         >
-          Review
+          {expanded ? "Hide" : "Review"}
         </button>
       </div>
     </div>
@@ -2715,6 +2725,72 @@ function PermissionPrompt({
  * from its todo list, plus the plan it had approved. Unlike PlanPrompt this
  * outlives the approval — it is what the thread intends to do, at a glance.
  */
+function ExternalApprovalCard({ thread }: { thread: ThreadInfo }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const prompt = String(thread.pendingExternalPrompt || "").trim();
+  const label = thread.pairingLabel || "An external MCP client";
+
+  const act = async (kind: "approve" | "reject") => {
+    setBusy(true);
+    setError(null);
+    try {
+      const api = resolveCoderApi();
+      if (kind === "approve") await api.pairing.approve({ threadId: thread.id });
+      else await api.pairing.reject({ threadId: thread.id });
+    } catch (err) {
+      setError(err instanceof Error && err.message ? err.message : String(err));
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div
+      className={styles.planCard}
+      data-external-approval=""
+      data-page-block=""
+    >
+      <div className={styles.planCardHead}>
+        <span className={styles.planCardTitle}>Pairing launch</span>
+      </div>
+      <p className={styles.planProgress}>
+        {label} wants to start this task. It will run in a managed worktree
+        after you approve.
+      </p>
+      {prompt ? (
+        <pre className={styles.planBody} data-external-prompt="">
+          {prompt}
+        </pre>
+      ) : null}
+      {error ? (
+        <p className={styles.pairingError} role="alert">
+          {error}
+        </p>
+      ) : null}
+      <div className={styles.permissionActions}>
+        <button
+          type="button"
+          className={styles.permissionAllow}
+          data-external-approve=""
+          disabled={busy}
+          onClick={() => void act("approve")}
+        >
+          Approve
+        </button>
+        <button
+          type="button"
+          className={styles.permissionDeny}
+          data-external-reject=""
+          disabled={busy}
+          onClick={() => void act("reject")}
+        >
+          Don&apos;t run
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function PlanCard({ thread }: { thread: ThreadInfo }) {
   const steps = thread.planSteps ?? [];
   // No steps yet means the prose IS the overview, so it starts expanded.
@@ -4344,6 +4420,7 @@ export const ThreadView = memo(function ThreadView({
   terminalApi,
   onPanesNeedRoom,
   runStats,
+  onFetchTurnDiff,
   restoreCheckpoint,
   onFetchDiff,
   onFetchReviewContext,
@@ -4471,6 +4548,12 @@ export const ThreadView = memo(function ThreadView({
    */
   const [handoffBannerDismissed, setHandoffBannerDismissed] = useState(false);
   const [runStatList, setRunStatList] = useState<RunStatInfo[]>([]);
+  const [openTurnSha, setOpenTurnSha] = useState<string | null>(null);
+  const [turnDiffMode, setTurnDiffMode] = useState<DiffViewMode>("unified");
+  const openThreadId = detail?.thread.id ?? null;
+  useEffect(() => {
+    setOpenTurnSha(null);
+  }, [openThreadId]);
   const [restoreConfirm, setRestoreConfirm] = useState<ReviewBar | null>(null);
   const [restorePending, setRestorePending] = useState(false);
   const [restoreError, setRestoreError] = useState<string | null>(null);
@@ -4549,9 +4632,18 @@ export const ThreadView = memo(function ThreadView({
       cancelled = true;
     };
   }, [onListCliCommands, project?.path, threadId]);
-  const [incomingAttachments, setIncomingAttachments] = useState<
-    AttachmentInfo[]
-  >([]);
+  const [incomingHandoff, setIncomingHandoff] = useState<{
+    threadId: string;
+    items: AttachmentInfo[];
+  } | null>(null);
+  // #1206: bump during render so A→B→A cannot revive a save that
+  // resolves between the new render and the reset effect.
+  const screenshotHandoffGen = useRef(0);
+  const screenshotHandoffThreadId = useRef(threadId);
+  if (screenshotHandoffThreadId.current !== threadId) {
+    screenshotHandoffThreadId.current = threadId;
+    screenshotHandoffGen.current += 1;
+  }
   const [replyTo, setReplyTo] = useState<ReplyTarget | null>(null);
   const [snapOpen, setSnapOpen] = useState(false);
   const snapDialogRef = useRef<HTMLDivElement>(null);
@@ -4573,6 +4665,12 @@ export const ThreadView = memo(function ThreadView({
     setLayout(hydrated.layout);
     setFocusedId(hydrated.focusId);
   }
+  const browserPaneOpen = hasPaneType(layout, "browser");
+  const wasBrowserPaneOpen = useRef(browserPaneOpen);
+  if (wasBrowserPaneOpen.current && !browserPaneOpen) {
+    screenshotHandoffGen.current += 1;
+  }
+  wasBrowserPaneOpen.current = browserPaneOpen;
 
   const sessionImages = useMemo(
     () => sessionImagePathsFromMessages(detail?.messages ?? []),
@@ -5100,7 +5198,10 @@ export const ThreadView = memo(function ThreadView({
       retrySend.text,
       undefined,
       retrySend.attachments,
-      retrySend.fromNotice ? { fromNotice: true } : undefined,
+      {
+        fromQueue: true,
+        ...(retrySend.fromNotice ? { fromNotice: true } : {}),
+      },
     );
   }, [
     retrySend,
@@ -5288,27 +5389,61 @@ export const ThreadView = memo(function ThreadView({
     }
   }, [onListSnapWindows]);
 
+  const isLiveScreenshotHandoff = (
+    originThreadId: string | null,
+    generation: number,
+  ) =>
+    originThreadId != null &&
+    originThreadId === screenshotHandoffThreadId.current &&
+    generation === screenshotHandoffGen.current;
+
+  const deliverIncomingAttachment = (
+    originThreadId: string,
+    generation: number,
+    att: AttachmentInfo,
+  ) => {
+    if (!isLiveScreenshotHandoff(originThreadId, generation)) return;
+    setIncomingHandoff({ threadId: originThreadId, items: [att] });
+  };
+
+  const attachBrowserScreenshot = useCallback(
+    async (dataUrl: string, originThreadId: string) => {
+      if (!onSaveAttachmentImage) return;
+      const generation = screenshotHandoffGen.current;
+      const att = await onSaveAttachmentImage(dataUrl);
+      if (!att) return;
+      deliverIncomingAttachment(originThreadId, generation, att);
+    },
+    [onSaveAttachmentImage],
+  );
+
   const captureAppSnap = useCallback(
     async (sourceId: string) => {
       if (!onCaptureSnapWindow) return;
+      const originThreadId = screenshotHandoffThreadId.current;
+      const generation = screenshotHandoffGen.current;
       setSnapBusy(true);
       setSnapError(null);
       try {
         const att = await onCaptureSnapWindow(sourceId);
-        if (att) {
-          setIncomingAttachments([att]);
+        if (!isLiveScreenshotHandoff(originThreadId, generation)) return;
+        if (att && originThreadId) {
+          deliverIncomingAttachment(originThreadId, generation, att);
           setSnapOpen(false);
-        } else {
+        } else if (!att) {
           setSnapError("Could not capture that window");
         }
       } catch (err) {
+        if (!isLiveScreenshotHandoff(originThreadId, generation)) return;
         setSnapError(
           err instanceof Error && err.message
             ? err.message
             : "Failed to capture the window",
         );
       } finally {
-        setSnapBusy(false);
+        if (isLiveScreenshotHandoff(originThreadId, generation)) {
+          setSnapBusy(false);
+        }
       }
     },
     [onCaptureSnapWindow],
@@ -5528,7 +5663,10 @@ export const ThreadView = memo(function ThreadView({
       setSyncRefreshNonce(0);
       setCopiedThreadId(false);
       setLightbox(null);
-      setIncomingAttachments([]);
+      setIncomingHandoff(null);
+      setSnapOpen(false);
+      setSnapBusy(false);
+      setSnapError(null);
       if (copyFlashTimer.current != null) {
         clearTimeout(copyFlashTimer.current);
         copyFlashTimer.current = null;
@@ -6532,12 +6670,7 @@ export const ThreadView = memo(function ThreadView({
                 devServerStatus={devServerStatus}
                 listLocalServers={listLocalServers}
                 onAttachScreenshot={
-                  onSaveAttachmentImage
-                    ? async (dataUrl) => {
-                        const att = await onSaveAttachmentImage(dataUrl);
-                        if (att) setIncomingAttachments([att]);
-                      }
-                    : undefined
+                  onSaveAttachmentImage ? attachBrowserScreenshot : undefined
                 }
               />
             );
@@ -6870,17 +7003,38 @@ export const ThreadView = memo(function ThreadView({
                       }
                     />
                     {bar && (
-                      <ReviewBarStrip
-                        bar={bar}
-                        isWorking={isWorking}
-                        onReview={() => onViewChanges?.()}
-                        onUndo={() => {
-                          if (!bar.undoSha || isWorking || restorePending)
-                            return;
-                          setRestoreError(null);
-                          setRestoreConfirm(bar);
-                        }}
-                      />
+                      <>
+                        <ReviewBarStrip
+                          bar={bar}
+                          isWorking={isWorking}
+                          expanded={openTurnSha === bar.sha}
+                          onReview={() => {
+                            if (onFetchTurnDiff) {
+                              setOpenTurnSha((prev) =>
+                                prev === bar.sha ? null : bar.sha,
+                              );
+                              return;
+                            }
+                            onViewChanges?.();
+                          }}
+                          onUndo={() => {
+                            if (!bar.undoSha || isWorking || restorePending)
+                              return;
+                            setRestoreError(null);
+                            setRestoreConfirm(bar);
+                          }}
+                        />
+                        {openTurnSha === bar.sha && onFetchTurnDiff ? (
+                          <TurnDiffPanel
+                            threadId={detail.thread.id}
+                            sha={bar.sha}
+                            turn={bar.turn}
+                            mode={turnDiffMode}
+                            onModeChange={setTurnDiffMode}
+                            onFetch={onFetchTurnDiff}
+                          />
+                        ) : null}
+                      </>
                     )}
                   </>
                 )}
@@ -6918,6 +7072,10 @@ export const ThreadView = memo(function ThreadView({
             onStopSpec={onStopSpec}
             onSpecArtifact={onSpecArtifact}
           />
+        ) : null}
+
+        {thread.pendingExternalApproval ? (
+          <ExternalApprovalCard thread={thread} />
         ) : null}
 
         {thread.ask ? (
@@ -7424,8 +7582,9 @@ export const ThreadView = memo(function ThreadView({
         onSaveAttachmentImage={onSaveAttachmentImage}
         onLoadAttachmentImage={onLoadAttachmentImage}
         onDropAttachmentFiles={onDropAttachmentFiles}
-        incomingAttachments={incomingAttachments}
-        onIncomingAttachmentsConsumed={() => setIncomingAttachments([])}
+        incomingAttachments={incomingHandoff?.items}
+        incomingAttachmentThreadId={incomingHandoff?.threadId ?? null}
+        onIncomingAttachmentsConsumed={() => setIncomingHandoff(null)}
         onSlashAction={handleSlashAction}
         cliCommands={cliCommands}
         onStopRun={onStopRun}
@@ -7604,9 +7763,9 @@ export const ThreadView = memo(function ThreadView({
               {shortSha(restoreConfirm.undoSha)})?
             </h2>
             <p className={styles.confirmBody}>
-              This resets the worktree to this checkpoint. Uncommitted changes
-              and later checkpoints&apos; work will be lost. The main repository
-              is not touched.
+              This resets the worktree and the conversation to this checkpoint.
+              Later messages and later checkpoints&apos; work will be lost. The
+              main repository is not touched.
             </p>
             <div className={styles.confirmActions}>
               <button

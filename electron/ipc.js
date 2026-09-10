@@ -26,6 +26,7 @@ const {
   listCheckpoints,
   restoreCheckpoint,
   runStats,
+  turnDiff,
   conflictForecast,
   gcScan,
   gcClean,
@@ -66,6 +67,7 @@ const {
 } = require("./mcp.js");
 const mcpCatalog = require("./mcpCatalog.js");
 const mcpImports = require("./mcpImports.js");
+const pairing = require("./pairing.js");
 const skills = require("./skills.js");
 const skillCatalog = require("./skillCatalog.js");
 const skillImports = require("./skillImports.js");
@@ -179,6 +181,10 @@ function makeCtx(deps) {
     getIosSimulator,
     log: deps.log,
     confirmApplyUpdate: deps.confirmApplyUpdate,
+    getOrchStatus:
+      typeof deps.getOrchStatus === "function"
+        ? deps.getOrchStatus
+        : () => ({ running: false, port: null }),
     transport: "desktop",
   };
 }
@@ -1213,6 +1219,43 @@ const IPC_HANDLERS = {
       previewId: input && input.previewId,
     });
   },
+  "pairing:list": async (ctx) => {
+    return pairing.listPairings(ctx.userDataPath, {
+      getOrchStatus: ctx.getOrchStatus,
+    });
+  },
+  "pairing:create": async (ctx, input) => {
+    return pairing.createPairing(ctx.userDataPath, input || {}, {
+      getOrchStatus: ctx.getOrchStatus,
+    });
+  },
+  "pairing:revoke": async (ctx, input) => {
+    const id = input && typeof input.id === "string" ? input.id : "";
+    return pairing.revokePairing(ctx.userDataPath, id);
+  },
+  "pairing:approve": async (ctx, input) => {
+    const threadId =
+      input && typeof input.threadId === "string" ? input.threadId : "";
+    return pairing.approveExternalRun(
+      {
+        store: ctx.store,
+        runner: ctx.runner,
+        broadcast: ctx.broadcast,
+      },
+      threadId,
+    );
+  },
+  "pairing:reject": async (ctx, input) => {
+    const threadId =
+      input && typeof input.threadId === "string" ? input.threadId : "";
+    return pairing.rejectExternalRun(
+      {
+        store: ctx.store,
+        broadcast: ctx.broadcast,
+      },
+      threadId,
+    );
+  },
   // "Send test" in Settings (issue #167). The renderer cannot POST these
   // itself — Slack/Discord/ntfy answer no CORS preflight — and a typo'd or
   // revoked URL is otherwise only discoverable by finishing a real run.
@@ -1726,12 +1769,22 @@ const IPC_HANDLERS = {
     });
   },
   "git:restoreCheckpoint": async (ctx, input) => {
-    return restoreCheckpoint({
+    const result = await restoreCheckpoint({
       store: ctx.store,
       threadId: input.threadId,
       sha: input.sha,
       isRunning: (id) => ctx.runner.isRunning(id),
+      cleanupRunArtifacts: ctx.cleanupRunArtifacts,
     });
+    ctx.broadcast("threads:changed", services.listThreads(ctx.store));
+    if (ctx.runner && typeof ctx.runner.refreshDetail === "function") {
+      try {
+        ctx.runner.refreshDetail(input.threadId);
+      } catch {
+        // Open detail catches up on the next threads.get.
+      }
+    }
+    return result;
   },
   "git:syncInfo": async (ctx, input) => {
     try {
@@ -1903,6 +1956,13 @@ const IPC_HANDLERS = {
     return runStats({
       store: ctx.store,
       threadId: input && input.threadId,
+    });
+  },
+  "git:turnDiff": async (ctx, input) => {
+    return turnDiff({
+      store: ctx.store,
+      threadId: input && input.threadId,
+      sha: input && input.sha,
     });
   },
   "git:conflictForecast": async (ctx, input) => {

@@ -149,6 +149,35 @@ describe("serializeMessages / stringifyStore", () => {
     assert.equal(parsed.t2[0].text, "keep");
   });
 
+  it("omits workLogByThread from the envelope unless passed as the 4th argument", () => {
+    const bulky = {
+      t1: Array.from({ length: 20 }, (_, i) => ({
+        id: `w${i}`,
+        label: "step",
+        done: true,
+        timestamp: i,
+      })),
+    };
+    const skipped = JSON.parse(
+      stringifyStore(
+        { threads: [{ id: "t1" }], workLogByThread: bulky, settings: { n: 1 } },
+        {},
+        null,
+      ),
+    );
+    assert.deepEqual(skipped.workLogByThread, {});
+    assert.equal(skipped.settings.n, 1);
+    const inline = JSON.parse(
+      stringifyStore(
+        { threads: [{ id: "t1" }], workLogByThread: bulky },
+        {},
+        null,
+        bulky,
+      ),
+    );
+    assert.equal(inline.workLogByThread.t1.length, 20);
+  });
+
   it("omits a deleted thread and includes a newly added one", () => {
     const doc = JSON.stringify({
       messagesByThread: {

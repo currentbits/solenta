@@ -150,6 +150,7 @@ function view(props: {
   changesOpen?: boolean;
   onViewChanges?: () => void;
   runStats?: (threadId: string) => Promise<RunStatInfo[]>;
+  onFetchTurnDiff?: (threadId: string, sha: string) => Promise<DiffResult>;
   restoreCheckpoint?: (threadId: string, sha: string) => Promise<void>;
   onLoadImage?: (name: string) => Promise<string | null>;
   onLoadAttachmentImage?: (path: string) => Promise<string | null>;
@@ -231,6 +232,7 @@ function view(props: {
       onCloseChanges={() => {}}
       onViewChanges={props.onViewChanges}
       runStats={props.runStats}
+      onFetchTurnDiff={props.onFetchTurnDiff}
       restoreCheckpoint={props.restoreCheckpoint}
       onFetchDiff={
         props.onFetchDiff ??
@@ -1387,6 +1389,21 @@ describe("ThreadView review bar", () => {
     { sha: "sha-turn-2-bbbbbbbb", turn: 2, files: 1, additions: 2, deletions: 0 },
   ];
 
+  const turn2Diff: DiffResult = {
+    files: [{ path: "src/a.ts", status: "M", additions: 2, deletions: 0 }],
+    patch: [
+      "diff --git a/src/a.ts b/src/a.ts",
+      "--- a/src/a.ts",
+      "+++ b/src/a.ts",
+      "@@ -1,2 +1,3 @@",
+      " keep",
+      "-old",
+      "+new",
+      " keep",
+    ].join("\n"),
+    truncated: false,
+  };
+
   it("renders stats under the last assistant of each completed run", async () => {
     const m = await mount(
       view({
@@ -1421,8 +1438,9 @@ describe("ThreadView review bar", () => {
     m.unmount();
   });
 
-  it("Review opens Changes via onViewChanges; Undo confirm restores the prior checkpoint", async () => {
+  it("Review opens the turn's checkpoint diff; Undo confirm restores the prior checkpoint", async () => {
     let reviews = 0;
+    const fetched: Array<{ threadId: string; sha: string }> = [];
     const restores: Array<{ threadId: string; sha: string }> = [];
     const m = await mount(
       view({
@@ -1430,6 +1448,14 @@ describe("ThreadView review bar", () => {
         runStats: async () => twoStats,
         onViewChanges: () => {
           reviews += 1;
+        },
+        onFetchTurnDiff: async (threadId, sha) => {
+          fetched.push({ threadId, sha });
+          return sha === "sha-turn-2-bbbbbbbb" ? turn2Diff : {
+            files: [],
+            patch: "",
+            truncated: false,
+          };
         },
         restoreCheckpoint: async (threadId, sha) => {
           restores.push({ threadId, sha });
@@ -1441,7 +1467,35 @@ describe("ThreadView review bar", () => {
     const reviewBtns = m.queryAll("[data-review-open]");
     assert.equal(reviewBtns.length, 2);
     await m.click(reviewBtns[1] as HTMLElement);
-    assert.equal(reviews, 1, "Review calls onViewChanges");
+    await m.flush();
+    assert.equal(reviews, 0, "Review does not open the working-tree Git pane");
+    assert.deepEqual(fetched, [{ threadId: "t1", sha: "sha-turn-2-bbbbbbbb" }]);
+    const panel = m.query("[data-turn-diff]");
+    assert.ok(panel, "turn diff panel open");
+    assert.equal(panel!.getAttribute("data-turn-diff-sha"), "sha-turn-2-bbbbbbbb");
+    assert.equal(panel!.getAttribute("data-turn-diff-mode"), "unified");
+    assert.ok(
+      (panel!.textContent || "").includes("-old"),
+      "unified view shows the removed line",
+    );
+    assert.ok((panel!.textContent || "").includes("+new"));
+
+    await m.click(m.query("[data-turn-diff-mode-btn='split']") as HTMLElement);
+    await m.flush();
+    assert.equal(
+      m.query("[data-turn-diff]")?.getAttribute("data-turn-diff-mode"),
+      "split",
+    );
+    assert.ok(
+      m.query("[data-turn-diff-split-row]"),
+      "split view renders paired rows",
+    );
+    const splitText = m.query("[data-turn-diff]")?.textContent || "";
+    assert.ok(splitText.includes("old") && splitText.includes("new"));
+    assert.ok(
+      !splitText.includes("-old"),
+      "split view strips unified-diff prefixes",
+    );
 
     const firstUndo = m.query(
       "[data-review-bar='run-1'] [data-review-undo]",
@@ -1462,7 +1516,8 @@ describe("ThreadView review bar", () => {
     assert.ok(copy.includes("turn 1") || copy.includes("Turn 1"));
     assert.ok(copy.includes("sha-tur"), "confirm names short sha");
     assert.ok(
-      copy.includes("resets the worktree") &&
+      copy.includes("resets the worktree and the conversation") &&
+        copy.includes("Later messages") &&
         copy.includes("main repository is not touched"),
     );
 
@@ -1475,7 +1530,25 @@ describe("ThreadView review bar", () => {
     await m.click(m.query("[data-review-undo-submit]") as HTMLElement);
     await m.flush();
     assert.deepEqual(restores, [{ threadId: "t1", sha: "sha-turn-1-aaaaaaaa" }]);
-    assert.equal(reviews, 2, "successful undo also opens Changes");
+    assert.equal(reviews, 1, "successful undo also opens Changes");
+    m.unmount();
+  });
+
+  it("Review without onFetchTurnDiff still opens the Git pane", async () => {
+    let reviews = 0;
+    const m = await mount(
+      view({
+        detail: twoRunDetail,
+        runStats: async () => twoStats,
+        onViewChanges: () => {
+          reviews += 1;
+        },
+      }),
+    );
+    await m.flush();
+    await m.click(m.queryAll("[data-review-open]")[0] as HTMLElement);
+    assert.equal(reviews, 1);
+    assert.equal(m.query("[data-turn-diff]"), null);
     m.unmount();
   });
 

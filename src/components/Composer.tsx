@@ -296,8 +296,12 @@ interface ComposerProps {
   /**
    * Attachments arriving from outside the composer (Browser pane screenshot,
    * issue #155). Consumed into the pending chips, then onIncomingAttachmentsConsumed.
+   * `incomingAttachmentThreadId` is the originating thread of that handoff
+   * (#1206): a mismatch is consumed without pinning so a stale screenshot
+   * cannot land on another draft or wait for a later switch back.
    */
   incomingAttachments?: AttachmentInfo[];
+  incomingAttachmentThreadId?: string | null;
   onIncomingAttachmentsConsumed?: () => void;
   /**
    * CLI `/` verbs that live outside Composer (issue #472): rewind, usage,
@@ -484,6 +488,7 @@ export const Composer = memo(function Composer({
   onLoadAttachmentImage,
   onDropAttachmentFiles,
   incomingAttachments,
+  incomingAttachmentThreadId,
   onIncomingAttachmentsConsumed,
   onSlashAction,
   cliCommands,
@@ -826,9 +831,22 @@ export const Composer = memo(function Composer({
   }, [canAttachImages, threadId]);
   useEffect(() => {
     if (!incomingAttachments?.length) return;
+    if (
+      incomingAttachmentThreadId &&
+      incomingAttachmentThreadId !== threadId
+    ) {
+      onIncomingAttachmentsConsumed?.();
+      return;
+    }
     addAttachments(incomingAttachments);
     onIncomingAttachmentsConsumed?.();
-  }, [incomingAttachments, addAttachments, onIncomingAttachmentsConsumed]);
+  }, [
+    incomingAttachments,
+    incomingAttachmentThreadId,
+    threadId,
+    addAttachments,
+    onIncomingAttachmentsConsumed,
+  ]);
   const removeAttachment = useCallback(
     (path: string) =>
       setAttachmentsByThread((prev) => ({
