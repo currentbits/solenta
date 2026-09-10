@@ -76,6 +76,7 @@ import {
   groupHypotheses,
 } from "../hypothesisLedger";
 import { useEscapeClose } from "../useEscapeClose";
+import { useModalFocus } from "../useModalFocus";
 import {
   setDivergenceCardEnabled,
   useDivergenceCardEnabled,
@@ -1849,6 +1850,16 @@ export function GitTab({
     null,
   );
   const [restorePending, setRestorePending] = useState(false);
+  const closeRestoreConfirm = useCallback(() => {
+    if (restorePending) return;
+    setRestoreConfirm(null);
+  }, [restorePending]);
+  useEscapeClose(
+    restoreConfirm != null && !restorePending,
+    closeRestoreConfirm,
+  );
+  const restoreDialogRef = useRef<HTMLDivElement>(null);
+  useModalFocus(restoreConfirm != null, restoreDialogRef);
   const [now, setNow] = useState(() => Date.now());
   const [sync, setSync] = useState<GitSyncInfo | null>(null);
   const [syncing, setSyncing] = useState(false);
@@ -2214,16 +2225,15 @@ export function GitTab({
         <div
           className={styles.confirmOverlay}
           role="presentation"
-          onClick={() => {
-            if (restorePending) return;
-            setRestoreConfirm(null);
-          }}
+          onClick={closeRestoreConfirm}
         >
           <div
+            ref={restoreDialogRef}
             className={styles.confirmDialog}
             role="dialog"
             aria-modal="true"
             aria-labelledby="restore-checkpoint-title"
+            tabIndex={-1}
             data-restore-confirm={restoreConfirm.sha}
             onClick={(e) => e.stopPropagation()}
           >
@@ -2255,10 +2265,7 @@ export function GitTab({
                 className={styles.confirmCancel}
                 data-restore-confirm-cancel=""
                 disabled={restorePending}
-                onClick={() => {
-                  if (restorePending) return;
-                  setRestoreConfirm(null);
-                }}
+                onClick={closeRestoreConfirm}
               >
                 Cancel
               </button>
