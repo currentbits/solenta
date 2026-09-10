@@ -171,6 +171,14 @@ describe("Onboarding setup step (#630)", () => {
       0,
       "summary must be tabbable for the modal focus trap",
     );
+    await inAct(() => {
+      summary.focus();
+    });
+    assert.equal(
+      summary.ownerDocument.activeElement,
+      summary,
+      "summary must be keyboard-focusable",
+    );
     assert.ok(
       !m.query("[data-onboarding-default-worktree]"),
       "worktree control must stay hidden while collapsed",
@@ -188,6 +196,10 @@ describe("Onboarding setup step (#630)", () => {
     assert.ok(
       m.query("[data-onboarding-default-worktree]"),
       "opening the disclosure must reveal the worktree control",
+    );
+    assert.ok(
+      m.text().includes("now or later in Settings"),
+      "optional copy must not claim new threads start without saved defaults",
     );
     m.unmount();
   });
@@ -364,6 +376,46 @@ describe("Onboarding setup step (#630)", () => {
         Object.prototype.hasOwnProperty.call(p, "dailyBudgetUsd"),
       ),
       `negative must not reach settings.set, got: ${JSON.stringify(afterNeg)}`,
+    );
+    assert.ok(
+      (m.query("[data-onboarding-setup-error]")?.textContent || "").includes(
+        "above 0",
+      ),
+      "negative must keep the above-0 error",
+    );
+    m.unmount();
+  });
+
+  it("unsaved budget draft survives collapse", async () => {
+    const fake = createFakeCoder({ settings: { onboardingSeen: false } });
+    const m = await boot(fake);
+    await gotoSetup(m);
+    await openOptional(m);
+
+    const input = m.query("[data-onboarding-budget]");
+    assert.ok(input, "budget input must render");
+    await m.type(input, "18");
+    const before = settingsPatches(fake).filter((p) =>
+      Object.prototype.hasOwnProperty.call(p, "dailyBudgetUsd"),
+    );
+
+    await setOptionalOpen(m, false);
+    assert.ok(
+      !m.query("[data-onboarding-budget]"),
+      "collapse must unmount the budget input",
+    );
+
+    await openOptional(m);
+    const again = m.query("[data-onboarding-budget]") as HTMLInputElement | null;
+    assert.ok(again, "reopen must restore the budget input");
+    assert.equal(again.value, "18", "unsaved budget draft must survive collapse");
+    const after = settingsPatches(fake).filter((p) =>
+      Object.prototype.hasOwnProperty.call(p, "dailyBudgetUsd"),
+    );
+    assert.equal(
+      after.length,
+      before.length,
+      "collapse must not save the unsaved draft",
     );
     m.unmount();
   });
