@@ -692,6 +692,30 @@ function createRunner(opts) {
    */
   const active = new Map();
   /**
+   * Launches that have marked the thread working but have not yet placed a
+   * provider entry in `active`. Stop, isRunning, and stopAll must see these
+   * so a first-turn prefetch cannot spawn after the user cancelled (#1228).
+   * @type {Map<string, { id: string, runId: string }>}
+   */
+  const pendingLaunches = new Map();
+
+  function beginPendingLaunch(threadId, runId) {
+    const id = randomUUID();
+    pendingLaunches.set(threadId, { id, runId });
+    return id;
+  }
+
+  function isPendingLaunch(threadId, launchId) {
+    const pending = pendingLaunches.get(threadId);
+    return Boolean(pending && pending.id === launchId);
+  }
+
+  function cancelPendingLaunch(threadId) {
+    const pending = pendingLaunches.get(threadId) || null;
+    if (pending) pendingLaunches.delete(threadId);
+    return pending;
+  }
+  /**
    * Threads whose live ExitPlanMode prompt was already answered this turn.
    * Blocks the post-run fallback card so a claude deny does not reopen a
    * "plan" made of the result string (issue #707).
@@ -1176,7 +1200,7 @@ function createRunner(opts) {
   function flushOrchNotices(threadId) {
     const notes = orchNotices.get(threadId);
     if (!notes || notes.length === 0) return;
-    if (active.has(threadId)) return;
+    if (isRunning(threadId)) return;
     orchNotices.delete(threadId);
     if (!store.getThread(threadId)) return;
     const prompt = noticePrompt(notes);
@@ -1206,7 +1230,7 @@ function createRunner(opts) {
         appendMessage(threadId, "event", `${prompt}\n\nNot delivered: ${reason}`);
         // A run that raced in after the active guard above owns the status;
         // only an idle orchestrator is really stalled.
-        if (!active.has(threadId)) {
+        if (!isRunning(threadId)) {
           store.updateThread(
             threadId,
             {
@@ -1530,7 +1554,7 @@ function createRunner(opts) {
               "event",
               `${prompt}\n\nNot delivered: ${reason}`,
             );
-            if (!active.has(threadId)) {
+            if (!isRunning(threadId)) {
               store.updateThread(
                 threadId,
                 {
@@ -1581,7 +1605,7 @@ function createRunner(opts) {
     if (crew.length === 0) return;
     // Every terminal path calls clearRun before this hook, so a worker that
     // just landed is already out of `active`.
-    if (crew.some((t) => t.status === "working" && active.has(t.id))) return;
+    if (crew.some((t) => t.status === "working" && isRunning(t.id))) return;
     let changed = false;
     const simReleaseOpts = {
       getIosSimulator,
@@ -1621,7 +1645,7 @@ function createRunner(opts) {
       ) {
         continue;
       }
-      if (active.has(t.id) || t.worktreePath || t.pinnedAt) continue;
+      if (isRunning(t.id) || t.worktreePath || t.pinnedAt) continue;
       services.purgeThread(store, t.id);
       void services.scheduleSimulatorRelease(simReleaseOpts, "releaseThread", {
         threadId: t.id,
@@ -2721,7 +2745,7 @@ function createRunner(opts) {
   async function fireFailoverResume(threadId) {
     const thread = store.getThread(threadId);
     if (!thread || thread.quotaFailoverPending !== true) return;
-    if (active.has(threadId)) return;
+    if (isRunning(threadId)) return;
     const user = lastUserOnThread(threadId);
     if (!user || !String(user.text || "").trim()) {
       store.updateThread(
@@ -2783,7 +2807,7 @@ function createRunner(opts) {
     const thread = store.getThread(threadId);
     if (!thread || thread.status !== "quota-wait") return;
     if (!quotaWaitEnabled(thread, store.getSettings())) return;
-    if (active.has(threadId)) return;
+    if (isRunning(threadId)) return;
     const user = lastUserOnThread(threadId);
     if (!user || !String(user.text || "").trim()) {
       store.updateThread(
@@ -2842,7 +2866,7 @@ function createRunner(opts) {
       throw new Error("Thread is not waiting on a provider quota reset");
     }
     cancelQuotaWake(threadId);
-    if (active.has(threadId)) {
+    if (isRunning(threadId)) {
       throw new Error("A run is already active on this thread");
     }
     const user = lastUserOnThread(threadId);
@@ -7518,7 +7542,7 @@ function createRunner(opts) {
         return { runId: null, thread };
       }
     }
-    if (active.has(threadId)) {
+    if (isRunning(threadId)) {
       throw new Error("A run is already active on this thread");
     }
 
@@ -7790,6 +7814,8 @@ function createRunner(opts) {
       { touch: true },
     );
 
+    const launchId = beginPendingLaunch(threadId, runId);
+    try {
     // A creation-time worktree starts on the placeholder branch
     // coder/new-thread-<id>; once the first prompt promotes the title, the
     // branch follows (T3-style). Best-effort: never throws, never blocks.
@@ -7879,6 +7905,10 @@ function createRunner(opts) {
         bootstrapMemory,
       }));
 
+    if (!isPendingLaunch(threadId, launchId)) {
+      return { runId };
+    }
+
     const name = workflowNameFromThreadId(threadId);
 
     if (provider === "simulate") {
@@ -7913,6 +7943,12 @@ function createRunner(opts) {
       runId,
       getProvider("claude"),
     );
+    } finally {
+      const pending = pendingLaunches.get(threadId);
+      if (pending && pending.id === launchId) {
+        pendingLaunches.delete(threadId);
+      }
+    }
   }
 
   /**
@@ -8034,6 +8070,26 @@ function createRunner(opts) {
       );
     }
     if (!active.has(threadId)) {
+      const pending = cancelPendingLaunch(threadId);
+      if (pending) {
+        const runId = pending.runId;
+        appendMessage(threadId, "event", "Run stopped", runId);
+        appendDoneWorkLog(threadId, runId, "Run stopped");
+        store.updateThread(
+          threadId,
+          { status: "idle", runStartedAt: null, stoppedAt: Date.now() },
+          { touch: true },
+        );
+        store.save();
+        pushDetail(threadId, lastWorkflowByThread.get(threadId) || null);
+        pushThreadsChanged();
+        notifyRunTerminal(threadId, "stopped", "Run stopped", {
+          tokensIn: 0,
+          tokensOut: 0,
+          costUsd: 0,
+        });
+        return;
+      }
       // Idle orchestrator whose crew was still running: no terminal follows,
       // so publish the crew-stop events here.
       if (crew.stopped > 0 || crew.traced) {
@@ -8150,12 +8206,15 @@ function createRunner(opts) {
   }
 
   function isRunning(threadId) {
-    return active.has(threadId);
+    return active.has(threadId) || pendingLaunches.has(threadId);
   }
 
   function activeRunId(threadId) {
-    const entry = active.get(String(threadId));
-    return entry && typeof entry.runId === "string" ? entry.runId : null;
+    const id = String(threadId);
+    const entry = active.get(id);
+    if (entry && typeof entry.runId === "string") return entry.runId;
+    const pending = pendingLaunches.get(id);
+    return pending && typeof pending.runId === "string" ? pending.runId : null;
   }
 
   /**
@@ -8190,6 +8249,11 @@ function createRunner(opts) {
 
   function stopAll() {
     clearInterval(stallTimer);
+    // Invalidate first so an in-flight startRun cannot spawn after cleanup
+    // began (#1228). Leftover working rows are marked with the same quit
+    // interruption as live active entries below.
+    const leftoverPending = [...pendingLaunches.entries()];
+    pendingLaunches.clear();
     for (const entry of btwActive.values()) {
       entry.stopping = true;
       if (entry.handle && typeof entry.handle.kill === "function") {
@@ -8241,6 +8305,22 @@ function createRunner(opts) {
         "event",
         "Run interrupted by app quit",
         runId,
+      );
+      store.updateThread(
+        threadId,
+        { status: "idle", runStartedAt: null, stoppedAt: Date.now() },
+        { touch: true },
+      );
+      marked = true;
+    }
+    for (const [threadId, pending] of leftoverPending) {
+      const thread = store.getThread(threadId);
+      if (!thread || thread.status !== "working") continue;
+      appendMessage(
+        threadId,
+        "event",
+        "Run interrupted by app quit",
+        pending && pending.runId ? pending.runId : null,
       );
       store.updateThread(
         threadId,
