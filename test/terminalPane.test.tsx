@@ -8,7 +8,7 @@
 import assert from "node:assert/strict";
 import { describe, it, afterEach } from "node:test";
 import { useState } from "react";
-import { mount, unmountAll } from "./support/dom.ts";
+import { inAct, mount, unmountAll } from "./support/dom.ts";
 import { TerminalPane, type TerminalApi } from "../src/components/TerminalPane";
 import type { TerminalState } from "../src/shared/ipc";
 
@@ -26,6 +26,16 @@ function state(over: Partial<TerminalState> = {}): TerminalState {
     startedAt: 0,
     ...over,
   };
+}
+
+function deferred() {
+  let resolve!: (value: TerminalState) => void;
+  let reject!: (error: Error) => void;
+  const promise = new Promise<TerminalState>((yes, no) => {
+    resolve = yes;
+    reject = no;
+  });
+  return { promise, resolve, reject };
 }
 
 /** Records every cursor the pane sends back, overrides included. */
@@ -56,6 +66,133 @@ function api(over: Partial<TerminalApi> = {}) {
 }
 
 describe("TerminalPane", () => {
+  for (const boundary of ["thread switch", "restart"] as const) {
+    for (const operation of ["read", "write"] as const) {
+      it(`ignores a delayed ${operation} after ${boundary}`, async (t) => {
+        t.mock.timers.enable({ apis: ["setInterval"] });
+        const old = deferred();
+        let opened = 0;
+        let reads = 0;
+        const { calls, api: a } = api({
+          open: async () => ++opened === 1
+            ? state({ running: true, text: "old output\n", cursor: 11, reset: true })
+            : state({ running: true, text: "new\n", cursor: 4, pending: "new pending", cwd: "/new", reset: true }),
+          read: async () => operation === "read" && ++reads === 1
+            ? old.promise
+            : state({ running: true, text: "next\n", cursor: 9, cwd: "/new" }),
+          write: () => old.promise,
+        });
+        const m = await mount(<TerminalPane threadId="t1" api={a} />);
+        if (operation === "read") {
+          await inAct(() => t.mock.timers.tick(250));
+        } else {
+          await m.type(m.query("[data-terminal-input]"), "old command");
+          await m.press(m.query("[data-terminal-input]"), "Enter");
+        }
+        assert.equal(calls.find((c) => c.call === operation)?.since, 11);
+        if (boundary === "restart") {
+          await m.click(m.query("[data-terminal-restart]"));
+        } else {
+          await m.rerender(<TerminalPane threadId="t2" api={a} />);
+        }
+        await inAct(() => old.resolve(state({ text: "stale\n", cursor: 17, pending: "old pending", cwd: "/old" })));
+        assert.equal(m.query("[data-terminal-output]")!.textContent, "new\nnew pending");
+        assert.ok(m.text().includes("/new"));
+        assert.equal(m.query("[data-running]")!.getAttribute("data-running"), "true");
+        await inAct(() => t.mock.timers.tick(250));
+        assert.deepEqual(calls.at(-1), { call: "read", threadId: boundary === "restart" ? "t1" : "t2", since: 4 });
+        assert.equal(m.query("[data-terminal-output]")!.textContent, "new\nnext\n");
+      });
+    }
+  }
+
+  it("invalidates old replies as soon as restart begins and preserves the next command", async (t) => {
+    t.mock.timers.enable({ apis: ["setInterval"] });
+    const read = deferred();
+    const write = deferred();
+    const close = deferred();
+    const open = deferred();
+    let opened = 0;
+    let written = 0;
+    const { calls, api: a } = api({
+      open: () => ++opened === 1
+        ? Promise.resolve(state({ running: true, text: "old\n", cursor: 4, reset: true }))
+        : open.promise,
+      read: () => read.promise,
+      write: async (_id, data) => ++written === 1
+        ? write.promise
+        : state({ running: true, text: `$ ${data}\n`, cursor: 10 }),
+      close: () => close.promise,
+    });
+    const m = await mount(<TerminalPane threadId="t1" api={a} />);
+    await inAct(() => t.mock.timers.tick(250));
+    await m.press(m.query("[data-terminal-input]"), "Enter");
+    await m.click(m.query("[data-terminal-restart]"));
+    await inAct(() => {
+      read.resolve(state({ running: true, text: "stale read\n", cursor: 15 }));
+      write.resolve(state({ running: true, text: "stale write\n", cursor: 16 }));
+    });
+    assert.ok(!m.query("[data-terminal-output]")!.textContent!.includes("stale"));
+    await m.type(m.query("[data-terminal-input]"), "pwd");
+    await m.press(m.query("[data-terminal-input]"), "Enter");
+    await inAct(() => t.mock.timers.tick(500));
+    assert.equal(written, 1, "commands wait for restart without being discarded");
+    assert.equal(calls.filter((c) => c.call === "read").length, 1, "polling pauses during restart");
+    assert.equal((m.query("[data-terminal-input]") as HTMLInputElement).value, "pwd");
+    await inAct(() => close.resolve(state()));
+    await inAct(() => open.resolve(state({ running: true, text: "new\n", cursor: 4, reset: true })));
+    await m.press(m.query("[data-terminal-input]"), "Enter");
+    assert.deepEqual(calls.at(-1), { call: "write", threadId: "t1", since: 4 });
+    assert.equal(m.query("[data-terminal-output]")!.textContent, "new\n$ pwd\n");
+    await m.press(m.query("[data-terminal-input]"), "ArrowUp");
+    assert.equal((m.query("[data-terminal-input]") as HTMLInputElement).value, "pwd");
+  });
+
+  for (const stage of ["close", "open"] as const) {
+    for (const boundary of ["switch", "unmount", "restart"] as const) {
+      it(`abandons a restart waiting for ${stage} after ${boundary}`, async () => {
+        const delayed = deferred();
+        let opened = 0;
+        let closed = 0;
+        const { calls, api: a } = api({
+          open: async () => {
+            opened += 1;
+            if (stage === "open" && opened === 2) return delayed.promise;
+            return state({ text: `session ${opened}\n`, cursor: 10, reset: true });
+          },
+          close: async () => ++closed === 1 && stage === "close" ? delayed.promise : state(),
+        });
+        const m = await mount(<TerminalPane threadId="t1" api={a} />);
+        await m.click(m.query("[data-terminal-restart]"));
+        if (boundary === "switch") await m.rerender(<TerminalPane threadId="t2" api={a} />);
+        else if (boundary === "unmount") m.unmount();
+        else await m.click(m.query("[data-terminal-restart]"));
+        const before = m.query("[data-terminal-output]")?.textContent;
+        const count = calls.length;
+        await inAct(() => delayed.resolve(state({ text: "obsolete\n", cursor: 99, reset: true })));
+        assert.equal(calls.length, count, "a stale close must not open another shell");
+        assert.equal(m.query("[data-terminal-output]")?.textContent, before);
+      });
+    }
+  }
+
+  for (const rejected of [false, true]) {
+    it(`ignores an initial open ${rejected ? "failure" : "reply"} superseded by restart`, async () => {
+      const old = deferred();
+      let opened = 0;
+      const { api: a } = api({
+        open: async () => ++opened === 1 ? old.promise : state({ text: "new\n", cursor: 4, reset: true }),
+      });
+      const m = await mount(<TerminalPane threadId="t1" api={a} />);
+      await m.click(m.query("[data-terminal-restart]"));
+      await inAct(() => {
+        if (rejected) old.reject(new Error("old open failed"));
+        else old.resolve(state({ text: "old\n", cursor: 100, reset: true }));
+      });
+      assert.equal(m.query("[data-terminal-output]")!.textContent, "new\n");
+    });
+  }
+
   it("shows the cwd and the shell from the opened session", async () => {
     const { api: a } = api({
       open: async () =>
