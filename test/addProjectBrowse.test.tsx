@@ -14,6 +14,7 @@ import {
   project,
 } from "./support/fakeCoder.ts";
 import App from "../src/App";
+import { AddProjectPathModal } from "../src/components/AddProjectPathModal";
 import type { FsBrowseResult } from "../src/shared/ipc";
 
 async function boot(fake: ReturnType<typeof createFakeCoder>) {
@@ -142,6 +143,41 @@ describe("Add project: typed browse (#609)", () => {
       m.query("[data-add-project-path]"),
       null,
       "modal must close when the path is already a project",
+    );
+    m.unmount();
+  });
+});
+
+describe("AddProjectPathModal focus trap (#916)", () => {
+  it("opening the dialog moves focus inside; Tab stays inside", async () => {
+    const m = await mount(
+      <AddProjectPathModal
+        onClose={() => {}}
+        onSubmit={async () => ({})}
+        onCreate={async () => ({})}
+        onBrowse={async () =>
+          ({
+            parentPath: "/",
+            existed: true,
+            entries: [],
+          }) satisfies FsBrowseResult
+        }
+      />,
+    );
+    const dialog = m.query('[role="dialog"]') as HTMLElement | null;
+    assert.ok(dialog, "add-project dialog");
+    assert.ok(
+      dialog.contains(document.activeElement),
+      "opening the dialog must move focus inside it",
+    );
+    await m.pressFocused("Tab");
+    const first = document.activeElement as HTMLElement;
+    assert.ok(dialog.contains(first), "Tab stays inside");
+    assert.notEqual(first, dialog, "Tab moves to a focusable inside the dialog");
+    await m.pressFocused("Tab");
+    assert.ok(
+      dialog.contains(document.activeElement),
+      "second Tab stays inside",
     );
     m.unmount();
   });
