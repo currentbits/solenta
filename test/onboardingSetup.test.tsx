@@ -7,7 +7,7 @@
  */
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { mount } from "./support/dom.ts";
+import { inAct, mount } from "./support/dom.ts";
 import {
   createFakeCoder,
   installFakeCoder,
@@ -25,6 +25,7 @@ async function boot(
   return mount(<App />);
 }
 
+/** Advance until setup. cli → setup is one Next; still works if welcome exists. */
 async function gotoSetup(
   m: Awaited<ReturnType<typeof mount>>,
 ): Promise<void> {
@@ -41,23 +42,43 @@ async function gotoSetup(
   assert.equal(
     m.query("[data-onboarding-step]")?.getAttribute("data-onboarding-step"),
     "setup",
-    "must land on the setup step from welcome or cli",
+    "must land on the setup step",
   );
 }
 
-async function openOptional(
+async function setOptionalOpen(
   m: Awaited<ReturnType<typeof mount>>,
+  open: boolean,
 ): Promise<HTMLDetailsElement> {
   const details = m.query(
     "[data-onboarding-optional-defaults]",
   ) as HTMLDetailsElement | null;
   assert.ok(details, "optional defaults disclosure must render");
-  if (!details.open) {
-    const summary = m.query("[data-onboarding-optional-summary]");
-    assert.ok(summary, "optional defaults summary must render");
-    await m.click(summary);
+  if (details.open !== open) {
+    await inAct(() => {
+      details.open = open;
+      details.dispatchEvent(new Event("toggle", { bubbles: true }));
+    });
+    await m.flush();
   }
-  assert.equal(details.open, true, "optional defaults must be open");
+  assert.equal(
+    details.open,
+    open,
+    open
+      ? "optional defaults must be open"
+      : "optional defaults must be collapsed",
+  );
+  return details;
+}
+
+async function openOptional(
+  m: Awaited<ReturnType<typeof mount>>,
+): Promise<HTMLDetailsElement> {
+  const details = await setOptionalOpen(m, true);
+  assert.ok(
+    m.query("[data-onboarding-default-worktree]"),
+    "opening optional defaults must reveal the controls",
+  );
   return details;
 }
 
@@ -136,10 +157,19 @@ describe("Onboarding setup step (#630)", () => {
     ) as HTMLDetailsElement | null;
     assert.ok(details, "optional defaults disclosure must render");
     assert.equal(details.open, false, "optional defaults must start collapsed");
+    const summary = m.query(
+      "[data-onboarding-optional-summary]",
+    ) as HTMLElement | null;
+    assert.ok(summary, "optional defaults summary must render");
     assert.match(
-      (m.query("[data-onboarding-optional-summary]")?.textContent || "").trim(),
+      (summary.textContent || "").trim(),
       /Optional defaults/,
       "summary must be labelled Optional defaults",
+    );
+    assert.equal(
+      summary.tabIndex,
+      0,
+      "summary must be tabbable for the modal focus trap",
     );
     assert.ok(
       !m.query("[data-onboarding-default-worktree]"),
@@ -236,12 +266,10 @@ describe("Onboarding setup step (#630)", () => {
       `budget 40 must save, got: ${JSON.stringify(patches)}`,
     );
 
-    await m.click(m.query("[data-onboarding-optional-summary]"));
-    assert.equal(
-      (m.query("[data-onboarding-optional-defaults]") as HTMLDetailsElement)
-        .open,
-      false,
-      "summary click must collapse optional defaults",
+    await setOptionalOpen(m, false);
+    assert.ok(
+      !m.query("[data-onboarding-budget]"),
+      "collapse must unmount optional controls",
     );
     await openOptional(m);
     const worktreeAgain = m.query(
@@ -313,8 +341,12 @@ describe("Onboarding setup step (#630)", () => {
     const err = m.query("[data-onboarding-setup-error]");
     assert.ok(err, "invalid budget must render data-onboarding-setup-error");
     assert.ok(
-      (err.textContent || "").includes("Daily budget must be a positive number"),
-      `error must show the positive-finite rule, got: ${err.textContent}`,
+      (err.textContent || "").includes("above 0"),
+      `error must explain a budget above 0, got: ${err.textContent}`,
+    );
+    assert.ok(
+      !(err.textContent || "").includes("null"),
+      `visible copy must not say null, got: ${err.textContent}`,
     );
     const afterZero = settingsPatches(fake);
     assert.ok(
@@ -332,6 +364,44 @@ describe("Onboarding setup step (#630)", () => {
         Object.prototype.hasOwnProperty.call(p, "dailyBudgetUsd"),
       ),
       `negative must not reach settings.set, got: ${JSON.stringify(afterNeg)}`,
+    );
+    m.unmount();
+  });
+
+  it("malformed number input does not clear an existing cap", async () => {
+    const fake = createFakeCoder({
+      settings: { onboardingSeen: false, dailyBudgetUsd: 25 },
+    });
+    const m = await boot(fake);
+    await gotoSetup(m);
+    await openOptional(m);
+
+    const input = m.query("[data-onboarding-budget]") as HTMLInputElement | null;
+    const save = m.query("[data-onboarding-budget-save]");
+    assert.ok(input && save, "budget controls must render");
+    assert.equal(input.value, "25", "existing cap must fill the input");
+
+    Object.defineProperty(input, "validity", {
+      configurable: true,
+      get: () => ({ badInput: true }),
+    });
+    await m.type(input, "");
+    await m.click(save);
+
+    const err = m.query("[data-onboarding-setup-error]");
+    assert.ok(err, "badInput must render data-onboarding-setup-error");
+    assert.ok(
+      (err.textContent || "").includes("leave it blank"),
+      `error must explain blank vs invalid, got: ${err.textContent}`,
+    );
+    const patches = settingsPatches(fake);
+    assert.ok(
+      !patches.some(
+        (p) =>
+          Object.prototype.hasOwnProperty.call(p, "dailyBudgetUsd") &&
+          p.dailyBudgetUsd === null,
+      ),
+      `badInput must not save a cleared cap, got: ${JSON.stringify(patches)}`,
     );
     m.unmount();
   });

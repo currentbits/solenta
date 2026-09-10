@@ -1,10 +1,11 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { AppSettings } from "../../shared/ipc";
 import type { OnboardingStepProps } from "./OnboardingModal";
 import styles from "./OnboardingModal.module.css";
 
 const PREVIEW_COUNT = 4;
-const BUDGET_ERROR = "Daily budget must be a positive number or null";
+const BUDGET_ERROR =
+  "Enter a budget above 0, or leave it blank for no cap.";
 
 function budgetToInput(value: number | null | undefined): string {
   if (value == null) return "";
@@ -37,6 +38,7 @@ export default function SetupStep({
   const [budgetText, setBudgetText] = useState("");
   const [budgetSeeded, setBudgetSeeded] = useState(false);
   const [optionalOpen, setOptionalOpen] = useState(false);
+  const budgetInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (!settings || budgetSeeded) return;
@@ -60,6 +62,10 @@ export default function SetupStep({
   );
 
   const saveBudget = useCallback(() => {
+    if (budgetInputRef.current?.validity.badInput) {
+      setError(BUDGET_ERROR);
+      return;
+    }
     const parsed = parseBudget(budgetText);
     if (!isAllowedBudget(parsed)) {
       setError(BUDGET_ERROR);
@@ -114,23 +120,21 @@ export default function SetupStep({
       <details
         className={styles.setupSection}
         data-onboarding-optional-defaults=""
-        open={optionalOpen}
+        onToggle={(e) => {
+          setOptionalOpen((e.currentTarget as HTMLDetailsElement).open);
+        }}
       >
         <summary
           className={styles.setupSectionLabel}
           data-onboarding-optional-summary=""
-          onClick={(e) => {
-            // jsdom does not toggle <details> on summary click.
-            e.preventDefault();
-            setOptionalOpen((on) => !on);
-          }}
+          tabIndex={0}
         >
           Optional defaults
         </summary>
         {optionalOpen ? (
           <fieldset className={styles.setupSection} disabled={defaultsDisabled}>
             <p className={styles.stepBody}>
-              New threads start without these. Each choice is optional.
+              You can change these defaults now or later in Settings.
             </p>
 
             <label className={styles.setupToggle}>
@@ -183,6 +187,7 @@ export default function SetupStep({
               </label>
               <div className={styles.setupBudgetRow}>
                 <input
+                  ref={budgetInputRef}
                   id="onboarding-budget"
                   className={styles.setupInput}
                   type="number"
