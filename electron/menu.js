@@ -47,6 +47,14 @@ function appMenuTemplate(opts = {}) {
         { role: "quit" },
       ],
     });
+  } else {
+    // Windows/Linux have no app menu; File > Quit binds Ctrl+Q the way
+    // the Darwin app menu binds Cmd+Q. role:quit still goes through
+    // before-quit, so the active-work dialog (#1195) covers this path.
+    template.push({
+      label: "File",
+      submenu: [{ role: "quit" }],
+    });
   }
   template.push(
     {

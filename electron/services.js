@@ -4279,9 +4279,13 @@ function listTrashed(store, opts) {
  * After metadata is durable on disk, schedules one best-effort
  * `opts.cleanupRunArtifacts()` pass (same contract as deleteThread). Cleanup
  * rejection is logged via `opts.log` and never fails project removal.
+ * Session processes live in the runner Map, not the Store; the IPC
+ * `projects:remove` handler retires each returned id after this succeeds
+ * (issue #1227).
  * @param {import('./store').Store} store
  * @param {{ projectId: string }} input
  * @param {{ isRunning?: (threadId: string) => boolean, getIosSimulator?: () => object | null, cleanupRunArtifacts?: () => unknown, log?: (msg: string) => void }} [opts]
+ * @returns {Promise<{ removedThreadIds: string[] }>}
  */
 async function removeProject(store, input, opts) {
   const projectId =
@@ -4323,6 +4327,7 @@ async function removeProject(store, input, opts) {
     }
   }
 
+  const removedThreadIds = threads.map((thread) => thread.id);
   for (const thread of threads) {
     purgeThread(store, thread.id);
   }
@@ -4331,6 +4336,7 @@ async function removeProject(store, input, opts) {
   void scheduleImagePruneFromStore(store);
   scheduleArtifactCleanup(opts);
   void scheduleSimulatorRelease(opts, "releaseProject", { projectId });
+  return { removedThreadIds };
 }
 
 /**

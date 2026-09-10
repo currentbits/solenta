@@ -45,8 +45,13 @@ describe("keyboard sheet vim Escape (#779)", () => {
 
   it("keeps stop-on-escape when vim motions are off", async () => {
     setComposerVimEnabled(false);
-    const { m, text } = await openSheet();
+    const { m, text, kbds } = await openSheet();
     assert.match(text, /Stop the live turn/);
+    assert.match(text, /Command palette/);
+    assert.match(text, /Search files in this project/);
+    assert.match(text, /Search file contents/);
+    assert.ok(kbds.includes("⌘ + K"), "⌘K is the palette");
+    assert.ok(kbds.includes("⌘ + J / ⇧J"), "previous thread moved off ⌘K");
     assert.doesNotMatch(text, /leave insert/i);
     m.unmount();
   });

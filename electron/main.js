@@ -39,8 +39,14 @@ const {
 const { createOrchServer } = require("./orchServer.js");
 const { createPrStateRefresher, createRetentionSweeper } = require("./worktrees.js");
 const { createWedgedLaneWatchdog } = require("./mergeQueue.js");
-const { killAll: killAllDevServers } = require("./devservers.js");
-const { killAll: killAllTerminals } = require("./terminal.js");
+const {
+  killAll: killAllDevServers,
+  listLive: listLiveDevServers,
+} = require("./devservers.js");
+const {
+  killAll: killAllTerminals,
+  listLive: listLiveTerminals,
+} = require("./terminal.js");
 const { startScheduler } = require("./automations.js");
 const { startAutoDispatch } = require("./autodispatch.js");
 const { startPostMergeScheduler } = require("./postmerge.js");
@@ -57,6 +63,11 @@ const { configureDefaultSecrets } = require("./secrets.js");
 const { installCrashGuard } = require("./crash-guard.js");
 const { start: startLoopLag } = require("./looplag.js");
 const { installShutdown, runAppCleanup } = require("./shutdown.js");
+const {
+  createQuitPolicy,
+  shouldBlockWindowClose,
+  showNativeQuitDialog,
+} = require("./quitGuard.js");
 const { installAppMenu } = require("./menu.js");
 const { bootFirstPaint } = require("./boot.js");
 const { applyZoom, clampUiScale } = require("./zoom.js");
@@ -103,6 +114,9 @@ let memorySupervisor = null;
 /** @type {ReturnType<typeof createRunner> | null} */
 let runner = null;
 
+/** @type {ReturnType<typeof installShutdown> | null} */
+let shutdown = null;
+
 /** @type {ReturnType<typeof createStayAwake> | null} */
 let stayAwake = null;
 
@@ -147,6 +161,28 @@ let iosSimulator = null;
 
 /** @type {ReturnType<typeof createIOSSimulatorStreamBroker> | null} */
 let iosSimulatorStream = null;
+
+const quitPolicy = createQuitPolicy({
+  listActiveThreadIds: () =>
+    runner && typeof runner.listActiveThreadIds === "function"
+      ? runner.listActiveThreadIds()
+      : [],
+  listActiveBtwCount: () =>
+    runner && typeof runner.listActiveBtwCount === "function"
+      ? runner.listActiveBtwCount()
+      : 0,
+  listThreads: () => (store ? store.getThreads() : []),
+  listLiveTerminals: () => listLiveTerminals(),
+  listLiveDevServers: () => listLiveDevServers(),
+  getSettings: () => (store ? store.getSettings() : null),
+  setSettings: (patch) => {
+    if (!store) return;
+    store.setSettings(patch);
+    // About to quit: the 250ms save() timer would miss app.exit().
+    store.saveNow();
+  },
+  showDialog: (spec) => showNativeQuitDialog(spec, { dialog, BrowserWindow }),
+});
 
 /**
  * Crash recovery has to finish before anything can attach: an attach that got
@@ -265,6 +301,24 @@ function createWindow() {
     } catch {
       // contents may already be gone
     }
+  });
+
+  // Windows/Linux last-window close is a quit. Prevent destroying the
+  // window before the active-work dialog can cancel (#1195). macOS close
+  // hides the window and leaves the app running.
+  win.on("close", (event) => {
+    if (
+      !shouldBlockWindowClose({
+        platform: process.platform,
+        serveWeb: serveOpts.enabled,
+        shuttingDown: Boolean(shutdown && shutdown.isActive && shutdown.isActive()),
+        wouldConfirm: () => quitPolicy.wouldConfirm(),
+      })
+    ) {
+      return;
+    }
+    event.preventDefault();
+    app.quit();
   });
 
   if (isDev) {
@@ -660,6 +714,12 @@ app.whenReady().then(async () => {
       artifactStore ? artifactStore.cleanup() : Promise.resolve(),
     getIosSimulator: currentIosSimulator,
     log: (msg) => console.warn(msg),
+    confirmApplyUpdate: async () => {
+      const ok = await quitPolicy.confirmQuit("update");
+      if (!ok) return false;
+      quitPolicy.markSkipOnce();
+      return true;
+    },
     getOrchStatus: () =>
       orchServer ? orchServer.getStatus() : { running: false, port: null },
   });
@@ -827,8 +887,9 @@ app.whenReady().then(async () => {
   }
 });
 
-installShutdown({
+shutdown = installShutdown({
   app,
+  confirmQuit: () => quitPolicy.confirmQuit(),
   cleanup: () =>
     runAppCleanup({
       log: (msg) => console.warn(msg),

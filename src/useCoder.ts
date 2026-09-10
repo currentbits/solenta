@@ -58,7 +58,10 @@ import type {
   ListPrsResult,
   CheckoutPrResult,
   PrChecksResult,
+  PrCommentResult,
+  PrDetailResult,
   PrInfo,
+  PrTemplateResult,
   ProjectInfo,
   ProjectUpdateInput,
   ProviderInfo,
@@ -601,8 +604,12 @@ export interface UseCoderResult {
   revertFile: (path: string, status: string) => Promise<{ path: string }>;
   /** Draft a commit message with the thread's provider (never commits). */
   suggestCommitMessage: () => Promise<{ message: string }>;
-  /** File paths for the composer @-mention popup. */
-  listFiles: (query: string) => Promise<string[]>;
+  /** File paths for the composer @-mention popup and the file palette. */
+  listFiles: (query: string, opts?: { limit?: number }) => Promise<string[]>;
+  /** Fixed-string content search in the selected thread's project. */
+  searchFileContents: (query: string) => Promise<
+    Array<{ path: string; line: number; text: string }>
+  >;
   /** Native folder picker for @-mention browse. */
   pickDirectory: () => Promise<string | null>;
   /** AppSnap window list. */
@@ -665,6 +672,37 @@ export interface UseCoderResult {
     projectId: string;
     prNumber: number;
   }) => Promise<CheckoutPrResult>;
+  /** Repo PULL_REQUEST_TEMPLATE files. Failures are in-band. */
+  prTemplate: (projectPath: string) => Promise<PrTemplateResult>;
+  /** Full PR for the in-app workspace. Failures are in-band. */
+  prDetail: (input: {
+    projectPath: string;
+    prNumber: number;
+  }) => Promise<PrDetailResult>;
+  prEdit: (input: {
+    projectPath: string;
+    prNumber: number;
+    title?: string;
+    body?: string;
+  }) => Promise<PrDetailResult>;
+  prComment: (input: {
+    projectPath: string;
+    prNumber: number;
+    body: string;
+  }) => Promise<PrCommentResult>;
+  prClose: (input: {
+    projectPath: string;
+    prNumber: number;
+  }) => Promise<PrDetailResult>;
+  prReady: (input: {
+    projectPath: string;
+    prNumber: number;
+    undo?: boolean;
+  }) => Promise<PrDetailResult>;
+  prMergeAt: (input: {
+    projectPath: string;
+    prNumber: number;
+  }) => Promise<PrDetailResult>;
   /** Issues for a project checkout (`gh issue list`). Failures are in-band. */
   listIssues: (projectPath: string) => Promise<ListIssuesResult>;
   /** Move an issue's plan:* label (Planboard). Failures are in-band. */
@@ -3023,11 +3061,25 @@ export function useCoder(): UseCoderResult {
   }, [api, selectedThreadId]);
 
   const listFiles = useCallback(
-    async (query: string) => {
+    async (query: string, opts?: { limit?: number }) => {
       if (!selectedThreadId) return [];
       const threadId = selectedThreadId;
-      const result = await api.files.list({ threadId, query });
+      const result = await api.files.list({
+        threadId,
+        query,
+        limit: opts?.limit,
+      });
       return result.files;
+    },
+    [api, selectedThreadId],
+  );
+
+  const searchFileContents = useCallback(
+    async (query: string) => {
+      if (!selectedThreadId || !query.trim()) return [];
+      const threadId = selectedThreadId;
+      const result = await api.files.search({ threadId, query });
+      return result.hits;
     },
     [api, selectedThreadId],
   );
@@ -3319,6 +3371,68 @@ export function useCoder(): UseCoderResult {
   const listPrs = useCallback(
     async (projectPath: string, opts?: ListPrsOptions) => {
       return api.git.listPrs(projectPath, opts);
+    },
+    [api],
+  );
+
+  const prTemplate = useCallback(
+    async (projectPath: string) => {
+      return api.git.prTemplate({ projectPath });
+    },
+    [api],
+  );
+
+  const prDetail = useCallback(
+    async (input: { projectPath: string; prNumber: number }) => {
+      return api.git.prDetail(input);
+    },
+    [api],
+  );
+
+  const prEdit = useCallback(
+    async (input: {
+      projectPath: string;
+      prNumber: number;
+      title?: string;
+      body?: string;
+    }) => {
+      return api.git.prEdit(input);
+    },
+    [api],
+  );
+
+  const prComment = useCallback(
+    async (input: {
+      projectPath: string;
+      prNumber: number;
+      body: string;
+    }) => {
+      return api.git.prComment(input);
+    },
+    [api],
+  );
+
+  const prClose = useCallback(
+    async (input: { projectPath: string; prNumber: number }) => {
+      return api.git.prClose(input);
+    },
+    [api],
+  );
+
+  const prReady = useCallback(
+    async (input: {
+      projectPath: string;
+      prNumber: number;
+      undo?: boolean;
+    }) => {
+      return api.git.prReady(input);
+    },
+    [api],
+  );
+
+  const prMergeAt = useCallback(
+    async (input: { projectPath: string; prNumber: number }) => {
+      return api.git.prMergeAt(input);
     },
     [api],
   );
@@ -4136,6 +4250,7 @@ export function useCoder(): UseCoderResult {
     revertFile,
     suggestCommitMessage,
     listFiles,
+    searchFileContents,
     pickDirectory,
     listSnapWindows,
     captureSnapWindow,
@@ -4154,6 +4269,13 @@ export function useCoder(): UseCoderResult {
     prMerge,
     listPrs,
     checkoutPr,
+    prTemplate,
+    prDetail,
+    prEdit,
+    prComment,
+    prClose,
+    prReady,
+    prMergeAt,
     listIssues,
     setIssuePlanStatus,
     createIssue,

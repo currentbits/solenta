@@ -32,6 +32,12 @@ import { ArchiveToast } from "./components/ArchiveToast";
 import { AddProjectPathModal } from "./components/AddProjectPathModal";
 import { EditProjectModal } from "./components/EditProjectModal";
 import { WorkflowsModal } from "./components/WorkflowsModal";
+import { CommandPalette } from "./components/CommandPalette";
+import {
+  PALETTE_ACTIONS,
+  matchPaletteShortcut,
+  type PaletteMode,
+} from "./commandPalette";
 import { WebTokenGate } from "./components/WebTokenGate";
 import { isWebMode } from "./shared/wire";
 import { isBuildMismatch } from "./buildMismatch";
@@ -237,6 +243,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     revertFile,
     suggestCommitMessage,
     listFiles,
+    searchFileContents,
     pickDirectory,
     listSnapWindows,
     captureSnapWindow,
@@ -254,6 +261,13 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     prMerge,
     listPrs,
     checkoutPr,
+    prTemplate,
+    prDetail,
+    prEdit,
+    prComment,
+    prClose,
+    prReady,
+    prMergeAt,
     listIssues,
     setIssuePlanStatus,
     createIssue,
@@ -365,6 +379,10 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
   const [changesNonce, setChangesNonce] = useState(0);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsPane, setSettingsPane] = useState<SettingsPane | null>(null);
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  const [paletteMode, setPaletteMode] = useState<PaletteMode>("command");
+  const paletteModeRef = useRef<PaletteMode>("command");
+  paletteModeRef.current = paletteMode;
   /** Mid-session latch so finishing the tour does not wait on settings.set. */
   const [onboardingDismissed, setOnboardingDismissed] = useState(false);
   /** Relaunch from Settings even after onboardingSeen is true. */
@@ -1090,6 +1108,19 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
   // the expand button is still one click away.
   const collapseAgentsForPanes = useCallback(() => setAgentsCollapsed(true), []);
 
+  const toggleAgents = useCallback(() => {
+    if (narrow) {
+      setDrawer((d) => (d === "agents" ? null : "agents"));
+      return;
+    }
+    collapseSourceRef.current = "user";
+    setAgentsCollapsed((c) => {
+      const next = !c;
+      persistLastIfRemembering(next);
+      return next;
+    });
+  }, [narrow, persistLastIfRemembering]);
+
   useEffect(() => {
     if (collapseSourceRef.current !== "user") return;
     collapseSourceRef.current = null;
@@ -1102,20 +1133,30 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
       if (e.altKey || e.shiftKey) return;
       if (dialogOpen()) return;
       e.preventDefault();
-      if (narrow) {
-        setDrawer((d) => (d === "agents" ? null : "agents"));
-        return;
-      }
-      collapseSourceRef.current = "user";
-      setAgentsCollapsed((c) => {
-        const next = !c;
-        persistLastIfRemembering(next);
-        return next;
-      });
+      toggleAgents();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [narrow, persistLastIfRemembering]);
+  }, [toggleAgents]);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const next = matchPaletteShortcut(e);
+      if (!next) return;
+      const paletteEl = document.querySelector("[data-command-palette]");
+      if (dialogOpen() && !paletteEl) return;
+      e.preventDefault();
+      e.stopPropagation();
+      if (paletteEl && paletteModeRef.current === next) {
+        setPaletteOpen(false);
+        return;
+      }
+      setPaletteMode(next);
+      setPaletteOpen(true);
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, []);
 
   // ponytail: restore to the trigger, not a focus trap. Tab can leave the pane.
   useEffect(() => {
@@ -1405,6 +1446,61 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
   const handleAddProject = useCallback(() => {
     setAddPathOpen(true);
   }, []);
+
+  const handlePaletteProject = useCallback(
+    (projectId: string) => {
+      const latest = threads
+        .filter((t) => t.projectId === projectId && !t.archived)
+        .sort((a, b) => b.updatedAt - a.updatedAt)[0];
+      if (latest) handleSelectThread(latest.id);
+    },
+    [threads, handleSelectThread],
+  );
+
+  const handlePaletteFile = useCallback(
+    (rel: string, opts?: { reveal?: boolean }) => {
+      const cleaned = rel.endsWith("/") ? rel.slice(0, -1) : rel;
+      void resolvePaths([cleaned]).then((rows) => {
+        const abs = rows[0]?.abs;
+        if (!abs) return;
+        void openWorkspacePath(abs, {
+          reveal: Boolean(opts?.reveal || rel.endsWith("/")),
+        });
+      });
+    },
+    [resolvePaths, openWorkspacePath],
+  );
+
+  const runPaletteAction = useCallback(
+    (id: string) => {
+      if (id === "new-thread") handleCreateThreadPlain();
+      else if (id === "settings") openSettings();
+      else if (id === "kanban") openKanban();
+      else if (id === "planboard") openPlanboard();
+      else if (id === "activity") openActivity();
+      else if (id === "prs") openPrs();
+      else if (id === "usage") openUsage();
+      else if (id === "fleet") openFleet();
+      else if (id === "insights") openInsights();
+      else if (id === "digest") openDigest();
+      else if (id === "add-project") handleAddProject();
+      else if (id === "toggle-agents") toggleAgents();
+    },
+    [
+      handleCreateThreadPlain,
+      openSettings,
+      openKanban,
+      openPlanboard,
+      openActivity,
+      openPrs,
+      openUsage,
+      openFleet,
+      openInsights,
+      openDigest,
+      handleAddProject,
+      toggleAgents,
+    ],
+  );
 
   const finishOnboarding = useCallback(async () => {
     await saveSettings({ onboardingSeen: true });
@@ -1700,6 +1796,12 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
               listPrs={listPrs}
               onSelectThread={handleSelectThread}
               onCheckoutPr={handleCheckoutPr}
+              prDetail={prDetail}
+              prEdit={prEdit}
+              prComment={prComment}
+              prClose={prClose}
+              prReady={prReady}
+              prMergeAt={prMergeAt}
               restore={viewRestore?.view === "prs" ? viewRestore : null}
               onRestoreApplied={clearViewRestore}
             />
@@ -1893,6 +1995,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         listLocalServers={listLocalServers}
         onPush={pushBranch}
         onCreatePr={createPr}
+        onPrTemplate={prTemplate}
         onPrChecks={prChecks}
         onPrMerge={prMerge}
         gitSyncInfo={gitSyncInfo}
@@ -2091,6 +2194,23 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
           onRemove={removeWorkflow}
           listError={workflowListError}
           onRetryList={refreshWorkflows}
+        />
+        <CommandPalette
+          open={paletteOpen}
+          mode={paletteMode}
+          onClose={() => setPaletteOpen(false)}
+          onModeChange={setPaletteMode}
+          threads={threads}
+          projects={projects}
+          searchThreads={searchThreads}
+          listFiles={listFiles}
+          searchFileContents={searchFileContents}
+          canSearchWorkspace={Boolean(selectedThreadId)}
+          onSelectThread={handleSelectThread}
+          onSelectProject={handlePaletteProject}
+          onRunAction={runPaletteAction}
+          onOpenFile={handlePaletteFile}
+          actions={PALETTE_ACTIONS}
         />
         <SettingsModal
           open={settingsOpen}

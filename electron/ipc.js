@@ -12,6 +12,7 @@ const {
   commit,
   revertFile,
   listFiles,
+  searchFiles,
   mergeWorktree,
   conflictContext,
   removeWorktree,
@@ -76,6 +77,15 @@ const { createSafeCommandRunner } = require("./skillPluginAdapters.js");
 const cliCommands = require("./cliCommands.js");
 const cliSessions = require("./cli-sessions.js");
 const { fetchIssue, listIssues, setPlanStatus, createIssue } = require("./issues.js");
+const {
+  readPrTemplate,
+  viewPrDetail,
+  editPr,
+  commentPr,
+  closePr,
+  readyPr,
+  mergePrAt,
+} = require("./prWorkspace.js");
 const automations = require("./automations.js");
 const { buildActivity } = require("./activity.js");
 const { collectDigest } = require("./digest.js");
@@ -116,8 +126,9 @@ function defaultWindowBroadcast(channel, payload) {
 
 /**
  * A thread the user pushed out of attention (settled, archived, deleted,
- * ejected) has no next turn: kill its kept-alive Claude CLI now instead of
- * holding the process for the 30-minute idle reaper (issue #48, #979).
+ * ejected, or whose project was removed) has no next turn: kill its
+ * kept-alive Claude CLI now instead of holding the process for the
+ * 30-minute idle reaper (issue #48, #979, #1227).
  *
  * @param {object} ctx
  * @param {string} threadId
@@ -180,6 +191,7 @@ function makeCtx(deps) {
     cleanupRunArtifacts: deps.cleanupRunArtifacts,
     getIosSimulator,
     log: deps.log,
+    confirmApplyUpdate: deps.confirmApplyUpdate,
     getOrchStatus:
       typeof deps.getOrchStatus === "function"
         ? deps.getOrchStatus
@@ -422,12 +434,23 @@ const IPC_HANDLERS = {
     });
   },
   "projects:remove": async (ctx, input) => {
-    await services.removeProject(ctx.store, input, {
+    const result = await services.removeProject(ctx.store, input, {
       isRunning: (id) => ctx.runner.isRunning(id),
       getIosSimulator: ctx.getIosSimulator,
       cleanupRunArtifacts: ctx.cleanupRunArtifacts,
       log: ctx.log,
     });
+    // #1227: idle Claude keep-alives live in the runner Map, not the Store.
+    // Same retire as threads:delete, after a successful purge so a rejected
+    // active-run guard cannot stop a session that still belongs to the project.
+    const threadIds = (result && result.removedThreadIds) || [];
+    for (const threadId of threadIds) {
+      try {
+        retireAgent(ctx, threadId);
+      } catch {
+        // already exited or missing handle
+      }
+    }
     ctx.broadcast("threads:changed", services.listThreads(ctx.store));
   },
   "projects:codeMap": async (ctx, input) => {
@@ -977,7 +1000,11 @@ const IPC_HANDLERS = {
     }
     return status;
   },
-  "app:applyUpdate": async () => {
+  "app:applyUpdate": async (ctx) => {
+    if (typeof ctx.confirmApplyUpdate === "function") {
+      const ok = await ctx.confirmApplyUpdate();
+      if (!ok) return;
+    }
     updater.applyUpdate();
   },
   "app:feedback": async (ctx, input) => {
@@ -1542,6 +1569,14 @@ const IPC_HANDLERS = {
       store: ctx.store,
       threadId: input.threadId,
       query: input.query,
+      limit: input.limit,
+    });
+  },
+  "files:search": async (ctx, input) => {
+    return searchFiles({
+      store: ctx.store,
+      threadId: input.threadId,
+      query: input.query,
     });
   },
   "files:resolve": async (ctx, input) => {
@@ -1729,6 +1764,53 @@ const IPC_HANDLERS = {
       worktreeBase: ctx.worktreeBase,
       broadcast: ctx.broadcast,
     });
+  },
+  "git:prTemplate": async (_ctx, input) => {
+    return readPrTemplate(input && input.projectPath);
+  },
+  "git:prDetail": async (_ctx, input) => {
+    return viewPrDetail(input && input.projectPath, input && input.prNumber);
+  },
+  "git:prEdit": async (ctx, input) => {
+    return editPr(
+      input && input.projectPath,
+      {
+        prNumber: input && input.prNumber,
+        title: input && input.title,
+        body: input && input.body,
+      },
+      { store: ctx.store, broadcast: ctx.broadcast },
+    );
+  },
+  "git:prComment": async (_ctx, input) => {
+    return commentPr(input && input.projectPath, {
+      prNumber: input && input.prNumber,
+      body: input && input.body,
+    });
+  },
+  "git:prClose": async (ctx, input) => {
+    return closePr(
+      input && input.projectPath,
+      { prNumber: input && input.prNumber },
+      { store: ctx.store, broadcast: ctx.broadcast },
+    );
+  },
+  "git:prReady": async (ctx, input) => {
+    return readyPr(
+      input && input.projectPath,
+      {
+        prNumber: input && input.prNumber,
+        undo: Boolean(input && input.undo),
+      },
+      { store: ctx.store, broadcast: ctx.broadcast },
+    );
+  },
+  "git:prMergeAt": async (ctx, input) => {
+    return mergePrAt(
+      input && input.projectPath,
+      { prNumber: input && input.prNumber },
+      { store: ctx.store, broadcast: ctx.broadcast },
+    );
   },
   "issues:fetch": async (ctx, input) => {
     const projectPath = input && input.projectPath;
