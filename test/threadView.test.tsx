@@ -190,6 +190,9 @@ function view(props: {
   ) => void | Promise<void>;
   onPickDirectory?: () => Promise<string | null>;
   onListSnapWindows?: () => Promise<Array<{ id: string; name: string }>>;
+  onCaptureSnapWindow?: (
+    sourceId: string,
+  ) => Promise<AttachmentInfo | null>;
   queuedPrompt?: string | null;
   queuedItems?: string[] | null;
   onEditQueued?: (prompt: string, items?: string[]) => void | Promise<void>;
@@ -252,6 +255,7 @@ function view(props: {
       onReturnToView={props.onReturnToView}
       onPickDirectory={props.onPickDirectory}
       onListSnapWindows={props.onListSnapWindows}
+      onCaptureSnapWindow={props.onCaptureSnapWindow}
     />
   );
 }
@@ -1268,10 +1272,11 @@ describe("ThreadView mounted interactions", () => {
     await m.click(lightboxGroup);
     await m.click(m.query("button.toolToggle"));
     await m.flush();
-    const opener = m.query("button.toolToggle") as HTMLElement | null;
-    assert.ok(opener, "expanded tool toggle");
+    const opener = m.query("img.toolImage") as HTMLElement | null;
+    assert.ok(opener, "focusable thumbnail");
+    assert.equal(opener.tabIndex, 0, "thumbnail is in the tab order");
     await inAct(() => opener.focus());
-    await m.click(m.query("img.toolImage"));
+    await m.click(opener);
     const box = m.query("[data-image-lightbox]") as HTMLElement | null;
     assert.ok(box, "lightbox open");
     assert.ok(
@@ -1290,7 +1295,7 @@ describe("ThreadView mounted interactions", () => {
 
     await m.pressFocused("Escape");
     assert.equal(m.query("[data-image-lightbox]"), null);
-    assert.equal(document.activeElement, opener, "Escape restores opener focus");
+    assert.equal(document.activeElement, opener, "Escape restores thumbnail focus");
     m.unmount();
   });
 
@@ -1521,6 +1526,57 @@ describe("ThreadView review bar", () => {
     assert.equal(restores.length, 0, "Escape must not restore");
     m.unmount();
   });
+
+  it("Escape is ignored while restore is in flight; Tab stays inside", async () => {
+    let resolveRestore!: () => void;
+    const held = new Promise<void>((resolve) => {
+      resolveRestore = resolve;
+    });
+    const restores: Array<{ threadId: string; sha: string }> = [];
+    const m = await mount(
+      view({
+        detail: twoRunDetail,
+        runStats: async () => twoStats,
+        restoreCheckpoint: async (threadId, sha) => {
+          restores.push({ threadId, sha });
+          return held;
+        },
+      }),
+    );
+    await m.flush();
+    const opener = m.query(
+      "[data-review-bar='run-2'] [data-review-undo]",
+    ) as HTMLButtonElement | null;
+    assert.ok(opener, "Undo on second run");
+    await m.click(opener);
+    await m.flush();
+    await m.click(m.query("[data-review-undo-submit]") as HTMLElement);
+    await m.flush();
+    const dialog = m.query("[data-review-undo-confirm]") as HTMLElement | null;
+    assert.ok(dialog, "confirm stays mounted while restore is pending");
+    assert.deepEqual(restores, [{ threadId: "t1", sha: "sha-turn-1-aaaaaaaa" }]);
+
+    await m.pressFocused("Escape");
+    assert.ok(
+      m.query("[data-review-undo-confirm]"),
+      "Escape is inert while restorePending",
+    );
+    assert.deepEqual(restores, [{ threadId: "t1", sha: "sha-turn-1-aaaaaaaa" }]);
+
+    await m.pressFocused("Tab");
+    assert.ok(
+      dialog.contains(document.activeElement),
+      "Tab stays inside while pending",
+    );
+
+    await inAct(async () => {
+      resolveRestore();
+      await Promise.resolve();
+    });
+    await m.flush();
+    assert.equal(m.query("[data-review-undo-confirm]"), null);
+    m.unmount();
+  });
 });
 
 describe("ThreadView nested dialog focus", () => {
@@ -1586,6 +1642,69 @@ describe("ThreadView nested dialog focus", () => {
     m.unmount();
   });
 
+  it("Escape is ignored while rewind is in flight; Tab stays inside", async () => {
+    let resolveRewind!: () => void;
+    const held = new Promise<void>((resolve) => {
+      resolveRewind = resolve;
+    });
+    const rewinds: string[] = [];
+    const m = await mount(
+      view({
+        onRewindAndResubmit: async (messageId) => {
+          rewinds.push(messageId);
+          return held;
+        },
+        detail: detail({
+          messages: [
+            msg({
+              id: "u1",
+              role: "user",
+              text: "first prompt",
+              createdAt: 10,
+            }),
+            msg({
+              id: "a1",
+              role: "assistant",
+              text: "reply",
+              createdAt: 20,
+            }),
+          ],
+        }),
+      }),
+    );
+    const editBtn = m.query('[data-edit-message="u1"]');
+    assert.ok(editBtn, "edit affordance");
+    await m.click(editBtn as HTMLElement);
+    await m.click(m.query('[data-edit-resubmit="u1"]') as HTMLElement);
+    await m.flush();
+    await m.click(m.query("[data-rewind-confirm-submit]") as HTMLElement);
+    await m.flush();
+    const dialog = m.query("[data-rewind-confirm]") as HTMLElement | null;
+    assert.ok(dialog, "confirm stays mounted while rewind is pending");
+    assert.deepEqual(rewinds, ["u1"]);
+
+    await m.pressFocused("Escape");
+    assert.ok(
+      m.query("[data-rewind-confirm]"),
+      "Escape is inert while rewindPending",
+    );
+    assert.deepEqual(rewinds, ["u1"]);
+
+    await m.pressFocused("Tab");
+    assert.ok(
+      dialog.contains(document.activeElement),
+      "Tab stays inside while pending",
+    );
+
+    await inAct(async () => {
+      resolveRewind();
+      await Promise.resolve();
+    });
+    await m.flush();
+    assert.equal(m.query("[data-rewind-confirm]"), null);
+    m.unmount();
+  });
+
   it("opening appsnap moves focus out of the composer; Tab stays inside including the window list; Escape restores", async () => {
     const m = await mount(
       view({
@@ -1636,6 +1755,62 @@ describe("ThreadView nested dialog focus", () => {
     await m.pressFocused("Escape");
     assert.equal(m.query("[data-appsnap]"), null);
     assert.equal(document.activeElement, opener, "Escape restores opener focus");
+    m.unmount();
+  });
+
+  it("Escape is ignored while appsnap capture is in flight; Tab stays inside", async () => {
+    let resolveCapture!: () => void;
+    const held = new Promise<AttachmentInfo | null>((resolve) => {
+      resolveCapture = () =>
+        resolve({
+          kind: "image",
+          path: "/tmp/snap.png",
+          name: "snap.png",
+        });
+    });
+    const captured: string[] = [];
+    const m = await mount(
+      view({
+        onListSnapWindows: async () => [
+          { id: "win-a", name: "Alpha" },
+          { id: "win-b", name: "Beta" },
+        ],
+        onCaptureSnapWindow: async (sourceId) => {
+          captured.push(sourceId);
+          return held;
+        },
+      }),
+    );
+    await inAct(() => {
+      for (const type of ["keydown", "keyup", "keydown", "keyup"] as const) {
+        window.dispatchEvent(
+          new KeyboardEvent(type, { key: "Alt", bubbles: true }),
+        );
+      }
+    });
+    await m.flush();
+    await m.click(m.query('[data-appsnap-window="win-a"]') as HTMLElement);
+    await m.flush();
+    const dialog = m.query("[data-appsnap]") as HTMLElement | null;
+    assert.ok(dialog, "overlay stays mounted while capture is pending");
+    assert.deepEqual(captured, ["win-a"]);
+
+    await m.pressFocused("Escape");
+    assert.ok(m.query("[data-appsnap]"), "Escape is inert while snapBusy");
+    assert.deepEqual(captured, ["win-a"]);
+
+    await m.pressFocused("Tab");
+    assert.ok(
+      dialog.contains(document.activeElement),
+      "Tab stays inside while pending",
+    );
+
+    await inAct(async () => {
+      resolveCapture();
+      await Promise.resolve();
+    });
+    await m.flush();
+    assert.equal(m.query("[data-appsnap]"), null);
     m.unmount();
   });
 });
