@@ -315,6 +315,51 @@ describe("web mode attachments", () => {
     }
   });
 
+  it("web paperclip pick of a text file calls saveFile and shows a chip", async () => {
+    const saved: AttachmentInfo = {
+      kind: "file",
+      path: "/tmp/attachments/t-web-pick-file/notes.md",
+      name: "notes.md",
+    };
+    const fake = createFakeCoder({
+      threads: [thread({ id: "t-web-pick-file", title: "web pick file" })],
+      saveFile: () => ({ attachment: saved }),
+    });
+    const m = await boot(fake);
+    dropCoder();
+
+    const inputs: HTMLInputElement[] = [];
+    const orig = document.createElement.bind(document);
+    document.createElement = ((tagName: string, options?: ElementCreationOptions) => {
+      const el = orig(tagName, options);
+      if (tagName === "input") inputs.push(el as HTMLInputElement);
+      return el;
+    }) as typeof document.createElement;
+
+    try {
+      const btn = m.query('button[aria-label="Attach files or folders"]');
+      assert.ok(btn, "web mode must show the paperclip once files can attach");
+      await m.click(btn);
+      const input = inputs.find((el) => el.type === "file");
+      assert.ok(input, "paperclip must open one file input");
+      const file = new File(["# notes"], "notes.md", { type: "text/markdown" });
+      Object.defineProperty(input, "files", { value: [file] });
+      await inAct(() => {
+        input.dispatchEvent(new Event("change"));
+      });
+      await m.flush();
+      const calls = fake.of("attachments.saveFile");
+      assert.ok(calls.length > 0, "picked text file must call saveFile");
+      assert.ok(
+        m.query('[data-attachment-kind="file"]'),
+        "picked markdown must surface as a file chip",
+      );
+    } finally {
+      document.createElement = orig;
+      m.unmount();
+    }
+  });
+
   it("web paperclip Folder uses showDirectoryPicker and saveFolder", async () => {
     const saved: AttachmentInfo = {
       kind: "folder",

@@ -141,13 +141,13 @@ function threadDir(userDataPath, tid) {
 }
 
 function decodeDataUrl(dataUrl, maxBytes) {
-  const m = /^data:(?:[a-z]+\/[a-z0-9.+-]+)?;base64,(.*)$/is.exec(
-    String(dataUrl || ""),
-  );
-  if (!m) return null;
+  const s = String(dataUrl || "");
+  if (!/^data:/i.test(s)) return null;
+  const idx = s.search(/;base64,/i);
+  if (idx < 0) return null;
   let buf;
   try {
-    buf = Buffer.from(m[1], "base64");
+    buf = Buffer.from(s.slice(idx + 8), "base64");
   } catch {
     return null;
   }

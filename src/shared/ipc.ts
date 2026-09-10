@@ -4504,8 +4504,10 @@ export interface CoderApi {
   /**
    * Composer attachments: files, images, and folders the user pins to a
    * message. Only absolute paths travel; the agent reads them with its
-   * file tools. pick needs a native dialog, so it rejects in web mode
-   * (the renderer hides the attach button when no Electron bridge is present).
+   * file tools. Native pick uses a dialog (files + folders). Web pick uses
+   * `<input type=file>` for files and showDirectoryPicker for folders,
+   * persisted via saveImage / saveFile / saveFolder because the browser
+   * File is ephemeral.
    */
   attachments: {
     /**
@@ -4532,6 +4534,7 @@ export interface CoderApi {
     /**
      * Persist a non-image file under userData/attachments/<threadId>.
      * null when the payload is empty, too large, or the thread id is invalid.
+     * saveImage still refuses these payloads.
      */
     saveFile(input: {
       threadId: string;

@@ -130,6 +130,7 @@ function readFileAsDataUrl(file: File): Promise<string | null> {
   });
 }
 
+/** Same extensions native classifyPaths treats as kind=image. */
 const WEB_IMAGE_EXTS = new Set([
   "png",
   "jpg",
@@ -141,9 +142,10 @@ const WEB_IMAGE_EXTS = new Set([
 ]);
 
 function isWebImageFile(file: File): boolean {
-  if (file.type.startsWith("image/")) return true;
-  const ext = file.name.split(".").pop()?.toLowerCase() ?? "";
-  return WEB_IMAGE_EXTS.has(ext);
+  const dot = file.name.lastIndexOf(".");
+  const ext = dot >= 0 ? file.name.slice(dot + 1).toLowerCase() : "";
+  if (ext) return WEB_IMAGE_EXTS.has(ext);
+  return file.type.toLowerCase().startsWith("image/");
 }
 
 async function filesToAttachments(
@@ -165,7 +167,12 @@ async function filesToAttachments(
   return out;
 }
 
-/** Web file picker. No accept and no webkitdirectory: folders are a separate chip. */
+/**
+ * Web file picker. No accept and no webkitdirectory: folders are a
+ * separate chip (showDirectoryPicker / saveFolder). No `accept=image/*`
+ * so Spark can attach text files (#1173). Composer still drops kind=image
+ * on text-only models.
+ */
 function pickWebFiles(): Promise<File[]> {
   return new Promise((resolve) => {
     const input = document.createElement("input");
@@ -622,7 +629,7 @@ export interface UseCoderResult {
   /**
    * Classify drag-dropped files as attachments. Native resolves absolute
    * paths via the Electron preload; web reads each File as a data URL
-   * and walks directory entries into saveFolder.
+   * (saveImage / saveFile) and walks directory entries into saveFolder.
    */
   dropAttachmentFiles: (
     files: File[],
