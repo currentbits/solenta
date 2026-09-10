@@ -146,4 +146,44 @@ describe("App build-mismatch blocking state", () => {
     assert.equal(m.query("[data-build-mismatch]"), null);
     m.unmount();
   });
+
+  it("moves focus inside; Tab stays inside; Escape does not dismiss", async () => {
+    const fake = createFakeCoder({ status: stampedStatus(MAIN_SHA) });
+    const m = await boot(fake, RENDERER_SHA);
+    const dialog = m.query("[data-build-mismatch]") as HTMLElement | null;
+    assert.ok(dialog, "mismatch screen must mount");
+    assert.ok(
+      dialog.contains(document.activeElement),
+      "opening the dialog must move focus inside it",
+    );
+
+    await m.pressFocused("Tab");
+    const first = document.activeElement as HTMLElement;
+    assert.ok(dialog.contains(first), "Tab stays inside");
+    assert.equal(first.tagName, "BUTTON");
+    assert.notEqual(first, dialog, "Tab moves to a focusable inside the dialog");
+
+    await m.pressFocused("Tab");
+    assert.ok(
+      dialog.contains(document.activeElement),
+      "second Tab stays inside",
+    );
+    assert.equal(
+      document.activeElement,
+      first,
+      "Tab wraps on the only control",
+    );
+
+    await m.pressFocused("Escape");
+    assert.ok(
+      m.query("[data-build-mismatch]"),
+      "Escape must not dismiss a hard-stop that requires restart",
+    );
+    assert.equal(
+      fake.of("app.applyUpdate").length,
+      0,
+      "Escape must not take the Restart path",
+    );
+    m.unmount();
+  });
 });

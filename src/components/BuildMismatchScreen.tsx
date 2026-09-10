@@ -12,7 +12,7 @@ type BuildMismatchScreenProps = {
  * UI is how a stale renderer keeps talking to a new main.
  *
  * Tab is trapped (ProviderQuota pairing: ref + tabIndex=-1 + useModalFocus).
- * Escape must not dismiss — the only exit is Restart.
+ * Do not add useEscapeClose — Escape must not dismiss; the only exit is Restart.
  */
 export function BuildMismatchScreen({ onRestart }: BuildMismatchScreenProps) {
   const dialogRef = useRef<HTMLDivElement>(null);
