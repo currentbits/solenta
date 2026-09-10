@@ -702,6 +702,8 @@ export interface UseCoderResult {
   restoreCheckpoint: (threadId: string, sha: string) => Promise<void>;
   /** Per-checkpoint-pair shortstat for a thread. Never rejects. */
   runStats: (threadId: string) => Promise<RunStatInfo[]>;
+  /** Checkpoint-to-checkpoint patch for one turn. Never rejects. */
+  fetchTurnDiff: (threadId: string, sha: string) => Promise<DiffResult>;
   /** Predicted merge conflicts between active threads (#249). Never rejects. */
   conflictForecast: (projectId: string) => Promise<ConflictForecast>;
   /** Local TCP listeners whose cwd is the thread worktree or project. */
@@ -3441,6 +3443,17 @@ export function useCoder(): UseCoderResult {
     [api],
   );
 
+  const fetchTurnDiff = useCallback(
+    async (threadId: string, sha: string) => {
+      try {
+        return await api.git.turnDiff({ threadId, sha });
+      } catch {
+        return { files: [], patch: "", truncated: false };
+      }
+    },
+    [api],
+  );
+
   const conflictForecast = useCallback(
     async (projectId: string) => {
       try {
@@ -4133,6 +4146,7 @@ export function useCoder(): UseCoderResult {
     listCheckpoints,
     restoreCheckpoint,
     runStats,
+    fetchTurnDiff,
     conflictForecast,
     listLocalServers,
     revealInFinder,

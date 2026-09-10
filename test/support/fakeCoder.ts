@@ -228,6 +228,8 @@ export interface FakeOptions {
   checkpoints?: Record<string, CheckpointInfo[]>;
   /** Per-thread runStats override. When omitted, derived from checkpoints. */
   runStats?: Record<string, RunStatInfo[]>;
+  /** Per-thread turnDiff override keyed by sha. */
+  turnDiff?: Record<string, DiffResult>;
   /** Force a channel to reject, e.g. { "runs.start": new Error("boom") }. */
   fail?: Record<string, Error>;
   /** Override issues.fetch result (default: a successful fixture). */
@@ -3021,6 +3023,40 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
           deletions: 0,
         }));
         return rec("git.runStats", [input], derived);
+      },
+      turnDiff: (input: unknown) => {
+        const i = input as { threadId: string; sha: string };
+        const override = opts.turnDiff?.[i.sha];
+        if (override) {
+          return rec("git.turnDiff", [input], {
+            files: override.files.slice(),
+            patch: override.patch,
+            truncated: override.truncated,
+          });
+        }
+        const t = threads.find((x) => x.id === i.threadId);
+        const list = checkpoints[i.threadId] ?? [];
+        if (!t || !t.worktreePath || !list.some((c) => c.sha === i.sha)) {
+          return rec("git.turnDiff", [input], {
+            files: [],
+            patch: "",
+            truncated: false,
+          } as DiffResult);
+        }
+        return rec("git.turnDiff", [input], {
+          files: [{ path: "src/a.ts", status: "M", additions: 1, deletions: 0 }],
+          patch: [
+            "diff --git a/src/a.ts b/src/a.ts",
+            "--- a/src/a.ts",
+            "+++ b/src/a.ts",
+            "@@ -1,2 +1,3 @@",
+            " keep",
+            "-old",
+            "+new",
+            " keep",
+          ].join("\n"),
+          truncated: false,
+        } as DiffResult);
       },
     },
     mergeQueue: {

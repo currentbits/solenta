@@ -229,6 +229,7 @@ const IPC_CHANNELS = Object.freeze([
   { ns: "git", method: "repoInfo" },
   { ns: "git", method: "pull" },
   { ns: "git", method: "runStats" },
+  { ns: "git", method: "turnDiff" },
   { ns: "git", method: "conflictForecast" },
   { ns: "git", method: "gcScan" },
   { ns: "git", method: "gcClean" },
