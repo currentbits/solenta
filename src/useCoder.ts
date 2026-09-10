@@ -83,6 +83,7 @@ import type {
   StayAwakeMode,
   StayAwakeStatus,
   ThreadDetail,
+  ThreadForkOpts,
   ThreadInfo,
   ThreadSummaryInfo,
   TrashedThreadInfo,
@@ -347,7 +348,7 @@ export interface UseCoderResult {
    */
   forkThread: (
     threadId: string,
-    opts?: { provider?: string; model?: string | null; worktree?: boolean },
+    opts?: ThreadForkOpts,
   ) => Promise<ThreadInfo | null>;
   /**
    * Start a run, or queue the prompt when that thread is already working:
@@ -1624,15 +1625,10 @@ export function useCoder(): UseCoderResult {
   const forkThread = useCallback(
     async (
       threadId: string,
-      opts?: { provider?: string; model?: string | null; worktree?: boolean },
+      opts?: ThreadForkOpts,
     ) => {
       try {
-        const input: {
-          threadId: string;
-          provider?: string;
-          model?: string | null;
-          worktree?: boolean;
-        } = { threadId };
+        const input: { threadId: string } & ThreadForkOpts = { threadId };
         if (opts && Object.prototype.hasOwnProperty.call(opts, "provider")) {
           input.provider = opts.provider;
         }
@@ -1641,6 +1637,18 @@ export function useCoder(): UseCoderResult {
         }
         if (opts && Object.prototype.hasOwnProperty.call(opts, "worktree")) {
           input.worktree = opts.worktree;
+        }
+        if (opts && Object.prototype.hasOwnProperty.call(opts, "isolate")) {
+          input.isolate = opts.isolate;
+        }
+        if (opts && Object.prototype.hasOwnProperty.call(opts, "leadSnapshotSha")) {
+          input.leadSnapshotSha = opts.leadSnapshotSha;
+        }
+        if (opts && Object.prototype.hasOwnProperty.call(opts, "leadSnapshotBranch")) {
+          input.leadSnapshotBranch = opts.leadSnapshotBranch;
+        }
+        if (opts && Object.prototype.hasOwnProperty.call(opts, "leadSnapshotDirty")) {
+          input.leadSnapshotDirty = opts.leadSnapshotDirty;
         }
         const t = await api.threads.fork(input);
         // Same selection path as createThread: prepend row, select new id.
