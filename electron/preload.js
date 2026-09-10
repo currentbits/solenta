@@ -251,6 +251,7 @@ const IPC_CHANNELS = Object.freeze([
   { ns: "issues", method: "setPlanStatus" },
   { ns: "issues", method: "create" },
   { ns: "files", method: "list" },
+  { ns: "files", method: "search" },
   { ns: "files", method: "image" },
   { ns: "files", method: "resolve" },
   { ns: "fs", method: "browse" },

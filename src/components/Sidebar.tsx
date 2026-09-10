@@ -2032,9 +2032,9 @@ export const Sidebar = memo(function Sidebar({
       }
 
       const key = e.key.toLowerCase();
-      if (key === "j" || key === "k") {
+      if (key === "j") {
         e.preventDefault();
-        const delta = key === "j" ? 1 : -1;
+        const delta = e.shiftKey ? -1 : 1;
         const next = stepVisibleId(visibleIds, activeThreadId, delta as 1 | -1);
         if (next) {
           setMultiSelected(new Set());
