@@ -5,7 +5,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { mount } from "./support/dom.ts";
-import { WEB_TOKEN_KEY } from "../src/coderApi";
+import { WEB_TOKEN_KEY, devBuild } from "../src/coderApi";
 import { WebTokenGate } from "../src/components/WebTokenGate";
 
 describe("WebTokenGate focus trap (#916)", () => {
@@ -31,5 +31,25 @@ describe("WebTokenGate focus trap (#916)", () => {
       "second Tab stays inside",
     );
     m.unmount();
+  });
+
+  it("stays closed in a DEV build even when mounted with no token", async () => {
+    const prev = devBuild.isDev;
+    const shell = await mount(<div />);
+    window.localStorage.removeItem(WEB_TOKEN_KEY);
+    window.history.replaceState(null, "", "/");
+    shell.unmount();
+    devBuild.isDev = () => true;
+    try {
+      const m = await mount(<WebTokenGate />);
+      assert.equal(
+        m.query("[data-web-token-gate]"),
+        null,
+        "WebTokenGate must not open itself during npm run dev:browser",
+      );
+      m.unmount();
+    } finally {
+      devBuild.isDev = prev;
+    }
   });
 });

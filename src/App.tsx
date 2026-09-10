@@ -7,7 +7,7 @@ import {
   useSyncExternalStore,
 } from "react";
 import { useCoder } from "./useCoder";
-import { isDevBuild } from "./coderApi";
+import { isDevBuild, needsWebTokenGate } from "./coderApi";
 import { demoProviderLimits } from "./providerUsageDemo";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { Sidebar } from "./components/Sidebar";
@@ -1274,7 +1274,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
 
   return (
     <div className={styles.shell}>
-      {isWebMode() && <WebTokenGate />}
+      {needsWebTokenGate() && <WebTokenGate />}
       <div
         className={styles.app}
         data-layout="app"
