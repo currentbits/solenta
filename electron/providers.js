@@ -19,7 +19,7 @@ const { posixQuote } = require("./ssh.js");
  *   No max.
  * - codex: no dedicated flag; config override `-c model_reasoning_effort=<level>`.
  *   Astra/Sol/Terra: low|medium|high|xhigh|max|ultra (ultra = parallel
- *   subagents). Luna: through max, no ultra. gpt-5.5 / 5.4-mini / spark:
+ *   subagents). Luna: through max, no ultra. gpt-5.5 / spark:
  *   low|medium|high|xhigh (no max, no ultra). Live web search is
  *   `-c web_search=live` (issue #799; `--search` after exec is rejected),
  *   gated by thread.webSearch (issue #174).
@@ -342,17 +342,17 @@ const PROVIDERS = [
     // (model → user), not exec stdin. app-server turn/steer is a
     // different protocol. Do not fake by kill+resume.
     supportsSteer: false,
-    // Snapshot of ~/.codex/models_cache.json visibility=list (client 0.153.2,
-    // 2026-09-04). Astra is the flagship (priority 1); Sol is the 5.6
-    // workhorse. gpt-5.4 is retired (upgrade → terra) and omitted.
+    // Snapshot of ~/.codex/models_cache.json visibility=list (client 0.153.4,
+    // 2026-09-09). Astra is the flagship (priority 1); Sol is the 5.6
+    // workhorse. gpt-5.4 / gpt-5.4-mini are retired and omitted.
     // gpt-reserve / codex-auto-review are visibility=hide.
+    // contextTokens are cache context_window (not max_context_window).
     models: [
       "gpt-6-astra",
       "gpt-5.6-sol",
       "gpt-5.6-terra",
       "gpt-5.6-luna",
       "gpt-5.5",
-      "gpt-5.4-mini",
       "gpt-5.3-codex-spark",
     ],
     modelInfo: [
@@ -362,6 +362,7 @@ const PROVIDERS = [
         description: "Our most capable model for complex, demanding work.",
         vendor: "OpenAI",
         recommended: true,
+        contextTokens: 272_000,
         efforts: CODEX_SOL_TERRA_EFFORTS.slice(),
         inputModalities: CODEX_TEXT_IMAGE.slice(),
       },
@@ -370,6 +371,7 @@ const PROVIDERS = [
         label: "GPT-5.6-Sol",
         description: "Reliable agentic workhorse for everyday tasks.",
         vendor: "OpenAI",
+        contextTokens: 272_000,
         efforts: CODEX_SOL_TERRA_EFFORTS.slice(),
         inputModalities: CODEX_TEXT_IMAGE.slice(),
       },
@@ -378,6 +380,7 @@ const PROVIDERS = [
         label: "GPT-5.6-Terra",
         description: "Balanced agentic coding model for everyday work.",
         vendor: "OpenAI",
+        contextTokens: 272_000,
         efforts: CODEX_SOL_TERRA_EFFORTS.slice(),
         inputModalities: CODEX_TEXT_IMAGE.slice(),
       },
@@ -386,6 +389,7 @@ const PROVIDERS = [
         label: "GPT-5.6-Luna",
         description: "Fast and affordable agentic coding model.",
         vendor: "OpenAI",
+        contextTokens: 272_000,
         efforts: CODEX_LUNA_EFFORTS.slice(),
         inputModalities: CODEX_TEXT_IMAGE.slice(),
       },
@@ -395,15 +399,7 @@ const PROVIDERS = [
         description:
           "Proven previous-generation model for coding and general work.",
         vendor: "OpenAI",
-        efforts: CODEX_55_EFFORTS.slice(),
-        inputModalities: CODEX_TEXT_IMAGE.slice(),
-      },
-      {
-        id: "gpt-5.4-mini",
-        label: "GPT-5.4-Mini",
-        description:
-          "Small, fast, and cost-efficient model for simpler coding tasks.",
-        vendor: "OpenAI",
+        contextTokens: 272_000,
         efforts: CODEX_55_EFFORTS.slice(),
         inputModalities: CODEX_TEXT_IMAGE.slice(),
       },
@@ -412,6 +408,7 @@ const PROVIDERS = [
         label: "GPT-5.3-Codex-Spark",
         description: "Ultra-fast coding model.",
         vendor: "OpenAI",
+        contextTokens: 128_000,
         efforts: CODEX_55_EFFORTS.slice(),
         // Live cache input_modalities is ["text"] only. Do not invent images.
         inputModalities: CODEX_TEXT_ONLY.slice(),
@@ -419,7 +416,7 @@ const PROVIDERS = [
     ],
     // Union of per-model lists (fallback for Default / custom ids).
     // Astra/Sol/Terra add ultra (parallel subagents); Luna stops at max;
-    // 5.5 / 5.4-mini / spark stop at xhigh.
+    // 5.5 / spark stop at xhigh.
     efforts: CODEX_EFFORTS.slice(),
     supportsSearch: true,
     // Issue #170: exec defaults to read-only unless we pass --sandbox.

@@ -4607,7 +4607,10 @@ function createRunner(opts) {
         permissionMode: thread.permissionMode || "default",
         allowNetwork: planboardNote === services.PLANBOARD_NOTE,
       }),
-      ...getCodexMcpArgs({ projectPath: localCwd }),
+      ...getCodexMcpArgs({
+        projectPath: localCwd,
+        projectId: thread.projectId,
+      }),
     ];
     if (codexExecConfig.length) insertBeforeLast(args, codexExecConfig);
     /** @type {Record<string, string>} */

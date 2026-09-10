@@ -74,11 +74,18 @@ describe("providers registry", () => {
     assert.ok(codex.models.includes("gpt-5.6-sol"));
     assert.ok(codex.models.includes("gpt-5.6-terra"));
     assert.ok(codex.models.includes("gpt-5.3-codex-spark"));
+    assert.equal(codex.models.includes("gpt-5.4-mini"), false);
     assert.ok(codex.models.length >= 5);
     const astra = codex.modelInfo.find((m) => m.id === "gpt-6-astra");
     assert.equal(astra.recommended, true);
+    assert.equal(astra.contextTokens, 272_000);
     const sol = codex.modelInfo.find((m) => m.id === "gpt-5.6-sol");
     assert.equal(sol.recommended, undefined);
+    assert.equal(sol.contextTokens, 272_000);
+    const codexSpark = codex.modelInfo.find(
+      (m) => m.id === "gpt-5.3-codex-spark",
+    );
+    assert.equal(codexSpark.contextTokens, 128_000);
 
     const grok = getProvider("grok");
     assert.equal(grok.kind, "claude-stream");

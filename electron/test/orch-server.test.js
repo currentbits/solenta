@@ -1727,6 +1727,22 @@ describe("orch-server provider injection", () => {
         CODER_MCP_TOKEN_CODER_MEMORY: memToken,
         CODER_MCP_TOKEN_CODER_THREADS: orchToken,
       });
+      const bound = getCodexMcpArgs({
+        projectPath: "/tmp/solenta",
+        projectId: "proj-1",
+      });
+      assert.ok(
+        bound.includes(
+          `mcp_servers.coder-memory.url="http://127.0.0.1:${memPort}/mcp?project=${encodeURIComponent("/tmp/solenta")}"`,
+        ),
+        `memory url must bind ?project=, got ${JSON.stringify(bound)}`,
+      );
+      assert.ok(
+        bound.includes(
+          `mcp_servers.coder-threads.url="http://127.0.0.1:${orchPort}/mcp?projectId=proj-1"`,
+        ),
+        `threads url must bind ?projectId= (#927), got ${JSON.stringify(bound)}`,
+      );
     } finally {
       sup.stop();
       await new Promise((r) => server.close(r));
