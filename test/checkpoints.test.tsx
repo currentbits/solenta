@@ -399,6 +399,36 @@ describe("App checkpoints wiring (round 50)", () => {
     m.unmount();
   });
 
+  it("opening the restore confirm moves focus inside; Tab stays inside", async () => {
+    const cps = threeCheckpoints();
+    const middle = cps[1]!;
+    const fake = makeFake({ checkpoints: cps });
+    const m = await boot(fake);
+    await selectThread(m, "checkpoint source thread");
+    await openGitTab(m);
+
+    await m.click(
+      m.query(`[data-checkpoint-restore="${middle.sha}"]`) as HTMLElement,
+    );
+    await m.flush();
+    const dialog = m.query(
+      `[data-restore-confirm="${middle.sha}"]`,
+    ) as HTMLElement | null;
+    assert.ok(dialog, "confirm dialog open");
+    assert.ok(
+      dialog.contains(document.activeElement),
+      "opening the dialog must move focus inside it",
+    );
+    await m.pressFocused("Tab");
+    assert.ok(dialog.contains(document.activeElement), "Tab stays inside");
+    await m.pressFocused("Tab");
+    assert.ok(
+      dialog.contains(document.activeElement),
+      "second Tab stays inside",
+    );
+    m.unmount();
+  });
+
   it("Escape dismisses restore confirm and does not call restore", async () => {
     const cps = threeCheckpoints();
     const middle = cps[1]!;

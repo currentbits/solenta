@@ -385,6 +385,7 @@ function ImageLightbox({
   alt: string;
   onClose: () => void;
 }) {
+  const dialogRef = useRef<HTMLDivElement>(null);
   const [zoomed, setZoomed] = useState(false);
   const dialogRef = useRef<HTMLDivElement>(null);
   useEscapeClose(true, onClose);
@@ -4474,10 +4475,12 @@ export const ThreadView = memo(function ThreadView({
   const [restoreConfirm, setRestoreConfirm] = useState<ReviewBar | null>(null);
   const [restorePending, setRestorePending] = useState(false);
   const [restoreError, setRestoreError] = useState<string | null>(null);
+  const reviewUndoDialogRef = useRef<HTMLDivElement>(null);
   const [rewindConfirm, setRewindConfirm] = useState<{
     messageId: string;
     prompt: string;
   } | null>(null);
+  const rewindDialogRef = useRef<HTMLDivElement>(null);
   const [rewindRestoreFiles, setRewindRestoreFiles] = useState(false);
   const [rewindPending, setRewindPending] = useState(false);
   const rewindDialogRef = useRef<HTMLDivElement>(null);
@@ -4554,6 +4557,7 @@ export const ThreadView = memo(function ThreadView({
   >([]);
   const [replyTo, setReplyTo] = useState<ReplyTarget | null>(null);
   const [snapOpen, setSnapOpen] = useState(false);
+  const snapDialogRef = useRef<HTMLDivElement>(null);
   const [snapWindows, setSnapWindows] = useState<
     Array<{ id: string; name: string }>
   >([]);
