@@ -2082,6 +2082,8 @@ function copyEjectCommand(store, thread, opts) {
     provider: thread.provider,
     sessionId: thread.sessionId,
     cwd,
+    model: thread.model,
+    sessionStartModel: thread.sessionStartModel,
   });
   const writeText =
     opts && typeof opts.writeText === "function"

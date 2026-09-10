@@ -1377,6 +1377,17 @@ function migrateThread(t) {
   const lane = normalizeMergeLane(t.lane);
   if (lane) next.lane = lane;
   else delete next.lane;
+  // Model the CLI session started on. Codex exec resume hydrates this
+  // from the rollout and ignores a later picker (#1215). Omitted when
+  // unset so old fixtures still deepEqual.
+  if (
+    typeof t.sessionStartModel === "string" &&
+    t.sessionStartModel.trim() !== ""
+  ) {
+    next.sessionStartModel = t.sessionStartModel.trim();
+  } else {
+    delete next.sessionStartModel;
+  }
   return next;
 }
 
@@ -3304,6 +3315,30 @@ class Store {
         !Object.prototype.hasOwnProperty.call(patch, "sessionId")
       ) {
         p = { ...patch, sessionId: null };
+      }
+      // Snapshot the rollout model on first sessionId (or a replacement
+      // id). Codex exec resume ignores later picker changes (#1215).
+      if (Object.prototype.hasOwnProperty.call(p, "sessionId")) {
+        const nextSid =
+          p.sessionId && p.sessionId !== "cwd" ? p.sessionId : null;
+        const prevSid =
+          t.sessionId && t.sessionId !== "cwd" ? t.sessionId : null;
+        if (!Object.prototype.hasOwnProperty.call(p, "sessionStartModel")) {
+          if (!nextSid) {
+            p = { ...p, sessionStartModel: null };
+          } else if (nextSid !== prevSid) {
+            const modelSrc = Object.prototype.hasOwnProperty.call(p, "model")
+              ? p.model
+              : t.model;
+            p = {
+              ...p,
+              sessionStartModel:
+                modelSrc != null && String(modelSrc).trim() !== ""
+                  ? String(modelSrc).trim()
+                  : null,
+            };
+          }
+        }
       }
       // A retry/new run is any non-failed status — drop a stale reason.
       // quota-wait keeps lastError so the card tooltip still explains why.

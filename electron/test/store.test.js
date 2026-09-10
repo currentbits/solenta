@@ -171,6 +171,26 @@ describe("Store", () => {
     assert.equal(store.getThread("t1").sessionId, "sess-3");
   });
 
+  it("first sessionId assignment snapshots the thread model for Codex eject", () => {
+    const store = new Store(filePath);
+    store.setThreads([
+      { id: "t1", model: "gpt-5.6-sol", sessionId: null },
+    ]);
+
+    store.updateThread("t1", { sessionId: "sess-sol" });
+    assert.equal(store.getThread("t1").sessionStartModel, "gpt-5.6-sol");
+
+    store.updateThread("t1", { sessionId: "sess-sol" });
+    store.updateThread("t1", { model: "gpt-6-astra" });
+    assert.equal(store.getThread("t1").sessionStartModel, "gpt-5.6-sol");
+
+    store.updateThread("t1", { sessionId: "sess-fresh" });
+    assert.equal(store.getThread("t1").sessionStartModel, "gpt-6-astra");
+
+    store.updateThread("t1", { sessionId: null });
+    assert.equal(store.getThread("t1").sessionStartModel, null);
+  });
+
   it("round-trips projects, threads, messages, work log", () => {
     const store = new Store(filePath);
     const project = {

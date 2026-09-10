@@ -49,6 +49,42 @@ describe("ejectCommand (#554)", () => {
     );
   });
 
+  it("Codex eject warns from the session-start model even after usage catches up to the picker", () => {
+    const sessionId = "01a072f7-10e0-7fd2-b691-7d481327516f";
+    const { command, note } = ejectCommand({
+      provider: "codex",
+      sessionId,
+      cwd,
+      model: "gpt-6-astra",
+      sessionStartModel: "gpt-5.6-sol",
+      usageModel: "gpt-6-astra",
+    });
+    const resume =
+      `cd ${posixQuote(cwd)} && codex exec resume ${posixQuote(sessionId)}`;
+    assert.equal(command.split("\n")[0], resume);
+    assert.equal(command.includes("-m"), false, "must not pretend -m switches the rollout");
+    assert.ok(note);
+    assert.match(note, /cannot honor/i);
+    assert.match(note, /gpt-6-astra/);
+    assert.match(note, /gpt-5.6-sol/);
+    assert.match(command, /# /);
+  });
+
+  it("Claude model-only switch does not add an exec-resume warning", () => {
+    const { command, note } = ejectCommand({
+      provider: "claude",
+      sessionId: "sess-claude",
+      cwd,
+      model: "claude-sonnet-5",
+      sessionStartModel: "claude-opus-5",
+    });
+    assert.equal(
+      command,
+      `cd ${posixQuote(cwd)} && claude --resume ${posixQuote("sess-claude")}`,
+    );
+    assert.equal(note, undefined);
+  });
+
   it("a provider without resume still copies cd", () => {
     const { command, note } = ejectCommand({
       provider: "simulate",
@@ -98,6 +134,34 @@ describe("setEjected copies the command (#554)", () => {
       copied,
       `cd ${posixQuote(projectPath)} && codex exec resume ${posixQuote("codex-sess")}`,
     );
+  });
+
+  it("eject still warns when usage.model has caught up to the picker but the rollout has not", () => {
+    let copied = null;
+    services.setProvider(store, { threadId, provider: "codex" });
+    store.updateThread(threadId, { model: "gpt-5.6-sol" });
+    store.updateThread(threadId, { sessionId: "codex-sess" });
+    store.updateThread(threadId, { model: "gpt-6-astra" });
+    store.setUsage(threadId, {
+      model: "gpt-6-astra",
+      inputTokens: 1,
+      outputTokens: 1,
+      costUsd: 0,
+      turns: 1,
+    });
+    services.setEjected(
+      store,
+      { threadId, ejected: true },
+      { writeText: (text) => { copied = text; } },
+    );
+    assert.equal(
+      copied.split("\n")[0],
+      `cd ${posixQuote(projectPath)} && codex exec resume ${posixQuote("codex-sess")}`,
+    );
+    assert.equal(copied.includes("-m"), false);
+    assert.match(copied, /cannot honor/i);
+    assert.match(copied, /gpt-6-astra/);
+    assert.match(copied, /gpt-5.6-sol/);
   });
 
   it("eject cds into the bound worktree, not the project checkout", () => {

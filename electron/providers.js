@@ -1536,6 +1536,8 @@ function ejectResumeTail(entry, sessionId) {
     case "cursor":
       return `--resume ${id}`;
     case "codex":
+      // exec resume hydrates the model from the rollout and ignores -m
+      // (live 2026-09-10). ejectCommand notes a later picker change.
       return `exec resume ${id}`;
     case "opencode":
       return `-s ${id}`;
@@ -1550,7 +1552,18 @@ function ejectResumeTail(entry, sessionId) {
 
 /**
  * Exact command to continue a thread in the raw CLI inside its worktree.
- * @param {{ provider?: string | null, sessionId?: string | null, cwd?: string | null }} input
+ * Codex exec resume hydrates the model from the rollout and ignores -m, so
+ * a later picker change is called out on a # comment (issue #1210 / #1215).
+ * Compare against the session-start snapshot, not last usage.model — usage
+ * can catch up after turn/start.model while the rollout stays on the old
+ * model. The first line stays the runnable resume; $TERMINAL uses that line.
+ * @param {{
+ *   provider?: string | null,
+ *   sessionId?: string | null,
+ *   cwd?: string | null,
+ *   model?: string | null,
+ *   sessionStartModel?: string | null,
+ * }} input
  * @returns {{ command: string, note?: string }}
  */
 function ejectCommand(input) {
@@ -1566,6 +1579,21 @@ function ejectCommand(input) {
     const command = cd
       ? `${cd} && ${entry.defaultBin} ${resumeTail}`
       : `${entry.defaultBin} ${resumeTail}`;
+    const wanted =
+      input && input.model != null && String(input.model).trim() !== ""
+        ? String(input.model).trim()
+        : "";
+    const started =
+      input &&
+      input.sessionStartModel != null &&
+      String(input.sessionStartModel).trim() !== ""
+        ? String(input.sessionStartModel).trim()
+        : "";
+    if (entry.id === "codex" && wanted && started && wanted !== started) {
+      const note =
+        `Terminal resume uses ${started}; exec resume cannot honor ${wanted}.`;
+      return { command: `${command}\n# ${note}`, note };
+    }
     return { command };
   }
   const name = entry && entry.name ? entry.name : "This provider";
