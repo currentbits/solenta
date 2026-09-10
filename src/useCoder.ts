@@ -1095,8 +1095,10 @@ export function useCoder(): UseCoderResult {
         ),
       );
       void (async () => {
+        let cleared = false;
         try {
           await api.threads.setQueued({ threadId: id, prompt: null });
+          cleared = true;
           await api.runs.start({
             threadId: id,
             prompt: pending.prompt,
@@ -1104,22 +1106,30 @@ export function useCoder(): UseCoderResult {
           });
         } catch (err) {
           // A failed retry must not eat the prompt — that is the loss this
-          // issue exists to kill. Put it back, with the new error on it.
-          setError({ scope: "run", message: errorMessage(err) });
-          await api.threads
-            .setQueued({
-              threadId: id,
-              prompt: pending.prompt,
-              attachments: pending.attachments,
-            })
-            .catch(() => null);
-          // setQueued clears the stored error (a fresh queue is not a failed
-          // one), so the reason lives on the local row until the next attempt.
+          // issue exists to kill. Re-enqueue only if the host actually
+          // dropped it: setQueued appends, so compensating a failed clear
+          // duplicates prompt and attachments (issue #925).
+          const message = errorMessage(err);
+          setError({ scope: "run", message });
+          let queued: QueuedMessage = { ...pending, error: message };
+          if (cleared) {
+            try {
+              const updated = await api.threads.setQueued({
+                threadId: id,
+                prompt: pending.prompt,
+                attachments: pending.attachments,
+              });
+              if (updated.queued) {
+                queued = { ...updated.queued, error: message };
+              }
+            } catch {
+              // Keep the in-memory payload; a second restore miss must not
+              // eat the prompt the user still has locally.
+            }
+          }
           applyThreads(
             threadsRef.current.map((t) =>
-              t.id === id
-                ? { ...t, queued: { ...pending, error: errorMessage(err) } }
-                : t,
+              t.id === id ? { ...t, queued } : t,
             ),
           );
         }
