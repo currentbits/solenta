@@ -3,9 +3,13 @@
 const { describe, it, afterEach } = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
+const os = require("node:os");
+const path = require("node:path");
 const { spawn } = require("node:child_process");
 const {
   killTree,
+  awaitKillTree,
+  awaitPendingKills,
   agentSpawnOptions,
   signalGroup,
   beginShutdown,
@@ -121,6 +125,35 @@ function reapPid(pid, child) {
   }
 }
 
+function forceKill(child) {
+  reapPid(child && child.pid, child);
+}
+
+function spawnDetached(script) {
+  return spawn(process.execPath, ["-e", script], {
+    detached: true,
+    stdio: "ignore",
+  });
+}
+
+/** READY handshake so the SIGTERM handler is installed before we signal. */
+async function spawnStubborn() {
+  const ready = path.join(
+    os.tmpdir(),
+    `coder-stubborn-${process.pid}-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+  );
+  const child = spawnDetached(
+    `process.on("SIGTERM",()=>{});require("fs").writeFileSync(${JSON.stringify(ready)},"READY");setInterval(()=>{},50);`,
+  );
+  await waitFor(() => fs.existsSync(ready), { timeoutMs: 3000 });
+  try {
+    fs.unlinkSync(ready);
+  } catch {
+    // ignore
+  }
+  return child;
+}
+
 async function spawnIgnorer() {
   const child = spawn(
     process.execPath,
@@ -223,6 +256,106 @@ describe("killTree", { skip: !posix }, () => {
     } finally {
       if (timer) clearTimeout(timer);
       reapPid(child.pid, child);
+    }
+  });
+
+  it("returns without waiting for a SIGTERM-ignoring child", async () => {
+    const child = await spawnStubborn();
+    try {
+      const t0 = Date.now();
+      killTree(child, 2000);
+      const elapsed = Date.now() - t0;
+      assert.ok(elapsed < 200, `killTree held for ${elapsed}ms`);
+      assert.ok(alive(child.pid), "in-app Stop must not wait for SIGKILL");
+    } finally {
+      forceKill(child);
+      await waitFor(() => !alive(child.pid), { timeoutMs: 2000 }).catch(() => {});
+    }
+  });
+});
+
+describe("awaitKillTree", { skip: !posix }, () => {
+  afterEach(() => {
+    resetShutdownForTests();
+  });
+
+  it("SIGKILLs a SIGTERM-ignoring child instead of waiting past the grace", async () => {
+    const child = await spawnStubborn();
+    try {
+      const t0 = Date.now();
+      await awaitKillTree(child, 200);
+      const elapsed = Date.now() - t0;
+      assert.ok(elapsed >= 100, `escalated too fast (${elapsed}ms)`);
+      assert.ok(elapsed < 1500, `hung quit (${elapsed}ms)`);
+      assert.equal(alive(child.pid), false);
+    } finally {
+      forceKill(child);
+    }
+  });
+
+  it("lets a cooperative child exit without waiting the full grace", async () => {
+    const child = spawnDetached("setInterval(()=>{},200);");
+    try {
+      await waitFor(() => alive(child.pid), { timeoutMs: 2000 });
+      const t0 = Date.now();
+      await awaitKillTree(child, 3000);
+      const elapsed = Date.now() - t0;
+      assert.ok(elapsed < 1000, `waited the full grace (${elapsed}ms)`);
+      assert.equal(alive(child.pid), false);
+    } finally {
+      forceKill(child);
+    }
+  });
+
+  it("resolves immediately when the child is already dead", async () => {
+    const child = spawnDetached("setInterval(()=>{},200);");
+    forceKill(child);
+    await waitFor(() => !alive(child.pid), { timeoutMs: 2000 });
+    const t0 = Date.now();
+    await awaitKillTree(child, 3000);
+    assert.ok(Date.now() - t0 < 200);
+  });
+
+  it("joins an in-flight killTree instead of stacking a second grace", async () => {
+    const child = await spawnStubborn();
+    try {
+      killTree(child, 200);
+      const t0 = Date.now();
+      await awaitKillTree(child, 5000);
+      const elapsed = Date.now() - t0;
+      assert.ok(elapsed < 1500, `second grace stacked (${elapsed}ms)`);
+      assert.equal(alive(child.pid), false);
+    } finally {
+      forceKill(child);
+    }
+  });
+});
+
+describe("awaitPendingKills", { skip: !posix }, () => {
+  afterEach(() => {
+    resetShutdownForTests();
+  });
+
+  it("resolves immediately when nothing is in flight", async () => {
+    const t0 = Date.now();
+    await awaitPendingKills();
+    assert.ok(Date.now() - t0 < 100);
+  });
+
+  it("still reaps after a caller throws", async () => {
+    const child = await spawnStubborn();
+    try {
+      killTree(child, 200);
+      await assert.rejects(async () => {
+        try {
+          throw new Error("boom");
+        } finally {
+          await awaitPendingKills();
+        }
+      }, /boom/);
+      assert.equal(alive(child.pid), false);
+    } finally {
+      forceKill(child);
     }
   });
 });

@@ -13,6 +13,7 @@ const {
   looksLikeProcessWrapper,
   electronIdentityEnv,
 } = require("./worktreeEnv.js");
+const { killTree, awaitKillTree, signalGroup } = require("./proc.js");
 
 const PREFERRED_SCRIPTS = ["dev", "start", "serve"];
 const RING_LIMIT = 50;
@@ -108,15 +109,12 @@ function scriptCommand(root, script) {
  *   dead: boolean,
  *   deadAt: number | null,
  *   platform: NodeJS.Platform,
+ *   child?: import("node:child_process").ChildProcess | null,
  * }} DevServerRecord
  */
 
 /** @type {Map<string, DevServerRecord>} */
 const records = new Map();
-
-/** pid → SIGKILL fallback timer, so stop() can drop the record immediately. */
-/** @type {Map<number, NodeJS.Timeout>} */
-const pendingKills = new Map();
 
 /**
  * @param {number} pid
@@ -197,39 +195,19 @@ function toState(rec) {
 }
 
 /**
+ * Pid-only fallback when the record has no ChildProcess. stop() prefers
+ * killTree so `exit` clears SIGKILL (PID-reuse).
+ *
  * @param {number} pid
- * @param {NodeJS.Platform} [platform]
  */
-function killProcessGroup(pid, platform = process.platform) {
+function killProcessGroup(pid) {
   if (!pid) return;
-  // Windows has no POSIX process groups; process.kill(-pid) throws and
-  // SIGTERM is terminate. Kill the pid directly instead of failing closed
-  // through the catch.
-  const target = platform === "win32" ? pid : -pid;
-  try {
-    process.kill(target, "SIGTERM");
-  } catch {
-    try {
-      process.kill(pid, "SIGTERM");
-    } catch {
-      // already gone
-    }
-  }
-  if (pendingKills.has(pid)) return;
+  const stub = { pid, kill: (sig) => process.kill(pid, sig) };
+  signalGroup(stub, "SIGTERM");
   const timer = setTimeout(() => {
-    pendingKills.delete(pid);
-    try {
-      process.kill(target, "SIGKILL");
-    } catch {
-      try {
-        process.kill(pid, "SIGKILL");
-      } catch {
-        // already gone
-      }
-    }
+    signalGroup(stub, "SIGKILL");
   }, KILL_FALLBACK_MS);
   if (typeof timer.unref === "function") timer.unref();
-  pendingKills.set(pid, timer);
 }
 
 /**
@@ -318,6 +296,7 @@ function start(threadId, root, script, opts = {}) {
       dead: true,
       deadAt: Date.now(),
       platform,
+      child: null,
     };
     records.set(threadId, rec);
     return toState(rec);
@@ -335,6 +314,7 @@ function start(threadId, root, script, opts = {}) {
     dead: !pid,
     deadAt: !pid ? Date.now() : null,
     platform,
+    child,
   };
   records.set(threadId, rec);
 
@@ -367,7 +347,9 @@ function start(threadId, root, script, opts = {}) {
 function stop(threadId) {
   const rec = records.get(threadId);
   if (!rec) return { running: false };
-  if (rec.pid) killProcessGroup(rec.pid, rec.platform);
+  // In-app Stop: fire-and-forget. App quit uses killAll and awaits SIGKILL.
+  if (rec.child) killTree(rec.child, KILL_FALLBACK_MS);
+  else if (rec.pid) killProcessGroup(rec.pid);
   records.delete(threadId);
   return { running: false };
 }
@@ -387,11 +369,25 @@ function status(threadId) {
   return state;
 }
 
-/** Stop every tracked server. Wired into app quit. */
-function killAll() {
+/**
+ * Stop every tracked server and wait for exit or SIGKILL. App-quit path
+ * only: ordinary stop() must not hold the UI for the grace period (#1232).
+ *
+ * @param {number} [sigkillAfterMs]
+ * @returns {Promise<void>}
+ */
+async function killAll(sigkillAfterMs = KILL_FALLBACK_MS) {
+  const waits = [];
   for (const id of [...records.keys()]) {
-    stop(id);
+    const rec = records.get(id);
+    records.delete(id);
+    if (rec && rec.child) {
+      waits.push(awaitKillTree(rec.child, sigkillAfterMs));
+    } else if (rec && rec.pid) {
+      killProcessGroup(rec.pid);
+    }
   }
+  await Promise.all(waits);
 }
 
 module.exports = {

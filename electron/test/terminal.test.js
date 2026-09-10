@@ -2,10 +2,13 @@
 
 const { describe, it, after } = require("node:test");
 const assert = require("node:assert/strict");
+const fs = require("node:fs");
 const os = require("node:os");
+const path = require("node:path");
+const { spawn } = require("node:child_process");
 const terminal = require("../terminal.js");
 
-after(() => terminal.killAll());
+after(() => terminal.killAll(200));
 
 /**
  * Wait until the session's committed output satisfies `done`, or give up.
@@ -127,5 +130,91 @@ describe("terminal sessions", () => {
     const state = terminal.write(id, "echo nope");
     assert.equal(state.running, false);
     assert.equal(state.text, "", "no session, no scrollback");
+  });
+
+  async function spawnStubbornShell() {
+    const ready = path.join(
+      os.tmpdir(),
+      `coder-term-ready-${process.pid}-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+    );
+    const child = spawn(
+      process.execPath,
+      [
+        "-e",
+        `process.on("SIGTERM",()=>{});require("fs").writeFileSync(${JSON.stringify(ready)},"READY");setInterval(()=>{},50);`,
+      ],
+      { detached: true, stdio: ["ignore", "pipe", "pipe"] },
+    );
+    const t0 = Date.now();
+    while (!fs.existsSync(ready) && Date.now() - t0 < 3000) {
+      await new Promise((r) => setTimeout(r, 15));
+    }
+    try {
+      fs.unlinkSync(ready);
+    } catch {
+      // ignore
+    }
+    return child;
+  }
+
+  it("close returns without waiting for SIGKILL", async (t) => {
+    if (process.platform === "win32") return t.skip("POSIX signals");
+    const id = "t-close-fast";
+    const child = await spawnStubbornShell();
+    terminal.open(id, os.tmpdir(), {
+      spawn: () => child,
+    });
+    try {
+      const t0 = Date.now();
+      terminal.close(id);
+      assert.ok(Date.now() - t0 < 150);
+      try {
+        process.kill(child.pid, 0);
+      } catch {
+        assert.fail("in-app close must not wait for SIGKILL");
+      }
+    } finally {
+      try {
+        process.kill(-child.pid, "SIGKILL");
+      } catch {
+        try {
+          child.kill("SIGKILL");
+        } catch {
+          // ignore
+        }
+      }
+    }
+  });
+
+  it("killAll waits to SIGKILL a SIGTERM-ignoring session", async (t) => {
+    if (process.platform === "win32") return t.skip("POSIX signals");
+    const id = "t-killall-stubborn";
+    const child = await spawnStubbornShell();
+    terminal.open(id, os.tmpdir(), {
+      spawn: () => child,
+    });
+    try {
+      const t0 = Date.now();
+      await terminal.killAll(200);
+      const elapsed = Date.now() - t0;
+      assert.ok(elapsed >= 100, `did not wait for grace (${elapsed}ms)`);
+      assert.ok(elapsed < 1500, `hung quit (${elapsed}ms)`);
+      try {
+        process.kill(child.pid, 0);
+        assert.fail("session still running after killAll");
+      } catch {
+        // ESRCH
+      }
+    } finally {
+      try {
+        process.kill(-child.pid, "SIGKILL");
+      } catch {
+        try {
+          child.kill("SIGKILL");
+        } catch {
+          // ignore
+        }
+      }
+    }
   });
 });
