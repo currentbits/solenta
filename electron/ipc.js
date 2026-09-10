@@ -12,6 +12,7 @@ const {
   commit,
   revertFile,
   listFiles,
+  searchFiles,
   mergeWorktree,
   conflictContext,
   removeWorktree,
@@ -1539,6 +1540,14 @@ const IPC_HANDLERS = {
   },
   "files:list": async (ctx, input) => {
     return listFiles({
+      store: ctx.store,
+      threadId: input.threadId,
+      query: input.query,
+      limit: input.limit,
+    });
+  },
+  "files:search": async (ctx, input) => {
+    return searchFiles({
       store: ctx.store,
       threadId: input.threadId,
       query: input.query,

@@ -6308,7 +6308,7 @@ function buildDevCoder(): CoderApi {
       },
     },
     files: {
-      async list(input: { threadId: string; query?: string }) {
+      async list(input: { threadId: string; query?: string; limit?: number }) {
         const q = (input.query ?? "").toLowerCase();
         const all = [
           "src/App.tsx",
@@ -6319,7 +6319,33 @@ function buildDevCoder(): CoderApi {
           "README.md",
           "package.json",
         ];
-        return { files: all.filter((f) => !q || f.toLowerCase().includes(q)) };
+        const cap = Math.min(Math.max(Number(input.limit) || 20, 1), 80);
+        return {
+          files: all
+            .filter((f) => !q || f.toLowerCase().includes(q))
+            .slice(0, cap),
+        };
+      },
+      async search(input: { threadId: string; query: string }) {
+        const q = (input.query ?? "").toLowerCase();
+        if (!q) return { hits: [] };
+        const hits = [
+          {
+            path: "src/App.tsx",
+            line: 12,
+            text: "export function App() {",
+          },
+          {
+            path: "README.md",
+            line: 1,
+            text: "# Solenta",
+          },
+        ].filter(
+          (h) =>
+            h.path.toLowerCase().includes(q) ||
+            h.text.toLowerCase().includes(q),
+        );
+        return { hits };
       },
       async image(_input: { name: string }) {
         return { dataUrl: null };

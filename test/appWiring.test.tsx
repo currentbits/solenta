@@ -1716,3 +1716,72 @@ describe("Return to source view (#942)", () => {
     }
   });
 });
+
+describe("App command palette (#150)", () => {
+  it("cmd+k opens from the composer and lists a thread", async () => {
+    const t1 = thread({ id: "t-pal", title: "Palette target" });
+    const fake = createFakeCoder({
+      threads: [t1],
+      details: { "t-pal": detail({ thread: t1 }) },
+    });
+    const m = await boot(fake);
+    try {
+      await m.flush();
+      const ta = m.query("textarea");
+      assert.ok(ta, "composer textarea");
+      (ta as HTMLElement).focus();
+      await inAct(async () => {
+        window.dispatchEvent(
+          new KeyboardEvent("keydown", {
+            key: "k",
+            metaKey: true,
+            bubbles: true,
+            cancelable: true,
+          }),
+        );
+      });
+      await m.flush();
+      const dialog = m.query("[data-command-palette-dialog]");
+      assert.ok(dialog, "palette opens while composer is focused");
+      assert.match(m.text(), /Palette target/);
+      assert.match(m.text(), /New thread/);
+    } finally {
+      m.unmount();
+    }
+  });
+
+  it("cmd+p opens file search against files.list", async () => {
+    const t1 = thread({ id: "t-files", title: "Has a repo" });
+    const fake = createFakeCoder({
+      threads: [t1],
+      details: { "t-files": detail({ thread: t1 }) },
+    });
+    const m = await boot(fake);
+    try {
+      await m.flush();
+      const row = m.query('button[aria-label="Select thread: Has a repo"]');
+      if (row) await m.click(row as HTMLElement);
+      await m.flush();
+      await inAct(async () => {
+        window.dispatchEvent(
+          new KeyboardEvent("keydown", {
+            key: "p",
+            metaKey: true,
+            bubbles: true,
+            cancelable: true,
+          }),
+        );
+      });
+      await m.flush();
+      assert.equal(
+        m.query("[data-palette-mode]")?.getAttribute("data-palette-mode"),
+        "files",
+      );
+      await inAct(() => new Promise((r) => setTimeout(r, 200)));
+      await m.flush();
+      assert.ok(fake.of("files.list").length > 0, "files.list for the picker");
+    } finally {
+      m.unmount();
+    }
+  });
+});
