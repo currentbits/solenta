@@ -42,6 +42,7 @@ import type {
   GitSyncInfo,
   PrChecksResult,
   PrInfo,
+  PrTemplateResult,
   PendingPermissionInfo,
   PendingQuestion,
   PermissionDecision,
@@ -145,6 +146,7 @@ import { ProviderQuotaDialog } from "./ProviderQuota";
 import type { ProviderLimitsLoader } from "../providerUsage";
 import { buildBestOfNEntries } from "../bestOfN";
 import { createPrPrompt, isPrTooLargeMessage, splitPrPrompt } from "../prUi";
+import { CreatePrDialog } from "./CreatePrDialog";
 import {
   blastRadiusLabel,
   blastRadiusTitle,
@@ -696,6 +698,8 @@ interface ThreadViewProps {
     /** Override the PR-size cap for this creation (issue #402). */
     allowOversize?: boolean;
   }) => Promise<PrInfo>;
+  /** Repo PULL_REQUEST_TEMPLATE for the create-PR composer. */
+  onPrTemplate?: (projectPath: string) => Promise<PrTemplateResult>;
   /** CI checks for the current PR. Failures stay in-band. */
   onPrChecks?: () => Promise<PrChecksResult>;
   /** Squash-merge the current OPEN PR. Pass ciWorkflowApproved after sign-off. */
@@ -1878,6 +1882,7 @@ function NextGitActionButton({
   onViewChanges,
   onPush,
   onCreatePr,
+  loadPrTemplate,
   onPrChecks,
   onPrMerge,
   onStartRun,
@@ -1900,6 +1905,7 @@ function NextGitActionButton({
     draft?: boolean;
     allowOversize?: boolean;
   }) => Promise<PrInfo>;
+  loadPrTemplate?: () => Promise<PrTemplateResult>;
   onPrChecks?: () => Promise<PrChecksResult>;
   onPrMerge?: (opts?: { ciWorkflowApproved?: boolean }) => Promise<PrInfo>;
   onStartRun: (prompt: string) => void | Promise<void>;
@@ -1919,6 +1925,9 @@ function NextGitActionButton({
   );
   /** Confirm bar for CI-workflow merge sign-off (issue #510). */
   const [ciSignOff, setCiSignOff] = useState(false);
+  const [composerOpen, setComposerOpen] = useState(false);
+  const [composerError, setComposerError] = useState<string | null>(null);
+  const lastSubmit = useRef({ title: thread.title, body: "", draft: false });
   const [github, setGithub] = useState<{
     ready: boolean;
     hint: string | null;
@@ -1957,6 +1966,9 @@ function NextGitActionButton({
     setOversizeMsg(null);
     setBlastRadius(null);
     setCiSignOff(false);
+    setComposerOpen(false);
+    setComposerError(null);
+    lastSubmit.current = { title: thread.title, body: "", draft: false };
   }, [thread.id]);
 
   const loadGit = useCallback(async () => {
@@ -2088,22 +2100,8 @@ function NextGitActionButton({
     }
     if (action.kind === "create-pr") {
       if (onCreatePr) {
-        setPending(true);
-        try {
-          await onCreatePr({ title: thread.title, body: "" });
-          setOversizeMsg(null);
-          await loadGit();
-          await loadChecks();
-        } catch (err) {
-          // The size-cap refusal (issue #402) is not a failure: offer the
-          // split-into-stack prompt or an explicit override inline. Other
-          // rejections surface via the parent's runError banner.
-          const msg = err instanceof Error ? err.message : String(err);
-          if (isPrTooLargeMessage(msg)) setOversizeMsg(msg);
-          else void loadForge(true);
-        } finally {
-          setPending(false);
-        }
+        setComposerError(null);
+        setComposerOpen(true);
         return;
       }
       void onStartRun(createPrPrompt(providerName));
@@ -2154,20 +2152,44 @@ function NextGitActionButton({
 
   if (action.kind === "idle") return null;
 
-  /** Retry PR creation with the explicit size-cap override (issue #402). */
-  const createOversizePr = async () => {
+  const submitPr = async (input: {
+    title: string;
+    body: string;
+    draft: boolean;
+    allowOversize?: boolean;
+  }) => {
     if (!onCreatePr || pending || isWorking) return;
+    lastSubmit.current = {
+      title: input.title,
+      body: input.body,
+      draft: input.draft,
+    };
     setPending(true);
     try {
-      await onCreatePr({ title: thread.title, body: "", allowOversize: true });
+      await onCreatePr(input);
+      setComposerOpen(false);
+      setComposerError(null);
       setOversizeMsg(null);
       await loadGit();
       await loadChecks();
-    } catch {
-      // Parent surfaces rejections via the runError banner.
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (isPrTooLargeMessage(msg)) {
+        setComposerError(msg);
+        setOversizeMsg(msg);
+      } else {
+        setComposerError(msg);
+        void loadForge(true);
+      }
     } finally {
       setPending(false);
     }
+  };
+
+  /** Retry PR creation with the explicit size-cap override (issue #402). */
+  const createOversizePr = async () => {
+    if (!onCreatePr || pending || isWorking) return;
+    await submitPr({ ...lastSubmit.current, allowOversize: true });
   };
 
   const disabled = isWorking || pending || !action.actionable;
@@ -2295,7 +2317,7 @@ function NextGitActionButton({
           </button>
         </span>
       ) : null}
-      {oversizeMsg ? (
+      {oversizeMsg && !composerOpen ? (
         <span
           className={styles.oversizeBar}
           data-pr-oversize=""
@@ -2331,6 +2353,27 @@ function NextGitActionButton({
             ×
           </button>
         </span>
+      ) : null}
+      {composerOpen ? (
+        <CreatePrDialog
+          initialTitle={thread.title}
+          loadTemplate={loadPrTemplate}
+          pending={pending}
+          error={composerError}
+          oversize={oversizeMsg != null}
+          onSubmit={(input) => void submitPr(input)}
+          onSplit={() => {
+            setComposerOpen(false);
+            setOversizeMsg(null);
+            void onStartRun(splitPrPrompt(providerName));
+          }}
+          onCreateAnyway={() => void createOversizePr()}
+          onClose={() => {
+            if (pending) return;
+            setComposerOpen(false);
+            setComposerError(null);
+          }}
+        />
       ) : null}
     </>
   );
@@ -4449,6 +4492,7 @@ export const ThreadView = memo(function ThreadView({
   listLocalServers,
   onPush,
   onCreatePr,
+  onPrTemplate,
   onPrChecks,
   onPrMerge,
   gitSyncInfo,
@@ -6334,6 +6378,11 @@ export const ThreadView = memo(function ThreadView({
             onViewChanges={onViewChanges}
             onPush={onPush}
             onCreatePr={onCreatePr}
+            loadPrTemplate={
+              project && onPrTemplate
+                ? () => onPrTemplate(project.path)
+                : undefined
+            }
             onPrChecks={onPrChecks}
             onPrMerge={onPrMerge}
             onStartRun={onStartRun}

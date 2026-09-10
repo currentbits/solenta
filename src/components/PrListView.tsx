@@ -22,10 +22,13 @@ import type {
   CoderApi,
   ListPrsOptions,
   ListPrsResult,
+  PrCommentResult,
+  PrDetailResult,
   ProjectInfo,
   SourceControlDiscovery,
   ThreadInfo,
 } from "../shared/ipc";
+import { PrWorkspacePanel } from "./PrWorkspacePanel";
 import styles from "./PrListView.module.css";
 
 function rejectReason(err: unknown, fallback: string): string {
@@ -48,6 +51,34 @@ export interface PrListViewProps {
   }) => Promise<CheckoutPrResult>;
   /** Optional forge probe (#608). When omitted, the view discovers itself. */
   github?: { ready: boolean; hint: string | null } | null;
+  prDetail?: (input: {
+    projectPath: string;
+    prNumber: number;
+  }) => Promise<PrDetailResult>;
+  prEdit?: (input: {
+    projectPath: string;
+    prNumber: number;
+    title?: string;
+    body?: string;
+  }) => Promise<PrDetailResult>;
+  prComment?: (input: {
+    projectPath: string;
+    prNumber: number;
+    body: string;
+  }) => Promise<PrCommentResult>;
+  prClose?: (input: {
+    projectPath: string;
+    prNumber: number;
+  }) => Promise<PrDetailResult>;
+  prReady?: (input: {
+    projectPath: string;
+    prNumber: number;
+    undo?: boolean;
+  }) => Promise<PrDetailResult>;
+  prMergeAt?: (input: {
+    projectPath: string;
+    prNumber: number;
+  }) => Promise<PrDetailResult>;
 }
 
 export function PrListView({
@@ -59,6 +90,12 @@ export function PrListView({
   github: githubProp,
   restore = null,
   onRestoreApplied,
+  prDetail,
+  prEdit,
+  prComment,
+  prClose,
+  prReady,
+  prMergeAt,
 }: PrListViewProps) {
   const [results, setResults] = useState<Map<string, ListPrsResult>>(
     () => new Map(),
@@ -79,8 +116,15 @@ export function PrListView({
   );
   const rootRef = useRef<HTMLElement>(null);
   const [loadingMore, setLoadingMore] = useState<string | null>(null);
+  const [selected, setSelected] = useState<{
+    projectId: string;
+    prNumber: number;
+  } | null>(null);
   const loadGen = useRef(0);
   const github = githubProp !== undefined ? githubProp : discoveredGithub;
+  const workspaceReady = Boolean(
+    prDetail && prEdit && prComment && prClose && prReady && prMergeAt,
+  );
 
   const loadAll = useCallback(async () => {
     const gen = ++loadGen.current;
@@ -254,6 +298,21 @@ export function PrListView({
   };
   useViewRestore(!loading || loadedCount > 0, restore, rootRef, onRestoreApplied);
 
+  const selectedProject = selected
+    ? (projects.find((p) => p.id === selected.projectId) ?? null)
+    : null;
+  const selectedMatch = (() => {
+    if (!selected || !selectedProject) return null;
+    const group = groups.find((g) => g.project.id === selectedProject.id);
+    const listed =
+      group && group.ok
+        ? group.prs.find((row) => row.number === selected.prNumber)
+        : null;
+    return listed
+      ? matchThreadForPr(listed, threads, selectedProject.id)
+      : null;
+  })();
+
   return (
     <main className={styles.main} data-pr-list="" ref={rootRef}>
       <header className={styles.header}>
@@ -368,6 +427,7 @@ export function PrListView({
             : null}
         </div>
       ) : (
+        <div className={styles.workspace}>
         <div className={styles.list} data-return-scroll="">
           {filtered.map((group) => {
             if (group.ok && group.prs.length === 0 && query.trim()) return null;
@@ -417,14 +477,35 @@ export function PrListView({
                       key={`${group.project.id}-${pr.number}`}
                       className={styles.row}
                       data-pr-row={pr.number}
+                      data-pr-selected={
+                        selected?.projectId === group.project.id &&
+                        selected.prNumber === pr.number
+                          ? ""
+                          : undefined
+                      }
                       data-return-row={rowKey}
                     >
                       <button
                         type="button"
                         className={styles.rowSelect}
-                        disabled={!matched}
-                        aria-label={`Select thread for PR #${pr.number}`}
+                        disabled={!workspaceReady && !matched}
+                        aria-label={
+                          workspaceReady
+                            ? `Open pull request #${pr.number}`
+                            : `Select thread for PR #${pr.number}`
+                        }
+                        aria-pressed={
+                          selected?.projectId === group.project.id &&
+                          selected.prNumber === pr.number
+                        }
                         onClick={() => {
+                          if (workspaceReady) {
+                            setSelected({
+                              projectId: group.project.id,
+                              prNumber: pr.number,
+                            });
+                            return;
+                          }
                           if (!matched) return;
                           onSelectThread(
                             matched.id,
@@ -532,6 +613,39 @@ export function PrListView({
               </section>
             );
           })}
+        </div>
+        {workspaceReady &&
+        selected &&
+        selectedProject &&
+        prDetail &&
+        prEdit &&
+        prComment &&
+        prClose &&
+        prReady &&
+        prMergeAt ? (
+          <PrWorkspacePanel
+            projectPath={selectedProject.path}
+            prNumber={selected.prNumber}
+            matchedThread={selectedMatch}
+            prDetail={prDetail}
+            prEdit={prEdit}
+            prComment={prComment}
+            prClose={prClose}
+            prReady={prReady}
+            prMergeAt={prMergeAt}
+            onSelectThread={(id) =>
+              onSelectThread(
+                id,
+                originFromRowKey(
+                  rootRef.current,
+                  `${selectedProject.id}:${selected.prNumber}`,
+                  { query, projectFilter },
+                ),
+              )
+            }
+            onClose={() => setSelected(null)}
+          />
+        ) : null}
         </div>
       )}
     </main>

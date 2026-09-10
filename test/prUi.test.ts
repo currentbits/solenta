@@ -5,6 +5,8 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
+  canSubmitComment,
+  canSubmitPr,
   createPrPrompt,
   isPrTooLargeMessage,
   PR_TOO_LARGE_PREFIX,
@@ -52,6 +54,17 @@ describe("createPrPrompt", () => {
     );
     assert.ok(prompt.includes("pull request"));
     assert.ok(prompt.includes("gh pr create"));
+  });
+});
+
+describe("canSubmitPr / canSubmitComment", () => {
+  it("refuses blank titles and comments", () => {
+    assert.equal(canSubmitPr(""), false);
+    assert.equal(canSubmitPr("   "), false);
+    assert.equal(canSubmitPr("Ship it"), true);
+    assert.equal(canSubmitComment(""), false);
+    assert.equal(canSubmitComment("\n"), false);
+    assert.equal(canSubmitComment("lgtm"), true);
   });
 });
 

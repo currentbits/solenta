@@ -39,6 +39,10 @@ import type {
   FetchIssueResult,
   ListIssuesResult,
   CheckoutPrResult,
+  PrCommentResult,
+  PrDetail,
+  PrDetailResult,
+  PrTemplateResult,
   LocalServerInfo,
   MemoryEntryInfo,
   MemoryMaintenanceReport,
@@ -5495,6 +5499,80 @@ function buildDevCoder(): CoderApi {
           prompt: `GitHub pull request #${input.prNumber}: ${t.title}\n${t.prUrl}\n`,
           thread: t,
         } satisfies CheckoutPrResult;
+      },
+      async prTemplate(_input: { projectPath: string }): Promise<PrTemplateResult> {
+        return { ok: true, body: "", path: null, templates: [] };
+      },
+      async prDetail(input: {
+        projectPath: string;
+        prNumber: number;
+      }): Promise<PrDetailResult> {
+        const t = threads.find((x) => x.prNumber === input.prNumber);
+        const pr: PrDetail = {
+          number: input.prNumber,
+          title: t?.title ?? `PR #${input.prNumber}`,
+          body: "",
+          url:
+            t?.prUrl ??
+            `https://github.com/example/repo/pull/${input.prNumber}`,
+          state: (t?.prState ?? "OPEN") as PrDetail["state"],
+          isDraft: false,
+          headRefName: t?.branch ?? `feat/${input.prNumber}`,
+          comments: [],
+        };
+        return { ok: true, pr };
+      },
+      async prEdit(input: {
+        projectPath: string;
+        prNumber: number;
+        title?: string;
+        body?: string;
+      }): Promise<PrDetailResult> {
+        const viewed = await this.prDetail(input);
+        if (!viewed.ok) return viewed;
+        return {
+          ok: true,
+          pr: {
+            ...viewed.pr,
+            title: input.title ?? viewed.pr.title,
+            body: input.body ?? viewed.pr.body,
+          },
+        };
+      },
+      async prComment(_input: {
+        projectPath: string;
+        prNumber: number;
+        body: string;
+      }): Promise<PrCommentResult> {
+        return {
+          ok: true,
+          url: "https://github.com/example/repo/pull/1#issuecomment-1",
+        };
+      },
+      async prClose(input: {
+        projectPath: string;
+        prNumber: number;
+      }): Promise<PrDetailResult> {
+        const viewed = await this.prDetail(input);
+        if (!viewed.ok) return viewed;
+        return { ok: true, pr: { ...viewed.pr, state: "CLOSED" } };
+      },
+      async prReady(input: {
+        projectPath: string;
+        prNumber: number;
+        undo?: boolean;
+      }): Promise<PrDetailResult> {
+        const viewed = await this.prDetail(input);
+        if (!viewed.ok) return viewed;
+        return { ok: true, pr: { ...viewed.pr, isDraft: Boolean(input.undo) } };
+      },
+      async prMergeAt(input: {
+        projectPath: string;
+        prNumber: number;
+      }): Promise<PrDetailResult> {
+        const viewed = await this.prDetail(input);
+        if (!viewed.ok) return viewed;
+        return { ok: true, pr: { ...viewed.pr, state: "MERGED", isDraft: false } };
       },
       async listCheckpoints(input: { threadId: string }) {
         const detail = details.get(input.threadId);

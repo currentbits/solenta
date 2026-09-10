@@ -2060,6 +2060,58 @@ export type CheckoutPrResult =
     }
   | { ok: false; reason: string };
 
+/** One file from the repo's PULL_REQUEST_TEMPLATE search (issue #154). */
+export interface PrTemplateFile {
+  name: string;
+  path: string;
+  body: string;
+}
+
+/** Repo PR template load. Failures stay in-band. */
+export type PrTemplateResult =
+  | {
+      ok: true;
+      body: string;
+      path: string | null;
+      templates: PrTemplateFile[];
+    }
+  | { ok: false; reason: string };
+
+/** One issue-comment on a PR from `gh pr view --json comments`. */
+export interface PrComment {
+  author: string;
+  body: string;
+  createdAt: string;
+  url?: string;
+}
+
+/** Full PR for the in-app workspace (issue #154). */
+export interface PrDetail {
+  number: number;
+  title: string;
+  body: string;
+  url: string;
+  state: "OPEN" | "CLOSED" | "MERGED";
+  isDraft: boolean;
+  headRefName: string;
+  baseRefName?: string;
+  author?: string;
+  additions?: number;
+  deletions?: number;
+  changedFiles?: number;
+  mergeable?: "MERGEABLE" | "CONFLICTING" | "UNKNOWN";
+  updatedAt?: string;
+  comments: PrComment[];
+}
+
+export type PrDetailResult =
+  | { ok: true; pr: PrDetail }
+  | { ok: false; reason: string };
+
+export type PrCommentResult =
+  | { ok: true; url?: string }
+  | { ok: false; reason: string };
+
 /** A GitHub or Linear issue fetched for thread start. */
 export interface IssueInfo {
   number: number;
@@ -4437,6 +4489,59 @@ export interface CoderApi {
       projectId: string;
       prNumber: number;
     }): Promise<CheckoutPrResult>;
+    /**
+     * Repo PULL_REQUEST_TEMPLATE files for the create-PR composer.
+     * Local files only; never needs gh. Failures stay in-band.
+     */
+    prTemplate(input: { projectPath: string }): Promise<PrTemplateResult>;
+    /**
+     * Full PR (title, body, comments, draft) for the in-app workspace.
+     * Failures stay in-band like listPrs.
+     */
+    prDetail(input: {
+      projectPath: string;
+      prNumber: number;
+    }): Promise<PrDetailResult>;
+    /**
+     * Rewrite a PR title and/or body via `gh pr edit`. Failures in-band.
+     */
+    prEdit(input: {
+      projectPath: string;
+      prNumber: number;
+      title?: string;
+      body?: string;
+    }): Promise<PrDetailResult>;
+    /**
+     * Post an issue comment on a PR via `gh pr comment`. Failures in-band.
+     */
+    prComment(input: {
+      projectPath: string;
+      prNumber: number;
+      body: string;
+    }): Promise<PrCommentResult>;
+    /**
+     * Close a PR via `gh pr close`. Failures in-band.
+     */
+    prClose(input: {
+      projectPath: string;
+      prNumber: number;
+    }): Promise<PrDetailResult>;
+    /**
+     * Mark a draft ready (`gh pr ready`) or convert back to draft (`--undo`).
+     */
+    prReady(input: {
+      projectPath: string;
+      prNumber: number;
+      undo?: boolean;
+    }): Promise<PrDetailResult>;
+    /**
+     * Squash-merge a listed PR by number (`gh pr merge --squash`). Unlike
+     * prMerge this does not require a bound thread.
+     */
+    prMergeAt(input: {
+      projectPath: string;
+      prNumber: number;
+    }): Promise<PrDetailResult>;
     /**
      * Checkpoints: after each successful turn that changed files, the runner
      * auto-commits in the thread's WORKTREE ("coder-checkpoint: turn N").
