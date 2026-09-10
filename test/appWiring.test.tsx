@@ -724,7 +724,10 @@ describe("App remove-project wiring (round 41)", () => {
       "Cancel must not call projects.remove",
     );
 
-    await m.click(m.query("[data-scope-trigger]"));
+    // Cancel leaves the scope menu open so Escape can restore the opener.
+    if (!m.query("[data-scope-menu]")) {
+      await m.click(m.query("[data-scope-trigger]"));
+    }
     await m.click(m.query('[data-project-remove="p-drop"]'));
     await m.click(m.query('[data-remove-confirm-submit="p-drop"]'));
     await m.flush();

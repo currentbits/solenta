@@ -1561,6 +1561,7 @@ export const Sidebar = memo(function Sidebar({
     branches: string[];
   } | null>(null);
   const [scopeMenuOpen, setScopeMenuOpen] = useState(false);
+  const [removeConfirmId, setRemoveConfirmId] = useState<string | null>(null);
   const [filterMenu, setFilterMenu] = useState<FilterMenu | null>(null);
   const [statusFilter, setStatusFilter] = useState<StatusFilter | null>(() =>
     parseStatusFilter(loadStored(STATUS_FILTER_KEY)),
@@ -1575,7 +1576,8 @@ export const Sidebar = memo(function Sidebar({
     parseGroupBy(loadStored(GROUP_BY_KEY)),
   );
   useEscapeClose(
-    createMenuOpen || scopeMenuOpen || filterMenu != null,
+    (createMenuOpen || scopeMenuOpen || filterMenu != null) &&
+      removeConfirmId == null,
     () => {
       setCreateMenuOpen(false);
       setBasePicker(null);
@@ -1597,7 +1599,6 @@ export const Sidebar = memo(function Sidebar({
     setIssueError(null);
   }, [issuePending]);
   useEscapeClose(issueFormFor != null && !issuePending, closeIssueForm);
-  const [removeConfirmId, setRemoveConfirmId] = useState<string | null>(null);
   const [removePending, setRemovePending] = useState(false);
   const closeRemoveConfirm = useCallback(() => {
     if (removePending) return;
@@ -2863,7 +2864,6 @@ export const Sidebar = memo(function Sidebar({
                       title="Remove project"
                       onClick={(e) => {
                         e.stopPropagation();
-                        setScopeMenuOpen(false);
                         setRemoveConfirmId(p.id);
                       }}
                     >

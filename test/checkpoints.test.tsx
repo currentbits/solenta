@@ -313,7 +313,7 @@ describe("App checkpoints wiring (round 50)", () => {
     m.unmount();
   });
 
-  it("opening restore confirm moves focus inside; Tab stays inside", async () => {
+  it("opening restore confirm moves focus out of the opener; Tab stays inside; Escape restores", async () => {
     const cps = threeCheckpoints();
     const middle = cps[1]!;
     const fake = makeFake({ checkpoints: cps });
@@ -321,9 +321,12 @@ describe("App checkpoints wiring (round 50)", () => {
     await selectThread(m, "checkpoint source thread");
     await openGitTab(m);
 
-    await m.click(
-      m.query(`[data-checkpoint-restore="${middle.sha}"]`) as HTMLElement,
-    );
+    const opener = m.query(
+      `[data-checkpoint-restore="${middle.sha}"]`,
+    ) as HTMLElement;
+    assert.ok(opener, "Restore on middle checkpoint");
+    opener.focus();
+    await m.click(opener);
     await m.flush();
     const dialog = m.query(
       `[data-restore-confirm="${middle.sha}"]`,
@@ -331,8 +334,9 @@ describe("App checkpoints wiring (round 50)", () => {
     assert.ok(dialog, "confirm dialog open");
     assert.ok(
       dialog.contains(document.activeElement),
-      "opening moves focus inside the dialog",
+      "opening the dialog must move focus inside it",
     );
+    assert.notEqual(document.activeElement, opener);
 
     await m.pressFocused("Tab");
     const first = document.activeElement as HTMLElement;
@@ -346,10 +350,18 @@ describe("App checkpoints wiring (round 50)", () => {
 
     await m.pressFocused("Tab");
     assert.equal(document.activeElement, first, "Tab wraps inside the dialog");
+
+    await m.pressFocused("Escape");
+    assert.equal(m.query("[data-restore-confirm]"), null);
+    assert.equal(
+      document.activeElement,
+      opener,
+      "Escape restores opener focus",
+    );
     assert.equal(
       fake.of("git.restoreCheckpoint").length,
       0,
-      "Tab must not restore",
+      "Escape must not restore",
     );
     m.unmount();
   });

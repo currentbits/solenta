@@ -1388,7 +1388,7 @@ describe("Sidebar remove + edit project (scope menu)", () => {
     m.unmount();
   });
 
-  it("opening remove confirm moves focus inside; Tab stays inside", async () => {
+  it("opening remove confirm moves focus out of the opener; Tab stays inside; Escape restores", async () => {
     await clearSidebarStorage();
     const removed: string[] = [];
     const m = await mount(
@@ -1400,13 +1400,17 @@ describe("Sidebar remove + edit project (scope menu)", () => {
       }),
     );
     await openScopeMenu(m);
-    await m.click(m.query('[data-project-remove="p2"]')!);
+    const opener = m.query('[data-project-remove="p2"]') as HTMLElement;
+    assert.ok(opener, "remove opener");
+    opener.focus();
+    await m.click(opener);
     const dialog = m.query('[data-remove-confirm="p2"]') as HTMLElement | null;
     assert.ok(dialog, "remove confirm open");
     assert.ok(
       dialog.contains(document.activeElement),
-      "opening moves focus inside the dialog",
+      "opening the dialog must move focus inside it",
     );
+    assert.notEqual(document.activeElement, opener);
 
     await m.pressFocused("Tab");
     const first = document.activeElement as HTMLElement;
@@ -1420,6 +1424,14 @@ describe("Sidebar remove + edit project (scope menu)", () => {
 
     await m.pressFocused("Tab");
     assert.equal(document.activeElement, first, "Tab wraps inside the dialog");
+
+    await m.pressFocused("Escape");
+    assert.equal(m.query('[data-remove-confirm="p2"]'), null);
+    assert.equal(
+      document.activeElement,
+      opener,
+      "Escape restores opener focus",
+    );
     assert.deepEqual(removed, []);
     m.unmount();
   });
