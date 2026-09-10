@@ -4032,7 +4032,8 @@ export interface CoderApi {
      *    seeded with a digest of the retained tail;
      *  - with `restoreFiles`, hard-resets the WORKTREE to the checkpoint of
      *    the last RETAINED turn (turn N = the Nth user message that survives),
-     *    via the same guarded path as `git.restoreCheckpoint`.
+     *    via the same guarded path as `git.restoreCheckpoint` but with
+     *    conversation rewind skipped (this method already truncated).
      *
      * Usage history (`usageByThread`, spend) is NEVER rewritten: that money
      * was really spent.
@@ -4194,6 +4195,12 @@ export interface CoderApi {
        * does not reset the auto-turn cap or look like a new human prompt.
        */
       fromNotice?: boolean;
+      /**
+       * Skip folding a leftover queued follow-up into this prompt
+       * (issue #1203). Retry turn must pass this so the failed prompt
+       * is the only text sent; Send now of the leftover stays separate.
+       */
+      fromQueue?: boolean;
     }): Promise<{ runId: string }>;
     /**
      * Inject guidance into a live turn (issue #156). The provider must
@@ -4463,10 +4470,14 @@ export interface CoderApi {
      * auto-commits in the thread's WORKTREE ("coder-checkpoint: turn N").
      * Never fires on the main repo, never when the worktree is clean.
      * listCheckpoints returns newest-first; empty for threads without a
-     * worktree. restoreCheckpoint hard-resets the WORKTREE to the given sha;
-     * rejects while a run is active, when the worktree is missing, or when
-     * the sha is not one of this thread's checkpoints (never an arbitrary
-     * reset target). The renderer confirms destructively BEFORE calling.
+     * worktree. restoreCheckpoint hard-resets the WORKTREE to the given sha
+     * and truncates the transcript to that turn (issue #149): later messages
+     * and their work-log items are dropped, sessionId is cleared, and
+     * replayContext is set so the next turn starts a fresh CLI session seeded
+     * with the surviving tail. Rejects while a run is active, when the
+     * worktree is missing, or when the sha is not one of this thread's
+     * checkpoints (never an arbitrary reset target). The renderer confirms
+     * destructively BEFORE calling.
      */
     listCheckpoints(input: { threadId: string }): Promise<CheckpointInfo[]>;
     restoreCheckpoint(input: { threadId: string; sha: string }): Promise<void>;
@@ -4493,6 +4504,13 @@ export interface CoderApi {
      * has no worktree or checkpoints. Never rejects.
      */
     runStats(input: { threadId: string }): Promise<RunStatInfo[]>;
+    /**
+     * Checkpoint-to-checkpoint patch for one turn (#148). Same pairing as
+     * runStats: N vs N-1 (first vs its parent). `sha` must be one of this
+     * thread's checkpoints. Never rejects: missing worktree / unknown sha /
+     * git failure return an empty DiffResult.
+     */
+    turnDiff(input: { threadId: string; sha: string }): Promise<DiffResult>;
     /**
      * Predicted merge conflicts between the project's active worktree threads
      * (#249), computed with `git merge-tree` before anyone merges. Read-only

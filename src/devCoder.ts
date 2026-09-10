@@ -5602,8 +5602,8 @@ function buildDevCoder(): CoderApi {
         return { ok: true as const, summary: "Already up to date" };
       },
       async restoreCheckpoint(input: { threadId: string; sha: string }) {
-        // Fixture: drop the newer checkpoints and stamp the transcript. The
-        // guards and the real `git reset --hard` are in electron/worktrees.js.
+        // Fixture twin of electron/worktrees.js restoreCheckpoint: drop
+        // newer checkpoints and rewind the transcript (issue #149).
         const detail = details.get(input.threadId);
         if (!detail) throw new Error(`Unknown thread: ${input.threadId}`);
         const list = checkpointsByThread.get(input.threadId) || [];
@@ -5611,14 +5611,27 @@ function buildDevCoder(): CoderApi {
         const idx = list.findIndex((c) => c.sha.startsWith(want));
         if (idx < 0) throw new Error(`Unknown checkpoint: ${input.sha}`);
         checkpointsByThread.set(input.threadId, list.slice(idx));
-        detail.messages.push({
-          id: id("msg"),
-          role: "event",
-          text: `Restored checkpoint turn ${list[idx]!.turn} (${list[idx]!.sha.slice(0, 7)})`,
-          createdAt: now(),
+        const match = list[idx]!;
+        const slackEnd = match.at + 999;
+        const dropIdx = detail.messages.findIndex(
+          (m) => Number.isFinite(m.createdAt) && m.createdAt > slackEnd,
+        );
+        if (dropIdx >= 0) {
+          const droppedRuns = new Set(
+            detail.messages
+              .slice(dropIdx)
+              .map((m) => m.runId)
+              .filter((r): r is string => !!r),
+          );
+          detail.messages = detail.messages.slice(0, dropIdx);
+          detail.workLog = detail.workLog.filter(
+            (w) => !w.runId || !droppedRuns.has(w.runId),
+          );
+        }
+        patchThread(input.threadId, {
+          sessionId: null,
+          replayContext: true,
         });
-        details.set(input.threadId, detail);
-        emitDetail(detail);
       },
       async runStats(input: { threadId: string }): Promise<RunStatInfo[]> {
         try {
@@ -5637,6 +5650,17 @@ function buildDevCoder(): CoderApi {
             }));
         } catch {
           return [];
+        }
+      },
+      async turnDiff(input: { threadId: string; sha: string }): Promise<DiffResult> {
+        try {
+          const detail = details.get(input.threadId);
+          if (!detail || !detail.thread.worktreePath) return { ...EMPTY_DIFF };
+          const list = checkpointsByThread.get(input.threadId) || [];
+          if (!list.some((c) => c.sha === input.sha)) return { ...EMPTY_DIFF };
+          return fakeDiff(detail.thread);
+        } catch {
+          return { ...EMPTY_DIFF };
         }
       },
       async conflictForecast(input: {

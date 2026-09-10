@@ -2624,9 +2624,9 @@ export function GitTab({
               )?
             </h2>
             <p className={styles.confirmBody}>
-              This resets the worktree to this checkpoint. Uncommitted changes
-              and later checkpoints&apos; work will be lost. The main repository
-              is not touched.
+              This resets the worktree and the conversation to this checkpoint.
+              Later messages and later checkpoints&apos; work will be lost. The
+              main repository is not touched.
             </p>
             <div className={styles.confirmActions}>
               <button

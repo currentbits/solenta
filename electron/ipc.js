@@ -26,6 +26,7 @@ const {
   listCheckpoints,
   restoreCheckpoint,
   runStats,
+  turnDiff,
   conflictForecast,
   gcScan,
   gcClean,
@@ -1777,12 +1778,22 @@ const IPC_HANDLERS = {
     });
   },
   "git:restoreCheckpoint": async (ctx, input) => {
-    return restoreCheckpoint({
+    const result = await restoreCheckpoint({
       store: ctx.store,
       threadId: input.threadId,
       sha: input.sha,
       isRunning: (id) => ctx.runner.isRunning(id),
+      cleanupRunArtifacts: ctx.cleanupRunArtifacts,
     });
+    ctx.broadcast("threads:changed", services.listThreads(ctx.store));
+    if (ctx.runner && typeof ctx.runner.refreshDetail === "function") {
+      try {
+        ctx.runner.refreshDetail(input.threadId);
+      } catch {
+        // Open detail catches up on the next threads.get.
+      }
+    }
+    return result;
   },
   "git:syncInfo": async (ctx, input) => {
     try {
@@ -1954,6 +1965,13 @@ const IPC_HANDLERS = {
     return runStats({
       store: ctx.store,
       threadId: input && input.threadId,
+    });
+  },
+  "git:turnDiff": async (ctx, input) => {
+    return turnDiff({
+      store: ctx.store,
+      threadId: input && input.threadId,
+      sha: input && input.sha,
     });
   },
   "git:conflictForecast": async (ctx, input) => {

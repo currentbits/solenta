@@ -362,7 +362,7 @@ export interface UseCoderResult {
     prompt: string,
     threadId?: string,
     attachments?: AttachmentInfo[],
-    opts?: { fromNotice?: boolean; steer?: boolean },
+    opts?: { fromNotice?: boolean; steer?: boolean; fromQueue?: boolean },
   ) => Promise<void>;
   /**
    * Edit-and-resubmit (#254): rewind the transcript to just before
@@ -736,6 +736,8 @@ export interface UseCoderResult {
   restoreCheckpoint: (threadId: string, sha: string) => Promise<void>;
   /** Per-checkpoint-pair shortstat for a thread. Never rejects. */
   runStats: (threadId: string) => Promise<RunStatInfo[]>;
+  /** Checkpoint-to-checkpoint patch for one turn. Never rejects. */
+  fetchTurnDiff: (threadId: string, sha: string) => Promise<DiffResult>;
   /** Predicted merge conflicts between active threads (#249). Never rejects. */
   conflictForecast: (projectId: string) => Promise<ConflictForecast>;
   /** Local TCP listeners whose cwd is the thread worktree or project. */
@@ -1700,7 +1702,7 @@ export function useCoder(): UseCoderResult {
       prompt: string,
       targetThreadId?: string,
       attachments?: AttachmentInfo[],
-      opts?: { fromNotice?: boolean; steer?: boolean },
+      opts?: { fromNotice?: boolean; steer?: boolean; fromQueue?: boolean },
     ) => {
       const threadId = targetThreadId ?? selectedThreadId;
       if (!threadId) return;
@@ -1830,6 +1832,7 @@ export function useCoder(): UseCoderResult {
           prompt,
           attachments,
           ...(opts?.fromNotice ? { fromNotice: true } : {}),
+          ...(opts?.fromQueue ? { fromQueue: true } : {}),
         });
         const d = await api.threads.get(threadId);
         if (selectedRef.current !== threadId) return;
@@ -3521,8 +3524,11 @@ export function useCoder(): UseCoderResult {
   const restoreCheckpoint = useCallback(
     async (threadId: string, sha: string) => {
       await api.git.restoreCheckpoint({ threadId, sha });
+      // Transcript is now shorter than what we hold. Restore starts no run,
+      // so nothing else would repair the open detail (issue #149).
+      reloadDetail(threadId);
     },
-    [api],
+    [api, reloadDetail],
   );
 
   const runStats = useCallback(
@@ -3531,6 +3537,17 @@ export function useCoder(): UseCoderResult {
         return await api.git.runStats({ threadId });
       } catch {
         return [];
+      }
+    },
+    [api],
+  );
+
+  const fetchTurnDiff = useCallback(
+    async (threadId: string, sha: string) => {
+      try {
+        return await api.git.turnDiff({ threadId, sha });
+      } catch {
+        return { files: [], patch: "", truncated: false };
       }
     },
     [api],
@@ -4235,6 +4252,7 @@ export function useCoder(): UseCoderResult {
     listCheckpoints,
     restoreCheckpoint,
     runStats,
+    fetchTurnDiff,
     conflictForecast,
     listLocalServers,
     revealInFinder,

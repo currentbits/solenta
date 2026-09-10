@@ -232,6 +232,8 @@ export interface FakeOptions {
   checkpoints?: Record<string, CheckpointInfo[]>;
   /** Per-thread runStats override. When omitted, derived from checkpoints. */
   runStats?: Record<string, RunStatInfo[]>;
+  /** Per-thread turnDiff override keyed by sha. */
+  turnDiff?: Record<string, DiffResult>;
   /** Force a channel to reject, e.g. { "runs.start": new Error("boom") }. */
   fail?: Record<string, Error>;
   /** Override issues.fetch result (default: a successful fixture). */
@@ -3037,7 +3039,7 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
        * Hard-reset worktree to a thread-owned sha. Production guards:
        * run active, missing worktree, unknown sha. Truncates later
        * (newer) checkpoints from the list so a subsequent list matches
-       * a real reset.
+       * a real reset, and rewinds the transcript (issue #149).
        */
       restoreCheckpoint: (input: unknown) => {
         const i = input as { threadId: string; sha: string };
@@ -3071,6 +3073,30 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
         // Keep the restored checkpoint and older ones; drop newer (earlier
         // indices in newest-first order).
         checkpoints[i.threadId] = list.slice(idx);
+        const match = list[idx]!;
+        const d = details[i.threadId];
+        if (d) {
+          const slackEnd = match.at + 999;
+          const dropIdx = d.messages.findIndex(
+            (m) => Number.isFinite(m.createdAt) && m.createdAt > slackEnd,
+          );
+          if (dropIdx >= 0) {
+            const droppedRuns = new Set(
+              d.messages
+                .slice(dropIdx)
+                .map((m) => m.runId)
+                .filter((r): r is string => !!r),
+            );
+            d.messages = d.messages.slice(0, dropIdx);
+            d.workLog = d.workLog.filter(
+              (w) => !w.runId || !droppedRuns.has(w.runId),
+            );
+          }
+          const next = { ...t, sessionId: null, replayContext: true };
+          threads = threads.map((x) => (x.id === i.threadId ? next : x));
+          d.thread = next;
+          for (const cb of detailSubs) cb(d);
+        }
         return Promise.resolve(undefined);
       },
       syncInfo: (input: unknown) =>
@@ -3117,6 +3143,40 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
           deletions: 0,
         }));
         return rec("git.runStats", [input], derived);
+      },
+      turnDiff: (input: unknown) => {
+        const i = input as { threadId: string; sha: string };
+        const override = opts.turnDiff?.[i.sha];
+        if (override) {
+          return rec("git.turnDiff", [input], {
+            files: override.files.slice(),
+            patch: override.patch,
+            truncated: override.truncated,
+          });
+        }
+        const t = threads.find((x) => x.id === i.threadId);
+        const list = checkpoints[i.threadId] ?? [];
+        if (!t || !t.worktreePath || !list.some((c) => c.sha === i.sha)) {
+          return rec("git.turnDiff", [input], {
+            files: [],
+            patch: "",
+            truncated: false,
+          } as DiffResult);
+        }
+        return rec("git.turnDiff", [input], {
+          files: [{ path: "src/a.ts", status: "M", additions: 1, deletions: 0 }],
+          patch: [
+            "diff --git a/src/a.ts b/src/a.ts",
+            "--- a/src/a.ts",
+            "+++ b/src/a.ts",
+            "@@ -1,2 +1,3 @@",
+            " keep",
+            "-old",
+            "+new",
+            " keep",
+          ].join("\n"),
+          truncated: false,
+        } as DiffResult);
       },
     },
     mergeQueue: {

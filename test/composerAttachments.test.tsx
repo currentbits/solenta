@@ -154,6 +154,7 @@ function composer(
       folders?: import("../src/dropFiles").DroppedFolder[],
     ) => Promise<AttachmentInfo[]>;
     incoming?: AttachmentInfo[];
+    incomingThreadId?: string | null;
     onIncomingConsumed?: () => void;
     onSaveImage?: (dataUrl: string) => Promise<AttachmentInfo | null>;
     folderPicks?: AttachmentInfo[];
@@ -207,6 +208,7 @@ function composer(
       onLoadAttachmentImage={async () => null}
       onDropAttachmentFiles={over.onDrop}
       incomingAttachments={over.incoming}
+      incomingAttachmentThreadId={over.incomingThreadId}
       onIncomingAttachmentsConsumed={over.onIncomingConsumed}
     />
   );
@@ -284,6 +286,26 @@ describe("Composer attachments", () => {
     );
     assert.ok(m.text().includes("pic.png"));
     assert.equal(consumed.length, 1);
+    m.unmount();
+  });
+
+  it("does not pin incoming attachments from another thread (issue #1206)", async () => {
+    const h: Harness = { sends: [] };
+    const consumed: number[] = [];
+    const m = await mount(
+      composer(h, {
+        incoming: [IMAGE],
+        incomingThreadId: "t-other",
+        onIncomingConsumed: () => consumed.push(1),
+      }),
+    );
+    await m.flush();
+    assert.equal(
+      m.query('[data-attachment-kind="image"]'),
+      null,
+      "foreign screenshot must not become a chip on this thread",
+    );
+    assert.equal(consumed.length, 1, "stale handoff must still be consumed");
     m.unmount();
   });
 
