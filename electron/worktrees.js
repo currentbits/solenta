@@ -4935,6 +4935,137 @@ async function runStats(opts) {
   }
 }
 
+const EMPTY_TURN_DIFF = { files: [], patch: "", truncated: false };
+
+/**
+ * Unquote a git path (`"foo bar"` → `foo bar`). Porcelain and name-status
+ * quote paths that contain spaces.
+ * @param {string} filePath
+ */
+function unquoteGitPath(filePath) {
+  return String(filePath || "").replace(/^"|"$/g, "");
+}
+
+/**
+ * Checkpoint-to-checkpoint patch for one turn (#148).
+ * Same pairing as runStats: N vs N-1, first vs `<sha>^`.
+ * Never throws: missing worktree / unknown sha / git failures return empty.
+ * `sha` must be one of this thread's checkpoints — never an arbitrary rev.
+ *
+ * @param {object} opts
+ * @param {import('./store').Store} opts.store
+ * @param {string} opts.threadId
+ * @param {string} opts.sha
+ * @returns {Promise<{ files: Array<{path: string, status: string, additions: number, deletions: number}>, patch: string, truncated: boolean }>}
+ */
+async function turnDiff(opts) {
+  try {
+    const { store, threadId, sha } = opts;
+    if (!threadId || !sha) return { ...EMPTY_TURN_DIFF };
+    const thread = store.getThread(threadId);
+    if (!thread || !thread.worktreePath) return { ...EMPTY_TURN_DIFF };
+    const cwd = thread.worktreePath;
+    if (!fs.existsSync(cwd)) return { ...EMPTY_TURN_DIFF };
+
+    const list = await listCheckpoints({ store, threadId });
+    if (!list.length) return { ...EMPTY_TURN_DIFF };
+
+    const oldestFirst = [...list].sort((a, b) => {
+      if (a.turn !== b.turn) return a.turn - b.turn;
+      return a.at - b.at;
+    });
+    const idx = oldestFirst.findIndex((c) => c.sha === sha);
+    if (idx < 0) return { ...EMPTY_TURN_DIFF };
+
+    const cp = oldestFirst[idx];
+    const from = idx === 0 ? `${cp.sha}^` : oldestFirst[idx - 1].sha;
+    const to = cp.sha;
+
+    const nameStatus = await gitTryAsync(
+      cwd,
+      ["diff", "--name-status", from, to, "--"],
+      { raw: true },
+    );
+    const numstat = await gitTryAsync(
+      cwd,
+      ["diff", "--numstat", from, to, "--"],
+      { raw: true },
+    );
+    const patchResult = await gitTryAsync(
+      cwd,
+      ["diff", from, to, "--"],
+      { raw: true },
+    );
+
+    if (!nameStatus.ok && !numstat.ok && !patchResult.ok) {
+      return { ...EMPTY_TURN_DIFF };
+    }
+
+    /** @type {Map<string, { path: string, status: string, additions: number, deletions: number }>} */
+    const byPath = new Map();
+    if (nameStatus.ok) {
+      for (const line of String(nameStatus.stdout || "").split("\n")) {
+        if (!line.trim()) continue;
+        const parts = line.split("\t");
+        if (parts.length < 2) continue;
+        const letter = (parts[0].trim().charAt(0) || "M").toUpperCase();
+        const filePath = unquoteGitPath(parts[parts.length - 1]);
+        if (!filePath) continue;
+        byPath.set(filePath, {
+          path: filePath,
+          status: letter,
+          additions: 0,
+          deletions: 0,
+        });
+      }
+    }
+    if (numstat.ok) {
+      for (const line of String(numstat.stdout || "").split("\n")) {
+        if (!line.trim()) continue;
+        const parts = line.split("\t");
+        if (parts.length < 3) continue;
+        const addStr = parts[0];
+        const delStr = parts[1];
+        let filePath = parts.slice(2).join("\t");
+        if (filePath.includes(" => ")) {
+          filePath = filePath.split(" => ").pop() || filePath;
+        }
+        filePath = unquoteGitPath(filePath);
+        if (!filePath) continue;
+        const additions = addStr === "-" ? 0 : parseInt(addStr, 10) || 0;
+        const deletions = delStr === "-" ? 0 : parseInt(delStr, 10) || 0;
+        const existing = byPath.get(filePath);
+        if (existing) {
+          existing.additions = additions;
+          existing.deletions = deletions;
+        } else {
+          byPath.set(filePath, {
+            path: filePath,
+            status: "M",
+            additions,
+            deletions,
+          });
+        }
+      }
+    }
+
+    let patch = patchResult.ok ? String(patchResult.stdout || "") : "";
+    let truncated = false;
+    if (patch.length > PATCH_TRUNCATE) {
+      patch = patch.slice(0, PATCH_TRUNCATE);
+      truncated = true;
+    }
+
+    return {
+      files: [...byPath.values()],
+      patch,
+      truncated,
+    };
+  } catch {
+    return { ...EMPTY_TURN_DIFF };
+  }
+}
+
 /**
  * @param {string} subject
  * @returns {number | null}
@@ -6289,6 +6420,7 @@ module.exports = {
   listCheckpoints,
   restoreCheckpoint,
   runStats,
+  turnDiff,
   conflictForecast,
   parseShortstat,
   gitTryAsync,

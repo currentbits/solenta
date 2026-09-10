@@ -4389,6 +4389,13 @@ export interface CoderApi {
      */
     runStats(input: { threadId: string }): Promise<RunStatInfo[]>;
     /**
+     * Checkpoint-to-checkpoint patch for one turn (#148). Same pairing as
+     * runStats: N vs N-1 (first vs its parent). `sha` must be one of this
+     * thread's checkpoints. Never rejects: missing worktree / unknown sha /
+     * git failure return an empty DiffResult.
+     */
+    turnDiff(input: { threadId: string; sha: string }): Promise<DiffResult>;
+    /**
      * Predicted merge conflicts between the project's active worktree threads
      * (#249), computed with `git merge-tree` before anyone merges. Read-only
      * and never rejects: a project without a repo returns no pairs.
