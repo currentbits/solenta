@@ -1,9 +1,9 @@
 /**
- * Onboarding setup step (#630): add-project handoff, recommended
- * defaultWorktree / defaultOrchestrate toggles, Use recommended, and
- * the optional daily budget field.
+ * Onboarding setup step: project-first add/done states, optional
+ * worktree / delegation / budget defaults behind a native disclosure,
+ * Enable both, and inline budget validation.
  *
- * Run: node --import=./test/support/render.mjs --test test/onboardingSetup.test.tsx
+ * Run: node --import=./test/support/disable-grok-mcp.mjs --import=./test/support/render.mjs --experimental-strip-types --test test/onboardingSetup.test.tsx
  */
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
@@ -28,15 +28,37 @@ async function boot(
 async function gotoSetup(
   m: Awaited<ReturnType<typeof mount>>,
 ): Promise<void> {
-  const next = m.query("[data-onboarding-next]");
-  assert.ok(next, "Next control must exist");
-  await m.click(next);
-  await m.click(next);
+  for (let i = 0; i < 8; i++) {
+    const id = m
+      .query("[data-onboarding-step]")
+      ?.getAttribute("data-onboarding-step");
+    if (id === "setup") return;
+    const next = m.query("[data-onboarding-next]") as HTMLButtonElement | null;
+    assert.ok(next, "Next control must exist while seeking setup");
+    if (id === "tour" || next.textContent?.trim() === "Finish") break;
+    await m.click(next);
+  }
   assert.equal(
     m.query("[data-onboarding-step]")?.getAttribute("data-onboarding-step"),
     "setup",
-    "two Next clicks must land on the setup step",
+    "must land on the setup step from welcome or cli",
   );
+}
+
+async function openOptional(
+  m: Awaited<ReturnType<typeof mount>>,
+): Promise<HTMLDetailsElement> {
+  const details = m.query(
+    "[data-onboarding-optional-defaults]",
+  ) as HTMLDetailsElement | null;
+  assert.ok(details, "optional defaults disclosure must render");
+  if (!details.open) {
+    const summary = m.query("[data-onboarding-optional-summary]");
+    assert.ok(summary, "optional defaults summary must render");
+    await m.click(summary);
+  }
+  assert.equal(details.open, true, "optional defaults must be open");
+  return details;
 }
 
 function settingsPatches(
@@ -104,10 +126,47 @@ describe("Onboarding setup step (#630)", () => {
     m.unmount();
   });
 
+  it("keeps optional defaults collapsed until the summary is opened", async () => {
+    const fake = createFakeCoder({ settings: { onboardingSeen: false } });
+    const m = await boot(fake);
+    await gotoSetup(m);
+
+    const details = m.query(
+      "[data-onboarding-optional-defaults]",
+    ) as HTMLDetailsElement | null;
+    assert.ok(details, "optional defaults disclosure must render");
+    assert.equal(details.open, false, "optional defaults must start collapsed");
+    assert.match(
+      (m.query("[data-onboarding-optional-summary]")?.textContent || "").trim(),
+      /Optional defaults/,
+      "summary must be labelled Optional defaults",
+    );
+    assert.ok(
+      !m.query("[data-onboarding-default-worktree]"),
+      "worktree control must stay hidden while collapsed",
+    );
+    assert.ok(
+      !m.query("[data-onboarding-recommended]"),
+      "Enable both must stay hidden while collapsed",
+    );
+    assert.ok(
+      !m.query("[data-onboarding-budget]"),
+      "budget control must stay hidden while collapsed",
+    );
+
+    await openOptional(m);
+    assert.ok(
+      m.query("[data-onboarding-default-worktree]"),
+      "opening the disclosure must reveal the worktree control",
+    );
+    m.unmount();
+  });
+
   it("toggling worktree records settings.set with defaultWorktree: true", async () => {
     const fake = createFakeCoder({ settings: { onboardingSeen: false } });
     const m = await boot(fake);
     await gotoSetup(m);
+    await openOptional(m);
 
     const box = m.query(
       "[data-onboarding-default-worktree]",
@@ -124,13 +183,19 @@ describe("Onboarding setup step (#630)", () => {
     m.unmount();
   });
 
-  it("Use recommended records defaultWorktree and defaultOrchestrate on", async () => {
+  it("Enable both records defaultWorktree and defaultOrchestrate on", async () => {
     const fake = createFakeCoder({ settings: { onboardingSeen: false } });
     const m = await boot(fake);
     await gotoSetup(m);
+    await openOptional(m);
 
     const rec = m.query("[data-onboarding-recommended]");
-    assert.ok(rec, "Use recommended must render");
+    assert.ok(rec, "Enable both must render");
+    assert.match(
+      (rec.textContent || "").trim(),
+      /Enable both/,
+      `button must read Enable both, got: ${rec.textContent}`,
+    );
     await m.click(rec);
 
     const patches = settingsPatches(fake);
@@ -138,7 +203,63 @@ describe("Onboarding setup step (#630)", () => {
       patches.some(
         (p) => p.defaultWorktree === true && p.defaultOrchestrate === true,
       ),
-      `Use recommended must save both flags, got: ${JSON.stringify(patches)}`,
+      `Enable both must save both flags, got: ${JSON.stringify(patches)}`,
+    );
+    m.unmount();
+  });
+
+  it("saved worktree and budget persist in the controls", async () => {
+    const fake = createFakeCoder({
+      settings: {
+        onboardingSeen: false,
+        defaultWorktree: true,
+        dailyBudgetUsd: 25,
+      },
+    });
+    const m = await boot(fake);
+    await gotoSetup(m);
+    await openOptional(m);
+
+    const worktree = m.query(
+      "[data-onboarding-default-worktree]",
+    ) as HTMLInputElement | null;
+    const budget = m.query("[data-onboarding-budget]") as HTMLInputElement | null;
+    assert.ok(worktree && budget, "optional controls must render");
+    assert.equal(worktree.checked, true, "saved worktree default must stay on");
+    assert.equal(budget.value, "25", "saved daily budget must fill the input");
+
+    await m.type(budget, "40");
+    await m.click(m.query("[data-onboarding-budget-save]"));
+    const patches = settingsPatches(fake);
+    assert.ok(
+      patches.some((p) => p.dailyBudgetUsd === 40),
+      `budget 40 must save, got: ${JSON.stringify(patches)}`,
+    );
+
+    await m.click(m.query("[data-onboarding-optional-summary]"));
+    assert.equal(
+      (m.query("[data-onboarding-optional-defaults]") as HTMLDetailsElement)
+        .open,
+      false,
+      "summary click must collapse optional defaults",
+    );
+    await openOptional(m);
+    const worktreeAgain = m.query(
+      "[data-onboarding-default-worktree]",
+    ) as HTMLInputElement | null;
+    const budgetAgain = m.query(
+      "[data-onboarding-budget]",
+    ) as HTMLInputElement | null;
+    assert.ok(worktreeAgain && budgetAgain, "reopen must restore the controls");
+    assert.equal(
+      worktreeAgain.checked,
+      true,
+      "worktree default must survive collapse",
+    );
+    assert.equal(
+      budgetAgain.value,
+      "40",
+      "saved budget must survive collapse",
     );
     m.unmount();
   });
@@ -147,6 +268,7 @@ describe("Onboarding setup step (#630)", () => {
     const fake = createFakeCoder({ settings: { onboardingSeen: false } });
     const m = await boot(fake);
     await gotoSetup(m);
+    await openOptional(m);
 
     const input = m.query("[data-onboarding-budget]");
     const save = m.query("[data-onboarding-budget-save]");
@@ -175,24 +297,63 @@ describe("Onboarding setup step (#630)", () => {
     m.unmount();
   });
 
-  it("a rejected save shows an inline error", async () => {
+  it("invalid budget is rejected inline without calling settings.set", async () => {
     const fake = createFakeCoder({ settings: { onboardingSeen: false } });
     const m = await boot(fake);
     await gotoSetup(m);
+    await openOptional(m);
 
     const input = m.query("[data-onboarding-budget]");
     const save = m.query("[data-onboarding-budget-save]");
-    assert.ok(input, "budget input must render");
-    assert.ok(save, "budget Save must render");
+    assert.ok(input && save, "budget controls must render");
 
     await m.type(input, "0");
     await m.click(save);
 
     const err = m.query("[data-onboarding-setup-error]");
-    assert.ok(err, "rejected save must render data-onboarding-setup-error");
+    assert.ok(err, "invalid budget must render data-onboarding-setup-error");
     assert.ok(
       (err.textContent || "").includes("Daily budget must be a positive number"),
-      `error must show the backend message, got: ${err.textContent}`,
+      `error must show the positive-finite rule, got: ${err.textContent}`,
+    );
+    const afterZero = settingsPatches(fake);
+    assert.ok(
+      !afterZero.some((p) =>
+        Object.prototype.hasOwnProperty.call(p, "dailyBudgetUsd"),
+      ),
+      `zero must not reach settings.set, got: ${JSON.stringify(afterZero)}`,
+    );
+
+    await m.type(input, "-3");
+    await m.click(save);
+    const afterNeg = settingsPatches(fake);
+    assert.ok(
+      !afterNeg.some((p) =>
+        Object.prototype.hasOwnProperty.call(p, "dailyBudgetUsd"),
+      ),
+      `negative must not reach settings.set, got: ${JSON.stringify(afterNeg)}`,
+    );
+    m.unmount();
+  });
+
+  it("a rejected save shows an inline error", async () => {
+    const fake = createFakeCoder({
+      settings: { onboardingSeen: false },
+      fail: { "settings.set": new Error("could not write settings") },
+    });
+    const m = await boot(fake);
+    await gotoSetup(m);
+    await openOptional(m);
+
+    const box = m.query("[data-onboarding-default-worktree]");
+    assert.ok(box, "worktree toggle must render");
+    await m.click(box);
+
+    const err = m.query("[data-onboarding-setup-error]");
+    assert.ok(err, "rejected save must render data-onboarding-setup-error");
+    assert.ok(
+      (err.textContent || "").includes("could not write settings"),
+      `error must show the async message, got: ${err.textContent}`,
     );
     m.unmount();
   });

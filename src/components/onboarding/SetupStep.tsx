@@ -4,6 +4,7 @@ import type { OnboardingStepProps } from "./OnboardingModal";
 import styles from "./OnboardingModal.module.css";
 
 const PREVIEW_COUNT = 4;
+const BUDGET_ERROR = "Daily budget must be a positive number or null";
 
 function budgetToInput(value: number | null | undefined): string {
   if (value == null) return "";
@@ -13,6 +14,10 @@ function budgetToInput(value: number | null | undefined): string {
 function parseBudget(text: string): number | null {
   const raw = text.trim();
   return raw === "" ? null : Number(raw);
+}
+
+function isAllowedBudget(value: number | null): boolean {
+  return value === null || (Number.isFinite(value) && value > 0);
 }
 
 function errorMessage(err: unknown): string {
@@ -31,6 +36,7 @@ export default function SetupStep({
   const [error, setError] = useState<string | null>(null);
   const [budgetText, setBudgetText] = useState("");
   const [budgetSeeded, setBudgetSeeded] = useState(false);
+  const [optionalOpen, setOptionalOpen] = useState(false);
 
   useEffect(() => {
     if (!settings || budgetSeeded) return;
@@ -53,15 +59,24 @@ export default function SetupStep({
     [onSaveSettings],
   );
 
+  const saveBudget = useCallback(() => {
+    const parsed = parseBudget(budgetText);
+    if (!isAllowedBudget(parsed)) {
+      setError(BUDGET_ERROR);
+      return;
+    }
+    void save({ dailyBudgetUsd: parsed });
+  }, [budgetText, save]);
+
   const defaultsDisabled = settings == null || pending;
   const preview = projects.slice(0, PREVIEW_COUNT);
   const extra = projects.length - preview.length;
 
   return (
     <div className={styles.step}>
-      <h3 className={styles.stepTitle}>Project & defaults</h3>
+      <h3 className={styles.stepTitle}>Add a project</h3>
       <p className={styles.stepBody}>
-        Add a project and pick recommended defaults
+        Choose a folder. New threads run against it.
       </p>
 
       {projects.length === 0 ? (
@@ -96,87 +111,105 @@ export default function SetupStep({
         </div>
       )}
 
-      <fieldset className={styles.setupSection} disabled={defaultsDisabled}>
-        <legend className={styles.setupSectionLabel}>Recommended defaults</legend>
-        <p className={styles.stepBody}>
-          Headline features ship off. Turn them on so new threads match how
-          Solenta is meant to run.
-        </p>
-
-        <label className={styles.setupToggle}>
-          <input
-            type="checkbox"
-            data-onboarding-default-worktree=""
-            checked={settings?.defaultWorktree ?? false}
-            onChange={(e) => {
-              void save({ defaultWorktree: e.target.checked });
-            }}
-          />
-          <span>
-            Run new threads in isolated git worktrees so parallel agents never
-            collide
-          </span>
-        </label>
-
-        <label className={styles.setupToggle}>
-          <input
-            type="checkbox"
-            data-onboarding-default-orchestrate=""
-            checked={settings?.defaultOrchestrate ?? false}
-            onChange={(e) => {
-              void save({ defaultOrchestrate: e.target.checked });
-            }}
-          />
-          <span>
-            Delegate new threads to a worker. The first prompt is handed to a
-            worker in its own worktree; this thread supervises.
-          </span>
-        </label>
-
-        <button
-          type="button"
-          className={`${styles.btn} ${styles.btnPrimary}`}
-          data-onboarding-recommended=""
-          onClick={() => {
-            void save({ defaultWorktree: true, defaultOrchestrate: true });
+      <details
+        className={styles.setupSection}
+        data-onboarding-optional-defaults=""
+        open={optionalOpen}
+      >
+        <summary
+          className={styles.setupSectionLabel}
+          data-onboarding-optional-summary=""
+          onClick={(e) => {
+            // jsdom does not toggle <details> on summary click.
+            e.preventDefault();
+            setOptionalOpen((on) => !on);
           }}
         >
-          Use recommended
-        </button>
+          Optional defaults
+        </summary>
+        {optionalOpen ? (
+          <fieldset className={styles.setupSection} disabled={defaultsDisabled}>
+            <p className={styles.stepBody}>
+              New threads start without these. Each choice is optional.
+            </p>
 
-        <div className={styles.setupBudget}>
-          <label className={styles.setupBudgetLabel} htmlFor="onboarding-budget">
-            Daily budget (USD)
-          </label>
-          <div className={styles.setupBudgetRow}>
-            <input
-              id="onboarding-budget"
-              className={styles.setupInput}
-              type="number"
-              inputMode="decimal"
-              min="0"
-              step="any"
-              placeholder="No cap"
-              value={budgetText}
-              data-onboarding-budget=""
-              onChange={(e) => {
-                setBudgetText(e.target.value);
-                setError(null);
-              }}
-            />
+            <label className={styles.setupToggle}>
+              <input
+                type="checkbox"
+                data-onboarding-default-worktree=""
+                checked={settings?.defaultWorktree ?? false}
+                onChange={(e) => {
+                  void save({ defaultWorktree: e.target.checked });
+                }}
+              />
+              <span>
+                Isolated git worktree for each new thread. Parallel agents do
+                not share a checkout; you merge when ready. Uses extra disk.
+              </span>
+            </label>
+
+            <label className={styles.setupToggle}>
+              <input
+                type="checkbox"
+                data-onboarding-default-orchestrate=""
+                checked={settings?.defaultOrchestrate ?? false}
+                onChange={(e) => {
+                  void save({ defaultOrchestrate: e.target.checked });
+                }}
+              />
+              <span>
+                Delegate the first prompt to a worker in its own worktree. This
+                thread supervises instead of doing the work.
+              </span>
+            </label>
+
             <button
               type="button"
-              className={styles.btn}
-              data-onboarding-budget-save=""
+              className={`${styles.btn} ${styles.btnPrimary}`}
+              data-onboarding-recommended=""
               onClick={() => {
-                void save({ dailyBudgetUsd: parseBudget(budgetText) });
+                void save({ defaultWorktree: true, defaultOrchestrate: true });
               }}
             >
-              Save
+              Enable both
             </button>
-          </div>
-        </div>
-      </fieldset>
+
+            <div className={styles.setupBudget}>
+              <label
+                className={styles.setupBudgetLabel}
+                htmlFor="onboarding-budget"
+              >
+                Daily budget (USD)
+              </label>
+              <div className={styles.setupBudgetRow}>
+                <input
+                  id="onboarding-budget"
+                  className={styles.setupInput}
+                  type="number"
+                  inputMode="decimal"
+                  min="0"
+                  step="any"
+                  placeholder="No cap"
+                  value={budgetText}
+                  data-onboarding-budget=""
+                  onChange={(e) => {
+                    setBudgetText(e.target.value);
+                    setError(null);
+                  }}
+                />
+                <button
+                  type="button"
+                  className={styles.btn}
+                  data-onboarding-budget-save=""
+                  onClick={saveBudget}
+                >
+                  Save
+                </button>
+              </div>
+            </div>
+          </fieldset>
+        ) : null}
+      </details>
 
       {error ? (
         <p
