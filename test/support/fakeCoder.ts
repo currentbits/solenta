@@ -345,6 +345,7 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
     agentsPanelRememberLast: false,
     stayAwake: "agent",
     quotaWaitAutoResume: true,
+    confirmQuitWithActiveWork: true,
     prDiffCapLines: 400,
     onboardingSeen: true,
     uiScale: 1,
@@ -900,6 +901,16 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
             );
           }
           next.quotaWaitAutoResume = v;
+        }
+        if (Object.prototype.hasOwnProperty.call(p, "confirmQuitWithActiveWork")) {
+          const v = p.confirmQuitWithActiveWork;
+          if (typeof v !== "boolean") {
+            calls.push({ channel: "settings.set", args: [patch] });
+            return Promise.reject(
+              new Error("confirmQuitWithActiveWork must be a boolean"),
+            );
+          }
+          next.confirmQuitWithActiveWork = v;
         }
         if (Object.prototype.hasOwnProperty.call(p, "prDiffCapLines")) {
           const v = p.prDiffCapLines;

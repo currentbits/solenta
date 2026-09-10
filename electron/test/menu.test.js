@@ -21,7 +21,29 @@ describe("app menu template (issue #353)", () => {
       "app menu needs the quit role",
     );
     const linux = appMenuTemplate({ platform: "linux" });
-    assert.equal(linux[0].label, "Edit");
+    assert.equal(linux[0].label, "File");
+    assert.ok(
+      linux[0].submenu.some((i) => i.role === "quit"),
+      "Windows/Linux File menu needs Quit so Ctrl+Q hits before-quit",
+    );
+  });
+
+  it("binds Quit on File for Windows and Linux, not a second Darwin app menu", () => {
+    for (const platform of ["linux", "win32"]) {
+      const t = appMenuTemplate({ platform });
+      const file = t.find((m) => m.label === "File");
+      assert.ok(file, `File menu missing on ${platform}`);
+      assert.ok(
+        file.submenu.some((i) => i.role === "quit"),
+        `${platform} File menu needs the quit role`,
+      );
+    }
+    const mac = appMenuTemplate({ platform: "darwin" });
+    assert.equal(
+      mac.some((m) => m.label === "File"),
+      false,
+      "macOS Quit lives on the app menu, not File",
+    );
   });
 
   it("keeps reload, devtools, zoom, and fullscreen on View", () => {

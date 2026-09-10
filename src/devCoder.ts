@@ -1688,6 +1688,7 @@ function buildDevCoder(): CoderApi {
   let agentsPanelRememberLast = false;
   let stayAwake: AppSettings["stayAwake"] = "agent";
   let quotaWaitAutoResume = true;
+  let confirmQuitWithActiveWork = true;
   let otel: OtelSettings = { endpoint: null, headers: {}, claudeMetrics: false };
   let webhook: WebhookSettings = {
     url: null,
@@ -2561,6 +2562,7 @@ function buildDevCoder(): CoderApi {
           agentsPanelRememberLast,
           stayAwake,
           quotaWaitAutoResume,
+          confirmQuitWithActiveWork,
           agentProfiles: agentProfiles.map((p) => ({ ...p })),
           defaultOrchestratorProfileId,
           subagentPool: {
@@ -2709,6 +2711,12 @@ function buildDevCoder(): CoderApi {
           }
           quotaWaitAutoResume = patch.quotaWaitAutoResume;
         }
+        if (Object.prototype.hasOwnProperty.call(patch, "confirmQuitWithActiveWork")) {
+          if (typeof patch.confirmQuitWithActiveWork !== "boolean") {
+            throw new Error("confirmQuitWithActiveWork must be a boolean");
+          }
+          confirmQuitWithActiveWork = patch.confirmQuitWithActiveWork;
+        }
         if (Object.prototype.hasOwnProperty.call(patch, "agentProfiles")) {
           if (!Array.isArray(patch.agentProfiles)) {
             throw new Error("agentProfiles must be an array");
@@ -2813,6 +2821,7 @@ function buildDevCoder(): CoderApi {
           agentsPanelRememberLast,
           stayAwake,
           quotaWaitAutoResume,
+          confirmQuitWithActiveWork,
           agentProfiles: agentProfiles.map((p) => ({ ...p })),
           defaultOrchestratorProfileId,
           subagentPool: {
