@@ -1181,7 +1181,7 @@ describe("plugin slash commands", () => {
       installPath,
       files,
       commands,
-      secret = "plugin-secret-value",
+      secret = "plugin-example-value",
     } = opts;
     const manifest = { name };
     if (commands) manifest.commands = commands;
@@ -1350,7 +1350,7 @@ describe("plugin slash commands", () => {
     assert.ok(!dumped.includes("user-secret-value"));
     assert.ok(!dumped.includes("cache-secret"));
     assert.ok(!dumped.includes("market-secret"));
-    assert.ok(!dumped.includes("plugin-secret-value"));
+    assert.ok(!dumped.includes("plugin-example-value"));
 
     const stagedRoot = path.join(userData, "harness-imports");
     for (const id of fs.readdirSync(stagedRoot)) {
@@ -1418,7 +1418,7 @@ describe("plugin slash commands", () => {
     ]);
     writeFile(
       path.join(installPath, "hooks", "setup.sh"),
-      "#!/bin/sh\necho plugin-secret-value\n",
+      "#!/bin/sh\necho plugin-example-value\n",
     );
     writePluginCommands(
       path.join(codex, "plugins", "cache", "mp", "other", "9.0.0"),
@@ -1439,7 +1439,7 @@ describe("plugin slash commands", () => {
         `[plugins."other@mp"]`,
         "enabled = false",
         "",
-        "api_key = \"toml-secret-value\"",
+        "api_key = \"toml-example-value\"",
         "",
       ].join("\n"),
     );
@@ -1468,8 +1468,8 @@ describe("plugin slash commands", () => {
     );
     const dumped = JSON.stringify(preview);
     assert.ok(!dumped.includes("deploy-secret"));
-    assert.ok(!dumped.includes("plugin-secret-value"));
-    assert.ok(!dumped.includes("toml-secret-value"));
+    assert.ok(!dumped.includes("plugin-example-value"));
+    assert.ok(!dumped.includes("toml-example-value"));
     assert.ok(!dumped.includes("cache-secret"));
     const staged = path.join(
       userData,
@@ -1546,7 +1546,7 @@ describe("plugin slash commands", () => {
     );
     writeFile(
       path.join(installPath, "hooks", "setup.sh"),
-      "#!/bin/sh\necho plugin-secret-value\n",
+      "#!/bin/sh\necho plugin-example-value\n",
     );
     writeFile(
       path.join(env.HOME, ".codex", "config.toml"),
@@ -1572,7 +1572,7 @@ describe("plugin slash commands", () => {
     );
     const dumped = JSON.stringify(preview);
     assert.ok(!dumped.includes("deploy-secret"));
-    assert.ok(!dumped.includes("plugin-secret-value"));
+    assert.ok(!dumped.includes("plugin-example-value"));
   });
 
   it("omits Codex plugins/cache and plugins/marketplaces from harness import", async () => {
@@ -2111,7 +2111,7 @@ describe("plugin slash commands", () => {
     ]);
     writeFile(
       path.join(installPath, "hooks", "setup.sh"),
-      "#!/bin/sh\necho plugin-secret-value\n",
+      "#!/bin/sh\necho plugin-example-value\n",
     );
     writePluginCommands(
       path.join(cursor, "plugins", "cache", "cursor-public", "other", "def456"),
@@ -2154,7 +2154,7 @@ describe("plugin slash commands", () => {
     );
     const dumped = JSON.stringify(preview);
     assert.ok(!dumped.includes("deploy-secret"));
-    assert.ok(!dumped.includes("plugin-secret-value"));
+    assert.ok(!dumped.includes("plugin-example-value"));
     assert.ok(!dumped.includes("disabled-secret"));
     assert.ok(!dumped.includes("cache-secret"));
     const staged = path.join(
@@ -2699,7 +2699,7 @@ describe("plugin skills", () => {
     writeSkill(path.join(cursor, "skills-cursor"), "cursor-only", "Cursor managed");
     writeFile(
       path.join(cursor, "plugins", "local", "shipper", "hooks", "setup.sh"),
-      "#!/bin/sh\necho plugin-secret-value\n",
+      "#!/bin/sh\necho plugin-example-value\n",
     );
 
     const preview = await previewImport({
@@ -2717,7 +2717,7 @@ describe("plugin skills", () => {
     assert.equal(byName.orphan, undefined);
     assert.equal(byName.nope, undefined);
     const dumped = JSON.stringify(preview);
-    assert.ok(!dumped.includes("plugin-secret-value"));
+    assert.ok(!dumped.includes("plugin-example-value"));
     const staged = path.join(
       userData,
       "harness-imports",
@@ -2761,7 +2761,7 @@ describe("plugin skills", () => {
     ]);
     writeFile(
       path.join(installPath, "hooks", "setup.sh"),
-      "#!/bin/sh\necho plugin-secret-value\n",
+      "#!/bin/sh\necho plugin-example-value\n",
     );
     writeFile(
       path.join(installPath, "skills", "deploy-flow", "SKILL.md"),
@@ -2796,7 +2796,7 @@ describe("plugin skills", () => {
     assert.equal(byName["ghost-skill"], undefined);
     const dumped = JSON.stringify(preview);
     assert.ok(!dumped.includes("deploy-secret"));
-    assert.ok(!dumped.includes("plugin-secret-value"));
+    assert.ok(!dumped.includes("plugin-example-value"));
     const staged = path.join(
       userData,
       "harness-imports",
@@ -3013,7 +3013,7 @@ describe("plugin skills", () => {
     );
     writeFile(
       path.join(installPath, "hooks", "setup.sh"),
-      "#!/bin/sh\necho plugin-secret-value\n",
+      "#!/bin/sh\necho plugin-example-value\n",
     );
     writeFile(
       path.join(installPath, "skills", "deploy-flow", "SKILL.md"),
@@ -3038,7 +3038,7 @@ describe("plugin skills", () => {
         `[plugins."other@mp"]`,
         "enabled = false",
         "",
-        'api_key = "toml-secret-value"',
+        'api_key = "toml-example-value"',
         "",
       ].join("\n"),
     );
@@ -3061,8 +3061,8 @@ describe("plugin skills", () => {
     assert.equal(byName["ghost-skill"], undefined);
     const dumped = JSON.stringify(preview);
     assert.ok(!dumped.includes("deploy-secret"));
-    assert.ok(!dumped.includes("plugin-secret-value"));
-    assert.ok(!dumped.includes("toml-secret-value"));
+    assert.ok(!dumped.includes("plugin-example-value"));
+    assert.ok(!dumped.includes("toml-example-value"));
     const staged = path.join(
       userData,
       "harness-imports",
@@ -3252,7 +3252,7 @@ describe("plugin skills", () => {
     );
     writeFile(
       path.join(installPath, "hooks", "setup.sh"),
-      "#!/bin/sh\necho plugin-secret-value\n",
+      "#!/bin/sh\necho plugin-example-value\n",
     );
     writeFile(
       path.join(installPath, "skills", "deploy-flow", "SKILL.md"),
@@ -3293,7 +3293,7 @@ describe("plugin skills", () => {
     assert.equal(byName.market, undefined);
     const dumped = JSON.stringify(preview);
     assert.ok(!dumped.includes("deploy-secret"));
-    assert.ok(!dumped.includes("plugin-secret-value"));
+    assert.ok(!dumped.includes("plugin-example-value"));
     const staged = path.join(
       userData,
       "harness-imports",
