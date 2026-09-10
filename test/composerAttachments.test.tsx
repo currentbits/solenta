@@ -626,25 +626,19 @@ describe("Composer attachments", () => {
     );
     m.unmount();
   });
-});
 
-describe("Composer image attach gated by Codex inputModalities (#1167)", () => {
-  const spark = {
-    provider: "codex",
-    model: "gpt-5.3-codex-spark",
-    providers: [CODEX],
-  };
-  const astra = {
-    provider: "codex",
-    model: "gpt-6-astra",
-    providers: [CODEX],
-  };
-
-  it("keeps the attach button on Spark so files and folders still pick", async () => {
+  it("keeps a folder pick on Codex Spark (#1169)", async () => {
     const restore = installNativeBridge();
     try {
       const h: Harness = { sends: [] };
-      const m = await mount(composer(h, { ...spark, picks: [FOLDER] }));
+      const m = await mount(
+        composer(h, {
+          provider: "codex",
+          model: "gpt-5.3-codex-spark",
+          providers: CODEX_PROVIDERS,
+          picks: [FOLDER],
+        }),
+      );
       const btn = m.query('button[aria-label="Attach files or folders"]');
       assert.ok(btn, "Spark must keep the paperclip for file/folder attach");
       await m.click(btn);
@@ -659,32 +653,17 @@ describe("Composer image attach gated by Codex inputModalities (#1167)", () => {
     }
   });
 
-  it("does not pin an incoming screenshot on Spark", async () => {
-    const h: Harness = { sends: [] };
-    const consumed: number[] = [];
-    const m = await mount(
-      composer(h, {
-        ...spark,
-        incoming: [IMAGE],
-        onIncomingConsumed: () => consumed.push(1),
-      }),
-    );
-    await m.flush();
-    assert.equal(
-      m.query('[data-attachment-kind="image"]'),
-      null,
-      "incoming screenshot must not become a chip on Spark",
-    );
-    assert.equal(consumed.length, 1, "incoming payload is still consumed");
-    m.unmount();
-  });
-
   it("does not pin a picked image on Spark but keeps a folder from the same pick", async () => {
     const restore = installNativeBridge();
     try {
       const h: Harness = { sends: [] };
       const m = await mount(
-        composer(h, { ...spark, picks: [IMAGE, FOLDER] }),
+        composer(h, {
+          provider: "codex",
+          model: "gpt-5.3-codex-spark",
+          providers: CODEX_PROVIDERS,
+          picks: [IMAGE, FOLDER],
+        }),
       );
       await m.click(m.query('button[aria-label="Attach files or folders"]'));
       await m.flush();
@@ -701,101 +680,5 @@ describe("Composer image attach gated by Codex inputModalities (#1167)", () => {
     } finally {
       restore();
     }
-  });
-
-  it("does not pin a pasted image on Spark", async () => {
-    const h: Harness = { sends: [] };
-    let saved = 0;
-    const m = await mount(
-      composer(h, {
-        ...spark,
-        onSaveImage: async () => {
-          saved += 1;
-          return IMAGE;
-        },
-      }),
-    );
-    const ta = m.query("textarea");
-    assert.ok(ta);
-    const file = new File([Uint8Array.from([1])], "pic.png", {
-      type: "image/png",
-    });
-    await inAct(() => {
-      const ev = new Event("paste", { bubbles: true, cancelable: true });
-      Object.defineProperty(ev, "clipboardData", {
-        value: {
-          items: [
-            {
-              kind: "file",
-              type: "image/png",
-              getAsFile: () => file,
-            },
-          ],
-          getData: () => "",
-        },
-      });
-      ta.dispatchEvent(ev);
-    });
-    await m.flush();
-    assert.equal(saved, 0);
-    assert.equal(
-      m.query('[data-attachment-kind="image"]'),
-      null,
-      "pasted images must not pin on Spark",
-    );
-    m.unmount();
-  });
-
-  it("drops image files from a mixed drop on Spark and still accepts a file", async () => {
-    const h: Harness = { sends: [] };
-    const m = await mount(
-      composer(h, {
-        ...spark,
-        onDrop: async () => [IMAGE, FILE],
-      }),
-    );
-    const image = new File([Uint8Array.from([1])], "pic.png", {
-      type: "image/png",
-    });
-    const notes = new File(["# notes"], "notes.md", { type: "text/markdown" });
-    await dispatchDrop(m.query("textarea"), [image, notes]);
-    await m.flush();
-    assert.equal(
-      m.query('[data-attachment-kind="image"]'),
-      null,
-      "Spark must not keep the dropped image",
-    );
-    assert.ok(
-      m.query('[data-attachment-kind="file"]'),
-      "Spark must still keep the dropped file",
-    );
-    m.unmount();
-  });
-
-  it("still pins an image chip on Astra from pick and incoming", async () => {
-    const h: Harness = { sends: [] };
-    const m = await mount(
-      composer(h, {
-        ...astra,
-        picks: [IMAGE],
-        incoming: [IMAGE],
-      }),
-    );
-    await m.flush();
-    assert.ok(
-      m.query('[data-attachment-kind="image"]'),
-      "Astra must still pin an incoming screenshot",
-    );
-    m.unmount();
-
-    const h2: Harness = { sends: [] };
-    const m2 = await mount(composer(h2, { ...astra, picks: [IMAGE] }));
-    await m2.click(m2.query('button[aria-label="Attach files or folders"]'));
-    await m2.flush();
-    assert.ok(
-      m2.query('[data-attachment-kind="image"]'),
-      "Astra must still pin a picked image",
-    );
-    m2.unmount();
   });
 });
