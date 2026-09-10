@@ -79,7 +79,11 @@ function modal(stubs: Stubs = {}) {
       open
       initialPane={stubs.initialPane}
       onClose={stubs.onClose ?? (() => {})}
-      settings={stubs.settings ?? { dailyBudgetUsd: 5, autoSettleAfterDays: 3 }}
+      settings={
+        stubs.settings === undefined
+          ? { dailyBudgetUsd: 5, autoSettleAfterDays: 3 }
+          : stubs.settings
+      }
       providers={stubs.providers}
       status={stubs.status === undefined ? status() : stubs.status}
       onCheckUpdate={stubs.onCheckUpdate}
@@ -296,6 +300,188 @@ describe("SettingsModal PR size cap (#402)", () => {
     await m.type(input, "");
     await m.click(m.byText("Save"));
     assert.equal(patches[0].prDiffCapLines, null);
+    m.unmount();
+  });
+});
+
+describe("SettingsModal late settings load (#930)", () => {
+  const loaded = {
+    dailyBudgetUsd: 5,
+    orchestrationBudgetUsd: 2,
+    autoSettleAfterDays: 3,
+    prDiffCapLines: 400,
+  } as AppSettings;
+
+  it("hydrates empty drafts when settings arrive while open, and saving PR cap does not null the rest", async () => {
+    const patches: Partial<AppSettings>[] = [];
+    const onSaveSettings = async (patch: Partial<AppSettings>) => {
+      patches.push({ ...patch });
+      return { ...loaded, ...patch };
+    };
+
+    const m = await mount(
+      modal({
+        initialPane: "git",
+        settings: null,
+        onSaveSettings,
+      }),
+    );
+    const empty = m.query("#pr-diff-cap") as HTMLInputElement;
+    assert.ok(empty, "PR cap input must render while settings are still null");
+    assert.equal(empty.value, "", "null settings paint an empty PR cap draft");
+
+    await m.rerender(
+      modal({
+        initialPane: "git",
+        settings: loaded,
+        onSaveSettings,
+      }),
+    );
+
+    const filled = m.query("#pr-diff-cap") as HTMLInputElement;
+    assert.equal(
+      filled.value,
+      "400",
+      "late-arriving settings must fill the PR cap draft",
+    );
+
+    await m.type(filled, "500");
+    await m.press(filled, "Enter");
+    assert.equal(patches.length, 1, "Enter must save once");
+    assert.equal(patches[0].prDiffCapLines, 500);
+    assert.notEqual(
+      patches[0].dailyBudgetUsd,
+      null,
+      "saving PR cap must not send dailyBudgetUsd: null",
+    );
+    assert.notEqual(
+      patches[0].orchestrationBudgetUsd,
+      null,
+      "saving PR cap must not send orchestrationBudgetUsd: null",
+    );
+    assert.notEqual(
+      patches[0].autoSettleAfterDays,
+      null,
+      "saving PR cap must not send autoSettleAfterDays: null",
+    );
+    m.unmount();
+  });
+
+  it("keeps a dirty PR cap when settings arrive and still hydrates untouched caps", async () => {
+    const patches: Partial<AppSettings>[] = [];
+    const onSaveSettings = async (patch: Partial<AppSettings>) => {
+      patches.push({ ...patch });
+      return { ...loaded, ...patch };
+    };
+
+    const m = await mount(
+      modal({
+        initialPane: "git",
+        settings: null,
+        onSaveSettings,
+      }),
+    );
+    const input = m.query("#pr-diff-cap") as HTMLInputElement;
+    await m.type(input, "500");
+
+    await m.rerender(
+      modal({
+        initialPane: "git",
+        settings: loaded,
+        onSaveSettings,
+      }),
+    );
+
+    assert.equal(
+      (m.query("#pr-diff-cap") as HTMLInputElement).value,
+      "500",
+      "late settings must not overwrite a dirty PR cap",
+    );
+
+    await m.click(m.query("[data-settings-nav=spending]"));
+    assert.equal(
+      (m.query("#daily-budget") as HTMLInputElement).value,
+      "5",
+      "untouched daily budget must hydrate from late settings",
+    );
+    assert.equal(
+      (m.query("#orch-budget") as HTMLInputElement).value,
+      "2",
+      "untouched orchestration budget must hydrate from late settings",
+    );
+
+    await m.click(m.query("[data-settings-nav=git]"));
+    await m.press(m.query("#pr-diff-cap"), "Enter");
+    assert.equal(patches.length, 1);
+    assert.equal(patches[0].prDiffCapLines, 500);
+    assert.notEqual(patches[0].dailyBudgetUsd, null);
+    assert.notEqual(patches[0].orchestrationBudgetUsd, null);
+    assert.notEqual(patches[0].autoSettleAfterDays, null);
+    m.unmount();
+  });
+
+  it("omits untouched numeric fields when saving before settings have loaded", async () => {
+    const patches: Partial<AppSettings>[] = [];
+    const m = await mount(
+      modal({
+        initialPane: "git",
+        settings: null,
+        onSaveSettings: async (patch) => {
+          patches.push({ ...patch });
+          return { ...loaded, ...patch };
+        },
+      }),
+    );
+    const input = m.query("#pr-diff-cap") as HTMLInputElement;
+    await m.type(input, "500");
+    await m.press(input, "Enter");
+    assert.equal(patches.length, 1);
+    assert.equal(patches[0].prDiffCapLines, 500);
+    assert.equal(
+      Object.prototype.hasOwnProperty.call(patches[0], "dailyBudgetUsd"),
+      false,
+      "unhydrated daily budget must not be sent as null",
+    );
+    assert.equal(
+      Object.prototype.hasOwnProperty.call(
+        patches[0],
+        "orchestrationBudgetUsd",
+      ),
+      false,
+      "unhydrated orchestration budget must not be sent as null",
+    );
+    assert.equal(
+      Object.prototype.hasOwnProperty.call(patches[0], "autoSettleAfterDays"),
+      false,
+      "unhydrated auto-settle must not be sent as null",
+    );
+    m.unmount();
+  });
+
+  it("does not clobber a dirty PR cap with a later settings refresh", async () => {
+    const m = await mount(
+      modal({
+        initialPane: "git",
+        settings: loaded,
+        onSaveSettings: async (patch) => ({ ...loaded, ...patch }),
+      }),
+    );
+    const input = m.query("#pr-diff-cap") as HTMLInputElement;
+    assert.equal(input.value, "400");
+    await m.type(input, "500");
+
+    await m.rerender(
+      modal({
+        initialPane: "git",
+        settings: { ...loaded, prDiffCapLines: 999 },
+        onSaveSettings: async (patch) => ({ ...loaded, ...patch }),
+      }),
+    );
+    assert.equal(
+      (m.query("#pr-diff-cap") as HTMLInputElement).value,
+      "500",
+      "a later settings refresh must not overwrite a dirty PR cap",
+    );
     m.unmount();
   });
 });
