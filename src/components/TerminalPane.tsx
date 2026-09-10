@@ -46,11 +46,17 @@ export function TerminalPane({
 
   const applyState = useCallback((state: TerminalState, generation: number) => {
     if (generation !== generationRef.current) return;
+    if (state.cursor < cursorRef.current) return;
+    // Reads and writes can overlap. Their deltas end at the absolute cursor,
+    // so only append the suffix beyond the output we have already consumed.
+    const unseen = state.text.slice(
+      Math.max(0, state.text.length - (state.cursor - cursorRef.current)),
+    );
     cursorRef.current = state.cursor;
     setSession(state);
     setPending(state.pending);
     setText((prev) => {
-      const next = state.reset ? state.text : prev + state.text;
+      const next = state.reset ? state.text : prev + unseen;
       return next.length > TEXT_LIMIT ? next.slice(-TEXT_LIMIT) : next;
     });
   }, []);

@@ -66,6 +66,50 @@ function api(over: Partial<TerminalApi> = {}) {
 }
 
 describe("TerminalPane", () => {
+  for (const overlap of ["read/read", "read/write", "write/read"]) {
+    for (const reversed of [false, true]) {
+      it(`consumes ${overlap} overlap once with ${reversed ? "reversed" : "ordered"} replies`, async (t) => {
+        t.mock.timers.enable({ apis: ["setInterval"] });
+        const replies: ((value: TerminalState) => void)[] = [];
+        const delayed = () => new Promise<TerminalState>((resolve) => replies.push(resolve));
+        const { calls, api: a } = api({
+          open: async () => state({ running: true, reset: true }),
+          read: delayed,
+          write: delayed,
+        });
+        const m = await mount(<TerminalPane threadId="t1" api={a} />);
+        for (const operation of overlap.split("/")) {
+          if (operation === "read") {
+            await inAct(() => t.mock.timers.tick(250));
+          } else {
+            await m.type(m.query("[data-terminal-input]"), "echo second");
+            await m.press(m.query("[data-terminal-input]"), "Enter");
+          }
+        }
+        assert.deepEqual(calls.slice(1).map((call) => call.since), [0, 0]);
+        await inAct(() => t.mock.timers.tick(250));
+        assert.equal(calls.at(-1)?.since, 0);
+        const snapshots = [
+          state({ running: true, text: "first\n", cursor: 6, pending: "old" }),
+          state({ running: true, text: "first\nsecond\n", cursor: 13, pending: "new" }),
+        ];
+        for (const index of reversed ? [1, 0] : [0, 1]) {
+          await inAct(() => replies[index](snapshots[index]));
+        }
+        assert.equal(m.query("[data-terminal-output]")!.textContent, "first\nsecond\nnew");
+        await inAct(() => replies[2](snapshots[1]));
+        assert.equal(m.query("[data-terminal-output]")!.textContent, "first\nsecond\nnew", "an identical snapshot adds no text");
+        await inAct(() => t.mock.timers.tick(250));
+        assert.equal(calls.at(-1)?.since, 13, "older replies cannot rewind the cursor");
+        // No new committed output: refresh the partial line without replaying text.
+        await inAct(() => replies[3](state({ running: false, cursor: 13, pending: "done" })));
+        assert.equal(m.query("[data-terminal-output]")!.textContent, "first\nsecond\ndone");
+        assert.equal(m.query("[data-running]")!.getAttribute("data-running"), "false");
+        m.unmount();
+      });
+    }
+  }
+
   for (const boundary of ["thread switch", "restart"] as const) {
     for (const operation of ["read", "write"] as const) {
       it(`ignores a delayed ${operation} after ${boundary}`, async (t) => {
@@ -105,6 +149,26 @@ describe("TerminalPane", () => {
       });
     }
   }
+
+  it("recovers a trimmed buffer and ignores a delayed older reset", async (t) => {
+    t.mock.timers.enable({ apis: ["setInterval"] });
+    const replies: ((value: TerminalState) => void)[] = [];
+    const { calls, api: a } = api({
+      open: async () => state({ running: true, text: "old\n", cursor: 4, reset: true }),
+      read: () => new Promise<TerminalState>((resolve) => replies.push(resolve)),
+    });
+    const m = await mount(<TerminalPane threadId="t1" api={a} />);
+    await inAct(() => t.mock.timers.tick(500));
+    await inAct(() => replies[1](state({ running: true, text: "retained\n", cursor: 200_100, reset: true })));
+    assert.equal(m.query("[data-terminal-output]")!.textContent, "retained\n");
+    await inAct(() => replies[0](state({ running: true, text: "older\n", cursor: 200_090, reset: true })));
+    assert.equal(m.query("[data-terminal-output]")!.textContent, "retained\n");
+    await inAct(() => t.mock.timers.tick(250));
+    assert.equal(calls.at(-1)?.since, 200_100);
+    await inAct(() => replies[2](state({ running: true, text: "next\n", cursor: 200_105 })));
+    assert.equal(m.query("[data-terminal-output]")!.textContent, "retained\nnext\n");
+    m.unmount();
+  });
 
   it("invalidates old replies as soon as restart begins and preserves the next command", async (t) => {
     t.mock.timers.enable({ apis: ["setInterval"] });
@@ -235,7 +299,7 @@ describe("TerminalPane", () => {
         opened += 1;
         return opened === 1
           ? state({ text: "stale\n", cursor: 6, reset: true })
-          : state({ text: "fresh\n", cursor: 6, reset: true });
+          : state({ text: "new\n", cursor: 4, reset: true });
       },
     });
     const m = await mount(<TerminalPane threadId="t1" api={a} />);
@@ -244,7 +308,7 @@ describe("TerminalPane", () => {
     await m.flush();
     assert.equal(
       m.query("[data-terminal-output]")!.textContent,
-      "fresh\n",
+      "new\n",
       "a reset replaces the scrollback instead of doubling it",
     );
     m.unmount();
