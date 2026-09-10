@@ -473,13 +473,19 @@ async function runAppServer() {
       if (turnKind === "review" || turnKind === "compact") {
         replyError(msg.id, {
           code: -32600,
-          message: "activeTurnNotSteerable",
-          data: { activeTurnNotSteerable: { turnKind } },
+          message: `cannot steer a ${turnKind} turn`,
+          data: {
+            message: `cannot steer a ${turnKind} turn`,
+            codexErrorInfo: { activeTurnNotSteerable: { turnKind } },
+          },
         });
         return;
       }
       if (msg.params.expectedTurnId !== turnId) {
-        replyError(msg.id, { code: -32600, message: "expectedTurnId mismatch" });
+        replyError(msg.id, {
+          code: -32600,
+          message: `expected active turn id \`${msg.params.expectedTurnId}\` but found \`${turnId}\``,
+        });
         return;
       }
       reply(msg.id, { turnId });

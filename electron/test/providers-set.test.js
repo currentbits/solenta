@@ -146,7 +146,7 @@ describe("setProvider lock semantics", () => {
     assert.equal(store.getThread(thread.id).updatedAt, before);
   });
 
-  it("drops the Codex session when the model changes so Astra is not a Sol resume", () => {
+  it("keeps the Codex session across a model-only change (turn/start.model)", () => {
     const thread = store.getThreads()[0];
     services.setProvider(store, { threadId: thread.id, provider: "codex" });
     store.updateThread(thread.id, {
@@ -159,12 +159,12 @@ describe("setProvider lock semantics", () => {
       model: "gpt-6-astra",
     });
     assert.equal(updated.model, "gpt-6-astra");
-    assert.equal(updated.sessionId, null);
+    assert.equal(updated.sessionId, "sess-sol");
     const same = services.setProvider(store, {
       threadId: thread.id,
       model: "gpt-6-astra",
     });
-    assert.equal(same.sessionId, null);
+    assert.equal(same.sessionId, "sess-sol");
   });
 
   it("accepts listed AND unlisted codex models", () => {

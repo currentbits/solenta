@@ -68,7 +68,7 @@ describe("providers registry", () => {
     assert.equal(codex.kind, "codex-json");
     assert.equal(codex.supportsResume, true);
     assert.equal(codex.supportsSteer, true);
-    assert.equal(codex.sessionPinsModel, true);
+    assert.equal(codex.sessionPinsModel, undefined);
     assert.ok(codex.models.includes("gpt-5.5"));
     assert.ok(codex.models.includes("gpt-6-astra"));
     assert.ok(codex.models.includes("gpt-5.6-sol"));
@@ -664,7 +664,7 @@ describe("sessionIdForResume (#1020)", () => {
   const codex = getProvider("codex");
   const claude = getProvider("claude");
 
-  it("skips Codex resume when the chosen model differs from the last reported one", () => {
+  it("keeps Codex resume across a model-only change (turn/start.model sticks)", () => {
     const thread = {
       sessionId: "sess-sol",
       model: "gpt-6-astra",
@@ -672,7 +672,7 @@ describe("sessionIdForResume (#1020)", () => {
     };
     assert.equal(
       sessionIdForResume(codex, thread, { model: "gpt-5.6-sol" }),
-      null,
+      "sess-sol",
     );
     assert.equal(
       sessionIdForResume(codex, thread, { model: "gpt-6-astra" }),
@@ -702,13 +702,30 @@ describe("sessionIdForResume (#1020)", () => {
     );
   });
 
-  it("skips Codex resume when picker differs from sessionStartModel even if usage caught up", () => {
-    // Session started on Sol. Picker and last usage.model are both Astra
-    // (turn/start.model can catch usage up). exec resume still hydrates
-    // the original rollout, so the next send must be a fresh exec with -m.
+  it("keeps Codex resume when picker differs from sessionStartModel (turn/start.model)", () => {
+    // Interactive app-server honors turn/start.model. sessionPinsModel is
+    // unset, so a picker switch keeps the session. exec resume still
+    // hydrates the original rollout; ejectCommand notes that separately.
     assert.equal(
       sessionIdForResume(
         codex,
+        {
+          sessionId: "sess-sol",
+          model: "gpt-6-astra",
+          sessionStartModel: "gpt-5.6-sol",
+          ejected: false,
+        },
+        { model: "gpt-6-astra" },
+      ),
+      "sess-sol",
+    );
+  });
+
+  it("sessionPinsModel providers skip resume when picker differs from sessionStartModel", () => {
+    const pinned = { ...codex, sessionPinsModel: true };
+    assert.equal(
+      sessionIdForResume(
+        pinned,
         {
           sessionId: "sess-sol",
           model: "gpt-6-astra",

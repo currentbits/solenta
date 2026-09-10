@@ -57,10 +57,13 @@ const { posixQuote } = require("./ssh.js");
  * @property {string} binEnv - env var that overrides the binary
  * @property {string} defaultBin
  * @property {boolean} supportsResume
- * @property {boolean} [sessionPinsModel] - exec resume hydrates the model
- *   from the rollout and ignores -m (Codex). A model-only switch must drop
- *   sessionId; the runner also skips resume when thread.model differs from
- *   sessionStartModel (fall back to usage.model when the snapshot is missing).
+ * @property {boolean} [sessionPinsModel] - exec --json resume hydrates the
+ *   model from the rollout and ignores -m. When set, a model-only switch
+ *   drops sessionId and sessionIdForResume skips resume if thread.model
+ *   differs from sessionStartModel (fall back to usage.model). Interactive
+ *   Codex leaves this unset: `turn/start.model` overrides subsequent turns
+ *   (live-verified 2026-09-10, CLI 0.153.4). Workflow / ask / commitmsg
+ *   stay on exec --json and never call sessionIdForResume.
  * @property {string[]} models
  * @property {ModelInfo[]} modelInfo
  * @property {Array<"low"|"medium"|"high"|"xhigh"|"max"|"ultra"|"ultracode">} efforts
@@ -333,11 +336,11 @@ const PROVIDERS = [
     binEnv: "CODER_CODEX_BIN",
     defaultBin: "codex",
     supportsResume: true,
-    // exec resume hydrates model from the rollout; -m does not switch it.
-    sessionPinsModel: true,
+    // Interactive app-server: turn/start.model sticks on later turns
+    // (live 2026-09-10). exec --json resume still ignores -m; those
+    // paths (workflow / ask / commitmsg) never use sessionIdForResume.
     // Interactive turns use a private `codex app-server` and `turn/steer`
-    // (#1170). Workflow / ask / commitmsg stay on exec --json (no send).
-    // Do not fake steer by kill+resume. Queue remains the idle follow-up.
+    // (#1170). Do not fake steer by kill+resume. Queue remains idle follow-up.
     supportsSteer: true,
     // Interactive app-server uses approvalPolicy on-request (#1208).
     // Do not flip exec AskForApproval to on-request: workflow / ask /
@@ -1494,11 +1497,12 @@ function getProvider(id) {
 }
 
 /**
- * Session id to pass to buildArgs. Ejected threads never resume. Codex
- * pins the model on the rollout: if the picker differs from the model
- * snapshotted at session start, start a fresh exec so -m actually applies.
- * usage.model can catch up after turn/start.model while exec resume still
- * hydrates the original rollout (#1215 / #1221).
+ * Session id to pass to buildArgs / app-server thread/resume. Ejected
+ * threads never resume. Providers with sessionPinsModel skip resume when
+ * the picker differs from sessionStartModel (fall back to usage.model).
+ * Interactive Codex does not set that flag: turn/start.model overrides
+ * subsequent turns. usage.model can catch up after turn/start.model while
+ * exec resume still hydrates the original rollout (#1215 / #1221).
  *
  * @param {ProviderEntry | null | undefined} entry
  * @param {{

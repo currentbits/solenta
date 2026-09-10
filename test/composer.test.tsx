@@ -64,7 +64,8 @@ const CODEX: ProviderInfo = {
   id: "codex",
   name: "Codex",
   available: true,
-  supportsResume: false,
+  supportsResume: true,
+  supportsSteer: true,
   models: [],
   modelInfo: [],
   efforts: [],
@@ -1954,9 +1955,24 @@ describe("Composer while a run is active (busy)", () => {
     m.unmount();
   });
 
-  it("hides Steer when the provider cannot take stdin mid-turn", async () => {
+  it("shows Steer for Codex while a run is live (#1170)", async () => {
     const h = makeHarness("codex");
     const m = await mount(composer(h, { busy: true, provider: "codex" }));
+    const queue = m.query('[data-steer-action="queue"]') as HTMLButtonElement;
+    const steer = m.query('[data-steer-action="steer"]') as HTMLButtonElement;
+    assert.ok(queue, "Queue stays the idle follow-up");
+    assert.ok(steer, "Steer must be offered on a live Codex turn");
+    await m.type(m.query("textarea"), "no, do X instead");
+    await m.click(steer);
+    await m.click(m.query('button[aria-label="Send"]'));
+    assert.deepEqual(h.sends, ["no, do X instead"]);
+    assert.deepEqual(h.steers, [true]);
+    m.unmount();
+  });
+
+  it("hides Steer when the provider cannot take stdin mid-turn", async () => {
+    const h = makeHarness("kimi");
+    const m = await mount(composer(h, { busy: true, provider: "kimi" }));
     assert.equal(m.query("[data-steer-toggle]"), null);
     await m.type(m.query("textarea"), "follow up");
     await m.click(m.query('button[aria-label="Send"]'));

@@ -1472,9 +1472,10 @@ function setProvider(store, input) {
     );
   } else if (modelProvided) {
     patch.model = normalizeModelForProvider(nextEntry, input.model);
-    // Codex exec resume hydrates the model from the rollout and ignores
-    // -m. Drop the session so the next send is a fresh exec with the
-    // chosen model (#1020).
+    // Providers with sessionPinsModel (exec --json ignores -m) drop the
+    // session so the next send is a fresh run with the chosen model
+    // (#1020). Interactive Codex app-server does not: turn/start.model
+    // overrides subsequent turns (live-verified 2026-09-10).
     if (
       thread.sessionId &&
       patch.model !== thread.model &&
