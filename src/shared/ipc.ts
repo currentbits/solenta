@@ -2151,6 +2151,12 @@ export interface ModelInfo {
    * provider list". Empty means this model is not effort-capable.
    */
   efforts?: ReasoningEffort[];
+  /**
+   * Snapshot of the vendor catalog's input_modalities. Codex Spark is
+   * `["text"]` only; Astra/Sol/Terra/Luna/5.5 are `["text","image"]`.
+   * Absent means allow images (Default, custom ids, other providers).
+   */
+  inputModalities?: Array<"text" | "image">;
 }
 
 /**

@@ -47,6 +47,9 @@ const { posixQuote } = require("./ssh.js");
  *   without it)
  * @property {string[]} [efforts] - when present (including `[]`), replaces
  *   the provider-wide efforts list for this model
+ * @property {Array<"text"|"image">} [inputModalities] - vendor catalog
+ *   input_modalities. Codex Spark is `["text"]` only. Absent means allow
+ *   images; never invent image support for a text-only model.
  *
  * @typedef {object} ProviderEntry
  * @property {string} id
@@ -329,6 +332,7 @@ const PROVIDERS = [
         vendor: "OpenAI",
         recommended: true,
         efforts: CODEX_SOL_TERRA_EFFORTS.slice(),
+        inputModalities: ["text", "image"],
       },
       {
         id: "gpt-5.6-sol",
@@ -336,6 +340,7 @@ const PROVIDERS = [
         description: "Reliable agentic workhorse for everyday tasks.",
         vendor: "OpenAI",
         efforts: CODEX_SOL_TERRA_EFFORTS.slice(),
+        inputModalities: ["text", "image"],
       },
       {
         id: "gpt-5.6-terra",
@@ -343,6 +348,7 @@ const PROVIDERS = [
         description: "Balanced agentic coding model for everyday work.",
         vendor: "OpenAI",
         efforts: CODEX_SOL_TERRA_EFFORTS.slice(),
+        inputModalities: ["text", "image"],
       },
       {
         id: "gpt-5.6-luna",
@@ -350,6 +356,7 @@ const PROVIDERS = [
         description: "Fast and affordable agentic coding model.",
         vendor: "OpenAI",
         efforts: CODEX_LUNA_EFFORTS.slice(),
+        inputModalities: ["text", "image"],
       },
       {
         id: "gpt-5.5",
@@ -358,6 +365,7 @@ const PROVIDERS = [
           "Proven previous-generation model for coding and general work.",
         vendor: "OpenAI",
         efforts: CODEX_55_EFFORTS.slice(),
+        inputModalities: ["text", "image"],
       },
       {
         id: "gpt-5.4-mini",
@@ -373,6 +381,8 @@ const PROVIDERS = [
         description: "Ultra-fast coding model.",
         vendor: "OpenAI",
         efforts: CODEX_55_EFFORTS.slice(),
+        // Live cache input_modalities is ["text"] only. Do not invent images.
+        inputModalities: ["text"],
       },
     ],
     // Union of per-model lists (fallback for Default / custom ids).

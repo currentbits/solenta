@@ -54,6 +54,7 @@ import {
   rowKey,
   showReasoningControl,
   stepHighlightIndex,
+  supportsImagesForModel,
   type ModelRow,
   type ProfileRow,
 } from "../modelPicker";
@@ -473,6 +474,8 @@ export const Composer = memo(function Composer({
   dropHostRef,
   onFileDragChange,
 }: ComposerProps) {
+  const currentProviderInfo = providers.find((p) => p.id === provider);
+  const canAttachImages = supportsImagesForModel(currentProviderInfo, model);
   const transcriptView = useTranscriptViewMode();
   const vimEnabled = useComposerVimEnabled();
   const [vimMode, setVimMode] = useState(INITIAL_VIM.mode);
@@ -780,18 +783,30 @@ export const Composer = memo(function Composer({
   const attachments = attachmentsByThread[threadId] ?? [];
   const addAttachments = useCallback(
     (items: AttachmentInfo[]) => {
-      if (!items.length) return;
+      const accepted = canAttachImages
+        ? items
+        : items.filter((a) => a.kind !== "image");
+      if (!accepted.length) return;
       setAttachmentsByThread((prev) => {
         const existing = prev[threadId] ?? [];
         const seen = new Set(existing.map((a) => a.path));
-        const fresh = items.filter((a) => !seen.has(a.path));
+        const fresh = accepted.filter((a) => !seen.has(a.path));
         return fresh.length
           ? { ...prev, [threadId]: [...existing, ...fresh] }
           : prev;
       });
     },
-    [threadId],
+    [threadId, canAttachImages],
   );
+  useEffect(() => {
+    if (canAttachImages) return;
+    setAttachmentsByThread((prev) => {
+      const existing = prev[threadId] ?? [];
+      const next = existing.filter((a) => a.kind !== "image");
+      if (next.length === existing.length) return prev;
+      return { ...prev, [threadId]: next };
+    });
+  }, [canAttachImages, threadId]);
   useEffect(() => {
     if (!incomingAttachments?.length) return;
     addAttachments(incomingAttachments);
@@ -1107,7 +1122,6 @@ export const Composer = memo(function Composer({
   const shortSess = shortSessionId(sessionId);
   const sessionLocked = Boolean(sessionId);
   const providerName = providerDisplayName(provider, providers);
-  const currentProviderInfo = providers.find((p) => p.id === provider);
   const canSteer = Boolean(busy && currentProviderInfo?.supportsSteer);
   const providerRows = buildProviderRows(
     providers,
@@ -1727,6 +1741,10 @@ export const Composer = memo(function Composer({
       (item) => item.kind === "file" && item.type.startsWith("image/"),
     );
     if (items.length > 0 && onSaveAttachmentImage) {
+      if (!canAttachImages) {
+        e.preventDefault();
+        return;
+      }
       e.preventDefault();
       for (const item of items) {
         const blob = item.getAsFile();
@@ -1756,8 +1774,11 @@ export const Composer = memo(function Composer({
       if (!onDropAttachmentFiles || disabled || sending) return;
       try {
         const items = await onDropAttachmentFiles(files);
-        if (items.length) {
-          addAttachments(items);
+        const accepted = canAttachImages
+          ? items
+          : items.filter((a) => a.kind !== "image");
+        if (accepted.length) {
+          addAttachments(accepted);
           setLocalError(null);
         } else {
           setLocalError(DROP_REJECT_MESSAGE);
@@ -1770,7 +1791,7 @@ export const Composer = memo(function Composer({
         setLocalError(msg);
       }
     },
-    [onDropAttachmentFiles, disabled, sending, addAttachments],
+    [onDropAttachmentFiles, disabled, sending, addAttachments, canAttachImages],
   );
 
   const composerRef = useRef<HTMLDivElement>(null);

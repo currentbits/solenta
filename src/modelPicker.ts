@@ -357,6 +357,25 @@ export function initialHighlightIndex(
 }
 
 /**
+ * Whether the composer may attach images for this model.
+ * Only an explicit `inputModalities` list that omits `"image"` hides
+ * them (Codex Spark). Absent means allow, including Default and custom ids.
+ */
+export function supportsImagesForModel(
+  provider: ProviderInfo | undefined | null,
+  modelId: string | null | undefined,
+): boolean {
+  if (!provider) return true;
+  const infos = Array.isArray(provider.modelInfo) ? provider.modelInfo : [];
+  const hit =
+    modelId == null || modelId === ""
+      ? (infos.find((m) => m.recommended) ?? infos[0])
+      : infos.find((m) => m.id === modelId);
+  if (!hit || !Array.isArray(hit.inputModalities)) return true;
+  return hit.inputModalities.includes("image");
+}
+
+/**
  * Effort list for the selected model: ModelInfo.efforts when that field is
  * present (including `[]`), otherwise ProviderInfo.efforts. Empty → hide
  * the pill. Custom / Default (null id) use the provider list.

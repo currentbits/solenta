@@ -437,6 +437,31 @@ describe("providers registry", () => {
     assert.ok(!list.some((p) => p.id === "simulate"));
   });
 
+  it("Codex snapshots inputModalities from the live cache (issue #1167)", () => {
+    const codex = getProvider("codex");
+    const byId = Object.fromEntries(codex.modelInfo.map((m) => [m.id, m]));
+    assert.deepEqual(byId["gpt-6-astra"].inputModalities, ["text", "image"]);
+    assert.deepEqual(byId["gpt-5.6-sol"].inputModalities, ["text", "image"]);
+    assert.deepEqual(byId["gpt-5.6-terra"].inputModalities, ["text", "image"]);
+    assert.deepEqual(byId["gpt-5.6-luna"].inputModalities, ["text", "image"]);
+    assert.deepEqual(byId["gpt-5.5"].inputModalities, ["text", "image"]);
+    assert.deepEqual(byId["gpt-5.3-codex-spark"].inputModalities, ["text"]);
+    // Retired gpt-5.4-mini is not in the live list; do not invent image support.
+    if (byId["gpt-5.4-mini"]) {
+      assert.equal(byId["gpt-5.4-mini"].inputModalities, undefined);
+    }
+
+    const listed = listProviders({
+      which: () => null,
+      env: {},
+      includeSimulate: false,
+    }).find((p) => p.id === "codex");
+    const spark = listed.modelInfo.find((m) => m.id === "gpt-5.3-codex-spark");
+    const astra = listed.modelInfo.find((m) => m.id === "gpt-6-astra");
+    assert.deepEqual(spark.inputModalities, ["text"]);
+    assert.deepEqual(astra.inputModalities, ["text", "image"]);
+  });
+
   it("listProviders advertises supportsSteer only for Claude", () => {
     const which = () => null;
     const list = listProviders({ which, env: {}, includeSimulate: true });
