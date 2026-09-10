@@ -186,8 +186,8 @@ describe("keyboard sheet focus trap", () => {
     const opener = m.query("[data-trap-opener]") as HTMLElement;
     opener.focus();
     await m.click(opener);
-    const dialog = m.query("[data-keyboard-sheet]") as HTMLElement | null;
-    assert.ok(dialog, "keyboard sheet");
+    const dialog = m.query("[data-keyboard-sheet-dialog]") as HTMLElement | null;
+    assert.ok(dialog, "keyboard sheet dialog");
     assert.ok(
       dialog.contains(document.activeElement),
       "opening the dialog must move focus inside it",
@@ -199,10 +199,7 @@ describe("keyboard sheet focus trap", () => {
     assert.ok(dialog.contains(first), "Tab stays inside");
     assert.notEqual(first, dialog, "Tab moves to a focusable inside the dialog");
     await m.pressFocused("Tab");
-    assert.ok(
-      dialog.contains(document.activeElement),
-      "second Tab stays inside",
-    );
+    assert.equal(document.activeElement, first, "Tab wraps inside the dialog");
 
     await m.pressFocused("Escape");
     assert.equal(m.query("[data-keyboard-sheet]"), null);

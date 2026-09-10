@@ -200,7 +200,7 @@ describe("WebTokenGate focus trap", () => {
     const opener = m.query("[data-trap-opener]") as HTMLElement;
     opener.focus();
     await m.rerender(<Harness show={true} />);
-    const dialog = m.query("[data-web-token-gate]") as HTMLElement | null;
+    const dialog = m.query("[data-web-token-gate-dialog]") as HTMLElement | null;
     assert.ok(dialog, "web token gate");
     assert.ok(
       dialog.contains(document.activeElement),
@@ -209,12 +209,10 @@ describe("WebTokenGate focus trap", () => {
     assert.notEqual(document.activeElement, opener);
 
     await m.pressFocused("Tab");
-    assert.ok(dialog.contains(document.activeElement), "Tab stays inside");
+    const first = document.activeElement as HTMLElement;
+    assert.ok(dialog.contains(first), "Tab stays inside");
     await m.pressFocused("Tab");
-    assert.ok(
-      dialog.contains(document.activeElement),
-      "second Tab stays inside",
-    );
+    assert.equal(document.activeElement, first, "Tab wraps inside the dialog");
 
     await m.pressFocused("Escape");
     assert.equal(m.query("[data-web-token-gate]"), null);

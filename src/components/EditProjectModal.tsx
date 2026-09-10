@@ -144,6 +144,7 @@ export function EditProjectModal({
         aria-modal="true"
         aria-labelledby="edit-project-title"
         tabIndex={-1}
+        data-edit-project-dialog=""
         onClick={(e) => e.stopPropagation()}
       >
         <div className={styles.header}>

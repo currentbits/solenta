@@ -46,6 +46,7 @@ export function WebTokenGate() {
         aria-modal="true"
         aria-labelledby="web-token-title"
         tabIndex={-1}
+        data-web-token-gate-dialog=""
       >
         <div className={styles.header}>
           <h2 id="web-token-title" className={styles.title}>

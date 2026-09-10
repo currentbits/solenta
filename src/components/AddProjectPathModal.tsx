@@ -181,6 +181,7 @@ export function AddProjectPathModal({
         aria-modal="true"
         aria-labelledby="add-project-path-title"
         tabIndex={-1}
+        data-add-project-path-dialog=""
         onClick={(e) => e.stopPropagation()}
       >
         <div className={styles.header}>

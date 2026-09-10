@@ -183,7 +183,7 @@ describe("Add project focus trap", () => {
     const opener = m.query("[data-trap-opener]") as HTMLElement;
     opener.focus();
     await m.click(opener);
-    const dialog = m.query("[data-add-project-path]") as HTMLElement | null;
+    const dialog = m.query("[data-add-project-path-dialog]") as HTMLElement | null;
     assert.ok(dialog, "add-project dialog");
     assert.ok(
       dialog.contains(document.activeElement),
@@ -196,10 +196,9 @@ describe("Add project focus trap", () => {
     assert.ok(dialog.contains(first), "Tab stays inside");
     assert.notEqual(first, dialog, "Tab moves to a focusable inside the dialog");
     await m.pressFocused("Tab");
-    assert.ok(
-      dialog.contains(document.activeElement),
-      "second Tab stays inside",
-    );
+    const second = document.activeElement as HTMLElement;
+    assert.ok(dialog.contains(second), "second Tab stays inside");
+    assert.notEqual(second, first);
 
     await m.pressFocused("Escape");
     assert.equal(m.query("[data-add-project-path]"), null);

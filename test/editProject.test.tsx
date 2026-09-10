@@ -355,7 +355,7 @@ describe("edit project focus trap", () => {
     const opener = m.query("[data-trap-opener]") as HTMLElement;
     opener.focus();
     await m.click(opener);
-    const dialog = m.query("[data-edit-project]") as HTMLElement | null;
+    const dialog = m.query("[data-edit-project-dialog]") as HTMLElement | null;
     assert.ok(dialog, "edit-project dialog");
     assert.ok(
       dialog.contains(document.activeElement),
@@ -368,10 +368,9 @@ describe("edit project focus trap", () => {
     assert.ok(dialog.contains(first), "Tab stays inside");
     assert.notEqual(first, dialog, "Tab moves to a focusable inside the dialog");
     await m.pressFocused("Tab");
-    assert.ok(
-      dialog.contains(document.activeElement),
-      "second Tab stays inside",
-    );
+    const second = document.activeElement as HTMLElement;
+    assert.ok(dialog.contains(second), "second Tab stays inside");
+    assert.notEqual(second, first);
 
     await m.pressFocused("Escape");
     assert.equal(m.query("[data-edit-project]"), null);

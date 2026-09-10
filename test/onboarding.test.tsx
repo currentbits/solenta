@@ -182,10 +182,9 @@ describe("OnboardingModal focus trap", () => {
     assert.ok(dialog.contains(first), "Tab stays inside");
     assert.notEqual(first, dialog, "Tab moves to a focusable inside the dialog");
     await m.pressFocused("Tab");
-    assert.ok(
-      dialog.contains(document.activeElement),
-      "second Tab stays inside",
-    );
+    const second = document.activeElement as HTMLElement;
+    assert.ok(dialog.contains(second), "second Tab stays inside");
+    assert.notEqual(second, first);
 
     await m.pressFocused("Escape");
     assert.equal(m.query("[data-onboarding]"), null);
