@@ -117,8 +117,9 @@ function defaultWindowBroadcast(channel, payload) {
 
 /**
  * A thread the user pushed out of attention (settled, archived, deleted,
- * ejected) has no next turn: kill its kept-alive Claude CLI now instead of
- * holding the process for the 30-minute idle reaper (issue #48, #979).
+ * ejected, or whose project was removed) has no next turn: kill its
+ * kept-alive Claude CLI now instead of holding the process for the
+ * 30-minute idle reaper (issue #48, #979, #1227).
  *
  * @param {object} ctx
  * @param {string} threadId
@@ -423,12 +424,23 @@ const IPC_HANDLERS = {
     });
   },
   "projects:remove": async (ctx, input) => {
-    await services.removeProject(ctx.store, input, {
+    const result = await services.removeProject(ctx.store, input, {
       isRunning: (id) => ctx.runner.isRunning(id),
       getIosSimulator: ctx.getIosSimulator,
       cleanupRunArtifacts: ctx.cleanupRunArtifacts,
       log: ctx.log,
     });
+    // #1227: idle Claude keep-alives live in the runner Map, not the Store.
+    // Same retire as threads:delete, after a successful purge so a rejected
+    // active-run guard cannot stop a session that still belongs to the project.
+    const threadIds = (result && result.removedThreadIds) || [];
+    for (const threadId of threadIds) {
+      try {
+        retireAgent(ctx, threadId);
+      } catch {
+        // already exited or missing handle
+      }
+    }
     ctx.broadcast("threads:changed", services.listThreads(ctx.store));
   },
   "projects:codeMap": async (ctx, input) => {

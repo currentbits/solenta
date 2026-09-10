@@ -112,7 +112,13 @@ describe("removeProject", () => {
     });
     store.saveNow();
 
-    await services.removeProject(store, { projectId: projectA.id });
+    const removed = await services.removeProject(store, {
+      projectId: projectA.id,
+    });
+    assert.deepEqual(
+      new Set(removed.removedThreadIds),
+      new Set([t1.id, t2.id]),
+    );
 
     assert.equal(store.getProject(projectA.id), null);
     assert.equal(store.getThread(t1.id), null);
