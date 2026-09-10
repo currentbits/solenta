@@ -121,10 +121,12 @@ const INSTRUCTIONS =
   "not copied. Running workers, worktree:false workers, and independent " +
   "threads are refused. " +
   "When this project's origin is GitHub, issue_list, issue_create, " +
-  "issue_set_plan, and issue_complete write Planboard issues on that origin " +
-  "(plan:todo, plan:doing, plan:done). They run on the host, not through " +
-  "sandboxed gh, and there is no repo argument: writes stay on this thread's " +
-  "origin. The tools are omitted when the origin is not GitHub.";
+  "issue_set_plan, issue_complete, and issue_comment write Planboard issues " +
+  "on that origin (plan:todo, plan:doing, plan:done). They run on the host, " +
+  "not through sandboxed gh, and there is no repo argument: writes stay on " +
+  "this thread's origin. issue_comment posts a comment without changing " +
+  "labels or closing the issue. The tools are omitted when the origin is " +
+  "not GitHub.";
 
 function timingSafeEqualString(a, b) {
   const bufferA = Buffer.from(a);
@@ -1094,6 +1096,16 @@ function createToolHandlers(deps) {
     });
   }
 
+  async function issue_comment(args) {
+    const thread = requireOwnThread(args);
+    const { commentIssue } = require("./issues.js");
+    return commentIssue(
+      originPathOf(thread),
+      args && args.number,
+      args && args.body,
+    );
+  }
+
   async function issue_list(args) {
     const thread = requireOwnThread(args);
     const { listIssues } = require("./issues.js");
@@ -1180,6 +1192,7 @@ function createToolHandlers(deps) {
     issue_create,
     issue_set_plan,
     issue_complete,
+    issue_comment,
     issue_list,
   };
 }
@@ -1766,6 +1779,24 @@ function buildMcpServer(sdk, handlers, opts = {}) {
         },
       },
       async (args) => json(await handlers.issue_complete(args)),
+    );
+    server.registerTool(
+      "issue_comment",
+      {
+        description:
+          "Post a comment on an existing GitHub Planboard issue on THIS " +
+          "thread's project origin without changing plan:* labels or closing " +
+          "it. Closed issues remain commentable. There is no repo argument: " +
+          "writes stay on the bound origin. projectId is YOUR OWN project id " +
+          "(stated at the end of your prompt); the thread must belong to it.",
+        inputSchema: {
+          threadId: z.string().min(1),
+          projectId: z.string().min(1),
+          number: z.number().int().positive(),
+          body: z.string().min(1),
+        },
+      },
+      async (args) => json(await handlers.issue_comment(args)),
     );
   }
 

@@ -886,10 +886,11 @@ const PLANBOARD_NOTE =
   "\n\n[Planboard] This workspace tracks project plans as GitHub issues. " +
   "For multi-step work, record and maintain your plan/roadmap/issues as " +
   "GitHub issues in this repo's origin using the coder-threads tools " +
-  "issue_create, issue_list, issue_set_plan, and issue_complete " +
-  "(status labels plan:todo, plan:doing, plan:done). Do not use `gh` " +
-  "for these writes: host-side tools keep the board in sync even when a " +
-  "sandbox cannot authenticate to GitHub. " +
+  "issue_create, issue_list, issue_set_plan, issue_complete, and " +
+  "issue_comment (status labels plan:todo, plan:doing, plan:done). " +
+  "issue_comment appends a comment without changing plan:* or closing. " +
+  "Do not use `gh` for these writes: host-side tools keep the board in " +
+  "sync even when a sandbox cannot authenticate to GitHub. " +
   "Skip this for trivial tasks. Your own todo list is mirrored onto the " +
   "board as live steps, so keep it current instead of filing issues for " +
   "individual steps.";

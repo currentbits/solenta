@@ -23,6 +23,7 @@ const { resetMemorySupForTests } = require("../memory-sup.js");
 const APP_PATH = path.join(__dirname, "..", "..");
 
 const PLANBOARD_TOOLS = [
+  "issue_comment",
   "issue_complete",
   "issue_create",
   "issue_list",
@@ -164,6 +165,10 @@ if (args[1] === "view") {
   }));
   process.exit(0);
 }
+if (args[1] === "comment") {
+  process.stdout.write("https://github.com/acme/demo/issues/150#issuecomment-99\\n");
+  process.exit(0);
+}
 process.exit(0);
 `,
     );
@@ -195,10 +200,12 @@ process.exit(0);
     assert.match(INSTRUCTIONS, /issue_list/);
     assert.match(INSTRUCTIONS, /issue_set_plan/);
     assert.match(INSTRUCTIONS, /issue_complete/);
+    assert.match(INSTRUCTIONS, /issue_comment/);
     assert.match(PLANBOARD_NOTE, /issue_create/);
     assert.match(PLANBOARD_NOTE, /issue_list/);
     assert.match(PLANBOARD_NOTE, /issue_set_plan/);
     assert.match(PLANBOARD_NOTE, /issue_complete/);
+    assert.match(PLANBOARD_NOTE, /issue_comment/);
     assert.match(PLANBOARD_NOTE, /plan:todo, plan:doing, plan:done/);
     assert.doesNotMatch(PLANBOARD_NOTE, /using `gh`/);
   });
@@ -266,6 +273,49 @@ process.exit(0);
           fs.realpathSync(c.cwd) === origin,
       ),
     );
+  });
+
+  it("comments on the bound origin without a repo argument or state change", async () => {
+    const h = createToolHandlers(githubDeps());
+    const posted = await h.issue_comment({
+      threadId: "t1",
+      projectId: "p1",
+      number: 150,
+      body: "research amendment",
+    });
+    assert.deepEqual(posted, {
+      ok: true,
+      url: "https://github.com/acme/demo/issues/150#issuecomment-99",
+    });
+    const seen = calls(callsPath);
+    assert.equal(seen.length, 1);
+    assert.equal(fs.realpathSync(seen[0].cwd), fs.realpathSync(repo));
+    assert.deepEqual(seen[0].args, [
+      "issue",
+      "comment",
+      "150",
+      "--body",
+      "research amendment",
+    ]);
+    assert.equal(seen[0].args.includes("-R"), false);
+    assert.equal(
+      seen.some((c) => ["edit", "close", "reopen"].includes(c.args[1])),
+      false,
+    );
+  });
+
+  it("rejects an empty comment body without spawning gh", async () => {
+    const h = createToolHandlers(githubDeps());
+    assert.deepEqual(
+      await h.issue_comment({
+        threadId: "t1",
+        projectId: "p1",
+        number: 150,
+        body: "  ",
+      }),
+      { ok: false, reason: "empty comment" },
+    );
+    assert.deepEqual(calls(callsPath), []);
   });
 
   it("rejects a thread in another project and never spawns gh", async () => {
