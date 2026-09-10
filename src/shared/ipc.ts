@@ -4105,7 +4105,9 @@ export interface CoderApi {
      *
      * Rewind only truncates; it starts nothing. The renderer follows with the
      * usual `runs.start({ prompt })`, which appends the edited text as a new
-     * user message (rewind must NOT append it, or it lands twice).
+     * user message (rewind must NOT append it, or it lands twice). A rejected
+     * start must `rewind({ threadId, undo: true })` so the dropped tail is
+     * not left committed without a run (#1202).
      *
      * What it does:
      *  - drops `messageId` and every message after it from the transcript,
@@ -4128,9 +4130,11 @@ export interface CoderApi {
      */
     rewind(input: {
       threadId: string;
-      messageId: string;
-      prompt: string;
+      messageId?: string;
+      prompt?: string;
       restoreFiles?: boolean;
+      /** Roll back a rewind whose following start was rejected (#1202). */
+      undo?: boolean;
     }): Promise<RewindResult>;
     /**
      * Sets the thread's provider and/or model. A provider change on a

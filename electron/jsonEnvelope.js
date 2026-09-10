@@ -23,6 +23,7 @@ const MESSAGES_SENTINEL = "\u0001__lazy_messages__\u0001";
 const AFTER_MESSAGE_KEYS = [
   "workLogByThread",
   "usageByThread",
+  "rewindRestoreByThread",
   "workflowTemplates",
   "spendByDay",
   "usageByDay",
