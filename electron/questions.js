@@ -32,7 +32,8 @@ function text(value, max = TEXT_MAX) {
  *
  * @param {unknown} raw - the `questions` array from a tool input
  * @returns {{ question: string, header: string, multiSelect: boolean,
- *   options: { label: string, description: string }[] }[] | null}
+ *   options: { label: string, description: string }[],
+ *   customAnswer?: boolean }[] | null}
  */
 function normalizeQuestions(raw) {
   if (!Array.isArray(raw)) return null;
@@ -49,12 +50,19 @@ function normalizeQuestions(raw) {
       options.push({ label, description: text(o.description) });
     }
     if (options.length === 0) continue;
-    out.push({
+    /** @type {{ question: string, header: string, multiSelect: boolean,
+     *   options: { label: string, description: string }[],
+     *   customAnswer?: boolean }} */
+    const row = {
       question,
       header: text(q.header, 40),
       multiSelect: q.multiSelect === true,
       options,
-    });
+    };
+    // Choice-only: the UI must not advertise Other/files. Default remains
+    // custom-capable (both current answer channels already accept text).
+    if (q.customAnswer === false) row.customAnswer = false;
+    out.push(row);
   }
   return out.length > 0 ? out : null;
 }

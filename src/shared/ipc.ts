@@ -1612,6 +1612,12 @@ export interface PendingQuestion {
   /** True: the user may pick several options (answer joins labels with ", "). */
   multiSelect: boolean;
   options: { label: string; description: string }[];
+  /**
+   * False hides Other and file attach (choice-only). Absent/true: custom
+   * text is allowed, and file references ride as saved paths in the answer
+   * string — not as a binary field on the permission response (#1219).
+   */
+  customAnswer?: boolean;
 }
 
 /** User decision on a PendingPermissionInfo. "allowAlways" also allows the tool for the rest of the CLI session. */
@@ -3772,6 +3778,8 @@ export interface CoderApi {
       /**
        * For question prompts (pendingPermission.questions): the chosen answer
        * per question text; sent to the agent as updatedInput.answers.
+       * File references are path lines inside these strings, not a separate
+       * attachments field (issue #1219).
        */
       answers?: Record<string, string>;
       /**
