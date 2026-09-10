@@ -497,6 +497,15 @@ export interface ThreadInfo {
    */
   pendingPlan?: PendingPlanCard | null;
   /**
+   * External MCP pairing that launched this thread (#157). Null/absent on
+   * ordinary in-app threads. `pendingExternalApproval` means the run has
+   * not started; Approve in the thread view calls pairing.approve.
+   */
+  pairingId?: string | null;
+  pairingLabel?: string | null;
+  pendingExternalApproval?: boolean;
+  pendingExternalPrompt?: string | null;
+  /**
    * Epoch ms of the last stream event the provider CLI produced on the active
    * run (issue #314). Absent/null until the run emits anything. Feeds the turn
    * watchdog; a run whose CLI hangs keeps runStartedAt but stops moving this.
@@ -2727,6 +2736,60 @@ export type McpServerDefinition =
   | McpServerRemoteDefinition
   | McpServerStdioDefinition;
 
+/** Capability a pairing token may grant (#157). `read` is always present. */
+export type PairingCapability = "read" | "launch" | "steer" | "read_all";
+
+/** Public pairing row. The raw token is never stored here. */
+export interface PairingInfo {
+  id: string;
+  name: string;
+  tokenPrefix: string;
+  capabilities: PairingCapability[];
+  /** Null means every current project. */
+  projectIds: string[] | null;
+  expiresAt: number | null;
+  createdAt: number;
+  lastUsedAt: number | null;
+  revokedAt: number | null;
+  requireApproval: boolean;
+  managedWorktree: boolean;
+  launchesPerHour: number;
+  readsPerMinute: number;
+  expired?: boolean;
+}
+
+export interface PairingServerInfo {
+  running: boolean;
+  port: number | null;
+  url: string | null;
+}
+
+export interface PairingList {
+  pairings: PairingInfo[];
+  server: PairingServerInfo;
+}
+
+export interface PairingCreateInput {
+  name: string;
+  projectIds?: string[] | null;
+  capabilities?: PairingCapability[];
+  /** Lifetime in ms. null/0 = no expiry. Omit for the 30-day default. */
+  ttlMs?: number | null;
+  requireApproval?: boolean;
+  managedWorktree?: boolean;
+  launchesPerHour?: number;
+  readsPerMinute?: number;
+}
+
+/** Returned once at mint. `token` is not persisted and is not listed later. */
+export interface PairingCreated {
+  pairing: PairingInfo;
+  token: string;
+  url: string | null;
+  claudeDesktopJson: string | null;
+  pairingPrompt: string | null;
+}
+
 /** Whole-definition upsert input. Omitted secrets preserve existing values. */
 export type McpServerSaveInput =
   | {
@@ -3443,6 +3506,20 @@ export interface CoderApi {
     previewImport(input: McpPreviewImportInput): Promise<McpImportPreview>;
     installImport(input: McpInstallRequest): Promise<McpInstallResult>;
     discardImport(input: { previewId: string }): Promise<void>;
+  };
+  /**
+   * External MCP pairing (#157). Mint a scoped, expiring token so Claude
+   * Desktop (or another MCP client) can launch and track Solenta tasks
+   * against the loopback orchestrator. The raw token is returned only from
+   * `create`. Approve/reject gate runs that pairing launched with
+   * requireApproval (the default).
+   */
+  pairing: {
+    list(): Promise<PairingList>;
+    create(input: PairingCreateInput): Promise<PairingCreated>;
+    revoke(input: { id: string }): Promise<PairingInfo>;
+    approve(input: { threadId: string }): Promise<unknown>;
+    reject(input: { threadId: string }): Promise<ThreadInfo>;
   };
   /**
    * Agent skills on disk (SKILL.md files). A skill is installed once and

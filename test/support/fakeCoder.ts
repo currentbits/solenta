@@ -46,6 +46,9 @@ import type {
   McpServerInfo,
   McpServerDefinition,
   McpServerSaveInput,
+  PairingCreated,
+  PairingInfo,
+  PairingList,
   MemoryEntryInfo,
   MemoryMaintenanceReport,
   PrChecksResult,
@@ -3146,6 +3149,58 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
       write: (input: unknown) => rec("speech.write", [input], undefined),
       stop: (input: unknown) => rec("speech.stop", [input], undefined),
       cancel: (input: unknown) => rec("speech.cancel", [input], undefined),
+    },
+    pairing: {
+      list: () =>
+        rec("pairing.list", [], {
+          pairings: [] as PairingInfo[],
+          server: { running: false, port: null, url: null },
+        } satisfies PairingList),
+      create: (input: unknown) =>
+        rec(
+          "pairing.create",
+          [input],
+          {
+            pairing: {
+              id: "pair-1",
+              name: "Claude Desktop",
+              tokenPrefix: "abcd1234",
+              capabilities: ["read", "launch"],
+              projectIds: null,
+              expiresAt: Date.now() + 86400000,
+              createdAt: Date.now(),
+              lastUsedAt: null,
+              revokedAt: null,
+              requireApproval: true,
+              managedWorktree: true,
+              launchesPerHour: 30,
+              readsPerMinute: 120,
+            },
+            token: "a".repeat(64),
+            url: "http://127.0.0.1:7422/mcp",
+            claudeDesktopJson: "{}",
+            pairingPrompt: "pair",
+          } satisfies PairingCreated,
+        ),
+      revoke: (input: unknown) =>
+        rec("pairing.revoke", [input], {
+          id: "pair-1",
+          name: "Claude Desktop",
+          tokenPrefix: "abcd1234",
+          capabilities: ["read", "launch"],
+          projectIds: null,
+          expiresAt: null,
+          createdAt: 0,
+          lastUsedAt: null,
+          revokedAt: Date.now(),
+          requireApproval: true,
+          managedWorktree: true,
+          launchesPerHour: 30,
+          readsPerMinute: 120,
+        } satisfies PairingInfo),
+      approve: (input: unknown) => rec("pairing.approve", [input], { runId: "r1" }),
+      reject: (input: unknown) =>
+        rec("pairing.reject", [input], threads[0] ?? ({} as ThreadInfo)),
     },
     vibeKanban: {
       preview: (input?: unknown) =>

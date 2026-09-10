@@ -38,6 +38,7 @@ import styles from "./SettingsModal.module.css";
 import { WorktreeGcSection } from "./WorktreeGcSection";
 import { VibeKanbanSection } from "./VibeKanbanSection";
 import { SourceControlSection } from "./SourceControlSection";
+import { IntegrationsSection } from "./IntegrationsSection";
 
 export const SETTINGS_PANES = [
   "general",
@@ -46,6 +47,7 @@ export const SETTINGS_PANES = [
   "git",
   "agents",
   "memory",
+  "integrations",
   "advanced",
 ] as const;
 
@@ -88,6 +90,12 @@ const PANE_META: Record<
     label: "Memory",
     hint: "The local memory server injected into every session.",
     keywords: "memory entries vectors janitor server port embed",
+  },
+  integrations: {
+    label: "Integrations",
+    hint: "Pair an external MCP client so it can launch and track Solenta tasks.",
+    keywords:
+      "mcp pairing claude desktop claude code token integrations external agent connect",
   },
   advanced: {
     label: "Advanced",
@@ -1894,6 +1902,13 @@ export function SettingsModal({
           <VibeKanbanSection active={open && pane === "advanced"} />
           )}
 
+          {pane === "integrations" && (
+          <IntegrationsSection
+            active={open && pane === "integrations"}
+            projects={projects}
+          />
+          )}
+
           {pane === "memory" && (
           <section className={styles.section}>
             <div className={styles.memoryRow}>
@@ -2394,6 +2409,11 @@ function PaneIcon({ id }: { id: SettingsPane }) {
         <>
           <rect x="4" y="5" width="16" height="14" rx="2" />
           <path d="M8 9h8M8 13h5" />
+        </>
+      ) : id === "integrations" ? (
+        <>
+          <path d="M8 7h3v3H8zM13 14h3v3h-3z" />
+          <path d="M11 8.5h2.5A2.5 2.5 0 0 1 16 11M13 15.5h-2.5A2.5 2.5 0 0 1 8 13" />
         </>
       ) : (
         <>

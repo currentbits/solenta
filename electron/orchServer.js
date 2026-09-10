@@ -7,6 +7,7 @@ const path = require("node:path");
 const { createRequire } = require("node:module");
 
 const { registerMcpServer, unregisterMcpServer } = require("./memory-sup.js");
+const pairing = require("./pairing.js");
 const { startWithPoolFailover } = require("./subagentPool.js");
 const { getProvider, resolveBin, isBinAvailable } = require("./providers.js");
 const {
@@ -1894,9 +1895,18 @@ function createOrchServer(opts) {
       }
 
       if (url.pathname === "/mcp") {
-        if (!authorized(req, config.token, url)) {
-          res.writeHead(401).end();
-          return;
+        const presented = pairing.presentedTokenFromRequest(req, url);
+        const sessionOk = authorized(req, config.token, url);
+        let pairingAuth = null;
+        if (!sessionOk) {
+          pairingAuth = pairing.authorizeToken(userDataPath, presented, {
+            kind: "read",
+          });
+          if (!pairingAuth.ok) {
+            const status = pairingAuth.reason === "rate_limited" ? 429 : 401;
+            res.writeHead(status).end();
+            return;
+          }
         }
         if (req.method !== "POST") {
           res.writeHead(405).end();
@@ -1913,20 +1923,32 @@ function createOrchServer(opts) {
           return;
         }
 
-        const boundProjectId = url.searchParams.get("projectId") || "";
-        const handlers = createToolHandlers({
-          ...handlerDeps,
-          boundProjectId: boundProjectId || null,
-        });
-        const boundProject =
-          boundProjectId && typeof store.getProject === "function"
-            ? store.getProject(boundProjectId)
-            : null;
-        const mcp = buildMcpServer(sdk, handlers, {
-          planboard: Boolean(
-            boundProject && planboardNoteFor(boundProject.path),
-          ),
-        });
+        let mcp;
+        if (pairingAuth) {
+          const handlers = pairing.createExternalHandlers({
+            ...handlerDeps,
+            pairing: pairing.toPublic(pairingAuth.pairing),
+            presentedToken: presented,
+            userDataPath,
+            notify: opts.notify,
+          });
+          mcp = pairing.buildExternalMcpServer(sdk, handlers, pairingAuth.pairing);
+        } else {
+          const boundProjectId = url.searchParams.get("projectId") || "";
+          const handlers = createToolHandlers({
+            ...handlerDeps,
+            boundProjectId: boundProjectId || null,
+          });
+          const boundProject =
+            boundProjectId && typeof store.getProject === "function"
+              ? store.getProject(boundProjectId)
+              : null;
+          mcp = buildMcpServer(sdk, handlers, {
+            planboard: Boolean(
+              boundProject && planboardNoteFor(boundProject.path),
+            ),
+          });
+        }
         const transport = new sdk.StreamableHTTPServerTransport({
           sessionIdGenerator: undefined,
         });
