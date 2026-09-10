@@ -345,6 +345,10 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     null,
   );
   const [addPathOpen, setAddPathOpen] = useState(false);
+  const createdFirstThreadRef = useRef<{
+    id: string;
+    projectId: string;
+  } | null>(null);
   const [editProjectId, setEditProjectId] = useState<string | null>(null);
   const [view, setView] = useState<AppView>(() => {
     if (typeof window === "undefined") return "thread";
@@ -1157,15 +1161,53 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     setAddPathOpen(true);
   }, []);
 
-  const finishOnboarding = useCallback(() => {
+  const finishOnboarding = useCallback(async () => {
+    await saveSettings({ onboardingSeen: true });
+    createdFirstThreadRef.current = null;
     setOnboardingDismissed(true);
     setOnboardingForceOpen(false);
-    void saveSettings({ onboardingSeen: true });
   }, [saveSettings]);
+
+  const handleCreateFirstThread = useCallback(
+    async (input: { projectId: string; provider: string }) => {
+      const existing = createdFirstThreadRef.current;
+      let threadId =
+        existing && existing.projectId === input.projectId
+          ? existing.id
+          : null;
+      if (!threadId) {
+        const thread = await createThread("New Thread", input.projectId, {
+          inheritProvider: false,
+        });
+        if (!thread) {
+          throw new Error("Could not create thread");
+        }
+        threadId = thread.id;
+      }
+      createdFirstThreadRef.current = {
+        id: threadId,
+        projectId: input.projectId,
+      };
+      try {
+        await setProvider({ threadId, provider: input.provider });
+      } catch (err) {
+        const message =
+          err instanceof Error && err.message
+            ? err.message
+            : "Could not set the thread agent";
+        throw err instanceof Error ? err : new Error(message);
+      }
+      selectThread(threadId);
+      setView("thread");
+      setRevealThreadId(threadId);
+    },
+    [createThread, selectThread, setProvider],
+  );
 
   const showOnboarding = useCallback(() => {
     setSettingsOpen(false);
     setOnboardingForceOpen(true);
+    createdFirstThreadRef.current = null;
   }, []);
 
   const onboardingOpen =
@@ -1726,7 +1768,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         />
         <OnboardingModal
           open={onboardingOpen}
-          onClose={finishOnboarding}
+          suspended={addPathOpen}
           onFinish={finishOnboarding}
           providers={providers}
           refreshProviders={refreshProviders}
@@ -1734,6 +1776,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
           onAddProject={handleAddProject}
           settings={settings}
           onSaveSettings={saveSettings}
+          onCreateFirstThread={handleCreateFirstThread}
         />
         {archiveToastIds && (
           <ArchiveToast
