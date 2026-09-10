@@ -1,5 +1,7 @@
 "use strict";
 
+const { beginShutdown } = require("./proc.js");
+
 /**
  * One-line message for a failed teardown step. No stack, no cause chain: this
  * goes to the user's console while the app is already on its way out.
@@ -83,6 +85,10 @@ function installShutdown({ app, exit, cleanup, log = (m) => console.warn(m) }) {
   }
 
   function shutdown() {
+    // Before stopAll/killTree: POSIX agent CLIs are detached, and the 3s
+    // SIGKILL fallback is unref'd. If we app.exit first, a SIGTERM-ignorer
+    // outlives Electron (#1233). beginShutdown makes killTree SIGKILL now.
+    beginShutdown();
     if (!cleanupPromise) {
       cleanupPromise = Promise.resolve()
         .then(cleanup)
@@ -110,9 +116,10 @@ function installShutdown({ app, exit, cleanup, log = (m) => console.warn(m) }) {
     }
     shutdownThenExit();
   });
-  // process.exit/app.exit, not app.quit(): stopAll already SIGTERM'd agent
-  // groups, and app.quit() is async and may not finish before the terminal is
-  // gone (scripts/dev.js kills Electron then process.exit(0)s immediately).
+  // process.exit/app.exit, not app.quit(): beginShutdown already made
+  // killTree SIGKILL detached agent groups. app.quit() is async and may
+  // not finish before the terminal is gone (scripts/dev.js kills Electron
+  // then process.exit(0)s immediately). Do not switch that script to quit.
   process.on("SIGINT", shutdownThenExit);
   process.on("SIGTERM", shutdownThenExit);
   return shutdown;

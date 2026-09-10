@@ -1,10 +1,16 @@
 "use strict";
 
-const { describe, it } = require("node:test");
+const { describe, it, afterEach } = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const { spawn } = require("node:child_process");
-const { killTree, agentSpawnOptions, signalGroup } = require("../proc.js");
+const {
+  killTree,
+  agentSpawnOptions,
+  signalGroup,
+  beginShutdown,
+  resetShutdownForTests,
+} = require("../proc.js");
 
 const posix = process.platform !== "win32";
 
@@ -90,7 +96,62 @@ describe("signalGroup", () => {
   });
 });
 
+function reapPid(pid, child) {
+  if (pid && alive(pid)) {
+    try {
+      process.kill(-pid, "SIGKILL");
+    } catch {
+      try {
+        process.kill(pid, "SIGKILL");
+      } catch {
+        // ignore
+      }
+    }
+  }
+  if (child && child.pid && alive(child.pid)) {
+    try {
+      process.kill(-child.pid, "SIGKILL");
+    } catch {
+      try {
+        child.kill("SIGKILL");
+      } catch {
+        // ignore
+      }
+    }
+  }
+}
+
+async function spawnIgnorer() {
+  const child = spawn(
+    process.execPath,
+    [
+      "-e",
+      "process.on('SIGTERM',()=>{});process.stdout.write('READY');setInterval(()=>{},200)",
+    ],
+    agentSpawnOptions({ stdio: ["ignore", "pipe", "pipe"] }),
+  );
+  child.stdout.setEncoding("utf8");
+  await new Promise((resolve, reject) => {
+    const t = setTimeout(() => reject(new Error("no READY")), 3000);
+    child.stdout.on("data", (chunk) => {
+      if (String(chunk).includes("READY")) {
+        clearTimeout(t);
+        resolve();
+      }
+    });
+    child.on("error", (err) => {
+      clearTimeout(t);
+      reject(err);
+    });
+  });
+  return child;
+}
+
 describe("killTree", { skip: !posix }, () => {
+  afterEach(() => {
+    resetShutdownForTests();
+  });
+
   it("kills a backgrounded grandchild via the process group", async () => {
     const child = spawn("/bin/sh", ["-c", "sleep 60 & echo $!; wait"], {
       detached: true,
@@ -129,28 +190,39 @@ describe("killTree", { skip: !posix }, () => {
       }
       assert.equal(alive(gpid), false, "grandchild must die with the group");
     } finally {
-      if (gpid && alive(gpid)) {
-        try {
-          process.kill(-gpid, "SIGKILL");
-        } catch {
-          try {
-            process.kill(gpid, "SIGKILL");
-          } catch {
-            // ignore
-          }
-        }
-      }
-      if (child.pid && alive(child.pid)) {
-        try {
-          process.kill(-child.pid, "SIGKILL");
-        } catch {
-          try {
-            child.kill("SIGKILL");
-          } catch {
-            // ignore
-          }
-        }
-      }
+      reapPid(gpid, child);
+    }
+  });
+
+  it("SIGKILL immediately on shutdown so a SIGTERM-ignorer cannot outlive quit", async () => {
+    const child = await spawnIgnorer();
+    try {
+      assert.ok(alive(child.pid), "ignorer must be alive before kill");
+      beginShutdown();
+      const timer = killTree(child, 3000);
+      assert.equal(timer, null, "quit path must not arm an unref'd SIGKILL timer");
+      await waitFor(() => !alive(child.pid), { timeoutMs: 2000 });
+      assert.equal(alive(child.pid), false);
+    } finally {
+      reapPid(child.pid, child);
+    }
+  });
+
+  it("does not hold in-app Stop: a SIGTERM-ignorer stays up until the fallback", async () => {
+    const child = await spawnIgnorer();
+    let timer;
+    try {
+      timer = killTree(child, 400);
+      await new Promise((r) => setTimeout(r, 80));
+      assert.equal(
+        alive(child.pid),
+        true,
+        "in-app Stop must not SIGKILL immediately",
+      );
+      await waitFor(() => !alive(child.pid), { timeoutMs: 2000 });
+    } finally {
+      if (timer) clearTimeout(timer);
+      reapPid(child.pid, child);
     }
   });
 });
