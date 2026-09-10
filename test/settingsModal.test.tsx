@@ -10,6 +10,7 @@
  */
 import assert from "node:assert/strict";
 import { describe, it, afterEach } from "node:test";
+import { useState } from "react";
 import { mount, unmountAll } from "./support/dom.ts";
 import { SettingsModal, type SettingsPane } from "../src/components/SettingsModal";
 import type {
@@ -1942,15 +1943,47 @@ describe("SettingsModal default orchestrator profile (#725)", () => {
   });
 });
 
-describe("SettingsModal focus trap (#916)", () => {
-  it("opening the dialog moves focus inside; Tab stays inside", async () => {
-    const m = await mount(modal());
+describe("SettingsModal focus trap", () => {
+  it("opening the dialog moves focus inside; Tab stays inside; Escape restores", async () => {
+    function Harness() {
+      const [open, setOpen] = useState(false);
+      return (
+        <>
+          <button
+            type="button"
+            data-trap-opener=""
+            onClick={() => setOpen(true)}
+          >
+            Open settings
+          </button>
+          <SettingsModal
+            open={open}
+            onClose={() => setOpen(false)}
+            settings={{ dailyBudgetUsd: 5, autoSettleAfterDays: 3 }}
+            status={status()}
+            onSaveSettings={async (patch) => ({
+              dailyBudgetUsd: patch.dailyBudgetUsd ?? null,
+              autoSettleAfterDays:
+                patch.autoSettleAfterDays === undefined
+                  ? 3
+                  : patch.autoSettleAfterDays,
+            })}
+          />
+        </>
+      );
+    }
+    const m = await mount(<Harness />);
+    const opener = m.query("[data-trap-opener]") as HTMLElement;
+    opener.focus();
+    await m.click(opener);
     const dialog = m.query("[data-settings]") as HTMLElement | null;
     assert.ok(dialog, "settings dialog");
     assert.ok(
       dialog.contains(document.activeElement),
       "opening the dialog must move focus inside it",
     );
+    assert.notEqual(document.activeElement, opener);
+
     await m.pressFocused("Tab");
     const first = document.activeElement as HTMLElement;
     assert.ok(dialog.contains(first), "Tab stays inside");
@@ -1960,6 +1993,10 @@ describe("SettingsModal focus trap (#916)", () => {
       dialog.contains(document.activeElement),
       "second Tab stays inside",
     );
+
+    await m.pressFocused("Escape");
+    assert.equal(m.query("[data-settings]"), null);
+    assert.equal(document.activeElement, opener, "Escape restores the opener");
     m.unmount();
   });
 });

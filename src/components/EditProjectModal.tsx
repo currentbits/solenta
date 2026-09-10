@@ -62,7 +62,7 @@ export function EditProjectModal({
     onClose();
   }, [onClose, pending]);
 
-  useEscapeClose(true, handleClose);
+  useEscapeClose(!pending, handleClose);
   useModalFocus(true, dialogRef);
 
   const host = remoteHost.trim();

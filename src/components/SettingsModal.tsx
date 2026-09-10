@@ -426,12 +426,13 @@ export function SettingsModal({
     }
   }, [open, settings]);
 
+  const dialogRef = useRef<HTMLDivElement>(null);
   const handleClose = useCallback(() => {
+    if (savingRef.current) return;
     onClose();
   }, [onClose]);
 
-  const dialogRef = useRef<HTMLDivElement>(null);
-  useEscapeClose(open, handleClose);
+  useEscapeClose(open && !saving, handleClose);
   useModalFocus(open, dialogRef);
 
   useEffect(() => {
@@ -870,8 +871,8 @@ export function SettingsModal({
         role="dialog"
         aria-modal="true"
         aria-label="Settings"
-        data-settings=""
         tabIndex={-1}
+        data-settings=""
         onMouseDown={(e) => e.stopPropagation()}
       >
         <header className={styles.header}>

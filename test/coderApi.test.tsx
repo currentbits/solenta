@@ -11,6 +11,7 @@
 import assert from "node:assert/strict";
 import { afterEach, describe, it } from "node:test";
 import { mount } from "./support/dom.ts";
+import { WebTokenGate } from "../src/components/WebTokenGate";
 import {
   WEB_TOKEN_KEY,
   needsWebTokenGate,
@@ -178,6 +179,46 @@ describe("token-missing gate", () => {
     await m.click(submit);
     assert.equal(window.localStorage.getItem(WEB_TOKEN_KEY), "pasted-tok");
     assert.equal(reloads, 1);
+    m.unmount();
+  });
+});
+
+describe("WebTokenGate focus trap", () => {
+  it("opening the dialog moves focus inside; Tab stays inside; Escape restores", async () => {
+    await withDom();
+    function Harness({ show }: { show: boolean }) {
+      return (
+        <>
+          <button type="button" data-trap-opener="">
+            Opener
+          </button>
+          {show ? <WebTokenGate /> : null}
+        </>
+      );
+    }
+    const m = await mount(<Harness show={false} />);
+    const opener = m.query("[data-trap-opener]") as HTMLElement;
+    opener.focus();
+    await m.rerender(<Harness show={true} />);
+    const dialog = m.query("[data-web-token-gate]") as HTMLElement | null;
+    assert.ok(dialog, "web token gate");
+    assert.ok(
+      dialog.contains(document.activeElement),
+      "opening the dialog must move focus inside it",
+    );
+    assert.notEqual(document.activeElement, opener);
+
+    await m.pressFocused("Tab");
+    assert.ok(dialog.contains(document.activeElement), "Tab stays inside");
+    await m.pressFocused("Tab");
+    assert.ok(
+      dialog.contains(document.activeElement),
+      "second Tab stays inside",
+    );
+
+    await m.pressFocused("Escape");
+    assert.equal(m.query("[data-web-token-gate]"), null);
+    assert.equal(document.activeElement, opener, "Escape restores the opener");
     m.unmount();
   });
 });

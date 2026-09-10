@@ -4,6 +4,7 @@
  */
 import assert from "node:assert/strict";
 import { afterEach, describe, it } from "node:test";
+import { useState } from "react";
 import { mount } from "./support/dom.ts";
 import { KeyboardSheet } from "../src/components/KeyboardSheet";
 import { setComposerVimEnabled } from "../src/uiPrefs";
@@ -160,15 +161,39 @@ describe("keyboard sheet vim section heading (#822)", () => {
   });
 });
 
-describe("keyboard sheet focus trap (#916)", () => {
-  it("opening the sheet moves focus inside; Tab stays inside", async () => {
-    const m = await mount(<KeyboardSheet open onClose={() => {}} />);
-    const dialog = m.query('[role="dialog"]') as HTMLElement | null;
-    assert.ok(dialog, "keyboard sheet dialog");
+describe("keyboard sheet focus trap", () => {
+  afterEach(() => {
+    setComposerVimEnabled(false);
+  });
+
+  it("opening the dialog moves focus inside; Tab stays inside; Escape restores", async () => {
+    function Harness() {
+      const [open, setOpen] = useState(false);
+      return (
+        <>
+          <button
+            type="button"
+            data-trap-opener=""
+            onClick={() => setOpen(true)}
+          >
+            Open shortcuts
+          </button>
+          <KeyboardSheet open={open} onClose={() => setOpen(false)} />
+        </>
+      );
+    }
+    const m = await mount(<Harness />);
+    const opener = m.query("[data-trap-opener]") as HTMLElement;
+    opener.focus();
+    await m.click(opener);
+    const dialog = m.query("[data-keyboard-sheet]") as HTMLElement | null;
+    assert.ok(dialog, "keyboard sheet");
     assert.ok(
       dialog.contains(document.activeElement),
       "opening the dialog must move focus inside it",
     );
+    assert.notEqual(document.activeElement, opener);
+
     await m.pressFocused("Tab");
     const first = document.activeElement as HTMLElement;
     assert.ok(dialog.contains(first), "Tab stays inside");
@@ -178,6 +203,10 @@ describe("keyboard sheet focus trap (#916)", () => {
       dialog.contains(document.activeElement),
       "second Tab stays inside",
     );
+
+    await m.pressFocused("Escape");
+    assert.equal(m.query("[data-keyboard-sheet]"), null);
+    assert.equal(document.activeElement, opener, "Escape restores the opener");
     m.unmount();
   });
 });

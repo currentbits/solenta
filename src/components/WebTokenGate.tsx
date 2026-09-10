@@ -1,5 +1,6 @@
-import { useRef, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { persistWebToken, resolveWebToken, webNavigation } from "../coderApi";
+import { useEscapeClose } from "../useEscapeClose";
 import { useModalFocus } from "../useModalFocus";
 import styles from "./SettingsModal.module.css";
 
@@ -12,13 +13,15 @@ import styles from "./SettingsModal.module.css";
 export function WebTokenGate() {
   const [token, setToken] = useState("");
   const dialogRef = useRef<HTMLDivElement>(null);
-  const [open] = useState(() => {
+  const [open, setOpen] = useState(() => {
     try {
       return !resolveWebToken();
     } catch {
       return true;
     }
   });
+  const handleClose = useCallback(() => setOpen(false), []);
+  useEscapeClose(open, handleClose);
   useModalFocus(open, dialogRef);
 
   if (!open) return null;

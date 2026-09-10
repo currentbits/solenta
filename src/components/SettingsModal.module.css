@@ -18,6 +18,7 @@
   background: var(--bg-elevated);
   box-shadow: var(--shadow-modal);
   overflow: hidden;
+  outline: none;
 }
 
 .header {
@@ -488,6 +489,7 @@
   background: var(--bg-elevated);
   box-shadow: var(--shadow-modal);
   overflow: hidden;
+  outline: none;
 }
 
 .shell {

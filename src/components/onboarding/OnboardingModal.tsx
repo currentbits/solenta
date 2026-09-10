@@ -80,6 +80,7 @@ export function OnboardingModal({
         role="dialog"
         aria-modal="true"
         aria-label="Welcome to Solenta"
+        tabIndex={-1}
         data-onboarding=""
         tabIndex={-1}
         onMouseDown={(e) => e.stopPropagation()}
