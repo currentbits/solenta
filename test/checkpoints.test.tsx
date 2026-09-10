@@ -357,6 +357,51 @@ describe("App checkpoints wiring (round 50)", () => {
     );
     m.unmount();
   });
+
+  it("Escape dismisses the restore-checkpoint confirm and restores focus", async () => {
+    const cps = threeCheckpoints();
+    const middle = cps[1]!;
+    const fake = makeFake({ checkpoints: cps });
+    const m = await boot(fake);
+    await selectThread(m, "checkpoint source thread");
+    await openGitTab(m);
+
+    const trigger = m.query(
+      `[data-checkpoint-restore="${middle.sha}"]`,
+    ) as HTMLElement | null;
+    assert.ok(trigger, "Restore on middle checkpoint");
+    trigger.focus();
+    await m.click(trigger);
+    await m.flush();
+
+    const dialog = m.query(
+      `[data-restore-confirm="${middle.sha}"]`,
+    ) as HTMLElement | null;
+    assert.ok(dialog, "confirm dialog open");
+    assert.ok(
+      dialog.contains(document.activeElement),
+      "opening the dialog must move focus inside it",
+    );
+    assert.notEqual(document.activeElement, trigger);
+
+    await m.pressFocused("Escape");
+    assert.equal(
+      m.query(`[data-restore-confirm="${middle.sha}"]`),
+      null,
+      "Escape dismisses the confirm",
+    );
+    assert.equal(
+      fake.of("git.restoreCheckpoint").length,
+      0,
+      "Escape must not restore",
+    );
+    assert.equal(
+      document.activeElement,
+      trigger,
+      "Escape restores restore-button focus",
+    );
+    m.unmount();
+  });
 });
 
 describe("fakeCoder restore truncates later checkpoints", () => {

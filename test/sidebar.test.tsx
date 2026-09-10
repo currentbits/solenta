@@ -1363,6 +1363,82 @@ describe("Sidebar remove + edit project (scope menu)", () => {
     assert.equal(m.query('[data-remove-confirm="p2"]'), null);
     m.unmount();
   });
+
+  it("Escape dismisses the remove-project confirm and restores focus", async () => {
+    await clearSidebarStorage();
+    const removed: string[] = [];
+    const m = await mount(
+      sidebar(removeThreads, {
+        projects: [p1, p2],
+        onRemoveProject: (id) => {
+          removed.push(id);
+        },
+      }),
+    );
+    await openScopeMenu(m);
+    const trigger = m.query('[data-project-remove="p2"]') as HTMLElement | null;
+    assert.ok(trigger, "remove trigger");
+    trigger.focus();
+    await m.click(trigger);
+    await m.flush();
+    const dialog = m.query('[data-remove-confirm="p2"]') as HTMLElement | null;
+    assert.ok(dialog, "confirm open");
+    assert.ok(
+      dialog.contains(document.activeElement),
+      "opening the dialog must move focus inside it",
+    );
+
+    await m.pressFocused("Escape");
+    assert.equal(m.query('[data-remove-confirm="p2"]'), null);
+    assert.deepEqual(removed, [], "Escape must not remove the project");
+    assert.ok(
+      document.activeElement && document.activeElement.isConnected,
+      "Escape restores focus to a live node",
+    );
+    assert.ok(
+      m.container.contains(document.activeElement) ||
+        document.activeElement === document.body,
+      "Escape restores focus after the confirm unmounts",
+    );
+    m.unmount();
+  });
+
+  it("Escape does not dismiss the remove-project confirm while remove is in flight", async () => {
+    await clearSidebarStorage();
+    let resolveRemove!: () => void;
+    const held = new Promise<void>((resolve) => {
+      resolveRemove = resolve;
+    });
+    const m = await mount(
+      sidebar(removeThreads, {
+        projects: [p1, p2],
+        onRemoveProject: () => held,
+      }),
+    );
+    await openScopeMenu(m);
+    await m.click(m.query('[data-project-remove="p2"]')!);
+    await m.click(m.query('[data-remove-confirm-submit="p2"]')!);
+    await m.flush();
+    assert.ok(m.query('[data-remove-confirm="p2"]'), "still open while pending");
+
+    await inAct(() => {
+      document.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "Escape", bubbles: true }),
+      );
+    });
+    assert.ok(
+      m.query('[data-remove-confirm="p2"]'),
+      "Escape must not close while removePending",
+    );
+
+    await inAct(async () => {
+      resolveRemove();
+      await Promise.resolve();
+    });
+    await m.flush();
+    assert.equal(m.query('[data-remove-confirm="p2"]'), null);
+    m.unmount();
+  });
 });
 
 describe("Sidebar unread indicators", () => {
