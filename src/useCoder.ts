@@ -58,7 +58,10 @@ import type {
   ListPrsResult,
   CheckoutPrResult,
   PrChecksResult,
+  PrCommentResult,
+  PrDetailResult,
   PrInfo,
+  PrTemplateResult,
   ProjectInfo,
   ProjectUpdateInput,
   ProviderInfo,
@@ -84,6 +87,7 @@ import type {
   StayAwakeStatus,
   ThreadDetail,
   ThreadInfo,
+  ThreadMessagePin,
   ThreadSummaryInfo,
   TrashedThreadInfo,
   CrewTaskView,
@@ -496,6 +500,11 @@ export interface UseCoderResult {
   renameThread: (threadId: string, title: string) => Promise<void>;
   /** Save scratch notes on a thread (header editor, issue #194). */
   setNotes: (threadId: string, notes: string) => Promise<void>;
+  /** Replace the per-thread transcript bookmark list (issue #1217). */
+  setMessagePins: (
+    threadId: string,
+    pins: ThreadMessagePin[],
+  ) => Promise<void>;
   /** Change the recorded merge/PR base after create (#187). */
   setBaseBranch: (threadId: string, baseBranch: string | null) => Promise<void>;
   /** Retarget an idle worker onto the lead's current committed HEAD. */
@@ -601,8 +610,12 @@ export interface UseCoderResult {
   revertFile: (path: string, status: string) => Promise<{ path: string }>;
   /** Draft a commit message with the thread's provider (never commits). */
   suggestCommitMessage: () => Promise<{ message: string }>;
-  /** File paths for the composer @-mention popup. */
-  listFiles: (query: string) => Promise<string[]>;
+  /** File paths for the composer @-mention popup and the file palette. */
+  listFiles: (query: string, opts?: { limit?: number }) => Promise<string[]>;
+  /** Fixed-string content search in the selected thread's project. */
+  searchFileContents: (query: string) => Promise<
+    Array<{ path: string; line: number; text: string }>
+  >;
   /** Native folder picker for @-mention browse. */
   pickDirectory: () => Promise<string | null>;
   /** AppSnap window list. */
@@ -665,6 +678,37 @@ export interface UseCoderResult {
     projectId: string;
     prNumber: number;
   }) => Promise<CheckoutPrResult>;
+  /** Repo PULL_REQUEST_TEMPLATE files. Failures are in-band. */
+  prTemplate: (projectPath: string) => Promise<PrTemplateResult>;
+  /** Full PR for the in-app workspace. Failures are in-band. */
+  prDetail: (input: {
+    projectPath: string;
+    prNumber: number;
+  }) => Promise<PrDetailResult>;
+  prEdit: (input: {
+    projectPath: string;
+    prNumber: number;
+    title?: string;
+    body?: string;
+  }) => Promise<PrDetailResult>;
+  prComment: (input: {
+    projectPath: string;
+    prNumber: number;
+    body: string;
+  }) => Promise<PrCommentResult>;
+  prClose: (input: {
+    projectPath: string;
+    prNumber: number;
+  }) => Promise<PrDetailResult>;
+  prReady: (input: {
+    projectPath: string;
+    prNumber: number;
+    undo?: boolean;
+  }) => Promise<PrDetailResult>;
+  prMergeAt: (input: {
+    projectPath: string;
+    prNumber: number;
+  }) => Promise<PrDetailResult>;
   /** Issues for a project checkout (`gh issue list`). Failures are in-band. */
   listIssues: (projectPath: string) => Promise<ListIssuesResult>;
   /** Move an issue's plan:* label (Planboard). Failures are in-band. */
@@ -1838,13 +1882,34 @@ export function useCoder(): UseCoderResult {
         setError({ scope: "run", message: errorMessage(err) });
         throw err;
       }
-      // The transcript we hold is now longer than the stored one. A run push
-      // would repair it, but only if the run starts — so refetch here, or a
-      // failed start leaves dropped messages on screen as if nothing happened.
-      reloadDetail(threadId);
-      await startRun(prompt, threadId, attachments);
+      // Do not refetch between rewind and start: the edited bubble is in
+      // the dropped tail, so a reload unmounts the inline editor. Start
+      // success reloads via startRun; start reject undoes then reloads.
+      try {
+        await startRun(prompt, threadId, attachments);
+      } catch (err) {
+        try {
+          await api.threads.rewind({ threadId, undo: true });
+        } catch {
+          // Keep the start error; undo is best-effort.
+        }
+        try {
+          const d = await api.threads.get(threadId);
+          if (selectedRef.current === threadId) {
+            setDetail(d);
+            applyThreads(
+              threadsRef.current.map((t) =>
+                t.id === d.thread.id ? d.thread : t,
+              ),
+            );
+          }
+        } catch {
+          // Banner already set by startRun.
+        }
+        throw err;
+      }
     },
-    [api, selectedThreadId, startRun, reloadDetail],
+    [api, selectedThreadId, startRun, applyThreads],
   );
 
   const refreshWorkflows = useCallback(async () => {
@@ -2450,6 +2515,28 @@ export function useCoder(): UseCoderResult {
     [api, applyThreads],
   );
 
+  const setMessagePins = useCallback(
+    async (
+      threadId: string,
+      pins: ThreadMessagePin[],
+    ) => {
+      try {
+        const thread = await api.threads.setMessagePins({ threadId, pins });
+        applyThreads(
+          threadsRef.current.map((t) => (t.id === thread.id ? thread : t)),
+        );
+        setDetail((prev) =>
+          prev && prev.thread.id === thread.id ? { ...prev, thread } : prev,
+        );
+        setError(null);
+      } catch (err) {
+        setError({ scope: "run", message: errorMessage(err) });
+        throw err;
+      }
+    },
+    [api, applyThreads],
+  );
+
   const setBaseBranch = useCallback(
     async (threadId: string, baseBranch: string | null) => {
       try {
@@ -3002,11 +3089,25 @@ export function useCoder(): UseCoderResult {
   }, [api, selectedThreadId]);
 
   const listFiles = useCallback(
-    async (query: string) => {
+    async (query: string, opts?: { limit?: number }) => {
       if (!selectedThreadId) return [];
       const threadId = selectedThreadId;
-      const result = await api.files.list({ threadId, query });
+      const result = await api.files.list({
+        threadId,
+        query,
+        limit: opts?.limit,
+      });
       return result.files;
+    },
+    [api, selectedThreadId],
+  );
+
+  const searchFileContents = useCallback(
+    async (query: string) => {
+      if (!selectedThreadId || !query.trim()) return [];
+      const threadId = selectedThreadId;
+      const result = await api.files.search({ threadId, query });
+      return result.hits;
     },
     [api, selectedThreadId],
   );
@@ -3298,6 +3399,68 @@ export function useCoder(): UseCoderResult {
   const listPrs = useCallback(
     async (projectPath: string, opts?: ListPrsOptions) => {
       return api.git.listPrs(projectPath, opts);
+    },
+    [api],
+  );
+
+  const prTemplate = useCallback(
+    async (projectPath: string) => {
+      return api.git.prTemplate({ projectPath });
+    },
+    [api],
+  );
+
+  const prDetail = useCallback(
+    async (input: { projectPath: string; prNumber: number }) => {
+      return api.git.prDetail(input);
+    },
+    [api],
+  );
+
+  const prEdit = useCallback(
+    async (input: {
+      projectPath: string;
+      prNumber: number;
+      title?: string;
+      body?: string;
+    }) => {
+      return api.git.prEdit(input);
+    },
+    [api],
+  );
+
+  const prComment = useCallback(
+    async (input: {
+      projectPath: string;
+      prNumber: number;
+      body: string;
+    }) => {
+      return api.git.prComment(input);
+    },
+    [api],
+  );
+
+  const prClose = useCallback(
+    async (input: { projectPath: string; prNumber: number }) => {
+      return api.git.prClose(input);
+    },
+    [api],
+  );
+
+  const prReady = useCallback(
+    async (input: {
+      projectPath: string;
+      prNumber: number;
+      undo?: boolean;
+    }) => {
+      return api.git.prReady(input);
+    },
+    [api],
+  );
+
+  const prMergeAt = useCallback(
+    async (input: { projectPath: string; prNumber: number }) => {
+      return api.git.prMergeAt(input);
     },
     [api],
   );
@@ -4081,6 +4244,7 @@ export function useCoder(): UseCoderResult {
     resumeQuotaWait,
     renameThread,
     setNotes,
+    setMessagePins,
     setBaseBranch,
     refreshWorkerSnapshot,
     resolveSuggestion,
@@ -4115,6 +4279,7 @@ export function useCoder(): UseCoderResult {
     revertFile,
     suggestCommitMessage,
     listFiles,
+    searchFileContents,
     pickDirectory,
     listSnapWindows,
     captureSnapWindow,
@@ -4133,6 +4298,13 @@ export function useCoder(): UseCoderResult {
     prMerge,
     listPrs,
     checkoutPr,
+    prTemplate,
+    prDetail,
+    prEdit,
+    prComment,
+    prClose,
+    prReady,
+    prMergeAt,
     listIssues,
     setIssuePlanStatus,
     createIssue,

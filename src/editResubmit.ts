@@ -8,7 +8,8 @@ import type { ChatMessage, ThreadStatus } from "./shared/ipc";
  *
  * Confirming calls threads.rewind (which starts nothing) then the ordinary
  * runs.start path with the edited text — rewind must not append it, or the
- * message lands twice.
+ * message lands twice. A rejected start undoes the rewind so the dropped
+ * tail is not left committed without a run (#1202).
  */
 
 /** True when this bubble can open the edit-and-resubmit editor. */

@@ -14,6 +14,7 @@ const {
 const { normalizeAcceptedHunks } = require("./reviewItinerary.js");
 const { normalizeBtwCards } = require("./btw.js");
 const { normalizePendingQuestion } = require("./questions.js");
+const { normalizeMessagePins } = require("./messagePins.js");
 const { getDefaultSecrets } = require("./secrets.js");
 const {
   splitMessagesByThread,
@@ -82,6 +83,7 @@ const EMPTY = {
   workLogByThread: {},
   usageByThread: {},
   runArtifactsByThread: {},
+  rewindRestoreByThread: {},
   workflowTemplates: [],
   spendByDay: {},
   usageByDay: {},
@@ -479,6 +481,9 @@ function validateQuotaFailover(raw) {
  * quotaWaitAutoResume: only an explicit false turns auto-resume off, so
  * absent/junk keeps Claude's default (continue when the usage limit resets).
  *
+ * confirmQuitWithActiveWork: only an explicit false opts out of the
+ * accidental-quit dialog (issue #1195). Absent/junk keeps the confirm.
+ *
  * prDiffCapLines: absent/junk → DEFAULT_PR_DIFF_CAP_LINES (400); only an
  * explicit null disables the PR-size cap (issue #402).
  *
@@ -515,6 +520,7 @@ function normalizeSettings(raw) {
     agentsPanelRememberLast: false,
     stayAwake: "agent",
     quotaWaitAutoResume: true,
+    confirmQuitWithActiveWork: true,
     prDiffCapLines: DEFAULT_PR_DIFF_CAP_LINES,
     agentProfiles: [],
     defaultOrchestratorProfileId: null,
@@ -644,6 +650,9 @@ function normalizeSettings(raw) {
   settings.quotaWaitAutoResume =
     /** @type {{ quotaWaitAutoResume?: unknown }} */ (obj)
       .quotaWaitAutoResume !== false;
+  settings.confirmQuitWithActiveWork =
+    /** @type {{ confirmQuitWithActiveWork?: unknown }} */ (obj)
+      .confirmQuitWithActiveWork !== false;
   settings.autoSettleOnMerge =
     /** @type {{ autoSettleOnMerge?: unknown }} */ (obj).autoSettleOnMerge !==
     false;
@@ -1295,6 +1304,8 @@ function migrateThread(t) {
     ejected: t.ejected === true,
     // Per-thread user scratch pad (issue #194): absent → empty.
     notes: typeof t.notes === "string" ? t.notes : "",
+    // Transcript bookmarks (issue #1217): absent/invalid → none.
+    messagePins: normalizeMessagePins(t.messagePins),
     // User-defined tags (issue #789): absent/invalid → none.
     tags: Array.isArray(t.tags)
       ? t.tags.filter((x) => typeof x === "string" && x.trim() !== "")
@@ -1588,6 +1599,9 @@ class Store {
       this._secrets.emit(
         `[store] encrypted ${this._secretsMigrated} plaintext credential(s) at rest`,
       );
+    }
+    if (this.recoverDanglingRewind()) {
+      this._recoveredOnLoad = true;
     }
     if (this._recoveredOnLoad) {
       this.save();
@@ -2408,6 +2422,12 @@ class Store {
           ? parsed.usageByThread
           : {},
       runArtifactsByThread: normalizeRunArtifactsByThread(parsed.runArtifactsByThread),
+      rewindRestoreByThread:
+        parsed.rewindRestoreByThread &&
+        typeof parsed.rewindRestoreByThread === "object" &&
+        !Array.isArray(parsed.rewindRestoreByThread)
+          ? parsed.rewindRestoreByThread
+          : {},
       workflowTemplates: Array.isArray(parsed.workflowTemplates)
         ? parsed.workflowTemplates.map(migrateTemplateKimiModels)
         : [],
@@ -2997,6 +3017,97 @@ class Store {
   }
 
   /**
+   * Snapshot taken just before a rewind, so a rejected start can put the
+   * tail back (#1202). Not part of ThreadInfo; listThreads must not send it.
+   * @param {string} threadId
+   * @returns {object | null}
+   */
+  getRewindRestore(threadId) {
+    const map = this.data.rewindRestoreByThread;
+    if (!map || typeof map !== "object") return null;
+    return map[threadId] || null;
+  }
+
+  /**
+   * @param {string} threadId
+   * @param {object | null} snap
+   */
+  setRewindRestore(threadId, snap) {
+    if (!this.data.rewindRestoreByThread || typeof this.data.rewindRestoreByThread !== "object") {
+      this.data.rewindRestoreByThread = {};
+    }
+    if (snap == null) {
+      delete this.data.rewindRestoreByThread[threadId];
+    } else {
+      this.data.rewindRestoreByThread[threadId] = snap;
+    }
+    this.markDirty();
+  }
+
+  /**
+   * Drop a pending rewind restore handle without applying it. Call when a
+   * run has been accepted so a later undo cannot resurrect the tail.
+   * @param {string} threadId
+   */
+  clearRewindRestore(threadId) {
+    this.setRewindRestore(threadId, null);
+  }
+
+  /**
+   * Put the pre-rewind transcript, work-log, artifacts, and session fields
+   * back. Caller owns saveNow / file restore.
+   * @param {string} threadId
+   * @param {object} snap
+   */
+  applyRewindRestore(threadId, snap) {
+    if (!snap || typeof snap !== "object") return;
+    if (Array.isArray(snap.messages)) this.setMessages(threadId, snap.messages);
+    if (Array.isArray(snap.workLog)) this.setWorkLog(threadId, snap.workLog);
+    if (Array.isArray(snap.artifacts)) this.setRunArtifacts(threadId, snap.artifacts);
+    this.updateThread(threadId, {
+      sessionId: snap.sessionId != null ? snap.sessionId : null,
+      replayContext: snap.replayContext === true,
+      ...(snap.status != null ? { status: snap.status } : {}),
+      lastError: snap.lastError != null ? snap.lastError : null,
+      lastErrorKind: snap.lastErrorKind != null ? snap.lastErrorKind : null,
+      runStartedAt: snap.runStartedAt != null ? snap.runStartedAt : null,
+    });
+  }
+
+  /**
+   * Crash/reload recovery for #1202: an idle thread with a restore handle
+   * and no new run yet must not keep a truncated shard. Working threads
+   * keep the handle (start accepted). If the transcript grew past the
+   * retained count, a run already appended — drop the handle.
+   * @returns {boolean}
+   */
+  recoverDanglingRewind() {
+    const map = this.data.rewindRestoreByThread;
+    if (!map || typeof map !== "object") return false;
+    let recovered = false;
+    for (const threadId of Object.keys(map)) {
+      const snap = map[threadId];
+      const thread = this.getThread(threadId);
+      if (!thread || thread.status === "working") continue;
+      const currentLen = this.getMessages(threadId).length;
+      if (
+        snap &&
+        typeof snap.retainedCount === "number" &&
+        currentLen !== snap.retainedCount
+      ) {
+        delete map[threadId];
+        recovered = true;
+        continue;
+      }
+      this.applyRewindRestore(threadId, snap);
+      delete map[threadId];
+      recovered = true;
+    }
+    if (recovered) this.markDirty();
+    return recovered;
+  }
+
+  /**
    * @param {string} threadId
    * @returns {{ model: string | null, inputTokens: number, outputTokens: number, costUsd: number, turns: number } | null}
    */
@@ -3280,6 +3391,7 @@ class Store {
       agentsPanelRememberLast: n.agentsPanelRememberLast,
       stayAwake: n.stayAwake,
       quotaWaitAutoResume: n.quotaWaitAutoResume,
+      confirmQuitWithActiveWork: n.confirmQuitWithActiveWork,
       prDiffCapLines: n.prDiffCapLines,
       agentProfiles: n.agentProfiles,
       defaultOrchestratorProfileId: n.defaultOrchestratorProfileId,
@@ -3528,6 +3640,13 @@ class Store {
         throw new Error("quotaWaitAutoResume must be a boolean");
       }
       this.data.settings.quotaWaitAutoResume = v;
+    }
+    if (Object.prototype.hasOwnProperty.call(patch, "confirmQuitWithActiveWork")) {
+      const v = patch.confirmQuitWithActiveWork;
+      if (typeof v !== "boolean") {
+        throw new Error("confirmQuitWithActiveWork must be a boolean");
+      }
+      this.data.settings.confirmQuitWithActiveWork = v;
     }
     if (Object.prototype.hasOwnProperty.call(patch, "linearApiKey")) {
       const v = patch.linearApiKey;
@@ -3997,6 +4116,7 @@ function cloneEmpty() {
     workLogByThread: {},
     usageByThread: {},
     runArtifactsByThread: {},
+    rewindRestoreByThread: {},
     workflowTemplates: [],
     spendByDay: {},
     usageByDay: {},

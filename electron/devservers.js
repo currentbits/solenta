@@ -394,6 +394,15 @@ function killAll() {
   }
 }
 
+/** Thread ids with a still-running managed server. Dead records do not count. */
+function listLive() {
+  const ids = [];
+  for (const [id, rec] of records) {
+    if (rec && !rec.dead && isAlive(rec.pid)) ids.push(id);
+  }
+  return ids;
+}
+
 module.exports = {
   captureServerUrl,
   detectScripts,
@@ -403,4 +412,5 @@ module.exports = {
   stop,
   status,
   killAll,
+  listLive,
 };

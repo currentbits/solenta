@@ -128,4 +128,13 @@ describe("terminal sessions", () => {
     assert.equal(state.running, false);
     assert.equal(state.text, "", "no session, no scrollback");
   });
+
+  it("listLive reports open shells and not closed ones", async (t) => {
+    if (process.platform === "win32") return t.skip("POSIX shell only");
+    const id = "t-live";
+    terminal.open(id, os.tmpdir());
+    assert.ok(terminal.listLive().includes(id));
+    terminal.close(id);
+    assert.equal(terminal.listLive().includes(id), false);
+  });
 });

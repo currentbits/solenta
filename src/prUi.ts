@@ -47,6 +47,16 @@ export function isPrTooLargeMessage(message: string): boolean {
   return message.startsWith(`${PR_TOO_LARGE_PREFIX}:`);
 }
 
+/** Title must be non-blank before the composer submits. */
+export function canSubmitPr(title: string): boolean {
+  return title.trim().length > 0;
+}
+
+/** Comment box refuses whitespace-only bodies. */
+export function canSubmitComment(body: string): boolean {
+  return body.trim().length > 0;
+}
+
 /**
  * Prompt sent to the agent when a PR is refused for exceeding the size cap:
  * the auto-split path of issue #402. The agent restacks the branch into a

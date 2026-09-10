@@ -490,11 +490,11 @@ describe("Sidebar jump shortcuts (round 46)", () => {
     m.unmount();
   });
 
-  it("cmd+j / cmd+k wrap through the list", async () => {
+  it("cmd+j / cmd+shift+j wrap through the list", async () => {
     const m = await mount(<Host />);
     await openShelves(m);
     // Flat order: pin-mid first, settled-mid last. Start at the first row;
-    // cmd+k wraps to the settled shelf's last row.
+    // cmd+shift+j wraps to the settled shelf's last row. ⌘K is the palette.
     const firstBtn = m
       .query('[data-thread-card="pin-mid"]')!
       .querySelector("button")!;
@@ -508,7 +508,7 @@ describe("Sidebar jump shortcuts (round 46)", () => {
     );
 
     await inAct(async () => {
-      dispatchKey("keydown", "k", { metaKey: true });
+      dispatchKey("keydown", "j", { metaKey: true, shiftKey: true });
     });
     await m.flush();
     assert.equal(
@@ -516,7 +516,7 @@ describe("Sidebar jump shortcuts (round 46)", () => {
         "data-thread-card",
       ),
       "settled-mid",
-      "cmd+k from first wraps to last",
+      "cmd+shift+j from first wraps to last",
     );
 
     await inAct(async () => {
