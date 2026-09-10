@@ -6,10 +6,11 @@
  */
 import assert from "node:assert/strict";
 import { describe, it, afterEach, beforeEach } from "node:test";
+import { useState } from "react";
 import { inAct, mount, unmountAll, type Mounted } from "./support/dom.ts";
 import { Composer } from "../src/components/Composer";
 import { setPasteCardsEnabled } from "../src/uiPrefs";
-import type { ProviderInfo } from "../src/shared/ipc";
+import type { AttachmentInfo, ProviderInfo } from "../src/shared/ipc";
 import type { ReplyTarget } from "../src/replyContext";
 
 const PROVIDERS: ProviderInfo[] = [
@@ -31,8 +32,11 @@ function mountComposer(
     onListFiles?: (query: string) => Promise<string[]>;
     replyTo?: ReplyTarget | null;
     onClearReply?: () => void;
+    onRevealReply?: () => void;
+    replySourceUnavailable?: boolean;
     provider?: string;
     model?: string | null;
+    onPickAttachments?: () => Promise<AttachmentInfo[]>;
   } = {},
 ) {
   return mount(
@@ -63,6 +67,9 @@ function mountComposer(
       onPickMentionFolder={over.onPickMentionFolder}
       replyTo={over.replyTo}
       onClearReply={over.onClearReply}
+      onRevealReply={over.onRevealReply}
+      replySourceUnavailable={over.replySourceUnavailable}
+      onPickAttachments={over.onPickAttachments}
     />,
   );
 }
@@ -158,6 +165,148 @@ describe("Composer paste-cards and stash (#381)", () => {
     assert.match(sent[0], /<reply-context message="a1">/);
     assert.match(sent[0], /agent said folders first/);
     assert.match(sent[0], /why folders\?/);
+  });
+
+  it("source control on the reply chip reveals the quoted message", async () => {
+    let revealed = 0;
+    const replyTo: ReplyTarget = {
+      messageId: "a1",
+      threadId: "t1",
+      text: "Alpha needs a fix. Bravo is also wrong.",
+      kind: "selection",
+      sourceText: "Keep. Alpha needs a fix. Bravo is also wrong. Outro.",
+    };
+    const m = await mountComposer({
+      replyTo,
+      onRevealReply: () => {
+        revealed += 1;
+      },
+    });
+    const chip = m.query("[data-reply-chip]");
+    assert.ok(chip);
+    assert.equal(chip.getAttribute("data-reply-kind"), "selection");
+    await m.click(m.query("[data-reply-source]"));
+    assert.equal(revealed, 1);
+  });
+
+  it("keeps an unavailable quote readable and does not jump", async () => {
+    let revealed = 0;
+    const replyTo: ReplyTarget = {
+      messageId: "a1",
+      threadId: "t1",
+      text: "Alpha needs a fix.",
+      kind: "selection",
+      truncated: true,
+      sourceText: "Alpha needs a fix. Bravo.",
+    };
+    const m = await mountComposer({
+      replyTo,
+      replySourceUnavailable: true,
+      onRevealReply: () => {
+        revealed += 1;
+      },
+    });
+    const chip = m.query("[data-reply-chip]");
+    assert.ok(chip);
+    assert.match(chip.textContent ?? "", /Alpha needs a fix/);
+    assert.equal(chip.getAttribute("data-reply-source"), "unavailable");
+    assert.ok(m.query("[data-reply-truncated]"));
+    await m.click(m.query("[data-reply-source]"));
+    assert.equal(revealed, 0, "unavailable source must not navigate");
+  });
+
+  it("does not replace draft text or attachments when a cite chip appears", async () => {
+    const sent: string[] = [];
+    const attachment: AttachmentInfo = {
+      name: "note.txt",
+      path: "/tmp/note.txt",
+      kind: "file",
+    };
+
+    function Harness() {
+      const [replyTo, setReplyTo] = useState<ReplyTarget | null>(null);
+      return (
+        <div>
+          <button
+            type="button"
+            data-apply-cite=""
+            onClick={() =>
+              setReplyTo({
+                messageId: "a1",
+                threadId: "t1",
+                text: "Alpha needs a fix.",
+                kind: "selection",
+                sourceText: "Alpha needs a fix.",
+              })
+            }
+          >
+            cite
+          </button>
+          <Composer
+            threadId="t1"
+            branch="coder/power-ups"
+            permissionMode="default"
+            onPermissionModeChange={() => {}}
+            provider="claude"
+            model={null}
+            reasoningEffort={null}
+            providers={PROVIDERS}
+            workflows={[]}
+            onSetProvider={() => {}}
+            onSetReasoningEffort={() => {}}
+            onSaveWorkflow={async (t) => ({
+              id: "saved",
+              name: t.name,
+              builtin: false,
+              phases: t.phases,
+            })}
+            onRemoveWorkflow={async () => {}}
+            sessionId={null}
+            hasWorktree={true}
+            onSend={(prompt) => {
+              sent.push(prompt);
+            }}
+            onBuild={() => {}}
+            replyTo={replyTo}
+            onPickAttachments={async () => [attachment]}
+          />
+        </div>
+      );
+    }
+
+    const m = await mount(<Harness />);
+    await m.type(textarea(m), "keep this prompt");
+    await m.click(m.query('button[aria-label="Attach files or folders"]'));
+    await m.flush();
+    assert.ok(m.query("[data-attachment-kind]"));
+    await m.click(m.query("[data-apply-cite]"));
+    assert.ok(m.query("[data-reply-chip]"));
+    assert.equal(textarea(m).value, "keep this prompt");
+    assert.ok(m.query("[data-attachment-kind]"), "attachment survives cite");
+    assert.equal(sent.length, 0);
+  });
+
+  it("sends a truncated cite with the existing bound marker", async () => {
+    const sent: string[] = [];
+    const replyTo: ReplyTarget = {
+      messageId: "a1",
+      threadId: "t1",
+      text: "Q".repeat(80),
+      kind: "selection",
+      truncated: true,
+      sourceText: "full",
+    };
+    const m = await mountComposer({
+      replyTo,
+      onSend: (prompt) => {
+        sent.push(prompt);
+      },
+    });
+    await m.type(textarea(m), "trim this");
+    await m.click(m.query('button[aria-label="Send"]'));
+    assert.equal(sent.length, 1);
+    assert.match(sent[0], /quoted message truncated/);
+    assert.match(sent[0], /trim this/);
   });
 
   it("Browse folder inserts a directory mention", async () => {

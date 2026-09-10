@@ -270,6 +270,10 @@ interface ComposerProps {
   /** Quote one agent message as bounded context on the next send. */
   replyTo?: ReplyTarget | null;
   onClearReply?: () => void;
+  /** Jump back to the quoted source message in the transcript. */
+  onRevealReply?: () => void;
+  /** Source message is missing or no longer matches the snapshot. */
+  replySourceUnavailable?: boolean;
   /**
    * File/image/folder picker for attachments. Absent hides the attach button
    * (tests / shells that do not wire one). `includeImages: false` on
@@ -482,6 +486,8 @@ export const Composer = memo(function Composer({
   onPickMentionFolder,
   replyTo = null,
   onClearReply,
+  onRevealReply,
+  replySourceUnavailable = false,
   onPickAttachments,
   onPickFolderAttachments,
   onSaveAttachmentImage,
@@ -1488,7 +1494,11 @@ export const Composer = memo(function Composer({
   const composeOutgoing = useCallback(
     (draft: string) => {
       let body = composePastePrompt(draft.trim(), pasteCards);
-      if (replyTo) body = wrapReplyContext(replyTo.text, body, replyTo.messageId);
+      if (replyTo) {
+        body = wrapReplyContext(replyTo.text, body, replyTo.messageId, {
+          truncated: replyTo.truncated,
+        });
+      }
       return body;
     },
     [pasteCards, replyTo],
@@ -2217,17 +2227,59 @@ export const Composer = memo(function Composer({
           </ul>
         )}
         {replyTo && (
-          <div className={styles.replyChip} data-reply-chip="">
-            <span className={styles.replyChipLabel}>Reply</span>
-            <span className={styles.replyChipText}>
-              {excerptReply(replyTo.text)}
+          <div
+            className={styles.replyChip}
+            data-reply-chip=""
+            data-reply-kind={replyTo.kind ?? "message"}
+            data-reply-source={
+              replySourceUnavailable ? "unavailable" : "ok"
+            }
+            data-reply-truncated={replyTo.truncated ? "" : undefined}
+            onClick={() => {
+              if (replySourceUnavailable) return;
+              onRevealReply?.();
+            }}
+          >
+            <span className={styles.replyChipLabel}>
+              {replyTo.kind === "selection" ? "Cite" : "Reply"}
             </span>
+            <button
+              type="button"
+              className={styles.replyChipSource}
+              data-reply-source=""
+              disabled={replySourceUnavailable}
+              aria-label={
+                replySourceUnavailable
+                  ? "Quoted source is unavailable"
+                  : "Show quoted message"
+              }
+              title={
+                replySourceUnavailable
+                  ? "Quoted source is unavailable"
+                  : "Show quoted message"
+              }
+              onClick={(e) => {
+                e.stopPropagation();
+                if (replySourceUnavailable) return;
+                onRevealReply?.();
+              }}
+            >
+              {excerptReply(replyTo.text)}
+            </button>
+            {replyTo.truncated && (
+              <span className={styles.replyChipTruncated} data-reply-truncated="">
+                truncated
+              </span>
+            )}
             <button
               type="button"
               className={styles.attachmentRemove}
               aria-label="Cancel reply"
               title="Cancel reply"
-              onClick={() => onClearReply?.()}
+              onClick={(e) => {
+                e.stopPropagation();
+                onClearReply?.();
+              }}
             >
               ×
             </button>
