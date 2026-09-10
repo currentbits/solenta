@@ -438,6 +438,134 @@ describe("automation CRUD + scheduler", () => {
     assert.equal(mine.length, MAX_THREADS_PER_AUTOMATION + 3);
   });
 
+  it("keeps a quota-wait automation thread and its transcript past the cap (#932)", async () => {
+    const created = services.addAutomation(store, {
+      projectId: "p1",
+      name: "Sweep",
+      prompt: "go",
+      provider: "claude",
+      preset: "hourly",
+    });
+    const parked = services.createThread(store, {
+      projectId: "p1",
+      title: "Sweep",
+      automationId: created.id,
+    });
+    const parkedAt = Date.now() - 8 * 24 * 60 * 60 * 1000;
+    store.updateThread(parked.id, {
+      createdAt: parkedAt,
+      status: "quota-wait",
+      quotaWaitUntil: Date.now() + 7 * 24 * 60 * 60 * 1000,
+      lastError: "usage limit reached",
+    });
+    store.appendMessage(parked.id, {
+      id: "u1",
+      role: "user",
+      text: "review the repo",
+      createdAt: parkedAt,
+    });
+    store.appendMessage(parked.id, {
+      id: "a1",
+      role: "assistant",
+      text: "started, then hit quota",
+      createdAt: parkedAt + 1,
+    });
+
+    for (let i = 0; i < MAX_THREADS_PER_AUTOMATION; i++) {
+      const thread = await fireAuto(created.id);
+      thread.status = "done";
+    }
+
+    assert.ok(store.getThread(parked.id), "quota-wait thread must survive prune");
+    assert.equal(store.getThread(parked.id).status, "quota-wait");
+    assert.deepEqual(
+      store.getMessages(parked.id).map((m) => m.text),
+      ["review the repo", "started, then hit quota"],
+    );
+  });
+
+  it("keeps other unfinished automation threads past the cap (#932)", async () => {
+    const created = services.addAutomation(store, {
+      projectId: "p1",
+      name: "Sweep",
+      prompt: "go",
+      provider: "claude",
+      preset: "hourly",
+    });
+    const now = Date.now();
+    const failover = services.createThread(store, {
+      projectId: "p1",
+      title: "Sweep",
+      automationId: created.id,
+    });
+    store.updateThread(failover.id, {
+      createdAt: now - 4000,
+      status: "idle",
+      quotaFailoverPending: true,
+    });
+    const asking = services.createThread(store, {
+      projectId: "p1",
+      title: "Sweep",
+      automationId: created.id,
+    });
+    store.updateThread(asking.id, {
+      createdAt: now - 3000,
+      status: "idle",
+      pendingQuestion: {
+        id: "q1",
+        askedAt: now - 3000,
+        questions: [{ question: "Merge?", options: [{ label: "Yes" }] }],
+      },
+    });
+    const planning = services.createThread(store, {
+      projectId: "p1",
+      title: "Sweep",
+      automationId: created.id,
+    });
+    store.updateThread(planning.id, {
+      createdAt: now - 2000,
+      status: "idle",
+      pendingPlan: {
+        id: "plan1",
+        plan: "Ship the parked work after quota resets.",
+        askedAt: now - 2000,
+      },
+    });
+
+    for (let i = 0; i < MAX_THREADS_PER_AUTOMATION; i++) {
+      const thread = await fireAuto(created.id);
+      thread.status = "done";
+    }
+
+    assert.ok(store.getThread(failover.id), "quotaFailoverPending");
+    assert.ok(store.getThread(asking.id), "pendingQuestion");
+    assert.ok(store.getThread(planning.id), "pendingPlan");
+  });
+
+  it("still prunes done and failed automation history past the cap", async () => {
+    const created = services.addAutomation(store, {
+      projectId: "p1",
+      name: "Sweep",
+      prompt: "go",
+      provider: "claude",
+      preset: "hourly",
+    });
+    const done = await fireAuto(created.id);
+    done.status = "done";
+    const failed = await fireAuto(created.id);
+    failed.status = "failed";
+
+    for (let i = 0; i < MAX_THREADS_PER_AUTOMATION; i++) {
+      const thread = await fireAuto(created.id);
+      thread.status = "done";
+    }
+
+    assert.equal(store.getThread(done.id), null);
+    assert.equal(store.getThread(failed.id), null);
+    assert.equal(store.getMessages(done.id).length, 0);
+    assert.equal(store.getMessages(failed.id).length, 0);
+  });
+
   it("leaves other automations and hand-made threads untouched", async () => {
     const created = services.addAutomation(store, {
       projectId: "p1",

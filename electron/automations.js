@@ -3,8 +3,9 @@
 const PRESETS = new Set(["hourly", "daily", "weekly"]);
 
 // Issue #134: keep only the newest N threads per automation so hourly fires
-// cannot grow the store without bound. No settings knob; skipped live/pinned
-// threads still count toward the kept set.
+// cannot grow the store without bound. No settings knob; skipped live, pinned,
+// or unfinished threads still count toward the kept set. Quota-wait and other
+// unfinished waits are not disposable history (#932).
 const MAX_THREADS_PER_AUTOMATION = 20;
 
 /**
@@ -90,9 +91,33 @@ function patchAutomation(store, id, patch) {
 }
 
 /**
+ * Keep-last-N must not discard unfinished work (#932). Completed, failed,
+ * and idle history is disposable. A live run, a quota park, a scheduled
+ * quota failover resume, or a turn still waiting on the user is not.
+ * Worktree-backed and pinned threads stay for the same reason as #134.
+ *
+ * @param {object | null | undefined} t
+ * @returns {boolean}
+ */
+function isRetainedAutomationThread(t) {
+  if (!t) return false;
+  if (t.worktreePath || t.pinnedAt) return true;
+  if (t.status === "working" || t.status === "quota-wait") return true;
+  // fireFailoverResume no-ops if the row is gone — same trap as quota-wait.
+  if (t.quotaFailoverPending === true) return true;
+  // awaitingInput is working-only in the UI; questions/plans persist after
+  // grok/kimi finish the turn, so they can sit on idle/done rows.
+  if (t.awaitingInput === true) return true;
+  if (t.pendingQuestion) return true;
+  if (t.pendingPlan) return true;
+  return false;
+}
+
+/**
  * Drop oldest threads for one automation past MAX_THREADS_PER_AUTOMATION.
- * Never deletes a live run (status "working"), a worktree-backed thread, or
- * a pinned thread. Those skipped threads still occupy a keep slot.
+ * Never deletes a live run, unfinished wait, worktree-backed thread, or
+ * pinned thread. Those skipped threads still occupy a keep slot when they
+ * fall inside the newest N; past the cap they can make the list exceed N.
  * Does not save; caller owns durability.
  *
  * @param {import("./store").Store} store
@@ -109,7 +134,7 @@ function pruneAutomationThreads(store, automationId) {
   indexed.sort((a, b) => (b.t.createdAt - a.t.createdAt) || (b.i - a.i));
   for (let i = MAX_THREADS_PER_AUTOMATION; i < indexed.length; i++) {
     const t = indexed[i].t;
-    if (t.status === "working" || t.worktreePath || t.pinnedAt) continue;
+    if (isRetainedAutomationThread(t)) continue;
     services.purgeThread(store, t.id);
   }
 }
@@ -221,7 +246,7 @@ function listAutomationRuns(store, automationId) {
     runs,
     // At the cap, older fires *may* have been dropped. Count cannot prove
     // deletion: the first MAX fires are all still here, and protected
-    // working/pinned/worktree rows can keep the list at/over the cap.
+    // working/pinned/worktree/unfinished rows can keep the list at/over the cap.
     retentionLimitReached: runs.length >= MAX_THREADS_PER_AUTOMATION,
   };
 }
