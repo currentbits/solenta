@@ -4540,8 +4540,9 @@ export interface CoderApi {
     }): Promise<{ attachment: AttachmentInfo | null }>;
     /**
      * Persist a directory tree under userData/attachments/<threadId> and
-     * return a kind=folder chip. Web File System Access / directory-entry
-     * drops use this because the browser has no absolute path for the folder.
+     * return a kind=folder chip. Web File System Access picks and
+     * directory-entry drops use this because the browser has no absolute
+     * path for the live folder.
      */
     saveFolder(input: {
       threadId: string;

@@ -227,14 +227,26 @@ describe("attachments module", () => {
     const attachRoot = path.join(tmpDir, "attachments");
     if (fs.existsSync(attachRoot)) {
       const walk = (dir) => {
-        for (const name of fs.readdirSync(dir)) {
-          assert.notEqual(name, "outside.txt");
-          const full = path.join(dir, name);
-          if (fs.statSync(full).isDirectory()) walk(full);
+        const names = [];
+        for (const ent of fs.readdirSync(dir, { withFileTypes: true })) {
+          const full = path.join(dir, ent.name);
+          names.push(full);
+          if (ent.isDirectory()) names.push(...walk(full));
         }
+        return names;
       };
-      walk(attachRoot);
+      for (const full of walk(attachRoot)) {
+        assert.ok(
+          full.startsWith(attachRoot),
+          `must not write outside attachments: ${full}`,
+        );
+        assert.ok(
+          !full.includes(`${path.sep}outside.txt`) && !full.endsWith("abs.txt"),
+          `traversal file must not land on disk: ${full}`,
+        );
+      }
     }
+    assert.equal(fs.existsSync(path.join(tmpDir, "outside.txt")), false);
   });
 
   it("omits the Images filter when includeImages is false (#1169)", async () => {

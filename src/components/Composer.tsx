@@ -272,12 +272,14 @@ interface ComposerProps {
   /**
    * File/image/folder picker for attachments. Absent hides the attach button
    * (tests / shells that do not wire one). `includeImages: false` on
-   * text-only models so the native dialog omits the Images filter. Web pick
-   * is image-only, so the paperclip also hides when the model refuses images.
+   * text-only models so the native dialog omits the Images filter. Web still
+   * shows the paperclip for files/folders; Composer strips kind=image.
    */
   onPickAttachments?: (opts?: {
     includeImages?: boolean;
   }) => Promise<AttachmentInfo[]>;
+  /** Web folder pick via showDirectoryPicker. Absent: paperclip is files-only. */
+  onPickFolderAttachments?: () => Promise<AttachmentInfo[]>;
   /** Persist a pasted image; returns its attachment or null when rejected. */
   onSaveAttachmentImage?: (dataUrl: string) => Promise<AttachmentInfo | null>;
   /** Thumbnail data URL for an attached image; null when unavailable. */
@@ -476,6 +478,7 @@ export const Composer = memo(function Composer({
   replyTo = null,
   onClearReply,
   onPickAttachments,
+  onPickFolderAttachments,
   onSaveAttachmentImage,
   onLoadAttachmentImage,
   onDropAttachmentFiles,
@@ -896,6 +899,7 @@ export const Composer = memo(function Composer({
   /** Type-in filter for the drilled-in model list. Empty on the provider screen. */
   const [modelQuery, setModelQuery] = useState("");
   const [buildMenuOpen, setBuildMenuOpen] = useState(false);
+  const [attachOpen, setAttachOpen] = useState(false);
   const [bestOfNOpen, setBestOfNOpen] = useState(false);
   const [bestIds, setBestIds] = useState<string[]>([]);
   const [manageOpen, setManageOpen] = useState(false);
@@ -904,6 +908,7 @@ export const Composer = memo(function Composer({
     Record<string, string>
   >({});
   const modeWrapRef = useRef<HTMLDivElement>(null);
+  const attachWrapRef = useRef<HTMLDivElement>(null);
   const modelWrapRef = useRef<HTMLDivElement>(null);
   const modelTriggerRef = useRef<HTMLButtonElement>(null);
   const effortWrapRef = useRef<HTMLDivElement>(null);
@@ -1211,7 +1216,14 @@ export const Composer = memo(function Composer({
       : undefined;
 
   useEffect(() => {
-    if (!modeOpen && !modelOpen && !effortOpen && !buildMenuOpen && !bestOfNOpen)
+    if (
+      !modeOpen &&
+      !modelOpen &&
+      !effortOpen &&
+      !buildMenuOpen &&
+      !bestOfNOpen &&
+      !attachOpen
+    )
       return;
     const onDoc = (e: MouseEvent) => {
       const t = e.target as Node;
@@ -1230,10 +1242,13 @@ export const Composer = memo(function Composer({
       if (bestOfNOpen && !bestOfNWrapRef.current?.contains(t)) {
         setBestOfNOpen(false);
       }
+      if (attachOpen && !attachWrapRef.current?.contains(t)) {
+        setAttachOpen(false);
+      }
     };
     document.addEventListener("mousedown", onDoc);
     return () => document.removeEventListener("mousedown", onDoc);
-  }, [modeOpen, modelOpen, effortOpen, buildMenuOpen, bestOfNOpen]);
+  }, [modeOpen, modelOpen, effortOpen, buildMenuOpen, bestOfNOpen, attachOpen]);
 
   // When the popover opens, seed highlight on the selected model and focus the list.
   useEffect(() => {
@@ -1356,6 +1371,7 @@ export const Composer = memo(function Composer({
     effortOpen ||
     buildMenuOpen ||
     bestOfNOpen ||
+    attachOpen ||
     viewOpen;
   const closeAllMenus = useCallback(() => {
     setModeOpen(false);
@@ -1367,6 +1383,7 @@ export const Composer = memo(function Composer({
     }
     setBuildMenuOpen(false);
     setBestOfNOpen(false);
+    setAttachOpen(false);
     setViewOpen(false);
   }, [modelOpen, closeModelPicker]);
   useEscapeClose(anyMenuOpen, closeAllMenus);
@@ -1734,9 +1751,13 @@ export const Composer = memo(function Composer({
     onDismissError?.();
   };
 
-  const pickAttachments = () => {
-    if (!onPickAttachments || disabled || sending) return;
-    onPickAttachments({ includeImages: canAttachImages })
+  const runAttachmentPick = (
+    picker:
+      | ((opts?: { includeImages?: boolean }) => Promise<AttachmentInfo[]>)
+      | undefined,
+  ) => {
+    if (!picker || disabled || sending) return;
+    picker({ includeImages: canAttachImages })
       .then(addAttachments)
       .catch((err) => {
         const msg =
@@ -1745,6 +1766,26 @@ export const Composer = memo(function Composer({
             : "Failed to attach";
         setLocalError(msg);
       });
+  };
+
+  const canPickWebFolderNow = () =>
+    Boolean(onPickFolderAttachments) &&
+    isWebMode() &&
+    typeof (window as Window & { showDirectoryPicker?: unknown })
+      .showDirectoryPicker === "function";
+
+  const pickAttachments = () => {
+    if (!onPickAttachments || disabled || sending) return;
+    if (canPickWebFolderNow()) {
+      setAttachOpen((v) => !v);
+      setModeOpen(false);
+      setModelOpen(false);
+      setEffortOpen(false);
+      setBuildMenuOpen(false);
+      setBestOfNOpen(false);
+      return;
+    }
+    runAttachmentPick(onPickAttachments);
   };
 
   /** Clipboard images become saved attachments; large text pastes become cards. */
@@ -2264,30 +2305,72 @@ export const Composer = memo(function Composer({
         </div>
         <div className={styles.controls}>
           <div className={styles.pills}>
-            {onPickAttachments && !ask && (canAttachImages || !isWebMode()) && (
-              <button
-                type="button"
-                className={styles.pill}
-                disabled={disabled || sending}
-                aria-disabled={disabled || sending ? "true" : undefined}
-                aria-label="Attach files or folders"
-                title="Attach files or folders"
-                onClick={pickAttachments}
-              >
-                <svg
-                  width="13"
-                  height="13"
-                  viewBox="0 0 16 16"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="1.5"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  aria-hidden="true"
+            {onPickAttachments && !ask && (
+              <div className={styles.modeWrap} ref={attachWrapRef}>
+                <button
+                  type="button"
+                  className={styles.pill}
+                  disabled={disabled || sending}
+                  aria-disabled={disabled || sending ? "true" : undefined}
+                  aria-label="Attach files or folders"
+                  title="Attach files or folders"
+                  aria-haspopup={
+                    canPickWebFolderNow() ? "menu" : undefined
+                  }
+                  aria-expanded={
+                    canPickWebFolderNow() ? attachOpen : undefined
+                  }
+                  onClick={pickAttachments}
                 >
-                  <path d="m12.5 7.5-4.95 4.95a3.5 3.5 0 0 1-4.95-4.95l5.3-5.3a2.33 2.33 0 0 1 3.3 3.3l-5.3 5.3a1.17 1.17 0 0 1-1.65-1.65l4.6-4.6" />
-                </svg>
-              </button>
+                  <svg
+                    width="13"
+                    height="13"
+                    viewBox="0 0 16 16"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1.5"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    aria-hidden="true"
+                  >
+                    <path d="m12.5 7.5-4.95 4.95a3.5 3.5 0 0 1-4.95-4.95l5.3-5.3a2.33 2.33 0 0 1 3.3 3.3l-5.3 5.3a1.17 1.17 0 0 1-1.65-1.65l4.6-4.6" />
+                  </svg>
+                </button>
+                {attachOpen && (
+                  <ul
+                    className={styles.modeMenu}
+                    role="menu"
+                    aria-label="Attach"
+                  >
+                    <li>
+                      <button
+                        type="button"
+                        className={styles.modeOption}
+                        role="menuitem"
+                        onClick={() => {
+                          setAttachOpen(false);
+                          runAttachmentPick(onPickAttachments);
+                        }}
+                      >
+                        Files
+                      </button>
+                    </li>
+                    <li>
+                      <button
+                        type="button"
+                        className={styles.modeOption}
+                        role="menuitem"
+                        onClick={() => {
+                          setAttachOpen(false);
+                          runAttachmentPick(onPickFolderAttachments);
+                        }}
+                      >
+                        Folder
+                      </button>
+                    </li>
+                  </ul>
+                )}
+              </div>
             )}
             {hasSpeech && speech && (
               <>

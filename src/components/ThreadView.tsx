@@ -653,6 +653,8 @@ interface ThreadViewProps {
   onPickAttachments?: (opts?: {
     includeImages?: boolean;
   }) => Promise<AttachmentInfo[]>;
+  /** Web folder pick (showDirectoryPicker → saveFolder). */
+  onPickFolderAttachments?: () => Promise<AttachmentInfo[]>;
   /** Persist a pasted image; returns its attachment or null when rejected. */
   onSaveAttachmentImage?: (dataUrl: string) => Promise<AttachmentInfo | null>;
   /** Loads one attached image (absolute path) as a data URL. */
@@ -4343,6 +4345,7 @@ export const ThreadView = memo(function ThreadView({
   onOpenWorkspacePath,
   onLoadImage,
   onPickAttachments,
+  onPickFolderAttachments,
   onSaveAttachmentImage,
   onLoadAttachmentImage,
   onDropAttachmentFiles,
@@ -7392,6 +7395,7 @@ export const ThreadView = memo(function ThreadView({
         replyTo={replyTo}
         onClearReply={() => setReplyTo(null)}
         onPickAttachments={onPickAttachments}
+        onPickFolderAttachments={onPickFolderAttachments}
         onSaveAttachmentImage={onSaveAttachmentImage}
         onLoadAttachmentImage={onLoadAttachmentImage}
         onDropAttachmentFiles={onDropAttachmentFiles}

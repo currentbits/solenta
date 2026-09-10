@@ -244,6 +244,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     openWorkspacePath,
     loadToolImage,
     pickAttachments,
+    pickFolderAttachments,
     saveAttachmentImage,
     loadAttachmentImage,
     dropAttachmentFiles,
@@ -1835,6 +1836,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         onOpenWorkspacePath={openWorkspacePath}
         onLoadImage={loadToolImage}
         onPickAttachments={pickAttachments}
+        onPickFolderAttachments={pickFolderAttachments}
         onSaveAttachmentImage={saveAttachmentImage}
         onLoadAttachmentImage={loadAttachmentImage}
         onDropAttachmentFiles={dropAttachmentFiles}

@@ -189,7 +189,7 @@ function saveImage(userDataPath, threadId, dataUrl) {
   if (!ext) return null;
   const buf = Buffer.from(m[2], "base64");
   if (!buf.length || buf.length > MAX_IMAGE_BYTES) return null;
-  const dir = path.join(userDataPath, DIR_NAME, tid);
+  const dir = threadDir(userDataPath, tid);
   try {
     fs.mkdirSync(dir, { recursive: true });
     const name = `${Date.now()}-${randomUUID().slice(0, 8)}.${ext}`;

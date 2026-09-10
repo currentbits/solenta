@@ -165,13 +165,12 @@ async function filesToAttachments(
   return out;
 }
 
-/** ponytail: web mode can only attach images, not folders. Native picker allows folders; `<input type=file>` cannot. Text-only models hide the paperclip in web (#1172) instead of opening this picker. */
-function pickWebImageFiles(): Promise<File[]> {
+/** Web file picker. No accept and no webkitdirectory: folders are a separate chip. */
+function pickWebFiles(): Promise<File[]> {
   return new Promise((resolve) => {
     const input = document.createElement("input");
     input.type = "file";
     input.multiple = true;
-    input.accept = "image/*";
     let settled = false;
     const finish = (files: File[]) => {
       if (settled) return;
@@ -183,6 +182,60 @@ function pickWebImageFiles(): Promise<File[]> {
     input.addEventListener("cancel", () => finish([]));
     input.click();
   });
+}
+
+type WebFolderFile = { relativePath: string; dataUrl: string };
+
+type WebDirEntry = {
+  kind: string;
+  getFile?: () => Promise<File>;
+  entries?: () => AsyncIterableIterator<[string, WebDirEntry]>;
+};
+
+type WebDirHandle = {
+  name: string;
+  entries: () => AsyncIterableIterator<[string, WebDirEntry]>;
+};
+
+async function readDirectoryHandle(
+  handle: WebDirHandle,
+  prefix = "",
+): Promise<WebFolderFile[]> {
+  const out: WebFolderFile[] = [];
+  for await (const [name, entry] of handle.entries()) {
+    if (entry.kind === "file" && entry.getFile) {
+      const file = await entry.getFile();
+      const dataUrl = await readFileAsDataUrl(file);
+      if (dataUrl) out.push({ relativePath: `${prefix}${name}`, dataUrl });
+      continue;
+    }
+    if (entry.kind === "directory" && typeof entry.entries === "function") {
+      const nestedEntries = entry.entries.bind(entry);
+      out.push(
+        ...(await readDirectoryHandle(
+          { name, entries: nestedEntries },
+          `${prefix}${name}/`,
+        )),
+      );
+    }
+  }
+  return out;
+}
+
+async function pickWebFolder(): Promise<{
+  name: string;
+  files: WebFolderFile[];
+} | null> {
+  const picker = (
+    window as Window & { showDirectoryPicker?: () => Promise<WebDirHandle> }
+  ).showDirectoryPicker;
+  if (typeof picker !== "function") return null;
+  try {
+    const handle = await picker();
+    return { name: handle.name, files: await readDirectoryHandle(handle) };
+  } catch {
+    return null;
+  }
 }
 
 export type WorkflowSaveInput = Omit<WorkflowTemplateInfo, "id" | "builtin"> & {
@@ -556,10 +609,12 @@ export interface UseCoderResult {
   ) => Promise<void>;
   /** Data URL for one image a tool returned; null when it is gone. */
   loadToolImage: (name: string) => Promise<string | null>;
-  /** Native file/image/folder picker, or a web <input type=file> for images. */
+  /** Native file/image/folder picker, or a web <input type=file> for files. */
   pickAttachments: (opts?: {
     includeImages?: boolean;
   }) => Promise<AttachmentInfo[]>;
+  /** Web-only folder pick via showDirectoryPicker; persists through saveFolder. */
+  pickFolderAttachments: () => Promise<AttachmentInfo[]>;
   /** Persist a pasted image for the selected thread; null when rejected. */
   saveAttachmentImage: (dataUrl: string) => Promise<AttachmentInfo | null>;
   /** Data URL for one attached image; null when it is gone. */
@@ -3021,10 +3076,9 @@ export function useCoder(): UseCoderResult {
   const pickAttachments = useCallback(async (opts?: {
     includeImages?: boolean;
   }) => {
-    if (opts?.includeImages === false && isWebMode()) return [];
     if (isWebMode()) {
       if (!selectedThreadId) return [];
-      return filesToAttachments(await pickWebImageFiles(), {
+      return filesToAttachments(await pickWebFiles(), {
         image: saveAttachmentImage,
         file: saveAttachmentFile,
       });
@@ -3034,6 +3088,22 @@ export function useCoder(): UseCoderResult {
     });
     return result.attachments;
   }, [api, saveAttachmentFile, saveAttachmentImage, selectedThreadId]);
+
+  const pickFolderAttachments = useCallback(async () => {
+    if (!selectedThreadId) return [];
+    const picked = await pickWebFolder();
+    if (!picked) return [];
+    try {
+      const result = await api.attachments.saveFolder({
+        threadId: selectedThreadId,
+        name: picked.name,
+        files: picked.files,
+      });
+      return result.attachment ? [result.attachment] : [];
+    } catch {
+      return [];
+    }
+  }, [api, selectedThreadId]);
 
   const loadAttachmentImage = useCallback(
     async (path: string) => {
@@ -3994,6 +4064,7 @@ export function useCoder(): UseCoderResult {
     openWorkspacePath,
     loadToolImage,
     pickAttachments,
+    pickFolderAttachments,
     saveAttachmentImage,
     loadAttachmentImage,
     dropAttachmentFiles,

@@ -275,6 +275,113 @@ describe("web mode attachments", () => {
     m.unmount();
   });
 
+  it("web paperclip file input has no accept and no webkitdirectory", async () => {
+    const inputs: HTMLInputElement[] = [];
+    const orig = document.createElement.bind(document);
+    document.createElement = ((tag: string, options?: ElementCreationOptions) => {
+      const el = orig(tag, options);
+      if (String(tag).toLowerCase() === "input") {
+        inputs.push(el as HTMLInputElement);
+      }
+      return el;
+    }) as typeof document.createElement;
+
+    const fake = createFakeCoder({
+      threads: [thread({ id: "t-web-pick", title: "web pick" })],
+    });
+    const m = await boot(fake);
+    dropCoder();
+    try {
+      const btn = m.query('button[aria-label="Attach files or folders"]');
+      assert.ok(btn, "web paperclip must stay");
+      await m.click(btn);
+      await m.flush();
+      const input = inputs.find((el) => el.type === "file");
+      assert.ok(input, "paperclip must open <input type=file>");
+      assert.equal(
+        input.accept,
+        "",
+        "web picker must not be image-only (issue #1173)",
+      );
+      assert.equal(
+        Boolean(input.webkitdirectory),
+        false,
+        "must not use webkitdirectory (flattens folders into files)",
+      );
+      assert.equal(input.multiple, true);
+    } finally {
+      document.createElement = orig;
+      m.unmount();
+    }
+  });
+
+  it("web paperclip Folder uses showDirectoryPicker and saveFolder", async () => {
+    const saved: AttachmentInfo = {
+      kind: "folder",
+      path: "/tmp/attachments/t-web-folder/specs",
+      name: "specs",
+    };
+    const fake = createFakeCoder({
+      threads: [thread({ id: "t-web-folder", title: "web folder" })],
+      saveFolder: () => ({ attachment: saved }),
+    });
+    const nested = new File(["# a"], "a.md", { type: "text/markdown" });
+    const picker = async () => ({
+      kind: "directory" as const,
+      name: "specs",
+      entries: async function* () {
+        yield [
+          "a.md",
+          {
+            kind: "file" as const,
+            getFile: async () => nested,
+          },
+        ] as const;
+      },
+    });
+    (
+      window as unknown as { showDirectoryPicker: typeof picker }
+    ).showDirectoryPicker = picker;
+
+    const m = await boot(fake);
+    dropCoder();
+    try {
+      const btn = m.query('button[aria-label="Attach files or folders"]');
+      assert.ok(btn, "web paperclip must stay");
+      await m.click(btn);
+      await m.flush();
+      const folderItem = m.byText("Folder");
+      assert.ok(folderItem, "web paperclip must offer Folder when showDirectoryPicker exists");
+      await m.click(folderItem);
+      await m.flush();
+
+      const calls = fake.of("attachments.saveFolder");
+      assert.ok(calls.length > 0, "Folder pick must call attachments.saveFolder");
+      const input = calls[calls.length - 1].args[0] as {
+        threadId: string;
+        name: string;
+        files: Array<{ relativePath: string; dataUrl: string }>;
+      };
+      assert.equal(input.threadId, "t-web-folder");
+      assert.equal(input.name, "specs");
+      assert.equal(input.files.length, 1);
+      assert.equal(input.files[0].relativePath, "a.md");
+      assert.ok(
+        input.files[0].dataUrl.startsWith("data:"),
+        "folder files must be data URLs",
+      );
+      assert.ok(
+        m.query('[data-attachment-kind="folder"]'),
+        "returned folder must surface as a composer chip",
+      );
+      assert.ok(m.text().includes("specs"));
+    } finally {
+      delete (window as unknown as { showDirectoryPicker?: unknown })
+        .showDirectoryPicker;
+      m.unmount();
+    }
+  });
+
   it("web directory drop walks webkitGetAsEntry and saves a folder chip", async () => {
     const saved: AttachmentInfo = {
       kind: "folder",

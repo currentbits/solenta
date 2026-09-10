@@ -156,6 +156,7 @@ function composer(
     incoming?: AttachmentInfo[];
     onIncomingConsumed?: () => void;
     onSaveImage?: (dataUrl: string) => Promise<AttachmentInfo | null>;
+    folderPicks?: AttachmentInfo[];
     provider?: string;
     model?: string | null;
     providers?: ProviderInfo[];
@@ -194,6 +195,11 @@ function composer(
           ? undefined
           : (over.onPick ?? (async () => picks))
       }
+      onPickFolderAttachments={
+        over.folderPicks
+          ? async () => over.folderPicks ?? []
+          : undefined
+      }
       onSaveAttachmentImage={
         over.onSaveImage ??
         (async () => (over.savedImage === undefined ? null : over.savedImage))
@@ -217,6 +223,40 @@ function installNativeBridge(): () => void {
 }
 
 describe("Composer attachments", () => {
+  it("web paperclip with a folder picker offers Files and Folder", async () => {
+    const h: Harness = { sends: [] };
+    const m = await mount(
+      composer(h, { picks: [FILE], folderPicks: [FOLDER] }),
+    );
+    (
+      window as unknown as { showDirectoryPicker: () => Promise<unknown> }
+    ).showDirectoryPicker = async () => ({ name: "specs" });
+    try {
+      const btn = m.query('button[aria-label="Attach files or folders"]');
+      assert.ok(btn, "paperclip must stay");
+      await m.click(btn);
+      await m.flush();
+      assert.equal(
+        m.query('[data-attachment-kind]'),
+        null,
+        "first click must open the chooser, not attach immediately",
+      );
+      assert.ok(m.byText("Files"), "chooser must offer Files");
+      const folderItem = m.byText("Folder");
+      assert.ok(folderItem, "chooser must offer Folder");
+      await m.click(folderItem);
+      await m.flush();
+      assert.ok(
+        m.query('[data-attachment-kind="folder"]'),
+        "Folder must pin a folder chip",
+      );
+    } finally {
+      delete (window as unknown as { showDirectoryPicker?: unknown })
+        .showDirectoryPicker;
+      m.unmount();
+    }
+  });
+
   it("hides the attach button when no picker is provided (web mode)", async () => {
     const h: Harness = { sends: [] };
     const m = await mount(composer(h, { withPicker: false }));
@@ -499,7 +539,7 @@ describe("Composer attachments", () => {
     }
   });
 
-  it("hides the attach button on Codex Spark in web mode (#1172)", async () => {
+  it("keeps the attach button on Codex Spark in web mode for files", async () => {
     const h: Harness = { sends: [] };
     const m = await mount(
       composer(h, {
@@ -511,10 +551,9 @@ describe("Composer attachments", () => {
     );
     const attach = m.query('button[aria-label="Attach files or folders"]');
     m.unmount();
-    assert.equal(
+    assert.ok(
       attach,
-      null,
-      "web picker is image-only, so Spark has nothing to attach",
+      "web picker attaches files, so Spark keeps the paperclip",
     );
   });
 
