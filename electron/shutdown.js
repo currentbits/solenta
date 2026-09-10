@@ -13,10 +13,12 @@ function reason(err) {
 /**
  * App teardown, in the only order that is safe:
  *
- * 1. live runs, so nothing keeps writing while the rest goes away;
+ * 1. live runs, so nothing keeps writing while the rest goes away
+ *    (TERM owned agent groups, wait for exit or the grace deadline, KILL);
  * 2. the iOS simulator, whose recording finalization has to commit its
  *    artifacts and whose device ownership has to be released before exit;
- * 3. servers, schedulers, and child processes.
+ * 3. servers, schedulers, and child processes (same TERM/wait/KILL for
+ *    managed terminal and devserver groups).
  *
  * Every phase is best-effort and isolated: a failing phase is logged and the
  * later ones still run, because a cleanup error must never leave a device
@@ -110,9 +112,10 @@ function installShutdown({ app, exit, cleanup, log = (m) => console.warn(m) }) {
     }
     shutdownThenExit();
   });
-  // process.exit/app.exit, not app.quit(): stopAll already SIGTERM'd agent
-  // groups, and app.quit() is async and may not finish before the terminal is
-  // gone (scripts/dev.js kills Electron then process.exit(0)s immediately).
+  // process.exit/app.exit, not app.quit(): cleanup has already awaited
+  // TERM/KILL of owned groups. app.quit() is async and may not finish
+  // before the terminal is gone (scripts/dev.js kills Electron then
+  // process.exit(0)s immediately — do not switch that script to app.quit()).
   process.on("SIGINT", shutdownThenExit);
   process.on("SIGTERM", shutdownThenExit);
   return shutdown;

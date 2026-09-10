@@ -6,6 +6,7 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const { EventEmitter } = require("node:events");
+const { spawn } = require("node:child_process");
 const {
   captureServerUrl,
   detectScripts,
@@ -13,6 +14,7 @@ const {
   appendLog,
   start,
   stop,
+  killAll,
 } = require("../devservers.js");
 
 function fakeNpmChild() {
@@ -382,6 +384,104 @@ describe("start spawn shape", () => {
       "flag must not be a trailing npm extra arg (concurrently would swallow it)",
     );
     stop("t-wrap");
+  });
+});
+
+describe("killAll quit escalation", () => {
+  function alive(pid) {
+    if (!pid) return false;
+    try {
+      process.kill(pid, 0);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  async function spawnStubbornSidecar() {
+    const ready = path.join(
+      os.tmpdir(),
+      `coder-dev-ready-${process.pid}-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+    );
+    const child = spawn(
+      process.execPath,
+      [
+        "-e",
+        `process.on("SIGTERM",()=>{});require("fs").writeFileSync(${JSON.stringify(ready)},"READY");setInterval(()=>{},50);`,
+      ],
+      { detached: true, stdio: ["ignore", "pipe", "pipe"] },
+    );
+    const t0 = Date.now();
+    while (!fs.existsSync(ready) && Date.now() - t0 < 3000) {
+      await new Promise((r) => setTimeout(r, 15));
+    }
+    try {
+      fs.unlinkSync(ready);
+    } catch {
+      // ignore
+    }
+    return child;
+  }
+
+  it("waits to SIGKILL a SIGTERM-ignoring sidecar, then returns", async (t) => {
+    if (process.platform === "win32") return t.skip("POSIX signals");
+    const dir = tmpDir();
+    fs.writeFileSync(
+      path.join(dir, "package.json"),
+      JSON.stringify({ scripts: { dev: "node -e 'setInterval(()=>{},1000)'" } }),
+    );
+    const child = await spawnStubbornSidecar();
+    start("t-killall", dir, "dev", {
+      spawn: () => child,
+    });
+    assert.ok(child && child.pid);
+    try {
+      const t0 = Date.now();
+      await killAll(200);
+      const elapsed = Date.now() - t0;
+      assert.ok(elapsed >= 100, `did not wait for grace (${elapsed}ms)`);
+      assert.ok(elapsed < 1500, `hung quit (${elapsed}ms)`);
+      assert.equal(alive(child.pid), false);
+    } finally {
+      try {
+        process.kill(-child.pid, "SIGKILL");
+      } catch {
+        try {
+          child.kill("SIGKILL");
+        } catch {
+          // ignore
+        }
+      }
+    }
+  });
+
+  it("stop() returns without waiting for SIGKILL", async (t) => {
+    if (process.platform === "win32") return t.skip("POSIX signals");
+    const dir = tmpDir();
+    fs.writeFileSync(
+      path.join(dir, "package.json"),
+      JSON.stringify({ scripts: { dev: "node -e 'setInterval(()=>{},1000)'" } }),
+    );
+    const child = await spawnStubbornSidecar();
+    start("t-stop-fast", dir, "dev", {
+      spawn: () => child,
+    });
+    try {
+      const t0 = Date.now();
+      stop("t-stop-fast");
+      assert.ok(Date.now() - t0 < 150);
+      assert.equal(alive(child.pid), true, "in-app stop must not wait for SIGKILL");
+    } finally {
+      try {
+        process.kill(-child.pid, "SIGKILL");
+      } catch {
+        try {
+          child.kill("SIGKILL");
+        } catch {
+          // ignore
+        }
+      }
+    }
   });
 });
 

@@ -73,7 +73,7 @@ const workflowEngine = require("./workflow.js");
 const { wrapCommand } = require("./ssh.js");
 const { wslTarget } = require("./wsl.js");
 const { resolveSandbox } = require("./sandbox.js");
-const { killTree } = require("./proc.js");
+const { killTree, awaitPendingKills } = require("./proc.js");
 const { stop: stopDevServer } = require("./devservers.js");
 const {
   runVerifyCommand,
@@ -8782,6 +8782,15 @@ function createRunner(opts) {
   }
 
   /**
+   * Await SIGKILL escalation for children stopAll/stopRun already TERMed.
+   * Quit path only: in-app stopRun stays fire-and-forget (#1232).
+   * @returns {Promise<void>}
+   */
+  async function reapStoppedChildren() {
+    await awaitPendingKills();
+  }
+
+  /**
    * Await drain of the fire-and-forget exporters (tests / app-quit): the
    * session transcript queue and buffered OTel spans.
    * @returns {Promise<void>}
@@ -8908,6 +8917,7 @@ function createRunner(opts) {
     activeRunId,
     isAutoTurn,
     stopAll,
+    reapStoppedChildren,
     flushTranscripts,
     workflowNameFromThreadId,
     toWorkflowView,

@@ -20,6 +20,7 @@
 const spawn = require("cross-spawn");
 const { wrapCommand } = require("./ssh.js");
 const { wslTarget } = require("./wsl.js");
+const { killTree, awaitKillTree, signalGroup } = require("./proc.js");
 
 /** Committed output kept per session. Older text is dropped from the front. */
 const BUFFER_LIMIT = 200_000;
@@ -159,32 +160,17 @@ function emptyState() {
 }
 
 /**
+ * Pid-only fallback when we have no ChildProcess (so killTree cannot
+ * watch `exit` as the PID-reuse guard). Ordinary close() prefers the child.
+ *
  * @param {number} pid
- * @param {NodeJS.Platform} platform
  */
-function killProcessGroup(pid, platform) {
+function killProcessGroup(pid) {
   if (!pid) return;
-  // Windows has no POSIX process groups; process.kill(-pid) throws there.
-  const target = platform === "win32" ? pid : -pid;
-  try {
-    process.kill(target, "SIGTERM");
-  } catch {
-    try {
-      process.kill(pid, "SIGTERM");
-    } catch {
-      // already gone
-    }
-  }
+  const stub = { pid, kill: (sig) => process.kill(pid, sig) };
+  signalGroup(stub, "SIGTERM");
   const timer = setTimeout(() => {
-    try {
-      process.kill(target, "SIGKILL");
-    } catch {
-      try {
-        process.kill(pid, "SIGKILL");
-      } catch {
-        // already gone
-      }
-    }
+    signalGroup(stub, "SIGKILL");
   }, KILL_FALLBACK_MS);
   if (typeof timer.unref === "function") timer.unref();
 }
@@ -329,13 +315,31 @@ function close(threadId) {
   const sess = sessions.get(threadId);
   if (!sess) return emptyState();
   sessions.delete(threadId);
-  if (sess.pid) killProcessGroup(sess.pid, sess.platform);
+  // In-app pane close: fire-and-forget, same as stopRun. Quit uses killAll.
+  if (sess.child) killTree(sess.child, KILL_FALLBACK_MS);
+  else if (sess.pid) killProcessGroup(sess.pid);
   return emptyState();
 }
 
-/** Kill every session. Called from the app quit path. */
-function killAll() {
-  for (const threadId of [...sessions.keys()]) close(threadId);
+/**
+ * Kill every session and wait for exit or SIGKILL. App-quit path only:
+ * ordinary close() must not hold the pane for the grace period (#1232).
+ *
+ * @param {number} [sigkillAfterMs]
+ * @returns {Promise<void>}
+ */
+async function killAll(sigkillAfterMs = KILL_FALLBACK_MS) {
+  const waits = [];
+  for (const threadId of [...sessions.keys()]) {
+    const sess = sessions.get(threadId);
+    sessions.delete(threadId);
+    if (sess && sess.child) {
+      waits.push(awaitKillTree(sess.child, sigkillAfterMs));
+    } else if (sess && sess.pid) {
+      killProcessGroup(sess.pid);
+    }
+  }
+  await Promise.all(waits);
 }
 
 module.exports = { open, write, read, close, killAll, BUFFER_LIMIT };

@@ -41,6 +41,7 @@ const { createPrStateRefresher, createRetentionSweeper } = require("./worktrees.
 const { createWedgedLaneWatchdog } = require("./mergeQueue.js");
 const { killAll: killAllDevServers } = require("./devservers.js");
 const { killAll: killAllTerminals } = require("./terminal.js");
+const { awaitPendingKills } = require("./proc.js");
 const { startScheduler } = require("./automations.js");
 const { startAutoDispatch } = require("./autodispatch.js");
 const { startPostMergeScheduler } = require("./postmerge.js");
@@ -806,18 +807,28 @@ installShutdown({
     runAppCleanup({
       log: (msg) => console.warn(msg),
       // Stop active runs and drain session transcript queue before exit.
-      stopRuns() {
+      async stopRuns() {
         if (!runner) return;
         try {
-          runner.stopAll();
-        } catch {
-          // ignore
-        }
-        try {
-          // Fire-and-forget flush; stopAll already kicked flush.
-          void runner.flushTranscripts();
-        } catch {
-          // ignore
+          try {
+            runner.stopAll();
+          } catch {
+            // ignore
+          }
+          try {
+            // Fire-and-forget flush; stopAll already kicked flush.
+            void runner.flushTranscripts();
+          } catch {
+            // ignore
+          }
+        } finally {
+          // TERM already sent; wait for exit or SIGKILL before the rest of
+          // teardown (and before app.exit discards the escalation timers).
+          try {
+            await runner.reapStoppedChildren();
+          } catch {
+            // ignore
+          }
         }
       },
       // After the runs are down (nothing new can start a recording) and before
@@ -831,7 +842,7 @@ installShutdown({
 });
 
 /** Servers, schedulers, and child processes: last, after runs and the device. */
-function teardownServices() {
+async function teardownServices() {
   if (webServer) {
     try {
       void webServer.close();
@@ -929,12 +940,17 @@ function teardownServices() {
     iosSimulatorStream = null;
   }
   try {
-    killAllDevServers();
+    await killAllDevServers();
   } catch {
     // ignore
   }
   try {
-    killAllTerminals();
+    await killAllTerminals();
+  } catch {
+    // ignore
+  }
+  try {
+    await awaitPendingKills();
   } catch {
     // ignore
   }
