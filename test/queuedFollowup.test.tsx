@@ -520,6 +520,46 @@ describe("queued follow-up (issue #92 / #314)", () => {
     m.unmount();
   });
 
+  it("a rejected cancel keeps the queued strip and does not fill the composer", async () => {
+    const { fake, m } = await bootOnBusyThread();
+
+    await m.type(m.query("textarea"), "never mind this one");
+    await m.click(m.query('button[aria-label="Send"]'));
+    await m.flush();
+    const ta = m.query("textarea") as HTMLTextAreaElement;
+    assert.equal(ta.value, "", "queueing clears the composer");
+
+    const orig = fake.api.threads.setQueued.bind(fake.api.threads);
+    fake.api.threads.setQueued = (input) => {
+      if ((input as { prompt: string | null }).prompt === null) {
+        fake.calls.push({ channel: "threads.setQueued", args: [input] });
+        return Promise.reject(new Error("queue write failed"));
+      }
+      return orig(input);
+    };
+
+    await m.click(m.query("button[data-cancel-queued]"));
+    await m.flush();
+
+    const listed = await fake.api.threads.list();
+    const row = listed.find((t) => t.id === "t-busy");
+    assert.equal(
+      row?.queued?.prompt,
+      "never mind this one",
+      "a rejected clear must leave the host queue in place",
+    );
+    assert.ok(
+      m.query("[data-queued-prompt]"),
+      "a rejected clear must keep the queued strip",
+    );
+    assert.equal(
+      ta.value,
+      "",
+      "a rejected clear must not put the discarded prompt into the composer",
+    );
+    m.unmount();
+  });
+
   async function queueTwoThoughts(m: Awaited<ReturnType<typeof bootOnBusyThread>>["m"]) {
     await m.type(m.query("textarea"), "first thought");
     await m.click(m.query('button[aria-label="Send"]'));

@@ -372,8 +372,10 @@ export interface UseCoderResult {
   ) => Promise<void>;
   /** Follow-ups waiting for a run to land, keyed by thread id. */
   queued: Record<string, QueuedMessage>;
-  /** Drop a thread's queued follow-up. Defaults to the selected thread. */
-  cancelQueued: (threadId?: string) => void;
+  /** Drop a thread's queued follow-up. Defaults to the selected thread.
+   *  Resolves true once the host clear lands; false if there was nothing
+   *  to drop or the persist rejected (overlay restored). */
+  cancelQueued: (threadId?: string) => Promise<boolean>;
   /** Re-send a queued prompt after a delivery failure (issue #314). */
   retryQueued: (threadId?: string) => void;
   /** Replace a thread's queued follow-up text in place (issue #364 / #809). */
@@ -1051,19 +1053,30 @@ export function useCoder(): UseCoderResult {
   }, []);
 
   const cancelQueued = useCallback(
-    (threadId?: string) => {
+    (threadId?: string): Promise<boolean> => {
       const id = threadId ?? selectedRef.current;
-      if (!id) return;
+      if (!id) return Promise.resolve(false);
       const held = threadsRef.current.find((t) => t.id === id);
-      if (!held?.queued) return;
+      if (!held?.queued) return Promise.resolve(false);
       applyThreads(
         threadsRef.current.map((t) =>
           t.id === id ? { ...t, queued: null } : t,
         ),
       );
-      void api.threads.setQueued({ threadId: id, prompt: null }).catch((err) => {
-        setError({ scope: "run", message: errorMessage(err) });
-      });
+      return api.threads
+        .setQueued({ threadId: id, prompt: null })
+        .then(() => true)
+        .catch((err) => {
+          setError({ scope: "run", message: errorMessage(err) });
+          // Host still has the prompt — put the overlay back. Do not
+          // setQueued the old payload: that appends and duplicates.
+          applyThreads(
+            threadsRef.current.map((t) =>
+              t.id === id ? { ...t, queued: held.queued } : t,
+            ),
+          );
+          return false;
+        });
     },
     [api, applyThreads],
   );

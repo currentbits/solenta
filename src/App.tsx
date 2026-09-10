@@ -886,12 +886,14 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
   // onClick, so cancelQueued's optional threadId would swallow the DOM event
   // and cancel nothing.
   const handleCancelQueued = useCallback(() => {
-    // Non-destructive cancel (#364): hand the discarded text back to the
-    // composer, which applies it only onto an empty draft.
+    // Non-destructive cancel (#364): restore the discarded text onto an
+    // empty composer only after the host clear lands. A rejected clear
+    // keeps the overlay; filling the draft then would duplicate on send.
     const id = selectedThreadId;
     const text = id ? queued[id]?.prompt : null;
-    cancelQueued();
-    if (id && text) setQueuedDraftRestore({ threadId: id, text });
+    void cancelQueued().then((cleared) => {
+      if (cleared && id && text) setQueuedDraftRestore({ threadId: id, text });
+    });
   }, [cancelQueued, selectedThreadId, queued]);
 
   const handleRetryQueued = useCallback(() => {
