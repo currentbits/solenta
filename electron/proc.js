@@ -62,23 +62,54 @@ function signalGroup(child, sig) {
   }
 }
 
+/** Quit path only (#1233): once set, killTree SIGKILLs immediately. */
+let shuttingDown = false;
+
+/**
+ * Mark process teardown. Agent CLIs spawn detached on POSIX, so an unref'd
+ * SIGKILL timer dies with Electron and a SIGTERM-ignorer is left behind.
+ * installShutdown calls this before cleanup so every killTree during quit
+ * reaps the group before app.exit. In-app Stop does not set this.
+ */
+function beginShutdown() {
+  shuttingDown = true;
+}
+
+/** Test isolation: node:test may reuse a process across cases in one file. */
+function resetShutdownForTests() {
+  shuttingDown = false;
+}
+
 /**
  * SIGTERM the child's process group, then SIGKILL after `sigkillAfterMs`.
- * Returns the escalation timer so callers can clearTimeout in finish().
+ * During app quit (`beginShutdown`), SIGKILL immediately — the unref'd
+ * fallback never fires after `app.exit`. Returns the escalation timer so
+ * callers can clearTimeout in finish(), or null when no timer was armed.
  *
  * @param {import("node:child_process").ChildProcess} child
  * @param {number} sigkillAfterMs
- * @returns {ReturnType<typeof setTimeout>}
+ * @returns {ReturnType<typeof setTimeout> | null}
  */
 function killTree(child, sigkillAfterMs) {
+  if (shuttingDown) {
+    signalGroup(child, "SIGKILL");
+    return null;
+  }
   signalGroup(child, "SIGTERM");
   const timer = setTimeout(() => {
     signalGroup(child, "SIGKILL");
   }, sigkillAfterMs);
   // Unref'd like devservers.js: the escalation still fires while the app runs,
-  // but app quit (which kills without clearing the timer) is not held open 3s.
+  // but app quit is not held open 3s. Quit calls beginShutdown() first so
+  // this timer is never armed on the path that used to leak SIGTERM-ignorers.
   if (typeof timer.unref === "function") timer.unref();
   return timer;
 }
 
-module.exports = { killTree, agentSpawnOptions, signalGroup };
+module.exports = {
+  killTree,
+  agentSpawnOptions,
+  signalGroup,
+  beginShutdown,
+  resetShutdownForTests,
+};

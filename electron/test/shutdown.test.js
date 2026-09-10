@@ -4,12 +4,14 @@ const { describe, it, afterEach } = require("node:test");
 const assert = require("node:assert/strict");
 const { EventEmitter } = require("node:events");
 const { installShutdown, runAppCleanup } = require("../shutdown.js");
+const { resetShutdownForTests } = require("../proc.js");
 
 // Handlers land on the real `process` (that is the fix), so every test has to
 // put the default signal disposition back or the runner keeps them for good.
 afterEach(() => {
   process.removeAllListeners("SIGINT");
   process.removeAllListeners("SIGTERM");
+  resetShutdownForTests();
 });
 
 function harness(cleanup, opts = {}) {
