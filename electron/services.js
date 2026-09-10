@@ -1190,11 +1190,99 @@ function canHostWorktree(project) {
   );
 }
 
+const ISOLATE_ASK =
+  "Cannot isolate this fork: Ask threads stay in the shared checkout.";
+const ISOLATE_REMOTE =
+  "Cannot isolate this fork: remote projects cannot host git worktrees.";
+const ISOLATE_NO_GIT =
+  "Cannot isolate this fork: the project is not a local git repository.";
+
+/**
+ * Recorded start snapshot (#948 / #1223). Never writes baseBranch — that
+ * stays the merge/PR destination (#187).
+ *
+ * @param {object} patch
+ * @param {{ sha: string, branch: string | null, dirty?: boolean }} snapshot
+ */
+function applyIsolatedStartPatch(patch, snapshot) {
+  patch.pendingWorktree = true;
+  patch.leadSnapshotSha = snapshot.sha;
+  patch.leadSnapshotBranch = snapshot.branch;
+  if (snapshot.dirty) patch.leadSnapshotDirty = true;
+}
+
+/**
+ * Fail-closed isolated-workspace preflight (#1223). Throws before a fork
+ * thread is created. A caller-supplied SHA is reused so a Best of N race
+ * shares one committed start even if the source advances mid-launch.
+ *
+ * @param {import('./store').Store} store
+ * @param {object} source
+ * @param {{ leadSnapshotSha?: string | null, leadSnapshotBranch?: string | null, leadSnapshotDirty?: boolean }} [input]
+ * @returns {{ sha: string, branch: string | null, dirty: boolean }}
+ */
+function prepareIsolatedFork(store, source, input) {
+  if (source.ask === true) {
+    throw new Error(ISOLATE_ASK);
+  }
+  const projectId = source.projectId;
+  const project =
+    typeof store.getProject === "function" && projectId != null
+      ? store.getProject(projectId)
+      : null;
+  if (project && project.remoteHost) {
+    throw new Error(ISOLATE_REMOTE);
+  }
+  if (project && project.path) {
+    const { detectScm } = require("./scm.js");
+    const scm = detectScm(project.path);
+    if (scm && scm.support === "unsupported") {
+      throw new Error(
+        `Cannot isolate this fork: ${
+          scm.detail || "this checkout does not support git worktrees."
+        }`,
+      );
+    }
+  }
+  if (!canHostWorktree(project)) {
+    throw new Error(ISOLATE_NO_GIT);
+  }
+
+  const { captureLeadSnapshot, resolveWorktreeStart } = require("./worktrees.js");
+  const providedSha =
+    input && typeof input.leadSnapshotSha === "string"
+      ? input.leadSnapshotSha.trim()
+      : "";
+  if (providedSha) {
+    const sha = resolveWorktreeStart(
+      { leadSnapshotSha: providedSha },
+      project.path,
+    );
+    const branch =
+      input &&
+      typeof input.leadSnapshotBranch === "string" &&
+      input.leadSnapshotBranch.trim()
+        ? input.leadSnapshotBranch.trim()
+        : null;
+    return {
+      sha,
+      branch,
+      dirty: Boolean(input && input.leadSnapshotDirty === true),
+    };
+  }
+  return captureLeadSnapshot(store, source);
+}
+
 /**
  * Fork / hand off: new thread in the source's project. Source is never modified.
  *
+ * `worktree: true` is the opt-in chip path (#550): pendingWorktree when the
+ * project can host one, otherwise a silent no-op. `isolate: true` is the
+ * Best of N contract (#1223): required worktree + recorded start snapshot,
+ * fail-closed, never a checkout fallback. Ordinary Fork / hand-off omit both.
+ *
  * @param {import('./store').Store} store
- * @param {{ threadId: string, provider?: string, model?: string | null, worktree?: boolean }} input
+ * @param {{ threadId: string, provider?: string, model?: string | null, worktree?: boolean, isolate?: boolean, leadSnapshotSha?: string | null, leadSnapshotBranch?: string | null, leadSnapshotDirty?: boolean }} input
  * @returns {object}
  */
 function forkThread(store, input) {
@@ -1240,10 +1328,17 @@ function forkThread(store, input) {
     source.title != null && String(source.title) !== ""
       ? String(source.title)
       : "New Thread";
+  // Isolation is decided before createThread so a failed preflight cannot
+  // leave a checkout-bound candidate behind (#1223).
+  const isolatedSnapshot =
+    input && input.isolate === true
+      ? prepareIsolatedFork(store, source, input)
+      : null;
   // createThread applies THREAD_TITLE_MAX; "Fork: " + title uses the same path.
   const created = createThread(store, {
     projectId: source.projectId,
     title: `Fork: ${sourceTitle}`,
+    ...(isolatedSnapshot ? { baseBranch: source.baseBranch } : {}),
   });
 
   // createThread stamps lastVisitedAt = createdAt and handoffFrom null;
@@ -1276,9 +1371,13 @@ function forkThread(store, input) {
   if (source.ask === true) {
     forkPatch.ask = true;
   }
-  // Opt-in worktree for user-facing forks (issue #550 chips). Same guards
-  // as forkWorkerThread: not an Ask thread, project can host a worktree.
-  if (input.worktree === true) {
+  // isolate:true already passed preflight; apply snapshot + pendingWorktree
+  // in this same patch so isolation is not a follow-up update (#1223).
+  if (isolatedSnapshot) {
+    applyIsolatedStartPatch(forkPatch, isolatedSnapshot);
+  } else if (input.worktree === true) {
+    // Opt-in worktree for user-facing forks (issue #550 chips). Same guards
+    // as forkWorkerThread: not an Ask thread, project can host a worktree.
     const projectId = created.projectId ?? source.projectId;
     const project =
       typeof store.getProject === "function" && projectId != null
@@ -1366,10 +1465,7 @@ function forkWorkerThread(store, input, forkImpl = forkThread) {
     patch.poolAlias = resolved.alias;
   }
   if (wantsWorktree && snapshot) {
-    patch.pendingWorktree = true;
-    patch.leadSnapshotSha = snapshot.sha;
-    patch.leadSnapshotBranch = snapshot.branch;
-    if (snapshot.dirty) patch.leadSnapshotDirty = true;
+    applyIsolatedStartPatch(patch, snapshot);
   }
   const updated = store.updateThread(fork.id, patch);
   store.save();

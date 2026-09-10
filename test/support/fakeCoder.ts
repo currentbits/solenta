@@ -2469,6 +2469,10 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
           provider?: string;
           model?: string | null;
           worktree?: boolean;
+          isolate?: boolean;
+          leadSnapshotSha?: string | null;
+          leadSnapshotBranch?: string | null;
+          leadSnapshotDirty?: boolean;
         };
         calls.push({ channel: "threads.fork", args: [input] });
         const err = fail["threads.fork"];
@@ -2478,6 +2482,33 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
         if (!source) {
           // Match electron/services.js forkThread exactly.
           return Promise.reject(new Error(`Unknown thread: ${i.threadId}`));
+        }
+        if (i.isolate === true) {
+          if (source.ask === true) {
+            return Promise.reject(
+              new Error(
+                "Cannot isolate this fork: Ask threads stay in the shared checkout.",
+              ),
+            );
+          }
+          const proj = projects.find((p) => p.id === source.projectId);
+          if (proj?.remoteHost) {
+            return Promise.reject(
+              new Error(
+                "Cannot isolate this fork: remote projects cannot host git worktrees.",
+              ),
+            );
+          }
+          if (proj?.scm?.support === "unsupported") {
+            return Promise.reject(
+              new Error(
+                `Cannot isolate this fork: ${
+                  proj.scm.detail ||
+                  "this checkout does not support git worktrees."
+                }`,
+              ),
+            );
+          }
         }
 
         const providerProvided = Object.prototype.hasOwnProperty.call(
@@ -2582,7 +2613,26 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
           prUrl: null,
           prState: null,
           worktreePath: null,
-          ...(i.worktree === true ? { pendingWorktree: true } : {}),
+          ...(i.isolate === true
+            ? {
+                pendingWorktree: true,
+                leadSnapshotSha:
+                  (typeof i.leadSnapshotSha === "string" &&
+                    i.leadSnapshotSha.trim()) ||
+                  "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                leadSnapshotBranch:
+                  (typeof i.leadSnapshotBranch === "string" &&
+                    i.leadSnapshotBranch.trim()) ||
+                  source.branch ||
+                  "main",
+                ...(i.leadSnapshotDirty === true
+                  ? { leadSnapshotDirty: true }
+                  : {}),
+                baseBranch: source.baseBranch ?? null,
+              }
+            : i.worktree === true
+              ? { pendingWorktree: true }
+              : {}),
         });
         threads = [forked, ...threads];
         details[forked.id] = detail({ thread: forked, messages: [] });

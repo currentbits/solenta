@@ -3894,6 +3894,11 @@ function buildDevCoder(): CoderApi {
         const source = sourceDetail.thread;
         const providerChanging =
           input.provider != null && String(input.provider) !== source.provider;
+        if (input.isolate === true && source.ask === true) {
+          throw new Error(
+            "Cannot isolate this fork: Ask threads stay in the shared checkout.",
+          );
+        }
         const created = newThread({
           projectId: source.projectId,
           title: `Fork: ${source.title || "New Thread"}`,
@@ -3908,6 +3913,26 @@ function buildDevCoder(): CoderApi {
           teach: source.teach ?? null,
           ask: source.ask === true,
           handoffFrom: source.id,
+          ...(input.isolate === true
+            ? {
+                pendingWorktree: true,
+                leadSnapshotSha:
+                  (typeof input.leadSnapshotSha === "string" &&
+                    input.leadSnapshotSha.trim()) ||
+                  "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                leadSnapshotBranch:
+                  (typeof input.leadSnapshotBranch === "string" &&
+                    input.leadSnapshotBranch.trim()) ||
+                  source.branch ||
+                  "main",
+                ...(input.leadSnapshotDirty === true
+                  ? { leadSnapshotDirty: true }
+                  : {}),
+                baseBranch: source.baseBranch ?? null,
+              }
+            : input.worktree === true && source.ask !== true
+              ? { pendingWorktree: true }
+              : {}),
         });
         return registerThread(created);
       },

@@ -485,8 +485,14 @@ describe("Best of N submit sequence", () => {
         onSuggestCommitMessage={async () => ({ message: "feat: x" })}
         onPush={async () => ({ remote: "origin", branch: "main" })}
         onFork={async (opts) => {
-          calls.push(`fork:${opts?.provider ?? ""}`);
-          return { id: `fork-${opts?.provider}` } as ThreadInfo;
+          calls.push(
+            `fork:${opts?.provider ?? ""}:${opts?.isolate ? "iso" : "-"}:${opts?.leadSnapshotSha ?? "-"}`,
+          );
+          return {
+            id: `fork-${opts?.provider}`,
+            leadSnapshotSha: opts?.leadSnapshotSha ?? "snap1",
+            leadSnapshotBranch: "main",
+          } as ThreadInfo;
         }}
         onSelectThread={(id) => {
           calls.push(`select:${id}`);
@@ -500,9 +506,9 @@ describe("Best of N submit sequence", () => {
     await m.click(m.query("[data-best-of-n-run]"));
 
     assert.deepEqual(calls, [
-      "fork:kimi",
+      "fork:kimi:iso:-",
+      "fork:codex:iso:snap1",
       "run:fork-kimi:compare this",
-      "fork:codex",
       "run:fork-codex:compare this",
       "select:fork-kimi",
     ]);
@@ -605,10 +611,12 @@ describe("Best of N submit sequence", () => {
         onPush={async () => ({ remote: "origin", branch: "main" })}
         onFork={async (opts) => {
           calls.push(
-            `fork:${opts?.provider ?? ""}:${opts?.model === undefined ? "-" : opts.model}`,
+            `fork:${opts?.provider ?? ""}:${opts?.model === undefined ? "-" : opts.model}:${opts?.isolate ? "iso" : "-"}`,
           );
           return {
             id: `fork-${opts?.provider}`,
+            leadSnapshotSha: opts?.leadSnapshotSha ?? "snap1",
+            leadSnapshotBranch: "main",
           } as ThreadInfo;
         }}
         onSelectThread={(id) => {
@@ -623,14 +631,120 @@ describe("Best of N submit sequence", () => {
     await m.click(m.query("[data-best-of-n-run]"));
 
     assert.deepEqual(calls, [
-      "fork:claude:haiku",
+      "fork:claude:haiku:iso",
       "effort:fork-claude:low",
       "perm:fork-claude:plan",
+      "fork:kimi:-:iso",
       "run:fork-claude:compare this",
-      "fork:kimi:-",
       "run:fork-kimi:compare this",
       "select:fork-claude",
     ]);
+    m.unmount();
+  });
+
+  it("preflights unsupported projects before any fork", async () => {
+    const forks: unknown[] = [];
+    const m = await mount(
+      <ThreadView
+        detail={detail()}
+        project={{ ...project, remoteHost: "dev@box" }}
+        providers={PROVIDERS}
+        workflows={WORKFLOWS}
+        hasProjects={true}
+        onAddProject={() => {}}
+        onStartRun={async () => {}}
+        onStartWorkflow={() => {}}
+        onSaveWorkflow={noopSave}
+        onRemoveWorkflow={async () => {}}
+        onStopRun={() => {}}
+        onSetPermissionMode={() => {}}
+        onSetProvider={() => {}}
+        onSetReasoningEffort={() => {}}
+        onSetArchived={() => {}}
+        onDeleteThread={() => {}}
+        changesOpen={false}
+        changesNonce={0}
+        onCloseChanges={() => {}}
+        onFetchDiff={async () => ({ files: [], patch: "", truncated: false })}
+        onCommitChanges={async () => ({ subject: "x" })}
+        onRevertFile={async (path) => ({ path })}
+        onSuggestCommitMessage={async () => ({ message: "feat: x" })}
+        onPush={async () => ({ remote: "origin", branch: "main" })}
+        onFork={async (opts) => {
+          forks.push(opts);
+          return { id: "should-not" } as ThreadInfo;
+        }}
+      />,
+    );
+
+    await openBestOfN(m, "compare this");
+    await m.click(m.query('input[data-best-of-n-provider="claude"]'));
+    await m.click(m.query('input[data-best-of-n-provider="codex"]'));
+    await m.click(m.query("[data-best-of-n-run]"));
+
+    assert.equal(forks.length, 0, "preflight must not launch candidates");
+    assert.match(m.text(), /remote projects cannot host git worktrees/);
+    m.unmount();
+  });
+
+  it("keeps successful forks inspectable when a later start fails", async () => {
+    const calls: string[] = [];
+    const m = await mount(
+      <ThreadView
+        detail={detail()}
+        project={project}
+        providers={PROVIDERS}
+        workflows={WORKFLOWS}
+        hasProjects={true}
+        onAddProject={() => {}}
+        onStartRun={async (prompt, threadId) => {
+          calls.push(`run:${threadId}`);
+          if (threadId === "fork-codex") throw new Error("worktree add failed");
+        }}
+        onStartWorkflow={() => {}}
+        onSaveWorkflow={noopSave}
+        onRemoveWorkflow={async () => {}}
+        onStopRun={() => {}}
+        onSetPermissionMode={() => {}}
+        onSetProvider={() => {}}
+        onSetReasoningEffort={() => {}}
+        onSetArchived={() => {}}
+        onDeleteThread={() => {}}
+        changesOpen={false}
+        changesNonce={0}
+        onCloseChanges={() => {}}
+        onFetchDiff={async () => ({ files: [], patch: "", truncated: false })}
+        onCommitChanges={async () => ({ subject: "x" })}
+        onRevertFile={async (path) => ({ path })}
+        onSuggestCommitMessage={async () => ({ message: "feat: x" })}
+        onPush={async () => ({ remote: "origin", branch: "main" })}
+        onFork={async (opts) => {
+          calls.push(`fork:${opts?.provider ?? ""}`);
+          return {
+            id: `fork-${opts?.provider}`,
+            leadSnapshotSha: "snap1",
+            pendingWorktree: true,
+          } as ThreadInfo;
+        }}
+        onSelectThread={(id) => {
+          calls.push(`select:${id}`);
+        }}
+      />,
+    );
+
+    await openBestOfN(m, "compare this");
+    await m.click(m.query('input[data-best-of-n-provider="kimi"]'));
+    await m.click(m.query('input[data-best-of-n-provider="codex"]'));
+    await m.click(m.query("[data-best-of-n-run]"));
+
+    assert.deepEqual(calls, [
+      "fork:kimi",
+      "fork:codex",
+      "run:fork-kimi",
+      "run:fork-codex",
+      "select:fork-kimi",
+    ]);
+    assert.match(m.text(), /worktree add failed/);
     m.unmount();
   });
 });

@@ -5,7 +5,13 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import type { AgentProfile, ProviderInfo } from "../src/shared/ipc";
-import { buildBestOfNEntries, providerVendor } from "../src/bestOfN";
+import {
+  bestOfNForkOpts,
+  bestOfNIsolationError,
+  buildBestOfNEntries,
+  providerVendor,
+  snapshotFromFork,
+} from "../src/bestOfN";
 
 const AVAILABLE = ["claude", "codex", "kimi"];
 
@@ -214,5 +220,93 @@ describe("providerVendor", () => {
     };
     assert.equal(providerVendor(withVendor), "Anthropic");
     assert.equal(providerVendor(bare), "");
+  });
+});
+
+describe("bestOfNIsolationError", () => {
+  const gitProject = { path: "/tmp/repo" };
+
+  it("rejects Ask, remote, missing path, and unsupported scm", () => {
+    assert.equal(
+      bestOfNIsolationError({ ask: true }, gitProject),
+      "Cannot isolate this fork: Ask threads stay in the shared checkout.",
+    );
+    assert.equal(
+      bestOfNIsolationError({}, { path: "/tmp/repo", remoteHost: "box" }),
+      "Cannot isolate this fork: remote projects cannot host git worktrees.",
+    );
+    assert.equal(
+      bestOfNIsolationError({}, null),
+      "Cannot isolate this fork: the project is not a local git repository.",
+    );
+    assert.match(
+      bestOfNIsolationError(
+        {},
+        {
+          path: "/tmp/jj",
+          scm: {
+            kind: "jj",
+            support: "unsupported",
+            detail: "Jujutsu colocated repo.",
+          },
+        },
+      ) ?? "",
+      /Jujutsu colocated repo/,
+    );
+  });
+
+  it("allows a local git project", () => {
+    assert.equal(bestOfNIsolationError({}, gitProject), null);
+  });
+});
+
+describe("bestOfNForkOpts", () => {
+  it("marks isolate and reuses a captured snapshot on later candidates", () => {
+    const first = bestOfNForkOpts({
+      kind: "provider",
+      id: "claude",
+      provider: "claude",
+    });
+    assert.equal(first.isolate, true);
+    assert.equal(first.provider, "claude");
+    assert.equal(first.leadSnapshotSha, undefined);
+
+    const second = bestOfNForkOpts(
+      { kind: "provider", id: "codex", provider: "codex" },
+      { sha: "abc123", branch: "main", dirty: true },
+    );
+    assert.equal(second.isolate, true);
+    assert.equal(second.provider, "codex");
+    assert.equal(second.leadSnapshotSha, "abc123");
+    assert.equal(second.leadSnapshotBranch, "main");
+    assert.equal(second.leadSnapshotDirty, true);
+  });
+
+  it("includes model for a profile pick", () => {
+    const opts = bestOfNForkOpts({
+      kind: "profile",
+      id: "prof",
+      provider: "claude",
+      model: "haiku",
+      reasoningEffort: "low",
+      permissionMode: "plan",
+    });
+    assert.equal(opts.model, "haiku");
+    assert.equal(opts.isolate, true);
+  });
+});
+
+describe("snapshotFromFork", () => {
+  it("reads the recorded start and ignores empty sha", () => {
+    assert.deepEqual(
+      snapshotFromFork({
+        leadSnapshotSha: "deadbeef",
+        leadSnapshotBranch: "coder/lead",
+        leadSnapshotDirty: true,
+      }),
+      { sha: "deadbeef", branch: "coder/lead", dirty: true },
+    );
+    assert.equal(snapshotFromFork({ leadSnapshotSha: "  " }), null);
+    assert.equal(snapshotFromFork(null), null);
   });
 });

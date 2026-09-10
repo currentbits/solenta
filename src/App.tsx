@@ -50,6 +50,7 @@ import type {
   ConflictForecast,
   DistilledWorkflow,
   ProjectUpdateInput,
+  ThreadForkOpts,
   WorkSuggestion,
 } from "./shared/ipc";
 import styles from "./App.module.css";
@@ -871,7 +872,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
   );
 
   const handleForkOpen = useCallback(
-    async (opts?: { provider?: string; model?: string | null }) => {
+    async (opts?: ThreadForkOpts) => {
       if (!selectedThreadId) return null;
       return forkThread(selectedThreadId, opts);
     },
