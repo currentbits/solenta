@@ -1293,6 +1293,53 @@ describe("ThreadView mounted interactions", () => {
     assert.equal(document.activeElement, opener, "Escape restores opener focus");
     m.unmount();
   });
+
+  it("markdown image lightbox moves focus out of the image; Tab stays inside; Escape restores", async () => {
+    const dataUrl = "data:image/png;base64,AAAA";
+    const m = await mount(
+      view({
+        detail: detail({
+          messages: [
+            msg({
+              role: "assistant",
+              text: `Here is the shot:\n\n![5k run](${dataUrl})`,
+              createdAt: 1,
+              runId: "run-1",
+            }),
+          ],
+          workLog: [],
+        }),
+      }),
+    );
+    await m.flush();
+    const img = m.query("img.image") as HTMLElement | null;
+    assert.ok(img, "markdown image must render");
+    assert.equal(img.getAttribute("tabindex"), "0", "markdown image is focusable");
+    await inAct(() => img.focus());
+    assert.equal(document.activeElement, img);
+
+    await m.click(img);
+    const box = m.query("[data-image-lightbox]") as HTMLElement | null;
+    assert.ok(box, "lightbox open");
+    assert.ok(
+      box.contains(document.activeElement),
+      "opening the dialog must move focus inside it",
+    );
+    assert.notEqual(document.activeElement, img);
+
+    await m.pressFocused("Tab");
+    const first = document.activeElement as HTMLElement;
+    assert.ok(box.contains(first), "Tab stays inside");
+    assert.equal(first.tagName, "BUTTON");
+
+    await m.pressFocused("Tab");
+    assert.equal(document.activeElement, first, "Tab wraps inside the lightbox");
+
+    await m.pressFocused("Escape");
+    assert.equal(m.query("[data-image-lightbox]"), null);
+    assert.equal(document.activeElement, img, "Escape restores the markdown image");
+    m.unmount();
+  });
 });
 
 describe("ThreadView review bar", () => {
