@@ -1181,7 +1181,7 @@ describe("plugin slash commands", () => {
       installPath,
       files,
       commands,
-      secret = "plugin-secret-value",
+      secret = "dummy-plugin-value",
     } = opts;
     const manifest = { name };
     if (commands) manifest.commands = commands;
@@ -1350,7 +1350,7 @@ describe("plugin slash commands", () => {
     assert.ok(!dumped.includes("user-secret-value"));
     assert.ok(!dumped.includes("cache-secret"));
     assert.ok(!dumped.includes("market-secret"));
-    assert.ok(!dumped.includes("plugin-secret-value"));
+    assert.ok(!dumped.includes("dummy-plugin-value"));
 
     const stagedRoot = path.join(userData, "harness-imports");
     for (const id of fs.readdirSync(stagedRoot)) {
