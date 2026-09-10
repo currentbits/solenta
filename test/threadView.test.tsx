@@ -1235,7 +1235,7 @@ describe("ThreadView mounted interactions", () => {
     m.unmount();
   });
 
-  it("opening the lightbox moves focus inside; Tab stays inside", async () => {
+  it("opening the lightbox moves focus out of the opener; Tab stays inside; Escape restores", async () => {
     const dataUrl = "data:image/png;base64,AAAA";
     const m = await mount(
       view({
@@ -1268,13 +1268,17 @@ describe("ThreadView mounted interactions", () => {
     await m.click(lightboxGroup);
     await m.click(m.query("button.toolToggle"));
     await m.flush();
+    const opener = m.query("button.toolToggle") as HTMLElement | null;
+    assert.ok(opener, "expanded tool toggle");
+    await inAct(() => opener.focus());
     await m.click(m.query("img.toolImage"));
     const box = m.query("[data-image-lightbox]") as HTMLElement | null;
     assert.ok(box, "lightbox open");
     assert.ok(
       box.contains(document.activeElement),
-      "opening moves focus inside the lightbox",
+      "opening the dialog must move focus inside it",
     );
+    assert.notEqual(document.activeElement, opener);
 
     await m.pressFocused("Tab");
     const first = document.activeElement as HTMLElement;
@@ -1283,6 +1287,10 @@ describe("ThreadView mounted interactions", () => {
 
     await m.pressFocused("Tab");
     assert.equal(document.activeElement, first, "Tab wraps inside the lightbox");
+
+    await m.pressFocused("Escape");
+    assert.equal(m.query("[data-image-lightbox]"), null);
+    assert.equal(document.activeElement, opener, "Escape restores opener focus");
     m.unmount();
   });
 });
@@ -1419,7 +1427,7 @@ describe("ThreadView review bar", () => {
     m.unmount();
   });
 
-  it("opening review-undo confirm moves focus inside; Tab stays inside", async () => {
+  it("opening review-undo confirm moves focus out of the opener; Tab stays inside; Escape restores", async () => {
     const restores: Array<{ threadId: string; sha: string }> = [];
     const m = await mount(
       view({
@@ -1431,18 +1439,20 @@ describe("ThreadView review bar", () => {
       }),
     );
     await m.flush();
-    const secondUndo = m.query(
+    const opener = m.query(
       "[data-review-bar='run-2'] [data-review-undo]",
     ) as HTMLButtonElement | null;
-    assert.ok(secondUndo, "Undo on second run");
-    await m.click(secondUndo);
+    assert.ok(opener, "Undo on second run");
+    await inAct(() => opener.focus());
+    await m.click(opener);
     await m.flush();
     const dialog = m.query("[data-review-undo-confirm]") as HTMLElement | null;
     assert.ok(dialog, "confirm dialog open");
     assert.ok(
       dialog.contains(document.activeElement),
-      "opening moves focus inside the dialog",
+      "opening the dialog must move focus inside it",
     );
+    assert.notEqual(document.activeElement, opener);
 
     await m.pressFocused("Tab");
     const first = document.activeElement as HTMLElement;
@@ -1457,12 +1467,17 @@ describe("ThreadView review bar", () => {
     await m.pressFocused("Tab");
     assert.equal(document.activeElement, first, "Tab wraps inside the dialog");
     assert.equal(restores.length, 0, "Tab must not restore");
+
+    await m.pressFocused("Escape");
+    assert.equal(m.query("[data-review-undo-confirm]"), null);
+    assert.equal(document.activeElement, opener, "Escape restores opener focus");
+    assert.equal(restores.length, 0, "Escape must not restore");
     m.unmount();
   });
 });
 
 describe("ThreadView nested dialog focus", () => {
-  it("opening rewind confirm moves focus inside; Tab stays inside", async () => {
+  it("opening rewind confirm moves focus out of the opener; Tab stays inside; Escape restores", async () => {
     const rewinds: string[] = [];
     const m = await mount(
       view({
@@ -1490,14 +1505,18 @@ describe("ThreadView nested dialog focus", () => {
     const editBtn = m.query('[data-edit-message="u1"]');
     assert.ok(editBtn, "edit affordance");
     await m.click(editBtn as HTMLElement);
-    await m.click(m.query('[data-edit-resubmit="u1"]') as HTMLElement);
+    const opener = m.query('[data-edit-resubmit="u1"]') as HTMLElement | null;
+    assert.ok(opener, "resubmit");
+    await inAct(() => opener.focus());
+    await m.click(opener);
     await m.flush();
     const dialog = m.query("[data-rewind-confirm]") as HTMLElement | null;
     assert.ok(dialog, "rewind confirm open");
     assert.ok(
       dialog.contains(document.activeElement),
-      "opening moves focus inside the dialog",
+      "opening the dialog must move focus inside it",
     );
+    assert.notEqual(document.activeElement, opener);
 
     await m.pressFocused("Tab");
     const first = document.activeElement as HTMLElement;
@@ -1512,10 +1531,15 @@ describe("ThreadView nested dialog focus", () => {
     const third = document.activeElement as HTMLElement;
     assert.ok(dialog.contains(third), "third Tab stays inside");
     assert.deepEqual(rewinds, []);
+
+    await m.pressFocused("Escape");
+    assert.equal(m.query("[data-rewind-confirm]"), null);
+    assert.equal(document.activeElement, opener, "Escape restores opener focus");
+    assert.deepEqual(rewinds, []);
     m.unmount();
   });
 
-  it("opening appsnap moves focus inside; Tab stays inside including the window list", async () => {
+  it("opening appsnap moves focus out of the composer; Tab stays inside including the window list; Escape restores", async () => {
     const m = await mount(
       view({
         onListSnapWindows: async () => [
@@ -1524,6 +1548,9 @@ describe("ThreadView nested dialog focus", () => {
         ],
       }),
     );
+    const opener = m.query("textarea") as HTMLElement | null;
+    assert.ok(opener, "composer");
+    await inAct(() => opener.focus());
     await inAct(() => {
       for (const type of ["keydown", "keyup", "keydown", "keyup"] as const) {
         window.dispatchEvent(
@@ -1536,8 +1563,9 @@ describe("ThreadView nested dialog focus", () => {
     assert.ok(dialog, "appsnap overlay open");
     assert.ok(
       dialog.contains(document.activeElement),
-      "opening moves focus inside the overlay",
+      "opening the dialog must move focus inside it",
     );
+    assert.notEqual(document.activeElement, opener);
     assert.ok(m.query('[data-appsnap-window="win-a"]'), "window list rendered");
 
     await m.pressFocused("Tab");
@@ -1557,6 +1585,10 @@ describe("ThreadView nested dialog focus", () => {
 
     await m.pressFocused("Tab");
     assert.equal(document.activeElement, first, "Tab wraps including windows");
+
+    await m.pressFocused("Escape");
+    assert.equal(m.query("[data-appsnap]"), null);
+    assert.equal(document.activeElement, opener, "Escape restores opener focus");
     m.unmount();
   });
 });
