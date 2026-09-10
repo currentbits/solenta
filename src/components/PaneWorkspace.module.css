@@ -64,7 +64,7 @@
   flex-shrink: 0;
   height: 28px;
   padding: 0 8px 0 10px;
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid var(--border-soft);
   background: var(--bg-elevated);
   cursor: grab;
 }

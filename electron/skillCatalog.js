@@ -5,7 +5,7 @@
  * never come from the client.
  */
 
-const { listSkills } = require("./skills.js");
+const { installedCatalogIds } = require("./skills.js");
 
 const PONYTAIL_URL = "https://github.com/DietrichGebert/ponytail";
 
@@ -37,18 +37,7 @@ function getCatalogEntry(id) {
  */
 function listCatalog(opts = {}) {
   const env = opts.env || process.env;
-  const listed = listSkills(null, env, opts.userDataPath);
-  const installedIds = new Set();
-  for (const row of listed) {
-    if (
-      row.provenance === "curated" &&
-      row.origin &&
-      typeof row.origin.catalogId === "string" &&
-      row.origin.catalogId
-    ) {
-      installedIds.add(row.origin.catalogId);
-    }
-  }
+  const installedIds = installedCatalogIds(env, opts.userDataPath);
   return CATALOG.map((entry) => ({
     id: entry.id,
     name: entry.name,

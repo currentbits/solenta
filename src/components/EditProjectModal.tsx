@@ -62,7 +62,7 @@ export function EditProjectModal({
     onClose();
   }, [onClose, pending]);
 
-  useEscapeClose(true, handleClose);
+  useEscapeClose(!pending, handleClose);
   useModalFocus(true, dialogRef);
 
   const host = remoteHost.trim();
@@ -144,6 +144,7 @@ export function EditProjectModal({
         aria-modal="true"
         aria-labelledby="edit-project-title"
         tabIndex={-1}
+        data-edit-project-dialog=""
         onClick={(e) => e.stopPropagation()}
       >
         <div className={styles.header}>

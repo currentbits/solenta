@@ -19,6 +19,7 @@ import type {
   AppStatus,
   AttachmentInfo,
   AutomationInfo,
+  AutomationRunsResult,
   UpdateStatus,
   AutomationWrite,
   ChatMessage,
@@ -73,6 +74,10 @@ import type {
   SkillCatalogEntry,
   SkillImportPreview,
   SkillInstallRequest,
+  HarnessSourceId,
+  HarnessImportPreview,
+  HarnessInstallRequest,
+  HarnessInstallResult,
   SkillInstallResult,
   SkillPluginExtra,
   SkillPluginInstallResult,
@@ -85,7 +90,9 @@ import type {
   SpeechStatus,
   ThreadDetail,
   ThreadInfo,
+  TrashedThreadInfo,
   CrewTaskView,
+  CrewIntegration,
   DigestResult,
   UsageEntry,
   UsageReport,
@@ -399,7 +406,10 @@ function devProvider(
 }
 
 const DEV_PROVIDERS: ProviderInfo[] = [
-  devProvider("claude", "Claude Code", ["claude-opus-5", "claude-sonnet-5"]),
+  {
+    ...devProvider("claude", "Claude Code", ["claude-opus-5", "claude-sonnet-5"]),
+    supportsSteer: true,
+  },
   {
     ...devProvider("codex", "Codex", ["gpt-5.3-codex", "gpt-5.3"]),
     supportsSearch: true,
@@ -758,6 +768,7 @@ function seedThreads(projects: ProjectInfo[]): ThreadInfo[] {
       worktreePath: null,
       handoffFrom: null,
       muted: false,
+      ejected: false,
       // One seeded scratch pad so the browser demo shows #194 once the UI lands.
       notes:
         card.id === "thread-4"
@@ -1589,6 +1600,11 @@ function buildDevCoder(): CoderApi {
   let spaces: SpaceInfo[] = [];
   let threads = seedThreads(projects);
   const details = new Map<string, ThreadDetail>();
+  const trashed = new Map<
+    string,
+    TrashedThreadInfo & { thread: ThreadInfo; detail?: ThreadDetail }
+  >();
+  const TRASH_TTL_MS = 7 * 24 * 60 * 60 * 1000;
   const runTimers = new Map<string, ReturnType<typeof setInterval>>();
   const runStates = new Map<string, RunState>();
   /** Threads whose worktree was merged/removed; fakeDiff stays empty until re-setup. */
@@ -1599,6 +1615,7 @@ function buildDevCoder(): CoderApi {
   let templates: WorkflowTemplateInfo[] = [cloneTemplate(STANDARD_TEMPLATE)];
   /** Scheduled agent runs. */
   let automationsList: AutomationInfo[] = [];
+  const automationIdByThread = new Map<string, string>();
   /** Aggregated cost of finished fake runs this session (stands in for "today"). */
   let spendTodayUsd = 0;
   let dailyBudgetUsd: number | null = null;
@@ -1813,6 +1830,49 @@ function buildDevCoder(): CoderApi {
       { provider: "commands", label: "Commands", status: "covered" },
     ];
   }
+
+  function cannedHarnessPreview(source: HarnessSourceId): HarnessImportPreview {
+    const labels = {
+      claude: "Claude Code",
+      cursor: "Cursor",
+      codex: "Codex",
+    } as const;
+    return {
+      previewId: "h".repeat(32),
+      source: { id: source, label: labels[source] },
+      skills: [
+        {
+          id: "skill:house-style",
+          name: "house-style",
+          description: "Imported house style",
+          origin: "skills",
+          bytes: 80,
+          alreadyImported: false,
+          warnings: [],
+        },
+      ],
+      commands: source === "claude" || source === "codex"
+        ? [
+            {
+              id: "command:user:draft",
+              name: "draft",
+              description: "Draft a changelog",
+              origin: "user" as const,
+              bytes: 40,
+              alreadyImported: false,
+            },
+          ]
+        : [],
+      mcp: [],
+      memories: [],
+      instructions: [],
+      settings: null,
+      plugins: [],
+      warnings: [],
+    };
+  }
+
+  let pendingHarnessPreview: HarnessImportPreview | null = null;
   let skillsList: SkillInfo[] = [
     {
       name: "review-pr",
@@ -2035,6 +2095,7 @@ function buildDevCoder(): CoderApi {
       worktreePath: null,
       handoffFrom: null,
       muted: false,
+      ejected: false,
       notes: "",
       tags: [],
       queued: null,
@@ -2332,6 +2393,7 @@ function buildDevCoder(): CoderApi {
       async search(input: {
         query: string;
         project?: string;
+        type?: MemoryEntryInfo["type"];
       }): Promise<MemoryEntryInfo[]> {
         const q = input.query.trim().toLowerCase();
         if (!q) return [];
@@ -2342,25 +2404,35 @@ function buildDevCoder(): CoderApi {
         if (input.project != null && input.project !== "") {
           rows = rows.filter((row) => row.project === input.project);
         }
+        if (input.type) {
+          rows = rows.filter((row) => row.type === input.type);
+        }
         rows = [...rows].sort((a, b) =>
-          a.updatedAt < b.updatedAt ? 1 : a.updatedAt > b.updatedAt ? -1 : 0,
+          a.createdAt < b.createdAt ? 1 : a.createdAt > b.createdAt ? -1 : a.id < b.id ? 1 : a.id > b.id ? -1 : 0,
         );
         return rows.map(toListEntry);
       },
       async recent(input?: {
         limit?: number;
+        offset?: number;
         project?: string;
+        type?: MemoryEntryInfo["type"];
       }): Promise<MemoryEntryInfo[]> {
         const limit =
           input?.limit != null && input.limit > 0 ? Math.floor(input.limit) : 20;
+        const offset =
+          input?.offset != null && input.offset > 0 ? Math.floor(input.offset) : 0;
         let rows = [...memoryEntries];
         if (input?.project != null && input.project !== "") {
           rows = rows.filter((row) => row.project === input.project);
         }
+        if (input?.type) {
+          rows = rows.filter((row) => row.type === input.type);
+        }
         rows = rows.sort((a, b) =>
-          a.updatedAt < b.updatedAt ? 1 : a.updatedAt > b.updatedAt ? -1 : 0,
+          a.createdAt < b.createdAt ? 1 : a.createdAt > b.createdAt ? -1 : a.id < b.id ? 1 : a.id > b.id ? -1 : 0,
         );
-        return rows.slice(0, limit).map(toListEntry);
+        return rows.slice(offset, offset + limit).map(toListEntry);
       },
       async get(input: { id: string }): Promise<MemoryEntryInfo> {
         const row = memoryEntries.find((e) => e.id === input.id);
@@ -3023,6 +3095,76 @@ function buildDevCoder(): CoderApi {
       },
       async discardImport(): Promise<void> {},
     },
+    harness: {
+      async detectSources() {
+        return [
+          { id: "claude" as const, label: "Claude Code", present: true },
+          { id: "cursor" as const, label: "Cursor", present: false },
+          { id: "codex" as const, label: "Codex", present: false },
+        ];
+      },
+      async previewImport(input: {
+        source: HarnessSourceId;
+        projectPath?: string;
+      }): Promise<HarnessImportPreview> {
+        pendingHarnessPreview = cannedHarnessPreview(input.source);
+        return pendingHarnessPreview;
+      },
+      async installImport(
+        input: HarnessInstallRequest,
+      ): Promise<HarnessInstallResult> {
+        if (
+          !pendingHarnessPreview ||
+          pendingHarnessPreview.previewId !== input.previewId
+        ) {
+          throw new Error("Import preview is invalid");
+        }
+        const installedIn = [...ALL_SKILL_TARGETS];
+        const skills: HarnessInstallResult["skills"] = [];
+        const commands: HarnessInstallResult["commands"] = [];
+        for (const id of input.selected) {
+          if (id.startsWith("command:")) {
+            commands.push({
+              name: id.replace(/^command:(?:user|project|plugin):/, ""),
+              status: "installed",
+            });
+            continue;
+          }
+          if (!id.startsWith("skill:")) continue;
+          const name = id.slice("skill:".length);
+          skillsList = [
+            ...skillsList.filter(
+              (s) => !(s.name === name && s.source !== "project"),
+            ),
+            {
+              name,
+              description: name,
+              source: "claude",
+              installedIn,
+              missingFrom: [],
+              bytes: 80,
+              provenance: "added",
+            },
+          ];
+          skills.push({ name, status: "installed" });
+        }
+        pendingHarnessPreview = null;
+        return {
+          skills,
+          commands,
+          mcp: [],
+          memories: [],
+          instructions: [],
+          settings: null,
+          plugins: [],
+        };
+      },
+      async discardImport(input: { previewId: string }): Promise<void> {
+        if (pendingHarnessPreview?.previewId === input.previewId) {
+          pendingHarnessPreview = null;
+        }
+      },
+    },
     providers: {
       async list() {
         return DEV_PROVIDERS.map((p) => ({
@@ -3207,6 +3349,7 @@ function buildDevCoder(): CoderApi {
             projectId: existing.projectId,
             title: existing.name,
           });
+          automationIdByThread.set(thread.id, existing.id);
           await api.threads.setProvider({
             threadId: thread.id,
             provider: existing.provider,
@@ -3238,6 +3381,26 @@ function buildDevCoder(): CoderApi {
           );
           throw err;
         }
+      },
+      async listRuns(input: { id: string }): Promise<AutomationRunsResult> {
+        const existing = automationsList.find((a) => a.id === input.id);
+        if (!existing) {
+          throw new Error(`Unknown automation: ${input.id}`);
+        }
+        const indexed = threads
+          .map((t, i) => ({ t, i }))
+          .filter(({ t }) => automationIdByThread.get(t.id) === existing.id);
+        indexed.sort((a, b) => b.t.createdAt - a.t.createdAt || b.i - a.i);
+        const runs = indexed.map(({ t }) => ({
+          threadId: t.id,
+          startedAt: t.createdAt,
+          status: t.status,
+        }));
+        return {
+          automationId: existing.id,
+          runs,
+          retentionLimitReached: runs.length >= 20,
+        };
       },
     },
     projects: {
@@ -3597,6 +3760,41 @@ function buildDevCoder(): CoderApi {
           tasks: known ? SEED_CREW_TASKS.map((t) => ({ ...t })) : [],
         };
       },
+      async crewIntegration(input: { threadId: string }): Promise<CrewIntegration> {
+        const lead = threads.find((t) => t.id === input.threadId);
+        const workers = threads.filter((t) => t.handoffFrom === input.threadId);
+        return {
+          leadThreadId: input.threadId,
+          leadBranch: lead?.branch ?? null,
+          leadWorktreePath: lead?.worktreePath ?? null,
+          missingLeadWorktree: !lead?.worktreePath,
+          finalTarget: lead?.baseBranch || "main",
+          finalAction: "merge",
+          combinedFiles: [],
+          leadHeadSha: null,
+          leadVerify: lead?.verify ?? null,
+          verifyStale: false,
+          landed: lead?.prState === "MERGED",
+          workers: workers.map((w) => ({
+            workerId: w.id,
+            title: w.title,
+            taskId: null,
+            sourceSha: w.leadSnapshotSha ?? null,
+            sourceBranch: w.leadSnapshotBranch ?? null,
+            sourceDirty: w.leadSnapshotDirty === true,
+            changedFiles: [],
+            verify: w.verify ?? null,
+            destination: lead?.branch || "lead worktree",
+            state: w.status === "working" ? "running" : "ready",
+            blocked: false,
+            needs: [],
+            archived: w.archived === true,
+            worktreePath: w.worktreePath ?? null,
+            missingReason: null,
+          })),
+          receipts: lead?.integrationReceipts ?? [],
+        };
+      },
       /**
        * Full-content search: title + notes + message text, case-insensitive
        * substring, newest activity first, max 50. Includes archived. 0–1
@@ -3651,6 +3849,44 @@ function buildDevCoder(): CoderApi {
             : {}),
         });
         return registerThread(t);
+      },
+      async listCliSessions(_input?: {
+        provider?: "codex" | "grok" | "claude" | "cursor" | "opencode" | "kimi" | "muse";
+      }) {
+        return [];
+      },
+      async importCliSession(input) {
+        const provider =
+          input.provider === "grok" ||
+          input.provider === "claude" ||
+          input.provider === "cursor" ||
+          input.provider === "opencode" ||
+          input.provider === "kimi" ||
+          input.provider === "muse"
+            ? input.provider
+            : "codex";
+        const title =
+          provider === "grok"
+            ? "Imported Grok session"
+            : provider === "claude"
+              ? "Imported Claude session"
+              : provider === "cursor"
+                ? "Imported Cursor session"
+                : provider === "opencode"
+                  ? "Imported OpenCode session"
+                  : provider === "kimi"
+                    ? "Imported Kimi session"
+                    : provider === "muse"
+                      ? "Imported Muse session"
+                      : "Imported Codex session";
+        return registerThread(
+          newThread({
+            projectId: input.projectId,
+            title,
+            provider,
+            sessionId: input.sessionId,
+          }),
+        );
       },
       async fork(input) {
         const sourceDetail = details.get(input.threadId);
@@ -3822,8 +4058,36 @@ function buildDevCoder(): CoderApi {
         }
         return patchThread(input.threadId, { tags: clean });
       },
+      async setThreadProject(input: { threadId: string; projectId: string }) {
+        const detail = details.get(input.threadId);
+        if (!detail) throw new Error(`Thread not found: ${input.threadId}`);
+        const thread = detail.thread;
+        if (thread.projectId === input.projectId) return { ...thread };
+        if (thread.worktreePath) {
+          throw new Error("Cannot move a thread that has a worktree");
+        }
+        if (thread.orchWorker || thread.leadSnapshotSha) {
+          throw new Error("Cannot move a crew worker");
+        }
+        if (thread.status === "working" || thread.status === "quota-wait") {
+          throw new Error("Cannot move a thread while a run is active");
+        }
+        return patchThread(input.threadId, {
+          projectId: input.projectId,
+          sessionId: null,
+          replayContext: true,
+          branch: null,
+          baseBranch: null,
+          prNumber: null,
+          prUrl: null,
+          prState: null,
+        });
+      },
       async setMuted(input: { threadId: string; muted: boolean }) {
         return patchThread(input.threadId, { muted: input.muted });
+      },
+      async setEjected(input: { threadId: string; ejected: boolean }) {
+        return patchThread(input.threadId, { ejected: input.ejected === true });
       },
       async setCrossThreadInbound(input: {
         threadId: string;
@@ -3857,6 +4121,20 @@ function buildDevCoder(): CoderApi {
           baseBranch: input.baseBranch
             ? String(input.baseBranch).trim() || null
             : null,
+        });
+      },
+      async refreshWorkerSnapshot(input: { threadId: string }) {
+        const detail = details.get(input.threadId);
+        if (!detail) throw new Error(`Thread not found: ${input.threadId}`);
+        if (detail.thread.status === "working") {
+          throw new Error("Cannot refresh a running worker. Wait until it is idle.");
+        }
+        if (!detail.thread.orchWorker) {
+          throw new Error("Refresh is only for orchestration workers.");
+        }
+        return patchThread(input.threadId, {
+          leadSnapshotSha: "refreshed0000000000000000000000000000000",
+          leadSnapshotDirty: false,
         });
       },
       async resolveSuggestion(input: {
@@ -4194,10 +4472,56 @@ function buildDevCoder(): CoderApi {
         }
         clearRunTimer(input.threadId);
         runStates.delete(input.threadId);
-        clearedDiff.delete(input.threadId);
+        const now = Date.now();
+        const proj = projects.find((p) => p.id === detail.thread.projectId);
+        trashed.set(input.threadId, {
+          id: input.threadId,
+          title: detail.thread.title,
+          projectId: detail.thread.projectId,
+          projectSlug: proj?.slug ?? null,
+          projectMissing: !proj,
+          trashedAt: now,
+          expiresAt: now + TRASH_TTL_MS,
+          thread: detail.thread,
+          detail,
+        });
         details.delete(input.threadId);
         threads = threads.filter((t) => t.id !== input.threadId);
         emitThreads();
+      },
+      async restore(input) {
+        const row = trashed.get(input.threadId);
+        if (!row) throw new Error("Thread is not in Recently deleted");
+        if (row.projectMissing) {
+          throw new Error("Cannot restore: project is no longer available");
+        }
+        threads = [row.thread, ...threads];
+        if (row.detail) details.set(input.threadId, row.detail);
+        trashed.delete(input.threadId);
+        emitThreads();
+        return { ...row.thread };
+      },
+      async purge(input) {
+        const live = details.get(input.threadId);
+        const row = trashed.get(input.threadId);
+        if (!live && !row) throw new Error(`Thread not found: ${input.threadId}`);
+        if (live?.thread.worktreePath || row?.thread.worktreePath) {
+          throw new Error(
+            "Thread still has a worktree. Merge or delete it in the Git tab first.",
+          );
+        }
+        clearRunTimer(input.threadId);
+        runStates.delete(input.threadId);
+        clearedDiff.delete(input.threadId);
+        details.delete(input.threadId);
+        trashed.delete(input.threadId);
+        threads = threads.filter((t) => t.id !== input.threadId);
+        emitThreads();
+      },
+      async listTrashed() {
+        return [...trashed.values()].map(
+          ({ thread: _thread, detail: _detail, ...row }) => row,
+        );
       },
     },
     runs: {
@@ -4307,6 +4631,33 @@ function buildDevCoder(): CoderApi {
         emitDetail(detail);
         startRunTimer(input.threadId);
         return { runId };
+      },
+      async steer(input) {
+        const detail = details.get(input.threadId);
+        if (!detail) throw new Error(`Thread not found: ${input.threadId}`);
+        const run = runStates.get(input.threadId);
+        if (detail.thread.status !== "working" || !run) {
+          throw new Error("No live run to steer");
+        }
+        const prompt = input.prompt.trim();
+        if (!prompt) throw new Error("prompt is required");
+        const t = now();
+        detail.messages.push({
+          id: id("msg"),
+          role: "user",
+          text: prompt,
+          createdAt: t,
+          runId: run.runId,
+          steer: true,
+          ...(input.attachments?.length
+            ? { attachments: input.attachments }
+            : {}),
+        });
+        detail.thread = { ...detail.thread, updatedAt: t };
+        details.set(input.threadId, detail);
+        syncThreadRow(detail.thread);
+        emitDetail(detail);
+        return { runId: run.runId };
       },
       async startWorkflow(input) {
         const detail = details.get(input.threadId);
@@ -5087,7 +5438,7 @@ function buildDevCoder(): CoderApi {
       },
       async listPrs(projectPath: string) {
         const project = projects.find((p) => p.path === projectPath);
-        if (!project) return { ok: true, prs: [] };
+        if (!project) return { ok: true, prs: [], complete: true, limit: 50 };
         const prs = threads
           .filter(
             (t) =>
@@ -5102,7 +5453,7 @@ function buildDevCoder(): CoderApi {
             state: (t.prState ?? "OPEN") as "OPEN" | "CLOSED" | "MERGED",
             headRefName: t.branch ?? "",
           }));
-        return { ok: true, prs };
+        return { ok: true, prs, complete: true, limit: prs.length };
       },
       async checkoutPr(input: { projectId: string; prNumber: number }) {
         const project = projects.find((p) => p.id === input.projectId);
@@ -5366,6 +5717,12 @@ function buildDevCoder(): CoderApi {
           baseBranch: "main",
         };
       },
+      async integrateWorker(_input: {
+        leadThreadId: string;
+        workerThreadId: string;
+      }) {
+        throw new Error("Set up a lead worktree first");
+      },
       async mergeWorktree(input) {
         const detail = details.get(input.threadId);
         if (!detail) throw new Error(`Thread not found: ${input.threadId}`);
@@ -5430,6 +5787,43 @@ function buildDevCoder(): CoderApi {
         syncThreadRow(thread);
         emitDetail(detail);
         return { ...thread };
+      },
+    },
+    mergeQueue: {
+      async claimLane(_input: { threadId: string }) {
+        return { n: 1, port: 3001, path: "/tmp/lane-1", branch: "lane/1" };
+      },
+      async listLanes(_input: { projectId: string }) {
+        return [];
+      },
+      async previewLane(input: { projectId: string; lane: number }) {
+        return {
+          lane: input.lane,
+          sha: "demo",
+          files: [],
+          path: "/tmp/project",
+        };
+      },
+      async restorePreview(_input: { projectId: string }) {
+        return { restored: false };
+      },
+      async setSpotlight(input: { projectId: string; enabled: boolean }) {
+        return { spotlight: input.enabled === true };
+      },
+      async spotlightLane(input: { projectId: string; lane: number }) {
+        return {
+          lane: input.lane,
+          sha: "demo",
+          files: [],
+          path: "/tmp/project",
+          spotlight: true,
+        };
+      },
+      async recycleWedgedLanes(_input: { projectId: string }) {
+        return [];
+      },
+      async heartbeatLane(_input: { threadId: string; now?: number }) {
+        return null;
       },
     },
     speech: {
@@ -5865,6 +6259,20 @@ function buildDevCoder(): CoderApi {
         return { attachments: [] };
       },
       async saveImage(_input: { threadId: string; dataUrl: string }) {
+        return { attachment: null };
+      },
+      async saveFile(_input: {
+        threadId: string;
+        name: string;
+        dataUrl: string;
+      }) {
+        return { attachment: null };
+      },
+      async saveFolder(_input: {
+        threadId: string;
+        name: string;
+        files: Array<{ relativePath: string; dataUrl: string }>;
+      }) {
         return { attachment: null };
       },
       async readImage(_input: { path: string }) {

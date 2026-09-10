@@ -14,6 +14,7 @@ import { useState } from "react";
 import { mount, unmountAll, inAct } from "./support/dom.ts";
 import { Composer } from "../src/components/Composer";
 import {
+  setComposerBusyAction,
   setLastReasoningEffort,
   setTranscriptViewMode,
   setVerboseToolCards,
@@ -56,13 +57,15 @@ const CLAUDE_WITH_INFO: ProviderInfo = {
   ],
   efforts: ["low", "medium", "high", "xhigh", "max"],
   permissionModes: ["default", "acceptEdits", "plan", "bypassPermissions"],
+  supportsSteer: true,
 };
 
 const CODEX: ProviderInfo = {
   id: "codex",
   name: "Codex",
   available: true,
-  supportsResume: false,
+  supportsResume: true,
+  supportsSteer: true,
   models: [],
   modelInfo: [],
   efforts: [],
@@ -145,6 +148,7 @@ const WORKFLOWS: WorkflowTemplateInfo[] = [
 
 interface Harness {
   sends: string[];
+  steers: boolean[];
   builds: { prompt: string; templateId: string }[];
   modes: PermissionMode[];
   providerSets: { provider?: string; model?: string | null }[];
@@ -165,6 +169,7 @@ interface Harness {
 function makeHarness(provider = "claude"): Harness {
   return {
     sends: [],
+    steers: [],
     builds: [],
     modes: [],
     providerSets: [],
@@ -250,8 +255,9 @@ function composer(
       hasWorktree={over.hasWorktree ?? true}
       disabled={over.disabled ?? false}
       busy={over.busy ?? false}
-      onSend={(prompt) => {
+      onSend={(prompt, _attachments, opts) => {
         harness.sends.push(prompt);
+        harness.steers.push(opts?.steer === true);
       }}
       onBuild={(prompt, templateId) => {
         harness.builds.push({ prompt, templateId });
@@ -432,6 +438,7 @@ afterEach(() => {
   unmountAll();
   setTranscriptViewMode("normal");
   setVerboseToolCards(false);
+  setComposerBusyAction("queue");
   restoreSpeechMedia();
   delete (window as { coder?: unknown }).coder;
 });
@@ -1152,6 +1159,76 @@ describe("Composer drill-down picker", () => {
     m.unmount();
   });
 
+  it("opening the model picker moves focus inside; Tab stays inside; Escape restores", async () => {
+    const h = makeHarness();
+    const m = await mount(composer(h, { provider: "claude", model: null }));
+    const trigger = m.query('button[aria-label^="Model:"]') as HTMLButtonElement;
+    await m.click(trigger);
+
+    const dialog = m.query(
+      '[role="dialog"][aria-label="Model picker"]',
+    ) as HTMLElement | null;
+    assert.ok(dialog, "model picker");
+    assert.ok(
+      dialog.contains(document.activeElement),
+      "opening the dialog must move focus inside it",
+    );
+    assert.notEqual(document.activeElement, trigger);
+
+    const before = m.query('[data-highlighted="true"]')?.textContent;
+    await m.pressFocused("ArrowDown");
+    assert.notEqual(
+      m.query('[data-highlighted="true"]')?.textContent,
+      before,
+      "arrows must still move the listbox highlight",
+    );
+
+    await m.pressFocused("Enter");
+    assert.ok(
+      m.query('[role="listbox"][aria-label="Model"]'),
+      "Enter must still drill from the listbox",
+    );
+    const search = m.query('input[aria-label="Search models"]') as HTMLElement | null;
+    assert.ok(search, "drill focuses search");
+    assert.ok(
+      dialog.contains(document.activeElement),
+      "focus stays inside after drill",
+    );
+
+    await m.pressFocused("Tab");
+    const first = document.activeElement as HTMLElement;
+    assert.ok(dialog.contains(first), "Tab stays inside");
+    assert.notEqual(first, trigger, "Tab must not land back on the trigger");
+    assert.notEqual(
+      first,
+      search,
+      "Tab must move off search onto another control inside the popover",
+    );
+
+    await m.pressFocused("Escape");
+    assert.ok(
+      m.query('[role="listbox"][aria-label="Provider"]'),
+      "Escape must still step back a level",
+    );
+    assert.equal(
+      m.query('[role="listbox"][aria-label="Model"]'),
+      null,
+      "and leave the model level",
+    );
+
+    await m.pressFocused("Escape");
+    assert.equal(
+      m.query('[role="dialog"][aria-label="Model picker"]'),
+      null,
+      "Escape at the provider list closes the picker",
+    );
+    assert.ok(
+      document.activeElement === trigger,
+      `Escape restores the composer trigger (got ${document.activeElement?.tagName})`,
+    );
+    m.unmount();
+  });
+
   it("drills in highlighting the model the thread is on, not Default", async () => {
     // B3: the comment claimed this while the code sent every drill-in to row 0,
     // so the detail pane described Default while aria-selected sat elsewhere.
@@ -1545,6 +1622,90 @@ describe("Composer drill-down picker", () => {
     );
     m.unmount();
   });
+
+  it("moves focus out of the composer; Tab stays inside; Escape restores", async () => {
+    const h = makeHarness();
+    const m = await mount(composer(h, { provider: "claude", model: null }));
+    const opener = m.query('button[aria-label^="Model:"]') as HTMLElement | null;
+    assert.ok(opener, "model trigger");
+    await inAct(() => opener.focus());
+    await m.click(opener);
+    const dialog = m.query('[aria-label="Model picker"]') as HTMLElement | null;
+    assert.ok(dialog, "model picker");
+    assert.ok(
+      dialog.contains(document.activeElement),
+      "opening the dialog must move focus inside it",
+    );
+
+    await m.pressFocused("Tab");
+    const first = document.activeElement as HTMLElement;
+    assert.ok(dialog.contains(first), "Tab stays inside");
+
+    await m.pressFocused("Tab");
+    const second = document.activeElement as HTMLElement;
+    assert.ok(dialog.contains(second), "second Tab stays inside");
+    assert.notEqual(second, first);
+
+    let guard = 0;
+    while (document.activeElement !== first && guard < 40) {
+      await m.pressFocused("Tab");
+      assert.ok(
+        dialog.contains(document.activeElement),
+        "Tab stays inside while wrapping",
+      );
+      guard += 1;
+    }
+    assert.equal(document.activeElement, first, "Tab wraps inside the dialog");
+
+    await m.pressFocused("Escape");
+    assert.equal(m.query('[aria-label="Model picker"]'), null);
+    assert.equal(
+      document.activeElement,
+      opener,
+      "Escape restores the model trigger",
+    );
+    m.unmount();
+  });
+
+  it("keeps Tab inside after provider drill-in; Escape restores", async () => {
+    const h = makeHarness();
+    const m = await mount(composer(h, { provider: "claude", model: null }));
+    const opener = m.query('button[aria-label^="Model:"]') as HTMLElement | null;
+    assert.ok(opener, "model trigger");
+    await inAct(() => opener.focus());
+    await m.click(opener);
+    const dialog = m.query('[aria-label="Model picker"]') as HTMLElement | null;
+    assert.ok(dialog, "model picker");
+    assert.ok(
+      dialog.contains(document.activeElement),
+      "opening the dialog must move focus inside it",
+    );
+
+    assert.ok(await openProvider(m, "Claude Code"), "drill into a provider");
+    assert.ok(
+      dialog.contains(document.activeElement),
+      "opening the dialog must move focus inside it",
+    );
+    await m.pressFocused("Tab");
+    assert.ok(
+      dialog.contains(document.activeElement),
+      "Tab stays inside after drill-in",
+    );
+
+    await m.pressFocused("Escape");
+    assert.ok(
+      m.query('[role="listbox"][aria-label="Provider"]'),
+      "Escape steps back to providers",
+    );
+    await m.pressFocused("Escape");
+    assert.equal(m.query('[aria-label="Model picker"]'), null);
+    assert.equal(
+      document.activeElement,
+      opener,
+      "Escape restores the model trigger",
+    );
+    m.unmount();
+  });
 });
 
 describe("Composer model list search", () => {
@@ -1921,6 +2082,78 @@ describe("Composer while a run is active (busy)", () => {
       ["then run the tests"],
       "the follow-up must reach the parent, which queues it",
     );
+    m.unmount();
+  });
+
+  it("offers Queue or Steer on a steer-capable provider", async () => {
+    const h = makeHarness();
+    const m = await mount(composer(h, { busy: true }));
+    const queue = m.query('[data-steer-action="queue"]') as HTMLButtonElement;
+    const steer = m.query('[data-steer-action="steer"]') as HTMLButtonElement;
+    assert.ok(queue, "Queue must be offered mid-run");
+    assert.ok(steer, "Steer must be offered on Claude");
+    assert.equal(queue.getAttribute("aria-pressed"), "true");
+    assert.equal(steer.getAttribute("aria-pressed"), "false");
+
+    await m.type(m.query("textarea"), "keep going that way");
+    await m.click(m.query('button[aria-label="Send"]'));
+    assert.deepEqual(h.sends, ["keep going that way"]);
+    assert.deepEqual(h.steers, [false], "Queue is the default send");
+
+    await m.type(m.query("textarea"), "no, do X instead");
+    await m.click(steer);
+    assert.equal(steer.getAttribute("aria-pressed"), "true");
+    await m.click(m.query('button[aria-label="Send"]'));
+    assert.deepEqual(h.sends, ["keep going that way", "no, do X instead"]);
+    assert.deepEqual(h.steers, [false, true]);
+    m.unmount();
+  });
+
+  it("shows Steer for Codex while a run is live (#1170)", async () => {
+    const h = makeHarness("codex");
+    const m = await mount(composer(h, { busy: true, provider: "codex" }));
+    const queue = m.query('[data-steer-action="queue"]') as HTMLButtonElement;
+    const steer = m.query('[data-steer-action="steer"]') as HTMLButtonElement;
+    assert.ok(queue, "Queue stays the idle follow-up");
+    assert.ok(steer, "Steer must be offered on a live Codex turn");
+    await m.type(m.query("textarea"), "no, do X instead");
+    await m.click(steer);
+    await m.click(m.query('button[aria-label="Send"]'));
+    assert.deepEqual(h.sends, ["no, do X instead"]);
+    assert.deepEqual(h.steers, [true]);
+    m.unmount();
+  });
+
+  it("hides Steer when the provider cannot take stdin mid-turn", async () => {
+    const h = makeHarness("kimi");
+    const m = await mount(composer(h, { busy: true, provider: "kimi" }));
+    assert.equal(m.query("[data-steer-toggle]"), null);
+    await m.type(m.query("textarea"), "follow up");
+    await m.click(m.query('button[aria-label="Send"]'));
+    assert.deepEqual(h.sends, ["follow up"]);
+    assert.deepEqual(h.steers, [false]);
+    m.unmount();
+  });
+
+  it("⌘⇧Enter always steers when the provider can", async () => {
+    const h = makeHarness();
+    const m = await mount(composer(h, { busy: true }));
+    const ta = m.query("textarea") as HTMLTextAreaElement;
+    await m.type(ta, "redirect now");
+    await inAct(() => {
+      ta.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: "Enter",
+          metaKey: true,
+          shiftKey: true,
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+    });
+    await m.flush();
+    assert.deepEqual(h.sends, ["redirect now"]);
+    assert.deepEqual(h.steers, [true]);
     m.unmount();
   });
 
@@ -2690,6 +2923,7 @@ describe("Composer keyboard hints (issue #364)", () => {
     const hints = m.query("[data-kbd-hints]");
     assert.ok(hints);
     assert.match(hints!.textContent || "", /⌘Enter queue/);
+    assert.match(hints!.textContent || "", /⌘⇧Enter steer/);
     assert.match(hints!.textContent || "", /Esc stop/);
     m.unmount();
   });

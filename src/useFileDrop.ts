@@ -1,5 +1,11 @@
 import { useEffect, useRef, useState, type RefObject } from "react";
-import { filesFromDataTransfer, isFileDrag } from "./dropFiles";
+import {
+  captureDropItems,
+  filesFromDataTransfer,
+  foldersFromCapturedItems,
+  isFileDrag,
+  type DroppedFolder,
+} from "./dropFiles";
 
 /**
  * Bind drag-and-drop of OS files to `targetRef`. Returns whether a file
@@ -9,7 +15,7 @@ export function useFileDrop(
   targetRef: RefObject<HTMLElement | null>,
   opts: {
     enabled: boolean;
-    onFiles: (files: File[]) => void | Promise<void>;
+    onFiles: (files: File[], folders?: DroppedFolder[]) => void | Promise<void>;
     onDraggingChange?: (dragging: boolean) => void;
   },
 ): boolean {
@@ -45,15 +51,20 @@ export function useFileDrop(
       setHover(false);
     };
     const onDrop = (e: DragEvent) => {
+      const captured = captureDropItems(e.dataTransfer);
       const files = filesFromDataTransfer(e.dataTransfer);
-      if (!files.length) {
+      const hasDir = captured.some((item) => item.entry?.isDirectory);
+      if (!files.length && !hasDir) {
         setHover(false);
         return;
       }
       e.preventDefault();
       e.stopPropagation();
       setHover(false);
-      void onFilesRef.current(files);
+      void (async () => {
+        const folders = await foldersFromCapturedItems(captured);
+        await onFilesRef.current(files, folders);
+      })();
     };
 
     el.addEventListener("dragenter", onDragEnter);

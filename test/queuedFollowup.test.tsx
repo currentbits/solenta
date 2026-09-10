@@ -318,6 +318,142 @@ describe("queued follow-up (issue #92 / #314)", () => {
     m.unmount();
   });
 
+  const RETRY_SHOT = {
+    kind: "image" as const,
+    path: "/tmp/retry.png",
+    name: "retry.png",
+  };
+
+  async function hostQueued(fake: FakeCoder, threadId: string) {
+    const rows = await fake.api.threads.list();
+    return rows.find((t) => t.id === threadId)?.queued ?? null;
+  }
+
+  async function bootIdleRetryQueue() {
+    const idle = thread({
+      id: "t-idle-q",
+      title: "idle with leftover queue",
+      status: "idle",
+      queued: {
+        prompt: "Retry this once",
+        error: "CLI exited before ack",
+        attachments: [RETRY_SHOT],
+      },
+    });
+    const fake = createFakeCoder({
+      projects: [project()],
+      threads: [decoy(), idle],
+      details: {
+        "t-decoy": detail({ thread: decoy() }),
+        "t-idle-q": detail({ thread: idle }),
+      },
+    });
+    const m = await boot(fake);
+    const card = m.query(
+      'button[aria-label^="Select thread: idle with leftover queue"]',
+    );
+    assert.ok(card, "leftover-queue thread card must exist");
+    await m.click(card);
+    await m.flush();
+    return { fake, m };
+  }
+
+  it("does not duplicate the host queue when retry's clear rejects (issue #925)", async () => {
+    const { fake, m } = await bootIdleRetryQueue();
+    const origSetQueued = fake.api.threads.setQueued;
+    fake.api.threads.setQueued = ((input: unknown) => {
+      const i = input as { prompt: string | null };
+      if (i.prompt === null) {
+        fake.calls.push({ channel: "threads.setQueued", args: [input] });
+        return Promise.reject(new Error("queue write failed"));
+      }
+      return origSetQueued(input);
+    }) as typeof fake.api.threads.setQueued;
+
+    await m.click(m.query("button[data-retry-queued]"));
+    await m.flush();
+
+    assert.equal(fake.of("runs.start").length, 0, "a failed clear must not start");
+    const restores = fake
+      .of("threads.setQueued")
+      .filter((c) => (c.args[0] as { prompt: string | null }).prompt != null);
+    assert.equal(
+      restores.length,
+      0,
+      "a failed clear must not compensate by re-enqueueing",
+    );
+    const queued = await hostQueued(fake, "t-idle-q");
+    assert.equal(queued?.prompt, "Retry this once");
+    assert.deepEqual(queued?.attachments, [RETRY_SHOT]);
+    const strip = m.query("[data-queued-prompt]");
+    assert.ok(strip);
+    assert.equal(
+      (strip!.textContent || "").includes("Retry this once\n\nRetry this once"),
+      false,
+    );
+    assert.match(m.query("[data-queued-error]")?.textContent || "", /queue write failed/);
+    m.unmount();
+  });
+
+  it("restores the original payload once when retry's start rejects after a successful clear (issue #925)", async () => {
+    const { fake, m } = await bootIdleRetryQueue();
+    fake.api.runs.start = ((input: unknown) => {
+      fake.calls.push({ channel: "runs.start", args: [input] });
+      return Promise.reject(new Error("start failed"));
+    }) as typeof fake.api.runs.start;
+
+    await m.click(m.query("button[data-retry-queued]"));
+    await m.flush();
+
+    assert.equal(fake.of("runs.start").length, 1, "retry must attempt the run");
+    const restores = fake
+      .of("threads.setQueued")
+      .filter((c) => (c.args[0] as { prompt: string | null }).prompt != null);
+    assert.equal(restores.length, 1, "a rejected start must restore exactly once");
+    assert.deepEqual(restores[0]!.args[0], {
+      threadId: "t-idle-q",
+      prompt: "Retry this once",
+      attachments: [RETRY_SHOT],
+    });
+    const queued = await hostQueued(fake, "t-idle-q");
+    assert.equal(queued?.prompt, "Retry this once");
+    assert.deepEqual(queued?.attachments, [RETRY_SHOT]);
+    assert.match(m.query("[data-queued-error]")?.textContent || "", /start failed/);
+    m.unmount();
+  });
+
+  it("keeps a concurrently queued follow-up when retry's start rejects (issue #925)", async () => {
+    const { fake, m } = await bootIdleRetryQueue();
+    const origSetQueued = fake.api.threads.setQueued.bind(fake.api.threads);
+    fake.api.threads.setQueued = (async (input: unknown) => {
+      const result = await origSetQueued(input);
+      const i = input as { prompt: string | null };
+      if (i.prompt === null) {
+        await origSetQueued({
+          threadId: "t-idle-q",
+          prompt: "newer follow-up",
+        });
+      }
+      return result;
+    }) as typeof fake.api.threads.setQueued;
+    fake.api.runs.start = ((input: unknown) => {
+      fake.calls.push({ channel: "runs.start", args: [input] });
+      return Promise.reject(new Error("start failed"));
+    }) as typeof fake.api.runs.start;
+
+    await m.click(m.query("button[data-retry-queued]"));
+    await m.flush();
+
+    const queued = await hostQueued(fake, "t-idle-q");
+    assert.equal(queued?.prompt, "newer follow-up\n\nRetry this once");
+    assert.deepEqual(queued?.attachments, [RETRY_SHOT]);
+    const strip = m.query("[data-queued-prompt]");
+    assert.ok(strip);
+    assert.match(strip!.textContent || "", /newer follow-up/);
+    assert.match(strip!.textContent || "", /Retry this once/);
+    m.unmount();
+  });
+
   it("disables retry while the thread is still working", async () => {
     const busy = working();
     busy.queued = { prompt: "held", error: "delivery failed" };
@@ -499,6 +635,41 @@ describe("queued follow-up (issue #92 / #314)", () => {
     m.unmount();
   });
 
+  it("restores the queued strip when cancel's host clear rejects", async () => {
+    const { fake, m } = await bootOnBusyThread();
+
+    await m.type(m.query("textarea"), "never mind this one");
+    await m.click(m.query('button[aria-label="Send"]'));
+    await m.flush();
+
+    const orig = fake.api.threads.setQueued.bind(fake.api.threads);
+    fake.api.threads.setQueued = (input) => {
+      if ((input as { prompt: string | null }).prompt === null) {
+        fake.calls.push({ channel: "threads.setQueued", args: [input] });
+        return Promise.reject(new Error("queue clear failed"));
+      }
+      return orig(input);
+    };
+
+    await m.click(m.query("button[data-cancel-queued]"));
+    await m.flush();
+
+    const listed = await fake.api.threads.list();
+    const row = listed.find((t) => t.id === "t-busy");
+    assert.equal(
+      row?.queued?.prompt,
+      "never mind this one",
+      "a rejected clear must leave the host queue unchanged",
+    );
+    const strip = m.query("[data-queued-prompt]");
+    assert.ok(strip, "a failed clear must keep the queued strip");
+    assert.match(strip!.textContent || "", /never mind this one/);
+    const alert = m.query('[role="alert"]');
+    assert.ok(alert, "the clear rejection must stay visible");
+    assert.match(alert!.textContent || "", /queue clear failed/);
+    m.unmount();
+  });
+
   it("cancel does not clobber an in-progress composer draft", async () => {
     const { m } = await bootOnBusyThread();
 
@@ -516,6 +687,46 @@ describe("queued follow-up (issue #92 / #314)", () => {
       ta.value,
       "half-typed draft",
       "an in-progress draft always wins",
+    );
+    m.unmount();
+  });
+
+  it("a rejected cancel keeps the queued strip and does not fill the composer", async () => {
+    const { fake, m } = await bootOnBusyThread();
+
+    await m.type(m.query("textarea"), "never mind this one");
+    await m.click(m.query('button[aria-label="Send"]'));
+    await m.flush();
+    const ta = m.query("textarea") as HTMLTextAreaElement;
+    assert.equal(ta.value, "", "queueing clears the composer");
+
+    const orig = fake.api.threads.setQueued.bind(fake.api.threads);
+    fake.api.threads.setQueued = (input) => {
+      if ((input as { prompt: string | null }).prompt === null) {
+        fake.calls.push({ channel: "threads.setQueued", args: [input] });
+        return Promise.reject(new Error("queue write failed"));
+      }
+      return orig(input);
+    };
+
+    await m.click(m.query("button[data-cancel-queued]"));
+    await m.flush();
+
+    const listed = await fake.api.threads.list();
+    const row = listed.find((t) => t.id === "t-busy");
+    assert.equal(
+      row?.queued?.prompt,
+      "never mind this one",
+      "a rejected clear must leave the host queue in place",
+    );
+    assert.ok(
+      m.query("[data-queued-prompt]"),
+      "a rejected clear must keep the queued strip",
+    );
+    assert.equal(
+      ta.value,
+      "",
+      "a rejected clear must not put the discarded prompt into the composer",
     );
     m.unmount();
   });
@@ -769,6 +980,389 @@ describe("queued follow-up (issue #92 / #314)", () => {
       actions.querySelector("button[data-move-queued-down]"),
       "Down must sit inside the action cluster",
     );
+    m.unmount();
+  });
+
+  const QUEUED_SHOT = {
+    kind: "image" as const,
+    path: "/tmp/shot.png",
+    name: "shot.png",
+  };
+
+  async function bootQueuedPair() {
+    const busy = working();
+    busy.queued = {
+      prompt: "first thought\n\nsecond thought",
+      items: ["first thought", "second thought"],
+      attachments: [QUEUED_SHOT],
+    };
+    const fake = createFakeCoder({
+      projects: [project()],
+      threads: [decoy(), busy],
+      details: {
+        "t-decoy": detail({ thread: decoy() }),
+        "t-busy": detail({ thread: busy }),
+      },
+    });
+    const m = await boot(fake);
+    const card = m.query(
+      'button[aria-label^="Select thread: busy target thread"]',
+    );
+    assert.ok(card, "busy thread card must exist");
+    await m.click(card);
+    await m.flush();
+    return { fake, m, busy };
+  }
+
+  it("keeps a rejected queued-edit draft open for retry and preserves items plus attachments (issue #926)", async () => {
+    const attach = {
+      kind: "image" as const,
+      path: "/tmp/shot.png",
+      name: "shot.png",
+    };
+    const busy = working();
+    busy.queued = {
+      prompt: "Original queued text\n\nkeep this second",
+      items: ["Original queued text", "keep this second"],
+      attachments: [attach],
+    };
+    const fake = createFakeCoder({
+      projects: [project()],
+      threads: [decoy(), busy],
+      details: {
+        "t-decoy": detail({ thread: decoy() }),
+        "t-busy": detail({ thread: busy }),
+      },
+    });
+    const origSetQueued = fake.api.threads.setQueued;
+    let rejectReplace = true;
+    fake.api.threads.setQueued = ((input: unknown) => {
+      const i = input as { replace?: boolean };
+      if (i.replace === true && rejectReplace) {
+        fake.calls.push({ channel: "threads.setQueued", args: [input] });
+        return Promise.reject(new Error("queue write failed"));
+      }
+      return origSetQueued(input);
+    }) as typeof fake.api.threads.setQueued;
+
+    const m = await boot(fake);
+    const card = m.query(
+      'button[aria-label^="Select thread: busy target thread"]',
+    );
+    assert.ok(card);
+    await m.click(card);
+    await m.flush();
+
+    const first = m.query('[data-queued-item="0"]');
+    assert.ok(first, "seeded multi-item queue must render");
+    await m.click(first.querySelector("button[data-edit-queued]"));
+    const input = first.querySelector(
+      "textarea[data-edit-queued-input]",
+    ) as HTMLTextAreaElement | null;
+    assert.ok(input);
+    await m.type(input!, "Revised instructions");
+    await m.click(first.querySelector("button[data-save-queued-edit]"));
+    await m.flush();
+
+    const stillOpen = m.query(
+      "textarea[data-edit-queued-input]",
+    ) as HTMLTextAreaElement | null;
+    assert.ok(stillOpen, "a rejected write must leave the editor open");
+    assert.equal(
+      stillOpen!.value,
+      "Revised instructions",
+      "the revised draft must still be editable",
+    );
+    const editError = m.query("[data-queued-edit-error]");
+    assert.ok(editError, "the rejection must be visible on the editor");
+    assert.match(editError!.textContent || "", /queue write failed/);
+
+    rejectReplace = false;
+    await m.click(m.query("button[data-save-queued-edit]"));
+    await m.flush();
+
+    assert.equal(
+      m.query("textarea[data-edit-queued-input]"),
+      null,
+      "a successful retry must close the editor",
+    );
+    const replaceCalls = fake
+      .of("threads.setQueued")
+      .filter((c) => (c.args[0] as { replace?: boolean }).replace === true);
+    assert.equal(replaceCalls.length, 2, "reject then retry is two replace writes");
+    assert.deepEqual(replaceCalls[1]!.args[0], {
+      threadId: "t-busy",
+      prompt: "Revised instructions\n\nkeep this second",
+      attachments: [attach],
+      replace: true,
+      items: ["Revised instructions", "keep this second"],
+    });
+    const strip = m.query("[data-queued-prompt]");
+    assert.ok(strip);
+    assert.match(strip!.textContent || "", /Revised instructions/);
+    assert.match(strip!.textContent || "", /keep this second/);
+    m.unmount();
+  });
+
+  it("ignores a second Save while a queued-edit write is pending (issue #926)", async () => {
+    const busy = working();
+    busy.queued = { prompt: "Original queued text" };
+    const fake = createFakeCoder({
+      projects: [project()],
+      threads: [decoy(), busy],
+      details: {
+        "t-decoy": detail({ thread: decoy() }),
+        "t-busy": detail({ thread: busy }),
+      },
+    });
+    const origSetQueued = fake.api.threads.setQueued;
+    let release!: (value: unknown) => void;
+    fake.api.threads.setQueued = ((input: unknown) => {
+      const i = input as { replace?: boolean };
+      if (i.replace === true) {
+        fake.calls.push({ channel: "threads.setQueued", args: [input] });
+        return new Promise((resolve) => {
+          release = resolve;
+        });
+      }
+      return origSetQueued(input);
+    }) as typeof fake.api.threads.setQueued;
+
+    const m = await boot(fake);
+    const card = m.query(
+      'button[aria-label^="Select thread: busy target thread"]',
+    );
+    assert.ok(card);
+    await m.click(card);
+    await m.flush();
+
+    await m.click(m.query("button[data-edit-queued]"));
+    await m.type(m.query("textarea[data-edit-queued-input]"), "Revised once");
+    const save = m.query("button[data-save-queued-edit]") as HTMLButtonElement;
+    assert.ok(save);
+    await m.click(save);
+    assert.equal(save.disabled, true, "Save must lock while the write is in flight");
+    await m.click(save);
+    await m.flush();
+    assert.equal(
+      fake
+        .of("threads.setQueued")
+        .filter((c) => (c.args[0] as { replace?: boolean }).replace === true)
+        .length,
+      1,
+      "a second click must not start another write",
+    );
+
+    await inAct(() =>
+      release(
+        thread({
+          ...busy,
+          queued: { prompt: "Revised once" },
+        }),
+      ),
+    );
+    await m.flush();
+    assert.equal(m.query("textarea[data-edit-queued-input]"), null);
+    m.unmount();
+  });
+
+  it("keeps order and attachments after a rejected reorder, then retries (issue #1144)", async () => {
+    const { fake, m } = await bootQueuedPair();
+    const orig = fake.api.threads.setQueued.bind(fake.api.threads);
+    let rejectNext = true;
+    fake.api.threads.setQueued = (input) => {
+      if (rejectNext && (input as { replace?: boolean }).replace) {
+        rejectNext = false;
+        fake.calls.push({ channel: "threads.setQueued", args: [input] });
+        return Promise.reject(new Error("queue write failed"));
+      }
+      return orig(input);
+    };
+
+    const first = m.query('[data-queued-item="0"]');
+    assert.ok(first, "two queued thoughts must render as items");
+    const down = first.querySelector("button[data-move-queued-down]");
+    assert.ok(down, "a multi-item queue must offer reorder");
+    await m.click(down);
+
+    const items = m.queryAll("[data-queued-item]");
+    assert.equal(items.length, 2);
+    assert.match(
+      items[0]!.textContent || "",
+      /first thought/,
+      "a rejected reorder must not apply",
+    );
+    assert.match(items[1]!.textContent || "", /second thought/);
+    const err = m.query("[data-queued-write-error]");
+    assert.ok(err, "a rejected persist must show a retryable error on the strip");
+    assert.match(err.textContent || "", /queue write failed/);
+
+    const stillFirst = m.query('[data-queued-item="0"]');
+    await m.click(stillFirst!.querySelector("button[data-move-queued-down]"));
+
+    const replaceCalls = fake
+      .of("threads.setQueued")
+      .filter((c) => (c.args[0] as { replace?: boolean }).replace === true);
+    assert.equal(replaceCalls.length, 2, "retry must write again");
+    assert.deepEqual(replaceCalls[1]!.args[0], {
+      threadId: "t-busy",
+      prompt: "second thought\n\nfirst thought",
+      attachments: [QUEUED_SHOT],
+      replace: true,
+      items: ["second thought", "first thought"],
+    });
+    const retried = m.queryAll("[data-queued-item]");
+    assert.match(retried[0]!.textContent || "", /second thought/);
+    assert.match(retried[1]!.textContent || "", /first thought/);
+    assert.equal(
+      m.query("[data-queued-write-error]"),
+      null,
+      "a successful retry clears the persist error",
+    );
+    m.unmount();
+  });
+
+  it("does not start a second reorder while a replace is pending (issue #1144)", async () => {
+    const { fake, m } = await bootQueuedPair();
+    const orig = fake.api.threads.setQueued.bind(fake.api.threads);
+    let release!: (run: () => ReturnType<typeof orig>) => void;
+    const gate = new Promise<() => ReturnType<typeof orig>>((resolve) => {
+      release = resolve;
+    });
+    fake.api.threads.setQueued = (input) => {
+      fake.calls.push({ channel: "threads.setQueued", args: [input] });
+      return gate.then((run) => run());
+    };
+
+    const down = m.query('[data-queued-item="0"] button[data-move-queued-down]');
+    assert.ok(down);
+    await m.click(down);
+    await m.click(down);
+
+    assert.equal(
+      fake
+        .of("threads.setQueued")
+        .filter((c) => (c.args[0] as { replace?: boolean }).replace === true)
+        .length,
+      1,
+      "a second Down while the first replace is in flight must not write again",
+    );
+    const downBtn = m.query(
+      '[data-queued-item="0"] button[data-move-queued-down]',
+    ) as HTMLButtonElement | null;
+    assert.ok(downBtn);
+    assert.equal(downBtn.disabled, true, "Down must lock while a write is pending");
+
+    await inAct(() => {
+      release(() => orig({
+        threadId: "t-busy",
+        prompt: "second thought\n\nfirst thought",
+        attachments: [QUEUED_SHOT],
+        replace: true,
+        items: ["second thought", "first thought"],
+      }));
+    });
+    await m.flush();
+    m.unmount();
+  });
+
+  it("keeps both items after a rejected remove, then retries (issue #1144)", async () => {
+    const { fake, m } = await bootQueuedPair();
+    const orig = fake.api.threads.setQueued.bind(fake.api.threads);
+    let rejectNext = true;
+    fake.api.threads.setQueued = (input) => {
+      if (rejectNext && (input as { replace?: boolean }).replace) {
+        rejectNext = false;
+        fake.calls.push({ channel: "threads.setQueued", args: [input] });
+        return Promise.reject(new Error("queue write failed"));
+      }
+      return orig(input);
+    };
+
+    const first = m.query('[data-queued-item="0"]');
+    assert.ok(first, "two queued thoughts must render as items");
+    const remove = first.querySelector("button[data-remove-queued]");
+    assert.ok(remove, "a multi-item queue must offer remove");
+    await m.click(remove);
+
+    const items = m.queryAll("[data-queued-item]");
+    assert.equal(items.length, 2, "a rejected remove must not drop the item");
+    assert.match(items[0]!.textContent || "", /first thought/);
+    assert.match(items[1]!.textContent || "", /second thought/);
+    const err = m.query("[data-queued-write-error]");
+    assert.ok(err, "a rejected persist must show a retryable error on the strip");
+    assert.match(err.textContent || "", /queue write failed/);
+
+    const stillFirst = m.query('[data-queued-item="0"]');
+    await m.click(stillFirst!.querySelector("button[data-remove-queued]"));
+
+    const replaceCalls = fake
+      .of("threads.setQueued")
+      .filter((c) => (c.args[0] as { replace?: boolean }).replace === true);
+    assert.equal(replaceCalls.length, 2, "retry must write again");
+    assert.deepEqual(replaceCalls[1]!.args[0], {
+      threadId: "t-busy",
+      prompt: "second thought",
+      attachments: [QUEUED_SHOT],
+      replace: true,
+      items: ["second thought"],
+    });
+    const strip = m.query("[data-queued-prompt]");
+    assert.ok(strip, "the remaining thought stays queued");
+    assert.match(strip!.textContent || "", /second thought/);
+    assert.ok(
+      !/first thought/.test(strip!.textContent || ""),
+      "the removed thought must leave the strip",
+    );
+    assert.equal(
+      m.query("[data-queued-write-error]"),
+      null,
+      "a successful retry clears the persist error",
+    );
+    m.unmount();
+  });
+
+  it("does not start a second remove while a replace is pending (issue #1144)", async () => {
+    const { fake, m } = await bootQueuedPair();
+    const orig = fake.api.threads.setQueued.bind(fake.api.threads);
+    let release!: (run: () => ReturnType<typeof orig>) => void;
+    const gate = new Promise<() => ReturnType<typeof orig>>((resolve) => {
+      release = resolve;
+    });
+    fake.api.threads.setQueued = (input) => {
+      fake.calls.push({ channel: "threads.setQueued", args: [input] });
+      return gate.then((run) => run());
+    };
+
+    const remove = m.query('[data-queued-item="0"] button[data-remove-queued]');
+    assert.ok(remove);
+    await m.click(remove);
+    await m.click(remove);
+
+    assert.equal(
+      fake
+        .of("threads.setQueued")
+        .filter((c) => (c.args[0] as { replace?: boolean }).replace === true)
+        .length,
+      1,
+      "a second Remove while the first replace is in flight must not write again",
+    );
+    const removeBtn = m.query(
+      '[data-queued-item="0"] button[data-remove-queued]',
+    ) as HTMLButtonElement | null;
+    assert.ok(removeBtn);
+    assert.equal(removeBtn.disabled, true, "Remove must lock while a write is pending");
+
+    await inAct(() => {
+      release(() => orig({
+        threadId: "t-busy",
+        prompt: "second thought",
+        attachments: [QUEUED_SHOT],
+        replace: true,
+        items: ["second thought"],
+      }));
+    });
+    await m.flush();
     m.unmount();
   });
 });

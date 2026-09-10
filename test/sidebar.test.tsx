@@ -72,6 +72,8 @@ afterEach(() => {
       "sidebar:providerFilter",
       "sidebar:tagFilter",
       "sidebar:groupBy",
+      "sidebar:savedViews",
+      "sidebar:activeSavedView",
       "coder.sidebar.collapsedGroups",
       "coder.sidebar.settledCollapsed",
     ]) {
@@ -144,6 +146,7 @@ function sidebar(
     onSetPinned?: (threadId: string, pinned: boolean) => void;
     onSetSnoozed?: (threadId: string, until: number | null) => void;
     onSetTags?: (threadId: string, tags: string[]) => void;
+    onSetThreadProject?: (threadId: string, projectId: string) => void;
     projectError?: string | null;
     providers?: ProviderInfo[];
     onSetMuted?: (threadId: string, muted: boolean) => void;
@@ -161,6 +164,9 @@ function sidebar(
     appVersion?: string | null;
     channel?: "prod" | "nightly" | null;
     searchThreads?: (input: { query: string }) => Promise<ThreadInfo[]>;
+    trashedThreads?: import("../src/shared/ipc").TrashedThreadInfo[];
+    onRestoreThread?: (threadId: string) => void;
+    onPurgeThread?: (threadId: string) => void;
   } = {},
 ) {
   const projects = over.projects ?? [p1];
@@ -186,6 +192,7 @@ function sidebar(
       onSetPinned={over.onSetPinned}
       onSetSnoozed={over.onSetSnoozed}
       onSetTags={over.onSetTags}
+      onSetThreadProject={over.onSetThreadProject}
       onSetMuted={over.onSetMuted}
       onRenameThread={over.onRenameThread}
       onFork={over.onFork}
@@ -204,6 +211,9 @@ function sidebar(
         (async ({ query }) =>
           threads.filter((t) => t.title.includes(query)))
       }
+      trashedThreads={over.trashedThreads}
+      onRestoreThread={over.onRestoreThread}
+      onPurgeThread={over.onPurgeThread}
     />
   );
 }
@@ -1290,6 +1300,30 @@ describe("Sidebar remove + edit project (scope menu)", () => {
     m.unmount();
   });
 
+  it("Escape dismisses the remove confirm without removing", async () => {
+    await clearSidebarStorage();
+    const removed: string[] = [];
+    const m = await mount(
+      sidebar(removeThreads, {
+        projects: [p1, p2],
+        onRemoveProject: (id) => {
+          removed.push(id);
+        },
+      }),
+    );
+    await openScopeMenu(m);
+    await m.click(m.query('[data-project-remove="p2"]')!);
+    const dialog = m.query('[data-remove-confirm="p2"]');
+    assert.ok(dialog, "confirm must open");
+    await m.press(dialog, "Escape");
+    assert.ok(
+      !m.query('[data-remove-confirm="p2"]'),
+      "Escape must dismiss the confirm",
+    );
+    assert.deepEqual(removed, []);
+    m.unmount();
+  });
+
   it("singular thread count wording", async () => {
     await clearSidebarStorage();
     const m = await mount(
@@ -1354,31 +1388,7 @@ describe("Sidebar remove + edit project (scope menu)", () => {
     m.unmount();
   });
 
-  it("Escape dismisses the remove confirm without removing", async () => {
-    await clearSidebarStorage();
-    const removed: string[] = [];
-    const m = await mount(
-      sidebar(removeThreads, {
-        projects: [p1, p2],
-        onRemoveProject: (id) => {
-          removed.push(id);
-        },
-      }),
-    );
-    await openScopeMenu(m);
-    await m.click(m.query('[data-project-remove="p2"]')!);
-    const dialog = m.query('[data-remove-confirm="p2"]');
-    assert.ok(dialog, "confirm must open");
-    await m.press(dialog, "Escape");
-    assert.ok(
-      !m.query('[data-remove-confirm="p2"]'),
-      "Escape must dismiss the confirm",
-    );
-    assert.deepEqual(removed, []);
-    m.unmount();
-  });
-
-  it("opening remove confirm moves focus inside; Tab stays inside", async () => {
+  it("opening remove confirm moves focus out of the opener; Tab stays inside; Escape restores", async () => {
     await clearSidebarStorage();
     const removed: string[] = [];
     const m = await mount(
@@ -1400,6 +1410,7 @@ describe("Sidebar remove + edit project (scope menu)", () => {
       dialog.contains(document.activeElement),
       "opening the dialog must move focus inside it",
     );
+    assert.notEqual(document.activeElement, opener);
 
     await m.pressFocused("Tab");
     const first = document.activeElement as HTMLElement;
@@ -1416,6 +1427,11 @@ describe("Sidebar remove + edit project (scope menu)", () => {
 
     await m.pressFocused("Escape");
     assert.equal(m.query('[data-remove-confirm="p2"]'), null);
+    assert.equal(
+      document.activeElement,
+      opener,
+      "Escape restores opener focus",
+    );
     assert.deepEqual(removed, []);
     m.unmount();
   });
@@ -1772,6 +1788,39 @@ describe("Sidebar status label + wait row", () => {
     m.unmount();
   });
 
+  it("settled workers of an active parent stay nested in Active", async () => {
+    await clearSidebarStorage();
+    const m = await mount(
+      sidebar([
+        ORCH,
+        worker({
+          id: "w-settled",
+          title: "Fork: Import existing CLI agent sessions",
+          status: "done",
+          runStartedAt: null,
+          settledOverride: "settled",
+        }),
+      ]),
+    );
+    const card = m.query('[data-thread-card="w-settled"]');
+    assert.ok(
+      card,
+      "settled worker must stay next to the parent without opening Settled",
+    );
+    assert.equal(card!.getAttribute("data-nested"), "true");
+    assert.equal(
+      card!.getAttribute("data-settled"),
+      null,
+      "Active nest is a full card, not a Settled slim row",
+    );
+    assert.equal(
+      m.query("[data-settled-shelf-toggle]"),
+      null,
+      "the only settled thread is nested under its parent, not in the shelf",
+    );
+    m.unmount();
+  });
+
   it("an idle thread with a queued follow-up says so", async () => {
     await clearSidebarStorage();
     const m = await mount(
@@ -2030,6 +2079,67 @@ describe("Sidebar card anatomy + hover actions", () => {
         .query('[data-thread-card="pin-old"] button[aria-label]')
         ?.getAttribute("aria-label")
         ?.includes(", pinned"),
+    );
+    m.unmount();
+  });
+
+  it("settled workers of a pinned parent stay nested in the pinned block", async () => {
+    await clearSidebarStorage();
+    const m = await mount(
+      sidebar([
+        thread({
+          id: "orch",
+          title: "orchestrate the fix",
+          status: "idle",
+          pinnedAt: FRESH - 1000,
+          updatedAt: FRESH,
+        }),
+        thread({
+          id: "w-settled",
+          title: "Fork: Import existing CLI agent sessions",
+          status: "done",
+          handoffFrom: "orch",
+          runStartedAt: null,
+          settledOverride: "settled",
+          updatedAt: FRESH,
+        }),
+        thread({
+          id: "active-card",
+          title: "active",
+          createdAt: FRESH + 100,
+          updatedAt: FRESH + 100,
+        }),
+      ]),
+    );
+    const card = m.query('[data-thread-card="w-settled"]');
+    assert.ok(
+      card,
+      "settled worker must stay next to the pinned parent without opening Settled",
+    );
+    assert.equal(card!.getAttribute("data-nested"), "true");
+    assert.equal(
+      card!.getAttribute("data-settled"),
+      null,
+      "pinned nest is a full card, not a Settled slim row",
+    );
+    const order = cardTitles(m);
+    const pinIdx = order.indexOf("orch");
+    const childIdx = order.indexOf("w-settled");
+    const activeIdx = order.indexOf("active-card");
+    assert.equal(
+      childIdx,
+      pinIdx + 1,
+      "child sits immediately under the pinned parent",
+    );
+    assert.ok(
+      childIdx < activeIdx,
+      "child is in the pinned block, not a lone Active card",
+    );
+    assert.ok(m.query("[data-pinned-divider]"));
+    assert.equal(
+      m.query("[data-settled-shelf-toggle]"),
+      null,
+      "the only settled thread is nested under its parent, not in the shelf",
     );
     m.unmount();
   });
@@ -2524,6 +2634,103 @@ describe("Sidebar snooze nested submenu (#583)", () => {
   });
 });
 
+describe("Sidebar move-to-project menu (#737)", () => {
+  const MENU_THREAD = [
+    thread({
+      id: "menu-src",
+      title: "menu source",
+      status: "idle",
+      updatedAt: FRESH + 80,
+      projectId: "p1",
+    }),
+  ];
+
+  it("offers other projects in a submenu and calls onSetThreadProject", async () => {
+    const moves: Array<[string, string]> = [];
+    const m = await mount(
+      sidebar(MENU_THREAD, {
+        projects: [p1, p2],
+        onSetThreadProject: (id, projectId) => {
+          moves.push([id, projectId]);
+        },
+      }),
+    );
+    await m.click(m.query('[data-more-btn="menu-src"]'));
+    const menu = portalMenu();
+    assert.ok(menu, "… menu must open");
+    const trigger = menu.querySelector(
+      "[data-move-project]",
+    ) as HTMLElement | null;
+    assert.ok(trigger, "Move to project…");
+    await m.click(trigger);
+    const dest = document.querySelector(
+      '[data-move-project-id="p2"]',
+    ) as HTMLElement | null;
+    assert.ok(dest, "destination project is listed");
+    assert.equal(
+      document.querySelector('[data-move-project-id="p1"]'),
+      null,
+      "current project omitted",
+    );
+    await m.click(dest);
+    assert.deepEqual(moves, [["menu-src", "p2"]]);
+    m.unmount();
+  });
+
+  it("hides Move to project when there is only one project", async () => {
+    const m = await mount(
+      sidebar(MENU_THREAD, {
+        projects: [p1],
+        onSetThreadProject: () => {},
+        onSetPinned: () => {},
+      }),
+    );
+    await m.click(m.query('[data-more-btn="menu-src"]'));
+    const menu = portalMenu();
+    assert.ok(menu);
+    assert.equal(menu.querySelector("[data-move-project]"), null);
+    m.unmount();
+  });
+
+  it("disables Move to project on a worktree thread and does not call through", async () => {
+    const moves: Array<[string, string]> = [];
+    const m = await mount(
+      sidebar(
+        [
+          thread({
+            id: "menu-src",
+            title: "menu source",
+            status: "idle",
+            updatedAt: FRESH + 80,
+            projectId: "p1",
+            worktreePath: "/tmp/wt",
+          }),
+        ],
+        {
+          projects: [p1, p2],
+          onSetThreadProject: (id, projectId) => {
+            moves.push([id, projectId]);
+          },
+        },
+      ),
+    );
+    await m.click(m.query('[data-more-btn="menu-src"]'));
+    const trigger = portalMenu()?.querySelector(
+      "[data-move-project]",
+    ) as HTMLButtonElement | null;
+    assert.ok(trigger, "Move to project…");
+    assert.equal(trigger.disabled, true);
+    await m.click(trigger);
+    assert.equal(
+      document.querySelector("[data-move-project-id]"),
+      null,
+      "destinations stay closed while disabled",
+    );
+    assert.deepEqual(moves, []);
+    m.unmount();
+  });
+});
+
 /**
  * React.memo(ThreadCard) stores the inner function on `.type`. Wrap it so a
  * no-op threads:changed can assert cards did not re-render (issue #617).
@@ -2934,6 +3141,384 @@ describe("Sidebar thread tags (#789)", () => {
     assert.ok(ids.includes("tagged-work"));
     assert.ok(ids.includes("tagged-both"));
     assert.ok(!ids.includes("plain"));
+    m.unmount();
+  });
+});
+
+describe("Sidebar saved filter views (#939)", () => {
+  const moreProviders: ProviderInfo[] = [
+    ...providers,
+    {
+      id: "codex",
+      name: "Codex",
+      available: true,
+      supportsResume: true,
+      models: [],
+      modelInfo: [],
+      efforts: [],
+    },
+  ];
+
+  const viewThreads: ThreadInfo[] = [
+    thread({
+      id: "busy",
+      title: "busy work",
+      status: "working",
+      runStartedAt: FRESH,
+      createdAt: FRESH + 50,
+      updatedAt: FRESH + 50,
+      projectId: "p1",
+    }),
+    thread({
+      id: "codex-fail",
+      title: "codex fail",
+      status: "failed",
+      provider: "codex",
+      createdAt: FRESH + 40,
+      updatedAt: FRESH + 40,
+      projectId: "p1",
+    }),
+    thread({
+      id: "release-tag",
+      title: "release tagged",
+      status: "idle",
+      tags: ["release"],
+      createdAt: FRESH + 30,
+      updatedAt: FRESH + 30,
+      projectId: "p1",
+    }),
+    thread({
+      id: "billing-idle",
+      title: "billing idle",
+      status: "idle",
+      createdAt: FRESH + 10,
+      updatedAt: FRESH + 10,
+      projectId: "p2",
+    }),
+  ];
+
+  async function openViewsMenu(
+    m: Awaited<ReturnType<typeof mount>>,
+  ): Promise<void> {
+    if (!m.query("[data-saved-views-menu]")) {
+      const btn = m.query("[data-saved-views-trigger]");
+      assert.ok(btn, "saved views trigger");
+      await m.click(btn);
+      await m.flush();
+    }
+  }
+
+  async function saveCurrentView(
+    m: Awaited<ReturnType<typeof mount>>,
+    name: string,
+  ): Promise<void> {
+    await openViewsMenu(m);
+    const save = m.query("[data-saved-view-save]");
+    assert.ok(save, "Save current as");
+    await m.click(save);
+    await m.flush();
+    const input = m.query("[data-saved-view-name]") as HTMLInputElement | null;
+    assert.ok(input, "name input");
+    await m.type(input, name);
+    const confirm = m.query("[data-saved-view-save-confirm]");
+    assert.ok(confirm, "save confirm");
+    await m.click(confirm);
+    await m.flush();
+  }
+
+  it("saves two combinations and recalls them independently after remount", async () => {
+    await clearSidebarStorage();
+    const opts = { projects: [p1, p2], providers: moreProviders };
+    const m1 = await mount(sidebar(viewThreads, opts));
+    await m1.click(m1.query("[data-status-filter-trigger]")!);
+    await m1.flush();
+    await m1.click(m1.query('[data-status-filter="failed"]')!);
+    await m1.flush();
+    await m1.click(m1.query("[data-provider-filter-trigger]")!);
+    await m1.flush();
+    await m1.click(m1.query('[data-provider-filter="codex"]')!);
+    await m1.flush();
+    await saveCurrentView(m1, "Failed Codex threads");
+    assert.deepEqual(cardTitles(m1), ["codex-fail"]);
+    m1.unmount();
+
+    const m2 = await mount(sidebar(viewThreads, opts));
+    await m2.click(m2.query("[data-status-filter-trigger]")!);
+    await m2.flush();
+    await m2.click(m2.query('[data-status-filter="all"]')!);
+    await m2.flush();
+    await m2.click(m2.query("[data-provider-filter-trigger]")!);
+    await m2.flush();
+    await m2.click(m2.query('[data-provider-filter="all"]')!);
+    await m2.flush();
+    await m2.click(m2.query("[data-tag-filter-trigger]")!);
+    await m2.flush();
+    await m2.click(m2.query('[data-tag-filter="release"]')!);
+    await m2.flush();
+    await saveCurrentView(m2, "Release-tagged threads");
+    assert.deepEqual(cardTitles(m2), ["release-tag"]);
+    m2.unmount();
+
+    const m3 = await mount(sidebar(viewThreads, opts));
+    await openViewsMenu(m3);
+    await m3.click(m3.query('[data-saved-view-label="Failed Codex threads"]')!);
+    await m3.flush();
+    assert.deepEqual(cardTitles(m3), ["codex-fail"]);
+    assert.match(
+      m3.query("[data-saved-views-trigger]")!.textContent || "",
+      /Failed Codex threads/,
+    );
+    m3.unmount();
+
+    const m4 = await mount(sidebar(viewThreads, opts));
+    await openViewsMenu(m4);
+    await m4.click(m4.query('[data-saved-view-label="Release-tagged threads"]')!);
+    await m4.flush();
+    assert.deepEqual(cardTitles(m4), ["release-tag"]);
+    m4.unmount();
+
+    const m5 = await mount(sidebar(viewThreads, opts));
+    await openViewsMenu(m5);
+    await m5.click(m5.query('[data-saved-view-label="Failed Codex threads"]')!);
+    await m5.flush();
+    assert.deepEqual(cardTitles(m5), ["codex-fail"]);
+    m5.unmount();
+  });
+
+  it("marks the active view modified when filters change, and update restores it", async () => {
+    await clearSidebarStorage();
+    const m = await mount(
+      sidebar(viewThreads, { projects: [p1, p2], providers: moreProviders }),
+    );
+    await m.click(m.query("[data-status-filter-trigger]")!);
+    await m.flush();
+    await m.click(m.query('[data-status-filter="failed"]')!);
+    await m.flush();
+    await saveCurrentView(m, "Failed");
+    assert.equal(
+      m.query("[data-saved-views-trigger]")!.getAttribute("data-modified"),
+      null,
+    );
+    await m.click(m.query("[data-status-filter-trigger]")!);
+    await m.flush();
+    await m.click(m.query('[data-status-filter="idle"]')!);
+    await m.flush();
+    assert.equal(
+      m.query("[data-saved-views-trigger]")!.getAttribute("data-modified"),
+      "true",
+    );
+    await openViewsMenu(m);
+    await m.click(m.query("[data-saved-view-update]")!);
+    await m.flush();
+    assert.equal(
+      m.query("[data-saved-views-trigger]")!.getAttribute("data-modified"),
+      null,
+    );
+    assert.ok(cardTitles(m).includes("release-tag"));
+    assert.ok(!cardTitles(m).includes("codex-fail"));
+    m.unmount();
+  });
+
+  it("new matching threads appear because views store criteria, not ids", async () => {
+    await clearSidebarStorage();
+    const opts = { projects: [p1, p2], providers: moreProviders };
+    const m = await mount(sidebar(viewThreads, opts));
+    await m.click(m.query("[data-status-filter-trigger]")!);
+    await m.flush();
+    await m.click(m.query('[data-status-filter="failed"]')!);
+    await m.flush();
+    await m.click(m.query("[data-provider-filter-trigger]")!);
+    await m.flush();
+    await m.click(m.query('[data-provider-filter="codex"]')!);
+    await m.flush();
+    await saveCurrentView(m, "Failed Codex");
+    assert.deepEqual(cardTitles(m), ["codex-fail"]);
+    await m.rerender(
+      sidebar(
+        [
+          ...viewThreads,
+          thread({
+            id: "codex-fail-new",
+            title: "new failure",
+            status: "failed",
+            provider: "codex",
+            createdAt: FRESH + 80,
+            updatedAt: FRESH + 80,
+            projectId: "p1",
+          }),
+        ],
+        opts,
+      ),
+    );
+    const ids = cardTitles(m);
+    assert.ok(ids.includes("codex-fail"));
+    assert.ok(ids.includes("codex-fail-new"));
+    assert.ok(!ids.includes("release-tag"));
+    m.unmount();
+  });
+
+  it("explains the open-thread carve-out when it misses the filter", async () => {
+    await clearSidebarStorage();
+    const m = await mount(
+      sidebar(viewThreads, {
+        projects: [p1, p2],
+        providers: moreProviders,
+        activeThreadId: "billing-idle",
+      }),
+    );
+    await m.click(m.query("[data-status-filter-trigger]")!);
+    await m.flush();
+    await m.click(m.query('[data-status-filter="failed"]')!);
+    await m.flush();
+    assert.ok(cardTitles(m).includes("billing-idle"));
+    const note = m.query("[data-filter-carve-out]");
+    assert.ok(note, "carve-out is visible");
+    assert.match(
+      note!.textContent || "",
+      /open thread stays visible/i,
+    );
+    m.unmount();
+  });
+
+  it("a missing project on an active view is unavailable, not silently broadened", async () => {
+    await clearSidebarStorage();
+    const { serializeSavedViews, addSavedView } = await import(
+      "../src/sidebarViews.ts"
+    );
+    const views = addSavedView([], {
+      name: "Gone project",
+      criteria: {
+        status: null,
+        providers: [],
+        projectId: "missing-project",
+        tag: null,
+        query: "",
+        groupBy: "none",
+      },
+      now: 1,
+      id: "v-gone",
+    });
+    window.localStorage.setItem("sidebar:savedViews", serializeSavedViews(views));
+    window.localStorage.setItem("sidebar:activeSavedView", "v-gone");
+    window.localStorage.setItem("sidebar:projectScope", "missing-project");
+    const m = await mount(
+      sidebar(viewThreads, { projects: [p1, p2], providers: moreProviders }),
+    );
+    const unavailable = m.query("[data-view-unavailable]");
+    assert.ok(unavailable, "explicit unavailable state");
+    assert.match(
+      unavailable!.textContent || "",
+      /project is no longer available/i,
+    );
+    assert.equal(
+      cardTitles(m).length,
+      0,
+      "must not fall back to all projects",
+    );
+    m.unmount();
+  });
+
+  it("renames the active view from the same menu", async () => {
+    await clearSidebarStorage();
+    const m = await mount(
+      sidebar(viewThreads, { projects: [p1, p2], providers: moreProviders }),
+    );
+    await m.click(m.query("[data-status-filter-trigger]")!);
+    await m.flush();
+    await m.click(m.query('[data-status-filter="failed"]')!);
+    await m.flush();
+    await saveCurrentView(m, "Failed");
+    await openViewsMenu(m);
+    await m.click(m.query("[data-saved-view-rename]")!);
+    await m.flush();
+    const input = m.query("[data-saved-view-name]") as HTMLInputElement | null;
+    assert.ok(input, "rename input");
+    await m.type(input, "Failed Codex");
+    await m.click(m.query("[data-saved-view-save-confirm]")!);
+    await m.flush();
+    assert.match(
+      m.query("[data-saved-views-trigger]")!.textContent || "",
+      /Failed Codex/,
+    );
+    assert.ok(m.query('[data-saved-view-label="Failed Codex"]'));
+    m.unmount();
+  });
+
+  it("deleting a saved view leaves threads in place", async () => {
+    await clearSidebarStorage();
+    const m = await mount(
+      sidebar(viewThreads, { projects: [p1, p2], providers: moreProviders }),
+    );
+    await m.click(m.query("[data-status-filter-trigger]")!);
+    await m.flush();
+    await m.click(m.query('[data-status-filter="failed"]')!);
+    await m.flush();
+    await saveCurrentView(m, "Failed");
+    const before = cardTitles(m);
+    await openViewsMenu(m);
+    await m.click(m.query("[data-saved-view-delete]")!);
+    await m.flush();
+    assert.deepEqual(cardTitles(m), before);
+    assert.equal(
+      m.query('[data-saved-view-label="Failed"]'),
+      null,
+    );
+    m.unmount();
+  });
+});
+
+describe("Sidebar recently deleted shelf (#940)", () => {
+  it("lists trashed threads with restore, expiry, and permanent delete", async () => {
+    await clearSidebarStorage();
+    const restored: string[] = [];
+    const purged: string[] = [];
+    const m = await mount(
+      sidebar(THREADS, {
+        projects: [p1],
+        trashedThreads: [
+          {
+            id: "gone-1",
+            title: "accidentally deleted",
+            projectId: "p1",
+            projectSlug: "acme/ledger",
+            projectMissing: false,
+            trashedAt: Date.now() - 1000,
+            expiresAt: Date.now() + 6 * DAY_MS,
+          },
+          {
+            id: "orphan-1",
+            title: "lost project",
+            projectId: "missing",
+            projectSlug: null,
+            projectMissing: true,
+            trashedAt: Date.now() - 2000,
+            expiresAt: Date.now() + 5 * DAY_MS,
+          },
+        ],
+        onRestoreThread: (id) => restored.push(id),
+        onPurgeThread: (id) => purged.push(id),
+      }),
+    );
+    const toggle = m.query("[data-trashed-shelf-toggle]");
+    assert.ok(toggle, "Recently deleted shelf toggle is present");
+    assert.match(toggle!.textContent || "", /Recently deleted \(2\)/);
+    await m.click(toggle!);
+    await m.flush();
+    assert.ok(m.query('[data-trashed-row="gone-1"]'));
+    assert.ok(m.text().includes("Expires in 6d"));
+    assert.ok(m.text().includes("Project unavailable"));
+    const restore = m.query('[data-restore-btn="gone-1"]') as HTMLButtonElement;
+    assert.ok(restore);
+    await m.click(restore);
+    assert.deepEqual(restored, ["gone-1"]);
+    const blocked = m.query(
+      '[data-restore-btn="orphan-1"]',
+    ) as HTMLButtonElement;
+    assert.ok(blocked);
+    assert.equal(blocked.disabled, true);
+    await m.click(m.query('[data-purge-btn="gone-1"]')!);
+    await m.click(m.query('[data-purge-confirm="gone-1"]')!);
+    assert.deepEqual(purged, ["gone-1"]);
     m.unmount();
   });
 });

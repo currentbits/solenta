@@ -53,6 +53,7 @@ function thread(extra: Partial<ThreadInfo> = {}): ThreadInfo {
     snoozedUntil: null,
     snoozedAt: null,
     muted: false,
+    ejected: false,
     notes: "",
     queued: null,
     lastVisitedAt: null,

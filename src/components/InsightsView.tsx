@@ -1,11 +1,21 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  originFromRowKey,
+  useViewRestore,
+  type ThreadOpenOrigin,
+  type ViewReturnState,
+} from "../viewReturn";
 import { formatRelativeAge } from "../format";
 import type { FailureMode } from "../shared/ipc";
 import styles from "./InsightsView.module.css";
 
 export interface InsightsViewProps {
   loadFailureModes: () => Promise<FailureMode[]>;
-  onSelectThread: (id: string) => void;
+  onSelectThread: (id: string, origin?: ThreadOpenOrigin) => void;
+  restore?: ViewReturnState | null;
+  onRestoreApplied?: () => void;
+  /** Live sidebar ids. Omitted means the list is still loading — treat rows as openable. */
+  existingThreadIds?: Iterable<string>;
 }
 
 /** Sample is long machine text; keep the card scannable until asked. */
@@ -14,6 +24,9 @@ const SAMPLE_LIMIT = 140;
 export function InsightsView({
   loadFailureModes,
   onSelectThread,
+  existingThreadIds,
+  restore = null,
+  onRestoreApplied,
 }: InsightsViewProps) {
   const [modes, setModes] = useState<FailureMode[]>([]);
   const [loading, setLoading] = useState(false);
@@ -52,9 +65,15 @@ export function InsightsView({
 
   // ponytail: manual refresh only, add a subscription if staleness becomes visible
   const empty = !loading && !error && modes.length === 0;
+  const rootRef = useRef<HTMLElement>(null);
+  useViewRestore(!loading || modes.length > 0, restore, rootRef, onRestoreApplied);
+  const liveThreadIds = useMemo(() => {
+    if (existingThreadIds == null) return null;
+    return new Set(existingThreadIds);
+  }, [existingThreadIds]);
 
   return (
-    <main className={styles.main} data-insights="">
+    <main className={styles.main} data-insights="" ref={rootRef}>
       <header className={styles.header}>
         <h1 className={styles.title}>Insights</h1>
         <button
@@ -88,7 +107,7 @@ export function InsightsView({
           </p>
         </div>
       ) : (
-        <div className={styles.list}>
+        <div className={styles.list} data-return-scroll="">
           {error && (
             <p className={styles.hint} role="alert">
               {error}
@@ -134,41 +153,61 @@ export function InsightsView({
                   </button>
                 )}
                 <div className={styles.offenders}>
-                  {mode.offenders.map((offender) => (
-                    <div
-                      key={`${offender.threadId}:${offender.at}:${offender.kind}`}
-                      className={styles.row}
-                      data-insights-offender={offender.threadId}
-                    >
-                      <button
-                        type="button"
-                        className={styles.rowSelect}
-                        aria-label={`Select thread: ${offender.threadTitle}`}
-                        onClick={() => onSelectThread(offender.threadId)}
-                      />
-                      <div className={styles.rowBody}>
-                        <div className={styles.rowTop}>
-                          <span className={styles.threadTitle}>
-                            {offender.threadTitle}
-                          </span>
-                          <span className={styles.provider}>
-                            {offender.provider}
-                          </span>
-                        </div>
-                        <div className={styles.rowMeta}>
-                          <span
-                            className={styles.kind}
-                            data-kind={offender.kind}
-                          >
-                            {offender.kind}
-                          </span>
-                          <span className={styles.age}>
-                            {formatRelativeAge(offender.at, now)}
-                          </span>
+                  {mode.offenders.map((offender) => {
+                    const missing =
+                      liveThreadIds != null &&
+                      !liveThreadIds.has(offender.threadId);
+                    const rowKey = `${mode.id}:${offender.threadId}`;
+                    return (
+                      <div
+                        key={`${offender.threadId}:${offender.at}:${offender.kind}`}
+                        className={styles.row}
+                        data-insights-offender={offender.threadId}
+                        data-return-row={rowKey}
+                        data-thread-unavailable={missing ? "" : undefined}
+                      >
+                        {missing ? null : (
+                          <button
+                            type="button"
+                            className={styles.rowSelect}
+                            aria-label={`Select thread: ${offender.threadTitle}`}
+                            onClick={() =>
+                              onSelectThread(
+                                offender.threadId,
+                                originFromRowKey(rootRef.current, rowKey),
+                              )
+                            }
+                          />
+                        )}
+                        <div className={styles.rowBody}>
+                          <div className={styles.rowTop}>
+                            <span className={styles.threadTitle}>
+                              {offender.threadTitle}
+                            </span>
+                            <span className={styles.provider}>
+                              {offender.provider}
+                            </span>
+                            {missing ? (
+                              <span className={styles.unavailable}>
+                                Transcript unavailable
+                              </span>
+                            ) : null}
+                          </div>
+                          <div className={styles.rowMeta}>
+                            <span
+                              className={styles.kind}
+                              data-kind={offender.kind}
+                            >
+                              {offender.kind}
+                            </span>
+                            <span className={styles.age}>
+                              {formatRelativeAge(offender.at, now)}
+                            </span>
+                          </div>
                         </div>
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </section>
             );

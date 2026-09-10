@@ -30,14 +30,51 @@ import {
   setActionError,
   setDraft,
   startEdit,
+  type CardActionsById,
 } from "../memoryCard";
 
 const MEMORY_NOT_RUNNING = "Memory server is not running.";
 const SEARCH_DEBOUNCE_MS = 300;
 const MIN_QUERY_LEN = 3;
-const RECENT_LIMIT = 20;
+const PAGE_SIZE = 20;
 
 type StoreType = "knowledge" | "convention" | "task" | "strategy";
+type FilterType = "" | StoreType;
+
+type SessionSnap = {
+  projectSlug: string | null;
+  query: string;
+  filterType: FilterType;
+  scrollTop: number;
+  formType: StoreType;
+  formTitle: string;
+  formBody: string;
+  adding: boolean;
+  cardActions: CardActionsById;
+  expandedId: string | null;
+};
+
+let sessionSnap: SessionSnap | null = null;
+
+export function resetMemoryTabSession(): void {
+  sessionSnap = null;
+}
+
+function isDirtySession(s: {
+  formTitle: string;
+  formBody: string;
+  cardActions: CardActionsById;
+}): boolean {
+  if (s.formTitle.trim() || s.formBody.trim()) return true;
+  return (
+    Object.keys(s.cardActions.editing).length > 0 ||
+    Object.keys(s.cardActions.drafts).length > 0
+  );
+}
+
+function scopeLabel(slug: string | null | undefined): string {
+  return slug ? slug.split("/").filter(Boolean).pop() || slug : "all projects";
+}
 
 export interface MemoryTabProps {
   /** Project PATH of the selected thread (falls back to slug). The memory
@@ -50,10 +87,13 @@ export interface MemoryTabProps {
   searchMemory: (input: {
     query: string;
     project?: string;
+    type?: MemoryEntryInfo["type"];
   }) => Promise<MemoryEntryInfo[]>;
   recentMemory: (input?: {
     limit?: number;
+    offset?: number;
     project?: string;
+    type?: MemoryEntryInfo["type"];
   }) => Promise<MemoryEntryInfo[]>;
   getMemory: (input: { id: string }) => Promise<MemoryEntryInfo>;
   updateMemory: (input: {
@@ -82,6 +122,7 @@ export interface MemoryTabProps {
   }) => Promise<AgentConfigWriteResult>;
   maintenanceMemory?: (input?: {
     project?: string;
+    summary?: boolean;
   }) => Promise<MemoryMaintenanceReport>;
   resolveMemory?: (input: {
     id: number;
@@ -146,7 +187,23 @@ function CodeMapCard({
   const [map, setMap] = useState<ProjectCodeMap | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [open, setOpen] = useState<string | null>(null);
+  const [opened, setOpened] = useState(false);
+  const [refresh, setRefresh] = useState(0);
+  const [boundProjectId, setBoundProjectId] = useState(projectId);
   const mounted = useRef(true);
+  const epochRef = useRef(0);
+  const liveProjectRef = useRef(projectId);
+
+  // AgentsPanel updates MemoryTab without a key. Reset during render so B's
+  // first paint cannot keep A's counts, modules, or expanded module.
+  if (boundProjectId !== projectId) {
+    setBoundProjectId(projectId);
+    setMap(null);
+    setOpen(null);
+    setError(null);
+    liveProjectRef.current = projectId;
+    epochRef.current += 1;
+  }
 
   useEffect(() => {
     mounted.current = true;
@@ -156,37 +213,53 @@ function CodeMapCard({
   }, []);
 
   useEffect(() => {
-    let cancelled = false;
+    if (!opened) return;
+    epochRef.current += 1;
+    const epoch = epochRef.current;
     setError(null);
+    const live = () =>
+      mounted.current &&
+      epoch === epochRef.current &&
+      liveProjectRef.current === projectId;
     void loadCodeMap({ projectId })
       .then((next) => {
-        if (!cancelled && mounted.current) setMap(next);
+        if (live()) setMap(next);
       })
       .catch((err: unknown) => {
-        if (!cancelled && mounted.current) {
+        if (live()) {
           setError(errorMessage(err));
           setMap(null);
         }
       });
-    return () => {
-      cancelled = true;
-    };
-  }, [loadCodeMap, projectId]);
+  }, [loadCodeMap, projectId, opened, refresh]);
 
-  const sha = map?.headSha ? map.headSha.slice(0, 7) : "";
-  const loc = [map?.defaultBranch, sha && `@ ${sha}`].filter(Boolean).join(" ");
-  const age = map?.updatedAt ? ageFromIso(new Date(map.updatedAt).toISOString()) : "";
+  const shown = map && map.projectId === projectId ? map : null;
+  const sha = shown?.headSha ? shown.headSha.slice(0, 7) : "";
+  const loc = [shown?.defaultBranch, sha && `@ ${sha}`].filter(Boolean).join(" ");
+  const age = shown?.updatedAt ? ageFromIso(new Date(shown.updatedAt).toISOString()) : "";
 
   return (
-    <section className={styles.section} data-code-map="">
-      <div className={styles.sectionHead}>
-        <h2 className={styles.sectionTitle}>Code map</h2>
-        {map && map.fileCount > 0 ? (
+    <details
+      className={styles.section}
+      data-code-map=""
+      open={opened}
+    >
+      <summary
+        className={styles.disclosureSummary}
+        onClick={(e) => {
+          e.preventDefault();
+          setOpened((on) => !on);
+        }}
+      >
+        <span className={styles.sectionTitle}>Code map</span>
+        {shown && shown.fileCount > 0 ? (
           <span className={styles.sectionMeta}>
-            {map.fileCount} files · {map.symbolCount} symbols
+            {shown.fileCount} files · {shown.symbolCount} symbols
           </span>
         ) : null}
-      </div>
+      </summary>
+      {opened ? (
+        <>
       <p className={styles.mapHint}>
         Regenerated wiki of the repo, not agent memory.
         {loc ? ` ${loc}` : ""}
@@ -197,12 +270,12 @@ function CodeMapCard({
           {error}
         </p>
       ) : null}
-      {map && map.modules.length === 0 && !error ? (
+      {shown && shown.modules.length === 0 && !error ? (
         <p className={styles.mapEmpty}>No index yet. It builds from the checkout.</p>
       ) : null}
-      {map && map.modules.length > 0 ? (
+      {shown && shown.modules.length > 0 ? (
         <ul className={styles.mapModules}>
-          {map.modules.map((mod) => {
+          {shown.modules.map((mod) => {
             const expanded = open === mod.name;
             return (
               <li key={mod.name}>
@@ -236,23 +309,39 @@ function CodeMapCard({
           })}
         </ul>
       ) : null}
-      {map && map.dependencies.length > 0 ? (
+      {shown && shown.dependencies.length > 0 ? (
         <p className={styles.mapDeps}>
           <span className={styles.sectionMeta}>Dependencies</span>
-          {map.dependencies.join(", ")}
+          {shown.dependencies.join(", ")}
         </p>
       ) : null}
-    </section>
+      <button
+        type="button"
+        className={styles.retryBtn}
+        onClick={() => setRefresh((n) => n + 1)}
+      >
+        Refresh
+      </button>
+        </>
+      ) : null}
+    </details>
   );
+}
+
+function projectLabelOf(slug: string | null | undefined, projectId: string): string {
+  const base = slug?.split("/").filter(Boolean).pop();
+  return base || projectId;
 }
 
 function ConfigDoctorCard({
   projectId,
+  projectLabel,
   lintAgentConfig,
   previewAgentConfig,
   writeAgentConfig,
 }: {
   projectId: string;
+  projectLabel: string;
   lintAgentConfig: (input: {
     projectId: string;
   }) => Promise<AgentConfigDoctorReport>;
@@ -265,6 +354,7 @@ function ConfigDoctorCard({
     targets?: string[];
   }) => Promise<AgentConfigWriteResult>;
 }) {
+  const [opened, setOpened] = useState(false);
   const [report, setReport] = useState<AgentConfigDoctorReport | null>(null);
   const [preview, setPreview] = useState<AgentConfigPreview | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -272,6 +362,10 @@ function ConfigDoctorCard({
   const [confirmWrite, setConfirmWrite] = useState(false);
   const [wrote, setWrote] = useState<string[] | null>(null);
   const mounted = useRef(true);
+  /** Bumped on project change so A's in-flight lint/preview cannot paint B. */
+  const epochRef = useRef(0);
+  const liveProjectRef = useRef(projectId);
+  const wroteByProject = useRef<Record<string, string[]>>({});
 
   useEffect(() => {
     mounted.current = true;
@@ -280,41 +374,61 @@ function ConfigDoctorCard({
     };
   }, []);
 
+  useEffect(() => {
+    epochRef.current += 1;
+    liveProjectRef.current = projectId;
+    setPreview(null);
+    setConfirmWrite(false);
+    setReport(null);
+    setError(null);
+    setBusy(false);
+    setWrote(wroteByProject.current[projectId] ?? null);
+  }, [projectId]);
+
+  const stillThisProject = (epoch: number, forProject: string) =>
+    mounted.current &&
+    epochRef.current === epoch &&
+    liveProjectRef.current === forProject;
+
   const loadLint = useCallback(async () => {
+    const epoch = epochRef.current;
+    const forProject = projectId;
     setBusy(true);
     setError(null);
-    setWrote(null);
     try {
-      const next = await lintAgentConfig({ projectId });
-      if (!mounted.current) return;
+      const next = await lintAgentConfig({ projectId: forProject });
+      if (!stillThisProject(epoch, forProject)) return;
       setReport(next);
     } catch (err) {
-      if (!mounted.current) return;
+      if (!stillThisProject(epoch, forProject)) return;
       setError(errorMessage(err));
       setReport(null);
     } finally {
-      if (mounted.current) setBusy(false);
+      if (stillThisProject(epoch, forProject)) setBusy(false);
     }
   }, [lintAgentConfig, projectId]);
 
   useEffect(() => {
+    if (!opened) return;
     void loadLint();
-  }, [loadLint]);
+  }, [loadLint, opened]);
 
   const onPreview = async () => {
     if (!previewAgentConfig) return;
+    const epoch = epochRef.current;
+    const forProject = projectId;
     setBusy(true);
     setError(null);
     try {
-      const next = await previewAgentConfig({ projectId });
-      if (!mounted.current) return;
+      const next = await previewAgentConfig({ projectId: forProject });
+      if (!stillThisProject(epoch, forProject)) return;
       setPreview(next);
       setConfirmWrite(false);
     } catch (err) {
-      if (!mounted.current) return;
+      if (!stillThisProject(epoch, forProject)) return;
       setError(errorMessage(err));
     } finally {
-      if (mounted.current) setBusy(false);
+      if (stillThisProject(epoch, forProject)) setBusy(false);
     }
   };
 
@@ -324,22 +438,26 @@ function ConfigDoctorCard({
       setConfirmWrite(true);
       return;
     }
+    const forProject = projectId;
     setBusy(true);
     setError(null);
     try {
-      const result = await writeAgentConfig({ projectId });
-      if (!mounted.current) return;
+      const result = await writeAgentConfig({ projectId: forProject });
+      wroteByProject.current[forProject] = result.written;
+      if (!mounted.current || liveProjectRef.current !== forProject) return;
       setWrote(result.written);
       setConfirmWrite(false);
       setPreview(null);
-      const next = await lintAgentConfig({ projectId });
-      if (!mounted.current) return;
+      const next = await lintAgentConfig({ projectId: forProject });
+      if (!mounted.current || liveProjectRef.current !== forProject) return;
       setReport(next);
     } catch (err) {
-      if (!mounted.current) return;
+      if (!mounted.current || liveProjectRef.current !== forProject) return;
       setError(errorMessage(err));
     } finally {
-      if (mounted.current) setBusy(false);
+      if (mounted.current && liveProjectRef.current === forProject) {
+        setBusy(false);
+      }
     }
   };
 
@@ -347,9 +465,20 @@ function ConfigDoctorCard({
   const considered = report?.memory.considered ?? 0;
 
   return (
-    <section className={styles.section} data-config-doctor="">
-      <div className={styles.sectionHead}>
-        <h2 className={styles.sectionTitle}>Config doctor</h2>
+    <details
+      className={styles.section}
+      data-config-doctor=""
+      data-config-project={projectId}
+      open={opened}
+    >
+      <summary
+        className={styles.disclosureSummary}
+        onClick={(e) => {
+          e.preventDefault();
+          setOpened((on) => !on);
+        }}
+      >
+        <span className={styles.sectionTitle}>Config doctor</span>
         {report ? (
           <span
             className={`${styles.grade} ${gradeClass(report.grade)}`}
@@ -358,22 +487,30 @@ function ConfigDoctorCard({
             {report.grade} {report.score}
           </span>
         ) : null}
-      </div>
+      </summary>
+      {opened ? (
+        <>
       {error ? (
         <p className={styles.formError} role="alert">
           {error}
         </p>
       ) : null}
+      <p className={styles.doctorMeta} data-config-target="">
+        {projectLabel}
+        {report
+          ? ` · ${
+              report.files.length === 0
+                ? "No AGENTS.md or CLAUDE.md"
+                : `${report.files.length} file${report.files.length === 1 ? "" : "s"}`
+            }${
+              considered > 0
+                ? ` · ${report.memory.covered}/${considered} memory`
+                : ""
+            }`
+          : ""}
+      </p>
       {report ? (
         <>
-          <p className={styles.doctorMeta}>
-            {report.files.length === 0
-              ? "No AGENTS.md or CLAUDE.md"
-              : `${report.files.length} file${report.files.length === 1 ? "" : "s"}`}
-            {considered > 0
-              ? ` · ${report.memory.covered}/${considered} memory`
-              : ""}
-          </p>
           {report.files.length > 0 ? (
             <ul className={styles.doctorFiles}>
               {report.files.map((file) => (
@@ -427,14 +564,24 @@ function ConfigDoctorCard({
             onClick={() => void onWrite()}
           >
             {confirmWrite
-              ? "Confirm write"
+              ? `Confirm write to ${projectLabel}`
               : preview
                 ? `Write ${preview.files.map((f) => f.path).join(", ")}`
                 : "Write from memory"}
           </button>
         ) : null}
+        <button
+          type="button"
+          className={styles.retryBtn}
+          disabled={busy}
+          onClick={() => void loadLint()}
+        >
+          Refresh
+        </button>
       </div>
-    </section>
+        </>
+      ) : null}
+    </details>
   );
 }
 
@@ -446,6 +593,7 @@ function ReviewQueueCard({
   projectSlug: string | null;
   maintenanceMemory: (input?: {
     project?: string;
+    summary?: boolean;
   }) => Promise<MemoryMaintenanceReport>;
   resolveMemory?: (input: {
     id: number;
@@ -455,6 +603,8 @@ function ReviewQueueCard({
   const [report, setReport] = useState<MemoryMaintenanceReport | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<number | null>(null);
+  const [opened, setOpened] = useState(false);
+  const [detailLoaded, setDetailLoaded] = useState(false);
   const mounted = useRef(true);
 
   useEffect(() => {
@@ -464,23 +614,27 @@ function ReviewQueueCard({
     };
   }, []);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (full: boolean) => {
     setError(null);
     try {
       const next = await maintenanceMemory({
         project: projectSlug || undefined,
+        ...(full ? {} : { summary: true }),
       });
       if (!mounted.current) return;
       setReport(next);
+      if (full) setDetailLoaded(true);
     } catch (err) {
       if (!mounted.current) return;
       setError(errorMessage(err));
-      setReport(null);
+      if (full) setReport(null);
     }
   }, [maintenanceMemory, projectSlug]);
 
   useEffect(() => {
-    void load();
+    setOpened(false);
+    setDetailLoaded(false);
+    void load(false);
   }, [load]);
 
   const onResolve = async (id: number, resolution: MemoryReviewResolution) => {
@@ -490,7 +644,7 @@ function ReviewQueueCard({
     try {
       await resolveMemory({ id, resolution });
       if (!mounted.current) return;
-      await load();
+      await load(true);
     } catch (err) {
       if (!mounted.current) return;
       setError(errorMessage(err));
@@ -509,13 +663,33 @@ function ReviewQueueCard({
   return (
     <section className={styles.section} data-review-queue="">
       <div className={styles.sectionHead}>
-        <h2 className={styles.sectionTitle}>Review queue</h2>
-        {open > 0 ? (
-          <span className={styles.sectionMeta}>
-            {open} need{open === 1 ? "s" : ""} your call
-          </span>
+        <button
+          type="button"
+          className={styles.reviewChip}
+          data-review-open=""
+          aria-expanded={opened}
+          onClick={() => {
+            const next = !opened;
+            setOpened(next);
+            if (next && !detailLoaded) void load(true);
+          }}
+        >
+          {open > 0
+            ? `${open} need${open === 1 ? "s" : ""} your call`
+            : "Review"}
+        </button>
+        {opened ? (
+          <button
+            type="button"
+            className={styles.retryBtn}
+            onClick={() => void load(true)}
+          >
+            Refresh
+          </button>
         ) : null}
       </div>
+      {opened ? (
+        <>
       {error ? (
         <p className={styles.formError} role="alert">
           {error}
@@ -569,6 +743,8 @@ function ReviewQueueCard({
           ))}
         </ul>
       ) : null}
+        </>
+      ) : null}
     </section>
   );
 }
@@ -589,29 +765,50 @@ export function MemoryTab({
   maintenanceMemory,
   resolveMemory,
 }: MemoryTabProps) {
+  const snap = sessionSnap;
   const [entries, setEntries] = useState<MemoryEntryInfo[]>([]);
-  const [query, setQuery] = useState("");
+  const [query, setQuery] = useState(() => snap?.query ?? "");
+  const [filterType, setFilterType] = useState<FilterType>(
+    () => snap?.filterType ?? "",
+  );
   const [loading, setLoading] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [hasMore, setHasMore] = useState(false);
   const [listError, setListError] = useState<string | null>(null);
   const [serverDown, setServerDown] = useState(false);
-  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [expandedId, setExpandedId] = useState<string | null>(
+    () => snap?.expandedId ?? null,
+  );
   /**
    * Drafts, edit intent, delete-confirm, and action errors keyed by entry id.
    * Collapse keeps drafts; card A cannot paint on card B by construction.
    */
-  const [cardActions, setCardActions] = useState(emptyCardActions);
+  const [cardActions, setCardActions] = useState(
+    () => snap?.cardActions ?? emptyCardActions(),
+  );
   const [actionBusy, setActionBusy] = useState(false);
   const [fullBodies, setFullBodies] = useState<Record<string, string>>({});
   /** Ids whose memory.get failed (non-not-running); re-click retries. */
   const [failedIds, setFailedIds] = useState<Record<string, string>>({});
   const [expandingId, setExpandingId] = useState<string | null>(null);
-  const [formType, setFormType] = useState<StoreType>("knowledge");
-  const [formTitle, setFormTitle] = useState("");
-  const [formBody, setFormBody] = useState("");
-  /** List filter: pass selected thread project into search/recent (off by default). */
+  const [formType, setFormType] = useState<StoreType>(
+    () => snap?.formType ?? "knowledge",
+  );
+  const [formTitle, setFormTitle] = useState(() => snap?.formTitle ?? "");
+  const [formBody, setFormBody] = useState(() => snap?.formBody ?? "");
+  const [adding, setAdding] = useState(() => snap?.adding ?? false);
   const [formError, setFormError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [now, setNow] = useState(() => Date.now());
+  const [listProject, setListProject] = useState<string | null>(() => {
+    if (snap && isDirtySession(snap) && snap.projectSlug !== projectSlug) {
+      return snap.projectSlug;
+    }
+    return projectSlug;
+  });
+  const [discardOpen, setDiscardOpen] = useState(() =>
+    Boolean(snap && isDirtySession(snap) && snap.projectSlug !== projectSlug),
+  );
 
   /** Bumped so late awaits do not clobber newer list results. */
   const listGen = useRef(0);
@@ -619,6 +816,20 @@ export function MemoryTab({
   const mountedRef = useRef(true);
   /** Latest search box text for Retry after not-running. */
   const queryRef = useRef(query);
+  const entriesRef = useRef(entries);
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+  const persistRef = useRef<SessionSnap>({
+    projectSlug: listProject,
+    query,
+    filterType,
+    scrollTop: snap?.scrollTop ?? 0,
+    formType,
+    formTitle,
+    formBody,
+    adding,
+    cardActions,
+    expandedId,
+  });
 
   useEffect(() => {
     mountedRef.current = true;
@@ -636,65 +847,140 @@ export function MemoryTab({
   }, [query]);
 
   useEffect(() => {
+    entriesRef.current = entries;
+  }, [entries]);
+
+  useEffect(() => {
+    persistRef.current = {
+      projectSlug: listProject,
+      query,
+      filterType,
+      scrollTop: scrollRef.current?.scrollTop ?? persistRef.current.scrollTop,
+      formType,
+      formTitle,
+      formBody,
+      adding,
+      cardActions,
+      expandedId,
+    };
+  }, [
+    listProject,
+    query,
+    filterType,
+    formType,
+    formTitle,
+    formBody,
+    adding,
+    cardActions,
+    expandedId,
+  ]);
+
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (el && snap && snap.projectSlug === listProject) {
+      el.scrollTop = snap.scrollTop;
+    }
+    return () => {
+      persistRef.current.scrollTop = scrollRef.current?.scrollTop ?? 0;
+      sessionSnap = persistRef.current;
+    };
+    // Restore once on mount; persist on unmount.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
     const handle = window.setInterval(() => setNow(Date.now()), 60_000);
     return () => window.clearInterval(handle);
   }, []);
 
-  // Memory is project-scoped: when a project is selected the tab shows that
-  // project and nothing else. No opt-in toggle; cross-project browsing is not
-  // a thing the server offers for a scoped query.
-  const listProjectFilter = projectSlug ?? undefined;
-
-  const loadRecent = useCallback(async () => {
-    const gen = ++listGen.current;
-    setLoading(true);
-    try {
-      const project = projectSlug ?? undefined;
-      const list = await recentMemory({
-        limit: RECENT_LIMIT,
-        ...(project ? { project } : {}),
-      });
-      if (!mountedRef.current || listGen.current !== gen) return;
-      setEntries(list);
-      setFullBodies({});
-      setExpandedId(null);
-      setFailedIds({});
-      setCardActions(clearAllCardActions());
-      setListError(null);
-      setServerDown(false);
-    } catch (err) {
-      if (!mountedRef.current || listGen.current !== gen) return;
-      if (isNotRunningError(err)) {
-        setServerDown(true);
-        setEntries([]);
-        setListError(null);
-      } else {
-        setListError(errorMessage(err));
-        setEntries([]);
-      }
-    } finally {
-      if (mountedRef.current && listGen.current === gen) {
-        setLoading(false);
-      }
+  useEffect(() => {
+    if (listProject === projectSlug) {
+      setDiscardOpen(false);
+      return;
     }
-  }, [recentMemory, projectSlug]);
+    if (isDirtySession({ formTitle, formBody, cardActions })) {
+      setDiscardOpen(true);
+      return;
+    }
+    setListProject(projectSlug);
+    setEntries([]);
+    setFullBodies({});
+    setExpandedId(null);
+    setFailedIds({});
+    setCardActions(clearAllCardActions());
+    setDiscardOpen(false);
+  }, [projectSlug, listProject, formTitle, formBody, cardActions]);
+
+  const discardAndSwitch = () => {
+    setCardActions(clearAllCardActions());
+    setFormTitle("");
+    setFormBody("");
+    setAdding(false);
+    setExpandedId(null);
+    setFullBodies({});
+    setFailedIds({});
+    setDiscardOpen(false);
+    setListProject(projectSlug);
+  };
+
+  const loadRecent = useCallback(
+    async (mode: "replace" | "append" = "replace") => {
+      const gen = mode === "replace" ? ++listGen.current : listGen.current;
+      if (mode === "replace") setLoading(true);
+      else setLoadingMore(true);
+      try {
+        const project = listProject ?? undefined;
+        const offset = mode === "append" ? entriesRef.current.length : 0;
+        const list = await recentMemory({
+          limit: PAGE_SIZE,
+          ...(offset > 0 ? { offset } : {}),
+          ...(project ? { project } : {}),
+          ...(filterType ? { type: filterType } : {}),
+        });
+        if (!mountedRef.current || listGen.current !== gen) return;
+        if (mode === "append") {
+          const have = new Set(entriesRef.current.map((row) => row.id));
+          setEntries([...entriesRef.current, ...list.filter((row) => !have.has(row.id))]);
+        } else {
+          setEntries(list);
+        }
+        setHasMore(list.length === PAGE_SIZE);
+        setListError(null);
+        setServerDown(false);
+      } catch (err) {
+        if (!mountedRef.current || listGen.current !== gen) return;
+        if (isNotRunningError(err)) {
+          setServerDown(true);
+          if (mode === "replace") setEntries([]);
+          setListError(null);
+        } else {
+          setListError(errorMessage(err));
+          if (mode === "replace") setEntries([]);
+        }
+      } finally {
+        if (mountedRef.current && listGen.current === gen) {
+          if (mode === "replace") setLoading(false);
+          else setLoadingMore(false);
+        }
+      }
+    },
+    [recentMemory, listProject, filterType],
+  );
 
   const runSearch = useCallback(
     async (q: string) => {
       const gen = ++listGen.current;
       setLoading(true);
       try {
-        const project = projectSlug ?? undefined;
+        const project = listProject ?? undefined;
         const list = await searchMemory({
           query: q,
           ...(project ? { project } : {}),
+          ...(filterType ? { type: filterType } : {}),
         });
         if (!mountedRef.current || listGen.current !== gen) return;
         setEntries(list);
-        setFullBodies({});
-        setExpandedId(null);
-        setFailedIds({});
-        setCardActions(clearAllCardActions());
+        setHasMore(false);
         setListError(null);
         setServerDown(false);
       } catch (err) {
@@ -713,7 +999,7 @@ export function MemoryTab({
         }
       }
     },
-    [searchMemory, projectSlug],
+    [searchMemory, listProject, filterType],
   );
 
   /** Retry after not-running: re-run active search when query is long enough. */
@@ -722,26 +1008,24 @@ export function MemoryTab({
     if (trimmed.length >= MIN_QUERY_LEN) {
       void runSearch(trimmed);
     } else {
-      void loadRecent();
+      void loadRecent("replace");
     }
   }, [loadRecent, runSearch]);
 
-  // Lazy first open (tab mount with empty query) + debounced search.
-  // Empty query → recent; 3+ chars → search after 300ms; 1–2 chars leave list as-is.
-  // Project filter toggles also re-run the current list.
+  // Empty / short query → recent; 3+ chars → search after 300ms.
+  // Short queries keep the recent list and explain the three-character minimum.
   useEffect(() => {
     const trimmed = query.trim();
-    if (trimmed.length === 0) {
-      void loadRecent();
+    if (trimmed.length < MIN_QUERY_LEN) {
+      void loadRecent("replace");
       return;
     }
-    if (trimmed.length < MIN_QUERY_LEN) return;
 
     const handle = window.setTimeout(() => {
       void runSearch(trimmed);
     }, SEARCH_DEBOUNCE_MS);
     return () => window.clearTimeout(handle);
-  }, [query, loadRecent, runSearch, listProjectFilter]);
+  }, [query, loadRecent, runSearch, listProject, filterType]);
 
   const toggleExpand = async (id: string) => {
     // Collapse keeps drafts and edit intent (afterCollapse only drops confirm UI).
@@ -810,9 +1094,10 @@ export function MemoryTab({
       setFormTitle("");
       setFormBody("");
       setFormType("knowledge");
+      setAdding(false);
       setServerDown(false);
       setQuery("");
-      await loadRecent();
+      await loadRecent("replace");
     } catch (err) {
       if (!mountedRef.current) return;
       if (isNotRunningError(err)) {
@@ -887,6 +1172,28 @@ export function MemoryTab({
       <CodeMapCard projectId={projectId} loadCodeMap={loadCodeMap} />
     ) : null;
 
+  const secondary = (
+    <div className={styles.secondary} data-memory-secondary="">
+      {mapCard}
+      {lintAgentConfig && projectId ? (
+        <ConfigDoctorCard
+          projectId={projectId}
+          projectLabel={projectLabelOf(projectSlug, projectId)}
+          lintAgentConfig={lintAgentConfig}
+          previewAgentConfig={previewAgentConfig}
+          writeAgentConfig={writeAgentConfig}
+        />
+      ) : null}
+      {maintenanceMemory ? (
+        <ReviewQueueCard
+          projectSlug={projectSlug}
+          maintenanceMemory={maintenanceMemory}
+          resolveMemory={resolveMemory}
+        />
+      ) : null}
+    </div>
+  );
+
   const toolbar = (
     <div className={styles.searchRow}>
       <input
@@ -897,18 +1204,99 @@ export function MemoryTab({
         onChange={(e) => setQuery(e.target.value)}
         aria-label="Search shared memory"
       />
+      <select
+        className={styles.select}
+        value={filterType}
+        onChange={(e) => setFilterType(e.target.value as FilterType)}
+        aria-label="Filter memory type"
+      >
+        <option value="">all types</option>
+        <option value="knowledge">knowledge</option>
+        <option value="convention">convention</option>
+        <option value="strategy">strategy</option>
+        <option value="task">task</option>
+      </select>
       <span className={styles.filterLabel} title="Memory is scoped to this project">
-        {projectSlug ? projectSlug.split("/").filter(Boolean).pop() : "all projects"}
+        {scopeLabel(projectSlug)}
       </span>
+      <button
+        type="button"
+        className={styles.addBtn}
+        aria-expanded={adding}
+        onClick={() => setAdding((on) => !on)}
+      >
+        {adding ? "Close" : "Add memory"}
+      </button>
     </div>
   );
+
+  const shortQuery = query.trim().length > 0 && query.trim().length < MIN_QUERY_LEN;
+  const scopedName = scopeLabel(listProject);
+
+  const rememberForm = adding ? (
+      <form
+        className={styles.form}
+        onSubmit={(e) => {
+          e.preventDefault();
+          void handleSave();
+        }}
+      >
+        <h2 className={styles.sectionTitle}>Remember something</h2>
+        <div className={styles.formRow}>
+          <select
+            className={styles.select}
+            value={formType}
+            onChange={(e) => setFormType(e.target.value as StoreType)}
+            aria-label="Memory type"
+          >
+            <option value="knowledge">knowledge</option>
+            <option value="convention">convention</option>
+            <option value="strategy">strategy</option>
+            <option value="task">task</option>
+          </select>
+          <input
+            type="text"
+            className={styles.titleInput}
+            placeholder="Title"
+            value={formTitle}
+            onChange={(e) => setFormTitle(e.target.value)}
+            aria-label="Memory title"
+          />
+        </div>
+        <textarea
+          className={styles.bodyInput}
+          placeholder="What should future sessions know?"
+          value={formBody}
+          onChange={(e) => setFormBody(e.target.value)}
+          rows={3}
+          aria-label="Memory body"
+        />
+        <p className={styles.formHint}>
+          {projectSlug
+            ? `Saved to ${projectSlug}`
+            : "Saved without a project (select a thread to scope it)"}
+        </p>
+        {formError && (
+          <p className={styles.formError} role="alert">
+            {formError}
+          </p>
+        )}
+        <button
+          type="submit"
+          className={styles.saveBtn}
+          disabled={saving}
+        >
+          {saving ? "Saving…" : "Save"}
+        </button>
+      </form>
+  ) : null;
 
   if (serverDown) {
     return (
       <div className={styles.root}>
         {toolbar}
-        <div className={styles.scroll} data-memory-scroll="">
-          {mapCard}
+        <div className={styles.scroll} data-memory-scroll="" ref={scrollRef}>
+          {rememberForm}
           <div className={styles.downWrap}>
             <p className={styles.downMessage}>{MEMORY_NOT_RUNNING}</p>
             <button
@@ -922,6 +1310,7 @@ export function MemoryTab({
               Retry
             </button>
           </div>
+          {secondary}
         </div>
       </div>
     );
@@ -929,38 +1318,50 @@ export function MemoryTab({
 
   const entryCountLabel = loading && entries.length === 0
     ? "Loading"
-    : String(entries.length);
+    : `${entries.length} loaded`;
 
   return (
     <div className={styles.root}>
       {toolbar}
-      <div className={styles.scroll} data-memory-scroll="">
-        {mapCard}
-        {lintAgentConfig && projectId ? (
-          <ConfigDoctorCard
-            projectId={projectId}
-            lintAgentConfig={lintAgentConfig}
-            previewAgentConfig={previewAgentConfig}
-            writeAgentConfig={writeAgentConfig}
-          />
+      <div className={styles.scroll} data-memory-scroll="" ref={scrollRef}>
+        {discardOpen ? (
+          <div className={styles.discardBanner} role="alertdialog">
+            <p>
+              Load memories for {scopeLabel(projectSlug)}? Unsaved edits will be
+              discarded.
+            </p>
+            <button
+              type="button"
+              className={styles.dangerBtn}
+              onClick={discardAndSwitch}
+            >
+              Discard and switch
+            </button>
+          </div>
         ) : null}
-        {maintenanceMemory ? (
-          <ReviewQueueCard
-            projectSlug={projectSlug}
-            maintenanceMemory={maintenanceMemory}
-            resolveMemory={resolveMemory}
-          />
-        ) : null}
+        {rememberForm}
 
-      <section className={styles.section}>
+      <section className={styles.section} data-memory-list="">
         <div className={styles.sectionHead}>
           <h2 className={styles.sectionTitle}>Memories</h2>
           <span className={styles.sectionMeta}>{entryCountLabel}</span>
         </div>
+      {shortQuery ? (
+        <p className={styles.searchHint} role="status">
+          Type 3 or more characters to search. Showing recent memories.
+        </p>
+      ) : null}
       <div className={styles.list}>
         {listError && (
           <p className={styles.formError} role="alert">
             {listError}
+            <button
+              type="button"
+              className={styles.retryBtn}
+              onClick={() => reloadCurrent()}
+            >
+              Retry
+            </button>
           </p>
         )}
         {loading && entries.length === 0 ? (
@@ -969,7 +1370,9 @@ export function MemoryTab({
           <p className={styles.empty}>
             {query.trim().length >= MIN_QUERY_LEN
               ? "No matching memories"
-              : "No recent memories"}
+              : filterType
+                ? `No ${filterType} memories`
+                : "No memories in this project"}
           </p>
         ) : (
           entries.map((entry) => {
@@ -992,10 +1395,12 @@ export function MemoryTab({
                 <button
                   type="button"
                   className={styles.cardToggle}
+                  data-memory-toggle=""
                   onClick={() => void toggleExpand(entry.id)}
                   aria-expanded={open}
                 >
-                  <div className={styles.cardHead}>
+                  <div className={styles.rowHead}>
+                    <span className={styles.cardTitle}>{entry.title}</span>
                     <span
                       className={`${styles.badge} ${typeBadgeClass(entry.type)}`}
                     >
@@ -1005,21 +1410,6 @@ export function MemoryTab({
                       {ageFromIso(entry.updatedAt, now)}
                     </span>
                   </div>
-                  <div className={styles.cardTitle}>{entry.title}</div>
-                  {entry.citations && entry.citations.length > 0 ? (
-                    <div className={styles.citations} data-citations="">
-                      {entry.citations.map((c, i) => (
-                        <span
-                          key={`${c.kind}-${i}`}
-                          className={styles.citation}
-                          title={c.kind === "file" ? c.excerpt : undefined}
-                        >
-                          {citationLabel(c)}
-                        </span>
-                      ))}
-                    </div>
-                  ) : null}
-                  {!open && <div className={styles.excerpt}>{entry.body}</div>}
                 </button>
                 {open ? (
                   <div className={styles.fullBodyWrap}>
@@ -1082,7 +1472,25 @@ export function MemoryTab({
                         </div>
                       </div>
                     ) : full ? (
+                      <>
                       <pre className={styles.fullBody}>{full}</pre>
+                      {entry.citations && entry.citations.length > 0 ? (
+                        <div className={styles.citations} data-citations="">
+                          {entry.citations.map((c, i) => (
+                            <span
+                              key={`${c.kind}-${i}`}
+                              className={styles.citation}
+                              title={c.kind === "file" ? c.excerpt : undefined}
+                            >
+                              {citationLabel(c)}
+                            </span>
+                          ))}
+                        </div>
+                      ) : null}
+                      {entry.source ? (
+                        <p className={styles.sourceLine}>Source: {entry.source}</p>
+                      ) : null}
+                      </>
                     ) : (
                       <p className={styles.bodyLoading}>Loading…</p>
                     )}
@@ -1152,73 +1560,29 @@ export function MemoryTab({
                     ) : null}
                   </div>
                 ) : null}
-                {entry.project && (
+                {entry.project &&
+                scopeLabel(entry.project) !== scopedName ? (
                   <span className={styles.projectTag} title={entry.project}>
                     {entry.project}
                   </span>
-                )}
+                ) : null}
               </div>
             );
           })
         )}
+        {hasMore && !loading && query.trim().length < MIN_QUERY_LEN ? (
+          <button
+            type="button"
+            className={styles.loadMore}
+            disabled={loadingMore}
+            onClick={() => void loadRecent("append")}
+          >
+            {loadingMore ? "Loading…" : "Load older memories"}
+          </button>
+        ) : null}
       </div>
       </section>
-
-      <form
-        className={styles.form}
-        onSubmit={(e) => {
-          e.preventDefault();
-          void handleSave();
-        }}
-      >
-        <h2 className={styles.sectionTitle}>Remember something</h2>
-        <div className={styles.formRow}>
-          <select
-            className={styles.select}
-            value={formType}
-            onChange={(e) => setFormType(e.target.value as StoreType)}
-            aria-label="Memory type"
-          >
-            <option value="knowledge">knowledge</option>
-            <option value="convention">convention</option>
-            <option value="strategy">strategy</option>
-            <option value="task">task</option>
-          </select>
-          <input
-            type="text"
-            className={styles.titleInput}
-            placeholder="Title"
-            value={formTitle}
-            onChange={(e) => setFormTitle(e.target.value)}
-            aria-label="Memory title"
-          />
-        </div>
-        <textarea
-          className={styles.bodyInput}
-          placeholder="What should future sessions know?"
-          value={formBody}
-          onChange={(e) => setFormBody(e.target.value)}
-          rows={3}
-          aria-label="Memory body"
-        />
-        <p className={styles.formHint}>
-          {projectSlug
-            ? `Saved to ${projectSlug}`
-            : "Saved without a project (select a thread to scope it)"}
-        </p>
-        {formError && (
-          <p className={styles.formError} role="alert">
-            {formError}
-          </p>
-        )}
-        <button
-          type="submit"
-          className={styles.saveBtn}
-          disabled={saving}
-        >
-          {saving ? "Saving…" : "Save"}
-        </button>
-      </form>
+      {secondary}
       </div>
     </div>
   );

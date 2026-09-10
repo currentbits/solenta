@@ -10,6 +10,12 @@ import { describe, it, afterEach } from "node:test";
 import { useRef, useState } from "react";
 import { inAct, mount, unmountAll } from "./support/dom.ts";
 import { SkillsTab } from "../src/components/SkillsTab";
+import {
+  filterInstalledSkills,
+  providerFilterCount,
+  sourceFilterCount,
+  toggleSetValue,
+} from "../src/components/skillsLibrary";
 import type {
   AppSettings,
   McpCatalogEntry,
@@ -27,6 +33,11 @@ import type {
   SkillPreviewImportInput,
   SkillTarget,
   SkillWrite,
+  HarnessSourceId,
+  HarnessSourceInfo,
+  HarnessImportPreview,
+  HarnessInstallRequest,
+  HarnessInstallResult,
 } from "../src/shared/ipc";
 
 afterEach(unmountAll);
@@ -200,6 +211,16 @@ interface HarnessOptions {
     input: SkillInstallRequest,
   ) => SkillInstallResult | void;
   onDiscardSkillImport?: (input: { previewId: string }) => void;
+  harnessSources?: HarnessSourceInfo[];
+  onDetectHarnessSources?: () => HarnessSourceInfo[];
+  onPreviewHarnessImport?: (input: {
+    source: HarnessSourceId;
+    projectPath?: string;
+  }) => HarnessImportPreview;
+  onInstallHarnessImport?: (
+    input: HarnessInstallRequest,
+  ) => HarnessInstallResult | void;
+  onDiscardHarnessImport?: (input: { previewId: string }) => void;
 }
 
 /**
@@ -356,6 +377,75 @@ function Harness(opts: HarnessOptions) {
       discardSkillImport={async (input) => {
         opts.onDiscardSkillImport?.(input);
       }}
+      detectHarnessSources={async () =>
+        opts.onDetectHarnessSources?.() ??
+        opts.harnessSources ?? [
+          { id: "claude", label: "Claude Code", present: true },
+          { id: "cursor", label: "Cursor", present: false },
+          { id: "codex", label: "Codex", present: false },
+        ]
+      }
+      previewHarnessImport={async (input) => {
+        if (opts.onPreviewHarnessImport) return opts.onPreviewHarnessImport(input);
+        return {
+          previewId: "h".repeat(32),
+          source: { id: input.source, label: "Claude Code" },
+          skills: [
+            {
+              id: "skill:house-style",
+              name: "house-style",
+              description: "Imported house style",
+              origin: "skills",
+              bytes: 80,
+              alreadyImported: false,
+              warnings: [],
+            },
+            {
+              id: "skill:already",
+              name: "already",
+              description: "Already present",
+              origin: "skills",
+              bytes: 40,
+              alreadyImported: true,
+              warnings: [],
+            },
+          ],
+          commands: [],
+          mcp: [],
+          memories: [],
+          instructions: [],
+          settings: null,
+          plugins: [],
+          warnings: [],
+        };
+      }}
+      installHarnessImport={async (input) => {
+        const override = opts.onInstallHarnessImport?.(input);
+        return (
+          override ?? {
+            skills: input.selected
+              .filter((id) => id.startsWith("skill:"))
+              .map((id) => ({
+                name: id.slice("skill:".length),
+                status: "installed" as const,
+              })),
+            commands: input.selected
+              .filter((id) => id.startsWith("command:"))
+              .map((id) => ({
+                name: id.replace(/^command:(?:user|project|plugin):/, ""),
+                status: "installed" as const,
+              })),
+            mcp: [],
+            memories: [],
+            instructions: [],
+            settings: null,
+            plugins: [],
+          }
+        );
+      }}
+      discardHarnessImport={async (input) => {
+        opts.onDiscardHarnessImport?.(input);
+      }}
       addSkill={async (input) => {
         opts.onAddSkill?.(input);
         const installedIn = [...ALL_TARGETS];
@@ -406,23 +496,46 @@ function Harness(opts: HarnessOptions) {
   );
 }
 
+async function openSkillsView(
+  m: Awaited<ReturnType<typeof mount>>,
+  view: "library" | "catalog" | "mcp" | "add",
+): Promise<void> {
+  const btn = m.query(`[data-skills-view-btn="${view}"]`);
+  assert.ok(btn, `${view} view control must render`);
+  await m.click(btn);
+}
+
+async function expandSkill(
+  m: Awaited<ReturnType<typeof mount>>,
+  key: string,
+): Promise<void> {
+  const row = m.query(`[data-skill="${key}"]`);
+  assert.ok(row, `skill ${key} must render`);
+  if (row.hasAttribute("data-expanded")) return;
+  const toggle = row.querySelector("[data-skill-toggle]");
+  assert.ok(toggle, `skill ${key} must have an expand control`);
+  await m.click(toggle);
+}
+
 describe("SkillsTab lists", () => {
-  it("renders built-ins, user servers, and skills with source badges", async () => {
+  it("renders installed skills first; MCP stays on a secondary view", async () => {
     const m = await mount(
       <Harness mcpServers={[httpDef()]} />,
-    );
-    assert.ok(m.text().includes("coder-memory"), "built-in must render");
-    assert.ok(m.text().includes("coder-threads"), "built-in must render");
-    assert.ok(m.text().includes("Built-in"), "built-in badge must render");
-    assert.ok(m.text().includes("team-tools"), "user server must render");
-    assert.ok(
-      m.text().includes("https://tools.example.com/mcp"),
-      "user server URL must render",
     );
     assert.ok(m.text().includes("review-pr"), "skill must render");
     assert.ok(
       m.text().includes("Review a pull request end to end"),
       "skill description must render",
+    );
+    assert.equal(
+      m.text().includes("coder-memory"),
+      false,
+      "built-in MCP must not occupy the installed library",
+    );
+    assert.equal(
+      m.text().includes("team-tools"),
+      false,
+      "added MCP must not occupy the installed library",
     );
     const badges = m.queryAll('[class*="badge"]').map((b) => b.textContent);
     assert.ok(badges.includes("Project"), "Project badge must render");
@@ -435,6 +548,15 @@ describe("SkillsTab lists", () => {
       badges.includes("Agents"),
       false,
       "user skills no longer carry a per-provider source badge",
+    );
+    await openSkillsView(m, "mcp");
+    assert.ok(m.text().includes("coder-memory"), "built-in must render");
+    assert.ok(m.text().includes("coder-threads"), "built-in must render");
+    assert.ok(m.text().includes("Built-in"), "built-in badge must render");
+    assert.ok(m.text().includes("team-tools"), "user server must render");
+    assert.ok(
+      m.text().includes("https://tools.example.com/mcp"),
+      "user server URL must render",
     );
     m.unmount();
   });
@@ -462,6 +584,13 @@ describe("SkillsTab lists", () => {
       false,
       "project skills must not offer Remove",
     );
+    await expandSkill(m, "project:local-rules");
+    assert.equal(
+      m.query('[data-skill="project:local-rules"]')?.textContent?.includes("Remove"),
+      false,
+      "expanded project skills must not offer Remove",
+    );
+    await expandSkill(m, "claude:review-pr");
     const claudeRow = m.query('[data-skill="claude:review-pr"]');
     assert.ok(claudeRow?.textContent?.includes("Remove"));
     m.unmount();
@@ -469,6 +598,7 @@ describe("SkillsTab lists", () => {
 
   it("renders coverage and token cost per row", async () => {
     const m = await mount(<Harness />);
+    await expandSkill(m, "claude:review-pr");
     const synced = m.query('[data-skill="claude:review-pr"]');
     assert.ok(synced, "synced skill row must render");
     const syncedCoverage = synced.querySelector("[data-coverage]");
@@ -486,6 +616,7 @@ describe("SkillsTab lists", () => {
       "~1.2k tokens",
     );
 
+    await expandSkill(m, "agents:write-tests");
     const drifted = m.query('[data-skill="agents:write-tests"]');
     assert.ok(drifted, "drifted skill row must render");
     assert.equal(drifted.querySelector("[data-coverage]")?.textContent, "5/6");
@@ -494,6 +625,7 @@ describe("SkillsTab lists", () => {
       "~200 tokens",
     );
 
+    await expandSkill(m, "project:local-rules");
     const project = m.query('[data-skill="project:local-rules"]');
     assert.ok(project, "project skill row must render");
     assert.equal(
@@ -571,7 +703,8 @@ describe("SkillsTab MCP servers", () => {
         onSaveSettings={(p) => settingsPatches.push(p)}
       />,
     );
-    assert.ok(listed.length >= 1, "listMcpServers must run on mount");
+    await openSkillsView(m, "mcp");
+    assert.ok(listed.length >= 1, "listMcpServers must run when MCP servers opens");
     assert.ok(m.text().includes("from-list"), "redacted list row must render");
     assert.equal(
       m.text().includes("from-settings"),
@@ -586,6 +719,16 @@ describe("SkillsTab MCP servers", () => {
     m.unmount();
   });
 
+  async function openLocalCommand(
+    m: Awaited<ReturnType<typeof mount>>,
+  ): Promise<void> {
+    const disclosure = m
+      .queryAll("summary")
+      .find((s) => s.textContent?.includes("Local command"));
+    assert.ok(disclosure, "Local command disclosure must render");
+    await m.click(disclosure ?? null);
+  }
+
   it("adds a server through saveMcpServer, not saveSettings", async () => {
     const saved: McpServerSaveInput[] = [];
     const settingsPatches: Partial<AppSettings>[] = [];
@@ -595,6 +738,7 @@ describe("SkillsTab MCP servers", () => {
         onSaveSettings={(p) => settingsPatches.push(p)}
       />,
     );
+    await openSkillsView(m, "mcp");
     await m.type(m.query('input[aria-label="MCP server name"]'), "team-tools");
     await m.type(
       m.query('input[aria-label="MCP server URL"]'),
@@ -618,6 +762,160 @@ describe("SkillsTab MCP servers", () => {
     m.unmount();
   });
 
+  it("saves a quoted script path and spaced label as one argv element each (#1139)", async () => {
+    const saved: McpServerSaveInput[] = [];
+    const m = await mount(
+      <Harness onSaveMcpServer={(p) => saved.push(p)} />,
+    );
+    await openSkillsView(m, "mcp");
+    await openLocalCommand(m);
+    await m.type(m.query('input[aria-label="MCP server name"]'), "local-tools");
+    await m.type(m.query('input[aria-label="MCP command"]'), "node");
+    await m.type(
+      m.query('input[aria-label="MCP command arguments"]'),
+      '"/tmp/My Tools/server.mjs" --label "hello world"',
+    );
+    await m.click(m.byText("Add local server"));
+
+    assert.equal(saved.length, 1, "saveMcpServer must fire once");
+    assert.deepEqual(saved[0], {
+      name: "local-tools",
+      transport: "stdio",
+      command: "node",
+      args: ["/tmp/My Tools/server.mjs", "--label", "hello world"],
+      enabled: false,
+      trusted: false,
+    });
+    m.unmount();
+  });
+
+  it("accepts a JSON string array in the local arguments field", async () => {
+    const saved: McpServerSaveInput[] = [];
+    const m = await mount(
+      <Harness onSaveMcpServer={(p) => saved.push(p)} />,
+    );
+    await openSkillsView(m, "mcp");
+    await openLocalCommand(m);
+    await m.type(m.query('input[aria-label="MCP server name"]'), "json-tools");
+    await m.type(m.query('input[aria-label="MCP command"]'), "node");
+    await m.type(
+      m.query('input[aria-label="MCP command arguments"]'),
+      '["/tmp/My Tools/server.mjs", "--label", "hello world"]',
+    );
+    await m.click(m.byText("Add local server"));
+
+    assert.equal(saved.length, 1);
+    assert.deepEqual(saved[0]?.args, [
+      "/tmp/My Tools/server.mjs",
+      "--label",
+      "hello world",
+    ]);
+    m.unmount();
+  });
+
+  it("keeps the local draft and shows an error when quoting is malformed", async () => {
+    const saved: McpServerSaveInput[] = [];
+    const m = await mount(
+      <Harness onSaveMcpServer={(p) => saved.push(p)} />,
+    );
+    await openSkillsView(m, "mcp");
+    await openLocalCommand(m);
+    await m.type(m.query('input[aria-label="MCP server name"]'), "local-tools");
+    await m.type(m.query('input[aria-label="MCP command"]'), "node");
+    await m.type(
+      m.query('input[aria-label="MCP command arguments"]'),
+      '"/tmp/My Tools/server.mjs',
+    );
+    await m.click(m.byText("Add local server"));
+
+    assert.equal(saved.length, 0, "malformed quoting must not save");
+    assert.match(m.text(), /unclosed quote/i);
+    assert.equal(
+      (m.query('input[aria-label="MCP server name"]') as HTMLInputElement)
+        .value,
+      "local-tools",
+    );
+    assert.equal(
+      (m.query('input[aria-label="MCP command"]') as HTMLInputElement).value,
+      "node",
+    );
+    assert.equal(
+      (m.query('input[aria-label="MCP command arguments"]') as HTMLInputElement)
+        .value,
+      '"/tmp/My Tools/server.mjs',
+    );
+    m.unmount();
+  });
+
+  it("shows a local quoting error inside the Local command disclosure", async () => {
+    const saved: McpServerSaveInput[] = [];
+    const m = await mount(
+      <Harness onSaveMcpServer={(p) => saved.push(p)} />,
+    );
+    await openSkillsView(m, "mcp");
+    await openLocalCommand(m);
+    await m.type(m.query('input[aria-label="MCP server name"]'), "local-tools");
+    await m.type(m.query('input[aria-label="MCP command"]'), "node");
+    await m.type(
+      m.query('input[aria-label="MCP command arguments"]'),
+      '"/tmp/My Tools/server.mjs',
+    );
+    await m.click(m.byText("Add local server"));
+
+    assert.equal(saved.length, 0, "malformed quoting must not save");
+    const localDetails = m
+      .queryAll("details")
+      .find((el) =>
+        Array.from(el.querySelectorAll("summary")).some((s) =>
+          s.textContent?.includes("Local command"),
+        ),
+      );
+    assert.ok(localDetails, "Local command disclosure must render");
+    const localAlert = localDetails.querySelector('[role="alert"]');
+    assert.ok(
+      localAlert,
+      "quoting error must render inside the Local command disclosure",
+    );
+    assert.match(localAlert.textContent ?? "", /unclosed quote/i);
+    const addServer = m.byText("Add server");
+    assert.ok(addServer, "HTTP Add server button must still render");
+    assert.equal(
+      addServer.previousElementSibling?.getAttribute("role") === "alert",
+      false,
+      "quoting error must not sit above the HTTP Add server button",
+    );
+    assert.equal(
+      (m.query('input[aria-label="MCP command arguments"]') as HTMLInputElement)
+        .value,
+      '"/tmp/My Tools/server.mjs',
+      "draft arguments must stay",
+    );
+    m.unmount();
+  });
+
+  it("trust still enables a local server after quoted args parse", async () => {
+    const saved: McpServerSaveInput[] = [];
+    const m = await mount(
+      <Harness onSaveMcpServer={(p) => saved.push(p)} />,
+    );
+    await openSkillsView(m, "mcp");
+    await openLocalCommand(m);
+    await m.type(m.query('input[aria-label="MCP server name"]'), "trusted-tools");
+    await m.type(m.query('input[aria-label="MCP command"]'), "node");
+    await m.type(
+      m.query('input[aria-label="MCP command arguments"]'),
+      '"/tmp/My Tools/server.mjs"',
+    );
+    await m.click(m.query('input[aria-label="Trust local MCP command"]'));
+    await m.click(m.byText("Add local server"));
+
+    assert.equal(saved.length, 1);
+    assert.deepEqual(saved[0]?.args, ["/tmp/My Tools/server.mjs"]);
+    assert.equal(saved[0]?.trusted, true);
+    assert.equal(saved[0]?.enabled, true);
+    m.unmount();
+  });
+
   it("rejects bad names, duplicate names, and non-http URLs without saving", async () => {
     const saved: McpServerSaveInput[] = [];
     const m = await mount(
@@ -628,6 +926,7 @@ describe("SkillsTab MCP servers", () => {
         onSaveMcpServer={(p) => saved.push(p)}
       />,
     );
+    await openSkillsView(m, "mcp");
     const name = () => m.query('input[aria-label="MCP server name"]');
     const url = () => m.query('input[aria-label="MCP server URL"]');
 
@@ -666,6 +965,7 @@ describe("SkillsTab MCP servers", () => {
         onSaveSettings={(p) => settingsPatches.push(p)}
       />,
     );
+    await openSkillsView(m, "mcp");
     const toggle = m.query(
       'input[aria-label="Enable team-tools"]',
     ) as HTMLInputElement | null;
@@ -692,6 +992,7 @@ describe("SkillsTab MCP servers", () => {
         onSaveSettings={(p) => settingsPatches.push(p)}
       />,
     );
+    await openSkillsView(m, "mcp");
     const row = m.query('[data-mcp="team-tools"]');
     const btn = Array.from(row?.querySelectorAll("button") ?? []).find((b) =>
       b.textContent?.includes("Remove"),
@@ -730,6 +1031,7 @@ describe("SkillsTab MCP servers", () => {
         onSaveSettings={(p) => settingsPatches.push(p)}
       />,
     );
+    await openSkillsView(m, "mcp");
     const row = m.query('[data-mcp="local-tools"]');
     assert.ok(row, "stdio row must render");
     assert.ok(
@@ -762,6 +1064,7 @@ describe("SkillsTab MCP servers", () => {
     const m = await mount(
       <Harness mcpServers={[httpDef()]} mcpCatalog={[]} />,
     );
+    await openSkillsView(m, "mcp");
     assert.ok(m.query('[data-mcp-section="curated"]'));
     assert.ok(m.query('[data-mcp-section="added"]'));
     assert.ok(m.text().includes("No curated MCP servers"));
@@ -801,6 +1104,7 @@ describe("SkillsTab MCP servers", () => {
         }}
       />,
     );
+    await openSkillsView(m, "mcp");
     const disclosure = m
       .queryAll("summary")
       .find((s) => s.textContent?.includes("Import JSON"));
@@ -857,6 +1161,7 @@ describe("SkillsTab MCP servers", () => {
         })}
       />,
     );
+    await openSkillsView(m, "mcp");
     const disclosure = m
       .queryAll("summary")
       .find((s) => s.textContent?.includes("Import JSON"));
@@ -884,6 +1189,7 @@ describe("SkillsTab MCP servers", () => {
         }}
       />,
     );
+    await openSkillsView(m, "mcp");
     await m.type(m.query('input[aria-label="MCP server name"]'), "srv");
     await m.type(
       m.query('input[aria-label="MCP server URL"]'),
@@ -927,7 +1233,7 @@ describe("SkillsTab skills", () => {
       "Ship the change",
     );
     await m.type(m.query('textarea[aria-label="Skill body"]'), "Do the thing.");
-    await m.click(m.byText("Add skill"));
+    await m.click(m.query('[data-skill-section="add"] button[type="submit"]'));
 
     assert.equal(added.length, 1, "addSkill must fire once");
     assert.deepEqual(added[0], {
@@ -953,13 +1259,13 @@ describe("SkillsTab skills", () => {
       "d",
     );
     await m.type(m.query('textarea[aria-label="Skill body"]'), "b");
-    await m.click(m.byText("Add skill"));
+    await m.click(m.query('[data-skill-section="add"] button[type="submit"]'));
     assert.equal(added.length, 0, "invalid name must not call addSkill");
     assert.ok(m.text().includes("lowercase letters, digits, dashes"));
 
     await m.type(m.query('input[aria-label="Skill name"]'), "ok-name");
     await m.type(m.query('input[aria-label="Skill description"]'), "");
-    await m.click(m.byText("Add skill"));
+    await m.click(m.query('[data-skill-section="add"] button[type="submit"]'));
     assert.equal(added.length, 0, "empty description must not call addSkill");
     assert.ok(m.text().includes("Description is required"));
     m.unmount();
@@ -968,6 +1274,7 @@ describe("SkillsTab skills", () => {
   it("remove asks inline, then deletes by name from all providers", async () => {
     const removed: Array<{ name: string }> = [];
     const m = await mount(<Harness onRemoveSkill={(i) => removed.push(i)} />);
+    await expandSkill(m, "claude:review-pr");
     const row = m.query('[data-skill="claude:review-pr"]');
     assert.ok(row, "skill row must render");
     const removeBtn = Array.from(row.querySelectorAll("button")).find((b) =>
@@ -1020,10 +1327,8 @@ describe("SkillsTab skills", () => {
     ) as HTMLButtonElement | null;
     assert.ok(syncBtn, "Sync button must render");
     assert.ok(
-      m
-        .query('[data-skill-section="added"]')
-        ?.querySelector('button[aria-label="Sync missing skills"]'),
-      "Sync belongs with added skills",
+      m.query("[data-skills-toolbar]")?.contains(syncBtn),
+      "Sync belongs on the installed library toolbar",
     );
     assert.equal(syncBtn.disabled, false, "Sync is enabled when there is drift");
     await m.click(syncBtn);
@@ -1073,9 +1378,9 @@ describe("SkillsTab skills", () => {
     assert.ok(syncBtn, "Sync button must render");
     assert.equal(syncBtn.disabled, true);
     assert.equal(
-      m.query('[data-skill-section="project"]'),
+      m.query('[data-skill="project:local-rules"]'),
       null,
-      "Project section is omitted when empty",
+      "Project skills are omitted when the inventory has none",
     );
     m.unmount();
   });
@@ -1102,15 +1407,13 @@ describe("SkillsTab sections", () => {
         ]}
       />,
     );
+    assert.ok(m.query('[data-skill="claude:review-pr"]'));
+    assert.ok(m.query('[data-skill="agents:write-tests"]'));
+    assert.ok(m.query('[data-skill="project:local-rules"]'));
+    await openSkillsView(m, "catalog");
     const curated = m.query('[data-skill-section="curated"]');
-    const added = m.query('[data-skill-section="added"]');
-    const project = m.query('[data-skill-section="project"]');
-    assert.ok(curated, "Curated section must render");
-    assert.ok(added, "Added section must render");
-    assert.ok(project, "Project section must render when present");
+    assert.ok(curated, "Curated section must render in the catalog view");
     assert.ok(curated.textContent?.includes("Curated skills"));
-    assert.ok(added.textContent?.includes("Added skills"));
-    assert.ok(project.textContent?.includes("Project skills"));
     assert.ok(curated.textContent?.includes("Ponytail"));
     assert.ok(curated.textContent?.includes("Dietrich Gebert"));
     assert.ok(curated.textContent?.includes("Installed"));
@@ -1122,15 +1425,21 @@ describe("SkillsTab sections", () => {
       curated.querySelector("[data-tokens]")?.textContent,
       "~1.2k tokens",
     );
-    assert.ok(added.textContent?.includes("write-tests"));
+    await openSkillsView(m, "library");
+    await m.click(m.query('[data-source-filter="added"]'));
+    assert.ok(m.query('[data-skill="agents:write-tests"]'));
     assert.equal(
-      added.textContent?.includes("review-pr"),
-      false,
-      "curated installs must not be duplicated in Added",
+      m.query('[data-skill="claude:review-pr"]'),
+      null,
+      "curated installs must not appear in the User filter",
     );
-    assert.equal(added.textContent?.includes("Ponytail"), false);
-    assert.ok(project.textContent?.includes("local-rules"));
-    assert.equal(project.textContent?.includes("Remove"), false);
+    await m.click(m.query('[data-source-filter="added"]'));
+    await m.click(m.query('[data-source-filter="project"]'));
+    assert.ok(m.query('[data-skill="project:local-rules"]'));
+    assert.equal(
+      m.query('[data-skill="project:local-rules"]')?.textContent?.includes("Remove"),
+      false,
+    );
     m.unmount();
   });
 
@@ -1146,11 +1455,13 @@ describe("SkillsTab sections", () => {
       />,
     );
     assert.equal(listed.length, 1);
-    assert.equal(catalogs.length, 1);
+    assert.equal(catalogs.length, 0, "catalog stays unloaded until Browse catalog");
     assert.ok(
       m.query('[data-skill="claude:review-pr"]'),
       "installed skills must still render",
     );
+    await openSkillsView(m, "catalog");
+    assert.equal(catalogs.length, 1);
     const curated = m.query('[data-skill-section="curated"]');
     assert.ok(curated?.textContent?.toLowerCase().includes("unavailable"));
     assert.equal(
@@ -1168,31 +1479,31 @@ describe("SkillsTab sections", () => {
         skillsError="Error invoking remote method 'skills:list': Error: skills down"
       />,
     );
+    assert.ok(m.text().includes("skills down"));
+    assert.equal(
+      m.text().includes("Error invoking remote method"),
+      false,
+    );
+    await openSkillsView(m, "catalog");
     assert.ok(
       m.query('[data-skill-section="curated"]')?.textContent?.includes("Ponytail"),
     );
     assert.equal(m.query('[data-skill="claude:review-pr"]'), null);
-    const added = m.query('[data-skill-section="added"]');
-    assert.ok(added?.textContent?.includes("skills down"));
-    assert.equal(
-      added?.textContent?.includes("Error invoking remote method"),
-      false,
-    );
     m.unmount();
   });
 
   it("does not mention catalog unavailable when the catalog loaded empty", async () => {
     const m = await mount(<Harness catalog={[]} skills={[]} />);
+    assert.ok(
+      m.text().toLowerCase().includes("add skill"),
+      "empty library invites Add skill",
+    );
+    await openSkillsView(m, "catalog");
     const curated = m.query('[data-skill-section="curated"]');
     assert.ok(curated);
     assert.equal(
       curated.textContent?.toLowerCase().includes("unavailable"),
       false,
-    );
-    const added = m.query('[data-skill-section="added"]');
-    assert.ok(
-      added?.textContent?.toLowerCase().includes("add skill"),
-      "empty Added invites Add skill",
     );
     const live = m.query("[aria-live]");
     assert.ok(live, "aria-live status is always mounted");
@@ -1225,6 +1536,7 @@ describe("SkillsTab sections", () => {
         skills={[curatedInstalled, SKILLS[1]]}
       />,
     );
+    await openSkillsView(failed, "catalog");
     const curated = failed.query('[data-skill-section="curated"]');
     assert.ok(curated?.textContent?.toLowerCase().includes("unavailable"));
     const row = failed.query('[data-catalog="ponytail"]');
@@ -1232,16 +1544,19 @@ describe("SkillsTab sections", () => {
     assert.ok(row.textContent?.includes("Ponytail"));
     assert.ok(row.textContent?.includes("Installed"));
     assert.equal(row.querySelector("[data-coverage]")?.textContent, "7/7");
+    await openSkillsView(failed, "library");
+    await failed.click(failed.query('[data-source-filter="added"]'));
     assert.equal(
-      failed.query('[data-skill-section="added"]')?.textContent?.includes("review-pr"),
-      false,
-      "fallback curated rows must not be duplicated in Added",
+      failed.query('[data-skill="claude:review-pr"]'),
+      null,
+      "fallback curated rows must not be duplicated as User skills",
     );
     failed.unmount();
 
     const empty = await mount(
       <Harness catalog={[]} skills={[curatedInstalled, SKILLS[1]]} />,
     );
+    await openSkillsView(empty, "catalog");
     assert.ok(empty.query('[data-catalog="ponytail"]'));
     assert.equal(
       empty
@@ -1270,6 +1585,7 @@ describe("SkillsTab sections", () => {
         ]}
       />,
     );
+    await openSkillsView(m, "catalog");
     const row = m.query('[data-catalog="ponytail"]');
     assert.ok(row);
     assert.ok(row.textContent?.includes("Installed"));
@@ -1278,9 +1594,8 @@ describe("SkillsTab sections", () => {
       null,
       "name-only match must not borrow an added skill's coverage",
     );
-    assert.ok(
-      m.query('[data-skill-section="added"]')?.textContent?.includes("Ponytail"),
-    );
+    await openSkillsView(m, "library");
+    assert.ok(m.query('[data-skill="claude:Ponytail"]'));
     m.unmount();
   });
 
@@ -1293,6 +1608,7 @@ describe("SkillsTab sections", () => {
       <Harness catalog={[catalogEntry()]} pendingCatalog={pending} />,
     );
     assert.ok(m.query('[data-skill="claude:review-pr"]'));
+    await openSkillsView(m, "catalog");
     assert.ok(
       m.query('[data-skill-section="curated"]')?.textContent?.includes("Loading"),
     );
@@ -1329,6 +1645,7 @@ describe("SkillsTab import preview", () => {
         }}
       />,
     );
+    await openSkillsView(m, "catalog");
     const row = m.query('[data-catalog="ponytail"]');
     assert.ok(row, "catalog row must render");
     assert.ok(row.textContent?.includes("Dietrich Gebert"));
@@ -1576,7 +1893,7 @@ describe("SkillsTab import preview", () => {
       />,
     );
     assert.equal(listed.length, 1);
-    assert.equal(catalogs.length, 1);
+    assert.equal(catalogs.length, 0, "catalog is not fetched for the installed library");
     await m.click(m.byText("Import file"));
     await m.click(m.byText("Install selected"));
     assert.deepEqual(installed, [
@@ -1588,7 +1905,11 @@ describe("SkillsTab import preview", () => {
       },
     ]);
     assert.equal(listed.length, 2, "skills reload after install");
-    assert.equal(catalogs.length, 2, "catalog reload after install");
+    assert.equal(
+      catalogs.length,
+      0,
+      "file install does not fetch a hidden catalog",
+    );
     assert.equal(m.query("[data-import-preview]"), null);
     assert.deepEqual(
       discarded,
@@ -1879,6 +2200,7 @@ describe("SkillsTab import preview", () => {
         ]}
       />,
     );
+    await openSkillsView(m, "catalog");
     const link = m.query('[data-catalog="ponytail"] a');
     assert.ok(link);
     assert.ok(link.getAttribute("href")?.includes("github.com"));
@@ -1886,6 +2208,9 @@ describe("SkillsTab import preview", () => {
       link.getAttribute("aria-label")?.includes("Ponytail"),
       "catalog source link must include the entry name",
     );
+    await openSkillsView(m, "library");
+    await expandSkill(m, "claude:review-pr");
+    await expandSkill(m, "agents:other-skill");
     const labels = m
       .queryAll('button[aria-label^="Remove "]')
       .map((b) => b.getAttribute("aria-label"));
@@ -2181,5 +2506,475 @@ describe("SkillsTab import preview", () => {
     assert.deepEqual(discarded, []);
     m.unmount();
     assert.deepEqual(discarded, []);
+  });
+});
+
+describe("SkillsTab harness import", () => {
+  it("scans Claude Code, selects remaining, and installs them", async () => {
+    const installed: HarnessInstallRequest[] = [];
+    const m = await mount(
+      <Harness
+        onInstallHarnessImport={(input) => {
+          installed.push(input);
+        }}
+      />,
+    );
+    await openSkillsView(m, "add");
+    const claude = m.query(
+      '[data-harness-source="claude"]',
+    ) as HTMLButtonElement | null;
+    const cursor = m.query(
+      '[data-harness-source="cursor"]',
+    ) as HTMLButtonElement | null;
+    assert.ok(claude);
+    assert.equal(claude?.disabled, false);
+    assert.equal(cursor?.disabled, true);
+    await m.click(claude);
+    const panel = m.query("[data-harness-preview]");
+    assert.ok(panel);
+    const remaining = m.query(
+      'input[aria-label="Select house-style"]',
+    ) as HTMLInputElement | null;
+    const already = m.query(
+      'input[aria-label="Select already"]',
+    ) as HTMLInputElement | null;
+    assert.equal(remaining?.checked, true);
+    assert.equal(already?.checked, false);
+    await m.click(m.byText("Import selected"));
+    assert.equal(installed.length, 1);
+    assert.deepEqual(installed[0].selected, ["skill:house-style"]);
+    assert.equal(installed[0].trustPluginCode, false);
+    m.unmount();
+  });
+
+  it("requires plugin trust and sends trustPluginCode", async () => {
+    const installed: HarnessInstallRequest[] = [];
+    const m = await mount(
+      <Harness
+        onPreviewHarnessImport={() => ({
+          previewId: "h".repeat(32),
+          source: { id: "claude" as const, label: "Claude Code" },
+          skills: [
+            {
+              id: "skill:ponytail-help",
+              name: "ponytail-help",
+              description: "Helper",
+              origin: "plugin",
+              bytes: 80,
+              alreadyImported: false,
+              warnings: [],
+            },
+          ],
+          commands: [],
+          mcp: [],
+          memories: [],
+          instructions: [],
+          settings: null,
+          warnings: [],
+          plugins: [
+            {
+              provider: "claude",
+              label: "ponytail",
+              executableFiles: ["hooks/setup.sh"],
+              activation: { kind: "claude-plugin", status: "pending" },
+            },
+            {
+              provider: "hooks",
+              label: "Hooks",
+              executableFiles: ["hooks/setup.sh"],
+              activation: { kind: "hooks", status: "pending" },
+            },
+          ],
+        })}
+        onInstallHarnessImport={(input) => {
+          installed.push(input);
+        }}
+      />,
+    );
+    await openSkillsView(m, "add");
+    await m.click(m.query('[data-harness-source="claude"]') as HTMLButtonElement);
+    const panel = m.query("[data-harness-preview]");
+    assert.ok(panel?.textContent?.includes("ponytail"));
+    assert.ok(panel?.textContent?.includes("hooks/setup.sh"));
+    assert.ok(
+      panel?.textContent?.toLowerCase().includes("activated after explicit trust") ||
+        panel?.textContent?.toLowerCase().includes("activated after you trust"),
+    );
+    const install = m.byText("Import selected") as HTMLButtonElement;
+    assert.equal(install.disabled, true);
+    const ack = m.query(
+      'input[aria-label="I trust this package and understand it may include executable instructions or hooks."]',
+    ) as HTMLInputElement | null;
+    assert.ok(ack, "plugin trust checkbox must render");
+    await m.click(ack);
+    assert.equal(
+      (m.byText("Import selected") as HTMLButtonElement).disabled,
+      false,
+    );
+    await m.click(m.byText("Import selected"));
+    assert.equal(installed.length, 1);
+    assert.equal(installed[0].trustPluginCode, true);
+    assert.deepEqual(installed[0].selected, ["skill:ponytail-help"]);
+    m.unmount();
+  });
+
+  it("lists slash commands and leaves already-imported ones unchecked", async () => {
+    const installed: HarnessInstallRequest[] = [];
+    const m = await mount(
+      <Harness
+        onPreviewHarnessImport={() => ({
+          previewId: "c".repeat(32),
+          source: { id: "claude", label: "Claude Code" },
+          skills: [],
+          commands: [
+            {
+              id: "command:user:draft",
+              name: "draft",
+              description: "Draft a changelog",
+              origin: "user",
+              bytes: 40,
+              alreadyImported: false,
+            },
+            {
+              id: "command:user:git:pr",
+              name: "git:pr",
+              description: "Open a pull request",
+              origin: "user",
+              bytes: 20,
+              alreadyImported: true,
+            },
+          ],
+          mcp: [],
+          memories: [],
+          instructions: [],
+          settings: null,
+          plugins: [],
+          warnings: [],
+        })}
+        onInstallHarnessImport={(input) => {
+          installed.push(input);
+        }}
+      />,
+    );
+    await openSkillsView(m, "add");
+    await m.click(m.query('[data-harness-source="claude"]') as HTMLButtonElement);
+    assert.ok(m.byText("/draft"));
+    assert.ok(m.byText("/git:pr"));
+    const remaining = m.query(
+      'input[aria-label="Select /draft"]',
+    ) as HTMLInputElement | null;
+    const already = m.query(
+      'input[aria-label="Select /git:pr"]',
+    ) as HTMLInputElement | null;
+    assert.equal(remaining?.checked, true);
+    assert.equal(already?.checked, false);
+    await m.click(m.byText("Import selected"));
+    assert.deepEqual(installed[0].selected, ["command:user:draft"]);
+    m.unmount();
+  });
+
+  it("lists Codex prompt rows in the Commands section", async () => {
+    const installed: HarnessInstallRequest[] = [];
+    const m = await mount(
+      <Harness
+        harnessSources={[
+          { id: "claude", label: "Claude Code", present: false },
+          { id: "cursor", label: "Cursor", present: false },
+          { id: "codex", label: "Codex", present: true },
+        ]}
+        onPreviewHarnessImport={(input) => {
+          assert.equal(input.source, "codex");
+          return {
+            previewId: "d".repeat(32),
+            source: { id: "codex", label: "Codex" },
+            skills: [],
+            commands: [
+              {
+                id: "command:user:draft",
+                name: "draft",
+                description: "Draft a changelog",
+                origin: "user",
+                bytes: 40,
+                alreadyImported: false,
+              },
+              {
+                id: "command:user:git:pr",
+                name: "git:pr",
+                description: "Open a pull request",
+                origin: "user",
+                bytes: 20,
+                alreadyImported: true,
+              },
+            ],
+            mcp: [],
+            memories: [],
+            instructions: [],
+            settings: null,
+            plugins: [],
+            warnings: [],
+          };
+        }}
+        onInstallHarnessImport={(input) => {
+          installed.push(input);
+        }}
+      />,
+    );
+    await openSkillsView(m, "add");
+    await m.click(m.query('[data-harness-source="codex"]') as HTMLButtonElement);
+    assert.ok(m.byText("/draft"));
+    assert.ok(m.byText("/git:pr"));
+    const remaining = m.query(
+      'input[aria-label="Select /draft"]',
+    ) as HTMLInputElement | null;
+    const already = m.query(
+      'input[aria-label="Select /git:pr"]',
+    ) as HTMLInputElement | null;
+    assert.equal(remaining?.checked, true);
+    assert.equal(already?.checked, false);
+    await m.click(m.byText("Import selected"));
+    assert.deepEqual(installed[0].selected, ["command:user:draft"]);
+    m.unmount();
+  });
+
+  it("lists plugin slash commands on the harness preview", async () => {
+    const installed: HarnessInstallRequest[] = [];
+    const m = await mount(
+      <Harness
+        onPreviewHarnessImport={() => ({
+          previewId: "d".repeat(32),
+          source: { id: "claude", label: "Claude Code" },
+          skills: [],
+          commands: [
+            {
+              id: "command:plugin:shipper:review",
+              name: "shipper:review",
+              description: "Review the diff",
+              origin: "plugin",
+              bytes: 40,
+              alreadyImported: false,
+            },
+            {
+              id: "command:plugin:shipper:git:pr",
+              name: "shipper:git:pr",
+              description: "Open a pull request",
+              origin: "plugin",
+              bytes: 20,
+              alreadyImported: true,
+            },
+          ],
+          mcp: [],
+          memories: [],
+          instructions: [],
+          settings: null,
+          plugins: [],
+          warnings: [],
+        })}
+        onInstallHarnessImport={(input) => {
+          installed.push(input);
+        }}
+      />,
+    );
+    await openSkillsView(m, "add");
+    await m.click(m.query('[data-harness-source="claude"]') as HTMLButtonElement);
+    assert.ok(m.byText("/shipper:review"));
+    assert.ok(m.byText("/shipper:git:pr"));
+    const remaining = m.query(
+      'input[aria-label="Select /shipper:review"]',
+    ) as HTMLInputElement | null;
+    const already = m.query(
+      'input[aria-label="Select /shipper:git:pr"]',
+    ) as HTMLInputElement | null;
+    assert.equal(remaining?.checked, true);
+    assert.equal(already?.checked, false);
+    await m.click(m.byText("Import selected"));
+    assert.deepEqual(installed[0].selected, ["command:plugin:shipper:review"]);
+    m.unmount();
+  });
+});
+
+describe("SkillsTab library search and filters", () => {
+  it("filters installed skills by case-insensitive name or description", async () => {
+    const skills: SkillInfo[] = [];
+    for (let i = 0; i < 200; i += 1) {
+      skills.push({
+        name: `skill-${String(i).padStart(3, "0")}`,
+        description: `Generic helper ${i}`,
+        source: "claude",
+        installedIn: ["claude"],
+        missingFrom: [],
+        bytes: 80,
+        provenance: "added",
+      });
+    }
+    skills[147] = {
+      name: "unique-needle",
+      description: "Find me in a large library",
+      source: "claude",
+      installedIn: ["claude"],
+      missingFrom: [],
+      bytes: 80,
+      provenance: "added",
+    };
+    const m = await mount(<Harness skills={skills} />);
+    assert.equal(m.query("[data-skills-count]")?.textContent, "200/200");
+    await m.type(m.query('input[aria-label="Search installed skills"]'), "UNIQUE-NEEDLE");
+    assert.ok(m.query('[data-skill="claude:unique-needle"]'));
+    assert.equal(m.queryAll("[data-skill]").length, 1);
+    assert.equal(m.query("[data-skills-count]")?.textContent, "1/200");
+    await m.type(
+      m.query('input[aria-label="Search installed skills"]'),
+      "find me in a large",
+    );
+    assert.ok(m.query('[data-skill="claude:unique-needle"]'));
+    assert.equal(m.queryAll("[data-skill]").length, 1);
+    m.unmount();
+  });
+
+  it("composes provider and source filters with honest counts that clear independently", async () => {
+    const m = await mount(<Harness />);
+    const user = m.query('[data-source-filter="added"]');
+    const project = m.query('[data-source-filter="project"]');
+    const claude = m.query('[data-provider-filter="claude"]');
+    const kimi = m.query('[data-provider-filter="kimi"]');
+    assert.ok(user?.textContent?.includes("2"));
+    assert.ok(project?.textContent?.includes("1"));
+    assert.ok(claude?.textContent?.includes("2"));
+    assert.ok(kimi?.textContent?.includes("1"));
+    await m.click(user);
+    assert.equal(m.queryAll("[data-skill]").length, 2);
+    assert.equal(m.query('[data-skill="project:local-rules"]'), null);
+    await m.click(kimi);
+    assert.ok(m.query('[data-skill="claude:review-pr"]'));
+    assert.equal(m.query('[data-skill="agents:write-tests"]'), null);
+    await m.click(kimi);
+    assert.ok(m.query('[data-skill="agents:write-tests"]'));
+    await m.click(user);
+    assert.ok(m.query('[data-skill="project:local-rules"]'));
+    const filtered = filterInstalledSkills(SKILLS, {
+      query: "",
+      sources: new Set(["added"]),
+      providers: new Set(["kimi"]),
+    });
+    assert.deepEqual(filtered.map((s) => s.name), ["review-pr"]);
+    assert.equal(
+      sourceFilterCount(SKILLS, "added", { query: "", providers: new Set() }),
+      2,
+    );
+    assert.equal(
+      providerFilterCount(SKILLS, "kimi", { query: "", sources: new Set() }),
+      1,
+    );
+    const next = toggleSetValue(new Set(["added"]), "added");
+    assert.equal(next.size, 0);
+    m.unmount();
+  });
+
+  it("preserves search when moving between library and catalog", async () => {
+    const m = await mount(<Harness catalog={[catalogEntry()]} />);
+    await m.type(m.query('input[aria-label="Search installed skills"]'), "write-tests");
+    assert.equal(m.queryAll("[data-skill]").length, 1);
+    await openSkillsView(m, "catalog");
+    assert.ok(m.query('[data-catalog="ponytail"]'));
+    await openSkillsView(m, "library");
+    assert.equal(
+      (m.query('input[aria-label="Search installed skills"]') as HTMLInputElement)
+        .value,
+      "write-tests",
+    );
+    assert.equal(m.queryAll("[data-skill]").length, 1);
+    m.unmount();
+  });
+
+  it("ignores a late skills list from the previous project", async () => {
+    let resolveOld!: (rows: SkillInfo[]) => void;
+    const pendingOld = new Promise<SkillInfo[]>((resolve) => {
+      resolveOld = resolve;
+    });
+    let listCalls = 0;
+    function RaceHarness() {
+      const [projectPath, setProjectPath] = useState("/old");
+      return (
+        <div>
+          <button type="button" onClick={() => {
+            setProjectPath("/new");
+          }}>
+            switch-project
+          </button>
+          <SkillsTab
+            projectPath={projectPath}
+            settings={settingsWith()}
+            saveSettings={async (patch) => ({ ...settingsWith(), ...patch })}
+            listMcpServers={async () => []}
+            saveMcpServer={async (input) => definitionFromSave(input)}
+            removeMcpServer={async () => {}}
+            setMcpEnabled={async (input) => httpDef({ name: input.name, enabled: input.enabled })}
+            listMcpCatalog={async () => []}
+            pickMcpImport={async () => null}
+            previewMcpImport={async () => {
+              throw new Error("unused");
+            }}
+            installMcpImport={async () => ({ installed: [] })}
+            discardMcpImport={async () => {}}
+            listSkills={async (input) => {
+              listCalls += 1;
+              if (input?.projectPath === "/old") return pendingOld;
+              return [
+                {
+                  name: "new-project-skill",
+                  description: "Only on the new project",
+                  source: "claude",
+                  installedIn: ["claude"],
+                  missingFrom: [],
+                  bytes: 40,
+                  provenance: "added",
+                },
+              ];
+            }}
+            addSkill={async (input) => ({ name: input.name, installedIn: [] })}
+            removeSkill={async () => {}}
+            syncSkills={async () => ({ copied: 0, skills: [] })}
+            listSkillCatalog={async () => []}
+            pickSkillImport={async () => null}
+            previewSkillImport={async () => preview()}
+            installSkillImport={async () => ({ installed: [], plugins: [] })}
+            discardSkillImport={async () => {}}
+            detectHarnessSources={async () => []}
+            previewHarnessImport={async () => {
+              throw new Error("unused");
+            }}
+            installHarnessImport={async () => ({
+              skills: [],
+              commands: [],
+              mcp: [],
+              memories: [],
+              instructions: [],
+              settings: null,
+              plugins: [],
+            })}
+            discardHarnessImport={async () => {}}
+          />
+        </div>
+      );
+    }
+    const m = await mount(<RaceHarness />);
+    await m.click(m.byText("switch-project"));
+    await inAct(async () => {
+      resolveOld([
+        {
+          name: "old-project-skill",
+          description: "Stale",
+          source: "claude",
+          installedIn: ["claude"],
+          missingFrom: [],
+          bytes: 40,
+          provenance: "added",
+        },
+      ]);
+    });
+    await m.flush();
+    assert.ok(m.query('[data-skill="claude:new-project-skill"]'));
+    assert.equal(m.query('[data-skill="claude:old-project-skill"]'), null);
+    assert.ok(listCalls >= 2);
+    m.unmount();
   });
 });

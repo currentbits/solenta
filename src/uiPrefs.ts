@@ -191,3 +191,30 @@ export function setLastReasoningEffort(effort: ReasoningEffort | null): void {
     // Private mode / quota: the preference just stops surviving a relaunch.
   }
 }
+
+/** Mid-run composer action (issue #156). Queue is the predictable default. */
+export type ComposerBusyAction = "queue" | "steer";
+const BUSY_ACTION_KEY = "coder.composerBusyAction";
+let busyAction: ComposerBusyAction | undefined;
+
+export function getComposerBusyAction(): ComposerBusyAction {
+  if (busyAction === undefined) {
+    let raw: string | null = null;
+    try {
+      raw = window.localStorage.getItem(BUSY_ACTION_KEY);
+    } catch {
+      raw = null;
+    }
+    busyAction = raw === "steer" ? "steer" : "queue";
+  }
+  return busyAction;
+}
+
+export function setComposerBusyAction(action: ComposerBusyAction): void {
+  busyAction = action === "steer" ? "steer" : "queue";
+  try {
+    window.localStorage.setItem(BUSY_ACTION_KEY, busyAction);
+  } catch {
+    // Private mode / quota: the preference just stops surviving a relaunch.
+  }
+}

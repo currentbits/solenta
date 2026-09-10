@@ -197,8 +197,27 @@ function schedulePostMergeVerify(store, threadId, now, opts) {
  */
 function onThreadPrState(store, threadId, prState, now) {
   if (String(prState || "").toUpperCase() !== "MERGED") return null;
+  const at = now == null ? Date.now() : now;
+  const thread = store.getThread(threadId);
+  if (
+    thread &&
+    Array.isArray(thread.integrationReceipts) &&
+    thread.integrationReceipts.length
+  ) {
+    store.updateThread(threadId, {
+      integrationLanded: {
+        at,
+        sha:
+          thread.integrationLanded && thread.integrationLanded.sha
+            ? thread.integrationLanded.sha
+            : null,
+        via: "pr",
+      },
+    });
+    store.save();
+  }
   void completeThreadIssue(store, threadId).catch(() => {});
-  return schedulePostMergeVerify(store, threadId, now == null ? Date.now() : now);
+  return schedulePostMergeVerify(store, threadId, at);
 }
 
 /**
@@ -210,7 +229,33 @@ function onThreadPrState(store, threadId, prState, now) {
 const completedIssues = new Set();
 
 /**
+ * Included worker issue IDs stored on integration receipts (#947).
+ * Receipts only — do not parse worker transcripts.
+ *
+ * @param {object | null | undefined} thread
+ * @returns {number[]}
+ */
+function includedIssueIdsFromReceipts(thread) {
+  const ids = [];
+  const receipts = Array.isArray(thread && thread.integrationReceipts)
+    ? thread.integrationReceipts
+    : [];
+  for (const r of receipts) {
+    if (!r || typeof r !== "object") continue;
+    const own = normalizeIssueNumber(r.issueNumber);
+    if (own && !ids.includes(own)) ids.push(own);
+    if (!Array.isArray(r.includedIssueIds)) continue;
+    for (const raw of r.includedIssueIds) {
+      const n = normalizeIssueNumber(raw);
+      if (n && !ids.includes(n)) ids.push(n);
+    }
+  }
+  return ids;
+}
+
+/**
  * Move a landed thread's planboard issue to plan:done and close it (#632).
+ * On a final land, also close included worker issues from receipts (#947).
  *
  * The board only ever moved forward: "Start task" and autodispatch set
  * plan:doing, and nothing wrote the done edge — so finished work sat in
@@ -226,31 +271,44 @@ const completedIssues = new Set();
 async function completeThreadIssue(store, threadId, deps) {
   const thread = store.getThread(threadId);
   if (!thread) return null;
-  const issueNumber =
+  const own =
     issueNumberFromThread(store, thread) ||
     firstPromptIssueNumber(store, thread);
-  if (!issueNumber) return null;
+  const numbers = [];
+  if (own) numbers.push(own);
+  for (const n of includedIssueIdsFromReceipts(thread)) {
+    if (!numbers.includes(n)) numbers.push(n);
+  }
+  if (!numbers.length) return null;
   const project = store.getProject(thread.projectId);
   if (!project || !project.path || project.remoteHost) return null;
-
-  const key = `${thread.projectId}:${issueNumber}`;
-  if (completedIssues.has(key)) return null;
-  completedIssues.add(key);
 
   const complete =
     (deps && deps.completeIssue) || require("./issues.js").completeIssue;
   const pr = thread.prNumber ? ` (PR #${thread.prNumber})` : "";
-  const res = await complete(project.path, issueNumber, {
-    comment: `Landed from Solenta thread "${thread.title}"${pr}. Closed on merge.`,
-  });
-  if (!res || !res.ok) {
-    completedIssues.delete(key);
-    return res || null;
+  let last = null;
+  let attempted = 0;
+  for (const issueNumber of numbers) {
+    const key = `${thread.projectId}:${issueNumber}`;
+    if (completedIssues.has(key)) continue;
+    completedIssues.add(key);
+    attempted += 1;
+    const res = await complete(project.path, issueNumber, {
+      comment: `Landed from Solenta thread "${thread.title}"${pr}. Closed on merge.`,
+    });
+    if (!res || !res.ok) {
+      completedIssues.delete(key);
+      last = res || last;
+      continue;
+    }
+    last = res;
+    if (!res.skipped) {
+      appendEvent(store, thread.id, `Planboard: #${issueNumber} moved to Done.`);
+    }
   }
-  if (res.skipped) return res;
-  appendEvent(store, thread.id, `Planboard: #${issueNumber} moved to Done.`);
+  if (attempted === 0) return null;
   store.save();
-  return res;
+  return last;
 }
 
 /**

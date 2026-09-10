@@ -4,6 +4,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { execFile, execFileSync } = require("node:child_process");
 const catalogDivergence = require("./catalogDivergence.js");
+const { posixQuote } = require("./ssh.js");
 
 /**
  * Data-driven provider registry for agent CLIs.
@@ -18,7 +19,7 @@ const catalogDivergence = require("./catalogDivergence.js");
  *   No max.
  * - codex: no dedicated flag; config override `-c model_reasoning_effort=<level>`.
  *   Astra/Sol/Terra: low|medium|high|xhigh|max|ultra (ultra = parallel
- *   subagents). Luna: through max, no ultra. gpt-5.5 / 5.4-mini / spark:
+ *   subagents). Luna: through max, no ultra. gpt-5.5 / spark:
  *   low|medium|high|xhigh (no max, no ultra). Live web search is
  *   `-c web_search=live` (issue #799; `--search` after exec is rejected),
  *   gated by thread.webSearch (issue #174).
@@ -46,6 +47,9 @@ const catalogDivergence = require("./catalogDivergence.js");
  *   without it)
  * @property {string[]} [efforts] - when present (including `[]`), replaces
  *   the provider-wide efforts list for this model
+ * @property {Array<"text"|"image">} [inputModalities] - vendor catalog
+ *   input_modalities. Codex Spark is `["text"]` only. Absent means allow
+ *   images; never invent image support for a text-only model.
  *
  * @typedef {object} ProviderEntry
  * @property {string} id
@@ -53,6 +57,13 @@ const catalogDivergence = require("./catalogDivergence.js");
  * @property {string} binEnv - env var that overrides the binary
  * @property {string} defaultBin
  * @property {boolean} supportsResume
+ * @property {boolean} [sessionPinsModel] - exec --json resume hydrates the
+ *   model from the rollout and ignores -m. When set, a model-only switch
+ *   drops sessionId and sessionIdForResume skips resume if thread.model
+ *   differs from sessionStartModel (fall back to usage.model). Interactive
+ *   Codex leaves this unset: `turn/start.model` overrides subsequent turns
+ *   (live-verified 2026-09-10, CLI 0.153.4). Workflow / ask / commitmsg
+ *   stay on exec --json and never call sessionIdForResume.
  * @property {string[]} models
  * @property {ModelInfo[]} modelInfo
  * @property {Array<"low"|"medium"|"high"|"xhigh"|"max"|"ultra"|"ultracode">} efforts
@@ -60,6 +71,10 @@ const catalogDivergence = require("./catalogDivergence.js");
  *   config.toml flip in kimi.js); absent means buildArgs emits the flag
  * @property {boolean} [supportsSearch] - CLI accepts `-c web_search=live`
  *   (live web search). Absent/false hides the composer Search pill.
+ * @property {boolean} [supportsSteer] - live process accepts a second stdin
+ *   user message as mid-turn guidance (Claude `--input-format stream-json`).
+ *   Codex exec --json is explicit false (issue #1164). Absent/false keeps
+ *   the composer queue-only while a run is active.
  * @property {Array<"default"|"acceptEdits"|"plan"|"bypassPermissions">} permissionModes
  *   Modes this adapter actually honours (changes argv / CLI behaviour).
  *   The composer only offers these; setPermissionMode rejects the rest.
@@ -71,6 +86,8 @@ const catalogDivergence = require("./catalogDivergence.js");
  *   model?: string | null,
  *   reasoningEffort?: string | null,
  *   webSearch?: boolean,
+ *   images?: string[],
+ *   files?: string[],
  * }) => string[]} buildArgs
  */
 
@@ -131,6 +148,27 @@ function honouredEfforts(entry, modelId) {
   const info = (entry.modelInfo || []).find((m) => m.id === modelId);
   if (info && Array.isArray(info.efforts)) return info.efforts.slice();
   return providerEfforts;
+}
+
+const CODEX_TEXT_IMAGE = ["text", "image"];
+const CODEX_TEXT_ONLY = ["text"];
+
+/**
+ * Whether `codex exec -i` is legal for this model. Spark's catalog
+ * input_modalities are text-only (#176 / #1167). Default / unknown ids
+ * follow Astra (vision).
+ * @param {string | null | undefined} modelId
+ * @returns {boolean}
+ */
+function codexModelAcceptsImages(modelId) {
+  const id = modelId == null || modelId === "" ? "" : String(modelId);
+  if (!id) return true;
+  const entry = PROVIDERS.find((p) => p.id === "codex");
+  const info = ((entry && entry.modelInfo) || []).find((m) => m.id === id);
+  if (info && Array.isArray(info.inputModalities)) {
+    return info.inputModalities.includes("image");
+  }
+  return id !== "gpt-5.3-codex-spark";
 }
 
 /**
@@ -206,6 +244,11 @@ const PROVIDERS = [
     binEnv: "CODER_CLAUDE_BIN",
     defaultBin: "claude",
     supportsResume: true,
+    // Interactive stream-json stdin: a second user line is mid-turn
+    // guidance (docs: "providing guidance to the model while it is
+    // processing a request"). Codex exec --json and one-shot -p CLIs
+    // have no equivalent, so they stay queue-only.
+    supportsSteer: true,
     models: [
       "claude-fable-5",
       "claude-opus-5",
@@ -293,17 +336,26 @@ const PROVIDERS = [
     binEnv: "CODER_CODEX_BIN",
     defaultBin: "codex",
     supportsResume: true,
-    // Snapshot of ~/.codex/models_cache.json visibility=list (client 0.153.2,
-    // 2026-09-04). Astra is the flagship (priority 1); Sol is the 5.6
-    // workhorse. gpt-5.4 is retired (upgrade → terra) and omitted.
+    // Interactive app-server: turn/start.model sticks on later turns
+    // (live 2026-09-10). exec --json resume still ignores -m; those
+    // paths (workflow / ask / commitmsg) never use sessionIdForResume.
+    // Interactive turns use a private `codex app-server` and `turn/steer`
+    // (#1170). Do not fake steer by kill+resume. Queue remains idle follow-up.
+    supportsSteer: true,
+    // Interactive app-server uses approvalPolicy on-request (#1208).
+    // Do not flip exec AskForApproval to on-request: workflow / ask /
+    // commitmsg stay runCodex exec --json with never-policy.
+    // Snapshot of ~/.codex/models_cache.json visibility=list (client 0.153.4,
+    // 2026-09-09). Astra is the flagship (priority 1); Sol is the 5.6
+    // workhorse. gpt-5.4 / gpt-5.4-mini are retired and omitted.
     // gpt-reserve / codex-auto-review are visibility=hide.
+    // contextTokens are cache context_window (not max_context_window).
     models: [
       "gpt-6-astra",
       "gpt-5.6-sol",
       "gpt-5.6-terra",
       "gpt-5.6-luna",
       "gpt-5.5",
-      "gpt-5.4-mini",
       "gpt-5.3-codex-spark",
     ],
     modelInfo: [
@@ -313,28 +365,36 @@ const PROVIDERS = [
         description: "Our most capable model for complex, demanding work.",
         vendor: "OpenAI",
         recommended: true,
+        contextTokens: 272_000,
         efforts: CODEX_SOL_TERRA_EFFORTS.slice(),
+        inputModalities: CODEX_TEXT_IMAGE.slice(),
       },
       {
         id: "gpt-5.6-sol",
         label: "GPT-5.6-Sol",
         description: "Reliable agentic workhorse for everyday tasks.",
         vendor: "OpenAI",
+        contextTokens: 272_000,
         efforts: CODEX_SOL_TERRA_EFFORTS.slice(),
+        inputModalities: CODEX_TEXT_IMAGE.slice(),
       },
       {
         id: "gpt-5.6-terra",
         label: "GPT-5.6-Terra",
         description: "Balanced agentic coding model for everyday work.",
         vendor: "OpenAI",
+        contextTokens: 272_000,
         efforts: CODEX_SOL_TERRA_EFFORTS.slice(),
+        inputModalities: CODEX_TEXT_IMAGE.slice(),
       },
       {
         id: "gpt-5.6-luna",
         label: "GPT-5.6-Luna",
         description: "Fast and affordable agentic coding model.",
         vendor: "OpenAI",
+        contextTokens: 272_000,
         efforts: CODEX_LUNA_EFFORTS.slice(),
+        inputModalities: CODEX_TEXT_IMAGE.slice(),
       },
       {
         id: "gpt-5.5",
@@ -342,27 +402,24 @@ const PROVIDERS = [
         description:
           "Proven previous-generation model for coding and general work.",
         vendor: "OpenAI",
+        contextTokens: 272_000,
         efforts: CODEX_55_EFFORTS.slice(),
-      },
-      {
-        id: "gpt-5.4-mini",
-        label: "GPT-5.4-Mini",
-        description:
-          "Small, fast, and cost-efficient model for simpler coding tasks.",
-        vendor: "OpenAI",
-        efforts: CODEX_55_EFFORTS.slice(),
+        inputModalities: CODEX_TEXT_IMAGE.slice(),
       },
       {
         id: "gpt-5.3-codex-spark",
         label: "GPT-5.3-Codex-Spark",
         description: "Ultra-fast coding model.",
         vendor: "OpenAI",
+        contextTokens: 128_000,
         efforts: CODEX_55_EFFORTS.slice(),
+        // Live cache input_modalities is ["text"] only. Do not invent images.
+        inputModalities: CODEX_TEXT_ONLY.slice(),
       },
     ],
     // Union of per-model lists (fallback for Default / custom ids).
     // Astra/Sol/Terra add ultra (parallel subagents); Luna stops at max;
-    // 5.5 / 5.4-mini / spark stop at xhigh.
+    // 5.5 / spark stop at xhigh.
     efforts: CODEX_EFFORTS.slice(),
     supportsSearch: true,
     // Issue #170: exec defaults to read-only unless we pass --sandbox.
@@ -375,16 +432,23 @@ const PROVIDERS = [
       reasoningEffort,
       webSearch,
       permissionMode,
+      images,
     }) {
       const args = sessionId
-        ? [
-            "exec",
-            "resume",
-            String(sessionId),
-            "--json",
-            "--skip-git-repo-check",
-          ]
-        : ["exec", "--json", "--skip-git-repo-check"];
+        ? ["exec", "resume", String(sessionId)]
+        : ["exec"];
+      // `-i, --image <FILE>...` is greedy. Sit it after exec (and resume
+      // id) and before the next flag so FILE... cannot swallow the prompt.
+      if (codexModelAcceptsImages(model)) {
+        const paths = [];
+        if (Array.isArray(images)) {
+          for (const p of images) {
+            if (typeof p === "string" && p) paths.push(p);
+          }
+        }
+        if (paths.length) args.push("-i", ...paths);
+      }
+      args.push("--json", "--skip-git-repo-check");
       if (model) {
         args.push("-m", String(model));
       }
@@ -614,9 +678,32 @@ const PROVIDERS = [
      * Resume via -s <sessionID>; model override via -m provider/model.
      * `--thinking` so `type: "reasoning"` parts land on stdout (issue #751).
      * Prompt is the last argv element.
+     * Live `opencode run --help` (1.17.12): `-f, --file` is a yargs array
+     * of files to attach. Sit it after `run` and before `--format` so the
+     * array cannot swallow the trailing prompt. Folders stay in the
+     * prompt-path section (no folder flag).
      */
-    buildArgs({ prompt, sessionId, model, reasoningEffort, permissionMode }) {
-      const args = ["run", "--format", "json", "--thinking"];
+    buildArgs({
+      prompt,
+      sessionId,
+      model,
+      reasoningEffort,
+      permissionMode,
+      files,
+    }) {
+      const args = ["run"];
+      const paths = [];
+      if (Array.isArray(files)) {
+        for (const p of files) {
+          if (typeof p === "string" && p) paths.push(p);
+        }
+      }
+      // `-f, --file` is a yargs array. Sit it after run and before the
+      // next flag so FILE... cannot swallow the prompt.
+      if (paths.length) {
+        args.push("-f", ...paths);
+      }
+      args.push("--format", "json", "--thinking");
       if (sessionId) {
         args.push("-s", String(sessionId));
       }
@@ -1410,6 +1497,127 @@ function getProvider(id) {
 }
 
 /**
+ * Session id to pass to buildArgs / app-server thread/resume. Ejected
+ * threads never resume. Providers with sessionPinsModel skip resume when
+ * the picker differs from sessionStartModel (fall back to usage.model).
+ * Interactive Codex does not set that flag: turn/start.model overrides
+ * subsequent turns. usage.model can catch up after turn/start.model while
+ * exec resume still hydrates the original rollout (#1215 / #1221).
+ *
+ * @param {ProviderEntry | null | undefined} entry
+ * @param {{
+ *   ejected?: boolean,
+ *   sessionId?: string | null,
+ *   model?: string | null,
+ *   sessionStartModel?: string | null,
+ * } | null | undefined} thread
+ * @param {{ model?: string | null } | null | undefined} usage
+ * @returns {string | null}
+ */
+function sessionIdForResume(entry, thread, usage) {
+  if (!thread || thread.ejected === true) return null;
+  const sid = thread.sessionId || null;
+  if (!sid) return null;
+  if (entry && entry.sessionPinsModel === true && thread.model) {
+    const started =
+      thread.sessionStartModel != null &&
+      String(thread.sessionStartModel).trim() !== ""
+        ? String(thread.sessionStartModel).trim()
+        : usage && usage.model
+          ? String(usage.model)
+          : "";
+    if (started && started !== String(thread.model)) return null;
+  }
+  return sid;
+}
+
+/**
+ * Interactive resume tail for the raw CLI (issue #554). Headless spawn
+ * flags stay in buildArgs; this is what the user pastes into a terminal.
+ * Flags stay unquoted; the session id is always POSIX-quoted.
+ * @param {ProviderEntry} entry
+ * @param {string} sessionId
+ * @returns {string | null}
+ */
+function ejectResumeTail(entry, sessionId) {
+  if (!entry || !entry.supportsResume || !sessionId) return null;
+  const id = posixQuote(sessionId);
+  switch (entry.id) {
+    case "claude":
+    case "grok":
+    case "cursor":
+      return `--resume ${id}`;
+    case "codex":
+      // exec resume hydrates the model from the rollout and ignores -m
+      // (live 2026-09-10). ejectCommand notes a later picker change.
+      return `exec resume ${id}`;
+    case "opencode":
+      return `-s ${id}`;
+    case "kimi":
+      return `-S ${id}`;
+    case "muse":
+      return `--session-id ${id}`;
+    default:
+      return null;
+  }
+}
+
+/**
+ * Exact command to continue a thread in the raw CLI inside its worktree.
+ * Codex exec resume hydrates the model from the rollout and ignores -m, so
+ * a later picker change is called out on a # comment (issue #1210 / #1215).
+ * Compare against the session-start snapshot, not last usage.model — usage
+ * can catch up after turn/start.model while the rollout stays on the old
+ * model. The first line stays the runnable resume; $TERMINAL uses that line.
+ * @param {{
+ *   provider?: string | null,
+ *   sessionId?: string | null,
+ *   cwd?: string | null,
+ *   model?: string | null,
+ *   sessionStartModel?: string | null,
+ * }} input
+ * @returns {{ command: string, note?: string }}
+ */
+function ejectCommand(input) {
+  const cwd = input && input.cwd ? String(input.cwd) : "";
+  const cd = cwd ? `cd ${posixQuote(cwd)}` : "";
+  const entry = getProvider(input && input.provider);
+  const sessionId =
+    input && input.sessionId != null && String(input.sessionId).trim() !== ""
+      ? String(input.sessionId)
+      : "";
+  const resumeTail = ejectResumeTail(entry, sessionId);
+  if (resumeTail && entry && entry.defaultBin) {
+    const command = cd
+      ? `${cd} && ${entry.defaultBin} ${resumeTail}`
+      : `${entry.defaultBin} ${resumeTail}`;
+    const wanted =
+      input && input.model != null && String(input.model).trim() !== ""
+        ? String(input.model).trim()
+        : "";
+    const started =
+      input &&
+      input.sessionStartModel != null &&
+      String(input.sessionStartModel).trim() !== ""
+        ? String(input.sessionStartModel).trim()
+        : "";
+    if (entry.id === "codex" && wanted && started && wanted !== started) {
+      const note =
+        `Terminal resume uses ${started}; exec resume cannot honor ${wanted}.`;
+      return { command: `${command}\n# ${note}`, note };
+    }
+    return { command };
+  }
+  const name = entry && entry.name ? entry.name : "This provider";
+  const note =
+    !entry || !entry.supportsResume
+      ? `${name} has no resume; start a new session in this directory.`
+      : "No session to resume; start a new session in this directory.";
+  const command = cd ? `${cd}\n# ${note}` : `# ${note}`;
+  return { command, note };
+}
+
+/**
  * All known public provider ids (not including simulate/generic).
  */
 function knownProviderIds() {
@@ -1556,6 +1764,7 @@ function listProviders(opts = {}) {
       modelInfo: (entry.modelInfo || []).map((m) => ({ ...m })),
       efforts: (entry.efforts || []).slice(),
       supportsSearch: entry.supportsSearch === true,
+      supportsSteer: entry.supportsSteer === true,
       permissionModes: honouredPermissionModes(entry),
     };
     out.push(info);
@@ -1571,6 +1780,7 @@ function listProviders(opts = {}) {
       modelInfo: [],
       efforts: [],
       supportsSearch: false,
+      supportsSteer: false,
       permissionModes: honouredPermissionModes(SIMULATE_ENTRY),
     });
   }
@@ -1592,6 +1802,8 @@ module.exports = {
   SIMULATE_ENTRY,
   ALL_PERMISSION_MODES,
   getProvider,
+  sessionIdForResume,
+  ejectCommand,
   knownProviderIds,
   resolveBin,
   isBinAvailable,
@@ -1599,6 +1811,7 @@ module.exports = {
   clearWhichCache,
   listProviders,
   honouredEfforts,
+  codexModelAcceptsImages,
   probeCatalogCli,
   catalogCliProbeStarted,
   resetCatalogCliCache,

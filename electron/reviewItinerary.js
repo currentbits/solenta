@@ -235,16 +235,20 @@ function loadReviewContext(opts) {
 }
 
 /**
- * @param {{ updateThread: Function, getThread: Function }} store
+ * @param {{ updateThread: Function, getThread: Function, save: Function }} store
  * @param {string} threadId
  * @param {unknown} hashes
  */
 function setReviewAccepted(store, threadId, hashes) {
   const thread = store.getThread(threadId);
   if (!thread) throw new Error(`Unknown thread: ${threadId}`);
-  return store.updateThread(threadId, {
+  const updated = store.updateThread(threadId, {
     reviewAcceptedHunks: normalizeAcceptedHunks(hashes),
   });
+  // updateThread mutates memory only; without save() the acceptance never
+  // marks dirty or arms the debounce, so a crash can drop it (#936).
+  store.save();
+  return updated;
 }
 
 module.exports = {

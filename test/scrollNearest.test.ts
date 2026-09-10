@@ -4,7 +4,7 @@
  */
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { nearestScrollTop } from "../src/scrollNearest";
+import { nearestScrollTop, offsetTopWithin } from "../src/scrollNearest";
 
 describe("nearestScrollTop", () => {
   it("leaves scrollTop when the child is already fully visible", () => {
@@ -35,5 +35,18 @@ describe("nearestScrollTop", () => {
       ),
       80,
     );
+  });
+});
+
+describe("offsetTopWithin", () => {
+  it("uses the container's box, not Element.offsetTop", () => {
+    const container = {
+      getBoundingClientRect: () => ({ top: 80 }),
+      scrollTop: 40,
+    } as HTMLElement;
+    const child = {
+      getBoundingClientRect: () => ({ top: 200 }),
+    } as HTMLElement;
+    assert.equal(offsetTopWithin(container, child), 160);
   });
 });

@@ -264,6 +264,139 @@ describe('memory core', () => {
     assert.equal(hits[0].id, warm.id)
   })
 
+  it('recent pages older rows with offset and a stable created_at,id order', () => {
+    const ids = []
+    for (let i = 0; i < 5; i++) {
+      ids.push(
+        memory.store({
+          type: 'knowledge',
+          title: `Row ${i}`,
+          body: `body ${i}`,
+          project: 'pager',
+          force: true,
+        }).id,
+      )
+    }
+    const now = Date.parse('2026-01-01T00:00:00.000Z')
+    ids.forEach((id, i) => {
+      const stamp = new Date(now + i * 1000).toISOString()
+      memory.db
+        .prepare(`UPDATE entries SET created_at = ?, updated_at = ? WHERE id = ?`)
+        .run(stamp, stamp, id)
+    })
+    const newest = memory.recent({ project: 'pager', limit: 2 })
+    assert.deepEqual(
+      newest.map((r) => r.id),
+      [ids[4], ids[3]],
+    )
+    const older = memory.recent({ project: 'pager', limit: 2, offset: 2 })
+    assert.deepEqual(
+      older.map((r) => r.id),
+      [ids[2], ids[1]],
+    )
+    const seen = new Set([...newest, ...older].map((r) => r.id))
+    assert.equal(seen.size, 4)
+    const typed = memory.recent({ project: 'pager', type: 'knowledge', limit: 10 })
+    assert.equal(typed.length, 5)
+    typed.forEach((row) => assert.equal(row.type, 'knowledge'))
+  })
+
+  it('recent offset stays inside one project and one type', () => {
+    for (let i = 0; i < 3; i++) {
+      memory.store({
+        type: 'convention',
+        title: `Conv ${i}`,
+        body: `convention body ${i}`,
+        project: 'alpha',
+        force: true,
+      })
+      memory.store({
+        type: 'knowledge',
+        title: `Know ${i}`,
+        body: `knowledge body ${i}`,
+        project: 'alpha',
+        force: true,
+      })
+      memory.store({
+        type: 'convention',
+        title: `Other ${i}`,
+        body: `other convention ${i}`,
+        project: 'beta',
+        force: true,
+      })
+    }
+    const page = memory.recent({
+      project: 'alpha',
+      type: 'convention',
+      limit: 2,
+      offset: 0,
+    })
+    assert.equal(page.length, 2)
+    for (const row of page) {
+      assert.equal(row.type, 'convention')
+      assert.equal(row.project, 'alpha')
+    }
+    const rest = memory.recent({
+      project: 'alpha',
+      type: 'convention',
+      limit: 2,
+      offset: 2,
+    })
+    assert.equal(rest.length, 1)
+    assert.equal(rest[0].type, 'convention')
+    assert.equal(rest[0].project, 'alpha')
+    const overlap = page.some((row) => rest.some((other) => other.id === row.id))
+    assert.equal(overlap, false)
+  })
+
+  it('search can restrict hits to one type', async () => {
+    memory.store({
+      type: 'convention',
+      title: 'Paging rule',
+      body: 'uniquezyx paging phrase for type filter',
+      project: 'typed',
+      force: true,
+    })
+    memory.store({
+      type: 'knowledge',
+      title: 'Paging fact',
+      body: 'uniquezyx paging phrase for type filter',
+      project: 'typed',
+      force: true,
+    })
+    const hits = await memory.search({
+      query: 'uniquezyx paging',
+      project: 'typed',
+      type: 'convention',
+    })
+    assert.ok(hits.length >= 1)
+    for (const hit of hits) assert.equal(hit.type, 'convention')
+  })
+
+  it('maintenance summary returns queue depth without near-dupe scan payload', () => {
+    memory.store({
+      type: 'knowledge',
+      title: 'Summary pair A uniquezyx',
+      body: 'summary pair body uniquezyx overlap text',
+      project: 'sum',
+      force: true,
+    })
+    memory.store({
+      type: 'knowledge',
+      title: 'Summary pair B uniquezyx',
+      body: 'summary pair body uniquezyx overlap text',
+      project: 'sum',
+      force: true,
+    })
+    const full = memory.maintenance({ project: 'sum' })
+    const summary = memory.maintenance({ project: 'sum', summary: true })
+    assert.equal(summary.queue.open, full.queue.open)
+    assert.deepEqual(summary.queue.items, [])
+    assert.deepEqual(summary.nearDupes, [])
+    assert.deepEqual(summary.agingRuns, [])
+    assert.deepEqual(summary.fatConventions, [])
+  })
+
   it('setWiki is distinct from entries and rides on bootstrap', () => {
     const wiki = {
       fileCount: 3,

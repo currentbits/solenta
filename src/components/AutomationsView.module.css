@@ -12,7 +12,7 @@
   justify-content: space-between;
   gap: 16px;
   padding: 0 24px;
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid var(--border-soft);
   background: var(--bg-elevated);
   flex-shrink: 0;
   height: 56px;
@@ -31,7 +31,7 @@
   flex-direction: column;
   gap: 10px;
   padding: 16px 24px;
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid var(--border-soft);
   flex-shrink: 0;
 }
 
@@ -90,12 +90,26 @@
   box-shadow: var(--focus-ring);
 }
 
+.select:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
 .hourInput {
   width: 72px;
 }
 
+.formActions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.formActions .action {
+  height: 30px;
+}
+
 .submit {
-  align-self: flex-start;
   display: inline-flex;
   align-items: center;
   height: 30px;
@@ -111,6 +125,11 @@
 
 .submit:hover:not(:disabled) {
   background: var(--btn-primary-hover);
+}
+
+.submit:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .formError {
@@ -194,6 +213,20 @@
   white-space: nowrap;
 }
 
+.prompt {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.4;
+  color: var(--text-muted);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 4;
+  line-clamp: 4;
+  overflow: hidden;
+}
+
 .rowActions {
   display: flex;
   align-items: center;
@@ -262,4 +295,93 @@
   font-size: 12.5px;
   color: var(--text-dim);
   max-width: 36ch;
+}
+
+.runsBlock {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.latest {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.latestLabel {
+  font-weight: 550;
+  color: var(--text-muted);
+}
+
+.runsToggle {
+  align-self: flex-start;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.runsToggle:hover {
+  color: var(--text);
+}
+
+.runs {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.runRow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 4px 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 12px;
+  text-align: left;
+}
+
+button.runRow:hover {
+  color: var(--text);
+}
+
+.runAge {
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.runStatus {
+  flex-shrink: 0;
+  font-weight: 550;
+  color: var(--text);
+}
+
+.pruned,
+.missing {
+  margin: 0;
+  padding: 4px 0;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.unavailable {
+  color: var(--text-muted);
+  font-size: 12px;
 }

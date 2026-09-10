@@ -38,17 +38,25 @@ export function TerminalPane({
   const [session, setSession] = useState<TerminalState | null>(null);
   const [draft, setDraft] = useState("");
   const cursorRef = useRef(0);
+  const generationRef = useRef(0);
   const outRef = useRef<HTMLPreElement>(null);
   const stickRef = useRef(true);
   const historyRef = useRef<string[]>([]);
   const historyPosRef = useRef(-1);
 
-  const applyState = useCallback((state: TerminalState) => {
+  const applyState = useCallback((state: TerminalState, generation: number) => {
+    if (generation !== generationRef.current) return;
+    if (state.cursor < cursorRef.current) return;
+    // Reads and writes can overlap. Their deltas end at the absolute cursor,
+    // so only append the suffix beyond the output we have already consumed.
+    const unseen = state.text.slice(
+      Math.max(0, state.text.length - (state.cursor - cursorRef.current)),
+    );
     cursorRef.current = state.cursor;
     setSession(state);
     setPending(state.pending);
     setText((prev) => {
-      const next = state.reset ? state.text : prev + state.text;
+      const next = state.reset ? state.text : prev + unseen;
       return next.length > TEXT_LIMIT ? next.slice(-TEXT_LIMIT) : next;
     });
   }, []);
@@ -58,7 +66,7 @@ export function TerminalPane({
   // fresh buffer.
   useEffect(() => {
     if (!threadId) return;
-    let live = true;
+    const generation = ++generationRef.current;
     cursorRef.current = 0;
     setText("");
     setPending("");
@@ -67,13 +75,15 @@ export function TerminalPane({
     void api
       .open(threadId)
       .then((state) => {
-        if (live) applyState(state);
+        applyState(state, generation);
       })
       .catch(() => {
-        if (live) setText("Could not start a shell for this thread.\n");
+        if (generation === generationRef.current) {
+          setText("Could not start a shell for this thread.\n");
+        }
       });
     return () => {
-      live = false;
+      generationRef.current += 1;
     };
   }, [threadId, api, applyState]);
 
@@ -83,10 +93,11 @@ export function TerminalPane({
     if (!threadId || !running) return;
     let live = true;
     const timer = setInterval(() => {
+      const generation = generationRef.current;
       void api
         .read(threadId, cursorRef.current)
         .then((state) => {
-          if (live) applyState(state);
+          if (live) applyState(state, generation);
         })
         .catch(() => {});
     }, POLL_MS);
@@ -104,7 +115,8 @@ export function TerminalPane({
   }, [text, pending]);
 
   const submit = useCallback(() => {
-    if (!threadId) return;
+    if (!threadId || !session) return;
+    const generation = generationRef.current;
     const line = draft;
     setDraft("");
     historyPosRef.current = -1;
@@ -117,20 +129,27 @@ export function TerminalPane({
     stickRef.current = true;
     void api
       .write(threadId, line, cursorRef.current)
-      .then(applyState)
+      .then((state) => applyState(state, generation))
       .catch(() => {});
-  }, [threadId, draft, api, applyState]);
+  }, [threadId, session, draft, api, applyState]);
 
   const restart = useCallback(() => {
     if (!threadId) return;
+    // Invalidate replies before close settles; cursors only identify output
+    // within one session. Pause reads/writes until the replacement opens.
+    const generation = ++generationRef.current;
+    setSession(null);
+    setPending("");
     void api
       .close(threadId)
-      .then(() => api.open(threadId))
-      .then((state) => {
+      .then(async () => {
+        if (generation !== generationRef.current) return;
+        const state = await api.open(threadId);
+        if (generation !== generationRef.current) return;
         cursorRef.current = 0;
         setText("");
         stickRef.current = true;
-        applyState({ ...state, reset: true });
+        applyState({ ...state, reset: true }, generation);
       })
       .catch(() => {});
   }, [threadId, api, applyState]);

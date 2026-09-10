@@ -1,16 +1,20 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
+  automationRunStatusLabel,
   createFormError,
   formatNextRun,
   scheduleLabel,
 } from "../automations";
+import { formatRelativeAge } from "../format";
 import type { RepeatDraft } from "../repeatThread";
 import type {
   AutomationInfo,
   AutomationPreset,
+  AutomationRunsResult,
   AutomationWrite,
   ProjectInfo,
   ProviderInfo,
+  ThreadStatus,
 } from "../shared/ipc";
 import styles from "./AutomationsView.module.css";
 
@@ -20,6 +24,15 @@ export interface AutomationsViewProps {
   providers: ProviderInfo[];
   /** Prefill the create form (issue #285 "repeat this"). */
   draft?: RepeatDraft | null;
+  /** Typed retained-run query; viewing history starts no run. */
+  loadRuns?: (id: string) => Promise<AutomationRunsResult>;
+  onSelectThread?: (id: string) => void;
+  /**
+   * Live sidebar rows. Used to overlay current status and to hide Open
+   * thread when a retained id has since been deleted. Omit while the
+   * list is still loading — treat runs as openable.
+   */
+  liveThreads?: Array<{ id: string; status: ThreadStatus }>;
   onCreate: (input: AutomationWrite) => Promise<void> | void;
   onUpdate: (
     input: Partial<AutomationWrite> & { id: string },
@@ -28,11 +41,192 @@ export interface AutomationsViewProps {
   onRunNow: (id: string) => Promise<void> | void;
 }
 
+function liveThreadKey(
+  threads: AutomationsViewProps["liveThreads"],
+): string {
+  if (!threads) return "";
+  return threads.map((t) => t.id).join("\n");
+}
+
+function AutomationRunHistory({
+  automation,
+  loadRuns,
+  onSelectThread,
+  liveThreads,
+  now,
+}: {
+  automation: AutomationInfo;
+  loadRuns: (id: string) => Promise<AutomationRunsResult>;
+  onSelectThread?: (id: string) => void;
+  liveThreads?: Array<{ id: string; status: ThreadStatus }>;
+  now: number;
+}) {
+  const [result, setResult] = useState<AutomationRunsResult | null>(null);
+  const [expanded, setExpanded] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const loadRef = useRef(loadRuns);
+  loadRef.current = loadRuns;
+  const idsKey = liveThreadKey(liveThreads);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const next = await loadRef.current(automation.id);
+        if (cancelled) return;
+        setResult(next);
+        setLoadError(null);
+      } catch (err) {
+        if (cancelled) return;
+        setLoadError(
+          err instanceof Error && err.message ? err.message : String(err),
+        );
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [automation.id, idsKey]);
+
+  const liveById = useMemo(() => {
+    const map = new Map<string, ThreadStatus>();
+    for (const t of liveThreads ?? []) map.set(t.id, t.status);
+    return map;
+  }, [liveThreads]);
+  const liveLoaded = liveThreads != null;
+
+  const resolved = (result?.runs ?? []).map((run) => {
+    const missing = liveLoaded && !liveById.has(run.threadId);
+    const status = liveById.get(run.threadId) ?? run.status;
+    return { ...run, status, missing };
+  });
+  const latest = resolved[0] ?? null;
+  const lastRunMissing =
+    result != null &&
+    !loadError &&
+    automation.lastRunAt != null &&
+    resolved.length === 0;
+
+  const openThread = (threadId: string) => {
+    onSelectThread?.(threadId);
+  };
+
+  return (
+    <div className={styles.runsBlock}>
+      {loadError ? (
+        <p className={styles.error} data-automation-runs-error="">
+          {loadError}
+        </p>
+      ) : null}
+      {latest && !latest.missing ? (
+        <div className={styles.latest} data-automation-latest="">
+          <span className={styles.latestLabel}>Latest run</span>
+          <span className={styles.runAge}>
+            {formatRelativeAge(latest.startedAt, now)}
+          </span>
+          <span
+            className={styles.runStatus}
+            data-automation-latest-status={latest.status}
+            data-run-display={automationRunStatusLabel(latest.status)}
+          >
+            {automationRunStatusLabel(latest.status)}
+          </span>
+          <button
+            type="button"
+            className={styles.action}
+            data-automation-open-thread=""
+            title="Open thread"
+            onClick={() => openThread(latest.threadId)}
+          >
+            Open thread
+          </button>
+        </div>
+      ) : latest?.missing ? (
+        <div className={styles.latest} data-automation-latest="">
+          <span className={styles.latestLabel}>Latest run</span>
+          <span className={styles.unavailable}>Transcript unavailable</span>
+        </div>
+      ) : lastRunMissing ? (
+        <p className={styles.missing} data-automation-runs-missing="">
+          The last run is no longer retained.
+        </p>
+      ) : null}
+      {resolved.length > 0 || result?.retentionLimitReached ? (
+        <>
+          <button
+            type="button"
+            className={styles.runsToggle}
+            data-automation-runs-toggle=""
+            aria-expanded={expanded}
+            onClick={() => setExpanded((open) => !open)}
+          >
+            Recent retained runs
+          </button>
+          {expanded ? (
+            <ul className={styles.runs} data-automation-runs="">
+              {resolved.map((run) => (
+                <li key={run.threadId}>
+                  {run.missing ? (
+                    <div
+                      className={styles.runRow}
+                      data-automation-run-row={run.threadId}
+                      data-thread-unavailable=""
+                    >
+                      <span className={styles.runAge}>
+                        {formatRelativeAge(run.startedAt, now)}
+                      </span>
+                      <span className={styles.runStatus}>
+                        {automationRunStatusLabel(run.status)}
+                      </span>
+                      <span className={styles.unavailable}>
+                        Transcript unavailable
+                      </span>
+                    </div>
+                  ) : (
+                    <button
+                      type="button"
+                      className={styles.runRow}
+                      data-automation-run-row={run.threadId}
+                      title="Open thread"
+                      onClick={() => openThread(run.threadId)}
+                    >
+                      <span className={styles.runAge}>
+                        {formatRelativeAge(run.startedAt, now)}
+                      </span>
+                      <span
+                        className={styles.runStatus}
+                        data-run-display={automationRunStatusLabel(run.status)}
+                      >
+                        {automationRunStatusLabel(run.status)}
+                      </span>
+                    </button>
+                  )}
+                </li>
+              ))}
+              {result?.retentionLimitReached ? (
+                <li
+                  className={styles.pruned}
+                  data-automation-retention-limit=""
+                >
+                  Older runs may no longer be retained.
+                </li>
+              ) : null}
+            </ul>
+          ) : null}
+        </>
+      ) : null}
+    </div>
+  );
+}
+
 export function AutomationsView({
   automations,
   projects,
   providers,
   draft,
+  loadRuns,
+  onSelectThread,
+  liveThreads,
   onCreate,
   onUpdate,
   onRemove,
@@ -51,6 +245,9 @@ export function AutomationsView({
   const [hour, setHour] = useState("9");
   const [formError, setFormError] = useState<string | null>(null);
   const [confirmId, setConfirmId] = useState<string | null>(null);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const savingRef = useRef(false);
   const [rowError, setRowError] = useState<{
     id: string;
     message: string;
@@ -59,12 +256,35 @@ export function AutomationsView({
 
   useEffect(() => {
     if (!draft) return;
+    setEditingId(null);
     setName(draft.name);
     setProjectId(draft.projectId);
     setPrompt(draft.prompt);
     setProvider(draft.provider);
     setModel(draft.model ?? "");
   }, [draft]);
+
+  const fillFrom = (auto: AutomationInfo) => {
+    setEditingId(auto.id);
+    setName(auto.name);
+    setProjectId(auto.projectId);
+    setPrompt(auto.prompt);
+    setProvider(auto.provider);
+    setModel(auto.model ?? "");
+    setPreset(auto.preset);
+    setHour(auto.hour != null ? String(auto.hour) : "9");
+    setFormError(null);
+  };
+
+  const clearEdit = () => {
+    setEditingId(null);
+    setName("");
+    setPrompt("");
+    setModel("");
+    setPreset("hourly");
+    setHour("9");
+    setFormError(null);
+  };
 
   /**
    * Row actions are fire-and-forget from an onClick, so a rejection has to
@@ -94,7 +314,13 @@ export function AutomationsView({
   const providerModels =
     providers.find((p) => p.id === provider)?.models ?? [];
 
+  /**
+   * Click and Enter both call submit() on this form. A useState flag is too
+   * late for a same-tick double submit, so the ref is the real lock (#941).
+   * Create and edit share this lock so a pending write cannot start twice.
+   */
   const submit = async () => {
+    if (savingRef.current) return;
     const error = createFormError({
       name,
       projectId,
@@ -107,20 +333,44 @@ export function AutomationsView({
       setFormError(error);
       return;
     }
+    savingRef.current = true;
+    setSaving(true);
     setFormError(null);
-    await onCreate({
-      name: name.trim(),
-      projectId,
-      prompt,
-      provider,
-      model: model.trim() || null,
-      preset,
-      hour: needsHour ? Number(hour) : null,
-      enabled: true,
-    });
-    setName("");
-    setPrompt("");
-    setModel("");
+    try {
+      if (editingId) {
+        await onUpdate({
+          id: editingId,
+          name: name.trim(),
+          prompt,
+          provider,
+          model: model.trim() || null,
+          preset,
+          hour: needsHour ? Number(hour) : null,
+        });
+        clearEdit();
+      } else {
+        await onCreate({
+          name: name.trim(),
+          projectId,
+          prompt,
+          provider,
+          model: model.trim() || null,
+          preset,
+          hour: needsHour ? Number(hour) : null,
+          enabled: true,
+        });
+        setName("");
+        setPrompt("");
+        setModel("");
+      }
+    } catch (err) {
+      setFormError(
+        err instanceof Error && err.message ? err.message : String(err),
+      );
+    } finally {
+      savingRef.current = false;
+      setSaving(false);
+    }
   };
 
   return (
@@ -156,6 +406,12 @@ export function AutomationsView({
               onChange={(e) => setProjectId(e.target.value)}
               name="projectId"
               aria-label="Project"
+              disabled={Boolean(editingId)}
+              title={
+                editingId
+                  ? "Project stays with this automation"
+                  : undefined
+              }
             >
               {projects.length === 0 ? (
                 <option value="">No projects</option>
@@ -199,6 +455,9 @@ export function AutomationsView({
                 data-automation-model=""
               >
                 <option value="">Default</option>
+                {model && !providerModels.includes(model) ? (
+                  <option value={model}>{model}</option>
+                ) : null}
                 {providerModels.map((m) => (
                   <option key={m} value={m}>
                     {m}
@@ -264,9 +523,36 @@ export function AutomationsView({
             {formError}
           </p>
         ) : null}
-        <button type="submit" className={styles.submit}>
-          Add automation
-        </button>
+        <div className={styles.formActions}>
+          {editingId ? (
+            <button
+              type="button"
+              className={styles.action}
+              data-automation-cancel=""
+              disabled={saving}
+              onClick={() => {
+                if (savingRef.current) return;
+                clearEdit();
+              }}
+            >
+              Cancel
+            </button>
+          ) : null}
+          <button
+            type="submit"
+            className={styles.submit}
+            disabled={saving}
+            aria-busy={saving || undefined}
+          >
+            {saving
+              ? editingId
+                ? "Saving…"
+                : "Adding…"
+              : editingId
+                ? "Save"
+                : "Add automation"}
+          </button>
+        </div>
       </form>
 
       {automations.length === 0 ? (
@@ -312,6 +598,20 @@ export function AutomationsView({
                     </span>
                   ) : null}
                 </div>
+                {auto.prompt ? (
+                  <p className={styles.prompt} data-automation-prompt="">
+                    {auto.prompt}
+                  </p>
+                ) : null}
+                {loadRuns ? (
+                  <AutomationRunHistory
+                    automation={auto}
+                    loadRuns={loadRuns}
+                    onSelectThread={onSelectThread}
+                    liveThreads={liveThreads}
+                    now={now}
+                  />
+                ) : null}
                 <div className={styles.rowActions}>
                   <label className={styles.toggle}>
                     <input
@@ -338,6 +638,19 @@ export function AutomationsView({
                     }}
                   >
                     Run now
+                  </button>
+                  <button
+                    type="button"
+                    className={styles.action}
+                    data-automation-edit=""
+                    title="Edit"
+                    disabled={saving}
+                    onClick={() => {
+                      if (savingRef.current) return;
+                      fillFrom(auto);
+                    }}
+                  >
+                    Edit
                   </button>
                   <button
                     type="button"

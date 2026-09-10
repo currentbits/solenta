@@ -344,6 +344,13 @@ describe("memory-proxy", () => {
     const withType = new URL(seen.at(-1), "http://x");
     assert.equal(withType.searchParams.get("type"), "convention");
 
+    await p.recent({ limit: 20, offset: 40, project: "coder", type: "task" });
+    const withOffset = new URL(seen.at(-1), "http://x");
+    assert.equal(withOffset.searchParams.get("limit"), "20");
+    assert.equal(withOffset.searchParams.get("offset"), "40");
+    assert.equal(withOffset.searchParams.get("project"), "coder");
+    assert.equal(withOffset.searchParams.get("type"), "task");
+
     // project alone must still produce a valid query string (leading "?").
     await p.recent({ project: "coder" });
     const projectOnly = new URL(seen.at(-1), "http://x");

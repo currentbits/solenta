@@ -155,6 +155,21 @@ function settleDaysToInput(value: number | null | undefined): string {
   return String(value);
 }
 
+function parseNumericDraft(text: string): number | null {
+  const raw = text.trim();
+  return raw === "" ? null : Number(raw);
+}
+
+type SettingsDraftKey =
+  | "daily"
+  | "orch"
+  | "settle"
+  | "pr"
+  | "uiScale"
+  | "linear"
+  | "otel"
+  | "webhook";
+
 const EMPTY_OTEL: OtelSettings = {
   endpoint: null,
   headers: {},
@@ -188,6 +203,26 @@ export function parseOtelHeaders(text: string): Record<string, string> {
     if (key) out[key] = value;
   }
   return out;
+}
+
+function settingsDraftSnapshot(settings: AppSettings | null) {
+  const otel = settings?.otel ?? EMPTY_OTEL;
+  const webhook = settings?.webhook ?? EMPTY_WEBHOOK;
+  return {
+    daily: budgetToInput(settings?.dailyBudgetUsd ?? null),
+    orch: budgetToInput(settings?.orchestrationBudgetUsd ?? null),
+    settle: settleDaysToInput(settings?.autoSettleAfterDays ?? null),
+    pr: budgetToInput(settings?.prDiffCapLines ?? null),
+    uiScale: settings?.uiScale ?? 1,
+    linear: settings?.linearApiKey ?? "",
+    otelEndpoint: otel.endpoint ?? "",
+    otelHeadersText: formatOtelHeaders(otel.headers),
+    otelClaudeMetrics: otel.claudeMetrics,
+    webhookUrl: webhook.url ?? "",
+    webhookOnDone: webhook.onDone !== false,
+    webhookOnFailed: webhook.onFailed !== false,
+    webhookOnWaiting: webhook.onWaiting !== false,
+  };
 }
 
 interface ProfileDraft {
@@ -331,49 +366,73 @@ export function SettingsModal({
   const [checkingUpdate, setCheckingUpdate] = useState(false);
   const [downloadingUpdate, setDownloadingUpdate] = useState(false);
   const wasOpen = useRef(false);
+  /** True once drafts have been filled from a real settings object. */
+  const hydrated = useRef(false);
+  const dirtyDrafts = useRef(new Set<SettingsDraftKey>());
   /** Sync guard: blur then Save-click can both fire before setSaving lands. */
   const savingRef = useRef(false);
 
   useEffect(() => {
     if (!open) {
       wasOpen.current = false;
+      hydrated.current = false;
+      dirtyDrafts.current.clear();
       return;
     }
-    if (wasOpen.current) return;
+    const justOpened = !wasOpen.current;
     wasOpen.current = true;
-    setPane(isSettingsPane(initialPane) ? initialPane : "general");
-    setNavQuery("");
-    setBudgetText(budgetToInput(settings?.dailyBudgetUsd ?? null));
-    setUiScale(settings?.uiScale ?? 1);
-    setOrchBudgetText(
-      budgetToInput(settings?.orchestrationBudgetUsd ?? null),
-    );
-    setSettleDaysText(settleDaysToInput(settings?.autoSettleAfterDays ?? null));
-    setPrCapText(budgetToInput(settings?.prDiffCapLines ?? null));
-    setLinearKeyText(settings?.linearApiKey ?? "");
-    const otel = settings?.otel ?? EMPTY_OTEL;
-    setOtelEndpoint(otel.endpoint ?? "");
-    setOtelHeadersText(formatOtelHeaders(otel.headers));
-    setOtelClaudeMetrics(otel.claudeMetrics);
-    const webhook = settings?.webhook ?? EMPTY_WEBHOOK;
-    setWebhookUrl(webhook.url ?? "");
-    setWebhookOnDone(webhook.onDone !== false);
-    setWebhookOnFailed(webhook.onFailed !== false);
-    setWebhookOnWaiting(webhook.onWaiting !== false);
-    setWebhookTest("idle");
-    setDraft(null);
-    setPoolDraft(null);
-    setError(null);
-    setSaving(false);
-    savingRef.current = false;
-  }, [open, settings?.dailyBudgetUsd, settings?.orchestrationBudgetUsd, settings?.autoSettleAfterDays, settings?.prDiffCapLines, settings?.otel, settings?.webhook, settings?.uiScale, settings?.linearApiKey]);
 
+    const applyDrafts = (from: AppSettings | null, onlyClean: boolean) => {
+      const snap = settingsDraftSnapshot(from);
+      const skip = (key: SettingsDraftKey) =>
+        onlyClean && dirtyDrafts.current.has(key);
+      if (!skip("daily")) setBudgetText(snap.daily);
+      if (!skip("orch")) setOrchBudgetText(snap.orch);
+      if (!skip("settle")) setSettleDaysText(snap.settle);
+      if (!skip("pr")) setPrCapText(snap.pr);
+      if (!skip("uiScale")) setUiScale(snap.uiScale);
+      if (!skip("linear")) setLinearKeyText(snap.linear);
+      if (!skip("otel")) {
+        setOtelEndpoint(snap.otelEndpoint);
+        setOtelHeadersText(snap.otelHeadersText);
+        setOtelClaudeMetrics(snap.otelClaudeMetrics);
+      }
+      if (!skip("webhook")) {
+        setWebhookUrl(snap.webhookUrl);
+        setWebhookOnDone(snap.webhookOnDone);
+        setWebhookOnFailed(snap.webhookOnFailed);
+        setWebhookOnWaiting(snap.webhookOnWaiting);
+      }
+    };
+
+    if (justOpened) {
+      setPane(isSettingsPane(initialPane) ? initialPane : "general");
+      setNavQuery("");
+      applyDrafts(settings, false);
+      setWebhookTest("idle");
+      setDraft(null);
+      setPoolDraft(null);
+      setError(null);
+      setSaving(false);
+      savingRef.current = false;
+      hydrated.current = settings != null;
+      return;
+    }
+
+    // Settings arrived after open: fill untouched drafts, keep dirty ones.
+    if (!hydrated.current && settings != null) {
+      applyDrafts(settings, true);
+      hydrated.current = true;
+    }
+  }, [open, settings]);
+
+  const dialogRef = useRef<HTMLDivElement>(null);
   const handleClose = useCallback(() => {
+    if (savingRef.current) return;
     onClose();
   }, [onClose]);
-  const dialogRef = useRef<HTMLDivElement>(null);
 
-  useEscapeClose(open, handleClose);
+  useEscapeClose(open && !saving, handleClose);
   useModalFocus(open, dialogRef);
 
   useEffect(() => {
@@ -414,37 +473,31 @@ export function SettingsModal({
 
   const save = async () => {
     if (savingRef.current) return;
+    const patch: Partial<AppSettings> = {};
+    const putNumeric = (
+      key:
+        | "dailyBudgetUsd"
+        | "orchestrationBudgetUsd"
+        | "autoSettleAfterDays"
+        | "prDiffCapLines",
+      text: string,
+      draftKey: SettingsDraftKey,
+    ) => {
+      // Empty unhydrated drafts are "unknown", not "clear this cap".
+      if (!hydrated.current && !dirtyDrafts.current.has(draftKey)) return;
+      patch[key] = parseNumericDraft(text);
+    };
+    putNumeric("dailyBudgetUsd", budgetText, "daily");
+    putNumeric("orchestrationBudgetUsd", orchBudgetText, "orch");
+    putNumeric("autoSettleAfterDays", settleDaysText, "settle");
+    putNumeric("prDiffCapLines", prCapText, "pr");
+    if (Object.keys(patch).length === 0) return;
+
     savingRef.current = true;
     setSaving(true);
     setError(null);
     try {
-      const budgetRaw = budgetText.trim();
-      // Empty = no cap. Otherwise pass the parsed number through and let the
-      // backend reject with its validation string.
-      const dailyBudgetUsd: number | null =
-        budgetRaw === "" ? null : Number(budgetRaw);
-
-      const orchBudgetRaw = orchBudgetText.trim();
-      // Same contract as the daily cap: empty = no per-orchestration ceiling.
-      const orchestrationBudgetUsd: number | null =
-        orchBudgetRaw === "" ? null : Number(orchBudgetRaw);
-
-      const settleRaw = settleDaysText.trim();
-      // Empty = Never (null disables inactivity settle). Otherwise parse.
-      const autoSettleAfterDays: number | null =
-        settleRaw === "" ? null : Number(settleRaw);
-
-      const prCapRaw = prCapText.trim();
-      // Empty = no size cap. Otherwise parse; the backend validates.
-      const prDiffCapLines: number | null =
-        prCapRaw === "" ? null : Number(prCapRaw);
-
-      const saved = await onSaveSettings({
-        dailyBudgetUsd,
-        orchestrationBudgetUsd,
-        autoSettleAfterDays,
-        prDiffCapLines,
-      });
+      const saved = await onSaveSettings(patch);
       setBudgetText(budgetToInput(saved.dailyBudgetUsd));
       setOrchBudgetText(budgetToInput(saved.orchestrationBudgetUsd));
       setSettleDaysText(settleDaysToInput(saved.autoSettleAfterDays));
@@ -452,6 +505,11 @@ export function SettingsModal({
       if (saved.linearApiKey !== undefined) {
         setLinearKeyText(saved.linearApiKey ?? "");
       }
+      hydrated.current = true;
+      dirtyDrafts.current.delete("daily");
+      dirtyDrafts.current.delete("orch");
+      dirtyDrafts.current.delete("settle");
+      dirtyDrafts.current.delete("pr");
     } catch (err) {
       const msg =
         err instanceof Error && err.message
@@ -929,6 +987,7 @@ export function SettingsModal({
                   value={budgetText}
                   disabled={saving}
                   onChange={(e) => {
+                    dirtyDrafts.current.add("daily");
                     setBudgetText(e.target.value);
                     setError(null);
                   }}
@@ -971,6 +1030,7 @@ export function SettingsModal({
                   disabled={saving}
                   data-orch-budget=""
                   onChange={(e) => {
+                    dirtyDrafts.current.add("orch");
                     setOrchBudgetText(e.target.value);
                     setError(null);
                   }}
@@ -1028,6 +1088,7 @@ export function SettingsModal({
                   disabled={saving}
                   data-pr-diff-cap=""
                   onChange={(e) => {
+                    dirtyDrafts.current.add("pr");
                     setPrCapText(e.target.value);
                     setError(null);
                   }}
@@ -1077,6 +1138,7 @@ export function SettingsModal({
                   disabled={saving}
                   data-linear-api-key=""
                   onChange={(e) => {
+                    dirtyDrafts.current.add("linear");
                     setLinearKeyText(e.target.value);
                     setError(null);
                   }}
@@ -1126,6 +1188,7 @@ export function SettingsModal({
                   disabled={saving}
                   data-auto-settle-days=""
                   onChange={(e) => {
+                    dirtyDrafts.current.add("settle");
                     setSettleDaysText(e.target.value);
                     setError(null);
                   }}
@@ -1434,6 +1497,7 @@ export function SettingsModal({
                 disabled={saving || settings == null}
                 data-otel-endpoint=""
                 onChange={(e) => {
+                  dirtyDrafts.current.add("otel");
                   setOtelEndpoint(e.target.value);
                   setError(null);
                 }}
@@ -1466,6 +1530,7 @@ export function SettingsModal({
                 disabled={saving || settings == null}
                 data-otel-headers=""
                 onChange={(e) => {
+                  dirtyDrafts.current.add("otel");
                   setOtelHeadersText(e.target.value);
                   setError(null);
                 }}
@@ -1965,6 +2030,7 @@ export function SettingsModal({
                   aria-valuetext={formatUiScale(uiScale)}
                   onChange={(e) => {
                     const next = Number(e.target.value);
+                    dirtyDrafts.current.add("uiScale");
                     setUiScale(next);
                     setError(null);
                     void onSaveSettings({ uiScale: next }).catch((err) => {
@@ -2029,6 +2095,7 @@ export function SettingsModal({
                 disabled={saving || settings == null}
                 data-webhook-url=""
                 onChange={(e) => {
+                  dirtyDrafts.current.add("webhook");
                   setWebhookUrl(e.target.value);
                   setError(null);
                 }}

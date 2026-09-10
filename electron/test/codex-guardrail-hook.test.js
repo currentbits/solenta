@@ -80,6 +80,48 @@ describe("materializeCodexGuardrailHome", () => {
       "hooks.json must be ours, not a link into ~/.codex",
     );
   });
+
+  it("shares sessions/ but not thread-writer-locks/ (#950)", () => {
+    fs.mkdirSync(path.join(source, "sessions"));
+    fs.mkdirSync(path.join(source, "thread-writer-locks"));
+    fs.writeFileSync(
+      path.join(source, "thread-writer-locks", "sess.lock"),
+      "held\n",
+    );
+    materializeCodexGuardrailHome({ dest, sourceHome: source });
+    assert.ok(
+      fs.lstatSync(path.join(dest, "sessions")).isSymbolicLink(),
+      "sessions must stay shared so resume still works",
+    );
+    const lockDest = path.join(dest, "thread-writer-locks");
+    assert.equal(
+      fs.lstatSync(lockDest).isSymbolicLink(),
+      false,
+      "overlay must not share Desktop's writer-lock namespace",
+    );
+    assert.ok(fs.statSync(lockDest).isDirectory());
+  });
+
+  it("replaces a leftover thread-writer-locks symlink with a real directory (#1226)", () => {
+    fs.mkdirSync(path.join(source, "thread-writer-locks"));
+    fs.writeFileSync(
+      path.join(source, "thread-writer-locks", "desktop.lock"),
+      "held\n",
+    );
+    fs.symlinkSync(
+      path.join(source, "thread-writer-locks"),
+      path.join(dest, "thread-writer-locks"),
+    );
+    materializeCodexGuardrailHome({ dest, sourceHome: source });
+    const lockDest = path.join(dest, "thread-writer-locks");
+    assert.equal(fs.lstatSync(lockDest).isSymbolicLink(), false);
+    assert.ok(fs.statSync(lockDest).isDirectory());
+    assert.equal(
+      fs.existsSync(path.join(lockDest, "desktop.lock")),
+      false,
+      "must not keep Desktop's lock files after unlinking the shared dir",
+    );
+  });
 });
 
 describe("codex guardrail hook (stdin)", () => {

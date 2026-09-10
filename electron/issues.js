@@ -573,6 +573,52 @@ async function completeIssue(projectPath, number, opts) {
 }
 
 /**
+ * Post a comment on an existing Planboard issue without changing plan:*
+ * labels or closing it. Closed issues remain commentable. Never throws.
+ *
+ * @param {string} projectPath
+ * @param {unknown} number
+ * @param {unknown} body
+ * @returns {Promise<{ ok: true, url: string } | { ok: false, reason: string }>}
+ */
+async function commentIssue(projectPath, number, body) {
+  const cwd = String(projectPath || "");
+  const issueNumber = Number(number);
+  const text = body == null ? "" : String(body).trim();
+  if (!cwd) return { ok: false, reason: "not a GitHub repo" };
+  if (!Number.isInteger(issueNumber) || issueNumber <= 0) {
+    return { ok: false, reason: "invalid issue reference" };
+  }
+  if (!text) return { ok: false, reason: "empty comment" };
+
+  const remote = gitTry(cwd, ["remote", "get-url", "origin"]);
+  if (!remote.ok || !isGitHubRemote(String(remote.stdout || "").trim())) {
+    return { ok: false, reason: "not a GitHub repo" };
+  }
+
+  const posted = await ghTryAsync(
+    cwd,
+    ["issue", "comment", String(issueNumber), "--body", text],
+    GH_USER,
+  );
+  const errText = posted.stderr || posted.combined || posted.stdout || "";
+  if (!posted.ok) {
+    if (posted.enoent) return { ok: false, reason: "gh missing" };
+    if (isGhAuthFailure(errText)) return { ok: false, reason: "auth" };
+    if (isIssueNotFound(errText)) return { ok: false, reason: "issue not found" };
+    return { ok: false, reason: tailErr(errText, "gh issue comment failed") };
+  }
+
+  const stdout = String(posted.stdout || "").trim();
+  const urlMatch = stdout.match(/https?:\/\/\S+/);
+  const url = urlMatch ? urlMatch[0].replace(/[)\].,;]+$/, "") : "";
+  if (!url) {
+    return { ok: false, reason: tailErr(stdout, "gh issue comment failed") };
+  }
+  return { ok: true, url };
+}
+
+/**
  * File an issue via `gh issue create` and label it plan:todo (issue #550
  * "File on planboard" chip). Never throws; failures come back as
  * `{ ok: false, reason }`. The label ride-along is best-effort: creation
@@ -631,6 +677,7 @@ module.exports = {
   setPlanStatus,
   reopenIssue,
   completeIssue,
+  commentIssue,
   createIssue,
   parseIssueListJson,
   ownerRepoFromRemote,

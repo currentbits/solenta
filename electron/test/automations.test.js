@@ -12,6 +12,7 @@ const {
   dueAutomations,
   startScheduler,
   runNow,
+  listAutomationRuns,
   MAX_THREADS_PER_AUTOMATION,
 } = require("../automations.js");
 
@@ -148,6 +149,62 @@ describe("automation CRUD + scheduler", () => {
 
     services.removeAutomation(store, { id: created.id });
     assert.equal(services.listAutomations(store).length, 0);
+  });
+
+  it("prompt and model updates keep id and nextRunAt", () => {
+    const created = services.addAutomation(store, {
+      projectId: "p1",
+      name: "Nightly review",
+      prompt: "review the repo",
+      provider: "claude",
+      model: null,
+      preset: "daily",
+      hour: 9,
+    });
+    const pinned = created.nextRunAt + 86_400_000;
+    store.setAutomations([
+      { ...store.getAutomation(created.id), nextRunAt: pinned },
+    ]);
+    store.saveNow();
+
+    const updated = services.updateAutomation(store, {
+      id: created.id,
+      prompt: "review harder",
+      model: "opus",
+    });
+    assert.equal(updated.id, created.id);
+    assert.equal(updated.nextRunAt, pinned);
+    assert.equal(updated.prompt, "review harder");
+    assert.equal(updated.model, "opus");
+    assert.equal(updated.enabled, true);
+    assert.equal(updated.projectId, "p1");
+    assert.equal(services.listAutomations(store).length, 1);
+  });
+
+  it("schedule changes recompute nextRunAt", () => {
+    const created = services.addAutomation(store, {
+      projectId: "p1",
+      name: "Hourly",
+      prompt: "go",
+      provider: "claude",
+      preset: "hourly",
+    });
+    const pinned = Date.now() + 99 * 86_400_000;
+    store.setAutomations([
+      { ...store.getAutomation(created.id), nextRunAt: pinned },
+    ]);
+    store.saveNow();
+
+    const updated = services.updateAutomation(store, {
+      id: created.id,
+      preset: "daily",
+      hour: 9,
+    });
+    assert.equal(updated.id, created.id);
+    assert.notEqual(updated.nextRunAt, pinned);
+    assert.ok(updated.nextRunAt < pinned);
+    assert.equal(updated.preset, "daily");
+    assert.equal(updated.hour, 9);
   });
 
   it("rejects a create without a name or hour", () => {
@@ -297,6 +354,26 @@ describe("automation CRUD + scheduler", () => {
     return store.getThread(threadId);
   }
 
+  it("updating an automation keeps existing thread links", async () => {
+    const created = services.addAutomation(store, {
+      projectId: "p1",
+      name: "Sweep",
+      prompt: "go",
+      provider: "claude",
+      preset: "hourly",
+    });
+    const thread = await fireAuto(created.id);
+    assert.equal(thread.automationId, created.id);
+
+    const updated = services.updateAutomation(store, {
+      id: created.id,
+      prompt: "go farther",
+    });
+    assert.equal(updated.id, created.id);
+    assert.equal(store.getThread(thread.id).automationId, created.id);
+    assert.equal(services.listAutomations(store).length, 1);
+  });
+
   it("retains only the newest MAX threads per automation and drops their messages", async () => {
     const created = services.addAutomation(store, {
       projectId: "p1",
@@ -361,6 +438,134 @@ describe("automation CRUD + scheduler", () => {
     assert.equal(mine.length, MAX_THREADS_PER_AUTOMATION + 3);
   });
 
+  it("keeps a quota-wait automation thread and its transcript past the cap (#932)", async () => {
+    const created = services.addAutomation(store, {
+      projectId: "p1",
+      name: "Sweep",
+      prompt: "go",
+      provider: "claude",
+      preset: "hourly",
+    });
+    const parked = services.createThread(store, {
+      projectId: "p1",
+      title: "Sweep",
+      automationId: created.id,
+    });
+    const parkedAt = Date.now() - 8 * 24 * 60 * 60 * 1000;
+    store.updateThread(parked.id, {
+      createdAt: parkedAt,
+      status: "quota-wait",
+      quotaWaitUntil: Date.now() + 7 * 24 * 60 * 60 * 1000,
+      lastError: "usage limit reached",
+    });
+    store.appendMessage(parked.id, {
+      id: "u1",
+      role: "user",
+      text: "review the repo",
+      createdAt: parkedAt,
+    });
+    store.appendMessage(parked.id, {
+      id: "a1",
+      role: "assistant",
+      text: "started, then hit quota",
+      createdAt: parkedAt + 1,
+    });
+
+    for (let i = 0; i < MAX_THREADS_PER_AUTOMATION; i++) {
+      const thread = await fireAuto(created.id);
+      thread.status = "done";
+    }
+
+    assert.ok(store.getThread(parked.id), "quota-wait thread must survive prune");
+    assert.equal(store.getThread(parked.id).status, "quota-wait");
+    assert.deepEqual(
+      store.getMessages(parked.id).map((m) => m.text),
+      ["review the repo", "started, then hit quota"],
+    );
+  });
+
+  it("keeps other unfinished automation threads past the cap (#932)", async () => {
+    const created = services.addAutomation(store, {
+      projectId: "p1",
+      name: "Sweep",
+      prompt: "go",
+      provider: "claude",
+      preset: "hourly",
+    });
+    const now = Date.now();
+    const failover = services.createThread(store, {
+      projectId: "p1",
+      title: "Sweep",
+      automationId: created.id,
+    });
+    store.updateThread(failover.id, {
+      createdAt: now - 4000,
+      status: "idle",
+      quotaFailoverPending: true,
+    });
+    const asking = services.createThread(store, {
+      projectId: "p1",
+      title: "Sweep",
+      automationId: created.id,
+    });
+    store.updateThread(asking.id, {
+      createdAt: now - 3000,
+      status: "idle",
+      pendingQuestion: {
+        id: "q1",
+        askedAt: now - 3000,
+        questions: [{ question: "Merge?", options: [{ label: "Yes" }] }],
+      },
+    });
+    const planning = services.createThread(store, {
+      projectId: "p1",
+      title: "Sweep",
+      automationId: created.id,
+    });
+    store.updateThread(planning.id, {
+      createdAt: now - 2000,
+      status: "idle",
+      pendingPlan: {
+        id: "plan1",
+        plan: "Ship the parked work after quota resets.",
+        askedAt: now - 2000,
+      },
+    });
+
+    for (let i = 0; i < MAX_THREADS_PER_AUTOMATION; i++) {
+      const thread = await fireAuto(created.id);
+      thread.status = "done";
+    }
+
+    assert.ok(store.getThread(failover.id), "quotaFailoverPending");
+    assert.ok(store.getThread(asking.id), "pendingQuestion");
+    assert.ok(store.getThread(planning.id), "pendingPlan");
+  });
+
+  it("still prunes done and failed automation history past the cap", async () => {
+    const created = services.addAutomation(store, {
+      projectId: "p1",
+      name: "Sweep",
+      prompt: "go",
+      provider: "claude",
+      preset: "hourly",
+    });
+    const done = await fireAuto(created.id);
+    done.status = "done";
+    const failed = await fireAuto(created.id);
+    failed.status = "failed";
+
+    for (let i = 0; i < MAX_THREADS_PER_AUTOMATION; i++) {
+      const thread = await fireAuto(created.id);
+      thread.status = "done";
+    }
+
+    assert.equal(store.getThread(done.id), null);
+    assert.equal(store.getThread(failed.id), null);
+    assert.equal(store.getMessages(done.id).length, 0);
+    assert.equal(store.getMessages(failed.id).length, 0);
+  });
+
   it("leaves other automations and hand-made threads untouched", async () => {
     const created = services.addAutomation(store, {
       projectId: "p1",
@@ -400,5 +605,211 @@ describe("automation CRUD + scheduler", () => {
       store.getThreads().filter((t) => t.automationId === other.id).length,
       1,
     );
+  });
+
+  it("listAutomationRuns returns only this automation's threads, newest first", async () => {
+    const created = services.addAutomation(store, {
+      projectId: "p1",
+      name: "Sweep",
+      prompt: "go",
+      provider: "claude",
+      preset: "hourly",
+    });
+    const other = services.addAutomation(store, {
+      projectId: "p1",
+      name: "Sweep",
+      prompt: "other",
+      provider: "claude",
+      preset: "hourly",
+    });
+    const handmade = services.createThread(store, {
+      projectId: "p1",
+      title: "Sweep",
+    });
+    const otherThread = await fireAuto(other.id);
+    const first = await fireAuto(created.id);
+    const second = await fireAuto(created.id);
+    store.getThread(second.id).status = "working";
+    store.getThread(first.id).status = "done";
+
+    const listed = listAutomationRuns(store, created.id);
+    assert.equal(listed.automationId, created.id);
+    assert.deepEqual(
+      listed.runs.map((r) => r.threadId),
+      [second.id, first.id],
+    );
+    assert.equal(listed.runs[0].status, "working");
+    assert.equal(listed.runs[1].status, "done");
+    assert.equal(listed.runs[0].startedAt, second.createdAt);
+    assert.equal(
+      listed.runs.some((r) => r.threadId === handmade.id),
+      false,
+    );
+    assert.equal(
+      listed.runs.some((r) => r.threadId === otherThread.id),
+      false,
+    );
+    assert.equal(listed.retentionLimitReached, false);
+  });
+
+  it("listAutomationRuns ignores another project's automation with the same name", async () => {
+    store.setProjects([
+      ...store.getProjects(),
+      { id: "p2", slug: "acme/other", name: "other", path: tmpDir },
+    ]);
+    store.saveNow();
+    const mine = services.addAutomation(store, {
+      projectId: "p1",
+      name: "Nightly",
+      prompt: "go",
+      provider: "claude",
+      preset: "hourly",
+    });
+    const theirs = services.addAutomation(store, {
+      projectId: "p2",
+      name: "Nightly",
+      prompt: "go",
+      provider: "claude",
+      preset: "hourly",
+    });
+    const mineThread = await fireAuto(mine.id);
+    const theirThread = await fireAuto(theirs.id);
+    const listed = listAutomationRuns(store, mine.id);
+    assert.deepEqual(
+      listed.runs.map((r) => r.threadId),
+      [mineThread.id],
+    );
+    assert.equal(
+      listed.runs.some((r) => r.threadId === theirThread.id),
+      false,
+    );
+  });
+
+  it("listAutomationRuns ignores a same-id thread on another project", async () => {
+    store.setProjects([
+      ...store.getProjects(),
+      { id: "p2", slug: "acme/other", name: "other", path: tmpDir },
+    ]);
+    store.saveNow();
+    const created = services.addAutomation(store, {
+      projectId: "p1",
+      name: "Sweep",
+      prompt: "go",
+      provider: "claude",
+      preset: "hourly",
+    });
+    const mine = await fireAuto(created.id);
+    const stray = services.createThread(store, {
+      projectId: "p2",
+      title: "Sweep",
+      automationId: created.id,
+    });
+    const listed = listAutomationRuns(store, created.id);
+    assert.deepEqual(
+      listed.runs.map((r) => r.threadId),
+      [mine.id],
+    );
+    assert.equal(
+      listed.runs.some((r) => r.threadId === stray.id),
+      false,
+    );
+  });
+
+  it("listAutomationRuns keeps association after rename", async () => {
+    const created = services.addAutomation(store, {
+      projectId: "p1",
+      name: "Sweep",
+      prompt: "go",
+      provider: "claude",
+      preset: "hourly",
+    });
+    const thread = await fireAuto(created.id);
+    services.updateAutomation(store, { id: created.id, name: "Renamed sweep" });
+    const listed = listAutomationRuns(store, created.id);
+    assert.deepEqual(
+      listed.runs.map((r) => r.threadId),
+      [thread.id],
+    );
+  });
+
+  it("listAutomationRuns passes quota-wait through and includes a live working run", async () => {
+    const created = services.addAutomation(store, {
+      projectId: "p1",
+      name: "Sweep",
+      prompt: "go",
+      provider: "claude",
+      preset: "hourly",
+    });
+    const parked = await fireAuto(created.id);
+    parked.status = "quota-wait";
+    const live = await fireAuto(created.id);
+    live.status = "working";
+    const listed = listAutomationRuns(store, created.id);
+    assert.equal(listed.runs[0].threadId, live.id);
+    assert.equal(listed.runs[0].status, "working");
+    assert.equal(listed.runs[1].threadId, parked.id);
+    assert.equal(listed.runs[1].status, "quota-wait");
+  });
+
+  it("listAutomationRuns sets retentionLimitReached at exactly the cap with no deletes", async () => {
+    const created = services.addAutomation(store, {
+      projectId: "p1",
+      name: "Sweep",
+      prompt: "go",
+      provider: "claude",
+      preset: "hourly",
+    });
+    const ids = [];
+    for (let i = 0; i < MAX_THREADS_PER_AUTOMATION; i++) {
+      const thread = await fireAuto(created.id);
+      ids.push(thread.id);
+    }
+    const listed = listAutomationRuns(store, created.id);
+    assert.equal(listed.runs.length, MAX_THREADS_PER_AUTOMATION);
+    assert.equal(listed.retentionLimitReached, true);
+    assert.deepEqual(
+      listed.runs.map((r) => r.threadId).sort(),
+      [...ids].sort(),
+    );
+    for (const id of ids) {
+      assert.ok(store.getThread(id), "exactly-cap fires are all still retained");
+    }
+  });
+
+  it("listAutomationRuns still lists only retained threads past the cap", async () => {
+    const created = services.addAutomation(store, {
+      projectId: "p1",
+      name: "Sweep",
+      prompt: "go",
+      provider: "claude",
+      preset: "hourly",
+    });
+    const ids = [];
+    for (let i = 0; i < MAX_THREADS_PER_AUTOMATION + 3; i++) {
+      const thread = await fireAuto(created.id);
+      ids.push(thread.id);
+    }
+    const listed = listAutomationRuns(store, created.id);
+    assert.equal(listed.runs.length, MAX_THREADS_PER_AUTOMATION);
+    assert.equal(listed.retentionLimitReached, true);
+    assert.equal(
+      listed.runs.some((r) => r.threadId === ids[0]),
+      false,
+    );
+    const kept = store.getThread(ids[ids.length - 1]);
+    kept.status = "failed";
+    assert.equal(
+      listAutomationRuns(store, created.id).runs[0].status,
+      "failed",
+    );
+  });
+
+  it("listAutomationRuns throws for an unknown automation and does not mint a thread", () => {
+    const before = store.getThreads().length;
+    assert.throws(
+      () => listAutomationRuns(store, "missing"),
+      /Unknown automation: missing/,
+    );
+    assert.equal(store.getThreads().length, before);
   });
 });

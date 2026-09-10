@@ -11,6 +11,7 @@
   width: min(420px, calc(100vw - 32px));
   max-height: min(80vh, 520px);
   overflow: auto;
+  outline: none;
   border-radius: var(--radius);
   border: 1px solid var(--border);
   background: var(--bg-elevated);

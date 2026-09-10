@@ -65,6 +65,9 @@ function normalizeEntry(raw) {
     createdAt,
     updatedAt,
   };
+  if (typeof o.source === "string" && o.source) {
+    entry.source = o.source;
+  }
   if (Array.isArray(o.citations)) {
     /** @type {import('../src/shared/ipc').MemoryCitation[]} */
     const citations = [];
@@ -327,7 +330,7 @@ function createMemoryProxy(opts) {
 
   return {
     /**
-     * @param {{ query: string, project?: string }} input
+     * @param {{ query: string, project?: string, type?: string }} input
      * @returns {Promise<import('../src/shared/ipc').MemoryEntryInfo[]>}
      */
     async search(input) {
@@ -336,19 +339,25 @@ function createMemoryProxy(opts) {
       if (input && input.project != null && input.project !== "") {
         pathWithQuery += `&project=${encodeURIComponent(String(input.project))}`;
       }
+      if (input && input.type != null && input.type !== "") {
+        pathWithQuery += `&type=${encodeURIComponent(String(input.type))}`;
+      }
       const raw = await request("GET", pathWithQuery);
       const list = Array.isArray(raw) ? raw : [];
       return list.map(normalizeEntry);
     },
 
     /**
-     * @param {{ limit?: number, project?: string }} [input]
+     * @param {{ limit?: number, offset?: number, project?: string, type?: string }} [input]
      * @returns {Promise<import('../src/shared/ipc').MemoryEntryInfo[]>}
      */
     async recent(input) {
       let pathWithQuery = "/api/recent";
       if (input && input.limit != null) {
         pathWithQuery += `?limit=${encodeURIComponent(String(input.limit))}`;
+      }
+      if (input && input.offset != null) {
+        pathWithQuery += `${pathWithQuery.includes("?") ? "&" : "?"}offset=${encodeURIComponent(String(input.offset))}`;
       }
       // Must forward project: the Memory tab's default view is recent(), and an
       // unscoped list shows other projects' rows next to a Delete button.
@@ -441,13 +450,16 @@ function createMemoryProxy(opts) {
 
     /**
      * Read-only consolidation report (open review queue, near-dupes, trust).
-     * @param {{ project?: string }} [input]
+     * @param {{ project?: string, summary?: boolean }} [input]
      * @returns {Promise<import('../src/shared/ipc').MemoryMaintenanceReport>}
      */
     async maintenance(input) {
       let pathWithQuery = "/api/maintenance";
       if (input && input.project != null && input.project !== "") {
         pathWithQuery += `?project=${encodeURIComponent(String(input.project))}`;
+      }
+      if (input && input.summary === true) {
+        pathWithQuery += `${pathWithQuery.includes("?") ? "&" : "?"}summary=1`;
       }
       const raw = await request("GET", pathWithQuery);
       return normalizeMaintenance(raw);

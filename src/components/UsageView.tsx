@@ -17,10 +17,20 @@ import styles from "./UsageView.module.css";
 
 export type UsageMetric = "cost" | "tokens";
 
+export interface UsageReportControls {
+  range: UsageRange;
+  metric: UsageMetric;
+  group: UsageBreakdownKind;
+}
+
 export interface UsageViewProps {
   loadUsage: () => Promise<UsageReport>;
   loadProviderLimits?: ProviderLimitsLoader;
   quotaDemo?: boolean;
+  onSelectThread?: (id: string) => void;
+  existingThreadIds?: Iterable<string>;
+  reportControls?: UsageReportControls;
+  onReportControlsChange?: (next: UsageReportControls) => void;
 }
 
 const EMPTY_REPORT: UsageReport = { byDay: {}, threadsByDay: {} };
@@ -97,18 +107,58 @@ export function UsageView({
   loadUsage,
   loadProviderLimits,
   quotaDemo = false,
+  onSelectThread,
+  existingThreadIds,
+  reportControls,
+  onReportControlsChange,
 }: UsageViewProps) {
   const [report, setReport] = useState<UsageReport>(EMPTY_REPORT);
   const [loading, setLoading] = useState(false);
-  const [range, setRange] = useState<UsageRange>(7);
-  const [metric, setMetric] = useState<UsageMetric>("cost");
-  const [group, setGroup] = useState<UsageBreakdownKind>("model");
+  const [error, setError] = useState<string | null>(null);
+  const [hasLastSuccess, setHasLastSuccess] = useState(false);
+  const [range, setRangeState] = useState<UsageRange>(
+    () => reportControls?.range ?? 7,
+  );
+  const [metric, setMetricState] = useState<UsageMetric>(
+    () => reportControls?.metric ?? "cost",
+  );
+  const [group, setGroupState] = useState<UsageBreakdownKind>(
+    () => reportControls?.group ?? "model",
+  );
   const [now, setNow] = useState(() => Date.now());
   const loadGen = useRef(0);
+
+  const setRange = useCallback(
+    (next: UsageRange) => {
+      setRangeState(next);
+      onReportControlsChange?.({ range: next, metric, group });
+    },
+    [onReportControlsChange, metric, group],
+  );
+  const setMetric = useCallback(
+    (next: UsageMetric) => {
+      setMetricState(next);
+      onReportControlsChange?.({ range, metric: next, group });
+    },
+    [onReportControlsChange, range, group],
+  );
+  const setGroup = useCallback(
+    (next: UsageBreakdownKind) => {
+      setGroupState(next);
+      onReportControlsChange?.({ range, metric, group: next });
+    },
+    [onReportControlsChange, range, metric],
+  );
+
+  const openableThreadIds = useMemo(() => {
+    if (!existingThreadIds) return null;
+    return new Set(existingThreadIds);
+  }, [existingThreadIds]);
 
   const loadAll = useCallback(async () => {
     const gen = ++loadGen.current;
     setLoading(true);
+    setError(null);
     try {
       const next = await loadUsage();
       if (gen !== loadGen.current) return;
@@ -124,10 +174,15 @@ export function UsageView({
           ? next.threadsByDay
           : {};
       setReport({ byDay, threadsByDay });
+      setHasLastSuccess(true);
       setNow(Date.now());
-    } catch {
+    } catch (err) {
       if (gen !== loadGen.current) return;
-      setReport(EMPTY_REPORT);
+      const msg =
+        err instanceof Error && err.message
+          ? err.message
+          : "Failed to load usage";
+      setError(msg);
     } finally {
       if (gen === loadGen.current) setLoading(false);
     }
@@ -144,7 +199,9 @@ export function UsageView({
     () => summarizeUsage(report, range, new Date(now)),
     [report, range, now],
   );
-  const empty = !loading && summary.providers.length === 0;
+  const rangeEmpty = summary.providers.length === 0;
+  const showLoading = loading && !hasLastSuccess && !error;
+  const initialError = Boolean(error && !hasLastSuccess);
 
   const providers = useMemo(() => {
     return summary.providers.slice().sort((a, b) => {
@@ -266,18 +323,46 @@ export function UsageView({
         </div>
       ) : null}
 
-      {loading && summary.providers.length === 0 && Object.keys(report.byDay).length === 0 ? (
+      {showLoading ? (
         <p className={styles.hint} aria-live="polite">
           Loading usage…
         </p>
-      ) : empty ? (
-        <div className={styles.empty} data-usage-empty="">
-          <p className={styles.emptyTitle}>No usage in this range</p>
-          <p className={styles.emptyHint}>
-            Token and cost totals from runs will show up here.
+      ) : initialError ? (
+        <div className={styles.empty} data-usage-error="">
+          <p className={styles.emptyTitle}>Could not load usage</p>
+          <p className={styles.emptyHint} role="alert">
+            {error}
           </p>
+          <button
+            type="button"
+            className={styles.retry}
+            onClick={() => void loadAll()}
+            disabled={loading}
+            title="Retry"
+          >
+            Retry
+          </button>
         </div>
       ) : (
+        <>
+          {error ? (
+            <div className={styles.refreshStatus} data-usage-error="">
+              <p className={styles.hint} role="alert">
+                {error}
+              </p>
+              <p className={styles.hint} data-usage-stale="" data-stale="">
+                Last successful report · stale
+              </p>
+            </div>
+          ) : null}
+          {rangeEmpty ? (
+            <div className={styles.empty} data-usage-empty="">
+              <p className={styles.emptyTitle}>No usage in this range</p>
+              <p className={styles.emptyHint}>
+                Token and cost totals from runs will show up here.
+              </p>
+            </div>
+          ) : (
         <div className={styles.body}>
           <section className={styles.totals} data-usage-totals="">
             <p className={styles.totalValue}>{totalLabel}</p>
@@ -447,7 +532,16 @@ export function UsageView({
                       data-usage-row={row.key}
                       data-usage-model={modelAttr}
                     >
-                      <td>{row.label}</td>
+                      <td>
+                        <BreakdownLabel
+                          row={row}
+                          group={group}
+                          onSelectThread={onSelectThread}
+                          openable={
+                            !openableThreadIds || openableThreadIds.has(row.key)
+                          }
+                        />
+                      </td>
                       <td>{row.detail}</td>
                       <td>
                         {row.unreported ? (
@@ -475,8 +569,48 @@ export function UsageView({
             </table>
           </section>
         </div>
+          )}
+        </>
       )}
     </main>
+  );
+}
+
+function BreakdownLabel({
+  row,
+  group,
+  onSelectThread,
+  openable,
+}: {
+  row: UsageBreakdownRow;
+  group: UsageBreakdownKind;
+  onSelectThread?: (id: string) => void;
+  openable: boolean;
+}) {
+  if (group !== "thread" || !onSelectThread) return row.label;
+  if (!openable) {
+    return (
+      <span
+        className={styles.threadGone}
+        data-usage-thread={row.key}
+        data-usage-thread-unavailable=""
+        title="This thread was deleted. Its usage stays in the report."
+      >
+        {row.label}
+        <span className={styles.unavailableHint}>unavailable</span>
+      </span>
+    );
+  }
+  return (
+    <button
+      type="button"
+      className={styles.threadLink}
+      data-usage-thread={row.key}
+      aria-label={`Open thread: ${row.label}`}
+      onClick={() => onSelectThread(row.key)}
+    >
+      {row.label}
+    </button>
   );
 }
 

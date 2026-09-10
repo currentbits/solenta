@@ -217,6 +217,122 @@ describe("DigestView", () => {
     m.unmount();
   });
 
+  it("opens a live thread by id when the live set is known", async () => {
+    let selected: string | null = null;
+    const m = await mount(
+      <DigestView
+        projects={[p1]}
+        loadDigest={async () =>
+          result([
+            run({
+              threadId: "t-live",
+              title: "Same title",
+              costUsd: 1.25,
+              commits: 1,
+              checks: { ran: true, failed: false, label: "npm test" },
+            }),
+            run({
+              threadId: "t-gone",
+              title: "Same title",
+              costUsd: 4.5,
+            }),
+          ])
+        }
+        markSeen={async () => ({ seenAt: NOW })}
+        existingThreadIds={["t-live"]}
+        onSelectThread={(id) => {
+          selected = id;
+        }}
+      />,
+    );
+    await m.flush();
+    const live = m.query('[data-digest-row="t-live"]');
+    const gone = m.query('[data-digest-row="t-gone"]');
+    assert.ok(live, "live row stays");
+    assert.ok(gone, "deleted row stays for historical accounting");
+    const select = live!.querySelector(
+      'button[aria-label="Select thread: Same title"]',
+    );
+    assert.ok(select, "live row keeps an accessible select control");
+    await m.click(select as HTMLElement);
+    assert.equal(selected, "t-live");
+    m.unmount();
+  });
+
+  it("keeps a missing thread visible and does not navigate", async () => {
+    let selected: string | null = null;
+    const m = await mount(
+      <DigestView
+        projects={[p1]}
+        loadDigest={async () =>
+          result([
+            run({
+              threadId: "t-gone",
+              title: "Deleted run",
+              costUsd: 3.2,
+              turns: 5,
+            }),
+          ])
+        }
+        markSeen={async () => ({ seenAt: NOW })}
+        existingThreadIds={["t-other"]}
+        onSelectThread={(id) => {
+          selected = id;
+        }}
+      />,
+    );
+    await m.flush();
+    const row = m.query('[data-digest-row="t-gone"]');
+    assert.ok(row, "historical row stays");
+    assert.match(row!.textContent ?? "", /unavailable/i);
+    assert.equal(
+      row!.querySelector('button[aria-label="Select thread: Deleted run"]'),
+      null,
+      "missing thread has no open action",
+    );
+    const cost = [...row!.querySelectorAll("span")].find((el) =>
+      (el.textContent ?? "").includes("$3.20"),
+    );
+    assert.ok(cost, "cost stays visible");
+    assert.equal(
+      cost!.closest("button"),
+      null,
+      "numeric cells stay outside the hit target",
+    );
+    await m.click(row);
+    assert.equal(selected, null, "deleted row must not navigate");
+    m.unmount();
+  });
+
+  it("treats omitted live ids as openable so boot does not flash unavailable", async () => {
+    let selected: string | null = null;
+    const m = await mount(
+      <DigestView
+        projects={[p1]}
+        loadDigest={async () =>
+          result([run({ threadId: "t-boot", title: "Still loading" })])
+        }
+        markSeen={async () => ({ seenAt: NOW })}
+        onSelectThread={(id) => {
+          selected = id;
+        }}
+      />,
+    );
+    await m.flush();
+    const row = m.query('[data-digest-row="t-boot"]');
+    assert.ok(row, "row renders during boot");
+    assert.equal(
+      /unavailable/i.test(row!.textContent ?? ""),
+      false,
+      "omitted live set must not mark rows unavailable",
+    );
+    const select = m.query('button[aria-label="Select thread: Still loading"]');
+    assert.ok(select, "row stays openable before the list arrives");
+    await m.click(select);
+    assert.equal(selected, "t-boot");
+    m.unmount();
+  });
+
   it("renders the empty-window state when nothing ran", async () => {
     const m = await mount(
       <DigestView
@@ -230,6 +346,168 @@ describe("DigestView", () => {
     assert.ok(m.text().includes("Nothing ran while you were away."));
     assert.equal(m.query("[data-digest-row]"), null);
     assert.equal(m.query("[data-digest-group]"), null);
+    const mark = m.query("[data-digest-mark-seen]") as HTMLButtonElement | null;
+    assert.ok(mark, "mark reviewed");
+    assert.equal(mark.disabled, false, "successful empty digest can be acknowledged");
+    m.unmount();
+  });
+
+  it("shows an initial load error with retry and keeps Mark reviewed disabled (#943)", async () => {
+    let calls = 0;
+    const m = await mount(
+      <DigestView
+        projects={[p1]}
+        loadDigest={async () => {
+          calls += 1;
+          throw new Error("store locked");
+        }}
+        markSeen={async () => ({ seenAt: NOW })}
+        onSelectThread={() => {}}
+      />,
+    );
+    await m.flush();
+    assert.equal(calls, 1);
+    assert.ok(m.query("[data-digest-error]"), "error marker");
+    assert.ok(m.query('[role="alert"]'), "error uses role=alert");
+    assert.ok(m.text().includes("store locked"));
+    assert.ok(m.byText("Retry"), "initial failure offers retry");
+    assert.ok(
+      !m.text().includes("Nothing ran while you were away."),
+      "must not claim nothing ran",
+    );
+    assert.equal(m.query("[data-digest-row]"), null);
+    const mark = m.query("[data-digest-mark-seen]") as HTMLButtonElement | null;
+    assert.ok(mark, "mark reviewed");
+    assert.equal(mark.disabled, true, "no successful digest, cannot acknowledge");
+    const refresh = m.byText("Refresh") as HTMLButtonElement | null;
+    assert.ok(refresh, "refresh control");
+    assert.equal(refresh.disabled, false, "loading control recovers");
+    m.unmount();
+  });
+
+  it("keeps the last digest after a failed refresh and recovers on retry (#943)", async () => {
+    let calls = 0;
+    const first = result([run({ threadId: "waste", title: "Investigate flake", costUsd: 1.8 })]);
+    const second = result([
+      run({
+        threadId: "ready",
+        title: "Ship ledger",
+        filesChanged: 1,
+        additions: 4,
+        deletions: 0,
+        commits: 1,
+        checks: { ran: true, failed: false, label: "npm test" },
+      }),
+    ]);
+    const m = await mount(
+      <DigestView
+        projects={[p1]}
+        loadDigest={async () => {
+          calls += 1;
+          if (calls === 1) return first;
+          if (calls === 2) throw new Error("store locked");
+          return second;
+        }}
+        markSeen={async () => ({ seenAt: NOW })}
+        onSelectThread={() => {}}
+      />,
+    );
+    await m.flush();
+    assert.ok(m.query('[data-digest-row="waste"]'), "first load");
+    assert.ok(m.text().includes("Investigate flake"));
+    assert.equal(m.query("[data-digest-error]"), null);
+    assert.equal(m.query("[data-digest-stale]"), null);
+
+    await m.click(m.byText("Refresh"));
+    assert.ok(m.query('[data-digest-row="waste"]'), "failed refresh keeps last rows");
+    assert.ok(m.text().includes("Investigate flake"));
+    assert.ok(
+      !m.text().includes("Nothing ran while you were away."),
+      "must not erase into empty",
+    );
+    assert.ok(m.query("[data-digest-window]"), "failed refresh keeps the digest window");
+    assert.ok(m.query("[data-digest-error]"), "refresh failure is visible");
+    assert.ok(m.query('[role="alert"]')?.textContent?.includes("store locked"));
+    assert.ok(m.query("[data-digest-stale]"), "stale/last-success marker");
+    assert.match(m.text(), /stale|out of date/i);
+    const refresh = m.byText("Refresh") as HTMLButtonElement;
+    assert.equal(refresh.disabled, false, "refresh re-enables after failure");
+    assert.ok(m.byText("Retry"), "refresh failure exposes retry");
+    const mark = m.query("[data-digest-mark-seen]") as HTMLButtonElement;
+    assert.equal(mark.disabled, false, "last successful digest can still be acknowledged");
+
+    await m.click(m.byText("Retry"));
+    assert.ok(m.query('[data-digest-row="ready"]'), "successful retry updates rows");
+    assert.ok(m.text().includes("Ship ledger"));
+    assert.equal(m.query('[data-digest-row="waste"]'), null, "previous rows are replaced");
+    assert.equal(m.query("[data-digest-error]"), null, "success clears the error");
+    assert.equal(m.query("[data-digest-stale]"), null, "success clears stale");
+    m.unmount();
+  });
+
+  it("shows the successful-empty copy only after a successful empty response (#943)", async () => {
+    let calls = 0;
+    const m = await mount(
+      <DigestView
+        projects={[p1]}
+        loadDigest={async () => {
+          calls += 1;
+          if (calls === 1) throw new Error("store locked");
+          return result([]);
+        }}
+        markSeen={async () => ({ seenAt: NOW })}
+        onSelectThread={() => {}}
+      />,
+    );
+    await m.flush();
+    assert.ok(!m.text().includes("Nothing ran while you were away."));
+    await m.click(m.byText("Retry"));
+    assert.ok(m.text().includes("Nothing ran while you were away."));
+    assert.equal(m.query("[data-digest-error]"), null);
+    assert.equal(m.query("[data-digest-row]"), null);
+    const mark = m.query("[data-digest-mark-seen]") as HTMLButtonElement;
+    assert.equal(mark.disabled, false);
+    m.unmount();
+  });
+
+  it("surfaces markSeen rejection and keeps the digest window (#943)", async () => {
+    let loads = 0;
+    let marks = 0;
+    const m = await mount(
+      <DigestView
+        projects={[p1]}
+        loadDigest={async () => {
+          loads += 1;
+          return result([run({ threadId: "waste", title: "Investigate flake", costUsd: 1.8 })]);
+        }}
+        markSeen={async () => {
+          marks += 1;
+          throw new Error("ack failed");
+        }}
+        onSelectThread={() => {}}
+      />,
+    );
+    await m.flush();
+    assert.equal(loads, 1);
+    assert.ok(m.query('[data-digest-row="waste"]'));
+    const windowBefore = m.query("[data-digest-window]")?.textContent;
+
+    const btn = m.query("[data-digest-mark-seen]") as HTMLButtonElement;
+    await m.click(btn);
+    await m.flush();
+
+    assert.equal(marks, 1);
+    assert.equal(loads, 1, "failed acknowledgement must not reload");
+    assert.ok(m.query('[data-digest-row="waste"]'), "rows stay");
+    assert.equal(
+      m.query("[data-digest-window]")?.textContent,
+      windowBefore,
+      "failed acknowledgement must not clear the window",
+    );
+    assert.ok(!m.text().includes("Nothing ran while you were away."));
+    assert.ok(m.query("[data-digest-ack-error]"), "ack failure marker");
+    assert.ok(m.query('[role="alert"]')?.textContent?.includes("ack failed"));
+    assert.equal(btn.disabled, false, "ack control recovers so the user can retry");
     m.unmount();
   });
 });

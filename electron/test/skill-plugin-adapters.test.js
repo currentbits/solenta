@@ -62,6 +62,26 @@ function recordingRunner(handler) {
   return { calls, runFile };
 }
 
+describe("detectPluginExtras Cursor vendor manifest", () => {
+  it("reports a cursor-plugin extra from .cursor-plugin/plugin.json only", () => {
+    writeFile(
+      path.join(tmp, ".cursor-plugin", "plugin.json"),
+      JSON.stringify({ name: "shipper", description: "Cursor plugin" }),
+    );
+    const extras = detectPluginExtras(tmp);
+    assert.deepEqual(
+      extras.map((e) => e.activation.kind),
+      ["cursor-plugin"],
+    );
+    const cursor = extras[0];
+    assert.equal(cursor.provider, "cursor");
+    assert.equal(cursor.pluginName, "shipper");
+    assert.equal(cursor.label, "shipper");
+    assert.equal(cursor.activation.status, "pending");
+    assert.deepEqual(cursor.executableFiles, []);
+  });
+});
+
 describe("planPluginActions Ponytail source", () => {
   it("dedupes Grok/generic manifests and produces Codex/Grok argv plus Claude instructions", () => {
     writePonytailManifests(tmp);

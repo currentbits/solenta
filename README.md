@@ -99,10 +99,10 @@ it.
   click, type and screenshot it through the `preview` tool.
 - **Planboard** — a project's plan as its GitHub issues. Agents on a GitHub
   origin use the coder-threads tools `issue_create`, `issue_list`,
-  `issue_set_plan`, and `issue_complete` (omitted when the origin is not
-  GitHub), with auto-dispatch from `plan:todo`, a review-load meter on the
-  open PR queue, and issues that close themselves when the thread's work
-  lands.
+  `issue_set_plan`, `issue_complete`, and `issue_comment` (omitted when
+  the origin is not GitHub), with auto-dispatch from `plan:todo`, a
+  review-load meter on the open PR queue, and issues that close themselves
+  when the thread's work lands.
 - **Orchestration** — workers nest under the thread that started them, crews,
   `/handoff`, `/advisor`, `/committee`, a subagent model pool, and
   coder-threads host tools so an agent can archive, settle, stop, rename,

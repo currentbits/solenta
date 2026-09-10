@@ -3,9 +3,10 @@
 /**
  * Prune userData/tool-images and userData/attachments (issue #145).
  *
- * Live (non-archived) threads keep their files. Archived and deleted threads
- * lose theirs. Legacy flat tool-images files (no thread dir) are dropped when
- * no live thread still names them — that check hydrates live transcripts only,
+ * Live (non-archived) threads keep their files. Unexpired Recently deleted
+ * threads keep theirs too (#940). Archived and purged threads lose theirs.
+ * Legacy flat tool-images files (no thread dir) are dropped when no live
+ * thread still names them — that check hydrates live transcripts only,
  * never archived ones.
  *
  * After the thread pass, a global size cap deletes oldest remaining files.
@@ -88,7 +89,10 @@ function liveThreadIds(store) {
     ? store.getThreads()
     : [];
   for (const t of threads) {
-    if (!t || t.archived) continue;
+    if (!t) continue;
+    // Unexpired trash stays in the store until expire/purge; keep its files.
+    const trashed = Number.isFinite(t.trashedAt);
+    if (!trashed && t.archived) continue;
     const id = String(t.id || "");
     if (SAFE_ID_RE.test(id)) ids.add(id);
   }

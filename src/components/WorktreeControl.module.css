@@ -1,3 +1,41 @@
+.toolbarCluster {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  flex-shrink: 1;
+}
+
+.leadLink {
+  display: inline-flex;
+  align-items: center;
+  height: 28px;
+  padding: 0 8px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 550;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.leadLink:hover {
+  color: var(--text);
+}
+
+.leadLink:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.leadLink:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
 .group {
   display: inline-flex;
   align-items: stretch;
@@ -75,6 +113,26 @@
   opacity: 0.78;
 }
 
+.snapshot {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-muted);
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: -0.01em;
+}
+
+.snapshotDirty {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
 .menuItemNested {
   padding-left: 18px;
   color: var(--text-muted);
@@ -85,6 +143,38 @@
   opacity: 0.7;
 }
 
+.crewLead {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  padding: 0 10px;
+  border: none;
+  border-left: 1px solid var(--border-soft);
+  background: transparent;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 550;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.crewLead:hover:not(:disabled) {
+  color: var(--text);
+  background: var(--overlay-hover);
+}
+
+.crewLead:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.crewLead:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
 .merge {
   display: inline-flex;
   align-items: center;
@@ -93,7 +183,7 @@
   height: 100%;
   padding: 0 10px;
   border: none;
-  border-left: 1px solid var(--border);
+  border-left: 1px solid var(--border-soft);
   border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
   background: var(--btn-primary-bg);
   color: var(--text-on-accent);

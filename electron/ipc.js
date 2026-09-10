@@ -33,6 +33,18 @@ const {
 } = require("./worktrees.js");
 const { suggestCommitMessage } = require("./commitmsg.js");
 const { listLocalServers } = require("./servers.js");
+const {
+  claimLane,
+  listLanes,
+  previewLane,
+  restorePreview,
+  recycleWedgedLanes,
+  spotlightEnv,
+  setSpotlight,
+  spotlightLane,
+  heartbeatLane,
+} = require("./mergeQueue.js");
+const { spawnEnvForDevServer, laneEnvExtra } = require("./worktreeEnv.js");
 const devservers = require("./devservers.js");
 const terminal = require("./terminal.js");
 const preview = require("./preview.js");
@@ -57,14 +69,20 @@ const mcpImports = require("./mcpImports.js");
 const skills = require("./skills.js");
 const skillCatalog = require("./skillCatalog.js");
 const skillImports = require("./skillImports.js");
+const harnessImports = require("./harnessImports.js");
 const { createSafeCommandRunner } = require("./skillPluginAdapters.js");
 const cliCommands = require("./cliCommands.js");
+const cliSessions = require("./cli-sessions.js");
 const { fetchIssue, listIssues, setPlanStatus, createIssue } = require("./issues.js");
 const automations = require("./automations.js");
 const { buildActivity } = require("./activity.js");
 const { collectDigest } = require("./digest.js");
 const { collectFleet } = require("./fleet.js");
 const { distillThread } = require("./distill.js");
+const {
+  crewIntegration,
+  integrateWorker,
+} = require("./crewIntegration.js");
 const updater = require("./updater.js");
 const feedback = require("./feedback.js");
 
@@ -95,9 +113,9 @@ function defaultWindowBroadcast(channel, payload) {
 }
 
 /**
- * A thread the user pushed out of attention (settled, archived, deleted) has
- * no next turn: kill its kept-alive Claude CLI now instead of holding the
- * process for the 30-minute idle reaper (issue #48).
+ * A thread the user pushed out of attention (settled, archived, deleted,
+ * ejected) has no next turn: kill its kept-alive Claude CLI now instead of
+ * holding the process for the 30-minute idle reaper (issue #48, #979).
  *
  * @param {object} ctx
  * @param {string} threadId
@@ -105,6 +123,12 @@ function defaultWindowBroadcast(channel, payload) {
 function retireAgent(ctx, threadId) {
   if (typeof ctx.runner.disposeClaudeSession === "function") {
     ctx.runner.disposeClaudeSession(threadId);
+  }
+  // #315: leftover npm run dev is its own process group, not the CLI's.
+  try {
+    devservers.stop(threadId);
+  } catch {
+    // no sidecar
   }
 }
 
@@ -433,6 +457,10 @@ const IPC_HANDLERS = {
     return services.removeSpace(ctx.store, input || {});
   },
   "threads:list": async (ctx) => {
+    services.expireTrashedThreads(ctx.store, {
+      cleanupRunArtifacts: ctx.cleanupRunArtifacts,
+      log: ctx.log,
+    });
     return services.listThreads(ctx.store);
   },
   "threads:summaries": async (ctx) => {
@@ -440,6 +468,9 @@ const IPC_HANDLERS = {
   },
   "threads:crewTasks": async (ctx, input) => {
     return services.listCrewTasks(ctx.store, input || {});
+  },
+  "threads:crewIntegration": async (ctx, input) => {
+    return crewIntegration(ctx.store, input || {});
   },
   "activity:list": async (ctx) => {
     const threads = ctx.store.getThreads();
@@ -485,6 +516,66 @@ const IPC_HANDLERS = {
   },
   "threads:search": async (ctx, input) => {
     return services.searchThreads(ctx.store, input || { query: "" });
+  },
+  "threads:listCliSessions": async (_ctx, input) => {
+    if (input && input.provider === "claude") {
+      return cliSessions.listClaudeSessions();
+    }
+    if (input && input.provider === "cursor") {
+      return cliSessions.listCursorSessions();
+    }
+    if (input && input.provider === "opencode") {
+      return cliSessions.listOpenCodeSessions();
+    }
+    if (input && input.provider === "grok") {
+      return cliSessions.listGrokSessions();
+    }
+    if (input && input.provider === "kimi") {
+      return cliSessions.listKimiSessions();
+    }
+    if (input && input.provider === "muse") {
+      return cliSessions.listMuseSessions();
+    }
+    return cliSessions.listCodexSessions();
+  },
+  "threads:importCliSession": async (ctx, input) => {
+    // Home is CODEX_HOME / GROK_HOME / CLAUDE_CONFIG_DIR / CURSOR_HOME /
+    // OPENCODE_HOME / KIMI_CODE_HOME / XDG_DATA_HOME/muse on this process.
+    // Ignore any renderer-supplied path.
+    const args = {
+      sessionId: input && input.sessionId,
+      projectId: input && input.projectId,
+    };
+    let thread;
+    if (input && input.provider === "claude") {
+      thread = cliSessions.importClaudeSession(ctx.store, args);
+    } else if (input && input.provider === "cursor") {
+      thread = cliSessions.importCursorSession(ctx.store, args);
+    } else if (input && input.provider === "opencode") {
+      thread = cliSessions.importOpenCodeSession(ctx.store, args);
+    } else if (input && input.provider === "grok") {
+      thread = cliSessions.importGrokSession(ctx.store, args);
+    } else if (input && input.provider === "kimi") {
+      thread = cliSessions.importKimiSession(ctx.store, args);
+    } else if (input && input.provider === "muse") {
+      thread = cliSessions.importMuseSession(ctx.store, args);
+    } else {
+      thread = cliSessions.importCodexSession(ctx.store, args);
+    }
+    ctx.broadcast("threads:changed", services.listThreads(ctx.store));
+    // Re-import may have absorbed new turns. Push the open transcript
+    // the same way reclaim does. Tests (and boot) may lack a runner.
+    if (thread && thread.id) {
+      try {
+        ctx.broadcast(
+          "thread:updated",
+          threadDetailFor(ctx, thread.id, false),
+        );
+      } catch {
+        // Sidebar list still refreshed.
+      }
+    }
+    return thread;
   },
   "threads:create": async (ctx, input) => {
     const thread = services.createThread(ctx.store, input);
@@ -636,10 +727,49 @@ const IPC_HANDLERS = {
     ctx.broadcast("threads:changed", services.listThreads(ctx.store));
     return updated;
   },
+  "threads:setThreadProject": async (ctx, input) => {
+    const updated = services.setThreadProject(ctx.store, input);
+    ctx.broadcast("threads:changed", services.listThreads(ctx.store));
+    return updated;
+  },
   "threads:setMuted": async (ctx, input) => {
     const updated = services.setMuted(ctx.store, input);
     ctx.broadcast("threads:changed", services.listThreads(ctx.store));
     return updated;
+  },
+  "threads:setEjected": async (ctx, input) => {
+    const updated = services.setEjected(ctx.store, input);
+    // #960: releasing the session writer is the point of eject. Stop this
+    // thread's child only — a crew cascade would kill workers the user did
+    // not ask to park.
+    if (
+      input &&
+      input.ejected === true &&
+      ctx.runner &&
+      typeof ctx.runner.isRunning === "function" &&
+      typeof ctx.runner.stopRun === "function" &&
+      ctx.runner.isRunning(input.threadId)
+    ) {
+      await ctx.runner.stopRun({
+        threadId: input.threadId,
+        cascadeCrew: false,
+      });
+    }
+    // #979: an idle Claude keep-alive still holds the session writer after
+    // the Solenta turn has ended (stopRun is a no-op then). Same retire as
+    // settle/archive/delete — this thread only, no crew cascade.
+    if (updated && input && input.ejected === true) {
+      retireAgent(ctx, input.threadId);
+    }
+    ctx.broadcast("threads:changed", services.listThreads(ctx.store));
+    if (updated && input && input.ejected === false) {
+      try {
+        ctx.broadcast("thread:updated", threadDetailFor(ctx, input.threadId, false));
+      } catch {
+        // Thread gone between reclaim and the detail push.
+      }
+    }
+    return ctx.store.getThread(input.threadId) || updated;
   },
   "threads:setCrossThreadInbound": async (ctx, input) => {
     const updated = services.setCrossThreadInbound(ctx.store, input);
@@ -661,6 +791,11 @@ const IPC_HANDLERS = {
   },
   "threads:setBaseBranch": async (ctx, input) => {
     const updated = services.setBaseBranch(ctx.store, input);
+    ctx.broadcast("threads:changed", services.listThreads(ctx.store));
+    return updated;
+  },
+  "threads:refreshWorkerSnapshot": async (ctx, input) => {
+    const updated = services.refreshWorkerSnapshot(ctx.store, input);
     ctx.broadcast("threads:changed", services.listThreads(ctx.store));
     return updated;
   },
@@ -1089,7 +1224,7 @@ const IPC_HANDLERS = {
       input && typeof input.projectPath === "string"
         ? input.projectPath
         : null;
-    return skills.listSkills(projectPath, process.env, ctx.userDataPath);
+    return skills.listSkillsAsync(projectPath, process.env, ctx.userDataPath);
   },
   "skills:add": async (ctx, input) => {
     return skills.addSkill(input || {});
@@ -1141,6 +1276,63 @@ const IPC_HANDLERS = {
       previewId: input && input.previewId,
     });
   },
+  "harness:detectSources": async () => {
+    return harnessImports.detectSources({ env: process.env });
+  },
+  "harness:previewImport": async (ctx, input) => {
+    const request = input && typeof input === "object" ? input : {};
+    const current = services.getSettings(ctx.store).mcpServers;
+    const projectPath =
+      typeof request.projectPath === "string" ? request.projectPath : undefined;
+    return harnessImports.previewImport({
+      userDataPath: ctx.userDataPath,
+      source: request.source,
+      projectPath,
+      current,
+      memory: ctx.memory,
+      env: process.env,
+    });
+  },
+  "harness:installImport": async (ctx, input) => {
+    const request = input && typeof input === "object" ? input : {};
+    const current = services.getSettings(ctx.store).mcpServers;
+    const projectPath =
+      typeof request.projectPath === "string" ? request.projectPath : undefined;
+    return harnessImports.installImport({
+      userDataPath: ctx.userDataPath,
+      current,
+      memory: ctx.memory,
+      env: process.env,
+      projectPath,
+      request: {
+        previewId: request.previewId,
+        selected: request.selected,
+        replace: request.replace === true,
+        trustLocal: request.trustLocal === true,
+        trustPluginCode: request.trustPluginCode === true,
+      },
+      runFile: createSafeCommandRunner(),
+      saveMcp: (nextList) => {
+        const next = services.setSettings(
+          ctx.store,
+          { mcpServers: nextList },
+          { replaceMcpServers: true },
+        );
+        try {
+          syncUserMcpServers(next.mcpServers, { userDataPath: ctx.userDataPath });
+        } catch {
+          // ignore
+        }
+        return next.mcpServers;
+      },
+    });
+  },
+  "harness:discardImport": async (ctx, input) => {
+    return harnessImports.discardImport({
+      userDataPath: ctx.userDataPath,
+      previewId: input && input.previewId,
+    });
+  },
   "providers:list": async (ctx) => {
     return services.listProvidersForApi(ctx.store);
   },
@@ -1177,7 +1369,28 @@ const IPC_HANDLERS = {
     const id = input && input.id != null ? String(input.id) : "";
     return automations.runNow(ctx, id);
   },
+  "automations:listRuns": async (ctx, input) => {
+    const id = input && input.id != null ? String(input.id) : "";
+    return automations.listAutomationRuns(ctx.store, id);
+  },
   "threads:delete": async (ctx, input) => {
+    services.trashThread(ctx.store, input, {
+      isRunning: (id) => ctx.runner.isRunning(id),
+      getIosSimulator: ctx.getIosSimulator,
+      log: ctx.log,
+    });
+    retireAgent(ctx, input.threadId);
+    ctx.broadcast("threads:changed", services.listThreads(ctx.store));
+  },
+  "threads:restore": async (ctx, input) => {
+    const thread = services.restoreThread(ctx.store, input, {
+      cleanupRunArtifacts: ctx.cleanupRunArtifacts,
+      log: ctx.log,
+    });
+    ctx.broadcast("threads:changed", services.listThreads(ctx.store));
+    return thread;
+  },
+  "threads:purge": async (ctx, input) => {
     services.deleteThread(ctx.store, input, {
       isRunning: (id) => ctx.runner.isRunning(id),
       getIosSimulator: ctx.getIosSimulator,
@@ -1187,8 +1400,18 @@ const IPC_HANDLERS = {
     retireAgent(ctx, input.threadId);
     ctx.broadcast("threads:changed", services.listThreads(ctx.store));
   },
+  "threads:listTrashed": async (ctx) => {
+    services.expireTrashedThreads(ctx.store, {
+      cleanupRunArtifacts: ctx.cleanupRunArtifacts,
+      log: ctx.log,
+    });
+    return services.listTrashed(ctx.store);
+  },
   "runs:start": async (ctx, input) => {
     return ctx.runner.startRun(input);
+  },
+  "runs:steer": async (ctx, input) => {
+    return ctx.runner.steerRun(input);
   },
   "runs:startWorkflow": async (ctx, input) => {
     return ctx.runner.startWorkflowRun(input);
@@ -1299,11 +1522,15 @@ const IPC_HANDLERS = {
     }
     return { dataUrl: mediaProtocol.toolImageUrl(name) };
   },
-  "attachments:pick": async (ctx) => {
+  "attachments:pick": async (ctx, input) => {
     if (!ctx.dialog || typeof ctx.dialog.showOpenDialog !== "function") {
       throw new Error("Attachment picker is not available in this mode");
     }
-    return { attachments: await attachments.pickAttachments(ctx.dialog) };
+    return {
+      attachments: await attachments.pickAttachments(ctx.dialog, {
+        includeImages: !input || input.includeImages !== false,
+      }),
+    };
   },
   "attachments:fromPaths": async (ctx, input) => {
     return {
@@ -1316,6 +1543,26 @@ const IPC_HANDLERS = {
         ctx.userDataPath,
         input && input.threadId,
         input && input.dataUrl,
+      ),
+    };
+  },
+  "attachments:saveFile": async (ctx, input) => {
+    return {
+      attachment: attachments.saveFile(
+        ctx.userDataPath,
+        input && input.threadId,
+        input && input.name,
+        input && input.dataUrl,
+      ),
+    };
+  },
+  "attachments:saveFolder": async (ctx, input) => {
+    return {
+      attachment: attachments.saveFolder(
+        ctx.userDataPath,
+        input && input.threadId,
+        input && input.name,
+        input && input.files,
       ),
     };
   },
@@ -1353,6 +1600,19 @@ const IPC_HANDLERS = {
     });
     await runRetention(ctx);
     return merged;
+  },
+  "git:integrateWorker": async (ctx, input) => {
+    const result = integrateWorker({
+      store: ctx.store,
+      leadThreadId: input && input.leadThreadId,
+      workerThreadId: input && input.workerThreadId,
+      ciWorkflowApproved: Boolean(input && input.ciWorkflowApproved),
+      broadcast: ctx.broadcast,
+      isRunning: (id) =>
+        typeof ctx.runner.isRunning === "function" && ctx.runner.isRunning(id),
+    });
+    await runRetention(ctx);
+    return result;
   },
   "git:conflictContext": async (ctx, input) => {
     return conflictContext({
@@ -1415,8 +1675,8 @@ const IPC_HANDLERS = {
     await runRetention(ctx);
     return info;
   },
-  "git:listPrs": async (_ctx, projectPath) => {
-    return listPrs(projectPath);
+  "git:listPrs": async (_ctx, projectPath, opts) => {
+    return listPrs(projectPath, opts);
   },
   "git:checkoutPr": async (ctx, input) => {
     return checkoutPr({
@@ -1546,6 +1806,59 @@ const IPC_HANDLERS = {
       broadcast: ctx.broadcast,
     });
   },
+  "mergeQueue:claimLane": async (ctx, input) => {
+    if (!ctx.worktreeBase) {
+      throw new Error("worktreeBase is not configured");
+    }
+    return claimLane({
+      store: ctx.store,
+      threadId: input && input.threadId,
+      worktreeBase: ctx.worktreeBase,
+    });
+  },
+  "mergeQueue:listLanes": async (ctx, input) => {
+    return listLanes(ctx.store, input && input.projectId);
+  },
+  "mergeQueue:previewLane": async (ctx, input) => {
+    return previewLane({
+      store: ctx.store,
+      projectId: input && input.projectId,
+      lane: input && input.lane,
+    });
+  },
+  "mergeQueue:restorePreview": async (ctx, input) => {
+    return restorePreview({
+      store: ctx.store,
+      projectId: input && input.projectId,
+    });
+  },
+  "mergeQueue:recycleWedgedLanes": async (ctx, input) => {
+    return recycleWedgedLanes({
+      store: ctx.store,
+      projectId: input && input.projectId,
+    });
+  },
+  "mergeQueue:heartbeatLane": async (ctx, input) => {
+    return heartbeatLane({
+      store: ctx.store,
+      threadId: input && input.threadId,
+      now: input && input.now,
+    });
+  },
+  "mergeQueue:setSpotlight": async (ctx, input) => {
+    return setSpotlight({
+      store: ctx.store,
+      projectId: input && input.projectId,
+      enabled: input && input.enabled,
+    });
+  },
+  "mergeQueue:spotlightLane": async (ctx, input) => {
+    return spotlightLane({
+      store: ctx.store,
+      projectId: input && input.projectId,
+      lane: input && input.lane,
+    });
+  },
   "vibeKanban:preview": async (ctx, input) => {
     return vibeKanban.preview(ctx.store, input || {});
   },
@@ -1615,12 +1928,35 @@ const IPC_HANDLERS = {
   "devserver:start": async (ctx, input) => {
     const threadId = input && input.threadId;
     const script = input && input.script;
-    const { root } = resolveDevServerRoot(ctx, threadId);
-    const allowed = devservers.detectScripts(root);
+    const { root, project, thread } = resolveDevServerRoot(ctx, threadId);
+    const spotlightOn = Boolean(project && project.spotlight === true);
+    const startRoot = spotlightOn && project.path ? project.path : root;
+    const allowed = devservers.detectScripts(startRoot);
     if (!script || !allowed.includes(script)) {
       throw new Error(script ? `Unknown script: ${script}` : "Unknown script");
     }
-    return devservers.start(threadId, root, script);
+    const n = thread && thread.lane && Number(thread.lane.n);
+    const port = thread && thread.lane && Number(thread.lane.port);
+    const portBase =
+      Number.isInteger(n) && Number.isInteger(port) && port > n
+        ? port - n
+        : undefined;
+    if (spotlightOn && Number.isInteger(n) && n > 0) {
+      spotlightLane({
+        store: ctx.store,
+        projectId: project.id,
+        lane: n,
+      });
+    }
+    return devservers.start(threadId, startRoot, script, {
+      project,
+      env: spawnEnvForDevServer({
+        project,
+        thread,
+        userDataPath: ctx.userDataPath,
+        extra: spotlightOn ? spotlightEnv(portBase) : laneEnvExtra(thread),
+      }),
+    });
   },
   "devserver:stop": async (ctx, input) => {
     const threadId = input && input.threadId;

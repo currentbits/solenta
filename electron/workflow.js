@@ -583,6 +583,7 @@ function spawnAgentCodex(opts) {
     threadId,
     skipOverlay,
     project,
+    projectId,
   } = opts;
 
   let text = "";
@@ -620,10 +621,14 @@ function spawnAgentCodex(opts) {
   });
   const codexExecConfig = [
     ...codexWorkspaceWriteArgs({
+      cwd,
       permissionMode: permissionMode || "default",
       allowNetwork: planboardNote === PLANBOARD_NOTE,
     }),
-    ...getCodexMcpArgs({ projectPath: cwd }),
+    ...getCodexMcpArgs({
+      projectPath: cwd,
+      projectId: projectId || (project && project.id),
+    }),
   ];
   if (codexExecConfig.length) insertBeforeLast(args, codexExecConfig);
   /** @type {Record<string, string>} */
@@ -1501,6 +1506,7 @@ function spawnPhaseAgent(opts) {
       threadId,
       skipOverlay,
       project,
+      projectId,
       appendMessage,
       runId,
       worktreePath,

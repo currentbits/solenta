@@ -87,6 +87,7 @@ describe("Store", () => {
           { id: "missing", lastError: null },
           { id: "overflow", lastErrorKind: "context-overflow" },
           { id: "upgrade", lastErrorKind: "cli-upgrade" },
+          { id: "writer-lock", lastErrorKind: "writer-lock" },
           { id: "unknown", lastErrorKind: "network-error" },
         ],
         messagesByThread: {},
@@ -99,6 +100,7 @@ describe("Store", () => {
     assert.equal(store.getThread("missing").lastErrorKind, null);
     assert.equal(store.getThread("overflow").lastErrorKind, "context-overflow");
     assert.equal(store.getThread("upgrade").lastErrorKind, "cli-upgrade");
+    assert.equal(store.getThread("writer-lock").lastErrorKind, "writer-lock");
     assert.equal(store.getThread("unknown").lastErrorKind, null);
   });
 
@@ -169,6 +171,26 @@ describe("Store", () => {
     assert.equal(store.getThread("t1").sessionId, "sess-3");
   });
 
+  it("first sessionId assignment snapshots the thread model for Codex eject and resume", () => {
+    const store = new Store(filePath);
+    store.setThreads([
+      { id: "t1", model: "gpt-5.6-sol", sessionId: null },
+    ]);
+
+    store.updateThread("t1", { sessionId: "sess-sol" });
+    assert.equal(store.getThread("t1").sessionStartModel, "gpt-5.6-sol");
+
+    store.updateThread("t1", { sessionId: "sess-sol" });
+    store.updateThread("t1", { model: "gpt-6-astra" });
+    assert.equal(store.getThread("t1").sessionStartModel, "gpt-5.6-sol");
+
+    store.updateThread("t1", { sessionId: "sess-fresh" });
+    assert.equal(store.getThread("t1").sessionStartModel, "gpt-6-astra");
+
+    store.updateThread("t1", { sessionId: null });
+    assert.equal(store.getThread("t1").sessionStartModel, null);
+  });
+
   it("round-trips projects, threads, messages, work log", () => {
     const store = new Store(filePath);
     const project = {
@@ -215,6 +237,7 @@ describe("Store", () => {
       feltEstimate: null,
       replayContext: false,
       muted: false,
+      ejected: false,
       notes: "",
       tags: [],
       queued: null,
@@ -2596,6 +2619,7 @@ describe("Store", () => {
       feltEstimate: null,
       replayContext: false,
       muted: false,
+      ejected: false,
       notes: "",
       tags: [],
       queued: null,
@@ -2671,6 +2695,7 @@ describe("Store", () => {
       feltEstimate: null,
       replayContext: false,
       muted: false,
+      ejected: false,
       notes: "",
       tags: [],
       queued: null,
@@ -2769,6 +2794,7 @@ describe("Store", () => {
       feltEstimate: null,
       replayContext: false,
       muted: false,
+      ejected: false,
       notes: "",
       tags: [],
       queued: null,
@@ -2850,6 +2876,7 @@ describe("Store", () => {
       feltEstimate: null,
       replayContext: false,
       muted: false,
+      ejected: false,
       notes: "",
       tags: [],
       queued: null,
@@ -2878,6 +2905,188 @@ describe("Store", () => {
     assert.ok(
       logs.some((msg) => msg.includes("run-artifacts: cleanup failed: cleanup boom")),
     );
+  });
+
+  describe("fromNotice backfill (#957)", () => {
+    const OLD_FOOTER =
+      "Continue orchestrating; thread_status has full details.";
+
+    function oldNotice(body) {
+      return `[orchestration] ${body}\n${OLD_FOOTER}`;
+    }
+
+    function writePreFlagShard(threadId, messages) {
+      fs.writeFileSync(
+        filePath,
+        JSON.stringify({
+          projects: [],
+          threads: [
+            {
+              id: threadId,
+              projectId: "p1",
+              title: "Lead",
+              status: "failed",
+              createdAt: 1,
+              updatedAt: 2,
+            },
+          ],
+          messagesByThread: {},
+        }),
+        "utf8",
+      );
+      fs.mkdirSync(path.join(tmpDir, "messages"), { recursive: true });
+      fs.writeFileSync(
+        path.join(tmpDir, "messages", `${threadId}.json`),
+        JSON.stringify(messages),
+        "utf8",
+      );
+    }
+
+    it("load sets fromNotice on an old footer-shaped user row", () => {
+      const notice = oldNotice(
+        'Worker thread w-old ("backend") finished with status done.',
+      );
+      writePreFlagShard("t1", [
+        { id: "u1", role: "user", text: "look at the app", createdAt: 1 },
+        { id: "u-notice", role: "user", text: notice, createdAt: 2 },
+        { id: "e1", role: "event", text: "Run error: exit 1", createdAt: 3 },
+      ]);
+      const store = new Store(filePath);
+      const msgs = store.getMessages("t1");
+      assert.equal(msgs.find((m) => m.id === "u-notice").fromNotice, true);
+      assert.equal(msgs.find((m) => m.id === "u1").fromNotice, undefined);
+    });
+
+    it("load sets fromNotice on an old undeliverable orch event", () => {
+      const notice = oldNotice(
+        'Worker thread w-cap ("backend") finished with status done.',
+      );
+      writePreFlagShard("t1", [
+        { id: "u1", role: "user", text: "look at the app", createdAt: 1 },
+        {
+          id: "e1",
+          role: "event",
+          text: `${notice}\n\nNot delivered: Crew auto-turn cap reached (25 consecutive machine-delivered turns). A human turn resets it.`,
+          createdAt: 2,
+        },
+      ]);
+      const store = new Store(filePath);
+      const last = store.getMessages("t1").at(-1);
+      assert.equal(last.fromNotice, true);
+    });
+
+    it("does not flag a verify-fix Not delivered event", () => {
+      const fixPrompt = [
+        "[verification failed] This turn is NOT done.",
+        "",
+        "Command: npm test",
+        "Result: exited 1",
+        "Fix attempt 1 of 2.",
+        "",
+        "Output:",
+        "```",
+        "fail",
+        "```",
+        "",
+        "State a root-cause hypothesis in one line, fix the cause, then re-run",
+        "the command yourself. Do not report success without its exit 0.",
+      ].join("\n");
+      writePreFlagShard("t1", [
+        { id: "u1", role: "user", text: "implement login", createdAt: 1 },
+        {
+          id: "e1",
+          role: "event",
+          text: `${fixPrompt}\n\nNot delivered: Daily budget reached`,
+          createdAt: 2,
+        },
+      ]);
+      const store = new Store(filePath);
+      const last = store.getMessages("t1").at(-1);
+      assert.equal(last.fromNotice, undefined);
+      assert.equal(store.getMessages("t1")[0].fromNotice, undefined);
+    });
+
+    it("does not flag a human user row that merely contains the old footer", () => {
+      writePreFlagShard("t1", [
+        {
+          id: "u1",
+          role: "user",
+          text: `Please quote this: ${OLD_FOOTER} then ship the sidebar.`,
+          createdAt: 1,
+        },
+      ]);
+      const store = new Store(filePath);
+      assert.equal(store.getMessages("t1")[0].fromNotice, undefined);
+    });
+
+    it("persists the backfill so a second load still has the flag", () => {
+      const notice = oldNotice('Worker thread w-old ("backend") finished.');
+      writePreFlagShard("t1", [
+        { id: "u-notice", role: "user", text: notice, createdAt: 1 },
+      ]);
+      const store = new Store(filePath);
+      assert.equal(store.getMessages("t1")[0].fromNotice, true);
+      store.saveNow();
+      const raw = JSON.parse(
+        fs.readFileSync(path.join(tmpDir, "messages", "t1.json"), "utf8"),
+      );
+      assert.equal(raw[0].fromNotice, true);
+      const reloaded = new Store(filePath);
+      assert.equal(reloaded.getMessages("t1")[0].fromNotice, true);
+    });
+
+    it("does not hydrate an unopened thread just to backfill", () => {
+      fs.writeFileSync(
+        filePath,
+        JSON.stringify({
+          projects: [],
+          threads: [
+            {
+              id: "t1",
+              projectId: "p1",
+              title: "Open",
+              status: "idle",
+              createdAt: 1,
+              updatedAt: 2,
+            },
+            {
+              id: "t2",
+              projectId: "p1",
+              title: "Closed",
+              status: "failed",
+              createdAt: 1,
+              updatedAt: 3,
+            },
+          ],
+          messagesByThread: {},
+        }),
+        "utf8",
+      );
+      fs.mkdirSync(path.join(tmpDir, "messages"), { recursive: true });
+      fs.writeFileSync(
+        path.join(tmpDir, "messages", "t1.json"),
+        JSON.stringify([
+          { id: "u1", role: "user", text: "hi", createdAt: 1 },
+        ]),
+        "utf8",
+      );
+      const notice = oldNotice('Worker thread w-old ("backend") finished.');
+      fs.writeFileSync(
+        path.join(tmpDir, "messages", "t2.json"),
+        JSON.stringify([
+          { id: "u-notice", role: "user", text: notice, createdAt: 1 },
+        ]),
+        "utf8",
+      );
+      const store = new Store(filePath);
+      assert.equal(store.getMessages("t1")[0].text, "hi");
+      assert.equal(
+        Object.prototype.hasOwnProperty.call(store._messagesHydrated, "t2"),
+        false,
+        "backfill must not scan every shard at boot",
+      );
+      assert.equal(store.getMessages("t2")[0].fromNotice, true);
+    });
   });
 });
 

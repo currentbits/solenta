@@ -8,6 +8,7 @@ const { execFileSync } = require("node:child_process");
 const { Store } = require("../store.js");
 const services = require("../services.js");
 const { createRunner } = require("../runner.js");
+const { setupWorktree } = require("../worktrees.js");
 const {
   extractSessionId,
   isSessionStartEvent,
@@ -27,44 +28,58 @@ async function loadCore() {
   return import(pathToFileURL(corePath).href);
 }
 
+function readRpc(rpcFile) {
+  if (!rpcFile || !fs.existsSync(rpcFile)) return [];
+  return fs
+    .readFileSync(rpcFile, "utf8")
+    .trim()
+    .split("\n")
+    .filter(Boolean)
+    .map((line) => JSON.parse(line));
+}
+
+function turnPrompt(rpc) {
+  const start = rpc.find((m) => m.method === "turn/start");
+  const input = start && start.params && start.params.input;
+  if (!Array.isArray(input)) return "";
+  return input
+    .filter((p) => p && p.type === "text")
+    .map((p) => String(p.text || ""))
+    .join("\n");
+}
+
 /**
- * `codex exec` / `exec resume` own `-c`. MCP overrides before `exec` are
- * dropped on resume, which re-denies first-party tools under never.
+ * MCP `-c` must sit after `app-server` so resume still auto-approves
+ * first-party servers (#846).
  * @param {string[]} argv
- * @param {{ url: string, resume?: false | string }} opts
+ * @param {{ url: string }} opts
  */
-function assertCodexMcpOnExec(argv, opts) {
-  const execIdx = argv.indexOf("exec");
-  assert.ok(execIdx >= 0, `expected exec in ${JSON.stringify(argv)}`);
-  if (opts.resume) {
-    assert.equal(argv[execIdx + 1], "resume");
-    assert.equal(argv[execIdx + 2], opts.resume);
-  } else {
-    assert.notEqual(argv[execIdx + 1], "resume");
-  }
-  const before = argv.slice(0, execIdx);
+function assertCodexMcpOnAppServer(argv, opts) {
+  const idx = argv.indexOf("app-server");
+  assert.ok(idx >= 0, `expected app-server in ${JSON.stringify(argv)}`);
+  const before = argv.slice(0, idx);
   for (let i = 0; i < before.length; i++) {
     if (before[i] === "-c") {
       assert.ok(
         !String(before[i + 1] || "").startsWith("mcp_servers."),
-        `mcp -c must not sit before exec (resume drops it): ${JSON.stringify(argv)}`,
+        `mcp -c must sit after app-server: ${JSON.stringify(argv)}`,
       );
     }
   }
-  const after = argv.slice(execIdx, argv.length - 1);
+  const after = argv.slice(idx);
   const values = [];
   for (let i = 0; i < after.length - 1; i++) {
     if (after[i] === "-c") values.push(after[i + 1]);
   }
   assert.ok(
     values.includes(opts.url),
-    `missing bound MCP url after exec: ${JSON.stringify(argv)}`,
+    `missing bound MCP url after app-server: ${JSON.stringify(argv)}`,
   );
   assert.ok(
     values.includes(
       'mcp_servers.coder-memory.default_tools_approval_mode="approve"',
     ),
-    `missing MCP auto-approve after exec: ${JSON.stringify(argv)}`,
+    `missing MCP auto-approve after app-server: ${JSON.stringify(argv)}`,
   );
 }
 
@@ -91,265 +106,13 @@ function waitFor(predicate, { timeoutMs = 15000, intervalMs = 20 } = {}) {
  * @param {string} dir
  */
 async function writeFakeCodex(dir) {
-  const body = `#!/usr/bin/env node
-"use strict";
-const fs = require("fs");
-
-if (process.env.CODER_FAKE_CODEX_ARGV_FILE) {
-  fs.writeFileSync(
-    process.env.CODER_FAKE_CODEX_ARGV_FILE,
-    JSON.stringify(process.argv.slice(1)),
-    "utf8",
+  const helper = require.resolve("./support/fakeCodexCli.js");
+  return writeFakeBin(
+    path.join(dir, "fake-codex"),
+    `"use strict";
+require(${JSON.stringify(helper)}).main();
+`,
   );
-  // MCP bearer tokens must arrive by env, not argv (issue #125).
-  fs.writeFileSync(
-    process.env.CODER_FAKE_CODEX_ARGV_FILE + ".env.json",
-    JSON.stringify(
-      Object.fromEntries(
-        Object.entries(process.env).filter(
-          ([k]) =>
-            k.startsWith("CODER_MCP_TOKEN_") ||
-            k === "CODEX_HOME" ||
-            k === "SOLENTA_WORKTREE",
-        ),
-      ),
-    ),
-    "utf8",
-  );
-}
-
-const scenario = process.env.CODER_FAKE_CODEX_SCENARIO || "success";
-const delay = (ms) => new Promise((r) => setTimeout(r, ms));
-function emit(obj) {
-  process.stdout.write(JSON.stringify(obj) + "\\n");
-}
-
-async function main() {
-  if (scenario === "fail-exit") {
-    process.stderr.write("codex-stderr-boom\\n");
-    process.exit(2);
-    return;
-  }
-
-  if (scenario === "structured-overflow") {
-    emit({
-      type: "turn.failed",
-      error: {
-        code: "context_length_exceeded",
-        message:
-          "Codex ran out of room in the model's context window. Start a new conversation.",
-      },
-    });
-    process.exit(1);
-    return;
-  }
-
-  if (scenario === "success" || scenario === "resume-turn") {
-    emit({ type: "thread.started", thread_id: "codex-sess-001" });
-    await delay(20);
-    emit({
-      type: "item.completed",
-      item: {
-        id: "item-msg-1",
-        type: "agent_message",
-        text: "Hello from codex",
-      },
-    });
-    await delay(20);
-    emit({
-      type: "item.started",
-      item: {
-        id: "item-cmd-1",
-        type: "command_execution",
-        command: "echo hi",
-      },
-    });
-    await delay(20);
-    emit({
-      type: "item.completed",
-      item: {
-        id: "item-cmd-1",
-        type: "command_execution",
-        command: "echo hi",
-        aggregated_output: "hi\\n",
-        exit_code: 0,
-      },
-    });
-    await delay(20);
-    emit({
-      type: "turn.completed",
-      usage: { input_tokens: 30, output_tokens: 12 },
-    });
-    process.exit(0);
-    return;
-  }
-
-  // Issue #752: reasoning and file_change must be visible before the turn
-  // settles; item.completed of the same ids must not duplicate cards.
-  if (scenario === "thinking-then-tool") {
-    emit({ type: "thread.started", thread_id: "codex-sess-live" });
-    await delay(10);
-    emit({
-      type: "item.started",
-      item: {
-        id: "item-reason-1",
-        type: "reasoning",
-        text: "I should patch src/foo.ts first.",
-      },
-    });
-    await delay(200);
-    emit({
-      type: "item.completed",
-      item: {
-        id: "item-reason-1",
-        type: "reasoning",
-        text: "I should patch src/foo.ts first.",
-      },
-    });
-    emit({
-      type: "item.started",
-      item: {
-        id: "item-edit-1",
-        type: "file_change",
-        changes: [{ path: "src/foo.ts", kind: "update" }],
-        status: "in_progress",
-      },
-    });
-    await delay(80);
-    emit({
-      type: "item.completed",
-      item: {
-        id: "item-edit-1",
-        type: "file_change",
-        changes: [{ path: "src/foo.ts", kind: "update" }],
-        status: "completed",
-      },
-    });
-    emit({
-      type: "item.completed",
-      item: {
-        id: "item-msg-1",
-        type: "agent_message",
-        text: "Patched foo.ts.",
-      },
-    });
-    emit({
-      type: "turn.completed",
-      usage: { input_tokens: 20, output_tokens: 8 },
-    });
-    process.exit(0);
-    return;
-  }
-
-  // Issue #171: remaining item types + official completed-only file_change
-  // / web_search (current exec --json never emits item.started for those).
-  if (scenario === "dropped-items") {
-    emit({ type: "thread.started", thread_id: "codex-sess-171" });
-    await delay(10);
-    emit({
-      type: "item.started",
-      item: {
-        id: "item-todo-1",
-        type: "todo_list",
-        items: [
-          { text: "Patch foo", completed: false },
-          { text: "Run tests", completed: false },
-        ],
-      },
-    });
-    await delay(10);
-    emit({
-      type: "item.updated",
-      item: {
-        id: "item-todo-1",
-        type: "todo_list",
-        items: [
-          { text: "Patch foo", completed: true },
-          { text: "Run tests", completed: false },
-        ],
-      },
-    });
-    emit({
-      type: "item.started",
-      item: {
-        id: "item-mcp-1",
-        type: "mcp_tool_call",
-        server: "github",
-        tool: "get_issue",
-        arguments: { number: 171 },
-        status: "in_progress",
-      },
-    });
-    await delay(20);
-    emit({
-      type: "item.completed",
-      item: {
-        id: "item-mcp-1",
-        type: "mcp_tool_call",
-        server: "github",
-        tool: "get_issue",
-        arguments: { number: 171 },
-        result: {
-          content: [{ type: "text", text: "open" }],
-          structured_content: null,
-        },
-        status: "completed",
-      },
-    });
-    emit({
-      type: "item.completed",
-      item: {
-        id: "item-edit-1",
-        type: "file_change",
-        changes: [{ path: "src/foo.ts", kind: "update" }],
-        status: "completed",
-      },
-    });
-    emit({
-      type: "item.completed",
-      item: {
-        id: "item-search-1",
-        type: "web_search",
-        query: "codex exec json",
-      },
-    });
-    emit({
-      type: "item.completed",
-      item: {
-        id: "item-todo-1",
-        type: "todo_list",
-        items: [
-          { text: "Patch foo", completed: true },
-          { text: "Run tests", completed: true },
-        ],
-      },
-    });
-    emit({
-      type: "item.completed",
-      item: {
-        id: "item-msg-1",
-        type: "agent_message",
-        text: "Done.",
-      },
-    });
-    emit({
-      type: "turn.completed",
-      usage: { input_tokens: 10, output_tokens: 4 },
-    });
-    process.exit(0);
-    return;
-  }
-
-  process.stderr.write("unknown scenario " + scenario + "\\n");
-  process.exit(1);
-}
-
-main().catch((e) => {
-  process.stderr.write(String(e) + "\\n");
-  process.exit(1);
-});
-`;
-  return writeFakeBin(path.join(dir, "fake-codex"), body);
 }
 
 describe("codex event parse helpers", () => {
@@ -443,6 +206,32 @@ describe("codex event parse helpers", () => {
     assert.equal(mcp.tool, "get_issue");
     assert.equal(mcp.server, "github");
 
+    const png =
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==";
+    const mcpImage = extractLiveItem({
+      type: "item.completed",
+      item: {
+        id: "m-img",
+        type: "mcp_tool_call",
+        server: "shots",
+        tool: "screenshot",
+        status: "completed",
+        result: [
+          { type: "text", text: "captured" },
+          {
+            type: "image",
+            source: { type: "base64", media_type: "image/png", data: png },
+          },
+        ],
+      },
+    });
+    assert.equal(mcpImage.kind, "mcp_tool_call");
+    assert.equal(mcpImage.images.length, 1);
+    assert.equal(mcpImage.images[0].mediaType, "image/png");
+    assert.equal(mcpImage.images[0].data, png);
+    assert.equal(mcpImage.output.includes(png), false);
+    assert.match(mcpImage.output, /\[image\]/);
+
     const search = extractLiveItem({
       type: "item.started",
       item: { id: "s1", type: "web_search", query: "codex exec json" },
@@ -515,6 +304,8 @@ describe("runner codex provider", () => {
   let prevArgvFile;
   let fakeCodex;
   let argvFile;
+  let rpcFile;
+  let prevRpcFile;
 
   let prevGrokMcpDisable;
   let prevGrokBin;
@@ -525,6 +316,7 @@ describe("runner codex provider", () => {
     prevCodexBin = process.env.CODER_CODEX_BIN;
     prevScenario = process.env.CODER_FAKE_CODEX_SCENARIO;
     prevArgvFile = process.env.CODER_FAKE_CODEX_ARGV_FILE;
+    prevRpcFile = process.env.CODER_FAKE_CODEX_RPC_FILE;
     prevGrokMcpDisable = process.env.CODER_GROK_MCP_DISABLE;
     prevGrokBin = process.env.CODER_GROK_BIN;
 
@@ -538,8 +330,10 @@ describe("runner codex provider", () => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "coder-codex-"));
     fakeCodex = await writeFakeCodex(tmpDir);
     argvFile = path.join(tmpDir, "argv.json");
+    rpcFile = path.join(tmpDir, "rpc.jsonl");
     process.env.CODER_CODEX_BIN = fakeCodex;
     process.env.CODER_FAKE_CODEX_ARGV_FILE = argvFile;
+    process.env.CODER_FAKE_CODEX_RPC_FILE = rpcFile;
 
     store = new Store(path.join(tmpDir, "store.json"));
     pushes = [];
@@ -577,6 +371,8 @@ describe("runner codex provider", () => {
     else process.env.CODER_FAKE_CODEX_SCENARIO = prevScenario;
     if (prevArgvFile === undefined) delete process.env.CODER_FAKE_CODEX_ARGV_FILE;
     else process.env.CODER_FAKE_CODEX_ARGV_FILE = prevArgvFile;
+    if (prevRpcFile === undefined) delete process.env.CODER_FAKE_CODEX_RPC_FILE;
+    else process.env.CODER_FAKE_CODEX_RPC_FILE = prevRpcFile;
     if (prevGrokMcpDisable === undefined) delete process.env.CODER_GROK_MCP_DISABLE;
     else process.env.CODER_GROK_MCP_DISABLE = prevGrokMcpDisable;
     if (prevGrokBin === undefined) delete process.env.CODER_GROK_BIN;
@@ -611,9 +407,93 @@ describe("runner codex provider", () => {
       );
     }
     assert.ok(!domains.includes('"*"'), domains);
-    const prompt = String(argv[argv.length - 1]);
+    const prompt = turnPrompt(readRpc(rpcFile));
     assert.match(prompt, /issue_create/);
     assert.doesNotMatch(prompt, /using `gh`/);
+  });
+
+  it("workspace-write grants linked-worktree git metadata (#847)", async () => {
+    process.env.CODER_FAKE_CODEX_SCENARIO = "success";
+    const repo = store.getProjects()[0].path;
+    git(repo, ["config", "user.email", "test@example.com"]);
+    git(repo, ["config", "user.name", "Test"]);
+    fs.writeFileSync(path.join(repo, "README.md"), "hello\n");
+    git(repo, ["add", "README.md"]);
+    git(repo, ["commit", "-m", "init"]);
+    try {
+      git(repo, ["checkout", "-b", "main"]);
+    } catch {
+      // already on main
+    }
+
+    runner.stopAll();
+    runner = createRunner({
+      store,
+      core,
+      pushFn: (channel, payload) => {
+        pushes.push({ channel, payload });
+      },
+      tickMs: 15,
+      userDataPath: tmpDir,
+    });
+
+    const project = store.getProjects()[0];
+    const t = services.createThread(store, {
+      projectId: project.id,
+      title: "WT Codex",
+    });
+    services.setProvider(store, { threadId: t.id, provider: "codex" });
+    const setup = setupWorktree({
+      store,
+      threadId: t.id,
+      worktreeBase: path.join(tmpDir, "worktrees"),
+      broadcast: () => {},
+    });
+    if (fs.existsSync(argvFile)) fs.unlinkSync(argvFile);
+    await runner.startRun({ threadId: t.id, prompt: "commit me" });
+    await waitFor(() => store.getThread(t.id).status === "done");
+    const argv = JSON.parse(fs.readFileSync(argvFile, "utf8"));
+    const gitDir = execFileSync(
+      "git",
+      ["rev-parse", "--path-format=absolute", "--git-dir"],
+      { cwd: setup.worktreePath, encoding: "utf8" },
+    ).trim();
+    const joined = argv.join(" ");
+    assert.ok(
+      argv.some((a) =>
+        String(a).startsWith("sandbox_workspace_write.writable_roots="),
+      ),
+      joined,
+    );
+    assert.ok(joined.includes(gitDir), joined);
+  });
+
+  it("workspace-write grants standalone .git metadata (#1160)", async () => {
+    process.env.CODER_FAKE_CODEX_SCENARIO = "success";
+    const repo = store.getProjects()[0].path;
+    git(repo, ["config", "user.email", "test@example.com"]);
+    git(repo, ["config", "user.name", "Test"]);
+    fs.writeFileSync(path.join(repo, "README.md"), "hello\n");
+    git(repo, ["add", "README.md"]);
+    git(repo, ["commit", "-m", "init"]);
+    if (fs.existsSync(argvFile)) fs.unlinkSync(argvFile);
+    const thread = store.getThreads()[0];
+    await runner.startRun({ threadId: thread.id, prompt: "commit me" });
+    await waitFor(() => store.getThread(thread.id).status === "done");
+    const argv = JSON.parse(fs.readFileSync(argvFile, "utf8"));
+    const gitDir = execFileSync(
+      "git",
+      ["rev-parse", "--path-format=absolute", "--git-dir"],
+      { cwd: repo, encoding: "utf8" },
+    ).trim();
+    const joined = argv.join(" ");
+    assert.ok(
+      argv.some((a) =>
+        String(a).startsWith("sandbox_workspace_write.writable_roots="),
+      ),
+      joined,
+    );
+    assert.ok(joined.includes(gitDir), joined);
   });
 
   it("omits GitHub proxy flags when sandbox gh cannot authenticate (#848)", async () => {
@@ -631,7 +511,7 @@ describe("runner codex provider", () => {
       !argv.some((a) => String(a).startsWith("features.network_proxy.domains=")),
       `fail-closed: no GitHub proxy when gh cannot auth, got ${JSON.stringify(argv)}`,
     );
-    const prompt = String(argv[argv.length - 1]);
+    const prompt = turnPrompt(readRpc(rpcFile));
     assert.doesNotMatch(prompt, /using `gh`/);
   });
 
@@ -673,25 +553,25 @@ describe("runner codex provider", () => {
     assert.equal(usage.turns, 1);
 
     const argv = JSON.parse(fs.readFileSync(argvFile, "utf8"));
-    // Shebang scripts include the script path as argv[0]; flags follow.
-    const execIdx = argv.indexOf("exec");
-    assert.ok(execIdx >= 0, `expected exec in ${JSON.stringify(argv)}`);
-    assert.ok(argv.includes("--json"));
-    assert.ok(argv.includes("--skip-git-repo-check"));
-    const last = argv[argv.length - 1];
-    assert.equal(
-      typeof last,
-      "string",
-      `runner prompt must stay last: ${JSON.stringify(argv)}`,
+    assert.ok(
+      argv.includes("app-server"),
+      `expected app-server in ${JSON.stringify(argv)}`,
     );
     assert.ok(
-      last.includes("codex please"),
-      `last argv token must contain the original prompt: ${JSON.stringify(argv)}`,
+      argv.includes("stdio://"),
+      `expected stdio listen in ${JSON.stringify(argv)}`,
     );
-    assert.ok(!argv.includes("resume"));
+    assert.ok(!argv.includes("exec"));
+    const rpc = readRpc(rpcFile);
+    assert.ok(rpc.some((m) => m.method === "thread/start"));
+    assert.equal(
+      rpc.some((m) => m.method === "thread/resume"),
+      false,
+    );
+    assert.match(turnPrompt(rpc), /codex please/);
   });
 
-  it("resume pass uses exec resume <sessionId>", async () => {
+  it("resume pass uses thread/resume of the stored session id", async () => {
     process.env.CODER_FAKE_CODEX_SCENARIO = "success";
     const thread = store.getThreads()[0];
     await runner.startRun({ threadId: thread.id, prompt: "first" });
@@ -700,6 +580,7 @@ describe("runner codex provider", () => {
 
     process.env.CODER_FAKE_CODEX_SCENARIO = "resume-turn";
     fs.unlinkSync(argvFile);
+    if (fs.existsSync(rpcFile)) fs.unlinkSync(rpcFile);
 
     await runner.startRun({ threadId: thread.id, prompt: "second" });
     await waitFor(() => {
@@ -709,25 +590,30 @@ describe("runner codex provider", () => {
     await waitFor(() => store.getThread(thread.id).status === "done");
 
     const argv = JSON.parse(fs.readFileSync(argvFile, "utf8"));
-    const execIdx = argv.indexOf("exec");
-    assert.ok(execIdx >= 0, `expected exec in ${JSON.stringify(argv)}`);
-    assert.equal(argv[execIdx + 1], "resume");
-    assert.equal(argv[execIdx + 2], "codex-sess-001");
-    assert.ok(argv.includes("--json"));
+    assert.ok(
+      argv.includes("app-server"),
+      `expected app-server in ${JSON.stringify(argv)}`,
+    );
     assert.ok(
       !argv.includes("--sandbox"),
-      "codex exec resume rejects --sandbox (issue #795)",
-    );
-    const last = argv[argv.length - 1];
-    assert.equal(
-      typeof last,
-      "string",
-      `runner prompt must stay last after resume: ${JSON.stringify(argv)}`,
+      "resume must not pass --sandbox (issue #795)",
     );
     assert.ok(
-      last.includes("second"),
-      `last argv token must contain the original prompt: ${JSON.stringify(argv)}`,
+      argv.some((a) =>
+        String(a).startsWith("sandbox_workspace_write.writable_roots="),
+      ),
+      `resume must still pass writable_roots (#1160): ${JSON.stringify(argv)}`,
     );
+    const rpc = readRpc(rpcFile);
+    const resume = rpc.find((m) => m.method === "thread/resume");
+    assert.ok(resume, `expected thread/resume, got ${JSON.stringify(rpc)}`);
+    assert.equal(resume.params.threadId, "codex-sess-001");
+    assert.equal(resume.params.excludeTurns, true);
+    assert.equal(
+      rpc.some((m) => m.method === "thread/start"),
+      false,
+    );
+    assert.match(turnPrompt(rpc), /second/);
   });
 
   it("isolates CODEX_HOME and bypasses hook trust for classifyTool (#813)", async () => {
@@ -752,7 +638,7 @@ describe("runner codex provider", () => {
       JSON.stringify(argv),
     );
     assert.ok(argv.includes("features.hooks=true"), JSON.stringify(argv));
-    assert.match(String(argv[argv.length - 1]), /guard me/);
+    assert.match(turnPrompt(readRpc(rpcFile)), /guard me/);
 
     const dest = path.join(tmpDir, "codex-homes", thread.id);
     assert.ok(fs.existsSync(path.join(dest, "hooks.json")));
@@ -768,6 +654,7 @@ describe("runner codex provider", () => {
       prompt: "boom",
     });
     await waitFor(() => store.getThread(thread.id).status === "failed");
+    assert.equal(store.getThread(thread.id).lastErrorKind, null);
     assert.ok(
       store
         .getMessages(thread.id)
@@ -779,6 +666,99 @@ describe("runner codex provider", () => {
             m.runId === runId,
         ),
     );
+  });
+
+  it("classifies writer-lock, keeps sessionId, and later resumes the same id (#953)", async () => {
+    process.env.CODER_FAKE_CODEX_SCENARIO = "writer-lock";
+    const thread = store.getThreads()[0];
+    store.updateThread(thread.id, { sessionId: "codex-sess-001" });
+
+    const { runId } = await runner.startRun({
+      threadId: thread.id,
+      prompt: "resume while locked",
+    });
+    await waitFor(() => store.getThread(thread.id).status === "failed");
+
+    const failed = store.getThread(thread.id);
+    assert.equal(failed.status, "failed");
+    assert.equal(failed.lastErrorKind, "writer-lock");
+    assert.equal(failed.sessionId, "codex-sess-001");
+    assert.match(failed.lastError, /^Codex session is locked by another process\./);
+
+    const events = store
+      .getMessages(thread.id)
+      .filter((m) => m.role === "event" && m.runId === runId);
+    assert.equal(events.length, 1);
+    assert.match(events[0].text, /^Codex session is locked by another process\./);
+    assert.match(events[0].text, /Provider error:/);
+    assert.match(events[0].text, /thread-store conflict/);
+    assert.doesNotMatch(events[0].text, /^ERROR codex_core::session/);
+    assert.doesNotMatch(events[0].text, /thread\/resume failed/);
+
+    process.env.CODER_FAKE_CODEX_SCENARIO = "resume-turn";
+    if (fs.existsSync(argvFile)) fs.unlinkSync(argvFile);
+
+    await runner.startRun({
+      threadId: thread.id,
+      prompt: "after lock released",
+    });
+    await waitFor(() => store.getThread(thread.id).status === "done");
+
+    const done = store.getThread(thread.id);
+    assert.equal(done.status, "done");
+    assert.equal(done.sessionId, "codex-sess-001");
+    assert.equal(done.lastErrorKind, null);
+
+    const argv = JSON.parse(fs.readFileSync(argvFile, "utf8"));
+    assert.ok(
+      argv.includes("app-server"),
+      `expected app-server in ${JSON.stringify(argv)}`,
+    );
+    const rpc = readRpc(rpcFile);
+    const resume = rpc.find((m) => m.method === "thread/resume");
+    assert.ok(resume);
+    assert.equal(resume.params.threadId, "codex-sess-001");
+  });
+
+  it("records lock-holder diagnosis and kills a leftover Solenta child (#1226)", async () => {
+    const killed = [];
+    runner.stopAll();
+    runner = createRunner({
+      store,
+      core,
+      pushFn() {},
+      tickMs: 15,
+      userDataPath: tmpDir,
+      inspectCodexWriterLockFn: () => ({
+        holderPid: 4242,
+        holderCommand: "codex",
+        ours: true,
+        stale: false,
+        lockDirShared: true,
+        lockPath: "/tmp/overlay/thread-writer-locks/codex-sess-001.lock",
+        codexHome: "/tmp/overlay",
+      }),
+      killWriterLockPidFn: (pid) => killed.push(pid),
+    });
+    process.env.CODER_FAKE_CODEX_SCENARIO = "writer-lock";
+    const thread = store.getThreads()[0];
+    store.updateThread(thread.id, { sessionId: "codex-sess-001" });
+    const { runId } = await runner.startRun({
+      threadId: thread.id,
+      prompt: "resume while locked",
+    });
+    await waitFor(() => store.getThread(thread.id).status === "failed");
+    assert.deepEqual(killed, [4242]);
+    const failed = store.getThread(thread.id);
+    assert.equal(failed.lastErrorKind, "writer-lock");
+    assert.equal(failed.sessionId, "codex-sess-001");
+    const events = store
+      .getMessages(thread.id)
+      .filter((m) => m.role === "event" && m.runId === runId);
+    assert.match(events[0].text, /pid 4242/);
+    assert.match(events[0].text, /Solenta Codex child/);
+    assert.match(events[0].text, /CODEX_HOME=\/tmp\/overlay/);
+    assert.match(events[0].text, /symlink/);
   });
 
   it("classifies stdout-only turn.failed overflow and publishes normalized failure", async () => {
@@ -922,9 +902,8 @@ describe("runner codex provider", () => {
       argv = JSON.parse(fs.readFileSync(argvFile, "utf8"));
       const cwd = t2.worktreePath || project.path;
       const boundUrl = `mcp_servers.coder-memory.url="http://127.0.0.1:${freePort}/mcp?project=${encodeURIComponent(cwd)}"`;
-      assertCodexMcpOnExec(argv, {
+      assertCodexMcpOnAppServer(argv, {
         url: boundUrl,
-        resume: false,
       });
       // The token reaches codex by env only: argv is visible to every local
       // process via `ps` for the whole run (issue #125).
@@ -945,6 +924,7 @@ describe("runner codex provider", () => {
         .getMessages(t2.id)
         .filter((m) => m.role === "assistant").length;
       fs.unlinkSync(argvFile);
+      if (fs.existsSync(rpcFile)) fs.unlinkSync(rpcFile);
       await runner.startRun({ threadId: t2.id, prompt: "resume-mem" });
       await waitFor(
         () =>
@@ -953,11 +933,12 @@ describe("runner codex provider", () => {
       );
       await waitFor(() => store.getThread(t2.id).status === "done");
       argv = JSON.parse(fs.readFileSync(argvFile, "utf8"));
-      assertCodexMcpOnExec(argv, { url: boundUrl, resume: sessionId });
-      assert.ok(
-        argv[argv.length - 1].includes("resume-mem"),
-        `prompt must stay last: ${JSON.stringify(argv)}`,
-      );
+      assertCodexMcpOnAppServer(argv, { url: boundUrl });
+      const rpc = readRpc(rpcFile);
+      const resume = rpc.find((m) => m.method === "thread/resume");
+      assert.ok(resume);
+      assert.equal(resume.params.threadId, sessionId);
+      assert.match(turnPrompt(rpc), /resume-mem/);
       sup.stop();
     } finally {
       await new Promise((r) => server.close(r));
@@ -1057,5 +1038,159 @@ describe("runner codex provider", () => {
 
     const search = tools.find((m) => m.tool.name === "WebSearch");
     assert.match(search.text, /codex exec json/);
+  });
+
+  it("steerRun writes turn/steer on the same runId (#1170)", async () => {
+    process.env.CODER_FAKE_CODEX_SCENARIO = "steer-wait";
+    const thread = store.getThreads()[0];
+    const { runId } = await runner.startRun({
+      threadId: thread.id,
+      prompt: "work",
+    });
+    await waitFor(() => runner.isRunning(thread.id));
+    await waitFor(() => {
+      const rpc = readRpc(rpcFile);
+      return rpc.some((m) => m.method === "turn/start");
+    });
+    const steered = await runner.steerRun({
+      threadId: thread.id,
+      prompt: "nudge mid-turn",
+    });
+    assert.equal(steered.runId, runId);
+    const steerRow = store.getMessages(thread.id).find((m) => m.steer === true);
+    assert.ok(steerRow);
+    assert.equal(steerRow.runId, runId);
+    assert.equal(steerRow.text, "nudge mid-turn");
+    await waitFor(() => store.getThread(thread.id).status === "done");
+    const rpc = readRpc(rpcFile);
+    const steer = rpc.find((m) => m.method === "turn/steer");
+    assert.ok(steer);
+    assert.equal(steer.params.expectedTurnId, "turn-1");
+    assert.equal(
+      rpc.filter((m) => m.method === "thread/start" || m.method === "thread/resume")
+        .length,
+      1,
+    );
+  });
+
+  it("steerRun before turn/start returns no steer row", async () => {
+    process.env.CODER_FAKE_CODEX_SCENARIO = "hang";
+    process.env.CODER_FAKE_CODEX_TURN_DELAY_MS = "400";
+    const thread = store.getThreads()[0];
+    await runner.startRun({ threadId: thread.id, prompt: "work" });
+    await waitFor(() => runner.isRunning(thread.id));
+    await assert.rejects(
+      () => runner.steerRun({ threadId: thread.id, prompt: "too soon" }),
+      /not accepting input/i,
+    );
+    assert.equal(
+      store.getMessages(thread.id).some((m) => m.steer === true),
+      false,
+    );
+    delete process.env.CODER_FAKE_CODEX_TURN_DELAY_MS;
+  });
+
+  it("passes image attachments as localImage input, not argv -i (#176)", async () => {
+    process.env.CODER_FAKE_CODEX_SCENARIO = "success";
+    const thread = store.getThreads()[0];
+    services.setProvider(store, { threadId: thread.id, model: "gpt-6-astra" });
+    const image = path.join(tmpDir, "shot.png");
+    const folder = path.join(tmpDir, "specs");
+    const notes = path.join(tmpDir, "notes.txt");
+    fs.writeFileSync(image, "x");
+    fs.writeFileSync(notes, "hello");
+    fs.mkdirSync(folder);
+    if (fs.existsSync(argvFile)) fs.unlinkSync(argvFile);
+
+    await runner.startRun({
+      threadId: thread.id,
+      prompt: "look at these",
+      attachments: [
+        { kind: "image", path: image, name: "shot.png" },
+        { kind: "folder", path: folder, name: "specs" },
+        { kind: "file", path: notes, name: "notes.txt" },
+      ],
+    });
+    await waitFor(() => store.getThread(thread.id).status === "done");
+
+    const argv = JSON.parse(fs.readFileSync(argvFile, "utf8"));
+    assert.ok(
+      argv.includes("app-server"),
+      `expected app-server in ${JSON.stringify(argv)}`,
+    );
+    assert.ok(
+      !argv.includes("-i"),
+      `images are UserInput, not -i: ${JSON.stringify(argv)}`,
+    );
+    const rpc = readRpc(rpcFile);
+    const start = rpc.find((m) => m.method === "turn/start");
+    assert.ok(start);
+    const input = start.params.input;
+    assert.ok(input.some((p) => p.type === "text" && /look at these/.test(p.text)));
+    assert.ok(input.some((p) => p.type === "localImage" && p.path === image));
+    const text = turnPrompt(rpc);
+    assert.ok(
+      !text.includes(image),
+      "vision models must not stuff the image path into the prompt",
+    );
+    assert.ok(text.includes(`- Folder: ${folder}`));
+    assert.ok(text.includes(`- File: ${notes}`));
+    assert.ok(
+      !argv.some((a) => String(a).includes("CODER_MCP_TOKEN")),
+      `token leaked into argv: ${JSON.stringify(argv)}`,
+    );
+
+    const userMsg = store
+      .getMessages(thread.id)
+      .find((m) => m.role === "user");
+    assert.equal(userMsg.text, "look at these");
+    assert.deepEqual(userMsg.attachments, [
+      { kind: "image", path: image, name: "shot.png" },
+      { kind: "folder", path: folder, name: "specs" },
+      { kind: "file", path: notes, name: "notes.txt" },
+    ]);
+  });
+
+  it("Spark stays text-only: no -i, image path stays in the prompt (#176 / #1167)", async () => {
+    process.env.CODER_FAKE_CODEX_SCENARIO = "success";
+    const thread = store.getThreads()[0];
+    services.setProvider(store, {
+      threadId: thread.id,
+      model: "gpt-5.3-codex-spark",
+    });
+    const image = path.join(tmpDir, "spark.png");
+    fs.writeFileSync(image, "x");
+    if (fs.existsSync(argvFile)) fs.unlinkSync(argvFile);
+
+    await runner.startRun({
+      threadId: thread.id,
+      prompt: "what is this",
+      attachments: [{ kind: "image", path: image, name: "spark.png" }],
+    });
+    await waitFor(() => store.getThread(thread.id).status === "done");
+
+    const argv = JSON.parse(fs.readFileSync(argvFile, "utf8"));
+    assert.ok(
+      !argv.includes("-i"),
+      `Spark must not get -i: ${JSON.stringify(argv)}`,
+    );
+    const rpc = readRpc(rpcFile);
+    const start = rpc.find((m) => m.method === "turn/start");
+    assert.ok(start);
+    assert.equal(
+      start.params.input.some((p) => p.type === "localImage"),
+      false,
+      "Spark must not send localImage",
+    );
+    const last = turnPrompt(rpc);
+    assert.ok(last.includes("what is this"));
+    assert.ok(
+      last.includes(`- Image: ${image}`),
+      "text-only Spark still lists the image as a prompt path",
+    );
+    assert.ok(
+      !argv.some((a) => String(a).includes("CODER_MCP_TOKEN")),
+      `token leaked into argv: ${JSON.stringify(argv)}`,
+    );
   });
 });

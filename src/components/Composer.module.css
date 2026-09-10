@@ -59,7 +59,7 @@
 .card {
   position: relative;
   background: var(--card);
-  border: 1px solid var(--border-soft);
+  border: 1px solid transparent;
   border-radius: 14px;
   padding: 12px 12px 10px;
   transition: border-color 0.15s ease;
@@ -208,6 +208,7 @@
   max-width: min(320px, 92vw);
   margin: 0;
   padding: 10px;
+  outline: none;
   border-radius: 12px;
   border: 1px solid var(--border);
   background: var(--bg-elevated);
@@ -545,7 +546,7 @@
   min-width: 0;
   min-height: 0;
   padding: 10px 8px 10px 10px;
-  border-right: 1px solid var(--border);
+  border-right: 1px solid var(--border-soft);
   display: flex;
   flex-direction: column;
 }
@@ -767,6 +768,46 @@
   flex-shrink: 0;
 }
 
+.steerToggle {
+  display: inline-flex;
+  height: 28px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.steerToggle button {
+  height: 100%;
+  padding: 0 10px;
+  border: 0;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.steerToggle button + button {
+  border-left: 1px solid var(--border);
+}
+
+.steerToggle button[aria-pressed="true"] {
+  background: var(--blue-soft);
+  color: var(--info-fg-strong);
+}
+
+.steerToggle button:hover:not([aria-pressed="true"]) {
+  background: var(--card-hover);
+  color: var(--text);
+}
+
+.steerToggle button:focus-visible {
+  outline: none;
+  box-shadow:
+    0 0 0 2px var(--card),
+    0 0 0 4px var(--focus-ring-color);
+}
+
 .viewMenu {
   left: auto;
   right: 0;
@@ -782,11 +823,10 @@
   display: grid;
   place-items: center;
   flex-shrink: 0;
-  box-shadow: 0 2px 8px var(--blue-border);
+  box-shadow: none;
   transition:
     background-color 0.12s ease,
-    transform 0.12s ease,
-    box-shadow 0.12s ease;
+    transform 0.12s ease;
 }
 
 .send:hover:not(:disabled) {
@@ -927,7 +967,7 @@
   flex-direction: column;
   gap: 6px;
   padding: 8px 10px;
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid var(--border-soft);
 }
 
 .customModelInput {

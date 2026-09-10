@@ -42,6 +42,7 @@ import {
   effortDisplayLabel,
   effortHint,
   effortsForModel,
+  supportsImagesForModel,
   providerDetail,
   effortOptions,
   firstSelectableIndex,
@@ -58,6 +59,7 @@ import {
   type ProfileRow,
 } from "../modelPicker";
 import { useEscapeClose } from "../useEscapeClose";
+import { useModalFocus } from "../useModalFocus";
 import { ProviderMark } from "./ProviderMark";
 import { applyMention, getMentionQuery, type MentionQuery } from "../mention";
 import { ArchiveToast } from "./ArchiveToast";
@@ -90,11 +92,16 @@ import {
   type SlashCommand,
 } from "../slashCommands";
 import { WorkflowsModal } from "./WorkflowsModal";
-import { DROP_OVERLAY_MESSAGE, DROP_REJECT_MESSAGE } from "../dropFiles";
+import {
+  DROP_OVERLAY_MESSAGE,
+  DROP_REJECT_MESSAGE,
+  type DroppedFolder,
+} from "../dropFiles";
 import { scrollChildIntoNearestView } from "../scrollNearest";
 import { teachPermissionAllowed } from "../teach";
 import type { ThreadTeach } from "../shared/ipc";
 import { useFileDrop } from "../useFileDrop";
+import { isWebMode } from "../shared/wire";
 import {
   cycleTranscriptViewMode,
   TRANSCRIPT_VIEW_HINTS,
@@ -103,13 +110,16 @@ import {
   type TranscriptViewMode,
 } from "../focusView";
 import {
+  getComposerBusyAction,
   getLastReasoningEffort,
   getPasteCardsEnabled,
   getTranscriptViewMode,
+  setComposerBusyAction,
   setLastReasoningEffort,
   setTranscriptViewMode,
   useComposerVimEnabled,
   useTranscriptViewMode,
+  type ComposerBusyAction,
 } from "../uiPrefs";
 import {
   INITIAL_VIM,
@@ -202,6 +212,8 @@ interface ComposerProps {
   onSetWebSearch?: (webSearch: boolean) => void | Promise<void>;
   onSaveWorkflow: (template: WorkflowSaveInput) => Promise<WorkflowTemplateInfo>;
   onRemoveWorkflow: (id: string) => Promise<void>;
+  workflowListError?: string | null;
+  onRetryWorkflows?: () => void | Promise<void>;
   /** Provider session id (short form shown in meta). */
   sessionId: string | null;
   /** Whether a worktree has been set up. */
@@ -214,8 +226,12 @@ interface ComposerProps {
    * Controls that only make sense between runs stay locked.
    */
   busy?: boolean;
-  /** Single session turn (send arrow + ⌘Enter). */
-  onSend: (prompt: string, attachments?: AttachmentInfo[]) => void | Promise<void>;
+  /** Single session turn (send arrow + ⌘Enter). While busy, `steer: true` injects into the live turn. */
+  onSend: (
+    prompt: string,
+    attachments?: AttachmentInfo[],
+    opts?: { steer?: boolean },
+  ) => void | Promise<void>;
   /**
    * Text pushed back toward the draft from outside (a cancelled queued
    * follow-up, issue #364). Applied at most once, and only onto an EMPTY
@@ -256,17 +272,27 @@ interface ComposerProps {
   onClearReply?: () => void;
   /**
    * File/image/folder picker for attachments. Absent hides the attach button
-   * (tests / shells that do not wire one).
+   * (tests / shells that do not wire one). `includeImages: false` on
+   * text-only models so the native dialog omits the Images filter. Web still
+   * shows the paperclip for files/folders; Composer strips kind=image.
    */
-  onPickAttachments?: () => Promise<AttachmentInfo[]>;
+  onPickAttachments?: (opts?: {
+    includeImages?: boolean;
+  }) => Promise<AttachmentInfo[]>;
+  /** Web folder pick via showDirectoryPicker. Absent: paperclip is files-only. */
+  onPickFolderAttachments?: () => Promise<AttachmentInfo[]>;
   /** Persist a pasted image; returns its attachment or null when rejected. */
   onSaveAttachmentImage?: (dataUrl: string) => Promise<AttachmentInfo | null>;
   /** Thumbnail data URL for an attached image; null when unavailable. */
   onLoadAttachmentImage?: (path: string) => Promise<string | null>;
   /**
    * Classify drag-dropped files into attachments. Absent disables drop.
+   * `folders` is the webkitGetAsEntry walk (web); native ignores it.
    */
-  onDropAttachmentFiles?: (files: File[]) => Promise<AttachmentInfo[]>;
+  onDropAttachmentFiles?: (
+    files: File[],
+    folders?: DroppedFolder[],
+  ) => Promise<AttachmentInfo[]>;
   /**
    * Attachments arriving from outside the composer (Browser pane screenshot,
    * issue #155). Consumed into the pending chips, then onIncomingAttachmentsConsumed.
@@ -432,6 +458,8 @@ export const Composer = memo(function Composer({
   onSetWebSearch,
   onSaveWorkflow,
   onRemoveWorkflow,
+  workflowListError = null,
+  onRetryWorkflows,
   sessionId,
   hasWorktree,
   disabled = false,
@@ -451,6 +479,7 @@ export const Composer = memo(function Composer({
   replyTo = null,
   onClearReply,
   onPickAttachments,
+  onPickFolderAttachments,
   onSaveAttachmentImage,
   onLoadAttachmentImage,
   onDropAttachmentFiles,
@@ -462,6 +491,8 @@ export const Composer = memo(function Composer({
   dropHostRef,
   onFileDragChange,
 }: ComposerProps) {
+  const currentProviderInfo = providers.find((p) => p.id === provider);
+  const canAttachImages = supportsImagesForModel(currentProviderInfo, model);
   const transcriptView = useTranscriptViewMode();
   const vimEnabled = useComposerVimEnabled();
   const [vimMode, setVimMode] = useState(INITIAL_VIM.mode);
@@ -531,6 +562,9 @@ export const Composer = memo(function Composer({
   const liveThreadIdRef = useRef(threadId);
   liveThreadIdRef.current = threadId;
   const [sending, setSending] = useState(false);
+  const [busyAction, setBusyAction] = useState<ComposerBusyAction>(
+    getComposerBusyAction,
+  );
   const [localError, setLocalError] = useState<string | null>(null);
   const hasSpeech = Boolean(coderSpeech());
   const [speech, setSpeech] = useState<SpeechStatus | null>(null);
@@ -766,18 +800,30 @@ export const Composer = memo(function Composer({
   const attachments = attachmentsByThread[threadId] ?? [];
   const addAttachments = useCallback(
     (items: AttachmentInfo[]) => {
-      if (!items.length) return;
+      const accepted = canAttachImages
+        ? items
+        : items.filter((a) => a.kind !== "image");
+      if (!accepted.length) return;
       setAttachmentsByThread((prev) => {
         const existing = prev[threadId] ?? [];
         const seen = new Set(existing.map((a) => a.path));
-        const fresh = items.filter((a) => !seen.has(a.path));
+        const fresh = accepted.filter((a) => !seen.has(a.path));
         return fresh.length
           ? { ...prev, [threadId]: [...existing, ...fresh] }
           : prev;
       });
     },
-    [threadId],
+    [threadId, canAttachImages],
   );
+  useEffect(() => {
+    if (canAttachImages) return;
+    setAttachmentsByThread((prev) => {
+      const existing = prev[threadId] ?? [];
+      const next = existing.filter((a) => a.kind !== "image");
+      if (next.length === existing.length) return prev;
+      return { ...prev, [threadId]: next };
+    });
+  }, [canAttachImages, threadId]);
   useEffect(() => {
     if (!incomingAttachments?.length) return;
     addAttachments(incomingAttachments);
@@ -854,6 +900,7 @@ export const Composer = memo(function Composer({
   /** Type-in filter for the drilled-in model list. Empty on the provider screen. */
   const [modelQuery, setModelQuery] = useState("");
   const [buildMenuOpen, setBuildMenuOpen] = useState(false);
+  const [attachOpen, setAttachOpen] = useState(false);
   const [bestOfNOpen, setBestOfNOpen] = useState(false);
   const [bestIds, setBestIds] = useState<string[]>([]);
   const [manageOpen, setManageOpen] = useState(false);
@@ -862,14 +909,17 @@ export const Composer = memo(function Composer({
     Record<string, string>
   >({});
   const modeWrapRef = useRef<HTMLDivElement>(null);
+  const attachWrapRef = useRef<HTMLDivElement>(null);
   const modelWrapRef = useRef<HTMLDivElement>(null);
   const modelTriggerRef = useRef<HTMLButtonElement>(null);
+  const modelPopoverRef = useRef<HTMLDivElement>(null);
   const effortWrapRef = useRef<HTMLDivElement>(null);
   const modelListRef = useRef<HTMLUListElement>(null);
   const modelSearchRef = useRef<HTMLInputElement>(null);
   const providerListRef = useRef<HTMLUListElement>(null);
   const buildWrapRef = useRef<HTMLDivElement>(null);
   const bestOfNWrapRef = useRef<HTMLDivElement>(null);
+  const bestOfNPopoverRef = useRef<HTMLDivElement>(null);
   const modelListId = useId();
 
   /** @-mention popup state; `mention` null means closed. */
@@ -1093,7 +1143,7 @@ export const Composer = memo(function Composer({
   const shortSess = shortSessionId(sessionId);
   const sessionLocked = Boolean(sessionId);
   const providerName = providerDisplayName(provider, providers);
-  const currentProviderInfo = providers.find((p) => p.id === provider);
+  const canSteer = Boolean(busy && currentProviderInfo?.supportsSteer);
   const providerRows = buildProviderRows(
     providers,
     provider,
@@ -1169,7 +1219,14 @@ export const Composer = memo(function Composer({
       : undefined;
 
   useEffect(() => {
-    if (!modeOpen && !modelOpen && !effortOpen && !buildMenuOpen && !bestOfNOpen)
+    if (
+      !modeOpen &&
+      !modelOpen &&
+      !effortOpen &&
+      !buildMenuOpen &&
+      !bestOfNOpen &&
+      !attachOpen
+    )
       return;
     const onDoc = (e: MouseEvent) => {
       const t = e.target as Node;
@@ -1188,10 +1245,13 @@ export const Composer = memo(function Composer({
       if (bestOfNOpen && !bestOfNWrapRef.current?.contains(t)) {
         setBestOfNOpen(false);
       }
+      if (attachOpen && !attachWrapRef.current?.contains(t)) {
+        setAttachOpen(false);
+      }
     };
     document.addEventListener("mousedown", onDoc);
     return () => document.removeEventListener("mousedown", onDoc);
-  }, [modeOpen, modelOpen, effortOpen, buildMenuOpen, bestOfNOpen]);
+  }, [modeOpen, modelOpen, effortOpen, buildMenuOpen, bestOfNOpen, attachOpen]);
 
   // When the popover opens, seed highlight on the selected model and focus the list.
   useEffect(() => {
@@ -1314,6 +1374,7 @@ export const Composer = memo(function Composer({
     effortOpen ||
     buildMenuOpen ||
     bestOfNOpen ||
+    attachOpen ||
     viewOpen;
   const closeAllMenus = useCallback(() => {
     setModeOpen(false);
@@ -1325,9 +1386,15 @@ export const Composer = memo(function Composer({
     }
     setBuildMenuOpen(false);
     setBestOfNOpen(false);
+    setAttachOpen(false);
     setViewOpen(false);
   }, [modelOpen, closeModelPicker]);
   useEscapeClose(anyMenuOpen, closeAllMenus);
+  // Popovers, not aria-modal. Listbox timeout already focuses the
+  // provider/model list on open and drill; takeFocus would steal that,
+  // and restore would fight closeModelPicker / Escape-back.
+  useModalFocus(modelOpen, modelPopoverRef, false);
+  useModalFocus(bestOfNOpen, bestOfNPopoverRef);
 
   const popupOpen = anyMenuOpen || mentionOpen || commandOpen || manageOpen;
   useEffect(() => {
@@ -1450,8 +1517,23 @@ export const Composer = memo(function Composer({
         await onDelegate(delegation.provider, delegation.task);
         return;
       }
-      await onSend(prompt, attachments.length ? attachments : undefined);
+      await onSend(
+        prompt,
+        attachments.length ? attachments : undefined,
+        canSteer && busyAction === "steer" ? { steer: true } : undefined,
+      );
     }, "Failed to start run");
+  };
+
+  const submitSteer = () => {
+    if (!canSend) return;
+    void runAction(async (prompt) => {
+      await onSend(
+        prompt,
+        attachments.length ? attachments : undefined,
+        { steer: true },
+      );
+    }, "Failed to steer");
   };
 
   const submitBtw = () => {
@@ -1635,6 +1717,12 @@ export const Composer = memo(function Composer({
       submitBtw();
       return;
     }
+    if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === "Enter") {
+      e.preventDefault();
+      if (canSteer) submitSteer();
+      else submitSend();
+      return;
+    }
     if ((e.metaKey || e.ctrlKey || e.shiftKey) && e.key === "Enter") {
       e.preventDefault();
       submitSend();
@@ -1671,9 +1759,13 @@ export const Composer = memo(function Composer({
     onDismissError?.();
   };
 
-  const pickAttachments = () => {
-    if (!onPickAttachments || disabled || sending) return;
-    onPickAttachments()
+  const runAttachmentPick = (
+    picker:
+      | ((opts?: { includeImages?: boolean }) => Promise<AttachmentInfo[]>)
+      | undefined,
+  ) => {
+    if (!picker || disabled || sending) return;
+    picker({ includeImages: canAttachImages })
       .then(addAttachments)
       .catch((err) => {
         const msg =
@@ -1684,6 +1776,26 @@ export const Composer = memo(function Composer({
       });
   };
 
+  const canPickWebFolderNow = () =>
+    Boolean(onPickFolderAttachments) &&
+    isWebMode() &&
+    typeof (window as Window & { showDirectoryPicker?: unknown })
+      .showDirectoryPicker === "function";
+
+  const pickAttachments = () => {
+    if (!onPickAttachments || disabled || sending) return;
+    if (canPickWebFolderNow()) {
+      setAttachOpen((v) => !v);
+      setModeOpen(false);
+      setModelOpen(false);
+      setEffortOpen(false);
+      setBuildMenuOpen(false);
+      setBestOfNOpen(false);
+      return;
+    }
+    runAttachmentPick(onPickAttachments);
+  };
+
   /** Clipboard images become saved attachments; large text pastes become cards. */
   const onPaste = (e: ClipboardEvent<HTMLTextAreaElement>) => {
     if (disabled || sending) return;
@@ -1691,6 +1803,9 @@ export const Composer = memo(function Composer({
       (item) => item.kind === "file" && item.type.startsWith("image/"),
     );
     if (items.length > 0 && onSaveAttachmentImage) {
+      // Refuse the image but do not preventDefault: a mixed clipboard
+      // still pastes its text. preventDefault would swallow that too.
+      if (!canAttachImages) return;
       e.preventDefault();
       for (const item of items) {
         const blob = item.getAsFile();
@@ -1716,12 +1831,15 @@ export const Composer = memo(function Composer({
   };
 
   const acceptDroppedFiles = useCallback(
-    async (files: File[]) => {
+    async (files: File[], folders?: DroppedFolder[]) => {
       if (!onDropAttachmentFiles || disabled || sending) return;
       try {
-        const items = await onDropAttachmentFiles(files);
-        if (items.length) {
-          addAttachments(items);
+        const items = await onDropAttachmentFiles(files, folders);
+        const accepted = canAttachImages
+          ? items
+          : items.filter((a) => a.kind !== "image");
+        if (accepted.length) {
+          addAttachments(accepted);
           setLocalError(null);
         } else {
           setLocalError(DROP_REJECT_MESSAGE);
@@ -1734,7 +1852,7 @@ export const Composer = memo(function Composer({
         setLocalError(msg);
       }
     },
-    [onDropAttachmentFiles, disabled, sending, addAttachments],
+    [onDropAttachmentFiles, disabled, sending, addAttachments, canAttachImages],
   );
 
   const composerRef = useRef<HTMLDivElement>(null);
@@ -2191,34 +2309,76 @@ export const Composer = memo(function Composer({
           hidden
         />
         <div ref={hintsRef} className={styles.hints} data-kbd-hints="" hidden>
-          {`⌘Enter ${busy ? "queue" : "send"} · ⌥Enter side question · ⌘S stash${busy ? " · Esc stop" : ""}${vimEnabled ? ` · VIM ${vimMode}` : ""}`}
+          {`⌘Enter ${canSteer && busyAction === "steer" ? "steer" : busy ? "queue" : "send"} · ⌥Enter side question · ⌘S stash${canSteer ? " · ⌘⇧Enter steer" : ""}${busy ? " · Esc stop" : ""}${vimEnabled ? ` · VIM ${vimMode}` : ""}`}
         </div>
         <div className={styles.controls}>
           <div className={styles.pills}>
             {onPickAttachments && !ask && (
-              <button
-                type="button"
-                className={styles.pill}
-                disabled={disabled || sending}
-                aria-disabled={disabled || sending ? "true" : undefined}
-                aria-label="Attach files or folders"
-                title="Attach files or folders"
-                onClick={pickAttachments}
-              >
-                <svg
-                  width="13"
-                  height="13"
-                  viewBox="0 0 16 16"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="1.5"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  aria-hidden="true"
+              <div className={styles.modeWrap} ref={attachWrapRef}>
+                <button
+                  type="button"
+                  className={styles.pill}
+                  disabled={disabled || sending}
+                  aria-disabled={disabled || sending ? "true" : undefined}
+                  aria-label="Attach files or folders"
+                  title="Attach files or folders"
+                  aria-haspopup={
+                    canPickWebFolderNow() ? "menu" : undefined
+                  }
+                  aria-expanded={
+                    canPickWebFolderNow() ? attachOpen : undefined
+                  }
+                  onClick={pickAttachments}
                 >
-                  <path d="m12.5 7.5-4.95 4.95a3.5 3.5 0 0 1-4.95-4.95l5.3-5.3a2.33 2.33 0 0 1 3.3 3.3l-5.3 5.3a1.17 1.17 0 0 1-1.65-1.65l4.6-4.6" />
-                </svg>
-              </button>
+                  <svg
+                    width="13"
+                    height="13"
+                    viewBox="0 0 16 16"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1.5"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    aria-hidden="true"
+                  >
+                    <path d="m12.5 7.5-4.95 4.95a3.5 3.5 0 0 1-4.95-4.95l5.3-5.3a2.33 2.33 0 0 1 3.3 3.3l-5.3 5.3a1.17 1.17 0 0 1-1.65-1.65l4.6-4.6" />
+                  </svg>
+                </button>
+                {attachOpen && (
+                  <ul
+                    className={styles.modeMenu}
+                    role="menu"
+                    aria-label="Attach"
+                  >
+                    <li>
+                      <button
+                        type="button"
+                        className={styles.modeOption}
+                        role="menuitem"
+                        onClick={() => {
+                          setAttachOpen(false);
+                          runAttachmentPick(onPickAttachments);
+                        }}
+                      >
+                        Files
+                      </button>
+                    </li>
+                    <li>
+                      <button
+                        type="button"
+                        className={styles.modeOption}
+                        role="menuitem"
+                        onClick={() => {
+                          setAttachOpen(false);
+                          runAttachmentPick(onPickFolderAttachments);
+                        }}
+                      >
+                        Folder
+                      </button>
+                    </li>
+                  </ul>
+                )}
+              </div>
             )}
             {hasSpeech && speech && (
               <>
@@ -2357,10 +2517,12 @@ export const Composer = memo(function Composer({
               </button>
               {modelOpen && (
                 <div
+                  ref={modelPopoverRef}
                   className={styles.modelPopover}
                   role="dialog"
                   aria-label="Model picker"
                   id={modelListId}
+                  tabIndex={-1}
                 >
                   <div className={styles.modelPopoverLeft}>
                     {drillProvider ? (
@@ -2427,6 +2589,7 @@ export const Composer = memo(function Composer({
                             <button
                               type="button"
                               className={styles.providerRow}
+                              tabIndex={-1}
                               data-highlighted={
                                 index === providerIndex ? "true" : undefined
                               }
@@ -2460,6 +2623,7 @@ export const Composer = memo(function Composer({
                             <button
                               type="button"
                               className={styles.providerRow}
+                              tabIndex={-1}
                               data-selected={row.current ? "true" : undefined}
                               data-highlighted={
                                 index + profileRows.length === providerIndex
@@ -2603,6 +2767,7 @@ export const Composer = memo(function Composer({
                             <button
                               type="button"
                               className={styles.modelRow}
+                              tabIndex={-1}
                               // The list scrolls (26 rows in a 240px box) and
                               // opens focused, so arrow keys are the first
                               // affordance. Scroll the list only: scrollIntoView
@@ -3052,10 +3217,12 @@ export const Composer = memo(function Composer({
                 </button>
                 {bestOfNOpen && (
                   <div
+                    ref={bestOfNPopoverRef}
                     className={styles.bestOfNPopover}
                     role="dialog"
                     aria-label="Best of N"
                     data-best-of-n-popover=""
+                    tabIndex={-1}
                   >
                     <p className={styles.bestOfNHint}>
                       Each selection forks a new thread
@@ -3155,6 +3322,39 @@ export const Composer = memo(function Composer({
             )}
           </div>
           <div className={styles.sendCluster}>
+          {canSteer && (
+            <div
+              className={styles.steerToggle}
+              role="group"
+              aria-label="Follow-up while this run is live"
+              data-steer-toggle=""
+            >
+              <button
+                type="button"
+                aria-pressed={busyAction === "queue"}
+                data-steer-action="queue"
+                title="Queue for when this run lands (⌘Enter)"
+                onClick={() => {
+                  setBusyAction("queue");
+                  setComposerBusyAction("queue");
+                }}
+              >
+                Queue
+              </button>
+              <button
+                type="button"
+                aria-pressed={busyAction === "steer"}
+                data-steer-action="steer"
+                title="Steer the live turn (⌘Enter). ⌘⇧Enter always steers."
+                onClick={() => {
+                  setBusyAction("steer");
+                  setComposerBusyAction("steer");
+                }}
+              >
+                Steer
+              </button>
+            </div>
+          )}
           <div className={styles.modeWrap} data-transcript-view="">
             <button
               type="button"
@@ -3231,11 +3431,15 @@ export const Composer = memo(function Composer({
             className={styles.send}
             aria-label="Send"
             disabled={!canSend}
-            data-queues={busy ? "" : undefined}
+            data-queues={busy && !(canSteer && busyAction === "steer") ? "" : undefined}
             title={
-              busy
-                ? "Queue for when this run lands (⌘Enter). ⌥Enter asks a side question."
-                : "Send (⌘Enter). ⌥Enter asks a side question."
+              canSteer && busyAction === "steer"
+                ? "Steer the live turn (⌘Enter). ⌘⇧Enter also steers."
+                : busy
+                  ? canSteer
+                    ? "Queue for when this run lands (⌘Enter). ⌘⇧Enter steers."
+                    : "Queue for when this run lands (⌘Enter). ⌥Enter asks a side question."
+                  : "Send (⌘Enter). ⌥Enter asks a side question."
             }
             onClick={() => submitSend()}
           >
@@ -3342,6 +3546,8 @@ export const Composer = memo(function Composer({
           return saved;
         }}
         onRemove={onRemoveWorkflow}
+        listError={workflowListError}
+        onRetryList={onRetryWorkflows}
       />
     </div>
   );

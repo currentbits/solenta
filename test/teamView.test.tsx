@@ -415,15 +415,84 @@ describe("Agents team view", () => {
     const m = await mount(content(thread(), [ORCHESTRATOR, done]));
     await m.flush();
 
-    let text = m.text();
+    const text = m.text();
     assert.match(text, /Orchestrator/, "card keeps the orchestrator chip");
     assert.ok(m.query('[aria-label="Team"]'), "team section still renders");
-    assert.match(text, /1 done/, "roster folded, not gone");
-    assert.doesNotMatch(text, /already finished/);
+    assert.match(
+      text,
+      /already finished/,
+      "the only workers are done: list them, do not fold behind a toggle",
+    );
+    assert.equal(
+      m.query("[data-wait-line]"),
+      null,
+      "finished workers must not keep a wait line",
+    );
+    assert.equal(
+      m.byText("1 done"),
+      null,
+      "no collapsed toggle when none are live",
+    );
+    m.unmount();
+  });
 
-    await m.click(m.byText("1 done"));
-    text = m.text();
-    assert.match(text, /already finished/, "done worker recoverable");
+  it("orchestrator: done+settled workers are findable without the Settled shelf", async () => {
+    const settledA = summary({
+      id: "t-settled-a",
+      title: "Fork: Import existing CLI agent sessions",
+      provider: "grok",
+      status: "done",
+      handoffFrom: "t-orch",
+    });
+    const settledB = summary({
+      id: "t-settled-b",
+      title: "Fork: Map the wait line",
+      provider: "grok",
+      status: "done",
+      handoffFrom: "t-orch",
+    });
+    const selected: string[] = [];
+    const m = await mount(
+      content(
+        thread({ status: "idle" }),
+        [ORCHESTRATOR, settledA, settledB],
+        (id) => selected.push(id),
+      ),
+    );
+    await m.flush();
+
+    const text = m.text();
+    assert.ok(m.query('[aria-label="Team"]'), "team roster still mounts");
+    assert.match(
+      text,
+      /Import existing CLI agent sessions/,
+      "settled worker title is visible without opening Settled",
+    );
+    assert.match(text, /Map the wait line/);
+    assert.doesNotMatch(
+      text,
+      /\d+ done/,
+      "no collapsed 'N done' toggle when every worker has landed",
+    );
+    assert.equal(
+      m.byText("2 done"),
+      null,
+      "no collapsed done toggle when the live roster is empty",
+    );
+    assert.equal(m.byText("Hide done"), null);
+    assert.doesNotMatch(
+      text,
+      /Settled/,
+      "Team is not the sidebar Settled shelf",
+    );
+    assert.equal(m.query("[data-wait-line]"), null);
+
+    await m.click(m.byText("Fork: Import existing CLI agent sessions"));
+    assert.deepEqual(
+      selected,
+      ["t-settled-a"],
+      "clicking the settled worker selects it from Team",
+    );
     m.unmount();
   });
 
@@ -474,6 +543,13 @@ describe("Agents team view", () => {
     assert.match(m.text(), /Hypotheses/);
     assert.match(m.text(), /2 ruled out · 1 worked/);
     assert.doesNotMatch(m.text(), /inconclusive/);
+    assert.equal(
+      card.querySelector("[data-env-grip]"),
+      null,
+      "ledger is not a reorderable Environment section",
+    );
+    assert.equal(card.getAttribute("draggable"), null);
+    assert.equal(m.query("[data-env-list]"), null);
 
     const rows = m.queryAll("[data-hypothesis-status]");
     assert.equal(rows.length, 3);
