@@ -701,4 +701,23 @@ describe("sessionIdForResume (#1020)", () => {
       null,
     );
   });
+
+  it("skips Codex resume when picker differs from sessionStartModel even if usage caught up", () => {
+    // Session started on Sol. Picker and last usage.model are both Astra
+    // (turn/start.model can catch usage up). exec resume still hydrates
+    // the original rollout, so the next send must be a fresh exec with -m.
+    assert.equal(
+      sessionIdForResume(
+        codex,
+        {
+          sessionId: "sess-sol",
+          model: "gpt-6-astra",
+          sessionStartModel: "gpt-5.6-sol",
+          ejected: false,
+        },
+        { model: "gpt-6-astra" },
+      ),
+      null,
+    );
+  });
 });

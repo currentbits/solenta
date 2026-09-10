@@ -59,7 +59,8 @@ const { posixQuote } = require("./ssh.js");
  * @property {boolean} supportsResume
  * @property {boolean} [sessionPinsModel] - exec resume hydrates the model
  *   from the rollout and ignores -m (Codex). A model-only switch must drop
- *   sessionId; the runner also skips resume when usage.model !== thread.model.
+ *   sessionId; the runner also skips resume when thread.model differs from
+ *   sessionStartModel (fall back to usage.model when the snapshot is missing).
  * @property {string[]} models
  * @property {ModelInfo[]} modelInfo
  * @property {Array<"low"|"medium"|"high"|"xhigh"|"max"|"ultra"|"ultracode">} efforts
@@ -1494,11 +1495,18 @@ function getProvider(id) {
 
 /**
  * Session id to pass to buildArgs. Ejected threads never resume. Codex
- * pins the model on the rollout: if the user asked for a different model
- * than usage last reported, start a fresh exec so -m actually applies.
+ * pins the model on the rollout: if the picker differs from the model
+ * snapshotted at session start, start a fresh exec so -m actually applies.
+ * usage.model can catch up after turn/start.model while exec resume still
+ * hydrates the original rollout (#1215 / #1221).
  *
  * @param {ProviderEntry | null | undefined} entry
- * @param {{ ejected?: boolean, sessionId?: string | null, model?: string | null } | null | undefined} thread
+ * @param {{
+ *   ejected?: boolean,
+ *   sessionId?: string | null,
+ *   model?: string | null,
+ *   sessionStartModel?: string | null,
+ * } | null | undefined} thread
  * @param {{ model?: string | null } | null | undefined} usage
  * @returns {string | null}
  */
@@ -1506,15 +1514,15 @@ function sessionIdForResume(entry, thread, usage) {
   if (!thread || thread.ejected === true) return null;
   const sid = thread.sessionId || null;
   if (!sid) return null;
-  if (
-    entry &&
-    entry.sessionPinsModel === true &&
-    thread.model &&
-    usage &&
-    usage.model &&
-    String(usage.model) !== String(thread.model)
-  ) {
-    return null;
+  if (entry && entry.sessionPinsModel === true && thread.model) {
+    const started =
+      thread.sessionStartModel != null &&
+      String(thread.sessionStartModel).trim() !== ""
+        ? String(thread.sessionStartModel).trim()
+        : usage && usage.model
+          ? String(usage.model)
+          : "";
+    if (started && started !== String(thread.model)) return null;
   }
   return sid;
 }
