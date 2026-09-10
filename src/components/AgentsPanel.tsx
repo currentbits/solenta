@@ -2349,6 +2349,15 @@ export function GitTab({
     }
   };
 
+  const closeRestoreConfirm = useCallback(() => {
+    if (restorePending) return;
+    setRestoreConfirm(null);
+  }, [restorePending]);
+  useEscapeClose(
+    restoreConfirm != null && !restorePending,
+    closeRestoreConfirm,
+  );
+
   const remote = Boolean(project?.remoteHost);
   const defaultOrder = isDefaultEnvSectionOrder(order);
 
@@ -2596,10 +2605,7 @@ export function GitTab({
         <div
           className={styles.confirmOverlay}
           role="presentation"
-          onClick={() => {
-            if (restorePending) return;
-            setRestoreConfirm(null);
-          }}
+          onClick={closeRestoreConfirm}
         >
           <div
             ref={restoreDialogRef}
@@ -2639,10 +2645,7 @@ export function GitTab({
                 className={styles.confirmCancel}
                 data-restore-confirm-cancel=""
                 disabled={restorePending}
-                onClick={() => {
-                  if (restorePending) return;
-                  setRestoreConfirm(null);
-                }}
+                onClick={closeRestoreConfirm}
               >
                 Cancel
               </button>

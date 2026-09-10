@@ -398,6 +398,34 @@ describe("App checkpoints wiring (round 50)", () => {
     );
     m.unmount();
   });
+
+  it("Escape dismisses restore confirm and does not call restore", async () => {
+    const cps = threeCheckpoints();
+    const middle = cps[1]!;
+    const fake = makeFake({ checkpoints: cps });
+    const m = await boot(fake);
+    await selectThread(m, "checkpoint source thread");
+    await openGitTab(m);
+
+    await m.click(
+      m.query(`[data-checkpoint-restore="${middle.sha}"]`) as HTMLElement,
+    );
+    await m.flush();
+    const dialog = m.query(`[data-restore-confirm="${middle.sha}"]`);
+    assert.ok(dialog, "confirm dialog open");
+    await m.press(dialog as HTMLElement, "Escape");
+    await m.flush();
+    assert.ok(
+      !m.query(`[data-restore-confirm="${middle.sha}"]`),
+      "Escape must dismiss the confirm",
+    );
+    assert.equal(
+      fake.of("git.restoreCheckpoint").length,
+      0,
+      "Escape must not call restoreCheckpoint",
+    );
+    m.unmount();
+  });
 });
 
 describe("fakeCoder restore truncates later checkpoints", () => {
