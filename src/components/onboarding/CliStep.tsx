@@ -13,6 +13,8 @@ export default function CliStep({
   providers,
   refreshProviders,
 }: OnboardingStepProps) {
+  const refresh: (options?: { throwOnError?: boolean }) => Promise<void> =
+    refreshProviders;
   const [checking, setChecking] = useState(false);
   const [checked, setChecked] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -29,7 +31,7 @@ export default function CliStep({
     setError(null);
     setChecked(false);
     try {
-      await refreshProviders({ throwOnError: true });
+      await refresh({ throwOnError: true });
       setChecked(true);
     } catch (err) {
       setError(errorMessage(err));

@@ -811,7 +811,7 @@ export interface UseCoderResult {
    * Pass `{ throwOnError: true }` to surface a list failure (onboarding
    * Recheck); the previous list is still kept.
    */
-  refreshProviders: (opts?: { throwOnError?: boolean }) => Promise<void>;
+  refreshProviders: (options?: { throwOnError?: boolean }) => Promise<void>;
   projectById: Map<string, ProjectInfo>;
   /** Thin memory passthroughs; callers hold list/search state locally. */
   searchMemory: (input: {
@@ -3399,12 +3399,12 @@ export function useCoder(): UseCoderResult {
   );
 
   const refreshProviders = useCallback(
-    async (opts?: { throwOnError?: boolean }) => {
+    async (options?: { throwOnError?: boolean }) => {
       try {
         setProviders(await api.providers.list());
       } catch (err) {
         // Best-effort staleness fix; keep the boot list on failure.
-        if (opts?.throwOnError) throw err;
+        if (options?.throwOnError) throw err;
       }
     },
     [api],
