@@ -18,10 +18,8 @@ const path = require("node:path");
 const { execFileSync } = require("node:child_process");
 
 const ssh = require("../ssh.js");
-const {
-  materializeGrokHome,
-  remoteGrokHomeReclaimScript,
-} = require("../grok.js");
+const { materializeGrokHome } = require("../grok.js");
+const { remoteOverlayReclaimScript } = require("../remote-overlay.js");
 const { scheduleRetention } = require("../worktrees.js");
 
 const AUTH_BODY = "do-not-delete-me\n";
@@ -173,7 +171,7 @@ describe("remote grok-home reclaim (#833)", () => {
     assert.equal(blob.includes("quota-grok"), false, "quota-wait thread overlay must survive");
   });
 
-  it("skips idle (not archived/settled) grok threads and local / non-grok threads", async () => {
+  it("skips active and local threads while reclaiming old overlays after a provider switch", async () => {
     await scheduleRetention({
       store: makeStore(
         [
@@ -207,7 +205,8 @@ describe("remote grok-home reclaim (#833)", () => {
     const blob = remoteScripts(calls).join("\n");
     assert.equal(blob.includes("idle-grok"), false);
     assert.equal(blob.includes("local-archived-grok"), false);
-    assert.equal(blob.includes("ssh-claude"), false);
+    assert.equal(blob.includes("ssh-claude"), true,
+      "switching providers must not leave an archived thread's Grok overlay behind");
   });
 
   it("does not follow auth/session symlinks into ~/.grok", async () => {
@@ -242,7 +241,7 @@ describe("remote grok-home reclaim (#833)", () => {
     assert.match(wrapped, /cd '\/srv\/app' && 'sh' '-c'/);
     assert.equal(wrapped.includes("rm -rf"), false, "rm -rf would follow dir symlinks");
 
-    const body = remoteGrokHomeReclaimScript([staleId]);
+    const body = remoteOverlayReclaimScript([staleId]);
     execFileSync("/bin/sh", ["-c", body], {
       encoding: "utf8",
       env: { ...process.env, HOME: remoteHome },

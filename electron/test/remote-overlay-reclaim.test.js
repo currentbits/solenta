@@ -29,6 +29,7 @@ const OVERLAY_KINDS = [
   "opencode-guardrails",
   "cursor-guardrails",
   "kimi-homes",
+  "grok-homes",
   "muse-homes",
 ];
 

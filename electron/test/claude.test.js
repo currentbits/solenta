@@ -1612,6 +1612,36 @@ describe("runner claude provider", () => {
     }
   });
 
+  it("AskUserQuestion delivers file paths inside answers, not a new field (#1219)", async () => {
+    process.env.CODER_FAKE_CLAUDE_SCENARIO = "question";
+    const ctrlFile = path.join(tmpDir, "ctrl-q-files.json");
+    process.env.CODER_FAKE_CLAUDE_CTRL_FILE = ctrlFile;
+    try {
+      const thread = store.getThreads()[0];
+      await runner.startRun({ threadId: thread.id, prompt: "pick a db" });
+
+      await waitFor(() => runner.getPendingPermission(thread.id) != null);
+      const pending = runner.getPendingPermission(thread.id);
+      runner.respondPermission({
+        threadId: thread.id,
+        requestId: pending.requestId,
+        decision: "allow",
+        answers: {
+          "Which database?": "Postgres\nImage: /tmp/shot.png",
+        },
+      });
+      await waitFor(() => store.getThread(thread.id).status === "done");
+
+      const ctrl = JSON.parse(fs.readFileSync(ctrlFile, "utf8"));
+      assert.deepEqual(ctrl.response.response.updatedInput.answers, {
+        "Which database?": "Postgres\nImage: /tmp/shot.png",
+      });
+      assert.equal(ctrl.response.response.updatedInput.attachments, undefined);
+    } finally {
+      delete process.env.CODER_FAKE_CLAUDE_CTRL_FILE;
+    }
+  });
+
   it("surfaces an ExitPlanMode plan and leaves plan mode on approval", async () => {
     process.env.CODER_FAKE_CLAUDE_SCENARIO = "plan";
     const thread = store.getThreads()[0];
