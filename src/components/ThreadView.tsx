@@ -4697,7 +4697,6 @@ export const ThreadView = memo(function ThreadView({
   const [pinSaving, setPinSaving] = useState(false);
   const [pinLabelId, setPinLabelId] = useState<string | null>(null);
   const [pinLabelDraft, setPinLabelDraft] = useState("");
-  const [jumpMessageId, setJumpMessageId] = useState<string | null>(null);
   const pinDraftRef = useRef<ThreadMessagePin[] | null>(null);
   pinDraftRef.current = pinDraft;
   const pinWriteGenRef = useRef<Record<string, number>>({});
@@ -4813,6 +4812,7 @@ export const ThreadView = memo(function ThreadView({
   const [replyByThread, setReplyByThread] = useState<
     Record<string, ReplyTarget>
   >({});
+  // Shared reveal target for pinned messages and reply-source navigation.
   const [jumpMessageId, setJumpMessageId] = useState<string | null>(null);
   const replyTo = threadId ? (replyByThread[threadId] ?? null) : null;
   const replySourceGone = replyTo
