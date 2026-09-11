@@ -4,6 +4,8 @@ const { randomUUID } = require("node:crypto");
 const os = require("node:os");
 const path = require("node:path");
 const { runClaude } = require("./claude.js");
+const { deployGrokGuardrailOverlay } = require("./grok.js");
+const { grokGuardrailNotice } = require("./grok-guardrail-hook.js");
 const {
   runCodex,
   extractAgentMessageText,
@@ -478,21 +480,33 @@ function spawnAgentClaude(opts) {
     args = [...baseArgs, ...getClaudeMcpArgs({ projectPath: cwd })];
   }
 
+  let wrapEnv;
+  if (entry && entry.id === "grok" && crossesBoundary(opts.project)) {
+    const dest = deployGrokGuardrailOverlay({
+      project: opts.project, threadId: opts.threadId,
+    });
+    wrapEnv = {
+      GROK_HOME: dest,
+      GROK_CLAUDE_MCPS_ENABLED: "false",
+      GROK_CURSOR_MCPS_ENABLED: "false",
+    };
+  }
+  const agentBin = binary || (entry ? resolveBin(entry) : null) ||
+    process.env.CODER_CLAUDE_BIN || "claude";
+  const spawn = entry && entry.id === "grok"
+    ? resolveWorkflowSpawn(opts.project, agentBin, args, cwd, wrapEnv)
+    : { binary: agentBin, args, cwd };
   const handle = runClaude({
-    binary:
-      binary ||
-      (entry ? resolveBin(entry) : null) ||
-      process.env.CODER_CLAUDE_BIN ||
-      "claude",
-    args,
+    binary: spawn.binary,
+    args: spawn.args,
     prompt,
-    cwd,
+    cwd: spawn.cwd,
     permissionMode: permissionMode || "default",
     sessionId: resumeId,
     model: model || null,
     interactive,
     envExtra:
-      entry && entry.id === "grok" ? mergeGrokSpawnEnv(undefined) : undefined,
+      entry && entry.id === "grok" ? mergeGrokSpawnEnv(wrapEnv) : undefined,
     onEvent: (ev) => {
       if (!ev || typeof ev !== "object") return;
       const sid = realSessionId(claudeStreamSessionId(ev));
@@ -514,6 +528,15 @@ function spawnAgentClaude(opts) {
       }
       if (ev.type === "assistant" && ev.message && Array.isArray(ev.message.content)) {
         for (const block of ev.message.content) {
+          if (entry && entry.id === "grok" && block && block.type === "tool_use" &&
+              typeof opts.appendMessage === "function") {
+            const notice = grokGuardrailNotice({
+              toolName: block.name,
+              input: block.input,
+              worktreePath: (opts.project && opts.project.remotePath) || cwd,
+            });
+            if (notice) opts.appendMessage(opts.threadId, "event", notice, opts.runId || null);
+          }
           if (block && block.type === "text" && typeof block.text === "string") {
             text += block.text;
             if (typeof onText === "function") onText(text);
@@ -1479,6 +1502,10 @@ function spawnPhaseAgent(opts) {
 
   if (entry.kind === "claude-stream") {
     return spawnAgentClaude({
+      project,
+      threadId,
+      appendMessage,
+      runId,
       prompt,
       cwd,
       permissionMode,

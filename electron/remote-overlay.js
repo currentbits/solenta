@@ -18,6 +18,7 @@ const REMOTE_OVERLAY_KINDS = [
   "opencode-guardrails",
   "cursor-guardrails",
   "kimi-homes",
+  "grok-homes",
   "muse-homes",
 ];
 
@@ -148,7 +149,7 @@ function remoteOverlayReclaimScript(threadIds) {
     `  for kind in ${kinds}; do`,
     '    dest="$HOME/.solenta/$kind/$id"',
     '    case "$dest" in',
-    "      */.solenta/codex-homes/*|*/.solenta/opencode-guardrails/*|*/.solenta/cursor-guardrails/*|*/.solenta/kimi-homes/*|*/.solenta/muse-homes/*) ;;",
+    "      */.solenta/codex-homes/*|*/.solenta/opencode-guardrails/*|*/.solenta/cursor-guardrails/*|*/.solenta/kimi-homes/*|*/.solenta/grok-homes/*|*/.solenta/muse-homes/*) ;;",
     "      *) continue ;;",
     "    esac",
     '    if [ -L "$dest" ]; then',

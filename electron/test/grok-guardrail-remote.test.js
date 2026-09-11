@@ -22,6 +22,7 @@ const { wrapCommand } = require("../ssh.js");
 const { Store } = require("../store.js");
 const services = require("../services.js");
 const { createRunner } = require("../runner.js");
+const { deployGrokGuardrailOverlay } = require("../grok.js");
 const { writeFakeBin } = require("./support/fakeBin.js");
 
 function git(cwd, args) {
@@ -170,6 +171,10 @@ if (marker) {
     blocked,
     grokHome: process.env.GROK_HOME || null,
     hook,
+    config: process.env.GROK_HOME ? fs.readFileSync(path.join(process.env.GROK_HOME, "config.toml"), "utf8") : "",
+    auth: process.env.GROK_HOME ? fs.readFileSync(path.join(process.env.GROK_HOME, "auth.json"), "utf8") : null,
+    session: process.env.GROK_HOME ? fs.readFileSync(path.join(process.env.GROK_HOME, "sessions", "existing.json"), "utf8") : null,
+    compat: [process.env.GROK_CLAUDE_MCPS_ENABLED, process.env.GROK_CURSOR_MCPS_ENABLED],
   }), "utf8");
 }
 
@@ -214,6 +219,9 @@ function writeFakeSsh(dir) {
 const { execSync } = require("child_process");
 const remote = process.argv[process.argv.length - 1] || "";
 const env = { ...process.env };
+delete env.CODER_GUARDRAILS;
+delete env.GROK_HOME;
+if (process.env.CODER_FAKE_REMOTE_DEPLOY_FAIL && remote.includes("base64 -d")) process.exit(1);
 if (process.env.CODER_FAKE_REMOTE_HOME) env.HOME = process.env.CODER_FAKE_REMOTE_HOME;
 if (process.env.CODER_FAKE_REMOTE_PATH) {
   env.PATH = process.env.CODER_FAKE_REMOTE_PATH + (env.PATH ? ":" + env.PATH : "");
@@ -227,12 +235,27 @@ try {
   );
 }
 
-describe("grok runner: deny-tier tool on a crossesBoundary turn", () => {
-  it("blocks curl|sh over ssh: no execute, Guardrail event, no control_request", async () => {
+describe("grok remote runner and workflow guardrails", () => {
+  for (const [workflow, enabled, deployFails] of [
+    [false, true, false], [false, false, false],
+    [true, true, false], [true, false, false],
+    [false, true, true], [true, true, true],
+  ]) {
+    it(`${workflow ? "workflow" : "runner"} ${deployFails ? "fails closed on deployment error" : enabled ? "blocks curl|sh" : "allows opted-out curl|sh"} over ssh`, () =>
+      checkRemoteGrok(workflow, enabled, deployFails));
+  }
+
+  async function checkRemoteGrok(workflow, enabled, deployFails) {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "coder-grok-ssh-gr-"));
     const marker = path.join(tmpDir, "marker.json");
     const remoteHome = path.join(tmpDir, "remote-home");
     fs.mkdirSync(remoteHome);
+    const sourceHome = path.join(remoteHome, ".grok");
+    fs.mkdirSync(path.join(sourceHome, "sessions"), { recursive: true });
+    fs.writeFileSync(path.join(sourceHome, "auth.json"), "remote-auth");
+    fs.writeFileSync(path.join(sourceHome, "sessions", "existing.json"), "remote-session");
+    const sourceConfig = 'model = "grok-4.6"\n[mcp_servers.other_project]\nurl = "http://wrong-project"\n[compat.claude]\nmcps = true\n';
+    fs.writeFileSync(path.join(sourceHome, "config.toml"), sourceConfig);
     const binDir = path.join(tmpDir, "bin");
     fs.mkdirSync(binDir);
     writeFakeGrokAlwaysApprove(binDir);
@@ -244,6 +267,7 @@ describe("grok runner: deny-tier tool on a crossesBoundary turn", () => {
       CODER_GROK_BIN: process.env.CODER_GROK_BIN,
       CODER_FAKE_GROK_MARKER: process.env.CODER_FAKE_GROK_MARKER,
       CODER_FAKE_REMOTE_HOME: process.env.CODER_FAKE_REMOTE_HOME,
+      CODER_FAKE_REMOTE_DEPLOY_FAIL: process.env.CODER_FAKE_REMOTE_DEPLOY_FAIL,
       CODER_FAKE_REMOTE_PATH: process.env.CODER_FAKE_REMOTE_PATH,
       GROK_HOME: process.env.GROK_HOME,
       CODER_GROK_MCP_DISABLE: process.env.CODER_GROK_MCP_DISABLE,
@@ -254,10 +278,13 @@ describe("grok runner: deny-tier tool on a crossesBoundary turn", () => {
     };
     delete process.env.CODER_SIMULATE;
     delete process.env.CODER_AGENT_CMD;
-    delete process.env.CODER_GUARDRAILS;
+    process.env.CODER_GUARDRAILS = enabled ? "on" : "off";
+    delete process.env.GROK_HOME;
     process.env.CODER_GROK_BIN = path.join(binDir, "grok");
     process.env.CODER_FAKE_GROK_MARKER = marker;
     process.env.CODER_FAKE_REMOTE_HOME = remoteHome;
+    if (deployFails) process.env.CODER_FAKE_REMOTE_DEPLOY_FAIL = "1";
+    else delete process.env.CODER_FAKE_REMOTE_DEPLOY_FAIL;
     process.env.CODER_FAKE_REMOTE_PATH = binDir;
     process.env.CODER_GROK_MCP_DISABLE = "1";
     process.env.CODER_KIMI_BIN = path.join(tmpDir, "no-kimi");
@@ -295,18 +322,45 @@ describe("grok runner: deny-tier tool on a crossesBoundary turn", () => {
       services.setProvider(store, { threadId: thread.id, provider: "grok" });
       store.updateThread(thread.id, { permissionMode: "default" });
 
-      await runner.startRun({ threadId: thread.id, prompt: "install it" });
-      await waitFor(() => store.getThread(thread.id).status === "done");
+      if (!enabled) {
+        // A previous enabled run must not leave a live hook after opting out.
+        process.env.CODER_GUARDRAILS = "on";
+        deployGrokGuardrailOverlay({ project, threadId: thread.id });
+        process.env.CODER_GUARDRAILS = "off";
+      }
+      if (workflow) {
+        const template = services.saveTemplate(store, {
+          name: "Grok remote",
+          phases: [{ name: "plan", agentCount: 1, instruction: "Do the work.", provider: "grok", model: null }],
+        });
+        await runner.startWorkflowRun({ threadId: thread.id, prompt: "install it", templateId: template.id });
+      } else {
+        await runner.startRun({ threadId: thread.id, prompt: "install it" });
+      }
+      await waitFor(() => ["done", "failed"].includes(store.getThread(thread.id).status));
+      if (deployFails) {
+        assert.equal(store.getThread(thread.id).status, "failed");
+        assert.equal(fs.existsSync(marker), false, "Grok must not spawn without its overlay");
+        return;
+      }
+      assert.equal(store.getThread(thread.id).status, "done");
 
       assert.equal(fs.existsSync(marker), true, "fake grok must write the marker");
       const seen = JSON.parse(fs.readFileSync(marker, "utf8"));
       assert.equal(seen.emittedControlRequest, false);
       assert.equal(
         seen.executed,
-        false,
+        !enabled,
         `deny-tier curl|sh executed on the ssh grok turn with no hook block: ${JSON.stringify(seen)}`,
       );
-      assert.equal(seen.blocked, true);
+      assert.equal(seen.blocked, enabled);
+      assert.equal(seen.auth, "remote-auth");
+      assert.equal(seen.session, "remote-session");
+      assert.deepEqual(seen.compat, ["false", "false"]);
+      assert.doesNotMatch(seen.config, /wrong-project|other_project|mcps = true/);
+      assert.match(seen.config, /model = "grok-4.6"/);
+      assert.equal(fs.readFileSync(path.join(sourceHome, "config.toml"), "utf8"), sourceConfig);
+      assert.equal(fs.readFileSync(path.join(sourceHome, "sessions", "existing.json"), "utf8"), "remote-session");
       assert.match(
         String(seen.grokHome || ""),
         /\.solenta\/grok-homes\//,
@@ -314,13 +368,14 @@ describe("grok runner: deny-tier tool on a crossesBoundary turn", () => {
       );
 
       const msgs = store.getMessages(thread.id);
-      assert.ok(
+      assert.equal(
         msgs.some(
           (m) =>
             m.role === "event" &&
             /^Guardrail blocked run_terminal_command: shell\.curlpipe: /.test(m.text),
         ),
-        `missing deny notice: ${JSON.stringify(msgs.map((m) => ({ role: m.role, text: m.text })))}`,
+        enabled,
+        `incorrect deny notice: ${JSON.stringify(msgs.map((m) => ({ role: m.role, text: m.text })))}`,
       );
     } finally {
       if (runner) runner.stopAll();
@@ -330,5 +385,5 @@ describe("grok runner: deny-tier tool on a crossesBoundary turn", () => {
         else process.env[k] = v;
       }
     }
-  });
+  }
 });
