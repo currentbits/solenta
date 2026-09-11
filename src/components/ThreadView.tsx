@@ -44,7 +44,6 @@ import type {
   PrInfo,
   PrTemplateResult,
   PendingPermissionInfo,
-  PendingQuestion,
   PermissionDecision,
   PermissionMode,
   CliSlashCommand,
@@ -126,6 +125,9 @@ import {
   type ToolGroup,
 } from "../toolGroups";
 import { RunArtifacts } from "./RunArtifacts";
+import { QuestionPrompt } from "./QuestionPrompt";
+import { formatQuestionAnswer } from "../questionAnswer";
+import { supportsImagesForModel } from "../modelPicker";
 import {
   TurnDiffPanel,
   type DiffViewMode,
@@ -2484,203 +2486,7 @@ function NextGitActionButton({
   );
 }
 
-/**
- * Answer text for a persisted question card (issue #647). The agent's turn is
- * already over, so this is an ordinary user message — and it repeats the
- * question, because on a session that could not resume it is the only record
- * of what was being answered.
- */
-export function formatQuestionAnswer(answers: Record<string, string>): string {
-  const lines = Object.entries(answers)
-    .filter(([, picked]) => picked)
-    .map(([question, picked]) => `${question}\n→ ${picked}`);
-  return lines.length ? `Answering your question:\n\n${lines.join("\n\n")}` : "";
-}
-
-/**
- * Option picker for an agent question. Options answer with a click or the 1-9
- * keys; a lone single-select question submits immediately, everything else
- * collects picks and submits together. Free text via "Other".
- *
- * Two sources feed the same card (issue #647): claude's blocking
- * AskUserQuestion permission prompt, where answering resumes the live run, and
- * the persisted thread.pendingQuestion left behind by grok/kimi, where
- * answering is simply the next message. Hence callbacks rather than a
- * pendingPermission — the picker does not care which one it is driving.
- */
-function QuestionPrompt({
-  questions,
-  onAnswer,
-  onDismiss,
-}: {
-  questions: PendingQuestion[];
-  onAnswer: (answers: Record<string, string>) => void | Promise<void>;
-  onDismiss: () => void | Promise<void>;
-}) {
-  const [picked, setPicked] = useState<Record<number, string[]>>({});
-  const [other, setOther] = useState<Record<number, string>>({});
-  const [sent, setSent] = useState(false);
-
-  const answerFor = useCallback(
-    (i: number): string => {
-      const parts = [...(picked[i] ?? [])];
-      const extra = (other[i] ?? "").trim();
-      if (extra) parts.push(extra);
-      return parts.join(", ");
-    },
-    [picked, other],
-  );
-  const allAnswered = questions.every((_, i) => answerFor(i) !== "");
-  // A lone single-select question answers straight from the click/keypress.
-  const instant = questions.length === 1 && !questions[0].multiSelect;
-
-  const submit = useCallback(
-    (override?: { index: number; label: string }) => {
-      if (sent) return;
-      const answers: Record<string, string> = {};
-      questions.forEach((q, i) => {
-        answers[q.question] =
-          override && override.index === i ? override.label : answerFor(i);
-      });
-      setSent(true);
-      void onAnswer(answers);
-    },
-    [sent, questions, answerFor, onAnswer],
-  );
-
-  const choose = useCallback(
-    (qi: number, label: string) => {
-      if (instant) {
-        submit({ index: qi, label });
-        return;
-      }
-      setPicked((prev) => {
-        const cur = prev[qi] ?? [];
-        const next = questions[qi].multiSelect
-          ? cur.includes(label)
-            ? cur.filter((l) => l !== label)
-            : [...cur, label]
-          : [label];
-        return { ...prev, [qi]: next };
-      });
-    },
-    [instant, questions, submit],
-  );
-
-  // 1-9 pick an option of the first unanswered question; Enter submits.
-  useEffect(() => {
-    const onKey = (ev: KeyboardEvent) => {
-      const t = ev.target as HTMLElement | null;
-      if (
-        t &&
-        (t.tagName === "INPUT" ||
-          t.tagName === "TEXTAREA" ||
-          t.isContentEditable)
-      ) {
-        return;
-      }
-      if (ev.metaKey || ev.ctrlKey || ev.altKey) return;
-      if (ev.key === "Enter") {
-        if (allAnswered) {
-          ev.preventDefault();
-          submit();
-        }
-        return;
-      }
-      const n = Number(ev.key);
-      if (!Number.isInteger(n) || n < 1) return;
-      let qi = questions.findIndex((_, i) => answerFor(i) === "");
-      if (qi < 0) qi = questions.length - 1;
-      const opt = questions[qi]?.options[n - 1];
-      if (!opt) return;
-      ev.preventDefault();
-      choose(qi, opt.label);
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [questions, answerFor, allAnswered, choose, submit]);
-
-  return (
-    <div
-      className={styles.permissionCard}
-      role="alertdialog"
-      aria-label="Agent question"
-    >
-      {questions.map((q, qi) => (
-        <div key={qi} className={styles.questionBlock}>
-          <div className={styles.permissionHead}>
-            {q.header && (
-              <span className={styles.questionChip}>{q.header}</span>
-            )}
-            {q.question}
-          </div>
-          <div className={styles.questionOptions}>
-            {q.options.map((opt, oi) => {
-              const isPicked = (picked[qi] ?? []).includes(opt.label);
-              return (
-                <button
-                  key={oi}
-                  type="button"
-                  className={styles.questionOption}
-                  data-picked={isPicked || undefined}
-                  onClick={() => choose(qi, opt.label)}
-                >
-                  <span className={styles.questionKey}>{oi + 1}</span>
-                  <span className={styles.questionText}>
-                    <span className={styles.questionLabel}>{opt.label}</span>
-                    {opt.description && (
-                      <span className={styles.questionDesc}>
-                        {opt.description}
-                      </span>
-                    )}
-                  </span>
-                </button>
-              );
-            })}
-            <input
-              type="text"
-              className={styles.questionOther}
-              placeholder="Other…"
-              value={other[qi] ?? ""}
-              onChange={(ev) =>
-                setOther((prev) => ({ ...prev, [qi]: ev.target.value }))
-              }
-              onKeyDown={(ev) => {
-                if (ev.key === "Enter" && answerFor(qi) !== "" && allAnswered) {
-                  ev.preventDefault();
-                  submit();
-                }
-              }}
-            />
-          </div>
-        </div>
-      ))}
-      <div className={styles.permissionActions}>
-        {(!instant || (other[0] ?? "").trim() !== "") && (
-          <button
-            type="button"
-            className={styles.permissionAllow}
-            disabled={!allAnswered || sent}
-            onClick={() => submit()}
-          >
-            Answer
-          </button>
-        )}
-        <button
-          type="button"
-          className={styles.permissionDeny}
-          disabled={sent}
-          onClick={() => {
-            setSent(true);
-            void onDismiss();
-          }}
-        >
-          Dismiss
-        </button>
-      </div>
-    </div>
-  );
-}
+export { formatQuestionAnswer } from "../questionAnswer";
 
 /**
  * Plan approval (ExitPlanMode): the plan rendered as markdown in the prompt
@@ -4813,7 +4619,6 @@ export const ThreadView = memo(function ThreadView({
   const [replyByThread, setReplyByThread] = useState<
     Record<string, ReplyTarget>
   >({});
-  const [jumpMessageId, setJumpMessageId] = useState<string | null>(null);
   const replyTo = threadId ? (replyByThread[threadId] ?? null) : null;
   const replySourceGone = replyTo
     ? replySourceUnavailable(
@@ -6427,6 +6232,20 @@ export const ThreadView = memo(function ThreadView({
   }
 
   const { thread } = detail;
+  const remoteQuestionFiles = Boolean(project?.remoteHost);
+  const questionAttach = {
+    threadId: thread.id,
+    allowAttachments: Boolean(onPickAttachments) && !remoteQuestionFiles,
+    remoteUnsupported: remoteQuestionFiles,
+    includeImages: supportsImagesForModel(
+      providers.find((p) => p.id === thread.provider),
+      thread.model,
+    ),
+    onPickAttachments,
+    onSaveAttachmentImage,
+    onLoadAttachmentImage,
+    onDropAttachmentFiles,
+  };
   const savedPins = pinsOf(thread);
   const displayPins = pinDraft ?? pinFailedRef.current[thread.id]?.pins ?? savedPins;
   const pinnedIds = new Set(displayPins.map((p) => p.messageId));
@@ -7651,24 +7470,28 @@ export const ThreadView = memo(function ThreadView({
         */}
         {!detail.pendingPermission && thread.pendingQuestion ? (
           <QuestionPrompt
-            key={thread.pendingQuestion.id}
+            key={`${thread.id}:${thread.pendingQuestion.id}`}
+            requestId={thread.pendingQuestion.id}
             questions={thread.pendingQuestion.questions}
-            onAnswer={(answers) => {
+            onAnswer={async (answers, attachments) => {
               // The Answer button gates on every question being answered, so
               // an empty text means nothing was picked — never start a turn
-              // with an empty prompt.
+              // with an empty prompt. Paths in the answer values keep
+              // file-only submits valid (issue #1219).
               const text = formatQuestionAnswer(answers);
-              if (text) void onStartRun(text);
+              if (text) await onStartRun(text, undefined, attachments);
             }}
             onDismiss={() => onClearQuestion()}
+            {...questionAttach}
           />
         ) : null}
 
         {detail.pendingPermission?.questions?.length ? (
           <QuestionPrompt
-            key={detail.pendingPermission.requestId}
+            key={`${thread.id}:${detail.pendingPermission.requestId}`}
+            requestId={detail.pendingPermission.requestId}
             questions={detail.pendingPermission.questions}
-            onAnswer={(answers) =>
+            onAnswer={async (answers) =>
               onRespondPermission(
                 detail.pendingPermission!.requestId,
                 "allow",
@@ -7678,6 +7501,7 @@ export const ThreadView = memo(function ThreadView({
             onDismiss={() =>
               onRespondPermission(detail.pendingPermission!.requestId, "deny")
             }
+            {...questionAttach}
           />
         ) : detail.pendingPermission?.plan ? (
           <PlanPrompt

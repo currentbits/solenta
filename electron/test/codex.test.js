@@ -616,7 +616,7 @@ describe("runner codex provider", () => {
     assert.match(turnPrompt(rpc), /second/);
   });
 
-  it("isolates CODEX_HOME and bypasses hook trust for classifyTool (#813)", async () => {
+  it("isolates CODEX_HOME and persists overlay hook trust without the exec-only flag (#1311)", async () => {
     runner.stopAll();
     runner = createRunner({
       store,
@@ -633,15 +633,21 @@ describe("runner codex provider", () => {
     await waitFor(() => store.getThread(thread.id).status === "done");
 
     const argv = JSON.parse(fs.readFileSync(argvFile, "utf8"));
-    assert.ok(
+    // Live Codex 0.153.4 `app-server` rejects this exec-only flag (exit 2).
+    assert.equal(
       argv.includes("--dangerously-bypass-hook-trust"),
+      false,
       JSON.stringify(argv),
     );
+    assert.ok(argv.includes("app-server"), JSON.stringify(argv));
     assert.ok(argv.includes("features.hooks=true"), JSON.stringify(argv));
     assert.match(turnPrompt(readRpc(rpcFile)), /guard me/);
 
     const dest = path.join(tmpDir, "codex-homes", thread.id);
     assert.ok(fs.existsSync(path.join(dest, "hooks.json")));
+    const cfg = fs.readFileSync(path.join(dest, "config.toml"), "utf8");
+    assert.match(cfg, /trusted_hash = "sha256:[0-9a-f]{64}"/);
+    assert.match(cfg, /hooks\.json:pre_tool_use:0:0/);
     const env = JSON.parse(fs.readFileSync(argvFile + ".env.json", "utf8"));
     assert.equal(env.CODEX_HOME, dest);
   });
