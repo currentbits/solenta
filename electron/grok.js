@@ -159,6 +159,61 @@ function grokMcpToml(mcpServers) {
   return parts.join("\n");
 }
 
+// Shared config isolation for local and remote homes.
+function grokOverlayToml(base, mcpServers) {
+  const mcp = grokMcpToml(mcpServers);
+  const compat = [
+    "[compat.claude]",
+    "mcps = false",
+    "",
+    "[compat.cursor]",
+    "mcps = false",
+    "",
+  ].join("\n");
+  const chunks = [];
+  if (base.trim()) chunks.push(base.replace(/\s+$/, ""));
+  chunks.push(compat.trimEnd());
+  if (mcp.trim()) chunks.push(mcp.replace(/\s+$/, ""));
+  return chunks.join("\n\n") + "\n";
+}
+
+/** Deploy on the far side of SSH/WSL; never copy host credentials or MCP URLs. */
+function deployGrokGuardrailOverlay({ project, threadId }) {
+  const { execCommand, posixQuote } = require("./ssh.js");
+  const {
+    probeRemoteHome, remoteOverlayDest, writeRemoteOverlay,
+  } = require("./remote-overlay.js");
+  const dest = remoteOverlayDest(probeRemoteHome(project), threadId, "grok-homes");
+  if (!dest || dest.includes("..")) throw new Error("remote GROK_HOME dest unusable");
+  const base = execCommand(
+    project, "sh", ["-c",
+      `mkdir -p ${posixQuote(dest)} && chmod 700 ${posixQuote(dest)} && ` +
+      'src="${GROK_HOME:-$HOME/.grok}" && if [ -f "$src/config.toml" ]; then cat "$src/config.toml"; fi',
+    ], { encoding: "utf8" },
+  );
+  let toml = grokOverlayToml(stripGrokConfigForOverlay(base), {});
+  const files = {};
+  if (guardrailsEnabled()) {
+    const command = grokGuardrailHookCommand({
+      nodePath: "node",
+      hookPath: `${dest}/grok-guardrail-hook.js`,
+      posix: true,
+    });
+    toml = injectGrokGuardrailHook(toml, command);
+    for (const name of ["grok-guardrail-hook.js", "guardrails.js"]) {
+      files[name] = fs.readFileSync(path.join(__dirname, name), "utf8");
+    }
+  }
+  files["config.toml"] = toml;
+  writeRemoteOverlay(project, dest, files, [
+    `chmod 600 ${posixQuote(`${dest}/config.toml`)}`,
+    // Create sessions before linking so a first remote run survives overlay GC.
+    'src="${GROK_HOME:-$HOME/.grok}"; mkdir -p "$src/sessions"',
+    `for f in ${GROK_HOME_LINKS.map(posixQuote).join(" ")}; do dst=${posixQuote(dest)}/"$f"; if [ -e "$src/$f" ] && [ ! -e "$dst" ] && [ ! -L "$dst" ]; then ln -s "$src/$f" "$dst"; fi; done`,
+  ]);
+  return dest;
+}
+
 function writeSecretFile(file, data) {
   fs.writeFileSync(file, data, { mode: 0o600, encoding: "utf8" });
   try {
@@ -200,20 +255,7 @@ function materializeGrokHome(opts) {
     }
   }
 
-  const mcp = grokMcpToml(opts.mcpServers || {});
-  const compat = [
-    "[compat.claude]",
-    "mcps = false",
-    "",
-    "[compat.cursor]",
-    "mcps = false",
-    "",
-  ].join("\n");
-  const chunks = [];
-  if (base.trim()) chunks.push(base.replace(/\s+$/, ""));
-  chunks.push(compat.trimEnd());
-  if (mcp.trim()) chunks.push(mcp.replace(/\s+$/, ""));
-  let toml = chunks.join("\n\n") + "\n";
+  let toml = grokOverlayToml(base, opts.mcpServers || {});
 
   // #812: PreToolUse hook so classifyTool runs before grok `-p`
   // --always-approve executes a tool. Overlay config.toml only — never
@@ -359,6 +401,7 @@ function reclaimGrokHomes(opts) {
 
 module.exports = {
   materializeGrokHome,
+  deployGrokGuardrailOverlay,
   reclaimGrokHomes,
   stripGrokConfigForOverlay,
   grokMcpToml,

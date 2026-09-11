@@ -1624,6 +1624,10 @@ describe("Composer drill-down picker", () => {
   });
 
   it("moves focus out of the composer; Tab stays inside; Escape restores", async () => {
+    // Provider list is a listbox: one chrome tab stop (the <ul>), options
+    // tabIndex=-1, arrows move the highlight. The Best-of-N wrap
+    // (assert.notEqual after two Tabs) does not apply until drill-in adds
+    // Back + search. See useModalFocus(modelOpen, ref, false).
     const h = makeHarness();
     const m = await mount(composer(h, { provider: "claude", model: null }));
     const opener = m.query('button[aria-label^="Model:"]') as HTMLElement | null;
@@ -1632,30 +1636,53 @@ describe("Composer drill-down picker", () => {
     await m.click(opener);
     const dialog = m.query('[aria-label="Model picker"]') as HTMLElement | null;
     assert.ok(dialog, "model picker");
+    const listbox = m.query(
+      '[role="listbox"][aria-label="Provider"]',
+    ) as HTMLElement | null;
+    assert.ok(listbox, "provider listbox");
+    assert.equal(
+      document.activeElement,
+      listbox,
+      "opening must focus the listbox so arrows work",
+    );
+
+    const optionButtons = [
+      ...dialog.querySelectorAll<HTMLButtonElement>('[role="option"] button'),
+    ];
+    assert.ok(optionButtons.length > 0, "the list has options");
     assert.ok(
-      dialog.contains(document.activeElement),
-      "opening the dialog must move focus inside it",
+      optionButtons.every((el) => el.tabIndex === -1),
+      "options are not tab stops; arrows own the list",
     );
 
     await m.pressFocused("Tab");
-    const first = document.activeElement as HTMLElement;
-    assert.ok(dialog.contains(first), "Tab stays inside");
+    assert.equal(
+      document.activeElement,
+      listbox,
+      "Tab stays on the listbox (the only chrome tab stop at this level)",
+    );
+    assert.notEqual(document.activeElement, opener);
+    assert.notEqual(
+      document.activeElement && document.activeElement.tagName,
+      "TEXTAREA",
+      "Tab must not leak to the composer",
+    );
 
     await m.pressFocused("Tab");
-    const second = document.activeElement as HTMLElement;
-    assert.ok(dialog.contains(second), "second Tab stays inside");
-    assert.notEqual(second, first);
+    assert.equal(
+      document.activeElement,
+      listbox,
+      "second Tab wraps on the same listbox, not onto a row button",
+    );
+    assert.ok(dialog.contains(document.activeElement), "second Tab stays inside");
 
-    let guard = 0;
-    while (document.activeElement !== first && guard < 40) {
-      await m.pressFocused("Tab");
-      assert.ok(
-        dialog.contains(document.activeElement),
-        "Tab stays inside while wrapping",
-      );
-      guard += 1;
-    }
-    assert.equal(document.activeElement, first, "Tab wraps inside the dialog");
+    const before = m.query('[data-highlighted="true"]')?.textContent;
+    await m.pressFocused("ArrowDown");
+    assert.notEqual(
+      m.query('[data-highlighted="true"]')?.textContent,
+      before,
+      "Tab must not break listbox arrow navigation",
+    );
 
     await m.pressFocused("Escape");
     assert.equal(m.query('[aria-label="Model picker"]'), null);

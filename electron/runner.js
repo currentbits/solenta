@@ -23,7 +23,7 @@ const {
 } = require("./codexApprovals.js");
 const kimiParse = require("./kimi.js");
 const { runKimi, materializeKimiHome, deployKimiGuardrailOverlay } = kimiParse;
-const { materializeGrokHome } = require("./grok.js");
+const { materializeGrokHome, deployGrokGuardrailOverlay } = require("./grok.js");
 const cursorParse = require("./cursor.js");
 const { runCursor, materializeCursorHome } = cursorParse;
 const { heartbeatLane } = require("./mergeQueue.js");
@@ -4076,24 +4076,25 @@ function createRunner(opts) {
     if (entryDef.id === "grok") {
       // Isolated GROK_HOME so this turn cannot inherit other projects'
       // MCP URLs or a user-global last-write-wins bind (issue #706).
-      // Skipped for ssh/WSL (the overlay lives on this host) and when
-      // userDataPath is unset (tests). Those paths fall back to
-      // `grok mcp add` with bound URLs, awaited so a stall cannot race
-      // this spawn.
-      if (userDataPath && !crossesBoundary(project)) {
+      // Remote homes are deployed on the far side of SSH/WSL.
+      if (userDataPath || crossesBoundary(project)) {
         try {
           const os = require("node:os");
-          const dest = path.join(userDataPath, "grok-homes", threadId);
-          const sourceHome =
-            process.env.GROK_HOME || path.join(os.homedir(), ".grok");
-          materializeGrokHome({
-            dest,
-            sourceHome,
-            mcpServers: kimiMcpServersForRun({
-              projectId: thread.projectId,
-              projectPath: localCwd || project.path,
-            }),
-          });
+          const dest = crossesBoundary(project)
+            ? deployGrokGuardrailOverlay({ project, threadId })
+            : path.join(userDataPath, "grok-homes", threadId);
+          if (!crossesBoundary(project)) {
+            const sourceHome =
+              process.env.GROK_HOME || path.join(os.homedir(), ".grok");
+            materializeGrokHome({
+              dest,
+              sourceHome,
+              mcpServers: kimiMcpServersForRun({
+                projectId: thread.projectId,
+                projectPath: localCwd || project.path,
+              }),
+            });
+          }
           grokHomeEnv = {
             GROK_HOME: dest,
             GROK_CLAUDE_MCPS_ENABLED: "false",
@@ -4122,12 +4123,11 @@ function createRunner(opts) {
           });
           await whenGrokMcpIdle();
         } catch {
-          // Overlay is the Solenta-run path; a bind miss on ssh/WSL must
-          // not kill the run. Failures stay on the grok mcp queue logs.
+          // Legacy path without userDataPath; failures stay on the MCP queue logs.
         }
       }
     }
-    const spawn = resolveSpawn(project, binary, args, localCwd);
+    const spawn = resolveSpawn(project, binary, args, localCwd, grokHomeEnv);
 
     if (abortIfCancelled(threadId, runId)) return { runId };
     const entry = claimPreparingRun(threadId, runId, {
