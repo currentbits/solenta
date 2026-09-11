@@ -1471,6 +1471,40 @@ describe("SettingsModal default provider and quota failover (#711)", () => {
   });
 });
 
+describe("SettingsModal guardrails", () => {
+  it("finds guardrails in search, saves off/on, and reports save failures", async () => {
+    const patches: Partial<AppSettings>[] = [];
+    let failSave = false;
+    function Harness() {
+      const [settings, setSettings] = useState({ guardrailsEnabled: true } as AppSettings);
+      return modal({
+        settings,
+        onSaveSettings: async (patch) => {
+          if (failSave) throw new Error("Could not save guardrails");
+          patches.push(patch);
+          const next = { ...settings, ...patch };
+          setSettings(next);
+          return next;
+        },
+      });
+    }
+    const m = await mount(<Harness />);
+    await m.type(m.query("[data-settings-search]") as HTMLInputElement, "guardrails");
+    await m.click(m.query('[data-settings-nav="advanced"]')!);
+    const box = m.query("[data-guardrails-enabled]") as HTMLInputElement;
+    assert.equal(box.checked, true);
+    await m.click(box);
+    assert.equal(box.checked, false);
+    await m.click(box);
+    assert.equal(box.checked, true);
+    assert.deepEqual(patches, [{ guardrailsEnabled: false }, { guardrailsEnabled: true }]);
+    failSave = true;
+    await m.click(box);
+    assert.equal(box.checked, true);
+    assert.ok(m.text().includes("Could not save guardrails"));
+  });
+});
+
 describe("SettingsModal confirm-quit-with-active-work (#1195)", () => {
   it("saves the ask-before-quit toggle", async () => {
     const patches: Partial<AppSettings>[] = [];

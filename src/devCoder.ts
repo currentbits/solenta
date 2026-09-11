@@ -1695,6 +1695,7 @@ function buildDevCoder(): CoderApi {
   let stayAwake: AppSettings["stayAwake"] = "agent";
   let quotaWaitAutoResume = true;
   let confirmQuitWithActiveWork = true;
+  let guardrailsEnabled = true;
   let otel: OtelSettings = { endpoint: null, headers: {}, claudeMetrics: false };
   let webhook: WebhookSettings = {
     url: null,
@@ -2570,6 +2571,7 @@ function buildDevCoder(): CoderApi {
           stayAwake,
           quotaWaitAutoResume,
           confirmQuitWithActiveWork,
+          guardrailsEnabled,
           agentProfiles: agentProfiles.map((p) => ({ ...p })),
           defaultOrchestratorProfileId,
           subagentPool: {
@@ -2724,6 +2726,12 @@ function buildDevCoder(): CoderApi {
           }
           confirmQuitWithActiveWork = patch.confirmQuitWithActiveWork;
         }
+        if (Object.prototype.hasOwnProperty.call(patch, "guardrailsEnabled")) {
+          if (typeof patch.guardrailsEnabled !== "boolean") {
+            throw new Error("guardrailsEnabled must be a boolean");
+          }
+          guardrailsEnabled = patch.guardrailsEnabled;
+        }
         if (Object.prototype.hasOwnProperty.call(patch, "agentProfiles")) {
           if (!Array.isArray(patch.agentProfiles)) {
             throw new Error("agentProfiles must be an array");
@@ -2829,6 +2837,7 @@ function buildDevCoder(): CoderApi {
           stayAwake,
           quotaWaitAutoResume,
           confirmQuitWithActiveWork,
+          guardrailsEnabled,
           agentProfiles: agentProfiles.map((p) => ({ ...p })),
           defaultOrchestratorProfileId,
           subagentPool: {

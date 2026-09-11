@@ -2586,6 +2586,8 @@ export interface AppSettings {
    * Default on; only an explicit false opts out.
    */
   confirmQuitWithActiveWork: boolean;
+  /** Solenta tool, injection, and secret checks. Default on; false opts out. */
+  guardrailsEnabled: boolean;
   /**
    * PR size cap in changed lines (additions + deletions vs the base branch),
    * enforced when a PR is created from the app (issue #402, DORA small

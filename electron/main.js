@@ -530,6 +530,8 @@ app.whenReady().then(async () => {
         );
       }
 
+      // Hooks inherit this path; the memory server also resolves it beside its config.
+      process.env.CODER_GUARDRAILS_PATH = path.join(userData, "guardrails-enabled");
       memorySupervisor = createMemorySupervisor({
         userDataPath: userData,
         appPath,
@@ -550,7 +552,9 @@ app.whenReady().then(async () => {
       configureDefaultSecrets({
         auditPath: path.join(userData, "secrets-audit.jsonl"),
       });
-      return new Store(path.join(userData, "coder-store.json"));
+      const loaded = new Store(path.join(userData, "coder-store.json"));
+      require("./guardrails.js").setGuardrailsEnabled(loaded.getSettings().guardrailsEnabled);
+      return loaded;
     },
   });
 

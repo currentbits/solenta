@@ -99,8 +99,8 @@ const PANE_META: Record<
   },
   advanced: {
     label: "Advanced",
-    hint: "Telemetry export and importing Vibe Kanban boards.",
-    keywords: "otel opentelemetry otlp traces headers vibe kanban import",
+    hint: "Guardrails, telemetry export, and importing Vibe Kanban boards.",
+    keywords: "guardrails safety security protection tools secrets injection otel opentelemetry otlp traces headers vibe kanban import",
   },
 };
 
@@ -1483,6 +1483,41 @@ export function SettingsModal({
                 </p>
               </div>
             )}
+          </section>
+          )}
+
+          {pane === "advanced" && (
+          <section className={styles.section}>
+            <h3 className={styles.sectionLabel}>Guardrails</h3>
+            <div className={styles.field}>
+              <label className={styles.fieldRow}>
+                <input
+                  type="checkbox"
+                  data-guardrails-enabled=""
+                  checked={settings?.guardrailsEnabled !== false}
+                  disabled={saving || settings == null}
+                  aria-describedby="guardrails-note"
+                  onChange={(e) => {
+                    setError(null);
+                    void onSaveSettings({ guardrailsEnabled: e.target.checked }).catch((err) => {
+                      setError(
+                        err instanceof Error && err.message
+                          ? err.message
+                          : "Failed to save settings",
+                      );
+                    });
+                  }}
+                />
+                <span>Solenta guardrails</span>
+              </label>
+              <p className={styles.note} id="guardrails-note">
+                Check agent tools for risky commands and protected files, scan
+                incoming content for prompt injection, and check outgoing changes
+                for secrets. Turning this off disables these checks across all
+                projects. Provider permission settings still apply. Restart active
+                agent runs to apply changes everywhere.
+              </p>
+            </div>
           </section>
           )}
 

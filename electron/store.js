@@ -521,6 +521,7 @@ function normalizeSettings(raw) {
     stayAwake: "agent",
     quotaWaitAutoResume: true,
     confirmQuitWithActiveWork: true,
+    guardrailsEnabled: true,
     prDiffCapLines: DEFAULT_PR_DIFF_CAP_LINES,
     agentProfiles: [],
     defaultOrchestratorProfileId: null,
@@ -653,6 +654,8 @@ function normalizeSettings(raw) {
   settings.confirmQuitWithActiveWork =
     /** @type {{ confirmQuitWithActiveWork?: unknown }} */ (obj)
       .confirmQuitWithActiveWork !== false;
+  settings.guardrailsEnabled =
+    /** @type {{ guardrailsEnabled?: unknown }} */ (obj).guardrailsEnabled !== false;
   settings.autoSettleOnMerge =
     /** @type {{ autoSettleOnMerge?: unknown }} */ (obj).autoSettleOnMerge !==
     false;
@@ -3392,6 +3395,7 @@ class Store {
       stayAwake: n.stayAwake,
       quotaWaitAutoResume: n.quotaWaitAutoResume,
       confirmQuitWithActiveWork: n.confirmQuitWithActiveWork,
+      guardrailsEnabled: n.guardrailsEnabled,
       prDiffCapLines: n.prDiffCapLines,
       agentProfiles: n.agentProfiles,
       defaultOrchestratorProfileId: n.defaultOrchestratorProfileId,
@@ -3647,6 +3651,13 @@ class Store {
         throw new Error("confirmQuitWithActiveWork must be a boolean");
       }
       this.data.settings.confirmQuitWithActiveWork = v;
+    }
+    if (Object.prototype.hasOwnProperty.call(patch, "guardrailsEnabled")) {
+      const v = patch.guardrailsEnabled;
+      if (typeof v !== "boolean") {
+        throw new Error("guardrailsEnabled must be a boolean");
+      }
+      this.data.settings.guardrailsEnabled = v;
     }
     if (Object.prototype.hasOwnProperty.call(patch, "linearApiKey")) {
       const v = patch.linearApiKey;
