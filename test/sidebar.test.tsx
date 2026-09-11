@@ -1798,26 +1798,52 @@ describe("Sidebar status label + wait row", () => {
           title: "Fork: Import existing CLI agent sessions",
           status: "done",
           runStartedAt: null,
-          settledOverride: "settled",
+          prState: "MERGED",
         }),
       ]),
     );
     const card = m.query('[data-thread-card="w-settled"]');
     assert.ok(
       card,
-      "settled worker must stay next to the parent without opening Settled",
+      "auto-settled worker must stay next to the parent without opening Settled",
     );
     assert.equal(card!.getAttribute("data-nested"), "true");
     assert.equal(
       card!.getAttribute("data-settled"),
-      null,
-      "Active nest is a full card, not a Settled slim row",
+      "true",
+      "nested auto-settled card still reports settled so Settle is not a no-op",
     );
     assert.equal(
       m.query("[data-settled-shelf-toggle]"),
       null,
       "the only settled thread is nested under its parent, not in the shelf",
     );
+    m.unmount();
+  });
+
+  it("explicit settle files a worker to the Settled shelf (#1315)", async () => {
+    await clearSidebarStorage();
+    const m = await mount(
+      sidebar([
+        ORCH,
+        worker({
+          id: "w-settled",
+          title: "Fork: Import existing CLI agent sessions",
+          status: "done",
+          runStartedAt: null,
+          settledOverride: "settled",
+        }),
+      ]),
+    );
+    assert.equal(
+      m.query('[data-thread-card="w-settled"]'),
+      null,
+      "explicit settle must leave the Active nest",
+    );
+    await openSettledShelf(m);
+    const row = m.query('[data-thread-card="w-settled"]');
+    assert.ok(row, "explicitly settled worker is on the Settled shelf");
+    assert.equal(row!.getAttribute("data-settled"), "true");
     m.unmount();
   });
 
@@ -2100,7 +2126,7 @@ describe("Sidebar card anatomy + hover actions", () => {
           status: "done",
           handoffFrom: "orch",
           runStartedAt: null,
-          settledOverride: "settled",
+          prState: "MERGED",
           updatedAt: FRESH,
         }),
         thread({
@@ -2119,8 +2145,8 @@ describe("Sidebar card anatomy + hover actions", () => {
     assert.equal(card!.getAttribute("data-nested"), "true");
     assert.equal(
       card!.getAttribute("data-settled"),
-      null,
-      "pinned nest is a full card, not a Settled slim row",
+      "true",
+      "nested auto-settled card still reports settled so Settle is not a no-op",
     );
     const order = cardTitles(m);
     const pinIdx = order.indexOf("orch");

@@ -529,7 +529,7 @@ describe("buildFlatSidebar (T3 flat sidebar)", () => {
     assert.deepEqual(flat.active.map((t) => t.id), ["src", "fork", "old"]);
   });
 
-  it("keeps settled workers nested under an still-active parent", () => {
+  it("explicit settle files a worker to the Settled shelf even if the parent is still active", () => {
     const flat = buildFlatSidebar(
       [
         thread({
@@ -547,6 +547,32 @@ describe("buildFlatSidebar (T3 flat sidebar)", () => {
           status: "done",
           handoffFrom: "orch",
           settledOverride: "settled",
+        }),
+      ],
+      settleOpts,
+    );
+    assert.deepEqual(flat.active.map((t) => t.id), ["orch"]);
+    assert.deepEqual(flat.settled.map((t) => t.id), ["w-settled"]);
+  });
+
+  it("keeps settled workers nested under an still-active parent", () => {
+    const flat = buildFlatSidebar(
+      [
+        thread({
+          id: "orch",
+          projectId: "p1",
+          updatedAt: NOW,
+          createdAt: NOW - 2,
+          status: "idle",
+        }),
+        thread({
+          id: "w-settled",
+          projectId: "p1",
+          updatedAt: NOW,
+          createdAt: NOW - 1,
+          status: "done",
+          handoffFrom: "orch",
+          prState: "MERGED",
         }),
         thread({
           id: "unrelated-settled",
@@ -581,7 +607,7 @@ describe("buildFlatSidebar (T3 flat sidebar)", () => {
           createdAt: NOW - 2,
           status: "done",
           handoffFrom: "orch",
-          settledOverride: "settled",
+          prState: "MERGED",
         }),
         thread({
           id: "w1a",
@@ -590,7 +616,7 @@ describe("buildFlatSidebar (T3 flat sidebar)", () => {
           createdAt: NOW - 1,
           status: "done",
           handoffFrom: "w1",
-          settledOverride: "settled",
+          prState: "MERGED",
         }),
       ],
       settleOpts,
@@ -643,7 +669,7 @@ describe("buildFlatSidebar (T3 flat sidebar)", () => {
           createdAt: NOW - 1,
           status: "done",
           handoffFrom: "orch",
-          settledOverride: "settled",
+          prState: "MERGED",
         }),
         thread({
           id: "unrelated-settled",
@@ -679,7 +705,7 @@ describe("buildFlatSidebar (T3 flat sidebar)", () => {
           createdAt: NOW - 2,
           status: "done",
           handoffFrom: "orch",
-          settledOverride: "settled",
+          prState: "MERGED",
         }),
         thread({
           id: "w1a",
@@ -688,7 +714,7 @@ describe("buildFlatSidebar (T3 flat sidebar)", () => {
           createdAt: NOW - 1,
           status: "done",
           handoffFrom: "w1",
-          settledOverride: "settled",
+          prState: "MERGED",
         }),
       ],
       settleOpts,

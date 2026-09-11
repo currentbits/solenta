@@ -1,0 +1,53 @@
+{
+  "version": "0.19.0",
+  "buildSha": "769984bf",
+  "assets": [
+    {
+      "file": "assets/index-DjDI5FXs.js",
+      "sha256": "721d25274361b3b33def7ccd2436fddc56a6cc639c900c6a3d6b44760323573f"
+    },
+    {
+      "file": "assets/index-Dn1e7UYW.css",
+      "sha256": "6c41d6deef4895f0da6001003dbb59f811275f72521aada1a7084a1586026675"
+    }
+  ],
+  "method": "Installed distribution rendered by Electron; isolated demo data; no UI/CSS overrides",
+  "scenes": {
+    "overview": {
+      "width": 2880,
+      "height": 1600,
+      "crop": null,
+      "sha256": "9b46132a2c1219ab34902295fa014f4e2c4ee5b1a87c87dd88f51ab41d6bd632"
+    },
+    "composer": {
+      "width": 2880,
+      "height": 1600,
+      "crop": null,
+      "sha256": "d3f1fd5a2d26a6e84732f72c4fa728c1c6e1096b3b8e760bca537d1f2c60ca08"
+    },
+    "providers": {
+      "width": 2880,
+      "height": 1600,
+      "crop": "420:280:415:414",
+      "sha256": "44c00e124f8cc0237f926512b85bb905698279d938f1724eef852cc915abd2d8"
+    },
+    "memory": {
+      "width": 2880,
+      "height": 1600,
+      "crop": "380:475:1060:0",
+      "sha256": "2533914a59f474a3bc2341a12659ffc2067ab97c671e9e6f7fe9c14fd12d7b5f"
+    },
+    "workers": {
+      "width": 2880,
+      "height": 1600,
+      "crop": "380:285:1060:258",
+      "sha256": "037e6647ddd4cdee8cb47f1447cce246eca20774a68d32dcf1ec72746956f5fa"
+    },
+    "git": {
+      "width": 2880,
+      "height": 1600,
+      "crop": "1108:510:300:0",
+      "sha256": "427fd1ec4b1f72b176e61bc578ac616181cc15da2df09fce32a1f978ff59258a"
+    }
+  }
+}

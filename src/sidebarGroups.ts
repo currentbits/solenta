@@ -190,7 +190,9 @@ export function buildFlatSidebar(
     (a, b) => b.updatedAt - a.updatedAt || a.id.localeCompare(b.id),
   );
 
-  // Settled workers of a still-visible parent stay nested next to it.
+  // Auto-settled workers (merged PR, inactivity) of a still-visible parent
+  // stay nested next to it. An explicit settle override files the row to
+  // the Settled shelf — clicking Settle must leave Active (#1315).
   // Pinned is its own attachForks pass — a pinned ancestor must take the
   // child in the pinned block, not dump it as a disconnected Active row.
   const pinnedIds = new Set(pinned.map((t) => t.id));
@@ -219,6 +221,10 @@ export function buildFlatSidebar(
   const nestActive: ThreadInfo[] = [];
   const settledRest: ThreadInfo[] = [];
   for (const t of settled) {
+    if (t.settledOverride === "settled") {
+      settledRest.push(t);
+      continue;
+    }
     const kind = visibleAncestorKind(t);
     if (kind === "pinned") nestPinned.push(t);
     else if (kind === "active") nestActive.push(t);

@@ -1,0 +1,35 @@
+{
+  "name": "solenta-x-film",
+  "version": "1.0.0",
+  "description": "Original Solenta product trailer for X",
+  "repository": {},
+  "license": "UNLICENSED",
+  "private": true,
+  "dependencies": {
+    "@remotion/cli": "4.0.523",
+    "@remotion/media": "4.0.523",
+    "react": "19.2.3",
+    "react-dom": "19.2.3",
+    "remotion": "4.0.523"
+  },
+  "devDependencies": {
+    "@remotion/eslint-config-flat": "4.0.523",
+    "@types/react": "19.2.7",
+    "@types/web": "0.0.166",
+    "eslint": "9.19.0",
+    "prettier": "3.8.1",
+    "typescript": "5.9.3"
+  },
+  "scripts": {
+    "dev": "remotion studio",
+    "capture": "electron scripts/capture.mjs",
+    "score": "node scripts/score.mjs",
+    "lint": "eslint src && tsc",
+    "render": "remotion render src/index.ts Solenta out/solenta-x-trailer.mp4 --codec=h264 --video-bitrate=8M --audio-codec=aac --audio-bitrate=192k --pixel-format=yuv420p --concurrency=4 --color-space=bt709",
+    "check": "node scripts/check.mjs",
+    "preview:frames": "node scripts/preview.mjs"
+  },
+  "sideEffects": [
+    "*.css"
+  ]
+}
