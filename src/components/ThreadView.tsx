@@ -4503,6 +4503,7 @@ export const ThreadView = memo(function ThreadView({
   const [pinSaving, setPinSaving] = useState(false);
   const [pinLabelId, setPinLabelId] = useState<string | null>(null);
   const [pinLabelDraft, setPinLabelDraft] = useState("");
+  // Shared reveal target for pinned messages and reply-source navigation.
   const [jumpMessageId, setJumpMessageId] = useState<string | null>(null);
   const pinDraftRef = useRef<ThreadMessagePin[] | null>(null);
   pinDraftRef.current = pinDraft;
