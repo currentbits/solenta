@@ -58,6 +58,7 @@
       <a href="#memory">Shared memory</a>
       <a href="#views">Kanban, Planboard, Pulse</a>
       <a href="#threads">Threads and providers</a>
+      <a href="#palette">Command palette</a>
       <a href="#worktrees">Worktrees and PRs</a>
       <a href="#workflows">Build workflows</a>
       <a href="#orchestration">Orchestration</a>
@@ -73,6 +74,7 @@
       <a href="#spend">Spend guardrails</a>
       <a href="#analytics">Usage and fleet analytics</a>
       <a href="#updates">Notifications and updates</a>
+      <a href="#integrations">External MCP pairing</a>
       <a href="#web-mode">Web mode</a>
       <a href="#ssh">SSH remote projects</a>
       <a href="#windows">Windows</a>
@@ -119,6 +121,13 @@
         remote one, see
         <a href="#ssh">SSH remote projects</a>). Create a thread, type a prompt,
         and the run streams in live.
+      </p>
+      <p>
+        First launch opens a short wizard: pick an installed agent, add a
+        project, then start a <strong>first thread</strong>. The composer
+        stays empty so you write the prompt yourself. An example is on the
+        last step if you want one. Replay the tour any time from
+        Settings, Show welcome tour.
       </p>
 
       <h2 id="memory">Shared memory</h2>
@@ -240,6 +249,8 @@
         <li><strong>Rename</strong> a thread from its header or the sidebar menu when the auto-generated title stops describing the work.</li>
         <li><strong>Snooze</strong> hides a thread until a preset (an hour, this evening, tomorrow, next week) without stopping the agent. A thread that blocks on you, or fails after you hid it, wakes early and shows a <em>Woke</em> pill. <em>Settle on merge</em> archives the thread when its PR lands.</li>
         <li><strong>Drop</strong> images and folders anywhere on the transcript, not only on the composer strip.</li>
+        <li><strong>Pin a message</strong> in the transcript to jump back to it. Pins take an optional label. The agent never reads them.</li>
+        <li><strong>Files on a question.</strong> When an agent asks you something, you can attach supporting files to the answer, not only type it.</li>
       </ul>
       <p>
         The sidebar is a flat list, not per-project groups. Each card
@@ -262,10 +273,12 @@
       </p>
       <p>
         <kbd>⌘N</kbd> starts a new thread, <kbd>⌘⇧N</kbd> starts one in a
-        chosen project. <kbd>⌘K</kbd> opens the command palette: jump to a
-        thread, a project file, or a line of content. Esc or Ctrl+C stops the
-        live turn. Click the project slug in the header to start another
-        thread there. The composer's
+        chosen project. <kbd>⌘K</kbd> opens the
+        <a href="#palette">command palette</a>. Esc or Ctrl+C stops the
+        live turn, including while the run is still preparing to launch.
+        Quitting the app asks if agents are still working, then SIGKILLs
+        detached CLIs so they do not linger. Click the project slug in the
+        header to start another thread there. The composer's
         <code>/</code> palette lists orchestration commands, the CLI verbs,
         and the underlying CLI's own skills and custom commands.
         <code>/btw</code> (or <kbd>⌥Enter</kbd> on a plain draft) asks a
@@ -305,6 +318,25 @@
         Settings, the second winning over the first.
       </p>
 
+
+      <h2 id="palette">Command palette</h2>
+      <p>
+        Three entry points, one overlay:
+      </p>
+      <ul>
+        <li><kbd>⌘K</kbd> is the command list plus recent threads and projects.</li>
+        <li><kbd>⌘P</kbd> searches files in the current project.</li>
+        <li><kbd>⌘⇧F</kbd> searches file contents and jumps to the matching line.</li>
+      </ul>
+      <p>
+        Type to filter. The command list includes New thread, Settings,
+        Kanban, Planboard, pull requests, Usage, Fleet, Insights, the morning
+        digest, Add project, and Toggle agents panel (<kbd>⌘.</kbd>).
+        Selecting a file opens it; selecting a thread or project switches to
+        it. Escape closes the overlay. The same shortcuts are on the
+        keyboard sheet.
+      </p>
+
       <h2 id="worktrees">Worktrees and pull requests</h2>
       <p>
         Each thread can get its own <strong>git worktree</strong>, so agents
@@ -340,9 +372,15 @@
         The header carries one <strong>next-action</strong> button that names
         the next git step (commit, push, open a PR, watch checks, or merge)
         instead of a row of always-visible controls. Create PR works on an
-        unpublished worktree without a prior Push. The Git pane can keep the
-        pull request as a draft, with an editable body that starts from the
-        repo's PR template. File paths in the
+        unpublished worktree without a prior Push. Create PR opens a
+        <strong>PR workspace</strong> dialog: title, an editable body,
+        a draft toggle and a markdown preview. The body starts from the
+        repo's <code>PULL_REQUEST_TEMPLATE</code> in the root,
+        <code>docs/</code> or <code>.github/</code>, including files in a
+        <code>PULL_REQUEST_TEMPLATE/</code> folder. After the PR is open
+        you can view it, edit the body, comment, mark it ready, close it
+        or merge it from the same pane, without a trip to the browser.
+        File paths in the
         transcript open the file in that worktree. Create PR refuses a
         diff larger than the configured <strong>PR size cap</strong>
         (default 400 changed lines) before anything is pushed. The
@@ -360,8 +398,10 @@
         guarded, so you cannot drop unmerged work by accident. Automatic
         checkpoints are committed as the agent works, and you can restore to
         any checkpoint from the Environment tab. Restore rolls the transcript
-        back with the files, and the Git pane can show the diff for a single
-        turn (checkpoint to checkpoint), not only the whole branch.
+        back with the files, not only the tree. The Git pane can also open a
+        <strong>per-turn diff</strong>: what changed between two checkpoints,
+        unified or split, with a chip per file, instead of the whole branch
+        since the base.
       </p>
       <p>
         Work can also start from an issue: paste a GitHub or Linear issue
@@ -691,6 +731,26 @@
       <p>
         The orchestrator also emits <strong>OpenTelemetry GenAI spans</strong>,
         so runs can be sent to whatever tracing backend you already have.
+      </p>
+
+
+      <h2 id="integrations">External MCP pairing</h2>
+      <p>
+        Settings, <strong>Integrations</strong> mints a pairing so a client
+        outside Solenta (Claude Desktop, Claude Code, or any MCP client on
+        this machine) can launch and track tasks through the loopback
+        coder-threads server. Solenta has to stay running. The raw token is
+        shown once at mint; disk stores only a sha256 hash, mode
+        <code>0600</code>.
+      </p>
+      <p>
+        Each pairing has a name, an optional expiry (7, 30, 90 days, or
+        none), and an optional project scope. Default capabilities are
+        <strong>read</strong> and <strong>launch</strong>. You can also
+        grant <strong>steer</strong> or <strong>read all tasks</strong>.
+        New work starts in a managed git worktree and, by default, waits
+        for you to approve it in the app. Revoke a pairing any time. Do
+        not put the token on a command line.
       </p>
 
       <h2 id="updates">Notifications and updates</h2>

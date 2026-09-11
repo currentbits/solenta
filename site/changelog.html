@@ -62,13 +62,13 @@
       <h2 id="v0-20-0">0.20.0 <small>2026-09-11</small></h2>
       <h3>Added</h3>
       <ul>
-        <li><strong>Command palette.</strong> <kbd>⌘K</kbd> jumps to a thread, a project file, or a line of content without leaving the keyboard.</li>
-        <li><strong>PR workspace.</strong> Draft a pull request from the Git pane. The body starts from the repo's PR template and stays editable before you publish.</li>
-        <li><strong>External MCP pairing.</strong> Pair an outside agent to this project with a scoped token so it can use Solenta's thread tools without seeing the rest of the house.</li>
-        <li><strong>Pin a transcript line.</strong> Mark a message you want to find again and jump back to it.</li>
-        <li><strong>Per-turn diffs.</strong> Review what changed between checkpoints, not only the whole branch.</li>
+        <li><strong>Command palette.</strong> <kbd>⌘K</kbd> runs commands and jumps to a thread or project. <kbd>⌘P</kbd> searches files in this project. <kbd>⌘⇧F</kbd> searches file contents. Type to filter; New thread, Settings, Kanban, Planboard, Usage and the other views are in the list.</li>
+        <li><strong>PR workspace.</strong> Create a pull request from a dialog: title, editable body, draft toggle and markdown preview. The body starts from the repo's <code>PULL_REQUEST_TEMPLATE</code> (root, <code>docs/</code> or <code>.github/</code>). After it is open you can view it, edit the body, comment, mark it ready, close it or merge it without leaving the app.</li>
+        <li><strong>External MCP pairing.</strong> Settings, Integrations mints a scoped token for Claude Desktop or any other MCP client on this machine. The raw token is shown once. Pairings expire, can be limited to selected projects, and default to read plus launch with approval. Solenta has to stay running.</li>
+        <li><strong>Pin a transcript line.</strong> Bookmark a message with an optional label and jump back to it. The agent never reads the pins.</li>
+        <li><strong>Per-turn diffs.</strong> Review what changed between checkpoints, unified or split, file by file, not only the whole branch.</li>
         <li><strong>Restore rewinds the chat.</strong> A checkpoint restore rolls the conversation back with the files, instead of leaving the old replies sitting there.</li>
-        <li><strong>First conversation.</strong> Onboarding walks you into a useful first thread instead of an empty window.</li>
+        <li><strong>First conversation.</strong> Onboarding is Agent, then Project, then a first thread with an empty composer so you write the prompt. Replay it from Settings.</li>
         <li><strong>Files on a question.</strong> Attach supporting files when you answer a question card.</li>
       </ul>
       <h3>Fixed</h3>
