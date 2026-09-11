@@ -262,8 +262,10 @@
       </p>
       <p>
         <kbd>⌘N</kbd> starts a new thread, <kbd>⌘⇧N</kbd> starts one in a
-        chosen project. Esc or Ctrl+C stops the live turn. Click the project
-        slug in the header to start another thread there. The composer's
+        chosen project. <kbd>⌘K</kbd> opens the command palette: jump to a
+        thread, a project file, or a line of content. Esc or Ctrl+C stops the
+        live turn. Click the project slug in the header to start another
+        thread there. The composer's
         <code>/</code> palette lists orchestration commands, the CLI verbs,
         and the underlying CLI's own skills and custom commands.
         <code>/btw</code> (or <kbd>⌥Enter</kbd> on a plain draft) asks a
@@ -338,7 +340,9 @@
         The header carries one <strong>next-action</strong> button that names
         the next git step (commit, push, open a PR, watch checks, or merge)
         instead of a row of always-visible controls. Create PR works on an
-        unpublished worktree without a prior Push. File paths in the
+        unpublished worktree without a prior Push. The Git pane can keep the
+        pull request as a draft, with an editable body that starts from the
+        repo's PR template. File paths in the
         transcript open the file in that worktree. Create PR refuses a
         diff larger than the configured <strong>PR size cap</strong>
         (default 400 changed lines) before anything is pushed. The
@@ -355,7 +359,9 @@
         is a button, not a terminal command. Worktree merge and delete are
         guarded, so you cannot drop unmerged work by accident. Automatic
         checkpoints are committed as the agent works, and you can restore to
-        any checkpoint from the Environment tab.
+        any checkpoint from the Environment tab. Restore rolls the transcript
+        back with the files, and the Git pane can show the diff for a single
+        turn (checkpoint to checkpoint), not only the whole branch.
       </p>
       <p>
         Work can also start from an issue: paste a GitHub or Linear issue

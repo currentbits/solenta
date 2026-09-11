@@ -59,6 +59,29 @@
         Every notable change to Solenta, newest first.
       </p>
 
+      <h2 id="v0-20-0">0.20.0 <small>2026-09-11</small></h2>
+      <h3>Added</h3>
+      <ul>
+        <li><strong>Command palette.</strong> <kbd>⌘K</kbd> jumps to a thread, a project file, or a line of content without leaving the keyboard.</li>
+        <li><strong>PR workspace.</strong> Draft a pull request from the Git pane. The body starts from the repo's PR template and stays editable before you publish.</li>
+        <li><strong>External MCP pairing.</strong> Pair an outside agent to this project with a scoped token so it can use Solenta's thread tools without seeing the rest of the house.</li>
+        <li><strong>Pin a transcript line.</strong> Mark a message you want to find again and jump back to it.</li>
+        <li><strong>Per-turn diffs.</strong> Review what changed between checkpoints, not only the whole branch.</li>
+        <li><strong>Restore rewinds the chat.</strong> A checkpoint restore rolls the conversation back with the files, instead of leaving the old replies sitting there.</li>
+        <li><strong>First conversation.</strong> Onboarding walks you into a useful first thread instead of an empty window.</li>
+        <li><strong>Files on a question.</strong> Attach supporting files when you answer a question card.</li>
+      </ul>
+      <h3>Fixed</h3>
+      <ul>
+        <li>Store writes no longer re-serialize every thread's work log, and the renderer keeps at most a handful of open transcripts in memory.</li>
+        <li>Transcript export to memory no longer queues without a bound when the memory server is slow.</li>
+        <li>Stop works while a run is still preparing, and quitting the app asks before it kills live agents. Detached CLIs get SIGKILL on quit so they do not linger.</li>
+        <li>A failed or stopped turn no longer auto-starts the queued follow-up. A failed edit-and-resubmit no longer leaves a committed rewind behind.</li>
+        <li>Codex resume no longer dies with "already has an active writer", and overlay hook trust persists without the exec-only app-server flag.</li>
+        <li>Screenshots stay with the turn that took them. Closing a confirm with Escape works, and remaining dialogs keep keyboard focus.</li>
+        <li>The Cursor overlay no longer leaves a dangling <code>cursor-agent</code> on PATH. Failed thread-note drafts stay and retry instead of vanishing.</li>
+      </ul>
+
       <h2 id="v0-19-0">0.19.0 <small>2026-09-07</small></h2>
       <h3>Added</h3>
       <ul>
