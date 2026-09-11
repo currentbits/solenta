@@ -5,8 +5,9 @@
  *
  * `codex exec` has no control_request. PreToolUse in an isolated
  * CODEX_HOME is the pre-exec gate. Ask is deny: Codex parses ask then
- * continues the tool. --dangerously-bypass-hook-trust is added by the
- * runner so noninteractive exec does not skip an untrusted hook.
+ * continues the tool. --dangerously-bypass-hook-trust is added by
+ * workflow `codex exec` so noninteractive exec does not skip an
+ * untrusted hook. Interactive `app-server` rejects that flag (#1309).
  */
 
 const fs = require("node:fs");

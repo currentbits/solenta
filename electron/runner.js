@@ -4814,11 +4814,10 @@ function createRunner(opts) {
       try {
         const dest = deployCodexGuardrailOverlay({ project, threadId });
         if (dest) {
-          args.push(
-            "-c",
-            "features.hooks=true",
-            "--dangerously-bypass-hook-trust",
-          );
+          // Isolated overlay + hooks=true. Do not pass
+          // --dangerously-bypass-hook-trust: that flag is exec-only and
+          // live Codex app-server exits 2 on it (#1309).
+          args.push("-c", "features.hooks=true");
           codexWrapEnv = {
             CODEX_HOME: dest,
             SOLENTA_WORKTREE: project.remotePath || localCwd,
@@ -4834,11 +4833,10 @@ function createRunner(opts) {
           process.env.CODEX_HOME ||
           path.join(require("node:os").homedir(), ".codex");
         materializeCodexGuardrailHome({ dest, sourceHome });
-        args.push(
-          "-c",
-          "features.hooks=true",
-          "--dangerously-bypass-hook-trust",
-        );
+        // Isolated overlay + hooks=true. Do not pass
+        // --dangerously-bypass-hook-trust: that flag is exec-only and
+        // live Codex app-server exits 2 on it (#1309).
+        args.push("-c", "features.hooks=true");
         codexMcpEnv.CODEX_HOME = dest;
         codexMcpEnv.SOLENTA_WORKTREE = localCwd;
       } catch {
