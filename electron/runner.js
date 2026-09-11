@@ -4975,7 +4975,8 @@ function createRunner(opts) {
         if (dest) {
           // Isolated overlay + hooks=true. Do not pass
           // --dangerously-bypass-hook-trust: that flag is exec-only and
-          // live Codex app-server exits 2 on it (#1309).
+          // live Codex app-server exits 2 on it (#1309). Trust is written
+          // into the overlay config.toml (#1311).
           args.push("-c", "features.hooks=true");
           codexWrapEnv = {
             CODEX_HOME: dest,
@@ -4994,7 +4995,8 @@ function createRunner(opts) {
         materializeCodexGuardrailHome({ dest, sourceHome });
         // Isolated overlay + hooks=true. Do not pass
         // --dangerously-bypass-hook-trust: that flag is exec-only and
-        // live Codex app-server exits 2 on it (#1309).
+        // live Codex app-server exits 2 on it (#1309). Trust is written
+        // into the overlay config.toml (#1311).
         args.push("-c", "features.hooks=true");
         codexMcpEnv.CODEX_HOME = dest;
         codexMcpEnv.SOLENTA_WORKTREE = localCwd;

@@ -616,7 +616,7 @@ describe("runner codex provider", () => {
     assert.match(turnPrompt(rpc), /second/);
   });
 
-  it("isolates CODEX_HOME for classifyTool without the exec-only hook-trust flag (#1309)", async () => {
+  it("isolates CODEX_HOME and persists overlay hook trust without the exec-only flag (#1311)", async () => {
     runner.stopAll();
     runner = createRunner({
       store,
@@ -645,6 +645,9 @@ describe("runner codex provider", () => {
 
     const dest = path.join(tmpDir, "codex-homes", thread.id);
     assert.ok(fs.existsSync(path.join(dest, "hooks.json")));
+    const cfg = fs.readFileSync(path.join(dest, "config.toml"), "utf8");
+    assert.match(cfg, /trusted_hash = "sha256:[0-9a-f]{64}"/);
+    assert.match(cfg, /hooks\.json:pre_tool_use:0:0/);
     const env = JSON.parse(fs.readFileSync(argvFile + ".env.json", "utf8"));
     assert.equal(env.CODEX_HOME, dest);
   });
