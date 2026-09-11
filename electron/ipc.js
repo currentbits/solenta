@@ -1069,7 +1069,16 @@ const IPC_HANDLERS = {
     return redactSettings(services.getSettings(ctx.store));
   },
   "settings:set": async (ctx, patch) => {
+    const previousGuardrails = ctx.store.getSettings().guardrailsEnabled;
     const next = services.setSettings(ctx.store, patch);
+    if (patch && Object.prototype.hasOwnProperty.call(patch, "guardrailsEnabled")) {
+      try {
+        require("./guardrails.js").setGuardrailsEnabled(next.guardrailsEnabled);
+      } catch (err) {
+        services.setSettings(ctx.store, { guardrailsEnabled: previousGuardrails });
+        throw err;
+      }
+    }
     if (patch && Object.prototype.hasOwnProperty.call(patch, "theme") && nativeTheme) {
       nativeTheme.themeSource = nativeThemeSource(next.theme);
       const bg = windowBackgroundColor(

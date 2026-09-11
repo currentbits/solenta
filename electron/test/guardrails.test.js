@@ -26,6 +26,7 @@ describe("guardrails: protected config", () => {
       ".github/workflows/ci.yml",
       ".git/hooks/pre-commit",
       ".git/config",
+      "guardrails-enabled",
     ]) {
       assert.equal(verdict("Write", { file_path: p }).decision, "deny", p);
     }

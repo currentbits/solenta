@@ -85,6 +85,11 @@ function envPairs(env) {
  */
 function boundaryArgv(bin, argv, env) {
   const rest = Array.isArray(argv) ? argv : [];
+  // Local settings files cannot cross SSH/WSL. Snapshot the opt-out for this run,
+  // including providers that still need their overlay for MCP/session isolation.
+  if (!require("./guardrails.js").guardrailsEnabled()) {
+    env = { ...env, CODER_GUARDRAILS: "off" };
+  }
   const pairs = envPairs(env);
   if (!pairs.length) return [basenameBin(bin), ...rest];
   return ["env", ...pairs, basenameBin(bin), ...rest];

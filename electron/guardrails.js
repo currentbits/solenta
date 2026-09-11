@@ -15,12 +15,13 @@
  *   scanInjection() — untrusted inbound text about to enter an agent context
  *   scanSecrets()   — outbound text about to leave the machine
  *
- * Escape hatch: CODER_GUARDRAILS=off. Nothing here throws; a guardrail that
+ * Opt out in Settings > Advanced, or with CODER_GUARDRAILS=off. A guardrail that
  * crashes the run is worse than the risk it covers.
  */
 
 const path = require("node:path");
 const os = require("node:os");
+const fs = require("node:fs");
 
 /** @typedef {"allow" | "ask" | "deny"} Decision */
 /** @typedef {{ decision: Decision, rule: string | null, reason: string }} Verdict */
@@ -32,10 +33,29 @@ const ALLOW = /** @type {Verdict} */ ({
   reason: "",
 });
 
-/** Env kill switch, read per call so a relaunch isn't needed to flip it. */
+/** Shared with local hooks and the memory server, including adopted servers. */
+function guardrailsSettingPath() {
+  return process.env.CODER_GUARDRAILS_PATH ||
+    (process.env.CODER_MEMORY_CONFIG
+      ? path.join(path.dirname(process.env.CODER_MEMORY_CONFIG), "guardrails-enabled")
+      : null);
+}
+
+function setGuardrailsEnabled(enabled) {
+  const file = guardrailsSettingPath();
+  if (file) fs.writeFileSync(file, enabled === false ? "0" : "1", { mode: 0o600 });
+}
+
+/** Read the tiny runtime flag per call; never parse the transcript store here. */
 function guardrailsEnabled() {
   const v = String(process.env.CODER_GUARDRAILS || "").toLowerCase();
-  return v !== "off" && v !== "0" && v !== "false";
+  if (v === "off" || v === "0" || v === "false") return false;
+  const file = guardrailsSettingPath();
+  try {
+    return !file || fs.readFileSync(file, "utf8") !== "0";
+  } catch {
+    return true;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -57,6 +77,7 @@ const PROTECTED_WRITE = [
   [/\/\.git\/hooks\//, "protected.githooks"],
   [/\/\.git\/config$/, "protected.gitconfig"],
   [/\/coder-store\.json$/, "protected.store"],
+  [/\/guardrails-enabled$/, "protected.guardrails"],
 ];
 
 /**
@@ -486,6 +507,7 @@ function redact(s) {
 
 module.exports = {
   guardrailsEnabled,
+  setGuardrailsEnabled,
   classifyTool,
   classifyCommand,
   scanInjection,
