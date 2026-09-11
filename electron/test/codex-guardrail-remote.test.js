@@ -115,9 +115,9 @@ describe("resolveSpawn Codex CODEX_HOME across a boundary", () => {
 });
 
 /**
- * Fake `codex exec`: no can_use_tool. Consults CODEX_HOME/hooks.json
- * PreToolUse when --dangerously-bypass-hook-trust is present (the
- * official seam).
+ * Fake `codex`: no can_use_tool. Consults CODEX_HOME/hooks.json
+ * PreToolUse when exec has --dangerously-bypass-hook-trust, or when
+ * app-server enabled hooks (that CLI has no trust-bypass flag, #1309).
  */
 function writeFakeCodexAlways(dir) {
   return writeFakeBin(
@@ -140,7 +140,9 @@ const tool = {
 function consultHook() {
   const home = process.env.CODEX_HOME;
   const trusted = argv.includes("--dangerously-bypass-hook-trust");
-  if (!home || !trusted) return { decision: "allow" };
+  const appServerHooks =
+    argv.includes("app-server") && argv.includes("features.hooks=true");
+  if (!home || !(trusted || appServerHooks)) return { decision: "allow" };
   let hooks;
   try {
     hooks = JSON.parse(fs.readFileSync(path.join(home, "hooks.json"), "utf8"));
@@ -352,7 +354,11 @@ describe("codex runner: deny-tier tool on a crossesBoundary turn", () => {
         `deny-tier curl|sh executed on the ssh Codex turn with no hook block: ${JSON.stringify(seen)}`,
       );
       assert.equal(seen.blocked, true);
-      assert.equal(seen.bypassHookTrust, true);
+      assert.equal(
+        seen.bypassHookTrust,
+        false,
+        "app-server must not get the exec-only hook-trust flag (#1309)",
+      );
       assert.match(
         String(seen.codexHome || ""),
         /\.solenta\/codex-homes\//,
