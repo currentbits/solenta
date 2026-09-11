@@ -562,6 +562,16 @@ function main() {
   dumpArgv();
   const argv = process.argv.slice(2);
   if (isAppServer(argv) || argv.includes("--listen")) {
+    // Live Codex 0.153.4: this flag is exec-only. Match that so a
+    // regression cannot hide behind a permissive fake (#1309).
+    if (argv.includes("--dangerously-bypass-hook-trust")) {
+      process.stderr.write(
+        "error: unexpected argument '--dangerously-bypass-hook-trust' found\n" +
+          "Usage: codex app-server --listen <URL> --config <key=value>\n",
+      );
+      process.exit(2);
+      return;
+    }
     return runAppServer();
   }
   return runExecJsonl();

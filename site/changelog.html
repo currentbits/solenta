@@ -59,12 +59,86 @@
         Every notable change to Solenta, newest first.
       </p>
 
+      <h2 id="v0-20-0">0.20.0 <small>2026-09-11</small></h2>
+      <h3>Added</h3>
+      <ul>
+        <li><strong>Import existing CLI sessions.</strong> Bring conversations from Codex, Claude Code, Grok, Cursor, OpenCode, Kimi and Muse into Solenta. Import one or all remaining sessions; re-import adds new turns without duplicating the thread.</li>
+        <li><strong>Eject and reclaim.</strong> Continue a thread in its provider CLI, then bring outside turns back into Solenta. Eject releases this thread&#x27;s agent process and copies a resume command; the rest of its crew can keep running.</li>
+        <li><strong>Steer a live turn.</strong> Send guidance into a running Claude or Codex turn. The composer has Queue and Steer controls, and Cmd+Shift+Enter steers directly. Your draft stays if delivery fails.</li>
+        <li><strong>Crew integration.</strong> The lead&#x27;s Integration view shows worker readiness, source snapshots and the final destination. Integrate selected workers into the lead, verify the combined result, then merge or open one PR.</li>
+        <li><strong>Recorded worker snapshots.</strong> Workers start from the lead&#x27;s recorded committed revision. See the source branch and SHA separately from the merge destination, and explicitly refresh an idle worker when the lead advances.</li>
+        <li><strong>Local development lanes.</strong> Claim a numbered lane with its own branch and port, see its path, preview it in the project checkout and restore afterward. Recycle wedged lanes; optional Spotlight selects the lane to preview.</li>
+        <li><strong>Dev-server isolation.</strong> Thread dev servers get separate data, config, cache and temporary directories. Claimed lanes supply a distinct port, and supported local Electron launches get a thread-specific app identity.</li>
+        <li><strong>Command palette.</strong> Cmd+K runs commands and jumps to threads or projects. Cmd+P searches project files; Cmd+Shift+F searches their contents and opens a matching line.</li>
+        <li><strong>PR workspace.</strong> Create draft PRs with an editable body from the repository template and a markdown preview. View, edit, comment, mark ready, close and merge open PRs in the app.</li>
+        <li><strong>Searchable pull requests.</strong> Find PRs by number, title or branch. Load more beyond the initial list and set the per-project list cap in Settings.</li>
+        <li><strong>External MCP pairing.</strong> Pair an outside MCP client through Settings, Integrations. Choose project scope, capabilities and expiry, approve launches in Solenta by default, and revoke access at any time.</li>
+        <li><strong>Import from other tools.</strong> Preview and selectively copy skills, slash commands, MCP servers, memories and instruction files from Claude Code, Codex and Cursor. Local commands and plugin code have separate trust controls.</li>
+        <li><strong>Plugin slash commands.</strong> Enabled Codex and Cursor plugin commands appear in the composer without a manual import, including namespaced commands. Disabled and unlisted cache plugins stay out.</li>
+        <li><strong>Searchable skill library.</strong> Search installed skills by name or description and filter by provider and source. Installed skills come first, with catalog, import and MCP tools on secondary views.</li>
+        <li><strong>Memory browsing.</strong> Browse older memories beyond the first 20, filter by type, and inspect source and citation details. Config doctor and maintenance tools sit behind the memory list.</li>
+        <li><strong>Saved sidebar views.</strong> Save named combinations of project, search, status, provider and tag filters. Rename or update them as your triage changes; views continue matching newly created threads.</li>
+        <li><strong>Recently deleted.</strong> Deleting a thread now offers Undo and a seven-day restore window. Restore it from Recently deleted or permanently delete it there.</li>
+        <li><strong>Move threads between projects.</strong> Move an idle thread from its menu. Threads with a worktree, an active run or a pending worker binding cannot be moved; old repository bindings are cleared.</li>
+        <li><strong>Better board navigation.</strong> Search Planboard by title or issue number and change project scope directly in Activity or Kanban. Back from a thread restores the originating view, filters, focus and scroll position.</li>
+        <li><strong>Automation editing and history.</strong> Edit an existing automation in place and open its recent runs. Names, prompts and models can change without creating a second schedule.</li>
+        <li><strong>Transcript pins and quotes.</strong> Pin a message with an optional label and jump back to it, even in a long transcript. Quote selected assistant text into the composer with its source attached.</li>
+        <li><strong>Per-turn diffs and restore.</strong> Review checkpoint-to-checkpoint changes in unified or split view. Restoring a checkpoint rewinds the conversation along with the files.</li>
+        <li><strong>Files on question answers.</strong> Attach supporting files to an individual question answer without mixing them into the composer draft.</li>
+        <li><strong>Browser file and folder attachments.</strong> Pick or drop ordinary files and folders in web mode. Folder uploads keep their tree structure, and text-only models can still receive file attachments.</li>
+        <li><strong>First useful conversation.</strong> Onboarding guides you through one agent, a project and your first thread, with an empty composer ready for your own prompt. Replay it from Settings.</li>
+      </ul>
+      <h3>Performance and memory</h3>
+      <ul>
+        <li><strong>Responsive transcript search.</strong> Content search scans stored transcripts in a background worker instead of parsing every thread into the main process&#x27;s history cache. A newer query cancels the previous scan.</li>
+        <li><strong>Bounded transcript cache.</strong> Previously opened threads use an eight-entry cache with an 8 MiB estimated payload budget. Recent threads still switch immediately; older ones reload on demand. This is a cache limit, not a limit on total app RAM.</li>
+        <li><strong>Smaller store writes.</strong> Work logs now live in separate per-thread files. Saving an active thread writes changed logs instead of serializing and rewriting every thread&#x27;s work log.</li>
+        <li><strong>Faster skill inventory.</strong> Skill scans yield to the app, read the install registry once and reuse parsed files across symlink aliases. Opening the catalog no longer repeats a full skill-file scan.</li>
+        <li><strong>Lighter memory diagnostics.</strong> The Memory tab loads a small maintenance summary first and requests the full diagnostics when opened, avoiding unnecessary work while browsing entries.</li>
+        <li><strong>Bounded memory export.</strong> The optional transcript mirror is capped at 256 pending entries and a 4 MiB estimated payload, including in-flight work. A slow memory server cannot grow the backlog indefinitely; local conversation history stays intact.</li>
+        <li><strong>Agent and server cleanup.</strong> Removing a project retires its idle agent sessions. Stop and settle clean up this thread&#x27;s managed dev server, and app quit terminates detached agents that could otherwise keep consuming resources.</li>
+      </ul>
+      <h3>Codex fixes</h3>
+      <ul>
+        <li><strong>Interactive session transport.</strong> Interactive Codex turns now use a private app-server connection, supporting real live steering and command-approval replies while retaining existing session history.</li>
+        <li><strong>Model changes take effect.</strong> Switching a resumed thread from Sol to Astra now sends the selected model on the next interactive turn, instead of silently continuing on the original model.</li>
+        <li><strong>Command approvals.</strong> Codex command requests show Accept and Deny, plus Accept all when the provider supports it. Commands are read-only on these cards because Codex cannot accept an edited command in its approval reply.</li>
+        <li><strong>Git writes in worktrees.</strong> Codex workspace-write includes the checkout&#x27;s Git metadata and the shared Git paths needed by linked worktrees, fixing blocked git add and git commit operations.</li>
+        <li><strong>Planboard tool availability.</strong> Codex&#x27;s first-party MCP connection binds the actual project ID, so issue tools appear and authorized Planboard writes can run on the host.</li>
+        <li><strong>Writer-lock isolation and recovery.</strong> Each isolated Codex home gets its own writer-lock directory. Conflicts identify the owner, release a Solenta-owned holder where possible, preserve the session and avoid a misleading Retry loop.</li>
+        <li><strong>Safe worker wake-ups.</strong> Worker notices wait while the Codex session is owned by another run or ejected to a CLI. They no longer repeatedly try to resume the same locked session.</li>
+        <li><strong>Eject model warning.</strong> The copied terminal command warns when Codex exec resume would use the session&#x27;s original model rather than a later picker choice.</li>
+        <li><strong>Native images and text-only models.</strong> Supported Codex models receive native image input. Spark rejects image attachments while retaining file and folder attachment controls, and Codex tool-result images are preserved in the transcript.</li>
+        <li><strong>Context usage.</strong> The app-server adapter distinguishes the latest context usage from cumulative totals, keeping the context ring from double-counting them.</li>
+        <li><strong>Guardrail startup and hook trust.</strong> Codex app-server no longer receives an unsupported exec-only flag. Hook trust is stored in its isolated config so guardrails run without rewriting the user&#x27;s main Codex config.</li>
+      </ul>
+      <h3>Fixed</h3>
+      <ul>
+        <li><strong>Queued follow-ups.</strong> Failed or stopped turns leave the next prompt queued. Failed edits, reorder, removal and retry preserve the draft and queue instead of discarding or duplicating instructions.</li>
+        <li><strong>Retry the right turn.</strong> Retrying a failed worker notice sends that notice, not the original human task. Notice provenance is persisted, including backfilled older messages.</li>
+        <li><strong>Stop during startup and quit confirmation.</strong> Stop can cancel the first turn while it is still preparing. Quitting asks before stopping active agents, terminals or dev servers, with a setting to control the confirmation.</li>
+        <li><strong>Failed edit-and-resubmit.</strong> If the replacement turn cannot start, the previous conversation tail is restored instead of leaving a completed rewind behind.</li>
+        <li><strong>Draft and review persistence.</strong> Failed thread-note saves keep the text and offer Retry. Workflow drafts survive selection changes and ask before discard; a successful save followed by a failed refresh no longer creates duplicates on retry. Review acceptance is now saved to disk.</li>
+        <li><strong>Correct project after navigation.</strong> Late Planboard, Skills and config-doctor responses cannot apply the previous project&#x27;s state or write confirmation to the next project.</li>
+        <li><strong>Visible load failures.</strong> Activity, Digest, Usage and Fleet distinguish errors from empty results and preserve existing reports where available. PR and Planboard controls recover after rejected requests instead of staying stuck.</li>
+        <li><strong>Settings and automation safety.</strong> Opening Settings before data arrives no longer clears untouched spending caps. Repeated Add automation cannot create duplicate schedules, and retention keeps unfinished and quota-wait runs.</li>
+        <li><strong>Crew landing and issue lifecycle.</strong> Merge controls name their destination and workers route through the lead&#x27;s Integration view. Integrating into the lead keeps worker issues open until the combined work lands; changed destinations are refused before writing.</li>
+        <li><strong>Lane ownership.</strong> Claimed lanes keep their heartbeat across view changes and local projects, so background work is not mistaken for a wedged lane and recycled.</li>
+        <li><strong>Screenshot and terminal ownership.</strong> Delayed screenshots remain attached to their originating thread. Terminal replies from an earlier thread or restart are ignored, and overlapping output is not duplicated.</li>
+        <li><strong>Provider integration details.</strong> The Cursor overlay no longer breaks the user&#x27;s cursor-agent executable. OpenCode receives native file and image attachments, and reclaim handles older OpenCode storage, long Claude/Grok paths and fragmented Kimi replies.</li>
+        <li><strong>MCP command arguments.</strong> Quoted executable paths, arguments containing spaces and JSON argument arrays keep their intended boundaries. Malformed quoting keeps the draft and shows an error.</li>
+        <li><strong>Keyboard focus and calmer chrome.</strong> Dialogs and popovers keep keyboard focus, Escape dismisses eligible confirmations, and focus returns to the opener. Softer borders and flatter lists reduce visual clutter across the app.</li>
+        <li><strong>Settled crew visibility.</strong> Settled workers remain discoverable under an active or pinned parent, so completed crew work does not disappear into another shelf.</li>
+        <li><strong>Planboard comments.</strong> Agents can append an issue comment through the host without changing the issue&#x27;s plan status or closing it.</li>
+      </ul>
+
       <h2 id="v0-19-0">0.19.0 <small>2026-09-07</small></h2>
       <h3>Added</h3>
       <ul>
         <li><strong>Inspector sidebar.</strong> Environment, Agents, Pulse, Memory, and Skills are continuous lists. Memory has a short search toolbar; Skills dropped the repeated subsection counts.</li>
         <li><strong>Provider marks.</strong> Thread cards show a small harness glyph instead of the provider name.</li>
         <li><strong>Account usage.</strong> <code>/usage</code> shows live quota windows and reset clocks from Codex, Grok, Claude, and Kimi, not just local spend history.</li>
+        <li><strong>Provider model catalogs.</strong> Updated Codex model capabilities and Cursor's available model list, including newly listed Fable 5.1 and Gemini 3.8 Flash variants.</li>
       </ul>
       <h3>Fixed</h3>
       <ul>
