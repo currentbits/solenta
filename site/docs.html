@@ -58,6 +58,8 @@
       <a href="#memory">Shared memory</a>
       <a href="#views">Kanban, Planboard, Pulse</a>
       <a href="#threads">Threads and providers</a>
+      <a href="#cli-sessions">Import, eject and reclaim</a>
+      <a href="#codex">Codex sessions</a>
       <a href="#palette">Command palette</a>
       <a href="#worktrees">Worktrees and PRs</a>
       <a href="#workflows">Build workflows</a>
@@ -78,6 +80,7 @@
       <a href="#web-mode">Web mode</a>
       <a href="#ssh">SSH remote projects</a>
       <a href="#windows">Windows</a>
+      <a href="#performance">Performance and memory use</a>
       <a href="#architecture">Architecture</a>
     </nav>
 
@@ -173,7 +176,7 @@
         writing; Write from memory confirms, then writes
         <code>AGENTS.md</code> / <code>CLAUDE.md</code> /
         <code>GEMINI.md</code>. Scoring and generation are
-        deterministic &mdash; no model in the loop.
+        deterministic, no model in the loop.
       </p>
       <p>
         A <strong>hypothesis ledger</strong> records what an agent
@@ -182,6 +185,21 @@
         A per-repo <strong>code index</strong> of symbols is built once and
         injected into every dispatched prompt, so a fresh worker starts knowing
         where things live.
+      </p>
+
+      <h3 id="memory-browser">Browse the full memory library</h3>
+      <p>
+        The Memory tab starts with your project's entries. Search by text or
+        filter by knowledge, convention, strategy or task. Use <strong>Load
+        older memories</strong> to browse beyond the first page. Expand an
+        entry to read its body and citations. Add memory opens the editor;
+        the secondary tools hold config doctor and the review queue.
+      </p>
+      <p>
+        Maintenance starts with a small summary. Open <strong>Review</strong>
+        for the detailed queue. Switching projects discards the previous
+        project's config-doctor preview and write confirmation, so a stale
+        preview cannot write another repository's instructions.
       </p>
 
       <h2 id="views">Kanban, Planboard, Pulse</h2>
@@ -200,7 +218,8 @@
         Planboard reads the board from labels. Agents on a GitHub-origin
         project write with the coder-threads tools
         <code>issue_create</code>, <code>issue_list</code>,
-        <code>issue_set_plan</code>, and <code>issue_complete</code>
+        <code>issue_set_plan</code>, <code>issue_complete</code> and
+        <code>issue_comment</code>
         (omitted when the origin is not GitHub). Sandboxed
         <code>gh</code> cannot see macOS keychain credentials, so those
         tools run on the host instead. An issue labelled
@@ -214,8 +233,8 @@
         <code>origin</code> is on GitHub. The header also
         shows <strong>review load</strong>: how many open, non-draft PRs
         are waiting and their combined line count. Thresholds follow the
-        400-line cap &mdash; four PRs or 1,200 lines is busy; seven or
-        2,400 is overloaded &mdash; because an orchestrator that
+        400-line cap, four PRs or 1,200 lines is busy; seven or
+        2,400 is overloaded, because an orchestrator that
         parallelizes agents manufactures review bottleneck, not agent
         bottleneck.
       </p>
@@ -228,6 +247,38 @@
         The sidebar's project scope filter limits Kanban, Planboard and
         Activity to the same repo, not only the thread list. Spaces are
         gone; cards carry their project slug instead.
+      </p>
+
+      <h3 id="saved-views">Saved views and returning to work</h3>
+      <p>
+        Save a named sidebar view to reuse a combination of project, search,
+        status, provider and tag filters. Views store matching rules, so new
+        matching threads appear automatically. Changing a filter marks the
+        active view modified; update or rename it from the same menu. Deleting
+        a view leaves its threads alone. If its project or another filter is
+        missing, the view says it is unavailable instead of showing all work.
+      </p>
+      <p>
+        Activity and Kanban have a project selector in their own header.
+        Planboard search accepts a title, an issue number or <code>#123</code>.
+        The PR view searches number, title and branch, and offers more results
+        beyond its initial list. Open a thread from a board or report and use
+        <strong>Back to</strong> to restore the view, filters, scroll and row
+        focus. Usage's thread breakdown also links directly to its threads.
+      </p>
+      <h3 id="recently-deleted">Recently deleted and moving threads</h3>
+      <p>
+        Delete offers Undo and keeps the thread in <strong>Recently
+        deleted</strong> for seven days. Restore returns the same conversation,
+        notes and work log without starting a run. The shelf shows the expiry
+        and also offers permanent deletion. Restoring a thread is not a
+        guarantee that its former worktree is still on disk.
+      </p>
+      <p>
+        <strong>Move to project</strong> in a thread's menu moves an idle
+        conversation to another project. A running thread, worktree thread or
+        pending worker cannot move. The move clears the old repository's
+        session, branch and PR bindings so the next run uses the new project.
       </p>
 
       <h2 id="threads">Threads and providers</h2>
@@ -304,7 +355,7 @@
       </p>
       <p>
         The caret next to <strong>+</strong> in the sidebar creates a thread in
-        one of three modes:
+        one of four modes:
       </p>
       <ul>
         <li><strong>New worktree thread</strong>: its own git worktree and branch, so the agent never touches your checkout.</li>
@@ -318,6 +369,106 @@
         Settings, the second winning over the first.
       </p>
 
+
+      <h3 id="steering">Queue or steer</h3>
+      <p>
+        While Claude or Codex is running, choose <strong>Queue</strong> to send
+        your draft after this turn, or <strong>Steer</strong> to inject guidance
+        into the live turn. <kbd>⌘Enter</kbd> follows that choice;
+        <kbd>⌘⇧Enter</kbd> steers directly. A delivered steer appears on the
+        current turn with a Steered label. If the live turn ends before
+        delivery, Solenta can fall back to queueing; a failed delivery keeps
+        your draft. Other providers use the follow-up queue.
+      </p>
+      <p>
+        A failed or stopped turn leaves queued instructions waiting for you.
+        Failed queue edits keep their text, and Retry uses the actual failed
+        message, including a machine-delivered worker notice. A side question
+        through <code>/btw</code> remains a separate card.
+      </p>
+      <h3 id="transcript-tools">Pins, quotes and attachments</h3>
+      <p>
+        Pin a message and optionally label it, then use the pin to jump back
+        even when it is outside the currently rendered transcript. Pins are
+        your bookmarks and are not added to the agent's prompt. Select text
+        inside an assistant reply and choose the quote action or press
+        <kbd>⌘⇧C</kbd> to attach that selection as context for your next send.
+      </p>
+      <p>
+        Question cards accept supporting files on each answer. Those files
+        belong to that question, separate from the composer draft. In web
+        mode the paperclip accepts ordinary files and offers a folder picker;
+        dropping a directory preserves its tree. Images are available only
+        for models that accept them. Screenshots captured from Browser stay
+        with the thread that requested them if you switch before capture ends.
+      </p>
+
+      <h2 id="cli-sessions">Import, eject and reclaim</h2>
+      <p>
+        Open the caret beside <strong>+</strong> in the sidebar, choose the
+        project, then choose <strong>Import Codex session</strong> or another
+        provider. Codex, Claude Code, Grok, Cursor, OpenCode, Kimi and Muse are
+        supported. Select a session to import, or import all remaining ones.
+        Already imported sessions are marked; re-importing adds new turns to
+        their existing Solenta thread instead of creating duplicates.
+      </p>
+      <p>
+        To continue outside Solenta, choose <strong>Eject to terminal</strong>
+        in the thread menu. This releases Solenta's process for that session,
+        copies a provider-specific resume command and, if a terminal is
+        configured through <code>TERMINAL</code>, attempts to open it there.
+        Otherwise paste the command into your terminal. Ejecting a lead does
+        not stop its workers. Solenta holds automatic Codex wake-ups while the
+        session is ejected.
+      </p>
+      <p>
+        Finish the outside CLI turn before choosing <strong>Reclaim</strong>.
+        Solenta reads that known session and appends the outside conversation
+        without duplicating messages already present. Sending a new prompt
+        while still ejected starts a fresh provider session rather than
+        taking the ejected session back. For Codex, read the copied command's
+        model warning: terminal <code>exec resume</code> can retain the
+        original rollout model even after you selected another model in-app.
+      </p>
+
+      <h2 id="codex">Codex sessions</h2>
+      <p>
+        Interactive Codex conversations support live steering, command
+        approvals and model changes on subsequent turns. Selecting Astra
+        after a Sol turn applies Astra to the next interactive turn while
+        preserving the conversation. Build workflow phases and background
+        completions use the noninteractive CLI path and do not offer live
+        steering.
+      </p>
+      <p>
+        A Codex command approval shows <strong>Accept</strong> and
+        <strong>Deny</strong>. <strong>Accept all</strong> appears only when
+        Codex offers approval for the session. The displayed command is
+        read-only because this provider cannot change it through the approval
+        response. Stop cancels pending requests. Unsupported approval request
+        types are rejected rather than silently approved.
+      </p>
+      <p>
+        First-party memory and Planboard tools are bound to the selected
+        project. Planboard writes run on the host. Workspace-write also grants
+        the Git metadata paths needed to stage and commit in a checkout or
+        managed worktree. Plan mode remains read-only.
+      </p>
+      <p>
+        If Codex reports <strong>already has an active writer</strong>, the
+        error identifies the holder where available. Solenta uses private
+        lock directories and can release a holder it identifies as its own;
+        an outside owner must finish or close before retrying. The session is
+        retained, worker notices wait, and a blind Retry loop is suppressed.
+        Eject and Reclaim are the explicit controls for moving session ownership.
+      </p>
+      <p>
+        Astra and other image-capable Codex models receive images as native
+        inputs. Spark is text-only: its attachment controls still accept files
+        and folders, but reject images. Tool-result images are kept in the
+        transcript. The context ring uses current usage separately from the
+        session's cumulative token totals.
+      </p>
 
       <h2 id="palette">Command palette</h2>
       <p>
@@ -344,7 +495,7 @@
         fail-closed: if the worktree cannot be created, the thread errors
         instead of silently running in your working copy. The worktree
         diff is a full-height <strong>Git</strong> pane in the thread
-        center &mdash; Environment's Open Git, the next-action Commit, and
+        center, Environment's Open Git, the next-action Commit, and
         <code>/review</code> all open it there, not as a card in the
         right-hand panel. The Environment tab still runs
         <code>git pull --ff-only</code>, starts the project dev server, and
@@ -389,8 +540,9 @@
         disable it.
       </p>
       <p>
-        A permission prompt that is a shell command is an editable field;
-        approving sends the edited command, not the original.
+        Claude shell-command permission cards allow editing before approval.
+        Codex command cards are read-only; see <a href="#codex">Codex
+        sessions</a> for their approval controls.
       </p>
       <p>
         PR state is live: checks show as badges on the thread card, and merging
@@ -432,6 +584,23 @@
         Solenta projects, threads, and messages. Nothing is locked in.
       </p>
 
+      <h3 id="lanes">Development lanes and previews</h3>
+      <p>
+        For a local project, Environment's <strong>Lanes</strong> section lets
+        a thread <strong>Claim lane</strong>. Each lane has a number, branch,
+        working path and assigned <code>PORT</code>. <strong>Preview</strong>
+        temporarily mirrors the selected lane into the project checkout;
+        <strong>Restore</strong> returns the checkout afterward. This changes
+        the checkout, so it is guarded against overwriting dirty work.
+      </p>
+      <p>
+        <strong>Spotlight</strong> is an explicit per-project opt-in for lane
+        preview. It does not merge or publish a lane. <strong>Recycle
+        wedged</strong> reclaims eligible stale lanes; live runs and previews
+        stay protected. Claimed lanes keep their heartbeat even when you
+        switch away from Git or to another local project.
+      </p>
+
       <h2 id="workflows">Build workflows</h2>
       <p>
         The <strong>Build</strong> button in the composer runs a multi-phase
@@ -442,6 +611,14 @@
         the transcript. The Agents
         panel shows every phase and worker settling in real time. You can write
         your own templates in the composer.
+      </p>
+
+      <p>
+        Workflow editor drafts survive moving between templates. Closing a
+        dirty editor asks whether to keep editing or discard. A successful
+        save is retained even if refreshing the template list fails, so retry
+        does not create a duplicate workflow. A true save failure keeps the
+        unsaved draft available.
       </p>
 
       <h2 id="orchestration">Orchestration</h2>
@@ -472,9 +649,8 @@
         per spawn instead of every worker inheriting the same default.
       </p>
       <p>
-        When two runs of the same task exist &mdash; a Best of N sibling,
-        a fork, or an earlier completed run on this thread &mdash;
-        Environment can show a <strong>divergence</strong> compare. It
+        When two runs of the same task exist, a Best of N sibling,
+        a fork, or an earlier completed run on this thread, Environment can show a <strong>divergence</strong> compare. It
         pairs tool steps (name, input, output, decision) and names the
         first mismatch. Assistant prose is ignored, so two models
         answering in different words do not count as a split. A length
@@ -502,6 +678,7 @@
           <tr><td>threads_list</td><td>Lists every thread with id, title, provider and status.</td></tr>
           <tr><td>thread_fork</td><td>Copies a thread into a new one, optionally on another provider, and starts it on a prompt.</td></tr>
           <tr><td>thread_send</td><td>Starts a run with a prompt on an existing thread.</td></tr>
+          <tr><td>refresh_worker_snapshot</td><td>Refreshes an idle worker onto its lead's current committed revision without changing the final destination.</td></tr>
           <tr><td>thread_status</td><td>Reports a thread's status and the first line of its last reply.</td></tr>
           <tr><td>thread_archive</td><td>Archives a thread the same way the sidebar does.</td></tr>
           <tr><td>thread_settle</td><td>Marks a thread settled, or clears the override.</td></tr>
@@ -513,11 +690,12 @@
           <tr><td>issue_list</td><td>Lists GitHub issues on this thread's project origin (Planboard).</td></tr>
           <tr><td>issue_create</td><td>Creates a GitHub issue on this origin and labels it plan:todo.</td></tr>
           <tr><td>issue_set_plan</td><td>Moves a Planboard issue's plan:todo / plan:doing / plan:done label.</td></tr>
+          <tr><td>issue_comment</td><td>Appends an issue comment without changing plan labels or closing the issue.</td></tr>
           <tr><td>issue_complete</td><td>Labels a plan:doing issue plan:done and closes it.</td></tr>
         </tbody>
       </table>
       <p>
-        The four <code>issue_*</code> tools are omitted when the project's
+        The five <code>issue_*</code> tools are omitted when the project's
         origin is not GitHub.
       </p>
       <p>
@@ -532,6 +710,25 @@
         until each thread settles. Use Build workflows when the pipeline shape
         is known and repeatable, and plain-language orchestration when it is
         not.
+      </p>
+
+      <h3 id="crew-integration">Integrate workers, then land the crew</h3>
+      <p>
+        The lead's Agents tab contains <strong>Integration</strong>. It names
+        the path from worker branches to the lead branch and then to the final
+        merge or PR destination. Check worker readiness, select workers and
+        integrate them into the lead. Run <strong>Verify now</strong> on the
+        combined result, then use the destination-named merge or PR action.
+        Worker menus send you back to this lead view instead of silently
+        landing on another checkout branch.
+      </p>
+      <p>
+        Each worker records the lead's committed branch and revision at fork.
+        Uncommitted lead edits are not copied. <strong>Refresh snapshot</strong>
+        explicitly updates an idle worker to the lead's current committed
+        revision; it does not change the final merge target. Busy workers and
+        unsafe refreshes are refused. Integrating a worker into the lead
+        keeps its issue open until the combined change actually lands.
       </p>
 
       <h2 id="guardrails">Guardrails and verification</h2>
@@ -619,18 +816,32 @@
 
       <h2 id="skills">Skills</h2>
       <p>
-        The <strong>Skills</strong> tab lists the <code>SKILL.md</code> files
-        your agents can reach: the two user directories
-        (<code>~/.claude/skills</code>, <code>~/.agents/skills</code>) and the
-        selected project's <code>.claude/skills</code>. You can read all three
-        from the app and add or delete skills in the user directories; project
-        skills are read-only, so a stray click cannot delete repo content.
+        The Skills tab starts with installed skills. Search by name or
+        description and filter by provider or source; filters combine and
+        show counts. Catalog, Add skill and MCP servers have their own views.
+        Project skills remain read-only, while user-installed skills can be
+        managed and synchronized to the provider directories on this machine.
       </p>
       <p>
-        Skills also <strong>fan out</strong>: install one once and Solenta
-        copies it into every provider's skills directory it finds on your
-        machine, so a skill you wrote for Claude Code is available to Codex,
-        Cursor, Grok, Kimi, OpenCode and Muse without six manual copies.
+        Open <strong>Add skill</strong>, then <strong>Import from other
+        tools</strong> to scan Claude Code, Codex or Cursor. Preview skills,
+        slash commands, MCP servers, memories and instruction files, select
+        the items you want, and import them. This is a one-way copy; the source
+        provider home stays in place. Already imported items are identified.
+        Local MCP commands and plugin code require their separate trust
+        choices; scanning the preview does not execute them.
+      </p>
+      <p>
+        Enabled Codex and Cursor plugin commands also appear directly in the
+        composer's slash palette without importing first. Namespaced commands
+        keep plugin names from colliding with existing commands. Disabled or
+        unlisted plugin-cache entries are not offered.
+      </p>
+      <p>
+        In <strong>MCP servers</strong>, local command arguments accept quoted
+        paths and values containing spaces, or a JSON array of strings. Invalid
+        quoting shows an error and preserves the draft. Trust the local command
+        only after reviewing what it launches.
       </p>
 
       <h2 id="automations">Automations</h2>
@@ -648,6 +859,14 @@
         worth keeping.
       </p>
 
+      <p>
+        Use <strong>Edit</strong> to change an automation in place. Its recent
+        runs link to the corresponding transcripts, including live and
+        quota-wait runs. Changing a name, prompt or model keeps the schedule's
+        identity; changing the schedule recalculates its next run. History
+        retention removes completed old runs, preserving unfinished work.
+      </p>
+
       <h2 id="dev-servers">Dev servers</h2>
       <p>
         A project's dev server starts from the app: Solenta reads
@@ -657,6 +876,15 @@
         <code>Local: http://localhost:5173/</code> banner) so it is one click
         away. Stopping the server is a button too: no orphaned process on a
         port you have to hunt down later.
+      </p>
+
+      <p>
+        Dev servers launched for a thread receive separate data, configuration,
+        cache and temporary directories. A claimed lane sets its port.
+        Supported local Electron launches also get a distinct thread app name
+        and icon. Apps must respect the supplied environment to use the
+        isolation; it does not rewrite hard-coded paths or ports. Stop and
+        settle clean up the thread's managed dev server.
       </p>
 
       <h2 id="panes">Terminal and Browser panes</h2>
@@ -820,6 +1048,32 @@ solenta --serve-web --serve-host 0.0.0.0   # LAN, your call</code></pre>
         boundary. Failed checks are advisory (they do not block add), but they
         name the fix. Agent CLIs stay attached to the app so Stop stops them,
         and a sandbox badge shows how the run is isolated.
+      </p>
+
+      <h2 id="performance">Performance and memory use</h2>
+      <p>
+        Content search scans saved transcripts in a background worker without
+        loading every archived conversation into the main history cache. A new
+        query cancels the old scan. Skill inventory scans yield between chunks,
+        reuse parsed files across symlink aliases and avoid repeating the full
+        scan just to open the catalog. Memory diagnostics load their full
+        details only when requested.
+      </p>
+      <p>
+        Recently opened transcripts use an eight-entry cache with an 8 MiB
+        estimated payload budget. Recent threads still appear immediately;
+        evicted ones load again when selected. A larger selected transcript
+        remains visible but is not retained in that cache after leaving it.
+        These are cache bounds, not a promise about total application RAM.
+      </p>
+      <p>
+        Work logs are saved per thread, so activity in one thread no longer
+        rewrites all historical logs. The optional export to shared memory
+        has a separate cap of 256 pending entries and a 4 MiB estimated
+        payload, including requests in flight. Under pressure that optional
+        mirror may omit entries; the local conversation history remains intact.
+        Removing a project also retires its idle agent sessions, and quitting
+        cleans up detached agent processes.
       </p>
 
       <h2 id="architecture">Architecture</h2>
