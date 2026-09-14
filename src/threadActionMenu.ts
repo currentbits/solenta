@@ -16,7 +16,8 @@ export function threadProjectMoveBlockReason(
   >,
 ): string | null {
   if (thread.worktreePath) return "Has a worktree in this project";
-  if (thread.orchWorker || thread.leadSnapshotSha) return "Crew worker";
+  if (thread.orchWorker) return "Crew worker";
+  if (thread.leadSnapshotSha) return "Has a recorded start snapshot";
   if (thread.status === "working" || thread.status === "quota-wait") {
     return "Run is active";
   }

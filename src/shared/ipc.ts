@@ -415,14 +415,15 @@ export interface ThreadInfo {
    */
   baseBranch?: string | null;
   /**
-   * Orchestration worker start snapshot (#948). The lead's committed
-   * HEAD at fork time. Separate from `baseBranch` (merge/PR destination).
+   * Isolated start snapshot (#948 workers, #1223 Best of N). The source's
+   * committed HEAD at fork time. Separate from `baseBranch` (merge/PR
+   * destination). Uncommitted source edits are not copied.
    */
   leadSnapshotSha?: string | null;
-  /** Branch name that owned `leadSnapshotSha` when the worker was forked. */
+  /** Branch name that owned `leadSnapshotSha` when the fork was created. */
   leadSnapshotBranch?: string | null;
   /**
-   * Lead worktree/checkout had uncommitted edits at fork. The worker
+   * Source worktree/checkout had uncommitted edits at fork. The candidate
    * inherits committed HEAD only; those edits are not copied.
    */
   leadSnapshotDirty?: boolean;
@@ -3496,6 +3497,25 @@ export interface SpeechStatus {
 }
 
 /**
+ * Options for `threads.fork` beyond the source threadId.
+ *
+ * Ordinary Fork / hand-off pass provider/model only. `worktree: true` is
+ * the #550 chip path (silent no-op when the project cannot host one).
+ * `isolate: true` is Best of N (#1223): required worktree + recorded start
+ * snapshot, fail-closed. Snapshot fields reuse a SHA already captured for
+ * the race so every candidate starts at the same committed revision.
+ */
+export type ThreadForkOpts = {
+  provider?: string;
+  model?: string | null;
+  worktree?: boolean;
+  isolate?: boolean;
+  leadSnapshotSha?: string | null;
+  leadSnapshotBranch?: string | null;
+  leadSnapshotDirty?: boolean;
+};
+
+/**
  * Renderer-facing API. Invoke method names are locked to
  * `src/shared/ipcChannels.ts` (IPC_CHANNEL_LOCK); keep JSDoc here.
  */
@@ -4115,19 +4135,13 @@ export interface CoderApi {
      * "Fork: <source title>" truncated like createThread titles. Rejects an
      * unknown source thread, and an override provider/model invalid by the
      * same rules as setProvider. The SOURCE thread is never modified.
+     *
+     * `worktree: true` (#550 chips) marks pendingWorktree when the project
+     * can host one. `isolate: true` (#1223 Best of N) requires a worktree
+     * and records a start snapshot; it fails closed instead of sharing the
+     * checkout. Ordinary Fork / hand-off omit both.
      */
-    fork(input: {
-      threadId: string;
-      provider?: string;
-      model?: string | null;
-      /**
-       * Give the fork its own worktree (issue #550 chips): sets
-       * pendingWorktree so the runner materializes it on the first run,
-       * same lazy path as forkWorkerThread. Ignored when the project
-       * cannot host worktrees.
-       */
-      worktree?: boolean;
-    }): Promise<ThreadInfo>;
+    fork(input: { threadId: string } & ThreadForkOpts): Promise<ThreadInfo>;
     /**
      * Resolve a suggested-work chip (issue #550): flip its status to
      * "started" / "filed" / "dismissed" and stamp startedThreadId /
