@@ -459,8 +459,8 @@ describe("grok provider registry", () => {
     const grok = getProvider("grok");
     assert.equal(grok.kind, "claude-stream");
     assert.equal(grok.supportsResume, true);
-    assert.deepEqual(grok.models, ["grok-4.6", "grok-4.5"]);
-    assert.equal(grok.modelInfo[0].id, "grok-4.6");
+    assert.deepEqual(grok.models, ["grok-4.7", "grok-4.6", "grok-4.5"]);
+    assert.equal(grok.modelInfo[0].id, "grok-4.7");
     assert.equal(grok.modelInfo[0].recommended, true);
     assert.deepEqual(grok.efforts, ["low", "medium", "high", "xhigh"]);
     assert.equal(grok.binEnv, "CODER_GROK_BIN");

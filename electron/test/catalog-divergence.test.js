@@ -378,7 +378,7 @@ describe("listProviders catalog notes", () => {
       const rec = codex.modelInfo.filter((m) => m.recommended).map((m) => m.id);
       assert.deepEqual(rec, ["gpt-5.5"]);
       assert.match(codex.catalogNote, /gpt-6-astra/);
-      assert.match(codex.catalogNote, /gpt-5\.6-sol/);
+      assert.match(codex.catalogNote, /gpt-6-sol/);
       assert.match(codex.catalogNote, /codex update/);
     } finally {
       fs.rmSync(home, { recursive: true, force: true });

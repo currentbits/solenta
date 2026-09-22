@@ -9,6 +9,7 @@ const {
   resolveBin,
   isBinAvailable,
   listProviders,
+  honouredEfforts,
   sessionIdForResume,
 } = require("../providers.js");
 
@@ -90,7 +91,7 @@ describe("providers registry", () => {
     const grok = getProvider("grok");
     assert.equal(grok.kind, "claude-stream");
     assert.equal(grok.supportsResume, true);
-    assert.deepEqual(grok.models, ["grok-4.6", "grok-4.5"]);
+    assert.deepEqual(grok.models, ["grok-4.7", "grok-4.6", "grok-4.5"]);
 
     const opencode = getProvider("opencode");
     assert.equal(opencode.kind, "opencode-json");
@@ -141,7 +142,7 @@ describe("providers registry", () => {
     assert.ok(cursor.models.includes("claude-fable-5-1-high"));
     assert.ok(cursor.models.includes("gemini-3.8-flash-high"));
     assert.ok(!cursor.models.some((id) => id.startsWith("cursor-grok-4.5-")));
-    assert.equal(cursor.models.length, 211);
+    assert.equal(cursor.models.length, 229);
     assert.equal(cursor.modelInfo[0].id, cursor.models[0]);
     // Live cursor-agent 2026.09.02-c22c1a3 --list-models has no Astra /
     // gpt-6-* rows. Effort is baked into Cursor ids; do not invent
@@ -172,6 +173,38 @@ describe("providers registry", () => {
     assert.equal(spark.vendor, "Meta");
   });
 
+  it("routes the September model additions with their supported efforts", () => {
+    const additions = [
+      ["claude", "claude-opus-5-5", "max", "--model"],
+      ["grok", "grok-4.7", "xhigh", "-m"],
+      ["codex", "gpt-6-sol", "ultra", "-m"],
+      ["codex", "gpt-6-luna", "max", "-m"],
+      ["codex", "gpt-6-terra", null, "-m"],
+      ...getProvider("cursor").models
+        .filter((id) => /^(grok-4\.7-|claude-opus-5-5-)/.test(id))
+        .map((id) => ["cursor", id, null, "--model"]),
+    ];
+    assert.equal(additions.length, 23);
+    for (const [providerId, model, effort, flag] of additions) {
+      const provider = getProvider(providerId);
+      assert.ok(provider.models.includes(model), model);
+      for (const sessionId of [null, "existing-session"]) {
+        const args = provider.buildArgs({
+          prompt: "hello", model, sessionId, reasoningEffort: effort,
+        });
+        assert.equal(args[args.indexOf(flag) + 1], model);
+        if (effort) {
+          assert.ok(honouredEfforts(provider, model).includes(effort));
+          assert.ok(args.includes(providerId === "codex"
+            ? `model_reasoning_effort=${effort}` : effort));
+        }
+      }
+    }
+    assert.ok(!honouredEfforts(getProvider("codex"), "gpt-6-luna").includes("ultra"));
+    // Terra is selectable, but no context limit is invented from Sol's cache.
+    assert.equal(getProvider("codex").modelInfo.find((m) => m.id === "gpt-6-terra").contextTokens, undefined);
+  });
+
   it("marks Codex Spark text-only; Astra/Sol/Terra/Luna/5.5 take images (#1167)", () => {
     // Live ~/.codex/models_cache.json (client 0.153.4): Spark
     // input_modalities is ["text"]; the others are ["text","image"].
@@ -188,6 +221,8 @@ describe("providers registry", () => {
     );
     for (const id of [
       "gpt-6-astra",
+      "gpt-6-sol",
+      "gpt-6-luna",
       "gpt-5.6-sol",
       "gpt-5.6-terra",
       "gpt-5.6-luna",

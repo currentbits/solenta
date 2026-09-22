@@ -251,6 +251,7 @@ const PROVIDERS = [
     supportsSteer: true,
     models: [
       "claude-fable-5",
+      "claude-opus-5-5",
       "claude-opus-5",
       "claude-sonnet-5",
       "claude-haiku-4-5",
@@ -260,6 +261,14 @@ const PROVIDERS = [
         id: "claude-fable-5",
         label: "Fable",
         description: "Fast everyday coding with strong defaults",
+        vendor: "Anthropic",
+        contextTokens: 1_000_000,
+        efforts: CLAUDE_EFFORTS.slice(),
+      },
+      {
+        id: "claude-opus-5-5",
+        label: "Opus 5.5",
+        description: "Claude Opus 5.5 for complex coding tasks",
         vendor: "Anthropic",
         contextTokens: 1_000_000,
         efforts: CLAUDE_EFFORTS.slice(),
@@ -345,13 +354,16 @@ const PROVIDERS = [
     // Interactive app-server uses approvalPolicy on-request (#1208).
     // Do not flip exec AskForApproval to on-request: workflow / ask /
     // commitmsg stay runCodex exec --json with never-policy.
-    // Snapshot of ~/.codex/models_cache.json visibility=list (client 0.153.4,
-    // 2026-09-09). Astra is the flagship (priority 1); Sol is the 5.6
-    // workhorse. gpt-5.4 / gpt-5.4-mini are retired and omitted.
+    // GPT-6 Sol/Luna: ~/.codex/models_cache.json (0.155.0, 2026-09-22).
+    // Keep previous-generation entries for existing installations.
+    // Astra remains recommended; gpt-5.4 / gpt-5.4-mini are omitted.
     // gpt-reserve / codex-auto-review are visibility=hide.
     // contextTokens are cache context_window (not max_context_window).
     models: [
       "gpt-6-astra",
+      "gpt-6-sol",
+      "gpt-6-terra",
+      "gpt-6-luna",
       "gpt-5.6-sol",
       "gpt-5.6-terra",
       "gpt-5.6-luna",
@@ -367,6 +379,32 @@ const PROVIDERS = [
         recommended: true,
         contextTokens: 272_000,
         efforts: CODEX_SOL_TERRA_EFFORTS.slice(),
+        inputModalities: CODEX_TEXT_IMAGE.slice(),
+      },
+      {
+        id: "gpt-6-sol",
+        label: "GPT-6-Sol",
+        description: "GPT-6 Sol Codex model.",
+        vendor: "OpenAI",
+        contextTokens: 272_000,
+        efforts: CODEX_SOL_TERRA_EFFORTS.slice(),
+        inputModalities: CODEX_TEXT_IMAGE.slice(),
+      },
+      {
+        id: "gpt-6-terra",
+        label: "GPT-6-Terra",
+        description: "GPT-6 Terra; availability depends on your Codex account.",
+        vendor: "OpenAI",
+        // Requested id, absent from the local 0.155.0 cache. Use provider
+        // defaults until its capabilities are published.
+      },
+      {
+        id: "gpt-6-luna",
+        label: "GPT-6-Luna",
+        description: "GPT-6 Luna Codex model.",
+        vendor: "OpenAI",
+        contextTokens: 272_000,
+        efforts: CODEX_LUNA_EFFORTS.slice(),
         inputModalities: CODEX_TEXT_IMAGE.slice(),
       },
       {
@@ -484,15 +522,23 @@ const PROVIDERS = [
     supportsResume: true,
     // Live `grok models` (1.0.5) + ~/.grok/models_cache.json. Ids, labels,
     // descriptions, context_window, and per-model reasoning_efforts copied
-    // from the cache; 4.6 is default.
-    models: ["grok-4.6", "grok-4.5"],
+    // from the cache; 4.7 added from the 2026-09-22 cache.
+    models: ["grok-4.7", "grok-4.6", "grok-4.5"],
     modelInfo: [
       {
-        id: "grok-4.6",
-        label: "Grok 4.6",
+        id: "grok-4.7",
+        label: "Grok 4.7",
         description: "SpaceXAI's latest frontier model",
         vendor: "xAI",
         recommended: true,
+        contextTokens: 500000,
+        efforts: GROK_46_EFFORTS.slice(),
+      },
+      {
+        id: "grok-4.6",
+        label: "Grok 4.6",
+        description: "xAI coding agent with tool use",
+        vendor: "xAI",
         contextTokens: 500000,
         efforts: GROK_46_EFFORTS.slice(),
       },
@@ -826,10 +872,29 @@ const PROVIDERS = [
     // Live cursor-agent --list-models (2026.09.02-c22c1a3). Ids, labels,
     // descriptions, vendors, and contextTokens copied from the catalog;
     // auto is recommended. Effort is baked into the model id.
+    // Grok 4.7 / Opus 5.5 additions: --list-models on 2026-09-22.
     // Do not invent gpt-6-astra / gpt-6-* ids; this CLI does not list them
     // (Codex 0.153.2 does).
     models: [
       "auto",
+      "grok-4.7-low",
+      "grok-4.7-low-fast",
+      "grok-4.7-medium",
+      "grok-4.7-medium-fast",
+      "grok-4.7-high",
+      "grok-4.7-high-fast",
+      "grok-4.7-xhigh",
+      "grok-4.7-xhigh-fast",
+      "claude-opus-5-5-low",
+      "claude-opus-5-5-low-fast",
+      "claude-opus-5-5-medium",
+      "claude-opus-5-5-medium-fast",
+      "claude-opus-5-5-high",
+      "claude-opus-5-5-high-fast",
+      "claude-opus-5-5-xhigh",
+      "claude-opus-5-5-xhigh-fast",
+      "claude-opus-5-5-max",
+      "claude-opus-5-5-max-fast",
       "gpt-5.3-codex-low",
       "gpt-5.3-codex-low-fast",
       "gpt-5.3-codex",
@@ -1049,6 +1114,24 @@ const PROVIDERS = [
         vendor: "Cursor",
         recommended: true,
       },
+      { id: "grok-4.7-low", label: "Grok 4.7 Low", description: "Grok 4.7 Low", vendor: "xAI" },
+      { id: "grok-4.7-low-fast", label: "Grok 4.7 Low Fast", description: "Grok 4.7 Low Fast", vendor: "xAI" },
+      { id: "grok-4.7-medium", label: "Grok 4.7 Medium", description: "Grok 4.7 Medium", vendor: "xAI" },
+      { id: "grok-4.7-medium-fast", label: "Grok 4.7 Medium Fast", description: "Grok 4.7 Medium Fast", vendor: "xAI" },
+      { id: "grok-4.7-high", label: "Grok 4.7 High", description: "Grok 4.7 High", vendor: "xAI" },
+      { id: "grok-4.7-high-fast", label: "Grok 4.7 High Fast", description: "Grok 4.7 High Fast", vendor: "xAI" },
+      { id: "grok-4.7-xhigh", label: "Grok 4.7 Extra High", description: "Grok 4.7 Extra High", vendor: "xAI" },
+      { id: "grok-4.7-xhigh-fast", label: "Grok 4.7 Extra High Fast", description: "Grok 4.7 Extra High Fast", vendor: "xAI" },
+      { id: "claude-opus-5-5-low", label: "Claude Opus 5.5 1M Low", description: "Claude Opus 5.5 1M Low", vendor: "Anthropic", contextTokens: 1000000 },
+      { id: "claude-opus-5-5-low-fast", label: "Claude Opus 5.5 1M Low Fast", description: "Claude Opus 5.5 1M Low Fast", vendor: "Anthropic", contextTokens: 1000000 },
+      { id: "claude-opus-5-5-medium", label: "Claude Opus 5.5 1M", description: "Claude Opus 5.5 1M", vendor: "Anthropic", contextTokens: 1000000 },
+      { id: "claude-opus-5-5-medium-fast", label: "Claude Opus 5.5 1M Fast", description: "Claude Opus 5.5 1M Fast", vendor: "Anthropic", contextTokens: 1000000 },
+      { id: "claude-opus-5-5-high", label: "Claude Opus 5.5 1M High", description: "Claude Opus 5.5 1M High", vendor: "Anthropic", contextTokens: 1000000 },
+      { id: "claude-opus-5-5-high-fast", label: "Claude Opus 5.5 1M High Fast", description: "Claude Opus 5.5 1M High Fast", vendor: "Anthropic", contextTokens: 1000000 },
+      { id: "claude-opus-5-5-xhigh", label: "Claude Opus 5.5 1M Extra High", description: "Claude Opus 5.5 1M Extra High", vendor: "Anthropic", contextTokens: 1000000 },
+      { id: "claude-opus-5-5-xhigh-fast", label: "Claude Opus 5.5 1M Extra High Fast", description: "Claude Opus 5.5 1M Extra High Fast", vendor: "Anthropic", contextTokens: 1000000 },
+      { id: "claude-opus-5-5-max", label: "Claude Opus 5.5 1M Max", description: "Claude Opus 5.5 1M Max", vendor: "Anthropic", contextTokens: 1000000 },
+      { id: "claude-opus-5-5-max-fast", label: "Claude Opus 5.5 1M Max Fast", description: "Claude Opus 5.5 1M Max Fast", vendor: "Anthropic", contextTokens: 1000000 },
       { id: "gpt-5.3-codex-low", label: "Codex 5.3 Low", description: "Codex 5.3 Low", vendor: "OpenAI" },
       { id: "gpt-5.3-codex-low-fast", label: "Codex 5.3 Low Fast", description: "Codex 5.3 Low Fast", vendor: "OpenAI" },
       { id: "gpt-5.3-codex", label: "Codex 5.3", description: "Codex 5.3", vendor: "OpenAI" },
