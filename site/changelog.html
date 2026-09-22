@@ -59,6 +59,18 @@
         Every notable change to Solenta, newest first.
       </p>
 
+      <h2 id="v0-21-0">0.21.0 <small>2026-09-22</small></h2>
+      <h3>Added</h3>
+      <ul>
+        <li><strong>New model choices.</strong> Select Grok 4.7, Claude Opus 5.5, and GPT-6 Sol, Luna or Terra in their respective providers. Grok 4.7 is now the recommended Grok model. GPT-6 Terra availability depends on your Codex account.</li>
+        <li><strong>Cursor model variants.</strong> Grok 4.7 and Claude Opus 5.5 are available with Cursor's supported reasoning levels and Fast variants.</li>
+        <li><strong>Guardrails setting.</strong> Turn Solenta's tool, prompt-injection and secret checks on or off in Settings, Advanced. The setting applies across projects; provider permission settings still apply. Restart active agent runs to apply the change everywhere.</li>
+      </ul>
+      <h3>Fixed</h3>
+      <ul>
+        <li><strong>Remote Grok guardrails.</strong> SSH and WSL runs now deploy their guardrail hooks on the remote machine, including workflow runs. Remote overlays keep host credentials and local MCP addresses out of the remote configuration, preserve sessions and are cleaned up with the thread.</li>
+      </ul>
+
       <h2 id="v0-20-0">0.20.0 <small>2026-09-11</small></h2>
       <h3>Added</h3>
       <ul>
