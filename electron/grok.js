@@ -10,7 +10,9 @@
  * sessions directory, copy the rest of config.toml with `[mcp_servers.*]`
  * replaced by Solenta servers bound to this project. Never follow those
  * symlinks on reclaim. Never symlink sessions/: grok 1.0.40+
- * cleanup_stale_sessions deletes through that link into ~/.grok.
+ * cleanup_stale_sessions deletes through that link into ~/.grok. Do not
+ * re-link auth.json after grok deleted it unless ~/.grok/auth.json
+ * changed (RefreshTokenRejected otherwise loops "Not signed in").
  */
 
 const fs = require("node:fs");
@@ -42,6 +44,9 @@ const GROK_HOME_LINKS = [
   "models_cache.json",
   "completions",
 ];
+
+/** Overlay marker: last source auth.json identity we linked. */
+const AUTH_STAMP_NAME = ".solenta-auth-src";
 
 function tomlEscape(value) {
   const s = String(value);
@@ -77,6 +82,104 @@ function linkOrSkip(src, dst) {
     // Windows without symlink privilege: isolation still holds; resume/auth
     // just will not share with the user's real home.
   }
+}
+
+function lstatOrNull(file) {
+  try {
+    return fs.lstatSync(file);
+  } catch {
+    return null;
+  }
+}
+
+function sourceFileSig(file) {
+  const st = fs.statSync(file);
+  return `${st.ino}:${st.size}:${st.mtimeMs}`;
+}
+
+function readStamp(stampPath) {
+  try {
+    return fs.readFileSync(stampPath, "utf8");
+  } catch {
+    return "";
+  }
+}
+
+function writeStamp(stampPath, sig) {
+  try {
+    fs.writeFileSync(stampPath, sig);
+  } catch {
+    // overlay housekeeping
+  }
+}
+
+/**
+ * Share ~/.grok/auth.json via symlink so a successful refresh updates the
+ * real login, but do not resurrect credentials grok already deleted.
+ *
+ * grok 1.0.40+ on RefreshTokenRejected unlinks GROK_HOME/auth.json (or
+ * replaces the symlink with a regular empty file). Re-linking the same
+ * rejected tokens makes the next turn retry the refresh, fail, and print
+ * "Not signed in" in a loop. Restore only when the source file changed
+ * (user ran grok login).
+ */
+function linkGrokAuth(sourceHome, dest) {
+  const src = path.join(sourceHome, "auth.json");
+  const dst = path.join(dest, "auth.json");
+  const stamp = path.join(dest, AUTH_STAMP_NAME);
+  if (!fs.existsSync(src)) return;
+  let sig;
+  try {
+    sig = sourceFileSig(src);
+  } catch {
+    return;
+  }
+
+  const dstSt = lstatOrNull(dst);
+  if (dstSt && dstSt.isSymbolicLink()) {
+    writeStamp(stamp, sig);
+    return;
+  }
+  if (readStamp(stamp) === sig) return;
+  if (dstSt) {
+    try {
+      fs.unlinkSync(dst);
+    } catch {
+      return;
+    }
+  }
+  linkOrSkip(src, dst);
+  writeStamp(stamp, sig);
+}
+
+/**
+ * flock is on the lock-file inode. Overlay grok otherwise creates a
+ * private GROK_HOME/auth.json.lock, so a Solenta turn and the TUI / usage
+ * poller can refresh the shared auth.json at once; the loser gets
+ * RefreshTokenRejected and deletes credentials.
+ */
+function linkGrokAuthLock(sourceHome, dest) {
+  const srcAuth = path.join(sourceHome, "auth.json");
+  const src = path.join(sourceHome, "auth.json.lock");
+  const dst = path.join(dest, "auth.json.lock");
+  if (!fs.existsSync(src) && fs.existsSync(srcAuth)) {
+    try {
+      fs.writeFileSync(src, "");
+    } catch {
+      return;
+    }
+  }
+  if (!fs.existsSync(src)) return;
+  const dstSt = lstatOrNull(dst);
+  if (dstSt && dstSt.isSymbolicLink()) return;
+  if (dstSt) {
+    try {
+      fs.unlinkSync(dst);
+    } catch {
+      return;
+    }
+  }
+  linkOrSkip(src, dst);
 }
 
 /** Reject path-segment session ids (`..`, extra slashes). */
@@ -381,7 +484,16 @@ function deployGrokGuardrailOverlay({ project, threadId, sessionId }) {
   writeRemoteOverlay(project, dest, files, [
     `chmod 600 ${posixQuote(`${dest}/config.toml`)}`,
     ...remoteOverlaySessionCmds(dest, sessionId),
-    `for f in ${GROK_HOME_LINKS.map(posixQuote).join(" ")}; do dst=${posixQuote(dest)}/"$f"; if [ -e "$src/$f" ] && [ ! -e "$dst" ] && [ ! -L "$dst" ]; then ln -s "$src/$f" "$dst"; fi; done`,
+    `for f in ${GROK_HOME_LINKS.filter((n) => n !== "auth.json").map(posixQuote).join(" ")}; do dst=${posixQuote(dest)}/"$f"; if [ -e "$src/$f" ] && [ ! -e "$dst" ] && [ ! -L "$dst" ]; then ln -s "$src/$f" "$dst"; fi; done`,
+    `dstauth=${posixQuote(`${dest}/auth.json`)}; stamp=${posixQuote(`${dest}/${AUTH_STAMP_NAME}`)}; srcauth="$src/auth.json"; ` +
+      `if [ -f "$srcauth" ]; then ` +
+      `sig=$(stat -f "%i:%z:%m" "$srcauth" 2>/dev/null || stat -c "%i:%s:%Y" "$srcauth"); ` +
+      `if [ -L "$dstauth" ]; then printf "%s" "$sig" > "$stamp"; ` +
+      `elif [ -f "$stamp" ] && [ "$(cat "$stamp")" = "$sig" ]; then :; ` +
+      `else rm -f "$dstauth"; ln -s "$srcauth" "$dstauth"; printf "%s" "$sig" > "$stamp"; fi; fi`,
+    `srclock="$src/auth.json.lock"; dstlock=${posixQuote(`${dest}/auth.json.lock`)}; ` +
+      `if [ ! -e "$srclock" ] && [ -f "$src/auth.json" ]; then : > "$srclock"; fi; ` +
+      `if [ -e "$srclock" ] && [ ! -L "$dstlock" ]; then rm -f "$dstlock"; ln -s "$srclock" "$dstlock"; fi`,
   ]);
   return dest;
 }
@@ -414,8 +526,11 @@ function materializeGrokHome(opts) {
 
   if (sourceHome && fs.existsSync(sourceHome)) {
     for (const name of GROK_HOME_LINKS) {
+      if (name === "auth.json") continue;
       linkOrSkip(path.join(sourceHome, name), path.join(dest, name));
     }
+    linkGrokAuth(sourceHome, dest);
+    linkGrokAuthLock(sourceHome, dest);
   }
   ensureOverlaySessionsDir(dest);
   if (sourceHome && opts.sessionId) {

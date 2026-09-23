@@ -134,6 +134,83 @@ enabled = ["ponytail"]
     );
   });
 
+  it("does not resurrect auth.json after grok deleted the overlay copy", () => {
+    materializeGrokHome({ dest, sourceHome: source });
+    fs.unlinkSync(path.join(dest, "auth.json"));
+
+    materializeGrokHome({ dest, sourceHome: source });
+
+    assert.equal(
+      fs.existsSync(path.join(dest, "auth.json")),
+      false,
+      "re-linking the same rejected credentials makes grok retry RefreshTokenRejected and print Not signed in",
+    );
+    assert.equal(
+      fs.readFileSync(path.join(source, "auth.json"), "utf8"),
+      '{"token":"keep"}\n',
+      "source ~/.grok/auth.json must stay intact",
+    );
+  });
+
+  it("re-links auth.json once source credentials change after a grok delete", () => {
+    materializeGrokHome({ dest, sourceHome: source });
+    fs.unlinkSync(path.join(dest, "auth.json"));
+    materializeGrokHome({ dest, sourceHome: source });
+    assert.equal(fs.existsSync(path.join(dest, "auth.json")), false);
+
+    fs.writeFileSync(path.join(source, "auth.json"), '{"token":"fresh-login"}\n');
+    materializeGrokHome({ dest, sourceHome: source });
+
+    const overlayAuth = path.join(dest, "auth.json");
+    assert.ok(fs.lstatSync(overlayAuth).isSymbolicLink());
+    assert.equal(
+      fs.readFileSync(overlayAuth, "utf8"),
+      '{"token":"fresh-login"}\n',
+    );
+  });
+
+  it("replaces a grok-written regular auth.json with a symlink after login", () => {
+    materializeGrokHome({ dest, sourceHome: source });
+    fs.unlinkSync(path.join(dest, "auth.json"));
+    fs.writeFileSync(path.join(dest, "auth.json"), "{}\n");
+
+    materializeGrokHome({ dest, sourceHome: source });
+    assert.equal(
+      fs.lstatSync(path.join(dest, "auth.json")).isSymbolicLink(),
+      false,
+      "same rejected credentials must not be restored over grok's cleared file",
+    );
+
+    fs.writeFileSync(path.join(source, "auth.json"), '{"token":"fresh-login"}\n');
+    materializeGrokHome({ dest, sourceHome: source });
+    assert.ok(fs.lstatSync(path.join(dest, "auth.json")).isSymbolicLink());
+    assert.equal(
+      fs.readFileSync(path.join(dest, "auth.json"), "utf8"),
+      '{"token":"fresh-login"}\n',
+    );
+  });
+
+  it("shares auth.json.lock with the real grok home so refresh is serialized", () => {
+    fs.writeFileSync(path.join(source, "auth.json.lock"), "src-lock\n");
+    materializeGrokHome({ dest, sourceHome: source });
+    const overlayLock = path.join(dest, "auth.json.lock");
+    assert.ok(fs.lstatSync(overlayLock).isSymbolicLink());
+    assert.equal(fs.realpathSync(overlayLock), fs.realpathSync(path.join(source, "auth.json.lock")));
+  });
+
+  it("replaces an overlay-private auth.json.lock with a symlink to the real lock", () => {
+    fs.writeFileSync(path.join(source, "auth.json.lock"), "src-lock\n");
+    materializeGrokHome({ dest, sourceHome: source });
+    fs.unlinkSync(path.join(dest, "auth.json.lock"));
+    fs.writeFileSync(path.join(dest, "auth.json.lock"), "overlay-private\n");
+
+    materializeGrokHome({ dest, sourceHome: source });
+
+    const overlayLock = path.join(dest, "auth.json.lock");
+    assert.ok(fs.lstatSync(overlayLock).isSymbolicLink());
+    assert.equal(fs.readFileSync(overlayLock, "utf8"), "src-lock\n");
+  });
+
   it("replaces a leftover sessions symlink without following it", () => {
     const keep = path.join(source, "sessions", "keep-me.json");
     fs.writeFileSync(keep, "source-session\n");
