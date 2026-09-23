@@ -173,7 +173,7 @@ if (marker) {
     hook,
     config: process.env.GROK_HOME ? fs.readFileSync(path.join(process.env.GROK_HOME, "config.toml"), "utf8") : "",
     auth: process.env.GROK_HOME ? fs.readFileSync(path.join(process.env.GROK_HOME, "auth.json"), "utf8") : null,
-    session: process.env.GROK_HOME ? fs.readFileSync(path.join(process.env.GROK_HOME, "sessions", "existing.json"), "utf8") : null,
+    session: null,
     compat: [process.env.GROK_CLAUDE_MCPS_ENABLED, process.env.GROK_CURSOR_MCPS_ENABLED],
   }), "utf8");
 }
@@ -355,7 +355,7 @@ describe("grok remote runner and workflow guardrails", () => {
       );
       assert.equal(seen.blocked, enabled);
       assert.equal(seen.auth, "remote-auth");
-      assert.equal(seen.session, "remote-session");
+      assert.equal(seen.session, null);
       assert.deepEqual(seen.compat, ["false", "false"]);
       assert.doesNotMatch(seen.config, /wrong-project|other_project|mcps = true/);
       assert.match(seen.config, /model = "grok-4.6"/);

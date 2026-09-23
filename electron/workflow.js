@@ -483,7 +483,9 @@ function spawnAgentClaude(opts) {
   let wrapEnv;
   if (entry && entry.id === "grok" && crossesBoundary(opts.project)) {
     const dest = deployGrokGuardrailOverlay({
-      project: opts.project, threadId: opts.threadId,
+      project: opts.project,
+      threadId: opts.threadId,
+      sessionId: resumeId,
     });
     wrapEnv = {
       GROK_HOME: dest,

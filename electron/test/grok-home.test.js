@@ -121,10 +121,106 @@ enabled = ["ponytail"]
 
     assert.equal(fs.lstatSync(path.join(dest, "config.toml")).isSymbolicLink(), false);
     assert.ok(fs.lstatSync(path.join(dest, "auth.json")).isSymbolicLink());
-    assert.ok(fs.lstatSync(path.join(dest, "sessions")).isSymbolicLink());
+    const overlaySessions = fs.lstatSync(path.join(dest, "sessions"));
+    assert.equal(
+      overlaySessions.isSymbolicLink(),
+      false,
+      "overlay sessions must not be a symlink into ~/.grok (grok stale-session GC deletes through it)",
+    );
+    assert.ok(overlaySessions.isDirectory());
     assert.equal(
       fs.statSync(path.join(dest, "config.toml")).mode & 0o777,
       0o600,
+    );
+  });
+
+  it("replaces a leftover sessions symlink without following it", () => {
+    const keep = path.join(source, "sessions", "keep-me.json");
+    fs.writeFileSync(keep, "source-session\n");
+    fs.rmSync(path.join(dest, "sessions"), { recursive: true, force: true });
+    fs.symlinkSync(path.join(source, "sessions"), path.join(dest, "sessions"));
+
+    materializeGrokHome({ dest, sourceHome: source });
+
+    const overlaySessions = path.join(dest, "sessions");
+    assert.equal(
+      fs.lstatSync(overlaySessions).isSymbolicLink(),
+      false,
+      "rematerialize must unlink the leftover sessions symlink",
+    );
+    assert.ok(fs.lstatSync(overlaySessions).isDirectory());
+    assert.equal(
+      fs.readFileSync(keep, "utf8"),
+      "source-session\n",
+      "unlinking overlay/sessions must not follow into ~/.grok",
+    );
+  });
+
+  it("does not let overlay session GC delete the source session store", () => {
+    const encodedCwd = encodeURIComponent("/tmp/proj");
+    const otherId = "01a0other-session";
+    const otherDir = path.join(source, "sessions", encodedCwd, otherId);
+    fs.mkdirSync(otherDir, { recursive: true });
+    fs.writeFileSync(path.join(otherDir, "summary.json"), "keep-source\n");
+
+    materializeGrokHome({ dest, sourceHome: source });
+
+    const overlayOther = path.join(dest, "sessions", encodedCwd, otherId);
+    if (fs.existsSync(overlayOther)) {
+      // grok cleanup_stale_sessions deletes session folders inside
+      // GROK_HOME/sessions, following a directory symlink into ~/.grok.
+      fs.rmSync(overlayOther, { recursive: true, force: true });
+    }
+    assert.equal(
+      fs.existsSync(path.join(otherDir, "summary.json")),
+      true,
+      "grok GC of overlay/sessions/<cwd>/<id> must not delete ~/.grok/sessions",
+    );
+    assert.equal(
+      fs.readFileSync(path.join(otherDir, "summary.json"), "utf8"),
+      "keep-source\n",
+    );
+  });
+
+  it("copies only the resume session into the overlay so --resume still works", () => {
+    const encodedCwd = encodeURIComponent("/tmp/proj");
+    const resumeId = "01a0resume-session";
+    const otherId = "01a0other-session";
+    const resumeDir = path.join(source, "sessions", encodedCwd, resumeId);
+    const otherDir = path.join(source, "sessions", encodedCwd, otherId);
+    fs.mkdirSync(resumeDir, { recursive: true });
+    fs.mkdirSync(otherDir, { recursive: true });
+    fs.writeFileSync(path.join(resumeDir, "summary.json"), "resume-me\n");
+    fs.writeFileSync(path.join(otherDir, "summary.json"), "foreign\n");
+
+    materializeGrokHome({ dest, sourceHome: source, sessionId: resumeId });
+
+    const overlaySessions = path.join(dest, "sessions");
+    assert.equal(fs.lstatSync(overlaySessions).isSymbolicLink(), false);
+    assert.equal(
+      fs.readFileSync(
+        path.join(overlaySessions, encodedCwd, resumeId, "summary.json"),
+        "utf8",
+      ),
+      "resume-me\n",
+    );
+    assert.equal(
+      fs.existsSync(path.join(overlaySessions, encodedCwd, otherId)),
+      false,
+      "other ~/.grok sessions must not be visible to overlay GC",
+    );
+    fs.rmSync(path.join(overlaySessions, encodedCwd, resumeId), {
+      recursive: true,
+      force: true,
+    });
+    assert.equal(
+      fs.readFileSync(path.join(resumeDir, "summary.json"), "utf8"),
+      "resume-me\n",
+      "resume session is a copy, so overlay GC cannot delete ~/.grok",
+    );
+    assert.equal(
+      fs.readFileSync(path.join(otherDir, "summary.json"), "utf8"),
+      "foreign\n",
     );
   });
 

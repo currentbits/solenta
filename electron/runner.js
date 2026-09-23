@@ -4081,7 +4081,11 @@ function createRunner(opts) {
         try {
           const os = require("node:os");
           const dest = crossesBoundary(project)
-            ? deployGrokGuardrailOverlay({ project, threadId })
+            ? deployGrokGuardrailOverlay({
+                project,
+                threadId,
+                sessionId: thread.sessionId || null,
+              })
             : path.join(userDataPath, "grok-homes", threadId);
           if (!crossesBoundary(project)) {
             const sourceHome =
@@ -4089,6 +4093,7 @@ function createRunner(opts) {
             materializeGrokHome({
               dest,
               sourceHome,
+              sessionId: thread.sessionId || null,
               mcpServers: kimiMcpServersForRun({
                 projectId: thread.projectId,
                 projectPath: localCwd || project.path,

@@ -6,12 +6,15 @@
  * Grok has no `--mcp-config`. `grok mcp add --scope user` writes the
  * user-global ~/.grok/config.toml, so a Solenta grok turn in project A
  * shares MCP URLs with every other project (and races boot-time
- * registration). Overlay: symlink auth/sessions/plugins, copy the rest of
- * config.toml with `[mcp_servers.*]` replaced by Solenta servers bound to
- * this project. Never follow those symlinks on reclaim.
+ * registration). Overlay: symlink auth/plugins, give each overlay its own
+ * sessions directory, copy the rest of config.toml with `[mcp_servers.*]`
+ * replaced by Solenta servers bound to this project. Never follow those
+ * symlinks on reclaim. Never symlink sessions/: grok 1.0.40+
+ * cleanup_stale_sessions deletes through that link into ~/.grok.
  */
 
 const fs = require("node:fs");
+const os = require("node:os");
 const path = require("node:path");
 const {
   injectGrokGuardrailHook,
@@ -20,15 +23,16 @@ const {
 const { guardrailsEnabled } = require("./guardrails.js");
 
 /**
- * Auth/session/plugin files a per-run home must share with the user's real
- * grok home so `--resume` and login still work. config.toml stays OUT — that
- * is the contamination (MCP URLs, last-write-wins project bind).
+ * Auth/plugin files a per-run home must share with the user's real grok
+ * home so login still works. `sessions` is overlay-owned (copied in for
+ * `--resume`); grok stale-session GC would otherwise delete through a
+ * directory symlink into ~/.grok. config.toml stays OUT — that is the
+ * contamination (MCP URLs, last-write-wins project bind).
  * @type {string[]}
  */
 const GROK_HOME_LINKS = [
   "auth.json",
   "agent_id",
-  "sessions",
   "installed-plugins",
   "marketplace-cache",
   "plugins",
@@ -73,6 +77,146 @@ function linkOrSkip(src, dst) {
     // Windows without symlink privilege: isolation still holds; resume/auth
     // just will not share with the user's real home.
   }
+}
+
+/** Reject path-segment session ids (`..`, extra slashes). */
+function safeSessionId(raw) {
+  const id = path.basename(String(raw || ""));
+  if (!id || id !== String(raw || "")) return "";
+  if (id === "." || id === "..") return "";
+  return id;
+}
+
+/**
+ * Relative path `cwd-group/session-id` under a sessions root, or "".
+ * Does not follow a sessions-root symlink.
+ * @param {string} sessionsRoot
+ * @param {string} sessionId
+ */
+function findSessionRel(sessionsRoot, sessionId) {
+  const id = safeSessionId(sessionId);
+  if (!id) return "";
+  let names = [];
+  try {
+    const st = fs.lstatSync(sessionsRoot);
+    if (st.isSymbolicLink() || !st.isDirectory()) return "";
+    names = fs.readdirSync(sessionsRoot, { withFileTypes: true });
+  } catch {
+    return "";
+  }
+  for (const ent of names) {
+    if (ent.isSymbolicLink() || !ent.isDirectory()) continue;
+    const cand = path.join(sessionsRoot, ent.name, id);
+    try {
+      const st = fs.lstatSync(cand);
+      if (st.isDirectory() && !st.isSymbolicLink()) {
+        return path.join(ent.name, id);
+      }
+    } catch {
+      // missing candidate
+    }
+  }
+  return "";
+}
+
+/**
+ * Overlay `sessions/` must be a real directory. Unlink a leftover symlink
+ * without following it into ~/.grok.
+ * @param {string} dest
+ */
+function ensureOverlaySessionsDir(dest) {
+  const dst = path.join(dest, "sessions");
+  try {
+    const st = fs.lstatSync(dst);
+    if (st.isSymbolicLink() || !st.isDirectory()) {
+      fs.unlinkSync(dst);
+    } else {
+      return dst;
+    }
+  } catch (err) {
+    if (!err || err.code !== "ENOENT") throw err;
+  }
+  fs.mkdirSync(dst, { recursive: true });
+  return dst;
+}
+
+/**
+ * Copy one resume session from the user's grok home into the overlay.
+ * Other sessions stay out so overlay GC cannot see them.
+ * @param {string} sourceHome
+ * @param {string} dest
+ * @param {string} sessionId
+ */
+function copyResumeSession(sourceHome, dest, sessionId) {
+  if (!sourceHome) return;
+  const overlay = path.join(dest, "sessions");
+  if (findSessionRel(overlay, sessionId)) return;
+  const rel = findSessionRel(path.join(sourceHome, "sessions"), sessionId);
+  if (!rel) return;
+  const from = path.join(sourceHome, "sessions", rel);
+  const to = path.join(overlay, rel);
+  fs.mkdirSync(path.dirname(to), { recursive: true });
+  fs.cpSync(from, to, { recursive: true });
+}
+
+/**
+ * Persist overlay-owned sessions into the real grok home so `--resume`
+ * survives overlay reclaim. Skips a leftover sessions symlink.
+ * @param {string} dest
+ * @param {string} sourceHome
+ */
+function copyOverlaySessionsToSource(dest, sourceHome) {
+  if (!sourceHome) return;
+  const overlay = path.join(dest, "sessions");
+  let st;
+  try {
+    st = fs.lstatSync(overlay);
+  } catch {
+    return;
+  }
+  if (st.isSymbolicLink() || !st.isDirectory()) return;
+  const target = path.join(sourceHome, "sessions");
+  fs.mkdirSync(target, { recursive: true });
+  let names = [];
+  try {
+    names = fs.readdirSync(overlay, { withFileTypes: true });
+  } catch {
+    return;
+  }
+  for (const ent of names) {
+    if (ent.isSymbolicLink()) continue;
+    try {
+      fs.cpSync(path.join(overlay, ent.name), path.join(target, ent.name), {
+        recursive: true,
+        force: true,
+      });
+    } catch {
+      // best-effort persist before reclaim
+    }
+  }
+}
+
+/**
+ * Source grok home this overlay was materialized from. Prefer the
+ * auth.json symlink target so tests (and alternate GROK_HOME) copy
+ * sessions back to the same tree, not the process ~/.grok.
+ * @param {string} dest
+ */
+function overlaySourceHome(dest) {
+  const auth = path.join(dest, "auth.json");
+  try {
+    const st = fs.lstatSync(auth);
+    if (st.isSymbolicLink()) {
+      const target = fs.readlinkSync(auth);
+      const abs = path.isAbsolute(target)
+        ? target
+        : path.resolve(path.dirname(auth), target);
+      return path.dirname(abs);
+    }
+  } catch {
+    // fall through
+  }
+  return process.env.GROK_HOME || path.join(os.homedir(), ".grok");
 }
 
 /**
@@ -177,8 +321,37 @@ function grokOverlayToml(base, mcpServers) {
   return chunks.join("\n\n") + "\n";
 }
 
+/**
+ * Remote overlay sessions: persist a real dir, unlink a leftover symlink
+ * without following, copy in the resume session. Never `ln -s sessions`.
+ * @param {string} dest
+ * @param {string} [sessionId]
+ * @returns {string[]}
+ */
+function remoteOverlaySessionCmds(dest, sessionId) {
+  const { posixQuote } = require("./ssh.js");
+  const dst = posixQuote(dest);
+  const sid = safeSessionId(sessionId);
+  const cmds = [
+    'src="${GROK_HOME:-$HOME/.grok}"',
+    "mkdir -p \"$src/sessions\"",
+    `sess=${dst}/sessions`,
+    'if [ -d "$sess" ] && [ ! -L "$sess" ]; then cp -a "$sess"/. "$src/sessions"/ || true; fi',
+    'if [ -L "$sess" ]; then rm -f -- "$sess"; fi',
+    'mkdir -p "$sess"',
+  ];
+  if (sid) {
+    cmds.push(
+      `sid=${posixQuote(sid)}`,
+      'found=$(find -P "$src/sessions" -mindepth 2 -maxdepth 2 -type d -name "$sid" 2>/dev/null | head -n 1 || true)',
+      'if [ -n "$found" ]; then rel=${found#"$src/sessions/"}; if [ ! -d "$sess/$rel" ]; then mkdir -p "$sess/$(dirname "$rel")" && cp -a "$found" "$sess/$rel"; fi; fi',
+    );
+  }
+  return cmds;
+}
+
 /** Deploy on the far side of SSH/WSL; never copy host credentials or MCP URLs. */
-function deployGrokGuardrailOverlay({ project, threadId }) {
+function deployGrokGuardrailOverlay({ project, threadId, sessionId }) {
   const { execCommand, posixQuote } = require("./ssh.js");
   const {
     probeRemoteHome, remoteOverlayDest, writeRemoteOverlay,
@@ -207,8 +380,7 @@ function deployGrokGuardrailOverlay({ project, threadId }) {
   files["config.toml"] = toml;
   writeRemoteOverlay(project, dest, files, [
     `chmod 600 ${posixQuote(`${dest}/config.toml`)}`,
-    // Create sessions before linking so a first remote run survives overlay GC.
-    'src="${GROK_HOME:-$HOME/.grok}"; mkdir -p "$src/sessions"',
+    ...remoteOverlaySessionCmds(dest, sessionId),
     `for f in ${GROK_HOME_LINKS.map(posixQuote).join(" ")}; do dst=${posixQuote(dest)}/"$f"; if [ -e "$src/$f" ] && [ ! -e "$dst" ] && [ ! -L "$dst" ]; then ln -s "$src/$f" "$dst"; fi; done`,
   ]);
   return dest;
@@ -227,6 +399,7 @@ function writeSecretFile(file, data) {
  * @param {object} opts
  * @param {string} opts.dest
  * @param {string} opts.sourceHome
+ * @param {string} [opts.sessionId]
  * @param {Record<string, object>} [opts.mcpServers]
  * @param {false | { command?: string, timeout?: number }} [opts.guardrailHook]
  *   PreToolUse classifyTool hook (#812). false skips it (tests / kill switch).
@@ -243,6 +416,10 @@ function materializeGrokHome(opts) {
     for (const name of GROK_HOME_LINKS) {
       linkOrSkip(path.join(sourceHome, name), path.join(dest, name));
     }
+  }
+  ensureOverlaySessionsDir(dest);
+  if (sourceHome && opts.sessionId) {
+    copyResumeSession(sourceHome, dest, opts.sessionId);
   }
 
   let base = "";
@@ -305,7 +482,7 @@ function isLiveGrokThread(store, threadId) {
 /**
  * Remove `target` without following symlinks. Unlink a symlink (even one
  * pointing at a directory) instead of descending into the target — the
- * overlay's auth/sessions links go into ~/.grok.
+ * overlay's auth.json (and leftover sessions/) links go into ~/.grok.
  * @param {string} target
  */
 function rmWithoutFollowing(target) {
@@ -390,6 +567,7 @@ function reclaimGrokHomes(opts) {
       continue;
     }
     try {
+      copyOverlaySessionsToSource(dest, overlaySourceHome(dest));
       rmWithoutFollowing(dest);
       removed.push(dest);
     } catch {

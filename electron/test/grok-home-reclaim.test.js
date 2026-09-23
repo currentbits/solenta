@@ -66,7 +66,12 @@ describe("grok-home reclaim (#706)", () => {
     });
 
     assert.ok(fs.lstatSync(path.join(staleDest, "auth.json")).isSymbolicLink());
-    assert.ok(fs.lstatSync(path.join(staleDest, "sessions")).isSymbolicLink());
+    assert.equal(
+      fs.lstatSync(path.join(staleDest, "sessions")).isSymbolicLink(),
+      false,
+      "overlay sessions is overlay-owned so grok GC cannot reach ~/.grok",
+    );
+    assert.ok(fs.lstatSync(path.join(staleDest, "sessions")).isDirectory());
 
     const store = {
       getProjects: () => [],
@@ -105,5 +110,64 @@ describe("grok-home reclaim (#706)", () => {
       "sessions/ dir symlink must not be followed into ~/.grok",
     );
     assert.equal(fs.existsSync(sourceHome), true);
+  });
+
+  it("reclaim unlinks a leftover sessions symlink without following it", async () => {
+    const staleId = "stale-symlink-sessions";
+    const staleDest = overlayPath(tmpDir, staleId);
+    fs.mkdirSync(staleDest, { recursive: true });
+    fs.symlinkSync(path.join(sourceHome, "sessions"), path.join(staleDest, "sessions"));
+    assert.ok(fs.lstatSync(path.join(staleDest, "sessions")).isSymbolicLink());
+
+    await scheduleRetention({
+      store: {
+        getProjects: () => [],
+        getThread: (id) => (id === staleId ? { id, status: "idle" } : null),
+      },
+      worktreeBase: path.join(tmpDir, "worktrees"),
+      userDataPath: tmpDir,
+    });
+
+    assert.equal(fs.existsSync(staleDest), false);
+    assert.equal(
+      fs.readFileSync(path.join(sourceHome, "sessions", "keep-me.json"), "utf8"),
+      SESSION,
+      "reclaim must unlink overlay/sessions without following into ~/.grok",
+    );
+  });
+
+  it("copies overlay-owned sessions back to the source home before deleting the overlay", async () => {
+    const staleId = "stale-overlay-session";
+    const staleDest = overlayPath(tmpDir, staleId);
+    materializeGrokHome({ dest: staleDest, sourceHome, mcpServers: {} });
+
+    const encodedCwd = encodeURIComponent("/tmp/proj");
+    const resumeId = "01a0overlay-session";
+    const overlaySession = path.join(staleDest, "sessions", encodedCwd, resumeId);
+    fs.mkdirSync(overlaySession, { recursive: true });
+    fs.writeFileSync(path.join(overlaySession, "summary.json"), "from-overlay\n");
+
+    await scheduleRetention({
+      store: {
+        getProjects: () => [],
+        getThread: (id) => (id === staleId ? { id, status: "idle" } : null),
+      },
+      worktreeBase: path.join(tmpDir, "worktrees"),
+      userDataPath: tmpDir,
+    });
+
+    assert.equal(fs.existsSync(staleDest), false, "idle overlay is still reclaimed");
+    assert.equal(
+      fs.readFileSync(
+        path.join(sourceHome, "sessions", encodedCwd, resumeId, "summary.json"),
+        "utf8",
+      ),
+      "from-overlay\n",
+      "overlay session must survive reclaim so the next turn can --resume",
+    );
+    assert.equal(
+      fs.readFileSync(path.join(sourceHome, "sessions", "keep-me.json"), "utf8"),
+      SESSION,
+    );
   });
 });

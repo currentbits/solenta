@@ -215,6 +215,13 @@ describe("remote grok-home reclaim (#833)", () => {
     const dest = path.join(remoteHome, ".solenta", "grok-homes", staleId);
     materializeGrokHome({ dest, sourceHome, mcpServers: {} });
     assert.ok(fs.lstatSync(path.join(dest, "auth.json")).isSymbolicLink());
+    assert.equal(
+      fs.lstatSync(path.join(dest, "sessions")).isSymbolicLink(),
+      false,
+      "overlay sessions is overlay-owned so grok GC cannot reach ~/.grok",
+    );
+    fs.rmSync(path.join(dest, "sessions"), { recursive: true, force: true });
+    fs.symlinkSync(path.join(sourceHome, "sessions"), path.join(dest, "sessions"));
     assert.ok(fs.lstatSync(path.join(dest, "sessions")).isSymbolicLink());
 
     await scheduleRetention({
