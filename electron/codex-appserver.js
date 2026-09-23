@@ -76,6 +76,86 @@ function snakeThreadItem(item) {
   return out;
 }
 
+const UNLOADED_V2_SUBAGENT_RESUME =
+  "cannot resume an unloaded multi-agent v2 sub-agent through its parent; resume the parent first, or use thread/read to inspect it";
+
+function nonEmptyId(value) {
+  if (typeof value !== "string") return null;
+  const id = value.trim();
+  return id || null;
+}
+
+function subagentThreadSpawn(thread) {
+  if (!thread || typeof thread !== "object") return null;
+  const source = thread.source;
+  if (!source || typeof source !== "object") return null;
+  const sub = source.subagent || source.subAgent;
+  if (!sub || typeof sub !== "object") return null;
+  const spawn = sub.thread_spawn || sub.threadSpawn;
+  if (!spawn || typeof spawn !== "object") return null;
+  return spawn;
+}
+
+function hasSubagentMetadata(thread) {
+  if (subagentThreadSpawn(thread)) return true;
+  const named = thread.threadSource;
+  if (typeof named === "string") {
+    if (/^subAgent/i.test(named) || /sub-agent|sub_agent/i.test(named)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Parent of a multi-agent v2 child. Codex 0.154.0 stores it on
+ * `source.subagent.thread_spawn.parent_thread_id`. `parentThreadId` is
+ * accepted only when that subagent metadata is also present.
+ * Never `forkedFromId` (ordinary forks are resume targets).
+ * @param {object | null | undefined} thread
+ * @returns {string | null}
+ */
+function parentIdOfThread(thread) {
+  if (!thread || typeof thread !== "object") return null;
+  const spawn = subagentThreadSpawn(thread);
+  if (spawn) {
+    const nested =
+      nonEmptyId(spawn.parent_thread_id) || nonEmptyId(spawn.parentThreadId);
+    if (nested) return nested;
+  }
+  if (hasSubagentMetadata(thread)) {
+    return (
+      nonEmptyId(thread.parentThreadId) || nonEmptyId(thread.parent_thread_id)
+    );
+  }
+  return null;
+}
+
+/**
+ * Multi-agent v2 children are not a Solenta resume target.
+ * @param {object | null | undefined} thread
+ */
+function isCodexChildThread(thread) {
+  if (!thread || typeof thread !== "object") return false;
+  const id = nonEmptyId(thread.id) || "";
+  const parent = parentIdOfThread(thread);
+  if (parent && parent !== id) return true;
+  return hasSubagentMetadata(thread);
+}
+
+function notificationThreadId(msg) {
+  const p = msg && msg.params && typeof msg.params === "object" ? msg.params : {};
+  if (typeof p.threadId === "string" && p.threadId) return p.threadId;
+  const thread = p.thread && typeof p.thread === "object" ? p.thread : null;
+  if (thread && typeof thread.id === "string" && thread.id) return thread.id;
+  return null;
+}
+
+function isUnloadedV2SubagentResumeError(err) {
+  const msg = err && err.message ? String(err.message) : String(err || "");
+  return msg.includes(UNLOADED_V2_SUBAGENT_RESUME);
+}
+
 function breakdownToJsonl(b) {
   if (!b || typeof b !== "object") return null;
   return {
@@ -99,6 +179,7 @@ function notificationToJsonl(msg) {
     const thread = p.thread && typeof p.thread === "object" ? p.thread : null;
     const id = thread && typeof thread.id === "string" ? thread.id : null;
     if (!id) return null;
+    if (isCodexChildThread(thread)) return null;
     return {
       type: "thread.started",
       thread_id: id,
@@ -266,7 +347,7 @@ function runCodexAppServerTurn(opts) {
   } = opts;
 
   let expectedTurnId = null;
-  let threadId = sessionId ? String(sessionId) : null;
+  let threadId = null;
   let settled = false;
   let stopping = false;
   let turnCompleted = false;
@@ -291,19 +372,17 @@ function runCodexAppServerTurn(opts) {
   }
 
   function onNotification(msg) {
-    if (msg && msg.method === "turn/started") {
+    if (!msg || msg.method === "thread/started") return;
+    if (!threadId) return;
+    const foreignId = notificationThreadId(msg);
+    if (foreignId && foreignId !== threadId) return;
+    if (msg.method === "turn/started") {
       const turn = msg.params && msg.params.turn;
       if (turn && typeof turn.id === "string" && turn.id) {
         expectedTurnId = turn.id;
       }
     }
-    if (msg && msg.method === "thread/started") {
-      const thread = msg.params && msg.params.thread;
-      if (thread && typeof thread.id === "string" && thread.id) {
-        threadId = thread.id;
-      }
-    }
-    if (msg && msg.method === "turn/completed") {
+    if (msg.method === "turn/completed") {
       turnCompleted = true;
       const mapped = notificationToJsonl(msg);
       emitEvent(mapped);
@@ -382,27 +461,79 @@ function runCodexAppServerTurn(opts) {
         model,
         cwd,
       });
-      let thread;
-      if (sessionId) {
-        const resumed = await client.send("thread/resume", {
-          threadId: String(sessionId),
+      const resumeThread = (id) =>
+        client.send("thread/resume", {
+          threadId: String(id),
           excludeTurns: true,
           ...tparams,
         });
-        thread = resumed && resumed.thread;
+
+      async function resumeParentOnce(parentId, originalErr) {
+        const parent = nonEmptyId(parentId);
+        const child = nonEmptyId(
+          sessionId != null ? String(sessionId) : "",
+        );
+        if (!parent || (child && parent === child)) throw originalErr;
+        let parentResumed;
+        try {
+          parentResumed = await resumeThread(parent);
+        } catch {
+          throw originalErr;
+        }
+        const parentThread = parentResumed && parentResumed.thread;
+        if (
+          !parentThread ||
+          typeof parentThread.id !== "string" ||
+          !parentThread.id ||
+          isCodexChildThread(parentThread)
+        ) {
+          throw originalErr;
+        }
+        return parentThread;
+      }
+
+      let thread;
+      if (sessionId) {
+        /** @type {Error | null} */
+        let resumeErr = null;
+        try {
+          const resumed = await resumeThread(sessionId);
+          thread = resumed && resumed.thread;
+        } catch (err) {
+          resumeErr = err instanceof Error ? err : new Error(String(err));
+        }
+        if (resumeErr) {
+          if (!isUnloadedV2SubagentResumeError(resumeErr)) throw resumeErr;
+          let inspected = null;
+          try {
+            const read = await client.send("thread/read", {
+              threadId: String(sessionId),
+            });
+            inspected = read && (read.thread || read);
+          } catch {
+            throw resumeErr;
+          }
+          thread = await resumeParentOnce(parentIdOfThread(inspected), resumeErr);
+        } else if (thread && isCodexChildThread(thread)) {
+          thread = await resumeParentOnce(
+            parentIdOfThread(thread),
+            new Error(UNLOADED_V2_SUBAGENT_RESUME),
+          );
+        }
       } else {
         const started = await client.send("thread/start", tparams);
         thread = started && started.thread;
       }
-      if (thread && typeof thread.id === "string" && thread.id) {
-        threadId = thread.id;
-        emitEvent({
-          type: "thread.started",
-          thread_id: thread.id,
-          session_id: thread.id,
-          thread,
-        });
+      if (!thread || typeof thread.id !== "string" || !thread.id) {
+        throw new Error("Codex app-server returned no thread");
       }
+      threadId = thread.id;
+      emitEvent({
+        type: "thread.started",
+        thread_id: thread.id,
+        session_id: thread.id,
+        thread,
+      });
       const startedTurn = await client.send(
         "turn/start",
         turnParams(
@@ -470,6 +601,9 @@ module.exports = {
   userInputFromPrompt,
   createCodexAppServerClient,
   runCodexAppServerTurn,
+  isCodexChildThread,
+  parentIdOfThread,
+  isUnloadedV2SubagentResumeError,
   SIGKILL_AFTER_MS,
   THREAD_SOURCE,
 };

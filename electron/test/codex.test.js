@@ -122,6 +122,12 @@ describe("codex event parse helpers", () => {
     assert.equal(extractSessionId(ev), "t-1");
   });
 
+  it("does not treat turn.started as a session start", () => {
+    const ev = { type: "turn.started", threadId: "child-sess" };
+    assert.equal(isSessionStartEvent(ev), false);
+    assert.equal(extractSessionId(ev), "child-sess");
+  });
+
   it("extracts agent message text from item.completed", () => {
     assert.equal(
       extractAgentMessageText({
@@ -569,6 +575,57 @@ describe("runner codex provider", () => {
       false,
     );
     assert.match(turnPrompt(rpc), /codex please/);
+  });
+
+  it("keeps the root sessionId when a v2 sub-agent emits thread/started", async () => {
+    process.env.CODER_FAKE_CODEX_SCENARIO = "child-spawn";
+    const thread = store.getThreads()[0];
+    await runner.startRun({ threadId: thread.id, prompt: "spawn children" });
+    await waitFor(() => store.getThread(thread.id).status === "done");
+    assert.equal(store.getThread(thread.id).sessionId, "codex-sess-001");
+    const assistants = store
+      .getMessages(thread.id)
+      .filter((m) => m.role === "assistant");
+    assert.equal(assistants.length, 1);
+    assert.equal(assistants[0].text, "Hello from codex");
+  });
+
+  it("recovers a poisoned child sessionId via thread/read without dropping history", async () => {
+    process.env.CODER_FAKE_CODEX_SCENARIO = "unloaded-child";
+    const thread = store.getThreads()[0];
+    store.updateThread(thread.id, { sessionId: "child-sess" });
+    store.appendMessage(thread.id, {
+      id: "hist-u",
+      role: "user",
+      text: "keep this history",
+    });
+    store.appendMessage(thread.id, {
+      id: "hist-a",
+      role: "assistant",
+      text: "prior parent reply",
+    });
+    const historyBefore = store.getMessages(thread.id).map((m) => m.text);
+
+    await runner.startRun({ threadId: thread.id, prompt: "continue" });
+    await waitFor(() => store.getThread(thread.id).status === "done");
+
+    const updated = store.getThread(thread.id);
+    assert.equal(updated.sessionId, "codex-sess-001");
+    const texts = store.getMessages(thread.id).map((m) => m.text);
+    assert.ok(texts.includes("keep this history"));
+    assert.ok(texts.includes("prior parent reply"));
+    assert.ok(texts.includes("Hello from codex"));
+    assert.equal(historyBefore.filter((t) => t === "keep this history").length, 1);
+
+    const rpc = readRpc(rpcFile);
+    const resumes = rpc.filter((m) => m.method === "thread/resume");
+    assert.ok(resumes.length >= 2, `expected recover resume, got ${JSON.stringify(rpc)}`);
+    assert.equal(resumes[0].params.threadId, "child-sess");
+    assert.equal(resumes[resumes.length - 1].params.threadId, "codex-sess-001");
+    assert.ok(rpc.some((m) => m.method === "thread/read"));
+    const turnStart = rpc.find((m) => m.method === "turn/start");
+    assert.ok(turnStart);
+    assert.equal(turnStart.params.threadId, "codex-sess-001");
   });
 
   it("resume pass uses thread/resume of the stored session id", async () => {

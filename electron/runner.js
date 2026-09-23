@@ -13,7 +13,10 @@ const {
   OUTPUT_TRUNCATE,
 } = require("./claude.js");
 const codexParse = require("./codex.js");
-const { runCodexAppServerTurn } = require("./codex-appserver.js");
+const {
+  runCodexAppServerTurn,
+  isCodexChildThread,
+} = require("./codex-appserver.js");
 const {
   classifyServerRequest,
   pendingFromCommand,
@@ -5210,13 +5213,12 @@ function createRunner(opts) {
         const structuredError = codexParse.extractTerminalError(ev);
         if (structuredError) terminalError = structuredError;
 
-        // Session / thread id
-        if (
-          codexParse.isSessionStartEvent(ev) ||
-          codexParse.extractSessionId(ev)
-        ) {
+        // Session / thread id. Only the root thread.started is a resume
+        // target: child thread/started and turn.started carry a different
+        // id and would poison the next thread/resume.
+        if (codexParse.isSessionStartEvent(ev)) {
           const sid = codexParse.extractSessionId(ev);
-          if (sid) {
+          if (sid && !isCodexChildThread(ev.thread || { id: sid })) {
             capturedSessionId = sid;
             const live = active.get(threadId);
             if (live && live.kind === "codex") live.sessionId = sid;
