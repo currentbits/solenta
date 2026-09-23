@@ -59,6 +59,14 @@
         Every notable change to Solenta, newest first.
       </p>
 
+      <h2 id="v0-21-1">0.21.1 <small>2026-09-23</small></h2>
+      <h3>Fixed</h3>
+      <ul>
+        <li><strong>Grok sign-out loop.</strong> After Grok rejects a refresh token, Solenta no longer re-links the same credentials on the next turn. Sign in again with grok login and the overlay picks up the new login.</li>
+        <li><strong>Grok session wipe.</strong> Each overlay now owns its own sessions directory instead of sharing ~/.grok/sessions, so Grok's stale-session cleanup cannot delete your real sessions through the overlay.</li>
+        <li><strong>Grok auth lock.</strong> Overlay runs share the real grok home's auth lock file, so a Solenta turn and the Grok TUI cannot refresh the same login at once and knock each other out.</li>
+      </ul>
+
       <h2 id="v0-21-0">0.21.0 <small>2026-09-22</small></h2>
       <h3>Added</h3>
       <ul>
