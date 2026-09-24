@@ -506,7 +506,9 @@ describe("orch-server tool handlers", () => {
       prompt: "take over",
     });
     assert.deepEqual(out, { threadId: "fork-1" });
-    assert.deepEqual(deps.forks, [{ threadId: "t1", provider: "codex" }]);
+    assert.deepEqual(deps.forks, [
+      { threadId: "t1", provider: "codex", title: "take over" },
+    ]);
     assert.deepEqual(deps.runs, [{ threadId: "fork-1", prompt: "take over" }]);
   });
 
@@ -514,7 +516,7 @@ describe("orch-server tool handlers", () => {
     const deps = makeDeps();
     const h = createToolHandlers(deps);
     await h.thread_fork({ threadId: "t1", projectId: "p1", prompt: "go" });
-    assert.deepEqual(deps.forks, [{ threadId: "t1" }]);
+    assert.deepEqual(deps.forks, [{ threadId: "t1", title: "go" }]);
   });
 
   it("thread_fork resolves a pool alias to provider and model", async () => {
@@ -547,7 +549,7 @@ describe("orch-server tool handlers", () => {
       prompt: "go",
     });
     assert.deepEqual(deps.forks, [
-      { threadId: "t1", provider: "claude", model: null },
+      { threadId: "t1", provider: "claude", model: null, title: "go" },
     ]);
   });
 
@@ -565,6 +567,20 @@ describe("orch-server tool handlers", () => {
       /Unknown pool alias: nope/,
     );
     assert.equal(deps.forks.length, 0);
+  });
+
+  it("thread_fork prefers an explicit title over the prompt first line", async () => {
+    const deps = makeDeps();
+    const h = createToolHandlers(deps);
+    await h.thread_fork({
+      threadId: "t1",
+      projectId: "p1",
+      title: "Review permissions",
+      prompt: "You are a worker.\nDo the long job.",
+    });
+    assert.deepEqual(deps.forks, [
+      { threadId: "t1", title: "Review permissions" },
+    ]);
   });
 
   it("thread_fork marks the new thread as an orchestration worker", async () => {
@@ -1410,6 +1426,9 @@ describe("orch-server HTTP", () => {
       assert.equal(mergeSchema.properties[field].type, "string");
       assert.ok(mergeSchema.required.includes(field));
     }
+    const forkSchema = list.body.result.tools.find((t) => t.name === "thread_fork").inputSchema;
+    assert.equal(forkSchema.properties.title.type, "string");
+    assert.ok(!forkSchema.required.includes("title"));
     const names = list.body.result.tools.map((t) => t.name).sort();
     assert.deepEqual(names, [
       "ask_user",

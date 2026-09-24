@@ -7615,6 +7615,7 @@ function createRunner(opts) {
         threadId,
         provider,
         worktree: cmd.kind === "handoff",
+        title: cmd.task,
       }),
     );
     const ids = workers.map((w) => w.id);
@@ -8189,8 +8190,9 @@ function createRunner(opts) {
     // belong to the run that actually happens — the worker's — so they are
     // deliberately skipped on this hop.
     if (thread.pendingFork) {
-      // Promote the title BEFORE forking so the worker is "Fork: <task>"
-      // rather than "Fork: New Thread".
+      // Promote the parent title BEFORE forking so the orchestrator is
+      // named after the first prompt, not "New Thread". The worker gets
+      // that same first line as its job title (no extra Fork: prefix).
       let forkTitle = thread.title;
       if (forkTitle === "New Thread") {
         const firstLine = String(prompt).split(/\r?\n/)[0].trim();
@@ -8201,7 +8203,7 @@ function createRunner(opts) {
         store.updateThread(threadId, { title: forkTitle }, { touch: true });
       }
 
-      const worker = services.forkWorkerThread(store, { threadId });
+      const worker = services.forkWorkerThread(store, { threadId, prompt });
       // The fork itself is a span (issue #280 asks for thread/fork/tool), and
       // it parents the worker's run so the crew reads as one trace tree. It
       // closes as soon as the worker is launched — the worker outliving its
