@@ -103,11 +103,7 @@ describe("materializeCursorPinPlugin", () => {
     assert.equal(pre.length, 1);
     assert.equal(pre[0].matcher, "Task|Agent");
     const scriptPath = path.join(dest, "scripts", "pin-task-parent.js");
-    assert.ok(
-      pre[0].command.includes(scriptPath),
-      `command should exec ${scriptPath}: ${pre[0].command}`,
-    );
-    assert.ok(pre[0].command.startsWith("node "));
+    assert.equal(pre[0].command, "node " + JSON.stringify(scriptPath));
     assert.equal(pre[0].timeout, 5);
     assert.ok(fs.existsSync(scriptPath));
     assert.match(

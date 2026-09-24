@@ -134,30 +134,40 @@ describe('trust ranking + maintenance', () => {
       body: 'null agent rank topic details here',
       importance: 3,
     })
-    const now = new Date().toISOString()
+    // rank_decay calls Date.now once per expression. A 1ms tick between the
+    // two calls makes with_trust 0.995^(1/86400000) instead of baseline.
+    const fixedMs = Date.parse('2026-06-01T00:00:00.000Z')
+    const fixedIso = new Date(fixedMs).toISOString()
     memory.db
       .prepare(
         `UPDATE entries SET created_at = ?, last_accessed_at = NULL, access_count = 0, agent = NULL WHERE id = ?`,
       )
-      .run(now, id)
+      .run(fixedIso, id)
 
-    const row = memory.db
-      .prepare(
-        `SELECT
-           (e.importance / 3.0)
-             * rank_decay(COALESCE(e.last_accessed_at, e.created_at))
-             * usage_boost(e.access_count, COALESCE(e.helpful_count, 0), COALESCE(e.harmful_count, 0))
-             AS baseline,
-           (e.importance / 3.0)
-             * rank_decay(COALESCE(e.last_accessed_at, e.created_at))
-             * usage_boost(e.access_count, COALESCE(e.helpful_count, 0), COALESCE(e.harmful_count, 0))
-             * agent_trust(e.agent)
-             AS with_trust
-         FROM entries e WHERE e.id = ?`,
-      )
-      .get(id)
-    assert.equal(row.with_trust, row.baseline)
-    assert.equal(memory.db.prepare(`SELECT agent_trust(NULL) AS t`).get().t, 1)
+    const realNow = Date.now
+    Date.now = () => fixedMs
+    try {
+      const row = memory.db
+        .prepare(
+          `SELECT
+             (e.importance / 3.0)
+               * rank_decay(COALESCE(e.last_accessed_at, e.created_at))
+               * usage_boost(e.access_count, COALESCE(e.helpful_count, 0), COALESCE(e.harmful_count, 0))
+               AS baseline,
+             (e.importance / 3.0)
+               * rank_decay(COALESCE(e.last_accessed_at, e.created_at))
+               * usage_boost(e.access_count, COALESCE(e.helpful_count, 0), COALESCE(e.harmful_count, 0))
+               * agent_trust(e.agent)
+               AS with_trust
+           FROM entries e WHERE e.id = ?`,
+        )
+        .get(id)
+      assert.equal(row.with_trust, row.baseline)
+      assert.equal(row.baseline, 1)
+      assert.equal(memory.db.prepare(`SELECT agent_trust(NULL) AS t`).get().t, 1)
+    } finally {
+      Date.now = realNow
+    }
   })
 
   test('poisoned agent ranks below a clean writer of the same text', async () => {

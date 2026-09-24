@@ -62,7 +62,9 @@ describe("materializeCodexGuardrailHome", () => {
     assert.ok(hooks.hooks.PreToolUse);
     const scriptPath = path.join(dest, "solenta-hooks", "guardrail-hook.js");
     const cmd = hooks.hooks.PreToolUse[0].hooks[0].command;
-    assert.ok(cmd.includes(scriptPath), cmd);
+    // Command is `node ` + JSON.stringify(path). Windows backslashes are
+    // escaped, so a raw scriptPath substring is not the contract.
+    assert.equal(cmd, "node " + JSON.stringify(scriptPath));
     assert.ok(fs.existsSync(scriptPath));
     assert.ok(fs.existsSync(path.join(dest, "solenta-hooks", "guardrails.js")));
     assert.ok(fs.lstatSync(path.join(dest, "auth.json")).isSymbolicLink());
@@ -150,7 +152,12 @@ describe("materializeCodexGuardrailHome", () => {
       statusMessage: "Solenta guardrails",
     });
     assert.match(cfg, /hooks\.state\./);
-    assert.ok(cfg.includes(key), `missing trust key ${key} in\n${cfg}`);
+    // tomlQuotedKey doubles backslashes. The key itself stays the realpath.
+    const quotedKey = `"${key.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
+    assert.ok(
+      cfg.includes(`[hooks.state.${quotedKey}]`),
+      `missing trust key ${quotedKey} in\n${cfg}`,
+    );
     assert.ok(cfg.includes(hash), `missing trusted_hash ${hash} in\n${cfg}`);
     assert.equal(
       fs.readFileSync(path.join(source, "config.toml"), "utf8"),

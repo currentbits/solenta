@@ -4195,11 +4195,14 @@ describe("createIOSSimulatorService recording", () => {
       threadId: "t1",
       generation: harness.generation,
     });
-    await harness.timers.advance(10_000);
-    await assertRejects(stopped, "recording_finalize_failed", (err) => {
+    // The finalize timer rejects `stopped` inside advance. Attaching afterwards
+    // is an unhandled rejection (PromiseRejectionHandledWarning).
+    const rejected = assertRejects(stopped, "recording_finalize_failed", (err) => {
       assert.equal(err.message, "Failed to finalize the simulator recording");
       return true;
     });
+    await harness.timers.advance(10_000);
+    await rejected;
     assert.deepEqual(harness.signals, [[-6100, "SIGKILL"]]);
     assert.equal(harness.store.getRunArtifacts("t1").length, 0);
     assert.deepEqual(stagingEntries(harness.userDataPath), []);
@@ -4406,8 +4409,9 @@ describe("createIOSSimulatorService recording", () => {
       threadId: "t1",
       generation: harness.generation,
     });
+    const rejected = assertRejects(stopped, "recording_finalize_failed");
     await harness.timers.advance(10_000);
-    await assertRejects(stopped, "recording_finalize_failed");
+    await rejected;
     assert.deepEqual(harness.signals, [
       [-6200, "SIGKILL"],
       [6200, "SIGKILL"],

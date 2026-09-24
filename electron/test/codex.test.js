@@ -83,6 +83,27 @@ function assertCodexMcpOnAppServer(argv, opts) {
   );
 }
 
+/**
+ * writable_roots lists realpath(git dir), TOML-quoted. A raw `includes`
+ * misses both the doubled Windows backslashes and an 8.3-vs-long name.
+ * @param {string[]} argv
+ * @param {string} gitDir
+ */
+function assertWritableGitRoot(argv, gitDir) {
+  let canonical = gitDir;
+  try {
+    canonical = fs.realpathSync(gitDir);
+  } catch {
+    canonical = path.resolve(gitDir);
+  }
+  const flag = argv.find((a) =>
+    String(a).startsWith("sandbox_workspace_write.writable_roots="),
+  );
+  assert.ok(flag, `missing writable_roots in ${JSON.stringify(argv)}`);
+  const quoted = `"${canonical.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
+  assert.ok(flag.includes(quoted), `missing ${quoted} in ${flag}`);
+}
+
 function waitFor(predicate, { timeoutMs = 15000, intervalMs = 20 } = {}) {
   return new Promise((resolve, reject) => {
     const start = Date.now();
@@ -360,7 +381,14 @@ describe("runner codex provider", () => {
 
   afterEach(() => {
     if (runner) runner.stopAll();
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+    // Windows can keep the checkout locked for a moment after the fake
+    // Codex process exits (EBUSY on rmdir). Node's own retry, not a skip.
+    fs.rmSync(tmpDir, {
+      recursive: true,
+      force: true,
+      maxRetries: process.platform === "win32" ? 10 : 0,
+      retryDelay: process.platform === "win32" ? 50 : 0,
+    });
     if (prevSimulate === undefined) delete process.env.CODER_SIMULATE;
     else process.env.CODER_SIMULATE = prevSimulate;
     if (prevAgentCmd === undefined) delete process.env.CODER_AGENT_CMD;
@@ -458,14 +486,7 @@ describe("runner codex provider", () => {
       ["rev-parse", "--path-format=absolute", "--git-dir"],
       { cwd: setup.worktreePath, encoding: "utf8" },
     ).trim();
-    const joined = argv.join(" ");
-    assert.ok(
-      argv.some((a) =>
-        String(a).startsWith("sandbox_workspace_write.writable_roots="),
-      ),
-      joined,
-    );
-    assert.ok(joined.includes(gitDir), joined);
+    assertWritableGitRoot(argv, gitDir);
   });
 
   it("workspace-write grants standalone .git metadata (#1160)", async () => {
@@ -486,14 +507,7 @@ describe("runner codex provider", () => {
       ["rev-parse", "--path-format=absolute", "--git-dir"],
       { cwd: repo, encoding: "utf8" },
     ).trim();
-    const joined = argv.join(" ");
-    assert.ok(
-      argv.some((a) =>
-        String(a).startsWith("sandbox_workspace_write.writable_roots="),
-      ),
-      joined,
-    );
-    assert.ok(joined.includes(gitDir), joined);
+    assertWritableGitRoot(argv, gitDir);
   });
 
   it("omits GitHub proxy flags when sandbox gh cannot authenticate (#848)", async () => {
@@ -907,7 +921,11 @@ describe("runner codex provider", () => {
       await waitFor(() => store.getThread(t2.id).status === "done");
       argv = JSON.parse(fs.readFileSync(argvFile, "utf8"));
       const cwd = t2.worktreePath || project.path;
-      const boundUrl = `mcp_servers.coder-memory.url="http://127.0.0.1:${freePort}/mcp?project=${encodeURIComponent(cwd)}"`;
+      // Same bind as boundSolentaMcpUrl: URL.searchParams encodes `~`
+      // (Windows 8.3 temps) as %7E. encodeURIComponent leaves it raw.
+      const bound = new URL(`http://127.0.0.1:${freePort}/mcp`);
+      bound.searchParams.set("project", cwd);
+      const boundUrl = `mcp_servers.coder-memory.url="${bound.toString()}"`;
       assertCodexMcpOnAppServer(argv, {
         url: boundUrl,
       });
