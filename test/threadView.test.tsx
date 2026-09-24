@@ -19,6 +19,7 @@ import { inAct, mount, unmountAll } from "./support/dom.ts";
 import { setTranscriptViewMode, setVerboseToolCards } from "../src/uiPrefs";
 import { ThreadView } from "../src/components/ThreadView";
 import styles from "../src/components/ThreadView.module.css";
+import { routineWorkerActivitySummary } from "../src/workerActivity";
 import { TRANSCRIPT_WINDOW } from "../src/transcriptWindow";
 import type {
   AttachmentInfo,
@@ -101,6 +102,7 @@ function msg(over: Partial<ChatMessage> & Pick<ChatMessage, "role" | "text">): C
     attachments: over.attachments,
     thinking: over.thinking,
     steer: over.steer,
+    fromNotice: over.fromNotice,
   };
 }
 
@@ -4062,5 +4064,683 @@ describe("ThreadView queued follow-up wrap (issue #903)", () => {
       /flex-shrink\s*:\s*0/,
       "the action cluster must not shrink when the thought wraps",
     );
+  });
+});
+
+const NOTICE_FOOTER = "Continue orchestrating; thread_status has full details.";
+
+function landingSuffix(threadId: string, branch = "coder/feature"): string {
+  return (
+    ` Its work is still only on branch ${branch}:` +
+    ` check it, then tell the user what it built and ask whether to merge` +
+    ` it (thread_merge) or open a pull request (thread_pr) with` +
+    ` workerThreadId ${threadId}. Do not land it before they answer \u2014` +
+    ` not even onto your own branch. If other workers have finished too,` +
+    ` ask about all of them in one question and name the order you would` +
+    ` land them in.`
+  );
+}
+
+function workerDoneLine(
+  id: string,
+  title: string,
+  reply = "",
+  opts: { landing?: boolean; branch?: string; status?: string } = {},
+): string {
+  const status = opts.status ?? "done";
+  return (
+    `Worker thread ${id} ("${title}") finished with status ${status}.` +
+    (reply ? ` Last reply: ${reply}` : "") +
+    (opts.landing ? landingSuffix(id, opts.branch) : "")
+  );
+}
+
+function orchNotice(lines: string[]): string {
+  const body = lines.join("\n");
+  const headed = /^\s*\[/.test(body) ? body : `[orchestration] ${body}`;
+  return `${headed}\n${NOTICE_FOOTER}`;
+}
+
+function activityDetails(root: { query: (sel: string) => Element | null }): HTMLDetailsElement {
+  const el = root.query("[data-worker-activity]");
+  assert.ok(el, "worker activity disclosure");
+  assert.equal(el.tagName, "DETAILS");
+  return el as HTMLDetailsElement;
+}
+
+describe("routine worker activity", () => {
+  const routine = orchNotice([
+    workerDoneLine("w-1", "backend", "API is in contract.md"),
+  ]);
+
+  it("summarizes a flagged routine notice and keeps the original text", () => {
+    const summary = routineWorkerActivitySummary(
+      msg({ id: "n1", role: "user", text: routine, fromNotice: true }),
+    );
+    assert.equal(summary, 'Worker "backend" finished. API is in contract.md');
+    const html = render({
+      detail: detail({
+        messages: [
+          msg({ id: "n1", role: "user", text: routine, createdAt: 1, fromNotice: true }),
+        ],
+      }),
+    });
+    assert.ok(html.includes("data-worker-activity"), "compact disclosure");
+    assert.doesNotMatch(html, /<details[^>]*\sopen/, "starts collapsed");
+    assert.match(
+      html,
+      /Worker (?:&quot;|")backend(?:&quot;|") finished\. API is in contract\.md/,
+    );
+    assert.ok(
+      html.includes("Continue orchestrating; thread_status has full details."),
+      "original footer stays in the document",
+    );
+    assert.ok(html.includes("Worker thread w-1"), "original worker line stays");
+    assert.ok(!html.includes("userBubble"), "not a user bubble");
+    assert.ok(!html.includes("\u2014"), "summary and chrome add no em dash");
+
+    const crew = orchNotice([
+      '[crew] finished t5 ("Names"): bounded titles. Unblocked: t6',
+    ]);
+    assert.equal(
+      routineWorkerActivitySummary(
+        msg({ id: "c", role: "user", text: crew, fromNotice: true }),
+      ),
+      'Crew task "Names" finished. bounded titles. Unblocked t6',
+    );
+    const batch = orchNotice([
+      workerDoneLine("w-1", "backend", "one", { landing: true }),
+      workerDoneLine("w-2", "frontend", "two"),
+    ]);
+    assert.equal(
+      routineWorkerActivitySummary(
+        msg({ id: "b", role: "user", text: batch, fromNotice: true }),
+      ),
+      'Workers "backend" and "frontend" finished. Merge or pull request decision waiting',
+    );
+  });
+
+  it("opens and closes the original text from the summary", async () => {
+    const m = await mount(
+      view({
+        detail: detail({
+          messages: [
+            msg({
+              id: "n1",
+              role: "user",
+              text: routine,
+              createdAt: 1,
+              fromNotice: true,
+            }),
+          ],
+        }),
+      }),
+    );
+    const closed = activityDetails(m);
+    assert.equal(closed.open, false);
+    await m.click(closed.querySelector("summary"));
+    assert.equal(activityDetails(m).open, true);
+    assert.ok(
+      activityDetails(m).querySelector("[data-worker-activity-body]")?.textContent?.includes(
+        "Continue orchestrating; thread_status has full details.",
+      ),
+    );
+    await m.click(activityDetails(m).querySelector("summary"));
+    assert.equal(activityDetails(m).open, false);
+    m.unmount();
+  });
+
+  it("leaves an unflagged lookalike as a user message", () => {
+    const summary = routineWorkerActivitySummary(
+      msg({ id: "u1", role: "user", text: routine }),
+    );
+    assert.equal(summary, null);
+    const html = render({
+      detail: detail({
+        messages: [msg({ id: "u1", role: "user", text: routine, createdAt: 1 })],
+      }),
+    });
+    assert.ok(html.includes("userBubble"));
+    assert.ok(!html.includes("data-worker-activity"));
+    assert.ok(html.includes("[orchestration] Worker thread w-1"));
+  });
+
+  it("keeps failed, questioned, and undeliverable notices fully visible", () => {
+    const failed = orchNotice([
+      workerDoneLine("w-1", "backend", "tests crashed", { status: "failed" }),
+    ]);
+    const asked = orchNotice([
+      workerDoneLine("w-1", "backend", "Need permission to deploy?"),
+    ]);
+    assert.equal(
+      routineWorkerActivitySummary(
+        msg({ id: "f", role: "user", text: failed, fromNotice: true }),
+      ),
+      null,
+    );
+    assert.equal(
+      routineWorkerActivitySummary(
+        msg({ id: "q", role: "user", text: asked, fromNotice: true }),
+      ),
+      null,
+    );
+    const html = render({
+      detail: detail({
+        thread: thread({ status: "failed" }),
+        messages: [
+          msg({ id: "f", role: "user", text: failed, createdAt: 1, fromNotice: true }),
+          msg({ id: "q", role: "user", text: asked, createdAt: 2, fromNotice: true }),
+        ],
+      }),
+    });
+    assert.ok(!html.includes("data-worker-activity"));
+    assert.ok(html.includes("userBubble"));
+    assert.ok(html.includes("finished with status failed"));
+    assert.ok(html.includes("Need permission to deploy?"));
+
+    const undelivered =
+      `${routine}\n\nNot delivered: Daily budget reached`;
+    const blocked = render({
+      detail: detail({
+        thread: thread({ status: "failed" }),
+        messages: [
+          msg({
+            id: "e-park",
+            role: "event",
+            text: undelivered,
+            createdAt: 3,
+            fromNotice: true,
+          }),
+        ],
+      }),
+    });
+    assert.ok(blocked.includes("eventLine"));
+    assert.ok(blocked.includes("Not delivered: Daily budget reached"));
+    assert.ok(blocked.includes("Retry turn"));
+    assert.ok(!blocked.includes("data-worker-activity"));
+    assert.ok(!blocked.includes("userBubble"));
+  });
+
+  it("names a landing decision without hiding the canned instructions", () => {
+    const text = orchNotice([
+      workerDoneLine("w-1", "backend", "API is in contract.md", {
+        landing: true,
+        branch: "(its own)",
+      }),
+    ]);
+    const summary = routineWorkerActivitySummary(
+      msg({ id: "n1", role: "user", text, fromNotice: true }),
+    );
+    assert.equal(
+      summary,
+      'Worker "backend" finished. API is in contract.md. Merge or pull request decision waiting',
+    );
+    const html = render({
+      detail: detail({
+        messages: [
+          msg({ id: "n1", role: "user", text, createdAt: 1, fromNotice: true }),
+        ],
+      }),
+    });
+    assert.ok(html.includes("Merge or pull request decision waiting"));
+    assert.ok(html.includes("thread_merge"));
+    assert.ok(html.includes("workerThreadId w-1"));
+    const summaryHtml = html.slice(
+      html.indexOf("<summary"),
+      html.indexOf("</summary>"),
+    );
+    assert.ok(!summaryHtml.includes("\u2014"));
+    assert.ok(summaryHtml.includes("thread_merge") === false);
+
+    const withPeriod = orchNotice([
+      workerDoneLine("w-1", "backend", "Folded the routine rows.", {
+        landing: true,
+      }),
+    ]);
+    assert.equal(
+      routineWorkerActivitySummary(
+        msg({ id: "period", role: "user", text: withPeriod, fromNotice: true }),
+      ),
+      'Worker "backend" finished. Folded the routine rows. Merge or pull request decision waiting',
+    );
+
+    const unknownTail = orchNotice([
+      workerDoneLine("w-1", "backend", "API is in contract.md", {
+        landing: true,
+      }).replace(
+        / Do not land it before they answer[\s\S]*$/,
+        " Choose deployment target",
+      ),
+    ]);
+    assert.equal(
+      routineWorkerActivitySummary(
+        msg({ id: "tail", role: "user", text: unknownTail, fromNotice: true }),
+      ),
+      null,
+    );
+    const tailHtml = render({
+      detail: detail({
+        messages: [
+          msg({
+            id: "tail",
+            role: "user",
+            text: unknownTail,
+            createdAt: 2,
+            fromNotice: true,
+          }),
+        ],
+      }),
+    });
+    assert.ok(tailHtml.includes("userBubble"));
+    assert.ok(tailHtml.includes("Choose deployment target"));
+    assert.ok(!tailHtml.includes("data-worker-activity"));
+    assert.equal(
+      routineWorkerActivitySummary(
+        msg({
+          id: "split",
+          role: "user",
+          text: orchNotice([
+            workerDoneLine("w-1", "backend", "API is in contract.md"),
+            landingSuffix("w-1").trim(),
+          ]),
+          fromNotice: true,
+        }),
+      ),
+      null,
+    );
+    assert.equal(
+      routineWorkerActivitySummary(
+        msg({
+          id: "ask",
+          role: "user",
+          text: orchNotice([
+            workerDoneLine("w-1", "backend", "Can I merge this?", { landing: true }),
+          ]),
+          fromNotice: true,
+        }),
+      ),
+      null,
+    );
+    assert.equal(
+      routineWorkerActivitySummary(
+        msg({
+          id: "direct",
+          role: "user",
+          text: orchNotice([
+            workerDoneLine("w-1", "backend", "Please call thread_merge", {
+              landing: true,
+            }),
+          ]),
+          fromNotice: true,
+        }),
+      ),
+      null,
+    );
+  });
+
+  it("keeps clear requests and soft failures visible, including inside a batch", () => {
+    const replies = [
+      "Needs your input before continuing",
+      "Please choose a branch to merge",
+      "Waiting for your decision",
+      "Unable to finish verification",
+      "Tests errored",
+    ];
+    for (const reply of replies) {
+      const text = orchNotice([
+        workerDoneLine("w-1", "backend", reply, { landing: true }),
+      ]);
+      assert.equal(
+        routineWorkerActivitySummary(
+          msg({ id: "ask", role: "user", text, fromNotice: true }),
+        ),
+        null,
+        reply,
+      );
+      const html = render({
+        detail: detail({
+          messages: [
+            msg({
+              id: "ask",
+              role: "user",
+              text,
+              createdAt: 1,
+              fromNotice: true,
+            }),
+          ],
+        }),
+      });
+      assert.ok(html.includes("userBubble"), reply);
+      assert.ok(html.includes(reply), reply);
+      assert.ok(!html.includes("data-worker-activity"), reply);
+    }
+
+    const batched = orchNotice([
+      workerDoneLine("w-1", "backend", "API is in contract.md", { landing: true }),
+      workerDoneLine("w-2", "frontend", "Needs your input before continuing"),
+    ]);
+    assert.equal(
+      routineWorkerActivitySummary(
+        msg({ id: "batch", role: "user", text: batched, fromNotice: true }),
+      ),
+      null,
+    );
+    const batchHtml = render({
+      detail: detail({
+        messages: [
+          msg({
+            id: "batch",
+            role: "user",
+            text: batched,
+            createdAt: 2,
+            fromNotice: true,
+          }),
+        ],
+      }),
+    });
+    assert.ok(batchHtml.includes("Needs your input before continuing"));
+    assert.ok(batchHtml.includes("API is in contract.md"));
+    assert.ok(!batchHtml.includes("data-worker-activity"));
+
+    const crewAsk = orchNotice([
+      '[crew] finished t5 ("Names"): Waiting for your decision',
+    ]);
+    assert.equal(
+      routineWorkerActivitySummary(
+        msg({ id: "crew-ask", role: "user", text: crewAsk, fromNotice: true }),
+      ),
+      null,
+    );
+  });
+
+  it("keeps routine and actionable notices visible in Summary mode", async () => {
+    setTranscriptViewMode("summary");
+    const routine = orchNotice([
+      workerDoneLine("w-1", "backend", "API is in contract.md", { landing: true }),
+    ]);
+    const asked = orchNotice([
+      workerDoneLine("w-2", "frontend", "Needs your input before continuing"),
+    ]);
+    const m = await mount(
+      view({
+        detail: detail({
+          messages: [
+            msg({ id: "u1", role: "user", text: "do the work", createdAt: 1 }),
+            msg({
+              id: "t1",
+              role: "tool",
+              text: "Read: a.ts",
+              createdAt: 2,
+              runId: "run-1",
+              tool: {
+                id: "tc1",
+                name: "Read",
+                input: "SUMMARY_SECRET_TOOL",
+                output: "ok",
+                done: true,
+                isError: false,
+              },
+            }),
+            msg({
+              id: "a1",
+              role: "assistant",
+              text: "ASSISTANT_FINAL_REPLY",
+              createdAt: 3,
+              runId: "run-1",
+            }),
+            msg({
+              id: "n-routine",
+              role: "user",
+              text: routine,
+              createdAt: 4,
+              fromNotice: true,
+            }),
+            msg({
+              id: "n-ask",
+              role: "user",
+              text: asked,
+              createdAt: 5,
+              fromNotice: true,
+            }),
+          ],
+        }),
+      }),
+    );
+    assert.ok(m.query("[data-focus-turn]"), "summary still folds tool activity");
+    assert.ok(
+      !m.text().includes("SUMMARY_SECRET_TOOL"),
+      "tool input stays inside the summary fold",
+    );
+    assert.ok(m.text().includes("ASSISTANT_FINAL_REPLY"));
+    const compact = activityDetails(m);
+    assert.equal(compact.open, false);
+    assert.match(
+      compact.querySelector("summary")?.textContent || "",
+      /Worker "backend" finished/,
+    );
+    assert.ok(m.text().includes("Needs your input before continuing"));
+    assert.ok(
+      !compact.textContent?.includes("Needs your input before continuing"),
+      "the request is not tucked into the routine disclosure",
+    );
+    assert.ok(m.html().includes("userBubble"));
+    m.unmount();
+  });
+
+  it("toggles when the summary receives the click a keyboard activation produces", async () => {
+    const routine = orchNotice([
+      workerDoneLine("w-1", "backend", "API is in contract.md"),
+    ]);
+    const m = await mount(
+      view({
+        detail: detail({
+          messages: [
+            msg({
+              id: "n1",
+              role: "user",
+              text: routine,
+              createdAt: 1,
+              fromNotice: true,
+            }),
+          ],
+        }),
+      }),
+    );
+    const summary = activityDetails(m).querySelector("summary");
+    assert.ok(summary);
+    (summary as HTMLElement).focus();
+    // Enter/Space on a summary synthesizes a click. jsdom does not, so the
+    // test dispatches that click, then a following pointer click.
+    await m.click(summary);
+    assert.equal(activityDetails(m).open, true);
+    await m.click(activityDetails(m).querySelector("summary"));
+    assert.equal(activityDetails(m).open, false);
+    m.unmount();
+  });
+
+  it("does not fold peer, stopped, blocked, attachment, or inbound notices", () => {
+    const peer = orchNotice([
+      '[peer from w-9 ("backend")] please review the contract',
+    ]);
+    const stopped = orchNotice([
+      workerDoneLine("w-1", "backend", "", { status: "stopped" }),
+    ]);
+    const blocked = orchNotice([
+      '[crew] finished t2 ("Names"): still blocked on t1',
+    ]);
+    for (const text of [peer, stopped, blocked]) {
+      assert.equal(
+        routineWorkerActivitySummary(
+          msg({ id: "x", role: "user", text, fromNotice: true }),
+        ),
+        null,
+        text.slice(0, 48),
+      );
+    }
+    const html = render({
+      onSelectThread: () => {},
+      detail: detail({
+        messages: [
+          msg({
+            id: "in",
+            role: "user",
+            text: routine,
+            createdAt: 1,
+            fromNotice: true,
+            fromThread: { id: "lead-1", title: "Lead" },
+          }),
+          msg({
+            id: "att",
+            role: "user",
+            text: routine,
+            createdAt: 2,
+            fromNotice: true,
+            attachments: [{ kind: "file", path: "/tmp/a.txt", name: "a.txt" }],
+          }),
+        ],
+      }),
+    });
+    assert.ok(html.includes("data-inbound-card"));
+    assert.ok(html.includes("data-inbound-from=\"lead-1\""));
+    assert.ok(html.includes("userBubble"));
+    assert.ok(html.includes("a.txt"));
+    assert.ok(!html.includes("data-worker-activity"));
+  });
+
+  it("keeps edit-and-resubmit on the original notice text", async () => {
+    const m = await mount(
+      view({
+        onRewindAndResubmit: async () => {},
+        detail: detail({
+          messages: [
+            msg({
+              id: "n1",
+              role: "user",
+              text: routine,
+              createdAt: 1,
+              fromNotice: true,
+            }),
+          ],
+        }),
+      }),
+    );
+    await m.click(m.query("[data-edit-message='n1']"));
+    const textarea = m.query("[data-edit-textarea='n1']");
+    assert.ok(textarea instanceof HTMLTextAreaElement);
+    assert.equal(textarea.value, routine);
+    m.unmount();
+  });
+
+  it("opens the notice in verbose mode and when search reveals it", async () => {
+    setTranscriptViewMode("verbose");
+    const verbose = await mount(
+      view({
+        detail: detail({
+          messages: [
+            msg({
+              id: "n1",
+              role: "user",
+              text: routine,
+              createdAt: 1,
+              fromNotice: true,
+            }),
+          ],
+        }),
+      }),
+    );
+    assert.equal(activityDetails(verbose).open, true);
+    await verbose.click(activityDetails(verbose).querySelector("summary"));
+    assert.equal(
+      activityDetails(verbose).open,
+      true,
+      "verbose keeps the original text visible",
+    );
+    verbose.unmount();
+    setTranscriptViewMode("normal");
+
+    const hidden = orchNotice([
+      workerDoneLine("w-early", "Review keyboard navigation", "SECRET_NOTICE_BODY"),
+    ]);
+    const messages = [
+      msg({
+        id: "notice-early",
+        role: "user",
+        text: hidden,
+        createdAt: 1,
+        fromNotice: true,
+      }),
+      ...Array.from({ length: TRANSCRIPT_WINDOW + 5 }, (_, i) =>
+        msg({
+          id: `pad-${i}`,
+          role: "user",
+          text: `pad ${i}`,
+          createdAt: i + 2,
+        }),
+      ),
+    ];
+
+    function RevealHarness() {
+      const [reveal, setReveal] = useState<string | null>(null);
+      return (
+        <div>
+          <button
+            type="button"
+            data-reveal-notice=""
+            onClick={() => setReveal("notice-early")}
+          >
+            reveal
+          </button>
+          {view({ detail: detail({ messages }), revealMessageId: reveal })}
+        </div>
+      );
+    }
+
+    const m = await mount(<RevealHarness />);
+    assert.ok(!m.html().includes("SECRET_NOTICE_BODY"), "notice starts above the window");
+    assert.ok(!m.html().includes("data-stream-in"));
+    await m.click(m.query("[data-reveal-notice]"));
+    assert.ok(m.html().includes("SECRET_NOTICE_BODY"), "reveal mounts the notice");
+    assert.equal(activityDetails(m).open, true, "reveal expands the notice");
+    assert.ok(m.query("[data-revealed-message]"));
+    assert.ok(m.query('[data-msg="notice-early"]'));
+    assert.ok(
+      !m.html().includes("data-stream-in"),
+      "revealed history must not replay the entrance",
+    );
+    m.unmount();
+  });
+
+  it("does not replay the entrance for a notice already in history", async () => {
+    const text = orchNotice([
+      workerDoneLine("w-hist", "sidebar", "HISTORICAL_NOTICE"),
+    ]);
+    const messages = Array.from({ length: TRANSCRIPT_WINDOW + 8 }, (_, i) => {
+      if (i === 7) {
+        return msg({
+          id: "notice-hist",
+          role: "user",
+          text,
+          createdAt: i + 1,
+          fromNotice: true,
+        });
+      }
+      return msg({
+        id: `hist-${i}`,
+        role: "user",
+        text: `hist ${i}`,
+        createdAt: i + 1,
+      });
+    });
+    const m = await mount(view({ detail: detail({ messages }) }));
+    assert.ok(!m.html().includes("HISTORICAL_NOTICE"), "notice starts above the window");
+    assert.ok(!m.html().includes("data-stream-in"));
+    await m.click(m.query("[data-show-earlier]"));
+    assert.ok(m.html().includes("HISTORICAL_NOTICE"));
+    assert.equal(activityDetails(m).open, false, "history stays collapsed");
+    assert.ok(
+      !m.html().includes("data-stream-in"),
+      "Show earlier must not replay the entrance",
+    );
+    m.unmount();
   });
 });

@@ -209,6 +209,7 @@ import {
   mapFocusTurns,
   type FocusTurnSummary,
 } from "../focusView";
+import { routineWorkerActivitySummary } from "../workerActivity";
 import { useRunDurationEnabled, useTranscriptViewMode } from "../uiPrefs";
 import { DROP_OVERLAY_MESSAGE, type DroppedFolder } from "../dropFiles";
 import { Composer } from "./Composer";
@@ -1222,6 +1223,7 @@ const UserMessageBlock = memo(function UserMessageBlock({
   canEdit,
   confirming,
   animateIn,
+  activityOpen = false,
   onRequestResubmit,
   onCancelConfirm,
   onLoadAttachmentImage,
@@ -1234,6 +1236,8 @@ const UserMessageBlock = memo(function UserMessageBlock({
   confirming: boolean;
   /** Freshly appended at the live tail — play the stream-in entrance. */
   animateIn?: boolean;
+  /** Verbose mode or an active reveal: keep the original notice text shown. */
+  activityOpen?: boolean;
   onRequestResubmit?: (messageId: string, prompt: string) => void;
   onCancelConfirm?: () => void;
   onLoadAttachmentImage?: (path: string) => Promise<string | null>;
@@ -1243,6 +1247,7 @@ const UserMessageBlock = memo(function UserMessageBlock({
 }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(message.text);
+  const [activityOpened, setActivityOpened] = useState(false);
   const taRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
@@ -1352,6 +1357,71 @@ const UserMessageBlock = memo(function UserMessageBlock({
             )}
           </div>
           <div className={styles.inboundBody}>{message.text}</div>
+        </div>
+      </article>
+    );
+  }
+
+  const activitySummary = routineWorkerActivitySummary(message);
+  if (activitySummary) {
+    const activityIsOpen = activityOpen || activityOpened;
+    return (
+      <article
+        className={`${styles.workerActivityRow}${streamCls}`}
+        data-msg={message.id}
+        data-stream-in={streamAttr}
+      >
+        <div className={styles.workerActivityCluster}>
+          <details
+            className={styles.workerActivity}
+            data-worker-activity=""
+            open={activityIsOpen}
+          >
+            <summary
+              className={styles.workerActivitySummary}
+              onClick={(event) => {
+                event.preventDefault();
+                if (activityOpen) return;
+                setActivityOpened((open) => !open);
+              }}
+            >
+              {activitySummary}
+            </summary>
+            <div
+              className={styles.workerActivityBody}
+              data-worker-activity-body=""
+            >
+              {message.text}
+            </div>
+          </details>
+          {canEdit && onRequestResubmit && (
+            <button
+              type="button"
+              className={`${styles.msgAction} ${styles.workerActivityAction}`}
+              aria-label="Edit and resubmit"
+              title="Edit and resubmit"
+              data-edit-message={message.id}
+              onClick={() => {
+                setDraft(message.text);
+                setEditing(true);
+              }}
+            >
+              Edit
+            </button>
+          )}
+          {onTogglePin && (
+            <button
+              type="button"
+              className={`${styles.msgAction} ${styles.workerActivityAction}`}
+              data-msg-pin=""
+              aria-pressed={pinned}
+              aria-label={pinned ? "Unpin message" : "Pin message"}
+              title={pinned ? "Unpin this message" : "Pin this message"}
+              onClick={onTogglePin}
+            >
+              {pinned ? "Unpin" : "Pin"}
+            </button>
+          )}
         </div>
       </article>
     );
@@ -1488,6 +1558,7 @@ const MessageBlock = memo(function MessageBlock({
   message,
   autoExpandTool,
   animateIn,
+  activityOpen = false,
   streaming,
   eventActionLabel,
   eventActionTitle,
@@ -1514,6 +1585,8 @@ const MessageBlock = memo(function MessageBlock({
   autoExpandTool: boolean;
   /** Freshly appended at the live tail — play the stream-in entrance. */
   animateIn?: boolean;
+  /** Verbose mode or an active reveal: keep a routine notice expanded. */
+  activityOpen?: boolean;
   /** Actively growing assistant message — show the streaming caret. */
   streaming?: boolean;
   onLoadImage?: (name: string) => Promise<string | null>;
@@ -1568,6 +1641,7 @@ const MessageBlock = memo(function MessageBlock({
         canEdit={Boolean(canEdit)}
         confirming={Boolean(confirming)}
         animateIn={entered}
+        activityOpen={activityOpen}
         onRequestResubmit={onRequestResubmit}
         onCancelConfirm={onCancelConfirm}
         onLoadAttachmentImage={onLoadAttachmentImage}
@@ -7310,6 +7384,9 @@ export const ThreadView = memo(function ThreadView({
                         verboseTools ||
                         entry.message.id === latestRunningToolId ||
                         entry.message.id === latestThinkingId
+                      }
+                      activityOpen={
+                        verboseTools || revealTargetId === entry.message.id
                       }
                       animateIn={!seenEntryKeys.current.has(entry.message.id)}
                       streaming={entry.message.id === streamingMessageId}
