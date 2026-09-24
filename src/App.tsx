@@ -25,7 +25,12 @@ import { InsightsView } from "./components/InsightsView";
 import { UsageView, type UsageReportControls } from "./components/UsageView";
 import { FleetView } from "./components/FleetView";
 import { DigestView } from "./components/DigestView";
-import { AgentsPanel } from "./components/AgentsPanel";
+import {
+  AgentsPanel,
+  defaultInspectorTab,
+  inspectorContextKey,
+  type PanelTab,
+} from "./components/AgentsPanel";
 import { ClaimedLanesHeartbeat, LaneHeartbeat } from "./components/LaneHeartbeat";
 import {
   SettingsModal,
@@ -475,7 +480,10 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     initialSidebarWidth,
   );
   const [agentsCollapsed, setAgentsCollapsed] = useState(true);
-  const [agentsTabFocus, setAgentsTabFocus] = useState(0);
+  /** Manual inspector tabs for this renderer session. Collapse unmounts the panel. */
+  const [inspectorChoices, setInspectorChoices] = useState<
+    Record<string, PanelTab>
+  >({});
   const sidebarPaneRef = useRef<HTMLDivElement>(null);
   const sidebarDragRef = useRef<{ finish(commit: boolean): void } | null>(
     null,
@@ -501,6 +509,9 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
 
   const viewRef = useRef(view);
   viewRef.current = view;
+  const selectedThreadIdRef = useRef(selectedThreadId);
+  selectedThreadIdRef.current = selectedThreadId;
+  const inspectorProjectIdRef = useRef<string | null>(null);
   const planboardProjectIdRef = useRef(planboardProjectId);
   planboardProjectIdRef.current = planboardProjectId;
   const kanbanProjectIdRef = useRef(kanbanProjectId);
@@ -558,15 +569,52 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     () => (loading ? undefined : threads.map((t) => t.id)),
     [loading, threads],
   );
-  const revealAgentsTeam = useCallback(() => {
-    if (narrow) setDrawer("agents");
-    else setAgentsCollapsed(false);
-    setAgentsTabFocus((n) => n + 1);
-  }, [narrow]);
+  const rememberInspectorTab = useCallback(
+    (
+      tab: PanelTab,
+      context?: {
+        view?: string;
+        threadId?: string | null;
+        projectId?: string | null;
+      },
+    ) => {
+      const viewName = context?.view ?? viewRef.current;
+      const threadId =
+        context && "threadId" in context
+          ? (context.threadId ?? null)
+          : viewName === "thread"
+            ? selectedThreadIdRef.current
+            : null;
+      const projectId =
+        context && "projectId" in context
+          ? (context.projectId ?? null)
+          : inspectorProjectIdRef.current;
+      const key = inspectorContextKey({ view: viewName, threadId, projectId });
+      setInspectorChoices((prev) =>
+        prev[key] === tab ? prev : { ...prev, [key]: tab },
+      );
+    },
+    [],
+  );
+  const revealAgentsTeam = useCallback(
+    (threadId?: string) => {
+      if (narrow) setDrawer("agents");
+      else setAgentsCollapsed(false);
+      // The header calls this as an onClick, so the first argument can be the event.
+      const id =
+        typeof threadId === "string" ? threadId : selectedThreadIdRef.current;
+      rememberInspectorTab("agents", {
+        view: "thread",
+        threadId: id,
+        projectId: inspectorProjectIdRef.current,
+      });
+    },
+    [narrow, rememberInspectorTab],
+  );
   const openCrewIntegration = useCallback(
     (leadId: string) => {
       handleSelectThread(leadId);
-      revealAgentsTeam();
+      revealAgentsTeam(leadId);
     },
     [handleSelectThread, revealAgentsTeam],
   );
@@ -1252,6 +1300,27 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     (visibleDetail && projectById.get(visibleDetail.thread.projectId)) ||
     (selectedProjectId ? projectById.get(selectedProjectId) : undefined) ||
     null;
+
+  const inspectorSummary =
+    view === "thread" && selectedThreadId
+      ? (threads.find((t) => t.id === selectedThreadId) ?? null)
+      : null;
+  // Same project object AgentsPanel receives. Board and activity scope can differ.
+  const inspectorProjectId = project?.id ?? null;
+  inspectorProjectIdRef.current = inspectorProjectId;
+  const inspectorKey = inspectorContextKey({
+    view,
+    threadId: view === "thread" ? selectedThreadId : null,
+    projectId: inspectorProjectId,
+  });
+  const inspectorTab =
+    inspectorChoices[inspectorKey] ??
+    defaultInspectorTab({
+      view,
+      summary: inspectorSummary,
+      threads,
+      workflow: view === "thread" && visibleDetail ? visibleDetail.workflow : null,
+    });
 
   const handleStartSuggestion = useCallback(
     async (s: WorkSuggestion) => {
@@ -2317,7 +2386,8 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
               }
             : undefined
         }
-        focusAgentsTabNonce={agentsTabFocus}
+        tab={inspectorTab}
+        onTabChange={rememberInspectorTab}
         onSelectThread={handleSelectThread}
         onViewChanges={openChanges}
         listCheckpoints={listCheckpoints}
