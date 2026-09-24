@@ -10,6 +10,9 @@ import { inAct, mount } from "./support/dom.ts";
 import {
   createFakeCoder,
   installFakeCoder,
+  detail,
+  project,
+  thread,
   type FakeCoder,
 } from "./support/fakeCoder.ts";
 import App from "../src/App";
@@ -300,6 +303,226 @@ describe("wide agents panel collapse (#645)", () => {
       const text = sheet!.textContent || "";
       assert.match(text, /⌘ \+ \./);
       assert.match(text, /agents panel/i);
+    } finally {
+      m.unmount();
+    }
+  });
+});
+
+const NOW = Date.now();
+
+function crewFixture() {
+  const lead = thread({
+    id: "t-lead",
+    title: "Lead task",
+    updatedAt: NOW,
+  });
+  const w1 = thread({
+    id: "t-w1",
+    title: "Review permissions",
+    handoffFrom: "t-lead",
+    orchWorker: true,
+    updatedAt: NOW + 1,
+  });
+  const w2 = thread({
+    id: "t-w2",
+    title: "Fix sidebar grouping",
+    handoffFrom: "t-lead",
+    orchWorker: true,
+    updatedAt: NOW + 2,
+  });
+  const nested = thread({
+    id: "t-nested",
+    title: "Nested helper",
+    handoffFrom: "t-w1",
+    orchWorker: true,
+    updatedAt: NOW + 3,
+  });
+  const fork = thread({
+    id: "t-fork",
+    title: "Fork: Lead task",
+    handoffFrom: "t-lead",
+    updatedAt: NOW + 4,
+  });
+  const archived = thread({
+    id: "t-archived",
+    title: "Archived crew worker",
+    handoffFrom: "t-lead",
+    orchWorker: true,
+    archived: true,
+    updatedAt: NOW + 5,
+  });
+  const cross = thread({
+    id: "t-cross",
+    projectId: "p2",
+    title: "Wrong project worker",
+    handoffFrom: "t-lead",
+    orchWorker: true,
+    updatedAt: NOW + 6,
+  });
+  return {
+    projects: [
+      project({ id: "p1" }),
+      project({ id: "p2", slug: "acme/two", name: "two", path: "/tmp/two" }),
+    ],
+    threads: [lead, w1, w2, nested, fork, archived, cross],
+    details: {
+      "t-lead": detail({ thread: lead }),
+      "t-w1": detail({ thread: w1 }),
+      "t-w2": detail({ thread: w2 }),
+      "t-nested": detail({ thread: nested }),
+      "t-fork": detail({ thread: fork }),
+      "t-archived": detail({ thread: archived }),
+      "t-cross": detail({ thread: cross }),
+    },
+  };
+}
+
+async function selectThreadByTitle(
+  m: Awaited<ReturnType<typeof mount>>,
+  title: string,
+) {
+  const card = m.query(`button[aria-label^="Select thread: ${title}"]`);
+  assert.ok(card, `thread card for "${title}" must exist`);
+  await m.click(card as HTMLElement);
+  await m.flush();
+}
+
+/** Crew families start collapsed. No-op when the toggle is not in this tree. */
+async function expandFamily(
+  m: Awaited<ReturnType<typeof mount>>,
+  threadId: string,
+) {
+  const toggle = m.query(`[data-family-toggle="${threadId}"]`);
+  if (!toggle) return;
+  if (toggle.getAttribute("aria-expanded") === "true") return;
+  await m.click(toggle as HTMLElement);
+  await m.flush();
+}
+
+async function selectFamilyWorker(
+  m: Awaited<ReturnType<typeof mount>>,
+  leadId: string,
+  title: string,
+) {
+  await expandFamily(m, leadId);
+  await selectThreadByTitle(m, title);
+}
+
+describe("Workers control opens the existing Agents team surface", () => {
+  it("opens the Agents tab from a collapsed rail and ignores manual forks", async () => {
+    const m = await boot(createFakeCoder(crewFixture()));
+    try {
+      assert.ok(m.query("[data-agents-expand]"), "starts collapsed");
+      const btn = m.query("[data-thread-header] [data-open-workers]");
+      assert.ok(btn, "lead with orchWorkers gets Workers");
+      assert.equal(
+        (btn!.textContent || "").trim(),
+        "Workers (3)",
+        "same-project orchWorkers including archived; cross-project excluded",
+      );
+      await m.click(btn as HTMLElement);
+      await m.flush();
+      assert.equal(m.query("[data-agents-expand]"), null, "rail expands");
+      const tab = m.query('[data-panel-tab="agents"]');
+      assert.ok(tab);
+      assert.equal(tab.getAttribute("data-active"), "true");
+      const team = m.query('[aria-label="Team"]');
+      assert.ok(team, "Team roster is the destination");
+      assert.match(team!.textContent || "", /Review permissions/);
+      assert.match(team!.textContent || "", /Fix sidebar grouping/);
+      assert.match(team!.textContent || "", /Archived crew worker/);
+      assert.doesNotMatch(
+        team!.textContent || "",
+        /Fork: Lead task/,
+        "manual forks stay out of Team",
+      );
+      assert.doesNotMatch(
+        team!.textContent || "",
+        /Wrong project worker/,
+        "cross-project orchWorker stays out of Team",
+      );
+      assert.ok(
+        m.query('[data-crew-integration]') || team,
+        "existing integration surface stays reachable",
+      );
+    } finally {
+      m.unmount();
+    }
+  });
+
+  it("hides Workers on an unrelated single thread", async () => {
+    const m = await boot(createFakeCoder());
+    try {
+      assert.equal(m.query("[data-open-workers]"), null);
+    } finally {
+      m.unmount();
+    }
+  });
+
+  it("opens the Agents drawer on a narrow window", async () => {
+    restoreMatchMedia = stubNarrow();
+    const m = await boot(createFakeCoder(crewFixture()));
+    try {
+      const agentsOpen = m.query('[data-drawer-open="agents"]');
+      assert.ok(agentsOpen);
+      assert.equal(agentsOpen.getAttribute("aria-expanded"), "false");
+      const btn = m.query("[data-thread-header] [data-open-workers]");
+      assert.ok(btn);
+      await m.click(btn as HTMLElement);
+      await m.flush();
+      assert.equal(agentsOpen.getAttribute("aria-expanded"), "true");
+      const tab = m.query('[data-panel-tab="agents"]');
+      assert.ok(tab);
+      assert.equal(tab.getAttribute("data-active"), "true");
+      assert.ok(m.query('[aria-label="Team"]'));
+    } finally {
+      m.unmount();
+    }
+  });
+
+  it("sends a worker back to its task and keeps ordinary fork provenance", async () => {
+    const m = await boot(createFakeCoder(crewFixture()));
+    try {
+      await selectFamilyWorker(m, "t-lead", "Fix sidebar grouping");
+      assert.equal(m.query("[data-open-workers]"), null);
+      assert.equal(m.query("[data-handoff-banner]"), null);
+      const nav = m.query("[data-worker-nav]");
+      assert.ok(nav);
+      assert.match(nav!.textContent || "", /^Task/);
+      assert.ok((nav!.textContent || "").includes("Lead task"));
+      await m.click(m.query('[data-task-source="t-lead"]') as HTMLElement);
+      await m.flush();
+      assert.ok(m.query("[data-open-workers]"), "parent task is selected again");
+
+      await selectFamilyWorker(m, "t-lead", "Nested helper");
+      const nestedNav = m.query("[data-worker-nav]");
+      assert.ok(nestedNav);
+      assert.match(
+        nestedNav!.textContent || "",
+        /^Parent worker/,
+        "a worker of a worker names the parent worker",
+      );
+      assert.doesNotMatch(nestedNav!.textContent || "", /^Task /);
+      await m.click(m.query('[data-task-source="t-w1"]') as HTMLElement);
+      await m.flush();
+      assert.ok(
+        m.query("[data-open-workers]"),
+        "parent worker is selected again",
+      );
+
+      await selectThreadByTitle(m, "Fork: Lead task");
+      assert.equal(m.query("[data-worker-nav]"), null);
+      assert.ok(m.query("[data-handoff-banner]"));
+      assert.ok(m.query("[aria-label='Dismiss handoff banner']"));
+
+      await selectThreadByTitle(m, "Wrong project worker");
+      assert.ok(m.query("[data-worker-nav]"));
+      assert.ok(
+        m.query("[data-worker-nav-missing]"),
+        "cross-project parent is not a Task link",
+      );
+      assert.equal(m.query("[data-task-source]"), null);
     } finally {
       m.unmount();
     }

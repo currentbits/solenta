@@ -91,6 +91,7 @@ const WORKER = summary({
   status: "working",
   handoffFrom: "t-orch",
   orchWorker: true,
+  projectId: "p1",
   lastActivity: { text: "Found the race in runner", at: 42 },
 });
 
@@ -142,7 +143,12 @@ describe("Agents team view", () => {
     const selected: string[] = [];
     const m = await mount(
       content(
-        thread({ id: "t-work", title: "Fork: Plan the fix", handoffFrom: "t-orch" }),
+        thread({
+          id: "t-work",
+          title: "Fork: Plan the fix",
+          handoffFrom: "t-orch",
+          orchWorker: true,
+        }),
         [ORCHESTRATOR, WORKER],
         (id) => selected.push(id),
       ),
@@ -168,6 +174,114 @@ describe("Agents team view", () => {
     assert.doesNotMatch(text, /Worker/);
     assert.match(text, /Session/, "plain session card still renders");
     m.unmount();
+  });
+
+  it("manual forks and legacy summaries without orchWorker stay out of Team", async () => {
+    const fork = summary({
+      id: "t-fork",
+      title: "Fork: independent conversation",
+      provider: "grok",
+      status: "working",
+      handoffFrom: "t-orch",
+    });
+    const denied = summary({
+      id: "t-not-worker",
+      title: "Fork: flagged false",
+      provider: "claude",
+      status: "idle",
+      handoffFrom: "t-orch",
+      orchWorker: false,
+    });
+    const cross = summary({
+      id: "t-cross",
+      title: "Wrong project worker",
+      provider: "grok",
+      status: "working",
+      handoffFrom: "t-orch",
+      orchWorker: true,
+      projectId: "p-other",
+    });
+    const archived = summary({
+      id: "t-archived",
+      title: "Archived crew worker",
+      provider: "claude",
+      status: "idle",
+      handoffFrom: "t-orch",
+      orchWorker: true,
+      projectId: "p1",
+    });
+    const mixed = await mount(
+      content(thread(), [ORCHESTRATOR, WORKER, fork, denied, cross, archived]),
+    );
+    await mixed.flush();
+    const team = mixed.query('[aria-label="Team"]');
+    assert.ok(team);
+    assert.match(team!.textContent || "", /Fork: Plan the fix/);
+    assert.match(
+      team!.textContent || "",
+      /Archived crew worker/,
+      "archived same-project workers stay on Team",
+    );
+    assert.doesNotMatch(
+      team!.textContent || "",
+      /independent conversation/,
+      "handoffFrom without orchWorker is not a crew worker",
+    );
+    assert.doesNotMatch(team!.textContent || "", /flagged false/);
+    assert.doesNotMatch(
+      team!.textContent || "",
+      /Wrong project worker/,
+      "cross-project orchWorker is not a crew child",
+    );
+    mixed.unmount();
+
+    const forkOnly = await mount(content(thread(), [ORCHESTRATOR, fork]));
+    await forkOnly.flush();
+    assert.equal(forkOnly.query('[aria-label="Team"]'), null);
+    assert.doesNotMatch(forkOnly.text(), /Orchestrator/);
+    forkOnly.unmount();
+
+    const viewingFork = await mount(
+      content(
+        thread({
+          id: "t-fork",
+          title: "Fork: independent conversation",
+          handoffFrom: "t-orch",
+        }),
+        [ORCHESTRATOR, fork],
+      ),
+    );
+    await viewingFork.flush();
+    assert.doesNotMatch(viewingFork.text(), /Worker/);
+    assert.doesNotMatch(viewingFork.text(), /Orchestrator/);
+    viewingFork.unmount();
+
+    const viewingCross = await mount(
+      content(
+        thread({
+          id: "t-work",
+          title: "Fork: Plan the fix",
+          handoffFrom: "t-orch",
+          orchWorker: true,
+          projectId: "p1",
+        }),
+        [
+          summary({
+            id: "t-orch",
+            title: "Plan the fix",
+            projectId: "p-other",
+          }),
+          WORKER,
+        ],
+      ),
+    );
+    await viewingCross.flush();
+    assert.doesNotMatch(
+      viewingCross.text(),
+      /Orchestrator/,
+      "cross-project parent is not a Team back-link",
+    );
+    viewingCross.unmount();
   });
 
   it("SessionCard shows unmetered cost when tokens exist but USD does not (#703)", async () => {
@@ -378,6 +492,39 @@ describe("Agents team view", () => {
       /waiting/,
       "the stalled worker's row reads waiting, not working",
     );
+    m.unmount();
+  });
+
+  it("orchestrator wait includes a nested blocked grandchild", async () => {
+    const mid = summary({
+      id: "t-mid",
+      title: "Review permissions",
+      provider: "grok",
+      status: "idle",
+      handoffFrom: "t-orch",
+      orchWorker: true,
+      projectId: "p1",
+    });
+    const nested = summary({
+      id: "t-nested",
+      title: "Nested helper",
+      provider: "grok",
+      status: "working",
+      handoffFrom: "t-mid",
+      orchWorker: true,
+      projectId: "p1",
+      awaitingInput: true,
+      runStartedAt: Date.now() - 60 * 1000,
+    });
+    const m = await mount(
+      content(thread({ projectId: "p1" }), [ORCHESTRATOR, mid, nested]),
+    );
+    await m.flush();
+    const line = m.query("[data-wait-line]");
+    assert.ok(line, "lead wait summary keeps the nested blocked worker");
+    assert.match(line!.textContent || "", /Waiting on 1 worker/);
+    assert.match(line!.textContent || "", /1 blocked/);
+    assert.equal(line!.getAttribute("data-attention"), "true");
     m.unmount();
   });
 

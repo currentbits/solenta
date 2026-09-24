@@ -74,6 +74,11 @@ import {
 } from "../format";
 import { contextRing, threadContextWindow } from "../contextRing";
 import { buildWaitStates, waitLabel, type WaitState } from "../waiting";
+import {
+  isDirectCrewChild,
+  isOrchWorker,
+  sameCrewProject,
+} from "../crewIntegration";
 import { CrewIntegration } from "./CrewIntegration";
 import { MemoryTab } from "./MemoryTab";
 import { SkillsTab } from "./SkillsTab";
@@ -2955,7 +2960,7 @@ export function AgentsContent({
   const [landingLead, setLandingLead] = useState(false);
   useEffect(() => {
     const isLead = Boolean(
-      thread && summaries?.some((s) => s.handoffFrom === thread.id),
+      thread && summaries?.some((s) => isDirectCrewChild(s, thread)),
     );
     if (!thread || !crewIntegration || !isLead) {
       setIntegration(null);
@@ -3003,27 +3008,28 @@ export function AgentsContent({
     [thread, summaries],
   );
 
-  // Roles derive from handoffFrom: a thread WITH one is a Worker; a thread
-  // another summary points to is an Orchestrator. Neither = plain session.
-  // Live workers stay as plain rows (failed / idle / working). Done workers
-  // fold behind a "N done" toggle while any worker is still live so a long
-  // orchestration stays scannable. When none are live — including ones the
-  // sidebar has settled — list them immediately (no toggle) so an all-done
-  // crew is not an empty Team.
+  // Roles derive from orchWorker: a true crew child is a Worker; a thread
+  // those children point at is an Orchestrator. Ordinary forks and legacy
+  // summaries without the flag stay a plain session. Live workers stay as
+  // plain rows (failed / idle / working). Done workers fold behind a
+  // "N done" toggle while any worker is still live so a long orchestration
+  // stays scannable. When none are live — including ones the sidebar has
+  // settled — list them immediately (no toggle) so an all-done crew is not
+  // an empty Team.
   const [showDoneWorkers, setShowDoneWorkers] = useState(false);
   const team = useMemo(() => {
     if (!thread || !summaries) return null;
-    const all = summaries.filter((s) => s.handoffFrom === thread.id);
+    const all = summaries.filter((s) => isDirectCrewChild(s, thread));
     const workers = all.filter((s) => s.status !== "done");
     const doneWorkers = all.filter((s) => s.status === "done");
     if (all.length > 0) {
       return { kind: "orchestrator" as const, workers, doneWorkers };
     }
-    const orchestrator = thread.handoffFrom
-      ? summaries.find((s) => s.id === thread.handoffFrom)
-      : undefined;
-    if (orchestrator) {
-      return { kind: "worker" as const, orchestrator };
+    if (isOrchWorker(thread) && thread.handoffFrom) {
+      const orchestrator = summaries.find((s) => s.id === thread.handoffFrom);
+      if (orchestrator && sameCrewProject(orchestrator, thread)) {
+        return { kind: "worker" as const, orchestrator };
+      }
     }
     return null;
   }, [thread, summaries]);
@@ -3038,8 +3044,11 @@ export function AgentsContent({
   // summaries is swapped for the ThreadInfo so the subagents come along.
   const wait = useMemo(() => {
     if (!thread || !summaries) return null;
-    const rows = summaries.filter((s) => s.id !== thread.id);
-    return buildWaitStates([...rows, thread]).get(thread.id) ?? null;
+    const crew = summaries.filter(
+      (s) =>
+        s.id !== thread.id && isOrchWorker(s) && sameCrewProject(s, thread),
+    );
+    return buildWaitStates([...crew, thread]).get(thread.id) ?? null;
   }, [thread, summaries]);
   const subagentSection =
     subagents.length > 0 ? (
@@ -3684,9 +3693,10 @@ export const AgentsPanel = memo(function AgentsPanel({
   spotlightLane,
   onCollapse,
 }: AgentsPanelProps) {
-  const [tab, setTab] = useState<PanelTab>(() =>
-    isPulseView(activeView) ? "pulse" : "git",
-  );
+  const [tab, setTab] = useState<PanelTab>(() => {
+    if (focusAgentsTabNonce && focusAgentsTabNonce > 0) return "agents";
+    return isPulseView(activeView) ? "pulse" : "git";
+  });
 
   useEffect(() => {
     if (focusAgentsTabNonce && focusAgentsTabNonce > 0) setTab("agents");
@@ -3712,6 +3722,7 @@ export const AgentsPanel = memo(function AgentsPanel({
           <button
             type="button"
             className={styles.tab}
+            data-panel-tab="agents"
             data-active={tab === "agents"}
             onClick={() => setTab("agents")}
           >

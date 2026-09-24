@@ -763,6 +763,14 @@ interface ThreadViewProps {
   onOpenWorktree?: () => void | Promise<void>;
   /** orchWorker: jump to the lead Integration section (issue #982). */
   onOpenCrewIntegration?: (leadThreadId: string) => void;
+  /**
+   * Direct orchWorker children of this thread. 0/absent hides the header
+   * Workers control. Count is resolved in App so this pane is not passed
+   * the full list (issue #91).
+   */
+  workerCount?: number;
+  /** Open the Agents Team / Integration surface for this orchestrator. */
+  onOpenWorkers?: () => void;
   /** Retarget this idle worker onto the lead's current committed HEAD. */
   onRefreshWorkerSnapshot?: (
     threadId: string,
@@ -4418,6 +4426,8 @@ export const ThreadView = memo(function ThreadView({
   conflictContext,
   onOpenWorktree,
   onOpenCrewIntegration,
+  workerCount = 0,
+  onOpenWorkers,
   onRefreshWorkerSnapshot,
   onRunCommand,
   runError = null,
@@ -6377,8 +6387,12 @@ export const ThreadView = memo(function ThreadView({
   };
 
   const handoffSourceId = thread.handoffFrom;
+  const isCrewWorker = Boolean(thread.orchWorker);
+  const showWorkerNav = isCrewWorker;
   const showHandoffBanner =
-    handoffSourceId != null && !handoffBannerDismissed;
+    !isCrewWorker && handoffSourceId != null && !handoffBannerDismissed;
+  const workerNavLabel = handoffSource?.orchWorker ? "Parent worker" : "Task";
+  const workersLabel = `Workers (${workerCount})`;
 
   const handleCopyThreadId = async () => {
     try {
@@ -6465,6 +6479,18 @@ export const ThreadView = memo(function ThreadView({
             <span className={styles.threadTitle}>{thread.title}</span>
           )}
           </div>
+          {workerCount > 0 && onOpenWorkers ? (
+            <button
+              type="button"
+              className={`${styles.btn} ${styles.workersBtn}`}
+              data-open-workers=""
+              aria-label={workersLabel}
+              title={workersLabel}
+              onClick={onOpenWorkers}
+            >
+              {workersLabel}
+            </button>
+          ) : null}
         </div>
         <div className={styles.headerTrail}>
           {worktree.toolbar}
@@ -7048,6 +7074,29 @@ export const ThreadView = memo(function ThreadView({
           }
           return (
             <div className={styles.chatSlot} data-pane-chat="">
+      {showWorkerNav && (
+        <div className={styles.handoffBanner} data-worker-nav="">
+          <span className={styles.handoffBannerText}>
+            {handoffSource ? (
+              <>
+                {workerNavLabel}{" "}
+                <button
+                  type="button"
+                  className={styles.handoffLink}
+                  data-task-source={handoffSource.id}
+                  onClick={() => onSelectThread?.(handoffSource.id)}
+                >
+                  {handoffSource.title}
+                </button>
+              </>
+            ) : (
+              <span data-worker-nav-missing="">
+                Task is no longer available
+              </span>
+            )}
+          </span>
+        </div>
+      )}
       {showHandoffBanner && (
         <div className={styles.handoffBanner} data-handoff-banner="">
           <span className={styles.handoffBannerText}>

@@ -54,6 +54,10 @@
   flex: 1;
 }
 
+.workersBtn {
+  flex-shrink: 0;
+}
+
 .headerTrail {
   display: flex;
   align-items: center;

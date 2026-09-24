@@ -66,6 +66,7 @@ import {
   type ThreadOpenOrigin,
   type ViewReturnState,
 } from "./viewReturn";
+import { isDirectCrewChild, sameCrewProject } from "./crewIntegration";
 
 const EMPTY_FORECAST: ConflictForecast = { pairs: [], computedAt: 0 };
 const EMPTY_AGENT_PROFILES: AgentProfile[] = [];
@@ -513,13 +514,17 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     () => (loading ? undefined : threads.map((t) => t.id)),
     [loading, threads],
   );
+  const revealAgentsTeam = useCallback(() => {
+    if (narrow) setDrawer("agents");
+    else setAgentsCollapsed(false);
+    setAgentsTabFocus((n) => n + 1);
+  }, [narrow]);
   const openCrewIntegration = useCallback(
     (leadId: string) => {
       handleSelectThread(leadId);
-      setAgentsCollapsed(false);
-      setAgentsTabFocus((n) => n + 1);
+      revealAgentsTeam();
     },
-    [handleSelectThread],
+    [handleSelectThread, revealAgentsTeam],
   );
 
   // The three panes are memo'd (issue #91): a 700ms stream tick must only
@@ -1252,10 +1257,22 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
 
   /** Provenance of a handed-off thread; a stable object while the row is. */
   const handoffFrom = visibleDetail?.thread.handoffFrom ?? null;
-  const handoffSource = useMemo(
-    () => (handoffFrom ? threads.find((t) => t.id === handoffFrom) ?? null : null),
-    [threads, handoffFrom],
-  );
+  const handoffSource = useMemo(() => {
+    if (!handoffFrom) return null;
+    const parent = threads.find((t) => t.id === handoffFrom) ?? null;
+    if (!parent || !sameCrewProject(parent, visibleDetail?.thread)) return null;
+    return parent;
+  }, [threads, handoffFrom, visibleDetail?.thread]);
+  /** Direct same-project orchWorker children. Manual forks and cross-project rows do not count. */
+  const workerCount = useMemo(() => {
+    const parent = visibleDetail?.thread;
+    if (!parent) return 0;
+    let n = 0;
+    for (const t of threads) {
+      if (isDirectCrewChild(t, parent)) n++;
+    }
+    return n;
+  }, [threads, visibleDetail?.thread]);
 
   /** What the Agents team view refetches on: ids + statuses, not identity. */
   const rosterKey = useMemo(
@@ -1901,6 +1918,8 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         conflictContext={conflictContext}
         onOpenWorktree={openInEditor}
         onOpenCrewIntegration={openCrewIntegration}
+        workerCount={workerCount}
+        onOpenWorkers={workerCount > 0 ? revealAgentsTeam : undefined}
         onRewindAndResubmit={rewindAndResubmit}
         onStartWorkflow={startWorkflowRun}
         onRetryWorkflowAgent={retryWorkflowAgent}
