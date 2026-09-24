@@ -1,6 +1,6 @@
 # Thread motion acceptance
 
-Plan: [#1353](https://github.com/currentbits/solenta/issues/1353). Follow-up to the four merged UX phases, tested against `f54bab82`. Grok's branch `coder/fork-this-is-a-persisetent-issue-when-us-6a5e9d` is reviewed at `632c6803`; the production correction is `a759450e` and the follow-up simplifies its regression tests. The branch is not merged. Proposed destination: `codex/thread-worker-ux`.
+Plan: [#1353](https://github.com/currentbits/solenta/issues/1353). Follow-up to the four merged UX phases, tested against `f54bab82`. Grok's branch `coder/fork-this-is-a-persisetent-issue-when-us-6a5e9d` was reviewed at `632c6803`; the production correction is `a759450e` and the follow-up simplifies its regression tests. It was merged with user approval into `codex/thread-worker-ux` as `34ea505a`.
 
 ## Reproduced defects
 
@@ -27,4 +27,4 @@ The production build/typecheck, 297 initial targeted checks and all 2,627 render
 
 The three motion regressions run directly in their own existing Node test process, import Sidebar after installing browser observers, and reuse the shared project/thread fixtures. Local timer cleanup lets the tests exit without a nested runner or forced exit.
 
-Ready for the user's merge-or-pull-request decision. No release or installation was performed.
+After landing, both changed files still match the reviewed tip. The destination production build/typecheck and all 299 targeted checks passed. The worker worktree was cleaned up. No release or installation was performed.
