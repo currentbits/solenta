@@ -528,6 +528,49 @@
   margin-left: 14px;
 }
 
+.card[data-compact="true"] {
+  min-height: 36px;
+  padding: 4px 10px;
+}
+
+.familyToggle {
+  position: relative;
+  z-index: 2;
+  pointer-events: auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 2px 0 0;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  min-width: 0;
+  max-width: 100%;
+  text-align: left;
+}
+
+.familyToggle:hover {
+  color: var(--text);
+}
+
+.familyToggle [data-attention="true"] {
+  color: var(--amber);
+}
+
+.familyChevron {
+  display: inline-flex;
+  flex-shrink: 0;
+  transition: transform 160ms ease;
+}
+
+.familyChevron[data-open="true"] {
+  transform: rotate(90deg);
+}
+
 .card[data-nested="true"]::before {
   content: "";
   position: absolute;
@@ -541,13 +584,7 @@
   pointer-events: none;
 }
 
-.card[data-recede="true"] {
-  opacity: 0.7;
-}
 
-.card[data-recede="true"]:hover {
-  opacity: 1;
-}
 
 .card[data-unread="true"] .cardTitle {
   font-weight: 600;
@@ -854,7 +891,7 @@
 
 .cardTitle {
   font-size: 13px;
-  font-weight: 500;
+  font-weight: 600;
   line-height: 1.35;
   color: var(--text);
   white-space: nowrap;
@@ -1662,6 +1699,7 @@
   .slimAge,
   .slimAction,
   .shelfChevron,
+  .familyChevron,
   .reveal,
   .statusPulse {
     transition: none;

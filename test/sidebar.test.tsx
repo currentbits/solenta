@@ -15,7 +15,12 @@ import { dismissContextMenu } from "../src/contextMenuFallback";
 import * as React from "react";
 import { inAct, mount } from "./support/dom";
 import App from "../src/App";
-import { Sidebar, SettledRow, ThreadCard } from "../src/components/Sidebar";
+import {
+  Sidebar,
+  SettledRow,
+  ThreadCard,
+  displayWorkerTitle,
+} from "../src/components/Sidebar";
 import {
   createFakeCoder,
   installFakeCoder,
@@ -365,6 +370,17 @@ async function clearSidebarStorage(): Promise<void> {
   window.localStorage.clear();
   shell.unmount();
 }
+
+describe("displayWorkerTitle", () => {
+  it("strips repeated Fork: prefixes and leaves a bare title alone", () => {
+    assert.equal(
+      displayWorkerTitle("Fork: Fork: Review permissions"),
+      "Review permissions",
+    );
+    assert.equal(displayWorkerTitle("Review permissions"), "Review permissions");
+    assert.equal(displayWorkerTitle("Fork:"), "Fork:");
+  });
+});
 
 describe("t3 paging constants are fixed facts", () => {
   it("INITIAL is 10 and PAGE is 25", () => {
@@ -1719,6 +1735,7 @@ describe("Sidebar status label + wait row", () => {
   const worker = (over: Partial<ThreadInfo> & Pick<ThreadInfo, "id">) =>
     thread({
       handoffFrom: "orch",
+      orchWorker: true,
       status: "working",
       runStartedAt: FRESH - 3 * 60 * 1000,
       updatedAt: FRESH,
@@ -1745,14 +1762,20 @@ describe("Sidebar status label + wait row", () => {
     m.unmount();
   });
 
-  it("an orchestrator with live workers keeps the wait row and tooltip", async () => {
+  it("an orchestrator with live workers keeps a collapsed family summary", async () => {
     await clearSidebarStorage();
     const m = await mount(
       sidebar([ORCH, worker({ id: "w1" }), worker({ id: "w2" })]),
     );
-    const row = m.query('[data-wait-row="orch"]');
-    assert.ok(row, "visible wait line renders while delegation is live");
-    assert.match(row!.textContent || "", /Waiting on 2 workers/);
+    const row = m.query('[data-family-summary="orch"]');
+    assert.ok(row, "collapsed crew lead summarizes its workers");
+    assert.match(row!.textContent || "", /2 workers/);
+    assert.match(row!.textContent || "", /2 running/);
+    assert.equal(
+      m.query('[data-thread-card="w1"]'),
+      null,
+      "workers stay folded until the family is opened",
+    );
     const label = m.query('[data-thread-card="orch"] [data-status-label]');
     assert.ok(label, "delegating parent still has a status label");
     assert.equal(
@@ -1760,35 +1783,34 @@ describe("Sidebar status label + wait row", () => {
       "Delegating",
       "a parent waiting on workers reads Delegating, not Working",
     );
-    assert.match(label!.getAttribute("title") || "", /Waiting on 2 workers/);
-    assert.match(label!.getAttribute("title") || "", /w1/);
     m.unmount();
   });
 
-  it("a worker blocked on a prompt turns the wait row into attention", async () => {
+  it("a worker blocked on a prompt turns the family summary into attention", async () => {
     await clearSidebarStorage();
     const m = await mount(
       sidebar([ORCH, worker({ id: "w1", awaitingInput: true })]),
     );
-    const row = m.query('[data-wait-row="orch"]');
+    const row = m.query('[data-family-summary="orch"]');
     assert.ok(row);
     assert.equal(row!.getAttribute("data-attention"), "true");
-    const label = m.query('[data-thread-card="orch"] [data-status-label]');
-    assert.ok(label);
-    assert.match(label!.getAttribute("title") || "", /blocked on you/);
+    assert.match(row!.textContent || "", /needs you/);
     m.unmount();
   });
 
-  it("no wait row once the fan-out lands", async () => {
+  it("finished workers stay in the family as ready, not integrated", async () => {
     await clearSidebarStorage();
     const m = await mount(
       sidebar([ORCH, worker({ id: "w1", status: "done", runStartedAt: null })]),
     );
-    assert.equal(m.query('[data-wait-row="orch"]'), null);
+    const row = m.query('[data-family-summary="orch"]');
+    assert.ok(row);
+    assert.match(row!.textContent || "", /1 ready/);
+    assert.equal((row!.textContent || "").includes("integrated"), false);
     m.unmount();
   });
 
-  it("settled workers of an active parent stay nested in Active", async () => {
+  it("explicit settle files a worker to the Settled shelf (#1315)", async () => {
     await clearSidebarStorage();
     const m = await mount(
       sidebar([
@@ -1802,21 +1824,118 @@ describe("Sidebar status label + wait row", () => {
         }),
       ]),
     );
-    const card = m.query('[data-thread-card="w-settled"]');
-    assert.ok(
-      card,
-      "settled worker must stay next to the parent without opening Settled",
+    assert.equal(
+      m.query('[data-thread-card="w-settled"]'),
+      null,
+      "explicit settle is not nested in Active while Settled is collapsed",
     );
+    assert.ok(
+      m.query("[data-settled-shelf-toggle]"),
+      "the settled worker lives on the Settled shelf",
+    );
+    m.unmount();
+  });
+
+  it("expanding a family shows compact worker rows", async () => {
+    await clearSidebarStorage();
+    const m = await mount(
+      sidebar([
+        ORCH,
+        worker({
+          id: "w1",
+          title: "Fork: Fork: Review permissions",
+        }),
+      ]),
+    );
+    const toggle = m.query('[data-family-toggle="orch"]');
+    assert.ok(toggle);
+    await m.click(toggle!);
+    const card = m.query('[data-thread-card="w1"]');
+    assert.ok(card, "expanded family reveals the worker");
+    assert.equal(card!.getAttribute("data-compact"), "true");
     assert.equal(card!.getAttribute("data-nested"), "true");
     assert.equal(
-      card!.getAttribute("data-settled"),
+      card!.querySelector("[data-card-slug]"),
       null,
-      "Active nest is a full card, not a Settled slim row",
+      "compact workers do not repeat project metadata",
+    );
+    const title = card!.querySelector("[title]");
+    assert.ok(title);
+    assert.equal(title!.textContent, "Review permissions");
+    assert.equal(
+      title!.getAttribute("title"),
+      "Fork: Fork: Review permissions",
+      "stored title stays on the tooltip and is not rewritten",
+    );
+    m.unmount();
+  });
+
+  it("a selected worker stays reachable without opening siblings", async () => {
+    await clearSidebarStorage();
+    const m = await mount(
+      sidebar([ORCH, worker({ id: "w1" }), worker({ id: "w2" })], {
+        activeThreadId: "w1",
+      }),
+    );
+    assert.ok(m.query('[data-thread-card="orch"]'));
+    assert.ok(m.query('[data-thread-card="w1"]'), "selected worker stays visible");
+    assert.equal(
+      m.query('[data-thread-card="w2"]'),
+      null,
+      "siblings stay collapsed",
+    );
+    const toggle = m.query('[data-family-toggle="orch"]');
+    assert.ok(toggle);
+    assert.equal(toggle!.getAttribute("aria-expanded"), "false");
+    m.unmount();
+  });
+
+  it("collapsing a family with a selected worker hides siblings only", async () => {
+    await clearSidebarStorage();
+    const m = await mount(
+      sidebar([ORCH, worker({ id: "w1" }), worker({ id: "w2" })], {
+        activeThreadId: "w1",
+      }),
+    );
+    const toggle = m.query('[data-family-toggle="orch"]');
+    assert.ok(toggle);
+    await m.click(toggle!);
+    assert.equal(toggle!.getAttribute("aria-expanded"), "true");
+    assert.ok(m.query('[data-thread-card="w2"]'), "expand shows siblings");
+    await m.click(toggle!);
+    assert.equal(toggle!.getAttribute("aria-expanded"), "false");
+    assert.ok(
+      m.query('[data-thread-card="w1"]'),
+      "selected worker remains reachable",
     );
     assert.equal(
-      m.query("[data-settled-shelf-toggle]"),
+      m.query('[data-thread-card="w2"]'),
       null,
-      "the only settled thread is nested under its parent, not in the shelf",
+      "siblings hide on explicit collapse",
+    );
+    m.unmount();
+  });
+
+  it("search finds a worker and shows its task context", async () => {
+    await clearSidebarStorage();
+    const m = await mount(
+      sidebar([
+        ORCH,
+        worker({ id: "w1", title: "Review permissions" }),
+        worker({ id: "w2", title: "Unrelated sibling" }),
+      ]),
+    );
+    await m.type(searchInput(m), "permissions");
+    await inAct(async () => {
+      await new Promise((r) => setTimeout(r, 350));
+    });
+    await m.flush();
+    assert.ok(m.query('[data-thread-card="orch"]'), "parent comes along as context");
+    assert.ok(m.query('[data-thread-card="w1"]'));
+    assert.equal(
+      m.query('[data-thread-card="w2"]'),
+      null,
+      "unrelated siblings stay hidden",
     );
     m.unmount();
   });
@@ -2083,7 +2202,7 @@ describe("Sidebar card anatomy + hover actions", () => {
     m.unmount();
   });
 
-  it("settled workers of a pinned parent stay nested in the pinned block", async () => {
+  it("explicit settle of a pinned parent's worker files it to Settled", async () => {
     await clearSidebarStorage();
     const m = await mount(
       sidebar([
@@ -2099,6 +2218,7 @@ describe("Sidebar card anatomy + hover actions", () => {
           title: "Fork: Import existing CLI agent sessions",
           status: "done",
           handoffFrom: "orch",
+          orchWorker: true,
           runStartedAt: null,
           settledOverride: "settled",
           updatedAt: FRESH,
@@ -2111,36 +2231,11 @@ describe("Sidebar card anatomy + hover actions", () => {
         }),
       ]),
     );
-    const card = m.query('[data-thread-card="w-settled"]');
-    assert.ok(
-      card,
-      "settled worker must stay next to the pinned parent without opening Settled",
-    );
-    assert.equal(card!.getAttribute("data-nested"), "true");
-    assert.equal(
-      card!.getAttribute("data-settled"),
-      null,
-      "pinned nest is a full card, not a Settled slim row",
-    );
-    const order = cardTitles(m);
-    const pinIdx = order.indexOf("orch");
-    const childIdx = order.indexOf("w-settled");
-    const activeIdx = order.indexOf("active-card");
-    assert.equal(
-      childIdx,
-      pinIdx + 1,
-      "child sits immediately under the pinned parent",
-    );
-    assert.ok(
-      childIdx < activeIdx,
-      "child is in the pinned block, not a lone Active card",
-    );
+    assert.equal(m.query('[data-thread-card="w-settled"]'), null);
+    assert.ok(m.query("[data-settled-shelf-toggle]"));
     assert.ok(m.query("[data-pinned-divider]"));
-    assert.equal(
-      m.query("[data-settled-shelf-toggle]"),
-      null,
-      "the only settled thread is nested under its parent, not in the shelf",
-    );
+    const order = cardTitles(m);
+    assert.ok(order.indexOf("orch") < order.indexOf("active-card"));
     m.unmount();
   });
 

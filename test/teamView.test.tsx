@@ -68,7 +68,9 @@ function thread(over: Partial<ThreadInfo> = {}): ThreadInfo {
   };
 }
 
-function summary(over: Partial<ThreadSummaryInfo> = {}): ThreadSummaryInfo {
+function summary(
+  over: Partial<ThreadSummaryInfo> & { orchWorker?: boolean } = {},
+): ThreadSummaryInfo {
   return {
     id: "t-orch",
     title: "Plan the fix",
@@ -88,6 +90,7 @@ const WORKER = summary({
   provider: "grok",
   status: "working",
   handoffFrom: "t-orch",
+  orchWorker: true,
   lastActivity: { text: "Found the race in runner", at: 42 },
 });
 
@@ -260,6 +263,7 @@ describe("Agents team view", () => {
       provider: "grok",
       status: "done",
       handoffFrom: "t-orch",
+      orchWorker: true,
     });
     const failed = summary({
       id: "t-fail",
@@ -267,6 +271,7 @@ describe("Agents team view", () => {
       provider: "grok",
       status: "failed",
       handoffFrom: "t-orch",
+      orchWorker: true,
     });
     const idle = summary({
       id: "t-idle",
@@ -274,6 +279,7 @@ describe("Agents team view", () => {
       provider: "claude",
       status: "idle",
       handoffFrom: "t-orch",
+      orchWorker: true,
     });
     const m = await mount(
       content(thread(), [ORCHESTRATOR, WORKER, done, failed, idle]),
@@ -347,6 +353,7 @@ describe("Agents team view", () => {
       provider: "grok",
       status: "working",
       handoffFrom: "t-orch",
+      orchWorker: true,
       runStartedAt: Date.now() - 3 * 60 * 1000,
     });
     const blocked = summary({
@@ -355,6 +362,7 @@ describe("Agents team view", () => {
       provider: "grok",
       status: "working",
       handoffFrom: "t-orch",
+      orchWorker: true,
       awaitingInput: true,
       runStartedAt: Date.now() - 60 * 1000,
     });
@@ -380,6 +388,7 @@ describe("Agents team view", () => {
       provider: "grok",
       status: "working",
       handoffFrom: "t-orch",
+      orchWorker: true,
       stalledAt: Date.now() - 12 * 60 * 1000,
       runStartedAt: Date.now() - 70 * 60 * 1000,
     });
@@ -397,6 +406,7 @@ describe("Agents team view", () => {
       title: "Fork: finished",
       status: "done",
       handoffFrom: "t-orch",
+      orchWorker: true,
     });
     const m = await mount(content(thread(), [ORCHESTRATOR, done]));
     await m.flush();
@@ -411,6 +421,7 @@ describe("Agents team view", () => {
       provider: "grok",
       status: "done",
       handoffFrom: "t-orch",
+      orchWorker: true,
     });
     const m = await mount(content(thread(), [ORCHESTRATOR, done]));
     await m.flush();
@@ -443,6 +454,7 @@ describe("Agents team view", () => {
       provider: "grok",
       status: "done",
       handoffFrom: "t-orch",
+      orchWorker: true,
     });
     const settledB = summary({
       id: "t-settled-b",
@@ -450,6 +462,7 @@ describe("Agents team view", () => {
       provider: "grok",
       status: "done",
       handoffFrom: "t-orch",
+      orchWorker: true,
     });
     const selected: string[] = [];
     const m = await mount(

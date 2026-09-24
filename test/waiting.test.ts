@@ -7,8 +7,10 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
   buildWaitStates,
+  crewSummaryLabel,
   isDelegating,
   subagentNames,
+  summarizeCrew,
   waitLabel,
   waitTooltip,
   type WaitRow,
@@ -32,12 +34,14 @@ describe("buildWaitStates", () => {
       row({
         id: "w1",
         handoffFrom: "orch",
+        orchWorker: true,
         status: "working",
         runStartedAt: NOW - 180_000,
       }),
       row({
         id: "w2",
         handoffFrom: "orch",
+        orchWorker: true,
         status: "working",
         runStartedAt: NOW - 60_000,
       }),
@@ -69,6 +73,7 @@ describe("buildWaitStates", () => {
         id: "w1",
         title: "Fork: migrate",
         handoffFrom: "orch",
+        orchWorker: true,
         status: "working",
         awaitingInput: true,
         runStartedAt: NOW - 3_600_000,
@@ -88,6 +93,7 @@ describe("buildWaitStates", () => {
         id: "w1",
         title: "Fork: migrate",
         handoffFrom: "orch",
+        orchWorker: true,
         status: "idle",
         runStartedAt: null,
         stoppedAt: NOW - 120_000,
@@ -116,6 +122,7 @@ describe("buildWaitStates", () => {
       row({
         id: "w1",
         handoffFrom: "orch",
+        orchWorker: true,
         status: "working",
         runStartedAt: NOW - 30_000,
         stoppedAt: NOW - 300_000,
@@ -164,6 +171,7 @@ describe("buildWaitStates", () => {
         id: "w1",
         status: "working",
         handoffFrom: "t1",
+        orchWorker: true,
         runStartedAt: NOW - 3 * 60_000,
       }),
     ]);
@@ -179,7 +187,7 @@ describe("buildWaitStates", () => {
   it("isDelegating: a finished turn with live workers is not done", () => {
     const wait = buildWaitStates([
       row({ id: "orch", status: "done" }),
-      row({ id: "w1", handoffFrom: "orch", status: "working" }),
+      row({ id: "w1", handoffFrom: "orch", orchWorker: true, status: "working" }),
     ]).get("orch")!;
     assert.equal(isDelegating("done", wait), true);
     assert.equal(isDelegating("idle", wait), true);
@@ -193,5 +201,103 @@ describe("buildWaitStates", () => {
       row({ id: "t1", handoffFrom: "t1", status: "working" }),
     ]);
     assert.equal(states.size, 0);
+  });
+
+  it("rolls a blocked grandchild up to the crew lead", () => {
+    const states = buildWaitStates([
+      row({ id: "orch", projectId: "p1", status: "done" }),
+      row({
+        id: "w1",
+        projectId: "p1",
+        handoffFrom: "orch",
+        orchWorker: true,
+        status: "done",
+      }),
+      row({
+        id: "w1a",
+        projectId: "p1",
+        title: "needs a path",
+        handoffFrom: "w1",
+        orchWorker: true,
+        status: "working",
+        awaitingInput: true,
+      }),
+    ]);
+    const wait = states.get("orch")!;
+    assert.equal(wait.blocked, 1);
+    assert.equal(wait.children[0]!.id, "w1a");
+    assert.equal(states.get("w1")?.blocked, 1, "intermediate worker also sees it");
+  });
+
+  it("does not treat a ThreadInfo manual fork as delegated work", () => {
+    const states = buildWaitStates([
+      row({ id: "src", projectId: "p1", status: "done" }),
+      row({
+        id: "fork",
+        projectId: "p1",
+        handoffFrom: "src",
+        status: "working",
+      }),
+    ]);
+    assert.equal(states.get("src"), undefined);
+  });
+
+  it("does not treat a live handoff without orchWorker as a crew worker", () => {
+    const states = buildWaitStates([
+      row({ id: "orch", status: "done" }),
+      row({ id: "w1", handoffFrom: "orch", status: "working" }),
+    ]);
+    assert.equal(states.get("orch"), undefined);
+  });
+});
+
+describe("summarizeCrew", () => {
+  it("counts ready, failed, and needs-you without calling done integrated", () => {
+    const s = summarizeCrew([
+      row({ id: "w1", status: "working", awaitingInput: true }),
+      row({ id: "w2", status: "working" }),
+      row({ id: "w3", status: "done" }),
+      row({ id: "w4", status: "failed" }),
+    ]);
+    assert.equal(s.workers, 4);
+    assert.equal(s.blocked, 1);
+    assert.equal(s.running, 1);
+    assert.equal(s.ready, 1);
+    assert.equal(s.failed, 1);
+    assert.equal(
+      crewSummaryLabel(s),
+      "4 workers · 1 needs you · 1 failed · 1 running · 1 ready",
+    );
+    assert.equal(crewSummaryLabel(s).includes("integrated"), false);
+  });
+
+  it("counts a blocked descendant once, not via the parent wait rollup", () => {
+    const s = summarizeCrew([
+      row({
+        id: "w1",
+        orchWorker: true,
+        status: "done",
+        handoffFrom: "orch",
+      }),
+      row({
+        id: "w1a",
+        orchWorker: true,
+        status: "working",
+        awaitingInput: true,
+        handoffFrom: "w1",
+      }),
+    ]);
+    assert.equal(s.blocked, 1);
+    assert.equal(s.ready, 1);
+    assert.equal(s.workers, 2);
+  });
+
+  it("does not treat idle that never completed as ready", () => {
+    const s = summarizeCrew([
+      row({ id: "w1", status: "idle" }),
+      row({ id: "w2", status: "done" }),
+    ]);
+    assert.equal(s.ready, 1);
+    assert.equal(s.workers, 2);
   });
 });
