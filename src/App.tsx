@@ -1,10 +1,14 @@
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
   useSyncExternalStore,
+  type CSSProperties,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type PointerEvent as ReactPointerEvent,
 } from "react";
 import { useCoder } from "./useCoder";
 import { isDevBuild, needsWebTokenGate } from "./coderApi";
@@ -67,6 +71,18 @@ import {
   type ViewReturnState,
 } from "./viewReturn";
 import { isDirectCrewChild, sameCrewProject } from "./crewIntegration";
+import {
+  bindSidebarDrag,
+  browserSidebarStorage,
+  initialSidebarWidth,
+  nextSidebarPreference,
+  saveSidebarWidth,
+  SIDEBAR_WIDTH_DEFAULT,
+  SIDEBAR_WIDTH_MIN,
+  SIDEBAR_WIDTH_STEP,
+  SIDEBAR_WIDTH_STEP_COARSE,
+  sidebarFitCap,
+} from "./sidebarWidth";
 
 const EMPTY_FORECAST: ConflictForecast = { pairs: [], computedAt: 0 };
 const EMPTY_AGENT_PROFILES: AgentProfile[] = [];
@@ -105,6 +121,19 @@ function getNarrow(): boolean {
 
 function useNarrow(): boolean {
   return useSyncExternalStore(subscribeNarrow, getNarrow, () => false);
+}
+
+function subscribeViewport(onChange: () => void): () => void {
+  window.addEventListener("resize", onChange);
+  return () => window.removeEventListener("resize", onChange);
+}
+
+function getViewportWidth(): number {
+  return window.innerWidth;
+}
+
+function useViewportWidth(): number {
+  return useSyncExternalStore(subscribeViewport, getViewportWidth, () => 0);
 }
 
 const AGENTS_LAST_KEY = "coder.agents.collapsed";
@@ -441,9 +470,16 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
   const [drawer, setDrawer] = useState<DrawerId | null>(null);
   const [forecast, setForecast] = useState<ConflictForecast>(EMPTY_FORECAST);
   const narrow = useNarrow();
+  const viewportWidth = useViewportWidth();
+  const [preferredSidebarWidth, setPreferredSidebarWidth] = useState(
+    initialSidebarWidth,
+  );
   const [agentsCollapsed, setAgentsCollapsed] = useState(true);
   const [agentsTabFocus, setAgentsTabFocus] = useState(0);
   const sidebarPaneRef = useRef<HTMLDivElement>(null);
+  const sidebarDragRef = useRef<{ finish(commit: boolean): void } | null>(
+    null,
+  );
   const agentsPaneRef = useRef<HTMLDivElement>(null);
   const threadsBtnRef = useRef<HTMLButtonElement>(null);
   const agentsBtnRef = useRef<HTMLButtonElement>(null);
@@ -454,6 +490,14 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
   const appliedPanelDefaultRef = useRef<"closed" | "open" | null>(null);
   rememberLastRef.current = settings?.agentsPanelRememberLast === true;
   const hideAgentsRail = agentsCollapsed && !narrow;
+  // Agents panel open is the case that can squeeze the transcript. The
+  // collapsed rail still leaves room for the widest sidebar above 900px.
+  const sidebarFit = sidebarFitCap(viewportWidth, !agentsCollapsed && !narrow);
+  const sidebarWidth = Math.min(preferredSidebarWidth, sidebarFit);
+  const preferredSidebarRef = useRef(preferredSidebarWidth);
+  preferredSidebarRef.current = preferredSidebarWidth;
+  const sidebarFitRef = useRef(sidebarFit);
+  sidebarFitRef.current = sidebarFit;
 
   const viewRef = useRef(view);
   viewRef.current = view;
@@ -1640,6 +1684,105 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     [updateProject],
   );
 
+  const commitSidebarWidth = useCallback((width: number) => {
+    setPreferredSidebarWidth(width);
+    saveSidebarWidth(width, browserSidebarStorage());
+  }, []);
+
+  const endSidebarDrag = useCallback((commit: boolean) => {
+    const session = sidebarDragRef.current;
+    sidebarDragRef.current = null;
+    session?.finish(commit);
+  }, []);
+
+  useLayoutEffect(() => {
+    if (narrow) endSidebarDrag(false);
+  }, [narrow, endSidebarDrag]);
+
+  useLayoutEffect(() => {
+    return () => {
+      const session = sidebarDragRef.current;
+      sidebarDragRef.current = null;
+      session?.finish(false);
+    };
+  }, []);
+
+  const onSidebarResizePointerDown = (
+    event: ReactPointerEvent<HTMLDivElement>,
+  ) => {
+    if (event.button !== 0 || narrow || sidebarDragRef.current) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const handle = event.currentTarget;
+    const pointerId = event.pointerId;
+    try {
+      handle.setPointerCapture(pointerId);
+    } catch {
+      // jsdom, or a pointer the browser will not capture.
+    }
+    try {
+      handle.focus({ preventScroll: true });
+    } catch {
+      handle.focus();
+    }
+    const startPreferred = preferredSidebarRef.current;
+    const sidebarLeft =
+      sidebarPaneRef.current?.getBoundingClientRect().left ?? 0;
+    const clearDrag = () => {
+      sidebarDragRef.current = null;
+    };
+    sidebarDragRef.current = bindSidebarDrag({
+      pointerId,
+      handle,
+      originX: event.clientX,
+      sidebarLeft,
+      startPreferred,
+      fitCap: () => sidebarFitRef.current,
+      onPreview: setPreferredSidebarWidth,
+      onCommit: (width) => {
+        clearDrag();
+        commitSidebarWidth(width);
+      },
+      onCancel: () => {
+        clearDrag();
+        setPreferredSidebarWidth(startPreferred);
+      },
+    });
+  };
+
+  const onSidebarResizeKeyDown = (
+    event: ReactKeyboardEvent<HTMLDivElement>,
+  ) => {
+    if (sidebarDragRef.current) return;
+    if (event.altKey || event.metaKey || event.ctrlKey) return;
+    if (event.key === "Enter") {
+      event.preventDefault();
+      commitSidebarWidth(SIDEBAR_WIDTH_DEFAULT);
+      return;
+    }
+    let delta = 0;
+    if (event.key === "ArrowLeft") {
+      delta = -(event.shiftKey ? SIDEBAR_WIDTH_STEP_COARSE : SIDEBAR_WIDTH_STEP);
+    } else if (event.key === "ArrowRight") {
+      delta = event.shiftKey ? SIDEBAR_WIDTH_STEP_COARSE : SIDEBAR_WIDTH_STEP;
+    } else {
+      return;
+    }
+    event.preventDefault();
+    const next = nextSidebarPreference(
+      preferredSidebarRef.current,
+      delta,
+      sidebarFitRef.current,
+      "delta",
+    );
+    if (next !== preferredSidebarRef.current) commitSidebarWidth(next);
+  };
+
+  const onSidebarResizeReset = () => {
+    if (sidebarDragRef.current) return;
+    commitSidebarWidth(SIDEBAR_WIDTH_DEFAULT);
+  };
+
   if (buildMismatch) {
     return (
       <BuildMismatchScreen onRestart={() => void applyUpdate()} />
@@ -1654,6 +1797,11 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         data-layout="app"
         data-drawer={drawer ?? ""}
         data-agents-collapsed={hideAgentsRail ? "true" : undefined}
+        style={
+          narrow
+            ? undefined
+            : ({ "--sidebar-width": `${sidebarWidth}px` } as CSSProperties)
+        }
       >
         <div className={styles.narrowBar} data-narrow-chrome="">
           <button
@@ -1772,6 +1920,25 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
             />
           </ErrorBoundary>
         </div>
+        {!narrow && (
+          <div
+            role="separator"
+            aria-orientation="vertical"
+            aria-label="Resize sidebar"
+            title="Arrow keys resize. Shift is a coarse step. Enter or double-click resets."
+            aria-controls="pane-sidebar"
+            aria-valuemin={SIDEBAR_WIDTH_MIN}
+            aria-valuemax={sidebarFit}
+            aria-valuenow={sidebarWidth}
+            aria-valuetext={`${sidebarWidth} pixels`}
+            tabIndex={0}
+            className={styles.sidebarResize}
+            data-sidebar-resize=""
+            onPointerDown={onSidebarResizePointerDown}
+            onKeyDown={onSidebarResizeKeyDown}
+            onDoubleClick={onSidebarResizeReset}
+          />
+        )}
         <div
           className={styles.threadSlot}
           data-pane="thread"
