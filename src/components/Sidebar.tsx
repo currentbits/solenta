@@ -227,6 +227,21 @@ function listMotionBlocked(skip: ListMotionSkip): boolean {
   return prefersReducedMotion() || skip.hydrate || skip.bulk || skip.keyboard;
 }
 
+/**
+ * auto-animate reinserts a removed row for the exit animation and marks it
+ * `__aa_del`. disable() cancels that animation and does not take the
+ * placeholder back out, so a keyboard snap, bulk replace, or reduced-motion
+ * change during the exit leaves a second copy of the row in the list.
+ */
+function releaseAbortedRows(parent: HTMLElement): void {
+  for (const child of [...parent.children]) {
+    if (!("__aa_del" in child)) continue;
+    delete (child as HTMLElement & { __aa_del?: unknown }).__aa_del;
+    if (child instanceof HTMLElement) child.removeAttribute("style");
+    child.remove();
+  }
+}
+
 function countIdChurn(
   prev: readonly string[],
   next: readonly string[],
@@ -1854,20 +1869,31 @@ export const Sidebar = memo(function Sidebar({
   const prevRowIds = useRef<string[]>([]);
   const applyListMotion = useCallback(() => {
     const enable = !listMotionBlocked(listAnimSkip.current);
-    for (const ctrl of listAnimCtrls.current.values()) {
+    for (const [node, ctrl] of listAnimCtrls.current) {
       if (enable) ctrl.enable();
-      else ctrl.disable();
+      else {
+        ctrl.disable();
+        releaseAbortedRows(node);
+      }
     }
   }, []);
   const bindListAnimation = useCallback((node: HTMLElement | null) => {
     if (!node) return;
     if (typeof ResizeObserver === "undefined") return;
+    // The library samples prefers-reduced-motion only while binding and, when
+    // it matches, never installs an observer. enable() cannot bring that
+    // observer back, so a session that starts reduced stays frozen after the
+    // user turns motion on. Own the gate instead.
     const ctrl = autoAnimate(node, {
       duration: FAMILY_MOTION_MS,
       easing: "ease-out",
+      disrespectUserMotionPreference: true,
     });
     listAnimCtrls.current.set(node, ctrl);
-    if (listMotionBlocked(listAnimSkip.current)) ctrl.disable();
+    if (listMotionBlocked(listAnimSkip.current)) {
+      ctrl.disable();
+      releaseAbortedRows(node);
+    }
     return () => {
       ctrl.destroy?.();
       listAnimCtrls.current.delete(node);
