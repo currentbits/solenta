@@ -1,6 +1,8 @@
 # Thread UX phase three review
 
-Plan: [#1351](https://github.com/currentbits/solenta/issues/1351). Two Grok branches were reviewed together against `3c7bc8a3` in an isolated checkout. They are ready for a user landing decision and are not merged.
+Plan: [#1351](https://github.com/currentbits/solenta/issues/1351). Two Grok branches were reviewed together against `3c7bc8a3` in an isolated checkout, then merged with user approval into `codex/thread-worker-ux`.
+
+Landed in this order: sidebar `14a8a984`, composer Options `02c40248`.
 
 | Order | Branch | Reviewed tip | Result |
 | --- | --- | --- | --- |
@@ -16,6 +18,7 @@ Validation:
 - Initial combined build/typecheck and all 2,615 renderer tests passed.
 - After the review fixes, the combined build/typecheck and 264 affected sidebar, composer, Best of N, drawer, agents and transcript checks passed.
 - All nine changed files in the combined checkout match the reviewed worker tips byte for byte. `git diff --check` passed.
+- After landing, all nine files still match the reviewed tips. The destination build/typecheck and all 264 targeted checks passed. Both worker worktrees were cleaned up.
 - An isolated Electron fixture passed native pointer commit and Escape cancellation, keyboard step/coarse step/reset, agents-panel fit and keyboard cap, and width persistence after reload.
 - Native Options checks passed Space/Tab/Escape, focus return after workflow editing, selecting a workflow without execution, explicit workflow execution, narrow drawer sizing and draft retention through Review and back.
 - Dark and light screenshots were inspected at desktop and narrow widths. Options also fits a 380×640 viewport. Reduced motion was enabled and checked in a separate native run.
@@ -23,4 +26,4 @@ Validation:
 
 Review fixes: keyboard growth now stops at the visible fit cap, reset keys are discoverable on the separator, Best of N has a visible section label, and workflow-editor close restores the Options trigger.
 
-This covers the resizing portion of [#358](https://github.com/currentbits/solenta/issues/358). An icons-only collapsed sidebar remains outside this phase. No release or installation is part of this landing decision.
+This covers the resizing portion of [#358](https://github.com/currentbits/solenta/issues/358). An icons-only collapsed sidebar remains outside this phase. These changes are merged locally; no release has been published or installed.
