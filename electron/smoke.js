@@ -18,7 +18,7 @@ process.on("uncaughtException", (err) => {
  *   A) CODER_SIMULATE=1 — simulated core ticker, new work-log shape
  *   B) CODER_AGENT_CMD = fake node -e agent — real generic spawn path to done
  *   C) CODER_CLAUDE_BIN = fake stream-json script — session, tools, usage
- *   D) CODER_CODEX_BIN = fake codex JSONL — session, tool Command, status done
+ *   D) CODER_CODEX_BIN = fake codex app-server — root session, tool Command, status done
  *   E) two-phase mixed template (fake claude seed + fake text finalize) + dossiers
  *
  * Uses a temp userData path so it never touches real app state.
@@ -215,45 +215,81 @@ const text = "SMOKE_TEXT_FINAL";
 }
 
 /**
- * Write a fake codex CLI that emits JSONL for smoke pass D.
+ * Write a fake codex app-server for smoke pass D.
+ * Interactive turns speak JSON-RPC (`app-server --listen stdio://`).
+ * The fixture answers with one root session, smoke-codex-sess-1.
  * @param {string} dir
  * @returns {string} absolute path to executable script
  */
 function writeSmokeFakeCodex(dir) {
   const body = `#!/usr/bin/env node
 "use strict";
-const delay = (ms) => new Promise((r) => setTimeout(r, ms));
-function emit(obj) { process.stdout.write(JSON.stringify(obj) + "\\n"); }
-(async () => {
-  emit({ type: "thread.started", thread_id: "smoke-codex-sess-1" });
-  await delay(20);
-  emit({
-    type: "item.completed",
-    item: { id: "msg1", type: "agent_message", text: "Smoke codex ok" },
-  });
-  await delay(20);
-  emit({
-    type: "item.started",
-    item: { id: "cmd1", type: "command_execution", command: "echo smoke" },
-  });
-  await delay(20);
-  emit({
-    type: "item.completed",
-    item: {
-      id: "cmd1",
-      type: "command_execution",
-      command: "echo smoke",
-      aggregated_output: "smoke\\n",
-      exit_code: 0,
-    },
-  });
-  await delay(20);
-  emit({
-    type: "turn.completed",
-    usage: { input_tokens: 9, output_tokens: 4 },
-  });
-  process.exit(0);
-})().catch((e) => { process.stderr.write(String(e)); process.exit(1); });
+const readline = require("node:readline");
+function send(obj) {
+  try { process.stdout.write(JSON.stringify(obj) + "\\n"); } catch { /* closed */ }
+}
+function reply(id, result) { send({ jsonrpc: "2.0", id, result }); }
+function notify(method, params) { send({ jsonrpc: "2.0", method, params }); }
+const ROOT_ID = "smoke-codex-sess-1";
+const TURN_ID = "smoke-codex-turn-1";
+const rootThread = { id: ROOT_ID, threadSource: "solenta" };
+process.stdout.on("error", () => {});
+const rl = readline.createInterface({ input: process.stdin });
+rl.on("error", () => {});
+rl.on("line", (line) => {
+  let msg;
+  try { msg = JSON.parse(line); } catch { return; }
+  if (!msg || typeof msg.method !== "string") return;
+  if (msg.method === "initialize") {
+    reply(msg.id, { userAgent: "smoke-codex-appserver" });
+    return;
+  }
+  if (msg.method === "initialized") return;
+  if (msg.method === "thread/start" || msg.method === "thread/resume") {
+    reply(msg.id, { thread: rootThread });
+    notify("thread/started", { thread: rootThread });
+    return;
+  }
+  if (msg.method === "turn/start") {
+    reply(msg.id, { turn: { id: TURN_ID, status: "inProgress", items: [] } });
+    notify("turn/started", { threadId: ROOT_ID, turn: { id: TURN_ID } });
+    notify("item/completed", {
+      item: { id: "msg1", type: "agentMessage", text: "Smoke codex ok" },
+      threadId: ROOT_ID,
+      turnId: TURN_ID,
+    });
+    notify("item/started", {
+      item: { id: "cmd1", type: "commandExecution", command: "echo smoke" },
+      threadId: ROOT_ID,
+      turnId: TURN_ID,
+    });
+    notify("item/completed", {
+      item: {
+        id: "cmd1",
+        type: "commandExecution",
+        command: "echo smoke",
+        aggregatedOutput: "smoke\\n",
+        exitCode: 0,
+      },
+      threadId: ROOT_ID,
+      turnId: TURN_ID,
+    });
+    notify("turn/completed", {
+      threadId: ROOT_ID,
+      turn: { id: TURN_ID, status: "completed" },
+      usage: { input_tokens: 9, output_tokens: 4 },
+    });
+    return;
+  }
+  if (msg.method === "turn/interrupt") {
+    reply(msg.id, {});
+    return;
+  }
+  if (msg.method === "thread/unsubscribe") {
+    reply(msg.id, { status: "unsubscribed" });
+    process.exit(0);
+  }
+});
 `;
   return writeFakeBin(dir, "smoke-fake-codex", body);
 }
@@ -671,7 +707,7 @@ app
     });
     logStep("passC", { ok: true });
 
-    // ── Pass D: codex adapter via fake JSONL binary ───────────────────
+    // ── Pass D: codex adapter via fake app-server binary ──────────────
     delete process.env.CODER_SIMULATE;
     delete process.env.CODER_AGENT_CMD;
     delete process.env.CODER_CLAUDE_BIN;

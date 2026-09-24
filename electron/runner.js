@@ -750,6 +750,10 @@ function createRunner(opts) {
     // per call rather than captured.
     getIosSimulator = () => null,
   } = opts;
+  // Lane beats (#346). Missing this binding threw inside the heartbeat
+  // try/catch, so lastBeat never moved and the wedge watchdog could
+  // recycle a live run.
+  const nowFn = typeof opts.now === "function" ? opts.now : () => Date.now();
 
   /**
    * @type {Map<string, object>}
@@ -1762,11 +1766,18 @@ function createRunner(opts) {
       },
     };
     for (const t of crew) {
-      // "idle" is a terminal too: stopped runs and app-quit interrupts land
-      // there (grok CLIs often end "cancelled" after finishing their work).
-      // pendingFork idle means the worker never ran — leave it visible.
-      const finished =
-        t.status === "done" || (t.status === "idle" && !t.pendingFork);
+      // Done is finished. Idle is finished only after the worker has run:
+      // stoppedAt (#183), a session, or a transcript. getMessages hydrates
+      // a shard, so only an unarchived idle row with neither cheaper mark
+      // pays for it. A fresh fork and a pendingFork stay visible (#979).
+      if (t.archived || t.pendingFork) continue;
+      let finished = t.status === "done";
+      if (!finished && t.status === "idle") {
+        finished =
+          Boolean(t.stoppedAt) ||
+          Boolean(t.sessionId) ||
+          (store.getMessages(t.id) || []).length > 0;
+      }
       if (finished && !t.archived) {
         // Not real activity: no touch, same as threads:setArchived.
         store.updateThread(t.id, { archived: true });
