@@ -3212,6 +3212,26 @@ describe("Composer live dictation (#845)", () => {
     m.unmount();
   });
 
+  it("restores an unsent draft after the composer unmounts", async () => {
+    const h = makeHarness();
+    const first = await mount(composer(h, { threadId: "t-kept-draft" }));
+    await first.type(first.query("textarea"), "keep this prompt");
+    first.unmount();
+    const second = await mount(composer(h, { threadId: "t-kept-draft" }));
+    assert.equal(
+      (second.query("textarea") as HTMLTextAreaElement).value,
+      "keep this prompt",
+    );
+    const other = await mount(composer(h, { threadId: "t-other-draft" }));
+    assert.equal(
+      (other.query("textarea") as HTMLTextAreaElement).value,
+      "",
+      "another thread does not inherit the draft",
+    );
+    second.unmount();
+    other.unmount();
+  });
+
   it("archiving cancels and restores the original draft", async () => {
     const fake = createFakeCoder({ speechStatus: SPEECH_READY });
     const shell = await mount(<div />);

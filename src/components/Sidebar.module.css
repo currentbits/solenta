@@ -439,22 +439,45 @@
 }
 
 .viewNav {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  display: flex;
+  flex-wrap: nowrap;
   align-items: center;
   gap: 2px;
   margin: 0 8px 8px;
   flex-shrink: 0;
 }
 
+.viewNav .filterMenuHost {
+  flex: 0 0 auto;
+  min-width: auto;
+}
+
 .viewNavBtn {
-  display: grid;
-  place-items: center;
-  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 1 1 0;
+  width: auto;
   min-width: 0;
   height: 28px;
+  padding: 0 6px;
   border-radius: var(--radius-sm);
   color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.viewNavLabel {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.viewNavMore {
+  flex: 0 0 auto;
+  gap: 4px;
+  padding: 0 8px;
 }
 
 .viewNavBtn:hover {
@@ -465,6 +488,18 @@
 .viewNavBtn[data-active="true"] {
   background: var(--card);
   color: var(--blue);
+}
+
+.viewNavBtn[data-active="true"]:hover {
+  color: var(--blue);
+}
+
+.appMoreMenu {
+  right: 0;
+  left: auto;
+  min-width: 168px;
+  transition: none;
+  animation: none;
 }
 
 .list {
@@ -871,8 +906,13 @@
   font-size: 12px;
 }
 
-.menuItem:hover {
+.menuItem:hover,
+.menuItem:focus-visible {
   background: var(--card-hover);
+}
+
+.menuItem[data-active="true"] {
+  color: var(--blue);
 }
 
 .menuItem:disabled {
@@ -1709,7 +1749,6 @@
 
 @media (hover: hover) and (pointer: fine) {
   .iconBtn:active:not(:disabled),
-  .viewNavBtn:active,
   .scopeTrigger:active,
   .viewTrigger:active,
   .filterTrigger:active,

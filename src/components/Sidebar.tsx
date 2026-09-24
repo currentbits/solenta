@@ -150,6 +150,59 @@ const BULK_ROW_DELTA = 40;
 type FilterMenu = "status" | "provider" | "group" | "tag" | "views";
 type ViewEditor = { mode: "save" | "rename"; name: string };
 
+/** Main app destination. Kept local so Sidebar does not import App. */
+type SidebarNavView =
+  | "thread"
+  | "kanban"
+  | "planboard"
+  | "prs"
+  | "automations"
+  | "activity"
+  | "usage"
+  | "fleet"
+  | "insights"
+  | "digest";
+
+const MORE_DESTINATIONS: readonly {
+  id:
+    | "activity"
+    | "kanban"
+    | "automations"
+    | "usage"
+    | "fleet"
+    | "insights"
+    | "digest";
+  label: string;
+  view: SidebarNavView;
+}[] = [
+  { id: "activity", label: "Activity", view: "activity" },
+  { id: "kanban", label: "Kanban", view: "kanban" },
+  { id: "automations", label: "Automations", view: "automations" },
+  { id: "usage", label: "Usage", view: "usage" },
+  { id: "fleet", label: "Fleet", view: "fleet" },
+  { id: "insights", label: "Insights", view: "insights" },
+  { id: "digest", label: "Digest", view: "digest" },
+];
+
+function moveAppMenuFocus(menu: HTMLElement, key: string): boolean {
+  const items = [
+    ...menu.querySelectorAll<HTMLElement>(
+      '[role="menuitem"]:not([disabled])',
+    ),
+  ];
+  if (items.length === 0) return false;
+  const from = items.findIndex((el) => el === document.activeElement);
+  let next = -1;
+  if (key === "ArrowDown") next = from < 0 ? 0 : (from + 1) % items.length;
+  else if (key === "ArrowUp") {
+    next = from < 0 ? items.length - 1 : (from - 1 + items.length) % items.length;
+  } else if (key === "Home") next = 0;
+  else if (key === "End") next = items.length - 1;
+  else return false;
+  items[next]?.focus();
+  return true;
+}
+
 function prefersReducedMotion(): boolean {
   return (
     typeof window !== "undefined" &&
@@ -365,10 +418,22 @@ interface SidebarProps {
     threadId: string,
     opts?: { provider?: string },
   ) => void | Promise<void>;
-  /** Which main view is showing. Defaults to thread so existing callers stay idle. */
-  activeView?: "thread" | "kanban" | "planboard" | "activity";
+  /**
+   * Which main view is showing. Pass the real view: collapsing other
+   * destinations to "thread" marks Threads active while the user is elsewhere.
+   */
+  activeView?: SidebarNavView;
+  /** Return to the selected thread. Does not create a thread. */
+  onOpenThreads?: () => void;
   onOpenKanban?: (scopedProjectId?: string | null) => void;
   onOpenPlanboard?: (scopedProjectId?: string | null) => void;
+  /** Existing pull-request list. Not a separate review dashboard. */
+  onOpenReview?: () => void;
+  onOpenAutomations?: () => void;
+  onOpenUsage?: () => void;
+  onOpenFleet?: () => void;
+  onOpenInsights?: () => void;
+  onOpenDigest?: () => void;
   /**
    * Paste a GitHub issue into this project. Omitted by existing tests so
    * the icon button stays hidden.
@@ -1652,8 +1717,15 @@ export const Sidebar = memo(function Sidebar({
   onPurgeThread,
   onFork,
   activeView = "thread",
+  onOpenThreads,
   onOpenKanban,
   onOpenPlanboard,
+  onOpenReview,
+  onOpenAutomations,
+  onOpenUsage,
+  onOpenFleet,
+  onOpenInsights,
+  onOpenDigest,
   onCreateThreadFromIssue,
   listCliSessions,
   importCliSession,
@@ -1691,6 +1763,9 @@ export const Sidebar = memo(function Sidebar({
   const [scopeMenuOpen, setScopeMenuOpen] = useState(false);
   const [removeConfirmId, setRemoveConfirmId] = useState<string | null>(null);
   const [filterMenu, setFilterMenu] = useState<FilterMenu | null>(null);
+  const [moreOpen, setMoreOpen] = useState(false);
+  const moreHostRef = useRef<HTMLSpanElement>(null);
+  const moreTriggerRef = useRef<HTMLButtonElement>(null);
   const [statusFilter, setStatusFilter] = useState<StatusFilter | null>(() =>
     parseStatusFilter(loadStored(STATUS_FILTER_KEY)),
   );
@@ -1705,7 +1780,8 @@ export const Sidebar = memo(function Sidebar({
   );
   useEscapeClose(
     (createMenuOpen || scopeMenuOpen || filterMenu != null) &&
-      removeConfirmId == null,
+      removeConfirmId == null &&
+      !moreOpen,
     () => {
       setCreateMenuOpen(false);
       setBasePicker(null);
@@ -1714,6 +1790,28 @@ export const Sidebar = memo(function Sidebar({
       setViewEditor(null);
     },
   );
+  useLayoutEffect(() => {
+    if (!moreOpen) return;
+    const menu = moreHostRef.current?.querySelector<HTMLElement>(
+      "[data-app-more-menu]",
+    );
+    if (!menu) return;
+    const current = menu.querySelector<HTMLElement>('[aria-current="page"]');
+    const first = menu.querySelector<HTMLElement>('[role="menuitem"]');
+    (current ?? first)?.focus();
+  }, [moreOpen]);
+  useEffect(() => {
+    if (!moreOpen) return;
+    const onPointer = (e: MouseEvent) => {
+      if (moreHostRef.current?.contains(e.target as Node)) return;
+      const menu = moreHostRef.current?.querySelector("[data-app-more-menu]");
+      const restore = Boolean(menu?.contains(document.activeElement));
+      setMoreOpen(false);
+      if (restore) moreTriggerRef.current?.focus();
+    };
+    document.addEventListener("mousedown", onPointer, true);
+    return () => document.removeEventListener("mousedown", onPointer, true);
+  }, [moreOpen]);
   const [importCliProvider, setImportCliProvider] =
     useState<CliImportProvider | null>(null);
   const [issueFormFor, setIssueFormFor] = useState<string | null>(null);
@@ -2502,7 +2600,54 @@ export const Sidebar = memo(function Sidebar({
     setCreateMenuOpen(false);
     setScopeMenuOpen(false);
     setViewEditor(null);
+    setMoreOpen(false);
     setFilterMenu((open) => (open === menu ? null : menu));
+  };
+
+  const toggleMore = () => {
+    setCreateMenuOpen(false);
+    setScopeMenuOpen(false);
+    setViewEditor(null);
+    setBasePicker(null);
+    setFilterMenu(null);
+    setMoreOpen((open) => !open);
+  };
+
+  const closeMore = (returnFocus: boolean) => {
+    setMoreOpen(false);
+    if (returnFocus) moreTriggerRef.current?.focus();
+  };
+
+  const onMoreBlur = (e: React.FocusEvent<HTMLElement>) => {
+    if (!moreOpen) return;
+    const next = e.relatedTarget;
+    if (next instanceof Node && e.currentTarget.contains(next)) return;
+    setMoreOpen(false);
+  };
+
+  const onMoreKeyDown = (e: React.KeyboardEvent<HTMLElement>) => {
+    if (!moreOpen) return;
+    if (e.key === "Escape") {
+      e.preventDefault();
+      e.stopPropagation();
+      closeMore(true);
+      return;
+    }
+    // Tab leaves the menu. Focus returns to More first so the browser's
+    // default tab move continues from that button. Hidden Electron does not
+    // fire the blur that would otherwise close it.
+    if (e.key === "Tab") {
+      closeMore(true);
+      return;
+    }
+    const menu = moreHostRef.current?.querySelector<HTMLElement>(
+      "[data-app-more-menu]",
+    );
+    if (!menu) return;
+    if (moveAppMenuFocus(menu, e.key)) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
   };
 
   const recallSavedView = (view: SavedView) => {
@@ -2768,6 +2913,23 @@ export const Sidebar = memo(function Sidebar({
     );
   })();
 
+  const moreRunners: Partial<
+    Record<(typeof MORE_DESTINATIONS)[number]["id"], () => void>
+  > = {};
+  if (onOpenActivity) moreRunners.activity = () => onOpenActivity(projectScope);
+  if (onOpenKanban) moreRunners.kanban = () => onOpenKanban(projectScope);
+  if (onOpenAutomations) moreRunners.automations = onOpenAutomations;
+  if (onOpenUsage) moreRunners.usage = onOpenUsage;
+  if (onOpenFleet) moreRunners.fleet = onOpenFleet;
+  if (onOpenInsights) moreRunners.insights = onOpenInsights;
+  if (onOpenDigest) moreRunners.digest = onOpenDigest;
+  const moreDestinations = MORE_DESTINATIONS.flatMap((dest) => {
+    const run = moreRunners[dest.id];
+    return run ? [{ ...dest, run }] : [];
+  });
+  const moreCurrentLabel =
+    moreDestinations.find((dest) => dest.view === activeView)?.label ?? null;
+
   return (
     <aside className={styles.sidebar}>
       {!isWebMode() && <div className={styles.dragRegion} />}
@@ -2851,6 +3013,7 @@ export const Sidebar = memo(function Sidebar({
                   setFilterMenu(null);
                   setViewEditor(null);
                   setBasePicker(null);
+                  setMoreOpen(false);
                   setCreateMenuOpen((open) => !open);
                 }}
               >
@@ -3108,6 +3271,7 @@ export const Sidebar = memo(function Sidebar({
               setCreateMenuOpen(false);
               setFilterMenu(null);
               setViewEditor(null);
+              setMoreOpen(false);
               setScopeMenuOpen((open) => !open);
             }}
           >
@@ -3624,51 +3788,104 @@ export const Sidebar = memo(function Sidebar({
         </span>
       </div>
 
-      <nav className={styles.viewNav} aria-label="Views">
+      <nav className={styles.viewNav} aria-label="App">
         <button
           type="button"
           className={styles.viewNavBtn}
-          data-view-nav="activity"
-          data-active={activeView === "activity" ? "true" : undefined}
-          title="Activity"
-          aria-label="Activity"
-          onClick={() => onOpenActivity?.(projectScope)}
+          data-view-nav="threads"
+          data-active={activeView === "thread" ? "true" : undefined}
+          aria-current={activeView === "thread" ? "page" : undefined}
+          onClick={() => onOpenThreads?.()}
         >
-          <Icon size={15}>
-            <path d="M3 12h3l2-6 4 12 2-6h4" />
-          </Icon>
-        </button>
-        <button
-          type="button"
-          className={styles.viewNavBtn}
-          data-view-nav="kanban"
-          data-active={activeView === "kanban" ? "true" : undefined}
-          title="Kanban"
-          aria-label="Kanban"
-          onClick={() => onOpenKanban?.(projectScope)}
-        >
-          <Icon size={15}>
-            <rect x="3" y="4" width="5" height="16" rx="1" />
-            <rect x="10" y="4" width="5" height="10" rx="1" />
-            <rect x="17" y="4" width="4" height="7" rx="1" />
-          </Icon>
+          <span className={styles.viewNavLabel}>Threads</span>
         </button>
         <button
           type="button"
           className={styles.viewNavBtn}
           data-view-nav="planboard"
           data-active={activeView === "planboard" ? "true" : undefined}
-          title="Planboard"
-          aria-label="Planboard"
+          aria-current={activeView === "planboard" ? "page" : undefined}
           onClick={() => onOpenPlanboard?.(projectScope)}
         >
-          <Icon size={15}>
-            <rect x="4" y="4" width="16" height="16" rx="2" />
-            <path d="M8 9h8" />
-            <path d="M8 13h6" />
-            <path d="M8 17h4" />
-          </Icon>
+          <span className={styles.viewNavLabel}>Planboard</span>
         </button>
+        <button
+          type="button"
+          className={styles.viewNavBtn}
+          data-view-nav="review"
+          data-active={activeView === "prs" ? "true" : undefined}
+          aria-current={activeView === "prs" ? "page" : undefined}
+          onClick={() => onOpenReview?.()}
+        >
+          <span className={styles.viewNavLabel}>Review</span>
+        </button>
+        {moreDestinations.length > 0 && (
+          <span
+            className={styles.filterMenuHost}
+            ref={moreHostRef}
+            onBlur={onMoreBlur}
+          >
+            <button
+              type="button"
+              ref={moreTriggerRef}
+              className={`${styles.viewNavBtn} ${styles.viewNavMore}`}
+              data-app-more=""
+              aria-haspopup="menu"
+              aria-expanded={moreOpen}
+              aria-controls="app-more-menu"
+              aria-current={moreCurrentLabel ? "page" : undefined}
+              data-active={moreCurrentLabel ? "true" : undefined}
+              aria-label={
+                moreCurrentLabel ? `More, ${moreCurrentLabel}` : undefined
+              }
+              onClick={toggleMore}
+              onKeyDown={onMoreKeyDown}
+            >
+              <span className={styles.viewNavLabel}>More</span>
+              <Icon size={12}>
+                <path d="m6 9 6 6 6-6" />
+              </Icon>
+            </button>
+            {moreOpen && (
+              <div
+                id="app-more-menu"
+                className={`${styles.menu} ${styles.appMoreMenu}`}
+                role="menu"
+                aria-label="More"
+                data-app-more-menu=""
+                onKeyDown={onMoreKeyDown}
+              >
+                {moreDestinations.map((dest) => {
+                  const current = activeView === dest.view;
+                  return (
+                    <button
+                      key={dest.id}
+                      type="button"
+                      className={styles.menuItem}
+                      role="menuitem"
+                      data-view-nav={dest.id}
+                      data-active={current ? "true" : undefined}
+                      aria-current={current ? "page" : undefined}
+                      onClick={() => {
+                        closeMore(true);
+                        dest.run();
+                      }}
+                    >
+                      {dest.label}
+                      {current && (
+                        <span className={styles.filterCheck}>
+                          <Icon size={12}>
+                            <path d="M5 12.5 9 16.5 19 7.5" />
+                          </Icon>
+                        </span>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </span>
+        )}
       </nav>
 
       {importCliProvider &&

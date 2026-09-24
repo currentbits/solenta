@@ -745,4 +745,82 @@ describe("Composer attachments", () => {
       restore();
     }
   });
+
+  it("restores text, attachment, and paste card after unmount, then send forgets them", async () => {
+    const h: Harness = { sends: [] };
+    const pasted = "unique-paste-token ".repeat(40);
+    async function pasteLarge(el: Element | null, text: string) {
+      assert.ok(el, "paste target");
+      await inAct(() => {
+        const ev = new Event("paste", { bubbles: true, cancelable: true });
+        Object.defineProperty(ev, "clipboardData", {
+          value: {
+            items: [],
+            getData: (type: string) => (type === "text/plain" ? text : ""),
+          },
+        });
+        el.dispatchEvent(ev);
+      });
+    }
+
+    const first = await mount(composer(h, { picks: [FILE] }));
+    const storageBefore = Object.keys(window.localStorage);
+    await first.type(first.query("textarea"), "ship the notes");
+    await pasteLarge(first.query("textarea"), pasted);
+    await first.click(
+      first.query('button[aria-label="Attach files or folders"]'),
+    );
+    const card = first.query("[data-paste-card]");
+    assert.ok(card, "large paste becomes a card");
+    assert.match(card.textContent ?? "", /Pasted/);
+    assert.ok(first.query('[data-attachment-kind="file"]'), "file chip");
+    assert.equal(
+      (first.query("textarea") as HTMLTextAreaElement).value,
+      "ship the notes",
+    );
+    const cardId = card.getAttribute("data-paste-card");
+    first.unmount();
+
+    const second = await mount(composer(h, { picks: [FILE] }));
+    assert.equal(
+      (second.query("textarea") as HTMLTextAreaElement).value,
+      "ship the notes",
+    );
+    assert.equal(
+      second.query("[data-paste-card]")?.getAttribute("data-paste-card"),
+      cardId,
+      "the same paste card comes back",
+    );
+    assert.ok(
+      second.query('[data-attachment-kind="file"]'),
+      "the file chip comes back",
+    );
+    assert.ok(second.text().includes("notes.md"));
+    const stored = Object.keys(window.localStorage).filter(
+      (key) => !storageBefore.includes(key),
+    );
+    assert.deepEqual(stored, [], "pending composer state is not written to localStorage");
+
+    await second.click(second.query('button[aria-label="Send"]'));
+    await second.flush();
+    assert.equal(h.sends.length, 1);
+    assert.match(h.sends[0]!.prompt, /ship the notes/);
+    assert.match(h.sends[0]!.prompt, /unique-paste-token/);
+    assert.match(h.sends[0]!.prompt, /<pasted-context/);
+    assert.deepEqual(h.sends[0]!.attachments, [FILE]);
+    assert.equal((second.query("textarea") as HTMLTextAreaElement).value, "");
+    assert.equal(second.query("[data-paste-card]"), null);
+    assert.equal(second.query("[data-attachment-kind]"), null);
+    second.unmount();
+
+    const third = await mount(composer(h, { picks: [FILE] }));
+    assert.equal((third.query("textarea") as HTMLTextAreaElement).value, "");
+    assert.equal(third.query("[data-paste-card]"), null);
+    assert.equal(
+      third.query("[data-attachment-kind]"),
+      null,
+      "a successful send must not come back after remount",
+    );
+    third.unmount();
+  });
 });

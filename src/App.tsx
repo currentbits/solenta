@@ -554,6 +554,10 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     return dest;
   }, []);
 
+  const openThreads = useCallback(() => {
+    setView("thread");
+    setDrawer(null);
+  }, []);
   const openKanban = useCallback((pid?: string | null) => {
     const dest = consumeReturn("kanban");
     if (dest) {
@@ -564,6 +568,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
       setKanbanProjectId(pid ?? null);
     }
     setView("kanban");
+    setDrawer(null);
   }, [consumeReturn]);
   const openPlanboard = useCallback(
     (pid?: string | null) => {
@@ -577,6 +582,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         setPlanboardProjectId(pid ?? selectedThreadProjectIdRef.current);
       }
       setView("planboard");
+      setDrawer(null);
     },
     [consumeReturn],
   );
@@ -602,6 +608,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
       setActivityProjectId(pid ?? null);
     }
     setView("activity");
+    setDrawer(null);
   }, [consumeReturn]);
   const openUsage = useCallback(() => {
     setReturnTo(null);
@@ -1711,14 +1718,17 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         providers={providers}
         activeThreadId={selectedThreadId}
         onSelectThread={handleSelectThread}
-        activeView={
-          view === "kanban" || view === "planboard" || view === "activity"
-            ? view
-            : "thread"
-        }
+        activeView={view}
+        onOpenThreads={openThreads}
         onOpenKanban={openKanban}
         onOpenPlanboard={openPlanboard}
+        onOpenReview={openPrs}
         onOpenActivity={openActivity}
+        onOpenAutomations={openAutomations}
+        onOpenUsage={openUsage}
+        onOpenFleet={openFleet}
+        onOpenInsights={openInsights}
+        onOpenDigest={openDigest}
         onCreateThread={handleCreateThread}
         listBaseBranches={listBaseBranches}
         defaultWorktree={settings?.defaultWorktree ?? false}

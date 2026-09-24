@@ -7,8 +7,10 @@ import {
   useState,
   type ClipboardEvent,
   type CSSProperties,
+  type Dispatch,
   type KeyboardEvent,
   type RefObject,
+  type SetStateAction,
 } from "react";
 import type {
   AgentProfile,
@@ -85,6 +87,13 @@ import {
 import { parseDelegate } from "../delegate";
 import { asBtwPrompt } from "../btw";
 import { buildBestOfNEntries, providerVendor } from "../bestOfN";
+import {
+  copyListRecord,
+  keptAttachments,
+  keptDrafts,
+  keptPasteCards,
+  syncListRecord,
+} from "../composerSession";
 import {
   commandQuery,
   matchSlashCommands,
@@ -448,6 +457,19 @@ function AttachmentChip({
   );
 }
 
+function keepList<T>(
+  store: Record<string, T[]>,
+  set: Dispatch<SetStateAction<Record<string, T[]>>>,
+): Dispatch<SetStateAction<Record<string, T[]>>> {
+  return (action) => {
+    set((prev) => {
+      const next = typeof action === "function" ? action(prev) : action;
+      syncListRecord(store, next);
+      return next;
+    });
+  };
+}
+
 export const Composer = memo(function Composer({
   threadId,
   branch,
@@ -522,8 +544,10 @@ export const Composer = memo(function Composer({
    * picker (model rows, pills, slash/mention refresh) on every letter, which
    * is the lag after a few keystrokes. The field is uncontrolled; React only
    * paints when hasPrompt flips or a popup needs to open.
+   *
+   * The object is the module map, so a later mount of this thread sees it.
    */
-  const draftsRef = useRef<Record<string, string>>({});
+  const draftsRef = useRef(keptDrafts);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const overflowRef = useRef<HTMLDivElement>(null);
   const pasteCardsRef = useRef<PasteCard[]>([]);
@@ -805,9 +829,13 @@ export const Composer = memo(function Composer({
    * not leak across a thread switch. Cleared together with the draft on a
    * successful action.
    */
-  const [attachmentsByThread, setAttachmentsByThread] = useState<
-    Record<string, AttachmentInfo[]>
-  >({});
+  const [attachmentsByThread, setAttachmentsState] = useState(() =>
+    copyListRecord(keptAttachments),
+  );
+  const setAttachmentsByThread = useCallback(
+    keepList(keptAttachments, setAttachmentsState),
+    [],
+  );
   const attachments = attachmentsByThread[threadId] ?? [];
   const addAttachments = useCallback(
     (items: AttachmentInfo[]) => {
@@ -868,9 +896,13 @@ export const Composer = memo(function Composer({
       ),
     [threadId],
   );
-  const [pasteCardsByThread, setPasteCardsByThread] = useState<
-    Record<string, PasteCard[]>
-  >({});
+  const [pasteCardsByThread, setPasteCardsState] = useState(() =>
+    copyListRecord(keptPasteCards),
+  );
+  const setPasteCardsByThread = useCallback(
+    keepList(keptPasteCards, setPasteCardsState),
+    [],
+  );
   const [expandedCardIds, setExpandedCardIds] = useState<
     Record<string, boolean>
   >({});
