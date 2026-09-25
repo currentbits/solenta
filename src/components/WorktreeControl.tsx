@@ -131,6 +131,7 @@ export function useWorktreeChrome(
     defaultBranch: string;
     branches: string[];
   } | null>(null);
+  const [baseQuery, setBaseQuery] = useState("");
   const [dirtyMessage, setDirtyMessage] = useState<string | null>(null);
   const [conflictMessage, setConflictMessage] = useState<string | null>(null);
   const [conflictKind, setConflictKind] = useState<"merge" | "rebase">("merge");
@@ -189,12 +190,14 @@ export function useWorktreeChrome(
   useEscapeClose(menuOpen, () => {
     setMenuOpen(false);
     setBasePicker(null);
+    menuRef.current?.querySelector<HTMLButtonElement>("[data-worktree-menu]")?.focus();
   });
 
   const openBasePicker = async () => {
     if (!listBaseBranches) return;
     try {
       const listed = await listBaseBranches();
+      setBaseQuery("");
       setBasePicker(listed);
     } catch (err) {
       const msg =
@@ -232,6 +235,13 @@ export function useWorktreeChrome(
       }
     }
   };
+
+  const baseMatches =
+    basePicker?.branches.filter(
+      (name) =>
+        name !== basePicker.defaultBranch &&
+        name.toLowerCase().includes(baseQuery.trim().toLowerCase()),
+    ) ?? [];
 
   const handleRefreshSnapshot = async () => {
     if (!onRefreshWorkerSnapshot || busy) return;
@@ -442,7 +452,7 @@ export function useWorktreeChrome(
           type="button"
           className={styles.meta}
           data-worktree-menu=""
-          aria-haspopup="menu"
+          aria-haspopup={basePicker ? "dialog" : "menu"}
           aria-expanded={menuOpen}
           aria-label="Worktree actions"
           title={path ?? "Worktree"}
@@ -485,12 +495,16 @@ export function useWorktreeChrome(
           </svg>
         </button>
         {menuOpen && (
-          <div className={styles.menu} role="menu">
+          <div
+            className={styles.menu}
+            role={basePicker ? "dialog" : "menu"}
+            aria-label={basePicker ? "Change base" : undefined}
+          >
             {onOpenWorktree && (
               <button
                 type="button"
                 className={styles.menuItem}
-                role="menuitem"
+                role={basePicker ? undefined : "menuitem"}
                 data-worktree-open=""
                 onClick={() => {
                   setMenuOpen(false);
@@ -504,7 +518,7 @@ export function useWorktreeChrome(
               <button
                 type="button"
                 className={styles.menuItem}
-                role="menuitem"
+                role={basePicker ? undefined : "menuitem"}
                 data-worktree-copy-path=""
                 onClick={() => void handleCopyPath()}
               >
@@ -516,7 +530,7 @@ export function useWorktreeChrome(
                 <button
                   type="button"
                   className={styles.menuItem}
-                  role="menuitem"
+                  role={basePicker ? undefined : "menuitem"}
                   data-change-base=""
                   disabled={busy || !listBaseBranches}
                   onClick={() => {
@@ -527,31 +541,41 @@ export function useWorktreeChrome(
                 </button>
                 {basePicker && (
                   <>
+                    <input
+                      className={styles.branchFilter}
+                      type="search"
+                      aria-label="Filter base branches"
+                      placeholder="Filter branches…"
+                      autoFocus
+                      value={baseQuery}
+                      onChange={(event) => setBaseQuery(event.target.value)}
+                    />
                     <button
                       type="button"
                       className={`${styles.menuItem} ${styles.menuItemNested}`}
-                      role="menuitem"
                       data-base-branch=""
                       disabled={busy}
                       onClick={() => void pickBase(null)}
                     >
                       Repo default
                     </button>
-                    {basePicker.branches
-                      .filter((name) => name !== basePicker.defaultBranch)
-                      .map((name) => (
-                        <button
-                          key={name}
-                          type="button"
-                          className={`${styles.menuItem} ${styles.menuItemNested}`}
-                          role="menuitem"
-                          data-base-branch={name}
-                          disabled={busy}
-                          onClick={() => void pickBase(name)}
-                        >
-                          {name}
-                        </button>
-                      ))}
+                    {baseMatches.map((name) => (
+                      <button
+                        key={name}
+                        type="button"
+                        className={`${styles.menuItem} ${styles.menuItemNested}`}
+                        data-base-branch={name}
+                        disabled={busy}
+                        onClick={() => void pickBase(name)}
+                      >
+                        {name}
+                      </button>
+                    ))}
+                    {baseMatches.length === 0 && (
+                      <p className={styles.menuItem} role="status">
+                        No matching branches
+                      </p>
+                    )}
                   </>
                 )}
               </>
@@ -560,7 +584,7 @@ export function useWorktreeChrome(
               <button
                 type="button"
                 className={styles.menuItem}
-                role="menuitem"
+                role={basePicker ? undefined : "menuitem"}
                 onClick={() => {
                   setMenuOpen(false);
                   openLead();
@@ -572,7 +596,7 @@ export function useWorktreeChrome(
             <button
               type="button"
               className={`${styles.menuItem} ${styles.menuItemDanger}`}
-              role="menuitem"
+              role={basePicker ? undefined : "menuitem"}
               data-worktree-delete=""
               disabled={busy}
               onClick={() => {
