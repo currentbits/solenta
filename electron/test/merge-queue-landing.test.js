@@ -107,7 +107,7 @@ describe("merge queue landing (#346 / #947)", () => {
     spy = installCompleteSpy();
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     if (spy) spy.restore();
     try {
       for (const t of store.getThreads()) {
@@ -122,7 +122,13 @@ describe("merge queue landing (#346 / #947)", () => {
     } catch {
       // ignore
     }
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+    // Debounced shard flushes still create files after the test returns.
+    // saveNow cancels that timer; flushPending waits until its tmp files are gone.
+    if (store && tmpDir && fs.existsSync(tmpDir)) {
+      store.saveNow();
+      await store.flushPending();
+    }
+    if (tmpDir) fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
   it("A→lead integrate leaves issue 123 open, writes a receipt, and does not move main", async () => {

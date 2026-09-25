@@ -3702,19 +3702,23 @@ function makeRecordingFsApi({
       realpath: (...args) => fs.promises.realpath(...args),
       writeFile: (...args) => fs.promises.writeFile(...args),
       stat: async (target) => {
-        const stat = await fs.promises.stat(target);
+        // Synthetic sizes are the poll trigger. statSync settles before
+        // settleAsync returns; fs.promises.stat can still be pending, and the
+        // stop that follows then finalizes as an explicit success.
         if (typeof statSize === "function") {
-          const size = statSize(String(target), stat);
+          const real = fs.statSync(target);
+          const size = statSize(String(target), real);
           if (typeof size === "number") {
             return {
               size,
-              isFile: () => true,
-              isDirectory: () => false,
-              isSymbolicLink: () => false,
+              isFile: () => real.isFile(),
+              isDirectory: () => real.isDirectory(),
+              isSymbolicLink: () => real.isSymbolicLink(),
             };
           }
+          return real;
         }
-        return stat;
+        return fs.promises.stat(target);
       },
       unlink: async (target) => {
         if (typeof unlinkError === "function") {
