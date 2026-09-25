@@ -248,7 +248,17 @@ function writeFakeSsh(dir) {
 const { execSync } = require("child_process");
 const remote = process.argv[process.argv.length - 1] || "";
 const env = { ...process.env };
-if (process.env.CODER_FAKE_REMOTE_HOME) env.HOME = process.env.CODER_FAKE_REMOTE_HOME;
+if (process.env.CODER_FAKE_REMOTE_HOME) {
+  env.HOME = process.env.CODER_FAKE_REMOTE_HOME;
+  // The overlay script prefers $XDG_CONFIG_HOME / $XDG_DATA_HOME over
+  // $HOME/.config and $HOME/.local/share. Those vars on a CI host name
+  // this machine, not the simulated remote user, so auth.json is never
+  // linked (Ubuntu runners set them; macOS runners usually do not).
+  delete env.XDG_CONFIG_HOME;
+  delete env.XDG_DATA_HOME;
+  delete env.XDG_STATE_HOME;
+  delete env.XDG_CACHE_HOME;
+}
 if (process.env.CODER_FAKE_REMOTE_PATH) {
   env.PATH = process.env.CODER_FAKE_REMOTE_PATH + (env.PATH ? ":" + env.PATH : "");
 }

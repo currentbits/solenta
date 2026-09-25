@@ -160,6 +160,9 @@ describe("live Codex workspace-write git commit (#1160 / #1161)", () => {
       }
 
       fs.writeFileSync(path.join(cwd, "extra.txt"), "extra\n");
+      // Stay on Codex's bwrap sandbox. Codex 0.153.4 execs /usr/bin/bwrap.
+      // The Linux job loads Ubuntu's bwrap-userns-restrict profile for
+      // that path. A Landlock fallback would stop proving this engine.
       const deniedAdd = sandboxCommand(codex, [], cwd, env, ["git", "add", "extra.txt"]);
       assertDenied(deniedAdd, "baseline git add without writable_roots");
       assert.match(deniedAdd.output, /index\.lock/, "baseline must reach git's index write");
@@ -170,14 +173,23 @@ describe("live Codex workspace-write git commit (#1160 / #1161)", () => {
 
       // Controls use the very same args as the successful git commands.
       const outside = path.join(base, "outside");
-      assertDenied(sandboxCommand(codex, roots, cwd, env, ["touch", outside]), "outside checkout");
+      assertDenied(
+        sandboxCommand(codex, roots, cwd, env, ["touch", outside]),
+        "outside checkout",
+      );
       assert.equal(fs.existsSync(outside), false);
       for (const repo of protectedRepos) {
         const gitDir = git(repo, ["rev-parse", "--absolute-git-dir"]);
         const index = path.join(gitDir, "index");
         const before = fs.readFileSync(index);
         fs.writeFileSync(path.join(repo, "forbidden.txt"), "must not be staged\n");
-        const denied = sandboxCommand(codex, roots, cwd, env, ["git", "-C", repo, "add", "forbidden.txt"]);
+        const denied = sandboxCommand(
+          codex,
+          roots,
+          cwd,
+          env,
+          ["git", "-C", repo, "add", "forbidden.txt"],
+        );
         assertDenied(denied, `protected index ${index}`);
         assert.match(denied.output, /index\.lock/);
         assert.deepEqual(fs.readFileSync(index), before);
