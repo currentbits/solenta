@@ -2321,6 +2321,8 @@ function setMessagePins(store, input) {
  * rebases unique thread commits onto the new base when clean, or
  * resets when there are none; dirty trees and rebase conflicts are
  * refused and the recorded base is left unchanged. Never bumps updatedAt.
+ * Orchestration workers keep their lead snapshot and commits: their base
+ * is only the merge/PR destination. Refresh snapshot rebases their work.
  *
  * @param {import('./store').Store} store
  * @param {{ threadId: string, baseBranch?: string | null }} input
@@ -2346,7 +2348,7 @@ function setBaseBranch(store, input) {
       throw new Error(`Unknown base branch: ${name}`);
     }
   }
-  if (thread.worktreePath) {
+  if (thread.worktreePath && !thread.orchWorker) {
     retargetWorktreeBase({ store, thread, baseName: name });
   }
   const patch = { baseBranch: name };
