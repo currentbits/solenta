@@ -79,6 +79,8 @@ jobs:
           rm -rf "$probe"
           mkdir -p "$probe"
           cd "$probe"
+          # Codex 0.153.4 errors when this path is missing (job 108204293686).
+          mkdir -p "${HOME}/.cache/solenta-codex-home"
           CODEX_HOME="${HOME}/.cache/solenta-codex-home" \
             codex sandbox -c sandbox_mode=workspace-write -- /bin/true
       - run: npm test
