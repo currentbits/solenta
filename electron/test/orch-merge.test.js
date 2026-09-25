@@ -13,6 +13,7 @@ const { Store } = require("../store.js");
 const services = require("../services.js");
 const { setupWorktree } = require("../worktrees.js");
 const { createToolHandlers } = require("../orchServer.js");
+const { createRunner } = require("../runner.js");
 
 function git(cwd, args) {
   return execFileSync("git", args, { cwd, encoding: "utf8" }).trim();
@@ -69,7 +70,82 @@ describe("thread_merge", () => {
   });
 
   afterEach(() => {
+    store.saveNow();
     fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("requires host human workflow sign-off for the exact worker and destination", async (t) => {
+    const wt = workOn(worker, "worker.txt", "worker\n");
+    const workflow = path.join(wt.worktreePath, ".github/workflows/test.yml");
+    fs.mkdirSync(path.dirname(workflow), { recursive: true });
+    fs.writeFileSync(workflow, "name: reviewed workflow\n");
+    git(wt.worktreePath, ["add", "-A"]);
+    git(wt.worktreePath, ["commit", "-m", "add workflow"]);
+    store.updateThread(worker.id, { status: "done" });
+    // Hold the queued human resume so no provider process runs in this fixture.
+    store.updateThread(lead.id, { status: "working" });
+    const runner = createRunner({ store, core: {}, pushFn: () => {} });
+    t.after(() => runner.stopAll());
+    let auto = false;
+    handlers = createToolHandlers({ store, runner: {
+      ...runner, isAutoTurn: () => auto,
+    } });
+    const args = {
+      threadId: lead.id, projectId: project.id, workerThreadId: worker.id,
+      approved: true, expectedPath: project.path, expectedBranch: "main",
+      ciWorkflowApproved: true, // An agent claim must never grant sign-off.
+    };
+    const before = git(project.path, ["rev-parse", "HEAD"]);
+    await assert.rejects(() => handlers.thread_merge(args), /CI_WORKFLOW/);
+    assert.equal(git(project.path, ["rev-parse", "HEAD"]), before);
+    const pending = runner.getPendingPermission(lead.id);
+    assert.equal(pending?.toolName, "CI workflow merge");
+    assert.equal(pending.acceptAlways, false);
+    assert.ok(pending.input.includes("+name: reviewed workflow"));
+    assert.ok(pending.input.includes(fs.realpathSync(project.path)));
+    assert.throws(() => runner.respondPermission({
+      threadId: lead.id, requestId: pending.requestId, decision: "allowAlways",
+    }), /one-time/);
+    runner.respondPermission({ threadId: lead.id, requestId: pending.requestId, decision: "deny" });
+    await assert.rejects(() => handlers.thread_merge(args), /CI_WORKFLOW/);
+    const approve = () => runner.respondPermission({
+      threadId: lead.id, requestId: runner.getPendingPermission(lead.id).requestId, decision: "allow",
+    });
+    approve();
+    assert.match(store.getThread(lead.id).queued.prompt, /thread_merge/);
+    auto = true;
+    await assert.rejects(() => handlers.thread_merge(args), /machine-delivered/);
+    auto = false;
+    // A new worker commit invalidates the prior human click.
+    fs.writeFileSync(workflow, "name: changed workflow\n");
+    git(wt.worktreePath, ["commit", "-am", "change workflow"]);
+    await assert.rejects(() => handlers.thread_merge(args), /CI_WORKFLOW/);
+    assert.match(runner.getPendingPermission(lead.id).input, /\+name: changed workflow/);
+    approve();
+    // Even the same destination branch at a new HEAD needs fresh review.
+    git(project.path, ["commit", "--allow-empty", "-m", "destination moved"]);
+    await assert.rejects(() => handlers.thread_merge(args), /CI_WORKFLOW/);
+    approve();
+    // The approval also binds the checkout path and branch, not just its SHA.
+    const destination = path.join(tmpDir, "other-destination");
+    git(project.path, ["worktree", "add", "-b", "reviewed-destination", destination]);
+    store.updateThread(lead.id, { worktreePath: destination, branch: "reviewed-destination" });
+    args.expectedPath = destination;
+    args.expectedBranch = "reviewed-destination";
+    await assert.rejects(() => handlers.thread_merge(args), /CI_WORKFLOW/);
+    assert.throws(() => runner.respondPermission({
+      threadId: lead.id, requestId: pending.requestId, decision: "allow",
+    }), /No active agent run/);
+    approve();
+    // Working-tree changes cannot silently enter the signed merge.
+    fs.writeFileSync(workflow, "name: unsigned draft\n");
+    await assert.rejects(() => handlers.thread_merge(args), /Commit or stash/);
+    git(wt.worktreePath, ["restore", ".github/workflows/test.yml"]);
+    const result = await handlers.thread_merge(args);
+    assert.equal(result.merged, true);
+    assert.equal(fs.readFileSync(path.join(destination, ".github/workflows/test.yml"), "utf8"), "name: changed workflow\n");
+    assert.ok(!fs.existsSync(path.join(project.path, ".github/workflows/test.yml")));
+    assert.equal(store.getThread(worker.id).worktreePath, null);
   });
 
   it("lands the worker on the lead's branch, not on main", async () => {
