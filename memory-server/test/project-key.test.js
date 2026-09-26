@@ -55,6 +55,13 @@ describe('canonical project keys', () => {
     assert.equal(canonicalProject(wt), 'mainrepo')
   })
 
+  it('resolves a Windows path to its basename, not the whole string', () => {
+    assert.equal(canonicalProject('C:\\Users\\me\\myrepo'), 'myrepo')
+    assert.equal(canonicalProject('C:/Users/me/myrepo'), 'myrepo')
+    assert.equal(canonicalProject('\\\\server\\share\\mainrepo'), 'mainrepo')
+    assert.equal(canonicalProject('pingdotgg/t3code'), 't3code')
+  })
+
   it('falls back to the basename for a non-repo path', () => {
     const plain = path.join(dir, 'not-a-repo')
     fs.mkdirSync(plain)
@@ -174,6 +181,30 @@ describe('normalizeProjectKeys migration', () => {
 
     // Idempotent: a second pass changes nothing.
     assert.equal(normalizeProjectKeys(db), 0)
+    db.close()
+  })
+
+  it('leaves a missing Windows worktree path alone', () => {
+    const dbPath = path.join(dir, 'legacy-win.db')
+    const db = openDb(dbPath)
+    createSchema(db)
+    const repo = path.join(dir, 'coder')
+    fs.mkdirSync(repo)
+    git(repo, ['init', '-q'])
+    const missing = 'C:\\no-such-solenta-wt\\wt-deadbeef'
+    const now = new Date().toISOString()
+    const insert = db.prepare(
+      `INSERT INTO entries (id, type, title, body, project, importance, created_at, updated_at)
+       VALUES (?, 'knowledge', ?, ?, ?, 3, ?, ?)`,
+    )
+    insert.run('a', 'from path', 'body a', repo, now, now)
+    insert.run('d', 'missing wt', 'body d', missing, now, now)
+    normalizeProjectKeys(db)
+    const rows = Object.fromEntries(
+      db.prepare(`SELECT id, project FROM entries`).all().map((r) => [r.id, r.project]),
+    )
+    assert.equal(rows.a, 'coder')
+    assert.equal(rows.d, missing)
     db.close()
   })
 })

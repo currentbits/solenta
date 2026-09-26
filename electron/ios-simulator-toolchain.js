@@ -269,7 +269,11 @@ function createIOSSimulatorToolchain({
     try {
       const st = await fsApi.promises.lstat(filePath);
       if (!st.isFile() || st.isSymbolicLink()) return false;
-      return (st.mode & 0o111) !== 0;
+      // Windows stat never records the Unix execute bit; chmod(0o755) only
+      // toggles read-only. A regular file is the strongest check that host
+      // can make. macOS and Linux still require the execute bit.
+      if ((st.mode & 0o111) !== 0) return true;
+      return process.platform === "win32";
     } catch {
       return false;
     }

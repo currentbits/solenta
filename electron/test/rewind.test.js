@@ -503,6 +503,9 @@ async function makeRewindWorktree() {
   const repo = path.join(tmpDir, "repo");
   fs.mkdirSync(repo);
   git(repo, ["init"]);
+  // GitHub Windows runners set core.autocrlf=true, which checks the same
+  // blob back out as CRLF. The rewind contract is byte-identical content.
+  git(repo, ["config", "core.autocrlf", "false"]);
   git(repo, ["config", "user.email", "test@example.com"]);
   git(repo, ["config", "user.name", "Test"]);
   fs.writeFileSync(path.join(repo, "README.md"), "hello\n");
