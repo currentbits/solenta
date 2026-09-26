@@ -17,16 +17,15 @@ describe("writeFakeBin", () => {
         dest,
         `process.stdout.write("echo:" + process.argv.slice(2).join(","));\n`,
       );
-      if (process.platform === "win32") {
-        assert.match(bin, /\.cmd$/i);
-        assert.ok(fs.existsSync(dest), "JS script still written next to the wrapper");
-      } else {
-        assert.equal(bin, dest);
-        assert.ok(fs.readFileSync(bin, "utf8").startsWith("#!/usr/bin/env node\n"));
-      }
+      assert.equal(bin, dest);
+      assert.ok(fs.readFileSync(bin, "utf8").startsWith("#!/usr/bin/env node\n"));
       const r = spawn.sync(bin, ["a", "b"], { encoding: "utf8" });
       assert.equal(r.status, 0, r.stderr);
       assert.equal(r.stdout, "echo:a,b");
+      // cmd.exe %* splits on newlines. cross-spawn must hand this to node.
+      const nl = spawn.sync(bin, ["line1\n- Folder: kept"], { encoding: "utf8" });
+      assert.equal(nl.status, 0, nl.stderr);
+      assert.equal(nl.stdout, "echo:line1\n- Folder: kept");
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }

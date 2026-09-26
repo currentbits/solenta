@@ -18,6 +18,7 @@ const {
   extractUsage,
 } = require("../codex.js");
 const { writeFakeBin } = require("./support/fakeBin.js");
+const { rmTree } = require("./support/rmTree.js");
 
 function git(cwd, args) {
   execFileSync("git", args, { cwd, stdio: "ignore" });
@@ -379,16 +380,11 @@ describe("runner codex provider", () => {
     services.setProvider(store, { threadId: thread.id, provider: "codex" });
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     if (runner) runner.stopAll();
-    // Windows can keep the checkout locked for a moment after the fake
-    // Codex process exits (EBUSY on rmdir). Node's own retry, not a skip.
-    fs.rmSync(tmpDir, {
-      recursive: true,
-      force: true,
-      maxRetries: process.platform === "win32" ? 10 : 0,
-      retryDelay: process.platform === "win32" ? 50 : 0,
-    });
+    // stopAll has already taskkilled. Windows can still EBUSY the cwd
+    // rmdir, and fs.rmSync maxRetries does not retry that first rmdir.
+    await rmTree(tmpDir);
     if (prevSimulate === undefined) delete process.env.CODER_SIMULATE;
     else process.env.CODER_SIMULATE = prevSimulate;
     if (prevAgentCmd === undefined) delete process.env.CODER_AGENT_CMD;
