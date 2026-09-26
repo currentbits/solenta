@@ -835,16 +835,23 @@ function bindFailureCanMove(err) {
  */
 function listenOnce(server, port, host) {
   return new Promise((resolve, reject) => {
-    const onError = (err) => {
-      server.removeListener('listening', onListening)
-      reject(err)
-    }
-    const onListening = () => {
+    let settled = false
+    const finish = (err) => {
+      if (settled) return
+      settled = true
       server.removeListener('error', onError)
-      resolve()
+      server.removeListener('listening', onListening)
+      if (err) reject(err)
+      else resolve()
     }
+    const onError = (err) => finish(err)
+    const onListening = () => finish(null)
     server.once('error', onError)
-    server.listen(port, host, onListening)
+    try {
+      server.listen(port, host, onListening)
+    } catch (err) {
+      finish(err)
+    }
   })
 }
 
@@ -879,9 +886,22 @@ async function listenWithPortFallback(server, config, host, configFile) {
     config.port = port
     return server
   } catch (err) {
-    await new Promise((resolve) => server.close(() => resolve()))
+    await closeServer(server)
     throw err
   }
+}
+
+/**
+ * Release a fallback bind. `server.close(cb)` never invokes cb when the
+ * server is not running: it waits for a `close` event that nothing emits.
+ * @param {http.Server} server
+ * @returns {Promise<void>}
+ */
+function closeServer(server) {
+  if (!server.listening) return Promise.resolve()
+  return new Promise((resolve) => {
+    server.close(() => resolve())
+  })
 }
 
 function isMain() {
