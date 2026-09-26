@@ -264,11 +264,32 @@
   left: 0;
   z-index: 24;
   min-width: 168px;
+  max-width: min(420px, 80vw);
+  max-height: min(420px, 60vh);
+  overflow-y: auto;
+  overflow-wrap: anywhere;
   padding: 4px;
   border-radius: 8px;
   border: 1px solid var(--border);
   background: var(--bg-elevated);
   box-shadow: var(--shadow-pop);
+}
+
+.branchFilter {
+  box-sizing: border-box;
+  width: 100%;
+  padding: 7px 10px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+  font-size: 12.5px;
+}
+
+.branchFilter:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
 }
 
 .menuItem {

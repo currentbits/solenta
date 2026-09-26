@@ -833,6 +833,59 @@ function truncateThreadTitle(title) {
 }
 
 /**
+ * Strip generated `Fork:` prefixes so a fork of a fork does not grow
+ * `Fork: Fork: …`. Provenance stays on `handoffFrom`.
+ * @param {string} title
+ * @returns {string}
+ */
+function stripForkTitlePrefix(title) {
+  let s = String(title ?? "").trim();
+  while (/^fork:\s*/i.test(s)) {
+    s = s.replace(/^fork:\s*/i, "").trim();
+  }
+  return s;
+}
+
+/**
+ * First non-empty prompt line, capped like createThread titles.
+ * @param {unknown} prompt
+ * @returns {string}
+ */
+function titleFromPromptLine(prompt) {
+  const line = String(prompt || "")
+    .split(/\r?\n/)
+    .map((s) => s.trim())
+    .find(Boolean);
+  return line ? truncateThreadTitle(line) : "";
+}
+
+/**
+ * Ordinary fork title: optional explicit name, else one `Fork:` on the
+ * source title with generated prefixes collapsed.
+ * @param {unknown} explicit
+ * @param {string} sourceTitle
+ * @returns {string}
+ */
+function resolveOrdinaryForkTitle(explicit, sourceTitle) {
+  const trimmed = explicit != null ? String(explicit).trim() : "";
+  if (trimmed) return truncateThreadTitle(trimmed);
+  const base = stripForkTitlePrefix(sourceTitle) || "New Thread";
+  return `Fork: ${base}`;
+}
+
+/**
+ * Worker job name: explicit title, else first prompt line. Empty means
+ * fall through to ordinary fork naming.
+ * @param {{ title?: unknown, prompt?: unknown } | null | undefined} input
+ * @returns {string}
+ */
+function resolveWorkerTitle(input) {
+  const trimmed = input && input.title != null ? String(input.title).trim() : "";
+  if (trimmed) return truncateThreadTitle(trimmed);
+  return titleFromPromptLine(input && input.prompt);
+}
+
+/**
  * Normalize a model string. The provider's `models` list is a picker snapshot,
  * not an allowlist: every provider accepts a custom id. Guards are trim,
  * non-empty, and at most 100 characters. A bad id fails at the CLI.
@@ -1196,7 +1249,7 @@ function canHostWorktree(project) {
  * Fork / hand off: new thread in the source's project. Source is never modified.
  *
  * @param {import('./store').Store} store
- * @param {{ threadId: string, provider?: string, model?: string | null, worktree?: boolean }} input
+ * @param {{ threadId: string, provider?: string, model?: string | null, worktree?: boolean, title?: string }} input
  * @returns {object}
  */
 function forkThread(store, input) {
@@ -1242,10 +1295,11 @@ function forkThread(store, input) {
     source.title != null && String(source.title) !== ""
       ? String(source.title)
       : "New Thread";
-  // createThread applies THREAD_TITLE_MAX; "Fork: " + title uses the same path.
+  // createThread applies THREAD_TITLE_MAX. Ordinary forks keep one `Fork:`
+  // prefix; an explicit title (workers) skips the prefix entirely.
   const created = createThread(store, {
     projectId: source.projectId,
-    title: `Fork: ${sourceTitle}`,
+    title: resolveOrdinaryForkTitle(input && input.title, sourceTitle),
   });
 
   // createThread stamps lastVisitedAt = createdAt and handoffFrom null;
@@ -1311,7 +1365,7 @@ function forkThread(store, input) {
  * `baseBranch` (the merge/PR destination).
  *
  * @param {any} store
- * @param {{ threadId: string, provider?: string, model?: string | null, pool?: string, worktree?: boolean }} input
+ * @param {{ threadId: string, provider?: string, model?: string | null, pool?: string, worktree?: boolean, title?: string, prompt?: string }} input
  * @param {(store: any, input: any) => any} [forkImpl] seam for tests
  * @returns {any} the new worker thread
  */
@@ -1325,8 +1379,10 @@ function forkWorkerThread(store, input, forkImpl = forkThread) {
     provider: input.provider,
   });
 
-  /** @type {{ threadId: string, provider?: string, model?: string | null }} */
+  /** @type {{ threadId: string, provider?: string, model?: string | null, title?: string }} */
   const forkInput = { threadId: input.threadId };
+  const workerTitle = resolveWorkerTitle(input);
+  if (workerTitle) forkInput.title = workerTitle;
   if (resolved) {
     forkInput.provider = resolved.provider;
     if (resolved.fromPool) {
@@ -2265,6 +2321,8 @@ function setMessagePins(store, input) {
  * rebases unique thread commits onto the new base when clean, or
  * resets when there are none; dirty trees and rebase conflicts are
  * refused and the recorded base is left unchanged. Never bumps updatedAt.
+ * Orchestration workers keep their lead snapshot and commits: their base
+ * is only the merge/PR destination. Refresh snapshot rebases their work.
  *
  * @param {import('./store').Store} store
  * @param {{ threadId: string, baseBranch?: string | null }} input
@@ -2290,7 +2348,7 @@ function setBaseBranch(store, input) {
       throw new Error(`Unknown base branch: ${name}`);
     }
   }
-  if (thread.worktreePath) {
+  if (thread.worktreePath && !thread.orchWorker) {
     retargetWorktreeBase({ store, thread, baseName: name });
   }
   const patch = { baseBranch: name };
@@ -3342,7 +3400,7 @@ function forkSpecWave(store, input, forkImpl) {
   for (const task of wave) {
     const worker = forkWorkerThread(
       store,
-      { threadId },
+      { threadId, title: task.title },
       forkImpl || forkThread,
     );
     const claimed = claimCrewTask(store, {
@@ -4434,7 +4492,8 @@ function listThreads(store) {
 /**
  * Per-thread summaries for the Agents tab team view (threads:summaries).
  * lastActivity is the first line of the thread's last assistant message
- * (null when the thread has none). Cheap: reads the store only.
+ * (null when the thread has none). orchWorker and projectId ride along so
+ * AgentsPanel can tell a true worker from an ordinary fork. Cheap: store only.
  * @param {import('./store').Store} store
  */
 function threadSummaries(store) {
@@ -4449,6 +4508,8 @@ function threadSummaries(store) {
         provider: t.provider,
         status: t.status,
         handoffFrom: t.handoffFrom ?? null,
+        orchWorker: t.orchWorker === true,
+        projectId: t.projectId,
         runStartedAt: t.runStartedAt ?? null,
         stoppedAt: t.stoppedAt ?? null,
         awaitingInput: t.awaitingInput === true,

@@ -419,8 +419,8 @@ function createToolHandlers(deps) {
       throw new Error(`Unknown thread: ${args.threadId}`);
     }
     assertSameProject(source, args.projectId);
-    /** @type {{ threadId: string, provider?: string, pool?: string, worktree?: boolean }} */
-    const input = { threadId: args.threadId };
+    /** @type {{ threadId: string, provider?: string, pool?: string, worktree?: boolean, title?: string, prompt?: string }} */
+    const input = { threadId: args.threadId, prompt: args.prompt };
     if (args.provider != null) {
       if (!getProvider(String(args.provider))) {
         throw new Error(`Unknown provider: ${args.provider}`);
@@ -429,6 +429,7 @@ function createToolHandlers(deps) {
     }
     if (args.pool != null) input.pool = String(args.pool);
     if (args.worktree === false) input.worktree = false;
+    if (args.title != null) input.title = String(args.title);
     // orchWorker + lazy worktree live in services.forkWorkerThread, shared
     // with the runner's pendingFork dispatch.
     const fork = forkWorkerThread(store, input, forkThread);
@@ -1237,6 +1238,8 @@ function buildMcpServer(sdk, handlers, opts = {}) {
         "match the source thread's project or the call is rejected. " +
         "The fork carries only a truncated digest of the source thread's last messages, not the " +
         "whole conversation — the prompt must be self-contained. " +
+        "Pass a short title for the assigned job (for example \"Review permissions\"). When omitted, " +
+        "the first non-empty prompt line is used, truncated like other thread titles. " +
         "The worker gets its own git worktree so parallel workers never edit the same files; " +
         "pass worktree:false to run it in the project checkout instead. " +
         "Optionally pass pool (an alias from the worker pool listed in your prompt) instead of " +
@@ -1248,6 +1251,7 @@ function buildMcpServer(sdk, handlers, opts = {}) {
         provider: z.string().min(1).optional(),
         pool: z.string().min(1).optional(),
         prompt: z.string().min(1),
+        title: z.string().min(1).optional(),
         worktree: z.boolean().optional(),
       },
     },

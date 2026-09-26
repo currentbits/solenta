@@ -1,4 +1,5 @@
 import { formatElapsed } from "./format";
+import { crewAncestorIds, isCrewWorker } from "./sidebarGroups";
 import type { SubagentInfo, ThreadStatus } from "./shared/ipc";
 
 /**
@@ -30,6 +31,9 @@ export interface WaitRow {
   stoppedAt?: number | null;
   awaitingInput?: boolean;
   subagents?: readonly SubagentInfo[];
+  orchWorker?: boolean;
+  /** Present on ThreadInfo; absent on Team summaries. */
+  projectId?: string;
 }
 
 export interface WaitChild {
@@ -73,12 +77,20 @@ export function buildWaitStates(
     out.set(parentId, state);
   };
 
+  const byId = new Map(rows.map((row) => [row.id, row]));
+
+  const reportToParents = (row: WaitRow, child: WaitChild, since?: number | null) => {
+    if (!isCrewWorker(row)) return;
+    const ancestors = crewAncestorIds(row, byId);
+    for (const parentId of ancestors) add(parentId, child, since);
+  };
+
   for (const row of rows) {
     if (row.handoffFrom == null || row.handoffFrom === row.id) {
       // Not a fork (or a corrupt self-reference): no parent to report to.
     } else if (row.status === "working") {
-      add(
-        row.handoffFrom,
+      reportToParents(
+        row,
         {
           id: row.id,
           title: row.title,
@@ -90,8 +102,8 @@ export function buildWaitStates(
       // Stopped mid-run and never restarted: the parent is still owed this
       // work, so surface the stall instead of reading it as a fork that
       // never ran (issue #183).
-      add(
-        row.handoffFrom,
+      reportToParents(
+        row,
         { id: row.id, title: row.title, state: "stopped" },
         row.stoppedAt,
       );
@@ -145,6 +157,54 @@ export function waitLabel(state: WaitState, now = Date.now()): string {
   if (state.since != null) parts.push(formatElapsed(state.since, now));
   if (state.blocked > 0) parts.push(`${state.blocked} blocked`);
   if (state.stopped > 0) parts.push(`${state.stopped} stopped`);
+  return parts.join(" · ");
+}
+
+export interface CrewSummary {
+  workers: number;
+  running: number;
+  blocked: number;
+  stopped: number;
+  failed: number;
+  ready: number;
+}
+
+/**
+ * Counts for a collapsed crew lead. Each row is counted once from its own
+ * status. Process-done is "ready", never "integrated". Idle that never
+ * completed is not ready.
+ */
+export function summarizeCrew(workers: readonly WaitRow[]): CrewSummary {
+  const s: CrewSummary = {
+    workers: workers.length,
+    running: 0,
+    blocked: 0,
+    stopped: 0,
+    failed: 0,
+    ready: 0,
+  };
+  for (const w of workers) {
+    if (w.status === "failed") s.failed += 1;
+    else if (w.status === "working" && w.awaitingInput) s.blocked += 1;
+    else if (w.status === "working") s.running += 1;
+    else if (w.stoppedAt != null) s.stopped += 1;
+    else if (w.status === "done") s.ready += 1;
+  }
+  return s;
+}
+
+/** "4 workers · 1 needs you · 2 ready" */
+export function crewSummaryLabel(s: CrewSummary): string {
+  const parts = [
+    `${s.workers} ${s.workers === 1 ? "worker" : "workers"}`,
+  ];
+  if (s.blocked > 0) {
+    parts.push(s.blocked === 1 ? "1 needs you" : `${s.blocked} need you`);
+  }
+  if (s.failed > 0) parts.push(`${s.failed} failed`);
+  if (s.stopped > 0) parts.push(`${s.stopped} stopped`);
+  if (s.running > 0) parts.push(`${s.running} running`);
+  if (s.ready > 0) parts.push(`${s.ready} ready`);
   return parts.join(" · ");
 }
 

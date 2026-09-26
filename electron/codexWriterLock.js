@@ -192,31 +192,17 @@ function releaseWriterLockHolder(info, killPid) {
 
 /**
  * SIGTERM the process group, then SIGKILL. Never our own pid.
+ * Win32 goes through signalPid so a `.cmd` grandchild is included.
  * @param {number} pid
  */
 function killPidTree(pid) {
   const n = Number(pid);
   if (!Number.isInteger(n) || n <= 0) return;
   if (n === process.pid) return;
-  try {
-    process.kill(-n, "SIGTERM");
-  } catch {
-    try {
-      process.kill(n, "SIGTERM");
-    } catch {
-      // already dead
-    }
-  }
+  const { signalPid } = require("./proc.js");
+  signalPid(n, "SIGTERM");
   const timer = setTimeout(() => {
-    try {
-      process.kill(-n, "SIGKILL");
-    } catch {
-      try {
-        process.kill(n, "SIGKILL");
-      } catch {
-        // already dead
-      }
-    }
+    signalPid(n, "SIGKILL");
   }, 3000);
   if (typeof timer.unref === "function") timer.unref();
 }

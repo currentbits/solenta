@@ -1,10 +1,14 @@
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
   useSyncExternalStore,
+  type CSSProperties,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type PointerEvent as ReactPointerEvent,
 } from "react";
 import { useCoder } from "./useCoder";
 import { isDevBuild, needsWebTokenGate } from "./coderApi";
@@ -21,7 +25,12 @@ import { InsightsView } from "./components/InsightsView";
 import { UsageView, type UsageReportControls } from "./components/UsageView";
 import { FleetView } from "./components/FleetView";
 import { DigestView } from "./components/DigestView";
-import { AgentsPanel } from "./components/AgentsPanel";
+import {
+  AgentsPanel,
+  defaultInspectorTab,
+  inspectorContextKey,
+  type PanelTab,
+} from "./components/AgentsPanel";
 import { ClaimedLanesHeartbeat, LaneHeartbeat } from "./components/LaneHeartbeat";
 import {
   SettingsModal,
@@ -66,6 +75,19 @@ import {
   type ThreadOpenOrigin,
   type ViewReturnState,
 } from "./viewReturn";
+import { isDirectCrewChild, sameCrewProject } from "./crewIntegration";
+import {
+  bindSidebarDrag,
+  browserSidebarStorage,
+  initialSidebarWidth,
+  nextSidebarPreference,
+  saveSidebarWidth,
+  SIDEBAR_WIDTH_DEFAULT,
+  SIDEBAR_WIDTH_MIN,
+  SIDEBAR_WIDTH_STEP,
+  SIDEBAR_WIDTH_STEP_COARSE,
+  sidebarFitCap,
+} from "./sidebarWidth";
 
 const EMPTY_FORECAST: ConflictForecast = { pairs: [], computedAt: 0 };
 const EMPTY_AGENT_PROFILES: AgentProfile[] = [];
@@ -104,6 +126,19 @@ function getNarrow(): boolean {
 
 function useNarrow(): boolean {
   return useSyncExternalStore(subscribeNarrow, getNarrow, () => false);
+}
+
+function subscribeViewport(onChange: () => void): () => void {
+  window.addEventListener("resize", onChange);
+  return () => window.removeEventListener("resize", onChange);
+}
+
+function getViewportWidth(): number {
+  return window.innerWidth;
+}
+
+function useViewportWidth(): number {
+  return useSyncExternalStore(subscribeViewport, getViewportWidth, () => 0);
 }
 
 const AGENTS_LAST_KEY = "coder.agents.collapsed";
@@ -440,9 +475,19 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
   const [drawer, setDrawer] = useState<DrawerId | null>(null);
   const [forecast, setForecast] = useState<ConflictForecast>(EMPTY_FORECAST);
   const narrow = useNarrow();
+  const viewportWidth = useViewportWidth();
+  const [preferredSidebarWidth, setPreferredSidebarWidth] = useState(
+    initialSidebarWidth,
+  );
   const [agentsCollapsed, setAgentsCollapsed] = useState(true);
-  const [agentsTabFocus, setAgentsTabFocus] = useState(0);
+  /** Manual inspector tabs for this renderer session. Collapse unmounts the panel. */
+  const [inspectorChoices, setInspectorChoices] = useState<
+    Record<string, PanelTab>
+  >({});
   const sidebarPaneRef = useRef<HTMLDivElement>(null);
+  const sidebarDragRef = useRef<{ finish(commit: boolean): void } | null>(
+    null,
+  );
   const agentsPaneRef = useRef<HTMLDivElement>(null);
   const threadsBtnRef = useRef<HTMLButtonElement>(null);
   const agentsBtnRef = useRef<HTMLButtonElement>(null);
@@ -453,9 +498,20 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
   const appliedPanelDefaultRef = useRef<"closed" | "open" | null>(null);
   rememberLastRef.current = settings?.agentsPanelRememberLast === true;
   const hideAgentsRail = agentsCollapsed && !narrow;
+  // Agents panel open is the case that can squeeze the transcript. The
+  // collapsed rail still leaves room for the widest sidebar above 900px.
+  const sidebarFit = sidebarFitCap(viewportWidth, !agentsCollapsed && !narrow);
+  const sidebarWidth = Math.min(preferredSidebarWidth, sidebarFit);
+  const preferredSidebarRef = useRef(preferredSidebarWidth);
+  preferredSidebarRef.current = preferredSidebarWidth;
+  const sidebarFitRef = useRef(sidebarFit);
+  sidebarFitRef.current = sidebarFit;
 
   const viewRef = useRef(view);
   viewRef.current = view;
+  const selectedThreadIdRef = useRef(selectedThreadId);
+  selectedThreadIdRef.current = selectedThreadId;
+  const inspectorProjectIdRef = useRef<string | null>(null);
   const planboardProjectIdRef = useRef(planboardProjectId);
   planboardProjectIdRef.current = planboardProjectId;
   const kanbanProjectIdRef = useRef(kanbanProjectId);
@@ -513,13 +569,54 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     () => (loading ? undefined : threads.map((t) => t.id)),
     [loading, threads],
   );
+  const rememberInspectorTab = useCallback(
+    (
+      tab: PanelTab,
+      context?: {
+        view?: string;
+        threadId?: string | null;
+        projectId?: string | null;
+      },
+    ) => {
+      const viewName = context?.view ?? viewRef.current;
+      const threadId =
+        context && "threadId" in context
+          ? (context.threadId ?? null)
+          : viewName === "thread"
+            ? selectedThreadIdRef.current
+            : null;
+      const projectId =
+        context && "projectId" in context
+          ? (context.projectId ?? null)
+          : inspectorProjectIdRef.current;
+      const key = inspectorContextKey({ view: viewName, threadId, projectId });
+      setInspectorChoices((prev) =>
+        prev[key] === tab ? prev : { ...prev, [key]: tab },
+      );
+    },
+    [],
+  );
+  const revealAgentsTeam = useCallback(
+    (threadId?: string) => {
+      if (narrow) setDrawer("agents");
+      else setAgentsCollapsed(false);
+      // The header calls this as an onClick, so the first argument can be the event.
+      const id =
+        typeof threadId === "string" ? threadId : selectedThreadIdRef.current;
+      rememberInspectorTab("agents", {
+        view: "thread",
+        threadId: id,
+        projectId: inspectorProjectIdRef.current,
+      });
+    },
+    [narrow, rememberInspectorTab],
+  );
   const openCrewIntegration = useCallback(
     (leadId: string) => {
       handleSelectThread(leadId);
-      setAgentsCollapsed(false);
-      setAgentsTabFocus((n) => n + 1);
+      revealAgentsTeam(leadId);
     },
-    [handleSelectThread],
+    [handleSelectThread, revealAgentsTeam],
   );
 
   // The three panes are memo'd (issue #91): a 700ms stream tick must only
@@ -549,6 +646,10 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     return dest;
   }, []);
 
+  const openThreads = useCallback(() => {
+    setView("thread");
+    setDrawer(null);
+  }, []);
   const openKanban = useCallback((pid?: string | null) => {
     const dest = consumeReturn("kanban");
     if (dest) {
@@ -559,6 +660,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
       setKanbanProjectId(pid ?? null);
     }
     setView("kanban");
+    setDrawer(null);
   }, [consumeReturn]);
   const openPlanboard = useCallback(
     (pid?: string | null) => {
@@ -572,6 +674,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         setPlanboardProjectId(pid ?? selectedThreadProjectIdRef.current);
       }
       setView("planboard");
+      setDrawer(null);
     },
     [consumeReturn],
   );
@@ -597,6 +700,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
       setActivityProjectId(pid ?? null);
     }
     setView("activity");
+    setDrawer(null);
   }, [consumeReturn]);
   const openUsage = useCallback(() => {
     setReturnTo(null);
@@ -1197,6 +1301,27 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     (selectedProjectId ? projectById.get(selectedProjectId) : undefined) ||
     null;
 
+  const inspectorSummary =
+    view === "thread" && selectedThreadId
+      ? (threads.find((t) => t.id === selectedThreadId) ?? null)
+      : null;
+  // Same project object AgentsPanel receives. Board and activity scope can differ.
+  const inspectorProjectId = project?.id ?? null;
+  inspectorProjectIdRef.current = inspectorProjectId;
+  const inspectorKey = inspectorContextKey({
+    view,
+    threadId: view === "thread" ? selectedThreadId : null,
+    projectId: inspectorProjectId,
+  });
+  const inspectorTab =
+    inspectorChoices[inspectorKey] ??
+    defaultInspectorTab({
+      view,
+      summary: inspectorSummary,
+      threads,
+      workflow: view === "thread" && visibleDetail ? visibleDetail.workflow : null,
+    });
+
   const handleStartSuggestion = useCallback(
     async (s: WorkSuggestion) => {
       const threadId = selectedThreadId;
@@ -1252,10 +1377,22 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
 
   /** Provenance of a handed-off thread; a stable object while the row is. */
   const handoffFrom = visibleDetail?.thread.handoffFrom ?? null;
-  const handoffSource = useMemo(
-    () => (handoffFrom ? threads.find((t) => t.id === handoffFrom) ?? null : null),
-    [threads, handoffFrom],
-  );
+  const handoffSource = useMemo(() => {
+    if (!handoffFrom) return null;
+    const parent = threads.find((t) => t.id === handoffFrom) ?? null;
+    if (!parent || !sameCrewProject(parent, visibleDetail?.thread)) return null;
+    return parent;
+  }, [threads, handoffFrom, visibleDetail?.thread]);
+  /** Direct same-project orchWorker children. Manual forks and cross-project rows do not count. */
+  const workerCount = useMemo(() => {
+    const parent = visibleDetail?.thread;
+    if (!parent) return 0;
+    let n = 0;
+    for (const t of threads) {
+      if (isDirectCrewChild(t, parent)) n++;
+    }
+    return n;
+  }, [threads, visibleDetail?.thread]);
 
   /** What the Agents team view refetches on: ids + statuses, not identity. */
   const rosterKey = useMemo(
@@ -1616,6 +1753,105 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     [updateProject],
   );
 
+  const commitSidebarWidth = useCallback((width: number) => {
+    setPreferredSidebarWidth(width);
+    saveSidebarWidth(width, browserSidebarStorage());
+  }, []);
+
+  const endSidebarDrag = useCallback((commit: boolean) => {
+    const session = sidebarDragRef.current;
+    sidebarDragRef.current = null;
+    session?.finish(commit);
+  }, []);
+
+  useLayoutEffect(() => {
+    if (narrow) endSidebarDrag(false);
+  }, [narrow, endSidebarDrag]);
+
+  useLayoutEffect(() => {
+    return () => {
+      const session = sidebarDragRef.current;
+      sidebarDragRef.current = null;
+      session?.finish(false);
+    };
+  }, []);
+
+  const onSidebarResizePointerDown = (
+    event: ReactPointerEvent<HTMLDivElement>,
+  ) => {
+    if (event.button !== 0 || narrow || sidebarDragRef.current) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const handle = event.currentTarget;
+    const pointerId = event.pointerId;
+    try {
+      handle.setPointerCapture(pointerId);
+    } catch {
+      // jsdom, or a pointer the browser will not capture.
+    }
+    try {
+      handle.focus({ preventScroll: true });
+    } catch {
+      handle.focus();
+    }
+    const startPreferred = preferredSidebarRef.current;
+    const sidebarLeft =
+      sidebarPaneRef.current?.getBoundingClientRect().left ?? 0;
+    const clearDrag = () => {
+      sidebarDragRef.current = null;
+    };
+    sidebarDragRef.current = bindSidebarDrag({
+      pointerId,
+      handle,
+      originX: event.clientX,
+      sidebarLeft,
+      startPreferred,
+      fitCap: () => sidebarFitRef.current,
+      onPreview: setPreferredSidebarWidth,
+      onCommit: (width) => {
+        clearDrag();
+        commitSidebarWidth(width);
+      },
+      onCancel: () => {
+        clearDrag();
+        setPreferredSidebarWidth(startPreferred);
+      },
+    });
+  };
+
+  const onSidebarResizeKeyDown = (
+    event: ReactKeyboardEvent<HTMLDivElement>,
+  ) => {
+    if (sidebarDragRef.current) return;
+    if (event.altKey || event.metaKey || event.ctrlKey) return;
+    if (event.key === "Enter") {
+      event.preventDefault();
+      commitSidebarWidth(SIDEBAR_WIDTH_DEFAULT);
+      return;
+    }
+    let delta = 0;
+    if (event.key === "ArrowLeft") {
+      delta = -(event.shiftKey ? SIDEBAR_WIDTH_STEP_COARSE : SIDEBAR_WIDTH_STEP);
+    } else if (event.key === "ArrowRight") {
+      delta = event.shiftKey ? SIDEBAR_WIDTH_STEP_COARSE : SIDEBAR_WIDTH_STEP;
+    } else {
+      return;
+    }
+    event.preventDefault();
+    const next = nextSidebarPreference(
+      preferredSidebarRef.current,
+      delta,
+      sidebarFitRef.current,
+      "delta",
+    );
+    if (next !== preferredSidebarRef.current) commitSidebarWidth(next);
+  };
+
+  const onSidebarResizeReset = () => {
+    if (sidebarDragRef.current) return;
+    commitSidebarWidth(SIDEBAR_WIDTH_DEFAULT);
+  };
+
   if (buildMismatch) {
     return (
       <BuildMismatchScreen onRestart={() => void applyUpdate()} />
@@ -1630,6 +1866,11 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         data-layout="app"
         data-drawer={drawer ?? ""}
         data-agents-collapsed={hideAgentsRail ? "true" : undefined}
+        style={
+          narrow
+            ? undefined
+            : ({ "--sidebar-width": `${sidebarWidth}px` } as CSSProperties)
+        }
       >
         <div className={styles.narrowBar} data-narrow-chrome="">
           <button
@@ -1694,14 +1935,17 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         providers={providers}
         activeThreadId={selectedThreadId}
         onSelectThread={handleSelectThread}
-        activeView={
-          view === "kanban" || view === "planboard" || view === "activity"
-            ? view
-            : "thread"
-        }
+        activeView={view}
+        onOpenThreads={openThreads}
         onOpenKanban={openKanban}
         onOpenPlanboard={openPlanboard}
+        onOpenReview={openPrs}
         onOpenActivity={openActivity}
+        onOpenAutomations={openAutomations}
+        onOpenUsage={openUsage}
+        onOpenFleet={openFleet}
+        onOpenInsights={openInsights}
+        onOpenDigest={openDigest}
         onCreateThread={handleCreateThread}
         listBaseBranches={listBaseBranches}
         defaultWorktree={settings?.defaultWorktree ?? false}
@@ -1745,6 +1989,25 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
             />
           </ErrorBoundary>
         </div>
+        {!narrow && (
+          <div
+            role="separator"
+            aria-orientation="vertical"
+            aria-label="Resize sidebar"
+            title="Arrow keys resize. Shift is a coarse step. Enter or double-click resets."
+            aria-controls="pane-sidebar"
+            aria-valuemin={SIDEBAR_WIDTH_MIN}
+            aria-valuemax={sidebarFit}
+            aria-valuenow={sidebarWidth}
+            aria-valuetext={`${sidebarWidth} pixels`}
+            tabIndex={0}
+            className={styles.sidebarResize}
+            data-sidebar-resize=""
+            onPointerDown={onSidebarResizePointerDown}
+            onKeyDown={onSidebarResizeKeyDown}
+            onDoubleClick={onSidebarResizeReset}
+          />
+        )}
         <div
           className={styles.threadSlot}
           data-pane="thread"
@@ -1901,6 +2164,8 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         conflictContext={conflictContext}
         onOpenWorktree={openInEditor}
         onOpenCrewIntegration={openCrewIntegration}
+        workerCount={workerCount}
+        onOpenWorkers={workerCount > 0 ? revealAgentsTeam : undefined}
         onRewindAndResubmit={rewindAndResubmit}
         onStartWorkflow={startWorkflowRun}
         onRetryWorkflowAgent={retryWorkflowAgent}
@@ -2121,7 +2386,8 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
               }
             : undefined
         }
-        focusAgentsTabNonce={agentsTabFocus}
+        tab={inspectorTab}
+        onTabChange={rememberInspectorTab}
         onSelectThread={handleSelectThread}
         onViewChanges={openChanges}
         listCheckpoints={listCheckpoints}

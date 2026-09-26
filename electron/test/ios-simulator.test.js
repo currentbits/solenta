@@ -3702,19 +3702,23 @@ function makeRecordingFsApi({
       realpath: (...args) => fs.promises.realpath(...args),
       writeFile: (...args) => fs.promises.writeFile(...args),
       stat: async (target) => {
-        const stat = await fs.promises.stat(target);
+        // Synthetic sizes are the poll trigger. statSync settles before
+        // settleAsync returns; fs.promises.stat can still be pending, and the
+        // stop that follows then finalizes as an explicit success.
         if (typeof statSize === "function") {
-          const size = statSize(String(target), stat);
+          const real = fs.statSync(target);
+          const size = statSize(String(target), real);
           if (typeof size === "number") {
             return {
               size,
-              isFile: () => true,
-              isDirectory: () => false,
-              isSymbolicLink: () => false,
+              isFile: () => real.isFile(),
+              isDirectory: () => real.isDirectory(),
+              isSymbolicLink: () => real.isSymbolicLink(),
             };
           }
+          return real;
         }
-        return stat;
+        return fs.promises.stat(target);
       },
       unlink: async (target) => {
         if (typeof unlinkError === "function") {
@@ -4195,11 +4199,14 @@ describe("createIOSSimulatorService recording", () => {
       threadId: "t1",
       generation: harness.generation,
     });
-    await harness.timers.advance(10_000);
-    await assertRejects(stopped, "recording_finalize_failed", (err) => {
+    // The finalize timer rejects `stopped` inside advance. Attaching afterwards
+    // is an unhandled rejection (PromiseRejectionHandledWarning).
+    const rejected = assertRejects(stopped, "recording_finalize_failed", (err) => {
       assert.equal(err.message, "Failed to finalize the simulator recording");
       return true;
     });
+    await harness.timers.advance(10_000);
+    await rejected;
     assert.deepEqual(harness.signals, [[-6100, "SIGKILL"]]);
     assert.equal(harness.store.getRunArtifacts("t1").length, 0);
     assert.deepEqual(stagingEntries(harness.userDataPath), []);
@@ -4406,8 +4413,9 @@ describe("createIOSSimulatorService recording", () => {
       threadId: "t1",
       generation: harness.generation,
     });
+    const rejected = assertRejects(stopped, "recording_finalize_failed");
     await harness.timers.advance(10_000);
-    await assertRejects(stopped, "recording_finalize_failed");
+    await rejected;
     assert.deepEqual(harness.signals, [
       [-6200, "SIGKILL"],
       [6200, "SIGKILL"],

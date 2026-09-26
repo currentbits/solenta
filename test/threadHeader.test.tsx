@@ -151,6 +151,10 @@ function view(props: {
   onMergeWorktree?: () => Promise<unknown>;
   onOpenCrewLead?: (leadId: string) => void;
   onRemoveWorktree?: (force?: boolean) => Promise<unknown>;
+  workerCount?: number;
+  onOpenWorkers?: () => void;
+  handoffSource?: ThreadInfo | null;
+  onSelectThread?: (id: string) => void;
 }) {
   return (
     <ThreadView
@@ -193,6 +197,10 @@ function view(props: {
       onMergeWorktree={props.onMergeWorktree}
       onOpenCrewLead={props.onOpenCrewLead}
       onRemoveWorktree={props.onRemoveWorktree}
+      workerCount={props.workerCount}
+      onOpenWorkers={props.onOpenWorkers}
+      handoffSource={props.handoffSource}
+      onSelectThread={props.onSelectThread}
     />
   );
 }
@@ -978,5 +986,159 @@ describe("header quick actions (#153)", () => {
     assert.ok(err);
     assert.match(err!.textContent || "", /already active/);
     m.unmount();
+  });
+});
+
+describe("Workers header control and parent navigation", () => {
+  it("shows Workers (n) and opens the inspector callback", async () => {
+    const opened: number[] = [];
+    const m = await mount(
+      view({
+        workerCount: 3,
+        onOpenWorkers: () => {
+          opened.push(1);
+        },
+      }),
+    );
+    await m.flush();
+    const btn = m.query("[data-thread-header] [data-open-workers]");
+    assert.ok(btn, "orchestrators with workers get a header control");
+    assert.equal((btn!.textContent || "").trim(), "Workers (3)");
+    assert.equal(btn!.getAttribute("aria-label"), "Workers (3)");
+    await m.click(btn);
+    assert.deepEqual(opened, [1]);
+    m.unmount();
+  });
+
+  it("hides Workers on a single thread and when the opener is missing", async () => {
+    const lone = await mount(view({ onOpenWorkers: () => {} }));
+    await lone.flush();
+    assert.equal(lone.query("[data-open-workers]"), null);
+    lone.unmount();
+
+    const counted = await mount(view({ workerCount: 2 }));
+    await counted.flush();
+    assert.equal(
+      counted.query("[data-open-workers]"),
+      null,
+      "count without an opener does not render a dead control",
+    );
+    counted.unmount();
+  });
+
+  it("keeps worker task navigation persistent and distinct from a fork banner", async () => {
+    const selected: string[] = [];
+    const lead = thread({ id: "lead-1", title: "Lead task" });
+    const m = await mount(
+      view({
+        detail: detail({
+          thread: thread({
+            orchWorker: true,
+            handoffFrom: "lead-1",
+            title: "Review permissions",
+          }),
+        }),
+        handoffSource: lead,
+        onSelectThread: (id) => {
+          selected.push(id);
+        },
+      }),
+    );
+    await m.flush();
+    assert.equal(m.query("[data-handoff-banner]"), null);
+    assert.equal(
+      m.query("[aria-label='Dismiss handoff banner']"),
+      null,
+    );
+    const nav = m.query("[data-worker-nav]");
+    assert.ok(nav, "crew workers get persistent task navigation");
+    assert.ok((nav!.textContent || "").includes("Task"));
+    assert.ok((nav!.textContent || "").includes("Lead task"));
+    const link = m.query('[data-task-source="lead-1"]');
+    assert.ok(link);
+    await m.click(link as HTMLElement);
+    assert.deepEqual(selected, ["lead-1"]);
+    m.unmount();
+
+    const nested = await mount(
+      view({
+        detail: detail({
+          thread: thread({
+            orchWorker: true,
+            handoffFrom: "w1",
+            title: "Nested helper",
+          }),
+        }),
+        handoffSource: thread({
+          id: "w1",
+          title: "Review permissions",
+          orchWorker: true,
+        }),
+      }),
+    );
+    await nested.flush();
+    const nestedNav = nested.query("[data-worker-nav]");
+    assert.ok(nestedNav);
+    assert.match(nestedNav!.textContent || "", /^Parent worker/);
+    assert.doesNotMatch(nestedNav!.textContent || "", /^Task /);
+    nested.unmount();
+  });
+
+  it("keeps ordinary forks dismissible and labels a missing parent", async () => {
+    const fork = await mount(
+      view({
+        detail: detail({
+          thread: thread({
+            handoffFrom: "lead-1",
+            title: "Fork: Lead task",
+          }),
+        }),
+        handoffSource: thread({ id: "lead-1", title: "Lead task" }),
+      }),
+    );
+    await fork.flush();
+    assert.equal(fork.query("[data-worker-nav]"), null);
+    assert.ok(fork.query("[data-handoff-banner]"));
+    assert.ok(fork.query("[aria-label='Dismiss handoff banner']"));
+    await fork.click(fork.query("[aria-label='Dismiss handoff banner']"));
+    await fork.flush();
+    assert.equal(fork.query("[data-handoff-banner]"), null);
+    fork.unmount();
+
+    const missingFork = await mount(
+      view({
+        detail: detail({
+          thread: thread({ handoffFrom: "gone" }),
+        }),
+      }),
+    );
+    await missingFork.flush();
+    assert.ok(
+      (missingFork.query("[data-handoff-missing]")?.textContent || "").includes(
+        "Forked from a deleted thread",
+      ),
+    );
+    missingFork.unmount();
+
+    const missingTask = await mount(
+      view({
+        detail: detail({
+          thread: thread({ orchWorker: true, handoffFrom: "gone" }),
+        }),
+      }),
+    );
+    await missingTask.flush();
+    assert.equal(missingTask.query("[data-handoff-banner]"), null);
+    assert.ok(missingTask.query("[data-worker-nav]"));
+    assert.equal(
+      missingTask.query("[aria-label='Dismiss handoff banner']"),
+      null,
+      "missing task parent stays on screen",
+    );
+    assert.equal(
+      (missingTask.query("[data-worker-nav-missing]")?.textContent || "").trim(),
+      "Task is no longer available",
+    );
+    missingTask.unmount();
   });
 });

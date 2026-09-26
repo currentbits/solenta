@@ -20,6 +20,7 @@ const {
 } = require("../kimi.js");
 const { getProvider } = require("../providers.js");
 const { writeFakeBin } = require("./support/fakeBin.js");
+const { rmTree } = require("./support/rmTree.js");
 
 /** 1x1 transparent PNG, the "tool-image" scenario's payload. */
 const PNG_B64 =
@@ -937,7 +938,7 @@ describe("kimi runner integration", () => {
     });
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     if (runner) runner.stopAll();
     if (prevKimiBin === undefined) delete process.env.CODER_KIMI_BIN;
     else process.env.CODER_KIMI_BIN = prevKimiBin;
@@ -949,7 +950,7 @@ describe("kimi runner integration", () => {
     else process.env.CODER_SIMULATE = prevSimulate;
     if (prevAgentCmd === undefined) delete process.env.CODER_AGENT_CMD;
     else process.env.CODER_AGENT_CMD = prevAgentCmd;
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+    await rmTree(tmpDir);
   });
 
   it("streams REAL role-shaped events and captures the session id", async () => {

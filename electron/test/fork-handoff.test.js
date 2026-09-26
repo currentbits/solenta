@@ -170,6 +170,35 @@ describe("forkThread + handoff (services)", () => {
     assert.equal(direct.title.length, services.THREAD_TITLE_MAX);
   });
 
+  it("forking an already-generated title does not stack Fork: prefixes", () => {
+    const once = services.forkThread(store, { threadId: source.id });
+    assert.equal(once.title, "Fork: Source work");
+    const twice = services.forkThread(store, { threadId: once.id });
+    assert.equal(twice.title, "Fork: Source work");
+    const stacked = services.createThread(store, {
+      projectId: project.id,
+      title: "Fork: Fork: Fork: Build sidebar grouping",
+    });
+    const fromStacked = services.forkThread(store, { threadId: stacked.id });
+    assert.equal(fromStacked.title, "Fork: Build sidebar grouping");
+    assert.equal(fromStacked.handoffFrom, stacked.id);
+    assert.equal(store.getThread(stacked.id).title, "Fork: Fork: Fork: Build sidebar grouping");
+  });
+
+  it("explicit title skips the Fork: prefix and keeps config/provenance", () => {
+    const forked = services.forkThread(store, {
+      threadId: source.id,
+      provider: "claude",
+      title: "Review permissions",
+    });
+    assert.equal(forked.title, "Review permissions");
+    assert.equal(forked.provider, "claude");
+    assert.equal(forked.model, null);
+    assert.equal(forked.permissionMode, "acceptEdits");
+    assert.equal(forked.handoffFrom, source.id);
+    assert.equal(store.getThread(source.id).title, "Source work");
+  });
+
   it("handoffFrom provenance persists across reload", () => {
     const forked = services.forkThread(store, { threadId: source.id });
     store.saveNow();

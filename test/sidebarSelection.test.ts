@@ -389,4 +389,21 @@ describe("flatVisibleThreadIds (T3 flat sidebar)", () => {
     });
     assert.deepEqual(ids, ["pin1", "a1", "a2", "s1", "arc1"]);
   });
+
+  it("hidden collapsed workers are skipped by keyboard order", () => {
+    const ids = flatVisibleThreadIds({
+      flat: {
+        pinned: [],
+        active: [t("orch"), t("w1"), t("w2")],
+        snoozed: [],
+        settled: [],
+        archived: [],
+      },
+      snoozedOpen: false,
+      settledOpen: false,
+      settledVisibleCount: 0,
+      hiddenIds: new Set(["w1", "w2"]),
+    });
+    assert.deepEqual(ids, ["orch"]);
+  });
 });

@@ -53,6 +53,194 @@ export function visibleAttentionCount(
 
 export type { SettleOpts };
 
+/** Minimal handoff shape for crew walks (ThreadInfo or wait rows). */
+export interface CrewLink {
+  id: string;
+  projectId?: string;
+  handoffFrom: string | null;
+  orchWorker?: boolean;
+}
+
+export function isCrewWorker(t: { orchWorker?: boolean }): boolean {
+  return t.orchWorker === true;
+}
+
+/**
+ * Walk orchWorker handoffFrom toward the crew lead. Cycle, missing parent,
+ * and cross-project hops stop the walk. Returns ancestor ids nearest-first.
+ */
+export function crewAncestorIds(
+  row: CrewLink,
+  byId: ReadonlyMap<string, CrewLink>,
+): string[] {
+  if (!isCrewWorker(row) || !row.handoffFrom || row.handoffFrom === row.id) {
+    return [];
+  }
+  const out: string[] = [];
+  const seen = new Set<string>([row.id]);
+  let cur: string | null = row.handoffFrom;
+  while (cur && !seen.has(cur)) {
+    seen.add(cur);
+    const parent = byId.get(cur);
+    if (!parent) break;
+    if (
+      row.projectId != null &&
+      parent.projectId != null &&
+      parent.projectId !== row.projectId
+    ) {
+      break;
+    }
+    out.push(parent.id);
+    if (
+      !isCrewWorker(parent) ||
+      !parent.handoffFrom ||
+      parent.handoffFrom === parent.id
+    ) {
+      break;
+    }
+    cur = parent.handoffFrom;
+  }
+  return out;
+}
+
+/**
+ * Topmost ancestor that is in `inList`. Flattens grandchildren onto the
+ * visible crew lead while preserving handoffFrom on the row.
+ * A cycle of orchWorkers has no non-worker lead — return null so those
+ * rows stay independent and discoverable when collapsed.
+ */
+export function crewOwnerInList(
+  row: CrewLink,
+  byId: ReadonlyMap<string, CrewLink>,
+  inList: ReadonlySet<string>,
+): string | null {
+  const ancestors = crewAncestorIds(row, byId);
+  const hasLead = ancestors.some((id) => {
+    const node = byId.get(id);
+    return node != null && !isCrewWorker(node);
+  });
+  if (!hasLead) return null;
+  for (let i = ancestors.length - 1; i >= 0; i--) {
+    const id = ancestors[i]!;
+    if (inList.has(id)) return id;
+  }
+  return null;
+}
+
+/**
+ * Reorder so orchWorker descendants sit under their visible crew lead,
+ * flattened to one level. Manual forks (no orchWorker) keep list order.
+ * `byIdFull` should include rows outside `list` so a missing intermediate
+ * worker does not strand a grandchild (archived parent, other shelf).
+ */
+export function nestWorkerFamilies(
+  list: ThreadInfo[],
+  byIdFull?: ReadonlyMap<string, CrewLink>,
+): ThreadInfo[] {
+  const ids = new Set(list.map((t) => t.id));
+  const byId = byIdFull ?? new Map(list.map((t) => [t.id, t]));
+  const children = new Map<string, ThreadInfo[]>();
+  const roots: ThreadInfo[] = [];
+  for (const t of list) {
+    const owner = isCrewWorker(t) ? crewOwnerInList(t, byId, ids) : null;
+    if (owner) {
+      const kids = children.get(owner) ?? [];
+      kids.push(t);
+      children.set(owner, kids);
+    } else {
+      roots.push(t);
+    }
+  }
+  const out: ThreadInfo[] = [];
+  const seen = new Set<string>();
+  const emit = (t: ThreadInfo) => {
+    if (seen.has(t.id)) return;
+    seen.add(t.id);
+    out.push(t);
+    for (const kid of children.get(t.id) ?? []) emit(kid);
+  };
+  for (const t of roots) emit(t);
+  // Corrupt-data guard: a handoffFrom cycle would strand its members.
+  for (const t of list) emit(t);
+  return out;
+}
+
+/** Root id → nested orchWorker ids in list order. */
+export function workerIdsByRoot(
+  list: readonly ThreadInfo[],
+  byIdFull?: ReadonlyMap<string, CrewLink>,
+): Map<string, string[]> {
+  const ids = new Set(list.map((t) => t.id));
+  const byId = byIdFull ?? new Map(list.map((t) => [t.id, t]));
+  const families = new Map<string, string[]>();
+  for (const t of list) {
+    if (!isCrewWorker(t)) continue;
+    const owner = crewOwnerInList(t, byId, ids);
+    if (!owner) continue;
+    const kids = families.get(owner) ?? [];
+    kids.push(t.id);
+    families.set(owner, kids);
+  }
+  return families;
+}
+
+/**
+ * Hide collapsed orchWorker rows. keepIds / keepWorkerIds keep those
+ * specific workers discoverable without opening the rest of the family.
+ */
+export function visibleFamilyRows(
+  list: readonly ThreadInfo[],
+  opts: {
+    expandedRootIds: ReadonlySet<string>;
+    keepIds?: readonly (string | null | undefined)[];
+    keepWorkerIds?: ReadonlySet<string>;
+    byIdFull?: ReadonlyMap<string, CrewLink>;
+  },
+): ThreadInfo[] {
+  const families = workerIdsByRoot(list, opts.byIdFull);
+  const workerToRoot = new Map<string, string>();
+  for (const [root, kids] of families) {
+    for (const id of kids) workerToRoot.set(id, root);
+  }
+  const keep = new Set<string>();
+  for (const id of opts.keepIds ?? []) {
+    if (id) keep.add(id);
+  }
+  const keepWorkers = opts.keepWorkerIds;
+  return list.filter((t) => {
+    const root = workerToRoot.get(t.id);
+    if (!root) return true;
+    if (opts.expandedRootIds.has(root)) return true;
+    if (keep.has(t.id)) return true;
+    if (keepWorkers?.has(t.id)) return true;
+    return false;
+  });
+}
+
+/**
+ * Search hits plus the crew lead of any matching worker, nested for display.
+ */
+export function withCrewSearchContext(
+  hits: readonly ThreadInfo[],
+  all: readonly ThreadInfo[],
+): ThreadInfo[] {
+  const byId = new Map(all.map((t) => [t.id, t]));
+  const ids = new Set(hits.map((t) => t.id));
+  const extra: ThreadInfo[] = [];
+  for (const t of hits) {
+    if (!isCrewWorker(t)) continue;
+    const ancestors = crewAncestorIds(t, byId);
+    const rootId = ancestors[ancestors.length - 1];
+    if (!rootId || ids.has(rootId)) continue;
+    const root = byId.get(rootId);
+    if (!root) continue;
+    extra.push(root);
+    ids.add(rootId);
+  }
+  const combined = extra.length === 0 ? [...hits] : [...hits, ...extra];
+  return nestWorkerFamilies(combined, byId);
+}
+
 /**
  * Split non-archived threads into attention vs settled.
  * Order within each side is preserved (caller sorts first when needed).
@@ -190,9 +378,11 @@ export function buildFlatSidebar(
     (a, b) => b.updatedAt - a.updatedAt || a.id.localeCompare(b.id),
   );
 
-  // Settled workers of a still-visible parent stay nested next to it.
-  // Pinned is its own attachForks pass — a pinned ancestor must take the
-  // child in the pinned block, not dump it as a disconnected Active row.
+  // Auto-settled orchWorkers (merged PR, inactivity) of a still-visible
+  // parent stay nested next to it. An explicit settle override files the
+  // row to the Settled shelf — clicking Settle must leave Active (#1315).
+  // Pinned is its own nest pass — a pinned lead must take the child in the
+  // pinned block, not dump it as a disconnected Active row.
   const pinnedIds = new Set(pinned.map((t) => t.id));
   const activeIds = new Set(active.map((t) => t.id));
   const byId = new Map<string, ThreadInfo>();
@@ -200,18 +390,15 @@ export function buildFlatSidebar(
     if (scopeProjectId != null && t.projectId !== scopeProjectId) continue;
     byId.set(t.id, t);
   }
-  const visibleAncestorKind = (
+  const visibleCrewOwnerKind = (
     t: ThreadInfo,
   ): "pinned" | "active" | null => {
-    let cur = t.handoffFrom;
-    const seen = new Set<string>();
-    while (cur && !seen.has(cur)) {
-      if (pinnedIds.has(cur)) return "pinned";
-      if (activeIds.has(cur)) return "active";
-      seen.add(cur);
-      const row = byId.get(cur);
-      if (!row || row.archived || effectiveSnoozed(row, opts.now)) return null;
-      cur = row.handoffFrom;
+    if (!isCrewWorker(t)) return null;
+    const ancestors = crewAncestorIds(t, byId);
+    for (let i = ancestors.length - 1; i >= 0; i--) {
+      const id = ancestors[i]!;
+      if (pinnedIds.has(id)) return "pinned";
+      if (activeIds.has(id)) return "active";
     }
     return null;
   };
@@ -219,16 +406,27 @@ export function buildFlatSidebar(
   const nestActive: ThreadInfo[] = [];
   const settledRest: ThreadInfo[] = [];
   for (const t of settled) {
-    const kind = visibleAncestorKind(t);
+    if (t.settledOverride === "settled" || !isCrewWorker(t)) {
+      settledRest.push(t);
+      continue;
+    }
+    const kind = visibleCrewOwnerKind(t);
     if (kind === "pinned") nestPinned.push(t);
     else if (kind === "active") nestActive.push(t);
     else settledRest.push(t);
   }
+  const activeRest: ThreadInfo[] = [];
+  for (const t of active) {
+    if (isCrewWorker(t) && visibleCrewOwnerKind(t) === "pinned") {
+      nestPinned.push(t);
+    } else {
+      activeRest.push(t);
+    }
+  }
 
   return {
-    pinned:
-      nestPinned.length > 0 ? attachForks([...pinned, ...nestPinned]) : pinned,
-    active: attachForks([...active, ...nestActive]),
+    pinned: nestWorkerFamilies([...pinned, ...nestPinned], byId),
+    active: nestWorkerFamilies([...activeRest, ...nestActive], byId),
     snoozed,
     settled: settledRest,
     archived,
@@ -252,38 +450,7 @@ function createdKey(t: ThreadInfo): number {
   return Number.isFinite(t.createdAt) ? t.createdAt : t.updatedAt;
 }
 
-/**
- * Reorder a sorted group list so forked threads (orchestration workers,
- * manual forks) sit directly under the thread that started them
- * (handoffFrom), depth-first. Threads whose source is absent from the list
- * keep their normal position.
- */
-function attachForks(list: ThreadInfo[]): ThreadInfo[] {
-  const ids = new Set(list.map((t) => t.id));
-  const children = new Map<string, ThreadInfo[]>();
-  const roots: ThreadInfo[] = [];
-  for (const t of list) {
-    if (t.handoffFrom && t.handoffFrom !== t.id && ids.has(t.handoffFrom)) {
-      const kids = children.get(t.handoffFrom) ?? [];
-      kids.push(t);
-      children.set(t.handoffFrom, kids);
-    } else {
-      roots.push(t);
-    }
-  }
-  const out: ThreadInfo[] = [];
-  const seen = new Set<string>();
-  const emit = (t: ThreadInfo) => {
-    if (seen.has(t.id)) return;
-    seen.add(t.id);
-    out.push(t);
-    for (const kid of children.get(t.id) ?? []) emit(kid);
-  };
-  for (const t of roots) emit(t);
-  // Corrupt-data guard: a handoffFrom cycle would strand its members.
-  for (const t of list) emit(t);
-  return out;
-}
+
 
 /**
  * Group threads under every registered project.
@@ -316,7 +483,7 @@ export function buildSidebarGroups(
         createdKey(b) - createdKey(a) ||
         a.id.localeCompare(b.id),
     );
-    byProject.set(key, attachForks(list));
+    byProject.set(key, nestWorkerFamilies(list));
   }
 
   const newest = (list: ThreadInfo[]) =>

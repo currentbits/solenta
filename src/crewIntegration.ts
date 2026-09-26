@@ -1,5 +1,39 @@
 import type { CrewIntegrationState } from "./shared/ipc";
 
+/** Crew worker flag. Missing on a legacy summary is unknown, not a worker. */
+export function isOrchWorker(
+  row: { orchWorker?: boolean } | null | undefined,
+): boolean {
+  return row?.orchWorker === true;
+}
+
+/** False only when both sides name a project and they differ. */
+export function sameCrewProject(
+  a: { projectId?: string } | null | undefined,
+  b: { projectId?: string } | null | undefined,
+): boolean {
+  if (a?.projectId && b?.projectId && a.projectId !== b.projectId) return false;
+  return true;
+}
+
+/**
+ * Direct crew child of parent. Requires orchWorker === true and matching
+ * handoffFrom. A known projectId that differs is malformed and excluded;
+ * a missing projectId is not treated as cross-project. Archived rows stay
+ * eligible: list and summaries both keep them.
+ */
+export function isDirectCrewChild(
+  child: {
+    orchWorker?: boolean;
+    handoffFrom?: string | null;
+    projectId?: string;
+  },
+  parent: { id: string; projectId?: string },
+): boolean {
+  if (!isOrchWorker(child) || child.handoffFrom !== parent.id) return false;
+  return sameCrewProject(child, parent);
+}
+
 /** Header path on the lead Integration section. */
 export function integrationPathLabel(
   leadBranch: string | null,

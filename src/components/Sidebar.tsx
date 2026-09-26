@@ -3,6 +3,7 @@ import {
   memo,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -33,7 +34,15 @@ import {
   formatWorktreeUsage,
 } from "../format";
 import { formatQuotaWaitLabel } from "../quotaWait";
-import { buildFlatSidebar } from "../sidebarGroups";
+import {
+  buildFlatSidebar,
+  crewAncestorIds,
+  isCrewWorker,
+  nestWorkerFamilies,
+  visibleFamilyRows,
+  withCrewSearchContext,
+  workerIdsByRoot,
+} from "../sidebarGroups";
 import { ProviderMark } from "./ProviderMark";
 import {
   GROUP_BY_KEY,
@@ -95,8 +104,10 @@ import { isUnread } from "../threadUnread";
 import { ProjectIcon } from "./ProjectIcon";
 import {
   buildWaitStates,
+  crewSummaryLabel,
   isDelegating,
   subagentNames,
+  summarizeCrew,
   waitLabel,
   waitTooltip,
   type WaitState,
@@ -133,16 +144,114 @@ const MIN_SEARCH_LEN = 2;
 const SCOPE_KEY = "sidebar:projectScope";
 const SNOOZED_OPEN_KEY = "sidebar:snoozedOpen";
 const SETTLED_OPEN_KEY = "sidebar:settledOpen";
+const WORKER_OPEN_KEY = "sidebar:workerOpen";
+const FAMILY_MOTION_MS = 160;
+const BULK_ROW_DELTA = 40;
 type FilterMenu = "status" | "provider" | "group" | "tag" | "views";
 type ViewEditor = { mode: "save" | "rename"; name: string };
 
+/** Main app destination. Kept local so Sidebar does not import App. */
+type SidebarNavView =
+  | "thread"
+  | "kanban"
+  | "planboard"
+  | "prs"
+  | "automations"
+  | "activity"
+  | "usage"
+  | "fleet"
+  | "insights"
+  | "digest";
+
+const MORE_DESTINATIONS: readonly {
+  id:
+    | "activity"
+    | "kanban"
+    | "automations"
+    | "usage"
+    | "fleet"
+    | "insights"
+    | "digest";
+  label: string;
+  view: SidebarNavView;
+}[] = [
+  { id: "activity", label: "Activity", view: "activity" },
+  { id: "kanban", label: "Kanban", view: "kanban" },
+  { id: "automations", label: "Automations", view: "automations" },
+  { id: "usage", label: "Usage", view: "usage" },
+  { id: "fleet", label: "Fleet", view: "fleet" },
+  { id: "insights", label: "Insights", view: "insights" },
+  { id: "digest", label: "Digest", view: "digest" },
+];
+
+function moveAppMenuFocus(menu: HTMLElement, key: string): boolean {
+  const items = [
+    ...menu.querySelectorAll<HTMLElement>(
+      '[role="menuitem"]:not([disabled])',
+    ),
+  ];
+  if (items.length === 0) return false;
+  const from = items.findIndex((el) => el === document.activeElement);
+  let next = -1;
+  if (key === "ArrowDown") next = from < 0 ? 0 : (from + 1) % items.length;
+  else if (key === "ArrowUp") {
+    next = from < 0 ? items.length - 1 : (from - 1 + items.length) % items.length;
+  } else if (key === "Home") next = 0;
+  else if (key === "End") next = items.length - 1;
+  else return false;
+  items[next]?.focus();
+  return true;
+}
+
+function prefersReducedMotion(): boolean {
+  return (
+    typeof window !== "undefined" &&
+    typeof window.matchMedia === "function" &&
+    window.matchMedia("(prefers-reduced-motion: reduce)").matches
+  );
+}
+
+type ListAnimCtrl = {
+  enable: () => void;
+  disable: () => void;
+  destroy?: () => void;
+};
+
+type ListMotionSkip = {
+  hydrate: boolean;
+  bulk: boolean;
+  keyboard: boolean;
+};
+
+function listMotionBlocked(skip: ListMotionSkip): boolean {
+  return prefersReducedMotion() || skip.hydrate || skip.bulk || skip.keyboard;
+}
+
 /**
- * t3 list animation: rows glide on lifecycle transitions instead of the
- * sidebar jumping. Attached per list container via ref callback; no-ops
- * where ResizeObserver is missing (jsdom).
+ * auto-animate reinserts a removed row for the exit animation and marks it
+ * `__aa_del`. disable() cancels that animation and does not take the
+ * placeholder back out, so a keyboard snap, bulk replace, or reduced-motion
+ * change during the exit leaves a second copy of the row in the list.
  */
-function attachListAnimation(node: HTMLElement | null): void {
-  if (node) autoAnimate(node, { duration: 150, easing: "ease-out" });
+function releaseAbortedRows(parent: HTMLElement): void {
+  for (const child of [...parent.children]) {
+    if (!("__aa_del" in child)) continue;
+    delete (child as HTMLElement & { __aa_del?: unknown }).__aa_del;
+    if (child instanceof HTMLElement) child.removeAttribute("style");
+    child.remove();
+  }
+}
+
+function countIdChurn(
+  prev: readonly string[],
+  next: readonly string[],
+): number {
+  const prevSet = new Set(prev);
+  const nextSet = new Set(next);
+  let n = 0;
+  for (const id of nextSet) if (!prevSet.has(id)) n += 1;
+  for (const id of prevSet) if (!nextSet.has(id)) n += 1;
+  return n;
 }
 
 function loadStored(key: string): string | null {
@@ -170,6 +279,20 @@ function loadFlag(key: string, fallback: boolean): boolean {
 
 function saveFlag(key: string, value: boolean): void {
   saveStored(key, value ? "1" : "0");
+}
+
+function loadOpenSet(key: string): Set<string> {
+  try {
+    const raw = JSON.parse(loadStored(key) || "[]") as unknown;
+    if (!Array.isArray(raw)) return new Set();
+    return new Set(raw.filter((id): id is string => typeof id === "string"));
+  } catch {
+    return new Set();
+  }
+}
+
+function saveOpenSet(key: string, ids: ReadonlySet<string>): void {
+  saveStored(key, JSON.stringify([...ids]));
 }
 
 function Icon({
@@ -310,10 +433,22 @@ interface SidebarProps {
     threadId: string,
     opts?: { provider?: string },
   ) => void | Promise<void>;
-  /** Which main view is showing. Defaults to thread so existing callers stay idle. */
-  activeView?: "thread" | "kanban" | "planboard" | "activity";
+  /**
+   * Which main view is showing. Pass the real view: collapsing other
+   * destinations to "thread" marks Threads active while the user is elsewhere.
+   */
+  activeView?: SidebarNavView;
+  /** Return to the selected thread. Does not create a thread. */
+  onOpenThreads?: () => void;
   onOpenKanban?: (scopedProjectId?: string | null) => void;
   onOpenPlanboard?: (scopedProjectId?: string | null) => void;
+  /** Existing pull-request list. Not a separate review dashboard. */
+  onOpenReview?: () => void;
+  onOpenAutomations?: () => void;
+  onOpenUsage?: () => void;
+  onOpenFleet?: () => void;
+  onOpenInsights?: () => void;
+  onOpenDigest?: () => void;
   /**
    * Paste a GitHub issue into this project. Omitted by existing tests so
    * the icon button stays hidden.
@@ -609,19 +744,28 @@ export type StatusPulseTone = "working" | "waiting" | "delegating" | "done";
  * stalled, quota, queued, and woke stay text-only so the motion means
  * "this thread is in flight or just finished."
  */
+/**
+ * Display-only: collapse generated `Fork:` prefixes on compact worker
+ * rows. Does not rewrite stored titles (rename still edits the raw value).
+ */
+export function displayWorkerTitle(title: string): string {
+  let s = title.trim();
+  while (/^fork:\s*/i.test(s)) s = s.replace(/^fork:\s*/i, "").trim();
+  return s || title;
+}
+
 export function statusPulseFor(
   thread: ThreadInfo,
   now: number,
   wait: WaitState | null,
   active: boolean,
 ): StatusPulseTone | null {
+  if (thread.status !== "working") return null;
+  if (thread.awaitingInput || thread.stalledAt != null) return null;
   const label = statusLabelFor(thread, now, wait, active);
-  if (!label) return null;
-  if (label.tone === "working") return "working";
-  if (label.tone === "delegating") return "delegating";
-  if (label.tone === "done") return "done";
-  if (label.tone === "attention" && label.text === "Waiting") return "waiting";
-  return null;
+  if (!label || label.tone !== "working") return null;
+  if (!label.text.startsWith("Working")) return null;
+  return "working";
 }
 
 function ConflictForecastBadge({
@@ -701,6 +845,11 @@ export const ThreadCard = memo(function ThreadCard({
   onFork,
   onToggleSnoozeMenu,
   nested = false,
+  compact = false,
+  familySummary = null,
+  familyExpanded = false,
+  familyAttention = false,
+  onToggleFamily,
   wait = null,
   showSlug = true,
   conflictForecast = null,
@@ -742,6 +891,11 @@ export const ThreadCard = memo(function ThreadCard({
   /** Parent bookkeeping: which card has its (native/portal) menu open. */
   onToggleSnoozeMenu?: (threadId: string | null) => void;
   nested?: boolean;
+  compact?: boolean;
+  familySummary?: string | null;
+  familyExpanded?: boolean;
+  familyAttention?: boolean;
+  onToggleFamily?: (threadId: string, snap?: boolean) => void;
   wait?: WaitState | null;
   showSlug?: boolean;
   conflictForecast?: ConflictForecast | null;
@@ -754,7 +908,8 @@ export const ThreadCard = memo(function ThreadCard({
   const label = statusLabelFor(thread, now, wait, active);
   const pulse = statusPulseFor(thread, now, wait ?? null, active);
   const pinned = isPinned(thread);
-  const recede = working && !active && !multiSelected;
+  const showProject = showSlug && !compact;
+  const shownTitle = compact ? displayWorkerTitle(thread.title) : thread.title;
   const subagentLines = wait ? subagentNames(wait) : [];
   // Menus are native Menu.popup / a body portal (#592) — the card only
   // tracks openness so the hover actions stay pinned underneath.
@@ -762,7 +917,7 @@ export const ThreadCard = memo(function ThreadCard({
   const menuBusy = useRef(false);
   const actionsOpen = menuOpen;
   const selectLabel = [
-    `Select thread: ${thread.title}`,
+    `Select thread: ${shownTitle}`,
     showUnread ? "unread" : null,
     pinned ? "pinned" : null,
     label ? label.spoken : null,
@@ -901,7 +1056,7 @@ export const ThreadCard = memo(function ThreadCard({
       data-unread={showUnread ? "true" : undefined}
       data-pinned={pinned ? "true" : undefined}
       data-nested={nested ? "true" : undefined}
-      data-recede={recede ? "true" : undefined}
+      data-compact={compact ? "true" : undefined}
       data-actions-open={actionsOpen ? "true" : undefined}
       onContextMenu={(e) => {
         if (renaming || editingTags) return;
@@ -934,9 +1089,10 @@ export const ThreadCard = memo(function ThreadCard({
         aria-label={selectLabel}
       />
       <div className={styles.cardBody}>
+        {!compact && (
         <div className={styles.cardLine1}>
           <ProjectIcon url={iconUrl} size={14} />
-          {showSlug && (
+          {showProject && (
             <span className={styles.cardSlug} data-card-slug="">
               {slug}
             </span>
@@ -1080,6 +1236,7 @@ export const ThreadCard = memo(function ThreadCard({
             )}
           </span>
         </div>
+        )}
         <div className={styles.cardLine2}>
           {pulse && (
             <span
@@ -1116,11 +1273,32 @@ export const ThreadCard = memo(function ThreadCard({
             />
           ) : (
             <div className={styles.cardTitle} title={thread.title}>
-              {thread.title}
+              {shownTitle}
             </div>
           )}
           {contentMatch && (
             <span className={styles.inMessagesTag}>in messages</span>
+          )}
+          {compact && (
+            <span className={styles.cardSlot}>
+              <span className={styles.cardStatus}>
+                {label ? (
+                  <span
+                    className={styles.statusLabel}
+                    data-status-label={label.text}
+                    data-tone={label.tone}
+                    title={label.title}
+                    {...label.flags}
+                  >
+                    {label.text}
+                  </span>
+                ) : (
+                  <span className={styles.age}>
+                    {formatRelativeAge(thread.updatedAt, now)}
+                  </span>
+                )}
+              </span>
+            </span>
           )}
         </div>
         {editingTags ? (
@@ -1175,6 +1353,7 @@ export const ThreadCard = memo(function ThreadCard({
             />
           </div>
         ) : (
+          !compact &&
           (thread.tags ?? []).length > 0 && (
             <div className={styles.tagRow} data-tag-row={thread.id}>
               {(thread.tags ?? []).map((tag) => (
@@ -1185,7 +1364,7 @@ export const ThreadCard = memo(function ThreadCard({
             </div>
           )
         )}
-        {hasLine3 && (
+        {!compact && hasLine3 && (
           <div className={styles.cardLine3}>
             {thread.branch ? (
               <span className={styles.cardBranch} data-card-branch="">
@@ -1221,7 +1400,36 @@ export const ThreadCard = memo(function ThreadCard({
             ) : null}
           </div>
         )}
-        {wait && (
+        {!compact && familySummary && onToggleFamily && (
+          <button
+            type="button"
+            className={styles.familyToggle}
+            data-family-toggle={thread.id}
+            aria-expanded={familyExpanded}
+            aria-label={`${familyExpanded ? "Hide" : "Show"} workers: ${familySummary}`}
+            onClick={(e) => {
+              e.stopPropagation();
+              onToggleFamily(thread.id, e.detail === 0);
+            }}
+          >
+            <span
+              className={styles.familyChevron}
+              data-open={familyExpanded ? "true" : undefined}
+              aria-hidden
+            >
+              <Icon size={10}>
+                <path d="m9 6 6 6-6 6" />
+              </Icon>
+            </span>
+            <span
+              data-family-summary={thread.id}
+              data-attention={familyAttention ? "true" : undefined}
+            >
+              {familySummary}
+            </span>
+          </button>
+        )}
+        {!compact && !familySummary && wait && (
           <div
             className={styles.waitRow}
             data-wait-row={thread.id}
@@ -1240,7 +1448,7 @@ export const ThreadCard = memo(function ThreadCard({
           ponytail: 3 lines then a "+N more" tail; if fan-outs routinely run
           wider, cap by card height instead of a count.
         */}
-        {subagentLines.slice(0, 3).map((name, i) => (
+        {!compact && subagentLines.slice(0, 3).map((name, i) => (
           <div
             key={i}
             className={styles.subagentRow}
@@ -1250,7 +1458,7 @@ export const ThreadCard = memo(function ThreadCard({
             {name}
           </div>
         ))}
-        {subagentLines.length > 3 && (
+        {!compact && subagentLines.length > 3 && (
           <div className={styles.subagentRow} data-subagent-row={thread.id}>
             +{subagentLines.length - 3} more
           </div>
@@ -1524,8 +1732,15 @@ export const Sidebar = memo(function Sidebar({
   onPurgeThread,
   onFork,
   activeView = "thread",
+  onOpenThreads,
   onOpenKanban,
   onOpenPlanboard,
+  onOpenReview,
+  onOpenAutomations,
+  onOpenUsage,
+  onOpenFleet,
+  onOpenInsights,
+  onOpenDigest,
   onCreateThreadFromIssue,
   listCliSessions,
   importCliSession,
@@ -1563,6 +1778,9 @@ export const Sidebar = memo(function Sidebar({
   const [scopeMenuOpen, setScopeMenuOpen] = useState(false);
   const [removeConfirmId, setRemoveConfirmId] = useState<string | null>(null);
   const [filterMenu, setFilterMenu] = useState<FilterMenu | null>(null);
+  const [moreOpen, setMoreOpen] = useState(false);
+  const moreHostRef = useRef<HTMLSpanElement>(null);
+  const moreTriggerRef = useRef<HTMLButtonElement>(null);
   const [statusFilter, setStatusFilter] = useState<StatusFilter | null>(() =>
     parseStatusFilter(loadStored(STATUS_FILTER_KEY)),
   );
@@ -1577,7 +1795,8 @@ export const Sidebar = memo(function Sidebar({
   );
   useEscapeClose(
     (createMenuOpen || scopeMenuOpen || filterMenu != null) &&
-      removeConfirmId == null,
+      removeConfirmId == null &&
+      !moreOpen,
     () => {
       setCreateMenuOpen(false);
       setBasePicker(null);
@@ -1586,6 +1805,28 @@ export const Sidebar = memo(function Sidebar({
       setViewEditor(null);
     },
   );
+  useLayoutEffect(() => {
+    if (!moreOpen) return;
+    const menu = moreHostRef.current?.querySelector<HTMLElement>(
+      "[data-app-more-menu]",
+    );
+    if (!menu) return;
+    const current = menu.querySelector<HTMLElement>('[aria-current="page"]');
+    const first = menu.querySelector<HTMLElement>('[role="menuitem"]');
+    (current ?? first)?.focus();
+  }, [moreOpen]);
+  useEffect(() => {
+    if (!moreOpen) return;
+    const onPointer = (e: MouseEvent) => {
+      if (moreHostRef.current?.contains(e.target as Node)) return;
+      const menu = moreHostRef.current?.querySelector("[data-app-more-menu]");
+      const restore = Boolean(menu?.contains(document.activeElement));
+      setMoreOpen(false);
+      if (restore) moreTriggerRef.current?.focus();
+    };
+    document.addEventListener("mousedown", onPointer, true);
+    return () => document.removeEventListener("mousedown", onPointer, true);
+  }, [moreOpen]);
   const [importCliProvider, setImportCliProvider] =
     useState<CliImportProvider | null>(null);
   const [issueFormFor, setIssueFormFor] = useState<string | null>(null);
@@ -1616,6 +1857,48 @@ export const Sidebar = memo(function Sidebar({
   const [settledOpen, setSettledOpen] = useState(() =>
     loadFlag(SETTLED_OPEN_KEY, false),
   );
+  const [workerOpen, setWorkerOpen] = useState<Set<string>>(
+    () => loadOpenSet(WORKER_OPEN_KEY),
+  );
+  const listAnimCtrls = useRef(new Map<HTMLElement, ListAnimCtrl>());
+  const listAnimSkip = useRef<ListMotionSkip>({
+    hydrate: true,
+    bulk: false,
+    keyboard: false,
+  });
+  const prevRowIds = useRef<string[]>([]);
+  const applyListMotion = useCallback(() => {
+    const enable = !listMotionBlocked(listAnimSkip.current);
+    for (const [node, ctrl] of listAnimCtrls.current) {
+      if (enable) ctrl.enable();
+      else {
+        ctrl.disable();
+        releaseAbortedRows(node);
+      }
+    }
+  }, []);
+  const bindListAnimation = useCallback((node: HTMLElement | null) => {
+    if (!node) return;
+    if (typeof ResizeObserver === "undefined") return;
+    // The library samples prefers-reduced-motion only while binding and, when
+    // it matches, never installs an observer. enable() cannot bring that
+    // observer back, so a session that starts reduced stays frozen after the
+    // user turns motion on. Own the gate instead.
+    const ctrl = autoAnimate(node, {
+      duration: FAMILY_MOTION_MS,
+      easing: "ease-out",
+      disrespectUserMotionPreference: true,
+    });
+    listAnimCtrls.current.set(node, ctrl);
+    if (listMotionBlocked(listAnimSkip.current)) {
+      ctrl.disable();
+      releaseAbortedRows(node);
+    }
+    return () => {
+      ctrl.destroy?.();
+      listAnimCtrls.current.delete(node);
+    };
+  }, []);
   const [trashedOpen, setTrashedOpen] = useState(false);
   const [purgeConfirmId, setPurgeConfirmId] = useState<string | null>(null);
   const [settledVisibleCount, setSettledVisibleCount] = useState(
@@ -1729,6 +2012,19 @@ export const Sidebar = memo(function Sidebar({
     return () => window.clearTimeout(handle);
   }, [query, runSearch]);
 
+  const keepThreadIds = useMemo(() => {
+    const ids: (string | null | undefined)[] = [activeThreadId, revealThreadId];
+    for (const id of [activeThreadId, revealThreadId]) {
+      if (!id) continue;
+      const row = liveById.get(id);
+      if (!row || !isCrewWorker(row)) continue;
+      const ancestors = crewAncestorIds(row, liveById);
+      const rootId = ancestors[ancestors.length - 1];
+      if (rootId) ids.push(rootId);
+    }
+    return ids;
+  }, [activeThreadId, revealThreadId, liveById]);
+
   const displayThreads = useMemo(() => {
     const source =
       searching
@@ -1736,7 +2032,7 @@ export const Sidebar = memo(function Sidebar({
           ? []
           : searchResults.map((t) => liveById.get(t.id) ?? t)
         : threads;
-    return filterThreads(
+    const filtered = filterThreads(
       source,
       {
         status: statusFilter,
@@ -1746,9 +2042,10 @@ export const Sidebar = memo(function Sidebar({
       },
       {
         waits: waitStates,
-        keepIds: [activeThreadId, revealThreadId],
+        keepIds: keepThreadIds,
       },
     );
+    return searching ? withCrewSearchContext(filtered, threads) : filtered;
   }, [
     searching,
     searchResults,
@@ -1759,8 +2056,7 @@ export const Sidebar = memo(function Sidebar({
     tagFilter,
     projectScope,
     waitStates,
-    activeThreadId,
-    revealThreadId,
+    keepThreadIds,
   ]);
 
   // Drop a stale scope if the project was removed. An active saved view
@@ -1807,36 +2103,89 @@ export const Sidebar = memo(function Sidebar({
   const statusGroups = useMemo(
     () =>
       groupBy === "status"
-        ? groupThreadsByStatus(attentionThreads, waitStates)
+        ? groupThreadsByStatus(attentionThreads, waitStates).map((g) => ({
+            ...g,
+            threads: nestWorkerFamilies(g.threads, liveById),
+          }))
         : [],
-    [groupBy, attentionThreads, waitStates],
+    [groupBy, attentionThreads, waitStates, liveById],
   );
   const tagGroups = useMemo(
-    () => (groupBy === "tag" ? groupThreadsByTag(attentionThreads) : []),
-    [groupBy, attentionThreads],
+    () =>
+      groupBy === "tag"
+        ? groupThreadsByTag(attentionThreads).map((g) => ({
+            ...g,
+            threads: nestWorkerFamilies(g.threads, liveById),
+          }))
+        : [],
+    [groupBy, attentionThreads, liveById],
   );
-  const groupedAttention = useMemo(() => {
-    if (groupBy === "project") {
-      return projectGroups.flatMap((g) => g.threads);
-    }
-    if (groupBy === "status") {
-      return statusGroups.flatMap((g) => g.threads);
-    }
-    if (groupBy === "tag") {
-      // A multi-tag thread renders under each tag; nav visits it once.
-      const seen = new Set<string>();
-      const out: ThreadInfo[] = [];
-      for (const g of tagGroups) {
-        for (const t of g.threads) {
-          if (seen.has(t.id)) continue;
-          seen.add(t.id);
-          out.push(t);
-        }
+  const searchHitIds = useMemo(() => {
+    if (!searching || searchResults == null) return undefined;
+    return new Set(searchResults.map((t) => t.id));
+  }, [searching, searchResults]);
+
+  const familyOpts = useMemo(
+    () => ({
+      expandedRootIds: workerOpen,
+      keepIds: keepThreadIds,
+      keepWorkerIds: searchHitIds,
+      byIdFull: liveById,
+    }),
+    [workerOpen, keepThreadIds, searchHitIds, liveById],
+  );
+
+  const visiblePinned = useMemo(
+    () => visibleFamilyRows(flat.pinned, familyOpts),
+    [flat.pinned, familyOpts],
+  );
+  const visibleActive = useMemo(
+    () => visibleFamilyRows(flat.active, familyOpts),
+    [flat.active, familyOpts],
+  );
+  const pinnedFamilies = useMemo(
+    () => workerIdsByRoot(flat.pinned, liveById),
+    [flat.pinned, liveById],
+  );
+  const activeFamilies = useMemo(
+    () => workerIdsByRoot(flat.active, liveById),
+    [flat.active, liveById],
+  );
+  const searchFamilies = useMemo(
+    () => workerIdsByRoot(displayThreads, liveById),
+    [displayThreads, liveById],
+  );
+
+  const toggleFamily = useCallback(
+    (threadId: string, snap = false) => {
+      if (snap) {
+        listAnimSkip.current.keyboard = true;
+        applyListMotion();
       }
-      return out;
-    }
-    return null;
-  }, [groupBy, projectGroups, statusGroups, tagGroups]);
+      setWorkerOpen((prev) => {
+        const next = new Set(prev);
+        if (next.has(threadId)) next.delete(threadId);
+        else next.add(threadId);
+        saveOpenSet(WORKER_OPEN_KEY, next);
+        return next;
+      });
+      if (snap) {
+        window.requestAnimationFrame(() => {
+          listAnimSkip.current.keyboard = false;
+          applyListMotion();
+        });
+      }
+    },
+    [applyListMotion],
+  );
+
+  useEffect(() => {
+    if (typeof window.matchMedia !== "function") return;
+    const mq = window.matchMedia("(prefers-reduced-motion: reduce)");
+    const onChange = () => applyListMotion();
+    mq.addEventListener("change", onChange);
+    return () => mq.removeEventListener("change", onChange);
+  }, [applyListMotion]);
 
   useEffect(() => {
     if (!revealThreadId) return;
@@ -1894,12 +2243,58 @@ export const Sidebar = memo(function Sidebar({
   const snoozedExpanded = snoozedOpen || filtersOn;
   const settledExpanded = settledOpen || filtersOn;
 
+  const visibleProjectGroups = useMemo(
+    () =>
+      projectGroups.map((g) => ({
+        ...g,
+        threads: visibleFamilyRows(g.threads, familyOpts),
+      })),
+    [projectGroups, familyOpts],
+  );
+  const visibleStatusGroups = useMemo(
+    () =>
+      statusGroups.map((g) => ({
+        ...g,
+        threads: visibleFamilyRows(g.threads, familyOpts),
+      })),
+    [statusGroups, familyOpts],
+  );
+  const visibleTagGroups = useMemo(
+    () =>
+      tagGroups.map((g) => ({
+        ...g,
+        threads: visibleFamilyRows(g.threads, familyOpts),
+      })),
+    [tagGroups, familyOpts],
+  );
+
   const visibleIds = useMemo(() => {
-    if (searching) return displayThreads.map((t) => t.id);
+    if (searching) {
+      return visibleFamilyRows(displayThreads, familyOpts).map((t) => t.id);
+    }
+    const groupedRows =
+      groupBy === "project"
+        ? visibleProjectGroups.flatMap((g) => g.threads)
+        : groupBy === "status"
+          ? visibleStatusGroups.flatMap((g) => g.threads)
+          : groupBy === "tag"
+            ? (() => {
+                const seen = new Set<string>();
+                const out: ThreadInfo[] = [];
+                for (const g of visibleTagGroups) {
+                  for (const t of g.threads) {
+                    if (seen.has(t.id)) continue;
+                    seen.add(t.id);
+                    out.push(t);
+                  }
+                }
+                return out;
+              })()
+            : null;
     const navFlat =
-      groupedAttention != null
-        ? { ...flat, pinned: [], active: groupedAttention }
-        : flat;
+      groupedRows != null
+        ? { ...flat, pinned: [], active: groupedRows }
+        : { ...flat, pinned: visiblePinned, active: visibleActive };
     return flatVisibleThreadIds({
       flat: navFlat,
       snoozedOpen: snoozedExpanded,
@@ -1911,14 +2306,41 @@ export const Sidebar = memo(function Sidebar({
   }, [
     searching,
     displayThreads,
+    familyOpts,
+    groupBy,
+    visibleProjectGroups,
+    visibleStatusGroups,
+    visibleTagGroups,
     flat,
-    groupedAttention,
+    visiblePinned,
+    visibleActive,
     snoozedExpanded,
     settledExpanded,
     settledVisibleCount,
     activeThreadId,
     revealThreadId,
   ]);
+
+  useLayoutEffect(() => {
+    const next = visibleIds;
+    const prev = prevRowIds.current;
+    const firstFill = prev.length === 0 && next.length > 0;
+    const churn = countIdChurn(prev, next);
+    const bulk =
+      searching ||
+      firstFill ||
+      listAnimSkip.current.hydrate ||
+      churn > BULK_ROW_DELTA;
+    listAnimSkip.current.bulk = bulk;
+    if (bulk || listAnimSkip.current.keyboard) applyListMotion();
+    prevRowIds.current = next;
+  }, [visibleIds, searching, applyListMotion]);
+
+  useEffect(() => {
+    listAnimSkip.current.hydrate = false;
+    listAnimSkip.current.bulk = searching;
+    applyListMotion();
+  }, [visibleIds, searching, applyListMotion]);
 
   const visibleIndex = useMemo(() => {
     const m = new Map<string, number>();
@@ -2204,7 +2626,54 @@ export const Sidebar = memo(function Sidebar({
     setCreateMenuOpen(false);
     setScopeMenuOpen(false);
     setViewEditor(null);
+    setMoreOpen(false);
     setFilterMenu((open) => (open === menu ? null : menu));
+  };
+
+  const toggleMore = () => {
+    setCreateMenuOpen(false);
+    setScopeMenuOpen(false);
+    setViewEditor(null);
+    setBasePicker(null);
+    setFilterMenu(null);
+    setMoreOpen((open) => !open);
+  };
+
+  const closeMore = (returnFocus: boolean) => {
+    setMoreOpen(false);
+    if (returnFocus) moreTriggerRef.current?.focus();
+  };
+
+  const onMoreBlur = (e: React.FocusEvent<HTMLElement>) => {
+    if (!moreOpen) return;
+    const next = e.relatedTarget;
+    if (next instanceof Node && e.currentTarget.contains(next)) return;
+    setMoreOpen(false);
+  };
+
+  const onMoreKeyDown = (e: React.KeyboardEvent<HTMLElement>) => {
+    if (!moreOpen) return;
+    if (e.key === "Escape") {
+      e.preventDefault();
+      e.stopPropagation();
+      closeMore(true);
+      return;
+    }
+    // Tab leaves the menu. Focus returns to More first so the browser's
+    // default tab move continues from that button. Hidden Electron does not
+    // fire the blur that would otherwise close it.
+    if (e.key === "Tab") {
+      closeMore(true);
+      return;
+    }
+    const menu = moreHostRef.current?.querySelector<HTMLElement>(
+      "[data-app-more-menu]",
+    );
+    if (!menu) return;
+    if (moveAppMenuFocus(menu, e.key)) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
   };
 
   const recallSavedView = (view: SavedView) => {
@@ -2270,11 +2739,27 @@ export const Sidebar = memo(function Sidebar({
   const issueProject =
     issueFormFor != null ? projectById.get(issueFormFor) ?? null : null;
 
-  const cardIds = searching
-    ? new Set(displayThreads.map((t) => t.id))
-    : new Set(attentionThreads.map((t) => t.id));
-
-  const renderCard = (thread: ThreadInfo) => (
+  const renderCard = (
+    thread: ThreadInfo,
+    families: ReadonlyMap<string, string[]>,
+  ) => {
+    let compact = false;
+    for (const kids of families.values()) {
+      if (kids.includes(thread.id)) {
+        compact = true;
+        break;
+      }
+    }
+    const kids = families.get(thread.id) ?? [];
+    const familyWorkers = kids
+      .map((id) => liveById.get(id))
+      .filter((t): t is ThreadInfo => t != null);
+    const summary =
+      familyWorkers.length > 0
+        ? summarizeCrew(familyWorkers)
+        : null;
+    const wait = waitStates.get(thread.id) ?? null;
+    return (
     <Fragment key={`${thread.id}:card`}>
       <ThreadCard
         thread={thread}
@@ -2286,7 +2771,7 @@ export const Sidebar = memo(function Sidebar({
         indexHint={indexHintFor(thread.id)}
         now={now}
         onSelect={handleSelect}
-        isSettled={searching ? effectiveSettled(thread, settleOpts) : false}
+        isSettled={effectiveSettled(thread, settleOpts)}
         onSetSettled={onSetSettled}
         onSetPinned={onSetPinned}
         onSetSnoozed={onSetSnoozed}
@@ -2297,10 +2782,13 @@ export const Sidebar = memo(function Sidebar({
         onRenameThread={onRenameThread}
         onFork={onFork}
         listMoveProjects={listMoveProjects}
-        nested={
-          thread.handoffFrom != null && cardIds.has(thread.handoffFrom)
-        }
-        wait={waitStates.get(thread.id) ?? null}
+        nested={compact}
+        compact={compact}
+        familySummary={summary ? crewSummaryLabel(summary) : null}
+        familyExpanded={workerOpen.has(thread.id)}
+        familyAttention={Boolean(summary && summary.blocked > 0)}
+        onToggleFamily={summary ? toggleFamily : undefined}
+        wait={wait}
         contentMatch={
           searching && !thread.title.toLowerCase().includes(queryLower)
         }
@@ -2308,7 +2796,8 @@ export const Sidebar = memo(function Sidebar({
         threadTitles={threadTitles}
       />
     </Fragment>
-  );
+    );
+  };
 
   // The open thread never vanishes — and neither does a freshly revealed
   // one (new-thread reveal can land on a collapsed shelf).
@@ -2450,6 +2939,23 @@ export const Sidebar = memo(function Sidebar({
     );
   })();
 
+  const moreRunners: Partial<
+    Record<(typeof MORE_DESTINATIONS)[number]["id"], () => void>
+  > = {};
+  if (onOpenActivity) moreRunners.activity = () => onOpenActivity(projectScope);
+  if (onOpenKanban) moreRunners.kanban = () => onOpenKanban(projectScope);
+  if (onOpenAutomations) moreRunners.automations = onOpenAutomations;
+  if (onOpenUsage) moreRunners.usage = onOpenUsage;
+  if (onOpenFleet) moreRunners.fleet = onOpenFleet;
+  if (onOpenInsights) moreRunners.insights = onOpenInsights;
+  if (onOpenDigest) moreRunners.digest = onOpenDigest;
+  const moreDestinations = MORE_DESTINATIONS.flatMap((dest) => {
+    const run = moreRunners[dest.id];
+    return run ? [{ ...dest, run }] : [];
+  });
+  const moreCurrentLabel =
+    moreDestinations.find((dest) => dest.view === activeView)?.label ?? null;
+
   return (
     <aside className={styles.sidebar}>
       {!isWebMode() && <div className={styles.dragRegion} />}
@@ -2533,6 +3039,7 @@ export const Sidebar = memo(function Sidebar({
                   setFilterMenu(null);
                   setViewEditor(null);
                   setBasePicker(null);
+                  setMoreOpen(false);
                   setCreateMenuOpen((open) => !open);
                 }}
               >
@@ -2790,6 +3297,7 @@ export const Sidebar = memo(function Sidebar({
               setCreateMenuOpen(false);
               setFilterMenu(null);
               setViewEditor(null);
+              setMoreOpen(false);
               setScopeMenuOpen((open) => !open);
             }}
           >
@@ -3306,51 +3814,104 @@ export const Sidebar = memo(function Sidebar({
         </span>
       </div>
 
-      <nav className={styles.viewNav} aria-label="Views">
+      <nav className={styles.viewNav} aria-label="App">
         <button
           type="button"
           className={styles.viewNavBtn}
-          data-view-nav="activity"
-          data-active={activeView === "activity" ? "true" : undefined}
-          title="Activity"
-          aria-label="Activity"
-          onClick={() => onOpenActivity?.(projectScope)}
+          data-view-nav="threads"
+          data-active={activeView === "thread" ? "true" : undefined}
+          aria-current={activeView === "thread" ? "page" : undefined}
+          onClick={() => onOpenThreads?.()}
         >
-          <Icon size={15}>
-            <path d="M3 12h3l2-6 4 12 2-6h4" />
-          </Icon>
-        </button>
-        <button
-          type="button"
-          className={styles.viewNavBtn}
-          data-view-nav="kanban"
-          data-active={activeView === "kanban" ? "true" : undefined}
-          title="Kanban"
-          aria-label="Kanban"
-          onClick={() => onOpenKanban?.(projectScope)}
-        >
-          <Icon size={15}>
-            <rect x="3" y="4" width="5" height="16" rx="1" />
-            <rect x="10" y="4" width="5" height="10" rx="1" />
-            <rect x="17" y="4" width="4" height="7" rx="1" />
-          </Icon>
+          <span className={styles.viewNavLabel}>Threads</span>
         </button>
         <button
           type="button"
           className={styles.viewNavBtn}
           data-view-nav="planboard"
           data-active={activeView === "planboard" ? "true" : undefined}
-          title="Planboard"
-          aria-label="Planboard"
+          aria-current={activeView === "planboard" ? "page" : undefined}
           onClick={() => onOpenPlanboard?.(projectScope)}
         >
-          <Icon size={15}>
-            <rect x="4" y="4" width="16" height="16" rx="2" />
-            <path d="M8 9h8" />
-            <path d="M8 13h6" />
-            <path d="M8 17h4" />
-          </Icon>
+          <span className={styles.viewNavLabel}>Planboard</span>
         </button>
+        <button
+          type="button"
+          className={styles.viewNavBtn}
+          data-view-nav="review"
+          data-active={activeView === "prs" ? "true" : undefined}
+          aria-current={activeView === "prs" ? "page" : undefined}
+          onClick={() => onOpenReview?.()}
+        >
+          <span className={styles.viewNavLabel}>Review</span>
+        </button>
+        {moreDestinations.length > 0 && (
+          <span
+            className={styles.filterMenuHost}
+            ref={moreHostRef}
+            onBlur={onMoreBlur}
+          >
+            <button
+              type="button"
+              ref={moreTriggerRef}
+              className={`${styles.viewNavBtn} ${styles.viewNavMore}`}
+              data-app-more=""
+              aria-haspopup="menu"
+              aria-expanded={moreOpen}
+              aria-controls="app-more-menu"
+              aria-current={moreCurrentLabel ? "page" : undefined}
+              data-active={moreCurrentLabel ? "true" : undefined}
+              aria-label={
+                moreCurrentLabel ? `More, ${moreCurrentLabel}` : undefined
+              }
+              onClick={toggleMore}
+              onKeyDown={onMoreKeyDown}
+            >
+              <span className={styles.viewNavLabel}>More</span>
+              <Icon size={12}>
+                <path d="m6 9 6 6 6-6" />
+              </Icon>
+            </button>
+            {moreOpen && (
+              <div
+                id="app-more-menu"
+                className={`${styles.menu} ${styles.appMoreMenu}`}
+                role="menu"
+                aria-label="More"
+                data-app-more-menu=""
+                onKeyDown={onMoreKeyDown}
+              >
+                {moreDestinations.map((dest) => {
+                  const current = activeView === dest.view;
+                  return (
+                    <button
+                      key={dest.id}
+                      type="button"
+                      className={styles.menuItem}
+                      role="menuitem"
+                      data-view-nav={dest.id}
+                      data-active={current ? "true" : undefined}
+                      aria-current={current ? "page" : undefined}
+                      onClick={() => {
+                        closeMore(true);
+                        dest.run();
+                      }}
+                    >
+                      {dest.label}
+                      {current && (
+                        <span className={styles.filterCheck}>
+                          <Icon size={12}>
+                            <path d="M5 12.5 9 16.5 19 7.5" />
+                          </Icon>
+                        </span>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </span>
+        )}
       </nav>
 
       {importCliProvider &&
@@ -3424,7 +3985,11 @@ export const Sidebar = memo(function Sidebar({
         </form>
       )}
 
-      <div className={styles.list} data-sidebar-list="" ref={attachListAnimation}>
+      <div
+        className={styles.list}
+        data-sidebar-list=""
+        ref={bindListAnimation}
+      >
         {projects.length === 0 && (
           <button
             type="button"
@@ -3459,19 +4024,27 @@ export const Sidebar = memo(function Sidebar({
         )}
 
         {searching
-          ? displayThreads.map((thread) => renderCard(thread))
+          ? visibleFamilyRows(displayThreads, familyOpts).map((thread) =>
+              renderCard(thread, searchFamilies),
+            )
           : (
             <>
               {groupBy === "project"
-                ? projectGroups.map((g) => {
+                ? visibleProjectGroups.map((g) => {
                     const key = g.project?.id ?? "orphan";
                     const title =
                       g.project?.slug || g.project?.name || "Unknown project";
+                    const source =
+                      projectGroups.find(
+                        (s) => (s.project?.id ?? "orphan") === key,
+                      )?.threads ?? g.threads;
+                    const families = workerIdsByRoot(source, liveById);
                     return (
                       <div
                         key={key}
                         className={styles.filterGroup}
                         data-filter-group={key}
+                        ref={bindListAnimation}
                       >
                         <div className={styles.filterGroupHeader}>
                           {g.project?.iconUrl ? (
@@ -3482,16 +4055,22 @@ export const Sidebar = memo(function Sidebar({
                             {g.threads.length}
                           </span>
                         </div>
-                        {g.threads.map((thread) => renderCard(thread))}
+                        {g.threads.map((thread) => renderCard(thread, families))}
                       </div>
                     );
                   })
                 : groupBy === "status"
-                  ? statusGroups.map((g) => (
+                  ? visibleStatusGroups.map((g) => {
+                      const source =
+                        statusGroups.find((s) => s.id === g.id)?.threads ??
+                        g.threads;
+                      const families = workerIdsByRoot(source, liveById);
+                      return (
                       <div
                         key={g.id}
                         className={styles.filterGroup}
                         data-filter-group={g.id}
+                        ref={bindListAnimation}
                       >
                         <div className={styles.filterGroupHeader}>
                           <span className={styles.filterGroupTitle}>{g.label}</span>
@@ -3499,15 +4078,22 @@ export const Sidebar = memo(function Sidebar({
                             {g.threads.length}
                           </span>
                         </div>
-                        {g.threads.map((thread) => renderCard(thread))}
+                        {g.threads.map((thread) => renderCard(thread, families))}
                       </div>
-                    ))
+                      );
+                    })
                   : groupBy === "tag"
-                    ? tagGroups.map((g) => (
+                    ? visibleTagGroups.map((g) => {
+                        const source =
+                          tagGroups.find((s) => s.id === g.id)?.threads ??
+                          g.threads;
+                        const families = workerIdsByRoot(source, liveById);
+                        return (
                         <div
                           key={g.id || "untagged"}
                           className={styles.filterGroup}
                           data-filter-group={g.id || "untagged"}
+                          ref={bindListAnimation}
                         >
                           <div className={styles.filterGroupHeader}>
                             <span className={styles.filterGroupTitle}>{g.label}</span>
@@ -3515,20 +4101,25 @@ export const Sidebar = memo(function Sidebar({
                               {g.threads.length}
                             </span>
                           </div>
-                          {g.threads.map((thread) => renderCard(thread))}
+                          {g.threads.map((thread) => renderCard(thread, families))}
                         </div>
-                      ))
+                        );
+                      })
                     : (
                     <>
-                      {flat.pinned.map((thread) => renderCard(thread))}
-                      {flat.pinned.length > 0 && (
+                      {visiblePinned.map((thread) =>
+                        renderCard(thread, pinnedFamilies),
+                      )}
+                      {visiblePinned.length > 0 && (
                         <div
                           className={styles.pinnedDivider}
                           data-pinned-divider=""
                           aria-hidden
                         />
                       )}
-                      {flat.active.map((thread) => renderCard(thread))}
+                      {visibleActive.map((thread) =>
+                        renderCard(thread, activeFamilies),
+                      )}
                     </>
                   )}
 

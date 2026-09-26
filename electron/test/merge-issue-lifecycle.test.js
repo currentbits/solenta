@@ -104,7 +104,7 @@ describe("merge issue lifecycle (#947)", () => {
     spy = installCompleteSpy();
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     if (spy) spy.restore();
     try {
       for (const t of store.getThreads()) {
@@ -119,7 +119,13 @@ describe("merge issue lifecycle (#947)", () => {
     } catch {
       // ignore
     }
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+    // Debounced shard flushes still create files after the test returns.
+    // saveNow cancels that timer; flushPending waits until its tmp files are gone.
+    if (store && tmpDir && fs.existsSync(tmpDir)) {
+      store.saveNow();
+      await store.flushPending();
+    }
+    if (tmpDir) fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
   it("A→lead via mergeWorktree(intoPath) leaves issue 123 open and main unchanged", async () => {
@@ -246,6 +252,9 @@ describe("merge issue lifecycle (#947)", () => {
     assert.equal(receipts[0].issueNumber, 94705);
     assert.deepEqual(receipts[0].includedIssueIds, [94705]);
     assert.equal(reloaded.getThread(worker.id).worktreePath, null);
+    // This second Store can schedule its own debounced save on load.
+    reloaded.saveNow();
+    await reloaded.flushPending();
   });
 
   it("direct final merge still closes the thread's own issue", async () => {

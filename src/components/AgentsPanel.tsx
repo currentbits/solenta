@@ -74,6 +74,11 @@ import {
 } from "../format";
 import { contextRing, threadContextWindow } from "../contextRing";
 import { buildWaitStates, waitLabel, type WaitState } from "../waiting";
+import {
+  isDirectCrewChild,
+  isOrchWorker,
+  sameCrewProject,
+} from "../crewIntegration";
 import { CrewIntegration } from "./CrewIntegration";
 import { MemoryTab } from "./MemoryTab";
 import { SkillsTab } from "./SkillsTab";
@@ -112,7 +117,7 @@ import {
 } from "../envSectionOrder";
 import styles from "./AgentsPanel.module.css";
 
-type PanelTab = "agents" | "git" | "memory" | "skills" | "pulse";
+export type PanelTab = "agents" | "git" | "memory" | "skills" | "pulse";
 
 type PulseView = "automations" | "usage" | "fleet" | "insights" | "digest";
 
@@ -124,8 +129,68 @@ const PULSE_VIEWS: readonly PulseView[] = [
   "digest",
 ];
 
+const INSPECTOR_TABS: readonly { id: PanelTab; label: string }[] = [
+  { id: "git", label: "Environment" },
+  { id: "agents", label: "Agents" },
+  { id: "memory", label: "Memory" },
+  { id: "skills", label: "Skills" },
+  { id: "pulse", label: "Pulse" },
+];
+
 function isPulseView(view: string | undefined): view is PulseView {
   return (PULSE_VIEWS as readonly string[]).includes(view ?? "");
+}
+
+/** Session key for a manual inspector choice. Thread keys include the project so two projects never share a selection. Other destinations key the route the same way. */
+export function inspectorContextKey(input: {
+  view: string;
+  projectId?: string | null;
+  threadId?: string | null;
+}): string {
+  const projectId = input.projectId ?? "";
+  if (input.view === "thread" && input.threadId) {
+    return `thread:${projectId}:${input.threadId}`;
+  }
+  if (input.view !== "thread") return `route:${projectId}:${input.view}`;
+  return `project:${projectId}`;
+}
+
+type InspectorThreadSignal = {
+  id: string;
+  orchWorker?: boolean;
+  handoffFrom?: string | null;
+  projectId?: string;
+};
+
+/**
+ * Default tab when this context has no manual choice.
+ * Crew/workflow → Agents. Ordinary threads, manual forks, and Review → Environment.
+ * Operational destinations → Pulse. A null summary (detail still loading, or no thread) stays Environment and does not look at any other thread.
+ */
+export function defaultInspectorTab(input: {
+  view: string;
+  summary: InspectorThreadSignal | null;
+  threads: readonly InspectorThreadSignal[];
+  workflow: unknown | null;
+}): PanelTab {
+  if (isPulseView(input.view)) return "pulse";
+  if (input.view !== "thread") return "git";
+  if (input.workflow) return "agents";
+  const summary = input.summary;
+  if (!summary) return "git";
+  if (input.threads.some((row) => isDirectCrewChild(row, summary))) {
+    return "agents";
+  }
+  if (
+    isOrchWorker(summary) &&
+    summary.handoffFrom &&
+    input.threads.some(
+      (row) => row.id === summary.handoffFrom && sameCrewProject(row, summary),
+    )
+  ) {
+    return "agents";
+  }
+  return "git";
 }
 
 /** Shared props for the 14px line icons in Environment card labels. */
@@ -278,8 +343,9 @@ interface AgentsPanelProps {
   discardHarnessImport: (input: { previewId: string }) => Promise<void>;
   /** Center-pane view, so Pulse/Environment can mark the active destination. */
   activeView?: string;
-  /** Bump to force the Agents tab (worker-header "Crew integration on lead"). */
-  focusAgentsTabNonce?: number;
+  /** App-owned inspector tab. The panel unmounts when the desktop rail collapses. */
+  tab: PanelTab;
+  onTabChange: (tab: PanelTab) => void;
   onOpenPrs?: () => void;
   onOpenAutomations?: () => void;
   onOpenUsage?: () => void;
@@ -2955,7 +3021,7 @@ export function AgentsContent({
   const [landingLead, setLandingLead] = useState(false);
   useEffect(() => {
     const isLead = Boolean(
-      thread && summaries?.some((s) => s.handoffFrom === thread.id),
+      thread && summaries?.some((s) => isDirectCrewChild(s, thread)),
     );
     if (!thread || !crewIntegration || !isLead) {
       setIntegration(null);
@@ -3003,27 +3069,28 @@ export function AgentsContent({
     [thread, summaries],
   );
 
-  // Roles derive from handoffFrom: a thread WITH one is a Worker; a thread
-  // another summary points to is an Orchestrator. Neither = plain session.
-  // Live workers stay as plain rows (failed / idle / working). Done workers
-  // fold behind a "N done" toggle while any worker is still live so a long
-  // orchestration stays scannable. When none are live — including ones the
-  // sidebar has settled — list them immediately (no toggle) so an all-done
-  // crew is not an empty Team.
+  // Roles derive from orchWorker: a true crew child is a Worker; a thread
+  // those children point at is an Orchestrator. Ordinary forks and legacy
+  // summaries without the flag stay a plain session. Live workers stay as
+  // plain rows (failed / idle / working). Done workers fold behind a
+  // "N done" toggle while any worker is still live so a long orchestration
+  // stays scannable. When none are live — including ones the sidebar has
+  // settled — list them immediately (no toggle) so an all-done crew is not
+  // an empty Team.
   const [showDoneWorkers, setShowDoneWorkers] = useState(false);
   const team = useMemo(() => {
     if (!thread || !summaries) return null;
-    const all = summaries.filter((s) => s.handoffFrom === thread.id);
+    const all = summaries.filter((s) => isDirectCrewChild(s, thread));
     const workers = all.filter((s) => s.status !== "done");
     const doneWorkers = all.filter((s) => s.status === "done");
     if (all.length > 0) {
       return { kind: "orchestrator" as const, workers, doneWorkers };
     }
-    const orchestrator = thread.handoffFrom
-      ? summaries.find((s) => s.id === thread.handoffFrom)
-      : undefined;
-    if (orchestrator) {
-      return { kind: "worker" as const, orchestrator };
+    if (isOrchWorker(thread) && thread.handoffFrom) {
+      const orchestrator = summaries.find((s) => s.id === thread.handoffFrom);
+      if (orchestrator && sameCrewProject(orchestrator, thread)) {
+        return { kind: "worker" as const, orchestrator };
+      }
     }
     return null;
   }, [thread, summaries]);
@@ -3038,8 +3105,11 @@ export function AgentsContent({
   // summaries is swapped for the ThreadInfo so the subagents come along.
   const wait = useMemo(() => {
     if (!thread || !summaries) return null;
-    const rows = summaries.filter((s) => s.id !== thread.id);
-    return buildWaitStates([...rows, thread]).get(thread.id) ?? null;
+    const crew = summaries.filter(
+      (s) =>
+        s.id !== thread.id && isOrchWorker(s) && sameCrewProject(s, thread),
+    );
+    return buildWaitStates([...crew, thread]).get(thread.id) ?? null;
   }, [thread, summaries]);
   const subagentSection =
     subagents.length > 0 ? (
@@ -3615,7 +3685,8 @@ export const AgentsPanel = memo(function AgentsPanel({
   onSelectThread,
   onRetryAgent,
   onViewChanges,
-  focusAgentsTabNonce,
+  tab,
+  onTabChange,
   listCheckpoints,
   restoreCheckpoint,
   listLocalServers,
@@ -3684,64 +3755,79 @@ export const AgentsPanel = memo(function AgentsPanel({
   spotlightLane,
   onCollapse,
 }: AgentsPanelProps) {
-  const [tab, setTab] = useState<PanelTab>(() =>
-    isPulseView(activeView) ? "pulse" : "git",
-  );
+  const tabListRef = useRef<HTMLDivElement>(null);
+  const focusRequest = useRef<PanelTab | null>(null);
+
+  const selectTab = (next: PanelTab, focus = false) => {
+    if (focus && next !== tab) focusRequest.current = next;
+    onTabChange(next);
+  };
 
   useEffect(() => {
-    if (focusAgentsTabNonce && focusAgentsTabNonce > 0) setTab("agents");
-  }, [focusAgentsTabNonce]);
+    const list = tabListRef.current;
+    if (!list) return;
+    const btn = list.querySelector<HTMLButtonElement>(
+      `[data-panel-tab="${tab}"]`,
+    );
+    if (!btn) return;
+    if (focusRequest.current === tab) {
+      focusRequest.current = null;
+      btn.focus({ preventScroll: true });
+    }
+    const listRect = list.getBoundingClientRect();
+    const btnRect = btn.getBoundingClientRect();
+    if (listRect.width <= 0 || btnRect.width <= 0) return;
+    if (btnRect.left < listRect.left) {
+      list.scrollLeft -= listRect.left - btnRect.left;
+    } else if (btnRect.right > listRect.right) {
+      list.scrollLeft += btnRect.right - listRect.right;
+    }
+  }, [tab]);
 
-  useEffect(() => {
-    if (isPulseView(activeView)) setTab("pulse");
-    else if (activeView === "prs") setTab("git");
-  }, [activeView]);
+  const onTabKeyDown = (event: ReactKeyboardEvent<HTMLButtonElement>) => {
+    const index = INSPECTOR_TABS.findIndex((item) => item.id === tab);
+    let next = -1;
+    if (event.key === "ArrowRight") next = (index + 1) % INSPECTOR_TABS.length;
+    else if (event.key === "ArrowLeft") {
+      next = (index - 1 + INSPECTOR_TABS.length) % INSPECTOR_TABS.length;
+    } else if (event.key === "Home") next = 0;
+    else if (event.key === "End") next = INSPECTOR_TABS.length - 1;
+    else return;
+    event.preventDefault();
+    event.stopPropagation();
+    selectTab(INSPECTOR_TABS[next]!.id, true);
+  };
 
   return (
     <aside className={styles.panel}>
       <header className={styles.tabs}>
-        <div className={styles.tabList}>
-          <button
-            type="button"
-            className={styles.tab}
-            data-active={tab === "git"}
-            onClick={() => setTab("git")}
-          >
-            Environment
-          </button>
-          <button
-            type="button"
-            className={styles.tab}
-            data-active={tab === "agents"}
-            onClick={() => setTab("agents")}
-          >
-            Agents
-          </button>
-          <button
-            type="button"
-            className={styles.tab}
-            data-active={tab === "memory"}
-            onClick={() => setTab("memory")}
-          >
-            Memory
-          </button>
-          <button
-            type="button"
-            className={styles.tab}
-            data-active={tab === "skills"}
-            onClick={() => setTab("skills")}
-          >
-            Skills
-          </button>
-          <button
-            type="button"
-            className={styles.tab}
-            data-panel-tab="pulse"
-            data-active={tab === "pulse"}
-            onClick={() => setTab("pulse")}
-          >
-            Pulse
-          </button>
+        <div
+          ref={tabListRef}
+          className={styles.tabList}
+          role="tablist"
+          aria-label="Inspector"
+        >
+          {INSPECTOR_TABS.map((item) => {
+            const selected = tab === item.id;
+            return (
+              <button
+                key={item.id}
+                type="button"
+                role="tab"
+                id={`inspector-tab-${item.id}`}
+                className={styles.tab}
+                data-panel-tab={item.id}
+                data-active={selected}
+                aria-selected={selected}
+                aria-controls="inspector-tabpanel"
+                tabIndex={selected ? 0 : -1}
+                onClick={() => selectTab(item.id)}
+                onKeyDown={onTabKeyDown}
+              >
+                {item.label}
+              </button>
+            );
+          })}
         </div>
         {onCollapse ? (
           <button
@@ -3771,6 +3857,12 @@ export const AgentsPanel = memo(function AgentsPanel({
         ) : null}
       </header>
 
+      <div
+        id="inspector-tabpanel"
+        role="tabpanel"
+        aria-labelledby={`inspector-tab-${tab}`}
+        className={styles.tabPanel}
+      >
       {tab === "agents" ? (
         <AgentsContent
           workflow={workflow}
@@ -3877,6 +3969,7 @@ export const AgentsPanel = memo(function AgentsPanel({
           onOpenDigest={onOpenDigest}
         />
       )}
+      </div>
     </aside>
   );
 });

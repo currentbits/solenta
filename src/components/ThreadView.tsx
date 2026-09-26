@@ -209,6 +209,7 @@ import {
   mapFocusTurns,
   type FocusTurnSummary,
 } from "../focusView";
+import { routineWorkerActivitySummary } from "../workerActivity";
 import { useRunDurationEnabled, useTranscriptViewMode } from "../uiPrefs";
 import { DROP_OVERLAY_MESSAGE, type DroppedFolder } from "../dropFiles";
 import { Composer } from "./Composer";
@@ -763,6 +764,14 @@ interface ThreadViewProps {
   onOpenWorktree?: () => void | Promise<void>;
   /** orchWorker: jump to the lead Integration section (issue #982). */
   onOpenCrewIntegration?: (leadThreadId: string) => void;
+  /**
+   * Direct orchWorker children of this thread. 0/absent hides the header
+   * Workers control. Count is resolved in App so this pane is not passed
+   * the full list (issue #91).
+   */
+  workerCount?: number;
+  /** Open the Agents Team / Integration surface for this orchestrator. */
+  onOpenWorkers?: () => void;
   /** Retarget this idle worker onto the lead's current committed HEAD. */
   onRefreshWorkerSnapshot?: (
     threadId: string,
@@ -1214,6 +1223,7 @@ const UserMessageBlock = memo(function UserMessageBlock({
   canEdit,
   confirming,
   animateIn,
+  activityOpen = false,
   onRequestResubmit,
   onCancelConfirm,
   onLoadAttachmentImage,
@@ -1226,6 +1236,8 @@ const UserMessageBlock = memo(function UserMessageBlock({
   confirming: boolean;
   /** Freshly appended at the live tail — play the stream-in entrance. */
   animateIn?: boolean;
+  /** Verbose mode or an active reveal: keep the original notice text shown. */
+  activityOpen?: boolean;
   onRequestResubmit?: (messageId: string, prompt: string) => void;
   onCancelConfirm?: () => void;
   onLoadAttachmentImage?: (path: string) => Promise<string | null>;
@@ -1235,6 +1247,7 @@ const UserMessageBlock = memo(function UserMessageBlock({
 }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(message.text);
+  const [activityOpened, setActivityOpened] = useState(false);
   const taRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
@@ -1344,6 +1357,71 @@ const UserMessageBlock = memo(function UserMessageBlock({
             )}
           </div>
           <div className={styles.inboundBody}>{message.text}</div>
+        </div>
+      </article>
+    );
+  }
+
+  const activitySummary = routineWorkerActivitySummary(message);
+  if (activitySummary) {
+    const activityIsOpen = activityOpen || activityOpened;
+    return (
+      <article
+        className={`${styles.workerActivityRow}${streamCls}`}
+        data-msg={message.id}
+        data-stream-in={streamAttr}
+      >
+        <div className={styles.workerActivityCluster}>
+          <details
+            className={styles.workerActivity}
+            data-worker-activity=""
+            open={activityIsOpen}
+          >
+            <summary
+              className={styles.workerActivitySummary}
+              onClick={(event) => {
+                event.preventDefault();
+                if (activityOpen) return;
+                setActivityOpened((open) => !open);
+              }}
+            >
+              {activitySummary}
+            </summary>
+            <div
+              className={styles.workerActivityBody}
+              data-worker-activity-body=""
+            >
+              {message.text}
+            </div>
+          </details>
+          {canEdit && onRequestResubmit && (
+            <button
+              type="button"
+              className={`${styles.msgAction} ${styles.workerActivityAction}`}
+              aria-label="Edit and resubmit"
+              title="Edit and resubmit"
+              data-edit-message={message.id}
+              onClick={() => {
+                setDraft(message.text);
+                setEditing(true);
+              }}
+            >
+              Edit
+            </button>
+          )}
+          {onTogglePin && (
+            <button
+              type="button"
+              className={`${styles.msgAction} ${styles.workerActivityAction}`}
+              data-msg-pin=""
+              aria-pressed={pinned}
+              aria-label={pinned ? "Unpin message" : "Pin message"}
+              title={pinned ? "Unpin this message" : "Pin this message"}
+              onClick={onTogglePin}
+            >
+              {pinned ? "Unpin" : "Pin"}
+            </button>
+          )}
         </div>
       </article>
     );
@@ -1480,6 +1558,7 @@ const MessageBlock = memo(function MessageBlock({
   message,
   autoExpandTool,
   animateIn,
+  activityOpen = false,
   streaming,
   eventActionLabel,
   eventActionTitle,
@@ -1506,6 +1585,8 @@ const MessageBlock = memo(function MessageBlock({
   autoExpandTool: boolean;
   /** Freshly appended at the live tail — play the stream-in entrance. */
   animateIn?: boolean;
+  /** Verbose mode or an active reveal: keep a routine notice expanded. */
+  activityOpen?: boolean;
   /** Actively growing assistant message — show the streaming caret. */
   streaming?: boolean;
   onLoadImage?: (name: string) => Promise<string | null>;
@@ -1560,6 +1641,7 @@ const MessageBlock = memo(function MessageBlock({
         canEdit={Boolean(canEdit)}
         confirming={Boolean(confirming)}
         animateIn={entered}
+        activityOpen={activityOpen}
         onRequestResubmit={onRequestResubmit}
         onCancelConfirm={onCancelConfirm}
         onLoadAttachmentImage={onLoadAttachmentImage}
@@ -4418,6 +4500,8 @@ export const ThreadView = memo(function ThreadView({
   conflictContext,
   onOpenWorktree,
   onOpenCrewIntegration,
+  workerCount = 0,
+  onOpenWorkers,
   onRefreshWorkerSnapshot,
   onRunCommand,
   runError = null,
@@ -6377,8 +6461,12 @@ export const ThreadView = memo(function ThreadView({
   };
 
   const handoffSourceId = thread.handoffFrom;
+  const isCrewWorker = Boolean(thread.orchWorker);
+  const showWorkerNav = isCrewWorker;
   const showHandoffBanner =
-    handoffSourceId != null && !handoffBannerDismissed;
+    !isCrewWorker && handoffSourceId != null && !handoffBannerDismissed;
+  const workerNavLabel = handoffSource?.orchWorker ? "Parent worker" : "Task";
+  const workersLabel = `Workers (${workerCount})`;
 
   const handleCopyThreadId = async () => {
     try {
@@ -6465,6 +6553,18 @@ export const ThreadView = memo(function ThreadView({
             <span className={styles.threadTitle}>{thread.title}</span>
           )}
           </div>
+          {workerCount > 0 && onOpenWorkers ? (
+            <button
+              type="button"
+              className={`${styles.btn} ${styles.workersBtn}`}
+              data-open-workers=""
+              aria-label={workersLabel}
+              title={workersLabel}
+              onClick={onOpenWorkers}
+            >
+              {workersLabel}
+            </button>
+          ) : null}
         </div>
         <div className={styles.headerTrail}>
           {worktree.toolbar}
@@ -7048,6 +7148,29 @@ export const ThreadView = memo(function ThreadView({
           }
           return (
             <div className={styles.chatSlot} data-pane-chat="">
+      {showWorkerNav && (
+        <div className={styles.handoffBanner} data-worker-nav="">
+          <span className={styles.handoffBannerText}>
+            {handoffSource ? (
+              <>
+                {workerNavLabel}{" "}
+                <button
+                  type="button"
+                  className={styles.handoffLink}
+                  data-task-source={handoffSource.id}
+                  onClick={() => onSelectThread?.(handoffSource.id)}
+                >
+                  {handoffSource.title}
+                </button>
+              </>
+            ) : (
+              <span data-worker-nav-missing="">
+                Task is no longer available
+              </span>
+            )}
+          </span>
+        </div>
+      )}
       {showHandoffBanner && (
         <div className={styles.handoffBanner} data-handoff-banner="">
           <span className={styles.handoffBannerText}>
@@ -7261,6 +7384,9 @@ export const ThreadView = memo(function ThreadView({
                         verboseTools ||
                         entry.message.id === latestRunningToolId ||
                         entry.message.id === latestThinkingId
+                      }
+                      activityOpen={
+                        verboseTools || revealTargetId === entry.message.id
                       }
                       animateIn={!seenEntryKeys.current.has(entry.message.id)}
                       streaming={entry.message.id === streamingMessageId}

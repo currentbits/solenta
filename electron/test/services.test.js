@@ -1664,6 +1664,51 @@ describe("forkWorkerThread", () => {
     assert.equal(stored.model, "kimi-for-coding-highspeed");
   });
 
+  it("uses an explicit title, else the first prompt line, else one Fork: prefix", () => {
+    const source = services.createThread(store, {
+      projectId: project.id,
+      title: "Fork: Fork: Build sidebar grouping",
+    });
+    const named = services.forkWorkerThread(store, {
+      threadId: source.id,
+      title: "Review permissions",
+      prompt: "This long prompt must not become the title.\nsecond line",
+    });
+    assert.equal(store.getThread(named.id).title, "Review permissions");
+    assert.equal(store.getThread(named.id).handoffFrom, source.id);
+    assert.equal(store.getThread(named.id).orchWorker, true);
+
+    const fromPrompt = services.forkWorkerThread(store, {
+      threadId: source.id,
+      prompt: "\n  Fix sidebar grouping  \nmore context\n",
+    });
+    assert.equal(store.getThread(fromPrompt.id).title, "Fix sidebar grouping");
+
+    const emptyPrompt = services.forkWorkerThread(store, {
+      threadId: source.id,
+      prompt: "   \n\n",
+    });
+    assert.equal(emptyPrompt.title, "Fork: Build sidebar grouping");
+
+    const longLine = "L".repeat(80);
+    const longPrompt = services.forkWorkerThread(store, {
+      threadId: source.id,
+      prompt: `${longLine}\nsecond`,
+    });
+    assert.equal(longPrompt.title.length, services.THREAD_TITLE_MAX);
+    assert.equal(longPrompt.title, longLine.slice(0, services.THREAD_TITLE_MAX));
+
+    const longTitle = services.forkWorkerThread(store, {
+      threadId: source.id,
+      title: "T".repeat(100),
+    });
+    assert.equal(longTitle.title.length, services.THREAD_TITLE_MAX);
+
+    const noHint = services.forkWorkerThread(store, { threadId: source.id });
+    assert.equal(noHint.title, "Fork: Build sidebar grouping");
+    assert.equal(store.getThread(source.id).title, "Fork: Fork: Build sidebar grouping");
+  });
+
   it("canHostWorktree rejects remote projects and non-repos", () => {
     assert.equal(services.canHostWorktree({ path: repo }), true);
     assert.equal(

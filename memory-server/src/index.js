@@ -707,7 +707,7 @@ async function handleApi(req, res, url, memory) {
  * @param {Memory} memory
  * @param {{ port: number, token: string, dbPath: string }} config
  * @param {string} [host]
- * @param {string} [configFile] when set, EADDRINUSE rewrites this file onto a fresh port and retries
+ * @param {string} [configFile] when set, a busy or Windows-reserved port rewrites this file onto an OS-assigned port and retries
  * @returns {Promise<http.Server>}
  */
 export function startServer(memory, config, host = '127.0.0.1', configFile) {
@@ -813,12 +813,44 @@ export function startServer(memory, config, host = '127.0.0.1', configFile) {
   return listenWithPortFallback(server, config, host, configFile)
 }
 
-const PORT_FALLBACK_ATTEMPTS = 20
+/**
+ * Windows reports both a taken port (SO_EXCLUSIVEADDRUSE) and a Hyper-V
+ * excluded dynamic port as EACCES, not EADDRINUSE. The 49500–49999 config
+ * window sits inside that dynamic range. An OS-assigned port (listen 0) is
+ * outside the excluded set the kernel just refused.
+ * @param {NodeJS.ErrnoException | null | undefined} err
+ * @returns {boolean}
+ */
+function bindFailureCanMove(err) {
+  if (!err) return false
+  if (err.code === 'EADDRINUSE') return true
+  return err.code === 'EACCES' && process.platform === 'win32'
+}
 
 /**
- * Bind `config.port`. On EADDRINUSE with a configFile, pick a fresh port in
- * the same range as loadOrCreateConfig, persist it, and retry so a squatter
- * cannot wedge us on the recorded port.
+ * @param {http.Server} server
+ * @param {number} port
+ * @param {string} host
+ * @returns {Promise<void>}
+ */
+function listenOnce(server, port, host) {
+  return new Promise((resolve, reject) => {
+    const onError = (err) => {
+      server.removeListener('listening', onListening)
+      reject(err)
+    }
+    const onListening = () => {
+      server.removeListener('error', onError)
+      resolve()
+    }
+    server.once('error', onError)
+    server.listen(port, host, onListening)
+  })
+}
+
+/**
+ * Bind `config.port`. When that port is busy or reserved and a configFile is
+ * set, bind an OS-assigned port, persist it, and keep the token and dbPath.
  * @param {http.Server} server
  * @param {{ port: number, token: string, dbPath: string }} config
  * @param {string} host
@@ -826,37 +858,30 @@ const PORT_FALLBACK_ATTEMPTS = 20
  * @returns {Promise<http.Server>}
  */
 async function listenWithPortFallback(server, config, host, configFile) {
-  let lastErr
-  for (let n = 0; n < PORT_FALLBACK_ATTEMPTS; n++) {
-    try {
-      await new Promise((resolve, reject) => {
-        const onError = (err) => reject(err)
-        server.once('error', onError)
-        server.listen(config.port, host, () => {
-          server.removeListener('error', onError)
-          resolve()
-        })
-      })
-      return server
-    } catch (err) {
-      lastErr = err
-      if (!(err && err.code === 'EADDRINUSE' && configFile)) throw err
-      if (n === PORT_FALLBACK_ATTEMPTS - 1) break
-      config.port = 49500 + crypto.randomInt(500)
-      const next = {
-        port: config.port,
-        token: config.token,
-        dbPath: config.dbPath,
-      }
-      fs.writeFileSync(configFile, JSON.stringify(next, null, 2), { mode: 0o600 })
-      try {
-        fs.chmodSync(configFile, 0o600)
-      } catch {
-        // best-effort
-      }
-    }
+  try {
+    await listenOnce(server, config.port, host)
+    return server
+  } catch (err) {
+    if (!configFile || !bindFailureCanMove(err)) throw err
   }
-  throw lastErr
+  await listenOnce(server, 0, host)
+  try {
+    const address = server.address()
+    const port = address && typeof address === 'object' ? address.port : null
+    if (!port) throw new Error('port fallback did not bind')
+    const next = { port, token: config.token, dbPath: config.dbPath }
+    fs.writeFileSync(configFile, JSON.stringify(next, null, 2), { mode: 0o600 })
+    try {
+      fs.chmodSync(configFile, 0o600)
+    } catch {
+      // best-effort
+    }
+    config.port = port
+    return server
+  } catch (err) {
+    await new Promise((resolve) => server.close(() => resolve()))
+    throw err
+  }
 }
 
 function isMain() {

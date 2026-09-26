@@ -750,6 +750,10 @@ function createRunner(opts) {
     // per call rather than captured.
     getIosSimulator = () => null,
   } = opts;
+  // Lane beats (#346). Missing this binding threw inside the heartbeat
+  // try/catch, so lastBeat never moved and the wedge watchdog could
+  // recycle a live run.
+  const nowFn = typeof opts.now === "function" ? opts.now : () => Date.now();
 
   /**
    * @type {Map<string, object>}
@@ -1762,11 +1766,18 @@ function createRunner(opts) {
       },
     };
     for (const t of crew) {
-      // "idle" is a terminal too: stopped runs and app-quit interrupts land
-      // there (grok CLIs often end "cancelled" after finishing their work).
-      // pendingFork idle means the worker never ran — leave it visible.
-      const finished =
-        t.status === "done" || (t.status === "idle" && !t.pendingFork);
+      // Done is finished. Idle is finished only after the worker has run:
+      // stoppedAt (#183), a session, or a transcript. getMessages hydrates
+      // a shard, so only an unarchived idle row with neither cheaper mark
+      // pays for it. A fresh fork and a pendingFork stay visible (#979).
+      if (t.archived || t.pendingFork) continue;
+      let finished = t.status === "done";
+      if (!finished && t.status === "idle") {
+        finished =
+          Boolean(t.stoppedAt) ||
+          Boolean(t.sessionId) ||
+          (store.getMessages(t.id) || []).length > 0;
+      }
       if (finished && !t.archived) {
         // Not real activity: no touch, same as threads:setArchived.
         store.updateThread(t.id, { archived: true });
@@ -7615,6 +7626,7 @@ function createRunner(opts) {
         threadId,
         provider,
         worktree: cmd.kind === "handoff",
+        title: cmd.task,
       }),
     );
     const ids = workers.map((w) => w.id);
@@ -8189,8 +8201,9 @@ function createRunner(opts) {
     // belong to the run that actually happens — the worker's — so they are
     // deliberately skipped on this hop.
     if (thread.pendingFork) {
-      // Promote the title BEFORE forking so the worker is "Fork: <task>"
-      // rather than "Fork: New Thread".
+      // Promote the parent title BEFORE forking so the orchestrator is
+      // named after the first prompt, not "New Thread". The worker gets
+      // that same first line as its job title (no extra Fork: prefix).
       let forkTitle = thread.title;
       if (forkTitle === "New Thread") {
         const firstLine = String(prompt).split(/\r?\n/)[0].trim();
@@ -8201,7 +8214,7 @@ function createRunner(opts) {
         store.updateThread(threadId, { title: forkTitle }, { touch: true });
       }
 
-      const worker = services.forkWorkerThread(store, { threadId });
+      const worker = services.forkWorkerThread(store, { threadId, prompt });
       // The fork itself is a span (issue #280 asks for thread/fork/tool), and
       // it parents the worker's run so the crew reads as one trace tree. It
       // closes as soon as the worker is launched — the worker outliving its

@@ -9,9 +9,12 @@ import {
   buildFlatSidebar,
   buildSidebarGroups,
   flattenLater,
+  nestWorkerFamilies,
   partitionSidebar,
   splitSettled,
   visibleAttentionCount,
+  visibleFamilyRows,
+  withCrewSearchContext,
 } from "../src/sidebarGroups.ts";
 import { AUTO_SETTLE_AFTER_DAYS } from "../src/threadSettle.ts";
 import type { ProjectInfo, ThreadInfo } from "../src/shared/ipc.ts";
@@ -136,24 +139,43 @@ describe("buildSidebarGroups", () => {
     );
   });
 
-  it("attaches forked threads directly under their source thread", () => {
+  it("attaches orchWorker descendants under their source; manual forks stay independent", () => {
     const threads = [
       thread({ id: "orch", projectId: "a", updatedAt: 100 }),
       thread({ id: "other", projectId: "a", updatedAt: 150 }),
-      thread({ id: "w1", projectId: "a", updatedAt: 200, handoffFrom: "orch" }),
-      thread({ id: "w2", projectId: "a", updatedAt: 300, handoffFrom: "orch" }),
+      thread({
+        id: "w1",
+        projectId: "a",
+        updatedAt: 200,
+        handoffFrom: "orch",
+        orchWorker: true,
+      }),
+      thread({
+        id: "w2",
+        projectId: "a",
+        updatedAt: 300,
+        handoffFrom: "orch",
+        orchWorker: true,
+      }),
+      thread({
+        id: "manual",
+        projectId: "a",
+        updatedAt: 350,
+        handoffFrom: "orch",
+      }),
       thread({
         id: "stray",
         projectId: "a",
         updatedAt: 400,
         handoffFrom: "gone",
+        orchWorker: true,
       }),
     ];
     const groups = buildSidebarGroups([pA], threads);
     assert.deepEqual(
       groups[0]!.threads.map((t) => t.id),
-      ["stray", "other", "orch", "w2", "w1"],
-      "workers follow their orchestrator; a fork with a missing source keeps sort order",
+      ["stray", "manual", "other", "orch", "w2", "w1"],
+      "orchWorkers follow their lead; a manual fork and a missing source keep sort order",
     );
   });
 
@@ -511,7 +533,7 @@ describe("buildFlatSidebar (T3 flat sidebar)", () => {
     assert.deepEqual(flat.archived.map((t) => t.id), ["gone"]);
   });
 
-  it("active sorts createdAt desc and attaches forks under their source", () => {
+  it("active sorts createdAt desc and attaches orchWorkers under their source", () => {
     const flat = buildFlatSidebar(
       [
         thread({ id: "old", projectId: "p1", updatedAt: NOW, createdAt: NOW - 3 }),
@@ -522,14 +544,22 @@ describe("buildFlatSidebar (T3 flat sidebar)", () => {
           updatedAt: NOW,
           createdAt: NOW - 1,
           handoffFrom: "src",
+          orchWorker: true,
+        }),
+        thread({
+          id: "manual",
+          projectId: "p1",
+          updatedAt: NOW,
+          createdAt: NOW - 0.5,
+          handoffFrom: "src",
         }),
       ],
       settleOpts,
     );
-    assert.deepEqual(flat.active.map((t) => t.id), ["src", "fork", "old"]);
+    assert.deepEqual(flat.active.map((t) => t.id), ["manual", "src", "fork", "old"]);
   });
 
-  it("keeps settled workers nested under an still-active parent", () => {
+  it("explicit settle files a worker to the Settled shelf even if the parent is still active", () => {
     const flat = buildFlatSidebar(
       [
         thread({
@@ -546,7 +576,35 @@ describe("buildFlatSidebar (T3 flat sidebar)", () => {
           createdAt: NOW - 1,
           status: "done",
           handoffFrom: "orch",
+          orchWorker: true,
           settledOverride: "settled",
+        }),
+      ],
+      settleOpts,
+    );
+    assert.deepEqual(flat.active.map((t) => t.id), ["orch"]);
+    assert.deepEqual(flat.settled.map((t) => t.id), ["w-settled"]);
+  });
+
+  it("keeps auto-settled orchWorkers nested under an still-active parent", () => {
+    const flat = buildFlatSidebar(
+      [
+        thread({
+          id: "orch",
+          projectId: "p1",
+          updatedAt: NOW,
+          createdAt: NOW - 2,
+          status: "idle",
+        }),
+        thread({
+          id: "w-settled",
+          projectId: "p1",
+          updatedAt: NOW,
+          createdAt: NOW - 1,
+          status: "done",
+          handoffFrom: "orch",
+          orchWorker: true,
+          prState: "MERGED",
         }),
         thread({
           id: "unrelated-settled",
@@ -581,7 +639,8 @@ describe("buildFlatSidebar (T3 flat sidebar)", () => {
           createdAt: NOW - 2,
           status: "done",
           handoffFrom: "orch",
-          settledOverride: "settled",
+          orchWorker: true,
+          prState: "MERGED",
         }),
         thread({
           id: "w1a",
@@ -590,7 +649,8 @@ describe("buildFlatSidebar (T3 flat sidebar)", () => {
           createdAt: NOW - 1,
           status: "done",
           handoffFrom: "w1",
-          settledOverride: "settled",
+          orchWorker: true,
+          prState: "MERGED",
         }),
       ],
       settleOpts,
@@ -625,7 +685,7 @@ describe("buildFlatSidebar (T3 flat sidebar)", () => {
     assert.deepEqual(flat.pinned.map((t) => t.id), ["p-old", "p-new"]);
   });
 
-  it("keeps settled workers nested under a pinned parent", () => {
+  it("keeps auto-settled workers nested under a pinned parent", () => {
     const flat = buildFlatSidebar(
       [
         thread({
@@ -643,7 +703,8 @@ describe("buildFlatSidebar (T3 flat sidebar)", () => {
           createdAt: NOW - 1,
           status: "done",
           handoffFrom: "orch",
-          settledOverride: "settled",
+          orchWorker: true,
+          prState: "MERGED",
         }),
         thread({
           id: "unrelated-settled",
@@ -679,7 +740,8 @@ describe("buildFlatSidebar (T3 flat sidebar)", () => {
           createdAt: NOW - 2,
           status: "done",
           handoffFrom: "orch",
-          settledOverride: "settled",
+          orchWorker: true,
+          prState: "MERGED",
         }),
         thread({
           id: "w1a",
@@ -688,7 +750,8 @@ describe("buildFlatSidebar (T3 flat sidebar)", () => {
           createdAt: NOW - 1,
           status: "done",
           handoffFrom: "w1",
-          settledOverride: "settled",
+          orchWorker: true,
+          prState: "MERGED",
         }),
       ],
       settleOpts,
@@ -696,5 +759,143 @@ describe("buildFlatSidebar (T3 flat sidebar)", () => {
     assert.deepEqual(flat.pinned.map((t) => t.id), ["orch", "w1", "w1a"]);
     assert.deepEqual(flat.active.map((t) => t.id), []);
     assert.deepEqual(flat.settled.map((t) => t.id), []);
+  });
+
+  it("flattens live grandchildren under the crew lead", () => {
+    const nested = nestWorkerFamilies([
+      thread({ id: "orch", projectId: "p1", updatedAt: NOW, createdAt: NOW - 3 }),
+      thread({
+        id: "w1",
+        projectId: "p1",
+        updatedAt: NOW,
+        createdAt: NOW - 2,
+        handoffFrom: "orch",
+        orchWorker: true,
+      }),
+      thread({
+        id: "w1a",
+        projectId: "p1",
+        updatedAt: NOW,
+        createdAt: NOW - 1,
+        handoffFrom: "w1",
+        orchWorker: true,
+      }),
+    ]);
+    assert.deepEqual(
+      nested.map((t) => t.id),
+      ["orch", "w1", "w1a"],
+      "grandchildren sit beside workers, still after the lead",
+    );
+  });
+
+  it("leaves cycle members and cross-project workers as independent rows", () => {
+    const nested = nestWorkerFamilies([
+      thread({
+        id: "a",
+        projectId: "p1",
+        updatedAt: NOW,
+        handoffFrom: "b",
+        orchWorker: true,
+      }),
+      thread({
+        id: "b",
+        projectId: "p1",
+        updatedAt: NOW,
+        handoffFrom: "a",
+        orchWorker: true,
+      }),
+      thread({ id: "lead", projectId: "p1", updatedAt: NOW }),
+      thread({
+        id: "other-proj",
+        projectId: "p2",
+        updatedAt: NOW,
+        handoffFrom: "lead",
+        orchWorker: true,
+      }),
+    ]);
+    assert.deepEqual(
+      nested.map((t) => t.id),
+      ["a", "b", "lead", "other-proj"],
+    );
+  });
+
+  it("keeps a 2-node cycle visible when families are collapsed", () => {
+    const list = nestWorkerFamilies([
+      thread({
+        id: "a",
+        projectId: "p1",
+        updatedAt: NOW,
+        handoffFrom: "b",
+        orchWorker: true,
+      }),
+      thread({
+        id: "b",
+        projectId: "p1",
+        updatedAt: NOW,
+        handoffFrom: "a",
+        orchWorker: true,
+      }),
+    ]);
+    const visible = visibleFamilyRows(list, { expandedRootIds: new Set() });
+    assert.deepEqual(visible.map((t) => t.id), ["a", "b"]);
+  });
+
+  it("hides collapsed workers and keeps a selected worker visible", () => {
+    const list = nestWorkerFamilies([
+      thread({ id: "orch", projectId: "p1", updatedAt: NOW, createdAt: NOW - 2 }),
+      thread({
+        id: "w1",
+        projectId: "p1",
+        updatedAt: NOW,
+        createdAt: NOW - 1,
+        handoffFrom: "orch",
+        orchWorker: true,
+      }),
+      thread({
+        id: "w2",
+        projectId: "p1",
+        updatedAt: NOW,
+        createdAt: NOW,
+        handoffFrom: "orch",
+        orchWorker: true,
+      }),
+    ]);
+    const hidden = visibleFamilyRows(list, { expandedRootIds: new Set() });
+    assert.deepEqual(hidden.map((t) => t.id), ["orch"]);
+    const selected = visibleFamilyRows(list, {
+      expandedRootIds: new Set(),
+      keepIds: ["w2"],
+    });
+    assert.deepEqual(
+      selected.map((t) => t.id),
+      ["orch", "w2"],
+      "selected worker stays; siblings stay collapsed",
+    );
+    const expanded = visibleFamilyRows(list, {
+      expandedRootIds: new Set(["orch"]),
+      keepIds: ["w2"],
+    });
+    assert.deepEqual(expanded.map((t) => t.id), ["orch", "w1", "w2"]);
+    const hits = visibleFamilyRows(list, {
+      expandedRootIds: new Set(),
+      keepWorkerIds: new Set(["w1"]),
+    });
+    assert.deepEqual(hits.map((t) => t.id), ["orch", "w1"]);
+  });
+
+  it("search context inserts the crew lead in front of a matching worker", () => {
+    const all = [
+      thread({ id: "orch", projectId: "p1", updatedAt: NOW, title: "Build sidebar" }),
+      thread({
+        id: "w1",
+        projectId: "p1",
+        updatedAt: NOW,
+        title: "Review permissions",
+        handoffFrom: "orch",
+        orchWorker: true,
+      }),
+    ];
+    const hits = withCrewSearchContext([all[1]!], all);
+    assert.deepEqual(hits.map((t) => t.id), ["orch", "w1"]);
   });
 });
