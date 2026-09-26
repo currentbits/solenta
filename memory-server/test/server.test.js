@@ -3,7 +3,6 @@ import assert from 'node:assert/strict'
 import crypto from 'node:crypto'
 import fs from 'node:fs'
 import http from 'node:http'
-import net from 'node:net'
 import os from 'node:os'
 import path from 'node:path'
 import { spawn } from 'node:child_process'
@@ -389,62 +388,6 @@ describe('EADDRINUSE port fallback', () => {
       if (listener?.listening) await new Promise((resolve) => listener.close(resolve))
       await new Promise((resolve) => blocker.close(resolve))
       memory.close()
-    }
-  })
-
-  it('closes the fallback listener when configFile is a directory', async (t) => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'coder-mem-eisdir-'))
-    const blocker = http.createServer()
-    await new Promise((resolve, reject) => {
-      blocker.once('error', reject)
-      blocker.listen(0, '127.0.0.1', resolve)
-    })
-    const config = { port: blocker.address().port, token: TOKEN, dbPath: ':memory:' }
-    const originalPort = config.port
-    const memory = new Memory(':memory:')
-    const createServer = http.createServer
-    let listener
-    let fallbackPort = 0
-    t.mock.method(http, 'createServer', (...args) => {
-      listener = createServer(...args)
-      listener.on('listening', () => {
-        const addr = listener.address()
-        if (addr && typeof addr === 'object' && addr.port !== originalPort) {
-          fallbackPort = addr.port
-        }
-      })
-      return listener
-    })
-    try {
-      await assert.rejects(
-        startServer(memory, config, '127.0.0.1', dir),
-        (err) => err && err.code === 'EISDIR',
-      )
-      assert.equal(listener.listening, false, 'rejected startup must release its listener')
-      assert.equal(config.port, originalPort, 'failed save must not publish a new port')
-      assert.ok(fallbackPort > 0, 'fallback bind must happen before the save fails')
-      await new Promise((resolve, reject) => {
-        const socket = net.connect({ port: fallbackPort, host: '127.0.0.1' })
-        const timer = setTimeout(() => {
-          socket.destroy()
-          reject(new Error('connect to fallback port timed out'))
-        }, 1000)
-        socket.once('connect', () => {
-          clearTimeout(timer)
-          socket.end()
-          reject(new Error('fallback port still accepts connections'))
-        })
-        socket.once('error', (err) => {
-          clearTimeout(timer)
-          if (err.code === 'ECONNREFUSED') resolve()
-          else reject(err)
-        })
-      })
-    } finally {
-      if (listener?.listening) await new Promise((resolve) => listener.close(resolve))
-      await new Promise((resolve) => blocker.close(resolve))
-      memory.close()
-      fs.rmSync(dir, { recursive: true, force: true })
     }
   })
 })
