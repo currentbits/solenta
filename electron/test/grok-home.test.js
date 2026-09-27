@@ -128,10 +128,15 @@ enabled = ["ponytail"]
       "overlay sessions must not be a symlink into ~/.grok (grok stale-session GC deletes through it)",
     );
     assert.ok(overlaySessions.isDirectory());
-    assert.equal(
-      fs.statSync(path.join(dest, "config.toml")).mode & 0o777,
-      0o600,
-    );
+    const mode = fs.statSync(path.join(dest, "config.toml")).mode & 0o777;
+    if (process.platform === "win32") {
+      // Node's Windows chmod only implements the read-only flag. writeSecretFile
+      // still requests 0o600; a writable file stats as 0o666 because group/other
+      // bits are not stored.
+      assert.equal(mode & 0o200, 0o200, `secret file must stay writable, got ${mode.toString(8)}`);
+    } else {
+      assert.equal(mode, 0o600);
+    }
   });
 
   it("does not resurrect auth.json after grok deleted the overlay copy", () => {

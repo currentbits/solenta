@@ -164,6 +164,7 @@ describe("orchestration commands", () => {
     const workers = workersOf(thread.id);
     assert.equal(workers.length, 1);
     assert.equal(workers[0].provider, "codex");
+    assert.equal(workers[0].title, "implement the plan above");
     assert.ok(
       workers[0].worktreePath || workers[0].pendingWorktree,
       "handoff worker has no worktree",

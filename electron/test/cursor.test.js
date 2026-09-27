@@ -10,6 +10,7 @@ const services = require("../services.js");
 const { createRunner } = require("../runner.js");
 const { getProvider, resolveBin } = require("../providers.js");
 const { writeFakeBin } = require("./support/fakeBin.js");
+const { rmTree } = require("./support/rmTree.js");
 
 /** 1x1 transparent PNG, the "tool-image" scenario's payload. */
 const PNG_B64 =
@@ -582,7 +583,7 @@ describe("cursor runner integration", () => {
     });
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     if (runner) runner.stopAll();
     if (prevCursorBin === undefined) delete process.env.CODER_CURSOR_BIN;
     else process.env.CODER_CURSOR_BIN = prevCursorBin;
@@ -595,7 +596,7 @@ describe("cursor runner integration", () => {
     else process.env.CODER_SIMULATE = prevSimulate;
     if (prevAgentCmd === undefined) delete process.env.CODER_AGENT_CMD;
     else process.env.CODER_AGENT_CMD = prevAgentCmd;
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+    await rmTree(tmpDir);
   });
 
   it("streams assistant text, tool card, and captures sessionId", async () => {

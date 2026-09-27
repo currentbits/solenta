@@ -4,7 +4,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { spawn } from 'node:child_process'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 
 const orphanPath = fileURLToPath(new URL('../src/orphan.js', import.meta.url))
 
@@ -35,10 +35,10 @@ describe('exitWhenOrphaned', () => {
     const server = path.join(dir, 'server.mjs')
     fs.writeFileSync(
       server,
-      `import { exitWhenOrphaned } from ${JSON.stringify(orphanPath)}\n` +
+      `import { exitWhenOrphaned } from ${JSON.stringify(pathToFileURL(orphanPath).href)}\n` +
         `if (!exitWhenOrphaned(100)) throw new Error('guard not armed')\n` +
         `setInterval(() => {}, 1000)\n` +
-        `console.log('up')\n`,
+        `console.log('up ' + process.pid)\n`,
     )
     // Spawned exactly as the supervisor spawns it: not detached.
     const parent = path.join(dir, 'parent.mjs')
@@ -56,17 +56,23 @@ describe('exitWhenOrphaned', () => {
     proc.stdout.on('data', (c) => {
       out += c
     })
-    const pid = () => Number(out.split('\n')[0])
+    // The child's stdout is inherited onto the parent's pipe, so its ready
+    // line can arrive before the parent's pid line. The server prints its
+    // own pid once the guard is armed.
+    const serverPid = () => {
+      const m = out.match(/up (\d+)/)
+      return m ? Number(m[1]) : 0
+    }
 
     try {
-      assert.ok(await waitFor(() => out.includes('up\n'), 10000), 'server never came up')
-      assert.ok(alive(pid()), 'server not running')
+      assert.ok(await waitFor(() => serverPid() > 0, 10000), 'server never came up')
+      assert.ok(alive(serverPid()), 'server not running')
 
       process.kill(proc.pid, 'SIGKILL')
 
-      assert.ok(await waitFor(() => !alive(pid()), 10000), 'server survived its parent')
+      assert.ok(await waitFor(() => !alive(serverPid()), 10000), 'server survived its parent')
     } finally {
-      for (const p of [proc.pid, pid()]) {
+      for (const p of [proc.pid, serverPid()]) {
         try {
           if (p) process.kill(p, 'SIGKILL')
         } catch {

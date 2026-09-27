@@ -74,7 +74,7 @@ describe("materializeCursorGuardrailPlugin", () => {
     const pre = hooks.hooks.preToolUse;
     assert.equal(pre.length, 1);
     const scriptPath = path.join(dest, "scripts", "guardrail-hook.js");
-    assert.ok(pre[0].command.includes(scriptPath));
+    assert.equal(pre[0].command, "node " + JSON.stringify(scriptPath));
     assert.ok(fs.existsSync(scriptPath));
     assert.ok(fs.existsSync(path.join(dest, "scripts", "guardrails.js")));
   });

@@ -1,7 +1,7 @@
 import { DatabaseSync } from 'node:sqlite'
 import fs from 'node:fs'
 import path from 'node:path'
-import { canonicalProject } from './project-key.js'
+import { canonicalProject, isAbsoluteProjectPath } from './project-key.js'
 
 /**
  * @param {import('node:sqlite').DatabaseSync} db
@@ -458,7 +458,7 @@ export function normalizeProjectKeys(db) {
       // resolved to its main repo, and rewriting it to its own basename would
       // freeze a bogus per-worktree project forever. Leave it; a live path
       // will migrate on a later boot.
-      if (project.startsWith('/') && !fs.existsSync(project)) continue
+      if (isAbsoluteProjectPath(project) && !fs.existsSync(project)) continue
       const canon = canonicalProject(project)
       if (canon === project) continue
       const res = db

@@ -97,10 +97,10 @@ describe("materializeCursorHome", () => {
     const mcp = JSON.parse(fs.readFileSync(mcpPath, "utf8"));
     assert.deepEqual(Object.keys(mcp.mcpServers), ["coder-memory"]);
     assert.ok(!mcp.mcpServers.girder);
-    assert.equal(
-      fs.statSync(mcpPath).mode & 0o777,
-      0o600,
-    );
+    // writeSecretFile requests 0o600. Windows stat reports 0o666 for a
+    // writable file; chmod there only toggles the readonly attribute.
+    const mcpMode = fs.statSync(mcpPath).mode & 0o777;
+    assert.equal(mcpMode, process.platform === "win32" ? 0o666 : 0o600);
 
     const cli = path.join(dest, ".cursor", "cli-config.json");
     assert.ok(fs.lstatSync(cli).isSymbolicLink());

@@ -11,7 +11,9 @@ const path = require("node:path");
 const ymlPath = path.join(__dirname, "..", "..", ".github", "workflows", "speech-spike.yml");
 
 describe("speech-spike.yml triggers", () => {
-  const src = fs.readFileSync(ymlPath, "utf8");
+  // Windows checkout rewrites LF to CRLF. The contract is the trigger block,
+  // not the newline byte.
+  const src = fs.readFileSync(ymlPath, "utf8").replace(/\r\n/g, "\n");
   const on = src.match(/^on:\n([\s\S]*?)\n(?:permissions:|jobs:)/m);
 
   it("declares an on: block before permissions/jobs", () => {

@@ -51,12 +51,28 @@ describe("defaultWhich PATH lookup", () => {
     assert.ok(hit && !hit.includes("\n"), "result must be one path");
   });
 
-  it("keys the cache by platform, so a win32 miss cannot poison posix", () => {
-    // win32 lookup runs `where`, which does not exist here -> null, uncached.
-    assert.equal(defaultWhich("node", process.env, "win32"), null);
-    // The posix lookup must still find node rather than reuse that null.
-    const hit = defaultWhich("node", process.env, "darwin");
-    assert.ok(hit && hit.includes("node"), `platform leaked: got ${hit}`);
+  it("keys the cache by platform for the same binary and PATH", (t) => {
+    const childProcess = require("node:child_process");
+    const modulePath = require.resolve("../providers.js");
+    const cached = require.cache[modulePath];
+    const calls = [];
+    const env = { PATH: "same-path" };
+    t.mock.method(childProcess, "execFileSync", (command, args, options) => {
+      assert.deepEqual(args, ["node"]);
+      assert.equal(options.env, env);
+      calls.push(command);
+      return command === "where" ? "C:\\fixture\\node.exe\r\n" : "/fixture/node\n";
+    });
+    delete require.cache[modulePath];
+    try {
+      const fresh = require("../providers.js");
+      assert.equal(fresh.defaultWhich("node", env, "win32"), "C:\\fixture\\node.exe");
+      assert.equal(fresh.defaultWhich("node", env, "darwin"), "/fixture/node");
+      assert.equal(fresh.defaultWhich("node", env, "win32"), "C:\\fixture\\node.exe");
+      assert.deepEqual(calls, ["where", "which"]);
+    } finally {
+      require.cache[modulePath] = cached;
+    }
   });
 });
 

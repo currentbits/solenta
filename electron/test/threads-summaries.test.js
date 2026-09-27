@@ -55,6 +55,7 @@ describe("threads summaries", () => {
         provider: "grok",
         status: "working",
         handoffFrom: "orch",
+        orchWorker: true,
         runStartedAt: 90,
         awaitingInput: true,
       }),
@@ -64,12 +65,15 @@ describe("threads summaries", () => {
     const work = rows.find((r) => r.id === "work");
     // runStartedAt + awaitingInput ride along so the Agents panel can render
     // "waiting on N · elapsed" and flag a blocked worker (issue #42).
+    // orchWorker + projectId distinguish a true worker from an ordinary fork.
     assert.deepEqual(work, {
       id: "work",
       title: "Fork: Plan",
       provider: "grok",
       status: "working",
       handoffFrom: "orch",
+      orchWorker: true,
+      projectId: "p1",
       runStartedAt: 90,
       stoppedAt: null,
       awaitingInput: true,
@@ -80,6 +84,34 @@ describe("threads summaries", () => {
     assert.equal(orch.runStartedAt, null);
     assert.equal(orch.awaitingInput, false);
     assert.equal(orch.stalledAt, null);
+    assert.equal(orch.orchWorker, false);
+    assert.equal(orch.projectId, "p1");
+  });
+
+  it("does not treat an ordinary fork as an orchWorker", () => {
+    store.setThreads([
+      makeThread({ id: "src", projectId: "p1" }),
+      makeThread({
+        id: "fork",
+        projectId: "p2",
+        handoffFrom: "src",
+      }),
+      makeThread({
+        id: "work",
+        projectId: "p2",
+        handoffFrom: "src",
+        orchWorker: true,
+      }),
+    ]);
+    const rows = Object.fromEntries(
+      services.threadSummaries(store).map((r) => [r.id, r]),
+    );
+    assert.equal(rows.src.orchWorker, false);
+    assert.equal(rows.fork.orchWorker, false);
+    assert.equal(rows.fork.handoffFrom, "src");
+    assert.equal(rows.fork.projectId, "p2");
+    assert.equal(rows.work.orchWorker, true);
+    assert.equal(rows.work.projectId, "p2");
   });
 
   it("mirrors stalledAt onto the summary row", () => {

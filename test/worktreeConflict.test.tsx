@@ -302,6 +302,37 @@ describe("stacked base after create (#187)", () => {
     m.unmount();
   });
 
+  it("finds and selects a base buried in hundreds of branches", async () => {
+    const target = "codex/thread-worker-ux";
+    const picked: Array<string | null> = [];
+    const m = await mount(chrome({
+      listBaseBranches: async () => ({
+        defaultBranch: "main",
+        branches: ["main", ...Array.from({ length: 300 }, (_, i) => `coder/worker-${i}`), target],
+      }),
+      onSetBaseBranch: async (baseBranch) => { picked.push(baseBranch); },
+    }));
+    await m.click(m.query("[data-worktree-menu]"));
+    await m.click(m.query("[data-change-base]"));
+    const filter = m.query('[aria-label="Filter base branches"]');
+    assert.equal(document.activeElement, filter);
+    await m.type(filter, "missing-branch");
+    assert.equal(m.query("[role='status']")?.textContent, "No matching branches");
+    await m.type(filter, " CODEX/THREAD-WORKER ");
+    assert.deepEqual(m.queryAll("[data-base-branch]").map(el => el.getAttribute("data-base-branch")), ["", target]);
+    await m.pressFocused("Escape");
+    assert.equal(document.activeElement, m.query("[data-worktree-menu]"));
+    assert.equal(m.query('[aria-label="Filter base branches"]'), null);
+    await m.click(m.query("[data-worktree-menu]"));
+    await m.click(m.query("[data-change-base]"));
+    assert.equal((m.query('[aria-label="Filter base branches"]') as HTMLInputElement).value, "");
+    await m.type(m.query('[aria-label="Filter base branches"]'), target);
+    await m.click(m.query(`[data-base-branch='${target}']`));
+    assert.deepEqual(picked, [target]);
+    assert.equal(m.query("[role='dialog']"), null);
+    m.unmount();
+  });
+
   it("hides Change base after the first pull request", async () => {
     const m = await mount(
       chrome({

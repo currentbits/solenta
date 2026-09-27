@@ -153,6 +153,7 @@ const GROK_SCOUT: AgentProfile = {
 
 function composer(over: {
   disabled?: boolean;
+  busy?: boolean;
   agentProfiles?: AgentProfile[];
   onBestOfN?: (ids: string[], prompt: string) => void | Promise<void>;
 } = {}) {
@@ -175,6 +176,7 @@ function composer(over: {
       sessionId={null}
       hasWorktree={true}
       disabled={over.disabled ?? false}
+      busy={over.busy ?? false}
       onSend={() => {}}
       onBuild={() => {}}
       onBestOfN={over.onBestOfN ?? (async () => {})}
@@ -189,19 +191,20 @@ async function openBestOfN(
   const ta = m.query("textarea");
   assert.ok(ta, "composer textarea");
   await m.type(ta, prompt);
-  const trigger = m.query("[data-best-of-n]") as HTMLButtonElement | null;
-  assert.ok(trigger, "Best of N trigger");
-  assert.equal(trigger.disabled, false, "trigger enables once there is a prompt");
+  const trigger = m.query("[data-composer-options]") as HTMLButtonElement | null;
+  assert.ok(trigger, "Options");
+  assert.equal(trigger.disabled, false, "Options opens without a separate Best of N trigger");
+  trigger.focus();
   await m.click(trigger);
   const pop = m.query("[data-best-of-n-popover]");
-  assert.ok(pop, "popover must open above the composer");
+  assert.ok(pop, "Best of N stays inside Options");
   return pop;
 }
 
 describe("Best of N popover", () => {
   it("opening Best of N moves focus inside; Tab stays inside; Escape restores", async () => {
     const m = await mount(composer());
-    const trigger = m.query("[data-best-of-n]") as HTMLButtonElement;
+    const trigger = m.query("[data-composer-options]") as HTMLButtonElement;
     const ta = m.query("textarea");
     assert.ok(ta, "composer textarea");
     await m.type(ta, "compare this");
@@ -217,51 +220,60 @@ describe("Best of N popover", () => {
     );
     assert.notEqual(document.activeElement, trigger);
 
-    await m.pressFocused("Tab");
+    let sawInput = false;
     const first = document.activeElement as HTMLElement;
-    assert.ok(dialog.contains(first), "Tab stays inside");
-    assert.equal(first.tagName, "INPUT");
-
-    await m.pressFocused("Tab");
-    const second = document.activeElement as HTMLElement;
-    assert.ok(dialog.contains(second), "second Tab stays inside");
-    assert.notEqual(second, first);
-
-    await m.pressFocused("Tab");
-    const third = document.activeElement as HTMLElement;
-    assert.ok(dialog.contains(third), "third Tab stays inside");
-
-    await m.pressFocused("Tab");
-    assert.ok(
-      document.activeElement === first,
-      "Tab wraps inside the dialog",
-    );
+    for (let i = 0; i < 8; i++) {
+      await m.pressFocused("Tab");
+      const current = document.activeElement as HTMLElement;
+      assert.ok(dialog.contains(current), "Tab stays inside");
+      if (current.tagName === "INPUT") sawInput = true;
+      if (i > 0 && current === first) break;
+    }
+    assert.equal(sawInput, true, "Tab reaches the Best of N checkboxes");
 
     await m.pressFocused("Escape");
     assert.equal(m.query("[data-best-of-n-popover]"), null);
     assert.ok(
       document.activeElement === trigger,
-      `Escape restores the composer trigger (got ${document.activeElement?.tagName})`,
+      `Escape restores the Options trigger (got ${document.activeElement?.tagName})`,
     );
     m.unmount();
   });
 
-  it("stays disabled when the composer is empty or a run is active", async () => {
+  it("opens without a prompt and stays shut while archived or a run is active", async () => {
     const empty = await mount(composer());
-    const emptyBtn = empty.query("[data-best-of-n]") as HTMLButtonElement;
-    assert.ok(emptyBtn, "Best of N control must exist");
-    assert.equal(emptyBtn.disabled, true, "empty prompt disables Best of N");
+    const emptyOptions = empty.query(
+      "[data-composer-options]",
+    ) as HTMLButtonElement;
+    assert.ok(emptyOptions, "Options must exist");
+    assert.equal(emptyOptions.disabled, false, "empty prompt still opens Options");
+    emptyOptions.focus();
+    await empty.click(emptyOptions);
+    const run = empty.query("[data-best-of-n-run]") as HTMLButtonElement;
+    assert.equal(run.disabled, true, "empty prompt disables Best of N run");
+    assert.match(run.title, /prompt/i);
+    await empty.click(empty.query('input[data-best-of-n-provider="claude"]'));
+    await empty.click(empty.query('input[data-best-of-n-provider="codex"]'));
     assert.equal(
-      emptyBtn.getAttribute("title"),
-      "Run this prompt on multiple providers at once",
+      (empty.query("[data-best-of-n-run]") as HTMLButtonElement).disabled,
+      true,
+      "two picks still do not run without a prompt",
     );
     empty.unmount();
 
-    const busy = await mount(composer({ disabled: true }));
-    const ta = busy.query("textarea");
-    await mTypeSafe(busy, ta, "still typed");
-    const busyBtn = busy.query("[data-best-of-n]") as HTMLButtonElement;
-    assert.equal(busyBtn.disabled, true, "active run disables Best of N");
+    const archived = await mount(composer({ disabled: true }));
+    const archivedOptions = archived.query(
+      "[data-composer-options]",
+    ) as HTMLButtonElement;
+    assert.equal(archivedOptions.disabled, true, "archived thread disables Options");
+    archived.unmount();
+
+    const busy = await mount(composer({ busy: true }));
+    const busyOptions = busy.query(
+      "[data-composer-options]",
+    ) as HTMLButtonElement;
+    assert.equal(busyOptions.disabled, true, "active run disables Options");
+    assert.match(busyOptions.title, /wait/i);
     busy.unmount();
   });
 
@@ -285,6 +297,21 @@ describe("Best of N popover", () => {
     assert.match(text, /Kimi/);
     assert.match(text, /Moonshot/);
     assert.match(text, /Each selection forks a new thread/);
+    const sectionLabels = m
+      .queryAll("[data-composer-options-popover] p")
+      .map((el) => el.textContent);
+    assert.ok(
+      sectionLabels.includes("Workflow"),
+      "workflow section keeps its heading",
+    );
+    assert.ok(
+      sectionLabels.includes("Best of N"),
+      "Best of N keeps a section heading like Workflow",
+    );
+    assert.ok(
+      sectionLabels.includes("Each selection forks a new thread"),
+      "Best of N keeps the explanatory sentence",
+    );
 
     const run = m.query("[data-best-of-n-run]") as HTMLButtonElement;
     assert.ok(run, "Run control");
@@ -411,8 +438,8 @@ describe("Best of N popover", () => {
     const ta = m.query("textarea");
     assert.ok(ta, "composer textarea");
     await m.type(ta, "compare this");
-    const opener = m.query("[data-best-of-n]") as HTMLButtonElement | null;
-    assert.ok(opener, "Best of N trigger");
+    const opener = m.query("[data-composer-options]") as HTMLButtonElement | null;
+    assert.ok(opener, "Options trigger");
     await inAct(() => opener.focus());
     await m.click(opener);
     const dialog = m.query("[data-best-of-n-popover]") as HTMLElement | null;
@@ -447,7 +474,7 @@ describe("Best of N popover", () => {
     assert.equal(
       document.activeElement,
       opener,
-      "Escape restores the Best of N trigger",
+      "Escape restores the Options trigger",
     );
     m.unmount();
   });
@@ -634,12 +661,3 @@ describe("Best of N submit sequence", () => {
     m.unmount();
   });
 });
-
-async function mTypeSafe(
-  m: Awaited<ReturnType<typeof mount>>,
-  el: Element | null,
-  value: string,
-) {
-  if (!el) return;
-  await m.type(el, value);
-}

@@ -1742,6 +1742,8 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
               provider: t.provider,
               status: t.status,
               handoffFrom: t.handoffFrom ?? null,
+              ...(t.orchWorker === true ? { orchWorker: true as const } : {}),
+              projectId: t.projectId,
               lastActivity: last
                 ? {
                     text: last.text.split(/\r?\n/, 1)[0].trim(),

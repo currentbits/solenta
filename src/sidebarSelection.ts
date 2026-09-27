@@ -98,10 +98,14 @@ export function flatVisibleThreadIds(input: {
   selectedThreadId?: string | null;
   /** Extra ids the carve-outs keep visible (e.g. a revealed thread). */
   keepThreadIds?: readonly (string | null | undefined)[];
+  /** Collapsed orchWorker rows — keyboard/multi-select skip them. */
+  hiddenIds?: ReadonlySet<string>;
 }): string[] {
   const ids: string[] = [];
   const seen = new Set<string>();
+  const hidden = input.hiddenIds;
   const push = (id: string) => {
+    if (hidden?.has(id)) return;
     if (!seen.has(id)) {
       seen.add(id);
       ids.push(id);

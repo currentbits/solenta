@@ -196,6 +196,9 @@ function composer(
     hasWorktree?: boolean;
     disabled?: boolean;
     busy?: boolean;
+    ask?: boolean;
+    workflows?: WorkflowTemplateInfo[];
+    buildError?: string;
     providers?: ProviderInfo[];
     agentProfiles?: AgentProfile[];
     onListFiles?: (query: string) => Promise<string[]>;
@@ -223,8 +226,9 @@ function composer(
       }
       webSearch={over.webSearch === true}
       providers={over.providers ?? PROVIDERS}
+      ask={over.ask ?? false}
       agentProfiles={over.agentProfiles}
-      workflows={WORKFLOWS}
+      workflows={over.workflows ?? WORKFLOWS}
       onSetProvider={(input) => {
         harness.providerSets.push(input);
         harness.callOrder.push("setProvider");
@@ -261,6 +265,7 @@ function composer(
       }}
       onBuild={(prompt, templateId) => {
         harness.builds.push({ prompt, templateId });
+        if (over.buildError) throw new Error(over.buildError);
       }}
       onListFiles={over.onListFiles}
     />
@@ -716,11 +721,18 @@ describe("Composer send", () => {
     const h = makeHarness();
     const m = await mount(composer(h));
     const send = m.query('button[aria-label="Send"]') as HTMLButtonElement;
-    const build = m.byText("Build") as HTMLButtonElement | null;
+    const options = m.query(
+      "[data-composer-options]",
+    ) as HTMLButtonElement | null;
 
     assert.equal(send.disabled, true, "empty prompt: Send disabled");
-    assert.ok(build, "Build control must exist");
+    assert.ok(options, "Options stays available with an empty prompt");
+    assert.equal(options.disabled, false, "empty prompt: Options still opens");
+    await m.click(options);
+    const build = m.query("[data-workflow-run]") as HTMLButtonElement | null;
+    assert.ok(build, "Build stays inside Options");
     assert.equal(build.disabled, true, "empty prompt: Build disabled");
+    assert.match(build.title, /prompt/i);
 
     await m.click(send);
     await m.click(build);
@@ -736,6 +748,236 @@ describe("Composer send", () => {
     );
     await m.click(m.query('button[aria-label="Send"]'));
     assert.equal(h.sends.length, 0, "whitespace Send must not call onSend");
+    m.unmount();
+  });
+});
+
+describe("Composer options", () => {
+  async function openOptions(m: Awaited<ReturnType<typeof mount>>) {
+    const trigger = m.query("[data-composer-options]") as HTMLButtonElement;
+    assert.ok(trigger, "Options");
+    trigger.focus();
+    await m.click(trigger);
+    const pop = m.query("[data-composer-options-popover]");
+    assert.ok(pop, "options popover");
+    return { trigger, pop: pop as HTMLElement };
+  }
+
+  it("selects a workflow without running it, then builds that template", async () => {
+    const h = makeHarness();
+    const workflows: WorkflowTemplateInfo[] = [
+      ...WORKFLOWS,
+      {
+        id: "ship",
+        name: "Ship",
+        builtin: false,
+        phases: [
+          { name: "ship", agentCount: 1, provider: "claude", model: null },
+        ],
+      },
+    ];
+    const m = await mount(composer(h, { workflows }));
+    assert.equal(m.byText("Build"), null, "Build is not a toolbar control");
+    assert.equal(m.query('button[aria-label="Best of N"]'), null);
+    const opened = await openOptions(m);
+    assert.equal(opened.pop.getAttribute("role"), "dialog");
+    assert.equal(opened.pop.querySelector('[role="menu"]'), null);
+    assert.equal(
+      m.query("[data-selected-workflow]")?.getAttribute("data-selected-workflow"),
+      "standard",
+    );
+    await m.click(m.query("[data-workflow-template='ship']"));
+    assert.equal(h.builds.length, 0, "picking a template must not run it");
+    assert.equal(m.query("[data-composer-options-popover]"), null);
+    await openOptions(m);
+    assert.equal(
+      m.query("[data-selected-workflow]")?.getAttribute("data-selected-workflow"),
+      "ship",
+    );
+    assert.equal(
+      (m.query("[data-workflow-run]") as HTMLButtonElement).disabled,
+      true,
+      "Build stays disabled until there is a prompt",
+    );
+    await m.type(m.query("textarea"), "ship the chip");
+    await m.click(m.query("[data-workflow-run]"));
+    assert.deepEqual(h.builds, [
+      { prompt: "ship the chip", templateId: "ship" },
+    ]);
+    m.unmount();
+  });
+
+  it("keeps the prompt when a workflow fails to start", async () => {
+    const h = makeHarness();
+    const m = await mount(
+      composer(h, { buildError: "workflow unavailable" }),
+    );
+    await m.type(m.query("textarea"), "keep me");
+    await openOptions(m);
+    await m.click(m.query("[data-workflow-run]"));
+    assert.match(m.text(), /workflow unavailable/);
+    assert.equal(
+      (m.query("textarea") as HTMLTextAreaElement).value,
+      "keep me",
+    );
+    assert.equal(m.query("[data-composer-options-popover]"), null);
+    m.unmount();
+  });
+
+  it("closes Options on outside click and Escape, restoring the trigger", async () => {
+    const h = makeHarness();
+    const m = await mount(composer(h));
+    const { trigger } = await openOptions(m);
+    await inAct(() => {
+      document.body.dispatchEvent(
+        new MouseEvent("mousedown", { bubbles: true }),
+      );
+    });
+    await m.flush();
+    assert.equal(m.query("[data-composer-options-popover]"), null);
+    trigger.focus();
+    await m.click(trigger);
+    assert.ok(
+      (m.query("[data-composer-options-popover]") as HTMLElement).contains(
+        document.activeElement,
+      ),
+    );
+    await m.pressFocused("Escape");
+    assert.equal(m.query("[data-composer-options-popover]"), null);
+    assert.equal(document.activeElement, trigger);
+    m.unmount();
+  });
+
+  it("closes Options when a run starts or the thread changes and keeps the draft", async () => {
+    const h = makeHarness();
+    function Shell() {
+      const [tid, setTid] = useState("t1");
+      const [busy, setBusy] = useState(false);
+      return (
+        <>
+          <button onClick={() => setBusy(true)}>start-run</button>
+          <button onClick={() => setTid((t) => (t === "t1" ? "t2" : "t1"))}>
+            swap-thread
+          </button>
+          {composer(h, { threadId: tid, busy })}
+        </>
+      );
+    }
+    const m = await mount(<Shell />);
+    await m.type(m.query("textarea"), "draft A");
+    await openOptions(m);
+    await m.click(m.byText("start-run"));
+    assert.equal(
+      m.query("[data-composer-options-popover]"),
+      null,
+      "a live run closes Options",
+    );
+    assert.ok(m.query("[data-steer-action='queue']"), "Queue stays on the toolbar");
+    assert.equal(
+      (m.query("textarea") as HTMLTextAreaElement).value,
+      "draft A",
+    );
+    m.unmount();
+
+    const idle = await mount(<Shell />);
+    await idle.type(idle.query("textarea"), "draft A");
+    await openOptions(idle);
+    await idle.click(idle.byText("swap-thread"));
+    assert.equal(idle.query("[data-composer-options-popover]"), null);
+    assert.equal(
+      (idle.query("textarea") as HTMLTextAreaElement).value,
+      "",
+      "the other thread keeps its own draft",
+    );
+    await idle.click(idle.byText("swap-thread"));
+    assert.equal(
+      (idle.query("textarea") as HTMLTextAreaElement).value,
+      "draft A",
+    );
+    idle.unmount();
+  });
+
+  it("opens manage workflows from Options without starting a run", async () => {
+    const h = makeHarness();
+    const m = await mount(composer(h));
+    const { trigger } = await openOptions(m);
+    const manage = m.byText("Manage workflows") as HTMLButtonElement;
+    manage.focus();
+    await m.click(manage);
+    assert.ok(m.query('[aria-label="Manage workflows"]'));
+    assert.equal(m.query("[data-composer-options-popover]"), null);
+    assert.equal(h.builds.length, 0);
+    await m.pressFocused("Escape");
+    assert.equal(m.query('[aria-label="Manage workflows"]'), null);
+    assert.equal(
+      m.query("[data-composer-options-popover]"),
+      null,
+      "Escape closes the editor and does not leave Options open under it",
+    );
+    assert.equal(
+      document.activeElement,
+      trigger,
+      "Escape returns to Options after the editor control unmounts",
+    );
+    m.unmount();
+  });
+
+  it("hides Options in Ask mode and leaves model and Send visible", async () => {
+    const h = makeHarness();
+    const m = await mount(composer(h, { ask: true }));
+    assert.equal(m.query("[data-composer-options]"), null);
+    assert.equal(m.query("[data-workflow-run]"), null);
+    assert.ok(m.query('button[aria-label="Send"]'));
+    assert.ok(m.query('button[aria-label^="Model:"]'));
+    m.unmount();
+  });
+
+  it("keeps the Options popover inside a narrow viewport", async () => {
+    const h = makeHarness();
+    const m = await mount(composer(h));
+    const trigger = m.query("[data-composer-options]") as HTMLButtonElement;
+    const wrap = trigger.parentElement as HTMLElement;
+    wrap.getBoundingClientRect = () =>
+      ({
+        x: 200,
+        y: 240,
+        left: 200,
+        top: 240,
+        right: 268,
+        bottom: 268,
+        width: 68,
+        height: 28,
+        toJSON() {
+          return {};
+        },
+      }) as DOMRect;
+    const prevW = window.innerWidth;
+    const prevH = window.innerHeight;
+    Object.defineProperty(window, "innerWidth", {
+      configurable: true,
+      value: 280,
+    });
+    Object.defineProperty(window, "innerHeight", {
+      configurable: true,
+      value: 320,
+    });
+    trigger.focus();
+    await m.click(trigger);
+    const pop = m.query("[data-composer-options-popover]") as HTMLElement;
+    const left = 200 + parseFloat(pop.style.left || "0");
+    const width = parseFloat(pop.style.width || "0");
+    assert.ok(left >= 8, `left ${left}`);
+    assert.ok(left + width <= 272, `right ${left + width}`);
+    const maxH = parseFloat(pop.style.maxHeight || "0");
+    assert.ok(maxH > 0 && maxH <= 232, `maxHeight ${maxH}`);
+    Object.defineProperty(window, "innerWidth", {
+      configurable: true,
+      value: prevW,
+    });
+    Object.defineProperty(window, "innerHeight", {
+      configurable: true,
+      value: prevH,
+    });
     m.unmount();
   });
 });
@@ -2060,12 +2302,14 @@ describe("Composer while hard-disabled (archived thread)", () => {
     assert.equal(ta.disabled, true, "prompt must be locked on an archived thread");
 
     const send = m.query('button[aria-label="Send"]') as HTMLButtonElement;
-    const build = m.byText("Build") as HTMLButtonElement;
+    const options = m.query("[data-composer-options]") as HTMLButtonElement;
     assert.equal(send.disabled, true, "Send disabled while archived");
-    assert.equal(build.disabled, true, "Build disabled while archived");
+    assert.equal(options.disabled, true, "Options disabled while archived");
+    assert.match(options.title, /archived/i);
 
     await m.click(send);
-    await m.click(build);
+    await m.click(options);
+    assert.equal(m.query("[data-workflow-run]"), null);
     assert.equal(h.sends.length, 0, "archived thread must block onSend");
     assert.equal(h.builds.length, 0, "archived thread must block onBuild");
     m.unmount();
@@ -2189,9 +2433,12 @@ describe("Composer while a run is active (busy)", () => {
     const m = await mount(composer(h, { busy: true }));
     await m.type(m.query("textarea"), "a prompt");
 
-    const build = m.byText("Build") as HTMLButtonElement;
-    assert.equal(build.disabled, true, "Build cannot start during a run");
-    await m.click(build);
+    const options = m.query("[data-composer-options]") as HTMLButtonElement;
+    assert.equal(options.disabled, true, "Options cannot open during a run");
+    assert.match(options.title, /wait/i);
+    assert.ok(m.query("[data-steer-toggle]"), "Queue versus Steer stays visible");
+    await m.click(options);
+    assert.equal(m.query("[data-workflow-run]"), null);
     assert.equal(h.builds.length, 0, "active run must block onBuild");
 
     const model = m.query(
@@ -2409,9 +2656,17 @@ describe("Composer structure", () => {
       );
       if (pill) await m.click(pill);
     }
-    // Build caret menu.
-    const caret = m.query('button[aria-label="Choose workflow template"]');
-    if (caret) await m.click(caret);
+    const options = m.query("[data-composer-options]");
+    if (options) {
+      await m.click(options);
+      for (const el of m.queryAll("[data-composer-options-popover] button")) {
+        assert.equal(
+          el.querySelector("button, a, input, textarea, select"),
+          null,
+          "Options must not nest interactive elements",
+        );
+      }
+    }
 
     const mlist = await openProvider(m, "Claude Code");
     assert.ok(mlist, "drill into a provider: level one has no model rows");
@@ -3210,6 +3465,26 @@ describe("Composer live dictation (#845)", () => {
     await m.click(m.byText("swap-thread"));
     assert.equal(ta().value, "draft A", "t1 restored without the partial");
     m.unmount();
+  });
+
+  it("restores an unsent draft after the composer unmounts", async () => {
+    const h = makeHarness();
+    const first = await mount(composer(h, { threadId: "t-kept-draft" }));
+    await first.type(first.query("textarea"), "keep this prompt");
+    first.unmount();
+    const second = await mount(composer(h, { threadId: "t-kept-draft" }));
+    assert.equal(
+      (second.query("textarea") as HTMLTextAreaElement).value,
+      "keep this prompt",
+    );
+    const other = await mount(composer(h, { threadId: "t-other-draft" }));
+    assert.equal(
+      (other.query("textarea") as HTMLTextAreaElement).value,
+      "",
+      "another thread does not inherit the draft",
+    );
+    second.unmount();
+    other.unmount();
   });
 
   it("archiving cancels and restores the original draft", async () => {

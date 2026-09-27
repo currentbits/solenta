@@ -1,0 +1,183 @@
+<div id="solenta-thread-concept" aria-label="Solenta task and worker concept">
+  <style>
+    #solenta-thread-concept { --st-bg:light-dark(#fafbfc,#10141c); --st-side:light-dark(#f1f3f6,#141923); --st-text:light-dark(#202633,#e8ecf4); --st-muted:light-dark(#596273,#a8b1c0); --st-line:light-dark(#dce1e8,#2b3341); --st-selected:light-dark(#e4ebf7,#233149); --st-blue:light-dark(#285fba,#91b8fa); --st-amber:light-dark(#855500,#e7ba61); --st-green:light-dark(#216b4c,#7dccac); --st-hover:light-dark(#e9edf3,#202734); font:13px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; color:var(--st-text); }
+    #solenta-thread-concept * { box-sizing:border-box; }
+    #solenta-thread-concept button { font:inherit; color:inherit; cursor:pointer; }
+    #solenta-thread-concept button:focus-visible, #solenta-thread-concept summary:focus-visible { outline:2px solid var(--st-blue); outline-offset:3px; }
+    #solenta-thread-concept .st-preview { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:12px; margin-bottom:12px; color:var(--st-muted); }
+    #solenta-thread-concept .st-shell { display:grid; grid-template-columns:270px minmax(0,1fr); background:var(--st-bg); border:1px solid var(--st-line); border-radius:12px; overflow:hidden; }
+    #solenta-thread-concept .st-sidebar { background:var(--st-side); padding:20px 12px; border-right:1px solid var(--st-line); min-width:0; }
+    #solenta-thread-concept .st-brand { font-size:18px; font-weight:600; letter-spacing:-.5px; padding:0 10px 22px; }
+    #solenta-thread-concept .st-project { margin:0 10px 20px; color:var(--st-muted); }
+    #solenta-thread-concept .st-section-label { margin:16px 10px 8px; color:var(--st-muted); font-size:11px; text-transform:uppercase; letter-spacing:.09em; }
+    #solenta-thread-concept .st-task { border-radius:7px; background:var(--st-selected); padding:11px 10px; }
+    #solenta-thread-concept .st-root-button { padding:0; border:0; background:none; text-align:left; font-weight:600; }
+    #solenta-thread-concept .st-summary { color:var(--st-muted); font-size:12px; margin:4px 0 7px; }
+    #solenta-thread-concept .st-text-button { padding:0; background:none; border:0; color:var(--st-blue); text-align:left; }
+    #solenta-thread-concept .st-disclosure { display:flex; align-items:center; gap:7px; padding:3px 0; width:100%; border:0; background:none; text-align:left; }
+    #solenta-thread-concept .st-chevron { display:inline-block; transform:rotate(0); transition:transform 160ms cubic-bezier(.23,1,.32,1); }
+    #solenta-thread-concept .st-disclosure[aria-expanded="true"] .st-chevron { transform:rotate(90deg); }
+    #solenta-thread-concept .st-workers { padding:7px 0 5px 13px; }
+    #solenta-thread-concept .st-worker { display:flex; width:100%; gap:8px; align-items:center; justify-content:space-between; min-height:36px; border:0; background:none; border-radius:5px; padding:6px 9px; text-align:left; }
+    #solenta-thread-concept .st-worker[aria-current="true"] { background:var(--st-selected); }
+    #solenta-thread-concept .st-worker span:first-child { min-width:0; }
+    #solenta-thread-concept .st-worker .st-state { white-space:nowrap; font-size:11px; }
+    #solenta-thread-concept .st-state { color:var(--st-muted); }
+    #solenta-thread-concept .st-state[data-tone="attention"] { color:var(--st-amber); }
+    #solenta-thread-concept .st-state[data-tone="running"] { color:var(--st-blue); }
+    #solenta-thread-concept .st-state[data-tone="complete"] { color:var(--st-green); }
+    #solenta-thread-concept .st-completed { margin:4px 0 0 9px; color:var(--st-muted); }
+    #solenta-thread-concept .st-completed summary { cursor:pointer; font-size:12px; padding:5px 0; }
+    #solenta-thread-concept .st-other { padding:12px 10px; color:var(--st-muted); }
+    #solenta-thread-concept .st-other strong { display:block; color:var(--st-text); font-weight:500; }
+    #solenta-thread-concept .st-main { min-width:0; }
+    #solenta-thread-concept .st-top { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:10px; min-height:61px; padding:12px 23px; border-bottom:1px solid var(--st-line); }
+    #solenta-thread-concept .st-breadcrumb { display:flex; flex-wrap:wrap; gap:7px; color:var(--st-muted); }
+    #solenta-thread-concept .st-button { display:inline-flex; align-items:center; gap:6px; padding:6px 10px; border:1px solid var(--st-line); border-radius:6px; background:var(--st-bg); }
+    #solenta-thread-concept .st-body { padding:25px; }
+    #solenta-thread-concept h2 { margin:0 0 6px; font-size:21px; font-weight:600; letter-spacing:-.5px; line-height:1.3; }
+    #solenta-thread-concept .st-subtitle { color:var(--st-muted); margin:0 0 23px; }
+    #solenta-thread-concept .st-attention { padding:12px 14px; border:1px solid var(--st-line); border-radius:7px; display:flex; align-items:center; justify-content:space-between; gap:15px; margin:0 0 25px; }
+    #solenta-thread-concept .st-attention strong { font-weight:500; color:var(--st-amber); }
+    #solenta-thread-concept .st-small { font-size:12px; color:var(--st-muted); }
+    #solenta-thread-concept .st-person { color:var(--st-muted); margin:0 0 7px; font-size:12px; }
+    #solenta-thread-concept .st-copy { max-width:64ch; margin:0 0 22px; }
+    #solenta-thread-concept .st-activity { margin:0 0 25px; color:var(--st-muted); }
+    #solenta-thread-concept .st-activity summary { cursor:pointer; }
+    #solenta-thread-concept .st-activity ul { padding-left:23px; }
+    #solenta-thread-concept .st-roster { margin-bottom:24px; }
+    #solenta-thread-concept .st-roster-heading { display:flex; align-items:baseline; justify-content:space-between; margin:0 0 9px; }
+    #solenta-thread-concept .st-roster-heading strong { font-weight:500; }
+    #solenta-thread-concept .st-roster-row { display:flex; flex-wrap:wrap; align-items:center; gap:12px; padding:11px 0; border-bottom:1px solid var(--st-line); }
+    #solenta-thread-concept .st-roster-job { flex:1; min-width:160px; }
+    #solenta-thread-concept .st-roster-job small { display:block; color:var(--st-muted); }
+    #solenta-thread-concept .st-roster-row .st-state { font-size:12px; }
+    #solenta-thread-concept .st-composer { border:1px solid var(--st-line); border-radius:9px; padding:13px; margin-top:30px; }
+    #solenta-thread-concept .st-composer p { color:var(--st-muted); margin:0 0 18px; }
+    #solenta-thread-concept .st-composer-footer { display:flex; justify-content:space-between; flex-wrap:wrap; gap:10px; font-size:12px; color:var(--st-muted); }
+    #solenta-thread-concept .st-live { min-height:22px; color:var(--st-muted); font-size:12px; padding-top:10px; }
+    #solenta-thread-concept [hidden] { display:none !important; }
+    @media(hover:hover) and (pointer:fine) { #solenta-thread-concept .st-worker:hover, #solenta-thread-concept .st-button:hover { background:var(--st-hover); } }
+    @media(max-width:680px) { #solenta-thread-concept .st-shell { grid-template-columns:1fr; } #solenta-thread-concept .st-sidebar { border-right:0; border-bottom:1px solid var(--st-line); } #solenta-thread-concept .st-brand { padding-bottom:8px; } #solenta-thread-concept .st-project { margin-bottom:12px; } #solenta-thread-concept .st-other { display:none; } #solenta-thread-concept .st-body { padding:20px 16px; } #solenta-thread-concept .st-top { padding:12px 16px; } }
+    @media(pointer:coarse) { #solenta-thread-concept button, #solenta-thread-concept summary { min-height:44px; } }
+    @media(prefers-reduced-motion:reduce) { #solenta-thread-concept .st-chevron { transition:none; } }
+  </style>
+  <div class="st-preview"><span>Proposed task view · illustrative content</span><button type="button" class="st-button" id="st-finish">Preview worker completion</button></div>
+  <div class="st-shell">
+    <aside class="st-sidebar" aria-label="Tasks">
+      <div class="st-brand">solenta</div>
+      <div class="st-project">Project / solenta</div>
+      <div class="st-section-label">Active tasks</div>
+      <div id="st-task-family">
+        <div class="st-task">
+          <button type="button" class="st-root-button" data-open="root">Improve thread organization</button>
+          <div class="st-summary" id="st-summary">1 running · 1 ready · 1 needs you</div>
+          <button type="button" class="st-disclosure" id="st-disclose" aria-expanded="false" aria-controls="st-workers"><span class="st-chevron" aria-hidden="true">›</span><span>4 workers</span></button>
+        </div>
+        <div class="st-workers" id="st-workers" hidden>
+          <button type="button" class="st-worker" data-open="hierarchy"><span>Sidebar hierarchy</span><span class="st-state">Review</span></button>
+          <button type="button" class="st-worker" data-open="lifecycle"><span>Worker lifecycle</span><span class="st-state" data-tone="attention">Needs you</span></button>
+          <button type="button" class="st-worker" data-open="motion"><span>Motion polish</span><span class="st-state" data-tone="running" id="st-motion-state">Running</span></button>
+          <details class="st-completed"><summary>Completed (1)</summary><button type="button" class="st-worker" data-open="titles"><span>Title cleanup</span><span class="st-state" data-tone="complete">Integrated</span></button></details>
+        </div>
+      </div>
+      <div class="st-other"><strong>Improve keyboard navigation</strong><span class="st-small">Ready for review</span></div>
+      <div class="st-other"><strong>Refine empty states</strong><span class="st-small">Updated yesterday</span></div>
+      <div class="st-section-label">Settled</div>
+    </aside>
+    <main class="st-main">
+      <header class="st-top">
+        <nav class="st-breadcrumb" aria-label="Task breadcrumb"><button type="button" class="st-text-button" data-open="root">Task</button><span aria-hidden="true">/</span><span id="st-breadcrumb">Overview</span></nav>
+        <button type="button" class="st-button" id="st-roster-toggle" aria-expanded="false" aria-controls="st-roster">Workers (4)</button>
+      </header>
+      <div class="st-body">
+        <h2 id="st-title">Improve thread organization</h2>
+        <p class="st-subtitle" id="st-subtitle">One task, four focused workers.</p>
+        <div class="st-attention"><div><strong>Worker lifecycle needs input</strong><div class="st-small">Should completed workers fold after integration?</div></div><button type="button" class="st-text-button" data-open="lifecycle">View question</button></div>
+        <section class="st-roster" id="st-roster" aria-label="Worker overview" hidden>
+          <div class="st-roster-heading"><strong>Workers</strong><span class="st-small">Review before integrating</span></div>
+          <div class="st-roster-row"><div class="st-roster-job">Sidebar hierarchy<small>Codex · 3 changed files · checks passed</small></div><span class="st-state">Ready for review</span><button type="button" class="st-text-button" data-open="hierarchy">Inspect</button></div>
+          <div class="st-roster-row"><div class="st-roster-job">Worker lifecycle<small>Grok · waiting for a decision</small></div><span class="st-state" data-tone="attention">Needs input</span><button type="button" class="st-text-button" data-open="lifecycle">Open</button></div>
+          <div class="st-roster-row"><div class="st-roster-job">Motion polish<small id="st-motion-detail">Codex · tuning disclosure transitions</small></div><span class="st-state" data-tone="running" id="st-roster-motion">Running</span><button type="button" class="st-text-button" data-open="motion">Inspect</button></div>
+          <div class="st-roster-row"><div class="st-roster-job">Title cleanup<small>Grok · result retained in task history</small></div><span class="st-state" data-tone="complete">Integrated</span><button type="button" class="st-text-button" data-open="titles">Open</button></div>
+        </section>
+        <section aria-label="Conversation">
+          <p class="st-person" id="st-author">Lead agent</p>
+          <p class="st-copy" id="st-copy">The sidebar work is ready to review. Motion polish is still running, and the lifecycle worker has one question. Title cleanup has already been integrated.</p>
+          <details class="st-activity"><summary id="st-activity-summary">Worker activity · 4 updates</summary><ul><li>Created four workers with distinct task names.</li><li>Sidebar hierarchy is ready for review.</li><li>Worker lifecycle requested a decision.</li><li>Title cleanup was integrated into the task branch.</li></ul></details>
+        </section>
+        <div class="st-composer" aria-label="Illustrative composer"><p>Follow up on this task…</p><div class="st-composer-footer"><span>Codex · Build · Ask before actions</span><span>Options</span></div></div>
+        <div class="st-live" aria-live="polite" id="st-live"></div>
+      </div>
+    </main>
+  </div>
+  <script>
+    (() => {
+      const root = document.getElementById('solenta-thread-concept');
+      const q = (s) => root.querySelector(s);
+      const state = { expanded:false, roster:false, selected:'root', finished:false, motion:true };
+      const saved = window.openai?.widgetState?.privateContent;
+      if (saved && typeof saved === 'object') {
+        for (const key of ['expanded','roster','finished','motion']) if (typeof saved[key] === 'boolean') state[key] = saved[key];
+        if (['root','hierarchy','lifecycle','motion','titles'].includes(saved.selected)) state.selected = saved.selected;
+      }
+      const content = {
+        root:['Improve thread organization','One task, four focused workers.','Lead agent','The sidebar work is ready to review. Motion polish is still running, and the lifecycle worker has one question. Title cleanup has already been integrated.'],
+        hierarchy:['Sidebar hierarchy','Ready for review · Codex · Task: Improve thread organization','Worker result','The sidebar now presents each task as one collapsible group. Three files changed and checks passed. Review the changes before integrating them into the task branch.'],
+        lifecycle:['Worker lifecycle','Needs input · Grok · Task: Improve thread organization','Worker question','Should completed workers fold after integration? My recommendation is to keep ready work visible until it is reviewed, then retain the result under Completed.'],
+        motion:['Motion polish','Running · Codex · Task: Improve thread organization','Worker update','I am tuning short disclosure transitions and checking that keyboard navigation and reduced motion stay immediate.'],
+        titles:['Title cleanup','Integrated · Grok · Task: Improve thread organization','Retained worker result','Worker titles describe the assigned job. Repeated generated prefixes no longer consume the title. The reviewed change is integrated and this result remains available.']
+      };
+      function persist() {
+        const promise = window.openai?.setWidgetState?.({ modelContent:{ concept:'Task-first threads with collapsible workers',selected:state.selected }, privateContent:{...state} });
+        promise?.catch?.(() => {});
+      }
+      function render() {
+        q('#st-workers').hidden = !state.expanded;
+        q('#st-disclose').setAttribute('aria-expanded',String(state.expanded));
+        q('#st-roster').hidden = !state.roster;
+        q('#st-roster-toggle').setAttribute('aria-expanded',String(state.roster));
+        q('#st-summary').textContent = state.finished ? '2 ready · 1 needs you' : '1 running · 1 ready · 1 needs you';
+        q('#st-finish').textContent = state.finished ? 'Replay running state' : 'Preview worker completion';
+        q('#st-motion-state').textContent = state.finished ? 'Review' : 'Running';
+        q('#st-roster-motion').textContent = state.finished ? 'Ready for review' : 'Running';
+        for (const el of [q('#st-motion-state'),q('#st-roster-motion')]) el.dataset.tone = state.finished ? '' : 'running';
+        q('#st-motion-detail').textContent = state.finished ? 'Codex · result available · verification pending' : 'Codex · tuning disclosure transitions';
+        const row = [...content[state.selected]];
+        if (state.finished && state.selected === 'root') row[3] = 'Sidebar hierarchy and motion polish are ready for review. The lifecycle worker still needs your decision. Finished work stays visible until reviewed and integrated.';
+        if (state.finished && state.selected === 'motion') { row[1] = 'Ready for review · Codex · Task: Improve thread organization'; row[2] = 'Worker result'; row[3] = 'The disclosure transitions are ready for review. Verification is pending. Finishing this run has not merged or archived the worker.'; }
+        q('#st-title').textContent = row[0]; q('#st-subtitle').textContent = row[1]; q('#st-author').textContent = row[2]; q('#st-copy').textContent = row[3];
+        q('#st-breadcrumb').textContent = state.selected === 'root' ? 'Overview' : row[0];
+        root.querySelectorAll('.st-worker').forEach(el => el.setAttribute('aria-current',String(el.dataset.open === state.selected)));
+        if (state.selected === 'titles') q('.st-completed').open = true;
+      }
+      function transition(event, change, selector) {
+        const target = q(selector);
+        const before = target.getBoundingClientRect().top;
+        target.getAnimations?.().forEach(a => a.cancel());
+        change(); render(); persist();
+        if (!state.motion || event.detail === 0 || window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return;
+        const offset = Math.max(-18,Math.min(18,before-target.getBoundingClientRect().top));
+        target.animate?.([{opacity:.5,transform:`translateY(${offset || 4}px)`},{opacity:1,transform:'translateY(0)'}],{duration:160,easing:'cubic-bezier(.23,1,.32,1)'});
+      }
+      q('#st-disclose').addEventListener('click',event => transition(event,() => { state.expanded = !state.expanded; },'.st-other'));
+      q('#st-roster-toggle').addEventListener('click',event => transition(event,() => { state.roster = !state.roster; },'#st-roster'));
+      root.querySelectorAll('[data-open]').forEach(el => el.addEventListener('click',() => { state.selected = el.dataset.open; if (state.selected !== 'root') state.expanded = true; render(); persist(); }));
+      q('#st-finish').addEventListener('click',event => transition(event,() => { state.finished = !state.finished; q('#st-live').textContent = state.finished ? 'Motion polish finished. Ready for review; verification pending.' : 'Motion polish is running.'; },'#st-summary'));
+      window.addEventListener('openai:set_globals',event => {
+        const value = event.detail?.globals?.widgetState?.privateContent;
+        if (!value) return;
+        for (const key of ['expanded','roster','finished','motion']) if (typeof value[key] === 'boolean') state[key] = value[key];
+        if (Object.hasOwn(content,value.selected)) state.selected = value.selected;
+        render();
+      });
+      render();
+      if (globalThis.Tweak) {
+        const tweak = new Tweak({container:root,onChange:render});
+        tweak.addToggle(state,'expanded',{label:'Expand worker family'});
+        tweak.addToggle(state,'roster',{label:'Show worker overview'});
+        tweak.addToggle(state,'motion',{label:'Animate mouse interactions'});
+      }
+    })();
+  </script>
+</div>

@@ -9,6 +9,7 @@ const { execFileSync } = require("node:child_process");
 const { Store } = require("../store.js");
 const services = require("../services.js");
 const { createRunner } = require("../runner.js");
+const { rmTree } = require("./support/rmTree.js");
 const {
   createSessionRecorder,
   recordTranscript,
@@ -225,7 +226,7 @@ describe("session-record unit: queue + POST /api/session", () => {
       await fake.close();
       fake = null;
     }
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+    await rmTree(tmpDir);
   });
 
   it("posts correct fields for a user entry on flush", async () => {
@@ -638,7 +639,7 @@ describe("auto session-record on real runs", () => {
       await fake.close();
       fake = null;
     }
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+    await rmTree(tmpDir);
     if (prevSimulate === undefined) delete process.env.CODER_SIMULATE;
     else process.env.CODER_SIMULATE = prevSimulate;
     if (prevAgentCmd === undefined) delete process.env.CODER_AGENT_CMD;
@@ -930,7 +931,7 @@ describe("module-level flushSessionRecord hook", () => {
       await fake.close();
       fake = null;
     }
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+    await rmTree(tmpDir);
   });
 
   it("recordTranscript + flushSessionRecord posts via shared proxy config", async () => {

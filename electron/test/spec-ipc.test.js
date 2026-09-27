@@ -25,7 +25,19 @@ describe("spec-mode IPC", () => {
     store = new Store(path.join(tmpDir, "store.json"));
     const repo = path.join(tmpDir, "repo");
     fs.mkdirSync(repo);
-    execFileSync("git", ["init"], { cwd: repo, stdio: "ignore" });
+    // Worktree workers record the lead's committed HEAD and refuse an unborn branch.
+    execFileSync("git", ["init", "-b", "main"], { cwd: repo, stdio: "ignore" });
+    execFileSync("git", ["config", "user.email", "spec-ipc@example.com"], {
+      cwd: repo,
+      stdio: "ignore",
+    });
+    execFileSync("git", ["config", "user.name", "Spec IPC"], {
+      cwd: repo,
+      stdio: "ignore",
+    });
+    fs.writeFileSync(path.join(repo, "README.md"), "hello\n");
+    execFileSync("git", ["add", "README.md"], { cwd: repo, stdio: "ignore" });
+    execFileSync("git", ["commit", "-m", "init"], { cwd: repo, stdio: "ignore" });
     const project = await services.addProject(store, repo);
     threadId = services.createThread(store, {
       projectId: project.id,

@@ -138,7 +138,19 @@ describe("orchestrator threads", () => {
       prompt: "build the thing",
     });
     assert.equal(store.getThread(thread.id).title, "build the thing");
-    assert.equal(workersOf(thread.id)[0].title, "Fork: build the thing");
+    assert.equal(workersOf(thread.id)[0].title, "build the thing");
+  });
+
+  it("names the pendingFork worker from the first prompt line, not stacked Fork:", async () => {
+    store.updateThread(thread.id, { title: "Fork: Fork: parent task" });
+    store.saveNow();
+    await makeRunner(tmpDir).startRun({
+      threadId: thread.id,
+      prompt: "\n  Review keyboard navigation\nrest of the assignment\n",
+    });
+    assert.equal(store.getThread(thread.id).title, "Fork: Fork: parent task");
+    assert.equal(workersOf(thread.id)[0].title, "Review keyboard navigation");
+    assert.equal(workersOf(thread.id)[0].handoffFrom, thread.id);
   });
 
   it("clears the flag: the second prompt runs the orchestrator itself", async () => {

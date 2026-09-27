@@ -39,6 +39,9 @@ describe("runWindowsDoctor", () => {
     });
     assert.equal(await doctor.runWindowsDoctor(WIN_REPO, "darwin"), null);
     assert.equal(await doctor.runWindowsDoctor(WIN_REPO, "linux"), null);
+    // The default argument follows setPlatform, then the host. Pin a non-win32
+    // host so "never probes" is the contract, including on a Windows runner.
+    doctor.setPlatform("darwin");
     assert.equal(await doctor.runWindowsDoctor(WIN_REPO), null);
     assert.equal(calls, 0);
   });
@@ -159,6 +162,12 @@ describe("runWindowsDoctor", () => {
     assert.ok(report);
     assert.equal(report.checks.find((c) => c.id === "node22").ok, true);
     doctor.setPlatform(null);
-    assert.equal(await doctor.runWindowsDoctor(WIN_REPO), null);
+    const restored = await doctor.runWindowsDoctor(WIN_REPO);
+    if (process.platform === "win32") {
+      assert.ok(restored, "clearing the override restores the Windows host");
+      assert.equal(restored.checks.find((c) => c.id === "node22").ok, true);
+    } else {
+      assert.equal(restored, null);
+    }
   });
 });

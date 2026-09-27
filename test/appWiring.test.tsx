@@ -33,6 +33,28 @@ async function boot(fake: FakeCoder) {
   return mount(<App />);
 }
 
+async function openAppDestination(
+  m: Awaited<ReturnType<typeof mount>>,
+  view: string,
+): Promise<void> {
+  const direct = m.query(`nav[aria-label="App"] [data-view-nav="${view}"]`);
+  if (direct) {
+    await m.click(direct as HTMLElement);
+    await m.flush();
+    return;
+  }
+  const more = m.query("[data-app-more]");
+  assert.ok(more, "More");
+  if (!m.query("[data-app-more-menu]")) {
+    await m.click(more as HTMLElement);
+    await m.flush();
+  }
+  const item = m.query(`[data-app-more-menu] [data-view-nav="${view}"]`);
+  assert.ok(item, `${view} in More`);
+  await m.click(item as HTMLElement);
+  await m.flush();
+}
+
 describe("App boot wiring", () => {
   it("loads projects, threads, providers and workflows on boot", async () => {
     const fake = createFakeCoder();
@@ -1341,10 +1363,7 @@ describe("Activity and Kanban in-view project scope (#944)", () => {
     assert.ok(item, `scope item ${projectId}`);
     await m.click(item as HTMLElement);
     await m.flush();
-    const nav = m.query(`[data-view-nav="${view}"]`);
-    assert.ok(nav, `${view} nav`);
-    await m.click(nav as HTMLElement);
-    await m.flush();
+    await openAppDestination(m, view);
   }
 
   it("opens Activity from a sidebar project and can switch to All projects", async () => {
@@ -1491,10 +1510,7 @@ describe("Activity and Kanban in-view project scope (#944)", () => {
       await m.flush();
       assert.equal(m.query("[data-activity]"), null, "left for the thread");
 
-      const nav = m.query('[data-view-nav="activity"]');
-      assert.ok(nav);
-      await m.click(nav as HTMLElement);
-      await m.flush();
+      await openAppDestination(m, "activity");
 
       const again = m.query('select[aria-label="Project"]') as HTMLSelectElement | null;
       assert.ok(again);
@@ -1641,8 +1657,7 @@ describe("Return to source view (#942)", () => {
     const m = await boot(fake);
     try {
       await m.flush();
-      await m.click(m.query('[data-view-nav="activity"]') as HTMLElement);
-      await m.flush();
+      await openAppDestination(m, "activity");
       const row = m.query('button[aria-label="Select thread: New billing thread"]');
       assert.ok(row);
       await m.click(row as HTMLElement);
@@ -1780,6 +1795,92 @@ describe("App command palette (#150)", () => {
       await inAct(() => new Promise((r) => setTimeout(r, 200)));
       await m.flush();
       assert.ok(fake.of("files.list").length > 0, "files.list for the picker");
+    } finally {
+      m.unmount();
+    }
+  });
+});
+
+describe("App primary navigation", () => {
+  it("Review opens pull requests and Threads returns without creating one", async () => {
+    const t1 = thread({ id: "t-keep", title: "Keep this thread" });
+    const fake = createFakeCoder({
+      threads: [t1],
+      details: { "t-keep": detail({ thread: t1 }) },
+    });
+    const m = await boot(fake);
+    try {
+      await m.flush();
+      const draftBox = () =>
+        m.query("textarea") as HTMLTextAreaElement | null;
+      const ta = draftBox();
+      assert.ok(ta, "composer");
+      await m.type(ta, "unsent draft");
+      const creates = fake.of("threads.create").length;
+
+      await m.click(m.query('[data-view-nav="review"]') as HTMLElement);
+      await m.flush();
+      assert.ok(m.query("[data-pr-list]"), "Review opens the pull-request list");
+      assert.equal(
+        m.query("textarea"),
+        null,
+        "the thread view unmounts off the thread route",
+      );
+      assert.equal(
+        m.query('[data-view-nav="review"]')?.getAttribute("aria-current"),
+        "page",
+      );
+      assert.equal(
+        m.query('[data-view-nav="threads"]')?.getAttribute("aria-current"),
+        null,
+      );
+      await m.click(m.query('[data-view-nav="threads"]') as HTMLElement);
+      await m.flush();
+      assert.equal(m.query("[data-pr-list]"), null);
+      assert.equal(draftBox()?.value, "unsent draft");
+      assert.equal(
+        m.query('[data-view-nav="threads"]')?.getAttribute("aria-current"),
+        "page",
+      );
+      assert.equal(fake.of("threads.create").length, creates);
+
+      await openAppDestination(m, "usage");
+      assert.ok(m.query("[data-usage]"));
+      assert.equal(m.query("textarea"), null, "Usage unmounts the composer");
+      assert.equal(
+        m.query("[data-app-more]")?.getAttribute("aria-current"),
+        "page",
+      );
+      assert.equal(
+        m.query('[data-view-nav="threads"]')?.getAttribute("aria-current"),
+        null,
+      );
+      await m.click(m.query('[data-view-nav="threads"]') as HTMLElement);
+      await m.flush();
+      assert.equal(m.query("[data-usage]"), null);
+      assert.equal(draftBox()?.value, "unsent draft");
+      assert.ok(m.text().includes("Keep this thread"));
+      assert.equal(fake.of("threads.create").length, creates);
+      assert.equal(
+        m.query('[data-thread-card="t-keep"]')?.getAttribute("data-active"),
+        "true",
+      );
+    } finally {
+      m.unmount();
+    }
+  });
+
+  it("opens an empty thread list without creating a thread", async () => {
+    const fake = createFakeCoder({ threads: [], projects: [project()] });
+    const m = await boot(fake);
+    try {
+      await m.flush();
+      const creates = fake.of("threads.create").length;
+      await m.click(m.query('[data-view-nav="threads"]') as HTMLElement);
+      await m.flush();
+      assert.equal(fake.of("threads.create").length, creates);
+      assert.equal(m.query("[data-planboard]"), null);
+      assert.equal(m.query("[data-pr-list]"), null);
     } finally {
       m.unmount();
     }

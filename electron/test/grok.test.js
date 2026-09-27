@@ -156,7 +156,11 @@ async function main() {
         if (fs.existsSync(\${JSON.stringify(stop)})) process.exit(0);
       }, 20);
       setTimeout(() => process.exit(0), 10000);
-    \`], { stdio: ["ignore", "inherit", "inherit"] });
+    \`], {
+      // Windows otherwise kills this child in the exiting parent's libuv job.
+      detached: process.platform === "win32",
+      stdio: ["ignore", "inherit", "inherit"],
+    });
     child.unref();
     emit({ type: "system", subtype: "init", session_id: "grok-background" });
     emit({ type: "assistant", message: {

@@ -360,6 +360,49 @@ describe("refresh worker onto lead snapshot", () => {
     return head(leadWt.worktreePath);
   }
 
+  it("changes a worker's merge destination without replaying inherited commits", () => {
+    const leadWt = setupLeadApi();
+    const snapshot = head(leadWt.worktreePath);
+    const worker = services.forkWorkerThread(store, { threadId: lead.id });
+    const wt = materialize(worker.id);
+    fs.writeFileSync(path.join(wt.worktreePath, "worker.txt"), "mine\n");
+    git(wt.worktreePath, ["add", "worker.txt"]);
+    git(wt.worktreePath, ["commit", "-m", "worker unique"]);
+    const workerHead = head(wt.worktreePath);
+    const later = advanceLead(leadWt, "api.txt", "new lead api\n");
+
+    // Replaying main..worker onto the lead would conflict on inherited api.txt.
+    for (const baseBranch of [leadWt.branch, null, leadWt.branch]) {
+      const updated = services.setBaseBranch(store, {
+        threadId: worker.id,
+        baseBranch,
+      });
+      assert.equal(updated.baseBranch, baseBranch);
+      assert.equal(updated.leadSnapshotSha, snapshot);
+      assert.equal(head(wt.worktreePath), workerHead);
+      assert.equal(fs.readFileSync(path.join(wt.worktreePath, "api.txt"), "utf8"), "from lead\n");
+    }
+
+    services.refreshWorkerSnapshot(store, { threadId: worker.id });
+    assert.equal(store.getThread(worker.id).baseBranch, leadWt.branch);
+    assert.equal(store.getThread(worker.id).leadSnapshotSha, later);
+    assert.equal(git(wt.worktreePath, ["rev-list", "--count", `${later}..HEAD`]), "1");
+    assert.equal(fs.readFileSync(path.join(wt.worktreePath, "worker.txt"), "utf8"), "mine\n");
+    assert.equal(fs.readFileSync(path.join(wt.worktreePath, "api.txt"), "utf8"), "new lead api\n");
+  });
+
+  it("keeps a pending worker on its recorded snapshot after changing destination", () => {
+    const leadWt = setupLeadApi();
+    const snapshot = head(leadWt.worktreePath);
+    const worker = services.forkWorkerThread(store, { threadId: lead.id });
+    advanceLead(leadWt, "api.txt", "new lead api\n");
+
+    services.setBaseBranch(store, { threadId: worker.id, baseBranch: leadWt.branch });
+    const wt = materialize(worker.id);
+    assert.equal(head(wt.worktreePath), snapshot);
+    assert.equal(store.getThread(worker.id).baseBranch, leadWt.branch);
+  });
+
   it("retargets an idle materialized worker onto the lead HEAD without changing baseBranch", () => {
     const leadWt = setupLeadApi();
     const first = head(leadWt.worktreePath);

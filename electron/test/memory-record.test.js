@@ -15,6 +15,7 @@ const {
   buildRunBody,
 } = require("../memory-record.js");
 const { writeFakeBin } = require("./support/fakeBin.js");
+const { rmTree } = require("./support/rmTree.js");
 
 const TOKEN = "test-bearer-token-64chars-abcdefghijklmnopqrstuvwxyz012345";
 
@@ -206,7 +207,7 @@ describe("recordRunOutcome unit", () => {
       await fake.close();
       fake = null;
     }
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+    await rmTree(tmpDir);
   });
 
   it("posts type run with title, body footer, and canonical project key", async () => {
@@ -326,7 +327,7 @@ describe("auto-record on real run terminals", () => {
       await fake.close();
       fake = null;
     }
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+    await rmTree(tmpDir);
     if (prevSimulate === undefined) delete process.env.CODER_SIMULATE;
     else process.env.CODER_SIMULATE = prevSimulate;
     if (prevAgentCmd === undefined) delete process.env.CODER_AGENT_CMD;
@@ -662,9 +663,9 @@ describe("codex listed model flows into -m", () => {
     });
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     if (runner) runner.stopAll();
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+    await rmTree(tmpDir);
     if (prevSimulate === undefined) delete process.env.CODER_SIMULATE;
     else process.env.CODER_SIMULATE = prevSimulate;
     if (prevAgentCmd === undefined) delete process.env.CODER_AGENT_CMD;

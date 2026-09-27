@@ -2,6 +2,7 @@
 
 const { describe, it, afterEach } = require("node:test");
 const assert = require("node:assert/strict");
+const { EventEmitter } = require("node:events");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
@@ -272,5 +273,89 @@ describe("createCodexJsonRpcSession (#1171)", () => {
           m.error.code === JSONRPC_METHOD_NOT_FOUND,
       );
     });
+  });
+
+  /**
+   * In-process child. A real EPIPE needs the read end to close; this emitter
+   * lets the test fire that error while the process is still open, and again
+   * after kill.
+   */
+  function openPipeChild() {
+    const stdin = new EventEmitter();
+    stdin.destroyed = false;
+    stdin.write = () => true;
+    stdin.end = () => {};
+    const stdout = new EventEmitter();
+    stdout.setEncoding = () => {};
+    const stderr = new EventEmitter();
+    stderr.setEncoding = () => {};
+    const child = new EventEmitter();
+    child.stdin = stdin;
+    child.stdout = stdout;
+    child.stderr = stderr;
+    child.kill = () => {};
+    return { child, stdin };
+  }
+
+  it("rejects the pending request when stdin EPIPE fires before the child exits", async () => {
+    const { child, stdin } = openPipeChild();
+    const errors = [];
+    const exits = [];
+    const session = createCodexJsonRpcSession({
+      binary: "fake-codex",
+      spawn: () => child,
+      onError(err) {
+        errors.push(err);
+      },
+      onExit(info) {
+        exits.push(info);
+      },
+    });
+    sessions.push(session);
+    const pending = session.request("initialize", {});
+    const epipe = new Error("write EPIPE");
+    epipe.code = "EPIPE";
+    stdin.emit("error", epipe);
+
+    await assert.rejects(pending, (err) => {
+      assert.equal(err.code, "EPIPE");
+      return true;
+    });
+    await assert.rejects(
+      session.request("thread/start", {}),
+      /stdin closed/,
+    );
+    assert.equal(errors.length, 1);
+    assert.equal(errors[0].code, "EPIPE");
+    assert.equal(exits.length, 0);
+
+    child.emit("close", 0);
+    assert.equal(exits.length, 1);
+    assert.equal(exits[0].code, 0);
+  });
+
+  it("ignores stdin EPIPE after shutdown", async () => {
+    const { child, stdin } = openPipeChild();
+    const errors = [];
+    const exits = [];
+    const session = createCodexJsonRpcSession({
+      binary: "fake-codex",
+      spawn: () => child,
+      onError(err) {
+        errors.push(err);
+      },
+      onExit(info) {
+        exits.push(info);
+      },
+    });
+    sessions.push(session);
+    session.kill();
+    const epipe = new Error("write EPIPE");
+    epipe.code = "EPIPE";
+    stdin.emit("error", epipe);
+    assert.equal(errors.length, 0);
+    child.emit("close", null);
+    assert.equal(exits.length, 1);
+    assert.equal(exits[0].code, null);
   });
 });

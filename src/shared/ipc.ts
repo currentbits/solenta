@@ -1062,8 +1062,9 @@ export interface SubagentInfo {
 
 /**
  * Lightweight per-thread row for the Agents tab team view (threads:summaries).
- * Roles derive from handoffFrom: a summary WITH handoffFrom is a Worker; a
- * thread another summary's handoffFrom points to is an Orchestrator.
+ * Crew workers set orchWorker: true. handoffFrom alone is an ordinary fork,
+ * not a Team worker. Absent orchWorker on a legacy row is unknown, not a
+ * worker. A thread another true worker's handoffFrom points to is the lead.
  */
 export interface ThreadSummaryInfo {
   id: string;
@@ -1071,6 +1072,13 @@ export interface ThreadSummaryInfo {
   provider: string;
   status: ThreadStatus;
   handoffFrom: string | null;
+  /**
+   * True on orchestration workers (ThreadInfo.orchWorker). Optional so
+   * older summaries stay valid; consumers must not treat missing as true.
+   */
+  orchWorker?: boolean;
+  /** Mirrors ThreadInfo.projectId when the producer includes it. */
+  projectId?: string;
   /** Mirrors ThreadInfo: drives the "waiting on N · elapsed" line (issue #42). */
   runStartedAt: number | null;
   /** Mirrors ThreadInfo: the run was stopped mid-flight and never restarted (issue #183). */
@@ -3770,9 +3778,10 @@ export interface CoderApi {
   threads: {
     list(): Promise<ThreadInfo[]>;
     /**
-     * Per-thread summaries for the Agents tab team view: role fields
-     * (handoffFrom) plus the first line of the last assistant message.
-     * Cheap: no git or provider calls.
+     * Per-thread summaries for the Agents tab team view: handoffFrom,
+     * orchWorker, projectId, plus the first line of the last assistant
+     * message. Cheap: no git or provider calls. Crew roles use orchWorker;
+     * handoffFrom alone is an ordinary fork.
      */
     summaries(): Promise<ThreadSummaryInfo[]>;
     /**

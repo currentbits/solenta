@@ -360,6 +360,36 @@ describe('EADDRINUSE port fallback', () => {
       fs.rmSync(dir, { recursive: true, force: true })
     }
   })
+
+  it('closes the fallback listener when persisting its port fails', async (t) => {
+    const blocker = http.createServer()
+    await new Promise((resolve, reject) => {
+      blocker.once('error', reject)
+      blocker.listen(0, '127.0.0.1', resolve)
+    })
+    const config = { port: blocker.address().port, token: TOKEN, dbPath: ':memory:' }
+    const originalPort = config.port
+    const cfgFile = path.join(os.tmpdir(), 'solenta-port-save-failure.json')
+    const failure = Object.assign(new Error('config save failed'), { code: 'EACCES' })
+    const memory = new Memory(':memory:')
+    const createServer = http.createServer
+    const writeFileSync = fs.writeFileSync
+    let listener
+    t.mock.method(http, 'createServer', (...args) => (listener = createServer(...args)))
+    t.mock.method(fs, 'writeFileSync', (file, ...args) => {
+      if (file === cfgFile) throw failure
+      return writeFileSync(file, ...args)
+    })
+    try {
+      await assert.rejects(startServer(memory, config, '127.0.0.1', cfgFile), (err) => err === failure)
+      assert.equal(listener.listening, false, 'rejected startup must release its listener')
+      assert.equal(config.port, originalPort, 'failed save must not publish a new port')
+    } finally {
+      if (listener?.listening) await new Promise((resolve) => listener.close(resolve))
+      await new Promise((resolve) => blocker.close(resolve))
+      memory.close()
+    }
+  })
 })
 
 async function waitForHealth(port, timeoutMs) {

@@ -15,7 +15,12 @@ import { dismissContextMenu } from "../src/contextMenuFallback";
 import * as React from "react";
 import { inAct, mount } from "./support/dom";
 import App from "../src/App";
-import { Sidebar, SettledRow, ThreadCard } from "../src/components/Sidebar";
+import {
+  Sidebar,
+  SettledRow,
+  ThreadCard,
+  displayWorkerTitle,
+} from "../src/components/Sidebar";
 import {
   createFakeCoder,
   installFakeCoder,
@@ -152,9 +157,27 @@ function sidebar(
     onSetMuted?: (threadId: string, muted: boolean) => void;
     onRenameThread?: (threadId: string, title: string) => void;
     onFork?: (threadId: string, opts?: { provider?: string }) => void;
+    activeView?:
+      | "thread"
+      | "kanban"
+      | "planboard"
+      | "prs"
+      | "automations"
+      | "activity"
+      | "usage"
+      | "fleet"
+      | "insights"
+      | "digest";
+    onOpenThreads?: () => void;
     onOpenPlanboard?: (scopedProjectId?: string | null) => void;
     onOpenKanban?: (scopedProjectId?: string | null) => void;
     onOpenActivity?: (scopedProjectId?: string | null) => void;
+    onOpenReview?: () => void;
+    onOpenAutomations?: () => void;
+    onOpenUsage?: () => void;
+    onOpenFleet?: () => void;
+    onOpenInsights?: () => void;
+    onOpenDigest?: () => void;
     revealThreadId?: string | null;
     onRevealHandled?: () => void;
     updateState?: UpdateStatus["state"] | null;
@@ -196,9 +219,17 @@ function sidebar(
       onSetMuted={over.onSetMuted}
       onRenameThread={over.onRenameThread}
       onFork={over.onFork}
+      activeView={over.activeView}
+      onOpenThreads={over.onOpenThreads}
       onOpenPlanboard={over.onOpenPlanboard}
       onOpenKanban={over.onOpenKanban}
       onOpenActivity={over.onOpenActivity}
+      onOpenReview={over.onOpenReview}
+      onOpenAutomations={over.onOpenAutomations}
+      onOpenUsage={over.onOpenUsage}
+      onOpenFleet={over.onOpenFleet}
+      onOpenInsights={over.onOpenInsights}
+      onOpenDigest={over.onOpenDigest}
       onCreateThreadFromIssue={over.onCreateThreadFromIssue}
       revealThreadId={over.revealThreadId ?? null}
       onRevealHandled={over.onRevealHandled}
@@ -216,6 +247,14 @@ function sidebar(
       onPurgeThread={over.onPurgeThread}
     />
   );
+}
+
+async function openMoreMenu(m: Awaited<ReturnType<typeof mount>>): Promise<void> {
+  if (m.query("[data-app-more-menu]")) return;
+  const more = m.query("[data-app-more]");
+  assert.ok(more, "More menu");
+  await m.click(more);
+  await m.flush();
 }
 
 /** Two projects; settled cases not all in one; selected not index 0. */
@@ -365,6 +404,17 @@ async function clearSidebarStorage(): Promise<void> {
   window.localStorage.clear();
   shell.unmount();
 }
+
+describe("displayWorkerTitle", () => {
+  it("strips repeated Fork: prefixes and leaves a bare title alone", () => {
+    assert.equal(
+      displayWorkerTitle("Fork: Fork: Review permissions"),
+      "Review permissions",
+    );
+    assert.equal(displayWorkerTitle("Review permissions"), "Review permissions");
+    assert.equal(displayWorkerTitle("Fork:"), "Fork:");
+  });
+});
 
 describe("t3 paging constants are fixed facts", () => {
   it("INITIAL is 10 and PAGE is 25", () => {
@@ -886,12 +936,18 @@ describe("Sidebar project scope", () => {
     m.unmount();
   });
 
-  it("view nav stays three icon buttons", async () => {
+  it("primary nav is labeled Threads, Planboard, and Review", async () => {
     await clearSidebarStorage();
     const m = await mount(sidebar(THREADS, { projects: [p1, p2] }));
-    assert.ok(m.query('[data-view-nav="activity"]'));
-    assert.ok(m.query('[data-view-nav="kanban"]'));
-    assert.ok(m.query('[data-view-nav="planboard"]'));
+    const nav = m.query("nav[aria-label='App']");
+    assert.ok(nav, "app nav");
+    const labels = [...nav.querySelectorAll(":scope > [data-view-nav]")].map(
+      (el) => el.textContent?.trim(),
+    );
+    assert.deepEqual(labels, ["Threads", "Planboard", "Review"]);
+    assert.equal(m.query("[data-app-more]"), null, "More stays hidden until a destination is wired");
+    assert.equal(m.query('[data-view-nav="activity"]'), null);
+    assert.equal(m.query('[data-view-nav="kanban"]'), null);
     m.unmount();
   });
 
@@ -950,7 +1006,10 @@ describe("Sidebar project scope", () => {
     await openScopeMenu(m);
     await m.click(m.query('[data-scope-item="p2"]')!);
     await m.flush();
-    const btn = m.query('[data-view-nav="kanban"]') as HTMLButtonElement | null;
+    await openMoreMenu(m);
+    const btn = m.query(
+      '[data-app-more-menu] [data-view-nav="kanban"]',
+    ) as HTMLButtonElement | null;
     assert.ok(btn, "kanban nav button");
     await m.click(btn);
     await m.flush();
@@ -969,7 +1028,10 @@ describe("Sidebar project scope", () => {
         },
       }),
     );
-    const btn = m.query('[data-view-nav="kanban"]') as HTMLButtonElement | null;
+    await openMoreMenu(m);
+    const btn = m.query(
+      '[data-app-more-menu] [data-view-nav="kanban"]',
+    ) as HTMLButtonElement | null;
     assert.ok(btn, "kanban nav button");
     await m.click(btn);
     await m.flush();
@@ -991,7 +1053,10 @@ describe("Sidebar project scope", () => {
     await openScopeMenu(m);
     await m.click(m.query('[data-scope-item="p2"]')!);
     await m.flush();
-    const btn = m.query('[data-view-nav="activity"]') as HTMLButtonElement | null;
+    await openMoreMenu(m);
+    const btn = m.query(
+      '[data-app-more-menu] [data-view-nav="activity"]',
+    ) as HTMLButtonElement | null;
     assert.ok(btn, "activity nav button");
     await m.click(btn);
     await m.flush();
@@ -1010,7 +1075,10 @@ describe("Sidebar project scope", () => {
         },
       }),
     );
-    const btn = m.query('[data-view-nav="activity"]') as HTMLButtonElement | null;
+    await openMoreMenu(m);
+    const btn = m.query(
+      '[data-app-more-menu] [data-view-nav="activity"]',
+    ) as HTMLButtonElement | null;
     assert.ok(btn, "activity nav button");
     await m.click(btn);
     await m.flush();
@@ -1059,20 +1127,38 @@ describe("Sidebar filter columns (#746)", () => {
     return css.match(new RegExp(`\\.${className}(?![\\w-])\\s*\\{([^}]*)\\}`))?.[1] ?? "";
   }
 
-  it("lays Status / Provider / Group and the view-nav icons on matching 3-col tracks", async () => {
+  it("keeps filter columns on 3 tracks and app nav on one short row", async () => {
     await clearSidebarStorage();
-    const m = await mount(sidebar(THREADS, { projects: [p1, p2] }));
+    const m = await mount(
+      sidebar(THREADS, {
+        projects: [p1, p2],
+        onOpenActivity: () => {},
+        onOpenKanban: () => {},
+        onOpenAutomations: () => {},
+      }),
+    );
     const filters = m.query("[data-filter-row]");
-    const nav = filters?.parentElement?.querySelector("nav[aria-label='Views']");
+    const nav = filters?.parentElement?.querySelector("nav[aria-label='App']");
     assert.ok(filters, "filter row");
-    assert.ok(nav, "view nav sits with the filter row");
+    assert.ok(nav, "app nav sits with the filter row");
     assert.equal(filters!.children.length, 3, "three filter columns");
-    assert.equal(nav!.querySelectorAll("[data-view-nav]").length, 3, "three view-nav icons");
+    assert.deepEqual(
+      [...nav!.querySelectorAll(":scope > [data-view-nav]")].map((el) =>
+        el.textContent?.trim(),
+      ),
+      ["Threads", "Planboard", "Review"],
+    );
+    assert.equal(nav!.querySelectorAll("[data-app-more]").length, 1);
     m.unmount();
 
     const threeCol = /grid-template-columns:\s*repeat\(3,\s*minmax\(0,\s*1fr\)\)/;
     assert.match(cssBlock("filterRow"), threeCol, "filter labels share three equal tracks");
-    assert.match(cssBlock("viewNav"), threeCol, "view-nav icons share the same three tracks");
+    assert.match(cssBlock("viewNav"), /display:\s*flex/);
+    assert.match(cssBlock("viewNav"), /flex-wrap:\s*nowrap/);
+    assert.doesNotMatch(cssBlock("viewNav"), /grid-template-rows/);
+    assert.match(cssBlock("viewNavBtn"), /height:\s*28px/);
+    assert.match(cssBlock("viewNavLabel"), /white-space:\s*nowrap/);
+    assert.match(cssBlock("appMoreMenu"), /transition:\s*none/);
     assert.match(
       cssBlock("filterTrigger"),
       /justify-content:\s*center/,
@@ -1083,7 +1169,232 @@ describe("Sidebar filter columns (#746)", () => {
       /flex:\s*1/,
       "growing the label shoved the chevron to the far edge and un-centered the column",
     );
-    assert.match(cssBlock("viewNavBtn"), /place-items:\s*center/);
+  });
+});
+
+describe("Sidebar app navigation", () => {
+  const wired = {
+    projects: [p1, p2],
+    onOpenActivity: () => {},
+    onOpenKanban: () => {},
+    onOpenAutomations: () => {},
+    onOpenUsage: () => {},
+    onOpenFleet: () => {},
+    onOpenInsights: () => {},
+    onOpenDigest: () => {},
+  };
+
+  it("More lists only destinations that have an opener", async () => {
+    await clearSidebarStorage();
+    const m = await mount(
+      sidebar(THREADS, {
+        projects: [p1, p2],
+        onOpenActivity: () => {},
+        onOpenUsage: () => {},
+      }),
+    );
+    await openMoreMenu(m);
+    const ids = [
+      ...m.queryAll("[data-app-more-menu] [data-view-nav]"),
+    ].map((el) => el.getAttribute("data-view-nav"));
+    assert.deepEqual(ids, ["activity", "usage"]);
+    m.unmount();
+  });
+
+  it("marks the open destination instead of treating every other view as Threads", async () => {
+    await clearSidebarStorage();
+    const usage = await mount(sidebar(THREADS, { ...wired, activeView: "usage" }));
+    assert.equal(
+      usage.query('[data-view-nav="threads"]')?.getAttribute("aria-current"),
+      null,
+    );
+    assert.equal(usage.query("[data-app-more]")?.getAttribute("aria-current"), "page");
+    assert.equal(usage.query("[data-app-more]")?.getAttribute("aria-label"), "More, Usage");
+    await openMoreMenu(usage);
+    assert.equal(
+      usage.query('[data-view-nav="usage"]')?.getAttribute("aria-current"),
+      "page",
+    );
+    assert.equal(
+      usage.query('[data-view-nav="activity"]')?.getAttribute("aria-current"),
+      null,
+    );
+    usage.unmount();
+
+    const board = await mount(
+      sidebar(THREADS, { ...wired, activeView: "planboard" }),
+    );
+    assert.equal(
+      board.query('[data-view-nav="planboard"]')?.getAttribute("aria-current"),
+      "page",
+    );
+    assert.equal(board.query("[data-app-more]")?.getAttribute("aria-current"), null);
+    board.unmount();
+
+    const review = await mount(sidebar(THREADS, { ...wired, activeView: "prs" }));
+    assert.equal(
+      review.query('[data-view-nav="review"]')?.getAttribute("aria-current"),
+      "page",
+    );
+    assert.equal(
+      review.query('[data-view-nav="threads"]')?.getAttribute("aria-current"),
+      null,
+    );
+    review.unmount();
+  });
+
+  it("ArrowDown moves in More and Escape returns focus to the trigger", async () => {
+    await clearSidebarStorage();
+    const m = await mount(sidebar(THREADS, wired));
+    await openMoreMenu(m);
+    assert.equal(
+      (document.activeElement as HTMLElement | null)?.getAttribute("data-view-nav"),
+      "activity",
+    );
+    await m.pressFocused("ArrowDown");
+    assert.equal(
+      (document.activeElement as HTMLElement | null)?.getAttribute("data-view-nav"),
+      "kanban",
+    );
+    await m.pressFocused("Escape");
+    assert.equal(m.query("[data-app-more-menu]"), null);
+    assert.equal(document.activeElement, m.query("[data-app-more]"));
+    m.unmount();
+  });
+
+  it("Tab and Shift+Tab close More without taking the key from the browser", async () => {
+    await clearSidebarStorage();
+    const m = await mount(sidebar(THREADS, wired));
+    const pressTab = async (shiftKey: boolean) => {
+      const focused = document.activeElement as HTMLElement;
+      const event = new KeyboardEvent("keydown", {
+        key: "Tab",
+        shiftKey,
+        bubbles: true,
+        cancelable: true,
+      });
+      await inAct(() => {
+        focused.dispatchEvent(event);
+      });
+      await m.flush();
+      return event;
+    };
+
+    await openMoreMenu(m);
+    assert.equal(
+      (document.activeElement as HTMLElement | null)?.getAttribute("data-view-nav"),
+      "activity",
+    );
+    const tab = await pressTab(false);
+    assert.equal(tab.defaultPrevented, false);
+    assert.equal(m.query("[data-app-more-menu]"), null);
+    assert.equal(document.activeElement, m.query("[data-app-more]"));
+
+    await openMoreMenu(m);
+    const shiftTab = await pressTab(true);
+    assert.equal(shiftTab.defaultPrevented, false);
+    assert.equal(m.query("[data-app-more-menu]"), null);
+    assert.equal(document.activeElement, m.query("[data-app-more]"));
+
+    await openMoreMenu(m);
+    await m.pressFocused("End");
+    assert.equal(
+      (document.activeElement as HTMLElement | null)?.getAttribute("data-view-nav"),
+      "digest",
+    );
+    const endTab = await pressTab(false);
+    assert.equal(endTab.defaultPrevented, false);
+    assert.equal(m.query("[data-app-more-menu]"), null);
+    assert.equal(document.activeElement, m.query("[data-app-more]"));
+    m.unmount();
+  });
+
+  it("closes More on an outside click", async () => {
+    await clearSidebarStorage();
+    const m = await mount(sidebar(THREADS, wired));
+    await openMoreMenu(m);
+    const search = m.query('input[aria-label="Search threads"]');
+    assert.ok(search);
+    await inAct(() => {
+      search.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+    });
+    await m.flush();
+    assert.equal(m.query("[data-app-more-menu]"), null);
+    m.unmount();
+  });
+
+  it("Threads does not create a thread or change the selection", async () => {
+    await clearSidebarStorage();
+    const created: Array<string | undefined> = [];
+    const selected: string[] = [];
+    let opened = false;
+    const m = await mount(
+      sidebar(THREADS, {
+        projects: [p1, p2],
+        activeThreadId: "billing-idle",
+        onCreateThread: (pid) => {
+          created.push(pid);
+        },
+        onSelectThread: (id) => {
+          selected.push(id);
+        },
+        onOpenThreads: () => {
+          opened = true;
+        },
+      }),
+    );
+    await m.click(m.query('[data-view-nav="threads"]'));
+    assert.equal(opened, true);
+    assert.deepEqual(created, []);
+    assert.deepEqual(selected, []);
+    assert.ok(m.query('[data-thread-card="billing-idle"]'));
+    m.unmount();
+  });
+
+  it("opens Threads when nothing is selected", async () => {
+    await clearSidebarStorage();
+    let opened = 0;
+    const created: unknown[] = [];
+    const m = await mount(
+      sidebar([], {
+        projects: [p1],
+        activeThreadId: null,
+        onCreateThread: (pid) => {
+          created.push(pid);
+        },
+        onOpenThreads: () => {
+          opened += 1;
+        },
+      }),
+    );
+    await m.click(m.query('[data-view-nav="threads"]'));
+    assert.equal(opened, 1);
+    assert.deepEqual(created, []);
+    m.unmount();
+  });
+
+  it("keeps the status filter when Planboard is opened", async () => {
+    await clearSidebarStorage();
+    const m = await mount(
+      sidebar(THREADS, {
+        projects: [p1, p2],
+        activeThreadId: "broken",
+        onOpenPlanboard: () => {},
+      }),
+    );
+    await m.click(m.query("[data-status-filter-trigger]"));
+    await m.click(m.query('[data-status-filter="failed"]'));
+    await m.flush();
+    const before = cardTitles(m);
+    assert.ok(before.includes("broken"));
+    assert.ok(!before.includes("busy"));
+    await m.click(m.query('[data-view-nav="planboard"]'));
+    assert.deepEqual(cardTitles(m), before);
+    assert.equal(
+      m.query("[data-status-filter-trigger]")?.getAttribute("data-active"),
+      "true",
+    );
+    m.unmount();
   });
 });
 
@@ -1719,6 +2030,7 @@ describe("Sidebar status label + wait row", () => {
   const worker = (over: Partial<ThreadInfo> & Pick<ThreadInfo, "id">) =>
     thread({
       handoffFrom: "orch",
+      orchWorker: true,
       status: "working",
       runStartedAt: FRESH - 3 * 60 * 1000,
       updatedAt: FRESH,
@@ -1745,14 +2057,20 @@ describe("Sidebar status label + wait row", () => {
     m.unmount();
   });
 
-  it("an orchestrator with live workers keeps the wait row and tooltip", async () => {
+  it("an orchestrator with live workers keeps a collapsed family summary", async () => {
     await clearSidebarStorage();
     const m = await mount(
       sidebar([ORCH, worker({ id: "w1" }), worker({ id: "w2" })]),
     );
-    const row = m.query('[data-wait-row="orch"]');
-    assert.ok(row, "visible wait line renders while delegation is live");
-    assert.match(row!.textContent || "", /Waiting on 2 workers/);
+    const row = m.query('[data-family-summary="orch"]');
+    assert.ok(row, "collapsed crew lead summarizes its workers");
+    assert.match(row!.textContent || "", /2 workers/);
+    assert.match(row!.textContent || "", /2 running/);
+    assert.equal(
+      m.query('[data-thread-card="w1"]'),
+      null,
+      "workers stay folded until the family is opened",
+    );
     const label = m.query('[data-thread-card="orch"] [data-status-label]');
     assert.ok(label, "delegating parent still has a status label");
     assert.equal(
@@ -1760,35 +2078,34 @@ describe("Sidebar status label + wait row", () => {
       "Delegating",
       "a parent waiting on workers reads Delegating, not Working",
     );
-    assert.match(label!.getAttribute("title") || "", /Waiting on 2 workers/);
-    assert.match(label!.getAttribute("title") || "", /w1/);
     m.unmount();
   });
 
-  it("a worker blocked on a prompt turns the wait row into attention", async () => {
+  it("a worker blocked on a prompt turns the family summary into attention", async () => {
     await clearSidebarStorage();
     const m = await mount(
       sidebar([ORCH, worker({ id: "w1", awaitingInput: true })]),
     );
-    const row = m.query('[data-wait-row="orch"]');
+    const row = m.query('[data-family-summary="orch"]');
     assert.ok(row);
     assert.equal(row!.getAttribute("data-attention"), "true");
-    const label = m.query('[data-thread-card="orch"] [data-status-label]');
-    assert.ok(label);
-    assert.match(label!.getAttribute("title") || "", /blocked on you/);
+    assert.match(row!.textContent || "", /needs you/);
     m.unmount();
   });
 
-  it("no wait row once the fan-out lands", async () => {
+  it("finished workers stay in the family as ready, not integrated", async () => {
     await clearSidebarStorage();
     const m = await mount(
       sidebar([ORCH, worker({ id: "w1", status: "done", runStartedAt: null })]),
     );
-    assert.equal(m.query('[data-wait-row="orch"]'), null);
+    const row = m.query('[data-family-summary="orch"]');
+    assert.ok(row);
+    assert.match(row!.textContent || "", /1 ready/);
+    assert.equal((row!.textContent || "").includes("integrated"), false);
     m.unmount();
   });
 
-  it("settled workers of an active parent stay nested in Active", async () => {
+  it("explicit settle files a worker to the Settled shelf (#1315)", async () => {
     await clearSidebarStorage();
     const m = await mount(
       sidebar([
@@ -1802,21 +2119,118 @@ describe("Sidebar status label + wait row", () => {
         }),
       ]),
     );
-    const card = m.query('[data-thread-card="w-settled"]');
-    assert.ok(
-      card,
-      "settled worker must stay next to the parent without opening Settled",
+    assert.equal(
+      m.query('[data-thread-card="w-settled"]'),
+      null,
+      "explicit settle is not nested in Active while Settled is collapsed",
     );
+    assert.ok(
+      m.query("[data-settled-shelf-toggle]"),
+      "the settled worker lives on the Settled shelf",
+    );
+    m.unmount();
+  });
+
+  it("expanding a family shows compact worker rows", async () => {
+    await clearSidebarStorage();
+    const m = await mount(
+      sidebar([
+        ORCH,
+        worker({
+          id: "w1",
+          title: "Fork: Fork: Review permissions",
+        }),
+      ]),
+    );
+    const toggle = m.query('[data-family-toggle="orch"]');
+    assert.ok(toggle);
+    await m.click(toggle!);
+    const card = m.query('[data-thread-card="w1"]');
+    assert.ok(card, "expanded family reveals the worker");
+    assert.equal(card!.getAttribute("data-compact"), "true");
     assert.equal(card!.getAttribute("data-nested"), "true");
     assert.equal(
-      card!.getAttribute("data-settled"),
+      card!.querySelector("[data-card-slug]"),
       null,
-      "Active nest is a full card, not a Settled slim row",
+      "compact workers do not repeat project metadata",
+    );
+    const title = card!.querySelector("[title]");
+    assert.ok(title);
+    assert.equal(title!.textContent, "Review permissions");
+    assert.equal(
+      title!.getAttribute("title"),
+      "Fork: Fork: Review permissions",
+      "stored title stays on the tooltip and is not rewritten",
+    );
+    m.unmount();
+  });
+
+  it("a selected worker stays reachable without opening siblings", async () => {
+    await clearSidebarStorage();
+    const m = await mount(
+      sidebar([ORCH, worker({ id: "w1" }), worker({ id: "w2" })], {
+        activeThreadId: "w1",
+      }),
+    );
+    assert.ok(m.query('[data-thread-card="orch"]'));
+    assert.ok(m.query('[data-thread-card="w1"]'), "selected worker stays visible");
+    assert.equal(
+      m.query('[data-thread-card="w2"]'),
+      null,
+      "siblings stay collapsed",
+    );
+    const toggle = m.query('[data-family-toggle="orch"]');
+    assert.ok(toggle);
+    assert.equal(toggle!.getAttribute("aria-expanded"), "false");
+    m.unmount();
+  });
+
+  it("collapsing a family with a selected worker hides siblings only", async () => {
+    await clearSidebarStorage();
+    const m = await mount(
+      sidebar([ORCH, worker({ id: "w1" }), worker({ id: "w2" })], {
+        activeThreadId: "w1",
+      }),
+    );
+    const toggle = m.query('[data-family-toggle="orch"]');
+    assert.ok(toggle);
+    await m.click(toggle!);
+    assert.equal(toggle!.getAttribute("aria-expanded"), "true");
+    assert.ok(m.query('[data-thread-card="w2"]'), "expand shows siblings");
+    await m.click(toggle!);
+    assert.equal(toggle!.getAttribute("aria-expanded"), "false");
+    assert.ok(
+      m.query('[data-thread-card="w1"]'),
+      "selected worker remains reachable",
     );
     assert.equal(
-      m.query("[data-settled-shelf-toggle]"),
+      m.query('[data-thread-card="w2"]'),
       null,
-      "the only settled thread is nested under its parent, not in the shelf",
+      "siblings hide on explicit collapse",
+    );
+    m.unmount();
+  });
+
+  it("search finds a worker and shows its task context", async () => {
+    await clearSidebarStorage();
+    const m = await mount(
+      sidebar([
+        ORCH,
+        worker({ id: "w1", title: "Review permissions" }),
+        worker({ id: "w2", title: "Unrelated sibling" }),
+      ]),
+    );
+    await m.type(searchInput(m), "permissions");
+    await inAct(async () => {
+      await new Promise((r) => setTimeout(r, 350));
+    });
+    await m.flush();
+    assert.ok(m.query('[data-thread-card="orch"]'), "parent comes along as context");
+    assert.ok(m.query('[data-thread-card="w1"]'));
+    assert.equal(
+      m.query('[data-thread-card="w2"]'),
+      null,
+      "unrelated siblings stay hidden",
     );
     m.unmount();
   });
@@ -2083,7 +2497,7 @@ describe("Sidebar card anatomy + hover actions", () => {
     m.unmount();
   });
 
-  it("settled workers of a pinned parent stay nested in the pinned block", async () => {
+  it("explicit settle of a pinned parent's worker files it to Settled", async () => {
     await clearSidebarStorage();
     const m = await mount(
       sidebar([
@@ -2099,6 +2513,7 @@ describe("Sidebar card anatomy + hover actions", () => {
           title: "Fork: Import existing CLI agent sessions",
           status: "done",
           handoffFrom: "orch",
+          orchWorker: true,
           runStartedAt: null,
           settledOverride: "settled",
           updatedAt: FRESH,
@@ -2111,36 +2526,11 @@ describe("Sidebar card anatomy + hover actions", () => {
         }),
       ]),
     );
-    const card = m.query('[data-thread-card="w-settled"]');
-    assert.ok(
-      card,
-      "settled worker must stay next to the pinned parent without opening Settled",
-    );
-    assert.equal(card!.getAttribute("data-nested"), "true");
-    assert.equal(
-      card!.getAttribute("data-settled"),
-      null,
-      "pinned nest is a full card, not a Settled slim row",
-    );
-    const order = cardTitles(m);
-    const pinIdx = order.indexOf("orch");
-    const childIdx = order.indexOf("w-settled");
-    const activeIdx = order.indexOf("active-card");
-    assert.equal(
-      childIdx,
-      pinIdx + 1,
-      "child sits immediately under the pinned parent",
-    );
-    assert.ok(
-      childIdx < activeIdx,
-      "child is in the pinned block, not a lone Active card",
-    );
+    assert.equal(m.query('[data-thread-card="w-settled"]'), null);
+    assert.ok(m.query("[data-settled-shelf-toggle]"));
     assert.ok(m.query("[data-pinned-divider]"));
-    assert.equal(
-      m.query("[data-settled-shelf-toggle]"),
-      null,
-      "the only settled thread is nested under its parent, not in the shelf",
-    );
+    const order = cardTitles(m);
+    assert.ok(order.indexOf("orch") < order.indexOf("active-card"));
     m.unmount();
   });
 

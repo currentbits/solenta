@@ -68,6 +68,7 @@ function createCodexJsonRpcSession(opts) {
   let lineBuf = "";
   let finished = false;
   let killed = false;
+  let stdinFailed = false;
   let killTimer = null;
   let nextId = 1;
   /** @type {Map<unknown, { resolve: (v: unknown) => void, reject: (e: Error) => void }>} */
@@ -102,14 +103,55 @@ function createCodexJsonRpcSession(opts) {
     }
   }
 
+  /**
+   * Stdin died while the child is still up. Reject in-flight requests now
+   * and report the error. Exit stays the child's real close. After
+   * kill/finish the same EPIPE is expected and must not surface.
+   * @param {Error | { message?: string, code?: string }} err
+   */
+  function noteStdinError(err) {
+    if (killed || finished || stdinFailed) return;
+    stdinFailed = true;
+    const error =
+      err instanceof Error
+        ? err
+        : new Error(
+            String((err && err.message) || "Codex app-server stdin closed"),
+          );
+    const waiters = [...pending.values()];
+    pending.clear();
+    for (const waiter of waiters) {
+      try {
+        waiter.reject(error);
+      } catch {
+        // ignore
+      }
+    }
+    if (typeof onError === "function") {
+      try {
+        onError(error);
+      } catch {
+        // ignore
+      }
+    }
+  }
+
   function write(obj) {
-    if (killed || finished || !child || !child.stdin || child.stdin.destroyed) {
+    if (
+      killed ||
+      finished ||
+      stdinFailed ||
+      !child ||
+      !child.stdin ||
+      child.stdin.destroyed
+    ) {
       return false;
     }
     try {
       child.stdin.write(`${JSON.stringify(obj)}\n`);
       return true;
-    } catch {
+    } catch (err) {
+      noteStdinError(err instanceof Error ? err : new Error(String(err)));
       return false;
     }
   }
@@ -237,6 +279,13 @@ function createCodexJsonRpcSession(opts) {
 
   child.stdout.setEncoding("utf8");
   child.stderr.setEncoding("utf8");
+  // Async EPIPE. A no-op listener keeps the process alive but leaves the
+  // in-flight request pending until the child eventually closes.
+  if (child.stdin) {
+    child.stdin.on("error", (err) => {
+      noteStdinError(err);
+    });
+  }
 
   child.stdout.on("data", (chunk) => {
     lineBuf += chunk;

@@ -40,7 +40,7 @@ describe("statusPulseFor", () => {
     );
   });
 
-  it("pulses waiting amber when the agent needs input", () => {
+  it("does not pulse waiting, even when the agent needs input", () => {
     assert.equal(
       statusPulseFor(
         thread({ status: "working", awaitingInput: true }),
@@ -48,35 +48,54 @@ describe("statusPulseFor", () => {
         null,
         false,
       ),
-      "waiting",
+      null,
     );
   });
 
-  it("pulses waiting amber when workers are blocked on you", () => {
+  it("does not pulse a parent whose workers are blocked on you", () => {
     const orch = thread({ id: "orch", status: "done" });
     const worker = thread({
       id: "w1",
       handoffFrom: "orch",
+      orchWorker: true,
       status: "working",
       awaitingInput: true,
     });
     const wait = waitFor([orch, worker]).get("orch") ?? null;
-    assert.equal(statusPulseFor(orch, NOW, wait, false), "waiting");
+    assert.equal(statusPulseFor(orch, NOW, wait, false), null);
   });
 
-  it("pulses delegating violet when a parent is waiting on live workers", () => {
+  it("does not pulse a working parent whose descendant is blocked", () => {
+    const orch = thread({
+      id: "orch",
+      status: "working",
+      runStartedAt: NOW,
+    });
+    const worker = thread({
+      id: "w1",
+      handoffFrom: "orch",
+      orchWorker: true,
+      status: "working",
+      awaitingInput: true,
+    });
+    const wait = waitFor([orch, worker]).get("orch") ?? null;
+    assert.equal(statusPulseFor(orch, NOW, wait, false), null);
+  });
+
+  it("does not pulse delegating; only actual working moves", () => {
     const orch = thread({ id: "orch", status: "done" });
     const worker = thread({
       id: "w1",
       handoffFrom: "orch",
+      orchWorker: true,
       status: "working",
       runStartedAt: NOW - 60_000,
     });
     const wait = waitFor([orch, worker]).get("orch") ?? null;
-    assert.equal(statusPulseFor(orch, NOW, wait, false), "delegating");
+    assert.equal(statusPulseFor(orch, NOW, wait, false), null);
   });
 
-  it("pulses done green only for unread finished work", () => {
+  it("does not pulse unread finished work", () => {
     assert.equal(
       statusPulseFor(
         thread({
@@ -88,30 +107,7 @@ describe("statusPulseFor", () => {
         null,
         false,
       ),
-      "done",
-    );
-    assert.equal(
-      statusPulseFor(
-        thread({ status: "done", updatedAt: NOW, lastVisitedAt: NOW }),
-        NOW,
-        null,
-        false,
-      ),
       null,
-    );
-    assert.equal(
-      statusPulseFor(
-        thread({
-          status: "done",
-          updatedAt: NOW,
-          lastVisitedAt: NOW - 1,
-        }),
-        NOW,
-        null,
-        true,
-      ),
-      null,
-      "selected thread is being read, so no done pulse",
     );
   });
 
@@ -199,38 +195,34 @@ describe("ThreadCard status pulse", () => {
     m.unmount();
   });
 
-  it("puts a waiting pulse on the title line", async () => {
+  it("leaves waiting as a static label with no pulse", async () => {
     const { m } = await card({ status: "working", awaitingInput: true });
-    const dot = m.query("[data-status-dot]");
-    assert.ok(dot, "waiting thread must show a pulse");
-    assert.equal(dot!.getAttribute("data-status-dot"), "waiting");
+    assert.equal(m.query("[data-status-dot]"), null);
+    assert.ok(m.query("[data-status-label]"));
     m.unmount();
   });
 
-  it("puts a delegating pulse on the title line", async () => {
+  it("leaves a delegating parent as a static label with no pulse", async () => {
     const { m } = await card({ id: "orch", status: "done", title: "orchestrate" }, [
       thread({
         id: "w1",
         handoffFrom: "orch",
+        orchWorker: true,
         status: "working",
         runStartedAt: NOW - 60_000,
       }),
     ]);
-    const dot = m.query("[data-status-dot]");
-    assert.ok(dot, "delegating parent must show a pulse");
-    assert.equal(dot!.getAttribute("data-status-dot"), "delegating");
+    assert.equal(m.query("[data-status-dot]"), null);
     m.unmount();
   });
 
-  it("puts a done pulse on unread finished work", async () => {
+  it("leaves unread finished work without a pulse", async () => {
     const { m } = await card({
       status: "done",
       updatedAt: NOW,
       lastVisitedAt: NOW - 1,
     });
-    const dot = m.query("[data-status-dot]");
-    assert.ok(dot, "unread done must show a pulse");
-    assert.equal(dot!.getAttribute("data-status-dot"), "done");
+    assert.equal(m.query("[data-status-dot]"), null);
     m.unmount();
   });
 

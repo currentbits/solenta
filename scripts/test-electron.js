@@ -1,9 +1,10 @@
 #!/usr/bin/env node
 // The electron suite on POSIX is `node --test electron/test/*.test.js`.
-// On win32, CreateProcess cannot run a shebang. Agent-CLI fakes now go
-// through writeFakeBin (electron/test/support/fakeBin.js) which emits a
-// .cmd wrapper; cross-spawn (after #442) can launch those. gh/fm still
-// use child_process.execFile, which cannot run .cmd — those files stay
+// On win32, CreateProcess cannot run a shebang. Agent-CLI fakes go
+// through writeFakeBin (electron/test/support/fakeBin.js): cross-spawn
+// reads the shebang and launches node.exe with the original argv, so a
+// prompt newline is not split by cmd.exe. gh/fm still use
+// child_process.execFile, which cannot run a shebang — those files stay
 // off this list. #450
 "use strict";
 
@@ -23,7 +24,7 @@ const WIN32_FILES = [
   "electron/test/doctor.test.js", // the win32 doctor probes
   "electron/test/sandbox.test.js", // sandbox resolution (platform injected)
   "electron/test/which-platform.test.js", // defaultWhich + cross-spawn source
-  "electron/test/fake-bin.test.js", // the .cmd wrapper contract
+  "electron/test/fake-bin.test.js", // shebang fake, argv preserved through cross-spawn
   "electron/test/provider-usage.test.js", // writeFakeBin + cross-spawn quota probe
   "electron/test/provider-usage-managed.test.js",
   "electron/test/proc.test.js", // agentSpawnOptions win32 attach (#480)

@@ -386,14 +386,34 @@ describe("runner simulated mode", () => {
     assert.equal(store.getThread(orch.id).archived, false);
   });
 
-  it("archives an idle (stopped) worker too, but not a pendingFork one", async () => {
+  it("archives an idle stopped worker, not a pendingFork or a fresh fork", async () => {
     const { orch, worker } = orchPair(store);
-    // Worker B's run was stopped (or the CLI ended "cancelled"): terminal
-    // status is "idle", not "done". It must still be swept off the sidebar.
+    // Stopped runs land idle with stoppedAt (#183). A cancelled CLI that
+    // finished leaves a transcript and no stoppedAt. Both have run, so the
+    // sweep hides them. A fresh fork is idle too and must stay startable.
     const stopped = services.forkThread(store, { threadId: orch.id });
     store.updateThread(stopped.id, {
       orchWorker: true,
       title: "Worker B",
+      status: "idle",
+      stoppedAt: 1,
+    });
+    const cancelled = services.forkThread(store, { threadId: orch.id });
+    store.updateThread(cancelled.id, {
+      orchWorker: true,
+      title: "Worker E",
+      status: "idle",
+    });
+    store.appendMessage(cancelled.id, {
+      id: "m-cancelled",
+      role: "user",
+      text: "did run",
+      createdAt: 1,
+    });
+    const fresh = services.forkThread(store, { threadId: orch.id });
+    store.updateThread(fresh.id, {
+      orchWorker: true,
+      title: "Worker D",
       status: "idle",
     });
     // Worker C is queued and never ran: idle + pendingFork stays visible.
@@ -409,6 +429,8 @@ describe("runner simulated mode", () => {
     await waitFor(() => store.getThread(worker.id).status === "done");
     await waitFor(() => store.getThread(worker.id).archived === true);
     assert.equal(store.getThread(stopped.id).archived, true);
+    assert.equal(store.getThread(cancelled.id).archived, true);
+    assert.equal(store.getThread(fresh.id).archived, false);
     assert.equal(store.getThread(queued.id).archived, false);
   });
 
@@ -1256,23 +1278,33 @@ describe("runner real agent mode", () => {
   });
 
   it("replaces overflow metadata when a later direct runner failure is generic", async () => {
-    const thread = store.getThreads()[0];
-    store.updateThread(thread.id, {
-      status: "failed",
-      lastError: "Context window is full",
-      lastErrorKind: "context-overflow",
-      pendingWorktree: true,
-    });
+    // Binary check runs before the worktree gate. CI has no claude on PATH,
+    // so an unset CODER_CLAUDE_BIN fails as "binary not found" and never
+    // reaches the generic worktree error this case is about.
+    const prevClaude = process.env.CODER_CLAUDE_BIN;
+    process.env.CODER_CLAUDE_BIN = process.execPath;
+    try {
+      const thread = store.getThreads()[0];
+      store.updateThread(thread.id, {
+        status: "failed",
+        lastError: "Context window is full",
+        lastErrorKind: "context-overflow",
+        pendingWorktree: true,
+      });
 
-    await assert.rejects(
-      () => runner.startRun({ threadId: thread.id, prompt: "try again" }),
-      /worktreeBase is not configured/,
-    );
+      await assert.rejects(
+        () => runner.startRun({ threadId: thread.id, prompt: "try again" }),
+        /worktreeBase is not configured/,
+      );
 
-    const failed = store.getThread(thread.id);
-    assert.equal(failed.status, "failed");
-    assert.match(failed.lastError, /worktreeBase is not configured/);
-    assert.equal(failed.lastErrorKind, null);
+      const failed = store.getThread(thread.id);
+      assert.equal(failed.status, "failed");
+      assert.match(failed.lastError, /worktreeBase is not configured/);
+      assert.equal(failed.lastErrorKind, null);
+    } finally {
+      if (prevClaude === undefined) delete process.env.CODER_CLAUDE_BIN;
+      else process.env.CODER_CLAUDE_BIN = prevClaude;
+    }
   });
 
   it("stopRun kills agent process and leaves idle + Run stopped", async () => {

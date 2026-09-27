@@ -2,13 +2,16 @@ import {
   memo,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useId,
   useRef,
   useState,
   type ClipboardEvent,
   type CSSProperties,
+  type Dispatch,
   type KeyboardEvent,
   type RefObject,
+  type SetStateAction,
 } from "react";
 import type {
   AgentProfile,
@@ -85,6 +88,13 @@ import {
 import { parseDelegate } from "../delegate";
 import { asBtwPrompt } from "../btw";
 import { buildBestOfNEntries, providerVendor } from "../bestOfN";
+import {
+  copyListRecord,
+  keptAttachments,
+  keptDrafts,
+  keptPasteCards,
+  syncListRecord,
+} from "../composerSession";
 import {
   commandQuery,
   matchSlashCommands,
@@ -187,7 +197,7 @@ interface ComposerProps {
   permissionMode: PermissionMode;
   /** Teach-mode autonomy cap on the permission picker (issue #373). */
   teach?: ThreadTeach | null;
-  /** Ask mode (issue #392): hide permission, Build, Best of N, attach. */
+  /** Ask mode (issue #392): hide permission, Options, attach. */
   ask?: boolean;
   onPermissionModeChange: (mode: PermissionMode) => void | Promise<void>;
   /** Current thread provider id. */
@@ -238,11 +248,11 @@ interface ComposerProps {
    * draft — never clobbers an in-progress one.
    */
   restoreDraft?: { threadId: string; text: string } | null;
-  /** Multi-phase Build workflow (Build pill main segment). */
+  /** Multi-phase workflow. The Build action inside Options calls this. */
   onBuild: (prompt: string, templateId: string) => void | Promise<void>;
   /**
    * Best of N: run this prompt on each selected provider or profile as a
-   * forked thread. Absent hides the control (tests and shells without fork).
+   * forked thread. Absent hides that section inside Options.
    */
   onBestOfN?: (selectedIds: string[], prompt: string) => void | Promise<void>;
   /**
@@ -448,6 +458,19 @@ function AttachmentChip({
   );
 }
 
+function keepList<T>(
+  store: Record<string, T[]>,
+  set: Dispatch<SetStateAction<Record<string, T[]>>>,
+): Dispatch<SetStateAction<Record<string, T[]>>> {
+  return (action) => {
+    set((prev) => {
+      const next = typeof action === "function" ? action(prev) : action;
+      syncListRecord(store, next);
+      return next;
+    });
+  };
+}
+
 export const Composer = memo(function Composer({
   threadId,
   branch,
@@ -522,8 +545,10 @@ export const Composer = memo(function Composer({
    * picker (model rows, pills, slash/mention refresh) on every letter, which
    * is the lag after a few keystrokes. The field is uncontrolled; React only
    * paints when hasPrompt flips or a popup needs to open.
+   *
+   * The object is the module map, so a later mount of this thread sees it.
    */
-  const draftsRef = useRef<Record<string, string>>({});
+  const draftsRef = useRef(keptDrafts);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const overflowRef = useRef<HTMLDivElement>(null);
   const pasteCardsRef = useRef<PasteCard[]>([]);
@@ -805,9 +830,13 @@ export const Composer = memo(function Composer({
    * not leak across a thread switch. Cleared together with the draft on a
    * successful action.
    */
-  const [attachmentsByThread, setAttachmentsByThread] = useState<
-    Record<string, AttachmentInfo[]>
-  >({});
+  const [attachmentsByThread, setAttachmentsState] = useState(() =>
+    copyListRecord(keptAttachments),
+  );
+  const setAttachmentsByThread = useCallback(
+    keepList(keptAttachments, setAttachmentsState),
+    [],
+  );
   const attachments = attachmentsByThread[threadId] ?? [];
   const addAttachments = useCallback(
     (items: AttachmentInfo[]) => {
@@ -868,9 +897,13 @@ export const Composer = memo(function Composer({
       ),
     [threadId],
   );
-  const [pasteCardsByThread, setPasteCardsByThread] = useState<
-    Record<string, PasteCard[]>
-  >({});
+  const [pasteCardsByThread, setPasteCardsState] = useState(() =>
+    copyListRecord(keptPasteCards),
+  );
+  const setPasteCardsByThread = useCallback(
+    keepList(keptPasteCards, setPasteCardsState),
+    [],
+  );
   const [expandedCardIds, setExpandedCardIds] = useState<
     Record<string, boolean>
   >({});
@@ -923,11 +956,23 @@ export const Composer = memo(function Composer({
   const [highlightIndex, setHighlightIndex] = useState(0);
   /** Type-in filter for the drilled-in model list. Empty on the provider screen. */
   const [modelQuery, setModelQuery] = useState("");
-  const [buildMenuOpen, setBuildMenuOpen] = useState(false);
+  const [optionsOpen, setOptionsOpen] = useState(false);
   const [attachOpen, setAttachOpen] = useState(false);
-  const [bestOfNOpen, setBestOfNOpen] = useState(false);
   const [bestIds, setBestIds] = useState<string[]>([]);
   const [manageOpen, setManageOpen] = useState(false);
+  // Close a stale Options or workflow editor when the thread, lock, or Ask
+  // mode changes. Adjusting during render drops it before paint, so the
+  // focus restore cannot run after the textarea takes the new thread.
+  const [menuGuardSeen, setMenuGuardSeen] = useState(
+    () => `${threadId}|${disabled || busy ? 1 : 0}|${ask ? 1 : 0}`,
+  );
+  const menuGuard = `${threadId}|${disabled || busy ? 1 : 0}|${ask ? 1 : 0}`;
+  if (menuGuardSeen !== menuGuard) {
+    setMenuGuardSeen(menuGuard);
+    setOptionsOpen(false);
+    const prevThread = menuGuardSeen.split("|")[0];
+    if (prevThread !== threadId || ask) setManageOpen(false);
+  }
   /** Per-thread last-used workflow template id. */
   const [templateByThread, setTemplateByThread] = useState<
     Record<string, string>
@@ -941,9 +986,11 @@ export const Composer = memo(function Composer({
   const modelListRef = useRef<HTMLUListElement>(null);
   const modelSearchRef = useRef<HTMLInputElement>(null);
   const providerListRef = useRef<HTMLUListElement>(null);
-  const buildWrapRef = useRef<HTMLDivElement>(null);
-  const bestOfNWrapRef = useRef<HTMLDivElement>(null);
-  const bestOfNPopoverRef = useRef<HTMLDivElement>(null);
+  const optionsWrapRef = useRef<HTMLDivElement>(null);
+  const optionsTriggerRef = useRef<HTMLButtonElement>(null);
+  const optionsPopoverRef = useRef<HTMLDivElement>(null);
+  /** Set when Manage workflows opens, so close can return to Options. */
+  const returnFocusToOptions = useRef(false);
   const modelListId = useId();
 
   /** @-mention popup state; `mention` null means closed. */
@@ -1013,8 +1060,7 @@ export const Composer = memo(function Composer({
         setModelOpen(true);
         setModeOpen(false);
         setEffortOpen(false);
-        setBuildMenuOpen(false);
-        setBestOfNOpen(false);
+        setOptionsOpen(false);
         onModelPickerOpen?.();
         return;
       }
@@ -1023,8 +1069,7 @@ export const Composer = memo(function Composer({
         setEffortOpen(true);
         setModelOpen(false);
         setModeOpen(false);
-        setBuildMenuOpen(false);
-        setBestOfNOpen(false);
+        setOptionsOpen(false);
         return;
       }
       if (action === "permissions") {
@@ -1032,8 +1077,7 @@ export const Composer = memo(function Composer({
         setModeOpen(true);
         setModelOpen(false);
         setEffortOpen(false);
-        setBuildMenuOpen(false);
-        setBestOfNOpen(false);
+        setOptionsOpen(false);
         return;
       }
       onSlashAction?.(action);
@@ -1153,6 +1197,8 @@ export const Composer = memo(function Composer({
     : workflows.some((w) => w.id === DEFAULT_TEMPLATE_ID)
       ? DEFAULT_TEMPLATE_ID
       : (workflows[0]?.id ?? DEFAULT_TEMPLATE_ID);
+  const selectedWorkflowName =
+    workflows.find((w) => w.id === templateId)?.name ?? null;
 
   const canSend =
     !disabled && !sending && (hasPrompt || pasteCards.length > 0);
@@ -1163,6 +1209,9 @@ export const Composer = memo(function Composer({
   const locked = disabled || busy;
   /** Build is enabled for any provider; backend validates phase providers. */
   const canBuild = !locked && !sending && hasPrompt;
+  const workflowRunTitle = hasPrompt
+    ? "Build workflow"
+    : "Add a prompt to run this workflow";
   const shownError = error ?? localError;
   const shortSess = shortSessionId(sessionId);
   const sessionLocked = Boolean(sessionId);
@@ -1247,8 +1296,7 @@ export const Composer = memo(function Composer({
       !modeOpen &&
       !modelOpen &&
       !effortOpen &&
-      !buildMenuOpen &&
-      !bestOfNOpen &&
+      !optionsOpen &&
       !attachOpen
     )
       return;
@@ -1263,11 +1311,8 @@ export const Composer = memo(function Composer({
       if (effortOpen && !effortWrapRef.current?.contains(t)) {
         setEffortOpen(false);
       }
-      if (buildMenuOpen && !buildWrapRef.current?.contains(t)) {
-        setBuildMenuOpen(false);
-      }
-      if (bestOfNOpen && !bestOfNWrapRef.current?.contains(t)) {
-        setBestOfNOpen(false);
+      if (optionsOpen && !optionsWrapRef.current?.contains(t)) {
+        setOptionsOpen(false);
       }
       if (attachOpen && !attachWrapRef.current?.contains(t)) {
         setAttachOpen(false);
@@ -1275,7 +1320,7 @@ export const Composer = memo(function Composer({
     };
     document.addEventListener("mousedown", onDoc);
     return () => document.removeEventListener("mousedown", onDoc);
-  }, [modeOpen, modelOpen, effortOpen, buildMenuOpen, bestOfNOpen, attachOpen]);
+  }, [modeOpen, modelOpen, effortOpen, optionsOpen, attachOpen]);
 
   // When the popover opens, seed highlight on the selected model and focus the list.
   useEffect(() => {
@@ -1396,8 +1441,7 @@ export const Composer = memo(function Composer({
     modeOpen ||
     modelOpen ||
     effortOpen ||
-    buildMenuOpen ||
-    bestOfNOpen ||
+    optionsOpen ||
     attachOpen ||
     viewOpen;
   const closeAllMenus = useCallback(() => {
@@ -1408,8 +1452,7 @@ export const Composer = memo(function Composer({
     } else {
       setModelOpen(false);
     }
-    setBuildMenuOpen(false);
-    setBestOfNOpen(false);
+    setOptionsOpen(false);
     setAttachOpen(false);
     setViewOpen(false);
   }, [modelOpen, closeModelPicker]);
@@ -1418,7 +1461,48 @@ export const Composer = memo(function Composer({
   // provider/model list on open and drill; takeFocus would steal that,
   // and restore would fight closeModelPicker / Escape-back.
   useModalFocus(modelOpen, modelPopoverRef, false);
-  useModalFocus(bestOfNOpen, bestOfNPopoverRef);
+  useModalFocus(optionsOpen, optionsPopoverRef);
+  // The pill wraps with the others, so its left edge is not the window's.
+  // Keep the panel on screen; the panel itself scrolls.
+  useLayoutEffect(() => {
+    if (!optionsOpen) return;
+    const pop = optionsPopoverRef.current;
+    const anchor = optionsWrapRef.current;
+    if (!pop || !anchor) return;
+    const place = () => {
+      const rect = anchor.getBoundingClientRect();
+      const margin = 8;
+      const width = Math.min(
+        320,
+        Math.max(160, window.innerWidth - margin * 2),
+      );
+      let left = 0;
+      if (rect.left + width > window.innerWidth - margin) {
+        left = window.innerWidth - margin - width - rect.left;
+      }
+      if (rect.left + left < margin) left = margin - rect.left;
+      const above = rect.top - margin;
+      pop.style.left = `${Math.round(left)}px`;
+      pop.style.width = `${Math.round(width)}px`;
+      pop.style.maxHeight = `${Math.round(Math.min(420, Math.max(0, above)))}px`;
+    };
+    place();
+    window.addEventListener("resize", place);
+    window.addEventListener("scroll", place, true);
+    return () => {
+      window.removeEventListener("resize", place);
+      window.removeEventListener("scroll", place, true);
+    };
+  }, [optionsOpen]);
+  // The editor opens after Options unmounts, so the focused Manage control is
+  // gone and the dialog restores to body. Run after that restore and land on
+  // the Options button, which is still mounted.
+  useLayoutEffect(() => {
+    if (manageOpen) return;
+    if (!returnFocusToOptions.current) return;
+    returnFocusToOptions.current = false;
+    optionsTriggerRef.current?.focus();
+  }, [manageOpen]);
 
   const popupOpen = anyMenuOpen || mentionOpen || commandOpen || manageOpen;
   useEffect(() => {
@@ -1575,7 +1659,7 @@ export const Composer = memo(function Composer({
 
   const submitBuild = () => {
     if (!canBuild) return;
-    setBuildMenuOpen(false);
+    setOptionsOpen(false);
     void runAction(
       (prompt) => onBuild(prompt, templateId),
       "Failed to start workflow",
@@ -1584,6 +1668,13 @@ export const Composer = memo(function Composer({
 
   const installedProviders = providers.filter((p) => p.available);
   const canBestOfN = Boolean(onBestOfN) && !busy && canSend;
+  const bestRunTitle = !canSend
+    ? "Add a prompt to run this on multiple providers"
+    : busy || disabled
+      ? "Wait for this run to finish"
+      : bestIds.length < 2
+        ? "Pick at least two"
+        : "Run this prompt on multiple providers at once";
   const toggleBestId = (id: string) => {
     setBestIds((prev) =>
       prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id],
@@ -1603,13 +1694,13 @@ export const Composer = memo(function Composer({
         plan.map((e) => e.id),
         prompt,
       );
-      setBestOfNOpen(false);
+      setOptionsOpen(false);
     }, "Failed to start Best of N");
   };
 
   const selectTemplate = (id: string) => {
     setTemplateByThread((prev) => ({ ...prev, [threadId]: id }));
-    setBuildMenuOpen(false);
+    setOptionsOpen(false);
   };
 
   const applyStashEntry = (entry: StashEntry) => {
@@ -1817,8 +1908,7 @@ export const Composer = memo(function Composer({
       setModeOpen(false);
       setModelOpen(false);
       setEffortOpen(false);
-      setBuildMenuOpen(false);
-      setBestOfNOpen(false);
+      setOptionsOpen(false);
       return;
     }
     runAttachmentPick(onPickAttachments);
@@ -2538,8 +2628,7 @@ export const Composer = memo(function Composer({
                     setModelOpen(true);
                     setModeOpen(false);
                     setEffortOpen(false);
-                    setBuildMenuOpen(false);
-                    setBestOfNOpen(false);
+                    setOptionsOpen(false);
                     // Providers were fetched once at boot; re-check so a CLI
                     // installed mid-session does not show "not installed".
                     onModelPickerOpen?.();
@@ -2928,8 +3017,7 @@ export const Composer = memo(function Composer({
                     setEffortOpen((v) => !v);
                     setModelOpen(false);
                     setModeOpen(false);
-                    setBuildMenuOpen(false);
-                    setBestOfNOpen(false);
+                    setOptionsOpen(false);
                   }}
                 >
                   <span className={styles.effortIcon} aria-hidden="true">
@@ -3031,8 +3119,7 @@ export const Composer = memo(function Composer({
                   setEffortOpen(false);
                   setModelOpen(false);
                   setModeOpen(false);
-                  setBuildMenuOpen(false);
-                  setBestOfNOpen(false);
+                  setOptionsOpen(false);
                   void toggleWebSearch();
                 }}
               >
@@ -3074,8 +3161,7 @@ export const Composer = memo(function Composer({
                     setModeOpen((v) => !v);
                     setModelOpen(false);
                     setEffortOpen(false);
-                    setBuildMenuOpen(false);
-                    setBestOfNOpen(false);
+                    setOptionsOpen(false);
                   }
                 }}
               >
@@ -3155,35 +3241,37 @@ export const Composer = memo(function Composer({
             )}
 
             {!ask && (
-            <div className={styles.buildSplit} ref={buildWrapRef}>
+            <div className={styles.modeWrap} ref={optionsWrapRef}>
               <button
+                ref={optionsTriggerRef}
                 type="button"
-                className={`${styles.pill} ${styles.pillAccent} ${styles.buildMain}`}
-                onClick={() => submitBuild()}
-                disabled={!canBuild}
-                aria-disabled={!canBuild ? "true" : undefined}
-                title="Build workflow"
-              >
-                {STATIC.mode}
-              </button>
-              <button
-                type="button"
-                className={`${styles.pill} ${styles.pillAccent} ${styles.buildCaret}`}
-                aria-label="Choose workflow template"
-                title="Choose workflow template"
-                aria-haspopup="menu"
-                aria-expanded={buildMenuOpen}
+                className={styles.pill}
                 disabled={locked || sending}
                 aria-disabled={locked || sending ? "true" : undefined}
+                aria-haspopup="dialog"
+                aria-expanded={optionsOpen}
+                aria-label="Options"
+                title={
+                  busy
+                    ? "Wait for this run to finish"
+                    : disabled
+                      ? "This thread is archived"
+                      : onBestOfN
+                        ? "Workflow and Best of N"
+                        : "Workflow"
+                }
+                data-composer-options=""
                 onClick={() => {
                   if (locked || sending) return;
-                  setBuildMenuOpen((v) => !v);
+                  setOptionsOpen((open) => !open);
                   setModeOpen(false);
                   setModelOpen(false);
                   setEffortOpen(false);
-                  setBestOfNOpen(false);
+                  setAttachOpen(false);
+                  setViewOpen(false);
                 }}
               >
+                Options
                 <span className={styles.caret}>
                   <svg
                     width="10"
@@ -3200,100 +3288,79 @@ export const Composer = memo(function Composer({
                   </svg>
                 </span>
               </button>
-              {buildMenuOpen && (
-                <ul
-                  className={`${styles.modeMenu} ${styles.buildMenu}`}
-                  role="menu"
-                  aria-label="Workflow templates"
+              {optionsOpen && (
+                <div
+                  ref={optionsPopoverRef}
+                  className={styles.optionsPopover}
+                  role="dialog"
+                  aria-label="Options"
+                  data-composer-options-popover=""
+                  data-best-of-n-popover={onBestOfN ? "" : undefined}
+                  tabIndex={-1}
                 >
-                  {workflows.map((t) => (
-                    <li key={t.id} role="none">
-                      <button
-                        type="button"
-                        className={styles.modeOption}
-                        role="menuitemradio"
-                        aria-checked={t.id === templateId}
-                        data-active={t.id === templateId}
-                        onClick={() => selectTemplate(t.id)}
+                  <div className={styles.optionsSection}>
+                    <p className={styles.bestOfNHint}>Workflow</p>
+                    {selectedWorkflowName && (
+                      <p
+                        className={styles.optionsCurrent}
+                        data-selected-workflow={templateId}
                       >
-                        <span className={styles.checkSlot}>
-                          {t.id === templateId ? "✓" : ""}
-                        </span>
-                        {t.name}
-                        {t.builtin && (
-                          <span className={styles.optionHint}> builtin</span>
-                        )}
-                      </button>
-                    </li>
-                  ))}
-                  {workflows.length > 0 && (
-                    <li role="separator" className={styles.menuDivider} />
-                  )}
-                  <li role="none">
+                        {selectedWorkflowName}
+                      </p>
+                    )}
+                    {workflows.length > 0 && (
+                      <ul
+                        className={styles.optionsList}
+                        aria-label="Workflow templates"
+                      >
+                        {workflows.map((t) => (
+                          <li key={t.id}>
+                            <button
+                              type="button"
+                              className={styles.modeOption}
+                              aria-pressed={t.id === templateId}
+                              data-active={t.id === templateId}
+                              data-workflow-template={t.id}
+                              onClick={() => selectTemplate(t.id)}
+                            >
+                              <span className={styles.checkSlot}>
+                                {t.id === templateId ? "✓" : ""}
+                              </span>
+                              {t.name}
+                              {t.builtin && (
+                                <span className={styles.optionHint}> builtin</span>
+                              )}
+                            </button>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
                     <button
                       type="button"
                       className={styles.modeOption}
-                      role="menuitem"
                       onClick={() => {
-                        setBuildMenuOpen(false);
+                        returnFocusToOptions.current = true;
+                        setOptionsOpen(false);
                         setManageOpen(true);
                       }}
                     >
                       Manage workflows…
                     </button>
-                  </li>
-                </ul>
-              )}
-            </div>
-            )}
-
-            {onBestOfN && !ask && (
-              <div className={styles.bestOfNWrap} ref={bestOfNWrapRef}>
-                <button
-                  type="button"
-                  className={styles.pill}
-                  disabled={!canBestOfN}
-                  aria-disabled={!canBestOfN ? "true" : undefined}
-                  aria-haspopup="dialog"
-                  aria-expanded={bestOfNOpen}
-                  aria-label="Best of N"
-                  title="Run this prompt on multiple providers at once"
-                  data-best-of-n=""
-                  onClick={() => {
-                    if (!canBestOfN) return;
-                    setBestOfNOpen((v) => !v);
-                    setModeOpen(false);
-                    setModelOpen(false);
-                    setEffortOpen(false);
-                    setBuildMenuOpen(false);
-                  }}
-                >
-                  Best of N
-                  <span className={styles.caret}>
-                    <svg
-                      width="10"
-                      height="10"
-                      viewBox="0 0 10 10"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="1.5"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      aria-hidden="true"
+                    <button
+                      type="button"
+                      className={styles.bestOfNRun}
+                      onClick={() => submitBuild()}
+                      disabled={!canBuild}
+                      aria-disabled={!canBuild ? "true" : undefined}
+                      title={workflowRunTitle}
+                      data-workflow-run=""
                     >
-                      <path d="M2.5 3.5 5 6l2.5-2.5" />
-                    </svg>
-                  </span>
-                </button>
-                {bestOfNOpen && (
-                  <div
-                    ref={bestOfNPopoverRef}
-                    className={styles.bestOfNPopover}
-                    role="dialog"
-                    aria-label="Best of N"
-                    data-best-of-n-popover=""
-                    tabIndex={-1}
-                  >
+                      {STATIC.mode}
+                    </button>
+                  </div>
+                  {onBestOfN && (
+                    <div className={styles.optionsBest}>
+                    <p className={styles.bestOfNHint}>Best of N</p>
                     <p className={styles.bestOfNHint}>
                       Each selection forks a new thread
                     </p>
@@ -3377,18 +3444,23 @@ export const Composer = memo(function Composer({
                     <button
                       type="button"
                       className={styles.bestOfNRun}
-                      disabled={bestIds.length < 2 || sending}
+                      disabled={!canBestOfN || bestIds.length < 2 || sending}
                       aria-disabled={
-                        bestIds.length < 2 || sending ? "true" : undefined
+                        !canBestOfN || bestIds.length < 2 || sending
+                          ? "true"
+                          : undefined
                       }
+                      title={bestRunTitle}
                       data-best-of-n-run=""
                       onClick={() => submitBestOfN()}
                     >
                       Run
                     </button>
-                  </div>
-                )}
-              </div>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
             )}
           </div>
           <div className={styles.sendCluster}>
@@ -3442,8 +3514,7 @@ export const Composer = memo(function Composer({
                 setModeOpen(false);
                 setModelOpen(false);
                 setEffortOpen(false);
-                setBuildMenuOpen(false);
-                setBestOfNOpen(false);
+                setOptionsOpen(false);
               }}
             >
               {TRANSCRIPT_VIEW_LABELS[transcriptView]}

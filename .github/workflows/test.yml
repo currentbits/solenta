@@ -29,6 +29,11 @@ on: push
 jobs:
   test:
     runs-on: ${{ matrix.os }}
+    # Healthy runs finish in about 6 minutes (Ubuntu) to 10 (macOS).
+    # The 2026-09-23 windows-latest job had no timeout, stopped emitting
+    # electron TAP after cursor.test.js, and was canceled at GitHub's
+    # 6-hour default. 25 minutes fails that hang. It does not skip tests.
+    timeout-minutes: 25
     strategy:
       fail-fast: false
       matrix:
@@ -47,6 +52,37 @@ jobs:
       - name: Install Codex for the Linux git sandbox proof
         if: runner.os == 'Linux'
         run: npm install --global @openai/codex@0.153.4
+      # Ubuntu 24.04 sets kernel.apparmor_restrict_unprivileged_userns=1.
+      # Unprivileged bwrap then dies in loopback setup
+      # (`RTM_NEWADDR: Operation not permitted`) before git runs.
+      # Codex 0.153.4 execs /usr/bin/bwrap (strace). A vendored
+      # codex-resources/bwrap exists and was not the process that ran.
+      # bwrap-userns-restrict allows that binary a user namespace and
+      # denies capability to its children. The sysctl stays 1 for every
+      # other program. The codex sandbox probe below fails the job if
+      # Codex stops calling this binary and the real sandbox still cannot
+      # start. It does not switch Codex onto Landlock.
+      - name: Allow bubblewrap user namespaces for the Codex sandbox proof
+        if: runner.os == 'Linux'
+        run: |
+          set -eu
+          sudo apt-get update
+          sudo apt-get install -y apparmor apparmor-profiles bubblewrap
+          if sysctl -n kernel.apparmor_restrict_unprivileged_userns 2>/dev/null | grep -qx 1; then
+            sudo install -m 0644 \
+              /usr/share/apparmor/extra-profiles/bwrap-userns-restrict \
+              /etc/apparmor.d/bwrap-userns-restrict
+            sudo apparmor_parser -r /etc/apparmor.d/bwrap-userns-restrict
+          fi
+          bwrap --ro-bind / / --dev /dev --proc /proc --unshare-net /bin/true
+          probe="${HOME}/.cache/solenta-codex-bwrap-probe"
+          rm -rf "$probe"
+          mkdir -p "$probe"
+          cd "$probe"
+          # Codex 0.153.4 errors when this path is missing (job 108204293686).
+          mkdir -p "${HOME}/.cache/solenta-codex-home"
+          CODEX_HOME="${HOME}/.cache/solenta-codex-home" \
+            codex sandbox -c sandbox_mode=workspace-write -- /bin/true
       - run: npm test
 
   smoke:

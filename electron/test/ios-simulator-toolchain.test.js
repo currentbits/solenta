@@ -485,6 +485,14 @@ describe("createIOSSimulatorToolchain fingerprint", () => {
   });
 });
 
+function assertExecutableHelper(file) {
+  const st = fs.lstatSync(file);
+  assert.equal(st.isFile(), true);
+  assert.equal(st.isSymbolicLink(), false);
+  if (process.platform === "win32") return;
+  assert.equal((st.mode & 0o111) !== 0, true);
+}
+
 describe("createIOSSimulatorToolchain ensureHelper", () => {
   it("builds with exact swift build argv, env, timeout, and detached group", async () => {
     const sourceRoot = makeSourceRoot();
@@ -530,9 +538,7 @@ describe("createIOSSimulatorToolchain ensureHelper", () => {
         HELPER_NAME,
       ),
     );
-    const st = fs.lstatSync(helperPath);
-    assert.equal(st.isFile(), true);
-    assert.equal((st.mode & 0o111) !== 0, true);
+    assertExecutableHelper(helperPath);
     assert.equal(
       fs.existsSync(
         path.join(
@@ -561,9 +567,7 @@ describe("createIOSSimulatorToolchain ensureHelper", () => {
     const second = await toolchain.ensureHelper(DEV_DIR);
     assert.equal(second, first);
     assert.equal(spawns.length, 1);
-    const st = fs.lstatSync(second);
-    assert.equal(st.isFile(), true);
-    assert.equal((st.mode & 0o111) !== 0, true);
+    assertExecutableHelper(second);
   });
 
   it("concurrent callers share one in-flight build promise", async () => {

@@ -1,4 +1,5 @@
 .main {
+  container: thread-pane / inline-size;
   position: relative;
   display: flex;
   flex-direction: column;
@@ -37,29 +38,37 @@
 
 .header {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 12px;
-  padding: 0 10px 0 16px;
+  gap: 8px 12px;
+  padding: 7px 10px 7px 16px;
   border-bottom: 1px solid var(--border-soft);
   background: var(--bg-elevated);
   flex-shrink: 0;
-  height: 44px;
+  min-height: 44px;
 }
 
 .headerLead {
   display: flex;
   align-items: center;
   gap: 8px;
-  min-width: 0;
-  flex: 1;
+  min-width: min(100%, 320px);
+  flex: 1 1 320px;
+}
+
+.workersBtn {
+  flex-shrink: 0;
 }
 
 .headerTrail {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 8px;
   flex-shrink: 0;
   min-width: 0;
+  max-width: 100%;
+  justify-content: flex-end;
 }
 
 .headerDivider {
@@ -378,13 +387,16 @@
   font-size: 11px;
   letter-spacing: 0.01em;
   white-space: nowrap;
+  max-width: 45%;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 button.project,
 span.project {
   appearance: none;
-  display: inline-flex;
-  align-items: center;
+  display: block;
+  line-height: 20px;
   height: 22px;
   padding: 0 7px;
   margin: 0;
@@ -2361,6 +2373,92 @@ button.diffLineGutter:focus-visible {
   margin-bottom: 4px;
 }
 
+.workerActivityRow {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  padding: 2px 0;
+  max-width: 100%;
+}
+
+.workerActivityCluster {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  max-width: 100%;
+  min-width: 0;
+}
+
+.workerActivityAction {
+  flex-shrink: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.workerActivityCluster:hover .workerActivityAction,
+.workerActivityCluster:focus-within .workerActivityAction {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.workerActivity {
+  min-width: 0;
+  color: var(--text-muted);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.workerActivitySummary {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  cursor: pointer;
+  list-style: none;
+  text-align: left;
+  border-radius: 4px;
+}
+
+.workerActivitySummary::-webkit-details-marker,
+.workerActivitySummary::marker {
+  display: none;
+  content: "";
+}
+
+.workerActivitySummary:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.workerActivitySummary::before {
+  content: "";
+  width: 0;
+  height: 0;
+  margin-top: 0.4em;
+  border-top: 3px solid transparent;
+  border-bottom: 3px solid transparent;
+  border-left: 4px solid var(--text-dim);
+  flex-shrink: 0;
+}
+
+.workerActivity[open] > .workerActivitySummary::before {
+  margin-top: 0.45em;
+  border-top: 4px solid var(--text-dim);
+  border-right: 3px solid transparent;
+  border-bottom: 0;
+  border-left: 3px solid transparent;
+}
+
+.workerActivityBody {
+  margin: 4px 0 2px 14px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: text;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--text);
+}
+
 .userEditBtn {
   position: absolute;
   top: 6px;
@@ -3314,4 +3412,47 @@ a.menuItem {
 
 .btwAnswer p:last-child {
   margin-bottom: 0;
+}
+
+@container thread-pane (max-width: 720px) {
+  .header {
+    gap: 8px;
+    padding: 8px 12px;
+  }
+
+  .headerLead {
+    flex-basis: 100%;
+    flex-wrap: wrap;
+  }
+
+  .headerLead > [data-return-to] {
+    flex-basis: 100%;
+    justify-content: flex-start;
+  }
+
+  .breadcrumb {
+    flex: 1;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 2px;
+  }
+
+  .breadcrumb .project {
+    max-width: 100%;
+    width: fit-content;
+    text-align: left;
+  }
+
+  .breadcrumb .sep {
+    display: none;
+  }
+
+  .headerTrail {
+    flex: 1;
+  }
+
+  .actions,
+  .quickActions {
+    display: contents;
+  }
 }

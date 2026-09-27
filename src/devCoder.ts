@@ -3767,6 +3767,8 @@ function buildDevCoder(): CoderApi {
             provider: t.provider,
             status: t.status,
             handoffFrom: t.handoffFrom ?? null,
+            orchWorker: t.orchWorker === true,
+            projectId: t.projectId,
             runStartedAt: t.runStartedAt ?? null,
             stoppedAt: t.stoppedAt ?? null,
             awaitingInput: t.awaitingInput === true,
@@ -3928,9 +3930,13 @@ function buildDevCoder(): CoderApi {
         const source = sourceDetail.thread;
         const providerChanging =
           input.provider != null && String(input.provider) !== source.provider;
+        let forkBase = String(source.title || "New Thread").trim();
+        while (/^fork:\s*/i.test(forkBase)) {
+          forkBase = forkBase.replace(/^fork:\s*/i, "").trim();
+        }
         const created = newThread({
           projectId: source.projectId,
-          title: `Fork: ${source.title || "New Thread"}`,
+          title: `Fork: ${forkBase || "New Thread"}`,
           provider: input.provider ? String(input.provider) : source.provider,
           // A model belongs to the provider that offered it.
           model: input.model

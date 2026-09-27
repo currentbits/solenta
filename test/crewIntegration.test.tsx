@@ -418,6 +418,8 @@ describe("AgentsContent Integration section", () => {
         provider: "claude",
         status: "done",
         handoffFrom: "t-orch",
+        orchWorker: true,
+        projectId: "p1",
         runStartedAt: null,
         lastActivity: null,
       },
@@ -463,6 +465,36 @@ describe("AgentsContent Integration section", () => {
     await plain.flush();
     assert.equal(plain.query("[data-crew-integration]"), null);
     plain.unmount();
+
+    const forkOnly = await mount(
+      <AgentsContent
+        workflow={null}
+        thread={thread()}
+        usage={null}
+        providers={PROVIDERS}
+        rosterKey="t-orch:idle,t-fork:idle"
+        listThreadSummaries={async () => [
+          summaries[0]!,
+          {
+            id: "t-fork",
+            title: "Fork: Lead",
+            provider: "claude",
+            status: "idle",
+            handoffFrom: "t-orch",
+            runStartedAt: null,
+            lastActivity: null,
+          },
+        ]}
+        crewIntegration={async () => view()}
+      />,
+    );
+    await forkOnly.flush();
+    assert.equal(
+      forkOnly.query("[data-crew-integration]"),
+      null,
+      "a manual fork does not make the parent a crew lead",
+    );
+    forkOnly.unmount();
   });
 });
 

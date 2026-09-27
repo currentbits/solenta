@@ -76,7 +76,7 @@ describe("kanbanColumns", () => {
     const columns = kanbanColumns(
       [
         thread({ id: "orch", status: "done" }),
-        thread({ id: "w1", status: "working", handoffFrom: "orch" }),
+        thread({ id: "w1", status: "working", handoffFrom: "orch", orchWorker: true }),
       ],
       settleOpts,
     );

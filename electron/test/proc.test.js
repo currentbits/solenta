@@ -8,8 +8,10 @@ const {
   killTree,
   agentSpawnOptions,
   signalGroup,
+  signalPid,
   beginShutdown,
   resetShutdownForTests,
+  WINDOWS_TREE_KILL_TIMEOUT_MS,
 } = require("../proc.js");
 
 const posix = process.platform !== "win32";
@@ -93,6 +95,66 @@ describe("agentSpawnOptions", () => {
 describe("signalGroup", () => {
   it("is exported for simulator recording finalization", () => {
     assert.equal(typeof signalGroup, "function");
+  });
+
+  it("on win32 taskkill is /T /F with a bounded timeout, and failure leaves the parent", () => {
+    /** @type {{ cmd: string, args: string[], timeout: number | undefined }[]} */
+    const calls = [];
+    const killed = [];
+    const child = {
+      pid: 4242,
+      kill(sig) {
+        killed.push(sig);
+      },
+    };
+    const spawn = (cmd, args, opts) => {
+      calls.push({
+        cmd,
+        args: args.slice(),
+        timeout: opts && opts.timeout,
+      });
+      return { status: calls.length === 1 ? 1 : 0 };
+    };
+    const win = { platform: "win32", spawn };
+    const termOk = signalGroup(child, "SIGTERM", win);
+    const killOk = signalPid(99, "SIGKILL", win);
+    assert.equal(termOk, false);
+    assert.equal(killOk, true);
+    assert.deepEqual(calls, [
+      {
+        cmd: "taskkill",
+        args: ["/PID", "4242", "/T", "/F"],
+        timeout: WINDOWS_TREE_KILL_TIMEOUT_MS,
+      },
+      {
+        cmd: "taskkill",
+        args: ["/PID", "99", "/T", "/F"],
+        timeout: WINDOWS_TREE_KILL_TIMEOUT_MS,
+      },
+    ]);
+    assert.deepEqual(
+      killed,
+      [],
+      "a failed tree kill must not signal cmd.exe alone",
+    );
+  });
+
+  it("on win32 a thrown taskkill does not kill the parent", () => {
+    const killed = [];
+    const child = {
+      pid: 7,
+      kill(sig) {
+        killed.push(sig);
+      },
+    };
+    const ok = signalGroup(child, "SIGTERM", {
+      platform: "win32",
+      spawn() {
+        throw new Error("ETIMEDOUT");
+      },
+    });
+    assert.equal(ok, false);
+    assert.deepEqual(killed, []);
   });
 });
 

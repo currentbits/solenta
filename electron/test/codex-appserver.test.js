@@ -13,6 +13,7 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const { writeFakeBin } = require("./support/fakeBin.js");
+const { rmTree } = require("./support/rmTree.js");
 const {
   notificationToJsonl,
   snakeThreadItem,
@@ -640,6 +641,7 @@ rl.on("line", async (line) => {
   it("rejects steer on review/compact turns", async () => {
     const dir = tmp();
     const bin = writeTurnFake(dir);
+    let exitInfo = null;
     const handle = runCodexAppServerTurn({
       binary: bin,
       args: ["app-server", "--listen", "stdio://"],
@@ -650,13 +652,18 @@ rl.on("line", async (line) => {
       },
       prompt: "review this",
       onEvent: () => {},
-      onExit: () => {},
+      onExit: (info) => {
+        exitInfo = info;
+      },
     });
     await waitFor(() => handle.canSteer());
     const sent = await Promise.resolve(handle.send("nudge"));
     assert.equal(sent, false);
+    // kill() only requests shutdown. The fake stays in steer-wait, cwd
+    // locked, until unsubscribe finishes. rmdir before that is EBUSY.
     handle.kill();
-    fs.rmSync(dir, { recursive: true, force: true });
+    await waitFor(() => exitInfo != null);
+    await rmTree(dir);
   });
 
   it("ignores v2 child thread/started and turn/completed so the root turn finishes", async () => {

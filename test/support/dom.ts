@@ -12,6 +12,7 @@
  * static harness when plain markup is enough: it is far cheaper.
  */
 import { JSDOM } from "jsdom";
+import { resetComposerSession } from "../../src/composerSession.ts";
 import { afterEach } from "node:test";
 import { act } from "react";
 import type { Root } from "react-dom/client";
@@ -161,6 +162,7 @@ export function unmountAll(): void {
   } catch {
     // jsdom without storage
   }
+  resetComposerSession();
   const noise = consoleErrors.splice(0);
   if (noise.length) {
     // React reports key warnings, act warnings and controlled/uncontrolled

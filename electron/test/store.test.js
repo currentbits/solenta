@@ -240,6 +240,7 @@ describe("Store", () => {
       ejected: false,
       notes: "",
       tags: [],
+      messagePins: [],
       queued: null,
       verifyCommand: null,
       verify: null,
@@ -975,6 +976,21 @@ describe("Store", () => {
       outputTokens: 4,
       costUsd: 0.02,
       turns: 1,
+    });
+    // Sparse: a thread has a rewind handle only after a real snapshot.
+    // An empty map is valid and must not be treated as a missing cascade.
+    store.setRewindRestore("t1", {
+      messages: store.getMessages("t1"),
+      workLog: store.getWorkLog("t1"),
+      artifacts: store.getRunArtifacts("t1"),
+      sessionId: null,
+      replayContext: false,
+      status: "idle",
+      lastError: null,
+      lastErrorKind: null,
+      runStartedAt: null,
+      headSha: null,
+      retainedCount: store.getMessages("t1").length,
     });
 
     // Sanity: every known ByThread map currently holds t1.

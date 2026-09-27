@@ -17,6 +17,7 @@ const services = require("../services.js");
 const { createRunner } = require("../runner.js");
 const ipc = require("../ipc.js");
 const { createIOSSimulatorService } = require("../ios-simulator.js");
+const { rmTree } = require("./support/rmTree.js");
 
 const DEVICE_UDID = "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE";
 const DEV_DIR = "/Applications/Xcode.app/Contents/Developer";
@@ -50,11 +51,9 @@ function makeTmpDir(prefix) {
   return dir;
 }
 
-function cleanupTmpDirs() {
-  for (const dir of tmpDirs) {
-    fs.rmSync(dir, { recursive: true, force: true });
-  }
-  tmpDirs = [];
+async function cleanupTmpDirs() {
+  const dirs = tmpDirs.splice(0);
+  for (const dir of dirs) await rmTree(dir);
 }
 
 async function settleAsync(times = 20) {
@@ -909,7 +908,7 @@ describe("runner run terminal notifies the simulator", () => {
   let prevSimulate;
   let prevAgentCmd;
 
-  afterEach(() => {
+  afterEach(async () => {
     if (runner) {
       try {
         runner.stopAll();
@@ -922,7 +921,7 @@ describe("runner run terminal notifies the simulator", () => {
     else process.env.CODER_SIMULATE = prevSimulate;
     if (prevAgentCmd === undefined) delete process.env.CODER_AGENT_CMD;
     else process.env.CODER_AGENT_CMD = prevAgentCmd;
-    cleanupTmpDirs();
+    await cleanupTmpDirs();
   });
 
   async function runnerHarness(runAgentFn, simulatorOverride) {
