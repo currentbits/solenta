@@ -325,71 +325,77 @@ function parseIssueListJson(stdout) {
   return issues;
 }
 
-/**
- * Issues for a project checkout (Planboard). Never throws: missing gh, a
- * non-GitHub remote, or auth failure come back as `{ ok: false, reason }`.
- *
- * @param {string} projectPath
- * @returns {Promise<{ ok: true, issues: ReturnType<typeof parseIssueListJson> } | { ok: false, reason: string }>}
- */
-async function listIssues(projectPath) {
+/** One bounded page for MCP callers. The repo always comes from origin. */
+async function listIssuePage(projectPath, opts = {}) {
+  const { state = "open", limit = 50, cursor = null, number = null } = opts;
+  if (!["open", "closed", "all"].includes(state) || !Number.isInteger(limit) || limit < 1 || limit > 100 ||
+      (cursor !== null && (typeof cursor !== "string" || cursor.length > 1024)) ||
+      (number !== null && (!Number.isSafeInteger(number) || number <= 0))) {
+    return { ok: false, reason: "Invalid issue list options" };
+  }
   const cwd = String(projectPath || "");
-  if (!cwd) {
-    return { ok: false, reason: "not a GitHub repo" };
-  }
-
-  const remote = gitTry(cwd, ["remote", "get-url", "origin"]);
-  if (!remote.ok) {
-    return { ok: false, reason: "not a GitHub repo" };
-  }
-  const originUrl = String(remote.stdout || "").trim();
-  if (!isGitHubRemote(originUrl)) {
-    return { ok: false, reason: "not a GitHub repo" };
-  }
-
-  const listed = await ghTryAsync(
-    cwd,
-    [
-      "issue",
-      "list",
-      "--state",
-      "all",
-      "--json",
-      "number,title,labels,state,url,updatedAt,createdAt",
-      // ponytail: one flat fetch of every issue; the Done column is capped in
-      // planColumns instead. Paginate (gh does 100/page) if a repo ever needs
-      // more than this.
-      "--limit",
-      "1000",
-    ],
-    GH_USER,
-  );
+  const remote = cwd && gitTry(cwd, ["remote", "get-url", "origin"]);
+  const repo = remote?.ok && ownerRepoFromRemote(remote.stdout);
+  if (!repo) return { ok: false, reason: "not a GitHub repo" };
+  const fields = "number,title,labels,state,url,updatedAt,createdAt";
+  const query = `query($owner:String!, $repo:String!, $first:Int!, $after:String, $state:IssueState!) {
+    repository(owner:$owner, name:$repo) {
+      issues(first:$first, after:$after, states:${state === "all" ? "null" : "[$state]"}, orderBy:{field:UPDATED_AT,direction:DESC}) {
+        nodes { number title url state updatedAt createdAt labels(first:100) { nodes { name } } }
+        pageInfo { hasNextPage endCursor }
+      }
+    }
+  }`;
+  // Omit the unused variable declaration for the all-states query.
+  const args = number !== null
+    ? ["issue", "view", String(number), "-R", `https://github.com/${repo.owner}/${repo.repo}`, "--json", fields]
+    : ["api", "graphql", "--hostname", "github.com", "-f", `query=${state === "all" ? query.replace(", $state:IssueState!", "") : query}`,
+      "-f", `owner=${repo.owner}`, "-f", `repo=${repo.repo}`, "-F", `first=${limit}`,
+      ...(cursor ? ["-f", `after=${cursor}`] : []),
+      ...(state === "all" ? [] : ["-f", `state=${state.toUpperCase()}`])];
+  const listed = await ghTryAsync(cwd, args, GH_USER);
   if (!listed.ok) {
-    if (listed.enoent) {
-      return { ok: false, reason: "gh missing" };
-    }
-    if (isGhAuthFailure(listed.stderr || listed.combined || listed.stdout)) {
-      return { ok: false, reason: "auth" };
-    }
-    return {
-      ok: false,
-      reason: tailErr(
-        listed.stderr || listed.combined,
-        "gh issue list failed",
-      ),
-    };
+    if (listed.enoent) return { ok: false, reason: "gh missing" };
+    if (isGhAuthFailure(listed.stderr || listed.combined || listed.stdout)) return { ok: false, reason: "auth" };
+    return { ok: false, reason: tailErr(listed.stderr || listed.combined, "gh issue list failed") };
   }
   try {
-    return { ok: true, issues: parseIssueListJson(listed.stdout) };
-  } catch (err) {
+    const data = JSON.parse(listed.stdout);
+    if (number !== null) {
+      const issues = parseIssueListJson(JSON.stringify([data]));
+      if (issues.length !== 1 || issues[0].number !== number) throw new Error("gh returned incomplete issue JSON");
+      return { ok: true, issues, nextCursor: null };
+    }
+    if (data.errors?.length) throw new Error(data.errors.map((e) => e.message).join("; "));
+    const page = data.data?.repository?.issues;
+    if (!Array.isArray(page?.nodes) || typeof page.pageInfo?.hasNextPage !== "boolean" ||
+        (page.pageInfo.hasNextPage && (!page.pageInfo.endCursor || page.pageInfo.endCursor === cursor))) {
+      throw new Error("gh returned incomplete issue page");
+    }
     return {
-      ok: false,
-      reason:
-        err && err.message
-          ? String(err.message)
-          : "gh returned unparseable issue list JSON",
+      ok: true,
+      issues: parseIssueListJson(JSON.stringify(page.nodes.map((row) => ({ ...row, labels: row.labels?.nodes })))),
+      nextCursor: page.pageInfo.hasNextPage ? page.pageInfo.endCursor : null,
     };
+  } catch (err) {
+    return { ok: false, reason: err.message || "gh returned unparseable issue list JSON" };
   }
+}
+
+/** Full active backlog for the board; closed history is bounded separately. */
+async function listIssues(projectPath) {
+  const issues = [];
+  let cursor = null;
+  do {
+    const page = await listIssuePage(projectPath, { state: "open", limit: 100, cursor });
+    if (!page.ok) return page;
+    issues.push(...page.issues);
+    cursor = page.nextCursor;
+  } while (cursor);
+  const closed = await listIssuePage(projectPath, { state: "closed", limit: 100 });
+  if (!closed.ok) return closed;
+  // An issue can close between page requests; keep its latest state.
+  return { ok: true, issues: [...new Map([...issues, ...closed.issues].map((i) => [i.number, i])).values()] };
 }
 
 const PLAN_LABELS = ["plan:todo", "plan:doing", "plan:done"];
@@ -674,6 +680,7 @@ module.exports = {
   issueStartPrompt,
   fetchIssue,
   listIssues,
+  listIssuePage,
   setPlanStatus,
   reopenIssue,
   completeIssue,

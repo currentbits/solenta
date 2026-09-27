@@ -1,7 +1,8 @@
 "use strict";
 
 const path = require("node:path");
-const { randomUUID } = require("node:crypto");
+const fs = require("node:fs");
+const { randomUUID, createHash } = require("node:crypto");
 const services = require("./services.js");
 const { runAgent, parseAgentCommand } = require("./agent.js");
 const {
@@ -17,6 +18,8 @@ const { runCodexAppServerTurn } = require("./codex-appserver.js");
 const {
   classifyServerRequest,
   pendingFromCommand,
+  pendingFromMcp,
+  approvalResponse,
   mapSolentaDecision,
   unsupportedError,
   DECISION_CANCEL,
@@ -2375,9 +2378,8 @@ function createRunner(opts) {
     }
     for (const p of pending) {
       try {
-        replyCodexJsonRpc(entry, p.rpcId !== undefined ? p.rpcId : p.id, {
-          decision: DECISION_CANCEL,
-        });
+        replyCodexJsonRpc(entry, p.rpcId !== undefined ? p.rpcId : p.id,
+          approvalResponse(p.method, DECISION_CANCEL));
       } catch {
         // ignore
       }
@@ -2404,7 +2406,7 @@ function createRunner(opts) {
     if (id === undefined || id === null) return false;
 
     const classified = classifyServerRequest(method, msg && msg.params);
-    if (classified.action !== "command") {
+    if (classified.action !== "command" && classified.action !== "mcp") {
       try {
         replyCodexJsonRpcError(
           e,
@@ -2417,7 +2419,8 @@ function createRunner(opts) {
       return true;
     }
 
-    const pending = pendingFromCommand(id, msg && msg.params);
+    const pending = classified.action === "mcp"
+      ? pendingFromMcp(id, msg.params) : pendingFromCommand(id, msg.params);
     let inputStr = pending.input;
     try {
       inputStr = truncate(pending.input, INPUT_TRUNCATE);
@@ -2432,7 +2435,7 @@ function createRunner(opts) {
       const live = store.getThread(threadId);
       const worktreePath = (live && live.worktreePath) || null;
       verdict = classifyTool({
-        toolName: "command",
+        toolName: pending.toolName,
         input: pending.rawInput,
         worktreePath,
       });
@@ -2444,9 +2447,8 @@ function createRunner(opts) {
       const rule = verdict.rule || "policy";
       const reason = verdict.reason || "blocked";
       try {
-        replyCodexJsonRpc(e, id, {
-          decision: mapSolentaDecision("deny", pending.availableDecisions),
-        });
+        replyCodexJsonRpc(e, id, approvalResponse(pending.method,
+          mapSolentaDecision("deny", pending.availableDecisions)));
       } catch {
         return false;
       }
@@ -2494,12 +2496,12 @@ function createRunner(opts) {
     replyCodexJsonRpc(
       e,
       pending.rpcId !== undefined ? pending.rpcId : pending.id,
-      { decision: mapped },
+      approvalResponse(pending.method, mapped),
     );
     const label =
       decision === "deny"
         ? `Denied: ${pending.summary}`
-        : decision === "allowAlways"
+        : mapped === "acceptForSession"
           ? `Allowed for session: ${pending.summary}`
           : `Allowed: ${pending.summary}`;
     appendMessage(threadId, "event", label, e.runId);
@@ -4076,6 +4078,7 @@ function createRunner(opts) {
     const interactive = entryDef.id === "claude";
     const mcpArgs = getClaudeMcpArgs({
       projectPath: localCwd,
+      projectId: thread.projectId,
       memoryOnly: thread.memoryConsolidate === true,
     });
     if (interactive) {
@@ -4773,6 +4776,11 @@ function createRunner(opts) {
       permissionMode: thread.permissionMode || "default",
       reasoningEffort: thread.reasoningEffort || null,
       mcp: interactive ? mcpArgs : [],
+      // The config path is stable; a warm process has already read its contents.
+      mcpHash: interactive
+        ? mcpArgs.filter((a) => a.startsWith("--mcp-config="))
+          .map((a) => createHash("sha256").update(fs.readFileSync(a.slice("--mcp-config=".length))).digest("hex"))
+        : [],
       otelEnv: spawnEnv || null,
     });
 
@@ -8447,6 +8455,7 @@ function createRunner(opts) {
       try {
         const hit = cliCommands.expandInvocableCommand(rawPrompt, {
           projectPath: projectForGate && projectForGate.path,
+          provider: thread.provider,
         });
         if (hit) {
           cliPrompt = hit.prompt;

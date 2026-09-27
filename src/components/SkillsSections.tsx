@@ -150,7 +150,7 @@ export function InstalledSkillRow({
 }) {
   const key = `${skill.source}:${skill.name}`;
   const drifted =
-    skill.provenance !== "project" && skill.missingFrom.length > 0;
+    skill.provenance !== "project" && (skill.missingFrom.length > 0 || Boolean(skill.differentIn?.length));
   const readOnly =
     skill.provenance === "project" || skill.source === "project";
   const hintId = `skill-remove-${key}`;
@@ -212,9 +212,14 @@ export function InstalledSkillRow({
           <span className={styles.rowDetail} data-skill-source>
             {skillSourceLabel(skill)}
           </span>
-          {drifted && (
+          {skill.missingFrom.length > 0 && (
             <span className={styles.rowDetail} data-skill-missing>
               Missing {formatTargetList(skill.missingFrom)}
+            </span>
+          )}
+          {Boolean(skill.differentIn?.length) && (
+            <span className={styles.rowDetail} data-skill-different>
+              Instructions in {formatTargetList(skill.differentIn!)} differ from {TARGET_LABEL[skill.source as SkillTarget]}. Sync preserves these versions.
             </span>
           )}
           {!readOnly &&

@@ -230,6 +230,23 @@ describe("createCodexJsonRpcSession (#1171)", () => {
     });
   });
 
+  it("cancels an outstanding elicitation with the MCP response shape", async () => {
+    const dir = tmp();
+    const replyFile = path.join(dir, "replies.jsonl");
+    const session = createCodexJsonRpcSession({ binary: writeFakeAppServer(dir), cwd: dir,
+      envExtra: { CODER_FAKE_APP_SERVER_REPLY_FILE: replyFile,
+        CODER_FAKE_APP_SERVER_ASKS: JSON.stringify([{ id: "mcp", method: "mcpServer/elicitation/request", params: {} }]) },
+      onServerRequest() { return true; },
+    });
+    sessions.push(session);
+    await session.request("initialize", {});
+    await waitFor(() => session.outstandingIds().includes("mcp"));
+    session.cancelOutstanding();
+    await waitFor(() => fs.readFileSync(replyFile, "utf8").includes('"id":"mcp"'));
+    const reply = fs.readFileSync(replyFile, "utf8").trim().split("\n").map(JSON.parse).find((m) => m.id === "mcp");
+    assert.deepEqual(reply.result, { action: "cancel", content: null, _meta: null });
+  });
+
   it("JSON-RPC-errors fileChange until a diff card exists", async () => {
     const dir = tmp();
     const replyFile = path.join(dir, "replies.jsonl");
