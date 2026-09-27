@@ -1,4 +1,5 @@
 .main {
+  container: thread-pane / inline-size;
   position: relative;
   display: flex;
   flex-direction: column;
@@ -37,21 +38,22 @@
 
 .header {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 12px;
-  padding: 0 10px 0 16px;
+  gap: 8px 12px;
+  padding: 7px 10px 7px 16px;
   border-bottom: 1px solid var(--border-soft);
   background: var(--bg-elevated);
   flex-shrink: 0;
-  height: 44px;
+  min-height: 44px;
 }
 
 .headerLead {
   display: flex;
   align-items: center;
   gap: 8px;
-  min-width: 0;
-  flex: 1;
+  min-width: min(100%, 320px);
+  flex: 1 1 320px;
 }
 
 .workersBtn {
@@ -60,10 +62,13 @@
 
 .headerTrail {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 8px;
   flex-shrink: 0;
   min-width: 0;
+  max-width: 100%;
+  justify-content: flex-end;
 }
 
 .headerDivider {
@@ -382,13 +387,16 @@
   font-size: 11px;
   letter-spacing: 0.01em;
   white-space: nowrap;
+  max-width: 45%;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 button.project,
 span.project {
   appearance: none;
-  display: inline-flex;
-  align-items: center;
+  display: block;
+  line-height: 20px;
   height: 22px;
   padding: 0 7px;
   margin: 0;
@@ -3404,4 +3412,47 @@ a.menuItem {
 
 .btwAnswer p:last-child {
   margin-bottom: 0;
+}
+
+@container thread-pane (max-width: 720px) {
+  .header {
+    gap: 8px;
+    padding: 8px 12px;
+  }
+
+  .headerLead {
+    flex-basis: 100%;
+    flex-wrap: wrap;
+  }
+
+  .headerLead > [data-return-to] {
+    flex-basis: 100%;
+    justify-content: flex-start;
+  }
+
+  .breadcrumb {
+    flex: 1;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 2px;
+  }
+
+  .breadcrumb .project {
+    max-width: 100%;
+    width: fit-content;
+    text-align: left;
+  }
+
+  .breadcrumb .sep {
+    display: none;
+  }
+
+  .headerTrail {
+    flex: 1;
+  }
+
+  .actions,
+  .quickActions {
+    display: contents;
+  }
 }
