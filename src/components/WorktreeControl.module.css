@@ -185,9 +185,6 @@
   max-width: 65%;
   overflow: hidden;
   text-overflow: ellipsis;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
   height: 100%;
   padding: 0 10px;
   border: none;
@@ -203,6 +200,12 @@
   transition:
     background-color 0.12s ease,
     transform 0.16s cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+.merge .spinner {
+  display: inline-block;
+  margin-right: 6px;
+  vertical-align: middle;
 }
 
 .merge:hover:not(:disabled) {
