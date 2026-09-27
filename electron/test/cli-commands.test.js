@@ -1403,3 +1403,18 @@ describe("expandInvocableCommand", () => {
     );
   });
 });
+
+it("uses the current provider's skill roots and shared fallback", () => {
+  const env = { HOME: tmp, CODEX_HOME: path.join(tmp, "custom-codex"), CURSOR_HOME: path.join(tmp, "custom-cursor") };
+  writeSkill(path.join(tmp, ".claude", "skills"), "demo", "Claude version");
+  writeSkill(path.join(env.CODEX_HOME, "skills"), "demo", "Codex version");
+  writeSkill(path.join(env.CURSOR_HOME, "skills"), "demo", "Cursor version");
+  writeSkill(path.join(tmp, ".agents", "skills"), "shared", "Shared version");
+  for (const provider of ["claude", "codex", "cursor"]) {
+    assert.match(expandInvocableCommand("/demo", { env, provider }).prompt, new RegExp(provider, "i"));
+    assert.match(expandInvocableCommand("/shared", { env, provider }).prompt, /Shared version/);
+  }
+  const project = path.join(tmp, "project");
+  writeSkill(path.join(project, ".codex", "skills"), "demo", "Project Codex version");
+  assert.match(expandInvocableCommand("/demo", { env, projectPath: project, provider: "codex" }).prompt, /Project Codex/);
+});

@@ -3026,6 +3026,8 @@ export interface SkillInfo {
    * skills.sync() clears it. Only targets whose CLI dir exists are counted.
    */
   missingFrom: SkillTarget[];
+  /** SKILL.md differs from source; sync deliberately preserves these variants. */
+  differentIn?: SkillTarget[];
   /** SKILL.md size in bytes: the context this skill costs once invoked. */
   bytes: number;
   provenance: SkillProvenance;
@@ -3653,7 +3655,7 @@ export interface CoderApi {
     /** Copies every skill into the targets it is missing from. */
     sync(): Promise<{ copied: number; skills: string[] }>;
     /** CLI `/` extras: invocable skills and custom commands (#606). */
-    commands(input?: { projectPath?: string }): Promise<CliSlashCommand[]>;
+    commands(input?: { projectPath?: string; provider?: string }): Promise<CliSlashCommand[]>;
     /** Main-owned curated catalog; `installed` requires a matching marker. */
     catalog(): Promise<SkillCatalogEntry[]>;
     /** Native Markdown/ZIP picker. Cancel returns null; no renderer path. */

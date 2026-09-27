@@ -596,6 +596,16 @@ describe("SkillsTab lists", () => {
     m.unmount();
   });
 
+  it("shows instruction differences even when a skill is installed everywhere", async () => {
+    const m = await mount(<Harness skills={[{ ...SKILLS[0], differentIn: ["codex"] }]} />);
+    await expandSkill(m, "claude:review-pr");
+    const row = m.query('[data-skill="claude:review-pr"]');
+    assert.ok(row?.querySelector("[data-drift]"));
+    assert.match(row?.querySelector("[data-skill-different]")?.textContent || "", /Codex differ from Claude/);
+    assert.match(row?.textContent || "", /Sync preserves these versions/);
+    m.unmount();
+  });
+
   it("renders coverage and token cost per row", async () => {
     const m = await mount(<Harness />);
     await expandSkill(m, "claude:review-pr");

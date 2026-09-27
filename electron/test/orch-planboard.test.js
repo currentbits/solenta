@@ -18,7 +18,7 @@ const {
 } = require("../orchServer.js");
 const { PLANBOARD_NOTE } = require("../services.js");
 const { writeFakeBin } = require("./support/fakeBin.js");
-const { resetMemorySupForTests } = require("../memory-sup.js");
+const { resetMemorySupForTests, getClaudeMcpArgs } = require("../memory-sup.js");
 
 const APP_PATH = path.join(__dirname, "..", "..");
 
@@ -148,6 +148,12 @@ if (args[1] === "create") {
   process.stdout.write("https://github.com/acme/demo/issues/77\\n");
   process.exit(0);
 }
+if (args[0] === "api") {
+  process.stdout.write(JSON.stringify({ data: { repository: { issues: { nodes: [{
+    number: 77, title: "chip", url: "https://github.com/acme/demo/issues/77", state: "OPEN", labels: { nodes: [] }
+  }], pageInfo: { hasNextPage: false, endCursor: null } } } } }));
+  process.exit(0);
+}
 if (args[1] === "list") {
   process.stdout.write(JSON.stringify([{
     number: 77,
@@ -273,6 +279,37 @@ process.exit(0);
           fs.realpathSync(c.cwd) === origin,
       ),
     );
+  });
+
+  it("pages MCP results and loads every open issue separately from bounded closed history", async () => {
+    writeFakeGh(tmp, callsPath, `
+const field = (name) => (args.find((a) => a.startsWith(name + "=")) || "").slice(name.length + 1);
+const closed = field("state") === "CLOSED";
+const start = Number(field("after") || 0);
+const limit = Number(field("first") || 50);
+const total = closed ? 1400 : 1002;
+const nodes = Array.from({ length: Math.min(limit, total - start) }, (_, i) => ({
+  number: (closed ? 2000 : 1) + start + i, title: "issue " + (start + i),
+  url: "https://github.com/acme/demo/issues/" + ((closed ? 2000 : 1) + start + i),
+  state: closed ? "CLOSED" : "OPEN", labels: { nodes: [] }
+}));
+process.stdout.write(JSON.stringify({ data: { repository: { issues: { nodes,
+  pageInfo: { hasNextPage: start + limit < total, endCursor: String(start + nodes.length) }
+} } } }));
+`);
+    const h = createToolHandlers(githubDeps());
+    const first = await h.issue_list({ threadId: "t1", projectId: "p1", limit: 10 });
+    assert.equal(first.ok, true);
+    assert.equal(first.issues.length, 10);
+    assert.equal(first.nextCursor, "10");
+    const next = await h.issue_list({ threadId: "t1", projectId: "p1", limit: 10, cursor: first.nextCursor });
+    assert.equal(next.issues[0].number, 11);
+    const board = await require("../issues.js").listIssues(repo);
+    assert.equal(board.ok, true);
+    assert.equal(board.issues.filter((i) => i.state === "OPEN").length, 1002);
+    assert.equal(board.issues.filter((i) => i.state === "CLOSED").length, 100);
+    const invalid = await h.issue_list({ threadId: "t1", projectId: "p1", limit: 10000 });
+    assert.equal(invalid.ok, false);
   });
 
   it("comments on the bound origin without a repo argument or state change", async () => {
@@ -459,5 +496,28 @@ describe("planboard MCP tools/list gate (issue #849)", () => {
     for (const t of PLANBOARD_TOOLS) {
       assert.equal(names.includes(t), true, `${t} should be listed`);
     }
+  });
+
+  it("exposes Planboard through Claude's generated config, without leaking the binding", async () => {
+    const repo = makeRepo(tmpDir, "claude-gh", "https://github.com/acme/demo.git");
+    const { port, token } = await startOrch(makeStore(
+      { p1: { id: "p1", path: repo } },
+      [{ id: "t1", projectId: "p1", status: "idle" }],
+    ));
+    const args = getClaudeMcpArgs({ projectPath: repo, projectId: "p1" });
+    const config = JSON.parse(fs.readFileSync(args[0].slice("--mcp-config=".length), "utf8"));
+    const url = new URL(config.mcpServers["coder-threads"].url);
+    const names = await listTools(port, token, url.search);
+    for (const name of PLANBOARD_TOOLS) assert.ok(names.includes(name), name);
+    const unbound = await listTools(port, token);
+    for (const name of PLANBOARD_TOOLS) assert.ok(!unbound.includes(name), name);
+    const memoryArgs = getClaudeMcpArgs({ projectPath: repo, projectId: "p1", memoryOnly: true });
+    const memory = JSON.parse(fs.readFileSync(memoryArgs[0].slice("--mcp-config=".length), "utf8"));
+    assert.equal(memory.mcpServers["coder-threads"], undefined);
+    const boundDir = path.dirname(args[0].slice("--mcp-config=".length));
+    fs.renameSync(boundDir, `${boundDir}-saved`);
+    fs.writeFileSync(boundDir, "not a directory");
+    assert.throws(() => getClaudeMcpArgs({ projectPath: repo, projectId: "p1" }),
+      "a failed bound write must not fall back to an unbound/global config");
   });
 });

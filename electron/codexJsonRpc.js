@@ -13,7 +13,7 @@
 
 const spawn = require("cross-spawn");
 const { killTree, agentSpawnOptions } = require("./proc.js");
-const { JSONRPC_METHOD_NOT_FOUND } = require("./codexApprovals.js");
+const { JSONRPC_METHOD_NOT_FOUND, approvalResponse } = require("./codexApprovals.js");
 
 const SIGKILL_AFTER_MS = 3000;
 const STDERR_TAIL_CHARS = 64 * 1024;
@@ -74,8 +74,8 @@ function createCodexJsonRpcSession(opts) {
   /** @type {Map<unknown, { resolve: (v: unknown) => void, reject: (e: Error) => void }>} */
   const pending = new Map();
   /** Inbound ServerRequest ids we have not answered yet. */
-  /** @type {Set<unknown>} */
-  const inbound = new Set();
+  /** @type {Map<unknown, string>} */
+  const inbound = new Map();
 
   function finish(code) {
     if (finished) return;
@@ -227,7 +227,7 @@ function createCodexJsonRpcSession(opts) {
     }
 
     if (method && id !== undefined && id !== null) {
-      inbound.add(id);
+      inbound.set(id, method);
       let handled = false;
       if (typeof onServerRequest === "function") {
         try {
@@ -342,15 +342,15 @@ function createCodexJsonRpcSession(opts) {
     respondJsonRpc,
     respondJsonRpcError,
     cancelOutstanding(decision) {
-      const ids = [...inbound];
+      const requests = [...inbound];
       inbound.clear();
-      const result = { decision: decision || "cancel" };
-      for (const id of ids) {
+      for (const [id, method] of requests) {
+        const result = approvalResponse(method, decision || "cancel");
         write({ jsonrpc: "2.0", id, result });
       }
     },
     outstandingIds() {
-      return [...inbound];
+      return [...inbound.keys()];
     },
     pid: child && child.pid,
     kill() {

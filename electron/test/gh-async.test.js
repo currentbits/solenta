@@ -97,7 +97,7 @@ process.exit(0);
   });
 
   it("listIssues does not block the event loop", async () => {
-    sleepGh(`process.stdout.write("[]\\n"); process.exit(0);`);
+    sleepGh(`process.stdout.write(JSON.stringify({data:{repository:{issues:{nodes:[],pageInfo:{hasNextPage:false,endCursor:null}}}}})); process.exit(0);`);
     const result = await assertEventLoopFree(() => listIssues(repo));
     assert.deepEqual(result, { ok: true, issues: [] });
   });
