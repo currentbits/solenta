@@ -66,7 +66,10 @@ async function caretToEnd(m: Mounted): Promise<void> {
   await inAct(() => {
     el.focus();
     el.setSelectionRange(el.value.length, el.value.length);
-    el.dispatchEvent(new Event("select", { bubbles: true }));
+    // React's onSelect observes selectionchange, not the native select event.
+    // Otherwise the first ArrowDown discovers the caret change and queues a
+    // second lookup that can reset the highlight during slow navigation.
+    document.dispatchEvent(new Event("selectionchange"));
   });
 }
 
@@ -180,11 +183,16 @@ describe("Composer @-mention popup", () => {
       intoView += 1;
     };
     try {
-      for (let i = 0; i < 8; i++) await m.press(el, "ArrowDown");
+      for (let i = 0; i < 8; i++) {
+        await m.press(el, "ArrowDown");
+        // Let any accidental lookup from the first key finish mid-navigation.
+        if (i === 3) await waitForPopup();
+      }
     } finally {
       proto.scrollIntoView = original;
     }
     assert.equal(intoView, 0, "scrollIntoView scrolls chatSlot");
+    assert.equal(list.querySelector('[data-highlighted="true"]')?.textContent, files[8]);
     assert.ok(list.scrollTop > 0, "the mention list itself must scroll");
   });
 });
