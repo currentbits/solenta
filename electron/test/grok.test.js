@@ -14,6 +14,7 @@ const services = require("../services.js");
 const { createRunner, liveClaudeChildren } = require("../runner.js");
 const { getProvider } = require("../providers.js");
 const { writeFakeBin } = require("./support/fakeBin.js");
+const { rmTree } = require("./support/rmTree.js");
 
 const TOKEN = "test-bearer-token-64chars-abcdefghijklmnopqrstuvwxyz012345";
 
@@ -583,9 +584,8 @@ describe("runner grok provider (claude-stream path)", () => {
     services.setProvider(store, { threadId: thread.id, provider: "grok" });
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     if (runner) runner.stopAll();
-    fs.rmSync(tmpDir, { recursive: true, force: true });
     if (prevSimulate === undefined) delete process.env.CODER_SIMULATE;
     else process.env.CODER_SIMULATE = prevSimulate;
     if (prevAgentCmd === undefined) delete process.env.CODER_AGENT_CMD;
@@ -598,6 +598,7 @@ describe("runner grok provider (claude-stream path)", () => {
     else process.env.CODER_FAKE_GROK_ARGV_FILE = prevArgvFile;
     if (prevGrokMcpDisable === undefined) delete process.env.CODER_GROK_MCP_DISABLE;
     else process.env.CODER_GROK_MCP_DISABLE = prevGrokMcpDisable;
+    await rmTree(tmpDir);
   });
 
   it("first turn argv: -p prompt, streaming-messages-json, no --resume/--verbose/--mcp-config", async () => {
