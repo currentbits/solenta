@@ -24,6 +24,7 @@ const { Store } = require("../store.js");
 const services = require("../services.js");
 const { createRunner } = require("../runner.js");
 const { writeFakeBin } = require("./support/fakeBin.js");
+const { rmTree } = require("./support/rmTree.js");
 
 function git(cwd, args) {
   execFileSync("git", args, { cwd, stdio: "ignore" });
@@ -379,11 +380,12 @@ emit({
     } finally {
       if (runner) runner.stopAll();
       resetMemorySupForTests();
-      fs.rmSync(tmpDir, { recursive: true, force: true });
       for (const [k, v] of Object.entries(prev)) {
         if (v === undefined) delete process.env[k];
         else process.env[k] = v;
       }
+      // "done" follows child close; Windows can still briefly lock its cwd.
+      await rmTree(tmpDir);
     }
   });
 });
