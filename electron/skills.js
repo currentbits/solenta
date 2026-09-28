@@ -10,6 +10,7 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const os = require("node:os");
+const { createHash } = require("node:crypto");
 
 const SKILL_NAME_RE = /^[a-z0-9-]+$/;
 const SKILL_MARKER_NAME = ".solenta-skill.json";
@@ -52,11 +53,11 @@ function SKILL_DIRS(env = process.env) {
   return {
     claude: path.join(home, ".claude", "skills"),
     agents: path.join(home, ".agents", "skills"),
-    codex: path.join(home, ".codex", "skills"),
+    codex: path.join(env.CODEX_HOME || path.join(home, ".codex"), "skills"),
     grok: path.join(home, ".grok", "skills"),
     opencode: path.join(home, ".config", "opencode", "skills"),
     kimi: path.join(home, ".kimi", "skills"),
-    cursor: path.join(home, ".cursor", "skills"),
+    cursor: path.join(env.CURSOR_HOME || path.join(home, ".cursor"), "skills"),
     muse: path.join(
       env.XDG_CONFIG_HOME || path.join(home, ".config"),
       "muse",
@@ -241,7 +242,7 @@ function readSkillDirent(baseDir, d, parseCache) {
   }
   const cached = parseCache && parseCache.get(real);
   if (cached) {
-    return { name: d.name, description: cached.description, bytes };
+    return { name: d.name, description: cached.description, bytes, digest: cached.digest };
   }
   let content;
   try {
@@ -250,10 +251,11 @@ function readSkillDirent(baseDir, d, parseCache) {
     return null;
   }
   const parsed = parseSkillMarkdown(content);
+  const digest = createHash("sha256").update(content).digest("hex");
   if (parseCache) {
-    parseCache.set(real, { description: parsed.description, bytes });
+    parseCache.set(real, { description: parsed.description, bytes, digest });
   }
-  return { name: d.name, description: parsed.description, bytes };
+  return { name: d.name, description: parsed.description, bytes, digest };
 }
 
 function scanSkillDir(baseDir, parseCache) {
@@ -417,6 +419,7 @@ function ingestScannedSkill(byName, target, skill, skillDir, userDataPath, regis
       description: skill.description,
       source: target,
       installedIn: [target],
+      digest: skill.digest,
       missingFrom: [],
       bytes: skill.bytes,
       provenance: managed ? managed.provenance : "added",
@@ -426,6 +429,9 @@ function ingestScannedSkill(byName, target, skill, skillDir, userDataPath, regis
     return;
   }
   existing.installedIn.push(target);
+  if (existing.digest !== skill.digest) {
+    (existing.differentIn ||= []).push(target);
+  }
   if (
     managed &&
     managed.provenance === "curated" &&
@@ -448,7 +454,8 @@ function finishSkillList(byName, active, projectPath, parseCache) {
       : SKILL_TARGETS.filter(
           (t) => active.has(t) && !row.installedIn.includes(t),
         );
-    userRows.push(row);
+    const { digest, ...publicRow } = row;
+    userRows.push(publicRow);
   }
   userRows.sort((a, b) => a.name.localeCompare(b.name));
 

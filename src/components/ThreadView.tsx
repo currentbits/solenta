@@ -683,6 +683,7 @@ interface ThreadViewProps {
   ) => Promise<AttachmentInfo | null>;
   /** CLI skills and custom commands for the composer `/` palette (#606). */
   onListCliCommands?: (input?: {
+    provider?: string;
     projectPath?: string;
   }) => Promise<CliSlashCommand[]>;
   /** Resolve transcript path tokens against the thread worktree. */
@@ -4671,7 +4672,7 @@ export const ThreadView = memo(function ThreadView({
       return;
     }
     let cancelled = false;
-    onListCliCommands({ projectPath: project?.path })
+    onListCliCommands({ projectPath: project?.path, provider: detail?.thread.provider })
       .then((rows) => {
         if (cancelled) return;
         setCliCommands(
@@ -4688,7 +4689,7 @@ export const ThreadView = memo(function ThreadView({
     return () => {
       cancelled = true;
     };
-  }, [onListCliCommands, project?.path, threadId]);
+  }, [onListCliCommands, project?.path, threadId, detail?.thread.provider]);
   const [incomingHandoff, setIncomingHandoff] = useState<{
     threadId: string;
     items: AttachmentInfo[];

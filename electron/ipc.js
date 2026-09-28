@@ -1324,7 +1324,7 @@ const IPC_HANDLERS = {
       input && typeof input.projectPath === "string"
         ? input.projectPath
         : null;
-    return cliCommands.listPaletteCommands({ projectPath });
+    return cliCommands.listPaletteCommands({ projectPath, provider: input?.provider });
   },
   "skills:catalog": async (ctx) => {
     return skillCatalog.listCatalog({ userDataPath: ctx.userDataPath });

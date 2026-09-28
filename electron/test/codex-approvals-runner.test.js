@@ -63,6 +63,7 @@ describe("Codex ServerRequest reply path (#1171)", () => {
   let prevGrokMcpDisable;
   let prevGrokBin;
   let prevGuardrails;
+  let prevGuardrailsPath;
 
   beforeEach(async () => {
     prevSimulate = process.env.CODER_SIMULATE;
@@ -70,12 +71,14 @@ describe("Codex ServerRequest reply path (#1171)", () => {
     prevGrokMcpDisable = process.env.CODER_GROK_MCP_DISABLE;
     prevGrokBin = process.env.CODER_GROK_BIN;
     prevGuardrails = process.env.CODER_GUARDRAILS;
+    prevGuardrailsPath = process.env.CODER_GUARDRAILS_PATH;
     delete process.env.CODER_SIMULATE;
     delete process.env.CODER_GUARDRAILS;
     process.env.CODER_GROK_MCP_DISABLE = "1";
     process.env.CODER_GROK_BIN = "no-grok-not-a-real-binary";
 
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "coder-codex-ask-"));
+    process.env.CODER_GUARDRAILS_PATH = path.join(tmpDir, "guardrails-enabled");
     const fake = writeFakeBin(
       path.join(tmpDir, "fake-codex"),
       `setInterval(() => {}, 30000);\n`,
@@ -130,6 +133,8 @@ describe("Codex ServerRequest reply path (#1171)", () => {
     else process.env.CODER_GROK_BIN = prevGrokBin;
     if (prevGuardrails === undefined) delete process.env.CODER_GUARDRAILS;
     else process.env.CODER_GUARDRAILS = prevGuardrails;
+    if (prevGuardrailsPath === undefined) delete process.env.CODER_GUARDRAILS_PATH;
+    else process.env.CODER_GUARDRAILS_PATH = prevGuardrailsPath;
   });
 
   async function startAsk() {
@@ -138,6 +143,31 @@ describe("Codex ServerRequest reply path (#1171)", () => {
     await waitFor(() => runner.isRunning(thread.id));
     return thread;
   }
+
+  it("routes MCP tool confirmation through allow, deny and Stop without pretending to fill forms", async () => {
+    const thread = await startAsk();
+    const params = { serverName: "probe", mode: "form", message: "Allow diagnostic_ping?",
+      _meta: { codex_approval_kind: "mcp_tool_call", tool_params: { query: "status" } },
+      requestedSchema: { type: "object", properties: {} } };
+    for (const [id, decision, action] of [["a", "allow", "accept"], ["b", "deny", "decline"], ["c", "allowAlways", "accept"]]) {
+      runner.handleCodexServerRequest(thread.id, { id, method: "mcpServer/elicitation/request", params });
+      const card = runner.getPendingPermission(thread.id);
+      assert.ok(card);
+      assert.match(card.summary, /diagnostic_ping/);
+      assert.match(card.input, /status/);
+      assert.equal(card.commandEditable, false);
+      assert.equal(card.acceptAlways, false);
+      runner.respondPermission({ threadId: thread.id, requestId: id, decision });
+      assert.deepEqual(replies.at(-1), { id, result: { action, content: action === "accept" ? {} : null, _meta: null } });
+    }
+    runner.handleCodexServerRequest(thread.id, { id: "form", method: "mcpServer/elicitation/request",
+      params: { ...params, requestedSchema: { type: "object", properties: { password: { type: "string" } } } } });
+    assert.equal(runner.getPendingPermission(thread.id), null);
+    assert.equal(replies.at(-1).error.code, JSONRPC_METHOD_NOT_FOUND);
+    runner.handleCodexServerRequest(thread.id, { id: "stop", method: "mcpServer/elicitation/request", params });
+    await runner.stopRun({ threadId: thread.id });
+    assert.deepEqual(replies.at(-1), { id: "stop", result: { action: "cancel", content: null, _meta: null } });
+  });
 
   it("queues item/commandExecution/requestApproval on pendingPermission", async () => {
     const thread = await startAsk();

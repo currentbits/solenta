@@ -477,7 +477,7 @@ function spawnAgentClaude(opts) {
   const interactive = Boolean(entry && entry.id === "claude");
   let args = baseArgs;
   if (interactive) {
-    args = [...baseArgs, ...getClaudeMcpArgs({ projectPath: cwd })];
+    args = [...baseArgs, ...getClaudeMcpArgs({ projectPath: cwd, projectId: opts.projectId || opts.project?.id })];
   }
 
   let wrapEnv;
@@ -1505,6 +1505,7 @@ function spawnPhaseAgent(opts) {
   if (entry.kind === "claude-stream") {
     return spawnAgentClaude({
       project,
+      projectId,
       threadId,
       appendMessage,
       runId,

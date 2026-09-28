@@ -946,6 +946,7 @@ export interface UseCoderResult {
   ) => Promise<HarnessInstallResult>;
   discardHarnessImport: (input: { previewId: string }) => Promise<void>;
   listCliCommands: (input?: {
+    provider?: string;
     projectPath?: string;
   }) => Promise<CliSlashCommand[]>;
   /** Codex / Grok / Claude / Cursor / OpenCode / Kimi / Muse CLI sessions on disk. */
@@ -4134,7 +4135,7 @@ export function useCoder(): UseCoderResult {
   );
 
   const listCliCommands = useCallback(
-    async (input?: { projectPath?: string }) => {
+    async (input?: { projectPath?: string; provider?: string }) => {
       return api.skills.commands(input);
     },
     [api],

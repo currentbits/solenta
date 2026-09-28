@@ -1110,8 +1110,8 @@ function createToolHandlers(deps) {
 
   async function issue_list(args) {
     const thread = requireOwnThread(args);
-    const { listIssues } = require("./issues.js");
-    return listIssues(originPathOf(thread));
+    const { listIssuePage } = require("./issues.js");
+    return listIssuePage(originPathOf(thread), args);
   }
 
   /**
@@ -1723,13 +1723,19 @@ function buildMcpServer(sdk, handlers, opts = {}) {
       "issue_list",
       {
         description:
-          "List GitHub issues on THIS thread's project origin (Planboard). " +
+          "List a bounded page of GitHub issues on THIS thread's project origin (Planboard). " +
+          "Defaults to 50 open issues, newest updated first. Pass nextCursor as cursor for the next page; " +
+          "use state for closed history or number for an exact issue. " +
           "There is no repo argument: the bound origin is the only repo. " +
           "projectId is YOUR OWN project id (stated at the end of your prompt); " +
           "the thread must belong to it.",
         inputSchema: {
           threadId: z.string().min(1),
           projectId: z.string().min(1),
+          state: z.enum(["open", "closed", "all"]).optional(),
+          limit: z.number().int().min(1).max(100).optional(),
+          cursor: z.string().max(1024).optional(),
+          number: z.number().int().positive().optional(),
         },
       },
       async (args) => json(await handlers.issue_list(args)),

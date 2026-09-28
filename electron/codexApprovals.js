@@ -3,8 +3,7 @@
 /**
  * Codex app-server ServerRequest mapping (issue #1171).
  *
- * Command approval (`item/commandExecution/requestApproval`, kind=command)
- * is the only ask that reuses Solenta's permission card. Everything else
+ * Command approval and MCP tool confirmations reuse the permission card. Everything else
  * is fail-closed until a dedicated UI exists. Do not send `updatedCommand`
  * into this RPC: Accept runs the proposed string (#509 hole).
  */
@@ -56,7 +55,7 @@ function decisionNames(available) {
  * @param {string} method
  * @param {unknown} params
  * @returns {{
- *   action: "command" | "unsupported" | "unknown",
+ *   action: "command" | "mcp" | "unsupported" | "unknown",
  *   method: string,
  *   kind?: string | null,
  *   reason: string,
@@ -64,6 +63,19 @@ function decisionNames(available) {
  */
 function classifyServerRequest(method, params) {
   const name = String(method || "");
+  // Codex uses elicitation for ordinary tool approval too. Only an empty
+  // confirmation form fits our permission card; never invent form answers.
+  if (name === METHOD_ELICITATION && params?.mode === "form" &&
+      params?._meta?.codex_approval_kind === "mcp_tool_call") {
+    const schema = params.requestedSchema;
+    if (schema?.type === "object" && schema.properties &&
+        !Array.isArray(schema.properties) && typeof schema.properties === "object" &&
+        Object.keys(schema.properties).length === 0 &&
+        (schema.required === undefined || (Array.isArray(schema.required) && schema.required.length === 0)) &&
+        Object.keys(schema).every((key) => ["type", "properties", "required", "additionalProperties", "title", "description", "$schema"].includes(key))) {
+      return { action: "mcp", method: name, reason: name };
+    }
+  }
   if (name === METHOD_COMMAND) {
     const rec =
       params && typeof params === "object" && !Array.isArray(params)
@@ -146,6 +158,26 @@ function pendingFromCommand(rpcId, params) {
   };
 }
 
+function pendingFromMcp(rpcId, params) {
+  const rawInput = params._meta.tool_params ?? {};
+  return {
+    id: stringifyRpcId(rpcId), rpcId, method: METHOD_ELICITATION,
+    toolName: `mcp__${params.serverName || "server"}`,
+    summary: String(params.message || `MCP: ${params.serverName || "server"}`),
+    input: JSON.stringify(rawInput, null, 2), rawInput,
+    command: null, commandEditable: false, acceptAlways: false,
+    availableDecisions: [DECISION_ACCEPT, DECISION_DECLINE],
+  };
+}
+
+function approvalResponse(method, decision) {
+  if (method === METHOD_ELICITATION) {
+    const action = decision === DECISION_SESSION ? DECISION_ACCEPT : decision;
+    return { action, content: action === DECISION_ACCEPT ? {} : null, _meta: null };
+  }
+  return { decision };
+}
+
 /**
  * Solenta permission button → Codex decision. Deny is `decline` (turn
  * continues). Stop uses `cancel` separately. `updatedCommand` is ignored.
@@ -197,6 +229,8 @@ module.exports = {
   decisionNames,
   stringifyRpcId,
   pendingFromCommand,
+  pendingFromMcp,
+  approvalResponse,
   mapSolentaDecision,
   unsupportedError,
 };
