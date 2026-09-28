@@ -2997,6 +2997,11 @@ button.diffLineGutter:focus-visible {
   color: var(--text-dim);
 }
 
+.inputUrl {
+  overflow-wrap: anywhere;
+  font-size: 12px;
+}
+
 .questionAttach {
   flex: none;
   display: grid;

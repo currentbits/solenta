@@ -1599,6 +1599,8 @@ export interface PendingPermissionInfo {
    * answer via respondPermission's `answers`.
    */
   questions?: PendingQuestion[] | null;
+  /** Typed input for Codex questions and MCP elicitation. Ephemeral, never persisted. */
+  inputRequest?: PendingInputRequest | null;
   /**
    * Present when the agent is asking to leave plan mode (ExitPlanMode): the
    * plan markdown, rendered in the prompt panel instead of the raw JSON.
@@ -1654,7 +1656,29 @@ export interface PendingQuestion {
 }
 
 /** User decision on a PendingPermissionInfo. "allowAlways" also allows the tool for the rest of the CLI session. */
-export type PermissionDecision = "allow" | "allowAlways" | "deny";
+export type PermissionDecision = "allow" | "allowAlways" | "deny" | "cancel";
+export type InputValues = Record<string, string | number | boolean | string[]>;
+export interface PendingInputRequest {
+  source: string;
+  message: string;
+  url?: string;
+  fields: Array<{
+    name: string;
+    title: string;
+    description?: string;
+    type: "string" | "number" | "integer" | "boolean" | "array";
+    required: boolean;
+    secret?: boolean;
+    custom?: boolean;
+    default?: string | number | boolean | string[];
+    options?: Array<{ value: string; label: string; description?: string }>;
+    minimum?: number;
+    maximum?: number;
+    minLength?: number;
+    maxLength?: number;
+    format?: "email" | "uri" | "date" | "date-time";
+  }>;
+}
 
 export interface ThreadDetail {
   thread: ThreadInfo;
@@ -3903,6 +3927,7 @@ export interface CoderApi {
        * pending tool has no command field.
        */
       updatedCommand?: string;
+      inputValues?: InputValues;
     }): Promise<void>;
     /**
      * Drop the persisted question card (ThreadInfo.pendingQuestion) without
