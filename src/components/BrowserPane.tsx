@@ -343,6 +343,7 @@ export function BrowserPane({
           className: styles.webview,
           "data-browser-webview": "",
           partition: `solenta-preview:${threadId}`,
+          src: "about:blank",
           allowpopups: "false",
           webpreferences: "contextIsolation=yes, sandbox=yes, nodeIntegration=no",
         })}

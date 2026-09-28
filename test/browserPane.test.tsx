@@ -48,6 +48,8 @@ describe("BrowserPane (issue #155)", () => {
   it("shows an empty state until a local URL is loaded", async () => {
     const m = await mount(<BrowserPane threadId="t1" />);
     assert.ok(m.query("[data-browser-pane]"));
+    assert.equal(m.query("webview")?.getAttribute("src"), "about:blank",
+      "Electron needs an initial URL before it creates the guest used by preview.bind");
     assert.ok(m.query("[data-browser-empty]"));
     assert.match(
       m.query("[data-browser-empty]")!.textContent || "",
