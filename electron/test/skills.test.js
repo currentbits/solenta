@@ -686,3 +686,14 @@ describe("syncUserMcpServers", () => {
     assert.equal(activeServers().length, 1);
   });
 });
+
+it("reports differing instructions without overwriting provider variants", () => {
+  const env = { HOME: tmp, CODEX_HOME: path.join(tmp, "custom-codex") };
+  writeSkill(path.join(tmp, ".claude", "skills"), "demo", "Claude version");
+  writeSkill(path.join(env.CODEX_HOME, "skills"), "demo", "Codex version");
+  const skill = listSkills(null, env).find((s) => s.name === "demo");
+  assert.deepEqual(skill.installedIn, ["claude", "codex"]);
+  assert.deepEqual(skill.differentIn, ["codex"]);
+  syncSkills(env);
+  assert.equal(fs.readFileSync(path.join(env.CODEX_HOME, "skills", "demo", "SKILL.md"), "utf8"), "Codex version");
+});

@@ -958,8 +958,8 @@ const PLANBOARD_NOTE =
  * already reports computer_use=true; passing --enable is a no-op.
  */
 const CODEX_COMPUTER_USE_NOTE =
-  "\n\n[Computer use] Solenta runs Codex via headless `codex exec` / " +
-  "`exec resume`. It has no Computer Use, desktop-control, or " +
+  "\n\n[Computer use] Solenta runs the headless Codex CLI (app-server for interactive threads). " +
+  "It has no Computer Use, desktop-control, or " +
   '"enable automation" / agentmux setting. Official Computer Use is ' +
   "installed from ChatGPT / Codex Desktop → Settings → Computer Use → " +
   "Install (plugin + Screen Recording + Accessibility). If those tools " +

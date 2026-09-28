@@ -322,18 +322,14 @@ function getClaudeMcpArgs(opts = {}) {
   const servers = activeServers();
   if (servers.length === 0 || !globalMcpConfigPath) return [];
   const projectPath = opts.projectPath ? String(opts.projectPath) : "";
+  const projectId = opts.projectId ? String(opts.projectId) : "";
   const memoryOnly = opts.memoryOnly === true;
   let configPath = globalMcpConfigPath;
-  if ((projectPath || memoryOnly) && globalUserDataPath) {
-    try {
-      configPath = writeBoundMcpConfig(
-        globalUserDataPath,
-        projectPath,
-        memoryOnly ? { memoryOnly: true } : {},
-      );
-    } catch {
-      configPath = globalMcpConfigPath;
-    }
+  if ((projectPath || projectId || memoryOnly) && globalUserDataPath) {
+    configPath = writeBoundMcpConfig(globalUserDataPath, projectPath, {
+      projectId,
+      memoryOnly,
+    });
   }
   // Both flags MUST use the single equals form: the claude CLI treats the
   // space-separated variants as variadic and swallows the trailing PROMPT as
@@ -1678,7 +1674,7 @@ function mcpServersDoc(projectPath, opts = {}) {
     }
     const entry = {
       type: s.transport === "sse" ? "sse" : "http",
-      url: boundCoderMemoryUrl(s.url, s.name, projectPath),
+      url: boundSolentaMcpUrl(s.url, s.name, { projectPath, projectId: opts.projectId }),
       headers: { ...(s.headers && typeof s.headers === "object" ? s.headers : {}) },
     };
     if (s.token) {
@@ -1717,14 +1713,17 @@ function writeMcpConfig(userDataPath) {
 function writeBoundMcpConfig(userDataPath, projectPath, opts = {}) {
   const key = crypto
     .createHash("sha1")
-    .update(String(projectPath))
+    .update(JSON.stringify([projectPath, opts.projectId || ""]))
     .digest("hex")
     .slice(0, 12);
   const dir = path.join(userDataPath, "mcp-bound");
   fs.mkdirSync(dir, { recursive: true });
   const suffix = opts.memoryOnly === true ? "-memory" : "";
   const mcpPath = path.join(dir, `${key}${suffix}.json`);
-  const docOpts = opts.memoryOnly === true ? { names: ["coder-memory"] } : {};
+  const docOpts = {
+    projectId: opts.projectId,
+    ...(opts.memoryOnly === true ? { names: ["coder-memory"] } : {}),
+  };
   writeSecretFile(
     mcpPath,
     JSON.stringify(mcpServersDoc(projectPath, docOpts), null, 2),

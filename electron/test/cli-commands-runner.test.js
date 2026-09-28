@@ -82,12 +82,16 @@ process.exit(0);
       body,
     );
 
-    const skillDir = path.join(tmpDir, ".claude", "skills", "commit");
+    const skillDir = path.join(tmpDir, ".grok", "skills", "commit");
     fs.mkdirSync(skillDir, { recursive: true });
     fs.writeFileSync(
       path.join(skillDir, "SKILL.md"),
       "---\nname: commit\ndescription: Commit staged work\n---\n\nLook at git diff --staged and commit.\n",
     );
+
+    const otherProvider = path.join(tmpDir, ".claude", "skills", "commit");
+    fs.mkdirSync(otherProvider, { recursive: true });
+    fs.writeFileSync(path.join(otherProvider, "SKILL.md"), "Wrong provider skill");
 
     store = new Store(path.join(tmpDir, "store.json"));
     const core = await loadCore();

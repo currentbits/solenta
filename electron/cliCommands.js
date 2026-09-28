@@ -256,12 +256,18 @@ function addOnce(byName, slashName, row) {
 /**
  * @param {object} [opts]
  * @param {string | null} [opts.projectPath]
+ * @param {string} [opts.provider]
  * @param {NodeJS.ProcessEnv} [opts.env]
  * @returns {InvocableCommand[]}
  */
 function listInvocableCommands(opts = {}) {
   const env = opts.env || process.env;
   const home = homeDir(env);
+  const dirs = SKILL_DIRS(env);
+  const provider = Object.hasOwn(dirs, opts.provider) ? opts.provider : null;
+  const providers = provider ? [provider, "agents"] : Object.keys(dirs);
+  const commandProviders = provider ? [provider].filter((p) => ["claude", "grok"].includes(p)) : ["claude", "grok"];
+  const projectProviders = provider ? providers : ["claude", "grok"];
   const project =
     typeof opts.projectPath === "string" ? opts.projectPath.trim() : "";
   /** @type {Map<string, InvocableCommand>} */
@@ -289,41 +295,31 @@ function listInvocableCommands(opts = {}) {
 
   // Project first so a repo skill wins the bare `/name`.
   if (project) {
-    for (const rel of [
-      path.join(".claude", "skills"),
-      path.join(".grok", "skills"),
-    ]) {
+    for (const rel of projectProviders.map((p) => path.join(`.${p}`, "skills"))) {
       for (const skill of scanSkillDir(path.join(project, rel))) {
         addSkill(`/${skill.name}`, skill);
       }
     }
-    for (const rel of [
-      path.join(".claude", "commands"),
-      path.join(".grok", "commands"),
-    ]) {
+    for (const rel of commandProviders.map((p) => path.join(`.${p}`, "commands"))) {
       for (const cmd of scanCommandDir(path.join(project, rel))) {
         addCommand(`/${cmd.name}`, cmd);
       }
     }
   }
 
-  const dirs = SKILL_DIRS(env);
-  for (const base of Object.values(dirs)) {
+  for (const base of providers.map((p) => dirs[p])) {
     for (const skill of scanSkillDir(base)) {
       addSkill(`/${skill.name}`, skill);
     }
   }
 
-  for (const skill of scanSkillDir(
+  for (const skill of (!provider || provider === "grok" ? scanSkillDir(
     path.join(home, ".grok", "bundled", "skills"),
-  )) {
+  ) : [])) {
     addSkill(`/${skill.name}`, skill);
   }
 
-  for (const rel of [
-    path.join(".claude", "commands"),
-    path.join(".grok", "commands"),
-  ]) {
+  for (const rel of commandProviders.map((p) => path.join(`.${p}`, "commands"))) {
     for (const cmd of scanCommandDir(path.join(home, rel))) {
       addCommand(`/${cmd.name}`, cmd);
     }
@@ -346,13 +342,13 @@ function listInvocableCommands(opts = {}) {
       }
     }
   };
-  for (const pluginRoot of pluginInstallPaths(env)) {
+  for (const pluginRoot of (!provider || provider === "claude" ? pluginInstallPaths(env) : [])) {
     addPluginRoot(pluginRoot);
   }
-  for (const pluginRoot of collectCursorPluginRoots(cursorHome(env))) {
+  for (const pluginRoot of (!provider || provider === "cursor" ? collectCursorPluginRoots(cursorHome(env)) : [])) {
     addPluginRoot(pluginRoot);
   }
-  for (const pluginRoot of collectCodexPluginRoots(codexHome(env))) {
+  for (const pluginRoot of (!provider || provider === "codex" ? collectCodexPluginRoots(codexHome(env)) : [])) {
     addPluginRoot(pluginRoot);
   }
 
@@ -378,7 +374,7 @@ function leadingSlash(prompt) {
  * would inject. Returns null when the token is unknown or reserved.
  *
  * @param {string} prompt
- * @param {{ projectPath?: string | null, env?: NodeJS.ProcessEnv }} [opts]
+ * @param {{ projectPath?: string | null, provider?: string, env?: NodeJS.ProcessEnv }} [opts]
  * @returns {{ name: string, kind: "skill" | "command", prompt: string } | null}
  */
 function expandInvocableCommand(prompt, opts = {}) {
@@ -419,6 +415,7 @@ function expandInvocableCommand(prompt, opts = {}) {
  * Palette rows for the renderer: no filesystem paths.
  * @param {object} [opts]
  * @param {string | null} [opts.projectPath]
+ * @param {string} [opts.provider]
  * @param {NodeJS.ProcessEnv} [opts.env]
  * @returns {Array<{ name: string, hint: string, kind: "insert" }>}
  */

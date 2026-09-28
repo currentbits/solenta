@@ -8,6 +8,7 @@ const { execFileSync } = require("node:child_process");
 const { Store } = require("../store.js");
 const services = require("../services.js");
 const { createRunner } = require("../runner.js");
+const { runCodexAppServerTurn } = require("../codex-appserver.js");
 const { setupWorktree } = require("../worktrees.js");
 const {
   extractSessionId,
@@ -323,6 +324,7 @@ describe("runner codex provider", () => {
   let tmpDir;
   let store;
   let runner;
+  let codexHandle;
   let pushes;
   let core;
   let prevSimulate;
@@ -334,6 +336,7 @@ describe("runner codex provider", () => {
   let argvFile;
   let rpcFile;
   let prevRpcFile;
+  let prevTurnDelay;
 
   let prevGrokMcpDisable;
   let prevGrokBin;
@@ -345,6 +348,7 @@ describe("runner codex provider", () => {
     prevScenario = process.env.CODER_FAKE_CODEX_SCENARIO;
     prevArgvFile = process.env.CODER_FAKE_CODEX_ARGV_FILE;
     prevRpcFile = process.env.CODER_FAKE_CODEX_RPC_FILE;
+    prevTurnDelay = process.env.CODER_FAKE_CODEX_TURN_DELAY_MS;
     prevGrokMcpDisable = process.env.CODER_GROK_MCP_DISABLE;
     prevGrokBin = process.env.CODER_GROK_BIN;
 
@@ -369,6 +373,10 @@ describe("runner codex provider", () => {
     runner = createRunner({
       store,
       core,
+      runCodexFn(opts) {
+        codexHandle = runCodexAppServerTurn(opts);
+        return codexHandle;
+      },
       pushFn: (channel, payload) => {
         pushes.push({ channel, payload });
       },
@@ -403,6 +411,8 @@ describe("runner codex provider", () => {
     else process.env.CODER_FAKE_CODEX_ARGV_FILE = prevArgvFile;
     if (prevRpcFile === undefined) delete process.env.CODER_FAKE_CODEX_RPC_FILE;
     else process.env.CODER_FAKE_CODEX_RPC_FILE = prevRpcFile;
+    if (prevTurnDelay === undefined) delete process.env.CODER_FAKE_CODEX_TURN_DELAY_MS;
+    else process.env.CODER_FAKE_CODEX_TURN_DELAY_MS = prevTurnDelay;
     if (prevGrokMcpDisable === undefined) delete process.env.CODER_GROK_MCP_DISABLE;
     else process.env.CODER_GROK_MCP_DISABLE = prevGrokMcpDisable;
     if (prevGrokBin === undefined) delete process.env.CODER_GROK_BIN;
@@ -1119,16 +1129,14 @@ describe("runner codex provider", () => {
 
   it("steerRun writes turn/steer on the same runId (#1170)", async () => {
     process.env.CODER_FAKE_CODEX_SCENARIO = "steer-wait";
+    process.env.CODER_FAKE_CODEX_TURN_DELAY_MS = "100";
     const thread = store.getThreads()[0];
     const { runId } = await runner.startRun({
       threadId: thread.id,
       prompt: "work",
     });
     await waitFor(() => runner.isRunning(thread.id));
-    await waitFor(() => {
-      const rpc = readRpc(rpcFile);
-      return rpc.some((m) => m.method === "turn/start");
-    });
+    await waitFor(() => codexHandle.canSteer());
     const steered = await runner.steerRun({
       threadId: thread.id,
       prompt: "nudge mid-turn",

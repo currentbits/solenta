@@ -59,7 +59,8 @@ describe("codexComputerUseNoteFor", () => {
   it("tells Codex the truth: no Solenta toggle, install from Desktop", () => {
     const note = services.codexComputerUseNoteFor("codex");
     assert.match(note, /\[Computer use\]/);
-    assert.match(note, /codex exec/);
+    assert.match(note, /headless Codex CLI/);
+    assert.match(note, /app-server/);
     assert.match(note, /Desktop/);
     assert.match(note, /do not invent/i);
     assert.doesNotMatch(note, /--enable computer_use/);

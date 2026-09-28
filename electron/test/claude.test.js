@@ -2332,6 +2332,38 @@ describe("runner claude provider", () => {
     assert.equal(spawns2.length, 1);
   });
 
+  it("restarts a warm Claude process when MCP contents change at the same path", async () => {
+    const { registerMcpServer, resetMemorySupForTests } = require("../memory-sup.js");
+    process.env.CODER_FAKE_CLAUDE_SCENARIO = "multi-turn";
+    const markerDir = path.join(tmpDir, "mcp-markers");
+    process.env.CODER_FAKE_CLAUDE_MARKER_DIR = markerDir;
+    const env = { HOME: tmpDir, USERPROFILE: tmpDir, CODER_GROK_MCP_DISABLE: "1",
+      CODER_KIMI_BIN: "no-kimi", CODER_CURSOR_BIN: "no-cursor" };
+    const register = (token) => registerMcpServer({ name: "probe", url: "http://127.0.0.1:1/mcp",
+      token, userDataPath: tmpDir, env, log() {} });
+    resetMemorySupForTests();
+    try {
+      register("before");
+      const thread = store.getThreads()[0];
+      const turn = async () => {
+        await runner.startRun({ threadId: thread.id, prompt: "hello" });
+        await waitFor(() => store.getThread(thread.id).status === "done");
+      };
+      await turn();
+      const firstArgs = fs.readFileSync(argvFile, "utf8");
+      register("after");
+      await turn();
+      // Config flags have not changed, but the process must reload the token.
+      const configArg = (s) => JSON.parse(s).find((a) => a.startsWith("--mcp-config="));
+      assert.equal(configArg(fs.readFileSync(argvFile, "utf8")), configArg(firstArgs));
+      assert.equal(fs.readFileSync(path.join(markerDir, "spawns"), "utf8").trim().split("\n").length, 2);
+      await turn();
+      assert.equal(fs.readFileSync(path.join(markerDir, "spawns"), "utf8").trim().split("\n").length, 2);
+    } finally {
+      resetMemorySupForTests();
+    }
+  });
+
   it("keeps only the 3 most recently idled CLIs alive (issue #36)", async () => {
     process.env.CODER_FAKE_CLAUDE_SCENARIO = "multi-turn";
     const markerDir = path.join(tmpDir, "lru-markers");
