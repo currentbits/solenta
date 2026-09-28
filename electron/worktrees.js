@@ -1139,6 +1139,8 @@ function autoResolveMergeArtifacts(cwd) {
  *   commit; omitted = add -A. Leftover dirty files refuse the merge so the
  *   worktree is not deleted with uncommitted work.
  * @param {(channel: string, payload: unknown) => void} [opts.broadcast]
+ * @param {(review: object) => boolean} [opts.ciWorkflowSignOff] host-only
+ *   approval lookup/request, bound to the exact clean merge preview
  * @returns {object} updated ThreadInfo
  */
 function mergeWorktree(opts) {
@@ -1197,7 +1199,9 @@ function mergeWorktree(opts) {
     wtPath,
     baseForGate,
     true,
-    opts.ciWorkflowApproved === true,
+    typeof opts.ciWorkflowSignOff === "function"
+      ? (files) => opts.ciWorkflowSignOff(ciWorkflowMergeReview(thread, target, files))
+      : opts.ciWorkflowApproved === true,
   );
 
   // (a) Commit any uncommitted worktree changes. Refuse while conflicts are
@@ -2211,7 +2215,41 @@ function gateCiWorkflowMerge(cwd, base, includeWorkingTree, approved) {
   if (!listed.ok) {
     throw new Error(inspectFailedMessage(listed.reason));
   }
-  assertCiWorkflowSignOff(ciWorkflowFiles(listed.paths), approved === true);
+  const files = ciWorkflowFiles(listed.paths);
+  assertCiWorkflowSignOff(files, files.length && typeof approved === "function"
+    ? approved(files) === true : approved === true);
+}
+
+/** Host-generated review, before checkout writes. Never truncate what is signed. */
+function ciWorkflowMergeReview(thread, target, files) {
+  // Require committed, clean inputs so the reviewed Git trees are exactly the
+  // ones mergeWorktree will use (no auto-commit, stash, or conflict replay).
+  for (const cwd of [thread.worktreePath, target]) {
+    if (gitOut(cwd, ["status", "--porcelain", "-uall"])) {
+      throw new Error("CI_WORKFLOW: Commit or stash changes in the worker and destination before requesting workflow sign-off.");
+    }
+  }
+  const sourceSha = gitOut(thread.worktreePath, ["rev-parse", "HEAD"]);
+  if (gitOut(thread.worktreePath, ["rev-parse", thread.branch]) !== sourceSha) {
+    throw new Error("CI_WORKFLOW: Worker checkout no longer matches its branch.");
+  }
+  const destinationPath = fs.realpathSync(target);
+  const destinationBranch = gitOut(target, ["symbolic-ref", "--quiet", "--short", "HEAD"]);
+  const destinationSha = gitOut(target, ["rev-parse", "HEAD"]);
+  const merged = gitTry(target, ["merge-tree", "--write-tree", destinationSha, sourceSha]);
+  if (!merged.ok) {
+    throw new Error("CI_WORKFLOW: Could not preview a clean merge. Resolve conflicts in the worker before requesting workflow sign-off.");
+  }
+  const tree = merged.stdout.split("\n")[0];
+  const changed = gitOut(target, ["diff", "--name-only", "--no-renames", "-z", destinationSha, tree], { raw: true });
+  const workflowFiles = [...new Set([...files, ...ciWorkflowFiles(changed.split("\0"))])].sort();
+  const patch = gitOut(target, ["diff", "--no-ext-diff", "--no-textconv", "--no-renames", "--binary",
+    destinationSha, tree, "--", ...workflowFiles.map((file) => `:(literal)${file}`)], { raw: true });
+  return {
+    workerThreadId: thread.id, sourcePath: fs.realpathSync(thread.worktreePath),
+    sourceBranch: thread.branch, sourceSha, destinationPath, destinationBranch,
+    destinationSha, tree, files: workflowFiles, patch,
+  };
 }
 
 /**

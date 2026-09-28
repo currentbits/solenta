@@ -626,6 +626,15 @@ function createToolHandlers(deps) {
       threadId: worker.id,
       intoPath,
       broadcast,
+      ciWorkflowSignOff: (review) => {
+        // CI sign-off also gates sub-leads. Never accept a tool-supplied flag.
+        assertUserApproved(self, args, "Signing off a CI workflow merge");
+        if (typeof runner.requestCiWorkflowSignOff !== "function") return false;
+        if (runner.requestCiWorkflowSignOff(self.id, review)) return true;
+        const err = new Error("CI_WORKFLOW: Human workflow sign-off requested on this thread. End this turn; the user must review the exact patch and destination in the permission card. Accept queues a human-started turn to retry thread_merge with the same destination.");
+        err.code = "CI_WORKFLOW";
+        throw err;
+      },
     });
     if (userDataPath) {
       const { scheduleRetention } = require("./worktrees.js");
@@ -1275,6 +1284,11 @@ function buildMcpServer(sdk, handlers, opts = {}) {
         "and expectedBranch; a mismatch refuses before any writes. Never replace " +
         "an approved destination with a different one to bypass a refusal. " +
         "The result reports the actual intoPath and branch (into). " +
+        "CI workflow changes open a human permission card with the exact patch " +
+        "and destination. Commit or stash dirty inputs first. On CI_WORKFLOW, " +
+        "end your turn and wait: accepting the card queues a retry prompt. " +
+        "A changed worker or destination needs fresh sign-off; no agent flag " +
+        "can grant it. " +
         "Merging is the user's decision: report the worker's " +
         "branch and what it changed, ask whether to merge or open a PR " +
         "(thread_pr), and pass approved:true only in the turn their answer " +

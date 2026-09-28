@@ -19,6 +19,7 @@ const {
   snakeThreadItem,
   runCodexAppServerTurn,
   createCodexAppServerClient,
+  isCodexChildThread,
 } = require("../codex-appserver.js");
 
 function tmp() {
@@ -58,6 +59,31 @@ describe("notificationToJsonl", () => {
     assert.equal(ev.type, "thread.started");
     assert.equal(ev.thread_id, "01abc");
     assert.equal(ev.session_id, "01abc");
+  });
+
+  it("does not map a v2 child thread/started into a persistable session id", () => {
+    const child = {
+      id: "child-sess",
+      source: {
+        subagent: { thread_spawn: { parent_thread_id: "01abc" } },
+      },
+    };
+    assert.equal(isCodexChildThread(child), true);
+    assert.equal(
+      isCodexChildThread({
+        id: "child-sess",
+        forkedFromId: "ancestor",
+        source: "exec",
+      }),
+      false,
+    );
+    assert.equal(
+      notificationToJsonl({
+        method: "thread/started",
+        params: { thread: child },
+      }),
+      null,
+    );
   });
 
   it("maps camelCase commandExecution onto extractCommandItem JSONL", () => {
@@ -223,12 +249,14 @@ rl.on("line", (line) => {
 `,
     );
     const notes = [];
+    let exited = false;
     const client = createCodexAppServerClient({
       binary: bin,
       args: ["app-server", "--listen", "stdio://"],
       cwd: dir,
       envExtra: { CODER_FAKE_CODEX_RPC_FILE: rpcFile },
       onNotification: (msg) => notes.push(msg),
+      onExit: () => { exited = true; },
     });
     const init = await client.send("initialize", {
       clientInfo: { name: "solenta", version: "1" },
@@ -243,6 +271,7 @@ rl.on("line", (line) => {
     assert.equal(started.thread.id, "tid-1");
     await waitFor(() => notes.some((n) => n.method === "thread/started"));
     client.kill();
+    await waitFor(() => exited);
     const rpc = fs
       .readFileSync(rpcFile, "utf8")
       .trim()
@@ -251,7 +280,7 @@ rl.on("line", (line) => {
     assert.equal(rpc[0].method, "initialize");
     assert.equal(rpc[1].method, "thread/start");
     assert.equal(rpc[1].params.threadSource, "solenta");
-    fs.rmSync(dir, { recursive: true, force: true });
+    await rmTree(dir);
   });
 });
 
@@ -302,12 +331,86 @@ rl.on("line", async (line) => {
   }
   if (msg.method === "initialized") return;
   if (msg.method === "thread/start") {
+    if (scenario === "child-before-reply" || scenario === "child-before-reply-hang") {
+      notify("thread/started", {
+        thread: {
+          id: "child-sess",
+          source: { subagent: { thread_spawn: { parent_thread_id: threadId } } },
+        },
+      });
+    }
     reply(msg.id, { thread: { id: threadId } });
     notify("thread/started", { thread: { id: threadId } });
     return;
   }
+  if (msg.method === "thread/read") {
+    const id = msg.params && msg.params.threadId;
+    if (scenario === "fork-read") {
+      reply(msg.id, { thread: { id, forkedFromId: "ancestor", source: "exec" } });
+      return;
+    }
+    if (scenario === "read-fail") {
+      replyError(msg.id, { code: -32600, message: "thread/read failed" });
+      return;
+    }
+    if (scenario === "parent-still-child") {
+      reply(msg.id, {
+        thread: {
+          id,
+          source: { subagent: { thread_spawn: { parent_thread_id: "mid-sess" } } },
+        },
+      });
+      return;
+    }
+    reply(msg.id, {
+      thread: {
+        id,
+        source: { subagent: { thread_spawn: { parent_thread_id: threadId } } },
+      },
+    });
+    return;
+  }
   if (msg.method === "thread/resume") {
-    threadId = msg.params.threadId;
+    const want = String(msg.params.threadId || threadId);
+    const v2Err = {
+      code: -32600,
+      message: "cannot resume an unloaded multi-agent v2 sub-agent through its parent; resume the parent first, or use thread/read to inspect it",
+    };
+    if (
+      (scenario === "unloaded-child" ||
+        scenario === "fork-read" ||
+        scenario === "read-fail" ||
+        scenario === "parent-still-child") &&
+      want !== threadId
+    ) {
+      if (scenario === "parent-still-child" && want === "mid-sess") {
+        reply(msg.id, {
+          thread: {
+            id: want,
+            source: { subagent: { thread_spawn: { parent_thread_id: threadId } } },
+          },
+        });
+        return;
+      }
+      replyError(msg.id, v2Err);
+      return;
+    }
+    if (scenario === "loaded-child" && want !== threadId) {
+      reply(msg.id, {
+        thread: {
+          id: want,
+          source: { subagent: { thread_spawn: { parent_thread_id: threadId } } },
+        },
+      });
+      notify("thread/started", {
+        thread: {
+          id: want,
+          source: { subagent: { thread_spawn: { parent_thread_id: threadId } } },
+        },
+      });
+      return;
+    }
+    threadId = want;
     reply(msg.id, { thread: { id: threadId, source: "exec" } });
     notify("thread/started", { thread: { id: threadId } });
     return;
@@ -316,6 +419,38 @@ rl.on("line", async (line) => {
     if (delayMs) await new Promise((r) => setTimeout(r, delayMs));
     reply(msg.id, { turn: { id: turnId, status: "inProgress", items: [] } });
     notify("turn/started", { threadId, turn: { id: turnId } });
+    if (scenario === "child-spawn" || scenario === "child-before-reply-hang") {
+      notify("thread/started", {
+        thread: {
+          id: "child-sess",
+          source: { subagent: { thread_spawn: { parent_thread_id: threadId } } },
+        },
+      });
+      notify("turn/started", { threadId: "child-sess", turn: { id: "child-turn-1" } });
+      notify("item/completed", {
+        item: { type: "agentMessage", id: "child-m", text: "from child" },
+        threadId: "child-sess",
+        turnId: "child-turn-1",
+      });
+      notify("thread/tokenUsage/updated", {
+        threadId: "child-sess",
+        turnId: "child-turn-1",
+        tokenUsage: {
+          last: { inputTokens: 9, outputTokens: 9, totalTokens: 18 },
+          total: { inputTokens: 9, outputTokens: 9, totalTokens: 18 },
+          modelContextWindow: 272000,
+        },
+      });
+      notify("turn/completed", {
+        threadId: "child-sess",
+        turn: {
+          id: "child-turn-1",
+          status: "failed",
+          error: { message: "child boom", code: "other" },
+        },
+      });
+    }
+    if (scenario === "child-before-reply-hang") return;
     if (scenario === "hang" || scenario === "steer-wait") return;
     emitSuccess();
     return;
@@ -411,7 +546,7 @@ rl.on("line", async (line) => {
     assert.equal(turnStart.params.approvalPolicy, "on-request");
     assert.ok(rpc.some((m) => m.method === "thread/unsubscribe"));
     assert.equal(typeof handle.send, "function");
-    fs.rmSync(dir, { recursive: true, force: true });
+    await rmTree(dir);
   });
 
   it("resumes an exec session id via thread/resume, not a new thread", async () => {
@@ -450,12 +585,13 @@ rl.on("line", async (line) => {
     const resumeTurn = rpc.find((m) => m.method === "turn/start");
     assert.ok(resumeTurn);
     assert.equal(resumeTurn.params.approvalPolicy, "on-request");
-    fs.rmSync(dir, { recursive: true, force: true });
+    await rmTree(dir);
   });
 
   it("send() is false until turn/start returns a turn id", async () => {
     const dir = tmp();
     const bin = writeTurnFake(dir);
+    let exited = false;
     const handle = runCodexAppServerTurn({
       binary: bin,
       args: ["app-server", "--listen", "stdio://"],
@@ -463,11 +599,12 @@ rl.on("line", async (line) => {
       envExtra: { CODER_FAKE_CODEX_TURN_DELAY_MS: "250" },
       prompt: "hello",
       onEvent: () => {},
-      onExit: () => {},
+      onExit: () => { exited = true; },
     });
     assert.equal(handle.send("nudge"), false);
     handle.kill();
-    fs.rmSync(dir, { recursive: true, force: true });
+    await waitFor(() => exited);
+    await rmTree(dir);
   });
 
   it("steer writes turn/steer with expectedTurnId on the same process", async () => {
@@ -509,7 +646,7 @@ rl.on("line", async (line) => {
       rpc.filter((m) => m.method === "thread/start" || m.method === "thread/resume").length,
       1,
     );
-    fs.rmSync(dir, { recursive: true, force: true });
+    await rmTree(dir);
   });
 
   it("rejects steer on review/compact turns", async () => {
@@ -537,6 +674,353 @@ rl.on("line", async (line) => {
     // locked, until unsubscribe finishes. rmdir before that is EBUSY.
     handle.kill();
     await waitFor(() => exitInfo != null);
+    await rmTree(dir);
+  });
+
+  it("ignores v2 child thread/started and turn/completed so the root turn finishes", async () => {
+    const dir = tmp();
+    const rpcFile = path.join(dir, "rpc.jsonl");
+    const bin = writeTurnFake(dir);
+    const events = [];
+    let exitInfo = null;
+    runCodexAppServerTurn({
+      binary: bin,
+      args: ["app-server", "--listen", "stdio://"],
+      cwd: dir,
+      envExtra: {
+        CODER_FAKE_CODEX_RPC_FILE: rpcFile,
+        CODER_FAKE_CODEX_SCENARIO: "child-spawn",
+      },
+      prompt: "spawn",
+      onEvent: (ev) => events.push(ev),
+      onExit: (info) => {
+        exitInfo = info;
+      },
+    });
+    await waitFor(() => exitInfo != null);
+    assert.equal(exitInfo.code, 0, exitInfo.stderr);
+    assert.ok(
+      events.some(
+        (e) => e.item && e.item.type === "agent_message" && e.item.text === "Hello from codex",
+      ),
+    );
+    assert.equal(
+      events.some((e) => e.type === "thread.started" && e.session_id === "child-sess"),
+      false,
+    );
+    assert.equal(
+      events.some((e) => e.item && e.item.text === "from child"),
+      false,
+    );
+    assert.equal(
+      events.some((e) => e.type === "token_count" && e.info.last_token_usage.input_tokens === 9),
+      false,
+    );
+    assert.equal(
+      events.some((e) => e.type === "turn.failed" && e.error && e.error.message === "child boom"),
+      false,
+    );
+    const rpc = fs
+      .readFileSync(rpcFile, "utf8")
+      .trim()
+      .split("\n")
+      .map((l) => JSON.parse(l));
+    const unsub = rpc.find((m) => m.method === "thread/unsubscribe");
+    assert.ok(unsub);
+    assert.equal(unsub.params.threadId, "codex-sess-001");
+    await rmTree(dir);
+  });
+
+  it("recovers thread/resume of an unloaded v2 child via thread/read of the parent", async () => {
+    const dir = tmp();
+    const rpcFile = path.join(dir, "rpc.jsonl");
+    const bin = writeTurnFake(dir);
+    const events = [];
+    let exitInfo = null;
+    runCodexAppServerTurn({
+      binary: bin,
+      args: ["app-server", "--listen", "stdio://"],
+      cwd: dir,
+      envExtra: {
+        CODER_FAKE_CODEX_RPC_FILE: rpcFile,
+        CODER_FAKE_CODEX_SCENARIO: "unloaded-child",
+      },
+      prompt: "continue",
+      sessionId: "child-sess",
+      onEvent: (ev) => events.push(ev),
+      onExit: (info) => {
+        exitInfo = info;
+      },
+    });
+    await waitFor(() => exitInfo != null);
+    assert.equal(exitInfo.code, 0, exitInfo.stderr);
+    const rpc = fs
+      .readFileSync(rpcFile, "utf8")
+      .trim()
+      .split("\n")
+      .map((l) => JSON.parse(l));
+    const resumes = rpc.filter((m) => m.method === "thread/resume");
+    assert.equal(resumes[0].params.threadId, "child-sess");
+    assert.equal(resumes[resumes.length - 1].params.threadId, "codex-sess-001");
+    assert.ok(rpc.some((m) => m.method === "thread/read"));
+    const turnStart = rpc.find((m) => m.method === "turn/start");
+    assert.equal(turnStart.params.threadId, "codex-sess-001");
+    assert.ok(events.some((e) => e.type === "thread.started" && e.session_id === "codex-sess-001"));
+    await rmTree(dir);
+  });
+
+  it("switches a loaded v2 child resume onto the parent thread", async () => {
+    const dir = tmp();
+    const rpcFile = path.join(dir, "rpc.jsonl");
+    const bin = writeTurnFake(dir);
+    let exitInfo = null;
+    runCodexAppServerTurn({
+      binary: bin,
+      args: ["app-server", "--listen", "stdio://"],
+      cwd: dir,
+      envExtra: {
+        CODER_FAKE_CODEX_RPC_FILE: rpcFile,
+        CODER_FAKE_CODEX_SCENARIO: "loaded-child",
+      },
+      prompt: "continue",
+      sessionId: "child-sess",
+      onEvent: () => {},
+      onExit: (info) => {
+        exitInfo = info;
+      },
+    });
+    await waitFor(() => exitInfo != null);
+    assert.equal(exitInfo.code, 0, exitInfo.stderr);
+    const rpc = fs
+      .readFileSync(rpcFile, "utf8")
+      .trim()
+      .split("\n")
+      .map((l) => JSON.parse(l));
+    const resumes = rpc.filter((m) => m.method === "thread/resume");
+    assert.equal(resumes[0].params.threadId, "child-sess");
+    assert.equal(resumes[resumes.length - 1].params.threadId, "codex-sess-001");
+    const unsub = rpc.find((m) => m.method === "thread/unsubscribe");
+    assert.equal(unsub.params.threadId, "codex-sess-001");
+    await rmTree(dir);
+  });
+
+  const V2_UNLOADED =
+    "cannot resume an unloaded multi-agent v2 sub-agent through its parent; resume the parent first, or use thread/read to inspect it";
+
+  function readRpc(rpcFile) {
+    return fs
+      .readFileSync(rpcFile, "utf8")
+      .trim()
+      .split("\n")
+      .map((l) => JSON.parse(l));
+  }
+
+  it("does not thread/start when thread/read is an ordinary fork with forkedFromId", async () => {
+    const dir = tmp();
+    const rpcFile = path.join(dir, "rpc.jsonl");
+    const bin = writeTurnFake(dir);
+    let exitInfo = null;
+    let caught = null;
+    runCodexAppServerTurn({
+      binary: bin,
+      args: ["app-server", "--listen", "stdio://"],
+      cwd: dir,
+      envExtra: {
+        CODER_FAKE_CODEX_RPC_FILE: rpcFile,
+        CODER_FAKE_CODEX_SCENARIO: "fork-read",
+      },
+      prompt: "continue",
+      sessionId: "child-sess",
+      onEvent: () => {},
+      onError: (err) => {
+        caught = err;
+      },
+      onExit: (info) => {
+        exitInfo = info;
+      },
+    });
+    await waitFor(() => exitInfo != null);
+    assert.equal(exitInfo.code, 1);
+    assert.match(String((caught && caught.message) || exitInfo.stderr), new RegExp(V2_UNLOADED));
+    const rpc = readRpc(rpcFile);
+    assert.equal(
+      rpc.some((m) => m.method === "thread/start"),
+      false,
+    );
+    assert.equal(
+      rpc.some((m) => m.method === "turn/start"),
+      false,
+    );
+    assert.ok(rpc.some((m) => m.method === "thread/read"));
+    await rmTree(dir);
+  });
+
+  it("does not thread/start when thread/read fails after the v2 resume error", async () => {
+    const dir = tmp();
+    const rpcFile = path.join(dir, "rpc.jsonl");
+    const bin = writeTurnFake(dir);
+    let exitInfo = null;
+    runCodexAppServerTurn({
+      binary: bin,
+      args: ["app-server", "--listen", "stdio://"],
+      cwd: dir,
+      envExtra: {
+        CODER_FAKE_CODEX_RPC_FILE: rpcFile,
+        CODER_FAKE_CODEX_SCENARIO: "read-fail",
+      },
+      prompt: "continue",
+      sessionId: "child-sess",
+      onEvent: () => {},
+      onExit: (info) => {
+        exitInfo = info;
+      },
+    });
+    await waitFor(() => exitInfo != null);
+    assert.equal(exitInfo.code, 1);
+    assert.match(String(exitInfo.stderr), new RegExp(V2_UNLOADED));
+    const rpc = readRpc(rpcFile);
+    assert.equal(
+      rpc.some((m) => m.method === "thread/start"),
+      false,
+    );
+    assert.equal(
+      rpc.some((m) => m.method === "turn/start"),
+      false,
+    );
+    await rmTree(dir);
+  });
+
+  it("does not hop again when the recovered parent is still a v2 child", async () => {
+    const dir = tmp();
+    const rpcFile = path.join(dir, "rpc.jsonl");
+    const bin = writeTurnFake(dir);
+    let exitInfo = null;
+    runCodexAppServerTurn({
+      binary: bin,
+      args: ["app-server", "--listen", "stdio://"],
+      cwd: dir,
+      envExtra: {
+        CODER_FAKE_CODEX_RPC_FILE: rpcFile,
+        CODER_FAKE_CODEX_SCENARIO: "parent-still-child",
+      },
+      prompt: "continue",
+      sessionId: "child-sess",
+      onEvent: () => {},
+      onExit: (info) => {
+        exitInfo = info;
+      },
+    });
+    await waitFor(() => exitInfo != null);
+    assert.equal(exitInfo.code, 1);
+    assert.match(String(exitInfo.stderr), new RegExp(V2_UNLOADED));
+    const rpc = readRpc(rpcFile);
+    const resumes = rpc.filter((m) => m.method === "thread/resume");
+    assert.equal(resumes.length, 2);
+    assert.equal(resumes[0].params.threadId, "child-sess");
+    assert.equal(resumes[1].params.threadId, "mid-sess");
+    assert.equal(
+      rpc.some((m) => m.method === "thread/start"),
+      false,
+    );
+    assert.equal(
+      rpc.some((m) => m.method === "turn/start"),
+      false,
+    );
+    await rmTree(dir);
+  });
+
+  it("pins turn/start to the start RPC root when a nested-source child thread/started arrives first", async () => {
+    const dir = tmp();
+    const rpcFile = path.join(dir, "rpc.jsonl");
+    const bin = writeTurnFake(dir);
+    const events = [];
+    let exitInfo = null;
+    runCodexAppServerTurn({
+      binary: bin,
+      args: ["app-server", "--listen", "stdio://"],
+      cwd: dir,
+      envExtra: {
+        CODER_FAKE_CODEX_RPC_FILE: rpcFile,
+        CODER_FAKE_CODEX_SCENARIO: "child-before-reply",
+      },
+      prompt: "spawn",
+      onEvent: (ev) => events.push(ev),
+      onExit: (info) => {
+        exitInfo = info;
+      },
+    });
+    await waitFor(() => exitInfo != null);
+    assert.equal(exitInfo.code, 0, exitInfo.stderr);
+    const rpc = readRpc(rpcFile);
+    const turnStart = rpc.find((m) => m.method === "turn/start");
+    assert.ok(turnStart);
+    assert.equal(turnStart.params.threadId, "codex-sess-001");
+    assert.equal(
+      events.some((e) => e.type === "thread.started" && e.session_id === "child-sess"),
+      false,
+    );
+    assert.ok(events.some((e) => e.type === "thread.started" && e.session_id === "codex-sess-001"));
+    await rmTree(dir);
+  });
+
+  it("steers the start-RPC root after a nested-source child thread/started", async () => {
+    const dir = tmp();
+    const rpcFile = path.join(dir, "rpc.jsonl");
+    const bin = writeTurnFake(dir);
+    let exitInfo = null;
+    const handle = runCodexAppServerTurn({
+      binary: bin,
+      args: ["app-server", "--listen", "stdio://"],
+      cwd: dir,
+      envExtra: {
+        CODER_FAKE_CODEX_RPC_FILE: rpcFile,
+        CODER_FAKE_CODEX_SCENARIO: "child-before-reply-hang",
+      },
+      prompt: "hang",
+      onEvent: () => {},
+      onExit: (info) => {
+        exitInfo = info;
+      },
+    });
+    await waitFor(() => handle.canSteer());
+    const sent = await Promise.resolve(handle.send("nudge"));
+    assert.equal(sent, true);
+    await waitFor(() => exitInfo != null);
+    const rpc = readRpc(rpcFile);
+    const steer = rpc.find((m) => m.method === "turn/steer");
+    assert.ok(steer);
+    assert.equal(steer.params.threadId, "codex-sess-001");
+    await rmTree(dir);
+  });
+
+  it("interrupts the start-RPC root after a nested-source child thread/started", async () => {
+    const dir = tmp();
+    const rpcFile = path.join(dir, "rpc.jsonl");
+    const bin = writeTurnFake(dir);
+    let exitInfo = null;
+    const handle = runCodexAppServerTurn({
+      binary: bin,
+      args: ["app-server", "--listen", "stdio://"],
+      cwd: dir,
+      envExtra: {
+        CODER_FAKE_CODEX_RPC_FILE: rpcFile,
+        CODER_FAKE_CODEX_SCENARIO: "child-before-reply-hang",
+      },
+      prompt: "hang",
+      onEvent: () => {},
+      onExit: (info) => {
+        exitInfo = info;
+      },
+    });
+    await waitFor(() => handle.canSteer());
+    handle.kill();
+    await waitFor(() => exitInfo != null);
+    const rpc = readRpc(rpcFile);
+    const interrupt = rpc.find((m) => m.method === "turn/interrupt");
+    assert.ok(interrupt);
+    assert.equal(interrupt.params.threadId, "codex-sess-001");
+    const unsub = rpc.find((m) => m.method === "thread/unsubscribe");
+    assert.equal(unsub.params.threadId, "codex-sess-001");
     await rmTree(dir);
   });
 
@@ -573,6 +1057,6 @@ rl.on("line", async (line) => {
     const interruptAt = methods.indexOf("turn/interrupt");
     const unsubAt = methods.indexOf("thread/unsubscribe");
     assert.ok(interruptAt >= 0 && unsubAt > interruptAt);
-    fs.rmSync(dir, { recursive: true, force: true });
+    await rmTree(dir);
   });
 });

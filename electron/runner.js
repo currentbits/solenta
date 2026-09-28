@@ -14,7 +14,10 @@ const {
   OUTPUT_TRUNCATE,
 } = require("./claude.js");
 const codexParse = require("./codex.js");
-const { runCodexAppServerTurn } = require("./codex-appserver.js");
+const {
+  runCodexAppServerTurn,
+  isCodexChildThread,
+} = require("./codex-appserver.js");
 const { pendingFromInput } = require("./codexInput.js");
 const {
   classifyServerRequest,
@@ -763,6 +766,9 @@ function createRunner(opts) {
    * @type {Map<string, object>}
    */
   const active = new Map();
+  // Host-only, across turns. Restart fails closed and requires a fresh click;
+  // neither agent-editable store data nor MCP arguments can mint a sign-off.
+  const ciWorkflowSignOffs = new Map();
   /**
    * Threads whose live ExitPlanMode prompt was already answered this turn.
    * Blocks the post-run fallback card so a claude deny does not reopen a
@@ -2275,6 +2281,16 @@ function createRunner(opts) {
    * } | null}
    */
   function getPendingPermission(threadId) {
+    const ci = ciWorkflowSignOffs.get(threadId);
+    if (ci && !ci.approved) {
+      return {
+        requestId: ci.id, toolName: "CI workflow merge",
+        summary: "Sign off the workflow patch and merge destination",
+        input: ci.input, command: null, acceptAlways: false,
+        questions: null, plan: null,
+        guardrail: { rule: "CI_WORKFLOW", reason: "Accept signs off only this patch and destination, then resumes orchestration. Changes require a new sign-off." },
+      };
+    }
     const e = active.get(threadId);
     if (
       e &&
@@ -2534,6 +2550,32 @@ function createRunner(opts) {
   function respondPermission(input) {
     const { threadId, requestId, decision, answers, updatedCommand } =
       input || {};
+    const ci = ciWorkflowSignOffs.get(threadId);
+    if (ci && !ci.approved && ci.id === requestId) {
+      if (decision !== "allow" && decision !== "deny") {
+        throw new Error("CI workflow sign-off requires a one-time Accept or Deny");
+      }
+      if (decision === "allow") {
+        ci.approved = true;
+        const r = ci.review;
+        services.setQueued(store, { threadId, prompt:
+          `I signed off the CI workflow patch from worker ${r.workerThreadId} (${r.sourceSha}) ` +
+          `into ${r.destinationPath} on ${r.destinationBranch} (${r.destinationSha}). ` +
+          `Resume thread_merge with approved:true, workerThreadId ${r.workerThreadId}, ` +
+          `expectedPath ${JSON.stringify(r.destinationPath)}, expectedBranch ${JSON.stringify(r.destinationBranch)}. ` +
+          "This approval covers only that worker and destination; changed inputs require fresh sign-off.",
+        });
+      } else {
+        ciWorkflowSignOffs.delete(threadId);
+      }
+      appendMessage(threadId, "event", decision === "allow" ? "CI workflow merge signed off" : "CI workflow merge sign-off denied");
+      store.updateThread(threadId, { awaitingInput: getPendingPermission(threadId) != null });
+      store.save();
+      pushDetail(threadId);
+      pushThreadsChanged();
+      if (decision === "allow") maybeDrainQueued(threadId);
+      return;
+    }
     const e = active.get(threadId);
     if (!e || !e.handle) {
       return respondPersistedPlan(threadId, requestId, decision);
@@ -2675,6 +2717,26 @@ function createRunner(opts) {
     pushThreadsChanged();
     refreshDetail(threadId);
     return { asked: true, questions: questions.length };
+  }
+
+  /** Called only by the host merge guard; renderer respondPermission grants it. */
+  function requestCiWorkflowSignOff(threadId, review) {
+    const key = JSON.stringify(review);
+    const previous = ciWorkflowSignOffs.get(threadId);
+    if (previous?.key === key) {
+      if (!previous.approved || isAutoTurn(threadId)) return false;
+      ciWorkflowSignOffs.delete(threadId); // Single use, including failed merges.
+      return true;
+    }
+    const input = `Worker: ${review.workerThreadId}\nSource: ${review.sourceBranch} (${review.sourceSha})\n` +
+      `Destination: ${review.destinationPath}\nBranch: ${review.destinationBranch} (${review.destinationSha})\n` +
+      `Workflow files: ${review.files.join(", ")}\n\n${review.patch || "(No net workflow change at this destination.)"}`;
+    ciWorkflowSignOffs.set(threadId, { id: randomUUID(), key, review, input, approved: false });
+    store.updateThread(threadId, { awaitingInput: true });
+    store.save();
+    pushDetail(threadId);
+    pushThreadsChanged();
+    return false;
   }
 
   /**
@@ -5248,13 +5310,12 @@ function createRunner(opts) {
         const structuredError = codexParse.extractTerminalError(ev);
         if (structuredError) terminalError = structuredError;
 
-        // Session / thread id
-        if (
-          codexParse.isSessionStartEvent(ev) ||
-          codexParse.extractSessionId(ev)
-        ) {
+        // Session / thread id. Only the root thread.started is a resume
+        // target: child thread/started and turn.started carry a different
+        // id and would poison the next thread/resume.
+        if (codexParse.isSessionStartEvent(ev)) {
           const sid = codexParse.extractSessionId(ev);
-          if (sid) {
+          if (sid && !isCodexChildThread(ev.thread || { id: sid })) {
             capturedSessionId = sid;
             const live = active.get(threadId);
             if (live && live.kind === "codex") live.sessionId = sid;
@@ -8411,7 +8472,8 @@ function createRunner(opts) {
       {
         status: "working",
         title,
-        awaitingInput: keepQuestion != null || keepPlan != null,
+        awaitingInput: keepQuestion != null || keepPlan != null ||
+          ciWorkflowSignOffs.get(threadId)?.approved === false,
         runStartedAt: Date.now(),
         // Any user turn supersedes an open question card (issue #647):
         // answering it IS this message, and so is changing the subject.
@@ -9194,6 +9256,7 @@ function createRunner(opts) {
     toWorkflowView,
     resolveProvider,
     getPendingPermission,
+    requestCiWorkflowSignOff,
     handleCodexServerRequest,
     respondPermission,
     askUser,
