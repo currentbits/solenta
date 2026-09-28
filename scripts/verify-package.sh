@@ -231,6 +231,20 @@ if [[ "$APP_PGID" != "$ELECTRON_PID" ]]; then
   exit 1
 fi
 
+# Follow memory-server.json just like memory-sup.js: EADDRINUSE can move the port.
+# Read failures (including a partial rewrite) are retried within the existing budgets.
+refresh_memory_port() {
+  local current_port
+  current_port="$(node -e '
+    const fs = require("fs");
+    const cfg = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+    if (!Number.isInteger(cfg.port) || cfg.port < 1 || cfg.port > 65535 ||
+        cfg.token !== process.argv[2] || cfg.dbPath !== process.argv[3]) process.exit(1);
+    process.stdout.write(String(cfg.port));
+  ' "$CONFIG_FILE" "$TOKEN" "$DB_FILE" 2>/dev/null)" || return 1
+  PORT="$current_port"
+}
+
 # Wait up to 10s for the process to stay alive and for /health on the isolated port.
 DEADLINE=$((SECONDS + 10))
 while (( SECONDS < DEADLINE )); do
@@ -239,7 +253,7 @@ while (( SECONDS < DEADLINE )); do
     cat "$LOG" >&2 || true
     exit 1
   fi
-  if curl -fsS --max-time 1 "http://127.0.0.1:${PORT}/health" >/dev/null 2>&1; then
+  if refresh_memory_port && curl -fsS --max-time 1 "http://127.0.0.1:${PORT}/health" >/dev/null 2>&1; then
     break
   fi
   sleep 0.5
@@ -258,6 +272,10 @@ HEALTH_OK=0
 HEALTH_DEADLINE=$((SECONDS + 10))
 LAST_BODY=""
 while (( SECONDS < HEALTH_DEADLINE )); do
+  if ! refresh_memory_port; then
+    sleep 0.5
+    continue
+  fi
   set +e
   LAST_BODY="$(curl -fsS --max-time 2 "http://127.0.0.1:${PORT}/health" 2>/dev/null)"
   CURL_EC=$?
@@ -307,6 +325,10 @@ echo "  BEFORE_COUNT=$BEFORE_COUNT"
 # model (~25MB first-boot download possible), run inference, and write a vector.
 # Poll until vectors.count > BEFORE_COUNT (delta form; empty isolated db → count>=1).
 SEED_MARKER="pkg-verify-embed-$(date +%s)-$$"
+if ! refresh_memory_port; then
+  echo "ERROR: cannot read isolated memory-server config before store" >&2
+  exit 1
+fi
 set +e
 STORE_BODY="$(curl -fsS --max-time 5 \
   -X POST "http://127.0.0.1:${PORT}/api/store" \
@@ -331,6 +353,10 @@ COUNT_OK=0
 # flaked on a busy connection (release cut 2026-08-14).
 COUNT_DEADLINE=$((SECONDS + 180))
 while (( SECONDS < COUNT_DEADLINE )); do
+  if ! refresh_memory_port; then
+    sleep 0.5
+    continue
+  fi
   set +e
   LAST_BODY="$(curl -fsS --max-time 2 "http://127.0.0.1:${PORT}/health" 2>/dev/null)"
   CURL_EC=$?
