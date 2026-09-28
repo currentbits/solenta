@@ -9,6 +9,7 @@ on:
         required: true
         type: string
   push:
+    branches: ['**']
     paths:
       - .github/workflows/verify-release-package.yml
       - scripts/verify-release-package.mjs
