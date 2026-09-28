@@ -45,6 +45,12 @@ function waitFor(predicate, { timeoutMs = 8000, intervalMs = 15 } = {}) {
 }
 
 describe("notificationToJsonl", () => {
+  it("forwards resolved server request ids without changing their type", () => {
+    for (const requestId of [0, "input"]) assert.deepEqual(notificationToJsonl({
+      method: "serverRequest/resolved", params: { requestId, threadId: "t" },
+    }), { type: "server_request.resolved", requestId });
+  });
+
   it("maps thread/started to thread.started with session id", () => {
     const ev = notificationToJsonl({
       method: "thread/started",
@@ -243,12 +249,14 @@ rl.on("line", (line) => {
 `,
     );
     const notes = [];
+    let exited = false;
     const client = createCodexAppServerClient({
       binary: bin,
       args: ["app-server", "--listen", "stdio://"],
       cwd: dir,
       envExtra: { CODER_FAKE_CODEX_RPC_FILE: rpcFile },
       onNotification: (msg) => notes.push(msg),
+      onExit: () => { exited = true; },
     });
     const init = await client.send("initialize", {
       clientInfo: { name: "solenta", version: "1" },
@@ -263,6 +271,7 @@ rl.on("line", (line) => {
     assert.equal(started.thread.id, "tid-1");
     await waitFor(() => notes.some((n) => n.method === "thread/started"));
     client.kill();
+    await waitFor(() => exited);
     const rpc = fs
       .readFileSync(rpcFile, "utf8")
       .trim()
@@ -271,7 +280,7 @@ rl.on("line", (line) => {
     assert.equal(rpc[0].method, "initialize");
     assert.equal(rpc[1].method, "thread/start");
     assert.equal(rpc[1].params.threadSource, "solenta");
-    fs.rmSync(dir, { recursive: true, force: true });
+    await rmTree(dir);
   });
 });
 
@@ -537,7 +546,7 @@ rl.on("line", async (line) => {
     assert.equal(turnStart.params.approvalPolicy, "on-request");
     assert.ok(rpc.some((m) => m.method === "thread/unsubscribe"));
     assert.equal(typeof handle.send, "function");
-    fs.rmSync(dir, { recursive: true, force: true });
+    await rmTree(dir);
   });
 
   it("resumes an exec session id via thread/resume, not a new thread", async () => {
@@ -576,12 +585,13 @@ rl.on("line", async (line) => {
     const resumeTurn = rpc.find((m) => m.method === "turn/start");
     assert.ok(resumeTurn);
     assert.equal(resumeTurn.params.approvalPolicy, "on-request");
-    fs.rmSync(dir, { recursive: true, force: true });
+    await rmTree(dir);
   });
 
   it("send() is false until turn/start returns a turn id", async () => {
     const dir = tmp();
     const bin = writeTurnFake(dir);
+    let exited = false;
     const handle = runCodexAppServerTurn({
       binary: bin,
       args: ["app-server", "--listen", "stdio://"],
@@ -589,11 +599,12 @@ rl.on("line", async (line) => {
       envExtra: { CODER_FAKE_CODEX_TURN_DELAY_MS: "250" },
       prompt: "hello",
       onEvent: () => {},
-      onExit: () => {},
+      onExit: () => { exited = true; },
     });
     assert.equal(handle.send("nudge"), false);
     handle.kill();
-    fs.rmSync(dir, { recursive: true, force: true });
+    await waitFor(() => exited);
+    await rmTree(dir);
   });
 
   it("steer writes turn/steer with expectedTurnId on the same process", async () => {
@@ -635,7 +646,7 @@ rl.on("line", async (line) => {
       rpc.filter((m) => m.method === "thread/start" || m.method === "thread/resume").length,
       1,
     );
-    fs.rmSync(dir, { recursive: true, force: true });
+    await rmTree(dir);
   });
 
   it("rejects steer on review/compact turns", async () => {
@@ -717,7 +728,7 @@ rl.on("line", async (line) => {
     const unsub = rpc.find((m) => m.method === "thread/unsubscribe");
     assert.ok(unsub);
     assert.equal(unsub.params.threadId, "codex-sess-001");
-    fs.rmSync(dir, { recursive: true, force: true });
+    await rmTree(dir);
   });
 
   it("recovers thread/resume of an unloaded v2 child via thread/read of the parent", async () => {
@@ -755,7 +766,7 @@ rl.on("line", async (line) => {
     const turnStart = rpc.find((m) => m.method === "turn/start");
     assert.equal(turnStart.params.threadId, "codex-sess-001");
     assert.ok(events.some((e) => e.type === "thread.started" && e.session_id === "codex-sess-001"));
-    fs.rmSync(dir, { recursive: true, force: true });
+    await rmTree(dir);
   });
 
   it("switches a loaded v2 child resume onto the parent thread", async () => {
@@ -790,7 +801,7 @@ rl.on("line", async (line) => {
     assert.equal(resumes[resumes.length - 1].params.threadId, "codex-sess-001");
     const unsub = rpc.find((m) => m.method === "thread/unsubscribe");
     assert.equal(unsub.params.threadId, "codex-sess-001");
-    fs.rmSync(dir, { recursive: true, force: true });
+    await rmTree(dir);
   });
 
   const V2_UNLOADED =
@@ -841,7 +852,7 @@ rl.on("line", async (line) => {
       false,
     );
     assert.ok(rpc.some((m) => m.method === "thread/read"));
-    fs.rmSync(dir, { recursive: true, force: true });
+    await rmTree(dir);
   });
 
   it("does not thread/start when thread/read fails after the v2 resume error", async () => {
@@ -876,7 +887,7 @@ rl.on("line", async (line) => {
       rpc.some((m) => m.method === "turn/start"),
       false,
     );
-    fs.rmSync(dir, { recursive: true, force: true });
+    await rmTree(dir);
   });
 
   it("does not hop again when the recovered parent is still a v2 child", async () => {
@@ -915,7 +926,7 @@ rl.on("line", async (line) => {
       rpc.some((m) => m.method === "turn/start"),
       false,
     );
-    fs.rmSync(dir, { recursive: true, force: true });
+    await rmTree(dir);
   });
 
   it("pins turn/start to the start RPC root when a nested-source child thread/started arrives first", async () => {
@@ -949,7 +960,7 @@ rl.on("line", async (line) => {
       false,
     );
     assert.ok(events.some((e) => e.type === "thread.started" && e.session_id === "codex-sess-001"));
-    fs.rmSync(dir, { recursive: true, force: true });
+    await rmTree(dir);
   });
 
   it("steers the start-RPC root after a nested-source child thread/started", async () => {
@@ -979,7 +990,7 @@ rl.on("line", async (line) => {
     const steer = rpc.find((m) => m.method === "turn/steer");
     assert.ok(steer);
     assert.equal(steer.params.threadId, "codex-sess-001");
-    fs.rmSync(dir, { recursive: true, force: true });
+    await rmTree(dir);
   });
 
   it("interrupts the start-RPC root after a nested-source child thread/started", async () => {
@@ -1010,7 +1021,7 @@ rl.on("line", async (line) => {
     assert.equal(interrupt.params.threadId, "codex-sess-001");
     const unsub = rpc.find((m) => m.method === "thread/unsubscribe");
     assert.equal(unsub.params.threadId, "codex-sess-001");
-    fs.rmSync(dir, { recursive: true, force: true });
+    await rmTree(dir);
   });
 
   it("stop interrupts, unsubscribes, then kills", async () => {
@@ -1046,6 +1057,6 @@ rl.on("line", async (line) => {
     const interruptAt = methods.indexOf("turn/interrupt");
     const unsubAt = methods.indexOf("thread/unsubscribe");
     assert.ok(interruptAt >= 0 && unsubAt > interruptAt);
-    fs.rmSync(dir, { recursive: true, force: true });
+    await rmTree(dir);
   });
 });

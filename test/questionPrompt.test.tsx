@@ -14,6 +14,7 @@ import {
   formatQuestionAnswer,
 } from "../src/components/ThreadView";
 import type {
+  InputValues,
   AttachmentInfo,
   PendingPermissionInfo,
   PermissionDecision,
@@ -151,6 +152,8 @@ function threadView(over: {
     requestId: string,
     decision: PermissionDecision,
     answers?: Record<string, string>,
+    updatedCommand?: string,
+    inputValues?: InputValues,
   ) => void | Promise<void>;
   onPickAttachments?: (opts?: {
     includeImages?: boolean;
@@ -257,6 +260,22 @@ function mountView(
 }
 
 afterEach(unmountAll);
+
+it("routes typed input through the thread's permission callback and resets answers for a new request", async () => {
+  const pending: PendingPermissionInfo = { requestId: "input-1", toolName: "request_user_input", summary: "Input", input: "",
+    inputRequest: { source: "Codex", message: "Pick a destination", fields: [
+      { name: "destination", title: "Destination", type: "string", required: true },
+    ] } };
+  const calls: unknown[] = [];
+  const onRespondPermission = (...args: unknown[]) => { calls.push(args); };
+  const v = await mount(threadView({ pending, onRespondPermission }));
+  assert.ok(v.query('[data-input-prompt]'));
+  await v.type(v.query('input[name="destination"]'), "staging");
+  await v.click(v.byText("Send answers"));
+  assert.deepEqual(calls, [["input-1", "allow", undefined, undefined, { destination: "staging" }]]);
+  await v.rerender(threadView({ pending: { ...pending, requestId: "input-2" }, onRespondPermission }));
+  assert.equal((v.query('input[name="destination"]') as HTMLInputElement).value, "");
+});
 
 describe("QuestionPrompt", () => {
   it("renders the question with numbered options instead of raw JSON", async () => {

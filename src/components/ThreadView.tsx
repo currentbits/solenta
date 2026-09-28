@@ -45,6 +45,7 @@ import type {
   PrTemplateResult,
   PendingPermissionInfo,
   PermissionDecision,
+  InputValues,
   PermissionMode,
   CliSlashCommand,
   ProjectInfo,
@@ -126,6 +127,7 @@ import {
 } from "../toolGroups";
 import { RunArtifacts } from "./RunArtifacts";
 import { QuestionPrompt } from "./QuestionPrompt";
+import { InputPrompt } from "./InputPrompt";
 import { formatQuestionAnswer } from "../questionAnswer";
 import { supportsImagesForModel } from "../modelPicker";
 import {
@@ -541,6 +543,7 @@ interface ThreadViewProps {
     decision: PermissionDecision,
     answers?: Record<string, string>,
     updatedCommand?: string,
+    inputValues?: InputValues,
   ) => void | Promise<void>;
   /**
    * Dismiss the persisted question card (thread.pendingQuestion) without
@@ -7614,7 +7617,15 @@ export const ThreadView = memo(function ThreadView({
           />
         ) : null}
 
-        {detail.pendingPermission?.questions?.length ? (
+        {detail.pendingPermission?.inputRequest ? (
+          <InputPrompt
+            key={`${thread.id}:${detail.pendingPermission.requestId}`}
+            pending={detail.pendingPermission}
+            onRespond={(decision, inputValues) => onRespondPermission(
+              detail.pendingPermission!.requestId, decision, undefined, undefined, inputValues,
+            )}
+          />
+        ) : detail.pendingPermission?.questions?.length ? (
           <QuestionPrompt
             key={`${thread.id}:${detail.pendingPermission.requestId}`}
             requestId={detail.pendingPermission.requestId}

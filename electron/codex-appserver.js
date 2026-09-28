@@ -175,6 +175,9 @@ function notificationToJsonl(msg) {
   if (!msg || typeof msg !== "object") return null;
   const method = String(msg.method || "");
   const p = msg.params && typeof msg.params === "object" ? msg.params : {};
+  if (method === "serverRequest/resolved") {
+    return { type: "server_request.resolved", requestId: p.requestId };
+  }
   if (method === "thread/started") {
     const thread = p.thread && typeof p.thread === "object" ? p.thread : null;
     const id = thread && typeof thread.id === "string" ? thread.id : null;

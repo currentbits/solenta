@@ -50,6 +50,7 @@ import type {
   AgentConfigWriteResult,
   ProjectCodeMap,
   PermissionDecision,
+  InputValues,
   PermissionMode,
   PlanStatus,
   SetPlanStatusResult,
@@ -434,6 +435,7 @@ export interface UseCoderResult {
     decision: PermissionDecision,
     answers?: Record<string, string>,
     updatedCommand?: string,
+    inputValues?: InputValues,
   ) => Promise<void>;
   /** Dismiss the selected thread's persisted question card (issue #647). */
   clearQuestion: () => Promise<void>;
@@ -2115,6 +2117,7 @@ export function useCoder(): UseCoderResult {
       decision: PermissionDecision,
       answers?: Record<string, string>,
       updatedCommand?: string,
+      inputValues?: InputValues,
     ) => {
       if (!selectedThreadId) return;
       const threadId = selectedThreadId;
@@ -2127,6 +2130,7 @@ export function useCoder(): UseCoderResult {
           decision,
           answers,
           updatedCommand,
+          inputValues,
         });
         setError(null);
       } catch (err) {

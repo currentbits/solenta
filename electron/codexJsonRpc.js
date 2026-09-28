@@ -216,6 +216,7 @@ function createCodexJsonRpcSession(opts) {
     }
 
     if (method && (id === undefined || id === null)) {
+      if (method === "serverRequest/resolved") inbound.delete(msg.params?.requestId);
       if (typeof onNotification === "function") {
         try {
           onNotification({ method, params: msg.params });

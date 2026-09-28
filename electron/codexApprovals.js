@@ -3,7 +3,7 @@
 /**
  * Codex app-server ServerRequest mapping (issue #1171).
  *
- * Command approval and MCP tool confirmations reuse the permission card. Everything else
+ * Command approval and input requests reuse the pending-permission queue. Everything else
  * is fail-closed until a dedicated UI exists. Do not send `updatedCommand`
  * into this RPC: Accept runs the proposed string (#509 hole).
  */
@@ -55,7 +55,7 @@ function decisionNames(available) {
  * @param {string} method
  * @param {unknown} params
  * @returns {{
- *   action: "command" | "mcp" | "unsupported" | "unknown",
+ *   action: "command" | "mcp" | "input" | "unsupported" | "unknown",
  *   method: string,
  *   kind?: string | null,
  *   reason: string,
@@ -91,6 +91,10 @@ function classifyServerRequest(method, params) {
       };
     }
     return { action: "command", method: name, kind, reason: name };
+  }
+  if ((name === METHOD_ELICITATION && typeof params?.message === "string") ||
+      (name === METHOD_USER_INPUT && Array.isArray(params?.questions) && params.questions.length)) {
+    return { action: "input", method: name, reason: name };
   }
   if (UNSUPPORTED_METHODS.has(name)) {
     return { action: "unsupported", method: name, reason: name };
@@ -170,11 +174,13 @@ function pendingFromMcp(rpcId, params) {
   };
 }
 
-function approvalResponse(method, decision) {
+function approvalResponse(method, decision, content = {}) {
   if (method === METHOD_ELICITATION) {
     const action = decision === DECISION_SESSION ? DECISION_ACCEPT : decision;
-    return { action, content: action === DECISION_ACCEPT ? {} : null, _meta: null };
+    return { action, content: action === DECISION_ACCEPT ? content : null, _meta: null };
   }
+  if (method === METHOD_USER_INPUT) return { answers: decision === DECISION_ACCEPT
+    ? Object.fromEntries(Object.entries(content).map(([id, answer]) => [id, { answers: [answer] }])) : {} };
   return { decision };
 }
 
@@ -182,11 +188,12 @@ function approvalResponse(method, decision) {
  * Solenta permission button → Codex decision. Deny is `decline` (turn
  * continues). Stop uses `cancel` separately. `updatedCommand` is ignored.
  *
- * @param {"allow" | "allowAlways" | "deny"} decision
+ * @param {"allow" | "allowAlways" | "deny" | "cancel"} decision
  * @param {string[] | null | undefined} available
  * @returns {string}
  */
 function mapSolentaDecision(decision, available) {
+  if (decision === "cancel") return DECISION_CANCEL;
   let mapped =
     decision === "allowAlways"
       ? DECISION_SESSION
