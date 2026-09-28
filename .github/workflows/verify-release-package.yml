@@ -1,0 +1,54 @@
+name: verify published package
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Published tag to verify (or latest-nightly)
+        default: latest-nightly
+        required: true
+        type: string
+  push:
+    branches: ['**']
+    paths:
+      - .github/workflows/verify-release-package.yml
+      - scripts/verify-release-package.mjs
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RELEASE_TAG: ${{ inputs.release_tag || 'latest-nightly' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install Linux display libraries
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb libnss3 libatk1.0-0 libatk-bridge2.0-0 libcups2 libdrm2 libgtk-3-0 libgbm1 libasound2t64 libxcomposite1 libxdamage1 libxfixes3 libxrandr2 libxkbcommon0
+      - name: Verify published Linux package
+        if: runner.os == 'Linux'
+        run: xvfb-run --auto-servernum node scripts/verify-release-package.mjs "$RELEASE_TAG"
+      - name: Verify published Windows package
+        if: runner.os == 'Windows'
+        run: node scripts/verify-release-package.mjs "$env:RELEASE_TAG"
+      - name: Upload verification evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: package-verification-${{ runner.os }}
+          path: ${{ runner.temp }}/solenta-package-verification
+          if-no-files-found: warn
+          retention-days: 7
