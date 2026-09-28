@@ -443,6 +443,17 @@ async function runAppServer() {
       reply(msg.id, { turn: { id: turnId, status: "inProgress", items: [] } });
       notify("turn/started", { threadId, turn: { id: turnId } });
       if (scenario === "hang" || scenario === "steer-wait") return;
+      if (scenario === "ask-mcp-input" || scenario === "ask-native-input") {
+        send({ jsonrpc: "2.0", id: "ask-1",
+          method: scenario === "ask-mcp-input" ? "mcpServer/elicitation/request" : "item/tool/requestUserInput",
+          params: scenario === "ask-mcp-input"
+            ? { threadId, turnId, serverName: "example", mode: "form", message: "Export settings", requestedSchema: {
+                type: "object", required: ["count", "enabled"], properties: { count: { type: "integer" }, enabled: { type: "boolean" } },
+              } }
+            : { threadId, turnId, itemId: "input", questions: [{ id: "destination", header: "Destination", question: "Where?", options: null }] },
+        });
+        return;
+      }
       if (scenario === "ask-command") {
         send({
           jsonrpc: "2.0",

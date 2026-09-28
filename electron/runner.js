@@ -15,6 +15,7 @@ const {
 } = require("./claude.js");
 const codexParse = require("./codex.js");
 const { runCodexAppServerTurn } = require("./codex-appserver.js");
+const { pendingFromInput } = require("./codexInput.js");
 const {
   classifyServerRequest,
   pendingFromCommand,
@@ -2292,6 +2293,7 @@ function createRunner(opts) {
           commandEditable: p.commandEditable !== false,
           acceptAlways: p.acceptAlways !== false,
           questions: questionInfo(p.toolName, p.rawInput),
+          inputRequest: p.inputRequest || null,
           plan: planText(p.toolName, p.rawInput),
           guardrail: p.guardrail || null,
         };
@@ -2349,7 +2351,7 @@ function createRunner(opts) {
 
   function replyCodexJsonRpc(e, id, result) {
     if (e.handle && typeof e.handle.respondJsonRpc === "function") {
-      e.handle.respondJsonRpc(id, result);
+      if (e.handle.respondJsonRpc(id, result) === false) throw new Error("Codex request no longer pending or connection closed");
       return;
     }
     throw new Error("Codex run has no JSON-RPC reply path");
@@ -2406,7 +2408,7 @@ function createRunner(opts) {
     if (id === undefined || id === null) return false;
 
     const classified = classifyServerRequest(method, msg && msg.params);
-    if (classified.action !== "command" && classified.action !== "mcp") {
+    if (!["command", "mcp", "input"].includes(classified.action)) {
       try {
         replyCodexJsonRpcError(
           e,
@@ -2419,8 +2421,14 @@ function createRunner(opts) {
       return true;
     }
 
-    const pending = classified.action === "mcp"
-      ? pendingFromMcp(id, msg.params) : pendingFromCommand(id, msg.params);
+    let pending;
+    try {
+      pending = classified.action === "input" ? pendingFromInput(id, method, msg.params)
+        : classified.action === "mcp" ? pendingFromMcp(id, msg.params) : pendingFromCommand(id, msg.params);
+    } catch {
+      replyCodexJsonRpcError(e, id, unsupportedError(method, `${method}: unsupported input schema or URL`));
+      return true;
+    }
     let inputStr = pending.input;
     try {
       inputStr = truncate(pending.input, INPUT_TRUNCATE);
@@ -2491,15 +2499,16 @@ function createRunner(opts) {
       throw new Error("Permission request no longer pending");
     }
     const pending = e.pendingPermissions[idx];
-    e.pendingPermissions.splice(idx, 1);
     const mapped = mapSolentaDecision(decision, pending.availableDecisions);
+    const content = pending.inputRequest && mapped === "accept" ? pending.validateInput(input.inputValues) : undefined;
     replyCodexJsonRpc(
       e,
       pending.rpcId !== undefined ? pending.rpcId : pending.id,
-      approvalResponse(pending.method, mapped),
+      approvalResponse(pending.method, mapped, content),
     );
+    e.pendingPermissions.splice(idx, 1);
     const label =
-      decision === "deny"
+      pending.inputRequest ? `${mapped === "accept" ? "Answered" : mapped === "cancel" ? "Cancelled" : "Declined"}: ${pending.summary}` : decision === "deny"
         ? `Denied: ${pending.summary}`
         : mapped === "acceptForSession"
           ? `Allowed for session: ${pending.summary}`
@@ -5225,6 +5234,16 @@ function createRunner(opts) {
       onServerRequest: (req) => handleCodexServerRequest(threadId, req),
       onEvent: (ev) => {
         if (!guard()) return;
+
+        if (ev.type === "server_request.resolved") {
+          const live = active.get(threadId);
+          live.pendingPermissions = live.pendingPermissions.filter((p) => p.rpcId !== ev.requestId);
+          store.updateThread(threadId, { awaitingInput: live.pendingPermissions.length > 0 });
+          store.save();
+          pushDetail(threadId, codexState);
+          pushThreadsChanged();
+          return;
+        }
 
         const structuredError = codexParse.extractTerminalError(ev);
         if (structuredError) terminalError = structuredError;

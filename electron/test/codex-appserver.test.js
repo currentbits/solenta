@@ -44,6 +44,12 @@ function waitFor(predicate, { timeoutMs = 8000, intervalMs = 15 } = {}) {
 }
 
 describe("notificationToJsonl", () => {
+  it("forwards resolved server request ids without changing their type", () => {
+    for (const requestId of [0, "input"]) assert.deepEqual(notificationToJsonl({
+      method: "serverRequest/resolved", params: { requestId, threadId: "t" },
+    }), { type: "server_request.resolved", requestId });
+  });
+
   it("maps thread/started to thread.started with session id", () => {
     const ev = notificationToJsonl({
       method: "thread/started",

@@ -58,6 +58,7 @@ describe("Codex ServerRequest reply path (#1171)", () => {
   let store;
   let runner;
   let replies;
+  let emitCodexEvent;
   let prevSimulate;
   let prevCodexBin;
   let prevGrokMcpDisable;
@@ -94,6 +95,7 @@ describe("Codex ServerRequest reply path (#1171)", () => {
       pushFn: () => {},
       tickMs: 15,
       runCodexFn: ({ onEvent, onExit }) => {
+        emitCodexEvent = onEvent;
         onEvent({ type: "thread.started", thread_id: "codex-sess-ask" });
         return {
           respondJsonRpc(id, result) {
@@ -161,7 +163,7 @@ describe("Codex ServerRequest reply path (#1171)", () => {
       assert.deepEqual(replies.at(-1), { id, result: { action, content: action === "accept" ? {} : null, _meta: null } });
     }
     runner.handleCodexServerRequest(thread.id, { id: "form", method: "mcpServer/elicitation/request",
-      params: { ...params, requestedSchema: { type: "object", properties: { password: { type: "string" } } } } });
+      params: { ...params, requestedSchema: { type: "object", properties: { nested: { type: "object" } } } } });
     assert.equal(runner.getPendingPermission(thread.id), null);
     assert.equal(replies.at(-1).error.code, JSONRPC_METHOD_NOT_FOUND);
     runner.handleCodexServerRequest(thread.id, { id: "stop", method: "mcpServer/elicitation/request", params });
@@ -195,6 +197,104 @@ describe("Codex ServerRequest reply path (#1171)", () => {
     assert.equal(pending.acceptAlways, true);
     assert.equal(store.getThread(thread.id).awaitingInput, true);
     assert.equal(replies.length, 0);
+  });
+
+  it("keeps typed MCP input pending until valid user values arrive, without logging them", async () => {
+    const thread = await startAsk();
+    const params = { serverName: "test-server", mode: "form", message: "Choose export settings",
+      requestedSchema: { type: "object", required: ["email", "count", "enabled", "tags"], properties: {
+        email: { type: "string", format: "email" }, count: { type: "integer", minimum: 1, maximum: 5 },
+        enabled: { type: "boolean", default: false }, tags: { type: "array", minItems: 1, items: { type: "string", enum: ["a", "b"] } },
+      } } };
+    runner.handleCodexServerRequest(thread.id, { id: "form-values", method: "mcpServer/elicitation/request", params });
+    assert.equal(runner.getPendingPermission(thread.id)?.inputRequest?.source, "test-server");
+    assert.equal(replies.length, 0);
+    const input = { threadId: thread.id, requestId: "form-values", decision: "allow" };
+    for (const inputValues of [{}, { email: "invalid", count: 2, enabled: false, tags: ["a"] },
+      { email: "private@example.com", count: 9, enabled: false, tags: ["a"] },
+      { email: "private@example.com", count: 2, enabled: "false", tags: ["a"] },
+      { email: "private@example.com", count: 2, enabled: false, tags: ["outside"] },
+      { email: "private@example.com", count: 2, enabled: false, tags: ["a"], extra: "no" }]) {
+      assert.throws(() => runner.respondPermission({ ...input, inputValues }), /Invalid input/);
+      assert.equal(runner.getPendingPermission(thread.id).requestId, "form-values");
+      assert.equal(replies.length, 0);
+    }
+    const inputValues = { email: "private@example.com", count: 2, enabled: false, tags: ["a", "b"] };
+    runner.respondPermission({ ...input, inputValues });
+    assert.deepEqual(replies, [{ id: "form-values", result: { action: "accept", content: inputValues, _meta: null } }]);
+    assert.equal(runner.getPendingPermission(thread.id), null);
+    assert.ok(!JSON.stringify(store.getMessages(thread.id)).includes("private@example.com"));
+  });
+
+  it("routes native input by question id and cancels without inventing answers", async () => {
+    const thread = await startAsk();
+    const params = { threadId: "t", turnId: "u", itemId: "i", questions: [
+      { id: "first", header: "First", question: "Value?", options: null, isSecret: true },
+      { id: "second", header: "Second", question: "Value?", options: [{ label: "yes", description: "Use it" }], isOther: false },
+    ] };
+    runner.handleCodexServerRequest(thread.id, { id: "questions", method: "item/tool/requestUserInput", params });
+    assert.equal(runner.getPendingPermission(thread.id)?.inputRequest?.fields[0].secret, true);
+    runner.respondPermission({ threadId: thread.id, requestId: "questions", decision: "allow", inputValues: { first: "do-not-log", second: "yes" } });
+    assert.deepEqual(replies.at(-1), { id: "questions", result: { answers: { first: { answers: ["do-not-log"] }, second: { answers: ["yes"] } } } });
+    assert.ok(!JSON.stringify(store.getMessages(thread.id)).includes("do-not-log"));
+    for (const id of ["deny-questions", "stop-questions"]) {
+      runner.handleCodexServerRequest(thread.id, { id, method: "item/tool/requestUserInput", params });
+      if (id.startsWith("deny")) runner.respondPermission({ threadId: thread.id, requestId: id, decision: "deny" });
+      else await runner.stopRun({ threadId: thread.id });
+      assert.deepEqual(replies.at(-1), { id, result: { answers: {} } });
+    }
+  });
+
+  it("removes an input card when Codex resolves it elsewhere and rejects a stale answer", async () => {
+    const thread = await startAsk();
+    runner.handleCodexServerRequest(thread.id, { id: 101, method: "mcpServer/elicitation/request",
+      params: { serverName: "server", mode: "form", message: "Name?", requestedSchema: { type: "object", properties: { name: { type: "string" } } } } });
+    assert.ok(runner.getPendingPermission(thread.id));
+    runner.handleCodexServerRequest(thread.id, { id: "next", method: METHOD_COMMAND, params: { command: "ls" } });
+    emitCodexEvent({ type: "server_request.resolved", requestId: 101 });
+    assert.equal(runner.getPendingPermission(thread.id).requestId, "next");
+    assert.equal(store.getThread(thread.id).awaitingInput, true);
+    assert.throws(() => runner.respondPermission({ threadId: thread.id, requestId: "101", decision: "allow", inputValues: { name: "late" } }), /no longer pending/);
+    assert.deepEqual(replies, []);
+    emitCodexEvent({ type: "server_request.resolved", requestId: "next" });
+    assert.equal(runner.getPendingPermission(thread.id), null);
+    assert.equal(store.getThread(thread.id).awaitingInput, false);
+  });
+
+  it("checks unconstrained numeric wire values and rejects unsupported schemas and unsafe URLs", async () => {
+    const thread = await startAsk();
+    const method = "mcpServer/elicitation/request";
+    const params = { serverName: "server", mode: "openai/form", message: "",
+      requestedSchema: { type: "object", required: ["n"], properties: { n: { type: "number", title: null, maximum: null } } } };
+    runner.handleCodexServerRequest(thread.id, { id: "number", method, params });
+    for (const n of [NaN, Infinity, -Infinity, "1"]) assert.throws(() => runner.respondPermission({
+      threadId: thread.id, requestId: "number", decision: "allow", inputValues: { n },
+    }), /Invalid input/);
+    runner.respondPermission({ threadId: thread.id, requestId: "number", decision: "allow", inputValues: { n: 0 } });
+    assert.deepEqual(replies.at(-1).result.content, { n: 0 });
+    for (const requestedSchema of [
+      { type: "object", properties: { nested: { type: "object", properties: {} } } },
+      { type: "object", properties: { value: { type: "string", pattern: "^safe$" } } },
+      { type: "object", properties: {}, required: ["missing"] },
+    ]) {
+      runner.handleCodexServerRequest(thread.id, { id: "bad-schema", method, params: { ...params, requestedSchema } });
+      assert.ok(replies.at(-1).error);
+      assert.equal(runner.getPendingPermission(thread.id), null);
+    }
+    for (const url of ["javascript:alert(1)", "file:///tmp/secret", "https://user:pass@example.com/", "not a URL"]) {
+      runner.handleCodexServerRequest(thread.id, { id: "bad-url", method, params: { serverName: "server", message: "Login", mode: "url", url, elicitationId: "auth" } });
+      assert.ok(replies.at(-1).error);
+    }
+    runner.handleCodexServerRequest(thread.id, { id: "prototype", method: "item/tool/requestUserInput",
+      params: { questions: [{ id: "__proto__", question: "Name?" }] } });
+    assert.ok(replies.at(-1).error);
+    assert.equal(runner.getPendingPermission(thread.id), null);
+    for (const [decision, action] of [["allow", "accept"], ["deny", "decline"], ["cancel", "cancel"]]) {
+      runner.handleCodexServerRequest(thread.id, { id: action, method, params: { serverName: "server", message: "Login", mode: "url", url: "https://example.com/auth", elicitationId: "auth" } });
+      assert.equal(runner.getPendingPermission(thread.id).inputRequest.url, "https://example.com/auth");
+      runner.respondPermission({ threadId: thread.id, requestId: action, decision });
+      assert.deepEqual(replies.at(-1).result, { action, content: null, _meta: null });
+    }
   });
 
   it("maps allow / allowAlways / deny and ignores updatedCommand", async () => {

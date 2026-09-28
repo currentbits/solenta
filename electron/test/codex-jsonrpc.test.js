@@ -235,16 +235,37 @@ describe("createCodexJsonRpcSession (#1171)", () => {
     const replyFile = path.join(dir, "replies.jsonl");
     const session = createCodexJsonRpcSession({ binary: writeFakeAppServer(dir), cwd: dir,
       envExtra: { CODER_FAKE_APP_SERVER_REPLY_FILE: replyFile,
-        CODER_FAKE_APP_SERVER_ASKS: JSON.stringify([{ id: "mcp", method: "mcpServer/elicitation/request", params: {} }]) },
+        CODER_FAKE_APP_SERVER_ASKS: JSON.stringify([
+          { id: "mcp", method: "mcpServer/elicitation/request", params: {} },
+          { id: "native", method: "item/tool/requestUserInput", params: {} },
+        ]) },
       onServerRequest() { return true; },
     });
     sessions.push(session);
     await session.request("initialize", {});
-    await waitFor(() => session.outstandingIds().includes("mcp"));
+    await waitFor(() => session.outstandingIds().length === 2);
     session.cancelOutstanding();
-    await waitFor(() => fs.readFileSync(replyFile, "utf8").includes('"id":"mcp"'));
-    const reply = fs.readFileSync(replyFile, "utf8").trim().split("\n").map(JSON.parse).find((m) => m.id === "mcp");
-    assert.deepEqual(reply.result, { action: "cancel", content: null, _meta: null });
+    await waitFor(() => fs.readFileSync(replyFile, "utf8").includes('"id":"native"'));
+    const replies = fs.readFileSync(replyFile, "utf8").trim().split("\n").map(JSON.parse);
+    assert.deepEqual(replies.find((m) => m.id === "mcp").result, { action: "cancel", content: null, _meta: null });
+    assert.deepEqual(replies.find((m) => m.id === "native").result, { answers: {} });
+  });
+
+  it("drops remotely resolved requests before a late response or Stop", async () => {
+    const dir = tmp();
+    let resolved = false;
+    const session = createCodexJsonRpcSession({ binary: writeFakeAppServer(dir), cwd: dir,
+      envExtra: { CODER_FAKE_APP_SERVER_ASKS: JSON.stringify([
+        { id: "input", method: "item/tool/requestUserInput", params: {} },
+        { method: "serverRequest/resolved", params: { threadId: "t", requestId: "input" } },
+      ]) }, onServerRequest() { return true; },
+      onNotification(msg) { if (msg.method === "serverRequest/resolved") resolved = true; },
+    });
+    sessions.push(session);
+    await session.request("initialize", {});
+    await waitFor(() => resolved);
+    assert.deepEqual(session.outstandingIds(), []);
+    assert.equal(session.respondJsonRpc("input", { answers: {} }), false);
   });
 
   it("JSON-RPC-errors fileChange until a diff card exists", async () => {
