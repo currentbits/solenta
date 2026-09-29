@@ -4451,6 +4451,17 @@ function decorateThread(store, thread) {
  */
 const listThreadsCache = new WeakMap();
 
+/**
+ * Sidebar row: drop detail-only fields (#1385). The renderer reads
+ * hypotheses and suggestions from detail.thread only, and across every row
+ * they were ~46% of each threads:changed push.
+ * @param {object} row
+ */
+function listRow(row) {
+  const { hypotheses, suggestions, ...rest } = row;
+  return rest;
+}
+
 function listThreads(store) {
   const threads = store.getThreads();
   const projects = store.getProjects();
@@ -4481,7 +4492,7 @@ function listThreads(store) {
       value.push(prev);
       continue;
     }
-    const decorated = decorateThread(store, t);
+    const decorated = listRow(decorateThread(store, t));
     rows.set(t, decorated);
     value.push(decorated);
   }
