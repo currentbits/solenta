@@ -134,7 +134,10 @@ function defaultWindowBroadcast(channel, payload) {
  * @param {string} threadId
  */
 function retireAgent(ctx, threadId) {
-  if (typeof ctx.runner.disposeClaudeSession === "function") {
+  // #1383: retire defers the kill while the thread's own turn is live.
+  if (typeof ctx.runner.retireClaudeSession === "function") {
+    ctx.runner.retireClaudeSession(threadId);
+  } else if (typeof ctx.runner.disposeClaudeSession === "function") {
     ctx.runner.disposeClaudeSession(threadId);
   }
   // #315: leftover npm run dev is its own process group, not the CLI's.

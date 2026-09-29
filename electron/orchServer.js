@@ -368,7 +368,10 @@ function createToolHandlers(deps) {
    * @param {string} threadId
    */
   function retireAgent(threadId) {
-    if (typeof runner.disposeClaudeSession === "function") {
+    // #1383: a thread archiving itself must not SIGTERM its own live turn.
+    if (typeof runner.retireClaudeSession === "function") {
+      runner.retireClaudeSession(threadId);
+    } else if (typeof runner.disposeClaudeSession === "function") {
       runner.disposeClaudeSession(threadId);
     }
     // #315: same sidecar cleanup as ipc.retireAgent.
