@@ -3918,6 +3918,7 @@ export const AgentsPanel = memo(function AgentsPanel({
         <MemoryTab
           projectSlug={project?.path ?? project?.slug ?? null}
           projectId={project?.id ?? null}
+          consolidation={project ?? null}
           searchMemory={searchMemory}
           recentMemory={recentMemory}
           getMemory={getMemory}

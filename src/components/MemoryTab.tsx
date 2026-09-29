@@ -10,6 +10,7 @@ import type {
   MemoryMaintenanceReport,
   MemoryReviewItem,
   MemoryReviewResolution,
+  ProjectInfo,
 } from "../shared/ipc";
 import { formatRelativeAge } from "../format";
 import styles from "./MemoryTab.module.css";
@@ -76,6 +77,47 @@ function scopeLabel(slug: string | null | undefined): string {
   return slug ? slug.split("/").filter(Boolean).pop() || slug : "all projects";
 }
 
+type ConsolidationFields = Pick<
+  ProjectInfo,
+  | "memoryConsolidateAt"
+  | "memoryConsolidateDoneAt"
+  | "memoryConsolidateError"
+  | "memoryConsolidateProvider"
+>;
+
+function ago(ms: number, now: number): string {
+  const r = formatRelativeAge(ms, now);
+  return r === "now" ? "just now" : `${r} ago`;
+}
+
+/**
+ * One-line status of the hidden sleep-time consolidation job (#1384): a
+ * failing pass used to be invisible for days.
+ */
+export function consolidationStatus(
+  p: ConsolidationFields | null | undefined,
+  now = Date.now(),
+): { text: string; failed: boolean } {
+  const at = p?.memoryConsolidateAt ?? null;
+  const done = p?.memoryConsolidateDoneAt ?? null;
+  const via = p?.memoryConsolidateProvider ? ` · ${p.memoryConsolidateProvider}` : "";
+  const error = (p?.memoryConsolidateError ?? "").split("\n")[0].trim();
+  if (error) {
+    const when = done ?? at;
+    return {
+      text: `Last consolidation failed${when != null ? ` ${ago(when, now)}` : ""}${via}: ${error.slice(0, 160)}`,
+      failed: true,
+    };
+  }
+  if (done != null && (at == null || done >= at)) {
+    return { text: `Last consolidation ${ago(done, now)}${via} · ok`, failed: false };
+  }
+  if (at != null) {
+    return { text: `Consolidation running since ${ago(at, now)}${via}`, failed: false };
+  }
+  return { text: "Memory consolidation has not run yet.", failed: false };
+}
+
 export interface MemoryTabProps {
   /** Project PATH of the selected thread (falls back to slug). The memory
    *  server canonicalizes a path to the repo-root basename — the same key
@@ -84,6 +126,8 @@ export interface MemoryTabProps {
   projectSlug: string | null;
   /** Project id for the config doctor. Absent = no doctor card. */
   projectId?: string | null;
+  /** The project's sleep-time consolidation fields (#1384). */
+  consolidation?: ConsolidationFields | null;
   searchMemory: (input: {
     query: string;
     project?: string;
@@ -752,6 +796,7 @@ function ReviewQueueCard({
 export function MemoryTab({
   projectSlug,
   projectId,
+  consolidation,
   searchMemory,
   recentMemory,
   getMemory,
@@ -1346,6 +1391,18 @@ export function MemoryTab({
           <h2 className={styles.sectionTitle}>Memories</h2>
           <span className={styles.sectionMeta}>{entryCountLabel}</span>
         </div>
+      {consolidation !== undefined ? (() => {
+        const c = consolidationStatus(consolidation);
+        return (
+          <p
+            className={styles.searchHint}
+            data-memory-consolidation={c.failed ? "failed" : "ok"}
+            role={c.failed ? "alert" : "status"}
+          >
+            {c.text}
+          </p>
+        );
+      })() : null}
       {shortQuery ? (
         <p className={styles.searchHint} role="status">
           Type 3 or more characters to search. Showing recent memories.

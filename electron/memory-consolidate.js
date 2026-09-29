@@ -246,6 +246,28 @@ function latestConsolidateThread(threads, projectId) {
 }
 
 /**
+ * Record how a consolidation pass ended on its project (#1384) so the
+ * Memory tab can show it; the thread itself is hidden from the sidebar.
+ * A mid-run failure (not signed in, out of credit) only ever reached the
+ * hidden thread before. No-op for any other thread.
+ *
+ * @param {import("./store").Store} store
+ * @param {string} threadId
+ * @param {string} status terminal status (done / failed / stopped)
+ * @param {unknown} text terminal text (the error on failure)
+ */
+function recordConsolidateOutcome(store, threadId, status, text) {
+  const thread = store.getThread(threadId);
+  if (!thread || thread.memoryConsolidate !== true) return;
+  patchProject(store, thread.projectId, {
+    memoryConsolidateDoneAt: Date.now(),
+    memoryConsolidateError:
+      status === "failed" ? String(text || "Run failed") : null,
+  });
+  store.save();
+}
+
+/**
  * A failed pass must not burn the 24h gate across restarts. Clear
  * lastRunAt when the previous fire recorded an error or left a failed
  * thread. Same-session ticks still see lastRunAt and skip.
@@ -342,6 +364,8 @@ async function fireConsolidate(ctx, project, now, opts) {
   patchProject(ctx.store, project.id, {
     memoryConsolidateAt: now,
     memoryConsolidateError: null,
+    memoryConsolidateProvider: resolved.provider,
+    memoryConsolidateDoneAt: null,
   });
   ctx.store.save();
 
@@ -477,6 +501,7 @@ module.exports = {
   GROK_RETRY_AFTER_MS,
   resolveConsolidateProvider,
   pruneConsolidateThreads,
+  recordConsolidateOutcome,
   releaseFailedPasses,
   fireConsolidate,
   startMemoryConsolidateScheduler,
