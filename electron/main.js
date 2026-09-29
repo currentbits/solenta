@@ -783,8 +783,9 @@ app.whenReady().then(async () => {
   prStateRefresher.start();
 
   // Boot-time worktree GC: reclaim clean worktree dirs no thread references
-  // (crash/store-drift orphans). Conservative by design — dirty trees and
-  // unmerged branches are never touched. Delayed + unref'd like the PR
+  // (crash/store-drift orphans). Conservative by design — dirty trees are
+  // committed to recovered/<id> first (#1386) and unmerged branches are
+  // never deleted. Delayed + unref'd like the PR
   // refresher so startup stays fast and a short-lived process can exit.
   // Retention is owned by the periodic sweeper below (#641), not this timer.
   const worktreeBase = path.join(userData, "worktrees");
@@ -796,6 +797,9 @@ app.whenReady().then(async () => {
           console.warn(
             `worktree sweep: removed ${result.removed.length} orphan(s)`,
           );
+        }
+        for (const r of result.recovered || []) {
+          console.warn(`worktree sweep: saved ${r.dir} to branch ${r.branch}`);
         }
         const { scheduleImagePrune } = require("./image-store.js");
         return scheduleImagePrune({ store, userDataPath: userData });
