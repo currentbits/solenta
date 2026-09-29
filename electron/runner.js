@@ -856,6 +856,24 @@ function createRunner(opts) {
   }
 
   /**
+   * Release a thread's kept-alive Claude CLI because the thread was archived,
+   * settled, or deleted (#1383). A thread can archive ITSELF through the
+   * thread_archive tool, so its turn may still be live: killing now SIGTERMs
+   * the process making that call and the turn lands as "Run error (exit
+   * 143)". Mid-turn, flag the session; scheduleClaudeIdleReap disposes it as
+   * soon as the turn settles.
+   */
+  function retireClaudeSession(threadId) {
+    const sess = claudeSessions.get(threadId);
+    if (!sess) return;
+    if (active.has(threadId)) {
+      sess.retireAfterTurn = true;
+      return;
+    }
+    disposeClaudeSession(threadId);
+  }
+
+  /**
    * In-session subagents spawned via the Agent tool (issue #21). The CLI
    * runs them internally, so the only trace is its stream: the spawning
    * tool_use, its tool_result, and — for background agents — a later
@@ -1001,6 +1019,10 @@ function createRunner(opts) {
   /** Arm the idle reaper after a turn settles; disarmed on reuse. */
   function scheduleClaudeIdleReap(threadId) {
     const sess = claudeSessions.get(threadId);
+    if (sess && sess.retireAfterTurn) {
+      disposeClaudeSession(threadId);
+      return;
+    }
     if (!sess || sess.idleTimer) return;
     sess.idleTimer = setTimeout(
       () => disposeClaudeSession(threadId),
@@ -9262,6 +9284,7 @@ function createRunner(opts) {
     askUser,
     clearQuestion,
     disposeClaudeSession,
+    retireClaudeSession,
     deliverNotice,
     appendInbound,
     checkStalls,
