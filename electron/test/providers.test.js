@@ -77,8 +77,15 @@ describe("providers registry", () => {
     assert.ok(codex.models.includes("gpt-5.3-codex-spark"));
     assert.equal(codex.models.includes("gpt-5.4-mini"), false);
     assert.ok(codex.models.length >= 5);
+    // GPT-6.1 Sol (2026-09-29) is Codex 0.159's default and ours.
+    assert.equal(codex.models[0], "gpt-6.1-sol");
+    const sol61 = codex.modelInfo.find((m) => m.id === "gpt-6.1-sol");
+    assert.equal(sol61.recommended, true);
+    assert.equal(sol61.contextTokens, 272_000);
+    assert.ok(sol61.efforts.includes("ultra"));
+    assert.deepEqual(sol61.inputModalities, ["text", "image"]);
     const astra = codex.modelInfo.find((m) => m.id === "gpt-6-astra");
-    assert.equal(astra.recommended, true);
+    assert.equal(astra.recommended, undefined);
     assert.equal(astra.contextTokens, 272_000);
     const sol = codex.modelInfo.find((m) => m.id === "gpt-5.6-sol");
     assert.equal(sol.recommended, undefined);

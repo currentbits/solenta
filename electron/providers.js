@@ -354,12 +354,16 @@ const PROVIDERS = [
     // Interactive app-server uses approvalPolicy on-request (#1208).
     // Do not flip exec AskForApproval to on-request: workflow / ask /
     // commitmsg stay runCodex exec --json with never-policy.
-    // GPT-6 Sol/Luna: ~/.codex/models_cache.json (0.155.0, 2026-09-22).
-    // Keep previous-generation entries for existing installations.
-    // Astra remains recommended; gpt-5.4 / gpt-5.4-mini are omitted.
-    // gpt-reserve / codex-auto-review are visibility=hide.
+    // GPT-6.1 Sol (DevDay 2026-09-29): app-server model/list on 0.159.2
+    // (isDefault, priority 1) + ~/.codex/models_cache.json 2026-09-30. It is
+    // recommended; older CLIs (<0.159) do not list it.
+    // Keep previous-generation entries for existing installations: spark
+    // and gpt-6-terra are absent from the 0.159.2 list, gpt-5.5 is hidden
+    // there and retires from Codex on 2026-10-14. gpt-5.4 / gpt-5.4-mini
+    // are omitted. gpt-reserve / codex-auto-review are visibility=hide.
     // contextTokens are cache context_window (not max_context_window).
     models: [
+      "gpt-6.1-sol",
       "gpt-6-astra",
       "gpt-6-sol",
       "gpt-6-terra",
@@ -372,9 +376,9 @@ const PROVIDERS = [
     ],
     modelInfo: [
       {
-        id: "gpt-6-astra",
-        label: "GPT-6-Astra",
-        description: "Our most capable model for complex, demanding work.",
+        id: "gpt-6.1-sol",
+        label: "GPT-6.1-Sol",
+        description: "Latest workhorse model for coding and everyday work.",
         vendor: "OpenAI",
         recommended: true,
         contextTokens: 272_000,
@@ -382,9 +386,18 @@ const PROVIDERS = [
         inputModalities: CODEX_TEXT_IMAGE.slice(),
       },
       {
+        id: "gpt-6-astra",
+        label: "GPT-6-Astra",
+        description: "Frontier intelligence for the most demanding work.",
+        vendor: "OpenAI",
+        contextTokens: 272_000,
+        efforts: CODEX_SOL_TERRA_EFFORTS.slice(),
+        inputModalities: CODEX_TEXT_IMAGE.slice(),
+      },
+      {
         id: "gpt-6-sol",
         label: "GPT-6-Sol",
-        description: "GPT-6 Sol Codex model.",
+        description: "Previous generation workhorse model.",
         vendor: "OpenAI",
         contextTokens: 272_000,
         efforts: CODEX_SOL_TERRA_EFFORTS.slice(),
@@ -401,7 +414,7 @@ const PROVIDERS = [
       {
         id: "gpt-6-luna",
         label: "GPT-6-Luna",
-        description: "GPT-6 Luna Codex model.",
+        description: "Fast and affordable model for easier tasks.",
         vendor: "OpenAI",
         contextTokens: 272_000,
         efforts: CODEX_LUNA_EFFORTS.slice(),
@@ -410,7 +423,7 @@ const PROVIDERS = [
       {
         id: "gpt-5.6-sol",
         label: "GPT-5.6-Sol",
-        description: "Reliable agentic workhorse for everyday tasks.",
+        description: "Older generation workhorse model.",
         vendor: "OpenAI",
         contextTokens: 272_000,
         efforts: CODEX_SOL_TERRA_EFFORTS.slice(),
@@ -419,7 +432,7 @@ const PROVIDERS = [
       {
         id: "gpt-5.6-terra",
         label: "GPT-5.6-Terra",
-        description: "Balanced agentic coding model for everyday work.",
+        description: "Older balanced model for straightforward work.",
         vendor: "OpenAI",
         contextTokens: 272_000,
         efforts: CODEX_SOL_TERRA_EFFORTS.slice(),
@@ -428,7 +441,7 @@ const PROVIDERS = [
       {
         id: "gpt-5.6-luna",
         label: "GPT-5.6-Luna",
-        description: "Fast and affordable agentic coding model.",
+        description: "Older fast and efficient model.",
         vendor: "OpenAI",
         contextTokens: 272_000,
         efforts: CODEX_LUNA_EFFORTS.slice(),
@@ -437,8 +450,7 @@ const PROVIDERS = [
       {
         id: "gpt-5.5",
         label: "GPT-5.5",
-        description:
-          "Proven previous-generation model for coding and general work.",
+        description: "Legacy coding model; leaves Codex on 2026-10-14.",
         vendor: "OpenAI",
         contextTokens: 272_000,
         efforts: CODEX_55_EFFORTS.slice(),

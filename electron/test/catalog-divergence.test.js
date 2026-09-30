@@ -396,8 +396,8 @@ describe("listProviders catalog notes", () => {
       });
       const codex = list.find((p) => p.id === "codex");
       const rec = codex.modelInfo.filter((m) => m.recommended).map((m) => m.id);
-      assert.deepEqual(rec, ["gpt-6-astra"]);
-      assert.equal(codex.models[0], "gpt-6-astra");
+      assert.deepEqual(rec, ["gpt-6.1-sol"]);
+      assert.equal(codex.models[0], "gpt-6.1-sol");
       assert.equal(codex.catalogNote, undefined);
     } finally {
       fs.rmSync(home, { recursive: true, force: true });
