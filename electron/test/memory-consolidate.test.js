@@ -551,3 +551,45 @@ describe("resolveConsolidateProvider falls back after a failed grok pass (#1384)
     assert.equal(pick(), "grok");
   });
 });
+
+describe("recordConsolidateOutcome (#1384)", () => {
+  const { recordConsolidateOutcome } = require("../memory-consolidate.js");
+  let tmpDir;
+  let store;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "coder-memc-outcome-"));
+    store = new Store(path.join(tmpDir, "store.json"));
+    store.setProjects([
+      { id: "p1", slug: "acme/app", name: "app", path: tmpDir },
+    ]);
+    store.saveNow();
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  const project = () => store.getProjects().find((p) => p.id === "p1");
+
+  it("records a mid-run failure on the project, then clears it on success", () => {
+    const pass = services.createThread(store, {
+      projectId: "p1",
+      title: TITLE,
+      memoryConsolidate: true,
+    });
+    recordConsolidateOutcome(store, pass.id, "failed", "Run error: Not signed in.");
+    assert.equal(project().memoryConsolidateError, "Run error: Not signed in.");
+    assert.equal(typeof project().memoryConsolidateDoneAt, "number");
+
+    recordConsolidateOutcome(store, pass.id, "done", "ok");
+    assert.equal(project().memoryConsolidateError, null);
+  });
+
+  it("ignores ordinary threads", () => {
+    const t = services.createThread(store, { projectId: "p1", title: "work" });
+    recordConsolidateOutcome(store, t.id, "failed", "boom");
+    assert.equal(project().memoryConsolidateError, undefined);
+    assert.equal(project().memoryConsolidateDoneAt, undefined);
+  });
+});

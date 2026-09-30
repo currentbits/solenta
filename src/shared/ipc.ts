@@ -80,8 +80,12 @@ export interface ProjectInfo {
    * Host-stamped; not a user-editable project field.
    */
   memoryConsolidateAt?: number | null;
-  /** Last consolidation startRun error, if any. Cleared on a successful fire. */
+  /** Last consolidation error (startRun or the run itself), if any. Cleared on a successful fire. */
   memoryConsolidateError?: string | null;
+  /** Provider the last consolidation pass ran on (#1384). */
+  memoryConsolidateProvider?: string | null;
+  /** When the last consolidation pass ended; null while one is running (#1384). */
+  memoryConsolidateDoneAt?: number | null;
 }
 
 /** One named per-project shell command (issue #153). */

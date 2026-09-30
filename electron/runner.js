@@ -66,7 +66,10 @@ const {
   ensureCursorMcpConfig,
   whenGrokMcpIdle,
 } = require("./memory-sup.js");
-const { isMemoryConsolidateTool } = require("./memory-consolidate.js");
+const {
+  isMemoryConsolidateTool,
+  recordConsolidateOutcome,
+} = require("./memory-consolidate.js");
 const opencodeParse = require("./opencode.js");
 const { runOpencode } = opencodeParse;
 const { recordRunOutcome } = require("./memory-record.js");
@@ -1937,6 +1940,8 @@ function createRunner(opts) {
     // start the next turn.
     const terminalRunId = resolveTerminalRunId(threadId, extras);
     notifySimulatorRunTerminal(threadId, status, terminalRunId);
+    // #1384: hidden consolidation passes report their outcome on the project.
+    recordConsolidateOutcome(store, threadId, status, text);
     // Plan-mode CLIs without ExitPlanMode: persist an approval card from
     // the last assistant text before anything drains the type-ahead queue
     // (issue #707). Done and CLI-cancelled both count; a failed turn does not.
