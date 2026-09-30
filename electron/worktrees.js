@@ -791,6 +791,74 @@ function checkoutForMerge(preferredPath, branch) {
   );
 }
 
+function realOrResolved(p) {
+  try {
+    return fs.realpathSync(p);
+  } catch {
+    return path.resolve(p);
+  }
+}
+
+/**
+ * `git worktree remove` without blocking on the delete (#1392). The sync
+ * remove froze the main process for the whole recursive delete (0.4 s for
+ * a median worktree, 4 s for a large one; the 15 s cap failed a merge that
+ * had landed). Same refusals as git, then an O(1) rename aside, a prune,
+ * and an async delete. Only a LINKED worktree of repoPath qualifies (never
+ * the main checkout); anything else, or a failed rename (Windows EBUSY),
+ * falls back to git's own remove.
+ *
+ * @param {string} repoPath
+ * @param {string} wtPath
+ * @param {boolean} force
+ * @returns {{ ok: boolean, combined: string }}
+ */
+function removeWorktreeDir(repoPath, wtPath, force) {
+  const fallback = () =>
+    gitTry(
+      repoPath,
+      force
+        ? ["worktree", "remove", "--force", wtPath]
+        : ["worktree", "remove", wtPath],
+    );
+  const list = gitTry(repoPath, ["worktree", "list", "--porcelain"]);
+  if (!list.ok) return fallback();
+  const target = realOrResolved(wtPath);
+  const linked = list.stdout
+    .split("\n")
+    .filter((l) => l.startsWith("worktree "))
+    .slice(1) // the first entry is the main checkout
+    .map((l) => realOrResolved(l.slice("worktree ".length)));
+  if (!linked.includes(target)) return fallback();
+  if (!force) {
+    const st = gitTry(wtPath, ["status", "--porcelain"]);
+    if (!st.ok) return fallback();
+    if (st.stdout) {
+      return {
+        ok: false,
+        combined: `fatal: '${wtPath}' contains modified or untracked files, use --force to delete it`,
+      };
+    }
+  }
+  const trash = path.join(
+    path.dirname(target),
+    `.trash-${path.basename(target)}-${Date.now()}`,
+  );
+  try {
+    fs.renameSync(target, trash);
+  } catch {
+    return fallback();
+  }
+  gitTry(repoPath, ["worktree", "prune"]);
+  invalidateGitReads(target);
+  // ponytail: fire-and-forget; a crash mid-delete leaves a .trash-* dir that
+  // is not a git repo, which the boot orphan sweep force-removes.
+  void fs.promises
+    .rm(trash, { recursive: true, force: true, maxRetries: 3 })
+    .catch(() => {});
+  return { ok: true, combined: "" };
+}
+
 /**
  * Clear thread worktree fields, remove worktree dir + branch, save, broadcast.
  * A missing directory is already-removed: do not throw, still null
@@ -810,10 +878,7 @@ function cleanupWorktree(opts) {
 
   if (wtPath) {
     if (fs.existsSync(wtPath)) {
-      const args = forceRemove
-        ? ["worktree", "remove", "--force", wtPath]
-        : ["worktree", "remove", wtPath];
-      const rem = gitTry(project.path, args);
+      const rem = removeWorktreeDir(project.path, wtPath, Boolean(forceRemove));
       if (!rem.ok && fs.existsSync(wtPath)) {
         throw new Error(
           `Failed to remove worktree: ${rem.combined.split("\n")[0]}`,
@@ -5833,7 +5898,8 @@ function gitSaysNotARepo(res) {
  */
 async function forceRemoveWorktreeDir(dir, repoPath) {
   try {
-    fs.rmSync(dir, { recursive: true, force: true });
+    // #1392: async rm, so a sweep never blocks the main process on a delete.
+    await fs.promises.rm(dir, { recursive: true, force: true, maxRetries: 3 });
   } catch (err) {
     return {
       ok: false,
@@ -6574,6 +6640,7 @@ module.exports = {
   captureLeadSnapshot,
   resolveWorktreeStart,
   clearMissingWorktree,
+  removeWorktreeDir,
   prepareThreadWorktree,
   gitFailureText,
   maybeRenameWorktreeBranch,
