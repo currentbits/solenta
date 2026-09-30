@@ -28,6 +28,7 @@ const {
   ensureWorktree,
   clearMissingWorktree,
   removeWorktree,
+  removeWorktreeDir,
 } = require("../worktrees.js");
 
 function git(cwd, args) {
@@ -668,5 +669,61 @@ describe("ensureWorktree (lazy creation)", () => {
     );
     // Flag survives so the next run can retry.
     assert.equal(store.getThread(thread.id).pendingWorktree, true);
+  });
+});
+
+describe("removeWorktreeDir: rename aside, prune, async delete (#1392)", () => {
+  let fx;
+
+  beforeEach(async () => {
+    fx = await makeFixture();
+  });
+
+  afterEach(() => {
+    fs.rmSync(fx.tmpDir, { recursive: true, force: true });
+  });
+
+  function waitGone(p) {
+    return new Promise((resolve, reject) => {
+      const start = Date.now();
+      const tick = () => {
+        if (!fs.existsSync(p)) return resolve();
+        if (Date.now() - start > 10000) return reject(new Error("still there"));
+        setTimeout(tick, 20);
+      };
+      tick();
+    });
+  }
+
+  it("moves a clean linked worktree out of place and unregisters it at once", async () => {
+    const res = removeWorktreeDir(fx.repo, fx.worktreePath, false);
+    assert.equal(res.ok, true);
+    // Gone from its path and from git before the delete finishes.
+    assert.ok(!fs.existsSync(fx.worktreePath));
+    assert.ok(!git(fx.repo, ["worktree", "list"]).includes(fx.worktreePath));
+    const parent = path.dirname(fx.worktreePath);
+    const trash = fs
+      .readdirSync(parent)
+      .filter((n) => n.startsWith(".trash-"))
+      .map((n) => path.join(parent, n));
+    for (const t of trash) await waitGone(t);
+  });
+
+  it("refuses a dirty worktree without force, like git worktree remove", () => {
+    fs.writeFileSync(path.join(fx.worktreePath, "wip.txt"), "wip\n");
+    const res = removeWorktreeDir(fx.repo, fx.worktreePath, false);
+    assert.equal(res.ok, false);
+    assert.match(res.combined, /modified or untracked files/);
+    assert.ok(fs.existsSync(path.join(fx.worktreePath, "wip.txt")));
+  });
+
+  it("never moves the main checkout, even with force", () => {
+    const res = removeWorktreeDir(fx.repo, fx.repo, true);
+    assert.equal(res.ok, false);
+    assert.ok(fs.existsSync(path.join(fx.repo, "README.md")));
+    assert.equal(
+      fs.readdirSync(path.dirname(fx.repo)).some((n) => n.startsWith(".trash-")),
+      false,
+    );
   });
 });
