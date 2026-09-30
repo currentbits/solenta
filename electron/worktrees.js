@@ -5510,9 +5510,47 @@ async function maybeCleanupMergedWorktree(store, threadId) {
 }
 
 /**
+ * Commit a dirty orphan's working state to `recovered/<name>` (#1386) so
+ * the sweep can remove the folder without losing it. The branch is not
+ * `coder/`, so no GC path ever deletes it. Fixed identity and no hooks or
+ * signing: this is a salvage commit, not the user's own.
+ *
+ * @param {string} dir
+ * @param {string} name worktree dir name (thread id)
+ * @returns {Promise<string | null>} the branch, or null when any step failed
+ */
+const RECOVER_MAX_PATHS = 1000;
+
+async function saveOrphanToRecoveryBranch(dir, name) {
+  const branch = `recovered/${name}`;
+  const steps = [
+    ["switch", "-c", branch],
+    ["add", "-A"],
+    [
+      "-c",
+      "user.name=Solenta",
+      "-c",
+      "user.email=solenta@localhost",
+      "-c",
+      "commit.gpgsign=false",
+      "commit",
+      "--no-verify",
+      "-m",
+      `Recovered uncommitted work from deleted thread worktree ${name}`,
+    ],
+  ];
+  for (const args of steps) {
+    const r = await gitTryAsync(dir, args);
+    if (!r.ok) return null;
+  }
+  return branch;
+}
+
+/**
  * Boot-time GC: remove worktree dirs under worktreeBase that no thread
- * references. Conservative — only CLEAN worktrees are removed (a reset
- * store must never cost uncommitted work). A directory git reports as
+ * references. A dirty orphan is first committed to `recovered/<name>`
+ * (#1386) so its work survives as a branch; if that fails the dir is kept
+ * (a reset store must never cost uncommitted work). A directory git reports as
  * "not a git repository" is force-removed (#642): there is no status to
  * honor, and the branch (if any) lives in the repo. Other git failures
  * still keep the dir. Branches are only safe-deleted (-d) so unmerged
@@ -5525,8 +5563,8 @@ async function maybeCleanupMergedWorktree(store, threadId) {
  */
 async function sweepOrphanWorktrees(opts) {
   const { store, worktreeBase } = opts;
-  /** @type {{ removed: string[], kept: string[] }} */
-  const result = { removed: [], kept: [] };
+  /** @type {{ removed: string[], kept: string[], recovered: { dir: string, branch: string }[] }} */
+  const result = { removed: [], kept: [], recovered: [] };
 
   /** @type {fs.Dirent[]} */
   let entries = [];
@@ -5573,7 +5611,7 @@ async function sweepOrphanWorktrees(opts) {
         ["status", "--porcelain", "-uall"],
         { raw: true },
       );
-      if (!status.ok || String(status.stdout || "").trim()) {
+      if (!status.ok) {
         if (!String(status.stdout || "").trim() && gitSaysNotARepo(status)) {
           const forced = await forceRemoveWorktreeDir(dir, repoPath);
           if (forced.ok) result.removed.push(dir);
@@ -5582,6 +5620,23 @@ async function sweepOrphanWorktrees(opts) {
           result.kept.push(dir);
         }
         continue;
+      }
+      const dirty = String(status.stdout || "").trim();
+      if (dirty) {
+        // #1386: no thread will ever surface this dir again, so keeping it
+        // dirty keeps it forever. Commit the work to a branch first; any
+        // failure keeps the dir exactly as before.
+        // ponytail: path-count cap so unignored build output never lands in
+        // the repo's object store; such dirs stay kept, as before #1386.
+        const saved =
+          dirty.split("\n").length <= RECOVER_MAX_PATHS
+            ? await saveOrphanToRecoveryBranch(dir, entry.name)
+            : null;
+        if (!saved) {
+          result.kept.push(dir);
+          continue;
+        }
+        result.recovered.push({ dir, branch: saved });
       }
 
       const br = await gitTryAsync(dir, ["branch", "--show-current"]);

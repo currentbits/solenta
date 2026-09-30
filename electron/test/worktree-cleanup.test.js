@@ -267,7 +267,7 @@ describe("sweepOrphanWorktrees", () => {
     assert.ok(list.includes(fx.worktreePath));
   });
 
-  it("keeps orphans with uncommitted changes", async () => {
+  function dirtyOrphan() {
     const orphanThread = services.createThread(fx.store, {
       projectId: fx.project.id,
       title: "Dirty orphan",
@@ -281,6 +281,30 @@ describe("sweepOrphanWorktrees", () => {
     fs.writeFileSync(path.join(orphan.worktreePath, "precious.txt"), "wip\n");
     fx.store.removeThread(orphanThread.id);
     fx.store.saveNow();
+    return { id: orphanThread.id, dir: orphan.worktreePath };
+  }
+
+  it("saves a dirty orphan to recovered/<id>, then removes it (#1386)", async () => {
+    const orphan = dirtyOrphan();
+
+    const result = await sweepOrphanWorktrees({
+      store: fx.store,
+      worktreeBase: fx.worktreeBase,
+    });
+
+    const branch = `recovered/${orphan.id}`;
+    assert.deepEqual(result.recovered, [{ dir: orphan.dir, branch }]);
+    assert.deepEqual(result.removed, [orphan.dir]);
+    assert.ok(!fs.existsSync(orphan.dir));
+    // The work survives on the branch in the owning repo.
+    assert.equal(git(fx.repo, ["show", `${branch}:precious.txt`]), "wip");
+    assert.ok(fs.existsSync(fx.worktreePath));
+  });
+
+  it("keeps a dirty orphan when the recovery commit cannot be made", async () => {
+    const orphan = dirtyOrphan();
+    // Branch name already taken: switch -c fails, so nothing is removed.
+    git(fx.repo, ["branch", `recovered/${orphan.id}`]);
 
     const result = await sweepOrphanWorktrees({
       store: fx.store,
@@ -288,10 +312,8 @@ describe("sweepOrphanWorktrees", () => {
     });
 
     assert.deepEqual(result.removed, []);
-    assert.ok(fs.existsSync(orphan.worktreePath));
-    assert.ok(
-      fs.existsSync(path.join(orphan.worktreePath, "precious.txt")),
-    );
+    assert.deepEqual(result.kept, [orphan.dir]);
+    assert.ok(fs.existsSync(path.join(orphan.dir, "precious.txt")));
   });
 
   it("is a no-op when the base directory does not exist", async () => {
