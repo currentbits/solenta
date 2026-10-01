@@ -5228,7 +5228,7 @@ function removeAutomation(store, input) {
  * Live app status: today's spend, memory health (with counts), and which build
  * is running. A /health failure degrades to nulls; status must never throw.
  * @param {import('./store').Store} store
- * @param {{ health?: () => Promise<any>, status?: () => any, pkg?: any }} [deps] injectable for tests
+ * @param {{ health?: () => Promise<any>, status?: () => any, pkg?: any, platform?: string }} [deps] injectable for tests
  */
 async function appStatus(store, deps = {}) {
   const spend = store.getSpendToday();
@@ -5272,7 +5272,7 @@ async function appStatus(store, deps = {}) {
   return {
     spendTodayUsd,
     memory: { ...base, entries, vectors, lastError },
-    build: { version, sha, time, channel },
+    build: { version, sha, time, channel, platform: deps.platform || process.platform },
   };
 }
 

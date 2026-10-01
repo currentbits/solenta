@@ -3280,6 +3280,7 @@ export interface AppStatus {
     time: string | null;
     /** Update channel stamped at package time; null in a dev tree. */
     channel: "prod" | "nightly" | null;
+    platform?: string;
   };
 }
 

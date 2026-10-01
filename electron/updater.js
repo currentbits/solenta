@@ -5,7 +5,7 @@
 //
 // Two channels, stamped into the embedded package.json at package time:
 //   prod    -> newest non-prerelease (GET /releases/latest)
-//   nightly -> newest release of any kind (prereleases included)
+//   nightly -> newest prerelease
 // A build with no channel/releaseTag stamp (dev tree, local install-swap
 // bundle) never updates itself.
 //
@@ -107,11 +107,8 @@ function releaseTime(r) {
 
 /**
  * Latest release for a channel. prod trusts GitHub's "latest" (newest
- * non-prerelease); nightly takes the newest release of either kind. Nightly
- * means "newest code", so it has to include prod releases: a prerelease-only
- * feed freezes a nightly install forever as soon as prod moves ahead and no
- * newer nightly is cut. The channel itself is kept by the settings pin in
- * ipc.js, not by refusing to see prod tags.
+ * non-prerelease); nightly takes the newest prerelease. Their macOS bundles
+ * have different IDs and executable names, so one cannot replace the other.
  *
  * The list endpoint is NOT time-ordered: GitHub floats the "latest"
  * (non-prerelease) release to the front, so a prod tag cut this morning
@@ -124,7 +121,7 @@ async function fetchLatest(channel, fetchImpl) {
     const res = await doFetch(`${API}?per_page=15`, { headers: HEADERS });
     if (!res.ok) throw new Error(`GitHub releases: HTTP ${res.status}`);
     const list = await res.json();
-    const live = (Array.isArray(list) ? list : []).filter((r) => r && !r.draft);
+    const live = (Array.isArray(list) ? list : []).filter((r) => r && !r.draft && r.prerelease);
     let best = null;
     for (const r of live) {
       if (!best || releaseTime(r) > releaseTime(best)) best = r;
@@ -182,9 +179,11 @@ function downloadUpdate(deps = {}) {
 
 async function doCheck(deps, install) {
   const stamp = buildStamp(deps.pkg);
-  // Settings override wins; the stamped tag is still required so a dev tree
-  // (no releaseTag) can never update itself onto a channel.
-  const channel = deps.channelOverride || stamp.channel;
+  // macOS installs prod and nightly as separate app bundles. The shared
+  // settings override must not replace either bundle with the other channel.
+  const channel = (deps.platform || process.platform) === "darwin"
+    ? stamp.channel
+    : deps.channelOverride || stamp.channel;
   const tag = stamp.tag;
   const status = { state: "disabled", channel, tag: null, url: null, error: null };
   if (!channel || !tag) return status;
