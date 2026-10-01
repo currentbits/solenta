@@ -15,8 +15,8 @@
 //
 // Install on macOS reuses the proven swap: mv the running bundle aside as
 // Solenta.app.old, ditto the new one into place, delete .old on next boot.
-// The swapped-in bundle also means a plain quit+relaunch picks up the new
-// build even if the user never clicks "Restart".
+// Relaunch must name the new bundle's executable: the current process now
+// lives under .old, and prod/nightly builds can use different names.
 //
 // Windows is a portable zip (solenta.exe + resources/) and Linux is a
 // portable tar.gz (solenta + resources/). Those files are locked while the
@@ -43,7 +43,7 @@ const HEADERS = {
 /** @param {string} cmd @param {string[]} args */
 function run(cmd, args) {
   return new Promise((resolve, reject) => {
-    execFile(cmd, args, (err) => (err ? reject(err) : resolve(undefined)));
+    execFile(cmd, args, (err, stdout) => (err ? reject(err) : resolve(stdout)));
   });
 }
 
@@ -207,8 +207,8 @@ async function doCheck(deps, install) {
 
     const ready = await stage(asset, bundle, status.tag, deps);
     stagedTag = status.tag;
-    if (ready && ready.dir) {
-      stagedDir = ready.dir;
+    if (ready && ready.exe) {
+      stagedDir = ready.dir || null;
       stagedInstall = bundle;
       stagedExe = ready.exe;
     }
@@ -315,6 +315,15 @@ async function stage(asset, bundle, tag, deps) {
       .map((n) => path.join(work, n))
       .find((p) => p.endsWith(".app") && fs.existsSync(path.join(p, "Contents")));
     if (!newApp) throw new Error("update zip contains no .app bundle");
+    const exe = (await run("plutil", [
+      "-extract", "CFBundleExecutable", "raw", "-o", "-",
+      path.join(newApp, "Contents", "Info.plist"),
+    ])).trim();
+    const executable = path.join(newApp, "Contents", "MacOS", exe);
+    if (!exe || exe !== path.basename(exe) ||
+        !fs.existsSync(executable) || !fs.statSync(executable).isFile()) {
+      throw new Error("update app has no valid executable");
+    }
 
     const old = `${bundle}.old`;
     fs.rmSync(old, { recursive: true, force: true });
@@ -328,7 +337,7 @@ async function stage(asset, bundle, tag, deps) {
       fs.renameSync(old, bundle);
       throw err;
     }
-    return null;
+    return { exe };
   } finally {
     fs.rmSync(work, { recursive: true, force: true });
   }
@@ -451,7 +460,11 @@ function applyUpdate(deps = {}) {
       return;
     }
   }
-  app.relaunch();
+  if (platform === "darwin" && installRoot && exeName) {
+    app.relaunch({ execPath: path.join(installRoot, "Contents", "MacOS", exeName) });
+  } else {
+    app.relaunch();
+  }
   app.quit();
 }
 

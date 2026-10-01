@@ -258,6 +258,63 @@ describe("updater.stage digest verification", () => {
   });
 });
 
+describe("updater.downloadUpdate macOS", () => {
+  afterEach(() => updater.resetStaged());
+
+  it("relaunches the new executable when a nightly bundle receives a prod build", async () => {
+    if (process.platform !== "darwin") return;
+    const parent = fs.mkdtempSync(path.join(os.tmpdir(), "solenta-upd-mac-"));
+    const install = path.join(parent, "Solenta Nightly.app");
+    const next = path.join(parent, "Solenta.app");
+    const zip = path.join(parent, "update.zip");
+    try {
+      fs.mkdirSync(path.join(install, "Contents", "MacOS"), { recursive: true });
+      fs.writeFileSync(path.join(install, "Contents", "MacOS", "Solenta Nightly"), "old");
+      fs.mkdirSync(path.join(next, "Contents", "MacOS"), { recursive: true });
+      fs.writeFileSync(path.join(next, "Contents", "MacOS", "Solenta"), "new");
+      fs.writeFileSync(path.join(next, "Contents", "Info.plist"),
+        '<?xml version="1.0"?><plist version="1.0"><dict><key>CFBundleExecutable</key><string>Solenta</string></dict></plist>');
+      execFileSync("ditto", ["-c", "-k", "--keepParent", next, zip]);
+      const bytes = fs.readFileSync(zip);
+      const digest = `sha256:${crypto.createHash("sha256").update(bytes).digest("hex")}`;
+      const res = await updater.downloadUpdate({
+        pkg: NIGHTLY_PKG,
+        platform: "darwin",
+        arch: "arm64",
+        bundlePath: install,
+        fetch: async (url) => String(url).includes("example.invalid")
+          ? { ok: true, status: 200, body: Readable.toWeb(Readable.from(bytes)) }
+          : { ok: true, status: 200, json: async () => [{
+            tag_name: "v0.2.0",
+            published_at: "2026-10-01T00:00:00Z",
+            assets: [{
+              name: "Solenta-v0.2.0-macos-arm64.zip",
+              browser_download_url: "https://example.invalid/app.zip",
+              digest,
+            }],
+          }] },
+      });
+      assert.equal(res.state, "staged");
+      assert.equal(fs.readFileSync(path.join(install, "Contents", "MacOS", "Solenta"), "utf8"), "new");
+      assert.equal(fs.readFileSync(path.join(`${install}.old`, "Contents", "MacOS", "Solenta Nightly"), "utf8"), "old");
+
+      const calls = [];
+      updater.applyUpdate({ platform: "darwin", app: {
+        relaunch: (opts) => calls.push(["relaunch", opts]),
+        quit: () => calls.push(["quit"]),
+      } });
+      assert.deepEqual(calls, [
+        ["relaunch", { execPath: path.join(install, "Contents", "MacOS", "Solenta") }],
+        ["quit"],
+      ]);
+      assert.equal(updater.bundlePath(calls[0][1].execPath, "darwin"), install);
+    } finally {
+      fs.rmSync(parent, { recursive: true, force: true });
+      fs.rmSync(`${install}.old`, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("updater.pickAsset", () => {
   it("matches the platform/arch token in asset names", () => {
     const release = {
