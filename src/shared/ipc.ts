@@ -3573,6 +3573,13 @@ export interface CoderApi {
      * Rejects with a user-facing sentence when the endpoint refuses.
      */
     feedback(input: { text: string; threadId?: string }): Promise<void>;
+    /** Open an SSH-forwarded Solenta Web host in an isolated desktop window. */
+    openRemoteConnection(input: {
+      host: string;
+      label?: string;
+      remotePort?: number;
+      token: string;
+    }): Promise<{ host: string; remotePort: number }>;
   };
   /**
    * Proxied to the local shared-memory server by the main process (the

@@ -723,6 +723,11 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
           error: null,
         } as UpdateStatus),
       applyUpdate: () => rec("app.applyUpdate", [], undefined),
+      openRemoteConnection: (input: unknown) =>
+        rec("app.openRemoteConnection", [input], {
+          host: "workstation",
+          remotePort: 4620,
+        }),
     },
     memory: {
       search: (input: unknown) => rec("memory.search", [input], [] as MemoryEntryInfo[]),

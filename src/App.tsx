@@ -2502,6 +2502,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
           onSaveSettings={(patch) => saveSettings(patch)}
           onTestWebhook={testWebhook}
           onShowOnboarding={showOnboarding}
+          onOpenConnection={(input) => api.app.openRemoteConnection(input)}
         />
         <OnboardingModal
           open={onboardingOpen}

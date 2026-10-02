@@ -39,6 +39,9 @@ import { WorktreeGcSection } from "./WorktreeGcSection";
 import { VibeKanbanSection } from "./VibeKanbanSection";
 import { SourceControlSection } from "./SourceControlSection";
 import { IntegrationsSection } from "./IntegrationsSection";
+import { ConnectionsSection } from "./ConnectionsSection";
+import { isWebMode } from "../shared/wire";
+import type { CoderApi } from "../shared/ipc";
 
 export const SETTINGS_PANES = [
   "general",
@@ -47,6 +50,7 @@ export const SETTINGS_PANES = [
   "git",
   "agents",
   "memory",
+  "connections",
   "integrations",
   "advanced",
 ] as const;
@@ -90,6 +94,11 @@ const PANE_META: Record<
     label: "Memory",
     hint: "The local memory server injected into every session.",
     keywords: "memory entries vectors janitor server port embed",
+  },
+  connections: {
+    label: "Connections",
+    hint: "Run Solenta on another machine through SSH.",
+    keywords: "remote ssh host server tunnel workstation web token",
   },
   integrations: {
     label: "Integrations",
@@ -142,6 +151,7 @@ interface SettingsModalProps {
   }) => Promise<SourceControlDiscovery>;
   /** Relaunch the first-run welcome tour (#628). */
   onShowOnboarding?: () => void;
+  onOpenConnection?: CoderApi["app"]["openRemoteConnection"];
 }
 
 const UI_SCALE_MIN = 0.8;
@@ -348,6 +358,7 @@ export function SettingsModal({
   onGcClean,
   onDiscoverSourceControl,
   onShowOnboarding,
+  onOpenConnection,
 }: SettingsModalProps) {
   const [pane, setPane] = useState<SettingsPane>("general");
   const [navQuery, setNavQuery] = useState("");
@@ -452,6 +463,7 @@ export function SettingsModal({
 
   const navFilter = navQuery.trim().toLowerCase();
   const visiblePanes = SETTINGS_PANES.filter((id) => {
+    if (id === "connections" && isWebMode()) return false;
     if (!navFilter) return true;
     const meta = PANE_META[id];
     return (
@@ -1944,6 +1956,10 @@ export function SettingsModal({
           />
           )}
 
+          {pane === "connections" && !isWebMode() && (
+          <ConnectionsSection onOpen={onOpenConnection} />
+          )}
+
           {pane === "memory" && (
           <section className={styles.section}>
             <div className={styles.memoryRow}>
@@ -2477,6 +2493,12 @@ function PaneIcon({ id }: { id: SettingsPane }) {
         <>
           <path d="M8 7h3v3H8zM13 14h3v3h-3z" />
           <path d="M11 8.5h2.5A2.5 2.5 0 0 1 16 11M13 15.5h-2.5A2.5 2.5 0 0 1 8 13" />
+        </>
+      ) : id === "connections" ? (
+        <>
+          <rect x="3" y="5" width="8" height="6" rx="1" />
+          <rect x="13" y="13" width="8" height="6" rx="1" />
+          <path d="M11 8h3a3 3 0 0 1 3 3v2" />
         </>
       ) : (
         <>
