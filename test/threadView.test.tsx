@@ -375,7 +375,15 @@ describe("ThreadView sandbox badge", () => {
 
   it("renders yes/no in Thread details with the reason on title", async () => {
     const shown = async (sandbox: { sandboxed: boolean; reason: string }) => {
-      const m = await mount(view({ detail: detail({ thread: thread({ sandbox }) }) }));
+      // A started thread: a draft's header has no details card (#1411).
+      const m = await mount(
+        view({
+          detail: detail({
+            thread: thread({ sandbox }),
+            messages: [msg({ id: "u1", role: "user", text: "go", createdAt: 1 })],
+          }),
+        }),
+      );
       await m.flush();
       assert.equal(m.query("[data-sandbox-badge]"), null, "badge stays out of the header row");
       await m.click(m.query("[data-thread-details-btn]"));

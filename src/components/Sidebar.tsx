@@ -4535,25 +4535,16 @@ export const Sidebar = memo(function Sidebar({
         <button
           type="button"
           className={styles.viewNavBtn}
-          data-view-nav="threads"
-          title="Threads"
-          data-active={activeView === "thread" ? "true" : undefined}
-          aria-current={activeView === "thread" ? "page" : undefined}
-          onClick={() => onOpenThreads?.()}
-        >
-          <Icon size={15}>
-            <path d="M4 6h16M4 12h16M4 18h10" />
-          </Icon>
-          <span className={styles.srOnly}>Threads</span>
-        </button>
-        <button
-          type="button"
-          className={styles.viewNavBtn}
           data-view-nav="planboard"
-          title="Planboard"
+          title={activeView === "planboard" ? "Back to threads" : "Planboard"}
           data-active={activeView === "planboard" ? "true" : undefined}
           aria-current={activeView === "planboard" ? "page" : undefined}
-          onClick={() => onOpenPlanboard?.(projectScope)}
+          onClick={() =>
+            // The active destination toggles back to the thread view (#1411).
+            activeView === "planboard"
+              ? onOpenThreads?.()
+              : onOpenPlanboard?.(projectScope)
+          }
         >
           <Icon size={15}>
             <rect x="3" y="4" width="18" height="16" rx="2" />
@@ -4565,10 +4556,12 @@ export const Sidebar = memo(function Sidebar({
           type="button"
           className={styles.viewNavBtn}
           data-view-nav="review"
-          title="Review"
+          title={activeView === "prs" ? "Back to threads" : "Review"}
           data-active={activeView === "prs" ? "true" : undefined}
           aria-current={activeView === "prs" ? "page" : undefined}
-          onClick={() => onOpenReview?.()}
+          onClick={() =>
+            activeView === "prs" ? onOpenThreads?.() : onOpenReview?.()
+          }
         >
           <Icon size={15}>
             <circle cx="6" cy="6" r="2" />
@@ -4614,6 +4607,20 @@ export const Sidebar = memo(function Sidebar({
                 data-app-more-menu=""
                 onKeyDown={onMoreKeyDown}
               >
+                {moreCurrentLabel ? (
+                  <button
+                    type="button"
+                    className={styles.menuItem}
+                    role="menuitem"
+                    data-view-nav="threads"
+                    onClick={() => {
+                      closeMore(true);
+                      onOpenThreads?.();
+                    }}
+                  >
+                    Back to threads
+                  </button>
+                ) : null}
                 {moreDestinations.map((dest) => {
                   const current = activeView === dest.view;
                   return (

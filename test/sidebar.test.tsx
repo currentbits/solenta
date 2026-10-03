@@ -965,7 +965,7 @@ describe("Sidebar project scope", () => {
     m.unmount();
   });
 
-  it("primary nav is labeled Threads, Planboard, and Review", async () => {
+  it("primary nav is labeled Planboard and Review (#1411: no Threads icon)", async () => {
     await clearSidebarStorage();
     const m = await mount(sidebar(THREADS, { projects: [p1, p2] }));
     const nav = m.query("nav[aria-label='App']");
@@ -973,7 +973,7 @@ describe("Sidebar project scope", () => {
     const labels = [...nav.querySelectorAll(":scope > [data-view-nav]")].map(
       (el) => el.textContent?.trim(),
     );
-    assert.deepEqual(labels, ["Threads", "Planboard", "Review"]);
+    assert.deepEqual(labels, ["Planboard", "Review"]);
     assert.equal(m.query("[data-app-more]"), null, "More stays hidden until a destination is wired");
     assert.equal(m.query('[data-view-nav="activity"]'), null);
     assert.equal(m.query('[data-view-nav="kanban"]'), null);
@@ -1175,7 +1175,7 @@ describe("Sidebar filter columns (#746)", () => {
       [...nav!.querySelectorAll(":scope > [data-view-nav]")].map((el) =>
         el.textContent?.trim(),
       ),
-      ["Threads", "Planboard", "Review"],
+      ["Planboard", "Review"],
     );
     assert.equal(nav!.querySelectorAll("[data-app-more]").length, 1);
     m.unmount();
@@ -1233,10 +1233,6 @@ describe("Sidebar app navigation", () => {
   it("marks the open destination instead of treating every other view as Threads", async () => {
     await clearSidebarStorage();
     const usage = await mount(sidebar(THREADS, { ...wired, activeView: "usage" }));
-    assert.equal(
-      usage.query('[data-view-nav="threads"]')?.getAttribute("aria-current"),
-      null,
-    );
     assert.equal(usage.query("[data-app-more]")?.getAttribute("aria-current"), "page");
     assert.equal(usage.query("[data-app-more]")?.getAttribute("aria-label"), "Insights, Usage");
     await openMoreMenu(usage);
@@ -1264,10 +1260,6 @@ describe("Sidebar app navigation", () => {
     assert.equal(
       review.query('[data-view-nav="review"]')?.getAttribute("aria-current"),
       "page",
-    );
-    assert.equal(
-      review.query('[data-view-nav="threads"]')?.getAttribute("aria-current"),
-      null,
     );
     review.unmount();
   });
@@ -1352,7 +1344,7 @@ describe("Sidebar app navigation", () => {
     m.unmount();
   });
 
-  it("Threads does not create a thread or change the selection", async () => {
+  it("re-clicking the active Planboard returns to threads without creating or selecting", async () => {
     await clearSidebarStorage();
     const created: Array<string | undefined> = [];
     const selected: string[] = [];
@@ -1360,6 +1352,8 @@ describe("Sidebar app navigation", () => {
     const m = await mount(
       sidebar(THREADS, {
         projects: [p1, p2],
+        activeView: "planboard",
+        onOpenPlanboard: () => {},
         activeThreadId: "billing-idle",
         onCreateThread: (pid) => {
           created.push(pid);
@@ -1372,7 +1366,7 @@ describe("Sidebar app navigation", () => {
         },
       }),
     );
-    await m.click(m.query('[data-view-nav="threads"]'));
+    await m.click(m.query('[data-view-nav="planboard"]'));
     assert.equal(opened, true);
     assert.deepEqual(created, []);
     assert.deepEqual(selected, []);
@@ -1380,13 +1374,15 @@ describe("Sidebar app navigation", () => {
     m.unmount();
   });
 
-  it("opens Threads when nothing is selected", async () => {
+  it("re-clicking the active Review returns to threads when nothing is selected", async () => {
     await clearSidebarStorage();
     let opened = 0;
     const created: unknown[] = [];
     const m = await mount(
       sidebar([], {
         projects: [p1],
+        activeView: "prs",
+        onOpenReview: () => {},
         activeThreadId: null,
         onCreateThread: (pid) => {
           created.push(pid);
@@ -1396,7 +1392,7 @@ describe("Sidebar app navigation", () => {
         },
       }),
     );
-    await m.click(m.query('[data-view-nav="threads"]'));
+    await m.click(m.query('[data-view-nav="review"]'));
     assert.equal(opened, 1);
     assert.deepEqual(created, []);
     m.unmount();

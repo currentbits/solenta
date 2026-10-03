@@ -69,10 +69,19 @@ function thread(over: Partial<ThreadInfo> = {}): ThreadInfo {
   };
 }
 
+// A started thread by default: a message-less detail is a draft, whose
+// header has no git step or details card (#1411). Draft tests pass [].
 function detail(over: Partial<ThreadDetail> = {}): ThreadDetail {
   return {
     thread: over.thread ?? thread(),
-    messages: over.messages ?? [],
+    messages: over.messages ?? [
+      {
+        id: "u-start",
+        role: "user",
+        text: "start",
+        createdAt: 1,
+      } as ThreadDetail["messages"][number],
+    ],
     workLog: over.workLog ?? [],
     workflow: over.workflow ?? null,
     usage: over.usage ?? null,

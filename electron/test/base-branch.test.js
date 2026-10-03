@@ -882,6 +882,8 @@ describe("Previous worktree: stack a draft on another thread's branch (#1411)", 
     assert.notEqual(next.branch, prev.branch, "a fresh branch, not the same one");
     assert.notEqual(next.worktreePath, prev.worktreePath, "a fresh folder");
     assert.equal(next.baseBranch, prev.branch, "merges land back on the previous branch");
+    assert.equal(typeof next.worktreeSetupMs, "number", "setup time recorded");
+    assert.ok(next.worktreeSetupMs >= 0);
     assert.ok(fs.existsSync(path.join(next.worktreePath, "contract.md")), "committed work carries over");
     assert.ok(!fs.existsSync(path.join(next.worktreePath, "scratch.md")), "uncommitted edits stay behind");
   });

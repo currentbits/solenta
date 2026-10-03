@@ -4045,3 +4045,14 @@ button.heroProject:hover {
   text-decoration: underline;
   text-underline-offset: 3px;
 }
+
+/* Amber attention dot on the details toggle (#1411): behind upstream. */
+.attentionDot {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--amber);
+}

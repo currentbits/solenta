@@ -111,7 +111,7 @@ import {
 import { parseBtwCommand } from "./btw";
 import { parseFeedbackCommand } from "./feedback";
 import type { DroppedFolder } from "./dropFiles";
-import type { ProviderUsage } from "./shared/ipc";
+import type { EditorId, EditorOption, ProviderUsage } from "./shared/ipc";
 import {
   loadBootSnapshot,
   loadCachedThreadDetail,
@@ -766,6 +766,9 @@ export interface UseCoderResult {
   revealInFinder: () => Promise<void>;
   /** Open the selected thread root in the default editor. */
   openInEditor: () => Promise<void>;
+  /** Thread details "Open in" (#1411): installed editors + open with one. */
+  listEditors: () => Promise<EditorOption[]>;
+  openWorktreeIn: (editor: EditorId) => Promise<void>;
   /** Ahead/behind vs upstream for a thread root. */
   gitSyncInfo: (threadId: string) => Promise<GitSyncInfo>;
   /** Fetch remotes for a thread root. */
@@ -3715,6 +3718,29 @@ export function useCoder(): UseCoderResult {
     await api.shell.openPath({ threadId: selectedThreadId, path: root });
   }, [api, selectedThreadId, threadRootPath]);
 
+  const listEditors = useCallback(async () => {
+    try {
+      return await api.shell.editors();
+    } catch {
+      return [] as EditorOption[];
+    }
+  }, [api]);
+
+  const openWorktreeIn = useCallback(
+    async (editor: EditorId) => {
+      if (!selectedThreadId) return;
+      const root = threadRootPath(selectedThreadId);
+      if (!root) return;
+      try {
+        await api.shell.openIn({ threadId: selectedThreadId, path: root, editor });
+        setError(null);
+      } catch (err) {
+        setError({ scope: "run", message: errorMessage(err) });
+      }
+    },
+    [api, selectedThreadId, threadRootPath],
+  );
+
   const gitSyncInfo = useCallback(
     async (threadId: string) => {
       try {
@@ -4379,6 +4405,8 @@ export function useCoder(): UseCoderResult {
     listLocalServers,
     revealInFinder,
     openInEditor,
+    listEditors,
+    openWorktreeIn,
     gitSyncInfo,
     gitFetch,
     gitRepoInfo,

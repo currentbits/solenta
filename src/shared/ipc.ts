@@ -15,6 +15,13 @@ export interface SpaceInfo {
   name: string;
 }
 
+/** Thread details "Open in" targets (#1411). */
+export type EditorId = "cursor" | "vscode" | "zed" | "terminal" | "finder";
+export interface EditorOption {
+  id: EditorId;
+  name: string;
+}
+
 export interface ProjectInfo {
   id: string;
   /** e.g. "pingdotgg/t3code", derived from git remote or folder name */
@@ -743,6 +750,8 @@ export interface ThreadInfo {
    * the freshly fetched origin copy of the base, not the local branch.
    */
   worktreeFromOrigin?: boolean;
+  /** How long creating the worktree took (ms), for the transcript line. */
+  worktreeSetupMs?: number | null;
   /**
    * Orchestrator thread: the first prompt is forked to a worker that holds
    * the worktree and does the work, instead of running here (issue #202).
@@ -4970,6 +4979,10 @@ export interface CoderApi {
   shell: {
     reveal(input: { threadId: string; path: string }): Promise<void>;
     openPath(input: { threadId: string; path: string }): Promise<void>;
+    /** Installed editors for Thread details' "Open in" (#1411). */
+    editors(): Promise<EditorOption[]>;
+    /** Open a thread path with one of `editors()`. Ids only, never commands. */
+    openIn(input: { threadId: string; path: string; editor: EditorId }): Promise<void>;
   };
   devserver: {
     /** Runnable scripts (dev, start, serve) present in the thread root. */

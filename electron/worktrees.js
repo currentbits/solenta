@@ -1773,6 +1773,9 @@ function setupWorktree(opts) {
     execCommand(project, "mkdir", ["-p", path.posix.dirname(addPath)]);
   }
 
+  // Timed for the transcript's "Worktree ready · … · 2.1s" line (#1411);
+  // covers the start-point resolution (incl. a Start-from-origin fetch).
+  const setupStartedAt = Date.now();
   try {
     const start = resolveWorktreeStart(thread, project.path);
     gitOut(project.path, ["worktree", "add", "-b", branch, addPath, start]);
@@ -1785,6 +1788,7 @@ function setupWorktree(opts) {
   const updated = store.updateThread(threadId, {
     worktreePath: dir,
     branch,
+    worktreeSetupMs: Math.max(0, Date.now() - setupStartedAt),
   });
   store.save();
 

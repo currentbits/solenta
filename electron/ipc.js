@@ -1971,6 +1971,15 @@ const IPC_HANDLERS = {
     const err = await shell.openPath(target);
     if (err) throw new Error(err);
   },
+  "shell:editors": async () => {
+    return require("./openIn.js").listEditors();
+  },
+  "shell:openIn": async (ctx, input) => {
+    const target = resolveAllowedShellPath(ctx.store, input);
+    await require("./openIn.js").openIn(target, input && input.editor, {
+      openPath: (p) => shell.openPath(p),
+    });
+  },
   "git:gcScan": async (ctx) => {
     return gcScan({ store: ctx.store, worktreeBase: ctx.worktreeBase });
   },

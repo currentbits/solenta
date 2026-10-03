@@ -67,6 +67,8 @@ import type {
   WorkLogItem,
   WorkSuggestion,
   WorkflowTemplateInfo,
+  EditorId,
+  EditorOption,
 } from "../shared/ipc";
 import {
   SPEC_ARTIFACTS,
@@ -793,6 +795,9 @@ interface ThreadViewProps {
   conflictContext?: (threadId: string) => Promise<ConflictContext>;
   /** Open the thread worktree in the configured editor. */
   onOpenWorktree?: () => void | Promise<void>;
+  /** Thread details "Open in ‹editor› ▾" (#1411). */
+  listEditors?: () => Promise<EditorOption[]>;
+  onOpenWorktreeIn?: (editor: EditorId) => void | Promise<void>;
   /** orchWorker: jump to the lead Integration section (issue #982). */
   onOpenCrewIntegration?: (leadThreadId: string) => void;
   /**
@@ -4721,6 +4726,8 @@ export const ThreadView = memo(function ThreadView({
   onToggleAgentsPanel,
   conflictContext,
   onOpenWorktree,
+  listEditors,
+  onOpenWorktreeIn,
   onOpenCrewIntegration,
   workerCount = 0,
   onOpenWorkers,
@@ -5416,6 +5423,12 @@ export const ThreadView = memo(function ThreadView({
             Promise.resolve(onSetBaseBranch(detail.thread.id, baseBranch))
         : undefined,
     onOpenCrewIntegration,
+    listEditors,
+    onOpenWorktreeIn: onOpenWorktreeIn
+      ? (editor) => {
+          void onOpenWorktreeIn(editor);
+        }
+      : undefined,
     onRefreshWorkerSnapshot:
       onRefreshWorkerSnapshot && detail?.thread
         ? () =>
@@ -6302,6 +6315,29 @@ export const ThreadView = memo(function ThreadView({
   }, [detailsOpen]);
   const closeDetails = useCallback(() => setDetailsOpen(false), []);
   const [prRequest, setPrRequest] = useState(0);
+  /** Header attention (#1411): the branch is behind its upstream. Local read,
+   *  no fetch; refreshed when the thread opens and when a run settles. */
+  const [headerBehind, setHeaderBehind] = useState(0);
+  const attentionThreadId = detail?.thread.id ?? null;
+  const attentionStatus = detail?.thread.status;
+  useEffect(() => {
+    if (!attentionThreadId || !gitSyncInfo || attentionStatus === "working") {
+      if (!attentionThreadId) setHeaderBehind(0);
+      return;
+    }
+    let live = true;
+    gitSyncInfo(attentionThreadId).then(
+      (info) => {
+        if (live) setHeaderBehind(info.hasUpstream ? info.behind ?? 0 : 0);
+      },
+      () => {
+        if (live) setHeaderBehind(0);
+      },
+    );
+    return () => {
+      live = false;
+    };
+  }, [attentionThreadId, attentionStatus, gitSyncInfo, syncRefreshNonce]);
   const [detailsGit, setDetailsGit] = useState<{
     changed: number;
     sync: GitSyncInfo | null;
@@ -6767,12 +6803,17 @@ export const ThreadView = memo(function ThreadView({
 
   const hasVersionControl =
     Boolean(gitSyncInfo && gitFetch) || headerCommands.length > 0;
+  // A brand-new draft's header is just terminal + right panel (#1411): no
+  // git step or details card until there is a conversation (or notes).
+  const isDraftHeader =
+    emptyMessages && !hasTimeline && !thread.notes && displayPins.length === 0;
   const hasDetails =
-    Boolean(onSetNotes) ||
+    !isDraftHeader &&
+    (Boolean(onSetNotes) ||
     Boolean(worktree.toolbar) ||
     Boolean(thread.sandbox) ||
     Boolean(ring && !ring.view.warn) ||
-    hasVersionControl;
+    hasVersionControl);
   // Worktree lifecycle as one transcript line (t3-style) instead of header
   // churn. Derived from thread state, so no message is stored.
   const worktreeBase =
@@ -6802,6 +6843,11 @@ export const ThreadView = memo(function ThreadView({
         </>
       ) : null}
       <span>from {worktreeBase}</span>
+      {typeof thread.worktreeSetupMs === "number" ? (
+        <span data-worktree-setup-ms="">
+          · {(thread.worktreeSetupMs / 1000).toFixed(1)}s
+        </span>
+      ) : null}
     </div>
   ) : thread.pendingWorktree &&
     thread.status !== "failed" &&
@@ -7160,7 +7206,7 @@ export const ThreadView = memo(function ThreadView({
         </div>
         <div className={styles.headerTrail}>
           <div className={styles.actions}>
-          {!thread.ask && (
+          {!thread.ask && !isDraftHeader && (
           <NextGitActionButton
             thread={thread}
             isWorking={isWorking}
@@ -7210,8 +7256,17 @@ export const ThreadView = memo(function ThreadView({
               data-active={detailsOpen ? "true" : undefined}
               aria-haspopup="dialog"
               aria-expanded={detailsOpen}
-              aria-label="Thread details"
-              title="Thread details"
+              aria-label={
+                headerBehind > 0
+                  ? `Thread details: ${headerBehind} behind upstream`
+                  : "Thread details"
+              }
+              title={
+                headerBehind > 0
+                  ? `Thread details · ${headerBehind} behind upstream`
+                  : "Thread details"
+              }
+              data-attention={headerBehind > 0 ? "" : undefined}
               onClick={() => setDetailsOpen((v) => !v)}
             >
               <svg
@@ -7228,7 +7283,9 @@ export const ThreadView = memo(function ThreadView({
                 <circle cx="8" cy="8" r="5.75" />
                 <path d="M8 7.25v3.5M8 5.25h.01" />
               </svg>
-              {thread.notes ? (
+              {headerBehind > 0 ? (
+                <span className={styles.attentionDot} data-attention-dot="" aria-hidden />
+              ) : thread.notes ? (
                 <span className={styles.notesDot} data-notes-dot="" aria-hidden />
               ) : null}
             </button>

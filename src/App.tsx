@@ -338,6 +338,8 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     listLocalServers,
     revealInFinder,
     openInEditor,
+    listEditors,
+    openWorktreeIn,
     gitSyncInfo,
     gitFetch,
     gitRepoInfo,
@@ -2276,6 +2278,8 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         onRefreshWorkerSnapshot={refreshWorkerSnapshot}
         conflictContext={conflictContext}
         onOpenWorktree={openInEditor}
+        listEditors={listEditors}
+        onOpenWorktreeIn={openWorktreeIn}
         onOpenCrewIntegration={openCrewIntegration}
         workerCount={workerCount}
         onOpenWorkers={workerCount > 0 ? revealAgentsTeam : undefined}

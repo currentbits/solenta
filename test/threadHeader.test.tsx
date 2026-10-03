@@ -88,10 +88,19 @@ function msg(
   };
 }
 
+// A started thread by default: a message-less detail is a draft, whose
+// header has no git step or details card (#1411). Draft tests pass [].
 function detail(over: Partial<ThreadDetail> = {}): ThreadDetail {
   return {
     thread: over.thread ?? thread(),
-    messages: over.messages ?? [],
+    messages: over.messages ?? [
+      {
+        id: "u-start",
+        role: "user",
+        text: "start",
+        createdAt: 1,
+      } as ThreadDetail["messages"][number],
+    ],
     workLog: over.workLog ?? [],
     workflow: over.workflow ?? null,
     usage: over.usage ?? null,
@@ -168,6 +177,8 @@ function view(props: {
   heroProjects?: ProjectInfo[];
   onMoveDraftToProject?: (threadId: string, projectId: string) => void;
   onStartWithoutProject?: (threadId: string) => void;
+  listEditors?: () => Promise<{ id: "cursor" | "vscode" | "zed" | "terminal" | "finder"; name: string }[]>;
+  onOpenWorktreeIn?: (editor: "cursor" | "vscode" | "zed" | "terminal" | "finder") => void;
 }) {
   return (
     <ThreadView
@@ -221,6 +232,8 @@ function view(props: {
       heroProjects={props.heroProjects}
       onMoveDraftToProject={props.onMoveDraftToProject}
       onStartWithoutProject={props.onStartWithoutProject}
+      listEditors={props.listEditors}
+      onOpenWorktreeIn={props.onOpenWorktreeIn}
     />
   );
 }
@@ -820,6 +833,36 @@ describe("Thread details card rows (#1411)", () => {
     m.unmount();
   });
 
+  it("opens the worktree in a chosen editor and remembers it", async () => {
+    globalThis.window?.localStorage.removeItem("solenta:openInEditor");
+    const opened: string[] = [];
+    const m = await mount(
+      view({
+        onSetupWorktree: async () => {},
+        onMergeWorktree: async () => {},
+        onRemoveWorktree: async () => {},
+        listEditors: async () => [
+          { id: "cursor", name: "Cursor" },
+          { id: "zed", name: "Zed" },
+          { id: "finder", name: "Finder" },
+        ],
+        onOpenWorktreeIn: (id) => opened.push(id),
+      }),
+    );
+    await m.flush();
+    await m.click(m.query("[data-thread-details-btn]"));
+    await m.flush();
+    const main = m.query("[data-worktree-open]")!;
+    assert.equal(main.textContent, "Cursor", "first installed editor by default");
+    await m.click(m.query("[data-editor-menu]"));
+    await m.click(m.query('[data-editor-option="zed"]'));
+    assert.deepEqual(opened, ["zed"]);
+    assert.equal(window.localStorage.getItem("solenta:openInEditor"), "zed");
+    assert.equal(m.query("[data-worktree-open]")!.textContent, "Zed", "remembered");
+    m.unmount();
+    window.localStorage.removeItem("solenta:openInEditor");
+  });
+
   it("offers Commit / Push / Create PR from what the branch needs", async () => {
     const opened: string[] = [];
     const m = await mount(
@@ -836,6 +879,20 @@ describe("Thread details card rows (#1411)", () => {
     assert.ok(m.query("[data-details-create-pr]"), "no PR yet → Create PR");
     assert.equal(m.query("[data-details-commit]"), null, "clean tree → no Commit");
     assert.match(m.query("[data-details-status]")?.textContent ?? "", /0 changed/);
+    m.unmount();
+  });
+
+  it("marks the details toggle amber when the branch is behind upstream", async () => {
+    const m = await mount(
+      view({
+        gitFetch: async () => {},
+        gitSyncInfo: async () => ({ hasUpstream: true, ahead: 0, behind: 3 }),
+      }),
+    );
+    await m.flush();
+    const btn = m.query("[data-thread-details-btn]")!;
+    assert.ok(btn.querySelector("[data-attention-dot]"), "amber dot");
+    assert.match(btn.getAttribute("title") ?? "", /3 behind upstream/);
     m.unmount();
   });
 
@@ -927,12 +984,17 @@ describe("worktree line at the top of the transcript (#1411)", () => {
 
   it("says Worktree ready with branch and base once the worktree exists", async () => {
     const m = await mount(
-      view({ detail: detail({ thread: thread({ baseBranch: "release" }), messages: sent }) }),
+      view({
+        detail: detail({
+          thread: thread({ baseBranch: "release", worktreeSetupMs: 2140 }),
+          messages: sent,
+        }),
+      }),
     );
     await m.flush();
     const line = m.query('[data-worktree-line="ready"]');
     assert.ok(line);
-    assert.match(line!.textContent ?? "", /Worktree ready·coder\/header-features-abc123from release/);
+    assert.match(line!.textContent ?? "", /Worktree ready·coder\/header-features-abc123from release· 2\.1s/);
     m.unmount();
   });
 
