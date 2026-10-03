@@ -62,7 +62,7 @@ describe("ejectCommand (#554)", () => {
     const resume =
       `cd ${posixQuote(cwd)} && codex exec resume ${posixQuote(sessionId)}`;
     assert.equal(command.split("\n")[0], resume);
-    assert.equal(command.includes("-m"), false, "must not pretend -m switches the rollout");
+    assert.doesNotMatch(command, /(^|\s)-m(\s|$)/, "must not pretend -m switches the rollout");
     assert.ok(note);
     assert.match(note, /cannot honor/i);
     assert.match(note, /gpt-6-astra/);
@@ -158,7 +158,8 @@ describe("setEjected copies the command (#554)", () => {
       copied.split("\n")[0],
       `cd ${posixQuote(projectPath)} && codex exec resume ${posixQuote("codex-sess")}`,
     );
-    assert.equal(copied.includes("-m"), false);
+    // -m as a flag only: the mkdtemp cd path can itself contain "-m".
+    assert.doesNotMatch(copied, /(^|\s)-m(\s|$)/);
     assert.match(copied, /cannot honor/i);
     assert.match(copied, /gpt-6-astra/);
     assert.match(copied, /gpt-5.6-sol/);
