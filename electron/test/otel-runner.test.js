@@ -9,6 +9,7 @@ const { Store } = require("../store.js");
 const services = require("../services.js");
 const { createRunner } = require("../runner.js");
 const { writeFakeBin } = require("./support/fakeBin.js");
+const { rmTree } = require("./support/rmTree.js");
 
 // otel.js is unit-tested against injected deps; this covers the other half —
 // that a real run through the runner actually reaches a collector, with the
@@ -161,7 +162,7 @@ describe("OTel spans from a real run", () => {
       runner.stopAll();
     }
     globalThis.fetch = prevFetch;
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+    await rmTree(tmpDir);
     if (prevBin === undefined) delete process.env.CODER_CLAUDE_BIN;
     else process.env.CODER_CLAUDE_BIN = prevBin;
     if (prevEnvFile === undefined) delete process.env.CODER_FAKE_CLAUDE_ENV_FILE;

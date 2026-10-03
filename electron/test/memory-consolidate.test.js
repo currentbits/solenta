@@ -491,3 +491,105 @@ describe("pruneConsolidateThreads", () => {
     assert.equal(left.includes(ids[1]), false);
   });
 });
+
+describe("resolveConsolidateProvider falls back after a failed grok pass (#1384)", () => {
+  const { resolveConsolidateProvider, GROK_RETRY_AFTER_MS } = require(
+    "../memory-consolidate.js",
+  );
+  let tmpDir;
+  let store;
+  let prevGrokBin;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "coder-memc-provider-"));
+    // An existing absolute path counts as an installed grok CLI.
+    prevGrokBin = process.env.CODER_GROK_BIN;
+    process.env.CODER_GROK_BIN = path.join(tmpDir, "grok");
+    fs.writeFileSync(process.env.CODER_GROK_BIN, "");
+    store = new Store(path.join(tmpDir, "store.json"));
+    store.setProjects([
+      { id: "p1", slug: "acme/app", name: "app", path: tmpDir },
+    ]);
+    store.saveNow();
+  });
+
+  afterEach(() => {
+    if (prevGrokBin === undefined) delete process.env.CODER_GROK_BIN;
+    else process.env.CODER_GROK_BIN = prevGrokBin;
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  function pass(provider, status, updatedAt) {
+    const t = services.createThread(store, {
+      projectId: "p1",
+      title: TITLE,
+      memoryConsolidate: true,
+    });
+    store.updateThread(t.id, { provider, status, createdAt: updatedAt, updatedAt });
+  }
+
+  const now = at(2026, 8, 29, 12);
+  const pick = () =>
+    resolveConsolidateProvider({ store, projectId: "p1", now }).provider;
+
+  it("uses grok when installed and no grok pass has failed", () => {
+    assert.equal(pick(), "grok");
+    pass("grok", "done", now - 1000);
+    assert.equal(pick(), "grok");
+  });
+
+  it("uses claude while the latest grok pass failed recently", () => {
+    pass("grok", "failed", now - 60_000);
+    assert.equal(pick(), "claude");
+    // A later successful claude pass does not re-arm grok.
+    pass("claude", "done", now - 1000);
+    assert.equal(pick(), "claude");
+  });
+
+  it("retries grok once the failure is older than the retry window", () => {
+    pass("grok", "failed", now - GROK_RETRY_AFTER_MS - 1);
+    assert.equal(pick(), "grok");
+  });
+});
+
+describe("recordConsolidateOutcome (#1384)", () => {
+  const { recordConsolidateOutcome } = require("../memory-consolidate.js");
+  let tmpDir;
+  let store;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "coder-memc-outcome-"));
+    store = new Store(path.join(tmpDir, "store.json"));
+    store.setProjects([
+      { id: "p1", slug: "acme/app", name: "app", path: tmpDir },
+    ]);
+    store.saveNow();
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  const project = () => store.getProjects().find((p) => p.id === "p1");
+
+  it("records a mid-run failure on the project, then clears it on success", () => {
+    const pass = services.createThread(store, {
+      projectId: "p1",
+      title: TITLE,
+      memoryConsolidate: true,
+    });
+    recordConsolidateOutcome(store, pass.id, "failed", "Run error: Not signed in.");
+    assert.equal(project().memoryConsolidateError, "Run error: Not signed in.");
+    assert.equal(typeof project().memoryConsolidateDoneAt, "number");
+
+    recordConsolidateOutcome(store, pass.id, "done", "ok");
+    assert.equal(project().memoryConsolidateError, null);
+  });
+
+  it("ignores ordinary threads", () => {
+    const t = services.createThread(store, { projectId: "p1", title: "work" });
+    recordConsolidateOutcome(store, t.id, "failed", "boom");
+    assert.equal(project().memoryConsolidateError, undefined);
+    assert.equal(project().memoryConsolidateDoneAt, undefined);
+  });
+});

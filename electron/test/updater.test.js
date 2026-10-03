@@ -92,7 +92,7 @@ describe("updater.checkUpdate", () => {
     assert.match(res.url, /releases\/tag\/v0.2.0/);
   });
 
-  it("nightly: follows the newest release, prerelease or not", async () => {
+  it("nightly: ignores a newer prod release and follows the newest prerelease", async () => {
     const res = await updater.checkUpdate({
       pkg: NIGHTLY_PKG,
       bundlePath: null,
@@ -116,10 +116,8 @@ describe("updater.checkUpdate", () => {
         ],
       }),
     });
-    // A prod release cut after the last nightly wins, otherwise the install
-    // freezes as soon as nightlies stop being cut.
     assert.equal(res.state, "available");
-    assert.equal(res.tag, "v0.2.0");
+    assert.equal(res.tag, "nightly-202608140000-def456");
   });
 
   it("nightly: picks by publish time, not list position (GitHub floats 'latest' first)", async () => {
@@ -158,12 +156,12 @@ describe("updater.checkUpdate", () => {
       bundlePath: null,
       fetch: fakeFetch({
         "/releases?": [
-          { tag_name: "v0.3.0", prerelease: false, draft: true, assets: [] },
-          { tag_name: "v0.2.0", prerelease: false, draft: false, html_url: "y", assets: [] },
+          { tag_name: "nightly-draft", prerelease: true, draft: true, assets: [] },
+          { tag_name: "nightly-live", prerelease: true, draft: false, html_url: "y", assets: [] },
         ],
       }),
     });
-    assert.equal(res.tag, "v0.2.0");
+    assert.equal(res.tag, "nightly-live");
   });
 
   it("nightly: reports none when the newest release is this build", async () => {
@@ -179,9 +177,10 @@ describe("updater.checkUpdate", () => {
     assert.equal(res.state, "none");
   });
 
-  it("channelOverride switches a prod build onto the nightly feed", async () => {
+  it("channelOverride switches a portable prod build onto the nightly feed", async () => {
     const res = await updater.checkUpdate({
       pkg: PROD_PKG,
+      platform: "linux",
       channelOverride: "nightly",
       bundlePath: null,
       fetch: fakeFetch({
@@ -199,6 +198,20 @@ describe("updater.checkUpdate", () => {
     assert.equal(res.state, "available");
     assert.equal(res.channel, "nightly");
     assert.equal(res.tag, "nightly-202608140000-def456");
+  });
+
+  it("macOS keeps its stamped channel despite the shared settings override", async () => {
+    const res = await updater.checkUpdate({
+      pkg: PROD_PKG,
+      platform: "darwin",
+      channelOverride: "nightly",
+      bundlePath: null,
+      fetch: fakeFetch({
+        "/releases/latest": { tag_name: "v0.2.0", assets: [] },
+      }),
+    });
+    assert.equal(res.channel, "prod");
+    assert.equal(res.tag, "v0.2.0");
   });
 
   it("channelOverride does not enable updates in an unstamped dev tree", async () => {
@@ -255,6 +268,62 @@ describe("updater.stage digest verification", () => {
       updater.stage(asset(`sha256:${sum}`), "/nope.app", "v1", deps),
       (err) => !/digest/.test(err.message),
     );
+  });
+});
+
+describe("updater.downloadUpdate macOS", () => {
+  afterEach(() => updater.resetStaged());
+
+  it("relaunches the new executable from the installed bundle", async () => {
+    if (process.platform !== "darwin") return;
+    const parent = fs.mkdtempSync(path.join(os.tmpdir(), "solenta-upd-mac-"));
+    const install = path.join(parent, "Solenta.app");
+    const next = path.join(parent, "Solenta.app");
+    const zip = path.join(parent, "update.zip");
+    try {
+      fs.mkdirSync(path.join(install, "Contents", "MacOS"), { recursive: true });
+      fs.writeFileSync(path.join(install, "Contents", "MacOS", "Solenta Old"), "old");
+      fs.mkdirSync(path.join(next, "Contents", "MacOS"), { recursive: true });
+      fs.writeFileSync(path.join(next, "Contents", "MacOS", "Solenta"), "new");
+      fs.writeFileSync(path.join(next, "Contents", "Info.plist"),
+        '<?xml version="1.0"?><plist version="1.0"><dict><key>CFBundleExecutable</key><string>Solenta</string></dict></plist>');
+      execFileSync("ditto", ["-c", "-k", "--keepParent", next, zip]);
+      const bytes = fs.readFileSync(zip);
+      const digest = `sha256:${crypto.createHash("sha256").update(bytes).digest("hex")}`;
+      const res = await updater.downloadUpdate({
+        pkg: PROD_PKG,
+        platform: "darwin",
+        arch: "arm64",
+        bundlePath: install,
+        fetch: async (url) => String(url).includes("example.invalid")
+          ? { ok: true, status: 200, body: Readable.toWeb(Readable.from(bytes)) }
+          : { ok: true, status: 200, json: async () => ({
+            tag_name: "v0.2.0",
+            assets: [{
+              name: "Solenta-v0.2.0-macos-arm64.zip",
+              browser_download_url: "https://example.invalid/app.zip",
+              digest,
+            }],
+          }) },
+      });
+      assert.equal(res.state, "staged");
+      assert.equal(fs.readFileSync(path.join(install, "Contents", "MacOS", "Solenta"), "utf8"), "new");
+      assert.equal(fs.readFileSync(path.join(`${install}.old`, "Contents", "MacOS", "Solenta Old"), "utf8"), "old");
+
+      const calls = [];
+      updater.applyUpdate({ platform: "darwin", app: {
+        relaunch: (opts) => calls.push(["relaunch", opts]),
+        quit: () => calls.push(["quit"]),
+      } });
+      assert.deepEqual(calls, [
+        ["relaunch", { execPath: path.join(install, "Contents", "MacOS", "Solenta") }],
+        ["quit"],
+      ]);
+      assert.equal(updater.bundlePath(calls[0][1].execPath, "darwin"), install);
+    } finally {
+      fs.rmSync(parent, { recursive: true, force: true });
+      fs.rmSync(`${install}.old`, { recursive: true, force: true });
+    }
   });
 });
 

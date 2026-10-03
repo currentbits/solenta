@@ -26,6 +26,7 @@ const { Store } = require("../store.js");
 const services = require("../services.js");
 const { createRunner } = require("../runner.js");
 const { writeFakeBin } = require("./support/fakeBin.js");
+const { rmTree } = require("./support/rmTree.js");
 
 const ECHO_HELLO = path.join(__dirname, "fixtures", "muse", "echo-hello.jsonl");
 
@@ -362,7 +363,7 @@ describe("muse runner: overlay on a crossesBoundary turn", () => {
       assert.equal(env.XDG_CONFIG_HOME.includes("\\"), false);
     } finally {
       if (runner) runner.stopAll();
-      fs.rmSync(tmpDir, { recursive: true, force: true });
+      await rmTree(tmpDir);
       for (const [k, v] of Object.entries(prev)) {
         if (v === undefined) delete process.env[k];
         else process.env[k] = v;
@@ -438,7 +439,7 @@ describe("muse runner: overlay on a crossesBoundary turn", () => {
     } finally {
       if (runner) runner.stopAll();
       ssh.setExecFileSync(null);
-      fs.rmSync(tmpDir, { recursive: true, force: true });
+      await rmTree(tmpDir);
       for (const [k, v] of Object.entries(prev)) {
         if (v === undefined) delete process.env[k];
         else process.env[k] = v;
@@ -509,7 +510,7 @@ describe("workflow muse remote overlay", () => {
       assert.equal(env.XDG_CONFIG_HOME.includes("\\"), false);
       assert.equal(env.XDG_DATA_HOME.includes("\\"), false);
     } finally {
-      fs.rmSync(tmpDir, { recursive: true, force: true });
+      await rmTree(tmpDir);
       for (const [k, v] of Object.entries(prev)) {
         if (v === undefined) delete process.env[k];
         else process.env[k] = v;

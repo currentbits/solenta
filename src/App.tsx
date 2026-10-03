@@ -104,6 +104,18 @@ export type AppView =
   | "insights"
   | "digest";
 
+/**
+ * Collapsed sidebar rail (window controls + Show sidebar). The macOS desktop
+ * window draws its traffic lights at x 16..72 (hiddenInset), so the rail is
+ * wide enough to hold them instead of letting them cover the page header.
+ */
+const SIDEBAR_RAIL_WIDTH =
+  !isWebMode() &&
+  typeof navigator !== "undefined" &&
+  /Mac/i.test(navigator.platform || navigator.userAgent || "")
+    ? 84
+    : 44;
+
 type DrawerId = "sidebar" | "agents";
 
 // CSS px, so Electron zoom (settings.uiScale) is included. minWidth 1100 DIP
@@ -207,6 +219,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     clearError,
     addProject,
     createProject,
+    ensureScratchProject,
     updateProject,
     createThread,
     listBaseBranches,
@@ -246,6 +259,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     setNotes,
     setMessagePins,
     setBaseBranch,
+    setPendingWorktree,
     refreshWorkerSnapshot,
     resolveSuggestion,
     setFeltEstimate,
@@ -294,6 +308,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     pushBranch,
     createPr,
     prChecks,
+    prStatus,
     prMerge,
     listPrs,
     checkoutPr,
@@ -324,6 +339,8 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     listLocalServers,
     revealInFinder,
     openInEditor,
+    listEditors,
+    openWorktreeIn,
     gitSyncInfo,
     gitFetch,
     gitRepoInfo,
@@ -480,6 +497,25 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     initialSidebarWidth,
   );
   const [agentsCollapsed, setAgentsCollapsed] = useState(true);
+  /** Wide layouts: the thread sidebar folds to a rail (#1411, ⌘B). */
+  const [sidebarHidden, setSidebarHidden] = useState(() => {
+    try {
+      return window.localStorage.getItem("app:sidebarHidden") === "1";
+    } catch {
+      return false;
+    }
+  });
+  const toggleSidebar = useCallback(() => {
+    setSidebarHidden((hidden) => {
+      const next = !hidden;
+      try {
+        window.localStorage.setItem("app:sidebarHidden", next ? "1" : "0");
+      } catch {
+        // storage blocked: still toggle for this session
+      }
+      return next;
+    });
+  }, []);
   /** Manual inspector tabs for this renderer session. Collapse unmounts the panel. */
   const [inspectorChoices, setInspectorChoices] = useState<
     Record<string, PanelTab>
@@ -808,6 +844,14 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
       void setThreadProject(threadId, projectId);
     },
     [setThreadProject],
+  );
+
+  const startWithoutProject = useCallback(
+    async (threadId: string) => {
+      const scratch = await ensureScratchProject();
+      if (scratch) await setThreadProject(threadId, scratch.id);
+    },
+    [ensureScratchProject, setThreadProject],
   );
 
   const handleSetMuted = useCallback(
@@ -1242,6 +1286,17 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      if (!(e.metaKey || e.ctrlKey) || e.altKey || e.shiftKey) return;
+      if (e.key.toLowerCase() !== "b" || narrow || dialogOpen()) return;
+      e.preventDefault();
+      toggleSidebar();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [toggleSidebar, narrow]);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
       if (!(e.metaKey || e.ctrlKey) || e.key !== ".") return;
       if (e.altKey || e.shiftKey) return;
       if (dialogOpen()) return;
@@ -1326,7 +1381,9 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     async (s: WorkSuggestion) => {
       const threadId = selectedThreadId;
       if (!threadId) return;
-      const t = await forkThread(threadId, { worktree: true });
+      // Stay on the thread the chip was clicked from; the new worker shows
+      // up in the sidebar and runs in the background.
+      const t = await forkThread(threadId, { worktree: true, select: false });
       if (!t) return;
       // Resolve before startRun so a failed kickoff cannot leave the chip
       // open — a retry would fork a second idle thread.
@@ -1336,8 +1393,8 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
       try {
         await startRun(s.prompt, t.id);
       } catch {
-        // startRun already set the run-scope error. The fork exists, the
-        // chip is started, and forkThread selected the new thread.
+        // startRun already set the run-scope error. The fork exists and
+        // the chip is started; the new thread is in the sidebar.
       }
     },
     [selectedThreadId, forkThread, startRun, resolveSuggestion],
@@ -1392,6 +1449,20 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
       if (isDirectCrewChild(t, parent)) n++;
     }
     return n;
+  }, [threads, visibleDetail?.thread]);
+
+  /** Draft strip "Previous worktree": the project's most recently active
+   *  other worktree thread (#1411). */
+  const previousWorktree = useMemo(() => {
+    const cur = visibleDetail?.thread;
+    if (!cur) return null;
+    let best: (typeof threads)[number] | null = null;
+    for (const t of threads) {
+      if (t.id === cur.id || t.projectId !== cur.projectId) continue;
+      if (t.archived || !t.worktreePath || !t.branch) continue;
+      if (!best || t.updatedAt > best.updatedAt) best = t;
+    }
+    return best?.branch ? { branch: best.branch, title: best.title } : null;
   }, [threads, visibleDetail?.thread]);
 
   /** What the Agents team view refetches on: ids + statuses, not identity. */
@@ -1866,10 +1937,15 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         data-layout="app"
         data-drawer={drawer ?? ""}
         data-agents-collapsed={hideAgentsRail ? "true" : undefined}
+        data-sidebar-hidden={!narrow && sidebarHidden ? "true" : undefined}
         style={
           narrow
             ? undefined
-            : ({ "--sidebar-width": `${sidebarWidth}px` } as CSSProperties)
+            : ({
+                "--sidebar-width": sidebarHidden
+                  ? `${SIDEBAR_RAIL_WIDTH}px`
+                  : `${sidebarWidth}px`,
+              } as CSSProperties)
         }
       >
         <div className={styles.narrowBar} data-narrow-chrome="">
@@ -1920,9 +1996,42 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
           tabIndex={-1}
           inert={narrow && drawer !== "sidebar"}
         >
+          {!narrow && sidebarHidden ? (
+            <div className={styles.sidebarRail} data-sidebar-rail="">
+              <div className={styles.sidebarRailDrag} />
+              <button
+                type="button"
+                className={styles.sidebarRailBtn}
+                data-sidebar-show=""
+                aria-label="Show sidebar"
+                title="Show sidebar (⌘B)"
+                onClick={toggleSidebar}
+              >
+                <svg
+                  width="15"
+                  height="15"
+                  viewBox="0 0 16 16"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.5"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden="true"
+                >
+                  <rect x="2.5" y="2.5" width="11" height="11" rx="2" />
+                  <path d="M6 2.5v11" />
+                </svg>
+              </button>
+            </div>
+          ) : null}
+          <div
+            className={styles.sidebarBody}
+            hidden={!narrow && sidebarHidden}
+          >
           <ErrorBoundary pane="Sidebar">
             <Sidebar
         appName="Solenta"
+        onCollapseSidebar={narrow ? undefined : toggleSidebar}
         appVersion={appStatus?.build.version ?? null}
         channel={appStatus?.build.channel ?? null}
         updateState={updateStatus?.state ?? null}
@@ -1988,8 +2097,9 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         conflictForecast={forecast}
             />
           </ErrorBoundary>
+          </div>
         </div>
-        {!narrow && (
+        {!narrow && !sidebarHidden && (
           <div
             role="separator"
             aria-orientation="vertical"
@@ -2034,6 +2144,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
                   : listProviderLimits
               }
               quotaDemo={quotaDemo}
+              providers={providers}
               onSelectThread={handleSelectThread}
               existingThreadIds={
                 loading ? undefined : threads.map((t) => t.id)
@@ -2160,9 +2271,18 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         onRemoveWorktree={removeWorktree}
         listBaseBranches={listBaseBranches}
         onSetBaseBranch={setBaseBranch}
+        onSetPendingWorktree={setPendingWorktree}
+        previousWorktree={previousWorktree}
+        heroProjects={projects}
+        onMoveDraftToProject={handleSetThreadProject}
+        onStartWithoutProject={(id) => void startWithoutProject(id)}
+        agentsPanelOpen={narrow ? drawer === "agents" : !agentsCollapsed}
+        onToggleAgentsPanel={toggleAgents}
         onRefreshWorkerSnapshot={refreshWorkerSnapshot}
         conflictContext={conflictContext}
         onOpenWorktree={openInEditor}
+        listEditors={listEditors}
+        onOpenWorktreeIn={openWorktreeIn}
         onOpenCrewIntegration={openCrewIntegration}
         workerCount={workerCount}
         onOpenWorkers={workerCount > 0 ? revealAgentsTeam : undefined}
@@ -2272,6 +2392,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         onCreatePr={createPr}
         onPrTemplate={prTemplate}
         onPrChecks={prChecks}
+        onPrStatus={prStatus}
         onPrMerge={prMerge}
         gitSyncInfo={gitSyncInfo}
         gitFetch={gitFetch}
@@ -2450,11 +2571,6 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         discardHarnessImport={discardHarnessImport}
         activeView={view}
         onOpenPrs={openPrs}
-        onOpenAutomations={openAutomations}
-        onOpenUsage={openUsage}
-        onOpenFleet={openFleet}
-        onOpenInsights={openInsights}
-        onOpenDigest={openDigest}
         onFork={handleForkOpen}
           />
           </ErrorBoundary>
@@ -2502,6 +2618,8 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
           onSaveSettings={(patch) => saveSettings(patch)}
           onTestWebhook={testWebhook}
           onShowOnboarding={showOnboarding}
+          onOpenConnection={(input) => api.app.openRemoteConnection(input)}
+          onForgetConnection={(input) => api.app.forgetRemoteConnection(input)}
         />
         <OnboardingModal
           open={onboardingOpen}

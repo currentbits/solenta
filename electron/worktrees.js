@@ -588,7 +588,23 @@ function resolveWorktreeStart(thread, projectPath) {
   if (thread && thread.orchWorker) {
     throw new Error(MISSING_START_SNAPSHOT);
   }
-  return resolveStartPoint(projectPath, mergeBaseName(thread, projectPath));
+  const base = mergeBaseName(thread, projectPath);
+  // "Start from origin" (draft strip, #1411): fetch the base and start from
+  // origin's copy. Bounded and prompt-free; no remote copy (offline, local
+  // stacked branch) falls back to the local branch below.
+  if (thread && thread.worktreeFromOrigin === true && base) {
+    gitTry(projectPath, ["fetch", "origin", base], {
+      timeout: 10_000,
+      env: { GIT_TERMINAL_PROMPT: "0" },
+    });
+    const remote = gitTry(projectPath, [
+      "rev-parse",
+      "--verify",
+      `refs/remotes/origin/${base}^{commit}`,
+    ]);
+    if (remote.ok && remote.stdout) return `origin/${base}`;
+  }
+  return resolveStartPoint(projectPath, base);
 }
 
 /**
@@ -791,6 +807,74 @@ function checkoutForMerge(preferredPath, branch) {
   );
 }
 
+function realOrResolved(p) {
+  try {
+    return fs.realpathSync(p);
+  } catch {
+    return path.resolve(p);
+  }
+}
+
+/**
+ * `git worktree remove` without blocking on the delete (#1392). The sync
+ * remove froze the main process for the whole recursive delete (0.4 s for
+ * a median worktree, 4 s for a large one; the 15 s cap failed a merge that
+ * had landed). Same refusals as git, then an O(1) rename aside, a prune,
+ * and an async delete. Only a LINKED worktree of repoPath qualifies (never
+ * the main checkout); anything else, or a failed rename (Windows EBUSY),
+ * falls back to git's own remove.
+ *
+ * @param {string} repoPath
+ * @param {string} wtPath
+ * @param {boolean} force
+ * @returns {{ ok: boolean, combined: string }}
+ */
+function removeWorktreeDir(repoPath, wtPath, force) {
+  const fallback = () =>
+    gitTry(
+      repoPath,
+      force
+        ? ["worktree", "remove", "--force", wtPath]
+        : ["worktree", "remove", wtPath],
+    );
+  const list = gitTry(repoPath, ["worktree", "list", "--porcelain"]);
+  if (!list.ok) return fallback();
+  const target = realOrResolved(wtPath);
+  const linked = list.stdout
+    .split("\n")
+    .filter((l) => l.startsWith("worktree "))
+    .slice(1) // the first entry is the main checkout
+    .map((l) => realOrResolved(l.slice("worktree ".length)));
+  if (!linked.includes(target)) return fallback();
+  if (!force) {
+    const st = gitTry(wtPath, ["status", "--porcelain"]);
+    if (!st.ok) return fallback();
+    if (st.stdout) {
+      return {
+        ok: false,
+        combined: `fatal: '${wtPath}' contains modified or untracked files, use --force to delete it`,
+      };
+    }
+  }
+  const trash = path.join(
+    path.dirname(target),
+    `.trash-${path.basename(target)}-${Date.now()}`,
+  );
+  try {
+    fs.renameSync(target, trash);
+  } catch {
+    return fallback();
+  }
+  gitTry(repoPath, ["worktree", "prune"]);
+  invalidateGitReads(target);
+  // ponytail: fire-and-forget; a crash mid-delete leaves a .trash-* dir that
+  // is not a git repo, which the boot orphan sweep force-removes.
+  void fs.promises
+    .rm(trash, { recursive: true, force: true, maxRetries: 3 })
+    .catch(() => {});
+  return { ok: true, combined: "" };
+}
+
 /**
  * Clear thread worktree fields, remove worktree dir + branch, save, broadcast.
  * A missing directory is already-removed: do not throw, still null
@@ -810,10 +894,7 @@ function cleanupWorktree(opts) {
 
   if (wtPath) {
     if (fs.existsSync(wtPath)) {
-      const args = forceRemove
-        ? ["worktree", "remove", "--force", wtPath]
-        : ["worktree", "remove", wtPath];
-      const rem = gitTry(project.path, args);
+      const rem = removeWorktreeDir(project.path, wtPath, Boolean(forceRemove));
       if (!rem.ok && fs.existsSync(wtPath)) {
         throw new Error(
           `Failed to remove worktree: ${rem.combined.split("\n")[0]}`,
@@ -1139,6 +1220,8 @@ function autoResolveMergeArtifacts(cwd) {
  *   commit; omitted = add -A. Leftover dirty files refuse the merge so the
  *   worktree is not deleted with uncommitted work.
  * @param {(channel: string, payload: unknown) => void} [opts.broadcast]
+ * @param {(review: object) => boolean} [opts.ciWorkflowSignOff] host-only
+ *   approval lookup/request, bound to the exact clean merge preview
  * @returns {object} updated ThreadInfo
  */
 function mergeWorktree(opts) {
@@ -1197,7 +1280,9 @@ function mergeWorktree(opts) {
     wtPath,
     baseForGate,
     true,
-    opts.ciWorkflowApproved === true,
+    typeof opts.ciWorkflowSignOff === "function"
+      ? (files) => opts.ciWorkflowSignOff(ciWorkflowMergeReview(thread, target, files))
+      : opts.ciWorkflowApproved === true,
   );
 
   // (a) Commit any uncommitted worktree changes. Refuse while conflicts are
@@ -1688,6 +1773,9 @@ function setupWorktree(opts) {
     execCommand(project, "mkdir", ["-p", path.posix.dirname(addPath)]);
   }
 
+  // Timed for the transcript's "Worktree ready · … · 2.1s" line (#1411);
+  // covers the start-point resolution (incl. a Start-from-origin fetch).
+  const setupStartedAt = Date.now();
   try {
     const start = resolveWorktreeStart(thread, project.path);
     gitOut(project.path, ["worktree", "add", "-b", branch, addPath, start]);
@@ -1700,6 +1788,7 @@ function setupWorktree(opts) {
   const updated = store.updateThread(threadId, {
     worktreePath: dir,
     branch,
+    worktreeSetupMs: Math.max(0, Date.now() - setupStartedAt),
   });
   store.save();
 
@@ -2211,7 +2300,41 @@ function gateCiWorkflowMerge(cwd, base, includeWorkingTree, approved) {
   if (!listed.ok) {
     throw new Error(inspectFailedMessage(listed.reason));
   }
-  assertCiWorkflowSignOff(ciWorkflowFiles(listed.paths), approved === true);
+  const files = ciWorkflowFiles(listed.paths);
+  assertCiWorkflowSignOff(files, files.length && typeof approved === "function"
+    ? approved(files) === true : approved === true);
+}
+
+/** Host-generated review, before checkout writes. Never truncate what is signed. */
+function ciWorkflowMergeReview(thread, target, files) {
+  // Require committed, clean inputs so the reviewed Git trees are exactly the
+  // ones mergeWorktree will use (no auto-commit, stash, or conflict replay).
+  for (const cwd of [thread.worktreePath, target]) {
+    if (gitOut(cwd, ["status", "--porcelain", "-uall"])) {
+      throw new Error("CI_WORKFLOW: Commit or stash changes in the worker and destination before requesting workflow sign-off.");
+    }
+  }
+  const sourceSha = gitOut(thread.worktreePath, ["rev-parse", "HEAD"]);
+  if (gitOut(thread.worktreePath, ["rev-parse", thread.branch]) !== sourceSha) {
+    throw new Error("CI_WORKFLOW: Worker checkout no longer matches its branch.");
+  }
+  const destinationPath = fs.realpathSync(target);
+  const destinationBranch = gitOut(target, ["symbolic-ref", "--quiet", "--short", "HEAD"]);
+  const destinationSha = gitOut(target, ["rev-parse", "HEAD"]);
+  const merged = gitTry(target, ["merge-tree", "--write-tree", destinationSha, sourceSha]);
+  if (!merged.ok) {
+    throw new Error("CI_WORKFLOW: Could not preview a clean merge. Resolve conflicts in the worker before requesting workflow sign-off.");
+  }
+  const tree = merged.stdout.split("\n")[0];
+  const changed = gitOut(target, ["diff", "--name-only", "--no-renames", "-z", destinationSha, tree], { raw: true });
+  const workflowFiles = [...new Set([...files, ...ciWorkflowFiles(changed.split("\0"))])].sort();
+  const patch = gitOut(target, ["diff", "--no-ext-diff", "--no-textconv", "--no-renames", "--binary",
+    destinationSha, tree, "--", ...workflowFiles.map((file) => `:(literal)${file}`)], { raw: true });
+  return {
+    workerThreadId: thread.id, sourcePath: fs.realpathSync(thread.worktreePath),
+    sourceBranch: thread.branch, sourceSha, destinationPath, destinationBranch,
+    destinationSha, tree, files: workflowFiles, patch,
+  };
 }
 
 /**
@@ -5472,9 +5595,47 @@ async function maybeCleanupMergedWorktree(store, threadId) {
 }
 
 /**
+ * Commit a dirty orphan's working state to `recovered/<name>` (#1386) so
+ * the sweep can remove the folder without losing it. The branch is not
+ * `coder/`, so no GC path ever deletes it. Fixed identity and no hooks or
+ * signing: this is a salvage commit, not the user's own.
+ *
+ * @param {string} dir
+ * @param {string} name worktree dir name (thread id)
+ * @returns {Promise<string | null>} the branch, or null when any step failed
+ */
+const RECOVER_MAX_PATHS = 1000;
+
+async function saveOrphanToRecoveryBranch(dir, name) {
+  const branch = `recovered/${name}`;
+  const steps = [
+    ["switch", "-c", branch],
+    ["add", "-A"],
+    [
+      "-c",
+      "user.name=Solenta",
+      "-c",
+      "user.email=solenta@localhost",
+      "-c",
+      "commit.gpgsign=false",
+      "commit",
+      "--no-verify",
+      "-m",
+      `Recovered uncommitted work from deleted thread worktree ${name}`,
+    ],
+  ];
+  for (const args of steps) {
+    const r = await gitTryAsync(dir, args);
+    if (!r.ok) return null;
+  }
+  return branch;
+}
+
+/**
  * Boot-time GC: remove worktree dirs under worktreeBase that no thread
- * references. Conservative — only CLEAN worktrees are removed (a reset
- * store must never cost uncommitted work). A directory git reports as
+ * references. A dirty orphan is first committed to `recovered/<name>`
+ * (#1386) so its work survives as a branch; if that fails the dir is kept
+ * (a reset store must never cost uncommitted work). A directory git reports as
  * "not a git repository" is force-removed (#642): there is no status to
  * honor, and the branch (if any) lives in the repo. Other git failures
  * still keep the dir. Branches are only safe-deleted (-d) so unmerged
@@ -5487,8 +5648,8 @@ async function maybeCleanupMergedWorktree(store, threadId) {
  */
 async function sweepOrphanWorktrees(opts) {
   const { store, worktreeBase } = opts;
-  /** @type {{ removed: string[], kept: string[] }} */
-  const result = { removed: [], kept: [] };
+  /** @type {{ removed: string[], kept: string[], recovered: { dir: string, branch: string }[] }} */
+  const result = { removed: [], kept: [], recovered: [] };
 
   /** @type {fs.Dirent[]} */
   let entries = [];
@@ -5535,7 +5696,7 @@ async function sweepOrphanWorktrees(opts) {
         ["status", "--porcelain", "-uall"],
         { raw: true },
       );
-      if (!status.ok || String(status.stdout || "").trim()) {
+      if (!status.ok) {
         if (!String(status.stdout || "").trim() && gitSaysNotARepo(status)) {
           const forced = await forceRemoveWorktreeDir(dir, repoPath);
           if (forced.ok) result.removed.push(dir);
@@ -5544,6 +5705,23 @@ async function sweepOrphanWorktrees(opts) {
           result.kept.push(dir);
         }
         continue;
+      }
+      const dirty = String(status.stdout || "").trim();
+      if (dirty) {
+        // #1386: no thread will ever surface this dir again, so keeping it
+        // dirty keeps it forever. Commit the work to a branch first; any
+        // failure keeps the dir exactly as before.
+        // ponytail: path-count cap so unignored build output never lands in
+        // the repo's object store; such dirs stay kept, as before #1386.
+        const saved =
+          dirty.split("\n").length <= RECOVER_MAX_PATHS
+            ? await saveOrphanToRecoveryBranch(dir, entry.name)
+            : null;
+        if (!saved) {
+          result.kept.push(dir);
+          continue;
+        }
+        result.recovered.push({ dir, branch: saved });
       }
 
       const br = await gitTryAsync(dir, ["branch", "--show-current"]);
@@ -5740,7 +5918,8 @@ function gitSaysNotARepo(res) {
  */
 async function forceRemoveWorktreeDir(dir, repoPath) {
   try {
-    fs.rmSync(dir, { recursive: true, force: true });
+    // #1392: async rm, so a sweep never blocks the main process on a delete.
+    await fs.promises.rm(dir, { recursive: true, force: true, maxRetries: 3 });
   } catch (err) {
     return {
       ok: false,
@@ -6481,6 +6660,7 @@ module.exports = {
   captureLeadSnapshot,
   resolveWorktreeStart,
   clearMissingWorktree,
+  removeWorktreeDir,
   prepareThreadWorktree,
   gitFailureText,
   maybeRenameWorktreeBranch,

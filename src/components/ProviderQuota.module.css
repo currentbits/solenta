@@ -204,7 +204,8 @@
 .fill {
   height: 100%;
   border-radius: inherit;
-  background: var(--blue);
+  /* Provider brand colour (#1411); warn / high below still win. */
+  background: var(--quota-fill, var(--blue));
 }
 
 .fill[data-warn] {
@@ -236,12 +237,75 @@
   gap: 12px;
 }
 
-.sectionTitle {
-  margin: 0;
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
+/*
+ * Usage › Limits: flat rows (provider | windows), not cards. Scoped to the
+ * section so the thread-view quota dialog keeps its card layout.
+ */
+.section .body {
+  padding: 0;
+  gap: 4px;
+}
+
+.section .list {
+  gap: 0;
+}
+
+.section .row {
+  display: grid;
+  grid-template-columns: minmax(140px, 200px) minmax(0, 1fr);
+  grid-template-areas:
+    "head windows"
+    "fetched windows";
+  align-content: start;
+  column-gap: 24px;
+  row-gap: 2px;
+  padding: 18px 0;
+  border: none;
+  border-bottom: 1px solid var(--border-soft);
+  border-radius: 0;
+  background: transparent;
+}
+
+.section .rowHead {
+  grid-area: head;
+  justify-content: flex-start;
+}
+
+.section .name {
+  font-weight: 500;
+}
+
+.section .fetched {
+  grid-area: fetched;
+}
+
+.section .windows,
+.section .statusNote {
+  grid-area: windows;
+  grid-row: 1 / span 2;
+}
+
+.section .window {
+  grid-template-columns: 90px minmax(0, 1fr) 72px 150px;
+  grid-template-areas: "label bar pct reset";
+  column-gap: 14px;
+}
+
+.section .pct {
+  text-align: right;
+}
+
+.section .reset {
+  text-align: right;
+  font-size: 12px;
+}
+
+.mark {
   color: var(--text-muted);
-  font-family: var(--mono);
+  flex-shrink: 0;
+}
+
+.section .rowHead {
+  align-items: center;
+  gap: 8px;
 }

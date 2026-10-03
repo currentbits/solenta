@@ -134,7 +134,10 @@ function defaultWindowBroadcast(channel, payload) {
  * @param {string} threadId
  */
 function retireAgent(ctx, threadId) {
-  if (typeof ctx.runner.disposeClaudeSession === "function") {
+  // #1383: retire defers the kill while the thread's own turn is live.
+  if (typeof ctx.runner.retireClaudeSession === "function") {
+    ctx.runner.retireClaudeSession(threadId);
+  } else if (typeof ctx.runner.disposeClaudeSession === "function") {
     ctx.runner.disposeClaudeSession(threadId);
   }
   // #315: leftover npm run dev is its own process group, not the CLI's.
@@ -196,6 +199,8 @@ function makeCtx(deps) {
       typeof deps.getOrchStatus === "function"
         ? deps.getOrchStatus
         : () => ({ running: false, port: null }),
+    openRemoteConnection: deps.openRemoteConnection,
+    forgetRemoteConnection: deps.forgetRemoteConnection,
     transport: "desktop",
   };
 }
@@ -372,6 +377,9 @@ const IPC_HANDLERS = {
   },
   "projects:add": async (ctx, projectPath, opts) => {
     return services.addProject(ctx.store, projectPath, opts);
+  },
+  "projects:ensureScratch": async (ctx) => {
+    return services.ensureScratchProject(ctx.store, ctx.userDataPath);
   },
   "projects:create": async (ctx, input) => {
     return services.createProject(ctx.store, input || {});
@@ -649,7 +657,9 @@ const IPC_HANDLERS = {
     if (input && input.teach === true) {
       services.startTeach(ctx.store, { threadId: thread.id });
     }
-    if (input && input.worktree === true) {
+    const scratchHost = ctx.store.getProject(thread.projectId);
+    if (input && input.worktree === true && !(scratchHost && scratchHost.scratch === true)) {
+      // Scratch has no git: the default-worktree setting does not apply there.
       try {
         if (!ctx.worktreeBase) {
           throw new Error("worktreeBase is not configured");
@@ -825,6 +835,11 @@ const IPC_HANDLERS = {
   },
   "threads:setBaseBranch": async (ctx, input) => {
     const updated = services.setBaseBranch(ctx.store, input);
+    ctx.broadcast("threads:changed", services.listThreads(ctx.store));
+    return updated;
+  },
+  "threads:setPendingWorktree": async (ctx, input) => {
+    const updated = services.setPendingWorktree(ctx.store, input);
     ctx.broadcast("threads:changed", services.listThreads(ctx.store));
     return updated;
   },
@@ -1040,6 +1055,18 @@ const IPC_HANDLERS = {
         // Thread archived between the send and the confirmation.
       }
     }
+  },
+  "app:openRemoteConnection": async (ctx, input) => {
+    if (ctx.transport !== "desktop" || !ctx.openRemoteConnection) {
+      throw new Error("Remote Connections require the desktop app.");
+    }
+    return ctx.openRemoteConnection(input);
+  },
+  "app:forgetRemoteConnection": async (ctx, input) => {
+    if (ctx.transport !== "desktop" || !ctx.forgetRemoteConnection) {
+      throw new Error("Remote Connections require the desktop app.");
+    }
+    ctx.forgetRemoteConnection(input);
   },
   "memory:search": async (ctx, input) => {
     return ctx.memory.search(input || { query: "" });
@@ -1739,10 +1766,13 @@ const IPC_HANDLERS = {
     });
   },
   "git:prStatus": async (ctx, input) => {
-    return prStatus({
+    const info = await prStatus({
       store: ctx.store,
       threadId: input.threadId,
     });
+    // The sidebar #N link reads the stored thread, not this return value.
+    if (info) ctx.broadcast("threads:changed", services.listThreads(ctx.store));
+    return info;
   },
   "git:prChecks": async (ctx, input) => {
     return prChecks({
@@ -1943,6 +1973,15 @@ const IPC_HANDLERS = {
     const target = resolveAllowedShellPath(ctx.store, input);
     const err = await shell.openPath(target);
     if (err) throw new Error(err);
+  },
+  "shell:editors": async () => {
+    return require("./openIn.js").listEditors();
+  },
+  "shell:openIn": async (ctx, input) => {
+    const target = resolveAllowedShellPath(ctx.store, input);
+    await require("./openIn.js").openIn(target, input && input.editor, {
+      openPath: (p) => shell.openPath(p),
+    });
   },
   "git:gcScan": async (ctx) => {
     return gcScan({ store: ctx.store, worktreeBase: ctx.worktreeBase });

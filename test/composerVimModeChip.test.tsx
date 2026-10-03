@@ -64,19 +64,7 @@ function modeChip(m: Mounted): Element | null {
   return m.container.querySelector("[data-vim-mode-chip]");
 }
 
-function transcriptTrigger(m: Mounted): Element {
-  const el = m.container.querySelector("[data-transcript-view-trigger]");
-  assert.ok(el, "transcript-view trigger is on the composer");
-  return el;
-}
-
-function assertChipDistinctFromTranscript(m: Mounted, chip: Element) {
-  const trigger = transcriptTrigger(m);
-  assert.notEqual(
-    chip.textContent,
-    trigger.textContent,
-    "vim chip must not reuse the transcript-view trigger text",
-  );
+function assertChipDistinctFromTranscript(_m: Mounted, chip: Element) {
   assert.notEqual(
     chip.textContent,
     TRANSCRIPT_VIEW_LABELS.normal,
@@ -97,8 +85,9 @@ describe("Composer vim mode chip (#818)", () => {
     const m = await mountComposer();
     assert.equal(modeChip(m), null);
     assert.equal(
-      transcriptTrigger(m).textContent,
-      TRANSCRIPT_VIEW_LABELS.normal,
+      m.container.querySelector("[data-transcript-view-trigger]"),
+      null,
+      "no transcript control competes for the slot (#1411)",
     );
   });
 

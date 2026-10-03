@@ -15,6 +15,7 @@ const PREVIEW_PARTITION_PREFIX = "solenta-preview:";
 const PANE_CLOSED =
   "Browser pane is not open on this thread. Open Views → Browser, then retry.";
 const MAX_SHOT_WIDTH = 1600;
+const INITIAL_LOAD_WAIT_MS = 2000;
 
 /** @type {Map<string, number>} threadId → webContentsId */
 const sessions = new Map();
@@ -227,6 +228,31 @@ function unbind(input) {
 }
 
 /**
+ * A guest binds on did-attach while its initial about:blank is still
+ * loading. loadURL issued then resolves on THAT load's did-finish-load, so
+ * navigate would report about:blank before the real page commits. Wait
+ * (bounded) for the initial load to stop first.
+ * @param {object} wc
+ */
+function initialLoadSettled(wc) {
+  if (typeof wc.isLoading !== "function" || !wc.isLoading()) return;
+  const url = typeof wc.getURL === "function" ? String(wc.getURL() || "") : "";
+  if (url && url !== "about:blank") return;
+  if (typeof wc.once !== "function") return;
+  return new Promise((resolve) => {
+    const done = () => {
+      clearTimeout(timer);
+      if (typeof wc.removeListener === "function") {
+        wc.removeListener("did-stop-loading", done);
+      }
+      resolve();
+    };
+    const timer = setTimeout(done, INITIAL_LOAD_WAIT_MS);
+    wc.once("did-stop-loading", done);
+  });
+}
+
+/**
  * @param {{ threadId?: string, url?: string }} input
  */
 async function navigate(input) {
@@ -241,6 +267,7 @@ async function navigate(input) {
     );
   }
   const target = decision.url || "about:blank";
+  await initialLoadSettled(wc);
   if (typeof wc.loadURL === "function") {
     await wc.loadURL(target);
   }

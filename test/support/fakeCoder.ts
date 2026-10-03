@@ -723,6 +723,14 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
           error: null,
         } as UpdateStatus),
       applyUpdate: () => rec("app.applyUpdate", [], undefined),
+      openRemoteConnection: (input: unknown) =>
+        rec("app.openRemoteConnection", [input], {
+          host: "workstation",
+          remotePort: 4620,
+          tokenSaved: true,
+        }),
+      forgetRemoteConnection: (input: unknown) =>
+        rec("app.forgetRemoteConnection", [input], undefined),
     },
     memory: {
       search: (input: unknown) => rec("memory.search", [input], [] as MemoryEntryInfo[]),
@@ -1555,6 +1563,20 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
         });
         return rec("projects.create", [input], created);
       },
+      ensureScratch: () => {
+        let found = projects.find((p) => p.scratch === true);
+        if (!found) {
+          found = project({
+            id: "p-scratch",
+            name: "Scratch",
+            slug: "Scratch",
+            path: "/tmp/solenta-data/scratch",
+            scratch: true,
+          });
+          projects.push(found);
+        }
+        return rec("projects.ensureScratch", [], found);
+      },
       pickDirectory: () =>
         rec("projects.pickDirectory", [], null as string | null),
       pickIcon: (input: { projectId: string }) =>
@@ -2383,6 +2405,23 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
         const next: ThreadInfo = {
           ...existing,
           messagePins: normalizeMessagePins(i.pins),
+        };
+        threads = threads.map((t) => (t.id === i.threadId ? next : t));
+        const d = details[i.threadId];
+        if (d) details[i.threadId] = { ...d, thread: next };
+        return Promise.resolve(next);
+      },
+      setPendingWorktree: (input: unknown) => {
+        const i = input as { threadId: string; worktree: boolean; fromOrigin?: boolean };
+        calls.push({ channel: "threads.setPendingWorktree", args: [input] });
+        const existing = threads.find((t) => t.id === i.threadId);
+        if (!existing) {
+          return Promise.reject(new Error(`Unknown thread: ${i.threadId}`));
+        }
+        const next = {
+          ...existing,
+          pendingWorktree: i.worktree === true,
+          ...(typeof i.fromOrigin === "boolean" ? { worktreeFromOrigin: i.fromOrigin } : {}),
         };
         threads = threads.map((t) => (t.id === i.threadId ? next : t));
         const d = details[i.threadId];
@@ -3440,6 +3479,13 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
     shell: {
       reveal: (input: unknown) => rec("shell.reveal", [input], undefined),
       openPath: (input: unknown) => rec("shell.openPath", [input], undefined),
+      editors: () =>
+        rec("shell.editors", [], [
+          { id: "cursor", name: "Cursor" },
+          { id: "zed", name: "Zed" },
+          { id: "finder", name: "Finder" },
+        ]),
+      openIn: (input: unknown) => rec("shell.openIn", [input], undefined),
     },
     devserver: {
       scripts: (input: unknown) => rec("devserver.scripts", [input], ["dev"]),

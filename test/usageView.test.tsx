@@ -141,7 +141,8 @@ describe("UsageView", () => {
     assert.ok(m.query("[data-usage]"), "root");
     assert.ok(m.query("[data-usage-totals]"), "totals");
     assert.ok(text.includes("$2.50"), "today cost");
-    assert.ok(text.includes("Σ 1.5k"), "today tokens");
+    assert.ok(text.includes("1.5k"), "today tokens");
+    assert.ok(!text.includes("Σ"), "report counts drop the Σ prefix");
     assert.ok(text.includes("4 turns"), "today turns");
     assert.ok(text.includes("claude"), "provider");
     assert.ok(text.includes("sonnet"), "model");
@@ -169,10 +170,10 @@ describe("UsageView", () => {
     await m.click(m.query('[data-usage-metric="tokens"]'));
     assert.equal(m.query("[data-usage]")?.getAttribute("data-metric"), "tokens");
     const totals = m.query("[data-usage-totals]")?.textContent ?? "";
-    assert.match(totals, /Σ 11\.5k/);
+    assert.match(totals, /11\.5k/);
     const grokRow = m.query('[data-usage-provider="grok"]');
     assert.ok(grokRow, "grok provider row");
-    assert.ok((grokRow?.textContent ?? "").includes("Σ 10.0k"));
+    assert.ok((grokRow?.textContent ?? "").includes("10.0k"));
     m.unmount();
   });
 
@@ -313,7 +314,7 @@ describe("UsageView", () => {
     m.unmount();
   });
 
-  it("can show provider quotas above local cost history without replacing it", async () => {
+  it("shows provider quotas on a Limits tab without losing local cost history", async () => {
     const m = await mount(
       <UsageView
         loadUsage={async () => ({ byDay: sampleData(), threadsByDay: {} })}
@@ -335,7 +336,16 @@ describe("UsageView", () => {
       />,
     );
     await m.flush();
+    assert.doesNotMatch(m.text(), /22% used/, "limits stay off the report tab");
+    assert.ok(m.query("[data-usage-totals]"), "report tab first");
+
+    await m.click(m.query('[data-usage-tab-btn="limits"]'));
+    await m.flush();
+    assert.equal(m.query("[data-usage]")?.getAttribute("data-usage-tab"), "limits");
     assert.match(m.text(), /22% used/);
+    assert.equal(m.query("[data-usage-range]"), null, "range picker hides on Limits");
+
+    await m.click(m.query('[data-usage-metric="cost"]'));
     assert.ok(m.query("[data-usage-totals]"), "local history still present");
     assert.ok(m.text().includes("$2.50"), "local cost still present");
     m.unmount();
@@ -526,7 +536,7 @@ describe("UsageView", () => {
     assert.equal(m.query("[data-usage-empty]"), null, "must not look like a loaded empty report");
     assert.equal(m.query("[data-usage-totals]"), null, "must not invent a $0 report");
     assert.ok(!m.text().includes("No usage in this range"));
-    const refresh = m.byText("Refresh");
+    const refresh = m.query("[data-usage-refresh]");
     assert.ok(refresh, "refresh control");
     assert.equal((refresh as HTMLButtonElement).disabled, false, "loading control recovers");
     m.unmount();
@@ -566,7 +576,7 @@ describe("UsageView", () => {
     assert.equal(m.query("[data-usage-error]"), null);
     assert.equal(m.query("[data-usage-stale]"), null);
 
-    await m.click(m.byText("Refresh"));
+    await m.click(m.query("[data-usage-refresh]"));
     assert.ok(m.text().includes("$2.50"), "failed refresh must keep last spend");
     assert.ok(!m.text().includes("No usage in this range"), "must not erase into empty");
     assert.ok(m.query("[data-usage-error]"), "refresh failure is visible");
@@ -575,7 +585,7 @@ describe("UsageView", () => {
     assert.match(m.text(), /stale/i);
     assert.equal(m.query("[data-usage]")?.getAttribute("data-range"), "7");
     assert.equal(m.query("[data-usage]")?.getAttribute("data-metric"), "cost");
-    const refresh = m.byText("Refresh") as HTMLButtonElement;
+    const refresh = m.query("[data-usage-refresh]") as HTMLButtonElement;
     assert.equal(refresh.disabled, false, "refresh re-enables after failure");
 
     await m.click(m.query('[data-usage-range="30"]'));

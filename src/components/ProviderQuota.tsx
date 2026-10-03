@@ -1,5 +1,13 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+} from "react";
 import { providerDisplayName } from "../format";
+import { ProviderMark } from "./ProviderMark";
+import { providerColor } from "../providerColors";
 import type { ProviderInfo } from "../shared/ipc";
 import {
   QUOTA_CLOCK_MS,
@@ -198,6 +206,12 @@ function QuotaRow({
       data-stale={stale ? "" : undefined}
     >
       <div className={styles.rowHead}>
+        <ProviderMark
+          providerId={row.provider}
+          size={13}
+          decorative
+          className={styles.mark}
+        />
         <span className={styles.name}>{label}</span>
         {active ? <span className={styles.active}>this thread</span> : null}
       </div>
@@ -231,7 +245,12 @@ function QuotaRow({
                 <div className={styles.track} aria-hidden>
                   <div
                     className={styles.fill}
-                    style={{ width: `${width}%` }}
+                    style={
+                      {
+                        width: `${width}%`,
+                        "--quota-fill": providerColor(row.provider),
+                      } as CSSProperties
+                    }
                     data-warn={width >= 80 && width < 95 ? "" : undefined}
                     data-high={width >= 95 ? "" : undefined}
                   />
@@ -314,8 +333,7 @@ export function ProviderQuotaDialog({
 
 export function ProviderQuotaSection(props: ProviderQuotaProps) {
   return (
-    <section className={styles.section} aria-label="Provider quotas">
-      <h2 className={styles.sectionTitle}>Account limits</h2>
+    <section className={styles.section} aria-label="Account limits">
       <ProviderQuota {...props} />
     </section>
   );

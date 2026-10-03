@@ -252,6 +252,17 @@ describe("SettingsModal build section", () => {
     assert.equal(checks, 2, "check button must call onCheckUpdate");
     m.unmount();
   });
+
+  it("shows the installed macOS channel instead of a shared channel selector", async () => {
+    const m = await mount(modal({
+      status: status({ build: { channel: "prod", platform: "darwin" } }),
+      settings: { dailyBudgetUsd: null, autoSettleAfterDays: 3, updateChannel: "nightly" },
+    }));
+    assert.equal(m.query("[data-update-channel]"), null);
+    assert.match(m.text(), /Update channel: Prod/);
+    assert.match(m.text(), /separate macOS apps/);
+    m.unmount();
+  });
 });
 
 describe("SettingsModal PR size cap (#402)", () => {

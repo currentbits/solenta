@@ -997,9 +997,8 @@ describe("App selection stamps lastVisitedAt (round 43 unread)", () => {
       await m.click(expand as HTMLElement);
       await m.flush();
     }
-    const pulse = m.query('[data-panel-tab="pulse"]');
-    assert.ok(pulse, "right sidebar must offer a Pulse tab");
-    await m.click(pulse as HTMLElement);
+    // Operational views live in the sidebar's Insights menu (#1411).
+    await m.click(m.query("[data-app-more]") as HTMLElement);
     await m.flush();
   }
 
@@ -1676,15 +1675,13 @@ describe("Return to source view (#942)", () => {
     }
   });
 
-  it("keeps Usage range and metric when switching Pulse reports", async () => {
+  it("keeps Usage range and metric when switching Insights reports", async () => {
     const fake = createFakeCoder();
     const m = await boot(fake);
     try {
       await m.flush();
       await expandAgents(m);
-      const pulse = m.query('[data-panel-tab="pulse"]');
-      assert.ok(pulse, "Pulse tab");
-      await m.click(pulse as HTMLElement);
+      await m.click(m.query("[data-app-more]") as HTMLElement);
       await m.flush();
       const usageNav = m.query('[data-view-nav="usage"]');
       assert.ok(usageNav, "Usage row");
@@ -1698,11 +1695,13 @@ describe("Return to source view (#942)", () => {
       assert.ok(m.query("[data-usage]"), "usage view");
       await m.click(m.query('[data-usage-range="30"]') as HTMLElement);
       await m.click(m.query('[data-usage-metric="tokens"]') as HTMLElement);
+      await m.click(m.query("[data-app-more]") as HTMLElement);
       const insightsNav = m.query('[data-view-nav="insights"]');
-      assert.ok(insightsNav, "Insights row stays on Pulse");
+      assert.ok(insightsNav, "Insights row in the sidebar menu");
       await m.click(insightsNav as HTMLElement);
       await m.flush();
       assert.ok(m.query("[data-insights]"));
+      await m.click(m.query("[data-app-more]") as HTMLElement);
       await m.click(m.query('[data-view-nav="usage"]') as HTMLElement);
       await m.flush();
       assert.equal(m.query("[data-usage]")?.getAttribute("data-range"), "30");
@@ -1802,7 +1801,7 @@ describe("App command palette (#150)", () => {
 });
 
 describe("App primary navigation", () => {
-  it("Review opens pull requests and Threads returns without creating one", async () => {
+  it("Review opens pull requests and re-clicking it returns without creating one", async () => {
     const t1 = thread({ id: "t-keep", title: "Keep this thread" });
     const fake = createFakeCoder({
       threads: [t1],
@@ -1830,17 +1829,14 @@ describe("App primary navigation", () => {
         m.query('[data-view-nav="review"]')?.getAttribute("aria-current"),
         "page",
       );
-      assert.equal(
-        m.query('[data-view-nav="threads"]')?.getAttribute("aria-current"),
-        null,
-      );
-      await m.click(m.query('[data-view-nav="threads"]') as HTMLElement);
+      // Re-clicking the active footer destination returns to threads (#1411).
+      await m.click(m.query('[data-view-nav="review"]') as HTMLElement);
       await m.flush();
       assert.equal(m.query("[data-pr-list]"), null);
       assert.equal(draftBox()?.value, "unsent draft");
       assert.equal(
-        m.query('[data-view-nav="threads"]')?.getAttribute("aria-current"),
-        "page",
+        m.query('[data-view-nav="review"]')?.getAttribute("aria-current"),
+        null,
       );
       assert.equal(fake.of("threads.create").length, creates);
 
@@ -1851,11 +1847,9 @@ describe("App primary navigation", () => {
         m.query("[data-app-more]")?.getAttribute("aria-current"),
         "page",
       );
-      assert.equal(
-        m.query('[data-view-nav="threads"]')?.getAttribute("aria-current"),
-        null,
-      );
-      await m.click(m.query('[data-view-nav="threads"]') as HTMLElement);
+      // From an Insights view, the Insights menu offers Back to threads.
+      await m.click(m.query("[data-app-more]") as HTMLElement);
+      await m.click(m.query('[data-app-more-menu] [data-view-nav="threads"]') as HTMLElement);
       await m.flush();
       assert.equal(m.query("[data-usage]"), null);
       assert.equal(draftBox()?.value, "unsent draft");
@@ -1876,11 +1870,98 @@ describe("App primary navigation", () => {
     try {
       await m.flush();
       const creates = fake.of("threads.create").length;
-      await m.click(m.query('[data-view-nav="threads"]') as HTMLElement);
+      await m.click(m.query('[data-view-nav="planboard"]') as HTMLElement);
+      await m.flush();
+      await m.click(m.query('[data-view-nav="planboard"]') as HTMLElement);
       await m.flush();
       assert.equal(fake.of("threads.create").length, creates);
       assert.equal(m.query("[data-planboard]"), null);
       assert.equal(m.query("[data-pr-list]"), null);
+    } finally {
+      m.unmount();
+    }
+  });
+});
+
+describe("thread sidebar collapse (#1411)", () => {
+  it("folds to a rail from the header button and comes back from the rail or ⌘B", async () => {
+    const fake = createFakeCoder();
+    const m = await boot(fake);
+    try {
+      await m.flush();
+      const layout = () => m.query('[data-layout="app"]');
+      assert.equal(layout()?.getAttribute("data-sidebar-hidden"), null);
+      await m.click(m.query("[data-sidebar-collapse]") as HTMLElement);
+      assert.equal(layout()?.getAttribute("data-sidebar-hidden"), "true");
+      assert.ok(m.query("[data-sidebar-rail]"), "rail shows");
+      assert.equal(m.query("[data-sidebar-resize]"), null, "no resize handle on the rail");
+
+      await m.click(m.query("[data-sidebar-show]") as HTMLElement);
+      assert.equal(layout()?.getAttribute("data-sidebar-hidden"), null);
+
+      await inAct(() => {
+        window.dispatchEvent(
+          new KeyboardEvent("keydown", { key: "b", metaKey: true, bubbles: true, cancelable: true }),
+        );
+      });
+      assert.equal(layout()?.getAttribute("data-sidebar-hidden"), "true", "⌘B hides");
+      await inAct(() => {
+        window.dispatchEvent(
+          new KeyboardEvent("keydown", { key: "b", metaKey: true, bubbles: true, cancelable: true }),
+        );
+      });
+      assert.equal(layout()?.getAttribute("data-sidebar-hidden"), null, "⌘B shows");
+    } finally {
+      m.unmount();
+      window.localStorage.removeItem("app:sidebarHidden");
+    }
+  });
+});
+
+describe("header toggles (#1411)", () => {
+  it("folds Views into the right-panel split: details · terminal · panel", async () => {
+    const t1 = thread({ id: "t-h", title: "header thread" });
+    const fake = createFakeCoder({ threads: [t1], details: { "t-h": detail({ thread: t1 }) } });
+    const m = await boot(fake);
+    try {
+      await m.flush();
+      await m.click(m.query('button[aria-label="Select thread: header thread"]') as HTMLElement);
+      await m.flush();
+      const split = m.query("[data-thread-header] [data-panel-split]");
+      assert.ok(split, "right-panel split control");
+      assert.ok(split!.querySelector("[data-agents-panel-toggle]"));
+      assert.ok(split!.querySelector("[data-views-btn]"), "panes chevron lives in the split");
+      assert.equal(
+        m.queryAll("[data-thread-header] [data-views-btn]").length,
+        1,
+        "no standalone Views icon",
+      );
+      await m.click(split!.querySelector("[data-views-btn]") as HTMLElement);
+      assert.ok(m.query("[data-views-item='diff']"), "pane list opens");
+    } finally {
+      m.unmount();
+    }
+  });
+});
+
+describe("start without a project (#1411)", () => {
+  it("moves the draft into the Scratch workspace", async () => {
+    const draft = thread({ id: "t-draft", title: "New Thread", worktreePath: null });
+    const fake = createFakeCoder({
+      threads: [draft],
+      details: { "t-draft": detail({ thread: draft, messages: [] }) },
+    });
+    const m = await boot(fake);
+    try {
+      await m.flush();
+      await m.click(m.query('button[aria-label="Select thread: New Thread"]') as HTMLElement);
+      await m.flush();
+      await m.click(m.query("[data-start-without-project]") as HTMLElement);
+      await m.flush();
+      assert.equal(fake.of("projects.ensureScratch").length, 1);
+      const moves = fake.of("threads.setThreadProject");
+      assert.equal(moves.length, 1);
+      assert.deepEqual(moves[0]!.args[0], { threadId: "t-draft", projectId: "p-scratch" });
     } finally {
       m.unmount();
     }

@@ -2997,6 +2997,11 @@ button.diffLineGutter:focus-visible {
   color: var(--text-dim);
 }
 
+.inputUrl {
+  overflow-wrap: anywhere;
+  font-size: 12px;
+}
+
 .questionAttach {
   flex: none;
   display: grid;
@@ -3455,4 +3460,600 @@ a.menuItem {
   .quickActions {
     display: contents;
   }
+}
+
+/* Thread details: worktree, sandbox, context, sync, notes and project
+   commands live here instead of crowding the header row. */
+.detailsWrap {
+  position: relative;
+}
+
+.detailsCard {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 20;
+  width: min(380px, calc(100vw - 32px));
+  padding: 4px 12px 12px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-pop);
+  display: flex;
+  flex-direction: column;
+}
+
+.detailsHeading {
+  padding: 10px 0 6px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-dim);
+}
+
+.detailsRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0;
+  min-width: 0;
+}
+
+.detailsRow:empty {
+  display: none;
+}
+
+.detailsCard .quickActions {
+  max-width: none;
+  flex-wrap: wrap;
+  overflow: visible;
+}
+
+/* A section whose rows all rendered nothing (no upstream, no commands)
+   drops its heading too. */
+.detailsSection:not(:has(.detailsRow:not(:empty))) {
+  display: none;
+}
+
+/* In the card the header's joined split-button becomes two stacked
+   controls: the full branch pill, then Merge on its own line. */
+.detailsRow:has([data-worktree-control]) > * {
+  flex: 1;
+  min-width: 0;
+}
+
+/* Header split-button only; the card's own rows share the attribute. */
+.detailsCard [data-worktree-control="ready"]:not([data-worktree-rows]) {
+  flex: 1;
+  flex-wrap: wrap;
+  gap: 8px;
+  height: auto;
+  border: none;
+  background: transparent;
+}
+
+.detailsCard [data-worktree-control="ready"]:not([data-worktree-rows]) > :first-child {
+  flex: 1 0 100%;
+  height: 30px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+
+.detailsCard [data-worktree-menu] {
+  max-width: none;
+  flex: 1;
+}
+
+.detailsCard [data-worktree-merge] {
+  height: 28px;
+  max-width: none;
+  border-left: none;
+  border-radius: var(--radius-sm);
+}
+
+/* Calm stream (#1409): per-message actions show on hover or keyboard
+   focus; touch screens (no hover) keep them visible. */
+.msgActions {
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+
+*:hover > .msgMeta .msgActions,
+.msgMeta:focus-within .msgActions {
+  opacity: 1;
+}
+
+@media (hover: none) {
+  .msgActions {
+    opacity: 1;
+  }
+}
+
+/* Suggested work: Start stays visible; File / Dismiss appear on hover. */
+.suggestedRow:not(:hover):not(:focus-within)
+  [data-suggestion-action="file"],
+.suggestedRow:not(:hover):not(:focus-within)
+  [data-suggestion-action="dismiss"] {
+  opacity: 0;
+}
+
+@media (hover: none) {
+  .suggestedRow [data-suggestion-action] {
+    opacity: 1;
+  }
+}
+
+/* T3-style header toggles (terminal pane, right panel): ghost squares. */
+.toggleBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  transition:
+    background-color 0.12s ease,
+    color 0.12s ease;
+}
+
+.toggleBtn:hover {
+  background: var(--card-hover);
+  color: var(--text);
+}
+
+.toggleBtn[data-active="true"] {
+  background: var(--card);
+  color: var(--text);
+}
+
+.toggleBtn:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+/* Worktree lifecycle line at the top of the transcript (#1411). */
+.worktreeLine {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 4px 0 12px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.worktreeLine b {
+  font-weight: 500;
+  color: var(--text-muted);
+}
+
+.worktreeLine[data-worktree-line="ready"] svg {
+  color: var(--green);
+}
+
+.worktreeLineBranch {
+  font-family: var(--mono);
+  font-size: 11.5px;
+}
+
+.worktreeLineSpinner {
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  border: 1.5px solid var(--border);
+  border-top-color: var(--text-muted);
+  animation: worktreeLineSpin 0.8s linear infinite;
+}
+
+@keyframes worktreeLineSpin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .worktreeLineSpinner {
+    animation: none;
+  }
+}
+
+/* ---- #1411 header: project crumb, title menu, quiet git split ---------- */
+.breadcrumb button.project,
+.breadcrumb span.project {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 24px;
+  padding: 0 6px;
+  background: transparent;
+  font-family: inherit;
+  font-size: 13px;
+  letter-spacing: normal;
+  color: var(--text-dim);
+}
+
+.breadcrumb button.project:hover {
+  background: var(--overlay-hover);
+  color: var(--text);
+}
+
+.breadcrumb .menuWrap {
+  min-width: 0;
+  display: flex;
+}
+
+.titleMenuBtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  height: 26px;
+  padding: 0 6px;
+  margin-left: -6px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.titleMenuBtn:hover,
+.titleMenuBtn[aria-expanded="true"] {
+  background: var(--overlay-hover);
+}
+
+.titleMenuBtn:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.titleChevron {
+  flex-shrink: 0;
+  color: var(--text-dim);
+}
+
+.titleMenu {
+  left: 0;
+  right: auto;
+}
+
+/* Git next step: a quiet outline split button, not a blue CTA. */
+.gitSplitMain,
+.gitSplitMain.btnPrimary {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  border-radius: var(--radius-sm) 0 0 var(--radius-sm);
+}
+
+.gitSplitMain:hover:not(:disabled),
+.gitSplitMain.btnPrimary:hover:not(:disabled) {
+  background: var(--overlay-hover);
+  color: var(--text);
+}
+
+.gitMore {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 30px;
+  margin-left: -9px;
+  border: 1px solid var(--border);
+  border-left-color: var(--border-soft);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+
+.gitMore:hover {
+  background: var(--overlay-hover);
+  color: var(--text);
+}
+
+/* Notes row at the foot of Thread details. */
+.detailsNotesBtn {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  margin-top: 6px;
+  padding: 8px 0 2px;
+  border: none;
+  border-top: 1px solid var(--border-soft);
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 12.5px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.detailsNotesBtn:hover {
+  color: var(--text);
+}
+
+.detailsNotesMeta {
+  margin-left: auto;
+  color: var(--text-dim);
+}
+
+/* Thread details rows (#1411): key column + value, like the mockup. */
+.detailsKv {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 28px;
+  font-size: 12.5px;
+  color: var(--text-muted);
+}
+
+.detailsKey {
+  width: 72px;
+  flex-shrink: 0;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.detailsKvEnd {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+}
+
+.detailsStatus {
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.detailsActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 6px 0 2px;
+}
+
+.detailsDanger {
+  padding-top: 2px;
+}
+
+.menuKbd {
+  margin-left: 6px;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--text-dim);
+}
+
+/* Message actions as icons (#1411). */
+.msgActions {
+  gap: 1px;
+  align-items: center;
+}
+
+.msgAction {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 22px;
+  border-radius: 6px;
+  color: var(--text-dim);
+}
+
+.msgAction:hover {
+  background: var(--overlay-hover);
+  color: var(--text);
+}
+
+.msgAction[aria-pressed="true"] {
+  color: var(--blue);
+}
+
+/* A pinned message keeps its actions in view: pinned is state, not chrome. */
+.msgActions:has([aria-pressed="true"]) {
+  opacity: 1;
+}
+
+/* Suggested work as dashed chips (#1411): click = start a thread; file /
+   dismiss are small icons revealed on hover or focus. */
+.suggestedWork {
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+}
+
+.suggestedLabel {
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.suggestedRow {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 0;
+}
+
+.suggestedChip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 420px;
+  height: 26px;
+  padding: 0 10px;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.suggestedChip:hover:not(:disabled) {
+  border-style: solid;
+  color: var(--text);
+}
+
+.suggestedIcon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+
+.suggestedIcon:hover:not(:disabled) {
+  background: var(--overlay-hover);
+  color: var(--text);
+}
+
+/* New-thread hero (#1411): the draft centres a headline with the composer
+   and workspace strip directly under it; the first send drops the layout
+   back to the normal transcript. */
+.chatSlot[data-draft-hero] {
+  justify-content: center;
+  padding-bottom: 6vh;
+}
+
+.chatSlot[data-draft-hero] > [data-thread-body] {
+  flex: 0 0 auto;
+  overflow: visible;
+}
+
+.heroDraft {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 0 16px 22px;
+  text-align: center;
+}
+
+.heroTitle {
+  margin: 0;
+  font-size: 26px;
+  font-weight: 400;
+  letter-spacing: -0.01em;
+  color: var(--text);
+}
+
+.heroHint {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-dim);
+}
+
+.heroChooser {
+  position: relative;
+  display: inline-block;
+}
+
+.heroProject {
+  padding: 0;
+  border: none;
+  background: transparent;
+  font: inherit;
+  color: inherit;
+  text-decoration: underline dotted var(--text-dim);
+  text-underline-offset: 6px;
+  text-decoration-thickness: 2px;
+}
+
+button.heroProject {
+  cursor: pointer;
+}
+
+button.heroProject:hover {
+  text-decoration-color: var(--text);
+}
+
+.heroMenu {
+  position: absolute;
+  top: calc(100% + 10px);
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  min-width: 200px;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-pop);
+  font-size: 13px;
+  text-align: left;
+}
+
+.heroMenuItem {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 8px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-muted);
+  font: inherit;
+  cursor: pointer;
+}
+
+.heroMenuItem:hover {
+  background: var(--overlay-hover);
+  color: var(--text);
+}
+
+/* The title menu hangs below the breadcrumb: let it escape the crumb's
+   clip. The title and project keep their own ellipsis. */
+.breadcrumb {
+  overflow: visible;
+}
+
+/* Right panel + panes as one split control (#1411): three header icons. */
+.panelSplit {
+  display: inline-flex;
+  align-items: center;
+}
+
+.panelSplit > .toggleBtn {
+  border-radius: var(--radius-sm) 0 0 var(--radius-sm);
+}
+
+.heroLink {
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.heroLink:hover {
+  color: var(--text);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+/* Amber attention dot on the details toggle (#1411): behind upstream. */
+.attentionDot {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--amber);
 }

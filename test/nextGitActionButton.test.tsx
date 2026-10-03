@@ -69,10 +69,19 @@ function thread(over: Partial<ThreadInfo> = {}): ThreadInfo {
   };
 }
 
+// A started thread by default: a message-less detail is a draft, whose
+// header has no git step or details card (#1411). Draft tests pass [].
 function detail(over: Partial<ThreadDetail> = {}): ThreadDetail {
   return {
     thread: over.thread ?? thread(),
-    messages: over.messages ?? [],
+    messages: over.messages ?? [
+      {
+        id: "u-start",
+        role: "user",
+        text: "start",
+        createdAt: 1,
+      } as ThreadDetail["messages"][number],
+    ],
     workLog: over.workLog ?? [],
     workflow: over.workflow ?? null,
     usage: over.usage ?? null,
@@ -103,6 +112,7 @@ function view(props: {
     allowOversize?: boolean;
   }) => Promise<PrInfo>;
   onPrChecks?: () => Promise<PrChecksResult>;
+  onPrStatus?: () => Promise<PrInfo | null>;
   onPrMerge?: (opts?: { ciWorkflowApproved?: boolean }) => Promise<PrInfo>;
   onStartRun?: (prompt: string) => void;
 }) {
@@ -135,6 +145,7 @@ function view(props: {
       onPush={props.onPush ?? (async () => ({ remote: "origin", branch: "main" }))}
       onCreatePr={props.onCreatePr}
       onPrChecks={props.onPrChecks}
+      onPrStatus={props.onPrStatus}
       onPrMerge={props.onPrMerge}
       gitSyncInfo={props.gitSyncInfo}
     />
@@ -703,5 +714,78 @@ describe("next-git-action button", () => {
       `updatedAt ticks must not re-spawn git.diff (got ${fetches} vs ${afterMount})`,
     );
     m.unmount();
+  });
+
+  describe("finds a PR opened outside Create PR", () => {
+    async function withGithubReady(fn: () => Promise<void>) {
+      // jsdom (and window.coder) only exist after the first mount.
+      const shell = await mount(<div />);
+      const w = window as unknown as { coder?: unknown };
+      const prev = w.coder;
+      w.coder = {
+        sourceControl: {
+          discover: async () => ({
+            probedAt: 1,
+            sourceControlProviders: [
+              {
+                kind: "github",
+                label: "GitHub",
+                status: "available",
+                installHint: null,
+                version: "2.0.0",
+                auth: { status: "authenticated", detail: null },
+              },
+            ],
+          }),
+        },
+      };
+      shell.unmount();
+      try {
+        await fn();
+      } finally {
+        w.coder = prev;
+      }
+    }
+
+    it("looks the branch up when no PR is recorded", async () => {
+      await withGithubReady(async () => {
+        let calls = 0;
+        const m = await mount(
+          view({
+            onPrStatus: async () => {
+              calls += 1;
+              return null;
+            },
+          }),
+        );
+        await m.flush();
+        assert.equal(calls, 1);
+        m.unmount();
+      });
+    });
+
+    it("skips the lookup once a PR is recorded", async () => {
+      await withGithubReady(async () => {
+        let calls = 0;
+        const m = await mount(
+          view({
+            detail: detail({
+              thread: thread({
+                prNumber: 7,
+                prUrl: "https://github.com/owner/repo/pull/7",
+                prState: "OPEN",
+              }),
+            }),
+            onPrStatus: async () => {
+              calls += 1;
+              return null;
+            },
+          }),
+        );
+        await m.flush();
+        assert.equal(calls, 0);
+        m.unmount();
+      });
+    });
   });
 });

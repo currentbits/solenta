@@ -133,7 +133,8 @@ describe("Add project: typed browse (#609)", () => {
       threads: [],
     });
     const m = await boot(fake);
-    await m.click(m.query('[aria-label="Add project"]'));
+    await m.click(m.query("[data-scope-trigger]"));
+    await m.click(m.query("[data-new-project]"));
     assert.ok(m.query("[data-add-project-path]"), "add-project modal must open");
     await m.type(m.query("[data-add-project-path-input]"), "/Users/demo/Code");
     await m.click(m.query("[data-add-project-path-submit]"));

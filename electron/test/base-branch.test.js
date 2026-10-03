@@ -21,6 +21,7 @@ const {
   listBranches,
 } = require("../worktrees.js");
 const { writeFakeBin } = require("./support/fakeBin.js");
+const { rmTree } = require("./support/rmTree.js");
 
 function git(cwd, args) {
   return execFileSync("git", args, {
@@ -105,7 +106,7 @@ describe("base-branch (#187)", () => {
     project = await services.addProject(store, repo);
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     try {
       for (const t of store.getThreads()) {
         if (t && t.worktreePath && fs.existsSync(t.worktreePath)) {
@@ -119,7 +120,7 @@ describe("base-branch (#187)", () => {
     } catch {
       // ignore
     }
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+    await rmTree(tmpDir);
   });
 
   it("createThread defaults baseBranch to null", () => {
@@ -391,7 +392,7 @@ describe("setBaseBranch", () => {
     }).id;
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     try {
       for (const t of store.getThreads()) {
         if (t && t.worktreePath && fs.existsSync(t.worktreePath)) {
@@ -405,7 +406,7 @@ describe("setBaseBranch", () => {
     } catch {
       // ignore
     }
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+    await rmTree(tmpDir);
   });
 
   it("records a local branch as the stacked base", () => {
@@ -758,5 +759,261 @@ describe("setBaseBranch", () => {
         !fs.existsSync(path.join(gitDir, "rebase-apply")),
       "conflict must abort the rebase, not leave it in progress",
     );
+  });
+});
+
+describe("setPendingWorktree (draft workspace strip)", () => {
+  let tmpDir;
+  let store;
+  let project;
+  let threadId;
+
+  beforeEach(async () => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "coder-pending-"));
+    store = new Store(path.join(tmpDir, "store.json"));
+    const repo = path.join(tmpDir, "repo");
+    fs.mkdirSync(repo);
+    git(repo, ["init"]);
+    project = await services.addProject(store, repo);
+    threadId = services.createThread(store, {
+      projectId: project.id,
+      title: "Draft",
+    }).id;
+  });
+
+  afterEach(async () => {
+    await rmTree(tmpDir);
+  });
+
+  it("arms and drops the lazy worktree before the first send", () => {
+    assert.equal(
+      services.setPendingWorktree(store, { threadId, worktree: true }).pendingWorktree,
+      true,
+    );
+    assert.equal(store.getThread(threadId).pendingWorktree, true);
+    services.setPendingWorktree(store, { threadId, worktree: false });
+    assert.equal(store.getThread(threadId).pendingWorktree, false);
+  });
+
+  it("locks after the first user message", () => {
+    store.appendMessage(threadId, {
+      id: "m1",
+      role: "user",
+      text: "go",
+      createdAt: Date.now(),
+    });
+    assert.throws(
+      () => services.setPendingWorktree(store, { threadId, worktree: true }),
+      /locked after the first message/,
+    );
+  });
+
+  it("refuses once a worktree exists", () => {
+    store.updateThread(threadId, { worktreePath: path.join(tmpDir, "wt") });
+    assert.throws(
+      () => services.setPendingWorktree(store, { threadId, worktree: false }),
+      /already has a worktree/,
+    );
+  });
+
+  it("refuses to arm on a project that is not a git repo", async () => {
+    const plain = path.join(tmpDir, "plain");
+    fs.mkdirSync(plain);
+    const p2 = await services.addProject(store, plain);
+    // addProject git-inits a plain folder; a repo deleted later looks like this.
+    fs.rmSync(path.join(plain, ".git"), { recursive: true, force: true });
+    const t2 = services.createThread(store, { projectId: p2.id, title: "x" }).id;
+    assert.throws(
+      () => services.setPendingWorktree(store, { threadId: t2, worktree: true }),
+      /can't host a worktree/,
+    );
+  });
+});
+
+describe("Previous worktree: stack a draft on another thread's branch (#1411)", () => {
+  let tmpDir;
+  let store;
+  let repo;
+  let project;
+  let worktreeBase;
+
+  beforeEach(async () => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "coder-prev-wt-"));
+    store = new Store(path.join(tmpDir, "store.json"));
+    worktreeBase = path.join(tmpDir, "worktrees");
+    repo = path.join(tmpDir, "repo");
+    fs.mkdirSync(repo);
+    git(repo, ["init"]);
+    git(repo, ["config", "user.email", "test@example.com"]);
+    git(repo, ["config", "user.name", "Test"]);
+    fs.writeFileSync(path.join(repo, "README.md"), "hello\n");
+    git(repo, ["add", "README.md"]);
+    git(repo, ["commit", "-m", "init"]);
+    project = await services.addProject(store, repo);
+  });
+
+  afterEach(async () => {
+    for (const t of store.getThreads()) {
+      if (t && t.worktreePath && fs.existsSync(t.worktreePath)) {
+        try {
+          git(repo, ["worktree", "remove", "--force", t.worktreePath]);
+        } catch {
+          // ignore
+        }
+      }
+    }
+    await rmTree(tmpDir);
+  });
+
+  it("starts from the previous branch's committed work", () => {
+    const a = services.createThread(store, { projectId: project.id, title: "API contract" });
+    setupWorktree({ store, threadId: a.id, worktreeBase });
+    const prev = store.getThread(a.id);
+    fs.writeFileSync(path.join(prev.worktreePath, "contract.md"), "v1\n");
+    git(prev.worktreePath, ["add", "contract.md"]);
+    git(prev.worktreePath, ["commit", "-m", "contract"]);
+    fs.writeFileSync(path.join(prev.worktreePath, "scratch.md"), "uncommitted\n");
+
+    const b = services.createThread(store, { projectId: project.id, title: "Build the form" });
+    services.setPendingWorktree(store, { threadId: b.id, worktree: true });
+    services.setBaseBranch(store, { threadId: b.id, baseBranch: prev.branch });
+    setupWorktree({ store, threadId: b.id, worktreeBase });
+    const next = store.getThread(b.id);
+
+    assert.notEqual(next.branch, prev.branch, "a fresh branch, not the same one");
+    assert.notEqual(next.worktreePath, prev.worktreePath, "a fresh folder");
+    assert.equal(next.baseBranch, prev.branch, "merges land back on the previous branch");
+    assert.equal(typeof next.worktreeSetupMs, "number", "setup time recorded");
+    assert.ok(next.worktreeSetupMs >= 0);
+    assert.ok(fs.existsSync(path.join(next.worktreePath, "contract.md")), "committed work carries over");
+    assert.ok(!fs.existsSync(path.join(next.worktreePath, "scratch.md")), "uncommitted edits stay behind");
+  });
+});
+
+describe("Start from origin (#1411)", () => {
+  let tmpDir;
+  let store;
+  let repo;
+  let project;
+  let worktreeBase;
+
+  beforeEach(async () => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "coder-origin-"));
+    store = new Store(path.join(tmpDir, "store.json"));
+    worktreeBase = path.join(tmpDir, "worktrees");
+    const remote = path.join(tmpDir, "remote.git");
+    git(tmpDir, ["init", "--bare", "-b", "main", remote]);
+    repo = path.join(tmpDir, "repo");
+    fs.mkdirSync(repo);
+    git(repo, ["init", "-b", "main"]);
+    git(repo, ["config", "user.email", "test@example.com"]);
+    git(repo, ["config", "user.name", "Test"]);
+    fs.writeFileSync(path.join(repo, "README.md"), "hello\n");
+    git(repo, ["add", "README.md"]);
+    git(repo, ["commit", "-m", "init"]);
+    git(repo, ["remote", "add", "origin", remote]);
+    git(repo, ["push", "-u", "origin", "main"]);
+    // Someone else lands a commit on origin/main; the local main is behind.
+    const other = path.join(tmpDir, "other");
+    git(tmpDir, ["clone", remote, other]);
+    git(other, ["config", "user.email", "o@example.com"]);
+    git(other, ["config", "user.name", "Other"]);
+    fs.writeFileSync(path.join(other, "upstream.md"), "new\n");
+    git(other, ["add", "upstream.md"]);
+    git(other, ["commit", "-m", "upstream"]);
+    git(other, ["push", "origin", "main"]);
+    project = await services.addProject(store, repo);
+  });
+
+  afterEach(async () => {
+    for (const t of store.getThreads()) {
+      if (t && t.worktreePath && fs.existsSync(t.worktreePath)) {
+        try {
+          git(repo, ["worktree", "remove", "--force", t.worktreePath]);
+        } catch {
+          // ignore
+        }
+      }
+    }
+    await rmTree(tmpDir);
+  });
+
+  it("fetches and starts from origin's copy of the base", () => {
+    const t = services.createThread(store, { projectId: project.id, title: "fresh" });
+    services.setPendingWorktree(store, { threadId: t.id, worktree: true, fromOrigin: true });
+    assert.equal(store.getThread(t.id).worktreeFromOrigin, true);
+    setupWorktree({ store, threadId: t.id, worktreeBase });
+    const wt = store.getThread(t.id).worktreePath;
+    assert.ok(fs.existsSync(path.join(wt, "upstream.md")), "has the commit only origin had");
+  });
+
+  it("without it, starts from the local branch", () => {
+    const t = services.createThread(store, { projectId: project.id, title: "local" });
+    services.setPendingWorktree(store, { threadId: t.id, worktree: true });
+    setupWorktree({ store, threadId: t.id, worktreeBase });
+    const wt = store.getThread(t.id).worktreePath;
+    assert.ok(!fs.existsSync(path.join(wt, "upstream.md")), "local main is behind origin");
+  });
+
+  it("falls back to the local branch when origin has no copy", () => {
+    git(repo, ["checkout", "-b", "local-only"]);
+    git(repo, ["checkout", "main"]);
+    const t = services.createThread(store, { projectId: project.id, title: "stacked" });
+    services.setPendingWorktree(store, { threadId: t.id, worktree: true, fromOrigin: true });
+    services.setBaseBranch(store, { threadId: t.id, baseBranch: "local-only" });
+    setupWorktree({ store, threadId: t.id, worktreeBase });
+    assert.ok(store.getThread(t.id).worktreePath, "created from local-only");
+  });
+});
+
+describe("Scratch workspace (#1411, start without a project)", () => {
+  let tmpDir;
+  let store;
+  let userData;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "coder-scratch-"));
+    store = new Store(path.join(tmpDir, "store.json"));
+    userData = path.join(tmpDir, "userData");
+  });
+
+  afterEach(async () => {
+    await rmTree(tmpDir);
+  });
+
+  it("creates one non-git Scratch project and returns it again", () => {
+    const a = services.ensureScratchProject(store, userData);
+    assert.equal(a.scratch, true);
+    assert.equal(a.name, "Scratch");
+    assert.ok(fs.existsSync(a.path), "folder exists");
+    assert.ok(!fs.existsSync(path.join(a.path, ".git")), "not a git repo");
+    const b = services.ensureScratchProject(store, userData);
+    assert.equal(b.id, a.id, "idempotent");
+    assert.equal(store.getProjects().filter((p) => p.scratch).length, 1);
+  });
+
+  it("moving a draft into Scratch drops its worktree intent", async () => {
+    const repo = path.join(tmpDir, "repo");
+    fs.mkdirSync(repo);
+    git(repo, ["init"]);
+    const real = await services.addProject(store, repo);
+    const t = services.createThread(store, { projectId: real.id, title: "draft" });
+    services.setPendingWorktree(store, { threadId: t.id, worktree: true });
+    const scratch = services.ensureScratchProject(store, userData);
+    services.setThreadProject(store, { threadId: t.id, projectId: scratch.id });
+    const moved = store.getThread(t.id);
+    assert.equal(moved.projectId, scratch.id);
+    assert.equal(moved.pendingWorktree, false);
+    assert.throws(
+      () => services.setPendingWorktree(store, { threadId: t.id, worktree: true }),
+      /can't host a worktree/,
+    );
+  });
+
+  it("keeps the scratch flag through a store reload", () => {
+    services.ensureScratchProject(store, userData);
+    store.saveNow();
+    const reloaded = new Store(path.join(tmpDir, "store.json"));
+    assert.equal(reloaded.getProjects().filter((p) => p.scratch === true).length, 1);
   });
 });

@@ -18,6 +18,9 @@ import {
 import { mergeOntoLabel, sourceSnapshotLabel } from "../crewIntegration";
 import { useEscapeClose } from "../useEscapeClose";
 import styles from "./WorktreeControl.module.css";
+import type { EditorId, EditorOption } from "../shared/ipc";
+
+const EDITOR_PREF_KEY = "solenta:openInEditor";
 
 type GitAction = "setup" | "merge" | "remove" | null;
 
@@ -35,6 +38,10 @@ export interface WorktreeControlProps {
   onStartRun?: (prompt: string, threadId?: string) => void | Promise<void>;
   conflictContext?: (threadId: string) => Promise<ConflictContext>;
   onOpenWorktree?: (() => void) | null;
+  /** Installed editors for the "Open in ‹editor› ▾" row (#1411). */
+  listEditors?: () => Promise<EditorOption[]>;
+  /** Open the worktree with one of `listEditors()`. */
+  onOpenWorktreeIn?: (editor: EditorId) => void;
   /** Local branches for the post-create stacked-base picker (#187). */
   listBaseBranches?: () => Promise<{ defaultBranch: string; branches: string[] }>;
   /** Persist a new merge/PR base, or null to clear to the repo default. */
@@ -51,6 +58,17 @@ export interface WorktreeControlProps {
 export interface WorktreeChrome {
   toolbar: ReactNode;
   banner: ReactNode;
+  /**
+   * Thread details layout (#1411): one row per fact / action instead of the
+   * header's pill + Merge split button. Same data attributes, so callers and
+   * tests reach the same controls. Null when there is no worktree yet (the
+   * setup / pending toolbar is used then).
+   */
+  rows: {
+    workspace: ReactNode;
+    versionControl: ReactNode;
+    danger: ReactNode;
+  } | null;
 }
 
 export function classifyGitError(msg: string): {
@@ -124,7 +142,40 @@ export function useWorktreeChrome(
     onSetBaseBranch,
     onOpenCrewIntegration,
     onRefreshWorkerSnapshot,
+    listEditors,
+    onOpenWorktreeIn,
   } = props;
+  const [editors, setEditors] = useState<EditorOption[] | null>(null);
+  const [editorPref, setEditorPref] = useState<EditorId | null>(() => {
+    try {
+      return (window.localStorage.getItem(EDITOR_PREF_KEY) as EditorId | null) ?? null;
+    } catch {
+      return null;
+    }
+  });
+  const [editorMenu, setEditorMenu] = useState(false);
+  const worktreeOpenable = Boolean(thread?.worktreePath);
+  useEffect(() => {
+    if (!worktreeOpenable || !listEditors || editors) return;
+    let live = true;
+    listEditors().then(
+      (rows) => live && setEditors(rows),
+      () => live && setEditors([]),
+    );
+    return () => {
+      live = false;
+    };
+  }, [worktreeOpenable, listEditors, editors]);
+  const pickEditor = (id: EditorId) => {
+    setEditorPref(id);
+    setEditorMenu(false);
+    try {
+      window.localStorage.setItem(EDITOR_PREF_KEY, id);
+    } catch {
+      // storage blocked: still open
+    }
+    onOpenWorktreeIn?.(id);
+  };
 
   const [gitAction, setGitAction] = useState<GitAction>(null);
   const [basePicker, setBasePicker] = useState<{
@@ -152,7 +203,8 @@ export function useWorktreeChrome(
 
   const hasWorktree = Boolean(thread?.worktreePath);
   const busy = isWorking || gitAction != null || resolving || refreshing;
-  const visible = Boolean(thread && !project?.remoteHost);
+  // Remote and Scratch (#1411, no git) projects have no worktree flow.
+  const visible = Boolean(thread && !project?.remoteHost && !project?.scratch);
 
   useEffect(() => {
     setDirtyMessage(null);
@@ -384,7 +436,7 @@ export function useWorktreeChrome(
   }, [thread?.worktreePath]);
 
   if (!visible || !thread) {
-    return { toolbar: null, banner: null };
+    return { toolbar: null, banner: null, rows: null };
   }
 
   const branch = thread.branch ?? null;
@@ -636,6 +688,21 @@ export function useWorktreeChrome(
     {refreshSnapshot}
     {leadPointer}
     </div>
+  ) : thread.pendingWorktree ? (
+    <div className={styles.toolbarCluster}>
+      <span
+        className={styles.pendingNote}
+        data-worktree-control="pending"
+        title="The worktree and its branch are created when the first message is sent"
+      >
+        <BranchGlyph />
+        Worktree on first send
+        {thread.baseBranch ? ` · from ${thread.baseBranch}` : ""}
+      </span>
+      {startSnapshot}
+      {startDirty}
+      {refreshSnapshot}
+    </div>
   ) : (
     <div className={styles.toolbarCluster}>
     <button
@@ -844,7 +911,241 @@ export function useWorktreeChrome(
     </>
   );
 
-  return { toolbar, banner };
+  const shortPath = path
+    ? path.length > 34
+      ? `…/${path.split(/[\\/]/).filter(Boolean).slice(-2).join("/")}`
+      : path
+    : "";
+  const rows = hasWorktree ? {
+    workspace: (
+    <div className={styles.rows} data-worktree-control="ready" data-worktree-rows="">
+      <div className={styles.row}>
+        <span className={styles.rowKey}>Worktree</span>
+        <span className={styles.rowMono} title={path ?? undefined}>
+          {shortPath}
+        </span>
+        {path ? (
+          <button
+            type="button"
+            className={styles.rowIcon}
+            data-worktree-copy-path=""
+            aria-label="Copy worktree path"
+            title={copiedPath ? "Copied" : "Copy path"}
+            onClick={() => void handleCopyPath()}
+          >
+            {copiedPath ? "Copied" : <CopyGlyph />}
+          </button>
+        ) : null}
+      </div>
+      {onOpenWorktreeIn && editors && editors.length > 0 ? (
+        <div className={styles.row}>
+          <span className={styles.rowKey}>Open in</span>
+          {(() => {
+            const current =
+              editors.find((e) => e.id === editorPref) ?? editors[0]!;
+            return (
+              <span className={styles.editorPick}>
+                <button
+                  type="button"
+                  className={styles.rowLink}
+                  data-worktree-open=""
+                  data-editor={current.id}
+                  title={`Open the worktree in ${current.name}`}
+                  onClick={() => onOpenWorktreeIn(current.id)}
+                >
+                  {current.name}
+                </button>
+                <button
+                  type="button"
+                  className={styles.rowIcon}
+                  data-editor-menu=""
+                  aria-haspopup="menu"
+                  aria-expanded={editorMenu}
+                  aria-label="Choose editor"
+                  title="Choose editor"
+                  onClick={() => setEditorMenu((v) => !v)}
+                >
+                  <svg width="10" height="10" viewBox="0 0 8 8" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <path d="M1.5 2.75 4 5.25 6.5 2.75" />
+                  </svg>
+                </button>
+                {editorMenu ? (
+                  <span className={styles.editorMenu} role="menu" aria-label="Open in">
+                    {editors.map((e) => (
+                      <button
+                        key={e.id}
+                        type="button"
+                        role="menuitemradio"
+                        aria-checked={e.id === current.id}
+                        className={`${styles.menuItem} ${styles.menuItemNested}`}
+                        data-editor-option={e.id}
+                        onClick={() => pickEditor(e.id)}
+                      >
+                        {e.name}
+                      </button>
+                    ))}
+                  </span>
+                ) : null}
+              </span>
+            );
+          })()}
+        </div>
+      ) : onOpenWorktree ? (
+        <div className={styles.row}>
+          <span className={styles.rowKey}>Open in</span>
+          <button
+            type="button"
+            className={styles.rowLink}
+            data-worktree-open=""
+            onClick={() => onOpenWorktree()}
+          >
+            Editor
+          </button>
+        </div>
+      ) : null}
+    </div>
+    ),
+    versionControl: (
+    <div className={styles.rows}>
+      <div className={styles.row}>
+        <span className={styles.rowKey}>Branch</span>
+        <span className={styles.rowMono} title={branch ?? undefined}>
+          {branch ?? "worktree"}
+        </span>
+        <span className={styles.rowFaint}>
+          →{" "}
+          <span
+            data-stacked-base=""
+            title={
+              thread.baseBranch
+                ? `Merge and PR land on ${thread.baseBranch}`
+                : "Merge and PR land on the repo default"
+            }
+          >
+            {thread.baseBranch || "repo default"}
+          </span>
+        </span>
+      </div>
+      {startSnapshot || startDirty || refreshSnapshot || leadPointer ? (
+        <div className={styles.row}>
+          <span className={styles.rowKey}>Snapshot</span>
+          {startSnapshot}
+          {startDirty}
+          {refreshSnapshot}
+          {leadPointer}
+        </div>
+      ) : null}
+      <div className={styles.rowButtons}>
+        <button
+          type="button"
+          className={styles.rowBtn}
+          data-worktree-merge=""
+          disabled={busy}
+          title={
+            thread.handoffFrom
+              ? `${mergeOntoLabel(thread.baseBranch)}. Crew staging is on the lead Integration section.`
+              : mergeOntoLabel(thread.baseBranch)
+          }
+          onClick={() => void runAction("merge", () => onMergeWorktree())}
+        >
+          {mergePending ? (
+            <>
+              <Spinner />
+              Merging…
+            </>
+          ) : (
+            mergeOntoLabel(thread.baseBranch)
+          )}
+        </button>
+        {onSetBaseBranch && !thread.prNumber ? (
+          <button
+            type="button"
+            className={styles.rowBtn}
+            data-change-base=""
+            aria-expanded={basePicker != null}
+            disabled={busy || !listBaseBranches}
+            onClick={() =>
+              basePicker ? setBasePicker(null) : void openBasePicker()
+            }
+          >
+            Change base
+          </button>
+        ) : null}
+      </div>
+      {basePicker ? (
+        <div className={styles.rowPicker} role="dialog" aria-label="Change base">
+          <input
+            className={styles.branchFilter}
+            type="search"
+            aria-label="Filter base branches"
+            placeholder="Filter branches…"
+            autoFocus
+            value={baseQuery}
+            onChange={(event) => setBaseQuery(event.target.value)}
+          />
+          <button
+            type="button"
+            className={`${styles.menuItem} ${styles.menuItemNested}`}
+            data-base-branch=""
+            disabled={busy}
+            onClick={() => void pickBase(null)}
+          >
+            Repo default
+          </button>
+          {baseMatches.map((name) => (
+            <button
+              key={name}
+              type="button"
+              className={`${styles.menuItem} ${styles.menuItemNested}`}
+              data-base-branch={name}
+              disabled={busy}
+              onClick={() => void pickBase(name)}
+            >
+              {name}
+            </button>
+          ))}
+          {baseMatches.length === 0 && (
+            <p className={styles.menuItem} role="status">
+              No matching branches
+            </p>
+          )}
+        </div>
+      ) : null}
+    </div>
+    ),
+    danger: (
+      <button
+        type="button"
+        className={styles.rowDanger}
+        data-worktree-delete=""
+        disabled={busy}
+        onClick={() => void runAction("remove", () => onRemoveWorktree(false))}
+      >
+        {removePending ? "Deleting…" : "Delete worktree…"}
+      </button>
+    ),
+  } : null;
+
+  return { toolbar, banner, rows };
+}
+
+function CopyGlyph() {
+  return (
+    <svg
+      width="13"
+      height="13"
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <rect x="5.5" y="5.5" width="8" height="8" rx="1.5" />
+      <path d="M10.5 5.5V4a1.5 1.5 0 0 0-1.5-1.5H4A1.5 1.5 0 0 0 2.5 4v5A1.5 1.5 0 0 0 4 10.5h1.5" />
+    </svg>
+  );
 }
 
 /** Stacked toolbar + banner for tests that do not mount ThreadView. */

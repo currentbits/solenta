@@ -350,6 +350,37 @@ async function attachWindowsDoctor(project) {
   return report ? { ...project, windowsDoctor: report } : project;
 }
 
+/**
+ * The Scratch workspace (#1411, "start without a project"): one built-in
+ * project whose folder lives under Solenta's data dir. Deliberately not a
+ * git repo, so no worktree, diff or PR flow applies; threads just run in
+ * that folder. Idempotent: returns the existing row when there is one and
+ * recreates the folder if it went missing.
+ *
+ * @param {import('./store').Store} store
+ * @param {string} userDataPath
+ */
+function ensureScratchProject(store, userDataPath) {
+  if (!userDataPath) {
+    throw new Error("Scratch workspace is not available in this mode");
+  }
+  const dir = path.join(userDataPath, "scratch");
+  fs.mkdirSync(dir, { recursive: true });
+  const existing = store.getProjects().find((p) => p && p.scratch === true);
+  if (existing) return presentProject(existing);
+  const project = {
+    id: randomUUID(),
+    slug: "Scratch",
+    name: "Scratch",
+    path: dir,
+    scratch: true,
+    worktreeRetention: DEFAULT_WORKTREE_RETENTION,
+  };
+  store.setProjects([...store.getProjects(), project]);
+  store.save();
+  return presentProject(project);
+}
+
 async function presentAdded(project) {
   return presentProject(await attachWindowsDoctor(project));
 }
@@ -2071,6 +2102,8 @@ function setThreadProject(store, input) {
     projectId: id,
     sessionId: null,
     replayContext: true,
+    // Scratch has no git: a draft moved there cannot keep a worktree intent.
+    ...(project.scratch === true ? { pendingWorktree: false } : {}),
     branch: null,
     baseBranch: null,
     prNumber: null,
@@ -2352,6 +2385,49 @@ function setBaseBranch(store, input) {
     retargetWorktreeBase({ store, thread, baseName: name });
   }
   const patch = { baseBranch: name };
+  const updated = store.updateThread(threadId, patch);
+  store.save();
+  return updated ? { ...updated } : { ...thread, ...patch };
+}
+
+/**
+ * Draft workspace choice (composer strip): arm or drop the lazy worktree
+ * before the first send. `fromOrigin` (optional) starts it from the
+ * freshly fetched origin copy of the base instead of the local branch. Locked once the thread has a worktree or any user
+ * message, so a running conversation never changes checkout underneath
+ * itself. Arming requires a local git project. Never bumps updatedAt.
+ *
+ * @param {import('./store').Store} store
+ * @param {{ threadId: string, worktree: boolean, fromOrigin?: boolean }} input
+ */
+function setPendingWorktree(store, input) {
+  const { threadId } = input || {};
+  const thread = store.getThread(threadId);
+  if (!thread) {
+    throw new Error(`Unknown thread: ${threadId}`);
+  }
+  const want = input.worktree === true;
+  const origin =
+    typeof input.fromOrigin === "boolean" ? input.fromOrigin : undefined;
+  if (
+    Boolean(thread.pendingWorktree) === want &&
+    !thread.worktreePath &&
+    (origin === undefined || Boolean(thread.worktreeFromOrigin) === origin)
+  ) {
+    return { ...thread };
+  }
+  if (thread.worktreePath) {
+    throw new Error("This thread already has a worktree");
+  }
+  if (store.getMessages(threadId).some((m) => m.role === "user")) {
+    throw new Error("The workspace is locked after the first message");
+  }
+  if (want && !canHostWorktree(store.getProject(thread.projectId))) {
+    throw new Error("This project can't host a worktree (needs a local git repo)");
+  }
+  /** @type {{ pendingWorktree: boolean, worktreeFromOrigin?: boolean }} */
+  const patch = { pendingWorktree: want };
+  if (origin !== undefined) patch.worktreeFromOrigin = origin;
   const updated = store.updateThread(threadId, patch);
   store.save();
   return updated ? { ...updated } : { ...thread, ...patch };
@@ -4451,6 +4527,17 @@ function decorateThread(store, thread) {
  */
 const listThreadsCache = new WeakMap();
 
+/**
+ * Sidebar row: drop detail-only fields (#1385). The renderer reads
+ * hypotheses and suggestions from detail.thread only, and across every row
+ * they were ~46% of each threads:changed push.
+ * @param {object} row
+ */
+function listRow(row) {
+  const { hypotheses, suggestions, ...rest } = row;
+  return rest;
+}
+
 function listThreads(store) {
   const threads = store.getThreads();
   const projects = store.getProjects();
@@ -4481,7 +4568,7 @@ function listThreads(store) {
       value.push(prev);
       continue;
     }
-    const decorated = decorateThread(store, t);
+    const decorated = listRow(decorateThread(store, t));
     rows.set(t, decorated);
     value.push(decorated);
   }
@@ -5217,7 +5304,7 @@ function removeAutomation(store, input) {
  * Live app status: today's spend, memory health (with counts), and which build
  * is running. A /health failure degrades to nulls; status must never throw.
  * @param {import('./store').Store} store
- * @param {{ health?: () => Promise<any>, status?: () => any, pkg?: any }} [deps] injectable for tests
+ * @param {{ health?: () => Promise<any>, status?: () => any, pkg?: any, platform?: string }} [deps] injectable for tests
  */
 async function appStatus(store, deps = {}) {
   const spend = store.getSpendToday();
@@ -5261,7 +5348,7 @@ async function appStatus(store, deps = {}) {
   return {
     spendTodayUsd,
     memory: { ...base, entries, vectors, lastError },
-    build: { version, sha, time, channel },
+    build: { version, sha, time, channel, platform: deps.platform || process.platform },
   };
 }
 
@@ -5662,6 +5749,8 @@ module.exports = {
   setNotes,
   setMessagePins,
   setBaseBranch,
+  setPendingWorktree,
+  ensureScratchProject,
   refreshWorkerSnapshot,
   setFeltEstimate,
   setVerifyCommand,

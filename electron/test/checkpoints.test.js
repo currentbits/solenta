@@ -21,6 +21,7 @@ const {
   CHECKPOINT_SUBJECT_PREFIX,
 } = require("../worktrees.js");
 const { createRunner } = require("../runner.js");
+const { rmTree } = require("./support/rmTree.js");
 
 function git(cwd, args) {
   return execFileSync("git", args, {
@@ -132,10 +133,10 @@ async function makeWorktreeFixture() {
 describe("maybeCreateCheckpoint", () => {
   let fx;
 
-  afterEach(() => {
+  afterEach(async () => {
     if (fx) {
       try {
-        fs.rmSync(fx.tmpDir, { recursive: true, force: true });
+        await rmTree(fx.tmpDir);
       } catch {
         // ignore
       }
@@ -196,10 +197,10 @@ describe("maybeCreateCheckpoint", () => {
 describe("listCheckpoints / restoreCheckpoint", () => {
   let fx;
 
-  afterEach(() => {
+  afterEach(async () => {
     if (fx) {
       try {
-        fs.rmSync(fx.tmpDir, { recursive: true, force: true });
+        await rmTree(fx.tmpDir);
       } catch {
         // ignore
       }
@@ -665,11 +666,11 @@ describe("runner auto-checkpoint on successful turn", () => {
     });
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     if (runner) runner.stopAll();
     if (fx) {
       try {
-        fs.rmSync(fx.tmpDir, { recursive: true, force: true });
+        await rmTree(fx.tmpDir);
       } catch {
         // ignore
       }

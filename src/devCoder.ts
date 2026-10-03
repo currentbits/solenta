@@ -2392,6 +2392,10 @@ function buildDevCoder(): CoderApi {
         return this.checkUpdate();
       },
       async applyUpdate(): Promise<void> {},
+      async openRemoteConnection(): Promise<{ host: string; remotePort: number; tokenSaved: boolean }> {
+        throw new Error("Remote Connections require the desktop app.");
+      },
+      async forgetRemoteConnection(): Promise<void> {},
       async feedback(input: {
         text: string;
         threadId?: string;
@@ -3505,6 +3509,19 @@ function buildDevCoder(): CoderApi {
         projects.push(project);
         return { ...project };
       },
+      async ensureScratch() {
+        const found = projects.find((p) => p.scratch === true);
+        if (found) return { ...found };
+        const project: ProjectInfo = {
+          id: id("proj"),
+          slug: "Scratch",
+          name: "Scratch",
+          path: "/Users/demo/Library/Application Support/Solenta/scratch",
+          scratch: true,
+        };
+        projects.push(project);
+        return { ...project };
+      },
       async pickDirectory() {
         // No native dialog in the browser dev mock; cancel like the real one.
         return null;
@@ -4185,6 +4202,26 @@ function buildDevCoder(): CoderApi {
           baseBranch: input.baseBranch
             ? String(input.baseBranch).trim() || null
             : null,
+        });
+      },
+      async setPendingWorktree(input: {
+        threadId: string;
+        worktree: boolean;
+        fromOrigin?: boolean;
+      }) {
+        const detail = details.get(input.threadId);
+        if (!detail) throw new Error(`Thread not found: ${input.threadId}`);
+        if (detail.thread.worktreePath) {
+          throw new Error("This thread already has a worktree");
+        }
+        if (detail.messages.some((m) => m.role === "user")) {
+          throw new Error("The workspace is locked after the first message");
+        }
+        return patchThread(input.threadId, {
+          pendingWorktree: input.worktree === true,
+          ...(typeof input.fromOrigin === "boolean"
+            ? { worktreeFromOrigin: input.fromOrigin }
+            : {}),
         });
       },
       async refreshWorkerSnapshot(input: { threadId: string }) {
@@ -6555,6 +6592,16 @@ function buildDevCoder(): CoderApi {
         // Dev mock: no Finder.
       },
       async openPath(_input: { threadId: string; path: string }) {
+        // Dev mock: no editor.
+      },
+      async editors() {
+        return [
+          { id: "cursor" as const, name: "Cursor" },
+          { id: "vscode" as const, name: "VS Code" },
+          { id: "finder" as const, name: "Finder" },
+        ];
+      },
+      async openIn(_input: { threadId: string; path: string; editor: string }) {
         // Dev mock: no editor.
       },
     },

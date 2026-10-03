@@ -431,8 +431,53 @@ async function runAppServer() {
       notify("thread/started", { thread: { id: threadId } });
       return;
     }
+    if (msg.method === "thread/read") {
+      reply(msg.id, {
+        thread: {
+          id: String(msg.params && msg.params.threadId ? msg.params.threadId : ""),
+          source: {
+            subagent: {
+              thread_spawn: { parent_thread_id: "codex-sess-001" },
+            },
+          },
+        },
+      });
+      return;
+    }
     if (msg.method === "thread/resume") {
-      threadId = String(msg.params.threadId || threadId);
+      const want = String(msg.params.threadId || threadId);
+      if (want === "child-sess") {
+        if (scenario === "loaded-child") {
+          reply(msg.id, {
+            thread: {
+              id: want,
+              source: {
+                subagent: {
+                  thread_spawn: { parent_thread_id: "codex-sess-001" },
+                },
+              },
+            },
+          });
+          notify("thread/started", {
+            thread: {
+              id: want,
+              source: {
+                subagent: {
+                  thread_spawn: { parent_thread_id: "codex-sess-001" },
+                },
+              },
+            },
+          });
+          return;
+        }
+        replyError(msg.id, {
+          code: -32600,
+          message:
+            "cannot resume an unloaded multi-agent v2 sub-agent through its parent; resume the parent first, or use thread/read to inspect it",
+        });
+        return;
+      }
+      threadId = want;
       reply(msg.id, { thread: { id: threadId, source: "exec" } });
       notify("thread/started", { thread: { id: threadId } });
       return;
@@ -443,6 +488,40 @@ async function runAppServer() {
       reply(msg.id, { turn: { id: turnId, status: "inProgress", items: [] } });
       notify("turn/started", { threadId, turn: { id: turnId } });
       if (scenario === "hang" || scenario === "steer-wait") return;
+      if (scenario === "child-spawn") {
+        notify("thread/started", {
+          thread: {
+            id: "child-sess",
+            source: {
+              subagent: { thread_spawn: { parent_thread_id: threadId } },
+            },
+          },
+        });
+        notify("turn/started", {
+          threadId: "child-sess",
+          turn: { id: "child-turn-1" },
+        });
+        notify("item/completed", {
+          item: { type: "agentMessage", id: "child-m", text: "from child" },
+          threadId: "child-sess",
+          turnId: "child-turn-1",
+        });
+        notify("turn/completed", {
+          threadId: "child-sess",
+          turn: { id: "child-turn-1", status: "completed" },
+        });
+      }
+      if (scenario === "ask-mcp-input" || scenario === "ask-native-input") {
+        send({ jsonrpc: "2.0", id: "ask-1",
+          method: scenario === "ask-mcp-input" ? "mcpServer/elicitation/request" : "item/tool/requestUserInput",
+          params: scenario === "ask-mcp-input"
+            ? { threadId, turnId, serverName: "example", mode: "form", message: "Export settings", requestedSchema: {
+                type: "object", required: ["count", "enabled"], properties: { count: { type: "integer" }, enabled: { type: "boolean" } },
+              } }
+            : { threadId, turnId, itemId: "input", questions: [{ id: "destination", header: "Destination", question: "Where?", options: null }] },
+        });
+        return;
+      }
       if (scenario === "ask-command") {
         send({
           jsonrpc: "2.0",

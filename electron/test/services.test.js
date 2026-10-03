@@ -1251,40 +1251,50 @@ describe("services", () => {
     assert.equal(status.dirty, true);
   });
 
-  it("gitStatus uses ssh when project.remoteHost is set", async () => {
-    const calls = [];
-    let syncCalls = 0;
-    ssh.setExecFileSync(() => {
-      syncCalls += 1;
-      return "";
+  for (const enabled of [true, false]) {
+    it(`gitStatus uses ssh when project.remoteHost is set (guardrails ${enabled ? "on" : "off"})`, async (t) => {
+      // Isolate the runtime preference from the developer's settings/environment.
+      t.mock.method(require("../guardrails.js"), "guardrailsEnabled", () => enabled);
+      const calls = [];
+      let syncCalls = 0;
+      ssh.setExecFileSync(() => {
+        syncCalls += 1;
+        return "";
+      });
+      ssh.setExecFile((bin, args, _opts, cb) => {
+        calls.push({ bin, args: args.slice() });
+        const remote = String(args[args.length - 1] || "");
+        if (remote.includes("rev-parse")) return cb(null, "true\n");
+        if (remote.includes("branch")) return cb(null, "main\n");
+        if (remote.includes("status")) return cb(null, " M src/a.ts\n");
+        return cb(null, "");
+      });
+      const status = await services.gitStatus({
+        path: "/unused-local",
+        remoteHost: "dev@box",
+        remotePath: "/srv/it's app",
+      });
+      assert.equal(status.isRepo, true);
+      assert.equal(status.branch, "main");
+      assert.equal(status.dirty, true);
+      assert.equal(syncCalls, 0, "gitStatus must not call execFileSync");
+      assert.ok(calls.length >= 1, "ssh must be spawned");
+      assert.ok(calls.every((c) => c.bin === "ssh"));
+      assert.ok(calls[0].args.includes("dev@box"));
+      assert.ok(calls[0].args.includes("BatchMode=yes"));
+      assert.ok(calls[0].args.includes("ConnectTimeout=10"));
+      const prefix = `cd '/srv/it'\\''s app' && ${enabled ? "" : "'env' 'CODER_GUARDRAILS=off' "}'git'`;
+      assert.deepEqual(
+        calls.map((c) => c.args.at(-1)),
+        [
+          `${prefix} 'rev-parse' '--is-inside-work-tree'`,
+          `${prefix} 'branch' '--show-current'`,
+          `${prefix} 'status' '--porcelain'`,
+        ],
+        "remote commands must preserve shell quoting and forward the guardrails opt-out",
+      );
     });
-    ssh.setExecFile((bin, args, _opts, cb) => {
-      calls.push({ bin, args: args.slice() });
-      const remote = String(args[args.length - 1] || "");
-      if (remote.includes("rev-parse")) return cb(null, "true\n");
-      if (remote.includes("branch")) return cb(null, "main\n");
-      if (remote.includes("status")) return cb(null, " M src/a.ts\n");
-      return cb(null, "");
-    });
-    const status = await services.gitStatus({
-      path: "/unused-local",
-      remoteHost: "dev@box",
-      remotePath: "/srv/app",
-    });
-    assert.equal(status.isRepo, true);
-    assert.equal(status.branch, "main");
-    assert.equal(status.dirty, true);
-    assert.equal(syncCalls, 0, "gitStatus must not call execFileSync");
-    assert.ok(calls.length >= 1, "ssh must be spawned");
-    assert.ok(calls.every((c) => c.bin === "ssh"));
-    assert.ok(calls[0].args.includes("dev@box"));
-    assert.ok(calls[0].args.includes("BatchMode=yes"));
-    assert.ok(calls[0].args.includes("ConnectTimeout=10"));
-    assert.ok(
-      calls.some((c) => /cd '\/srv\/app' && 'git'/.test(c.args[c.args.length - 1])),
-      "remote command must cd then run git",
-    );
-  });
+  }
 
   it("gitFetch uses the network timeout and does not call execFileSync", async () => {
     const calls = [];
@@ -2018,3 +2028,27 @@ describe("suggestedWorkNoteFor", () => {
   });
 });
 
+
+describe("listThreads rows omit detail-only fields (#1385)", () => {
+  it("drops hypotheses and suggestions from list rows, keeps them in detail", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "coder-slim-list-"));
+    try {
+      const store = new Store(path.join(dir, "store.json"));
+      store.setProjects([{ id: "p1", slug: "acme/app", name: "app", path: dir }]);
+      const t = services.createThread(store, { projectId: "p1", title: "t" });
+      store.updateThread(t.id, {
+        hypotheses: [{ id: "h1", claim: "c", status: "invalidated" }],
+        suggestions: [{ id: "s1", title: "s", prompt: "p", status: "open" }],
+      });
+      const row = services.listThreads(store).find((r) => r.id === t.id);
+      assert.equal("hypotheses" in row, false);
+      assert.equal("suggestions" in row, false);
+      assert.equal(row.title, "t");
+      const detail = services.getThreadDetail(store, t.id);
+      assert.equal(detail.thread.hypotheses.length, 1);
+      assert.equal(detail.thread.suggestions.length, 1);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});

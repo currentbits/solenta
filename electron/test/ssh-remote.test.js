@@ -10,6 +10,7 @@ const { diff, setExecFile } = require("../worktrees.js");
 const { createRunner, resolveSpawn } = require("../runner.js");
 const ssh = require("../ssh.js");
 const { writeFakeBin } = require("./support/fakeBin.js");
+const { rmTree } = require("./support/rmTree.js");
 
 async function loadCore() {
   const corePath = path.join(__dirname, "../../core/dist/index.js");
@@ -43,10 +44,10 @@ describe("worktrees.diff remoteHost", () => {
     store = new Store(path.join(tmpDir, "store.json"));
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     setExecFile(null);
     ssh.setExecFileSync(null);
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+    await rmTree(tmpDir);
   });
 
   it("prefixes git with ssh when the project has remoteHost", async () => {
@@ -151,9 +152,9 @@ describe("runner startRun remoteHost fake spawn", () => {
     });
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     if (runner) runner.stopAll();
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+    await rmTree(tmpDir);
     if (prevSimulate === undefined) delete process.env.CODER_SIMULATE;
     else process.env.CODER_SIMULATE = prevSimulate;
     if (prevAgentCmd === undefined) delete process.env.CODER_AGENT_CMD;

@@ -10,6 +10,7 @@ const services = require("../services.js");
 const { createRunner } = require("../runner.js");
 const { getMemoryStatus, resetMemorySupForTests } = require("../memory-sup.js");
 const { writeFakeBin } = require("./support/fakeBin.js");
+const { rmTree } = require("./support/rmTree.js");
 
 function git(cwd, args) {
   execFileSync("git", args, { cwd, stdio: "ignore" });
@@ -90,8 +91,8 @@ describe("spendByDay and settings", () => {
     filePath = path.join(tmpDir, "store.json");
   });
 
-  afterEach(() => {
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+  afterEach(async () => {
+    await rmTree(tmpDir);
   });
 
   it("recordSpend accumulates into local day key and persists", () => {
@@ -763,6 +764,7 @@ describe("spendByDay and settings", () => {
     resetMemorySupForTests();
     const store = new Store(filePath);
     const status = await services.appStatus(store, {
+      platform: "darwin",
       pkg: {
         version: "9.9.9",
         buildSha: "deadbee+dirty",
@@ -775,6 +777,7 @@ describe("spendByDay and settings", () => {
       sha: "deadbee+dirty",
       time: "2026-08-07T14:05:05Z",
       channel: "nightly",
+      platform: "darwin",
     });
   });
 
@@ -861,9 +864,9 @@ describe("budget gate and spend on real runs", () => {
     });
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     if (runner) runner.stopAll();
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+    await rmTree(tmpDir);
     if (prevBin === undefined) delete process.env.CODER_CLAUDE_BIN;
     else process.env.CODER_CLAUDE_BIN = prevBin;
     if (prevArgv === undefined) delete process.env.CODER_FAKE_CLAUDE_ARGV_FILE;

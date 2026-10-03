@@ -533,6 +533,24 @@ describe("buildFlatSidebar (T3 flat sidebar)", () => {
     assert.deepEqual(flat.archived.map((t) => t.id), ["gone"]);
   });
 
+  it("files quietly working families to the Working shelf; the inbox keeps the rest", () => {
+    const flat = buildFlatSidebar(
+      [
+        thread({ id: "done", projectId: "p1", updatedAt: NOW, createdAt: NOW - 6, status: "done" }),
+        thread({ id: "busy", projectId: "p1", updatedAt: NOW, createdAt: NOW - 5, status: "working" }),
+        thread({ id: "asks", projectId: "p1", updatedAt: NOW, createdAt: NOW - 4, status: "working", awaitingInput: true }),
+        thread({ id: "stuck", projectId: "p1", updatedAt: NOW, createdAt: NOW - 3, status: "working", stalledAt: NOW }),
+        // A done worker under a busy lead rides to the shelf with it…
+        thread({ id: "busy-w", projectId: "p1", updatedAt: NOW, createdAt: NOW - 2, status: "done", handoffFrom: "busy", orchWorker: true }),
+        // …and a busy worker under a done lead stays in the inbox.
+        thread({ id: "done-w", projectId: "p1", updatedAt: NOW, createdAt: NOW - 1, status: "working", handoffFrom: "done", orchWorker: true }),
+      ],
+      settleOpts,
+    );
+    assert.deepEqual(flat.active.map((t) => t.id), ["stuck", "asks", "done", "done-w"]);
+    assert.deepEqual(flat.working.map((t) => t.id), ["busy", "busy-w"]);
+  });
+
   it("active sorts createdAt desc and attaches orchWorkers under their source", () => {
     const flat = buildFlatSidebar(
       [

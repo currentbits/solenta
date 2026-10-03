@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { formatCostUsd, formatTokenSum } from "../format";
-import type { UsageReport } from "../shared/ipc";
+import { formatCostUsd, formatTokenCount, providerDisplayName } from "../format";
+import type { ProviderInfo, UsageReport } from "../shared/ipc";
 import {
   USAGE_RANGES,
   processedTokens,
@@ -12,6 +12,8 @@ import {
   type UsageTotals,
 } from "../usage";
 import type { ProviderLimitsLoader } from "../providerUsage";
+import { ProviderMark } from "./ProviderMark";
+import { providerColor } from "../providerColors";
 import { ProviderQuotaSection } from "./ProviderQuota";
 import styles from "./UsageView.module.css";
 
@@ -27,6 +29,8 @@ export interface UsageViewProps {
   loadUsage: () => Promise<UsageReport>;
   loadProviderLimits?: ProviderLimitsLoader;
   quotaDemo?: boolean;
+  /** Registry rows for display names ("Claude Code"); ids show without it. */
+  providers?: readonly ProviderInfo[];
   onSelectThread?: (id: string) => void;
   existingThreadIds?: Iterable<string>;
   reportControls?: UsageReportControls;
@@ -42,35 +46,17 @@ const BREAKDOWN_KINDS: { id: UsageBreakdownKind; label: string }[] = [
   { id: "thread", label: "Thread" },
 ];
 
-const PROVIDER_COLORS: Record<string, string> = {
-  claude: "var(--blue)",
-  grok: "var(--green)",
-  kimi: "var(--amber)",
-  codex: "var(--danger)",
-  opencode: "var(--text-muted)",
-  muse: "var(--accent)",
-};
-
-function providerColor(id: string): string {
-  return PROVIDER_COLORS[id] ?? "var(--text-muted)";
-}
-
 function metricValue(row: UsageTotals, metric: UsageMetric): number {
   return metric === "cost" ? row.costUsd : processedTokens(row);
 }
 
 function formatMetric(value: number, metric: UsageMetric): string {
-  return metric === "cost" ? formatCostUsd(value) : formatTokenSum(value);
+  return metric === "cost" ? formatCostUsd(value) : formatTokenCount(value);
 }
 
 function formatShare(share: number): string {
   if (!Number.isFinite(share) || share <= 0) return "0%";
   return `${Math.round(share * 100)}%`;
-}
-
-function barPercent(value: number, max: number): number {
-  if (!(max > 0) || !Number.isFinite(value) || value <= 0) return 0;
-  return (value / max) * 100;
 }
 
 function formatMultiplier(n: number): string {
@@ -79,34 +65,56 @@ function formatMultiplier(n: number): string {
   return `${text}×`;
 }
 
-function areaPath(values: number[], max: number, w: number, h: number): string {
-  const n = values.length;
-  if (n === 0) return "";
-  const yOf = (v: number) => {
-    if (!(max > 0) || !(v > 0)) return h;
-    return 1.5 + (1 - v / max) * (h - 1.5);
-  };
-  const xOf = (i: number) => (n === 1 ? w / 2 : (i / (n - 1)) * w);
-  const pts = values.map((v, i) => `${xOf(i)} ${yOf(v)}`);
-  return `M 0 ${h} L ${pts.join(" L ")} L ${w} ${h} Z`;
+/** "Sep 27" from a local YYYY-MM-DD day key. */
+function formatDayKey(key: string): string {
+  const [y, m, d] = key.split("-").map(Number);
+  if (!y || !m || !d) return key;
+  return new Date(y, m - 1, d).toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric",
+  });
 }
 
-function linePath(values: number[], max: number, w: number, h: number): string {
+/** Axis top and step: three gridlines at 1/2/2.5/5 × 10^k. */
+function niceAxis(max: number): { top: number; step: number } {
+  if (!(max > 0)) return { top: 0, step: 0 };
+  const raw = max / 3;
+  const mag = 10 ** Math.floor(Math.log10(raw));
+  const step = [1, 2, 2.5, 5, 10].map((f) => f * mag).find((s) => s >= raw) ?? raw;
+  return { top: step * 3, step };
+}
+
+/**
+ * Smooth series path (Catmull-Rom as cubic Béziers), control points clamped
+ * to the plot so a dip to zero never draws below the axis.
+ */
+function smoothPath(values: number[], max: number, w: number, h: number): string {
   const n = values.length;
   if (n === 0) return "";
-  const yOf = (v: number) => {
-    if (!(max > 0) || !(v > 0)) return h;
-    return 1.5 + (1 - v / max) * (h - 1.5);
-  };
+  const yOf = (v: number) => (!(max > 0) || !(v > 0) ? h : (1 - v / max) * h);
   const xOf = (i: number) => (n === 1 ? w / 2 : (i / (n - 1)) * w);
-  const pts = values.map((v, i) => `${xOf(i)} ${yOf(v)}`);
-  return `M ${pts.join(" L ")}`;
+  const pts = values.map((v, i) => [xOf(i), yOf(v)] as const);
+  const clamp = (y: number) => Math.min(h, Math.max(0, y));
+  let d = `M ${pts[0]![0]} ${pts[0]![1]}`;
+  for (let i = 1; i < n; i++) {
+    const p0 = pts[i - 2] ?? pts[i - 1]!;
+    const p1 = pts[i - 1]!;
+    const p2 = pts[i]!;
+    const p3 = pts[i + 1] ?? p2;
+    const c1x = p1[0] + (p2[0] - p0[0]) / 6;
+    const c1y = clamp(p1[1] + (p2[1] - p0[1]) / 6);
+    const c2x = p2[0] - (p3[0] - p1[0]) / 6;
+    const c2y = clamp(p2[1] - (p3[1] - p1[1]) / 6);
+    d += ` C ${c1x} ${c1y} ${c2x} ${c2y} ${p2[0]} ${p2[1]}`;
+  }
+  return d;
 }
 
 export function UsageView({
   loadUsage,
   loadProviderLimits,
   quotaDemo = false,
+  providers = [],
   onSelectThread,
   existingThreadIds,
   reportControls,
@@ -125,6 +133,8 @@ export function UsageView({
   const [group, setGroupState] = useState<UsageBreakdownKind>(
     () => reportControls?.group ?? "model",
   );
+  // ponytail: Limits tab is session-only; persist it in reportControls if people ask.
+  const [limitsOpen, setLimitsOpen] = useState(false);
   const [now, setNow] = useState(() => Date.now());
   const loadGen = useRef(0);
 
@@ -137,6 +147,7 @@ export function UsageView({
   );
   const setMetric = useCallback(
     (next: UsageMetric) => {
+      setLimitsOpen(false);
       setMetricState(next);
       onReportControlsChange?.({ range, metric: next, group });
     },
@@ -203,7 +214,7 @@ export function UsageView({
   const showLoading = loading && !hasLastSuccess && !error;
   const initialError = Boolean(error && !hasLastSuccess);
 
-  const providers = useMemo(() => {
+  const providerRows = useMemo(() => {
     return summary.providers.slice().sort((a, b) => {
       if (a.unreported !== b.unreported) return a.unreported ? 1 : -1;
       const diff = metricValue(b, metric) - metricValue(a, metric);
@@ -212,11 +223,11 @@ export function UsageView({
   }, [summary.providers, metric]);
 
   const plotted = useMemo(
-    () => providers.filter((p) => !p.unreported),
-    [providers],
+    () => providerRows.filter((p) => !p.unreported),
+    [providerRows],
   );
 
-  const chartMax = useMemo(() => {
+  const axis = useMemo(() => {
     let max = 0;
     for (const day of summary.days) {
       for (const row of plotted) {
@@ -225,7 +236,7 @@ export function UsageView({
         if (value > max) max = value;
       }
     }
-    return max;
+    return niceAxis(max);
   }, [summary.days, plotted, metric]);
 
   const breakdownRows: UsageBreakdownRow[] = useMemo(() => {
@@ -260,6 +271,14 @@ export function UsageView({
       ? "unmetered"
       : formatMetric(metricValue(summary.totals, metric), metric);
 
+  const firstDay = summary.days[0]?.day;
+  const lastDay = summary.days[summary.days.length - 1]?.day;
+  const midDay = summary.days[Math.floor((summary.days.length - 1) / 2)]?.day;
+  const rangeLabel =
+    firstDay && lastDay ? `${formatDayKey(firstDay)} – ${formatDayKey(lastDay)}` : null;
+  const ticks =
+    axis.step > 0 ? [3, 2, 1, 0].map((i) => i * axis.step) : [];
+
   return (
     <main
       className={styles.main}
@@ -267,29 +286,27 @@ export function UsageView({
       data-range={range}
       data-metric={metric}
       data-usage-group={group}
+      data-usage-tab={limitsOpen ? "limits" : "report"}
     >
       <header className={styles.header}>
-        <h1 className={styles.title}>Usage</h1>
+        <div className={styles.crumb}>
+          <span className={styles.crumbParent}>Insights</span>
+          <span className={styles.crumbSep} aria-hidden>
+            /
+          </span>
+          <h1 className={styles.title}>Usage</h1>
+          {!limitsOpen && rangeLabel ? (
+            <span className={styles.rangeLabel} data-usage-range-label="">
+              {rangeLabel}
+            </span>
+          ) : null}
+        </div>
         <div className={styles.controls}>
-          <div className={styles.segment} role="group" aria-label="Range">
-            {USAGE_RANGES.map((item) => (
-              <button
-                key={item}
-                type="button"
-                className={styles.segBtn}
-                aria-pressed={range === item}
-                data-usage-range={item}
-                onClick={() => setRange(item)}
-              >
-                {item} days
-              </button>
-            ))}
-          </div>
           <div className={styles.segment} role="group" aria-label="Metric">
             <button
               type="button"
               className={styles.segBtn}
-              aria-pressed={metric === "cost"}
+              aria-pressed={!limitsOpen && metric === "cost"}
               data-usage-metric="cost"
               onClick={() => setMetric("cost")}
             >
@@ -298,32 +315,69 @@ export function UsageView({
             <button
               type="button"
               className={styles.segBtn}
-              aria-pressed={metric === "tokens"}
+              aria-pressed={!limitsOpen && metric === "tokens"}
               data-usage-metric="tokens"
               onClick={() => setMetric("tokens")}
             >
               Tokens
             </button>
+            {loadProviderLimits ? (
+              <button
+                type="button"
+                className={styles.segBtn}
+                aria-pressed={limitsOpen}
+                data-usage-tab-btn="limits"
+                onClick={() => setLimitsOpen(true)}
+              >
+                Limits
+              </button>
+            ) : null}
           </div>
-          <button
-            type="button"
-            className={styles.refresh}
-            onClick={() => void loadAll()}
-            disabled={loading}
-            title="Refresh"
-          >
-            Refresh
-          </button>
+          {limitsOpen ? null : (
+            <>
+              <div className={styles.segment} role="group" aria-label="Range">
+                {USAGE_RANGES.map((item) => (
+                  <button
+                    key={item}
+                    type="button"
+                    className={styles.segBtn}
+                    aria-pressed={range === item}
+                    data-usage-range={item}
+                    onClick={() => setRange(item)}
+                  >
+                    {item} days
+                  </button>
+                ))}
+              </div>
+              <button
+                type="button"
+                className={styles.refresh}
+                onClick={() => void loadAll()}
+                disabled={loading}
+                aria-label="Refresh"
+                title="Refresh"
+                data-usage-refresh=""
+              >
+                <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true">
+                  <path d="M21 12a9 9 0 0 1-15.5 6.2L3 16M3 12a9 9 0 0 1 15.5-6.2L21 8M21 3v5h-5M3 21v-5h5" />
+                </svg>
+              </button>
+            </>
+          )}
         </div>
       </header>
 
-      {loadProviderLimits ? (
-        <div className={styles.quotaBlock}>
-          <ProviderQuotaSection loadLimits={loadProviderLimits} demo={quotaDemo} />
+      {limitsOpen && loadProviderLimits ? (
+        <div className={styles.body}>
+          <div className={styles.column}>
+            <ProviderQuotaSection
+              loadLimits={loadProviderLimits}
+              demo={quotaDemo}
+              providers={providers}
+            />
+          </div>
         </div>
-      ) : null}
-
-      {showLoading ? (
+      ) : showLoading ? (
         <p className={styles.hint} aria-live="polite">
           Loading usage…
         </p>
@@ -364,122 +418,160 @@ export function UsageView({
             </div>
           ) : (
         <div className={styles.body}>
-          <section className={styles.totals} data-usage-totals="">
-            <p className={styles.totalValue}>{totalLabel}</p>
-            {allUnreported || costUnmeteredTotal ? null : (
-              <p className={styles.caveat} data-usage-caveat="">
-                * if billed at full API rate
-              </p>
-            )}
-            <p className={styles.totalMeta}>
-              {allUnreported ? null : (
-                <>
-                  {costUnmeteredTotal
-                    ? "unmetered"
-                    : formatCostUsd(summary.totals.costUsd)}
-                  {" · "}
-                  {formatTokenSum(processedTokens(summary.totals))}
-                  {" · "}
-                </>
-              )}
-              {summary.totals.turns} turns
-              {summary.totals.wastedUsd > 0
-                ? ` · ${formatCostUsd(summary.totals.wastedUsd)} wasted`
-                : ""}
-            </p>
-          </section>
+          <div className={styles.column}>
+          <div className={styles.hero}>
+            <div className={styles.heroLeft}>
+              <section className={styles.totals} data-usage-totals="">
+                <p className={styles.totalValue}>{totalLabel}</p>
+                <p className={styles.totalMeta}>
+                  {summary.totals.turns} turns
+                  {allUnreported || costUnmeteredTotal ? null : (
+                    <>
+                      {" · "}
+                      <span data-usage-caveat="">if billed at full API rate</span>
+                    </>
+                  )}
+                </p>
+              </section>
 
-          <section className={styles.providers} aria-label="Providers">
-            <h2 className={styles.sectionTitle}>Providers</h2>
-            {providers.map((row) => (
-              <ProviderRow key={row.provider} row={row} metric={metric} />
-            ))}
-          </section>
+              <section className={styles.providers} aria-label="Providers">
+                {providerRows.map((row) => (
+                  <ProviderRow
+                    key={row.provider}
+                    row={row}
+                    metric={metric}
+                    name={providerDisplayName(row.provider, providers)}
+                  />
+                ))}
+              </section>
+            </div>
 
-          <div className={styles.stats} data-usage-stats="">
-            <Stat label="Processed" value={formatTokenSum(processedTokens(summary.totals))} kind="processed" />
-            <Stat
-              label="Cached input"
-              value={formatTokenSum(summary.totals.cachedInputTokens)}
-              kind="cached"
-            />
-            <Stat
-              label="Uncached input"
-              value={formatTokenSum(summary.totals.inputTokens)}
-              kind="uncached"
-            />
-            <Stat
-              label="Output"
-              value={formatTokenSum(summary.totals.outputTokens)}
-              kind="output"
-            />
+            <section className={styles.chartSection} aria-label="Daily usage">
+              <h2 className={styles.sectionTitle}>
+                {metric === "cost" ? "Daily cost" : "Daily tokens"}
+              </h2>
+              <div className={styles.chart}>
+                <div className={styles.yAxis} aria-hidden="true">
+                  {ticks.map((t) => (
+                    <span
+                      key={t}
+                      className={styles.yTick}
+                      style={{ top: `${axis.top > 0 ? (1 - t / axis.top) * 100 : 100}%` }}
+                    >
+                      {formatMetric(t, metric)}
+                    </span>
+                  ))}
+                </div>
+                <div className={styles.plot} role="img" aria-label="Daily usage chart">
+                  {/* ponytail: hand-rolled overlay SVG, no zoom/stack; reach for a chart lib if we need either */}
+                  <svg
+                    className={styles.chartSvg}
+                    viewBox="0 0 100 40"
+                    preserveAspectRatio="none"
+                    data-usage-chart=""
+                    aria-hidden="true"
+                  >
+                    {ticks.map((t) => {
+                      const y = axis.top > 0 ? (1 - t / axis.top) * 40 : 40;
+                      return (
+                        <line
+                          key={t}
+                          x1="0"
+                          x2="100"
+                          y1={y}
+                          y2={y}
+                          className={styles.gridLine}
+                          vectorEffect="non-scaling-stroke"
+                        />
+                      );
+                    })}
+                    {plotted.map((row) => {
+                      const values = summary.days.map((day) => {
+                        const cell = day.byProvider[row.provider];
+                        return cell ? metricValue(cell, metric) : 0;
+                      });
+                      const line = smoothPath(values, axis.top, 100, 40);
+                      const color = providerColor(row.provider);
+                      return (
+                        <g key={row.provider} data-usage-series={row.provider}>
+                          <path d={`${line} L 100 40 L 0 40 Z`} fill={color} opacity="0.1" />
+                          <path
+                            d={line}
+                            fill="none"
+                            stroke={color}
+                            strokeWidth="1.6"
+                            vectorEffect="non-scaling-stroke"
+                          />
+                        </g>
+                      );
+                    })}
+                  </svg>
+                  <div className={styles.chartHits}>
+                    {summary.days.map((day) => {
+                      const bits = plotted.map((row) => {
+                        const cell = day.byProvider[row.provider];
+                        const value = cell ? metricValue(cell, metric) : 0;
+                        return `${providerDisplayName(row.provider, providers)} ${formatMetric(value, metric)}`;
+                      });
+                      const label =
+                        bits.length > 0
+                          ? `${formatDayKey(day.day)}: ${bits.join(", ")}`
+                          : formatDayKey(day.day);
+                      return (
+                        <div
+                          key={day.day}
+                          className={styles.barCol}
+                          data-usage-bar={day.day}
+                          title={label}
+                          aria-label={label}
+                        />
+                      );
+                    })}
+                  </div>
+                </div>
+              </div>
+              {firstDay && lastDay ? (
+                <div className={styles.xAxis} aria-hidden="true">
+                  <span>{formatDayKey(firstDay)}</span>
+                  {midDay && midDay !== firstDay && midDay !== lastDay ? (
+                    <span>{formatDayKey(midDay)}</span>
+                  ) : null}
+                  <span>{formatDayKey(lastDay)}</span>
+                </div>
+              ) : null}
+            </section>
           </div>
 
-          <section className={styles.chartSection} aria-label="Daily usage">
-            <h2 className={styles.sectionTitle}>Daily</h2>
-            <div className={styles.chart} role="img" aria-label="Daily usage chart">
-              {/* ponytail: hand-rolled overlay SVG, no zoom/stack; reach for a chart lib if we need either */}
-              <svg
-                className={styles.chartSvg}
-                viewBox="0 0 100 40"
-                preserveAspectRatio="none"
-                data-usage-chart=""
-                aria-hidden="true"
-              >
-                {plotted.map((row) => {
-                  const values = summary.days.map((day) => {
-                    const cell = day.byProvider[row.provider];
-                    return cell ? metricValue(cell, metric) : 0;
-                  });
-                  const color = providerColor(row.provider);
-                  return (
-                    <g key={row.provider} data-usage-series={row.provider}>
-                      <path d={areaPath(values, chartMax, 100, 40)} fill={color} opacity="0.22" />
-                      <path
-                        d={linePath(values, chartMax, 100, 40)}
-                        fill="none"
-                        stroke={color}
-                        strokeWidth="1.25"
-                        vectorEffect="non-scaling-stroke"
-                        opacity="0.9"
-                      />
-                    </g>
-                  );
-                })}
-              </svg>
-              <div className={styles.chartHits}>
-                {summary.days.map((day) => {
-                  const bits = plotted.map((row) => {
-                    const cell = day.byProvider[row.provider];
-                    const value = cell ? metricValue(cell, metric) : 0;
-                    return `${row.provider} ${formatMetric(value, metric)}`;
-                  });
-                  const label = bits.length > 0 ? `${day.day}: ${bits.join(", ")}` : day.day;
-                  return (
-                    <div
-                      key={day.day}
-                      className={styles.barCol}
-                      data-usage-bar={day.day}
-                      title={label}
-                      aria-label={label}
-                    />
-                  );
-                })}
-              </div>
+          <section aria-label="Totals">
+            <h2 className={styles.sectionTitle}>Totals</h2>
+            <div className={styles.stats} data-usage-stats="">
+              <Stat label="Processed tokens" value={formatTokenCount(processedTokens(summary.totals))} kind="processed" />
+              <Stat
+                label="Cached input"
+                value={formatTokenCount(summary.totals.cachedInputTokens)}
+                kind="cached"
+              />
+              <Stat
+                label="Uncached input"
+                value={formatTokenCount(summary.totals.inputTokens)}
+                kind="uncached"
+              />
+              <Stat
+                label="Output"
+                value={formatTokenCount(summary.totals.outputTokens)}
+                kind="output"
+              />
+              <Stat
+                label="Wasted"
+                value={
+                  summary.totals.wastedUsd > 0
+                    ? formatCostUsd(summary.totals.wastedUsd)
+                    : "—"
+                }
+                kind="wasted"
+                title="Spend on runs that ended failed or stopped"
+              />
             </div>
-            {plotted.length > 0 && (
-              <ul className={styles.legend} data-usage-legend="">
-                {plotted.map((row) => (
-                  <li key={row.provider} className={styles.legendItem}>
-                    <span
-                      className={styles.legendSwatch}
-                      style={{ background: providerColor(row.provider) }}
-                    />
-                    {row.provider}
-                  </li>
-                ))}
-              </ul>
-            )}
           </section>
 
           <section className={styles.models} aria-label="Breakdown" data-usage-breakdown="">
@@ -504,18 +596,17 @@ export function UsageView({
               <thead>
                 <tr>
                   <th>{BREAKDOWN_KINDS.find((k) => k.id === group)?.label ?? "Name"}</th>
-                  <th>{group === "model" ? "Provider" : group === "thread" ? "Project" : ""}</th>
-                  <th>Cost</th>
-                  <th>Share</th>
-                  <th>Tokens</th>
-                  <th>Turns</th>
-                  <th title="on runs that ended failed/stopped">Wasted</th>
+                  {group === "thread" ? <th>Project</th> : null}
+                  <th className={styles.num}>Cost</th>
+                  <th className={styles.num}>Share</th>
+                  <th className={styles.num}>Tokens</th>
+                  <th className={styles.num}>Turns</th>
                 </tr>
               </thead>
               <tbody>
                 {breakdownRows.length === 0 ? (
                   <tr data-usage-breakdown-empty={group}>
-                    <td colSpan={7} className={styles.breakdownEmpty}>
+                    <td colSpan={group === "thread" ? 6 : 5} className={styles.breakdownEmpty}>
                       {group === "project" || group === "thread"
                         ? "No per-thread usage recorded in this range. Attribution starts from the first run after this update — earlier turns were never stored per thread."
                         : "No usage in this range."}
@@ -533,17 +624,29 @@ export function UsageView({
                       data-usage-model={modelAttr}
                     >
                       <td>
-                        <BreakdownLabel
-                          row={row}
-                          group={group}
-                          onSelectThread={onSelectThread}
-                          openable={
-                            !openableThreadIds || openableThreadIds.has(row.key)
-                          }
-                        />
+                        <span className={styles.rowLabel}>
+                          {group === "model" && row.detail ? (
+                            <ProviderMark
+                              providerId={row.detail}
+                              providers={providers}
+                              size={13}
+                              className={styles.rowMark}
+                            />
+                          ) : null}
+                          <BreakdownLabel
+                            row={row}
+                            group={group}
+                            onSelectThread={onSelectThread}
+                            openable={
+                              !openableThreadIds || openableThreadIds.has(row.key)
+                            }
+                          />
+                        </span>
                       </td>
-                      <td>{row.detail}</td>
-                      <td>
+                      {group === "thread" ? (
+                        <td className={styles.dim}>{row.detail}</td>
+                      ) : null}
+                      <td className={styles.num}>
                         {row.unreported ? (
                           <span className={styles.unreportedCell}>usage not reported</span>
                         ) : row.costUnmetered ? (
@@ -552,22 +655,20 @@ export function UsageView({
                           formatCostUsd(row.costUsd)
                         )}
                       </td>
-                      <td>{row.unreported ? "—" : formatShare(share)}</td>
-                      <td>
-                        {row.unreported ? "—" : formatTokenSum(processedTokens(row))}
+                      <td className={styles.num}>
+                        {row.unreported ? "—" : formatShare(share)}
                       </td>
-                      <td>{row.turns}</td>
-                      <td data-usage-wasted="">
-                        {row.unreported || !(row.wastedUsd > 0)
-                          ? "—"
-                          : formatCostUsd(row.wastedUsd)}
+                      <td className={styles.num}>
+                        {row.unreported ? "—" : formatTokenCount(processedTokens(row))}
                       </td>
+                      <td className={styles.num}>{row.turns}</td>
                     </tr>
                   );
                 })}
               </tbody>
             </table>
           </section>
+          </div>
         </div>
           )}
         </>
@@ -618,15 +719,22 @@ function Stat({
   label,
   value,
   kind,
+  title,
 }: {
   label: string;
   value: string;
   kind: string;
+  title?: string;
 }) {
   return (
-    <div className={styles.stat} data-usage-stat={kind}>
+    <div className={styles.stat} data-usage-stat={kind} title={title}>
       <span className={styles.statLabel}>{label}</span>
-      <span className={styles.statValue}>{value}</span>
+      <span
+        className={styles.statValue}
+        data-usage-wasted={kind === "wasted" ? "" : undefined}
+      >
+        {value}
+      </span>
     </div>
   );
 }
@@ -634,60 +742,48 @@ function Stat({
 function ProviderRow({
   row,
   metric,
+  name,
 }: {
   row: UsageProviderTotal;
   metric: UsageMetric;
+  name: string;
 }) {
-  if (row.unreported) {
-    return (
-      <div
-        className={styles.providerRowUnreported}
-        data-usage-provider={row.provider}
-        data-usage-unreported=""
-      >
-        <span className={styles.providerName}>{row.provider}</span>
-        <span className={styles.unreportedMeta}>
-          · {row.turns} turns · usage not reported
-        </span>
-      </div>
-    );
-  }
-  if (row.costUnmetered && metric === "cost") {
-    return (
-      <div
-        className={styles.providerRowUnreported}
-        data-usage-provider={row.provider}
-        data-usage-cost-unmetered=""
-      >
-        <span className={styles.providerName}>{row.provider}</span>
-        <span className={styles.unreportedMeta}>
-          · {row.turns} turns · unmetered
-        </span>
-      </div>
-    );
-  }
+  const unmetered = row.costUnmetered && metric === "cost";
   const share = metric === "cost" ? row.costShare : row.tokenShare;
-  const value = formatMetric(metricValue(row, metric), metric);
-  const color = providerColor(row.provider);
+  const meta = row.unreported
+    ? "usage not reported"
+    : unmetered
+      ? `unmetered · ${formatTokenCount(processedTokens(row))} tokens`
+      : [
+          `${formatShare(share)} of ${metric === "cost" ? "cost" : "tokens"}`,
+          metric === "cost" ? `${formatTokenCount(processedTokens(row))} tokens` : null,
+          row.cacheMultiplier != null ? `${formatMultiplier(row.cacheMultiplier)} cache` : null,
+        ]
+          .filter(Boolean)
+          .join(" · ");
+  const value =
+    row.unreported || unmetered ? "—" : formatMetric(metricValue(row, metric), metric);
   return (
     <div
       className={styles.providerRow}
       data-usage-provider={row.provider}
+      data-usage-unreported={row.unreported ? "" : undefined}
+      data-usage-cost-unmetered={unmetered ? "" : undefined}
+      data-off={row.unreported || unmetered ? "" : undefined}
     >
-      <span className={styles.providerName}>{row.provider}</span>
-      <div className={styles.shareTrack}>
-        <div
-          className={styles.shareFill}
-          style={{ width: `${barPercent(share, 1)}%`, background: color }}
+      <div className={styles.providerHead}>
+        <span
+          className={styles.providerDot}
+          style={{ background: row.unreported ? "var(--border)" : providerColor(row.provider) }}
         />
+        <ProviderMark providerId={row.provider} size={13} decorative className={styles.providerMark} />
+        <span className={styles.providerName}>{name}</span>
+        <span className={styles.providerTurns}>{row.turns} turns</span>
+        <span className={styles.providerValue}>{value}</span>
       </div>
-      <span className={styles.providerValue}>{value}</span>
-      <span className={styles.providerShare}>{formatShare(share)}</span>
-      {row.cacheMultiplier != null && (
-        <span className={styles.providerCache} data-usage-cache={row.provider}>
-          {formatMultiplier(row.cacheMultiplier)} cache
-        </span>
-      )}
+      <p className={styles.providerMeta} data-usage-cache={row.cacheMultiplier != null ? row.provider : undefined}>
+        {meta}
+      </p>
     </div>
   );
 }

@@ -92,6 +92,29 @@ describe("preview session (issue #155)", () => {
     assert.equal(ok.partition, "solenta-preview:t1");
   });
 
+  it("navigate waits for the guest's initial about:blank load to stop", async () => {
+    // Electron resolves an early loadURL on the initial load's
+    // did-finish-load, so the snapshot would still say about:blank.
+    const wc = fakeWebContents({ url: "" });
+    let loading = true;
+    wc.isLoading = () => loading;
+    preview.setWebContentsLookup(() => wc);
+    preview.bind({ threadId: "t1", webContentsId: 7 });
+
+    const pending = preview.navigate({
+      threadId: "t1",
+      url: "http://localhost:5173/",
+    });
+    await new Promise((r) => setImmediate(r));
+    assert.deepEqual(wc._state.loads, []);
+
+    loading = false;
+    wc._state.handlers["did-stop-loading"]();
+    const nav = await pending;
+    assert.deepEqual(wc._state.loads, ["http://localhost:5173/"]);
+    assert.equal(nav.url, "http://localhost:5173/");
+  });
+
   it("bind then screenshot / navigate / click / type", async () => {
     const wc = fakeWebContents({ url: "http://localhost:5173/" });
     preview.setWebContentsLookup((id) => (id === 7 ? wc : null));

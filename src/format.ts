@@ -34,6 +34,17 @@ export function formatWorkingLabel(runStartedAt: number, now = Date.now()): stri
   return `Working ${formatElapsed(runStartedAt, now)}`;
 }
 
+/** Report-style token count: "980", "1.5k", "2.68M", "1.20B". */
+export function formatTokenCount(tokens: number): string {
+  if (!Number.isFinite(tokens) || tokens < 1000) {
+    return String(Math.max(0, Math.round(Number.isFinite(tokens) ? tokens : 0)));
+  }
+  const [value, unit] =
+    tokens < 1e6 ? [tokens / 1e3, "k"] : tokens < 1e9 ? [tokens / 1e6, "M"] : [tokens / 1e9, "B"];
+  const digits = value >= 100 ? 0 : unit === "k" ? 1 : 2;
+  return `${value.toFixed(digits)}${unit}`;
+}
+
 /** Token sum like "Σ 52.0k". */
 export function formatTokenSum(tokens: number): string {
   if (tokens >= 1000) {

@@ -16,6 +16,7 @@ const { spawn } = require("node:child_process");
 const { execFileSync } = require("node:child_process");
 const { pathToFileURL } = require("node:url");
 const Module = require("node:module");
+const { rmTree } = require("./support/rmTree.js");
 
 {
   const origLoad = Module._load;
@@ -132,7 +133,7 @@ describe("#315 absolute stop leftover sidecars", () => {
     });
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     if (runner) runner.stopAll();
     for (const id of started.splice(0)) {
       try {
@@ -141,7 +142,7 @@ describe("#315 absolute stop leftover sidecars", () => {
         // ignore
       }
     }
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+    await rmTree(tmpDir);
     if (prevSimulate === undefined) delete process.env.CODER_SIMULATE;
     else process.env.CODER_SIMULATE = prevSimulate;
     if (prevAgentCmd === undefined) delete process.env.CODER_AGENT_CMD;

@@ -14,7 +14,11 @@ const {
   OUTPUT_TRUNCATE,
 } = require("./claude.js");
 const codexParse = require("./codex.js");
-const { runCodexAppServerTurn } = require("./codex-appserver.js");
+const {
+  runCodexAppServerTurn,
+  isCodexChildThread,
+} = require("./codex-appserver.js");
+const { pendingFromInput } = require("./codexInput.js");
 const {
   classifyServerRequest,
   pendingFromCommand,
@@ -62,7 +66,10 @@ const {
   ensureCursorMcpConfig,
   whenGrokMcpIdle,
 } = require("./memory-sup.js");
-const { isMemoryConsolidateTool } = require("./memory-consolidate.js");
+const {
+  isMemoryConsolidateTool,
+  recordConsolidateOutcome,
+} = require("./memory-consolidate.js");
 const opencodeParse = require("./opencode.js");
 const { runOpencode } = opencodeParse;
 const { recordRunOutcome } = require("./memory-record.js");
@@ -762,6 +769,9 @@ function createRunner(opts) {
    * @type {Map<string, object>}
    */
   const active = new Map();
+  // Host-only, across turns. Restart fails closed and requires a fresh click;
+  // neither agent-editable store data nor MCP arguments can mint a sign-off.
+  const ciWorkflowSignOffs = new Map();
   /**
    * Threads whose live ExitPlanMode prompt was already answered this turn.
    * Blocks the post-run fallback card so a claude deny does not reopen a
@@ -846,6 +856,24 @@ function createRunner(opts) {
       // already dead
     }
     finishRunningSubagents(threadId);
+  }
+
+  /**
+   * Release a thread's kept-alive Claude CLI because the thread was archived,
+   * settled, or deleted (#1383). A thread can archive ITSELF through the
+   * thread_archive tool, so its turn may still be live: killing now SIGTERMs
+   * the process making that call and the turn lands as "Run error (exit
+   * 143)". Mid-turn, flag the session; scheduleClaudeIdleReap disposes it as
+   * soon as the turn settles.
+   */
+  function retireClaudeSession(threadId) {
+    const sess = claudeSessions.get(threadId);
+    if (!sess) return;
+    if (active.has(threadId)) {
+      sess.retireAfterTurn = true;
+      return;
+    }
+    disposeClaudeSession(threadId);
   }
 
   /**
@@ -994,6 +1022,10 @@ function createRunner(opts) {
   /** Arm the idle reaper after a turn settles; disarmed on reuse. */
   function scheduleClaudeIdleReap(threadId) {
     const sess = claudeSessions.get(threadId);
+    if (sess && sess.retireAfterTurn) {
+      disposeClaudeSession(threadId);
+      return;
+    }
     if (!sess || sess.idleTimer) return;
     sess.idleTimer = setTimeout(
       () => disposeClaudeSession(threadId),
@@ -1908,6 +1940,8 @@ function createRunner(opts) {
     // start the next turn.
     const terminalRunId = resolveTerminalRunId(threadId, extras);
     notifySimulatorRunTerminal(threadId, status, terminalRunId);
+    // #1384: hidden consolidation passes report their outcome on the project.
+    recordConsolidateOutcome(store, threadId, status, text);
     // Plan-mode CLIs without ExitPlanMode: persist an approval card from
     // the last assistant text before anything drains the type-ahead queue
     // (issue #707). Done and CLI-cancelled both count; a failed turn does not.
@@ -2274,6 +2308,16 @@ function createRunner(opts) {
    * } | null}
    */
   function getPendingPermission(threadId) {
+    const ci = ciWorkflowSignOffs.get(threadId);
+    if (ci && !ci.approved) {
+      return {
+        requestId: ci.id, toolName: "CI workflow merge",
+        summary: "Sign off the workflow patch and merge destination",
+        input: ci.input, command: null, acceptAlways: false,
+        questions: null, plan: null,
+        guardrail: { rule: "CI_WORKFLOW", reason: "Accept signs off only this patch and destination, then resumes orchestration. Changes require a new sign-off." },
+      };
+    }
     const e = active.get(threadId);
     if (
       e &&
@@ -2292,6 +2336,7 @@ function createRunner(opts) {
           commandEditable: p.commandEditable !== false,
           acceptAlways: p.acceptAlways !== false,
           questions: questionInfo(p.toolName, p.rawInput),
+          inputRequest: p.inputRequest || null,
           plan: planText(p.toolName, p.rawInput),
           guardrail: p.guardrail || null,
         };
@@ -2349,7 +2394,7 @@ function createRunner(opts) {
 
   function replyCodexJsonRpc(e, id, result) {
     if (e.handle && typeof e.handle.respondJsonRpc === "function") {
-      e.handle.respondJsonRpc(id, result);
+      if (e.handle.respondJsonRpc(id, result) === false) throw new Error("Codex request no longer pending or connection closed");
       return;
     }
     throw new Error("Codex run has no JSON-RPC reply path");
@@ -2406,7 +2451,7 @@ function createRunner(opts) {
     if (id === undefined || id === null) return false;
 
     const classified = classifyServerRequest(method, msg && msg.params);
-    if (classified.action !== "command" && classified.action !== "mcp") {
+    if (!["command", "mcp", "input"].includes(classified.action)) {
       try {
         replyCodexJsonRpcError(
           e,
@@ -2419,8 +2464,14 @@ function createRunner(opts) {
       return true;
     }
 
-    const pending = classified.action === "mcp"
-      ? pendingFromMcp(id, msg.params) : pendingFromCommand(id, msg.params);
+    let pending;
+    try {
+      pending = classified.action === "input" ? pendingFromInput(id, method, msg.params)
+        : classified.action === "mcp" ? pendingFromMcp(id, msg.params) : pendingFromCommand(id, msg.params);
+    } catch {
+      replyCodexJsonRpcError(e, id, unsupportedError(method, `${method}: unsupported input schema or URL`));
+      return true;
+    }
     let inputStr = pending.input;
     try {
       inputStr = truncate(pending.input, INPUT_TRUNCATE);
@@ -2491,15 +2542,16 @@ function createRunner(opts) {
       throw new Error("Permission request no longer pending");
     }
     const pending = e.pendingPermissions[idx];
-    e.pendingPermissions.splice(idx, 1);
     const mapped = mapSolentaDecision(decision, pending.availableDecisions);
+    const content = pending.inputRequest && mapped === "accept" ? pending.validateInput(input.inputValues) : undefined;
     replyCodexJsonRpc(
       e,
       pending.rpcId !== undefined ? pending.rpcId : pending.id,
-      approvalResponse(pending.method, mapped),
+      approvalResponse(pending.method, mapped, content),
     );
+    e.pendingPermissions.splice(idx, 1);
     const label =
-      decision === "deny"
+      pending.inputRequest ? `${mapped === "accept" ? "Answered" : mapped === "cancel" ? "Cancelled" : "Declined"}: ${pending.summary}` : decision === "deny"
         ? `Denied: ${pending.summary}`
         : mapped === "acceptForSession"
           ? `Allowed for session: ${pending.summary}`
@@ -2525,6 +2577,32 @@ function createRunner(opts) {
   function respondPermission(input) {
     const { threadId, requestId, decision, answers, updatedCommand } =
       input || {};
+    const ci = ciWorkflowSignOffs.get(threadId);
+    if (ci && !ci.approved && ci.id === requestId) {
+      if (decision !== "allow" && decision !== "deny") {
+        throw new Error("CI workflow sign-off requires a one-time Accept or Deny");
+      }
+      if (decision === "allow") {
+        ci.approved = true;
+        const r = ci.review;
+        services.setQueued(store, { threadId, prompt:
+          `I signed off the CI workflow patch from worker ${r.workerThreadId} (${r.sourceSha}) ` +
+          `into ${r.destinationPath} on ${r.destinationBranch} (${r.destinationSha}). ` +
+          `Resume thread_merge with approved:true, workerThreadId ${r.workerThreadId}, ` +
+          `expectedPath ${JSON.stringify(r.destinationPath)}, expectedBranch ${JSON.stringify(r.destinationBranch)}. ` +
+          "This approval covers only that worker and destination; changed inputs require fresh sign-off.",
+        });
+      } else {
+        ciWorkflowSignOffs.delete(threadId);
+      }
+      appendMessage(threadId, "event", decision === "allow" ? "CI workflow merge signed off" : "CI workflow merge sign-off denied");
+      store.updateThread(threadId, { awaitingInput: getPendingPermission(threadId) != null });
+      store.save();
+      pushDetail(threadId);
+      pushThreadsChanged();
+      if (decision === "allow") maybeDrainQueued(threadId);
+      return;
+    }
     const e = active.get(threadId);
     if (!e || !e.handle) {
       return respondPersistedPlan(threadId, requestId, decision);
@@ -2666,6 +2744,26 @@ function createRunner(opts) {
     pushThreadsChanged();
     refreshDetail(threadId);
     return { asked: true, questions: questions.length };
+  }
+
+  /** Called only by the host merge guard; renderer respondPermission grants it. */
+  function requestCiWorkflowSignOff(threadId, review) {
+    const key = JSON.stringify(review);
+    const previous = ciWorkflowSignOffs.get(threadId);
+    if (previous?.key === key) {
+      if (!previous.approved || isAutoTurn(threadId)) return false;
+      ciWorkflowSignOffs.delete(threadId); // Single use, including failed merges.
+      return true;
+    }
+    const input = `Worker: ${review.workerThreadId}\nSource: ${review.sourceBranch} (${review.sourceSha})\n` +
+      `Destination: ${review.destinationPath}\nBranch: ${review.destinationBranch} (${review.destinationSha})\n` +
+      `Workflow files: ${review.files.join(", ")}\n\n${review.patch || "(No net workflow change at this destination.)"}`;
+    ciWorkflowSignOffs.set(threadId, { id: randomUUID(), key, review, input, approved: false });
+    store.updateThread(threadId, { awaitingInput: true });
+    store.save();
+    pushDetail(threadId);
+    pushThreadsChanged();
+    return false;
   }
 
   /**
@@ -5226,16 +5324,25 @@ function createRunner(opts) {
       onEvent: (ev) => {
         if (!guard()) return;
 
+        if (ev.type === "server_request.resolved") {
+          const live = active.get(threadId);
+          live.pendingPermissions = live.pendingPermissions.filter((p) => p.rpcId !== ev.requestId);
+          store.updateThread(threadId, { awaitingInput: live.pendingPermissions.length > 0 });
+          store.save();
+          pushDetail(threadId, codexState);
+          pushThreadsChanged();
+          return;
+        }
+
         const structuredError = codexParse.extractTerminalError(ev);
         if (structuredError) terminalError = structuredError;
 
-        // Session / thread id
-        if (
-          codexParse.isSessionStartEvent(ev) ||
-          codexParse.extractSessionId(ev)
-        ) {
+        // Session / thread id. Only the root thread.started is a resume
+        // target: child thread/started and turn.started carry a different
+        // id and would poison the next thread/resume.
+        if (codexParse.isSessionStartEvent(ev)) {
           const sid = codexParse.extractSessionId(ev);
-          if (sid) {
+          if (sid && !isCodexChildThread(ev.thread || { id: sid })) {
             capturedSessionId = sid;
             const live = active.get(threadId);
             if (live && live.kind === "codex") live.sessionId = sid;
@@ -8392,7 +8499,8 @@ function createRunner(opts) {
       {
         status: "working",
         title,
-        awaitingInput: keepQuestion != null || keepPlan != null,
+        awaitingInput: keepQuestion != null || keepPlan != null ||
+          ciWorkflowSignOffs.get(threadId)?.approved === false,
         runStartedAt: Date.now(),
         // Any user turn supersedes an open question card (issue #647):
         // answering it IS this message, and so is changing the subject.
@@ -9175,11 +9283,13 @@ function createRunner(opts) {
     toWorkflowView,
     resolveProvider,
     getPendingPermission,
+    requestCiWorkflowSignOff,
     handleCodexServerRequest,
     respondPermission,
     askUser,
     clearQuestion,
     disposeClaudeSession,
+    retireClaudeSession,
     deliverNotice,
     appendInbound,
     checkStalls,

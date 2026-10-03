@@ -88,7 +88,17 @@ export function StayAwakeControl({
           </>
         )}
       </Icon>
-      <span className={styles.label}>{MODE_LABEL[state.mode]}</span>
+      {/* Visible copy is the live state ("Awake" while it is keeping the Mac
+          up), the mode stays on the aria-label and tooltip (#1411). */}
+      <span className={styles.label}>
+        {state.blocking
+          ? "Awake"
+          : state.mode === "off"
+            ? "Sleep"
+            : state.mode === "on"
+              ? "Paused"
+              : "Auto"}
+      </span>
     </button>
   );
 }

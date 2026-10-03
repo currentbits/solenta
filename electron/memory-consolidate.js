@@ -137,20 +137,42 @@ function buildConsolidatePrompt(opts) {
   ].join("\n");
 }
 
+/** How long a failed grok pass pins a project's consolidation to Claude. */
+const GROK_RETRY_AFTER_MS = 7 * 24 * 60 * 60 * 1000;
+
 /**
  * Cheap worker: grok-4.5 when the grok CLI is installed, otherwise Claude
  * default. Claude is the provider that can actually confine tools via
  * --allowedTools; grok relies on the prompt plus the host deny list.
  *
+ * Installed is not signed in or funded (#1384): when this project's latest
+ * grok pass failed within GROK_RETRY_AFTER_MS, use Claude. Otherwise every
+ * app start re-fires a grok pass that fails the same way.
+ *
+ * @param {{ store?: import("./store").Store, projectId?: string, now?: number }} [opts]
  * @returns {{ provider: string, model: string | null }}
  */
-function resolveConsolidateProvider() {
+function resolveConsolidateProvider(opts) {
   const { getProvider, isBinAvailable, resolveBin } = require("./providers.js");
   const grok = getProvider("grok");
-  if (grok && isBinAvailable(resolveBin(grok))) {
-    return { provider: "grok", model: "grok-4.5" };
+  if (!grok || !isBinAvailable(resolveBin(grok))) {
+    return { provider: "claude", model: null };
   }
-  return { provider: "claude", model: null };
+  if (opts && opts.store && opts.projectId) {
+    const lastGrok = latestConsolidateThread(
+      opts.store.getThreads().filter((t) => t && t.provider === "grok"),
+      opts.projectId,
+    );
+    const now = Number.isFinite(opts.now) ? opts.now : Date.now();
+    if (
+      lastGrok &&
+      lastGrok.status === "failed" &&
+      now - (lastGrok.updatedAt || lastGrok.createdAt || 0) < GROK_RETRY_AFTER_MS
+    ) {
+      return { provider: "claude", model: null };
+    }
+  }
+  return { provider: "grok", model: "grok-4.5" };
 }
 
 /**
@@ -221,6 +243,28 @@ function latestConsolidateThread(threads, projectId) {
     if (!latest || t.createdAt > latest.createdAt) latest = t;
   }
   return latest;
+}
+
+/**
+ * Record how a consolidation pass ended on its project (#1384) so the
+ * Memory tab can show it; the thread itself is hidden from the sidebar.
+ * A mid-run failure (not signed in, out of credit) only ever reached the
+ * hidden thread before. No-op for any other thread.
+ *
+ * @param {import("./store").Store} store
+ * @param {string} threadId
+ * @param {string} status terminal status (done / failed / stopped)
+ * @param {unknown} text terminal text (the error on failure)
+ */
+function recordConsolidateOutcome(store, threadId, status, text) {
+  const thread = store.getThread(threadId);
+  if (!thread || thread.memoryConsolidate !== true) return;
+  patchProject(store, thread.projectId, {
+    memoryConsolidateDoneAt: Date.now(),
+    memoryConsolidateError:
+      status === "failed" ? String(text || "Run failed") : null,
+  });
+  store.save();
 }
 
 /**
@@ -311,11 +355,17 @@ async function fireConsolidate(ctx, project, now, opts) {
   const resolved =
     typeof ctx.resolveProvider === "function"
       ? ctx.resolveProvider()
-      : resolveConsolidateProvider();
+      : resolveConsolidateProvider({
+          store: ctx.store,
+          projectId: project.id,
+          now,
+        });
 
   patchProject(ctx.store, project.id, {
     memoryConsolidateAt: now,
     memoryConsolidateError: null,
+    memoryConsolidateProvider: resolved.provider,
+    memoryConsolidateDoneAt: null,
   });
   ctx.store.save();
 
@@ -448,8 +498,10 @@ module.exports = {
   shouldConsolidate,
   isMemoryConsolidateTool,
   buildConsolidatePrompt,
+  GROK_RETRY_AFTER_MS,
   resolveConsolidateProvider,
   pruneConsolidateThreads,
+  recordConsolidateOutcome,
   releaseFailedPasses,
   fireConsolidate,
   startMemoryConsolidateScheduler,

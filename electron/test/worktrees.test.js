@@ -25,6 +25,7 @@ const {
 const { reviewItineraryPathFor } = require("../reviewItinerary.js");
 const ssh = require("../ssh.js");
 const { writeFakeBin } = require("./support/fakeBin.js");
+const { rmTree } = require("./support/rmTree.js");
 
 function git(cwd, args) {
   return execFileSync("git", args, {
@@ -247,7 +248,7 @@ describe("worktrees", () => {
     });
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     // Remove worktrees first so rm of tmpDir succeeds
     try {
       for (const t of store.getThreads()) {
@@ -262,7 +263,7 @@ describe("worktrees", () => {
     } catch {
       // ignore
     }
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+    await rmTree(tmpDir);
   });
 
   it("setupWorktree creates branch and worktree, is idempotent", async () => {

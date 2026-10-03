@@ -22,6 +22,7 @@ const {
 } = require("../worktrees.js");
 const { createRunner } = require("../runner.js");
 const { writeFakeBin } = require("./support/fakeBin.js");
+const { rmTree } = require("./support/rmTree.js");
 
 function git(cwd, args) {
   return execFileSync("git", args, {
@@ -109,8 +110,8 @@ describe("rewindThread (services)", () => {
     thread = store.getThread(thread.id);
   });
 
-  afterEach(() => {
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+  afterEach(async () => {
+    await rmTree(tmpDir);
   });
 
   it("truncates messages and work-log; usage and spend untouched", async () => {
@@ -553,10 +554,10 @@ function appendTurn(store, threadId, n, createdAt) {
 describe("restoreFiles resets to the last retained turn", () => {
   let fx;
 
-  afterEach(() => {
+  afterEach(async () => {
     if (fx) {
       try {
-        fs.rmSync(fx.tmpDir, { recursive: true, force: true });
+        await rmTree(fx.tmpDir);
       } catch {
         // ignore
       }
@@ -843,9 +844,9 @@ process.stdin.on("data", (c) => {
     project = await services.addProject(store, repo);
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     if (runner) runner.stopAll();
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+    await rmTree(tmpDir);
     if (prevSimulate === undefined) delete process.env.CODER_SIMULATE;
     else process.env.CODER_SIMULATE = prevSimulate;
     if (prevClaudeBin === undefined) delete process.env.CODER_CLAUDE_BIN;

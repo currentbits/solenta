@@ -24,6 +24,7 @@ const {
   GH_AUTH_JSON_MIN,
 } = require("../sourceControl.js");
 const { isGhAuthFailure } = require("../worktrees.js");
+const { rmTree } = require("./support/rmTree.js");
 
 function missingBin(dir, name) {
   return path.join(dir, name);
@@ -181,9 +182,9 @@ describe("source control discovery probe", () => {
     invalidateDiscoveryCache();
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     invalidateDiscoveryCache();
-    fs.rmSync(tmp, { recursive: true, force: true });
+    await rmTree(tmp);
   });
 
   function emptyBins() {

@@ -332,8 +332,11 @@ export function flattenLater(later: LaterPartition): ThreadInfo[] {
 export interface FlatSidebar {
   /** Pin order, oldest pin first (T3: reorderable block above the inbox). */
   pinned: ThreadInfo[];
-  /** createdAt desc (static — activity never reorders), forks attached. */
+  /** The inbox: done / waiting / failed rows. createdAt desc (static —
+   *  activity never reorders), forks attached. */
   active: ThreadInfo[];
+  /** Mid-turn rows nobody needs to look at yet; same order as active. */
+  working: ThreadInfo[];
   /** Wake-soonest first. */
   snoozed: ThreadInfo[];
   /** Wrap-up newest first. */
@@ -345,7 +348,7 @@ export interface FlatSidebar {
 /**
  * Partition for the flat T3 sidebar. Precedence (first match wins), same as
  * partitionSidebar (#567) except pinned is its own section:
- *   archived > snoozed > pinned > settled > active
+ *   archived > snoozed > pinned > settled > working > active
  * scopeProjectId filters every section ("All projects" = null).
  */
 export function buildFlatSidebar(
@@ -424,13 +427,32 @@ export function buildFlatSidebar(
     }
   }
 
+  // Inbox vs Working shelf: a family files by its visible lead, so a busy
+  // lead takes its crew to the shelf and a done lead keeps it in the inbox.
+  const inbox = nestWorkerFamilies([...activeRest, ...nestActive], byId);
+  const inboxIds = new Set(inbox.map((t) => t.id));
+  const inboxById = new Map(inbox.map((t) => [t.id, t]));
+  const attention: ThreadInfo[] = [];
+  const working: ThreadInfo[] = [];
+  for (const t of inbox) {
+    const leadId =
+      (isCrewWorker(t) ? crewOwnerInList(t, byId, inboxIds) : null) ?? t.id;
+    (isQuietlyWorking(inboxById.get(leadId) ?? t) ? working : attention).push(t);
+  }
+
   return {
     pinned: nestWorkerFamilies([...pinned, ...nestPinned], byId),
-    active: nestWorkerFamilies([...activeRest, ...nestActive], byId),
+    active: attention,
+    working,
     snoozed,
     settled: settledRest,
     archived,
   };
+}
+
+/** Running and asking nothing of the user: no question, no stall. */
+export function isQuietlyWorking(t: ThreadInfo): boolean {
+  return t.status === "working" && !t.awaitingInput && t.stalledAt == null;
 }
 
 /** Default opts when a caller has no clock of its own (tests, pure helpers). */

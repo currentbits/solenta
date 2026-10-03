@@ -28,7 +28,9 @@ const {
   ensureWorktree,
   clearMissingWorktree,
   removeWorktree,
+  removeWorktreeDir,
 } = require("../worktrees.js");
+const { rmTree } = require("./support/rmTree.js");
 
 function git(cwd, args) {
   return execFileSync("git", args, {
@@ -113,8 +115,8 @@ describe("maybeCleanupMergedWorktree", () => {
     fx = await makeFixture();
   });
 
-  afterEach(() => {
-    fs.rmSync(fx.tmpDir, { recursive: true, force: true });
+  afterEach(async () => {
+    await rmTree(fx.tmpDir);
   });
 
   it("removes worktree and branch when PR merged, tree clean, all pushed", async () => {
@@ -174,8 +176,8 @@ describe("refreshPrStates merged-PR cleanup", () => {
     fx = await makeFixture();
   });
 
-  afterEach(() => {
-    fs.rmSync(fx.tmpDir, { recursive: true, force: true });
+  afterEach(async () => {
+    await rmTree(fx.tmpDir);
   });
 
   it("cleans the worktree when a PR flips OPEN→MERGED", async () => {
@@ -233,8 +235,8 @@ describe("sweepOrphanWorktrees", () => {
     fx = await makeFixture();
   });
 
-  afterEach(() => {
-    fs.rmSync(fx.tmpDir, { recursive: true, force: true });
+  afterEach(async () => {
+    await rmTree(fx.tmpDir);
   });
 
   it("removes a clean orphan worktree and leaves referenced ones alone", async () => {
@@ -267,7 +269,7 @@ describe("sweepOrphanWorktrees", () => {
     assert.ok(list.includes(fx.worktreePath));
   });
 
-  it("keeps orphans with uncommitted changes", async () => {
+  function dirtyOrphan() {
     const orphanThread = services.createThread(fx.store, {
       projectId: fx.project.id,
       title: "Dirty orphan",
@@ -281,6 +283,30 @@ describe("sweepOrphanWorktrees", () => {
     fs.writeFileSync(path.join(orphan.worktreePath, "precious.txt"), "wip\n");
     fx.store.removeThread(orphanThread.id);
     fx.store.saveNow();
+    return { id: orphanThread.id, dir: orphan.worktreePath };
+  }
+
+  it("saves a dirty orphan to recovered/<id>, then removes it (#1386)", async () => {
+    const orphan = dirtyOrphan();
+
+    const result = await sweepOrphanWorktrees({
+      store: fx.store,
+      worktreeBase: fx.worktreeBase,
+    });
+
+    const branch = `recovered/${orphan.id}`;
+    assert.deepEqual(result.recovered, [{ dir: orphan.dir, branch }]);
+    assert.deepEqual(result.removed, [orphan.dir]);
+    assert.ok(!fs.existsSync(orphan.dir));
+    // The work survives on the branch in the owning repo.
+    assert.equal(git(fx.repo, ["show", `${branch}:precious.txt`]), "wip");
+    assert.ok(fs.existsSync(fx.worktreePath));
+  });
+
+  it("keeps a dirty orphan when the recovery commit cannot be made", async () => {
+    const orphan = dirtyOrphan();
+    // Branch name already taken: switch -c fails, so nothing is removed.
+    git(fx.repo, ["branch", `recovered/${orphan.id}`]);
 
     const result = await sweepOrphanWorktrees({
       store: fx.store,
@@ -288,10 +314,8 @@ describe("sweepOrphanWorktrees", () => {
     });
 
     assert.deepEqual(result.removed, []);
-    assert.ok(fs.existsSync(orphan.worktreePath));
-    assert.ok(
-      fs.existsSync(path.join(orphan.worktreePath, "precious.txt")),
-    );
+    assert.deepEqual(result.kept, [orphan.dir]);
+    assert.ok(fs.existsSync(path.join(orphan.dir, "precious.txt")));
   });
 
   it("is a no-op when the base directory does not exist", async () => {
@@ -338,8 +362,8 @@ describe("cleanupWorktree via removeWorktree (#843)", () => {
     fx = await makeFixture();
   });
 
-  afterEach(() => {
-    fs.rmSync(fx.tmpDir, { recursive: true, force: true });
+  afterEach(async () => {
+    await rmTree(fx.tmpDir);
   });
 
   it("nulls fields when the worktree directory is already gone", () => {
@@ -428,8 +452,8 @@ describe("clearMissingWorktree (worktree deleted behind our back)", () => {
     project = await services.addProject(store, repo);
   });
 
-  afterEach(() => {
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+  afterEach(async () => {
+    await rmTree(tmpDir);
   });
 
   /** Thread with a worktree whose folder is then removed outside the app. */
@@ -537,8 +561,8 @@ describe("ensureWorktree (lazy creation)", () => {
     project = await services.addProject(store, repo);
   });
 
-  afterEach(() => {
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+  afterEach(async () => {
+    await rmTree(tmpDir);
   });
 
   it("creates the worktree for a pendingWorktree thread and clears the flag", () => {
@@ -646,5 +670,61 @@ describe("ensureWorktree (lazy creation)", () => {
     );
     // Flag survives so the next run can retry.
     assert.equal(store.getThread(thread.id).pendingWorktree, true);
+  });
+});
+
+describe("removeWorktreeDir: rename aside, prune, async delete (#1392)", () => {
+  let fx;
+
+  beforeEach(async () => {
+    fx = await makeFixture();
+  });
+
+  afterEach(async () => {
+    await rmTree(fx.tmpDir);
+  });
+
+  function waitGone(p) {
+    return new Promise((resolve, reject) => {
+      const start = Date.now();
+      const tick = () => {
+        if (!fs.existsSync(p)) return resolve();
+        if (Date.now() - start > 10000) return reject(new Error("still there"));
+        setTimeout(tick, 20);
+      };
+      tick();
+    });
+  }
+
+  it("moves a clean linked worktree out of place and unregisters it at once", async () => {
+    const res = removeWorktreeDir(fx.repo, fx.worktreePath, false);
+    assert.equal(res.ok, true);
+    // Gone from its path and from git before the delete finishes.
+    assert.ok(!fs.existsSync(fx.worktreePath));
+    assert.ok(!git(fx.repo, ["worktree", "list"]).includes(fx.worktreePath));
+    const parent = path.dirname(fx.worktreePath);
+    const trash = fs
+      .readdirSync(parent)
+      .filter((n) => n.startsWith(".trash-"))
+      .map((n) => path.join(parent, n));
+    for (const t of trash) await waitGone(t);
+  });
+
+  it("refuses a dirty worktree without force, like git worktree remove", () => {
+    fs.writeFileSync(path.join(fx.worktreePath, "wip.txt"), "wip\n");
+    const res = removeWorktreeDir(fx.repo, fx.worktreePath, false);
+    assert.equal(res.ok, false);
+    assert.match(res.combined, /modified or untracked files/);
+    assert.ok(fs.existsSync(path.join(fx.worktreePath, "wip.txt")));
+  });
+
+  it("never moves the main checkout, even with force", () => {
+    const res = removeWorktreeDir(fx.repo, fx.repo, true);
+    assert.equal(res.ok, false);
+    assert.ok(fs.existsSync(path.join(fx.repo, "README.md")));
+    assert.equal(
+      fs.readdirSync(path.dirname(fx.repo)).some((n) => n.startsWith(".trash-")),
+      false,
+    );
   });
 });

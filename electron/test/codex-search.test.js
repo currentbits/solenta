@@ -18,6 +18,7 @@ const { Store } = require("../store.js");
 const services = require("../services.js");
 const { createRunner } = require("../runner.js");
 const { writeFakeBin } = require("./support/fakeBin.js");
+const { rmTree } = require("./support/rmTree.js");
 
 function git(cwd, args) {
   execFileSync("git", args, { cwd, stdio: "ignore" });
@@ -192,8 +193,8 @@ describe("codex search: setWebSearch service", () => {
     project = await services.addProject(store, repo);
   });
 
-  afterEach(() => {
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+  afterEach(async () => {
+    await rmTree(tmpDir);
   });
 
   it("createThread defaults webSearch to false", () => {
@@ -308,7 +309,7 @@ describe("codex search: setWebSearch service", () => {
 });
 
 describe("codex search: store migration", () => {
-  it("heals a missing webSearch field to false without bumping updatedAt", () => {
+  it("heals a missing webSearch field to false without bumping updatedAt", async () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "coder-search-mig-"));
     const filePath = path.join(tmpDir, "s.json");
     try {
@@ -339,13 +340,13 @@ describe("codex search: store migration", () => {
       assert.equal(thread.webSearch, false);
       assert.equal(thread.updatedAt, 42);
     } finally {
-      fs.rmSync(tmpDir, { recursive: true, force: true });
+      await rmTree(tmpDir);
     }
   });
 });
 
 describe("codex search: IPC seam + runner wiring", () => {
-  it("preload exposes setWebSearch and main handles the channel", () => {
+  it("preload exposes setWebSearch and main handles the channel", async () => {
     const Module = require("node:module");
     const handlers = new Map();
     const bridge = {};
@@ -409,7 +410,7 @@ describe("codex search: IPC seam + runner wiring", () => {
           "main must handle threads:setWebSearch",
         );
       } finally {
-        fs.rmSync(tmp, { recursive: true, force: true });
+        await rmTree(tmp);
       }
     } finally {
       Module._load = origLoad;
@@ -500,7 +501,7 @@ emit({
       );
     } finally {
       if (runner) runner.stopAll();
-      fs.rmSync(tmpDir, { recursive: true, force: true });
+      await rmTree(tmpDir);
       for (const [k, v] of Object.entries(prev)) {
         if (v === undefined) delete process.env[k];
         else process.env[k] = v;

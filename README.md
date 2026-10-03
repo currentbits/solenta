@@ -196,6 +196,7 @@ Full detail: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 ```bash
 npm install
 cd core && npm install && npm run build && cd ..
+npm install --prefix memory-server # required for MCP tools and Codex input validation
 npm run dev              # Vite (HMR) + Electron against the real main process
 ```
 

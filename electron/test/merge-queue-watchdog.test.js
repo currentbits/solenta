@@ -28,6 +28,7 @@ const {
   WEDGE_WATCHDOG_INTERVAL_MS,
   WEDGE_WATCHDOG_STARTUP_MS,
 } = require("../mergeQueue.js");
+const { rmTree } = require("./support/rmTree.js");
 
 function git(cwd, args) {
   execFileSync("git", args, { cwd, stdio: "ignore" });
@@ -175,7 +176,7 @@ describe("createWedgedLaneWatchdog (#346)", () => {
     watchdog.stop();
   });
 
-  it("recycles a wedged lane per project and leaves a beating lane alone", () => {
+  it("recycles a wedged lane per project and leaves a beating lane alone", async () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "coder-wedge-wd-"));
     const store = new Store(path.join(tmpDir, "store.json"));
     const origComplete = issues.completeIssue;
@@ -242,7 +243,7 @@ describe("createWedgedLaneWatchdog (#346)", () => {
       watchdog.stop();
     } finally {
       issues.completeIssue = origComplete;
-      fs.rmSync(tmpDir, { recursive: true, force: true });
+      await rmTree(tmpDir);
     }
   });
 
@@ -292,9 +293,9 @@ describe("runner lane heartbeat (#346)", () => {
     });
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     if (runner) runner.stopAll();
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+    await rmTree(tmpDir);
     if (prevSimulate === undefined) delete process.env.CODER_SIMULATE;
     else process.env.CODER_SIMULATE = prevSimulate;
     if (prevAgentCmd === undefined) delete process.env.CODER_AGENT_CMD;

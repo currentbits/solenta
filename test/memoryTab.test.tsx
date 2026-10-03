@@ -12,7 +12,12 @@
 import assert from "node:assert/strict";
 import { describe, it, afterEach } from "node:test";
 import { inAct, mount, unmountAll } from "./support/dom.ts";
-import { MemoryTab, resetMemoryTabSession } from "../src/components/MemoryTab";
+import { cloneElement } from "react";
+import {
+  MemoryTab,
+  consolidationStatus,
+  resetMemoryTabSession,
+} from "../src/components/MemoryTab";
 import type {
   AgentConfigDoctorReport,
   AgentConfigPreview,
@@ -1604,6 +1609,77 @@ describe("MemoryTab browsing #1123", () => {
     assert.ok(m.query('input[aria-label="Edit title"]'));
     await m.click(m.byText("Discard and switch"));
     assert.equal(m.query('input[aria-label="Edit title"]'), null);
+    m.unmount();
+  });
+});
+
+describe("consolidation status line (#1384)", () => {
+  const now = 1_790_000_000_000;
+  const H = 3_600_000;
+
+  it("reports ok, running, failed and never-run", () => {
+    assert.deepEqual(
+      consolidationStatus(
+        {
+          memoryConsolidateAt: now - 2 * H - 60_000,
+          memoryConsolidateDoneAt: now - 2 * H,
+          memoryConsolidateProvider: "claude",
+        },
+        now,
+      ),
+      { text: "Last consolidation 2h ago · claude · ok", failed: false },
+    );
+    assert.deepEqual(
+      consolidationStatus(
+        { memoryConsolidateAt: now - 5 * 60_000, memoryConsolidateProvider: "grok" },
+        now,
+      ),
+      { text: "Consolidation running since 5m ago · grok", failed: false },
+    );
+    // The gate release after a failure clears memoryConsolidateAt; the
+    // failure must still show, dated by DoneAt, first error line only.
+    assert.deepEqual(
+      consolidationStatus(
+        {
+          memoryConsolidateAt: null,
+          memoryConsolidateDoneAt: now - 26 * H,
+          memoryConsolidateProvider: "grok",
+          memoryConsolidateError:
+            "Run error: Not signed in. To authenticate without a browser, run:\n  grok login --device-code",
+        },
+        now,
+      ),
+      {
+        text: "Last consolidation failed 1d ago · grok: Run error: Not signed in. To authenticate without a browser, run:",
+        failed: true,
+      },
+    );
+    assert.deepEqual(consolidationStatus(null, now), {
+      text: "Memory consolidation has not run yet.",
+      failed: false,
+    });
+  });
+
+  it("renders the line as an alert when the last pass failed", async () => {
+    const m = await mount(
+      cloneElement(tab(), {
+        consolidation: {
+          memoryConsolidateDoneAt: Date.now(),
+          memoryConsolidateProvider: "grok",
+          memoryConsolidateError: "Run error: Not signed in.",
+        },
+      }),
+    );
+    const line = m.query("[data-memory-consolidation]");
+    assert.equal(line?.getAttribute("data-memory-consolidation"), "failed");
+    assert.equal(line?.getAttribute("role"), "alert");
+    assert.match(line?.textContent ?? "", /failed just now · grok: Run error: Not signed in\./);
+    m.unmount();
+  });
+
+  it("renders nothing when no project is wired", async () => {
+    const m = await mount(tab());
+    assert.equal(m.query("[data-memory-consolidation]"), null);
     m.unmount();
   });
 });

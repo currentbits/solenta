@@ -182,10 +182,6 @@ function isSessionStartEvent(ev) {
   ) {
     return true;
   }
-  // Tolerant: any event with a session/thread id and a start-ish type
-  if (extractSessionId(ev) && /start|creat|init/i.test(type)) {
-    return true;
-  }
   return false;
 }
 

@@ -173,10 +173,11 @@ describe("delegation command", () => {
     m.unmount();
   });
 
-  it("the placeholder hints at delegation", async () => {
+  it("the placeholder hints at @ mentions (files and delegates)", async () => {
     const m = await mount(view([]));
     const ta = m.query("textarea") as HTMLTextAreaElement;
-    assert.match(ta.placeholder, /@provider delegates/);
+    // Short mockup copy (#1411): "@" covers files and @provider delegates.
+    assert.match(ta.placeholder, /@ files/);
     m.unmount();
   });
 });

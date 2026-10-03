@@ -231,7 +231,6 @@ describe("controls keep --border", () => {
       ["ThreadView", thread, "btn"],
       ["ThreadView", thread, "menu"],
       ["ThreadView", thread, "titleInput"],
-      ["Composer", composer, "pill"],
       ["AgentsPanel", agents, "collapseBtn"],
       ["AgentsPanel", agents, "gitBtn"],
       ["MemoryTab", memory, "searchInput"],
@@ -243,5 +242,14 @@ describe("controls keep --border", () => {
         `${file} .${name} must keep border: 1px solid var(--border)`,
       );
     }
+  });
+
+  it("composer pills are ghost (T3 calm pass, #1409): hover tint, no outline", () => {
+    const composer = loadCss("src/components/Composer.module.css");
+    const bodies = allRuleBodies(composer, "pill");
+    assert.ok(
+      bodies.some((b) => /border:\s*1px solid transparent/.test(b)),
+      "Composer .pill keeps a transparent 1px border so hover never shifts layout",
+    );
   });
 });

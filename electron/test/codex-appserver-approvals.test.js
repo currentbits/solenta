@@ -20,6 +20,7 @@ const services = require("../services.js");
 const { createRunner } = require("../runner.js");
 const { writeFakeBin } = require("./support/fakeBin.js");
 const { DECISION_ACCEPT, DECISION_CANCEL } = require("../codexApprovals.js");
+const { rmTree } = require("./support/rmTree.js");
 
 function git(cwd, args) {
   execFileSync("git", args, { cwd, stdio: "ignore" });
@@ -122,9 +123,9 @@ require(${JSON.stringify(helper)}).main();
     services.setProvider(store, { threadId: thread.id, provider: "codex" });
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     if (runner) runner.stopAll();
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+    await rmTree(tmpDir);
     if (prevSimulate === undefined) delete process.env.CODER_SIMULATE;
     else process.env.CODER_SIMULATE = prevSimulate;
     if (prevCodexBin === undefined) delete process.env.CODER_CODEX_BIN;
@@ -205,6 +206,23 @@ require(${JSON.stringify(helper)}).main();
           m.result.decision === DECISION_CANCEL,
       ),
     );
+    assert.equal(runner.getPendingPermission(thread.id), null);
+  });
+
+  for (const [scenario, inputValues, result] of [
+    ["ask-mcp-input", { count: 0, enabled: false }, { action: "accept", content: { count: 0, enabled: false }, _meta: null }],
+    ["ask-native-input", { destination: "staging" }, { answers: { destination: { answers: ["staging"] } } }],
+  ]) it(`round-trips ${scenario} through the runner and real JSON-RPC transport`, async () => {
+    process.env.CODER_FAKE_CODEX_SCENARIO = scenario;
+    const thread = store.getThreads()[0];
+    await runner.startRun({ threadId: thread.id, prompt: "do work" });
+    await waitFor(() => runner.getPendingPermission(thread.id));
+    const pending = runner.getPendingPermission(thread.id);
+    assert.ok(pending.inputRequest);
+    assert.equal(readRpc(rpcFile).some((m) => m.id === "ask-1"), false);
+    runner.respondPermission({ threadId: thread.id, requestId: pending.requestId, decision: "allow", inputValues });
+    await waitFor(() => store.getThread(thread.id).status === "done");
+    assert.deepEqual(readRpc(rpcFile).find((m) => m.id === "ask-1").result, result);
     assert.equal(runner.getPendingPermission(thread.id), null);
   });
 });

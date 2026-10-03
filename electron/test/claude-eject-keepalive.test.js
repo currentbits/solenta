@@ -17,6 +17,7 @@ const path = require("node:path");
 const { pathToFileURL } = require("node:url");
 const { execFileSync, spawnSync } = require("node:child_process");
 const Module = require("node:module");
+const { rmTree } = require("./support/rmTree.js");
 
 {
   const origLoad = Module._load;
@@ -269,9 +270,9 @@ describe("eject disposes idle Claude keep-alive (#979)", () => {
     store.saveNow();
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     if (runner) runner.stopAll();
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+    await rmTree(tmpDir);
     if (prevSimulate === undefined) delete process.env.CODER_SIMULATE;
     else process.env.CODER_SIMULATE = prevSimulate;
     if (prevAgentCmd === undefined) delete process.env.CODER_AGENT_CMD;

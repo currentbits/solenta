@@ -59,6 +59,33 @@
         Every notable change to Solenta, newest first.
       </p>
 
+      <h2 id="v0-22-0">0.22.0 <small>2026-09-30</small></h2>
+      <h3>Added</h3>
+      <ul>
+        <li><strong>GPT-6.1 Sol.</strong> OpenAI's newest Codex model is now first in the picker and recommended. It needs Codex CLI 0.159 or newer.</li>
+        <li><strong>Worker groups.</strong> Workers now sit under the task that started them, collapsed by default, with short names. A Workers button opens the task's worker panel, and every worker keeps a link back to its task. Routine completion notices fold away; failures and questions stay open.</li>
+        <li><strong>Simpler navigation.</strong> Threads, Planboard and Review up front, everything else under More. The sidebar is resizable with the mouse or keyboard, and drafts survive switching views.</li>
+        <li><strong>Composer options.</strong> Workflow and Best of N now live together in one Options dialog in the composer.</li>
+        <li><strong>Inspector remembers.</strong> Inspector tabs open to a sensible default for what you are looking at and remember what you picked per project and thread, even after collapsing the panel. Tabs work from the keyboard.</li>
+        <li><strong>Codex input forms.</strong> When an MCP tool or Codex itself asks for input, you get a form card instead of an error. Secret fields are masked and never land in the transcript.</li>
+        <li><strong>Memory consolidation status.</strong> The Memory tab shows when consolidation last ran, on which model, and the error if it failed.</li>
+        <li><strong>Recovered worktrees.</strong> Uncommitted work left in the worktree of a deleted thread is saved to a recovered/ branch in its repo, then the folder is removed.</li>
+      </ul>
+      <h3>Fixed</h3>
+      <ul>
+        <li><strong>Merge and close.</strong> A Claude thread that archives itself at the end of its turn now finishes as done instead of failed.</li>
+        <li><strong>Consolidation on Grok.</strong> When Grok is signed out or out of credit, memory consolidation switches to Claude instead of failing again on every launch.</li>
+        <li><strong>No freeze on merge.</strong> Removing a worker's worktree after a merge no longer blocks the app while files are deleted (2 seconds down to 25 ms on a large worktree), and a slow delete can no longer report a landed merge as failed.</li>
+        <li><strong>Lighter sidebar updates.</strong> Thread list updates carry about half the data they used to.</li>
+        <li><strong>Browser pane and agents.</strong> Agents can see and drive an open Browser pane, and navigating right after it opens reports the real page instead of a blank one.</li>
+        <li><strong>MCP tools.</strong> Claude always gets the project's Planboard tools and picks up MCP config changes on the next turn. Codex MCP tool confirmations go through the permission card instead of being rejected.</li>
+        <li><strong>Planboard backlog.</strong> The board loads every open issue instead of only the newest thousand, and agents page through issues instead of getting the whole board at once.</li>
+        <li><strong>Skill versions.</strong> Slash commands use the active provider's version of a skill, and the Skills tab shows when installed copies differ.</li>
+        <li><strong>Workflow sign-off.</strong> Approving a workflow merge signs off the exact patch and destination you reviewed, once. A changed patch needs a new approval.</li>
+        <li><strong>Codex sub-agents.</strong> A Codex child agent finishing no longer takes over or ends the parent thread's session.</li>
+        <li><strong>Narrow panes.</strong> The thread header wraps instead of squeezing the title to nothing.</li>
+      </ul>
+
       <h2 id="v0-21-1">0.21.1 <small>2026-09-23</small></h2>
       <h3>Fixed</h3>
       <ul>

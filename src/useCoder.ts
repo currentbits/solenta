@@ -50,6 +50,7 @@ import type {
   AgentConfigWriteResult,
   ProjectCodeMap,
   PermissionDecision,
+  InputValues,
   PermissionMode,
   PlanStatus,
   SetPlanStatusResult,
@@ -110,7 +111,7 @@ import {
 import { parseBtwCommand } from "./btw";
 import { parseFeedbackCommand } from "./feedback";
 import type { DroppedFolder } from "./dropFiles";
-import type { ProviderUsage } from "./shared/ipc";
+import type { EditorId, EditorOption, ProviderUsage } from "./shared/ipc";
 import {
   loadBootSnapshot,
   loadCachedThreadDetail,
@@ -329,6 +330,8 @@ export interface UseCoderResult {
   ) => Promise<ProjectInfo | null>;
   /** Create a new folder + git repo (projects.create) and add it. */
   createProject: (input: CreateProjectInput) => Promise<ProjectInfo | null>;
+  /** The built-in Scratch workspace ("start without a project", #1411). */
+  ensureScratchProject: () => Promise<ProjectInfo | null>;
   /** Patch name, SSH remotes, or worktree retention of a project. */
   updateProject: (input: ProjectUpdateInput) => Promise<ProjectInfo | null>;
   /** Create in projectId when given; otherwise the currently selected project. */
@@ -347,12 +350,19 @@ export interface UseCoderResult {
   ) => Promise<ThreadInfo | null>;
   /**
    * Fork / hand off a thread (threads.fork). Selects the new thread the same
-   * way createThread does. Plain fork: no provider override. Hand-off: pass
-   * provider (and optional model). Errors surface via error scope "run".
+   * way createThread does, unless `select: false` (background starts such as
+   * suggested-work chips keep the user on the thread they clicked from).
+   * Plain fork: no provider override. Hand-off: pass provider (and optional
+   * model). Errors surface via error scope "run".
    */
   forkThread: (
     threadId: string,
-    opts?: { provider?: string; model?: string | null; worktree?: boolean },
+    opts?: {
+      provider?: string;
+      model?: string | null;
+      worktree?: boolean;
+      select?: boolean;
+    },
   ) => Promise<ThreadInfo | null>;
   /**
    * Start a run, or queue the prompt when that thread is already working:
@@ -434,6 +444,7 @@ export interface UseCoderResult {
     decision: PermissionDecision,
     answers?: Record<string, string>,
     updatedCommand?: string,
+    inputValues?: InputValues,
   ) => Promise<void>;
   /** Dismiss the selected thread's persisted question card (issue #647). */
   clearQuestion: () => Promise<void>;
@@ -507,6 +518,12 @@ export interface UseCoderResult {
   ) => Promise<void>;
   /** Change the recorded merge/PR base after create (#187). */
   setBaseBranch: (threadId: string, baseBranch: string | null) => Promise<void>;
+  /** Draft workspace choice: arm or drop the lazy worktree before first send. */
+  setPendingWorktree: (
+    threadId: string,
+    worktree: boolean,
+    fromOrigin?: boolean,
+  ) => Promise<void>;
   /** Retarget an idle worker onto the lead's current committed HEAD. */
   refreshWorkerSnapshot: (threadId: string) => Promise<void>;
   /**
@@ -756,6 +773,9 @@ export interface UseCoderResult {
   revealInFinder: () => Promise<void>;
   /** Open the selected thread root in the default editor. */
   openInEditor: () => Promise<void>;
+  /** Thread details "Open in" (#1411): installed editors + open with one. */
+  listEditors: () => Promise<EditorOption[]>;
+  openWorktreeIn: (editor: EditorId) => Promise<void>;
   /** Ahead/behind vs upstream for a thread root. */
   gitSyncInfo: (threadId: string) => Promise<GitSyncInfo>;
   /** Fetch remotes for a thread root. */
@@ -1580,6 +1600,21 @@ export function useCoder(): UseCoderResult {
     }
   }, [api]);
 
+  const ensureScratchProject = useCallback(async () => {
+    try {
+      const p = await api.projects.ensureScratch();
+      setProjects((prev) => {
+        if (prev.some((x) => x.id === p.id)) return prev;
+        return [...prev, p];
+      });
+      setError(null);
+      return p;
+    } catch (err) {
+      setError({ scope: "project", message: errorMessage(err) });
+      return null;
+    }
+  }, [api]);
+
   const updateProject = useCallback(async (input: ProjectUpdateInput) => {
     try {
       const updated = await api.projects.update(input);
@@ -1673,7 +1708,12 @@ export function useCoder(): UseCoderResult {
   const forkThread = useCallback(
     async (
       threadId: string,
-      opts?: { provider?: string; model?: string | null; worktree?: boolean },
+      opts?: {
+        provider?: string;
+        model?: string | null;
+        worktree?: boolean;
+        select?: boolean;
+      },
     ) => {
       try {
         const input: {
@@ -1697,7 +1737,7 @@ export function useCoder(): UseCoderResult {
           ? threadsRef.current.map((x) => (x.id === t.id ? t : x))
           : [t, ...threadsRef.current];
         applyThreads(next);
-        setSelectedThreadId(t.id);
+        if (opts?.select !== false) setSelectedThreadId(t.id);
         setError(null);
         return t;
       } catch (err) {
@@ -2115,6 +2155,7 @@ export function useCoder(): UseCoderResult {
       decision: PermissionDecision,
       answers?: Record<string, string>,
       updatedCommand?: string,
+      inputValues?: InputValues,
     ) => {
       if (!selectedThreadId) return;
       const threadId = selectedThreadId;
@@ -2127,6 +2168,7 @@ export function useCoder(): UseCoderResult {
           decision,
           answers,
           updatedCommand,
+          inputValues,
         });
         setError(null);
       } catch (err) {
@@ -2542,6 +2584,29 @@ export function useCoder(): UseCoderResult {
     async (threadId: string, baseBranch: string | null) => {
       try {
         const thread = await api.threads.setBaseBranch({ threadId, baseBranch });
+        applyThreads(
+          threadsRef.current.map((t) => (t.id === thread.id ? thread : t)),
+        );
+        setDetail((prev) =>
+          prev && prev.thread.id === thread.id ? { ...prev, thread } : prev,
+        );
+        setError(null);
+      } catch (err) {
+        setError({ scope: "run", message: errorMessage(err) });
+        throw err;
+      }
+    },
+    [api, applyThreads],
+  );
+
+  const setPendingWorktree = useCallback(
+    async (threadId: string, worktree: boolean, fromOrigin?: boolean) => {
+      try {
+        const thread = await api.threads.setPendingWorktree({
+          threadId,
+          worktree,
+          ...(fromOrigin === undefined ? {} : { fromOrigin }),
+        });
         applyThreads(
           threadsRef.current.map((t) => (t.id === thread.id ? thread : t)),
         );
@@ -3359,9 +3424,19 @@ export function useCoder(): UseCoderResult {
   );
 
   const prStatus = useCallback(async () => {
-    if (!selectedThreadId) return null;
-    return api.git.prStatus({ threadId: selectedThreadId });
-  }, [api, selectedThreadId]);
+    const threadId = selectedThreadId;
+    if (!threadId) return null;
+    const pr = await api.git.prStatus({ threadId });
+    // prStatus records prNumber/prUrl on the thread; refresh the open header.
+    if (pr && selectedRef.current === threadId) {
+      const d = await api.threads.get(threadId);
+      if (selectedRef.current === threadId) {
+        applyThreadUpdate(d.thread);
+        setDetail(d);
+      }
+    }
+    return pr;
+  }, [api, selectedThreadId, applyThreadUpdate]);
 
   const prChecks = useCallback(async () => {
     if (!selectedThreadId) return { ok: false as const, reason: "no PR" };
@@ -3664,6 +3739,29 @@ export function useCoder(): UseCoderResult {
     if (!root) return;
     await api.shell.openPath({ threadId: selectedThreadId, path: root });
   }, [api, selectedThreadId, threadRootPath]);
+
+  const listEditors = useCallback(async () => {
+    try {
+      return await api.shell.editors();
+    } catch {
+      return [] as EditorOption[];
+    }
+  }, [api]);
+
+  const openWorktreeIn = useCallback(
+    async (editor: EditorId) => {
+      if (!selectedThreadId) return;
+      const root = threadRootPath(selectedThreadId);
+      if (!root) return;
+      try {
+        await api.shell.openIn({ threadId: selectedThreadId, path: root, editor });
+        setError(null);
+      } catch (err) {
+        setError({ scope: "run", message: errorMessage(err) });
+      }
+    },
+    [api, selectedThreadId, threadRootPath],
+  );
 
   const gitSyncInfo = useCallback(
     async (threadId: string) => {
@@ -4204,6 +4302,7 @@ export function useCoder(): UseCoderResult {
     clearError,
     addProject,
     createProject,
+    ensureScratchProject,
     updateProject,
     createThread,
     listBaseBranches,
@@ -4247,6 +4346,7 @@ export function useCoder(): UseCoderResult {
     setNotes,
     setMessagePins,
     setBaseBranch,
+    setPendingWorktree,
     refreshWorkerSnapshot,
     resolveSuggestion,
     setFeltEstimate,
@@ -4327,6 +4427,8 @@ export function useCoder(): UseCoderResult {
     listLocalServers,
     revealInFinder,
     openInEditor,
+    listEditors,
+    openWorktreeIn,
     gitSyncInfo,
     gitFetch,
     gitRepoInfo,

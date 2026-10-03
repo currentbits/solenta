@@ -355,10 +355,10 @@ describe("ThreadView empty states", () => {
     assert.ok(html.includes('type="button"'));
   });
 
-  it("shows the start prompt when the open thread has no messages", () => {
+  it("shows the new-thread hero when the open thread has no messages (#1411)", () => {
     const html = render({ detail: detail({ messages: [], workLog: [] }) });
     assert.ok(
-      html.includes("Start by describing what to build"),
+      html.includes("What should we build in") && html.includes("owner/repo"),
       `expected empty-thread prompt, got: ${html.slice(0, 240)}`,
     );
   });
@@ -373,38 +373,46 @@ describe("ThreadView sandbox badge", () => {
     );
   });
 
-  it("renders yes/no with the reason on title", () => {
-    const yes = render({
-      detail: detail({
-        thread: thread({
-          sandbox: {
-            sandboxed: true,
-            reason: "Codex default sandbox; runs locally as your user",
-          },
+  it("renders yes/no in Thread details with the reason on title", async () => {
+    const shown = async (sandbox: { sandboxed: boolean; reason: string }) => {
+      // A started thread: a draft's header has no details card (#1411).
+      const m = await mount(
+        view({
+          detail: detail({
+            thread: thread({ sandbox }),
+            messages: [msg({ id: "u1", role: "user", text: "go", createdAt: 1 })],
+          }),
         }),
-      }),
-    });
-    assert.ok(yes.includes("data-sandbox-badge"), "badge must render");
-    assert.ok(yes.includes('data-sandboxed="yes"'));
-    assert.ok(yes.includes("Sandboxed"));
-    assert.ok(
-      yes.includes('title="Codex default sandbox; runs locally as your user"'),
-      "reason must be the hover title",
-    );
+      );
+      await m.flush();
+      assert.equal(m.query("[data-sandbox-badge]"), null, "badge stays out of the header row");
+      await m.click(m.query("[data-thread-details-btn]"));
+      const badge = m.query("[data-sandbox-badge]");
+      assert.ok(badge, "badge renders in Thread details");
+      const out = {
+        sandboxed: badge!.getAttribute("data-sandboxed"),
+        text: badge!.textContent,
+        title: badge!.getAttribute("title"),
+      };
+      m.unmount();
+      return out;
+    };
 
-    const no = render({
-      detail: detail({
-        thread: thread({
-          sandbox: {
-            sandboxed: false,
-            reason: "Claude --permission-mode bypassPermissions (not gated); runs locally as your user",
-          },
-        }),
-      }),
+    const yes = await shown({
+      sandboxed: true,
+      reason: "Codex default sandbox; runs locally as your user",
     });
-    assert.ok(no.includes('data-sandboxed="no"'));
-    assert.ok(no.includes("Not sandboxed"));
-    assert.ok(no.includes("bypassPermissions"));
+    assert.equal(yes.sandboxed, "yes");
+    assert.equal(yes.text, "Sandboxed");
+    assert.equal(yes.title, "Codex default sandbox; runs locally as your user");
+
+    const no = await shown({
+      sandboxed: false,
+      reason: "Claude --permission-mode bypassPermissions (not gated); runs locally as your user",
+    });
+    assert.equal(no.sandboxed, "no");
+    assert.equal(no.text, "Not sandboxed");
+    assert.match(no.title ?? "", /bypassPermissions/);
   });
 });
 
@@ -997,9 +1005,9 @@ describe("ThreadView mounted interactions", () => {
         }),
       }),
     );
-    const trigger = m.query("[data-transcript-view-trigger]");
-    assert.ok(trigger, "transcript view control is in the composer");
-    assert.equal(trigger.getAttribute("data-transcript-view-mode"), "normal");
+    const mode = () =>
+      m.query("[data-transcript-view-mode]")!.getAttribute("data-transcript-view-mode");
+    assert.equal(mode(), "normal");
     assert.ok(
       !m.text().includes("TOOL_A_SECRET_INPUT"),
       "tool A body hidden while Verbose is off",
@@ -1009,9 +1017,10 @@ describe("ThreadView mounted interactions", () => {
       "tool B body hidden while Verbose is off",
     );
 
-    await m.click(trigger);
+    // View mode lives in the thread title menu now (#1411).
+    await m.click(m.query("[data-thread-title-menu]"));
     await m.click(m.query("[data-transcript-view-option='verbose']"));
-    assert.equal(trigger.getAttribute("data-transcript-view-mode"), "verbose");
+    assert.equal(mode(), "verbose");
     assert.ok(m.text().includes("TOOL_A_SECRET_INPUT"), "tool A input");
     assert.ok(m.text().includes("TOOL_A_SECRET_OUTPUT"), "tool A output");
     assert.ok(m.text().includes("TOOL_B_SECRET_INPUT"), "tool B input");
@@ -1071,8 +1080,10 @@ describe("ThreadView mounted interactions", () => {
         }),
       }),
     );
-    const trigger = m.query("[data-transcript-view-trigger]");
-    assert.equal(trigger?.getAttribute("data-transcript-view-mode"), "normal");
+    assert.equal(
+      m.query("[data-transcript-view-mode]")?.getAttribute("data-transcript-view-mode"),
+      "normal",
+    );
     assert.ok(
       m.text().includes("Ran 2 commands"),
       "tools collapse to one sentence while Verbose is off",
@@ -2777,7 +2788,7 @@ describe("ThreadView suggested-work chips (issue #550)", () => {
     assert.ok(html.includes('data-suggestion-id="s-empty"'));
     assert.ok(html.includes("Empty-transcript chip"));
     assert.ok(
-      html.includes("Start by describing what to build"),
+      html.includes("What should we build in") && html.includes("owner/repo"),
       "empty prompt stays visible next to the chips",
     );
   });

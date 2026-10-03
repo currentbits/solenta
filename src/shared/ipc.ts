@@ -15,6 +15,13 @@ export interface SpaceInfo {
   name: string;
 }
 
+/** Thread details "Open in" targets (#1411). */
+export type EditorId = "cursor" | "vscode" | "zed" | "terminal" | "finder";
+export interface EditorOption {
+  id: EditorId;
+  name: string;
+}
+
 export interface ProjectInfo {
   id: string;
   /** e.g. "pingdotgg/t3code", derived from git remote or folder name */
@@ -25,6 +32,12 @@ export interface ProjectInfo {
   remoteHost?: string;
   /** Absolute path on the remote host. Required when remoteHost is set. */
   remotePath?: string;
+  /**
+   * The built-in Scratch workspace (#1411): threads with no real project
+   * run in an empty folder under Solenta's data dir. Not a git repo, so
+   * worktree / diff / PR flows are hidden.
+   */
+  scratch?: boolean;
   /** Retired (#568). Stripped on store load; never written. */
   spaceId?: string;
   /** When true, a background poller starts a thread for every issue that enters plan:todo (issue #165). Absent = off. */
@@ -80,8 +93,12 @@ export interface ProjectInfo {
    * Host-stamped; not a user-editable project field.
    */
   memoryConsolidateAt?: number | null;
-  /** Last consolidation startRun error, if any. Cleared on a successful fire. */
+  /** Last consolidation error (startRun or the run itself), if any. Cleared on a successful fire. */
   memoryConsolidateError?: string | null;
+  /** Provider the last consolidation pass ran on (#1384). */
+  memoryConsolidateProvider?: string | null;
+  /** When the last consolidation pass ended; null while one is running (#1384). */
+  memoryConsolidateDoneAt?: number | null;
 }
 
 /** One named per-project shell command (issue #153). */
@@ -728,6 +745,13 @@ export interface ThreadInfo {
    * (lazy, t3-style), so a thread that never runs leaves nothing on disk.
    */
   pendingWorktree?: boolean;
+  /**
+   * Draft strip "Start from origin" (#1411): the lazy worktree starts from
+   * the freshly fetched origin copy of the base, not the local branch.
+   */
+  worktreeFromOrigin?: boolean;
+  /** How long creating the worktree took (ms), for the transcript line. */
+  worktreeSetupMs?: number | null;
   /**
    * Orchestrator thread: the first prompt is forked to a worker that holds
    * the worktree and does the work, instead of running here (issue #202).
@@ -1599,6 +1623,8 @@ export interface PendingPermissionInfo {
    * answer via respondPermission's `answers`.
    */
   questions?: PendingQuestion[] | null;
+  /** Typed input for Codex questions and MCP elicitation. Ephemeral, never persisted. */
+  inputRequest?: PendingInputRequest | null;
   /**
    * Present when the agent is asking to leave plan mode (ExitPlanMode): the
    * plan markdown, rendered in the prompt panel instead of the raw JSON.
@@ -1654,7 +1680,29 @@ export interface PendingQuestion {
 }
 
 /** User decision on a PendingPermissionInfo. "allowAlways" also allows the tool for the rest of the CLI session. */
-export type PermissionDecision = "allow" | "allowAlways" | "deny";
+export type PermissionDecision = "allow" | "allowAlways" | "deny" | "cancel";
+export type InputValues = Record<string, string | number | boolean | string[]>;
+export interface PendingInputRequest {
+  source: string;
+  message: string;
+  url?: string;
+  fields: Array<{
+    name: string;
+    title: string;
+    description?: string;
+    type: "string" | "number" | "integer" | "boolean" | "array";
+    required: boolean;
+    secret?: boolean;
+    custom?: boolean;
+    default?: string | number | boolean | string[];
+    options?: Array<{ value: string; label: string; description?: string }>;
+    minimum?: number;
+    maximum?: number;
+    minLength?: number;
+    maxLength?: number;
+    format?: "email" | "uri" | "date" | "date-time";
+  }>;
+}
 
 export interface ThreadDetail {
   thread: ThreadInfo;
@@ -3252,6 +3300,7 @@ export interface AppStatus {
     time: string | null;
     /** Update channel stamped at package time; null in a dev tree. */
     channel: "prod" | "nightly" | null;
+    platform?: string;
   };
 }
 
@@ -3545,6 +3594,18 @@ export interface CoderApi {
      * Rejects with a user-facing sentence when the endpoint refuses.
      */
     feedback(input: { text: string; threadId?: string }): Promise<void>;
+    /** Open an SSH-forwarded Solenta Web host in an isolated desktop window. */
+    openRemoteConnection(input: {
+      host: string;
+      label?: string;
+      remotePort?: number;
+      /** Blank reads userData/web-token on the host over SSH, then the saved token. */
+      token: string;
+      /** Save the verified token encrypted with the OS keychain (default true). */
+      remember?: boolean;
+    }): Promise<{ host: string; remotePort: number; tokenSaved: boolean }>;
+    /** Delete the saved web token for host:port. */
+    forgetRemoteConnection(input: { host: string; remotePort?: number }): Promise<void>;
   };
   /**
    * Proxied to the local shared-memory server by the main process (the
@@ -3714,6 +3775,11 @@ export interface CoderApi {
     add(path: string, opts?: AddProjectOptions): Promise<ProjectInfo>;
     /** Create a new folder + git repo at parentDir/name, then add it as a project. */
     create(input: CreateProjectInput): Promise<ProjectInfo>;
+    /**
+     * The built-in Scratch workspace ("start without a project", #1411):
+     * created on first call under Solenta's data dir, no git. Idempotent.
+     */
+    ensureScratch(): Promise<ProjectInfo>;
     /** Patch name and/or SSH remote fields of an existing project. */
     update(input: ProjectUpdateInput): Promise<ProjectInfo>;
     /**
@@ -3903,6 +3969,7 @@ export interface CoderApi {
        * pending tool has no command field.
        */
       updatedCommand?: string;
+      inputValues?: InputValues;
     }): Promise<void>;
     /**
      * Drop the persisted question card (ThreadInfo.pendingQuestion) without
@@ -4030,6 +4097,18 @@ export interface CoderApi {
     setBaseBranch(input: {
       threadId: string;
       baseBranch?: string | null;
+    }): Promise<ThreadInfo>;
+    /**
+     * Draft workspace choice: arm (`worktree: true`) or drop the lazy
+     * worktree before the first send. Refused once the thread has a
+     * worktree or a user message, and when arming on a project that can't
+     * host one. Never bumps updatedAt.
+     */
+    setPendingWorktree(input: {
+      threadId: string;
+      worktree: boolean;
+      /** Start from origin's copy of the base (fetched at creation). */
+      fromOrigin?: boolean;
     }): Promise<ThreadInfo>;
     /**
      * Retarget an idle orchestration worker onto the lead's current
@@ -4900,6 +4979,10 @@ export interface CoderApi {
   shell: {
     reveal(input: { threadId: string; path: string }): Promise<void>;
     openPath(input: { threadId: string; path: string }): Promise<void>;
+    /** Installed editors for Thread details' "Open in" (#1411). */
+    editors(): Promise<EditorOption[]>;
+    /** Open a thread path with one of `editors()`. Ids only, never commands. */
+    openIn(input: { threadId: string; path: string; editor: EditorId }): Promise<void>;
   };
   devserver: {
     /** Runnable scripts (dev, start, serve) present in the thread root. */

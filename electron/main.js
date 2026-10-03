@@ -75,6 +75,11 @@ const mediaProtocol = require("./media-protocol.js");
 const { createRunArtifactStore } = require("./run-artifact-store.js");
 const { createIOSSimulatorService } = require("./ios-simulator.js");
 const { createIOSSimulatorStreamBroker } = require("./ios-simulator-stream.js");
+const {
+  openRemoteConnection,
+  forgetRemoteConnection,
+  closeRemoteConnections,
+} = require("./remoteConnections.js");
 
 // Custom img protocol (issue #145): registerSchemesAsPrivileged MUST run
 // before app.ready or Electron ignores it.
@@ -330,7 +335,7 @@ function createWindow() {
 
 function broadcast(channel, payload) {
   for (const win of BrowserWindow.getAllWindows()) {
-    if (!win.isDestroyed()) {
+    if (!win.isDestroyed() && !win.solentaRemote) {
       win.webContents.send(channel, payload);
     }
   }
@@ -347,7 +352,7 @@ function isAnyWindowFocused() {
 }
 
 function focusMainWindow() {
-  const win = BrowserWindow.getAllWindows().find((w) => !w.isDestroyed());
+  const win = BrowserWindow.getAllWindows().find((w) => !w.isDestroyed() && !w.solentaRemote);
   if (!win) return null;
   if (win.isMinimized()) win.restore();
   win.show();
@@ -726,6 +731,8 @@ app.whenReady().then(async () => {
     },
     getOrchStatus: () =>
       orchServer ? orchServer.getStatus() : { running: false, port: null },
+    openRemoteConnection,
+    forgetRemoteConnection,
   });
   // Recently deleted expiry (#940): reclaim after restart even if the
   // renderer has not listed threads yet.
@@ -783,8 +790,9 @@ app.whenReady().then(async () => {
   prStateRefresher.start();
 
   // Boot-time worktree GC: reclaim clean worktree dirs no thread references
-  // (crash/store-drift orphans). Conservative by design — dirty trees and
-  // unmerged branches are never touched. Delayed + unref'd like the PR
+  // (crash/store-drift orphans). Conservative by design — dirty trees are
+  // committed to recovered/<id> first (#1386) and unmerged branches are
+  // never deleted. Delayed + unref'd like the PR
   // refresher so startup stays fast and a short-lived process can exit.
   // Retention is owned by the periodic sweeper below (#641), not this timer.
   const worktreeBase = path.join(userData, "worktrees");
@@ -796,6 +804,9 @@ app.whenReady().then(async () => {
           console.warn(
             `worktree sweep: removed ${result.removed.length} orphan(s)`,
           );
+        }
+        for (const r of result.recovered || []) {
+          console.warn(`worktree sweep: saved ${r.dir} to branch ${r.branch}`);
         }
         const { scheduleImagePrune } = require("./image-store.js");
         return scheduleImagePrune({ store, userDataPath: userData });
@@ -924,6 +935,7 @@ shutdown = installShutdown({
 
 /** Servers, schedulers, and child processes: last, after runs and the device. */
 function teardownServices() {
+  closeRemoteConnections();
   if (webServer) {
     try {
       void webServer.close();
