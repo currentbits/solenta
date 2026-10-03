@@ -308,6 +308,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     pushBranch,
     createPr,
     prChecks,
+    prStatus,
     prMerge,
     listPrs,
     checkoutPr,
@@ -2389,6 +2390,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         onCreatePr={createPr}
         onPrTemplate={prTemplate}
         onPrChecks={prChecks}
+        onPrStatus={prStatus}
         onPrMerge={prMerge}
         gitSyncInfo={gitSyncInfo}
         gitFetch={gitFetch}

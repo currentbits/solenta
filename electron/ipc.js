@@ -1766,10 +1766,13 @@ const IPC_HANDLERS = {
     });
   },
   "git:prStatus": async (ctx, input) => {
-    return prStatus({
+    const info = await prStatus({
       store: ctx.store,
       threadId: input.threadId,
     });
+    // The sidebar #N link reads the stored thread, not this return value.
+    if (info) ctx.broadcast("threads:changed", services.listThreads(ctx.store));
+    return info;
   },
   "git:prChecks": async (ctx, input) => {
     return prChecks({
