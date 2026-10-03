@@ -3479,6 +3479,13 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
     shell: {
       reveal: (input: unknown) => rec("shell.reveal", [input], undefined),
       openPath: (input: unknown) => rec("shell.openPath", [input], undefined),
+      editors: () =>
+        rec("shell.editors", [], [
+          { id: "cursor", name: "Cursor" },
+          { id: "zed", name: "Zed" },
+          { id: "finder", name: "Finder" },
+        ]),
+      openIn: (input: unknown) => rec("shell.openIn", [input], undefined),
     },
     devserver: {
       scripts: (input: unknown) => rec("devserver.scripts", [input], ["dev"]),

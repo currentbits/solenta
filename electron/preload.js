@@ -278,6 +278,8 @@ const IPC_CHANNELS = Object.freeze([
   { ns: "servers", method: "list" },
   { ns: "shell", method: "reveal" },
   { ns: "shell", method: "openPath" },
+  { ns: "shell", method: "editors" },
+  { ns: "shell", method: "openIn" },
   { ns: "devserver", method: "scripts" },
   { ns: "devserver", method: "start" },
   { ns: "devserver", method: "stop" },

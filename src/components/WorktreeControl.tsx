@@ -18,6 +18,9 @@ import {
 import { mergeOntoLabel, sourceSnapshotLabel } from "../crewIntegration";
 import { useEscapeClose } from "../useEscapeClose";
 import styles from "./WorktreeControl.module.css";
+import type { EditorId, EditorOption } from "../shared/ipc";
+
+const EDITOR_PREF_KEY = "solenta:openInEditor";
 
 type GitAction = "setup" | "merge" | "remove" | null;
 
@@ -35,6 +38,10 @@ export interface WorktreeControlProps {
   onStartRun?: (prompt: string, threadId?: string) => void | Promise<void>;
   conflictContext?: (threadId: string) => Promise<ConflictContext>;
   onOpenWorktree?: (() => void) | null;
+  /** Installed editors for the "Open in ‹editor› ▾" row (#1411). */
+  listEditors?: () => Promise<EditorOption[]>;
+  /** Open the worktree with one of `listEditors()`. */
+  onOpenWorktreeIn?: (editor: EditorId) => void;
   /** Local branches for the post-create stacked-base picker (#187). */
   listBaseBranches?: () => Promise<{ defaultBranch: string; branches: string[] }>;
   /** Persist a new merge/PR base, or null to clear to the repo default. */
@@ -135,7 +142,40 @@ export function useWorktreeChrome(
     onSetBaseBranch,
     onOpenCrewIntegration,
     onRefreshWorkerSnapshot,
+    listEditors,
+    onOpenWorktreeIn,
   } = props;
+  const [editors, setEditors] = useState<EditorOption[] | null>(null);
+  const [editorPref, setEditorPref] = useState<EditorId | null>(() => {
+    try {
+      return (window.localStorage.getItem(EDITOR_PREF_KEY) as EditorId | null) ?? null;
+    } catch {
+      return null;
+    }
+  });
+  const [editorMenu, setEditorMenu] = useState(false);
+  const worktreeOpenable = Boolean(thread?.worktreePath);
+  useEffect(() => {
+    if (!worktreeOpenable || !listEditors || editors) return;
+    let live = true;
+    listEditors().then(
+      (rows) => live && setEditors(rows),
+      () => live && setEditors([]),
+    );
+    return () => {
+      live = false;
+    };
+  }, [worktreeOpenable, listEditors, editors]);
+  const pickEditor = (id: EditorId) => {
+    setEditorPref(id);
+    setEditorMenu(false);
+    try {
+      window.localStorage.setItem(EDITOR_PREF_KEY, id);
+    } catch {
+      // storage blocked: still open
+    }
+    onOpenWorktreeIn?.(id);
+  };
 
   const [gitAction, setGitAction] = useState<GitAction>(null);
   const [basePicker, setBasePicker] = useState<{
@@ -897,7 +937,60 @@ export function useWorktreeChrome(
           </button>
         ) : null}
       </div>
-      {onOpenWorktree ? (
+      {onOpenWorktreeIn && editors && editors.length > 0 ? (
+        <div className={styles.row}>
+          <span className={styles.rowKey}>Open in</span>
+          {(() => {
+            const current =
+              editors.find((e) => e.id === editorPref) ?? editors[0]!;
+            return (
+              <span className={styles.editorPick}>
+                <button
+                  type="button"
+                  className={styles.rowLink}
+                  data-worktree-open=""
+                  data-editor={current.id}
+                  title={`Open the worktree in ${current.name}`}
+                  onClick={() => onOpenWorktreeIn(current.id)}
+                >
+                  {current.name}
+                </button>
+                <button
+                  type="button"
+                  className={styles.rowIcon}
+                  data-editor-menu=""
+                  aria-haspopup="menu"
+                  aria-expanded={editorMenu}
+                  aria-label="Choose editor"
+                  title="Choose editor"
+                  onClick={() => setEditorMenu((v) => !v)}
+                >
+                  <svg width="10" height="10" viewBox="0 0 8 8" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <path d="M1.5 2.75 4 5.25 6.5 2.75" />
+                  </svg>
+                </button>
+                {editorMenu ? (
+                  <span className={styles.editorMenu} role="menu" aria-label="Open in">
+                    {editors.map((e) => (
+                      <button
+                        key={e.id}
+                        type="button"
+                        role="menuitemradio"
+                        aria-checked={e.id === current.id}
+                        className={`${styles.menuItem} ${styles.menuItemNested}`}
+                        data-editor-option={e.id}
+                        onClick={() => pickEditor(e.id)}
+                      >
+                        {e.name}
+                      </button>
+                    ))}
+                  </span>
+                ) : null}
+              </span>
+            );
+          })()}
+        </div>
+      ) : onOpenWorktree ? (
         <div className={styles.row}>
           <span className={styles.rowKey}>Open in</span>
           <button

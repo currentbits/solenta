@@ -725,7 +725,9 @@ describe("inspector tab selection stays with the context", () => {
       await m.click(m.query('[data-app-more-menu] [data-view-nav="usage"]'));
       assert.equal(selectedInspectorTab(m), "git", "Usage opens on Environment (no Pulse tab, #1411)");
       assert.equal(m.query("[data-agents-expand]"), null, "route change does not collapse");
-      await m.click(m.query('[data-view-nav="threads"]'));
+      // Back to threads from an Insights view lives in that menu (#1411).
+      await openMore(m);
+      await m.click(m.query('[data-app-more-menu] [data-view-nav="threads"]'));
       assert.equal(selectedInspectorTab(m), "memory");
     } finally {
       m.unmount();
@@ -909,7 +911,8 @@ describe("inspector tab selection stays with the context", () => {
       await selectThreadByTitle(m, "Alpha");
       await m.click(m.query('[data-view-nav="planboard"]'));
       assert.equal(selectedInspectorTab(m), "skills");
-      await m.click(m.query('[data-view-nav="threads"]'));
+      // The active footer destination toggles back to threads (#1411).
+      await m.click(m.query('[data-view-nav="planboard"]'));
       assert.equal(selectedInspectorTab(m), "memory");
       assert.equal(
         m.query('[data-thread-card="t-a"]')?.getAttribute("data-active"),

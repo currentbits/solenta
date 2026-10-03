@@ -497,7 +497,7 @@ export const Composer = memo(function Composer({
   ask = false,
   onDelegate,
   onModelPickerOpen,
-  placeholder = "Ask anything, @tag files/folders, @provider delegates, $use skills, or / for commands",
+  placeholder = "Ask anything, @ files, $ skills, / commands",
   error = null,
   onDismissError,
   onListFiles,

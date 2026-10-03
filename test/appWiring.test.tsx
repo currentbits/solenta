@@ -1801,7 +1801,7 @@ describe("App command palette (#150)", () => {
 });
 
 describe("App primary navigation", () => {
-  it("Review opens pull requests and Threads returns without creating one", async () => {
+  it("Review opens pull requests and re-clicking it returns without creating one", async () => {
     const t1 = thread({ id: "t-keep", title: "Keep this thread" });
     const fake = createFakeCoder({
       threads: [t1],
@@ -1829,17 +1829,14 @@ describe("App primary navigation", () => {
         m.query('[data-view-nav="review"]')?.getAttribute("aria-current"),
         "page",
       );
-      assert.equal(
-        m.query('[data-view-nav="threads"]')?.getAttribute("aria-current"),
-        null,
-      );
-      await m.click(m.query('[data-view-nav="threads"]') as HTMLElement);
+      // Re-clicking the active footer destination returns to threads (#1411).
+      await m.click(m.query('[data-view-nav="review"]') as HTMLElement);
       await m.flush();
       assert.equal(m.query("[data-pr-list]"), null);
       assert.equal(draftBox()?.value, "unsent draft");
       assert.equal(
-        m.query('[data-view-nav="threads"]')?.getAttribute("aria-current"),
-        "page",
+        m.query('[data-view-nav="review"]')?.getAttribute("aria-current"),
+        null,
       );
       assert.equal(fake.of("threads.create").length, creates);
 
@@ -1850,11 +1847,9 @@ describe("App primary navigation", () => {
         m.query("[data-app-more]")?.getAttribute("aria-current"),
         "page",
       );
-      assert.equal(
-        m.query('[data-view-nav="threads"]')?.getAttribute("aria-current"),
-        null,
-      );
-      await m.click(m.query('[data-view-nav="threads"]') as HTMLElement);
+      // From an Insights view, the Insights menu offers Back to threads.
+      await m.click(m.query("[data-app-more]") as HTMLElement);
+      await m.click(m.query('[data-app-more-menu] [data-view-nav="threads"]') as HTMLElement);
       await m.flush();
       assert.equal(m.query("[data-usage]"), null);
       assert.equal(draftBox()?.value, "unsent draft");
@@ -1875,7 +1870,9 @@ describe("App primary navigation", () => {
     try {
       await m.flush();
       const creates = fake.of("threads.create").length;
-      await m.click(m.query('[data-view-nav="threads"]') as HTMLElement);
+      await m.click(m.query('[data-view-nav="planboard"]') as HTMLElement);
+      await m.flush();
+      await m.click(m.query('[data-view-nav="planboard"]') as HTMLElement);
       await m.flush();
       assert.equal(fake.of("threads.create").length, creates);
       assert.equal(m.query("[data-planboard]"), null);

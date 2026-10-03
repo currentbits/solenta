@@ -6594,6 +6594,16 @@ function buildDevCoder(): CoderApi {
       async openPath(_input: { threadId: string; path: string }) {
         // Dev mock: no editor.
       },
+      async editors() {
+        return [
+          { id: "cursor" as const, name: "Cursor" },
+          { id: "vscode" as const, name: "VS Code" },
+          { id: "finder" as const, name: "Finder" },
+        ];
+      },
+      async openIn(_input: { threadId: string; path: string; editor: string }) {
+        // Dev mock: no editor.
+      },
     },
     on(channel, cb) {
       if (channel === "threads:changed") {

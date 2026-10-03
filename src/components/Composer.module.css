@@ -1285,3 +1285,17 @@
   left: auto;
   right: 0;
 }
+
+/* Thin rule between the model·effort pill and the next pill (#1411). */
+.modelGroup + .modeWrap {
+  display: inline-flex;
+  align-items: center;
+}
+
+.modelGroup + .modeWrap::before {
+  content: "";
+  width: 1px;
+  height: 14px;
+  margin: 0 6px 0 0;
+  background: var(--border);
+}
