@@ -828,3 +828,61 @@ describe("setPendingWorktree (draft workspace strip)", () => {
     );
   });
 });
+
+describe("Previous worktree: stack a draft on another thread's branch (#1411)", () => {
+  let tmpDir;
+  let store;
+  let repo;
+  let project;
+  let worktreeBase;
+
+  beforeEach(async () => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "coder-prev-wt-"));
+    store = new Store(path.join(tmpDir, "store.json"));
+    worktreeBase = path.join(tmpDir, "worktrees");
+    repo = path.join(tmpDir, "repo");
+    fs.mkdirSync(repo);
+    git(repo, ["init"]);
+    git(repo, ["config", "user.email", "test@example.com"]);
+    git(repo, ["config", "user.name", "Test"]);
+    fs.writeFileSync(path.join(repo, "README.md"), "hello\n");
+    git(repo, ["add", "README.md"]);
+    git(repo, ["commit", "-m", "init"]);
+    project = await services.addProject(store, repo);
+  });
+
+  afterEach(() => {
+    for (const t of store.getThreads()) {
+      if (t && t.worktreePath && fs.existsSync(t.worktreePath)) {
+        try {
+          git(repo, ["worktree", "remove", "--force", t.worktreePath]);
+        } catch {
+          // ignore
+        }
+      }
+    }
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("starts from the previous branch's committed work", () => {
+    const a = services.createThread(store, { projectId: project.id, title: "API contract" });
+    setupWorktree({ store, threadId: a.id, worktreeBase });
+    const prev = store.getThread(a.id);
+    fs.writeFileSync(path.join(prev.worktreePath, "contract.md"), "v1\n");
+    git(prev.worktreePath, ["add", "contract.md"]);
+    git(prev.worktreePath, ["commit", "-m", "contract"]);
+    fs.writeFileSync(path.join(prev.worktreePath, "scratch.md"), "uncommitted\n");
+
+    const b = services.createThread(store, { projectId: project.id, title: "Build the form" });
+    services.setPendingWorktree(store, { threadId: b.id, worktree: true });
+    services.setBaseBranch(store, { threadId: b.id, baseBranch: prev.branch });
+    setupWorktree({ store, threadId: b.id, worktreeBase });
+    const next = store.getThread(b.id);
+
+    assert.notEqual(next.branch, prev.branch, "a fresh branch, not the same one");
+    assert.notEqual(next.worktreePath, prev.worktreePath, "a fresh folder");
+    assert.equal(next.baseBranch, prev.branch, "merges land back on the previous branch");
+    assert.ok(fs.existsSync(path.join(next.worktreePath, "contract.md")), "committed work carries over");
+    assert.ok(!fs.existsSync(path.join(next.worktreePath, "scratch.md")), "uncommitted edits stay behind");
+  });
+});

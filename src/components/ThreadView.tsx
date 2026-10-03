@@ -769,6 +769,8 @@ interface ThreadViewProps {
   onToggleAgentsPanel?: () => void;
   /** Draft workspace strip: arm or drop the lazy worktree before first send. */
   onSetPendingWorktree?: (threadId: string, worktree: boolean) => Promise<void>;
+  /** Draft strip "Previous worktree" source (latest other worktree thread). */
+  previousWorktree?: { branch: string; title: string } | null;
   /** Unmerged worktree files plus capped conflict-marker snippets. */
   conflictContext?: (threadId: string) => Promise<ConflictContext>;
   /** Open the thread worktree in the configured editor. */
@@ -4509,6 +4511,7 @@ export const ThreadView = memo(function ThreadView({
   listBaseBranches,
   onSetBaseBranch,
   onSetPendingWorktree,
+  previousWorktree,
   agentsPanelOpen,
   onToggleAgentsPanel,
   conflictContext,
@@ -8253,6 +8256,7 @@ export const ThreadView = memo(function ThreadView({
                   ? (base) => Promise.resolve(onSetBaseBranch(thread.id, base))
                   : undefined
               }
+              previous={previousWorktree}
             />
           ) : undefined
         }

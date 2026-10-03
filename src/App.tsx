@@ -1395,6 +1395,20 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     return n;
   }, [threads, visibleDetail?.thread]);
 
+  /** Draft strip "Previous worktree": the project's most recently active
+   *  other worktree thread (#1411). */
+  const previousWorktree = useMemo(() => {
+    const cur = visibleDetail?.thread;
+    if (!cur) return null;
+    let best: (typeof threads)[number] | null = null;
+    for (const t of threads) {
+      if (t.id === cur.id || t.projectId !== cur.projectId) continue;
+      if (t.archived || !t.worktreePath || !t.branch) continue;
+      if (!best || t.updatedAt > best.updatedAt) best = t;
+    }
+    return best?.branch ? { branch: best.branch, title: best.title } : null;
+  }, [threads, visibleDetail?.thread]);
+
   /** What the Agents team view refetches on: ids + statuses, not identity. */
   const rosterKey = useMemo(
     () => threads.map((t) => `${t.id}:${t.status}`).join(","),
@@ -2163,6 +2177,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         listBaseBranches={listBaseBranches}
         onSetBaseBranch={setBaseBranch}
         onSetPendingWorktree={setPendingWorktree}
+        previousWorktree={previousWorktree}
         agentsPanelOpen={narrow ? drawer === "agents" : !agentsCollapsed}
         onToggleAgentsPanel={toggleAgents}
         onRefreshWorkerSnapshot={refreshWorkerSnapshot}

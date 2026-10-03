@@ -160,6 +160,7 @@ function view(props: {
     projectId: string,
   ) => Promise<{ defaultBranch: string; branches: string[] }>;
   onSetBaseBranch?: (threadId: string, baseBranch: string | null) => Promise<void>;
+  previousWorktree?: { branch: string; title: string } | null;
 }) {
   return (
     <ThreadView
@@ -209,6 +210,7 @@ function view(props: {
       onSetPendingWorktree={props.onSetPendingWorktree}
       listBaseBranches={props.listBaseBranches}
       onSetBaseBranch={props.onSetBaseBranch}
+      previousWorktree={props.previousWorktree}
     />
   );
 }
@@ -628,6 +630,59 @@ describe("draft workspace strip under the composer", () => {
     await m.flush();
     await m.click(m.query('[data-workspace-base-option="release"]'));
     assert.deepEqual(calls.at(-1), ["base", "t1", "release"]);
+    m.unmount();
+  });
+
+  it("offers Previous worktree: a fresh worktree stacked on the last worktree branch", async () => {
+    const calls: unknown[] = [];
+    const prev = { branch: "coder/api-contract-1a2b3c", title: "API contract" };
+    const props = {
+      onSetPendingWorktree: async (id: string, worktree: boolean) => {
+        calls.push(["worktree", id, worktree]);
+      },
+      onSetBaseBranch: async (id: string, base: string | null) => {
+        calls.push(["base", id, base]);
+      },
+      previousWorktree: prev,
+    };
+    const m = await mount(view({ detail: draft(), ...props }));
+    await m.flush();
+    await m.click(m.query("[data-workspace-trigger]"));
+    const option = m.query('[data-workspace-option="previous"]');
+    assert.ok(option, "Previous worktree is offered");
+    assert.match(option!.textContent ?? "", /coder\/api-contract-1a2b3c/);
+    await m.click(option);
+    assert.deepEqual(calls, [
+      ["worktree", "t1", true],
+      ["base", "t1", "coder/api-contract-1a2b3c"],
+    ]);
+
+    // Armed + stacked on that branch reads as Previous worktree…
+    const stacked = draft();
+    stacked.thread = { ...stacked.thread, pendingWorktree: true, baseBranch: prev.branch };
+    await m.rerender(view({ detail: stacked, ...props }));
+    await m.flush();
+    assert.equal(m.query("[data-workspace-trigger]")!.getAttribute("data-workspace-trigger"), "previous");
+    assert.match(m.query("[data-workspace-trigger]")!.textContent ?? "", /Previous worktree/);
+
+    // …and switching to plain New worktree drops the stacked base.
+    calls.length = 0;
+    await m.click(m.query("[data-workspace-trigger]"));
+    await m.click(m.query('[data-workspace-option="worktree"]'));
+    assert.deepEqual(calls, [
+      ["worktree", "t1", true],
+      ["base", "t1", null],
+    ]);
+    m.unmount();
+  });
+
+  it("hides Previous worktree when the project has no other worktree thread", async () => {
+    const m = await mount(
+      view({ detail: draft(), onSetPendingWorktree: async () => {}, onSetBaseBranch: async () => {} }),
+    );
+    await m.flush();
+    await m.click(m.query("[data-workspace-trigger]"));
+    assert.equal(m.query('[data-workspace-option="previous"]'), null);
     m.unmount();
   });
 
