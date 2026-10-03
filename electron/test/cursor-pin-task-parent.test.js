@@ -22,6 +22,7 @@ const {
   cursorPinPluginDir,
   materializeCursorPinPlugin,
 } = require("../cursorPinTaskParent.js");
+const { rmTree } = require("./support/rmTree.js");
 
 function runHook(scriptPath, payload) {
   const input = typeof payload === "string" ? payload : JSON.stringify(payload);
@@ -82,8 +83,8 @@ describe("materializeCursorPinPlugin", () => {
     dest = fs.mkdtempSync(path.join(os.tmpdir(), "cursor-pin-"));
   });
 
-  afterEach(() => {
-    fs.rmSync(dest, { recursive: true, force: true });
+  afterEach(async () => {
+    await rmTree(dest);
   });
 
   it("writes plugin.json, hooks.json, and the hook script", () => {
@@ -123,8 +124,8 @@ describe("pin-task-parent hook (stdin)", () => {
     scriptPath = path.join(dest, "scripts", "pin-task-parent.js");
   });
 
-  afterEach(() => {
-    fs.rmSync(dest, { recursive: true, force: true });
+  afterEach(async () => {
+    await rmTree(dest);
   });
 
   it("replies after one JSON object without waiting for stdin EOF (issue #691)", async () => {

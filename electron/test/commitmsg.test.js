@@ -16,6 +16,7 @@ const {
 } = require("../commitmsg.js");
 const { buildPrompt } = require("../commitmsg.js");
 const { writeFakeBin } = require("./support/fakeBin.js");
+const { rmTree } = require("./support/rmTree.js");
 
 function git(cwd, args) {
   return execFileSync("git", args, {
@@ -239,8 +240,8 @@ console.log("feat: generated subject");
     );
   });
 
-  afterEach(() => {
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+  afterEach(async () => {
+    await rmTree(tmpDir);
   });
 
   function fakeEnv() {

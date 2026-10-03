@@ -26,6 +26,7 @@ const {
   whenGrokMcpIdle,
 } = require("../memory-sup.js");
 const { writeFakeBin } = require("./support/fakeBin.js");
+const { rmTree } = require("./support/rmTree.js");
 
 function waitFor(predicate, { timeoutMs = 10000, intervalMs = 30 } = {}) {
   return new Promise((resolve, reject) => {
@@ -225,13 +226,13 @@ describe("memory-sup supervisor", () => {
     resetMemorySupForTests();
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     resetMemorySupForTests();
     for (const [k, v] of Object.entries(prevEnv)) {
       if (v === undefined) delete process.env[k];
       else process.env[k] = v;
     }
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+    await rmTree(tmpDir);
   });
 
   it("adopts an already-healthy server without spawning", async () => {
@@ -794,13 +795,13 @@ describe("ensureKimiMcpConfig", () => {
     resetMemorySupForTests();
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     resetMemorySupForTests();
     for (const [k, v] of Object.entries(prevEnv)) {
       if (v === undefined) delete process.env[k];
       else process.env[k] = v;
     }
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+    await rmTree(tmpDir);
   });
 
   async function markHealthyViaAdopt(port, token) {
@@ -1027,13 +1028,13 @@ describe("ensureCursorMcpConfig", () => {
     resetMemorySupForTests();
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     resetMemorySupForTests();
     for (const [k, v] of Object.entries(prevEnv)) {
       if (v === undefined) delete process.env[k];
       else process.env[k] = v;
     }
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+    await rmTree(tmpDir);
   });
 
   it("creates fresh mcp.json when missing", () => {
@@ -1229,7 +1230,7 @@ process.exit(0);
       if (v === undefined) delete process.env[k];
       else process.env[k] = v;
     }
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+    await rmTree(tmpDir);
   });
 
   async function markHealthyViaAdopt(port, token, envExtra = {}) {
@@ -1567,7 +1568,7 @@ describe("MCP registration cleanup (issue #125)", () => {
       if (v === undefined) delete process.env[k];
       else process.env[k] = v;
     }
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+    await rmTree(tmpDir);
   });
 
   /** Fake grok that appends every `mcp ...` argv it sees. */

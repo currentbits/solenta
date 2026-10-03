@@ -17,6 +17,7 @@ const { Store } = require("../store.js");
 const services = require("../services.js");
 const { ejectCommand } = require("../providers.js");
 const { posixQuote } = require("../ssh.js");
+const { rmTree } = require("./support/rmTree.js");
 
 function git(cwd, args) {
   execFileSync("git", args, { cwd, stdio: "ignore" });
@@ -117,8 +118,8 @@ describe("setEjected copies the command (#554)", () => {
     }).id;
   });
 
-  afterEach(() => {
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+  afterEach(async () => {
+    await rmTree(tmpDir);
   });
 
   it("eject copies the Codex resume command", () => {

@@ -11,6 +11,7 @@ const services = require("../services.js");
 const { setupWorktree, createPr, push, commit } = require("../worktrees.js");
 const { suggestCommitMessage } = require("../commitmsg.js");
 const { writeFakeBin } = require("./support/fakeBin.js");
+const { rmTree } = require("./support/rmTree.js");
 
 const FAKE_AWS_KEY = "AKIAIOSFODNN7EXAMPLE";
 const FAKE_GH_TOKEN = `ghp_${"a".repeat(36)}`;
@@ -111,7 +112,7 @@ describe("guardrails outbound", () => {
     });
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     try {
       const t = store.getThread(thread.id);
       if (t && t.worktreePath && fs.existsSync(t.worktreePath)) {
@@ -124,7 +125,7 @@ describe("guardrails outbound", () => {
     } catch {
       // ignore
     }
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+    await rmTree(tmpDir);
     if (prevGhBin === undefined) delete process.env.CODER_GH_BIN;
     else process.env.CODER_GH_BIN = prevGhBin;
     if (prevGhState === undefined) delete process.env.CODER_FAKE_GH_STATE;

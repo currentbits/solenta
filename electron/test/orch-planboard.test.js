@@ -19,6 +19,7 @@ const {
 const { PLANBOARD_NOTE } = require("../services.js");
 const { writeFakeBin } = require("./support/fakeBin.js");
 const { resetMemorySupForTests, getClaudeMcpArgs } = require("../memory-sup.js");
+const { rmTree } = require("./support/rmTree.js");
 
 const APP_PATH = path.join(__dirname, "..", "..");
 
@@ -180,10 +181,10 @@ process.exit(0);
     );
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     if (prevGh == null) delete process.env.CODER_GH_BIN;
     else process.env.CODER_GH_BIN = prevGh;
-    fs.rmSync(tmp, { recursive: true, force: true });
+    await rmTree(tmp);
   });
 
   function githubDeps() {
@@ -410,7 +411,7 @@ describe("planboard MCP tools/list gate (issue #849)", () => {
     resetMemorySupForTests();
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     for (const s of servers) {
       try {
         s.stop();
@@ -423,7 +424,7 @@ describe("planboard MCP tools/list gate (issue #849)", () => {
       if (v === undefined) delete process.env[k];
       else process.env[k] = v;
     }
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+    await rmTree(tmpDir);
   });
 
   async function startOrch(store) {

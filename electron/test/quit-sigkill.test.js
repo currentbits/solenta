@@ -16,6 +16,7 @@ const services = require("../services.js");
 const { createRunner } = require("../runner.js");
 const { resetShutdownForTests } = require("../proc.js");
 const { installShutdown, runAppCleanup } = require("../shutdown.js");
+const { rmTree } = require("./support/rmTree.js");
 
 const posix = process.platform !== "win32";
 const IGNORER =
@@ -155,7 +156,7 @@ const deadline = Date.now() + 5000;
     } finally {
       if (victimPid && alive(victimPid)) reap(victimPid);
       if (helper.pid && alive(helper.pid)) reap(helper.pid);
-      fs.rmSync(tmp, { recursive: true, force: true });
+      await rmTree(tmp);
     }
   });
 
@@ -192,7 +193,7 @@ const deadline = Date.now() + 5000;
       resetShutdownForTests();
       if (runner) runner.stopAll();
       for (const pid of pids) reap(pid);
-      fs.rmSync(tmpDir, { recursive: true, force: true });
+      await rmTree(tmpDir);
       if (prevSimulate === undefined) delete process.env.CODER_SIMULATE;
       else process.env.CODER_SIMULATE = prevSimulate;
       if (prevAgentCmd === undefined) delete process.env.CODER_AGENT_CMD;

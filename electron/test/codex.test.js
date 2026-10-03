@@ -1032,7 +1032,7 @@ describe("runner codex provider", () => {
       resetMemorySupForTests();
       if (prevKimiMcp === undefined) delete process.env.CODER_KIMI_MCP_PATH;
       else process.env.CODER_KIMI_MCP_PATH = prevKimiMcp;
-      fs.rmSync(memDir, { recursive: true, force: true });
+      await rmTree(memDir);
     }
   });
 

@@ -24,6 +24,7 @@ const {
 } = require("../worktrees.js");
 const { writeFakeBin } = require("./support/fakeBin.js");
 const { IPC_HANDLERS } = require("../ipc.js");
+const { rmTree } = require("./support/rmTree.js");
 
 function git(cwd, args) {
   return execFileSync("git", args, {
@@ -216,10 +217,10 @@ process.exit(2);
     writeFakeGh({ view: VIEW_SAME });
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     if (prevGh == null) delete process.env.CODER_GH_BIN;
     else process.env.CODER_GH_BIN = prevGh;
-    fs.rmSync(tmp, { recursive: true, force: true });
+    await rmTree(tmp);
   });
 
   function runCheckout(over) {

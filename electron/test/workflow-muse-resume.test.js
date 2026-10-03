@@ -19,6 +19,7 @@ const { Store } = require("../store.js");
 const services = require("../services.js");
 const { createRunner } = require("../runner.js");
 const { writeFakeBin } = require("./support/fakeBin.js");
+const { rmTree } = require("./support/rmTree.js");
 
 const ECHO_HELLO = path.join(__dirname, "fixtures", "muse", "echo-hello.jsonl");
 const ECHO_SESSION_ID = "01a06856-a922-7ec0-a75a-aa6eab933dff";
@@ -140,8 +141,8 @@ describe("workflow muse phase session resume (#873)", () => {
     process.env.CODER_FAKE_MUSE_FIXTURE = ECHO_HELLO;
   });
 
-  afterEach(() => {
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+  afterEach(async () => {
+    await rmTree(tmpDir);
     for (const [k, v] of Object.entries(prev)) {
       if (v === undefined) delete process.env[k];
       else process.env[k] = v;

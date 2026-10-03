@@ -24,11 +24,12 @@ const {
   MSG_TIMEOUT,
   MSG_FAILED,
 } = require("../providerUsage.js");
+const { rmTree } = require("./support/rmTree.js");
 
 const tmpDirs = [];
-after(() => {
+after(async () => {
   for (const dir of tmpDirs) {
-    fs.rmSync(dir, { recursive: true, force: true });
+    await rmTree(dir);
   }
 });
 

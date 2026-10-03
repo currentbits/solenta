@@ -26,6 +26,7 @@ const {
   whenGrokMcpIdle,
 } = require("../memory-sup.js");
 const { writeFakeBin } = require("./support/fakeBin.js");
+const { rmTree } = require("./support/rmTree.js");
 
 function waitFor(predicate, { timeoutMs = 3000, intervalMs = 20 } = {}) {
   return new Promise((resolve, reject) => {
@@ -99,7 +100,7 @@ process.exit(0);
       if (v === undefined) delete process.env[k];
       else process.env[k] = v;
     }
-    fs.rmSync(tmp, { recursive: true, force: true });
+    await rmTree(tmp);
   });
 
   function remoteAndStdio() {

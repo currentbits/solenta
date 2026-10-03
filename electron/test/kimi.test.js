@@ -730,8 +730,8 @@ describe("harvestKimiSessionUsage (#696)", () => {
     tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "kimi-wire-"));
   });
 
-  afterEach(() => {
-    fs.rmSync(tmpHome, { recursive: true, force: true });
+  afterEach(async () => {
+    await rmTree(tmpHome);
   });
 
   function writeWire(sessionId, agent, lines) {

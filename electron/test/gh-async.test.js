@@ -16,6 +16,7 @@ const { execFileSync } = require("node:child_process");
 const { fetchIssue, listIssues, setPlanStatus } = require("../issues.js");
 const { listPrs, ghTryAsync } = require("../worktrees.js");
 const { writeFakeBin } = require("./support/fakeBin.js");
+const { rmTree } = require("./support/rmTree.js");
 
 function git(cwd, args) {
   return execFileSync("git", args, {
@@ -50,10 +51,10 @@ describe("interactive gh is async", () => {
     prevGh = process.env.CODER_GH_BIN;
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     if (prevGh == null) delete process.env.CODER_GH_BIN;
     else process.env.CODER_GH_BIN = prevGh;
-    fs.rmSync(tmp, { recursive: true, force: true });
+    await rmTree(tmp);
   });
 
   function sleepGh(scriptAfterSleep) {

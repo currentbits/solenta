@@ -28,6 +28,7 @@ const {
   PR_REFRESH_TIMEOUT_MS,
 } = require("../worktrees.js");
 const { writeFakeBin } = require("./support/fakeBin.js");
+const { rmTree } = require("./support/rmTree.js");
 
 function git(cwd, args) {
   return execFileSync("git", args, {
@@ -289,14 +290,14 @@ describe("refreshPrStates (round 47)", () => {
   /** @type {ReturnType<typeof makeFixture> | null} */
   let fx = null;
 
-  afterEach(() => {
+  afterEach(async () => {
     if (prevGhBin === undefined) delete process.env.CODER_GH_BIN;
     else process.env.CODER_GH_BIN = prevGhBin;
     if (prevGhState === undefined) delete process.env.CODER_FAKE_GH_STATE;
     else process.env.CODER_FAKE_GH_STATE = prevGhState;
     if (fx) {
       try {
-        fs.rmSync(fx.tmpDir, { recursive: true, force: true });
+        await rmTree(fx.tmpDir);
       } catch {
         // best-effort
       }

@@ -15,6 +15,7 @@ const path = require("node:path");
 const { runClaude } = require("../claude.js");
 const { runCodex } = require("../codex.js");
 const { writeFakeBin } = require("./support/fakeBin.js");
+const { rmTree } = require("./support/rmTree.js");
 
 function tmpDir() {
   return fs.mkdtempSync(path.join(os.tmpdir(), "coder-claude-spawn-"));
@@ -81,7 +82,7 @@ process.exit(0);
         `expected result event, got ${JSON.stringify(events)}`,
       );
     } finally {
-      fs.rmSync(dir, { recursive: true, force: true });
+      await rmTree(dir);
     }
   });
 
@@ -122,7 +123,7 @@ process.exit(0);
         false,
       );
     } finally {
-      fs.rmSync(dir, { recursive: true, force: true });
+      await rmTree(dir);
     }
   });
 
@@ -160,7 +161,7 @@ process.exit(0);
         `expected spawn error or nonzero, got code=${info.code} stderr=${info.stderr}`,
       );
     } finally {
-      fs.rmSync(dir, { recursive: true, force: true });
+      await rmTree(dir);
     }
   });
 });
@@ -199,7 +200,7 @@ process.exit(0);
         events.some((e) => e.type === "thread.started" && e.thread_id === "spawn-codex"),
       );
     } finally {
-      fs.rmSync(dir, { recursive: true, force: true });
+      await rmTree(dir);
     }
   });
 });
