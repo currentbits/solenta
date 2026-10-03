@@ -1380,7 +1380,9 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     async (s: WorkSuggestion) => {
       const threadId = selectedThreadId;
       if (!threadId) return;
-      const t = await forkThread(threadId, { worktree: true });
+      // Stay on the thread the chip was clicked from; the new worker shows
+      // up in the sidebar and runs in the background.
+      const t = await forkThread(threadId, { worktree: true, select: false });
       if (!t) return;
       // Resolve before startRun so a failed kickoff cannot leave the chip
       // open — a retry would fork a second idle thread.
@@ -1390,8 +1392,8 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
       try {
         await startRun(s.prompt, t.id);
       } catch {
-        // startRun already set the run-scope error. The fork exists, the
-        // chip is started, and forkThread selected the new thread.
+        // startRun already set the run-scope error. The fork exists and
+        // the chip is started; the new thread is in the sidebar.
       }
     },
     [selectedThreadId, forkThread, startRun, resolveSuggestion],

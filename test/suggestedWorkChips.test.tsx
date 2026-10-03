@@ -159,6 +159,19 @@ describe("App suggested-work chip wiring (issue #550)", () => {
     const startAt = channels.indexOf("runs.start");
     assert.ok(forkAt >= 0 && resolveAt > forkAt && startAt > resolveAt);
 
+    // The new worker runs in the background; the user stays where they
+    // clicked the chip instead of being switched to it.
+    const active = m.query('[data-active="true"]');
+    assert.equal(
+      active?.getAttribute("data-thread-card"),
+      "t-source-chip",
+      "starting a chip must keep the source thread selected",
+    );
+    assert.ok(
+      m.query(`[data-thread-card="${resolveArg.startedThreadId}"]`),
+      "the started thread appears in the sidebar",
+    );
+
     m.unmount();
   });
 
