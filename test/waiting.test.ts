@@ -229,7 +229,7 @@ describe("buildWaitStates", () => {
     assert.equal(states.get("w1")?.blocked, 1, "intermediate worker also sees it");
   });
 
-  it("does not treat a ThreadInfo manual fork as delegated work", () => {
+  it("counts a running plain fork as delegated work: the source is not done", () => {
     const states = buildWaitStates([
       row({ id: "src", projectId: "p1", status: "done" }),
       row({
@@ -239,15 +239,8 @@ describe("buildWaitStates", () => {
         status: "working",
       }),
     ]);
-    assert.equal(states.get("src"), undefined);
-  });
-
-  it("does not treat a live handoff without orchWorker as a crew worker", () => {
-    const states = buildWaitStates([
-      row({ id: "orch", status: "done" }),
-      row({ id: "w1", handoffFrom: "orch", status: "working" }),
-    ]);
-    assert.equal(states.get("orch"), undefined);
+    assert.deepEqual(states.get("src")?.children.map((c) => c.id), ["fork"]);
+    assert.ok(isDelegating("done", states.get("src")));
   });
 });
 

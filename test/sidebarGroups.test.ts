@@ -139,7 +139,7 @@ describe("buildSidebarGroups", () => {
     );
   });
 
-  it("attaches orchWorker descendants under their source; manual forks stay independent", () => {
+  it("attaches orchWorkers and plain forks under their source", () => {
     const threads = [
       thread({ id: "orch", projectId: "a", updatedAt: 100 }),
       thread({ id: "other", projectId: "a", updatedAt: 150 }),
@@ -174,8 +174,8 @@ describe("buildSidebarGroups", () => {
     const groups = buildSidebarGroups([pA], threads);
     assert.deepEqual(
       groups[0]!.threads.map((t) => t.id),
-      ["stray", "manual", "other", "orch", "w2", "w1"],
-      "orchWorkers follow their lead; a manual fork and a missing source keep sort order",
+      ["stray", "other", "orch", "manual", "w2", "w1"],
+      "workers and forks follow their lead; a missing source keeps sort order",
     );
   });
 
@@ -542,16 +542,16 @@ describe("buildFlatSidebar (T3 flat sidebar)", () => {
         thread({ id: "stuck", projectId: "p1", updatedAt: NOW, createdAt: NOW - 3, status: "working", stalledAt: NOW }),
         // A done worker under a busy lead rides to the shelf with it…
         thread({ id: "busy-w", projectId: "p1", updatedAt: NOW, createdAt: NOW - 2, status: "done", handoffFrom: "busy", orchWorker: true }),
-        // …and a busy worker under a done lead stays in the inbox.
+        // …and a busy worker takes its done lead along: the lead isn't done.
         thread({ id: "done-w", projectId: "p1", updatedAt: NOW, createdAt: NOW - 1, status: "working", handoffFrom: "done", orchWorker: true }),
       ],
       settleOpts,
     );
-    assert.deepEqual(flat.active.map((t) => t.id), ["stuck", "asks", "done", "done-w"]);
-    assert.deepEqual(flat.working.map((t) => t.id), ["busy", "busy-w"]);
+    assert.deepEqual(flat.active.map((t) => t.id), ["stuck", "asks"]);
+    assert.deepEqual(flat.working.map((t) => t.id), ["busy", "busy-w", "done", "done-w"]);
   });
 
-  it("active sorts createdAt desc and attaches orchWorkers under their source", () => {
+  it("active sorts createdAt desc and attaches workers and forks under their source", () => {
     const flat = buildFlatSidebar(
       [
         thread({ id: "old", projectId: "p1", updatedAt: NOW, createdAt: NOW - 3 }),
@@ -574,7 +574,38 @@ describe("buildFlatSidebar (T3 flat sidebar)", () => {
       ],
       settleOpts,
     );
-    assert.deepEqual(flat.active.map((t) => t.id), ["manual", "src", "fork", "old"]);
+    assert.deepEqual(flat.active.map((t) => t.id), ["src", "manual", "fork", "old"]);
+  });
+
+  it("files an idle lead with a running fork or worker to the Working shelf", () => {
+    const flat = buildFlatSidebar(
+      [
+        thread({ id: "lead", projectId: "p1", updatedAt: NOW, createdAt: NOW - 4, status: "done" }),
+        thread({ id: "fork", projectId: "p1", updatedAt: NOW, createdAt: NOW - 3, status: "working", handoffFrom: "lead" }),
+        thread({ id: "lead2", projectId: "p1", updatedAt: NOW, createdAt: NOW - 2, status: "idle" }),
+        thread({ id: "w", projectId: "p1", updatedAt: NOW, createdAt: NOW - 1, status: "working", handoffFrom: "lead2", orchWorker: true }),
+        thread({ id: "w-done", projectId: "p1", updatedAt: NOW, createdAt: NOW, status: "done", handoffFrom: "lead2", orchWorker: true }),
+      ],
+      settleOpts,
+    );
+    assert.deepEqual(flat.active.map((t) => t.id), []);
+    assert.deepEqual(flat.working.map((t) => t.id), ["lead2", "w-done", "w", "lead", "fork"]);
+  });
+
+  it("keeps a busy family in the inbox while any member needs the user", () => {
+    const flat = buildFlatSidebar(
+      [
+        thread({ id: "lead", projectId: "p1", updatedAt: NOW, createdAt: NOW - 3, status: "working" }),
+        thread({ id: "fork", projectId: "p1", updatedAt: NOW, createdAt: NOW - 2, status: "working", handoffFrom: "lead" }),
+        thread({ id: "asks", projectId: "p1", updatedAt: NOW, createdAt: NOW - 1, status: "working", awaitingInput: true, handoffFrom: "lead" }),
+        thread({ id: "lead2", projectId: "p1", updatedAt: NOW, createdAt: NOW - 6, status: "done" }),
+        thread({ id: "f2", projectId: "p1", updatedAt: NOW, createdAt: NOW - 5, status: "working", handoffFrom: "lead2" }),
+        thread({ id: "bad", projectId: "p1", updatedAt: NOW, createdAt: NOW - 4, status: "failed", handoffFrom: "lead2" }),
+      ],
+      settleOpts,
+    );
+    assert.deepEqual(flat.active.map((t) => t.id), ["lead", "asks", "fork", "lead2", "bad", "f2"]);
+    assert.deepEqual(flat.working.map((t) => t.id), []);
   });
 
   it("explicit settle files a worker to the Settled shelf even if the parent is still active", () => {
