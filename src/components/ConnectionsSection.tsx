@@ -88,7 +88,8 @@ export function ConnectionsSection({ onOpen, onForget }: {
   return (
     <section className={styles.section} data-connections="">
       <p className={styles.fieldNote}>
-        Connect to a Solenta Web host through SSH. The host keeps its projects,
+        Connect to a Solenta Web host through SSH. The host must accept key
+        login and already be in known_hosts. The host keeps its projects,
         agents, and worktrees. A remembered web token is encrypted with your
         system keychain and stays in the desktop app.
       </p>

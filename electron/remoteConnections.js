@@ -92,10 +92,29 @@ function validateConnection(input) {
   };
 }
 
+// Turn ssh's stderr into an instruction. BatchMode cannot prompt, so first
+// contact and password logins have to be settled in a terminal once.
+function explainSshFailure(host, stderr, code) {
+  const text = stderr.trim();
+  if (/REMOTE HOST IDENTIFICATION HAS CHANGED/.test(text)) {
+    return `The SSH host key for ${host} changed. Solenta will not send the web token until you verify the new key and update known_hosts.`;
+  }
+  if (/Host key verification failed/.test(text)) {
+    return `${host} is not in known_hosts yet. Run "ssh ${host}" in a terminal once to verify its host key, then connect again.`;
+  }
+  if (/Permission denied/.test(text)) {
+    return `SSH refused the login to ${host}. Connections need key-based login (an SSH key or agent); passwords cannot be entered here.`;
+  }
+  return text || `SSH exited (${code ?? "unknown"}).`;
+}
+
 function sshArgs(host, localPort, remotePort) {
   return [
     "-N", "-T",
     "-o", "BatchMode=yes",
+    // The web token goes down this tunnel: refuse unknown or changed host
+    // keys even if ~/.ssh/config relaxes checking for this host.
+    "-o", "StrictHostKeyChecking=yes",
     "-o", "ExitOnForwardFailure=yes",
     "-o", "ConnectTimeout=10",
     "-o", "ServerAliveInterval=15",
@@ -200,7 +219,7 @@ async function openRemoteConnection(input, deps = {}) {
     });
     child.once("error", (err) => { child.failure = err; });
     child.once("exit", (code) => {
-      child.failure = new Error(stderr.trim() || `SSH exited (${code ?? "unknown"}).`);
+      child.failure = new Error(explainSshFailure(host, stderr, code));
       if (entry.win && !entry.closing && !entry.reconnecting) void reconnect(child.failure);
     });
     return child;
@@ -329,6 +348,7 @@ function closeRemoteConnections() {
 module.exports = {
   validateConnection,
   sshArgs,
+  explainSshFailure,
   probeToken,
   createTokenStore,
   openRemoteConnection,

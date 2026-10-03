@@ -11,6 +11,7 @@ const { WebSocketServer } = require("ws");
 const {
   validateConnection,
   sshArgs,
+  explainSshFailure,
   createTokenStore,
   openRemoteConnection,
   closeRemoteConnections,
@@ -32,6 +33,23 @@ describe("remote Connections", () => {
     assert.deepEqual(sshArgs("user@work", 50000, 4620).slice(-3), [
       "-L", "127.0.0.1:50000:127.0.0.1:4620", "user@work",
     ]);
+  });
+
+  it("pins host keys and explains the ssh failures BatchMode cannot prompt for", () => {
+    const args = sshArgs("work", 50000, 4620);
+    assert.equal(args[args.indexOf("StrictHostKeyChecking=yes") - 1], "-o");
+    assert.match(
+      explainSshFailure("work", "No ED25519 host key is known for work and you have requested strict checking.\nHost key verification failed.\n", 255),
+      /Run "ssh work" in a terminal once/,
+    );
+    assert.match(
+      explainSshFailure("work", "@@@ WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED! @@@\nHost key verification failed.", 255),
+      /host key for work changed/,
+    );
+    assert.match(explainSshFailure("work", "user@work: Permission denied (publickey).", 255), /key-based login/);
+    assert.equal(explainSshFailure("work", "ssh: connect to host work port 22: Connection refused\n", 255),
+      "ssh: connect to host work port 22: Connection refused");
+    assert.equal(explainSshFailure("work", "", null), "SSH exited (unknown).");
   });
 
   it("stores tokens only as keychain ciphertext and refuses plaintext backends", () => {
