@@ -61,18 +61,21 @@ function waitDead(pid, timeoutMs = 4000) {
   });
 }
 
-function waitFile(filePath, timeoutMs = 4000) {
-  return new Promise((resolve, reject) => {
+// Spawn, then block synchronously until the child has written pidFile.
+// runStdioJsonRpc arms its timeout before spawning, so under CPU load the
+// timer could otherwise kill the fake before it boots and the test would see
+// no pid file. Blocking here means the timeout always hits a live, hung child.
+function spawnUntilFile(pidFile, timeoutMs = 10000) {
+  return (...args) => {
+    const child = require("cross-spawn")(...args);
+    const sleep = new Int32Array(new SharedArrayBuffer(4));
     const start = Date.now();
-    const tick = () => {
-      if (fs.existsSync(filePath)) return resolve();
-      if (Date.now() - start > timeoutMs) {
-        return reject(new Error(`missing ${filePath}`));
-      }
-      setTimeout(tick, 15);
-    };
-    tick();
-  });
+    while (!fs.existsSync(pidFile)) {
+      if (Date.now() - start > timeoutMs) throw new Error(`missing ${pidFile}`);
+      Atomics.wait(sleep, 0, 0, 15);
+    }
+    return child;
+  };
 }
 
 const LIVE_CODEX = {
@@ -580,8 +583,8 @@ setInterval(() => {}, 10000);
       cwd: dir,
       timeoutMs: 800,
       sigkillAfterMs: 100,
+      spawn: spawnUntilFile(pidFile),
     });
-    await waitFile(pidFile);
     const row = await pending;
     assert.equal(row.status, "error");
     assert.equal(row.message, MSG_TIMEOUT);
@@ -732,8 +735,8 @@ setInterval(() => {}, 10000);
       cwd: dir,
       timeoutMs: 800,
       sigkillAfterMs: 100,
+      spawn: spawnUntilFile(pidFile),
     });
-    await waitFile(pidFile);
     const row = await pending;
     assert.equal(row.status, "error");
     assert.equal(row.message, MSG_TIMEOUT);
