@@ -6,7 +6,7 @@
  */
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { mount } from "./support/dom.ts";
+import { inAct, mount } from "./support/dom.ts";
 import { AgentsContent } from "../src/components/AgentsPanel";
 import { CrewIntegration } from "../src/components/CrewIntegration";
 import { WorktreeControl } from "../src/components/WorktreeControl";
@@ -495,6 +495,80 @@ describe("AgentsContent Integration section", () => {
       "a manual fork does not make the parent a crew lead",
     );
     forkOnly.unmount();
+  });
+
+  it("does not refetch crew integration when only the summaries array changes", async () => {
+    const rows: ThreadSummaryInfo[] = [
+      { id: "t-orch", title: "Lead", provider: "claude", status: "idle", handoffFrom: null, runStartedAt: null, lastActivity: null },
+      { id: "t-work", title: "Worker A", provider: "claude", status: "done", handoffFrom: "t-orch", orchWorker: true, projectId: "p1", runStartedAt: null, lastActivity: null },
+    ];
+    let calls = 0;
+    const integration = async () => {
+      calls += 1;
+      return view();
+    };
+    const el = (fetcher: () => Promise<ThreadSummaryInfo[]>) => (
+      <AgentsContent
+        workflow={null}
+        thread={thread()}
+        usage={null}
+        providers={PROVIDERS}
+        rosterKey="t-orch:idle,t-work:done"
+        listThreadSummaries={fetcher}
+        crewIntegration={integration}
+        onIntegrateWorker={async () => {}}
+      />
+    );
+    const m = await mount(el(async () => rows.map((r) => ({ ...r }))));
+    await m.flush();
+    assert.equal(calls, 1);
+    // A new fetcher identity refetches summaries: same data, new array.
+    await m.rerender(el(async () => rows.map((r) => ({ ...r }))));
+    await m.flush();
+    assert.equal(calls, 1, "a summaries-only change must not rerun blocking git");
+    m.unmount();
+  });
+
+  it("debounces threads:changed reloads to one crewIntegration call", async () => {
+    const listeners: Array<() => void> = [];
+    const w = window as unknown as { coder?: unknown };
+    const prev = w.coder;
+    w.coder = {
+      on: (_ch: string, cb: () => void) => {
+        listeners.push(cb);
+        return () => {};
+      },
+    };
+    let calls = 0;
+    try {
+      const m = await mount(
+        <AgentsContent
+          workflow={null}
+          thread={thread()}
+          usage={null}
+          providers={PROVIDERS}
+          rosterKey="t-orch:idle,t-work:done"
+          listThreadSummaries={async () => [
+            { id: "t-work", title: "W", provider: "claude", status: "done", handoffFrom: "t-orch", orchWorker: true, projectId: "p1", runStartedAt: null, lastActivity: null },
+          ]}
+          crewIntegration={async () => {
+            calls += 1;
+            return view();
+          }}
+        />,
+      );
+      await m.flush();
+      const base = calls;
+      for (let i = 0; i < 5; i++) for (const cb of listeners) cb();
+      await inAct(async () => {
+        await new Promise((r) => setTimeout(r, 1_200));
+      });
+      await m.flush();
+      assert.equal(calls - base, 1, "five pushes inside 1s collapse into one reload");
+      m.unmount();
+    } finally {
+      w.coder = prev;
+    }
   });
 });
 
