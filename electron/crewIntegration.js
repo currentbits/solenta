@@ -10,11 +10,10 @@ const path = require("node:path");
 const {
   gitTry,
   mergeWorktree,
-  listChangedPaths,
   recordedBaseBranch,
-  repoDefaultBranch,
   isGitHubRemote,
 } = require("./worktrees.js");
+const worktrees = require("./worktrees.js");
 
 /**
  * @param {unknown} raw
@@ -116,6 +115,19 @@ function revParse(cwd) {
   const res = gitTry(cwd, ["rev-parse", "HEAD"]);
   if (!res.ok) return null;
   const sha = String(res.stdout || "").trim();
+  return sha || null;
+}
+
+/**
+ * Async variant of {@link revParse} for read models that must not block
+ * main (crew integration).
+ * @param {string | null | undefined} cwd
+ * @returns {Promise<string | null>}
+ */
+async function revParseAsync(cwd) {
+  if (!cwd || !fs.existsSync(cwd)) return null;
+  const res = await worktrees.gitTryAsync(cwd, ["rev-parse", "HEAD"]);
+  const sha = res.ok ? String(res.stdout || "").trim() : "";
   return sha || null;
 }
 
@@ -390,7 +402,7 @@ function snapshotSha(worker) {
  * @param {import('./store').Store} store
  * @param {{ threadId: string }} input
  */
-function crewIntegration(store, input) {
+async function crewIntegration(store, input) {
   const threadId = input && input.threadId;
   const lead = store.getThread(threadId);
   if (!lead) throw new Error(`Unknown thread: ${threadId}`);
@@ -400,7 +412,7 @@ function crewIntegration(store, input) {
   let finalTarget = recordedBaseBranch(lead);
   if (!finalTarget && projectPath) {
     try {
-      finalTarget = repoDefaultBranch(projectPath);
+      finalTarget = await worktrees.repoDefaultBranchAsync(projectPath);
     } catch {
       finalTarget = "main";
     }
@@ -411,19 +423,27 @@ function crewIntegration(store, input) {
   const landedRecord = normalizeLanded(lead.integrationLanded);
   const landed = Boolean(landedRecord) || lead.prState === "MERGED";
   const leadLive = worktreeLive(lead.worktreePath);
-  const leadHeadSha = leadLive ? revParse(lead.worktreePath) : null;
+  const leadHeadSha = leadLive ? await revParseAsync(lead.worktreePath) : null;
+  let leadBranchFromGit = "";
+  if (!(typeof lead.branch === "string" && lead.branch.trim()) && leadLive) {
+    const res = await worktrees.gitTryAsync(lead.worktreePath, [
+      "branch",
+      "--show-current",
+    ]);
+    leadBranchFromGit = String(res.stdout || "").trim();
+  }
   const leadBranch =
     (typeof lead.branch === "string" && lead.branch.trim()) ||
-    (leadLive
-      ? String(
-          gitTry(lead.worktreePath, ["branch", "--show-current"]).stdout || "",
-        ).trim()
-      : "") ||
+    leadBranchFromGit ||
     null;
 
   let github = false;
   if (projectPath) {
-    const origin = gitTry(projectPath, ["remote", "get-url", "origin"]);
+    const origin = await worktrees.gitTryAsync(projectPath, [
+      "remote",
+      "get-url",
+      "origin",
+    ]);
     github = origin.ok && isGitHubRemote(origin.stdout);
   }
   const finalAction =
@@ -437,64 +457,75 @@ function crewIntegration(store, input) {
     tasks = [];
   }
 
-  const workers = store
-    .getThreads()
-    .filter(
-      (t) =>
-        t &&
-        t.id !== lead.id &&
-        String(t.handoffFrom || "") === String(lead.id),
-    )
-    .map((worker) => {
-      const receipt =
-        receipts.find((r) => r.workerId === worker.id) || null;
-      const task = taskForWorker(tasks, worker);
-      const state = deriveState(worker, receipt, landed);
-      const liveHead = revParse(worker.worktreePath);
-      const sourceSha =
-        snapshotSha(worker) || liveHead || (receipt && receipt.sourceSha) || null;
-      const sourceBranch =
-        typeof worker.leadSnapshotBranch === "string" &&
-        worker.leadSnapshotBranch.trim()
-          ? worker.leadSnapshotBranch.trim()
-          : null;
-      let changedFiles = [];
-      if (worktreeLive(worker.worktreePath) && projectPath) {
-        const base =
+  const workers = await Promise.all(
+    store
+      .getThreads()
+      .filter(
+        (t) =>
+          t &&
+          t.id !== lead.id &&
+          String(t.handoffFrom || "") === String(lead.id),
+      )
+      .map(async (worker) => {
+        const receipt =
+          receipts.find((r) => r.workerId === worker.id) || null;
+        const task = taskForWorker(tasks, worker);
+        const state = deriveState(worker, receipt, landed);
+        const liveHead = await revParseAsync(worker.worktreePath);
+        const sourceSha =
           snapshotSha(worker) ||
-          recordedBaseBranch(worker) ||
-          finalTarget;
-        const listed = listChangedPaths(worker.worktreePath, { base });
-        if (listed && listed.ok) changedFiles = listed.paths || [];
-      }
-      const verify = worker.verify && typeof worker.verify === "object"
-        ? worker.verify
-        : null;
-      return {
-        workerId: worker.id,
-        title: (task && task.title) || worker.title || worker.id,
-        taskId: task ? task.id : null,
-        sourceSha,
-        sourceBranch,
-        sourceDirty: worker.leadSnapshotDirty === true,
-        changedFiles,
-        verify,
-        destination: leadBranch || "lead worktree",
-        state,
-        blocked: Boolean(task && task.blocked),
-        needs: task && Array.isArray(task.needs) ? task.needs.slice() : [],
-        archived: worker.archived === true,
-        worktreePath: worker.worktreePath || null,
-        missingReason:
-          state === "missing"
-            ? "Worker worktree is missing and there is no integrate receipt"
-            : null,
-      };
-    });
+          liveHead ||
+          (receipt && receipt.sourceSha) ||
+          null;
+        const sourceBranch =
+          typeof worker.leadSnapshotBranch === "string" &&
+          worker.leadSnapshotBranch.trim()
+            ? worker.leadSnapshotBranch.trim()
+            : null;
+        let changedFiles = [];
+        if (worktreeLive(worker.worktreePath) && projectPath) {
+          const base =
+            snapshotSha(worker) ||
+            recordedBaseBranch(worker) ||
+            finalTarget;
+          const listed = await worktrees.listChangedPathsAsync(
+            worker.worktreePath,
+            base,
+          );
+          if (listed && listed.ok) changedFiles = listed.paths || [];
+        }
+        const verify = worker.verify && typeof worker.verify === "object"
+          ? worker.verify
+          : null;
+        return {
+          workerId: worker.id,
+          title: (task && task.title) || worker.title || worker.id,
+          taskId: task ? task.id : null,
+          sourceSha,
+          sourceBranch,
+          sourceDirty: worker.leadSnapshotDirty === true,
+          changedFiles,
+          verify,
+          destination: leadBranch || "lead worktree",
+          state,
+          blocked: Boolean(task && task.blocked),
+          needs: task && Array.isArray(task.needs) ? task.needs.slice() : [],
+          archived: worker.archived === true,
+          worktreePath: worker.worktreePath || null,
+          missingReason:
+            state === "missing"
+              ? "Worker worktree is missing and there is no integrate receipt"
+              : null,
+        };
+      }),
+  );
 
   let combinedFiles = [];
   if (leadLive && lead.worktreePath) {
-    const listed = listChangedPaths(lead.worktreePath, { base: finalTarget });
+    const listed = await worktrees.listChangedPathsAsync(
+      lead.worktreePath,
+      finalTarget,
+    );
     if (listed && listed.ok) combinedFiles = listed.paths || [];
   }
 
