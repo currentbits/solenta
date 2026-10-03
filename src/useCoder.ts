@@ -3412,9 +3412,19 @@ export function useCoder(): UseCoderResult {
   );
 
   const prStatus = useCallback(async () => {
-    if (!selectedThreadId) return null;
-    return api.git.prStatus({ threadId: selectedThreadId });
-  }, [api, selectedThreadId]);
+    const threadId = selectedThreadId;
+    if (!threadId) return null;
+    const pr = await api.git.prStatus({ threadId });
+    // prStatus records prNumber/prUrl on the thread; refresh the open header.
+    if (pr && selectedRef.current === threadId) {
+      const d = await api.threads.get(threadId);
+      if (selectedRef.current === threadId) {
+        applyThreadUpdate(d.thread);
+        setDetail(d);
+      }
+    }
+    return pr;
+  }, [api, selectedThreadId, applyThreadUpdate]);
 
   const prChecks = useCallback(async () => {
     if (!selectedThreadId) return { ok: false as const, reason: "no PR" };
