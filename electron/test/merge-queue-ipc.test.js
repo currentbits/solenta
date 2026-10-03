@@ -155,7 +155,7 @@ describe("merge queue IPC (#346 product surface)", () => {
     assert.equal(claimed.n, 1);
     assert.equal(claimed.port, DEFAULT_PORT_BASE + 1);
     assert.equal(claimed.branch, "lane/1");
-    assert.equal(claimed.path, path.join(worktreeBase, "app-lane-1"));
+    assert.equal(claimed.path, path.join(worktreeBase, `app-${project.id.slice(0, 8)}-lane-1`));
     assert.ok(fs.existsSync(path.join(claimed.path, "README.md")));
 
     const lanes = await IPC_HANDLERS["mergeQueue:listLanes"](ctx, {
