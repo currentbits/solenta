@@ -31,7 +31,7 @@ import {
   inspectorContextKey,
   type PanelTab,
 } from "./components/AgentsPanel";
-import { ClaimedLanesHeartbeat, LaneHeartbeat } from "./components/LaneHeartbeat";
+import { ClaimedLanesHeartbeat } from "./components/LaneHeartbeat";
 import {
   SettingsModal,
   type SettingsPane,
@@ -1934,6 +1934,26 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     commitSidebarWidth(SIDEBAR_WIDTH_DEFAULT);
   };
 
+  const integrateSelectedWorker = useCallback(
+    async (workerThreadId: string) => {
+      if (selectedThreadId) await integrateWorker(selectedThreadId, workerThreadId);
+    },
+    [selectedThreadId, integrateWorker],
+  );
+  const verifySelectedLead = useCallback(async () => {
+    if (selectedThreadId) await runVerify(selectedThreadId);
+  }, [selectedThreadId, runVerify]);
+  const leadTitle = visibleDetail?.thread.title;
+  const landSelectedLead = useCallback(async () => {
+    if (!selectedThreadId) return;
+    const view = await crewIntegration(selectedThreadId);
+    if (view.finalAction === "pr") {
+      await createPr({ title: leadTitle || "Lead integration" });
+      return;
+    }
+    await mergeWorktree();
+  }, [selectedThreadId, crewIntegration, createPr, mergeWorktree, leadTitle]);
+
   if (buildMismatch) {
     return (
       <BuildMismatchScreen onRestart={() => void applyUpdate()} />
@@ -2472,11 +2492,6 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
             </div>
           ) : (
           <ErrorBoundary pane="Agents panel">
-            <LaneHeartbeat
-              threadId={selectedThreadId}
-              claimed={Boolean(visibleDetail?.thread.lane)}
-              heartbeatLane={heartbeatLane}
-            />
             <AgentsPanel
         onCollapse={narrow ? undefined : collapseAgents}
         workflow={visibleDetail?.workflow ?? null}
@@ -2489,35 +2504,10 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         listThreadSummaries={listThreadSummaries}
         listCrewTasks={listCrewTasks}
         crewIntegration={crewIntegration}
-        onIntegrateWorker={
-          selectedThreadId
-            ? async (workerThreadId: string) => {
-                await integrateWorker(selectedThreadId, workerThreadId);
-              }
-            : undefined
-        }
+        onIntegrateWorker={selectedThreadId ? integrateSelectedWorker : undefined}
         onRefreshWorker={refreshWorkerSnapshot}
-        onVerifyLead={
-          selectedThreadId
-            ? async () => {
-                await runVerify(selectedThreadId);
-              }
-            : undefined
-        }
-        onLandLead={
-          selectedThreadId
-            ? async () => {
-                const view = await crewIntegration(selectedThreadId);
-                if (view.finalAction === "pr") {
-                  await createPr({
-                    title: visibleDetail?.thread.title || "Lead integration",
-                  });
-                  return;
-                }
-                await mergeWorktree();
-              }
-            : undefined
-        }
+        onVerifyLead={selectedThreadId ? verifySelectedLead : undefined}
+        onLandLead={selectedThreadId ? landSelectedLead : undefined}
         tab={inspectorTab}
         onTabChange={rememberInspectorTab}
         onSelectThread={handleSelectThread}
