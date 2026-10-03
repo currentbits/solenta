@@ -3578,7 +3578,7 @@ export interface CoderApi {
       host: string;
       label?: string;
       remotePort?: number;
-      /** Blank uses the token saved for host:port, if any. */
+      /** Blank reads userData/web-token on the host over SSH, then the saved token. */
       token: string;
       /** Save the verified token encrypted with the OS keychain (default true). */
       remember?: boolean;

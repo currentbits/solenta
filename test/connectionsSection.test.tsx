@@ -29,7 +29,7 @@ it("saves an SSH host after connecting without persisting its web token", async 
   m.unmount();
 });
 
-it("connects with a saved token and forgets it with the host", async () => {
+it("connects with a blank token and forgets the saved one with the host", async () => {
   const calls: unknown[] = [];
   const forgot: unknown[] = [];
   const m = await mount(<ConnectionsSection
@@ -43,9 +43,7 @@ it("connects with a saved token and forgets it with the host", async () => {
   await m.type(m.query("[data-connection-token]"), "remote-secret");
   await m.click(m.query("[data-connection-open]"));
   assert.match(m.container.textContent || "", /token saved/);
-  const open = m.query("[data-connection-open]") as HTMLButtonElement;
-  assert.equal(open.disabled, false, "a saved token enables Connect with a blank field");
-  await m.click(open);
+  await m.click(m.query("[data-connection-open]"));
   assert.equal((calls[1] as { token: string }).token, "");
   await m.click(m.query('[aria-label="Forget user@work"]'));
   assert.deepEqual(forgot, [{ host: "user@work", remotePort: 4620 }]);

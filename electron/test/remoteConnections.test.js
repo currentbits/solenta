@@ -86,9 +86,16 @@ describe("remote Connections", () => {
     const dialogs = [];
     const ports = [];
     let down = false;
+    let notListening = false;
+    let remoteFile = "";
     const fakeSpawn = (_cmd, args) => {
       const localPort = Number(args[args.indexOf("-L") + 1].split(":")[1]);
       ports.push(localPort);
+      if (notListening) {
+        const idle = Object.assign(new EventEmitter(), { stderr: new EventEmitter(), kill() {} });
+        setImmediate(() => idle.stderr.emit("data", "channel 2: open failed: connect failed: Connection refused\n"));
+        return idle;
+      }
       if (down) {
         const dead = Object.assign(new EventEmitter(), { stderr: new EventEmitter(), kill() {} });
         setImmediate(() => {
@@ -139,6 +146,14 @@ describe("remote Connections", () => {
       },
       spawn: fakeSpawn,
       sleep: async () => {},
+      execFile: (_cmd, args, _opts, cb) => {
+        const host = args[args.length - 2];
+        if (host === "unknown@work") {
+          return cb(Object.assign(new Error("ssh"), { code: 255 }), "", "Host key verification failed.\n");
+        }
+        if (remoteFile) return cb(null, `${remoteFile}\n`, "");
+        cb(Object.assign(new Error("cat"), { code: 1 }), "", "");
+      },
       electron: {
         BrowserWindow: FakeWindow,
         shell: { openExternal() {} },
@@ -178,8 +193,35 @@ describe("remote Connections", () => {
       window.close();
       await assert.rejects(
         openRemoteConnection({ host: "nobody@work", token: "" }, deps),
-        /Enter the Solenta Web token/,
+        /No web token found on nobody@work/,
       );
+
+      // A blank token is read from the host's web-token file over SSH first.
+      remoteFile = token;
+      saved.clear();
+      await openRemoteConnection({ host: "fresh@work", token: "" }, deps);
+      assert.match(window.url, /\/\?token=remote-secret$/);
+      assert.equal(saved.get("fresh@work:4620"), token);
+      window.close();
+      remoteFile = "";
+
+      // SSH refusals surface before any tunnel is spawned.
+      const spawned = ports.length;
+      await assert.rejects(
+        openRemoteConnection({ host: "unknown@work", token: "" }, deps),
+        /not in known_hosts yet/,
+      );
+      assert.equal(ports.length, spawned);
+
+      // Nothing on the remote port: fail fast and never start the host.
+      notListening = true;
+      const started = Date.now();
+      await assert.rejects(
+        openRemoteConnection({ host: "idle@work", token, remotePort: 4700 }, deps),
+        /Nothing is listening on port 4700 on idle@work\. Start Solenta there with --serve-web=4700/,
+      );
+      assert.ok(Date.now() - started < 5_000, "must not wait for the 15 s timeout");
+      notListening = false;
       // A saved token the host now rejects is deleted.
       saved.set("stale@work:4620", "old-secret");
       await assert.rejects(

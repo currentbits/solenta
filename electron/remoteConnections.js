@@ -1,6 +1,6 @@
 "use strict";
 
-const { spawn } = require("node:child_process");
+const { execFile, spawn } = require("node:child_process");
 const crypto = require("node:crypto");
 const fs = require("node:fs");
 const net = require("node:net");
@@ -124,6 +124,34 @@ function sshArgs(host, localPort, remotePort) {
   ];
 }
 
+// The host persists its token in userData/web-token (webServer.js). Both
+// release channels keep productName "Solenta": macOS, then Linux/XDG. sh -c
+// so a fish or zsh login shell on the host does not change the syntax.
+const READ_TOKEN_COMMAND = `sh -c 'cat "$HOME/Library/Application Support/Solenta/web-token" 2>/dev/null || cat "\${XDG_CONFIG_HOME:-$HOME/.config}/Solenta/web-token" 2>/dev/null'`;
+
+// "" when the host has no token file; throws on ssh failures (exit 255) so
+// host-key and login problems surface before any tunnel is opened.
+function readRemoteToken(host, deps = {}) {
+  return new Promise((resolve, reject) => {
+    (deps.execFile || execFile)("ssh", [
+      "-T",
+      "-o", "BatchMode=yes",
+      "-o", "StrictHostKeyChecking=yes",
+      "-o", "ConnectTimeout=10",
+      host,
+      READ_TOKEN_COMMAND,
+    ], { timeout: 20_000, maxBuffer: 64 * 1024 }, (err, stdout, stderr) => {
+      if (err && (err.code === 255 || err.killed)) {
+        return reject(new Error(err.killed
+          ? `Timed out reading the web token from ${host}.`
+          : explainSshFailure(host, String(stderr || ""), err.code)));
+      }
+      const token = err ? "" : String(stdout).trim();
+      resolve(token.length <= 1024 ? token : "");
+    });
+  });
+}
+
 function freeLoopbackPort() {
   return new Promise((resolve, reject) => {
     const server = net.createServer();
@@ -187,8 +215,18 @@ async function openRemoteConnection(input, deps = {}) {
   const { host, label, remotePort, remember, token: typed } = validateConnection(input);
   const key = `${host}:${remotePort}`;
   const tokens = tokenStoreFor(deps);
-  const token = typed || tokens.get(key);
-  if (!token) throw new Error("Enter the Solenta Web token from the remote host.");
+  // Typed, then the host's own token file over SSH (always current), then
+  // the keychain copy for hosts whose token file cannot be read.
+  let token = typed;
+  let fromKeychain = false;
+  if (!token) token = await readRemoteToken(host, deps);
+  if (!token) {
+    token = tokens.get(key);
+    fromKeychain = !!token;
+  }
+  if (!token) {
+    throw new Error(`No web token found on ${host}. Start Solenta there with --serve-web once, or paste its token.`);
+  }
   const prior = active.get(key);
   if (prior) {
     if (prior.win && !prior.win.isDestroyed()) {
@@ -216,6 +254,11 @@ async function openRemoteConnection(input, deps = {}) {
     child.failure = null;
     child.stderr?.on("data", (chunk) => {
       stderr = (stderr + String(chunk)).slice(-1000);
+      // The forward is up but nothing listens on the remote port. Connect
+      // never starts the host (#245): say so instead of timing out.
+      if (/open failed: connect failed/.test(stderr) && !child.failure) {
+        child.failure = new Error(`Nothing is listening on port ${remotePort} on ${host}. Start Solenta there with --serve-web${remotePort === DEFAULT_REMOTE_PORT ? "" : `=${remotePort}`}, then connect again.`);
+      }
     });
     child.once("error", (err) => { child.failure = err; });
     child.once("exit", (code) => {
@@ -319,7 +362,7 @@ async function openRemoteConnection(input, deps = {}) {
       active.delete(key);
       if (entry.win && !entry.win.isDestroyed()) entry.win.destroy();
       entry.child?.kill();
-      if (!typed && /rejected this token/.test(err.message)) {
+      if (fromKeychain && /rejected this token/.test(err.message)) {
         try { tokens.delete(key); } catch { /* best effort */ }
         throw new Error("The remote Solenta host rejected the saved token. Enter its current token.");
       }
@@ -349,6 +392,7 @@ module.exports = {
   validateConnection,
   sshArgs,
   explainSshFailure,
+  readRemoteToken,
   probeToken,
   createTokenStore,
   openRemoteConnection,

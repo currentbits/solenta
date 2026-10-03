@@ -48,10 +48,6 @@ export function ConnectionsSection({ onOpen, onForget }: {
     setHosts(next);
   };
 
-  const selected = hosts.find((item) => item.id === selectedId);
-  const useSaved = !!selected?.tokenSaved && selected.host === host.trim() &&
-    String(selected.remotePort) === remotePort.trim();
-
   const connect = async () => {
     if (!onOpen || busy) return;
     setBusy(true);
@@ -75,10 +71,11 @@ export function ConnectionsSection({ onOpen, onForget }: {
       setSelectedId(profile.id);
       setToken("");
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-      // A rejected saved token is deleted by the main process.
-      if (useSaved && !token.trim() && selected) {
-        saveHosts(hosts.map((item) => item.id === selected.id ? { ...item, tokenSaved: false } : item));
+      const message = err instanceof Error ? err.message : String(err);
+      setError(message);
+      // The main process deleted the rejected keychain copy.
+      if (/rejected the saved token/.test(message)) {
+        saveHosts(hosts.map((item) => item.id === selectedId ? { ...item, tokenSaved: false } : item));
       }
     } finally {
       setBusy(false);
@@ -90,8 +87,8 @@ export function ConnectionsSection({ onOpen, onForget }: {
       <p className={styles.fieldNote}>
         Connect to a Solenta Web host through SSH. The host must accept key
         login and already be in known_hosts. The host keeps its projects,
-        agents, and worktrees. A remembered web token is encrypted with your
-        system keychain and stays in the desktop app.
+        agents, and worktrees. Leave the token blank to read it from the host
+        over SSH. A remembered token is encrypted with your system keychain.
       </p>
       {hosts.map((item) => (
         <div className={styles.connectionRow} key={item.id}>
@@ -132,7 +129,7 @@ export function ConnectionsSection({ onOpen, onForget }: {
       </label>
       <label className={styles.field}>
         <span className={styles.fieldLabel}>Web token</span>
-        <input className={styles.input} data-connection-token="" type="password" value={token} onChange={(e) => setToken(e.target.value)} autoComplete="off" spellCheck={false} placeholder={useSaved ? "Saved token" : "Token printed by --serve-web"} />
+        <input className={styles.input} data-connection-token="" type="password" value={token} onChange={(e) => setToken(e.target.value)} autoComplete="off" spellCheck={false} placeholder="Optional: read from the host over SSH" />
       </label>
       <label className={styles.fieldRow}>
         <input type="checkbox" data-connection-remember="" checked={remember} onChange={(e) => setRemember(e.target.checked)} />
@@ -140,7 +137,7 @@ export function ConnectionsSection({ onOpen, onForget }: {
       </label>
       {error && <p className={styles.fieldError} role="alert">{error}</p>}
       <div className={styles.fieldRow}>
-        <button type="button" data-connection-open="" className={`${styles.btn} ${styles.btnPrimary}`} disabled={!onOpen || busy || !host.trim() || (!token.trim() && !useSaved)} onClick={() => void connect()}>
+        <button type="button" data-connection-open="" className={`${styles.btn} ${styles.btnPrimary}`} disabled={!onOpen || busy || !host.trim()} onClick={() => void connect()}>
           {busy ? "Connecting…" : "Connect"}
         </button>
         <button type="button" className={styles.btn} onClick={() => {
