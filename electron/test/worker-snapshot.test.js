@@ -268,14 +268,14 @@ describe("orchestration worker start snapshot (#948)", () => {
     assert.equal(store.getThread(optedOut.id).orchWorker, true);
   });
 
-  it("exposes the source branch and SHA on the lead worker list, separate from the merge destination", () => {
+  it("exposes the source branch and SHA on the lead worker list, separate from the merge destination", async () => {
     const leadWt = setupLeadApi();
     const snap = head(leadWt.worktreePath);
     const branch = store.getThread(lead.id).branch;
     const worker = services.forkWorkerThread(store, { threadId: lead.id });
     materialize(worker.id);
 
-    const view = crewIntegration(store, { threadId: lead.id });
+    const view = await crewIntegration(store, { threadId: lead.id });
     const row = view.workers.find((w) => w.workerId === worker.id);
     assert.ok(row);
     assert.equal(row.sourceSha, snap);
@@ -596,7 +596,7 @@ describe("refresh worker onto lead snapshot", () => {
     assert.equal(store.getThread(optedOut.id).leadSnapshotSha, undefined);
   });
 
-  it("exposes the new source branch and SHA on the lead worker list", () => {
+  it("exposes the new source branch and SHA on the lead worker list", async () => {
     const leadWt = setupLeadApi();
     const worker = services.forkWorkerThread(store, { threadId: lead.id });
     materialize(worker.id);
@@ -604,7 +604,7 @@ describe("refresh worker onto lead snapshot", () => {
     const branch = store.getThread(lead.id).branch;
     services.refreshWorkerSnapshot(store, { threadId: worker.id });
 
-    const view = crewIntegration(store, { threadId: lead.id });
+    const view = await crewIntegration(store, { threadId: lead.id });
     const row = view.workers.find((w) => w.workerId === worker.id);
     assert.ok(row);
     assert.equal(row.sourceSha, later);

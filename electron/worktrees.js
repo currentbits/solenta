@@ -2158,6 +2158,17 @@ async function diffOnce(project, cwd) {
   };
 }
 
+/** Refs tried, in order, for a diff base name (#760). */
+function diffBaseCandidates(base) {
+  const name = String(base || "").trim();
+  if (!name || name.includes("...")) return [];
+  const out = [name];
+  if (!name.startsWith("refs/") && !name.includes("://")) {
+    out.push(`refs/heads/${name}`, `origin/${name}`, `refs/remotes/origin/${name}`);
+  }
+  return [...new Set(out)];
+}
+
 /**
  * Turn a short default-branch name (`main`) into a revision `git diff`
  * can resolve. Detached checkouts often have no local `refs/heads/main`
@@ -2169,28 +2180,49 @@ async function diffOnce(project, cwd) {
  * @returns {string}
  */
 function resolveDiffBase(cwd, base) {
-  const name = String(base || "").trim();
-  if (!name || name.includes("...")) return "";
-  /** @type {string[]} */
-  const candidates = [];
-  const seen = new Set();
-  const add = (ref) => {
-    if (ref && !seen.has(ref)) {
-      seen.add(ref);
-      candidates.push(ref);
-    }
-  };
-  add(name);
-  if (!name.startsWith("refs/") && !name.includes("://")) {
-    add(`refs/heads/${name}`);
-    add(`origin/${name}`);
-    add(`refs/remotes/origin/${name}`);
-  }
-  for (const ref of candidates) {
+  for (const ref of diffBaseCandidates(base)) {
     const probe = gitTry(cwd, ["rev-parse", "--verify", `${ref}^{commit}`]);
     if (probe.ok && probe.stdout) return ref;
   }
   return "";
+}
+
+/**
+ * Async variant of {@link resolveDiffBase} for read models that must not
+ * block main.
+ * @param {string} cwd
+ * @param {string} base
+ * @returns {Promise<string>}
+ */
+async function resolveDiffBaseAsync(cwd, base) {
+  for (const ref of diffBaseCandidates(base)) {
+    const probe = await gitTryAsync(cwd, ["rev-parse", "--verify", `${ref}^{commit}`]);
+    if (probe.ok && probe.stdout) return ref;
+  }
+  return "";
+}
+
+/**
+ * Async committed-diff variant of listChangedPaths for read models that
+ * must not block main (crew integration). Working tree is not included.
+ * @param {string} cwd
+ * @param {string} base
+ * @returns {Promise<{ ok: boolean, paths: string[], reason?: string }>}
+ */
+async function listChangedPathsAsync(cwd, base) {
+  const name = String(base || "").trim();
+  const ref = await resolveDiffBaseAsync(cwd, name);
+  if (!ref) return { ok: false, paths: [], reason: `unknown revision '${name}'` };
+  const res = await gitTryAsync(cwd, ["diff", "--name-only", `${ref}...HEAD`]);
+  if (!res.ok) {
+    return {
+      ok: false,
+      paths: [],
+      reason: (res.stderr || res.combined || "").split("\n")[0].trim(),
+    };
+  }
+  const paths = [...new Set(String(res.stdout || "").split("\n").map((l) => l.trim()).filter(Boolean))];
+  return { ok: true, paths };
 }
 
 /**
@@ -6657,6 +6689,7 @@ module.exports = {
   listBranches,
   recordedBaseBranch,
   repoDefaultBranch,
+  repoDefaultBranchAsync,
   captureLeadSnapshot,
   resolveWorktreeStart,
   clearMissingWorktree,
@@ -6671,6 +6704,7 @@ module.exports = {
   searchFiles,
   directoriesFromFiles,
   listChangedPaths,
+  listChangedPathsAsync,
   mergeWorktree,
   conflictContext,
   removeWorktree,

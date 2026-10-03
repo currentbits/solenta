@@ -31,7 +31,7 @@ import {
   inspectorContextKey,
   type PanelTab,
 } from "./components/AgentsPanel";
-import { ClaimedLanesHeartbeat, LaneHeartbeat } from "./components/LaneHeartbeat";
+import { ClaimedLanesHeartbeat } from "./components/LaneHeartbeat";
 import {
   SettingsModal,
   type SettingsPane,
@@ -1471,6 +1471,17 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     [threads],
   );
 
+  /** Agents panel refetch key: only the selected thread's project, so a
+   *  working thread elsewhere does not keep the team poll alive (#1398). */
+  const panelRosterKey = useMemo(() => {
+    const pid = visibleDetail?.thread.projectId;
+    if (!pid) return "";
+    return threads
+      .filter((t) => t.projectId === pid)
+      .map((t) => `${t.id}:${t.status}`)
+      .join(",");
+  }, [threads, visibleDetail?.thread.projectId]);
+
   /**
    * Same-task siblings for the divergence card. Keyed on roster + the open
    * thread so a 700ms stream tick on an unrelated row does not rebuild this.
@@ -1922,6 +1933,26 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     if (sidebarDragRef.current) return;
     commitSidebarWidth(SIDEBAR_WIDTH_DEFAULT);
   };
+
+  const integrateSelectedWorker = useCallback(
+    async (workerThreadId: string) => {
+      if (selectedThreadId) await integrateWorker(selectedThreadId, workerThreadId);
+    },
+    [selectedThreadId, integrateWorker],
+  );
+  const verifySelectedLead = useCallback(async () => {
+    if (selectedThreadId) await runVerify(selectedThreadId);
+  }, [selectedThreadId, runVerify]);
+  const leadTitle = visibleDetail?.thread.title;
+  const landSelectedLead = useCallback(async () => {
+    if (!selectedThreadId) return;
+    const view = await crewIntegration(selectedThreadId);
+    if (view.finalAction === "pr") {
+      await createPr({ title: leadTitle || "Lead integration" });
+      return;
+    }
+    await mergeWorktree();
+  }, [selectedThreadId, crewIntegration, createPr, mergeWorktree, leadTitle]);
 
   if (buildMismatch) {
     return (
@@ -2461,11 +2492,6 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
             </div>
           ) : (
           <ErrorBoundary pane="Agents panel">
-            <LaneHeartbeat
-              threadId={selectedThreadId}
-              claimed={Boolean(visibleDetail?.thread.lane)}
-              heartbeatLane={heartbeatLane}
-            />
             <AgentsPanel
         onCollapse={narrow ? undefined : collapseAgents}
         workflow={visibleDetail?.workflow ?? null}
@@ -2474,39 +2500,14 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         usage={visibleDetail?.usage ?? null}
         providers={providers}
         project={project}
-        rosterKey={rosterKey}
+        rosterKey={panelRosterKey}
         listThreadSummaries={listThreadSummaries}
         listCrewTasks={listCrewTasks}
         crewIntegration={crewIntegration}
-        onIntegrateWorker={
-          selectedThreadId
-            ? async (workerThreadId: string) => {
-                await integrateWorker(selectedThreadId, workerThreadId);
-              }
-            : undefined
-        }
+        onIntegrateWorker={selectedThreadId ? integrateSelectedWorker : undefined}
         onRefreshWorker={refreshWorkerSnapshot}
-        onVerifyLead={
-          selectedThreadId
-            ? async () => {
-                await runVerify(selectedThreadId);
-              }
-            : undefined
-        }
-        onLandLead={
-          selectedThreadId
-            ? async () => {
-                const view = await crewIntegration(selectedThreadId);
-                if (view.finalAction === "pr") {
-                  await createPr({
-                    title: visibleDetail?.thread.title || "Lead integration",
-                  });
-                  return;
-                }
-                await mergeWorktree();
-              }
-            : undefined
-        }
+        onVerifyLead={selectedThreadId ? verifySelectedLead : undefined}
+        onLandLead={selectedThreadId ? landSelectedLead : undefined}
         tab={inspectorTab}
         onTabChange={rememberInspectorTab}
         onSelectThread={handleSelectThread}

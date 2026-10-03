@@ -202,4 +202,37 @@ describe("threads summaries", () => {
     const [after] = services.threadSummaries(store);
     assert.deepEqual(after.lastActivity, { text: "kept", at: 10 });
   });
+
+  it("filters by projectId and threadIds before reading messages", () => {
+    store.setThreads([
+      makeThread({ id: "a", projectId: "p1" }),
+      makeThread({ id: "b", projectId: "p1" }),
+      makeThread({ id: "c", projectId: "p2" }),
+    ]);
+    const read = [];
+    const orig = store.getLastAssistantMessage.bind(store);
+    store.getLastAssistantMessage = (id) => {
+      read.push(id);
+      return orig(id);
+    };
+    assert.deepEqual(
+      services.threadSummaries(store, { projectId: "p1" }).map((r) => r.id),
+      ["a", "b"],
+    );
+    assert.deepEqual(read, ["a", "b"], "other projects' messages are not read");
+    read.length = 0;
+    assert.deepEqual(
+      services.threadSummaries(store, { threadIds: ["c"] }).map((r) => r.id),
+      ["c"],
+    );
+    assert.deepEqual(read, ["c"]);
+    assert.equal(services.threadSummaries(store).length, 3, "no filter = all rows");
+  });
+
+  it("caps lastActivity text at 200 characters", () => {
+    store.setThreads([makeThread({ id: "a" })]);
+    store.getLastAssistantMessage = () => ({ text: "x".repeat(500), createdAt: 5 });
+    const [row] = services.threadSummaries(store);
+    assert.equal(row.lastActivity.text.length, 200);
+  });
 });

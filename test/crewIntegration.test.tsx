@@ -6,7 +6,7 @@
  */
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { mount } from "./support/dom.ts";
+import { inAct, mount } from "./support/dom.ts";
 import { AgentsContent } from "../src/components/AgentsPanel";
 import { CrewIntegration } from "../src/components/CrewIntegration";
 import { WorktreeControl } from "../src/components/WorktreeControl";
@@ -495,6 +495,156 @@ describe("AgentsContent Integration section", () => {
       "a manual fork does not make the parent a crew lead",
     );
     forkOnly.unmount();
+  });
+
+  it("does not refetch crew integration when only the summaries array changes", async () => {
+    const rows: ThreadSummaryInfo[] = [
+      { id: "t-orch", title: "Lead", provider: "claude", status: "idle", handoffFrom: null, runStartedAt: null, lastActivity: null },
+      { id: "t-work", title: "Worker A", provider: "claude", status: "done", handoffFrom: "t-orch", orchWorker: true, projectId: "p1", runStartedAt: null, lastActivity: null },
+    ];
+    let calls = 0;
+    const integration = async () => {
+      calls += 1;
+      return view();
+    };
+    const el = (fetcher: () => Promise<ThreadSummaryInfo[]>) => (
+      <AgentsContent
+        workflow={null}
+        thread={thread()}
+        usage={null}
+        providers={PROVIDERS}
+        rosterKey="t-orch:idle,t-work:done"
+        listThreadSummaries={fetcher}
+        crewIntegration={integration}
+        onIntegrateWorker={async () => {}}
+      />
+    );
+    const m = await mount(el(async () => rows.map((r) => ({ ...r }))));
+    await m.flush();
+    assert.equal(calls, 1);
+    // A new fetcher identity refetches summaries: same data, new array.
+    await m.rerender(el(async () => rows.map((r) => ({ ...r }))));
+    await m.flush();
+    assert.equal(calls, 1, "a summaries-only change must not rerun blocking git");
+    m.unmount();
+  });
+
+  it("debounces threads:changed reloads to one crewIntegration call", async () => {
+    const listeners: Array<() => void> = [];
+    const w = window as unknown as { coder?: unknown };
+    const prev = w.coder;
+    w.coder = {
+      on: (_ch: string, cb: () => void) => {
+        listeners.push(cb);
+        return () => {};
+      },
+    };
+    let calls = 0;
+    try {
+      const m = await mount(
+        <AgentsContent
+          workflow={null}
+          thread={thread()}
+          usage={null}
+          providers={PROVIDERS}
+          rosterKey="t-orch:idle,t-work:done"
+          listThreadSummaries={async () => [
+            { id: "t-work", title: "W", provider: "claude", status: "done", handoffFrom: "t-orch", orchWorker: true, projectId: "p1", runStartedAt: null, lastActivity: null },
+          ]}
+          crewIntegration={async () => {
+            calls += 1;
+            return view();
+          }}
+        />,
+      );
+      await m.flush();
+      const base = calls;
+      for (let i = 0; i < 5; i++) for (const cb of listeners) cb();
+      await inAct(async () => {
+        await new Promise((r) => setTimeout(r, 1_200));
+      });
+      await m.flush();
+      assert.equal(calls - base, 1, "five pushes inside 1s collapse into one reload");
+      m.unmount();
+    } finally {
+      w.coder = prev;
+    }
+  });
+
+  it("keeps a later crewIntegration result after a slower earlier call resolves late", async () => {
+    const summaries: ThreadSummaryInfo[] = [
+      { id: "t-orch", title: "Lead", provider: "claude", status: "idle", handoffFrom: null, runStartedAt: null, lastActivity: null },
+      { id: "t-work", title: "Worker A", provider: "claude", status: "done", handoffFrom: "t-orch", orchWorker: true, projectId: "p1", runStartedAt: null, lastActivity: null },
+    ];
+    const listeners: Array<() => void> = [];
+    const w = window as unknown as { coder?: unknown };
+    const prev = w.coder;
+    w.coder = {
+      on: (_ch: string, cb: () => void) => {
+        listeners.push(cb);
+        return () => {};
+      },
+    };
+    let calls = 0;
+    let resolveFirst: ((v: CrewIntegrationView) => void) | null = null;
+    try {
+      const m = await mount(
+        <AgentsContent
+          workflow={null}
+          thread={thread()}
+          usage={null}
+          providers={PROVIDERS}
+          rosterKey="t-orch:idle,t-work:done"
+          listThreadSummaries={async () => summaries}
+          crewIntegration={async () => {
+            calls += 1;
+            if (calls === 1) {
+              // The mount-time load is the slow, soon-to-be-stale call.
+              return new Promise<CrewIntegrationView>((resolve) => {
+                resolveFirst = resolve;
+              });
+            }
+            return view({ finalTarget: "target-b" });
+          }}
+        />,
+      );
+      await m.flush();
+      assert.equal(calls, 1, "mount fires the first (slow) call");
+      assert.equal(
+        m.query("[data-crew-integration]"),
+        null,
+        "nothing to render while the first call is still pending",
+      );
+
+      // threads:changed (debounced ~1s) drives a second, faster call.
+      for (const cb of listeners) cb();
+      await inAct(async () => {
+        await new Promise((r) => setTimeout(r, 1_200));
+      });
+      await m.flush();
+      assert.equal(calls, 2, "threads:changed reload fired the second call");
+      assert.match(m.text(), /target-b/, "the newer call's view is shown");
+
+      // The first call resolves late, after the newer one already landed.
+      await inAct(async () => {
+        resolveFirst!(view({ finalTarget: "target-a" }));
+      });
+      await m.flush();
+
+      assert.match(
+        m.text(),
+        /target-b/,
+        "late resolution of the stale call must not clobber the newer view",
+      );
+      assert.doesNotMatch(
+        m.text(),
+        /target-a/,
+        "the stale call's view must never be applied",
+      );
+      m.unmount();
+    } finally {
+      w.coder = prev;
+    }
   });
 });
 
