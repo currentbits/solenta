@@ -20,6 +20,7 @@ const {
   materializeCursorGuardrailPlugin,
   cursorGuardrailPluginDir,
 } = require("../cursor-guardrail.js");
+const { rmTree } = require("./support/rmTree.js");
 
 function runHook(scriptPath, payload, env) {
   const input = typeof payload === "string" ? payload : JSON.stringify(payload);
@@ -55,8 +56,8 @@ describe("materializeCursorGuardrailPlugin", () => {
     dest = fs.mkdtempSync(path.join(os.tmpdir(), "cursor-gr-"));
   });
 
-  afterEach(() => {
-    fs.rmSync(dest, { recursive: true, force: true });
+  afterEach(async () => {
+    await rmTree(dest);
   });
 
   it("writes plugin.json, hooks.json, hook script, and guardrails.js", () => {
@@ -93,10 +94,10 @@ describe("cursor guardrail hook (stdin)", () => {
     delete process.env.CODER_GUARDRAILS;
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     if (prevGuardrails === undefined) delete process.env.CODER_GUARDRAILS;
     else process.env.CODER_GUARDRAILS = prevGuardrails;
-    fs.rmSync(dest, { recursive: true, force: true });
+    await rmTree(dest);
   });
 
   it("denies curl|sh before the tool would run", () => {

@@ -10,6 +10,7 @@ const services = require("../services.js");
 const { createRunner } = require("../runner.js");
 const { getProvider } = require("../providers.js");
 const { writeFakeBin } = require("./support/fakeBin.js");
+const { rmTree } = require("./support/rmTree.js");
 
 function git(cwd, args) {
   execFileSync("git", args, { cwd, stdio: "ignore" });
@@ -55,8 +56,8 @@ describe("setProvider lock semantics", () => {
     });
   });
 
-  afterEach(() => {
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+  afterEach(async () => {
+    await rmTree(tmpDir);
   });
 
   it("rejects unknown provider id", () => {
@@ -304,7 +305,7 @@ describe("setProvider lock semantics", () => {
 });
 
 describe("store migrates model: null", () => {
-  it("adds model null without changing updatedAt", () => {
+  it("adds model null without changing updatedAt", async () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "coder-mig-model-"));
     const filePath = path.join(tmpDir, "s.json");
     try {
@@ -338,7 +339,7 @@ describe("store migrates model: null", () => {
       assert.equal(t.model, null);
       assert.equal(t.updatedAt, 2);
     } finally {
-      fs.rmSync(tmpDir, { recursive: true, force: true });
+      await rmTree(tmpDir);
     }
   });
 });
@@ -382,9 +383,9 @@ describe("unavailable provider rejection", () => {
     });
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     if (runner) runner.stopAll();
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+    await rmTree(tmpDir);
     if (prevSimulate === undefined) delete process.env.CODER_SIMULATE;
     else process.env.CODER_SIMULATE = prevSimulate;
     if (prevAgentCmd === undefined) delete process.env.CODER_AGENT_CMD;
@@ -475,9 +476,9 @@ process.exit(0);
     });
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     if (runner) runner.stopAll();
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+    await rmTree(tmpDir);
     if (prevSimulate === undefined) delete process.env.CODER_SIMULATE;
     else process.env.CODER_SIMULATE = prevSimulate;
     if (prevAgentCmd === undefined) delete process.env.CODER_AGENT_CMD;
@@ -556,9 +557,9 @@ process.exit(0);
     services.setProvider(store, { threadId: thread.id, provider: "grok" });
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     if (runner) runner.stopAll();
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+    await rmTree(tmpDir);
     if (prevSimulate === undefined) delete process.env.CODER_SIMULATE;
     else process.env.CODER_SIMULATE = prevSimulate;
     if (prevAgentCmd === undefined) delete process.env.CODER_AGENT_CMD;

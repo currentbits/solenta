@@ -22,6 +22,7 @@ const { Store } = require("../store.js");
 const services = require("../services.js");
 const { createRunner } = require("../runner.js");
 const { writeFakeBin } = require("./support/fakeBin.js");
+const { rmTree } = require("./support/rmTree.js");
 
 function git(cwd, args) {
   execFileSync("git", args, { cwd, stdio: "ignore" });
@@ -246,8 +247,8 @@ describe("workflow phases get thread.permissionMode (#793)", () => {
     process.env.CODER_GROK_BIN = "no-grok";
   });
 
-  afterEach(() => {
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+  afterEach(async () => {
+    await rmTree(tmpDir);
     for (const [k, v] of Object.entries(prev)) {
       if (v === undefined) delete process.env[k];
       else process.env[k] = v;

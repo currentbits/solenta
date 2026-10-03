@@ -24,6 +24,7 @@ const {
   inspectFailedMessage,
 } = require("../blastRadius.js");
 const { writeFakeBin } = require("./support/fakeBin.js");
+const { rmTree } = require("./support/rmTree.js");
 
 function git(cwd, args) {
   return execFileSync("git", args, {
@@ -118,8 +119,8 @@ describe("electron blastRadius matcher", () => {
 describe("listChangedPaths base resolution (#760)", () => {
   let tmp;
 
-  afterEach(() => {
-    if (tmp) fs.rmSync(tmp, { recursive: true, force: true });
+  afterEach(async () => {
+    if (tmp) await rmTree(tmp);
   });
 
   it("lists vs origin/main when local main is gone", () => {
@@ -214,8 +215,8 @@ describe("mergeWorktree CI workflow gate", () => {
     worktreeBase = path.join(tmp, "wt");
   });
 
-  afterEach(() => {
-    fs.rmSync(tmp, { recursive: true, force: true });
+  afterEach(async () => {
+    await rmTree(tmp);
   });
 
   it("refuses a workflow-file merge until ciWorkflowApproved", () => {
@@ -323,12 +324,12 @@ describe("mergePr CI workflow gate", () => {
     process.env.CODER_FAKE_GH_STATE = statePath;
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     if (prevGh == null) delete process.env.CODER_GH_BIN;
     else process.env.CODER_GH_BIN = prevGh;
     if (prevState == null) delete process.env.CODER_FAKE_GH_STATE;
     else process.env.CODER_FAKE_GH_STATE = prevState;
-    fs.rmSync(tmp, { recursive: true, force: true });
+    await rmTree(tmp);
   });
 
   it("classifies the committed workflow on git.diff", async () => {

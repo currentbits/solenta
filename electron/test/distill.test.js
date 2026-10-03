@@ -14,6 +14,7 @@ const {
   parseDistilled,
 } = require("../distill.js");
 const { writeFakeBin } = require("./support/fakeBin.js");
+const { rmTree } = require("./support/rmTree.js");
 
 /** Write an executable fake fm that runs `body` as node. */
 function writeFakeFm(dir, body) {
@@ -109,8 +110,8 @@ describe("distillThread", () => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "coder-distill-"));
   });
 
-  afterEach(() => {
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+  afterEach(async () => {
+    await rmTree(tmpDir);
   });
 
   it("falls back to a single phase when fm is unavailable", async () => {
@@ -234,8 +235,8 @@ describe("save-ready shape", () => {
     store = new Store(path.join(tmpDir, "store.json"));
   });
 
-  afterEach(() => {
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+  afterEach(async () => {
+    await rmTree(tmpDir);
   });
 
   it("fallback and parsed drafts survive workflows.save", async () => {
@@ -287,7 +288,7 @@ describe("runs:distill IPC", () => {
     } finally {
       if (prevDisable === undefined) delete process.env.CODER_FM_DISABLE;
       else process.env.CODER_FM_DISABLE = prevDisable;
-      fs.rmSync(tmpDir, { recursive: true, force: true });
+      await rmTree(tmpDir);
     }
   });
 });

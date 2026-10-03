@@ -21,6 +21,7 @@ const {
   PR_TOO_LARGE_PREFIX,
 } = require("../worktrees.js");
 const { writeFakeBin } = require("./support/fakeBin.js");
+const { rmTree } = require("./support/rmTree.js");
 
 function git(cwd, args) {
   return execFileSync("git", args, {
@@ -136,7 +137,7 @@ describe("pr-size-cap (#402)", () => {
     process.env.CODER_FAKE_GH_STATE = statePath;
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     delete process.env.CODER_GH_BIN;
     delete process.env.CODER_FAKE_GH_STATE;
     try {
@@ -151,7 +152,7 @@ describe("pr-size-cap (#402)", () => {
     } catch {
       // ignore
     }
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+    await rmTree(tmpDir);
   });
 
   /** Worktree with one commit adding `lines` lines on the thread branch. */

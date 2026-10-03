@@ -90,9 +90,9 @@ describe("materializeKimiHome", () => {
     );
   });
 
-  afterEach(() => {
-    fs.rmSync(source, { recursive: true, force: true });
-    fs.rmSync(dest, { recursive: true, force: true });
+  afterEach(async () => {
+    await rmTree(source);
+    await rmTree(dest);
   });
 
   it("writes only Solenta MCP servers and only this cwd as a workspace", () => {
@@ -153,13 +153,13 @@ describe("kimiMcpServersForRun binds project on the URL", () => {
     resetMemorySupForTests();
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     resetMemorySupForTests();
     for (const [k, v] of Object.entries(prevEnv)) {
       if (v === undefined) delete process.env[k];
       else process.env[k] = v;
     }
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+    await rmTree(tmpDir);
   });
 
   it("puts projectId and project path on the matching server URLs", () => {

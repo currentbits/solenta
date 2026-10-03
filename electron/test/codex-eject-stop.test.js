@@ -20,6 +20,7 @@ const services = require("../services.js");
 const { createRunner } = require("../runner.js");
 const { IPC_HANDLERS, makeCtx } = require("../ipc.js");
 const { writeFakeBin } = require("./support/fakeBin.js");
+const { rmTree } = require("./support/rmTree.js");
 
 const HANG_SESSION = "01a072f7-10e0-7fd2-b691-7d481327516f";
 const WORKER_SESSION = "01a072f7-aaaa-7fd2-b691-7d481327516f";
@@ -229,8 +230,8 @@ describe("setEjected persist", () => {
     }).id;
   });
 
-  afterEach(() => {
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+  afterEach(async () => {
+    await rmTree(tmpDir);
   });
 
   it("new threads are not ejected; true survives reload without bumping updatedAt", () => {
@@ -326,9 +327,9 @@ describe("eject stops a running Codex child (#960)", () => {
     store.saveNow();
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     if (runner) runner.stopAll();
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+    await rmTree(tmpDir);
     if (prevSimulate === undefined) delete process.env.CODER_SIMULATE;
     else process.env.CODER_SIMULATE = prevSimulate;
     if (prevAgentCmd === undefined) delete process.env.CODER_AGENT_CMD;

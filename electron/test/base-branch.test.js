@@ -21,6 +21,7 @@ const {
   listBranches,
 } = require("../worktrees.js");
 const { writeFakeBin } = require("./support/fakeBin.js");
+const { rmTree } = require("./support/rmTree.js");
 
 function git(cwd, args) {
   return execFileSync("git", args, {
@@ -105,7 +106,7 @@ describe("base-branch (#187)", () => {
     project = await services.addProject(store, repo);
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     try {
       for (const t of store.getThreads()) {
         if (t && t.worktreePath && fs.existsSync(t.worktreePath)) {
@@ -119,7 +120,7 @@ describe("base-branch (#187)", () => {
     } catch {
       // ignore
     }
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+    await rmTree(tmpDir);
   });
 
   it("createThread defaults baseBranch to null", () => {
@@ -391,7 +392,7 @@ describe("setBaseBranch", () => {
     }).id;
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     try {
       for (const t of store.getThreads()) {
         if (t && t.worktreePath && fs.existsSync(t.worktreePath)) {
@@ -405,7 +406,7 @@ describe("setBaseBranch", () => {
     } catch {
       // ignore
     }
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+    await rmTree(tmpDir);
   });
 
   it("records a local branch as the stacked base", () => {
@@ -780,8 +781,8 @@ describe("setPendingWorktree (draft workspace strip)", () => {
     }).id;
   });
 
-  afterEach(() => {
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+  afterEach(async () => {
+    await rmTree(tmpDir);
   });
 
   it("arms and drops the lazy worktree before the first send", () => {
@@ -851,7 +852,7 @@ describe("Previous worktree: stack a draft on another thread's branch (#1411)", 
     project = await services.addProject(store, repo);
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     for (const t of store.getThreads()) {
       if (t && t.worktreePath && fs.existsSync(t.worktreePath)) {
         try {
@@ -861,7 +862,7 @@ describe("Previous worktree: stack a draft on another thread's branch (#1411)", 
         }
       }
     }
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+    await rmTree(tmpDir);
   });
 
   it("starts from the previous branch's committed work", () => {
@@ -924,7 +925,7 @@ describe("Start from origin (#1411)", () => {
     project = await services.addProject(store, repo);
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     for (const t of store.getThreads()) {
       if (t && t.worktreePath && fs.existsSync(t.worktreePath)) {
         try {
@@ -934,7 +935,7 @@ describe("Start from origin (#1411)", () => {
         }
       }
     }
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+    await rmTree(tmpDir);
   });
 
   it("fetches and starts from origin's copy of the base", () => {
@@ -976,8 +977,8 @@ describe("Scratch workspace (#1411, start without a project)", () => {
     userData = path.join(tmpDir, "userData");
   });
 
-  afterEach(() => {
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+  afterEach(async () => {
+    await rmTree(tmpDir);
   });
 
   it("creates one non-git Scratch project and returns it again", () => {

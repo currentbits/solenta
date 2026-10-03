@@ -7,9 +7,10 @@ const os = require("node:os");
 const path = require("node:path");
 const spawn = require("cross-spawn");
 const { writeFakeBin } = require("./support/fakeBin.js");
+const { rmTree } = require("./support/rmTree.js");
 
 describe("writeFakeBin", () => {
-  it("writes a spawnable node fake that forwards argv and stdout", () => {
+  it("writes a spawnable node fake that forwards argv and stdout", async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "coder-fakebin-"));
     try {
       const dest = path.join(dir, "fake-echo");
@@ -27,7 +28,7 @@ describe("writeFakeBin", () => {
       assert.equal(nl.status, 0, nl.stderr);
       assert.equal(nl.stdout, "echo:line1\n- Folder: kept");
     } finally {
-      fs.rmSync(dir, { recursive: true, force: true });
+      await rmTree(dir);
     }
   });
 });

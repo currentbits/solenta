@@ -22,6 +22,7 @@ const { Store } = require("../store.js");
 const services = require("../services.js");
 const { createRunner } = require("../runner.js");
 const { writeFakeBin } = require("./support/fakeBin.js");
+const { rmTree } = require("./support/rmTree.js");
 
 function git(cwd, args) {
   execFileSync("git", args, { cwd, stdio: "ignore" });
@@ -573,8 +574,8 @@ describe("reasoning effort: store migration", () => {
     filePath = path.join(tmpDir, "coder-store.json");
   });
 
-  afterEach(() => {
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+  afterEach(async () => {
+    await rmTree(tmpDir);
   });
 
   it("old threads missing reasoningEffort migrate to null, not undefined", () => {
@@ -687,8 +688,8 @@ describe("reasoning effort: setReasoningEffort service", () => {
     project = await services.addProject(store, repo);
   });
 
-  afterEach(() => {
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+  afterEach(async () => {
+    await rmTree(tmpDir);
   });
 
   it("createThread defaults reasoningEffort to null", () => {
@@ -1001,7 +1002,7 @@ describe("reasoning effort: setReasoningEffort service", () => {
 });
 
 describe("reasoning effort: IPC seam + runner wiring", () => {
-  it("preload exposes setReasoningEffort and main handles the channel", () => {
+  it("preload exposes setReasoningEffort and main handles the channel", async () => {
     const Module = require("node:module");
     const handlers = new Map();
     const bridge = {};
@@ -1065,7 +1066,7 @@ describe("reasoning effort: IPC seam + runner wiring", () => {
           "main must handle threads:setReasoningEffort",
         );
       } finally {
-        fs.rmSync(tmp, { recursive: true, force: true });
+        await rmTree(tmp);
       }
     } finally {
       Module._load = origLoad;
@@ -1153,7 +1154,7 @@ emit({
       );
     } finally {
       if (runner) runner.stopAll();
-      fs.rmSync(tmpDir, { recursive: true, force: true });
+      await rmTree(tmpDir);
       for (const [k, v] of Object.entries(prev)) {
         if (v === undefined) delete process.env[k];
         else process.env[k] = v;
@@ -1242,7 +1243,7 @@ emit({
       );
     } finally {
       if (runner) runner.stopAll();
-      fs.rmSync(tmpDir, { recursive: true, force: true });
+      await rmTree(tmpDir);
       for (const [k, v] of Object.entries(prev)) {
         if (v === undefined) delete process.env[k];
         else process.env[k] = v;

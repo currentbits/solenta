@@ -23,6 +23,7 @@ const {
   unregisterMcpServer,
   resetMemorySupForTests,
 } = require("../memory-sup.js");
+const { rmTree } = require("./support/rmTree.js");
 
 const APP_PATH = path.join(__dirname, "..", "..");
 
@@ -638,7 +639,7 @@ describe("orch-server tool handlers", () => {
         undefined,
       );
     } finally {
-      fs.rmSync(dir, { recursive: true, force: true });
+      await rmTree(dir);
     }
   });
 
@@ -1291,7 +1292,7 @@ describe("orch-server HTTP", () => {
     resetMemorySupForTests();
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     for (const s of servers) {
       try {
         s.stop();
@@ -1304,7 +1305,7 @@ describe("orch-server HTTP", () => {
       if (v === undefined) delete process.env[k];
       else process.env[k] = v;
     }
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+    await rmTree(tmpDir);
   });
 
   async function startOrch(overrides = {}) {
@@ -1677,7 +1678,7 @@ describe("orch-server provider injection", () => {
     resetMemorySupForTests();
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     for (const s of servers) {
       try {
         s.stop();
@@ -1690,7 +1691,7 @@ describe("orch-server provider injection", () => {
       if (v === undefined) delete process.env[k];
       else process.env[k] = v;
     }
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+    await rmTree(tmpDir);
   });
 
   /** Adopt a fake memory server so coder-memory is healthy too. */

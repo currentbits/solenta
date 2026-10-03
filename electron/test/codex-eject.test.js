@@ -18,6 +18,7 @@ const { Store } = require("../store.js");
 const services = require("../services.js");
 const { createRunner } = require("../runner.js");
 const { writeFakeBin } = require("./support/fakeBin.js");
+const { rmTree } = require("./support/rmTree.js");
 
 const EJECTED_SESSION = "01a072f7-10e0-7fd2-b691-7d481327516f";
 
@@ -82,8 +83,8 @@ describe("thread.ejected persist (#554)", () => {
     }).id;
   });
 
-  afterEach(() => {
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+  afterEach(async () => {
+    await rmTree(tmpDir);
   });
 
   it("new threads are not ejected; true survives reload", () => {
@@ -190,9 +191,9 @@ describe("ejected Codex lead does not resume (#554)", () => {
     store.saveNow();
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     if (runner) runner.stopAll();
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+    await rmTree(tmpDir);
     if (prevSimulate === undefined) delete process.env.CODER_SIMULATE;
     else process.env.CODER_SIMULATE = prevSimulate;
     if (prevAgentCmd === undefined) delete process.env.CODER_AGENT_CMD;
@@ -330,8 +331,8 @@ describe("reclaim appends outside Codex turns (#554)", () => {
     ]);
   });
 
-  afterEach(() => {
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+  afterEach(async () => {
+    await rmTree(tmpDir);
   });
 
   it("appends at least one outside assistant turn after reclaim", () => {
@@ -503,8 +504,8 @@ for (const provider of ["claude", "grok"]) {
       providerHome = fx.providerHome;
     });
 
-    afterEach(() => {
-      fs.rmSync(tmpDir, { recursive: true, force: true });
+    afterEach(async () => {
+      await rmTree(tmpDir);
     });
 
     it("appends at least one outside assistant turn after reclaim", () => {
@@ -889,8 +890,8 @@ for (const provider of ["cursor", "opencode"]) {
       artifact = fx.artifact;
     });
 
-    afterEach(() => {
-      fs.rmSync(tmpDir, { recursive: true, force: true });
+    afterEach(async () => {
+      await rmTree(tmpDir);
     });
 
     it("appends at least one outside assistant turn after reclaim", () => {
@@ -950,8 +951,8 @@ for (const provider of ["kimi", "muse"]) {
       artifact = fx.artifact;
     });
 
-    afterEach(() => {
-      fs.rmSync(tmpDir, { recursive: true, force: true });
+    afterEach(async () => {
+      await rmTree(tmpDir);
     });
 
     it("appends at least one outside assistant turn after reclaim", () => {
@@ -1096,8 +1097,8 @@ describe("reclaim joins Kimi content.part fragments (#999)", () => {
     writeKimiFragmentWire(providerHome, RECLAIM_SESSION);
   });
 
-  afterEach(() => {
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+  afterEach(async () => {
+    await rmTree(tmpDir);
   });
 
   it("does not append fragments that concatenate to the stored assistant message", () => {
@@ -1146,8 +1147,8 @@ describe("reclaim appends outside OpenCode JSON-fallback turns (#554)", () => {
     artifact = fx.artifact;
   });
 
-  afterEach(() => {
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+  afterEach(async () => {
+    await rmTree(tmpDir);
   });
 
   it("appends at least one outside assistant turn after reclaim", () => {
@@ -1198,8 +1199,8 @@ for (const provider of ["cursor", "opencode", "opencode-json"]) {
       providerHome = fx.providerHome;
     });
 
-    afterEach(() => {
-      fs.rmSync(tmpDir, { recursive: true, force: true });
+    afterEach(async () => {
+      await rmTree(tmpDir);
     });
 
     it("appends a second identical role+text turn that is not already in the transcript", () => {
@@ -1295,8 +1296,8 @@ describe("reclaim finds a Grok hashed cwd group (#964)", () => {
     );
   });
 
-  afterEach(() => {
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+  afterEach(async () => {
+    await rmTree(tmpDir);
   });
 
   it("appends outside turns from the slug-hash group", () => {
@@ -1395,8 +1396,8 @@ describe("reclaim finds a Claude hashed cwd project dir (#965)", () => {
     );
   });
 
-  afterEach(() => {
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+  afterEach(async () => {
+    await rmTree(tmpDir);
   });
 
   it("appends outside turns from the truncated-hash project dir", () => {
@@ -1496,8 +1497,8 @@ describe("reclaim finds a Claude prefix-sibling hashed dir (#966)", () => {
     );
   });
 
-  afterEach(() => {
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+  afterEach(async () => {
+    await rmTree(tmpDir);
   });
 
   it("appends outside turns from the prefix-sibling hashed dir", () => {
@@ -1567,8 +1568,8 @@ describe("reclaim finds a Claude session via realpath cwd (#968)", () => {
     ]);
   });
 
-  afterEach(() => {
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+  afterEach(async () => {
+    await rmTree(tmpDir);
   });
 
   it("appends outside turns from RA(realpath) when stored cwd is a symlink", () => {
@@ -1654,8 +1655,8 @@ describe("reclaim finds a Claude git-worktree hashed dir (#967)", () => {
     ]);
   });
 
-  afterEach(() => {
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+  afterEach(async () => {
+    await rmTree(tmpDir);
   });
 
   it("appends outside turns from the linked worktree RA() dir", () => {
@@ -1721,8 +1722,8 @@ describe("reclaim finds a Claude realpath hashed dir (#969)", () => {
     ]);
   });
 
-  afterEach(() => {
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+  afterEach(async () => {
+    await rmTree(tmpDir);
   });
 
   it("appends outside turns from RA(realpath(cwd))", () => {

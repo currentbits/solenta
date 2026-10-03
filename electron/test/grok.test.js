@@ -1031,7 +1031,7 @@ describe("runner grok provider (claude-stream path)", () => {
     } finally {
       resetMemorySupForTests();
       await new Promise((r) => server.close(r));
-      fs.rmSync(memDir, { recursive: true, force: true });
+      await rmTree(memDir);
     }
   });
 

@@ -17,6 +17,7 @@ const path = require("node:path");
 const { pathToFileURL } = require("node:url");
 const { execFileSync } = require("node:child_process");
 const Module = require("node:module");
+const { rmTree } = require("./support/rmTree.js");
 
 {
   const origLoad = Module._load;
@@ -164,9 +165,9 @@ describe("self-archive defers the Claude keep-alive kill (#1383)", () => {
     store.saveNow();
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     if (runner) runner.stopAll();
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+    await rmTree(tmpDir);
     for (const [k, v] of Object.entries(prevEnv)) {
       if (v === undefined) delete process.env[k];
       else process.env[k] = v;

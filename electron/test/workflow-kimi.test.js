@@ -23,6 +23,7 @@ const {
   resetMemorySupForTests,
 } = require("../memory-sup.js");
 const { writeFakeBin } = require("./support/fakeBin.js");
+const { rmTree } = require("./support/rmTree.js");
 
 function git(cwd, args) {
   execFileSync("git", args, { cwd, stdio: "ignore" });
@@ -126,9 +127,9 @@ describe("workflow kimi phases get effort and MCP overlay (#699)", () => {
     });
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     resetMemorySupForTests();
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+    await rmTree(tmpDir);
     for (const [k, v] of Object.entries(prev)) {
       if (v === undefined) delete process.env[k];
       else process.env[k] = v;

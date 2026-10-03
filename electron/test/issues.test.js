@@ -23,6 +23,7 @@ const {
   createIssue,
 } = require("../issues.js");
 const { writeFakeBin } = require("./support/fakeBin.js");
+const { rmTree } = require("./support/rmTree.js");
 
 function git(cwd, args) {
   return execFileSync("git", args, {
@@ -219,10 +220,10 @@ process.exit(2);
 `);
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     if (prevGh == null) delete process.env.CODER_GH_BIN;
     else process.env.CODER_GH_BIN = prevGh;
-    fs.rmSync(tmp, { recursive: true, force: true });
+    await rmTree(tmp);
   });
 
   it("returns the issue and passes -R owner/repo from origin", async () => {
@@ -482,10 +483,10 @@ ${body}
     writeFakeGh("process.exit(0);");
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     if (prevGh == null) delete process.env.CODER_GH_BIN;
     else process.env.CODER_GH_BIN = prevGh;
-    fs.rmSync(tmp, { recursive: true, force: true });
+    await rmTree(tmp);
   });
 
   it("adds the new plan label and removes the other two", async () => {
@@ -579,10 +580,10 @@ process.exit(0);
     prevGh = process.env.CODER_GH_BIN;
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     if (prevGh == null) delete process.env.CODER_GH_BIN;
     else process.env.CODER_GH_BIN = prevGh;
-    fs.rmSync(tmp, { recursive: true, force: true });
+    await rmTree(tmp);
   });
 
   it("labels plan:done and closes an in-progress issue", async () => {
@@ -662,10 +663,10 @@ ${body}
     writeFakeGh("process.exit(0);");
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     if (prevGh == null) delete process.env.CODER_GH_BIN;
     else process.env.CODER_GH_BIN = prevGh;
-    fs.rmSync(tmp, { recursive: true, force: true });
+    await rmTree(tmp);
   });
 
   it("reopens, comments, and moves the issue to plan:todo", async () => {
@@ -762,10 +763,10 @@ process.exit(0);
 `);
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     if (prevGh == null) delete process.env.CODER_GH_BIN;
     else process.env.CODER_GH_BIN = prevGh;
-    fs.rmSync(tmp, { recursive: true, force: true });
+    await rmTree(tmp);
   });
 
   it("creates without --label then labels plan:todo", async () => {
@@ -884,10 +885,10 @@ process.exit(0);
 `);
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     if (prevGh == null) delete process.env.CODER_GH_BIN;
     else process.env.CODER_GH_BIN = prevGh;
-    fs.rmSync(tmp, { recursive: true, force: true });
+    await rmTree(tmp);
   });
 
   it("posts a comment and returns the comment URL without editing or closing", async () => {
