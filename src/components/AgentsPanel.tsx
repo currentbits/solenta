@@ -3002,15 +3002,19 @@ export function AgentsContent({
   );
   const [verifyingLead, setVerifyingLead] = useState(false);
   const [landingLead, setLandingLead] = useState(false);
+  // Lead detection as a boolean so a new summaries array (every 5s poll)
+  // does not rerun ~6+3×workers git calls in main.
+  const isCrewLead = useMemo(
+    () => Boolean(thread && summaries?.some((s) => isDirectCrewChild(s, thread))),
+    [thread?.id, thread?.projectId, summaries],
+  );
   useEffect(() => {
-    const isLead = Boolean(
-      thread && summaries?.some((s) => isDirectCrewChild(s, thread)),
-    );
-    if (!thread || !crewIntegration || !isLead) {
+    if (!thread || !crewIntegration || !isCrewLead) {
       setIntegration(null);
       return;
     }
     let cancelled = false;
+    let timer: number | null = null;
     const load = () => {
       crewIntegration(thread.id)
         .then((res) => {
@@ -3034,14 +3038,21 @@ export function AgentsContent({
         coder?: { on?: (channel: "threads:changed", cb: () => void) => () => void };
       }
     ).coder;
+    // threads:changed fires dozens of times a minute in a crew run; one
+    // reload per second is plenty for a review surface.
     const off = api?.on?.("threads:changed", () => {
-      void load();
+      if (timer !== null) return;
+      timer = window.setTimeout(() => {
+        timer = null;
+        void load();
+      }, 1_000);
     });
     return () => {
       cancelled = true;
+      if (timer !== null) window.clearTimeout(timer);
       off?.();
     };
-  }, [thread?.id, crewIntegration, rosterKey, summaries]);
+  }, [thread?.id, crewIntegration, isCrewLead, rosterKey]);
 
   const crewOwnerTitle = useCallback(
     (threadId: string) => {
