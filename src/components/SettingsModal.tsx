@@ -2340,32 +2340,40 @@ export function SettingsModal({
                 : "unknown"}
             </p>
             <div className={styles.fieldRow}>
-              <label className={styles.note} htmlFor="update-channel">
-                Update channel
-              </label>
-              <select
-                id="update-channel"
-                className={styles.input}
-                data-update-channel=""
-                value={settings?.updateChannel ?? status?.build.channel ?? "prod"}
-                disabled={saving || settings == null}
-                onChange={(e) => {
-                  setError(null);
-                  const updateChannel = e.target.value as "prod" | "nightly";
-                  void onSaveSettings({ updateChannel })
-                    .then(() => onCheckUpdate?.())
-                    .catch((err) => {
-                      setError(
-                        err instanceof Error && err.message
-                          ? err.message
-                          : "Failed to save settings",
-                      );
-                    });
-                }}
-              >
-                <option value="prod">Prod</option>
-                <option value="nightly">Nightly</option>
-              </select>
+              {status?.build.platform === "darwin" && status.build.channel ? (
+                <span className={styles.note}>
+                  Update channel: {status.build.channel === "nightly" ? "Nightly" : "Prod"}
+                </span>
+              ) : (
+                <>
+                  <label className={styles.note} htmlFor="update-channel">
+                    Update channel
+                  </label>
+                  <select
+                    id="update-channel"
+                    className={styles.input}
+                    data-update-channel=""
+                    value={settings?.updateChannel ?? status?.build.channel ?? "prod"}
+                    disabled={saving || settings == null}
+                    onChange={(e) => {
+                      setError(null);
+                      const updateChannel = e.target.value as "prod" | "nightly";
+                      void onSaveSettings({ updateChannel })
+                        .then(() => onCheckUpdate?.())
+                        .catch((err) => {
+                          setError(
+                            err instanceof Error && err.message
+                              ? err.message
+                              : "Failed to save settings",
+                          );
+                        });
+                    }}
+                  >
+                    <option value="prod">Prod</option>
+                    <option value="nightly">Nightly</option>
+                  </select>
+                </>
+              )}
               <button
                 type="button"
                 className={styles.btn}
@@ -2379,6 +2387,15 @@ export function SettingsModal({
                 {checkingUpdate ? "Checking…" : "Check for updates"}
               </button>
             </div>
+            {status?.build.platform === "darwin" && status.build.channel && (
+              <p className={styles.note}>
+                Prod and Nightly are separate macOS apps. Download the other channel from{" "}
+                <a href="https://github.com/currentbits/solenta/releases" target="_blank" rel="noreferrer">
+                  Releases
+                </a>{" "}
+                and move it to Applications.
+              </p>
+            )}
             {update?.state === "none" && (
               <p className={styles.note}>Up to date.</p>
             )}

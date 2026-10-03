@@ -5,7 +5,7 @@
 //
 // Two channels, stamped into the embedded package.json at package time:
 //   prod    -> newest non-prerelease (GET /releases/latest)
-//   nightly -> newest release of any kind (prereleases included)
+//   nightly -> newest prerelease
 // A build with no channel/releaseTag stamp (dev tree, local install-swap
 // bundle) never updates itself.
 //
@@ -15,8 +15,8 @@
 //
 // Install on macOS reuses the proven swap: mv the running bundle aside as
 // Solenta.app.old, ditto the new one into place, delete .old on next boot.
-// The swapped-in bundle also means a plain quit+relaunch picks up the new
-// build even if the user never clicks "Restart".
+// Relaunch must name the new bundle's executable: the current process now
+// lives under .old, and prod/nightly builds can use different names.
 //
 // Windows is a portable zip (solenta.exe + resources/) and Linux is a
 // portable tar.gz (solenta + resources/). Those files are locked while the
@@ -43,7 +43,7 @@ const HEADERS = {
 /** @param {string} cmd @param {string[]} args */
 function run(cmd, args) {
   return new Promise((resolve, reject) => {
-    execFile(cmd, args, (err) => (err ? reject(err) : resolve(undefined)));
+    execFile(cmd, args, (err, stdout) => (err ? reject(err) : resolve(stdout)));
   });
 }
 
@@ -107,11 +107,8 @@ function releaseTime(r) {
 
 /**
  * Latest release for a channel. prod trusts GitHub's "latest" (newest
- * non-prerelease); nightly takes the newest release of either kind. Nightly
- * means "newest code", so it has to include prod releases: a prerelease-only
- * feed freezes a nightly install forever as soon as prod moves ahead and no
- * newer nightly is cut. The channel itself is kept by the settings pin in
- * ipc.js, not by refusing to see prod tags.
+ * non-prerelease); nightly takes the newest prerelease. Their macOS bundles
+ * have different IDs and executable names, so one cannot replace the other.
  *
  * The list endpoint is NOT time-ordered: GitHub floats the "latest"
  * (non-prerelease) release to the front, so a prod tag cut this morning
@@ -124,7 +121,7 @@ async function fetchLatest(channel, fetchImpl) {
     const res = await doFetch(`${API}?per_page=15`, { headers: HEADERS });
     if (!res.ok) throw new Error(`GitHub releases: HTTP ${res.status}`);
     const list = await res.json();
-    const live = (Array.isArray(list) ? list : []).filter((r) => r && !r.draft);
+    const live = (Array.isArray(list) ? list : []).filter((r) => r && !r.draft && r.prerelease);
     let best = null;
     for (const r of live) {
       if (!best || releaseTime(r) > releaseTime(best)) best = r;
@@ -182,9 +179,11 @@ function downloadUpdate(deps = {}) {
 
 async function doCheck(deps, install) {
   const stamp = buildStamp(deps.pkg);
-  // Settings override wins; the stamped tag is still required so a dev tree
-  // (no releaseTag) can never update itself onto a channel.
-  const channel = deps.channelOverride || stamp.channel;
+  // macOS installs prod and nightly as separate app bundles. The shared
+  // settings override must not replace either bundle with the other channel.
+  const channel = (deps.platform || process.platform) === "darwin"
+    ? stamp.channel
+    : deps.channelOverride || stamp.channel;
   const tag = stamp.tag;
   const status = { state: "disabled", channel, tag: null, url: null, error: null };
   if (!channel || !tag) return status;
@@ -207,8 +206,8 @@ async function doCheck(deps, install) {
 
     const ready = await stage(asset, bundle, status.tag, deps);
     stagedTag = status.tag;
-    if (ready && ready.dir) {
-      stagedDir = ready.dir;
+    if (ready && ready.exe) {
+      stagedDir = ready.dir || null;
       stagedInstall = bundle;
       stagedExe = ready.exe;
     }
@@ -315,6 +314,15 @@ async function stage(asset, bundle, tag, deps) {
       .map((n) => path.join(work, n))
       .find((p) => p.endsWith(".app") && fs.existsSync(path.join(p, "Contents")));
     if (!newApp) throw new Error("update zip contains no .app bundle");
+    const exe = (await run("plutil", [
+      "-extract", "CFBundleExecutable", "raw", "-o", "-",
+      path.join(newApp, "Contents", "Info.plist"),
+    ])).trim();
+    const executable = path.join(newApp, "Contents", "MacOS", exe);
+    if (!exe || exe !== path.basename(exe) ||
+        !fs.existsSync(executable) || !fs.statSync(executable).isFile()) {
+      throw new Error("update app has no valid executable");
+    }
 
     const old = `${bundle}.old`;
     fs.rmSync(old, { recursive: true, force: true });
@@ -328,7 +336,7 @@ async function stage(asset, bundle, tag, deps) {
       fs.renameSync(old, bundle);
       throw err;
     }
-    return null;
+    return { exe };
   } finally {
     fs.rmSync(work, { recursive: true, force: true });
   }
@@ -451,7 +459,11 @@ function applyUpdate(deps = {}) {
       return;
     }
   }
-  app.relaunch();
+  if (platform === "darwin" && installRoot && exeName) {
+    app.relaunch({ execPath: path.join(installRoot, "Contents", "MacOS", exeName) });
+  } else {
+    app.relaunch();
+  }
   app.quit();
 }
 

@@ -763,6 +763,7 @@ describe("spendByDay and settings", () => {
     resetMemorySupForTests();
     const store = new Store(filePath);
     const status = await services.appStatus(store, {
+      platform: "darwin",
       pkg: {
         version: "9.9.9",
         buildSha: "deadbee+dirty",
@@ -775,6 +776,7 @@ describe("spendByDay and settings", () => {
       sha: "deadbee+dirty",
       time: "2026-08-07T14:05:05Z",
       channel: "nightly",
+      platform: "darwin",
     });
   });
 
