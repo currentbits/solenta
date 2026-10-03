@@ -570,6 +570,82 @@ describe("AgentsContent Integration section", () => {
       w.coder = prev;
     }
   });
+
+  it("keeps a later crewIntegration result after a slower earlier call resolves late", async () => {
+    const summaries: ThreadSummaryInfo[] = [
+      { id: "t-orch", title: "Lead", provider: "claude", status: "idle", handoffFrom: null, runStartedAt: null, lastActivity: null },
+      { id: "t-work", title: "Worker A", provider: "claude", status: "done", handoffFrom: "t-orch", orchWorker: true, projectId: "p1", runStartedAt: null, lastActivity: null },
+    ];
+    const listeners: Array<() => void> = [];
+    const w = window as unknown as { coder?: unknown };
+    const prev = w.coder;
+    w.coder = {
+      on: (_ch: string, cb: () => void) => {
+        listeners.push(cb);
+        return () => {};
+      },
+    };
+    let calls = 0;
+    let resolveFirst: ((v: CrewIntegrationView) => void) | null = null;
+    try {
+      const m = await mount(
+        <AgentsContent
+          workflow={null}
+          thread={thread()}
+          usage={null}
+          providers={PROVIDERS}
+          rosterKey="t-orch:idle,t-work:done"
+          listThreadSummaries={async () => summaries}
+          crewIntegration={async () => {
+            calls += 1;
+            if (calls === 1) {
+              // The mount-time load is the slow, soon-to-be-stale call.
+              return new Promise<CrewIntegrationView>((resolve) => {
+                resolveFirst = resolve;
+              });
+            }
+            return view({ finalTarget: "target-b" });
+          }}
+        />,
+      );
+      await m.flush();
+      assert.equal(calls, 1, "mount fires the first (slow) call");
+      assert.equal(
+        m.query("[data-crew-integration]"),
+        null,
+        "nothing to render while the first call is still pending",
+      );
+
+      // threads:changed (debounced ~1s) drives a second, faster call.
+      for (const cb of listeners) cb();
+      await inAct(async () => {
+        await new Promise((r) => setTimeout(r, 1_200));
+      });
+      await m.flush();
+      assert.equal(calls, 2, "threads:changed reload fired the second call");
+      assert.match(m.text(), /target-b/, "the newer call's view is shown");
+
+      // The first call resolves late, after the newer one already landed.
+      await inAct(async () => {
+        resolveFirst!(view({ finalTarget: "target-a" }));
+      });
+      await m.flush();
+
+      assert.match(
+        m.text(),
+        /target-b/,
+        "late resolution of the stale call must not clobber the newer view",
+      );
+      assert.doesNotMatch(
+        m.text(),
+        /target-a/,
+        "the stale call's view must never be applied",
+      );
+      m.unmount();
+    } finally {
+      w.coder = prev;
+    }
+  });
 });
 
 describe("worker-header Merge destination", () => {

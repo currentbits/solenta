@@ -199,8 +199,9 @@ interface AgentsPanelProps {
   providers: ProviderInfo[];
   project: ProjectInfo | null;
   /**
-   * "id:status,…" over the thread list (see App). Changing it refetches
-   * summaries for the Agents tab team view; a string rather than the array
+   * "id:status,…" over the threads in the selected project (see App).
+   * Changing it refetches summaries for the Agents tab team view, which are
+   * fetched scoped to that project (#1398); a string rather than the array
    * because the array's identity churns on every stream tick (issue #91).
    */
   rosterKey?: string;
@@ -2927,7 +2928,8 @@ export function AgentsContent({
   // in App) rather than the thread array, whose identity churns on every
   // stream event; lastActivity is kept fresh by a slow poll while something is
   // working. Null when no fetcher.
-  // ponytail: poll, not per-event; summaries walk every thread's messages.
+  // ponytail: poll, not per-event; fetch is scoped to the selected
+  // thread's project (#1398), not every thread.
   const summaryProjectId = thread?.projectId ?? null;
   useEffect(() => {
     if (!listThreadSummaries || !summaryProjectId) {
@@ -2936,7 +2938,7 @@ export function AgentsContent({
     }
     let cancelled = false;
     const fetch = () => {
-      // Summaries walk every thread's messages in main; a hidden window
+      // Scoped to the selected thread's project (#1398); a hidden window
       // can't show the team view, so don't pay for it.
       if (document.hidden) return;
       // Same-project rows cover the team, the wait line and lead detection.
@@ -2996,6 +2998,10 @@ export function AgentsContent({
   const [integrationError, setIntegrationError] = useState<string | null>(
     null,
   );
+  // Guards against out-of-order resolution: crewIntegration is async in
+  // main, so a late call (e.g. the poll) can resolve after a newer one
+  // (e.g. a just-finished action) and clobber its result.
+  const integrationSeq = useRef(0);
   const [busyWorkerId, setBusyWorkerId] = useState<string | null>(null);
   const [busyKind, setBusyKind] = useState<"integrate" | "refresh" | null>(
     null,
@@ -3016,15 +3022,16 @@ export function AgentsContent({
     let cancelled = false;
     let timer: number | null = null;
     const load = () => {
+      const seq = ++integrationSeq.current;
       crewIntegration(thread.id)
         .then((res) => {
-          if (!cancelled) {
+          if (!cancelled && seq === integrationSeq.current) {
             setIntegration(res);
             setIntegrationError(null);
           }
         })
         .catch((err) => {
-          if (!cancelled) {
+          if (!cancelled && seq === integrationSeq.current) {
             setIntegration(null);
             setIntegrationError(
               err instanceof Error ? err.message : String(err),
@@ -3244,15 +3251,20 @@ export function AgentsContent({
                 setBusyWorkerId(workerId);
                 setBusyKind("integrate");
                 setIntegrationError(null);
+                let seq: number | null = null;
                 try {
                   await onIntegrateWorker(workerId);
                   if (crewIntegration) {
-                    setIntegration(await crewIntegration(thread.id));
+                    seq = ++integrationSeq.current;
+                    const res = await crewIntegration(thread.id);
+                    if (seq === integrationSeq.current) setIntegration(res);
                   }
                 } catch (err) {
-                  setIntegrationError(
-                    err instanceof Error ? err.message : String(err),
-                  );
+                  if (seq === null || seq === integrationSeq.current) {
+                    setIntegrationError(
+                      err instanceof Error ? err.message : String(err),
+                    );
+                  }
                 } finally {
                   setBusyWorkerId(null);
                   setBusyKind(null);
@@ -3264,15 +3276,21 @@ export function AgentsContent({
                       setBusyWorkerId(workerId);
                       setBusyKind("refresh");
                       setIntegrationError(null);
+                      let seq: number | null = null;
                       try {
                         await onRefreshWorker(workerId);
                         if (crewIntegration) {
-                          setIntegration(await crewIntegration(thread.id));
+                          seq = ++integrationSeq.current;
+                          const res = await crewIntegration(thread.id);
+                          if (seq === integrationSeq.current)
+                            setIntegration(res);
                         }
                       } catch (err) {
-                        setIntegrationError(
-                          err instanceof Error ? err.message : String(err),
-                        );
+                        if (seq === null || seq === integrationSeq.current) {
+                          setIntegrationError(
+                            err instanceof Error ? err.message : String(err),
+                          );
+                        }
                       } finally {
                         setBusyWorkerId(null);
                         setBusyKind(null);
@@ -3286,15 +3304,21 @@ export function AgentsContent({
                   ? async () => {
                       setVerifyingLead(true);
                       setIntegrationError(null);
+                      let seq: number | null = null;
                       try {
                         await onVerifyLead();
                         if (crewIntegration) {
-                          setIntegration(await crewIntegration(thread.id));
+                          seq = ++integrationSeq.current;
+                          const res = await crewIntegration(thread.id);
+                          if (seq === integrationSeq.current)
+                            setIntegration(res);
                         }
                       } catch (err) {
-                        setIntegrationError(
-                          err instanceof Error ? err.message : String(err),
-                        );
+                        if (seq === null || seq === integrationSeq.current) {
+                          setIntegrationError(
+                            err instanceof Error ? err.message : String(err),
+                          );
+                        }
                       } finally {
                         setVerifyingLead(false);
                       }
@@ -3306,15 +3330,21 @@ export function AgentsContent({
                   ? async () => {
                       setLandingLead(true);
                       setIntegrationError(null);
+                      let seq: number | null = null;
                       try {
                         await onLandLead();
                         if (crewIntegration) {
-                          setIntegration(await crewIntegration(thread.id));
+                          seq = ++integrationSeq.current;
+                          const res = await crewIntegration(thread.id);
+                          if (seq === integrationSeq.current)
+                            setIntegration(res);
                         }
                       } catch (err) {
-                        setIntegrationError(
-                          err instanceof Error ? err.message : String(err),
-                        );
+                        if (seq === null || seq === integrationSeq.current) {
+                          setIntegrationError(
+                            err instanceof Error ? err.message : String(err),
+                          );
+                        }
                       } finally {
                         setLandingLead(false);
                       }
