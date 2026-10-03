@@ -21,6 +21,7 @@ const {
   registerMcpServer,
   resetMemorySupForTests,
 } = require("../memory-sup.js");
+const { rmTree } = require("./support/rmTree.js");
 
 function fakeSafeStorage() {
   return {
@@ -152,7 +153,7 @@ describe("createSecrets", () => {
     assert.ok(logs.every((l) => !l.includes("!!!!not-base64-cipher")));
   });
 
-  it("recordUse never copies the secret value into the audit row", () => {
+  it("recordUse never copies the secret value into the audit row", async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "coder-secrets-audit-"));
     const auditPath = path.join(dir, "secrets-audit.jsonl");
     try {
@@ -181,7 +182,7 @@ describe("createSecrets", () => {
         assert.equal(fs.statSync(auditPath).mode & 0o777, 0o600);
       }
     } finally {
-      fs.rmSync(dir, { recursive: true, force: true });
+      await rmTree(dir);
     }
   });
 
@@ -270,8 +271,8 @@ describe("Store conceals secrets on disk", () => {
     });
   });
 
-  afterEach(() => {
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+  afterEach(async () => {
+    await rmTree(tmpDir);
   });
 
   it("writes a Linear API key encrypted, keeps memory plaintext", () => {
@@ -664,7 +665,7 @@ describe("credential injection audit (#543 / #262 companion)", () => {
     resetMemorySupForTests();
   });
 
-  it("records mcp-inject when a token is written into the CLI MCP config", () => {
+  it("records mcp-inject when a token is written into the CLI MCP config", async () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "coder-secrets-mcp-"));
     const name = `audit-${crypto.randomBytes(6).toString("hex")}`;
     const prevDisable = process.env.CODER_GROK_MCP_DISABLE;
@@ -697,7 +698,7 @@ describe("credential injection audit (#543 / #262 companion)", () => {
       else process.env.CODER_GROK_MCP_DISABLE = prevDisable;
       if (prevKimi === undefined) delete process.env.CODER_KIMI_MCP_PATH;
       else process.env.CODER_KIMI_MCP_PATH = prevKimi;
-      fs.rmSync(tmp, { recursive: true, force: true });
+      await rmTree(tmp);
     }
   });
 

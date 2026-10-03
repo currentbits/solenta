@@ -24,6 +24,7 @@ const { Store } = require("../store.js");
 const services = require("../services.js");
 const { createRunner } = require("../runner.js");
 const { writeFakeBin } = require("./support/fakeBin.js");
+const { rmTree } = require("./support/rmTree.js");
 
 function git(cwd, args) {
   execFileSync("git", args, { cwd, stdio: "ignore" });
@@ -75,9 +76,9 @@ describe("materializeCursorHome", () => {
     fs.writeFileSync(path.join(source, ".gitconfig"), "[user]\n\tname = Test\n");
   });
 
-  afterEach(() => {
-    fs.rmSync(source, { recursive: true, force: true });
-    fs.rmSync(dest, { recursive: true, force: true });
+  afterEach(async () => {
+    await rmTree(source);
+    await rmTree(dest);
   });
 
   it("writes only Solenta MCP under .cursor and keeps git/auth via home symlinks", () => {
@@ -245,13 +246,13 @@ describe("kimiMcpServersForRun binds project for cursor overlay", () => {
     resetMemorySupForTests();
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     resetMemorySupForTests();
     for (const [k, v] of Object.entries(prevEnv)) {
       if (v === undefined) delete process.env[k];
       else process.env[k] = v;
     }
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+    await rmTree(tmpDir);
   });
 
   it("puts projectId and project path on the matching server URLs", () => {
@@ -379,7 +380,7 @@ emit({
     } finally {
       if (runner) runner.stopAll();
       resetMemorySupForTests();
-      fs.rmSync(tmpDir, { recursive: true, force: true });
+      await rmTree(tmpDir);
       for (const [k, v] of Object.entries(prev)) {
         if (v === undefined) delete process.env[k];
         else process.env[k] = v;

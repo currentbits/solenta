@@ -18,6 +18,7 @@ const path = require("node:path");
 const { execFileSync } = require("node:child_process");
 const { pathToFileURL } = require("node:url");
 const Module = require("node:module");
+const { rmTree } = require("./support/rmTree.js");
 
 const CHANNEL = "mergeQueue:heartbeatLane";
 
@@ -115,10 +116,10 @@ describe("heartbeatLane IPC behavior (#346)", () => {
     ctx = { store, worktreeBase: path.join(tmpDir, "worktrees"), broadcast() {} };
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     const issues = require("../issues.js");
     issues.completeIssue = origComplete;
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+    await rmTree(tmpDir);
     unstub();
   });
 
@@ -244,9 +245,9 @@ describe("runner heartbeats a claimed lane (#346)", () => {
     });
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     if (runner) runner.stopAll();
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+    await rmTree(tmpDir);
     if (prevSimulate === undefined) delete process.env.CODER_SIMULATE;
     else process.env.CODER_SIMULATE = prevSimulate;
     if (prevAgentCmd === undefined) delete process.env.CODER_AGENT_CMD;

@@ -225,9 +225,9 @@ describe("materializeGrokHome injects the guardrail hook", () => {
     );
   });
 
-  afterEach(() => {
-    fs.rmSync(source, { recursive: true, force: true });
-    fs.rmSync(dest, { recursive: true, force: true });
+  afterEach(async () => {
+    await rmTree(source);
+    await rmTree(dest);
     if (prevGuardrails === undefined) delete process.env.CODER_GUARDRAILS;
     else process.env.CODER_GUARDRAILS = prevGuardrails;
   });

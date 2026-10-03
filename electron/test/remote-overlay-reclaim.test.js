@@ -23,6 +23,7 @@ const { scheduleRetention } = require("../worktrees.js");
 const { Store } = require("../store.js");
 const services = require("../services.js");
 const { createRunner } = require("../runner.js");
+const { rmTree } = require("./support/rmTree.js");
 
 const OVERLAY_KINDS = [
   "codex-homes",
@@ -200,9 +201,9 @@ describe("remote overlay reclaim (#838)", () => {
     });
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     ssh.setExecFileSync(null);
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+    await rmTree(tmpDir);
   });
 
   it("scheduleRetention deletes remote overlay dirs for an archived crossesBoundary thread", async () => {
@@ -448,10 +449,10 @@ describe("remote overlay reclaim on run end (#838)", () => {
     });
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     if (runner) runner.stopAll();
     ssh.setExecFileSync(null);
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+    await rmTree(tmpDir);
     if (prevSimulate === undefined) delete process.env.CODER_SIMULATE;
     else process.env.CODER_SIMULATE = prevSimulate;
     if (prevAgentCmd === undefined) delete process.env.CODER_AGENT_CMD;

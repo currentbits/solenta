@@ -15,6 +15,7 @@ const { execFileSync } = require("node:child_process");
 const { Store } = require("../store.js");
 const services = require("../services.js");
 const { createRunner } = require("../runner.js");
+const { rmTree } = require("./support/rmTree.js");
 
 function git(cwd, args) {
   execFileSync("git", args, { cwd, stdio: "ignore" });
@@ -57,8 +58,8 @@ describe("lastVisitedAt (round 43)", () => {
     project = await services.addProject(store, repo);
   });
 
-  afterEach(() => {
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+  afterEach(async () => {
+    await rmTree(tmpDir);
   });
 
   it("createThread stamps lastVisitedAt equal to createdAt (not unread)", () => {

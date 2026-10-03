@@ -30,6 +30,7 @@ const {
   removeWorktree,
   removeWorktreeDir,
 } = require("../worktrees.js");
+const { rmTree } = require("./support/rmTree.js");
 
 function git(cwd, args) {
   return execFileSync("git", args, {
@@ -114,8 +115,8 @@ describe("maybeCleanupMergedWorktree", () => {
     fx = await makeFixture();
   });
 
-  afterEach(() => {
-    fs.rmSync(fx.tmpDir, { recursive: true, force: true });
+  afterEach(async () => {
+    await rmTree(fx.tmpDir);
   });
 
   it("removes worktree and branch when PR merged, tree clean, all pushed", async () => {
@@ -175,8 +176,8 @@ describe("refreshPrStates merged-PR cleanup", () => {
     fx = await makeFixture();
   });
 
-  afterEach(() => {
-    fs.rmSync(fx.tmpDir, { recursive: true, force: true });
+  afterEach(async () => {
+    await rmTree(fx.tmpDir);
   });
 
   it("cleans the worktree when a PR flips OPEN→MERGED", async () => {
@@ -234,8 +235,8 @@ describe("sweepOrphanWorktrees", () => {
     fx = await makeFixture();
   });
 
-  afterEach(() => {
-    fs.rmSync(fx.tmpDir, { recursive: true, force: true });
+  afterEach(async () => {
+    await rmTree(fx.tmpDir);
   });
 
   it("removes a clean orphan worktree and leaves referenced ones alone", async () => {
@@ -361,8 +362,8 @@ describe("cleanupWorktree via removeWorktree (#843)", () => {
     fx = await makeFixture();
   });
 
-  afterEach(() => {
-    fs.rmSync(fx.tmpDir, { recursive: true, force: true });
+  afterEach(async () => {
+    await rmTree(fx.tmpDir);
   });
 
   it("nulls fields when the worktree directory is already gone", () => {
@@ -451,8 +452,8 @@ describe("clearMissingWorktree (worktree deleted behind our back)", () => {
     project = await services.addProject(store, repo);
   });
 
-  afterEach(() => {
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+  afterEach(async () => {
+    await rmTree(tmpDir);
   });
 
   /** Thread with a worktree whose folder is then removed outside the app. */
@@ -560,8 +561,8 @@ describe("ensureWorktree (lazy creation)", () => {
     project = await services.addProject(store, repo);
   });
 
-  afterEach(() => {
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+  afterEach(async () => {
+    await rmTree(tmpDir);
   });
 
   it("creates the worktree for a pendingWorktree thread and clears the flag", () => {
@@ -679,8 +680,8 @@ describe("removeWorktreeDir: rename aside, prune, async delete (#1392)", () => {
     fx = await makeFixture();
   });
 
-  afterEach(() => {
-    fs.rmSync(fx.tmpDir, { recursive: true, force: true });
+  afterEach(async () => {
+    await rmTree(fx.tmpDir);
   });
 
   function waitGone(p) {

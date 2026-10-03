@@ -5,6 +5,7 @@ const os = require("node:os");
 const path = require("node:path");
 const { buildFmArgs, fmAvailable, fmRun } = require("../fm.js");
 const { writeFakeBin } = require("./support/fakeBin.js");
+const { rmTree } = require("./support/rmTree.js");
 
 /** Write an executable fake fm that runs `body` as node. */
 function writeFakeFm(dir, body) {
@@ -50,8 +51,8 @@ describe("fmRun", () => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "coder-fm-"));
   });
 
-  afterEach(() => {
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+  afterEach(async () => {
+    await rmTree(tmpDir);
   });
 
   it("returns trimmed stdout and passes the prompt as the last arg", async () => {

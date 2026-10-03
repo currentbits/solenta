@@ -16,6 +16,7 @@ const { execFileSync } = require("node:child_process");
 const { Store } = require("../store.js");
 const services = require("../services.js");
 const { createRunner } = require("../runner.js");
+const { rmTree } = require("./support/rmTree.js");
 
 function git(cwd, args) {
   execFileSync("git", args, { cwd, stdio: "ignore" });
@@ -104,10 +105,10 @@ describe("queued drain after failed / stopped (#1203)", () => {
     prevAgentCmd = process.env.CODER_AGENT_CMD;
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     if (fx) {
       fx.runner.stopAll();
-      fs.rmSync(fx.tmpDir, { recursive: true, force: true });
+      await rmTree(fx.tmpDir);
       fx = null;
     }
     restoreEnv(prevSimulate, prevAgentCmd);

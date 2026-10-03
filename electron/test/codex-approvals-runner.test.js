@@ -25,6 +25,7 @@ const {
   JSONRPC_METHOD_NOT_FOUND,
 } = require("../codexApprovals.js");
 const { writeFakeBin } = require("./support/fakeBin.js");
+const { rmTree } = require("./support/rmTree.js");
 
 function git(cwd, args) {
   execFileSync("git", args, { cwd, stdio: "ignore" });
@@ -122,9 +123,9 @@ describe("Codex ServerRequest reply path (#1171)", () => {
     services.setProvider(store, { threadId: thread.id, provider: "codex" });
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     if (runner) runner.stopAll();
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+    await rmTree(tmpDir);
     if (prevSimulate === undefined) delete process.env.CODER_SIMULATE;
     else process.env.CODER_SIMULATE = prevSimulate;
     if (prevCodexBin === undefined) delete process.env.CODER_CODEX_BIN;

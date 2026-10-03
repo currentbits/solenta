@@ -19,6 +19,7 @@ const services = require("../services.js");
 const { setupWorktree } = require("../worktrees.js");
 const { createRunner } = require("../runner.js");
 const { MAX_FIX_ATTEMPTS } = require("../verify.js");
+const { rmTree } = require("./support/rmTree.js");
 
 function git(cwd, args) {
   return execFileSync("git", args, {
@@ -127,11 +128,11 @@ describe("runner verification gate", () => {
     });
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     if (runner) runner.stopAll();
     if (fx) {
       try {
-        fs.rmSync(fx.tmpDir, { recursive: true, force: true });
+        await rmTree(fx.tmpDir);
       } catch {
         // ignore
       }

@@ -12,6 +12,7 @@ const { execFileSync } = require("node:child_process");
 const { Store } = require("../store.js");
 const services = require("../services.js");
 const { createRunner } = require("../runner.js");
+const { rmTree } = require("./support/rmTree.js");
 
 function git(cwd, args) {
   execFileSync("git", args, { cwd, stdio: "ignore" });
@@ -56,10 +57,10 @@ describe("orchestrator threads", () => {
     store.saveNow();
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     if (runner) runner.stopAll();
     runner = null;
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+    await rmTree(tmpDir);
     if (prevSimulate === undefined) delete process.env.CODER_SIMULATE;
     else process.env.CODER_SIMULATE = prevSimulate;
   });

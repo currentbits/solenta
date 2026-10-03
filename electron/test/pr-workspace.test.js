@@ -23,6 +23,7 @@ const {
   readyPr,
   mergePrAt,
 } = require("../prWorkspace.js");
+const { rmTree } = require("./support/rmTree.js");
 
 function git(cwd, args) {
   return execFileSync("git", args, {
@@ -196,8 +197,8 @@ describe("collectPrTemplates", () => {
   beforeEach(() => {
     tmp = fs.mkdtempSync(path.join(os.tmpdir(), "coder-pr-tpl-"));
   });
-  afterEach(() => {
-    fs.rmSync(tmp, { recursive: true, force: true });
+  afterEach(async () => {
+    await rmTree(tmp);
   });
 
   it("returns empty when the checkout has no template", () => {
@@ -335,12 +336,12 @@ describe("gh PR workspace actions", () => {
     process.env.CODER_FAKE_GH_STATE = statePath;
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     if (prevGhBin === undefined) delete process.env.CODER_GH_BIN;
     else process.env.CODER_GH_BIN = prevGhBin;
     if (prevGhState === undefined) delete process.env.CODER_FAKE_GH_STATE;
     else process.env.CODER_FAKE_GH_STATE = prevGhState;
-    fs.rmSync(tmp, { recursive: true, force: true });
+    await rmTree(tmp);
   });
 
   function calls() {

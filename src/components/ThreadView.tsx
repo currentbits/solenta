@@ -751,6 +751,8 @@ interface ThreadViewProps {
   onPrTemplate?: (projectPath: string) => Promise<PrTemplateResult>;
   /** CI checks for the current PR. Failures stay in-band. */
   onPrChecks?: () => Promise<PrChecksResult>;
+  /** Look up the branch's PR on GitHub and record it on the thread. */
+  onPrStatus?: () => Promise<PrInfo | null>;
   /** Squash-merge the current OPEN PR. Pass ciWorkflowApproved after sign-off. */
   onPrMerge?: (opts?: { ciWorkflowApproved?: boolean }) => Promise<PrInfo>;
   /** Upstream state for the header sync pill; absent hides the pill. */
@@ -2241,6 +2243,7 @@ function NextGitActionButton({
   onCreatePr,
   loadPrTemplate,
   onPrChecks,
+  onPrStatus,
   onPrMerge,
   onStartRun,
   providerName,
@@ -2266,6 +2269,7 @@ function NextGitActionButton({
   }) => Promise<PrInfo>;
   loadPrTemplate?: () => Promise<PrTemplateResult>;
   onPrChecks?: () => Promise<PrChecksResult>;
+  onPrStatus?: () => Promise<PrInfo | null>;
   onPrMerge?: (opts?: { ciWorkflowApproved?: boolean }) => Promise<PrInfo>;
   onStartRun: (prompt: string) => void | Promise<void>;
   providerName: string;
@@ -2402,6 +2406,35 @@ function NextGitActionButton({
   useEffect(() => {
     void loadChecks();
   }, [loadChecks, thread.status]);
+
+  // Find a PR opened outside Create PR (an agent's `gh pr create`, the
+  // GitHub site). Only while none is recorded; after each run settles.
+  const githubReady = Boolean(github?.ready);
+  useEffect(() => {
+    if (
+      !onPrStatus ||
+      remoteProject ||
+      !githubReady ||
+      !thread.branch ||
+      !thread.worktreePath ||
+      thread.prNumber != null ||
+      thread.status === "working" ||
+      thread.status === "quota-wait"
+    ) {
+      return;
+    }
+    // Non-GitHub origin or gh failure: stay on Create PR.
+    onPrStatus().catch(() => {});
+  }, [
+    thread.id,
+    thread.branch,
+    thread.worktreePath,
+    thread.prNumber,
+    thread.status,
+    remoteProject,
+    githubReady,
+    onPrStatus,
+  ]);
 
   const lastPrRequest = useRef(prRequest ?? 0);
   useEffect(() => {
@@ -4708,6 +4741,7 @@ export const ThreadView = memo(function ThreadView({
   onCreatePr,
   onPrTemplate,
   onPrChecks,
+  onPrStatus,
   onPrMerge,
   gitSyncInfo,
   gitFetch,
@@ -7225,6 +7259,7 @@ export const ThreadView = memo(function ThreadView({
                 : undefined
             }
             onPrChecks={onPrChecks}
+            onPrStatus={onPrStatus}
             onPrMerge={onPrMerge}
             onStartRun={onStartRun}
             providerName={

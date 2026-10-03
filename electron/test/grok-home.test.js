@@ -80,9 +80,9 @@ enabled = ["ponytail"]
     fs.writeFileSync(path.join(source, "sessions", "s1.json"), "{}\n");
   });
 
-  afterEach(() => {
-    fs.rmSync(source, { recursive: true, force: true });
-    fs.rmSync(dest, { recursive: true, force: true });
+  afterEach(async () => {
+    await rmTree(source);
+    await rmTree(dest);
   });
 
   it("writes only Solenta MCP servers with bound URLs and keeps auth as a symlink", () => {
@@ -354,9 +354,9 @@ describe("materializeGrokHome PreToolUse inject (#812)", () => {
     fs.writeFileSync(path.join(source, "auth.json"), '{"token":"keep"}\n');
   });
 
-  afterEach(() => {
-    fs.rmSync(source, { recursive: true, force: true });
-    fs.rmSync(dest, { recursive: true, force: true });
+  afterEach(async () => {
+    await rmTree(source);
+    await rmTree(dest);
     if (prevGuardrails === undefined) delete process.env.CODER_GUARDRAILS;
     else process.env.CODER_GUARDRAILS = prevGuardrails;
   });
@@ -444,13 +444,13 @@ describe("kimiMcpServersForRun binds projectId for grok overlay", () => {
     resetMemorySupForTests();
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     resetMemorySupForTests();
     for (const [k, v] of Object.entries(prevEnv)) {
       if (v === undefined) delete process.env[k];
       else process.env[k] = v;
     }
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+    await rmTree(tmpDir);
   });
 
   it("puts projectId on coder-threads (coder-memory is owned by markHealthy)", () => {

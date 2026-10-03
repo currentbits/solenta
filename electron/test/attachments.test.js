@@ -14,6 +14,7 @@ const { Store } = require("../store.js");
 const services = require("../services.js");
 const { createRunner } = require("../runner.js");
 const attachments = require("../attachments.js");
+const { rmTree } = require("./support/rmTree.js");
 
 function git(cwd, args) {
   execFileSync("git", args, { cwd, stdio: "ignore" });
@@ -49,8 +50,8 @@ describe("attachments module", () => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "coder-attach-"));
   });
 
-  afterEach(() => {
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+  afterEach(async () => {
+    await rmTree(tmpDir);
   });
 
   it("classifies images, folders, and other files (issue #653)", () => {
@@ -383,9 +384,9 @@ describe("runner attachments", () => {
     services.createThread(store, { projectId: project.id, title: "New Thread" });
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     if (runner) runner.stopAll();
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+    await rmTree(tmpDir);
     if (prevAgentCmd === undefined) delete process.env.CODER_AGENT_CMD;
     else process.env.CODER_AGENT_CMD = prevAgentCmd;
   });

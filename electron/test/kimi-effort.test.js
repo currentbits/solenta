@@ -20,6 +20,7 @@ const { writeFakeBin } = require("./support/fakeBin.js");
 const { Store } = require("../store.js");
 const services = require("../services.js");
 const { createRunner } = require("../runner.js");
+const { rmTree } = require("./support/rmTree.js");
 
 const CONFIG = `default_model = "kimi-code/k3"
 
@@ -43,10 +44,10 @@ beforeEach(() => {
   process.env.KIMI_CODE_HOME = tmpHome;
 });
 
-afterEach(() => {
+afterEach(async () => {
   if (prevHome === undefined) delete process.env.KIMI_CODE_HOME;
   else process.env.KIMI_CODE_HOME = prevHome;
-  fs.rmSync(tmpHome, { recursive: true, force: true });
+  await rmTree(tmpHome);
 });
 
 function writeConfig(text = CONFIG) {
@@ -403,7 +404,7 @@ emit({ type: "usage", input_tokens: 1, output_tokens: 1 });
       );
     } finally {
       if (runner) runner.stopAll();
-      fs.rmSync(tmpDir, { recursive: true, force: true });
+      await rmTree(tmpDir);
       for (const [k, v] of Object.entries(prev)) {
         if (v === undefined) delete process.env[k];
         else process.env[k] = v;

@@ -21,6 +21,7 @@ const services = require("../services.js");
 const { createRunner } = require("../runner.js");
 const { setupWorktree, clearMissingWorktree } = require("../worktrees.js");
 const { writeFakeBin } = require("./support/fakeBin.js");
+const { rmTree } = require("./support/rmTree.js");
 
 /** Distinctive multiline git stderr — must appear verbatim, not first-line-only. */
 const GIT_STDERR =
@@ -160,7 +161,7 @@ describe("worktree setup failure must not start the agent (#511)", () => {
     project = await services.addProject(store, repo);
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     if (runner) runner.stopAll();
     process.env.PATH = prevPath;
     if (prevBin === undefined) delete process.env.CODER_CLAUDE_BIN;
@@ -169,7 +170,7 @@ describe("worktree setup failure must not start the agent (#511)", () => {
     else process.env.CODER_FAKE_CLAUDE_ARGV_FILE = prevArgv;
     if (prevSimulate === undefined) delete process.env.CODER_SIMULATE;
     else process.env.CODER_SIMULATE = prevSimulate;
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+    await rmTree(tmpDir);
   });
 
   it("records a setup error and spawns zero agent processes when worktree add fails", async () => {
@@ -293,11 +294,11 @@ describe("missing worktree must not fall back to the project checkout (#511)", (
     });
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     if (runner) runner.stopAll();
     if (prevSimulate === undefined) delete process.env.CODER_SIMULATE;
     else process.env.CODER_SIMULATE = prevSimulate;
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+    await rmTree(tmpDir);
   });
 
   it("clearMissingWorktree re-arms pendingWorktree instead of converting to a checkout thread", () => {

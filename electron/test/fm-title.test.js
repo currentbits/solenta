@@ -8,6 +8,7 @@ const { Store } = require("../store.js");
 const services = require("../services.js");
 const { maybeApplyFmTitle } = require("../fm-title.js");
 const { writeFakeBin } = require("./support/fakeBin.js");
+const { rmTree } = require("./support/rmTree.js");
 
 function git(cwd, args) {
   return execFileSync("git", args, {
@@ -59,8 +60,8 @@ describe("maybeApplyFmTitle", () => {
     });
   });
 
-  afterEach(() => {
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+  afterEach(async () => {
+    await rmTree(tmpDir);
   });
 
   it("saves a sanitised fm title after the first assistant reply", async () => {

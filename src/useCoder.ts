@@ -350,12 +350,19 @@ export interface UseCoderResult {
   ) => Promise<ThreadInfo | null>;
   /**
    * Fork / hand off a thread (threads.fork). Selects the new thread the same
-   * way createThread does. Plain fork: no provider override. Hand-off: pass
-   * provider (and optional model). Errors surface via error scope "run".
+   * way createThread does, unless `select: false` (background starts such as
+   * suggested-work chips keep the user on the thread they clicked from).
+   * Plain fork: no provider override. Hand-off: pass provider (and optional
+   * model). Errors surface via error scope "run".
    */
   forkThread: (
     threadId: string,
-    opts?: { provider?: string; model?: string | null; worktree?: boolean },
+    opts?: {
+      provider?: string;
+      model?: string | null;
+      worktree?: boolean;
+      select?: boolean;
+    },
   ) => Promise<ThreadInfo | null>;
   /**
    * Start a run, or queue the prompt when that thread is already working:
@@ -1701,7 +1708,12 @@ export function useCoder(): UseCoderResult {
   const forkThread = useCallback(
     async (
       threadId: string,
-      opts?: { provider?: string; model?: string | null; worktree?: boolean },
+      opts?: {
+        provider?: string;
+        model?: string | null;
+        worktree?: boolean;
+        select?: boolean;
+      },
     ) => {
       try {
         const input: {
@@ -1725,7 +1737,7 @@ export function useCoder(): UseCoderResult {
           ? threadsRef.current.map((x) => (x.id === t.id ? t : x))
           : [t, ...threadsRef.current];
         applyThreads(next);
-        setSelectedThreadId(t.id);
+        if (opts?.select !== false) setSelectedThreadId(t.id);
         setError(null);
         return t;
       } catch (err) {
@@ -3412,9 +3424,19 @@ export function useCoder(): UseCoderResult {
   );
 
   const prStatus = useCallback(async () => {
-    if (!selectedThreadId) return null;
-    return api.git.prStatus({ threadId: selectedThreadId });
-  }, [api, selectedThreadId]);
+    const threadId = selectedThreadId;
+    if (!threadId) return null;
+    const pr = await api.git.prStatus({ threadId });
+    // prStatus records prNumber/prUrl on the thread; refresh the open header.
+    if (pr && selectedRef.current === threadId) {
+      const d = await api.threads.get(threadId);
+      if (selectedRef.current === threadId) {
+        applyThreadUpdate(d.thread);
+        setDetail(d);
+      }
+    }
+    return pr;
+  }, [api, selectedThreadId, applyThreadUpdate]);
 
   const prChecks = useCallback(async () => {
     if (!selectedThreadId) return { ok: false as const, reason: "no PR" };

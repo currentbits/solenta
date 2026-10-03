@@ -3522,7 +3522,8 @@ a.menuItem {
   min-width: 0;
 }
 
-.detailsCard [data-worktree-control="ready"] {
+/* Header split-button only; the card's own rows share the attribute. */
+.detailsCard [data-worktree-control="ready"]:not([data-worktree-rows]) {
   flex: 1;
   flex-wrap: wrap;
   gap: 8px;
@@ -3531,7 +3532,7 @@ a.menuItem {
   background: transparent;
 }
 
-.detailsCard [data-worktree-control="ready"] > :first-child {
+.detailsCard [data-worktree-control="ready"]:not([data-worktree-rows]) > :first-child {
   flex: 1 0 100%;
   height: 30px;
   border: 1px solid var(--border);
