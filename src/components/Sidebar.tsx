@@ -36,6 +36,7 @@ import { formatQuotaWaitLabel } from "../quotaWait";
 import {
   buildFlatSidebar,
   crewAncestorIds,
+  isCrewWorker,
   nestWorkerFamilies,
   visibleFamilyRows,
   withCrewSearchContext,
@@ -911,7 +912,12 @@ export const ThreadCard = memo(function ThreadCard({
   const pulse = statusPulseFor(thread, now, wait ?? null, active);
   const pinned = isPinned(thread);
   const showProject = showSlug && !compact;
-  const shownTitle = compact ? displayWorkerTitle(thread.title) : thread.title;
+  // A plain fork is usually "Fork: <lead title>"; stripping that under the
+  // lead would make it read as a second copy of its lead.
+  const shownTitle =
+    compact && isCrewWorker(thread)
+      ? displayWorkerTitle(thread.title)
+      : thread.title;
   const subagentLines = wait ? subagentNames(wait) : [];
   // Menus are native Menu.popup / a body portal (#592) — the card only
   // tracks openness so the hover actions stay pinned underneath.
