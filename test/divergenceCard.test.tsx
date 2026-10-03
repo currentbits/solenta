@@ -360,6 +360,9 @@ describe("App wires peek, not get, for the other run", () => {
     installFakeCoder(fake);
     shell.unmount();
     const m = await mount(<App />);
+    // Forks nest collapsed under their source.
+    await m.click(m.query('[data-family-toggle="t-src"]') as HTMLElement);
+    await m.flush();
     const card = m.query('button[aria-label="Select thread: Claude attempt"]');
     assert.ok(card, "claude sibling must be in the sidebar");
     await m.click(card as HTMLElement);
