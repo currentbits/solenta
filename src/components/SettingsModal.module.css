@@ -97,6 +97,18 @@
   flex-wrap: wrap;
 }
 
+.connectionRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border-soft);
+  font-size: 12px;
+}
+
+.connectionRow span { flex: 1; min-width: 0; }
+.connectionRow small { display: block; color: var(--text-muted); }
+
 .iconPreview {
   width: 28px;
   height: 28px;

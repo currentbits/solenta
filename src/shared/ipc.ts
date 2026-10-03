@@ -3573,6 +3573,18 @@ export interface CoderApi {
      * Rejects with a user-facing sentence when the endpoint refuses.
      */
     feedback(input: { text: string; threadId?: string }): Promise<void>;
+    /** Open an SSH-forwarded Solenta Web host in an isolated desktop window. */
+    openRemoteConnection(input: {
+      host: string;
+      label?: string;
+      remotePort?: number;
+      /** Blank reads userData/web-token on the host over SSH, then the saved token. */
+      token: string;
+      /** Save the verified token encrypted with the OS keychain (default true). */
+      remember?: boolean;
+    }): Promise<{ host: string; remotePort: number; tokenSaved: boolean }>;
+    /** Delete the saved web token for host:port. */
+    forgetRemoteConnection(input: { host: string; remotePort?: number }): Promise<void>;
   };
   /**
    * Proxied to the local shared-memory server by the main process (the

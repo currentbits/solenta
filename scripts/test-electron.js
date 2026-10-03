@@ -27,6 +27,7 @@ const WIN32_FILES = [
   "electron/test/fake-bin.test.js", // shebang fake, argv preserved through cross-spawn
   "electron/test/provider-usage.test.js", // writeFakeBin + cross-spawn quota probe
   "electron/test/provider-usage-managed.test.js",
+  "electron/test/remoteConnections.test.js", // injected SSH spawn + loopback WebSocket
   "electron/test/proc.test.js", // agentSpawnOptions win32 attach (#480)
   "electron/test/rm-tree.test.js", // bounded cleanup of a child process cwd
   "electron/test/claude-spawn.test.js", // .cmd + runClaude/runCodex parse (#480)

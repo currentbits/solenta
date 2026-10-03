@@ -69,6 +69,8 @@ const IPC_CHANNELS = Object.freeze([
   { ns: "app", method: "downloadUpdate" },
   { ns: "app", method: "applyUpdate" },
   { ns: "app", method: "feedback" },
+  { ns: "app", method: "openRemoteConnection" },
+  { ns: "app", method: "forgetRemoteConnection" },
   { ns: "memory", method: "search" },
   { ns: "memory", method: "recent" },
   { ns: "memory", method: "get" },
