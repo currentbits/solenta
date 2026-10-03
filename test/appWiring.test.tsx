@@ -1920,3 +1920,53 @@ describe("thread sidebar collapse (#1411)", () => {
     }
   });
 });
+
+describe("header toggles (#1411)", () => {
+  it("folds Views into the right-panel split: details · terminal · panel", async () => {
+    const t1 = thread({ id: "t-h", title: "header thread" });
+    const fake = createFakeCoder({ threads: [t1], details: { "t-h": detail({ thread: t1 }) } });
+    const m = await boot(fake);
+    try {
+      await m.flush();
+      await m.click(m.query('button[aria-label="Select thread: header thread"]') as HTMLElement);
+      await m.flush();
+      const split = m.query("[data-thread-header] [data-panel-split]");
+      assert.ok(split, "right-panel split control");
+      assert.ok(split!.querySelector("[data-agents-panel-toggle]"));
+      assert.ok(split!.querySelector("[data-views-btn]"), "panes chevron lives in the split");
+      assert.equal(
+        m.queryAll("[data-thread-header] [data-views-btn]").length,
+        1,
+        "no standalone Views icon",
+      );
+      await m.click(split!.querySelector("[data-views-btn]") as HTMLElement);
+      assert.ok(m.query("[data-views-item='diff']"), "pane list opens");
+    } finally {
+      m.unmount();
+    }
+  });
+});
+
+describe("start without a project (#1411)", () => {
+  it("moves the draft into the Scratch workspace", async () => {
+    const draft = thread({ id: "t-draft", title: "New Thread", worktreePath: null });
+    const fake = createFakeCoder({
+      threads: [draft],
+      details: { "t-draft": detail({ thread: draft, messages: [] }) },
+    });
+    const m = await boot(fake);
+    try {
+      await m.flush();
+      await m.click(m.query('button[aria-label="Select thread: New Thread"]') as HTMLElement);
+      await m.flush();
+      await m.click(m.query("[data-start-without-project]") as HTMLElement);
+      await m.flush();
+      assert.equal(fake.of("projects.ensureScratch").length, 1);
+      const moves = fake.of("threads.setThreadProject");
+      assert.equal(moves.length, 1);
+      assert.deepEqual(moves[0]!.args[0], { threadId: "t-draft", projectId: "p-scratch" });
+    } finally {
+      m.unmount();
+    }
+  });
+});

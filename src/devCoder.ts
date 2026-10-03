@@ -3505,6 +3505,19 @@ function buildDevCoder(): CoderApi {
         projects.push(project);
         return { ...project };
       },
+      async ensureScratch() {
+        const found = projects.find((p) => p.scratch === true);
+        if (found) return { ...found };
+        const project: ProjectInfo = {
+          id: id("proj"),
+          slug: "Scratch",
+          name: "Scratch",
+          path: "/Users/demo/Library/Application Support/Solenta/scratch",
+          scratch: true,
+        };
+        projects.push(project);
+        return { ...project };
+      },
       async pickDirectory() {
         // No native dialog in the browser dev mock; cancel like the real one.
         return null;

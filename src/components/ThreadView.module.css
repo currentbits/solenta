@@ -4019,3 +4019,29 @@ button.heroProject:hover {
 .breadcrumb {
   overflow: visible;
 }
+
+/* Right panel + panes as one split control (#1411): three header icons. */
+.panelSplit {
+  display: inline-flex;
+  align-items: center;
+}
+
+.panelSplit > .toggleBtn {
+  border-radius: var(--radius-sm) 0 0 var(--radius-sm);
+}
+
+.heroLink {
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.heroLink:hover {
+  color: var(--text);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}

@@ -376,6 +376,9 @@ const IPC_HANDLERS = {
   "projects:add": async (ctx, projectPath, opts) => {
     return services.addProject(ctx.store, projectPath, opts);
   },
+  "projects:ensureScratch": async (ctx) => {
+    return services.ensureScratchProject(ctx.store, ctx.userDataPath);
+  },
   "projects:create": async (ctx, input) => {
     return services.createProject(ctx.store, input || {});
   },
@@ -652,7 +655,9 @@ const IPC_HANDLERS = {
     if (input && input.teach === true) {
       services.startTeach(ctx.store, { threadId: thread.id });
     }
-    if (input && input.worktree === true) {
+    const scratchHost = ctx.store.getProject(thread.projectId);
+    if (input && input.worktree === true && !(scratchHost && scratchHost.scratch === true)) {
+      // Scratch has no git: the default-worktree setting does not apply there.
       try {
         if (!ctx.worktreeBase) {
           throw new Error("worktreeBase is not configured");

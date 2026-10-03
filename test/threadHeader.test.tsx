@@ -167,6 +167,7 @@ function view(props: {
   previousWorktree?: { branch: string; title: string } | null;
   heroProjects?: ProjectInfo[];
   onMoveDraftToProject?: (threadId: string, projectId: string) => void;
+  onStartWithoutProject?: (threadId: string) => void;
 }) {
   return (
     <ThreadView
@@ -219,6 +220,7 @@ function view(props: {
       previousWorktree={props.previousWorktree}
       heroProjects={props.heroProjects}
       onMoveDraftToProject={props.onMoveDraftToProject}
+      onStartWithoutProject={props.onStartWithoutProject}
     />
   );
 }
@@ -869,6 +871,44 @@ describe("new-thread hero (#1411)", () => {
     await m.click(m.query('[data-hero-project-option="p2"]'));
     assert.deepEqual(moved, [["t1", "p2"]]);
     m.unmount();
+  });
+
+  it("offers 'or start without a project' and renders the Scratch variant", async () => {
+    const started: string[] = [];
+    const m = await mount(
+      view({
+        detail: detail({ thread: thread({ worktreePath: null }), messages: [] }),
+        onStartWithoutProject: (id) => started.push(id),
+        onSetPendingWorktree: async () => {},
+      }),
+    );
+    await m.flush();
+    await m.click(m.query("[data-start-without-project]"));
+    assert.deepEqual(started, ["t1"]);
+    m.unmount();
+
+    const scratch = { ...project, id: "p-scratch", slug: "Scratch", name: "Scratch", scratch: true };
+    const s2 = await mount(
+      view({
+        project: scratch,
+        detail: detail({ thread: thread({ projectId: "p-scratch", worktreePath: null }), messages: [] }),
+        heroProjects: [project, scratch],
+        onMoveDraftToProject: () => {},
+        onSetPendingWorktree: async () => {},
+        onSetupWorktree: async () => {},
+        onMergeWorktree: async () => {},
+        onRemoveWorktree: async () => {},
+      }),
+    );
+    await s2.flush();
+    assert.match(s2.query("[data-draft-hero-title]")?.textContent ?? "", /What should we build\?/);
+    assert.ok(s2.query("[data-hero-scratch]"));
+    assert.equal(s2.query("[data-workspace-strip]"), null, "no worktree strip in Scratch");
+    assert.equal(s2.query("[data-start-without-project]"), null);
+    await s2.click(s2.query("[data-hero-project]"));
+    assert.equal(s2.query('[data-hero-project-option="p-scratch"]'), null, "Scratch is not a move target");
+    assert.ok(s2.query('[data-hero-project-option="p1"]'));
+    s2.unmount();
   });
 
   it("drops the hero once the thread has messages", async () => {

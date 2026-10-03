@@ -236,3 +236,23 @@
     transform: none;
   }
 }
+
+.viewsChevron {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 28px;
+  padding: 0;
+  border: none;
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+
+.viewsChevron:hover,
+.viewsChevron[aria-expanded="true"] {
+  background: var(--card-hover);
+  color: var(--text);
+}

@@ -962,3 +962,55 @@ describe("Start from origin (#1411)", () => {
     assert.ok(store.getThread(t.id).worktreePath, "created from local-only");
   });
 });
+
+describe("Scratch workspace (#1411, start without a project)", () => {
+  let tmpDir;
+  let store;
+  let userData;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "coder-scratch-"));
+    store = new Store(path.join(tmpDir, "store.json"));
+    userData = path.join(tmpDir, "userData");
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("creates one non-git Scratch project and returns it again", () => {
+    const a = services.ensureScratchProject(store, userData);
+    assert.equal(a.scratch, true);
+    assert.equal(a.name, "Scratch");
+    assert.ok(fs.existsSync(a.path), "folder exists");
+    assert.ok(!fs.existsSync(path.join(a.path, ".git")), "not a git repo");
+    const b = services.ensureScratchProject(store, userData);
+    assert.equal(b.id, a.id, "idempotent");
+    assert.equal(store.getProjects().filter((p) => p.scratch).length, 1);
+  });
+
+  it("moving a draft into Scratch drops its worktree intent", async () => {
+    const repo = path.join(tmpDir, "repo");
+    fs.mkdirSync(repo);
+    git(repo, ["init"]);
+    const real = await services.addProject(store, repo);
+    const t = services.createThread(store, { projectId: real.id, title: "draft" });
+    services.setPendingWorktree(store, { threadId: t.id, worktree: true });
+    const scratch = services.ensureScratchProject(store, userData);
+    services.setThreadProject(store, { threadId: t.id, projectId: scratch.id });
+    const moved = store.getThread(t.id);
+    assert.equal(moved.projectId, scratch.id);
+    assert.equal(moved.pendingWorktree, false);
+    assert.throws(
+      () => services.setPendingWorktree(store, { threadId: t.id, worktree: true }),
+      /can't host a worktree/,
+    );
+  });
+
+  it("keeps the scratch flag through a store reload", () => {
+    services.ensureScratchProject(store, userData);
+    store.saveNow();
+    const reloaded = new Store(path.join(tmpDir, "store.json"));
+    assert.equal(reloaded.getProjects().filter((p) => p.scratch === true).length, 1);
+  });
+});

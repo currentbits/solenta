@@ -163,7 +163,8 @@ export function useWorktreeChrome(
 
   const hasWorktree = Boolean(thread?.worktreePath);
   const busy = isWorking || gitAction != null || resolving || refreshing;
-  const visible = Boolean(thread && !project?.remoteHost);
+  // Remote and Scratch (#1411, no git) projects have no worktree flow.
+  const visible = Boolean(thread && !project?.remoteHost && !project?.scratch);
 
   useEffect(() => {
     setDirtyMessage(null);

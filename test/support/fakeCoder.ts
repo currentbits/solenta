@@ -1555,6 +1555,20 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
         });
         return rec("projects.create", [input], created);
       },
+      ensureScratch: () => {
+        let found = projects.find((p) => p.scratch === true);
+        if (!found) {
+          found = project({
+            id: "p-scratch",
+            name: "Scratch",
+            slug: "Scratch",
+            path: "/tmp/solenta-data/scratch",
+            scratch: true,
+          });
+          projects.push(found);
+        }
+        return rec("projects.ensureScratch", [], found);
+      },
       pickDirectory: () =>
         rec("projects.pickDirectory", [], null as string | null),
       pickIcon: (input: { projectId: string }) =>

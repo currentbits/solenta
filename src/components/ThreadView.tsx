@@ -785,6 +785,8 @@ interface ThreadViewProps {
   heroProjects?: readonly ProjectInfo[];
   /** Move a draft to another project from the hero chooser. */
   onMoveDraftToProject?: (threadId: string, projectId: string) => void;
+  /** "or start without a project": move the draft into Scratch (#1411). */
+  onStartWithoutProject?: (threadId: string) => void;
   /** Draft strip "Previous worktree" source (latest other worktree thread). */
   previousWorktree?: { branch: string; title: string } | null;
   /** Unmerged worktree files plus capped conflict-marker snippets. */
@@ -2156,10 +2158,13 @@ function DraftProjectChooser({
   current,
   projects,
   onPick,
+  label: labelOverride,
 }: {
   current: ProjectInfo | null;
   projects: readonly ProjectInfo[];
   onPick?: (projectId: string) => void;
+  /** Visible trigger text when there is no current project (Scratch). */
+  label?: string;
 }) {
   const [open, setOpen] = useState(false);
   const wrapRef = useRef<HTMLSpanElement>(null);
@@ -2172,8 +2177,11 @@ function DraftProjectChooser({
     return () => document.removeEventListener("mousedown", onDown);
   }, [open]);
   useEscapeClose(open, () => setOpen(false));
-  const label = current ? current.slug || current.name : "this project";
-  const others = projects.filter((p) => p.id !== current?.id && !p.remoteHost);
+  const label =
+    labelOverride ?? (current ? current.slug || current.name : "this project");
+  const others = projects.filter(
+    (p) => p.id !== current?.id && !p.remoteHost && !p.scratch,
+  );
   if (!onPick || others.length === 0) {
     return <span className={styles.heroProject}>{label}</span>;
   }
@@ -4708,6 +4716,7 @@ export const ThreadView = memo(function ThreadView({
   previousWorktree,
   heroProjects,
   onMoveDraftToProject,
+  onStartWithoutProject,
   agentsPanelOpen,
   onToggleAgentsPanel,
   conflictContext,
@@ -7431,12 +7440,15 @@ export const ThreadView = memo(function ThreadView({
               <path d="M5 6.5 7 8.25 5 10M8.5 10.5H11" />
             </svg>
           </button>
-          <ViewsMenu
-            layout={layout}
-            onOpen={handleOpenPane}
-            onReset={handleResetLayout}
-          />
+          {onToggleAgentsPanel ? null : (
+            <ViewsMenu
+              layout={layout}
+              onOpen={handleOpenPane}
+              onReset={handleResetLayout}
+            />
+          )}
           {onToggleAgentsPanel ? (
+            <div className={styles.panelSplit} data-panel-split="">
             <button
               type="button"
               className={styles.toggleBtn}
@@ -7462,6 +7474,13 @@ export const ThreadView = memo(function ThreadView({
                 <path d="M10 2.5v11" />
               </svg>
             </button>
+            <ViewsMenu
+              compact
+              layout={layout}
+              onOpen={handleOpenPane}
+              onReset={handleResetLayout}
+            />
+            </div>
           ) : null}
         </div>
       </header>
@@ -7780,22 +7799,54 @@ export const ThreadView = memo(function ThreadView({
       >
         {emptyMessages && !hasTimeline && (
           <div className={styles.heroDraft} data-draft-hero-title="">
-            <h1 className={styles.heroTitle}>
-              What should we build in{" "}
-              <DraftProjectChooser
-                current={project}
-                projects={heroProjects ?? []}
-                onPick={
-                  onMoveDraftToProject
-                    ? (id) => onMoveDraftToProject(thread.id, id)
-                    : undefined
-                }
-              />
-              ?
-            </h1>
-            <p className={styles.heroHint}>
-              Describe the task, pick where it runs below, and send with ⌘Enter.
-            </p>
+            {project?.scratch ? (
+              <>
+                <h1 className={styles.heroTitle}>What should we build?</h1>
+                <p className={styles.heroHint} data-hero-scratch="">
+                  No project: this thread runs in an empty scratch folder.{" "}
+                  <DraftProjectChooser
+                    current={null}
+                    label="Pick a project"
+                    projects={heroProjects ?? []}
+                    onPick={
+                      onMoveDraftToProject
+                        ? (id) => onMoveDraftToProject(thread.id, id)
+                        : undefined
+                    }
+                  />
+                </p>
+              </>
+            ) : (
+              <>
+                <h1 className={styles.heroTitle}>
+                  What should we build in{" "}
+                  <DraftProjectChooser
+                    current={project}
+                    projects={heroProjects ?? []}
+                    onPick={
+                      onMoveDraftToProject
+                        ? (id) => onMoveDraftToProject(thread.id, id)
+                        : undefined
+                    }
+                  />
+                  ?
+                </h1>
+                {onStartWithoutProject ? (
+                  <button
+                    type="button"
+                    className={styles.heroLink}
+                    data-start-without-project=""
+                    onClick={() => onStartWithoutProject(thread.id)}
+                  >
+                    or start without a project
+                  </button>
+                ) : (
+                  <p className={styles.heroHint}>
+                    Describe the task, pick where it runs below, and send with ⌘Enter.
+                  </p>
+                )}
+              </>
+            )}
           </div>
         )}
 
@@ -8584,6 +8635,7 @@ export const ThreadView = memo(function ThreadView({
           onSetPendingWorktree &&
           project &&
           !project.remoteHost &&
+          !project.scratch &&
           !thread.worktreePath &&
           !thread.ask &&
           !thread.pendingFork &&

@@ -25,6 +25,12 @@ export interface ProjectInfo {
   remoteHost?: string;
   /** Absolute path on the remote host. Required when remoteHost is set. */
   remotePath?: string;
+  /**
+   * The built-in Scratch workspace (#1411): threads with no real project
+   * run in an empty folder under Solenta's data dir. Not a git repo, so
+   * worktree / diff / PR flows are hidden.
+   */
+  scratch?: boolean;
   /** Retired (#568). Stripped on store load; never written. */
   spaceId?: string;
   /** When true, a background poller starts a thread for every issue that enters plan:todo (issue #165). Absent = off. */
@@ -3747,6 +3753,11 @@ export interface CoderApi {
     add(path: string, opts?: AddProjectOptions): Promise<ProjectInfo>;
     /** Create a new folder + git repo at parentDir/name, then add it as a project. */
     create(input: CreateProjectInput): Promise<ProjectInfo>;
+    /**
+     * The built-in Scratch workspace ("start without a project", #1411):
+     * created on first call under Solenta's data dir, no git. Idempotent.
+     */
+    ensureScratch(): Promise<ProjectInfo>;
     /** Patch name and/or SSH remote fields of an existing project. */
     update(input: ProjectUpdateInput): Promise<ProjectInfo>;
     /**

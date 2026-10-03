@@ -219,6 +219,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     clearError,
     addProject,
     createProject,
+    ensureScratchProject,
     updateProject,
     createThread,
     listBaseBranches,
@@ -840,6 +841,14 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
       void setThreadProject(threadId, projectId);
     },
     [setThreadProject],
+  );
+
+  const startWithoutProject = useCallback(
+    async (threadId: string) => {
+      const scratch = await ensureScratchProject();
+      if (scratch) await setThreadProject(threadId, scratch.id);
+    },
+    [ensureScratchProject, setThreadProject],
   );
 
   const handleSetMuted = useCallback(
@@ -2261,6 +2270,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         previousWorktree={previousWorktree}
         heroProjects={projects}
         onMoveDraftToProject={handleSetThreadProject}
+        onStartWithoutProject={(id) => void startWithoutProject(id)}
         agentsPanelOpen={narrow ? drawer === "agents" : !agentsCollapsed}
         onToggleAgentsPanel={toggleAgents}
         onRefreshWorkerSnapshot={refreshWorkerSnapshot}

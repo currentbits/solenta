@@ -350,6 +350,37 @@ async function attachWindowsDoctor(project) {
   return report ? { ...project, windowsDoctor: report } : project;
 }
 
+/**
+ * The Scratch workspace (#1411, "start without a project"): one built-in
+ * project whose folder lives under Solenta's data dir. Deliberately not a
+ * git repo, so no worktree, diff or PR flow applies; threads just run in
+ * that folder. Idempotent: returns the existing row when there is one and
+ * recreates the folder if it went missing.
+ *
+ * @param {import('./store').Store} store
+ * @param {string} userDataPath
+ */
+function ensureScratchProject(store, userDataPath) {
+  if (!userDataPath) {
+    throw new Error("Scratch workspace is not available in this mode");
+  }
+  const dir = path.join(userDataPath, "scratch");
+  fs.mkdirSync(dir, { recursive: true });
+  const existing = store.getProjects().find((p) => p && p.scratch === true);
+  if (existing) return presentProject(existing);
+  const project = {
+    id: randomUUID(),
+    slug: "Scratch",
+    name: "Scratch",
+    path: dir,
+    scratch: true,
+    worktreeRetention: DEFAULT_WORKTREE_RETENTION,
+  };
+  store.setProjects([...store.getProjects(), project]);
+  store.save();
+  return presentProject(project);
+}
+
 async function presentAdded(project) {
   return presentProject(await attachWindowsDoctor(project));
 }
@@ -2071,6 +2102,8 @@ function setThreadProject(store, input) {
     projectId: id,
     sessionId: null,
     replayContext: true,
+    // Scratch has no git: a draft moved there cannot keep a worktree intent.
+    ...(project.scratch === true ? { pendingWorktree: false } : {}),
     branch: null,
     baseBranch: null,
     prNumber: null,
@@ -5717,6 +5750,7 @@ module.exports = {
   setMessagePins,
   setBaseBranch,
   setPendingWorktree,
+  ensureScratchProject,
   refreshWorkerSnapshot,
   setFeltEstimate,
   setVerifyCommand,

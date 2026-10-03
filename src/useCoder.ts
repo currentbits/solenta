@@ -330,6 +330,8 @@ export interface UseCoderResult {
   ) => Promise<ProjectInfo | null>;
   /** Create a new folder + git repo (projects.create) and add it. */
   createProject: (input: CreateProjectInput) => Promise<ProjectInfo | null>;
+  /** The built-in Scratch workspace ("start without a project", #1411). */
+  ensureScratchProject: () => Promise<ProjectInfo | null>;
   /** Patch name, SSH remotes, or worktree retention of a project. */
   updateProject: (input: ProjectUpdateInput) => Promise<ProjectInfo | null>;
   /** Create in projectId when given; otherwise the currently selected project. */
@@ -1576,6 +1578,21 @@ export function useCoder(): UseCoderResult {
         name: input.name.trim(),
         parentDir: input.parentDir.trim(),
       });
+      setProjects((prev) => {
+        if (prev.some((x) => x.id === p.id)) return prev;
+        return [...prev, p];
+      });
+      setError(null);
+      return p;
+    } catch (err) {
+      setError({ scope: "project", message: errorMessage(err) });
+      return null;
+    }
+  }, [api]);
+
+  const ensureScratchProject = useCallback(async () => {
+    try {
+      const p = await api.projects.ensureScratch();
       setProjects((prev) => {
         if (prev.some((x) => x.id === p.id)) return prev;
         return [...prev, p];
@@ -4237,6 +4254,7 @@ export function useCoder(): UseCoderResult {
     clearError,
     addProject,
     createProject,
+    ensureScratchProject,
     updateProject,
     createThread,
     listBaseBranches,

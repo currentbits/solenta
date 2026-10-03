@@ -44,10 +44,16 @@ export function ViewsMenu({
   layout,
   onOpen,
   onReset,
+  compact = false,
 }: {
   layout: LayoutNode;
   onOpen: (type: PaneType) => void;
   onReset: () => void;
+  /**
+   * Chevron trigger for the header's right-panel split control (#1411):
+   * the panel button toggles the panel, this opens the pane list.
+   */
+  compact?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const wrapRef = useRef<HTMLDivElement>(null);
@@ -67,14 +73,29 @@ export function ViewsMenu({
     <div className={styles.viewsWrap} ref={wrapRef} data-views-menu="">
       <button
         type="button"
-        className={styles.viewsBtn}
+        className={compact ? styles.viewsChevron : styles.viewsBtn}
         aria-haspopup="menu"
         aria-expanded={open}
         aria-label="Views"
-        title="Views: Git, Browser, Simulator, layout"
+        title="Panes: Git, Browser, Simulator, layout"
         data-views-btn=""
         onClick={() => setOpen((v) => !v)}
       >
+        {compact ? (
+          <svg
+            width="10"
+            height="10"
+            viewBox="0 0 16 16"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.8"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden="true"
+          >
+            <path d="m4 6 4 4 4-4" />
+          </svg>
+        ) : (
         <svg
           width="15"
           height="15"
@@ -89,6 +110,7 @@ export function ViewsMenu({
           <rect x="2.5" y="2.5" width="11" height="11" rx="2" />
           <path d="M8 2.5v11M8 8h5.5" />
         </svg>
+        )}
       </button>
       {open && (
         <div className={styles.viewsMenu} role="menu">
