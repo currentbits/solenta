@@ -350,6 +350,8 @@ describe("crew integration (#954)", () => {
   });
 
   it("crewIntegration yields to the event loop while it runs git", async () => {
+    workOn(lead, "lead.txt", "lead\n");
+    workOn(forkWorker("A"), "a.txt", "a\n");
     const pending = crewIntegration(store, { threadId: lead.id });
     assert.ok(pending && typeof pending.then === "function", "returns a promise");
     // A sync body wrapped in a promise resolves before any setImmediate.
@@ -360,6 +362,7 @@ describe("crew integration (#954)", () => {
     });
     const view = await pending;
     assert.ok(Array.isArray(view.workers));
+    assert.equal(view.workers.length, 1);
     assert.equal(yielded, true, "main kept serving events during the git reads");
   });
 
