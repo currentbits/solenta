@@ -36,7 +36,6 @@ import { formatQuotaWaitLabel } from "../quotaWait";
 import {
   buildFlatSidebar,
   crewAncestorIds,
-  isCrewWorker,
   nestWorkerFamilies,
   visibleFamilyRows,
   withCrewSearchContext,
@@ -2051,7 +2050,7 @@ export const Sidebar = memo(function Sidebar({
     for (const id of [activeThreadId, revealThreadId]) {
       if (!id) continue;
       const row = liveById.get(id);
-      if (!row || !isCrewWorker(row)) continue;
+      if (!row) continue;
       const ancestors = crewAncestorIds(row, liveById);
       const rootId = ancestors[ancestors.length - 1];
       if (rootId) ids.push(rootId);
