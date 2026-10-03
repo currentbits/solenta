@@ -2,7 +2,7 @@
  * Round 46 multi-select, batch toolbar, jump shortcuts, keyboard sheet.
  */
 import assert from "node:assert/strict";
-import { describe, it } from "node:test";
+import { afterEach, beforeEach, describe, it } from "node:test";
 import * as React from "react";
 import { useState } from "react";
 import { inAct, mount } from "./support/dom";
@@ -191,6 +191,15 @@ function dispatchKey(
 }
 
 describe("Sidebar multi-select (round 46)", () => {
+  beforeEach(async () => {
+    const shell = await mount(<div />);
+    window.localStorage.setItem("sidebar:workingOpen", "1");
+    shell.unmount();
+  });
+  afterEach(() => {
+    globalThis.window?.localStorage?.removeItem("sidebar:workingOpen");
+  });
+
   it("cmd+click toggles; plain click clears; toolbar at 2+", async () => {
     const m = await mount(<Host />);
     await openShelves(m);

@@ -1,0 +1,277 @@
+import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEscapeClose } from "../useEscapeClose";
+import styles from "./WorkspaceStrip.module.css";
+
+/**
+ * Draft-only lip under the composer (t3-style): pick where the first send
+ * runs — the project checkout or a fresh worktree from a base branch. The
+ * worktree itself is still created lazily on that first send; after it the
+ * strip unmounts and the choice lives in Thread details.
+ */
+export interface WorkspaceStripProps {
+  /** Thread has pendingWorktree armed. */
+  worktree: boolean;
+  /** Project checkout path, shown under "Local checkout". */
+  projectPath: string | null;
+  /** Recorded merge/PR base; null = repo default. */
+  baseBranch: string | null;
+  listBaseBranches?: () => Promise<{ defaultBranch: string; branches: string[] }>;
+  onSetWorktree: (worktree: boolean) => Promise<unknown>;
+  onSetBaseBranch?: (baseBranch: string | null) => Promise<unknown>;
+}
+
+type Open = "workspace" | "base" | null;
+
+export function WorkspaceStrip({
+  worktree,
+  projectPath,
+  baseBranch,
+  listBaseBranches,
+  onSetWorktree,
+  onSetBaseBranch,
+}: WorkspaceStripProps) {
+  const [open, setOpen] = useState<Open>(null);
+  const [branches, setBranches] = useState<{
+    defaultBranch: string;
+    branches: string[];
+  } | null>(null);
+  const [query, setQuery] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const rootRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => {
+      if (rootRef.current && !rootRef.current.contains(e.target as Node)) {
+        setOpen(null);
+      }
+    };
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
+  }, [open]);
+  useEscapeClose(open != null, () => setOpen(null));
+
+  // Name the repo default ("From main") once, without waiting for a click.
+  useEffect(() => {
+    if (!worktree || branches || !listBaseBranches) return;
+    let live = true;
+    listBaseBranches().then(
+      (listed) => live && setBranches(listed),
+      () => {},
+    );
+    return () => {
+      live = false;
+    };
+  }, [worktree, branches, listBaseBranches]);
+
+  const run = async (fn: () => Promise<unknown>) => {
+    setOpen(null);
+    setError(null);
+    try {
+      await fn();
+    } catch (err) {
+      setError(err instanceof Error && err.message ? err.message : String(err));
+    }
+  };
+
+  const baseLabel = baseBranch || branches?.defaultBranch || "repo default";
+  const q = query.trim().toLowerCase();
+  const matches = (branches?.branches ?? []).filter(
+    (b) => !q || b.toLowerCase().includes(q),
+  );
+
+  return (
+    <div className={styles.strip} ref={rootRef} data-workspace-strip="">
+      <div className={styles.anchor}>
+        <button
+          type="button"
+          className={styles.trigger}
+          data-workspace-trigger={worktree ? "worktree" : "local"}
+          aria-haspopup="menu"
+          aria-expanded={open === "workspace"}
+          onClick={() => setOpen((o) => (o === "workspace" ? null : "workspace"))}
+        >
+          {worktree ? <WorktreeGlyph /> : <FolderGlyph />}
+          {worktree ? "New worktree" : "Local checkout"}
+          <Chevron />
+        </button>
+        {open === "workspace" && (
+          <div className={styles.menu} role="menu" aria-label="Workspace">
+            <div className={styles.menuLabel}>Workspace</div>
+            <button
+              type="button"
+              role="menuitemradio"
+              aria-checked={!worktree}
+              className={styles.item}
+              data-workspace-option="local"
+              onClick={() => void run(() => onSetWorktree(false))}
+            >
+              <FolderGlyph />
+              <span className={styles.itemText}>
+                Local checkout
+                <small>{projectPath ? `Edit ${projectPath} directly` : "Edit the project folder directly"}</small>
+              </span>
+              {!worktree && <Check />}
+            </button>
+            <button
+              type="button"
+              role="menuitemradio"
+              aria-checked={worktree}
+              className={styles.item}
+              data-workspace-option="worktree"
+              onClick={() => void run(() => onSetWorktree(true))}
+            >
+              <WorktreeGlyph />
+              <span className={styles.itemText}>
+                New worktree
+                <small>Isolated branch, created when you send</small>
+              </span>
+              {worktree && <Check />}
+            </button>
+          </div>
+        )}
+      </div>
+
+      <span className={styles.spacer} />
+
+      {worktree && onSetBaseBranch ? (
+        <div className={styles.anchor}>
+          <button
+            type="button"
+            className={styles.trigger}
+            data-workspace-base={baseBranch ?? ""}
+            aria-haspopup="dialog"
+            aria-expanded={open === "base"}
+            title="Branch the worktree starts from (and merges back into)"
+            onClick={() => {
+              setQuery("");
+              setOpen((o) => (o === "base" ? null : "base"));
+              if (!branches && listBaseBranches) {
+                listBaseBranches().then(setBranches, (err) =>
+                  setError(err instanceof Error ? err.message : String(err)),
+                );
+              }
+            }}
+          >
+            <BranchGlyph />
+            From {baseLabel}
+            <Chevron />
+          </button>
+          {open === "base" && (
+            <div className={`${styles.menu} ${styles.menuRight}`} role="dialog" aria-label="Base branch">
+              <input
+                className={styles.filter}
+                type="search"
+                aria-label="Filter base branches"
+                placeholder="Filter branches…"
+                autoFocus
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+              />
+              <div className={styles.branchList}>
+                <button
+                  type="button"
+                  className={styles.item}
+                  data-workspace-base-option=""
+                  onClick={() => void run(() => onSetBaseBranch(null))}
+                >
+                  <span className={styles.itemText}>
+                    Repo default
+                    {branches?.defaultBranch ? <small>{branches.defaultBranch}</small> : null}
+                  </span>
+                  {!baseBranch && <Check />}
+                </button>
+                {matches.map((name) => (
+                  <button
+                    key={name}
+                    type="button"
+                    className={styles.item}
+                    data-workspace-base-option={name}
+                    onClick={() => void run(() => onSetBaseBranch(name))}
+                  >
+                    <span className={`${styles.itemText} ${styles.mono}`}>{name}</span>
+                    {baseBranch === name && <Check />}
+                  </button>
+                ))}
+                {branches && matches.length === 0 && (
+                  <p className={styles.empty} role="status">
+                    No matching branches
+                  </p>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+      ) : null}
+
+      {error ? (
+        <span className={styles.error} role="alert" data-workspace-error="">
+          {error}
+        </span>
+      ) : null}
+    </div>
+  );
+}
+
+function Svg({ children }: { children: ReactNode }) {
+  return (
+    <svg
+      className={styles.glyph}
+      width="13"
+      height="13"
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      {children}
+    </svg>
+  );
+}
+
+function FolderGlyph() {
+  return (
+    <Svg>
+      <path d="M2.5 4A1.5 1.5 0 0 1 4 2.5h2.2a1.5 1.5 0 0 1 1.1.5l.8 1a1.5 1.5 0 0 0 1.1.5H12A1.5 1.5 0 0 1 13.5 6v5A1.5 1.5 0 0 1 12 12.5H4A1.5 1.5 0 0 1 2.5 11V4Z" />
+    </Svg>
+  );
+}
+
+function WorktreeGlyph() {
+  return (
+    <Svg>
+      <path d="M2.5 4A1.5 1.5 0 0 1 4 2.5h2.2a1.5 1.5 0 0 1 1.1.5l.8 1a1.5 1.5 0 0 0 1.1.5H12A1.5 1.5 0 0 1 13.5 6v5A1.5 1.5 0 0 1 12 12.5H4A1.5 1.5 0 0 1 2.5 11V4Z" />
+      <circle cx="8" cy="8.5" r="1.3" />
+    </Svg>
+  );
+}
+
+function BranchGlyph() {
+  return (
+    <Svg>
+      <circle cx="4.5" cy="3.5" r="1.5" />
+      <circle cx="4.5" cy="12.5" r="1.5" />
+      <circle cx="11.5" cy="5.5" r="1.5" />
+      <path d="M4.5 5v6M11.5 7c0 2.2-2.8 2.3-4.6 3.4" />
+    </Svg>
+  );
+}
+
+function Chevron() {
+  return (
+    <svg className={styles.chevron} width="9" height="9" viewBox="0 0 8 8" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M1.5 2.75 4 5.25 6.5 2.75" />
+    </svg>
+  );
+}
+
+function Check() {
+  return (
+    <svg className={styles.check} width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="m3.5 8.5 3 3 6-7" />
+    </svg>
+  );
+}

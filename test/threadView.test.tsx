@@ -373,38 +373,38 @@ describe("ThreadView sandbox badge", () => {
     );
   });
 
-  it("renders yes/no with the reason on title", () => {
-    const yes = render({
-      detail: detail({
-        thread: thread({
-          sandbox: {
-            sandboxed: true,
-            reason: "Codex default sandbox; runs locally as your user",
-          },
-        }),
-      }),
-    });
-    assert.ok(yes.includes("data-sandbox-badge"), "badge must render");
-    assert.ok(yes.includes('data-sandboxed="yes"'));
-    assert.ok(yes.includes("Sandboxed"));
-    assert.ok(
-      yes.includes('title="Codex default sandbox; runs locally as your user"'),
-      "reason must be the hover title",
-    );
+  it("renders yes/no in Thread details with the reason on title", async () => {
+    const shown = async (sandbox: { sandboxed: boolean; reason: string }) => {
+      const m = await mount(view({ detail: detail({ thread: thread({ sandbox }) }) }));
+      await m.flush();
+      assert.equal(m.query("[data-sandbox-badge]"), null, "badge stays out of the header row");
+      await m.click(m.query("[data-thread-details-btn]"));
+      const badge = m.query("[data-sandbox-badge]");
+      assert.ok(badge, "badge renders in Thread details");
+      const out = {
+        sandboxed: badge!.getAttribute("data-sandboxed"),
+        text: badge!.textContent,
+        title: badge!.getAttribute("title"),
+      };
+      m.unmount();
+      return out;
+    };
 
-    const no = render({
-      detail: detail({
-        thread: thread({
-          sandbox: {
-            sandboxed: false,
-            reason: "Claude --permission-mode bypassPermissions (not gated); runs locally as your user",
-          },
-        }),
-      }),
+    const yes = await shown({
+      sandboxed: true,
+      reason: "Codex default sandbox; runs locally as your user",
     });
-    assert.ok(no.includes('data-sandboxed="no"'));
-    assert.ok(no.includes("Not sandboxed"));
-    assert.ok(no.includes("bypassPermissions"));
+    assert.equal(yes.sandboxed, "yes");
+    assert.equal(yes.text, "Sandboxed");
+    assert.equal(yes.title, "Codex default sandbox; runs locally as your user");
+
+    const no = await shown({
+      sandboxed: false,
+      reason: "Claude --permission-mode bypassPermissions (not gated); runs locally as your user",
+    });
+    assert.equal(no.sandboxed, "no");
+    assert.equal(no.text, "Not sandboxed");
+    assert.match(no.title ?? "", /bypassPermissions/);
   });
 });
 

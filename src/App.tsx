@@ -246,6 +246,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     setNotes,
     setMessagePins,
     setBaseBranch,
+    setPendingWorktree,
     refreshWorkerSnapshot,
     resolveSuggestion,
     setFeltEstimate,
@@ -2034,6 +2035,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
                   : listProviderLimits
               }
               quotaDemo={quotaDemo}
+              providers={providers}
               onSelectThread={handleSelectThread}
               existingThreadIds={
                 loading ? undefined : threads.map((t) => t.id)
@@ -2160,6 +2162,9 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         onRemoveWorktree={removeWorktree}
         listBaseBranches={listBaseBranches}
         onSetBaseBranch={setBaseBranch}
+        onSetPendingWorktree={setPendingWorktree}
+        agentsPanelOpen={narrow ? drawer === "agents" : !agentsCollapsed}
+        onToggleAgentsPanel={toggleAgents}
         onRefreshWorkerSnapshot={refreshWorkerSnapshot}
         conflictContext={conflictContext}
         onOpenWorktree={openInEditor}

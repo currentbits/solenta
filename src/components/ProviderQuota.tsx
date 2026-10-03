@@ -314,8 +314,7 @@ export function ProviderQuotaDialog({
 
 export function ProviderQuotaSection(props: ProviderQuotaProps) {
   return (
-    <section className={styles.section} aria-label="Provider quotas">
-      <h2 className={styles.sectionTitle}>Account limits</h2>
+    <section className={styles.section} aria-label="Account limits">
       <ProviderQuota {...props} />
     </section>
   );

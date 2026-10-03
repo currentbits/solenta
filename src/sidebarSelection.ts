@@ -84,7 +84,7 @@ export function buildVisibleThreadIds(input: VisibleListInput): string[] {
 
 /**
  * Ordered visible ids for the flat T3 sidebar — mirrors render order:
- * pinned → active → snoozed shelf → settled shelf (settled then archived,
+ * pinned → active → working shelf → snoozed shelf → settled shelf (settled then archived,
  * paged by settledVisibleCount). A collapsed shelf contributes only the
  * selected thread (carve-out: the open thread never vanishes); the same
  * carve-out applies past the settled page cap. Search mode does not use
@@ -92,6 +92,7 @@ export function buildVisibleThreadIds(input: VisibleListInput): string[] {
  */
 export function flatVisibleThreadIds(input: {
   flat: FlatSidebar;
+  workingOpen: boolean;
   snoozedOpen: boolean;
   settledOpen: boolean;
   settledVisibleCount: number;
@@ -120,6 +121,12 @@ export function flatVisibleThreadIds(input: {
 
   for (const t of input.flat.pinned) push(t.id);
   for (const t of input.flat.active) push(t.id);
+
+  if (input.workingOpen) {
+    for (const t of input.flat.working) push(t.id);
+  } else {
+    carveOut(input.flat.working);
+  }
 
   if (input.snoozedOpen) {
     for (const t of input.flat.snoozed) push(t.id);

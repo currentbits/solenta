@@ -331,6 +331,7 @@ describe("flatVisibleThreadIds (T3 flat sidebar)", () => {
   const flat = {
     pinned: [t("pin1")],
     active: [t("a1"), t("a2")],
+    working: [t("w0")],
     snoozed: [t("z1")],
     settled: [t("s1"), t("s2")],
     archived: [t("arc1")],
@@ -339,16 +340,30 @@ describe("flatVisibleThreadIds (T3 flat sidebar)", () => {
   it("orders pinned, active, then open shelves with settled paging", () => {
     const ids = flatVisibleThreadIds({
       flat,
+      workingOpen: true,
       snoozedOpen: true,
       settledOpen: true,
       settledVisibleCount: 2,
     });
-    assert.deepEqual(ids, ["pin1", "a1", "a2", "z1", "s1", "s2"]);
+    assert.deepEqual(ids, ["pin1", "a1", "a2", "w0", "z1", "s1", "s2"]);
+  });
+
+  it("collapsed Working shelf carves out only the selected thread", () => {
+    const ids = flatVisibleThreadIds({
+      flat,
+      workingOpen: false,
+      snoozedOpen: false,
+      settledOpen: false,
+      settledVisibleCount: 10,
+      selectedThreadId: "w0",
+    });
+    assert.deepEqual(ids, ["pin1", "a1", "a2", "w0"]);
   });
 
   it("archived rows page in at the settled tail", () => {
     const ids = flatVisibleThreadIds({
       flat,
+      workingOpen: false,
       snoozedOpen: true,
       settledOpen: true,
       settledVisibleCount: 10,
@@ -359,6 +374,7 @@ describe("flatVisibleThreadIds (T3 flat sidebar)", () => {
   it("collapsed shelves contribute only the selected thread", () => {
     const ids = flatVisibleThreadIds({
       flat,
+      workingOpen: false,
       snoozedOpen: false,
       settledOpen: false,
       settledVisibleCount: 10,
@@ -370,6 +386,7 @@ describe("flatVisibleThreadIds (T3 flat sidebar)", () => {
   it("keepThreadIds carve out a revealed thread on a collapsed shelf", () => {
     const ids = flatVisibleThreadIds({
       flat,
+      workingOpen: false,
       snoozedOpen: false,
       settledOpen: false,
       settledVisibleCount: 10,
@@ -382,6 +399,7 @@ describe("flatVisibleThreadIds (T3 flat sidebar)", () => {
   it("selected thread past the page cap is carved out", () => {
     const ids = flatVisibleThreadIds({
       flat,
+      workingOpen: false,
       snoozedOpen: false,
       settledOpen: true,
       settledVisibleCount: 1,
@@ -395,10 +413,12 @@ describe("flatVisibleThreadIds (T3 flat sidebar)", () => {
       flat: {
         pinned: [],
         active: [t("orch"), t("w1"), t("w2")],
+        working: [],
         snoozed: [],
         settled: [],
         archived: [],
       },
+      workingOpen: false,
       snoozedOpen: false,
       settledOpen: false,
       settledVisibleCount: 0,

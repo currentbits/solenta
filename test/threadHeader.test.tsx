@@ -155,6 +155,11 @@ function view(props: {
   onOpenWorkers?: () => void;
   handoffSource?: ThreadInfo | null;
   onSelectThread?: (id: string) => void;
+  onSetPendingWorktree?: (threadId: string, worktree: boolean) => Promise<void>;
+  listBaseBranches?: (
+    projectId: string,
+  ) => Promise<{ defaultBranch: string; branches: string[] }>;
+  onSetBaseBranch?: (threadId: string, baseBranch: string | null) => Promise<void>;
 }) {
   return (
     <ThreadView
@@ -201,6 +206,9 @@ function view(props: {
       onOpenWorkers={props.onOpenWorkers}
       handoffSource={props.handoffSource}
       onSelectThread={props.onSelectThread}
+      onSetPendingWorktree={props.onSetPendingWorktree}
+      listBaseBranches={props.listBaseBranches}
+      onSetBaseBranch={props.onSetBaseBranch}
     />
   );
 }
@@ -326,6 +334,7 @@ describe("sync pill", () => {
       }),
     );
     await m.flush();
+    await m.click(m.query("[data-thread-details-btn]"));
     assert.equal(m.query("[data-sync-pill]"), null);
     m.unmount();
   });
@@ -349,6 +358,7 @@ describe("sync pill", () => {
         view({ gitFetch: async () => {}, gitSyncInfo: async () => info }),
       );
       await m.flush();
+      await m.click(m.query("[data-thread-details-btn]"));
       const pill = m.query("[data-sync-pill]");
       assert.ok(pill, `pill visible for ${label}`);
       assert.equal((pill!.textContent || "").trim(), label);
@@ -356,7 +366,7 @@ describe("sync pill", () => {
     }
   });
 
-  it("fetches on mount and refetches then re-reads on click", async () => {
+  it("fetches when Thread details opens, then refetches and re-reads on click", async () => {
     const calls: string[] = [];
     const m = await mount(
       view({
@@ -370,6 +380,7 @@ describe("sync pill", () => {
       }),
     );
     await m.flush();
+    await m.click(m.query("[data-thread-details-btn]"));
     assert.ok(calls.includes("fetch"), "fetch on mount");
     assert.ok(calls.includes("syncInfo"), "sync read on mount");
     const fetches = calls.filter((c) => c === "fetch").length;
@@ -433,15 +444,16 @@ describe("header no longer hosts Environment actions", () => {
   });
 });
 
-describe("worktree in the thread topbar (#680)", () => {
+describe("worktree in Thread details (#680)", () => {
   it("is hidden until the worktree handlers are wired", async () => {
     const m = await mount(view({}));
     await m.flush();
+    assert.equal(m.query("[data-thread-details-btn]"), null, "nothing to show, no details button");
     assert.equal(m.query("[data-worktree-control]"), null);
     m.unmount();
   });
 
-  it("shows Merge onto destination in the header when the thread has a worktree", async () => {
+  it("shows Merge onto destination in Thread details when the thread has a worktree", async () => {
     const merges: number[] = [];
     const m = await mount(
       view({
@@ -453,17 +465,18 @@ describe("worktree in the thread topbar (#680)", () => {
       }),
     );
     await m.flush();
+    await m.click(m.query("[data-thread-details-btn]"));
     const header = m.query("[data-thread-header]");
     assert.ok(header, "thread header present");
     const merge = header!.querySelector("[data-worktree-merge]");
-    assert.ok(merge, "Merge lives in the topbar");
+    assert.ok(merge, "Merge lives in Thread details");
     assert.equal((merge!.textContent || "").trim(), "Merge onto repo default");
     await m.click(merge);
     assert.equal(merges.length, 1);
     m.unmount();
   });
 
-  it("shows Set up worktree in the header when the thread has none", async () => {
+  it("shows Set up worktree in Thread details when the thread has none", async () => {
     const m = await mount(
       view({
         detail: detail({ thread: thread({ worktreePath: null }) }),
@@ -473,13 +486,14 @@ describe("worktree in the thread topbar (#680)", () => {
       }),
     );
     await m.flush();
+    await m.click(m.query("[data-thread-details-btn]"));
     const setup = m.query("[data-worktree-setup]");
     assert.ok(setup);
     assert.ok(m.query("[data-thread-header]")!.contains(setup));
     m.unmount();
   });
 
-  it("shows the recorded stacked base on the header worktree control (#187)", async () => {
+  it("shows the recorded stacked base on the worktree control (#187)", async () => {
     const m = await mount(
       view({
         detail: detail({ thread: thread({ baseBranch: "stacked-base" }) }),
@@ -489,15 +503,16 @@ describe("worktree in the thread topbar (#680)", () => {
       }),
     );
     await m.flush();
+    await m.click(m.query("[data-thread-details-btn]"));
     const header = m.query("[data-thread-header]");
     assert.ok(header, "thread header present");
     const stacked = header!.querySelector("[data-stacked-base]");
-    assert.ok(stacked, "stacked-base label lives in the header");
+    assert.ok(stacked, "stacked-base label is shown");
     assert.equal((stacked!.textContent || "").trim(), "stacked-base");
     m.unmount();
   });
 
-  it("names the merge destination on the header button (#954)", async () => {
+  it("names the merge destination on the Merge button (#954)", async () => {
     const m = await mount(
       view({
         detail: detail({ thread: thread({ baseBranch: "release" }) }),
@@ -507,6 +522,7 @@ describe("worktree in the thread topbar (#680)", () => {
       }),
     );
     await m.flush();
+    await m.click(m.query("[data-thread-details-btn]"));
     const merge = m.query("[data-thread-header] [data-worktree-merge]");
     assert.ok(merge);
     assert.equal((merge!.textContent || "").trim(), "Merge onto release");
@@ -536,6 +552,7 @@ describe("worktree in the thread topbar (#680)", () => {
       }),
     );
     await m.flush();
+    await m.click(m.query("[data-thread-details-btn]"));
     const leadBtn = m.query("[data-thread-header] [data-crew-lead]");
     assert.ok(leadBtn, "crew workers get an Integrate from lead control");
     await m.click(leadBtn);
@@ -556,9 +573,105 @@ describe("worktree in the thread topbar (#680)", () => {
       }),
     );
     await m.flush();
+    await m.click(m.query("[data-thread-details-btn]"));
     const stacked = m.query("[data-thread-header] [data-stacked-base]");
     assert.ok(stacked, "unset threads still name the merge base");
     assert.equal((stacked!.textContent || "").trim(), "repo default");
+    m.unmount();
+  });
+});
+
+describe("draft workspace strip under the composer", () => {
+  const draft = () =>
+    detail({ thread: thread({ worktreePath: null, branch: null }), messages: [] });
+
+  it("lets a draft pick New worktree and a base branch, then names them", async () => {
+    const calls: unknown[] = [];
+    let current = draft();
+    const m = await mount(
+      view({
+        detail: current,
+        onSetPendingWorktree: async (id, worktree) => {
+          calls.push(["worktree", id, worktree]);
+        },
+        listBaseBranches: async () => ({ defaultBranch: "main", branches: ["main", "release"] }),
+        onSetBaseBranch: async (id, base) => {
+          calls.push(["base", id, base]);
+        },
+      }),
+    );
+    await m.flush();
+    const trigger = m.query("[data-workspace-trigger]");
+    assert.ok(trigger, "strip renders on a draft");
+    assert.equal(trigger!.getAttribute("data-workspace-trigger"), "local");
+    assert.equal(m.query("[data-workspace-base]"), null, "no base picker for Local checkout");
+    await m.click(trigger);
+    await m.click(m.query('[data-workspace-option="worktree"]'));
+    assert.deepEqual(calls, [["worktree", "t1", true]]);
+
+    current = detail({ ...current, thread: { ...current.thread, pendingWorktree: true } });
+    await m.rerender(
+      view({
+        detail: current,
+        onSetPendingWorktree: async () => {},
+        listBaseBranches: async () => ({ defaultBranch: "main", branches: ["main", "release"] }),
+        onSetBaseBranch: async (id, base) => {
+          calls.push(["base", id, base]);
+        },
+      }),
+    );
+    await m.flush();
+    const base = m.query("[data-workspace-base]");
+    assert.ok(base, "base picker for New worktree");
+    assert.match(base!.textContent ?? "", /From main/);
+    await m.click(base);
+    await m.flush();
+    await m.click(m.query('[data-workspace-base-option="release"]'));
+    assert.deepEqual(calls.at(-1), ["base", "t1", "release"]);
+    m.unmount();
+  });
+
+  it("is gone once the thread has a user message", async () => {
+    const m = await mount(
+      view({
+        detail: detail({
+          thread: thread({ worktreePath: null }),
+          messages: [msg({ id: "u1", role: "user", text: "go" })],
+        }),
+        onSetPendingWorktree: async () => {},
+      }),
+    );
+    await m.flush();
+    assert.equal(m.query("[data-workspace-strip]"), null);
+    m.unmount();
+  });
+
+  it("is gone once a worktree exists", async () => {
+    const m = await mount(
+      view({ detail: detail({ messages: [] }), onSetPendingWorktree: async () => {} }),
+    );
+    await m.flush();
+    assert.equal(m.query("[data-workspace-strip]"), null);
+    m.unmount();
+  });
+
+  it("shows a pending worktree in Thread details instead of Set up worktree", async () => {
+    const m = await mount(
+      view({
+        detail: detail({
+          thread: thread({ worktreePath: null, pendingWorktree: true, baseBranch: "release" }),
+        }),
+        onSetupWorktree: async () => {},
+        onMergeWorktree: async () => {},
+        onRemoveWorktree: async () => {},
+      }),
+    );
+    await m.flush();
+    await m.click(m.query("[data-thread-details-btn]"));
+    assert.equal(m.query("[data-worktree-setup]"), null);
+    const pending = m.query('[data-worktree-control="pending"]');
+    assert.ok(pending);
+    assert.match(pending!.textContent ?? "", /Worktree on first send · from release/);
     m.unmount();
   });
 });
@@ -699,15 +812,29 @@ describe("Views menu pane workspace (issue #552)", () => {
     m.unmount();
   });
 
-  it("opens an unshipped pane type as a placeholder slot", async () => {
+  it("keeps unbuilt pane types out of the Views menu", async () => {
     const m = await mount(view({}));
     await m.flush();
     await m.click(m.query("[data-views-btn]"));
-    await m.click(m.query("[data-views-item='files']"));
-    assert.ok(
-      m.query("[data-pane-placeholder='files']"),
-      "files registers as a pane even before it is built",
-    );
+    for (const type of ["files", "tasks", "subagent"]) {
+      assert.equal(m.query(`[data-views-item='${type}']`), null, `${type} is not offered`);
+    }
+    assert.ok(m.query("[data-views-item='diff']"), "Git is offered");
+    m.unmount();
+  });
+
+  it("toggles the terminal pane from the header", async () => {
+    const m = await mount(view({}));
+    await m.flush();
+    const toggle = m.query("[data-terminal-toggle]");
+    assert.ok(toggle);
+    assert.equal(toggle!.getAttribute("aria-pressed"), "false");
+    await m.click(toggle);
+    assert.ok(m.query("[data-terminal-pane]"), "terminal pane opens");
+    assert.equal(m.query("[data-terminal-toggle]")!.getAttribute("aria-pressed"), "true");
+    await m.click(m.query("[data-terminal-toggle]"));
+    assert.equal(m.query("[data-terminal-pane]"), null, "second click closes it");
+    assert.equal(m.query("[data-terminal-toggle]")!.getAttribute("aria-pressed"), "false");
     assert.ok(m.query("[data-pane-chat]"), "chat stays");
     m.unmount();
   });
@@ -924,10 +1051,11 @@ describe("breadcrumb new thread (issue #445)", () => {
   });
 });
 
-describe("header quick actions (#153)", () => {
+describe("project quick actions in Thread details (#153)", () => {
   it("hides the command row when the project has none", async () => {
     const m = await mount(view({ onRunCommand: async () => {} }));
     await m.flush();
+    assert.equal(m.query("[data-thread-details-btn]"), null, "nothing to show, no details button");
     assert.equal(m.query("[data-thread-commands]"), null);
     m.unmount();
   });
@@ -950,6 +1078,7 @@ describe("header quick actions (#153)", () => {
       }),
     );
     await m.flush();
+    await m.click(m.query("[data-thread-details-btn]"));
     assert.ok(m.query("[data-thread-commands]"));
     assert.ok(m.query('[data-thread-command="setup"]'));
     assert.equal(
@@ -980,6 +1109,7 @@ describe("header quick actions (#153)", () => {
       }),
     );
     await m.flush();
+    await m.click(m.query("[data-thread-details-btn]"));
     await m.click(m.query('[data-thread-command="setup"]'));
     await m.flush();
     const err = m.query("[data-thread-command-error]");

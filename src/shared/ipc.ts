@@ -4061,6 +4061,16 @@ export interface CoderApi {
       baseBranch?: string | null;
     }): Promise<ThreadInfo>;
     /**
+     * Draft workspace choice: arm (`worktree: true`) or drop the lazy
+     * worktree before the first send. Refused once the thread has a
+     * worktree or a user message, and when arming on a project that can't
+     * host one. Never bumps updatedAt.
+     */
+    setPendingWorktree(input: {
+      threadId: string;
+      worktree: boolean;
+    }): Promise<ThreadInfo>;
+    /**
      * Retarget an idle orchestration worker onto the lead's current
      * committed HEAD. Updates `leadSnapshotSha` only — never `baseBranch`.
      */

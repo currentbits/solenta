@@ -371,7 +371,7 @@ describe("worktree GC unmerged candidates (#601)", () => {
 });
 
 describe("worktree usage header (#559)", () => {
-  it("renders the rollup in the sidebar without opening the GC dialog", async () => {
+  it("keeps the worktree rollup out of the sidebar", async () => {
     const p1 = project({ id: "p1", name: "ledger", path: "/tmp/ledger" });
     const t1 = thread({
       id: "t1",
@@ -398,27 +398,10 @@ describe("worktree usage header (#559)", () => {
       }),
     });
     const m = await boot(fake);
-    const usage = m.query("[data-worktree-usage]");
-    assert.ok(usage, "sidebar must show a worktree usage line");
-    assert.match(usage.textContent ?? "", /worktrees · 2/);
+    // The sidebar no longer carries a "worktrees · N" chip (#1409); the
+    // rollup lives in Settings → Git, which the GC tests above cover.
+    assert.equal(m.query("[data-worktree-usage]"), null);
     assert.equal(m.query("[data-gc-dialog]"), null, "GC dialog is not open");
-    assert.equal(
-      m.query("[data-worktree-gc]"),
-      null,
-      "Settings GC section is not open yet",
-    );
-
-    await m.click(usage);
-    await m.flush();
-    assert.ok(
-      m.query("[data-worktree-gc]"),
-      "clicking the line opens Settings → Worktrees",
-    );
-    assert.equal(
-      m.query("[data-gc-dialog]"),
-      null,
-      "cleanup dialog stays closed",
-    );
     m.unmount();
   });
 });

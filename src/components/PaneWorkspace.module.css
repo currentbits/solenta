@@ -149,8 +149,9 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  width: 28px;
   height: 28px;
-  padding: 0 9px;
+  padding: 0;
   border: none;
   border-radius: var(--radius-sm);
   background: transparent;

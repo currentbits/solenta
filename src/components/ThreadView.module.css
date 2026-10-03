@@ -3461,3 +3461,155 @@ a.menuItem {
     display: contents;
   }
 }
+
+/* Thread details: worktree, sandbox, context, sync, notes and project
+   commands live here instead of crowding the header row. */
+.detailsWrap {
+  position: relative;
+}
+
+.detailsCard {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 20;
+  width: min(380px, calc(100vw - 32px));
+  padding: 4px 12px 12px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-pop);
+  display: flex;
+  flex-direction: column;
+}
+
+.detailsHeading {
+  padding: 10px 0 6px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-dim);
+}
+
+.detailsRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0;
+  min-width: 0;
+}
+
+.detailsRow:empty {
+  display: none;
+}
+
+.detailsCard .quickActions {
+  max-width: none;
+  flex-wrap: wrap;
+  overflow: visible;
+}
+
+/* A section whose rows all rendered nothing (no upstream, no commands)
+   drops its heading too. */
+.detailsSection:not(:has(.detailsRow:not(:empty))) {
+  display: none;
+}
+
+/* In the card the header's joined split-button becomes two stacked
+   controls: the full branch pill, then Merge on its own line. */
+.detailsRow:has([data-worktree-control]) > * {
+  flex: 1;
+  min-width: 0;
+}
+
+.detailsCard [data-worktree-control="ready"] {
+  flex: 1;
+  flex-wrap: wrap;
+  gap: 8px;
+  height: auto;
+  border: none;
+  background: transparent;
+}
+
+.detailsCard [data-worktree-control="ready"] > :first-child {
+  flex: 1 0 100%;
+  height: 30px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+
+.detailsCard [data-worktree-menu] {
+  max-width: none;
+  flex: 1;
+}
+
+.detailsCard [data-worktree-merge] {
+  height: 28px;
+  max-width: none;
+  border-left: none;
+  border-radius: var(--radius-sm);
+}
+
+/* Calm stream (#1409): per-message actions show on hover or keyboard
+   focus; touch screens (no hover) keep them visible. */
+.msgActions {
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+
+*:hover > .msgMeta .msgActions,
+.msgMeta:focus-within .msgActions {
+  opacity: 1;
+}
+
+@media (hover: none) {
+  .msgActions {
+    opacity: 1;
+  }
+}
+
+/* Suggested work: Start stays visible; File / Dismiss appear on hover. */
+.suggestedRow:not(:hover):not(:focus-within)
+  [data-suggestion-action="file"],
+.suggestedRow:not(:hover):not(:focus-within)
+  [data-suggestion-action="dismiss"] {
+  opacity: 0;
+}
+
+@media (hover: none) {
+  .suggestedRow [data-suggestion-action] {
+    opacity: 1;
+  }
+}
+
+/* T3-style header toggles (terminal pane, right panel): ghost squares. */
+.toggleBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  transition:
+    background-color 0.12s ease,
+    color 0.12s ease;
+}
+
+.toggleBtn:hover {
+  background: var(--card-hover);
+  color: var(--text);
+}
+
+.toggleBtn[data-active="true"] {
+  background: var(--card);
+  color: var(--text);
+}
+
+.toggleBtn:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}

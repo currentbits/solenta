@@ -10,7 +10,7 @@
  */
 import assert from "node:assert/strict";
 import fs from "node:fs";
-import { afterEach, describe, it } from "node:test";
+import { afterEach, beforeEach, describe, it } from "node:test";
 import { dismissContextMenu } from "../src/contextMenuFallback";
 import * as React from "react";
 import { inAct, mount } from "./support/dom";
@@ -64,6 +64,15 @@ const providers: ProviderInfo[] = [
 const FRESH = Date.now();
 const DAY_MS = 24 * 60 * 60 * 1000;
 
+// Card-anatomy tests render working threads; the Working shelf folds them
+// by default, so open it here and test the fold on its own.
+beforeEach(async () => {
+  const shell = await mount(<div />);
+  window.localStorage.setItem("sidebar:workingOpen", "1");
+  window.localStorage.setItem("sidebar:filtersOpen", "1");
+  shell.unmount();
+});
+
 afterEach(() => {
   dismissContextMenu();
   try {
@@ -71,6 +80,8 @@ afterEach(() => {
     if (!ls) return;
     for (const k of [
       "sidebar:projectScope",
+      "sidebar:workingOpen",
+      "sidebar:filtersOpen",
       "sidebar:snoozedOpen",
       "sidebar:settledOpen",
       "sidebar:statusFilter",
@@ -402,6 +413,8 @@ async function openCreateMenu(
 async function clearSidebarStorage(): Promise<void> {
   const shell = await mount(<div />);
   window.localStorage.clear();
+  window.localStorage.setItem("sidebar:workingOpen", "1");
+  window.localStorage.setItem("sidebar:filtersOpen", "1");
   shell.unmount();
 }
 
@@ -424,6 +437,22 @@ describe("t3 paging constants are fixed facts", () => {
 });
 
 describe("Sidebar is a flat list (no project groups)", () => {
+  it("folds quietly working threads into a collapsed Working shelf", async () => {
+    await clearSidebarStorage();
+    window.localStorage.removeItem("sidebar:workingOpen");
+    const m = await mount(sidebar(THREADS, { projects: [p1, p2] }));
+    const toggle = m.query("[data-working-shelf-toggle]")!;
+    assert.ok(toggle, "Working shelf renders");
+    assert.equal(toggle.getAttribute("aria-expanded"), "false");
+    assert.match(toggle.textContent ?? "", /^Working \(\d+\)/);
+    assert.ok(!cardTitles(m).includes("busy"), "busy is folded away");
+    assert.ok(cardTitles(m).includes("finished"), "done stays in the inbox");
+    await m.click(toggle);
+    assert.ok(cardTitles(m).includes("busy"), "expanding shows busy");
+    assert.equal(window.localStorage.getItem("sidebar:workingOpen"), "1");
+    m.unmount();
+  });
+
   it("retires group chrome and paints a slug on every card", async () => {
     await clearSidebarStorage();
     const m = await mount(sidebar(THREADS, { projects: [p1, p2] }));
@@ -438,7 +467,7 @@ describe("Sidebar is a flat list (no project groups)", () => {
     );
 
     const ids = cardTitles(m);
-    assert.ok(ids.includes("busy"), "working stays in the active list");
+    assert.ok(ids.includes("busy"), "working shows on the open Working shelf");
     assert.ok(ids.includes("finished"), "fresh done stays visible (not settled)");
     assert.ok(ids.includes("broken"), "failed stays visible");
     assert.ok(ids.includes("billing-idle"), "other project's attention shows");
@@ -1127,7 +1156,7 @@ describe("Sidebar filter columns (#746)", () => {
     return css.match(new RegExp(`\\.${className}(?![\\w-])\\s*\\{([^}]*)\\}`))?.[1] ?? "";
   }
 
-  it("keeps filter columns on 3 tracks and app nav on one short row", async () => {
+  it("keeps filter columns on 3 tracks and app nav as footer icons", async () => {
     await clearSidebarStorage();
     const m = await mount(
       sidebar(THREADS, {
@@ -1138,9 +1167,9 @@ describe("Sidebar filter columns (#746)", () => {
       }),
     );
     const filters = m.query("[data-filter-row]");
-    const nav = filters?.parentElement?.querySelector("nav[aria-label='App']");
+    const nav = m.query("footer nav[aria-label='App']");
     assert.ok(filters, "filter row");
-    assert.ok(nav, "app nav sits with the filter row");
+    assert.ok(nav, "app nav sits in the footer beside Settings");
     assert.equal(filters!.children.length, 3, "three filter columns");
     assert.deepEqual(
       [...nav!.querySelectorAll(":scope > [data-view-nav]")].map((el) =>
@@ -1508,7 +1537,7 @@ describe("Sidebar remove + edit project (scope menu)", () => {
     }),
   ];
 
-  it("exposes edit + remove per project inside the scope menu, plus New project", async () => {
+  it("exposes edit + remove per project and New project inside the scope menu", async () => {
     await clearSidebarStorage();
     const m = await mount(
       sidebar(removeThreads, {
@@ -1518,8 +1547,9 @@ describe("Sidebar remove + edit project (scope menu)", () => {
         onAddProject: () => {},
       }),
     );
-    assert.ok(m.query("[data-new-project]"), "New project sits outside the menu");
+    assert.equal(m.query("[data-new-project]"), null, "no standalone New project row");
     await openScopeMenu(m);
+    assert.ok(m.query("[data-new-project]"), "New project sits in the scope menu");
     assert.ok(m.query('[data-scope-edit="p1"]'));
     assert.ok(m.query('[data-scope-edit="p2"]'));
     assert.ok(m.query('[data-project-remove="p1"]'));

@@ -10,7 +10,7 @@
  */
 import assert from "node:assert/strict";
 import { describe, it, afterEach } from "node:test";
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { mount, unmountAll, inAct } from "./support/dom.ts";
 import { Composer } from "../src/components/Composer";
 import {
@@ -192,8 +192,7 @@ function composer(
     reasoningEffort?: ReasoningEffort | null;
     webSearch?: boolean;
     sessionId?: string | null;
-    branch?: string | null;
-    hasWorktree?: boolean;
+    workspaceStrip?: ReactNode;
     disabled?: boolean;
     busy?: boolean;
     ask?: boolean;
@@ -212,7 +211,6 @@ function composer(
   return (
     <Composer
       threadId={over.threadId ?? "t1"}
-      branch={over.branch === undefined ? "agentmux/abc" : over.branch}
       permissionMode={over.permissionMode ?? "default"}
       teach={over.teach}
       onPermissionModeChange={(mode) => {
@@ -256,7 +254,7 @@ function composer(
       })}
       onRemoveWorkflow={async () => {}}
       sessionId={over.sessionId === undefined ? null : over.sessionId}
-      hasWorktree={over.hasWorktree ?? true}
+      workspaceStrip={over.workspaceStrip}
       disabled={over.disabled ?? false}
       busy={over.busy ?? false}
       onSend={(prompt, _attachments, opts) => {
@@ -2450,47 +2448,24 @@ describe("Composer while a run is active (busy)", () => {
 });
 
 describe("Composer value displays (null-safe)", () => {
-  it("renders session short form and omits the chip when session is null", async () => {
+  it("drops the session / Project / branch chips; branch lives in Thread details", async () => {
     const h = makeHarness();
-    const withSess = await mount(
-      composer(h, { sessionId: "abcdef0123456789" }),
-    );
-    assert.ok(
-      withSess.text().includes("abcdef01"),
-      "session chip must show the short id",
-    );
-    assert.ok(
-      !withSess.text().includes("abcdef0123456789"),
-      "full session id must not dump into the meta row",
-    );
-    withSess.unmount();
-
-    const noSess = await mount(composer(h, { sessionId: null }));
-    assert.ok(noSess.query("textarea"), "composer still mounts with null session");
-    assert.ok(
-      !noSess.text().includes("abcdef01"),
-      "null session must not leave a stale chip",
-    );
-    noSess.unmount();
+    const m = await mount(composer(h, { sessionId: "abcdef0123456789" }));
+    assert.ok(m.query("textarea"));
+    assert.ok(!m.text().includes("abcdef01"), "no session chip");
+    assert.ok(!m.text().includes("Worktree") && !m.text().includes("Project"), "no workspace chip");
+    assert.equal(m.query("[data-composer-workspace]"), null, "no footer without a strip");
+    m.unmount();
   });
 
-  it("survives null branch and never invents a main chip", async () => {
+  it("renders the draft workspace strip slot when one is passed", async () => {
     const h = makeHarness();
-    const m = await mount(composer(h, { branch: null }));
-    assert.ok(
-      !m.text().includes("High · 1M"),
-      "decorative effort pill must not reappear",
+    const m = await mount(
+      composer(h, { workspaceStrip: <span data-test-strip="">strip</span> }),
     );
-    assert.ok(
-      m.text().includes("Worktree") || m.text().includes("Project"),
-      "the composer states where the work will land",
-    );
-    assert.ok(m.query("textarea"), "null branch must not crash the composer");
-    assert.equal(
-      m.text().includes("main"),
-      false,
-      "a null branch must not invent a default chip",
-    );
+    const slot = m.query("[data-composer-workspace]");
+    assert.ok(slot, "footer slot renders");
+    assert.ok(slot!.querySelector("[data-test-strip]"));
     m.unmount();
   });
 });

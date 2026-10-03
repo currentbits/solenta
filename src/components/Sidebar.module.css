@@ -115,45 +115,10 @@
   flex-shrink: 0;
 }
 
-.scopeRow {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  margin: 0 8px 6px;
-  flex-shrink: 0;
-}
-
 .scopeMenuHost {
   flex: 1;
   min-width: 0;
   position: relative;
-}
-
-.scopeTrigger {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  width: 100%;
-  min-width: 0;
-  height: 32px;
-  padding: 0 8px;
-  border-radius: var(--radius-sm);
-  color: var(--text);
-  font-size: 13px;
-  font-weight: 500;
-  text-align: left;
-}
-
-.scopeTrigger:hover {
-  background: var(--card-hover);
-}
-
-.scopeLabel {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .scopeItemRow {
@@ -191,22 +156,6 @@
   font-weight: 650;
   letter-spacing: 0.03em;
   line-height: 16px;
-}
-
-.worktreeUsage {
-  flex-shrink: 0;
-  height: 32px;
-  padding: 0 8px;
-  border-radius: var(--radius-sm);
-  color: var(--text-muted);
-  font-size: 12px;
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-}
-
-.worktreeUsage:hover {
-  background: var(--card-hover);
-  color: var(--text);
 }
 
 .viewRow {
@@ -618,8 +567,6 @@
   border-bottom-left-radius: var(--radius-sm);
   pointer-events: none;
 }
-
-
 
 .card[data-unread="true"] .cardTitle {
   font-weight: 600;
@@ -1717,20 +1664,6 @@
   cursor: default;
 }
 
-.footerAdd {
-  width: 32px;
-  height: 32px;
-  border-radius: var(--radius-sm);
-  display: grid;
-  place-items: center;
-  color: var(--text-muted);
-}
-
-.footerAdd:hover {
-  background: var(--card-hover);
-  color: var(--text);
-}
-
 @media (prefers-reduced-motion: reduce) {
   .card,
   .slimRow,
@@ -1749,11 +1682,78 @@
 
 @media (hover: hover) and (pointer: fine) {
   .iconBtn:active:not(:disabled),
-  .scopeTrigger:active,
   .viewTrigger:active,
   .filterTrigger:active,
   .caretBtn:active,
   .batchBtn:active {
     transform: scale(0.97);
   }
+}
+
+/* T3 inbox: Working / Snoozed / Settled sit at the foot of a short list. */
+.shelves {
+  display: flex;
+  flex-direction: column;
+  margin-top: auto;
+}
+
+/* Calm sidebar (#1409): one search row — filter toggle, project scope and
+   New thread sit beside the field; the filter rows fold into a bar. */
+.searchRow .iconBtn {
+  width: 26px;
+  height: 26px;
+}
+
+.searchRow .iconBtn[data-active="true"] {
+  color: var(--blue);
+}
+
+.searchRow .scopeMenuHost {
+  flex: 0 0 auto;
+}
+
+.filterBar {
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+}
+
+/* App destinations live in the footer as icons beside Settings. */
+.footerRow .settings {
+  flex: 0 0 auto;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  justify-content: center;
+}
+
+.footerRow .viewNav {
+  margin: 0 auto 0 0;
+  gap: 2px;
+}
+
+.footerRow .viewNavBtn,
+.footerRow .viewNavMore {
+  flex: 0 0 auto;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+}
+
+/* Anchor to the footer row, not the 30px icon, so it never clips. */
+.footerRow {
+  position: relative;
+}
+
+.footerRow .viewNav .filterMenuHost {
+  position: static;
+}
+
+.appMoreMenuUp {
+  top: auto;
+  bottom: 100%;
+  margin-top: 0;
+  margin-bottom: 4px;
+  left: 0;
+  right: auto;
 }

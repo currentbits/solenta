@@ -17,7 +17,9 @@ import { TerminalPane, type TerminalApi } from "./TerminalPane";
 import { BrowserPane } from "./BrowserPane";
 import { SimulatorPane } from "./SimulatorPane";
 import { useWorktreeChrome } from "./WorktreeControl";
+import { WorkspaceStrip } from "./WorkspaceStrip";
 import {
+  closePane,
   defaultPaneLayout,
   findLeaf,
   firstLeafId,
@@ -762,6 +764,11 @@ interface ThreadViewProps {
     threadId: string,
     baseBranch: string | null,
   ) => void | Promise<void>;
+  /** Right (agents) panel state + toggle for the header button (⌘.). */
+  agentsPanelOpen?: boolean;
+  onToggleAgentsPanel?: () => void;
+  /** Draft workspace strip: arm or drop the lazy worktree before first send. */
+  onSetPendingWorktree?: (threadId: string, worktree: boolean) => Promise<void>;
   /** Unmerged worktree files plus capped conflict-marker snippets. */
   conflictContext?: (threadId: string) => Promise<ConflictContext>;
   /** Open the thread worktree in the configured editor. */
@@ -4501,6 +4508,9 @@ export const ThreadView = memo(function ThreadView({
   onRemoveWorktree,
   listBaseBranches,
   onSetBaseBranch,
+  onSetPendingWorktree,
+  agentsPanelOpen,
+  onToggleAgentsPanel,
   conflictContext,
   onOpenWorktree,
   onOpenCrewIntegration,
@@ -4544,6 +4554,8 @@ export const ThreadView = memo(function ThreadView({
   const prevThreadId = useRef<string | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const [menuOpen, setMenuOpen] = useState(false);
+  const detailsRef = useRef<HTMLDivElement>(null);
+  const [detailsOpen, setDetailsOpen] = useState(false);
   const [deleteConfirm, setDeleteConfirm] = useState(false);
   const [renaming, setRenaming] = useState(false);
   const [renameDraft, setRenameDraft] = useState("");
@@ -5840,6 +5852,7 @@ export const ThreadView = memo(function ThreadView({
       prevThreadId.current = id;
       stickToBottom.current = true;
       setMenuOpen(false);
+      setDetailsOpen(false);
       setDeleteConfirm(false);
       setContextOpen(false);
       setRenaming(false);
@@ -5944,6 +5957,16 @@ export const ThreadView = memo(function ThreadView({
     },
     [layout, focusedId, applyLayout, onViewChanges, onPanesNeedRoom],
   );
+
+  const terminalLeaf = leaves(layout).find((l) => l.type === "terminal") ?? null;
+  const handleToggleTerminal = useCallback(() => {
+    if (!terminalLeaf) {
+      handleOpenPane("terminal");
+      return;
+    }
+    const next = closePane(layout, terminalLeaf.id);
+    if (next.closed) applyLayout(next.layout, next.focusId);
+  }, [terminalLeaf, layout, applyLayout, handleOpenPane]);
 
   const handleResetLayout = useCallback(() => {
     const next = defaultPaneLayout();
@@ -6060,6 +6083,21 @@ export const ThreadView = memo(function ThreadView({
     setDeleteConfirm(false);
   }, []);
   useEscapeClose(menuOpen, closeMenu);
+
+  useEffect(() => {
+    if (!detailsOpen) return;
+    const onDoc = (e: MouseEvent) => {
+      if (!detailsRef.current?.contains(e.target as Node)) setDetailsOpen(false);
+    };
+    document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, [detailsOpen]);
+  const closeDetails = useCallback(() => setDetailsOpen(false), []);
+  const ringWarn = ring?.view.warn === true;
+  useEffect(() => {
+    if (contextOpen && !ringWarn) setDetailsOpen(true);
+  }, [contextOpen, ringWarn]);
+  useEscapeClose(detailsOpen, closeDetails);
   useEscapeClose(restoreConfirm != null && !restorePending, () => {
     setRestoreConfirm(null);
   });
@@ -6488,6 +6526,26 @@ export const ThreadView = memo(function ThreadView({
     }, COPY_FLASH_MS);
   };
 
+  const hasVersionControl =
+    Boolean(gitSyncInfo && gitFetch) || headerCommands.length > 0;
+  const hasDetails =
+    Boolean(worktree.toolbar) ||
+    Boolean(thread.sandbox) ||
+    Boolean(ring && !ring.view.warn) ||
+    hasVersionControl;
+  // A warning ring stays in the header (compaction is close); otherwise the
+  // ring lives in Thread details.
+  const ringBadge = ring ? (
+    <ContextRingBadge
+      ring={ring.view}
+      segments={ring.segments}
+      used={ring.used}
+      open={contextOpen}
+      onOpenChange={setContextOpen}
+      onFork={onFork && !isWorking ? handleForkFresh : undefined}
+    />
+  ) : null;
+
   return (
     <PathLinkProvider
       threadId={detail.thread.id}
@@ -6571,18 +6629,34 @@ export const ThreadView = memo(function ThreadView({
           ) : null}
         </div>
         <div className={styles.headerTrail}>
-          {worktree.toolbar}
           <div className={styles.actions}>
-          {thread.sandbox && <SandboxBadge sandbox={thread.sandbox} />}
-          {ring && (
-            <ContextRingBadge
-              ring={ring.view}
-              segments={ring.segments}
-              used={ring.used}
-              open={contextOpen}
-              onOpenChange={setContextOpen}
-              onFork={onFork && !isWorking ? handleForkFresh : undefined}
-            />
+          {!thread.ask && (
+          <NextGitActionButton
+            thread={thread}
+            isWorking={isWorking}
+            remoteProject={Boolean(project?.remoteHost)}
+            changesOpen={changesOpen}
+            changesNonce={changesNonce}
+            syncRefreshNonce={syncRefreshNonce}
+            onFetchDiff={onFetchDiff}
+            gitSyncInfo={gitSyncInfo}
+            onViewChanges={onViewChanges}
+            onPush={onPush}
+            onCreatePr={onCreatePr}
+            loadPrTemplate={
+              project && onPrTemplate
+                ? () => onPrTemplate(project.path)
+                : undefined
+            }
+            onPrChecks={onPrChecks}
+            onPrMerge={onPrMerge}
+            onStartRun={onStartRun}
+            providerName={
+              providers.find((p) => p.id === thread.provider)?.name ??
+              thread.provider
+            }
+            onPushed={() => setSyncRefreshNonce((n) => n + 1)}
+          />
           )}
           {onStopSpec && thread.spec && !thread.ask && (
             <button
@@ -6631,70 +6705,97 @@ export const ThreadView = memo(function ThreadView({
               ) : null}
             </button>
           )}
-          {!thread.ask && (
-          <NextGitActionButton
-            thread={thread}
-            isWorking={isWorking}
-            remoteProject={Boolean(project?.remoteHost)}
-            changesOpen={changesOpen}
-            changesNonce={changesNonce}
-            syncRefreshNonce={syncRefreshNonce}
-            onFetchDiff={onFetchDiff}
-            gitSyncInfo={gitSyncInfo}
-            onViewChanges={onViewChanges}
-            onPush={onPush}
-            onCreatePr={onCreatePr}
-            loadPrTemplate={
-              project && onPrTemplate
-                ? () => onPrTemplate(project.path)
-                : undefined
-            }
-            onPrChecks={onPrChecks}
-            onPrMerge={onPrMerge}
-            onStartRun={onStartRun}
-            providerName={
-              providers.find((p) => p.id === thread.provider)?.name ??
-              thread.provider
-            }
-            onPushed={() => setSyncRefreshNonce((n) => n + 1)}
-          />
-          )}
-          {gitSyncInfo && gitFetch && (
-            <SyncPill
-              threadId={thread.id}
-              gitSyncInfo={gitSyncInfo}
-              gitFetch={gitFetch}
-              refreshNonce={syncRefreshNonce}
-            />
-          )}
-          {headerCommands.length > 0 ? (
-            <div className={styles.quickActions} data-thread-commands="">
-              {headerCommands.map((action) => {
-                const running = commandRunningId === action.id;
-                return (
-                  <button
-                    key={action.id}
-                    type="button"
-                    className={styles.btn}
-                    data-thread-command={action.id}
-                    title={action.command}
-                    disabled={isWorking || Boolean(commandRunningId)}
-                    onClick={() => runHeaderCommand(action.id)}
-                  >
-                    {running ? `${action.name}…` : action.name}
-                  </button>
-                );
-              })}
-              {commandError ? (
-                <span
-                  className={styles.commandError}
-                  data-thread-command-error=""
-                  role="alert"
-                >
-                  {commandError}
-                </span>
-              ) : null}
-            </div>
+          {ring?.view.warn ? ringBadge : null}
+          {hasDetails ? (
+          <div className={styles.detailsWrap} ref={detailsRef}>
+            <button
+              type="button"
+              className={styles.iconBtn}
+              data-thread-details-btn=""
+              data-active={detailsOpen ? "true" : undefined}
+              aria-haspopup="dialog"
+              aria-expanded={detailsOpen}
+              aria-label="Thread details"
+              title="Thread details"
+              onClick={() => setDetailsOpen((v) => !v)}
+            >
+              <svg
+                width="15"
+                height="15"
+                viewBox="0 0 16 16"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.5"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+              >
+                <circle cx="8" cy="8" r="5.75" />
+                <path d="M8 7.25v3.5M8 5.25h.01" />
+              </svg>
+            </button>
+            {detailsOpen && (
+              <div
+                className={styles.detailsCard}
+                role="dialog"
+                aria-label="Thread details"
+                data-thread-details=""
+              >
+                <section className={styles.detailsSection}>
+                  <div className={styles.detailsHeading}>Workspace</div>
+                  {worktree.toolbar ? (
+                    <div className={styles.detailsRow}>{worktree.toolbar}</div>
+                  ) : null}
+                  <div className={styles.detailsRow}>
+                    {thread.sandbox && <SandboxBadge sandbox={thread.sandbox} />}
+                    {ring && !ring.view.warn ? ringBadge : null}
+                  </div>
+                </section>
+                <section className={styles.detailsSection}>
+                  <div className={styles.detailsHeading}>Version control</div>
+                  <div className={styles.detailsRow}>
+                    {gitSyncInfo && gitFetch && (
+                      <SyncPill
+                        threadId={thread.id}
+                        gitSyncInfo={gitSyncInfo}
+                        gitFetch={gitFetch}
+                        refreshNonce={syncRefreshNonce}
+                      />
+                    )}
+                    {headerCommands.length > 0 ? (
+                      <div className={styles.quickActions} data-thread-commands="">
+                        {headerCommands.map((action) => {
+                          const running = commandRunningId === action.id;
+                          return (
+                            <button
+                              key={action.id}
+                              type="button"
+                              className={styles.btn}
+                              data-thread-command={action.id}
+                              title={action.command}
+                              disabled={isWorking || Boolean(commandRunningId)}
+                              onClick={() => runHeaderCommand(action.id)}
+                            >
+                              {running ? `${action.name}…` : action.name}
+                            </button>
+                          );
+                        })}
+                        {commandError ? (
+                          <span
+                            className={styles.commandError}
+                            data-thread-command-error=""
+                            role="alert"
+                          >
+                            {commandError}
+                          </span>
+                        ) : null}
+                      </div>
+                    ) : null}
+                  </div>
+                </section>
+              </div>
+            )}
+          </div>
           ) : null}
           <div className={styles.menuWrap} ref={menuRef}>
             <button
@@ -6913,11 +7014,63 @@ export const ThreadView = memo(function ThreadView({
           </div>
           </div>
           <div className={styles.headerDivider} aria-hidden />
+          <button
+            type="button"
+            className={styles.toggleBtn}
+            data-terminal-toggle=""
+            data-active={terminalLeaf ? "true" : undefined}
+            aria-pressed={Boolean(terminalLeaf)}
+            aria-label="Terminal"
+            title={terminalLeaf ? "Close terminal" : "Open terminal"}
+            onClick={handleToggleTerminal}
+          >
+            <svg
+              width="15"
+              height="15"
+              viewBox="0 0 16 16"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden="true"
+            >
+              <rect x="2.5" y="2.5" width="11" height="11" rx="2" />
+              <path d="M5 6.5 7 8.25 5 10M8.5 10.5H11" />
+            </svg>
+          </button>
           <ViewsMenu
             layout={layout}
             onOpen={handleOpenPane}
             onReset={handleResetLayout}
           />
+          {onToggleAgentsPanel ? (
+            <button
+              type="button"
+              className={styles.toggleBtn}
+              data-agents-panel-toggle=""
+              data-active={agentsPanelOpen ? "true" : undefined}
+              aria-pressed={Boolean(agentsPanelOpen)}
+              aria-label="Right panel"
+              title={`${agentsPanelOpen ? "Hide" : "Show"} right panel (⌘.)`}
+              onClick={onToggleAgentsPanel}
+            >
+              <svg
+                width="15"
+                height="15"
+                viewBox="0 0 16 16"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.5"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+              >
+                <rect x="2.5" y="2.5" width="11" height="11" rx="2" />
+                <path d="M10 2.5v11" />
+              </svg>
+            </button>
+          ) : null}
         </div>
       </header>
       {worktree.banner}
@@ -8017,7 +8170,6 @@ export const ThreadView = memo(function ThreadView({
 
       <Composer
         threadId={thread.id}
-        branch={thread.branch}
         permissionMode={thread.permissionMode}
         teach={thread.teach ?? null}
         ask={thread.ask === true}
@@ -8037,7 +8189,31 @@ export const ThreadView = memo(function ThreadView({
         workflowListError={workflowListError}
         onRetryWorkflows={onRetryWorkflows}
         sessionId={thread.sessionId}
-        hasWorktree={hasWorktree}
+        workspaceStrip={
+          onSetPendingWorktree &&
+          project &&
+          !project.remoteHost &&
+          !thread.worktreePath &&
+          !thread.ask &&
+          !thread.pendingFork &&
+          !thread.orchWorker &&
+          !detail.messages.some((m) => m.role === "user") ? (
+            <WorkspaceStrip
+              worktree={Boolean(thread.pendingWorktree)}
+              projectPath={project.path}
+              baseBranch={thread.baseBranch ?? null}
+              listBaseBranches={
+                listBaseBranches ? () => listBaseBranches(project.id) : undefined
+              }
+              onSetWorktree={(next) => onSetPendingWorktree(thread.id, next)}
+              onSetBaseBranch={
+                onSetBaseBranch
+                  ? (base) => Promise.resolve(onSetBaseBranch(thread.id, base))
+                  : undefined
+              }
+            />
+          ) : undefined
+        }
         disabled={isArchived}
         busy={isWorking}
         placeholder={

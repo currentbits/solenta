@@ -1,0 +1,167 @@
+.strip {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 30px;
+  padding: 2px 4px 0;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.anchor {
+  position: relative;
+  display: inline-flex;
+}
+
+.spacer {
+  flex: 1;
+}
+
+.trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 24px;
+  padding: 0 8px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-dim);
+  font: inherit;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.trigger:hover,
+.trigger[aria-expanded="true"] {
+  color: var(--text);
+  background: var(--card);
+}
+
+.trigger:focus-visible,
+.item:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.glyph {
+  flex-shrink: 0;
+}
+
+.chevron {
+  color: var(--text-dim);
+  opacity: 0.8;
+}
+
+.menu {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 0;
+  z-index: 30;
+  width: 290px;
+  padding: 5px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-modal);
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.menuRight {
+  left: auto;
+  right: 0;
+  width: 260px;
+}
+
+.menuLabel {
+  padding: 5px 8px 4px;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.item {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  padding: 7px 8px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 12.5px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.item:hover {
+  background: var(--card);
+  color: var(--text);
+}
+
+.item[aria-checked="true"] {
+  color: var(--text);
+}
+
+.itemText {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1;
+}
+
+.itemText small {
+  margin-top: 1px;
+  font-size: 11px;
+  color: var(--text-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.mono {
+  font-family: var(--mono);
+  font-size: 12px;
+}
+
+.check {
+  color: var(--blue);
+  flex-shrink: 0;
+}
+
+.filter {
+  margin: 2px 2px 4px;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+  font-size: 12.5px;
+}
+
+.branchList {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  max-height: 240px;
+  overflow-y: auto;
+}
+
+.empty {
+  margin: 0;
+  padding: 7px 8px;
+  color: var(--text-dim);
+}
+
+.error {
+  margin-left: 6px;
+  color: var(--danger);
+  font-size: 11.5px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
