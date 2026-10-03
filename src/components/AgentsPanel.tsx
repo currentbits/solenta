@@ -58,6 +58,7 @@ import type {
   HarnessInstallRequest,
   HarnessInstallResult,
   ThreadInfo,
+  ThreadSummariesInput,
   ThreadSummaryInfo,
   CrewTaskView,
   CrewIntegration as CrewIntegrationView,
@@ -204,7 +205,7 @@ interface AgentsPanelProps {
    */
   rosterKey?: string;
   /** threads:summaries passthrough powering the team view. */
-  listThreadSummaries?: () => Promise<ThreadSummaryInfo[]>;
+  listThreadSummaries?: (input?: ThreadSummariesInput) => Promise<ThreadSummaryInfo[]>;
   /** Shared crew task list (issue #277). Read-only; absent = no fetch. */
   listCrewTasks?: (
     threadId: string,
@@ -1530,7 +1531,7 @@ function RecapCard({
   listThreadSummaries,
 }: {
   thread: ThreadInfo | null;
-  listThreadSummaries?: () => Promise<ThreadSummaryInfo[]>;
+  listThreadSummaries?: (input?: ThreadSummariesInput) => Promise<ThreadSummaryInfo[]>;
 }) {
   const threadId = thread?.id ?? null;
   const threadStatus = thread?.status ?? null;
@@ -1544,7 +1545,7 @@ function RecapCard({
       setActivity(null);
       return;
     }
-    listThreadSummaries()
+    listThreadSummaries({ threadIds: [threadId] })
       .then((list) => {
         if (cancelled) return;
         const entry = Array.isArray(list)
@@ -2209,7 +2210,7 @@ export function GitTab({
   gitRepoInfo?: (threadId: string) => Promise<GitRepoInfo>;
   gitPull?: (threadId: string) => Promise<GitPullResult>;
   /** threads:summaries passthrough powering the Recap card. */
-  listThreadSummaries?: () => Promise<ThreadSummaryInfo[]>;
+  listThreadSummaries?: (input?: ThreadSummariesInput) => Promise<ThreadSummaryInfo[]>;
   claimLane?: (input: { threadId: string }) => Promise<MergeLaneClaim>;
   listLanes?: (input: { projectId: string }) => Promise<MergeLaneInfo[]>;
   previewLane?: (input: {
@@ -2898,7 +2899,7 @@ export function AgentsContent({
   usage: SessionUsage | null;
   providers: ProviderInfo[];
   rosterKey?: string;
-  listThreadSummaries?: () => Promise<ThreadSummaryInfo[]>;
+  listThreadSummaries?: (input?: ThreadSummariesInput) => Promise<ThreadSummaryInfo[]>;
   listCrewTasks?: (
     threadId: string,
   ) => Promise<{ rootThreadId: string; tasks: CrewTaskView[] }>;
@@ -2927,8 +2928,9 @@ export function AgentsContent({
   // stream event; lastActivity is kept fresh by a slow poll while something is
   // working. Null when no fetcher.
   // ponytail: poll, not per-event; summaries walk every thread's messages.
+  const summaryProjectId = thread?.projectId ?? null;
   useEffect(() => {
-    if (!listThreadSummaries) {
+    if (!listThreadSummaries || !summaryProjectId) {
       setSummaries(null);
       return;
     }
@@ -2937,7 +2939,8 @@ export function AgentsContent({
       // Summaries walk every thread's messages in main; a hidden window
       // can't show the team view, so don't pay for it.
       if (document.hidden) return;
-      listThreadSummaries()
+      // Same-project rows cover the team, the wait line and lead detection.
+      listThreadSummaries({ projectId: summaryProjectId })
         .then((list) => {
           if (!cancelled) setSummaries(list);
         })
@@ -2954,7 +2957,7 @@ export function AgentsContent({
       cancelled = true;
       if (id !== null) window.clearInterval(id);
     };
-  }, [listThreadSummaries, rosterKey]);
+  }, [listThreadSummaries, rosterKey, summaryProjectId]);
 
   const [crewTasks, setCrewTasks] = useState<CrewTaskView[]>([]);
   useEffect(() => {

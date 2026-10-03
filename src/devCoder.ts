@@ -99,6 +99,7 @@ import type {
   ThreadDetail,
   ThreadInfo,
   ThreadMessagePin,
+  ThreadSummariesInput,
   TrashedThreadInfo,
   CrewTaskView,
   CrewIntegration,
@@ -3767,8 +3768,11 @@ function buildDevCoder(): CoderApi {
         return threads.map((t) => ({ ...t }));
       },
       /** Team-view rows: newest assistant line per thread. */
-      async summaries() {
-        return threads.map((t) => {
+      async summaries(input?: ThreadSummariesInput) {
+        return threads
+          .filter((t) => !input?.projectId || t.projectId === input.projectId)
+          .filter((t) => !input?.threadIds || input.threadIds.includes(t.id))
+          .map((t) => {
           const msgs = details.get(t.id)?.messages ?? [];
           let last: (typeof msgs)[number] | null = null;
           for (let i = msgs.length - 1; i >= 0; i--) {
