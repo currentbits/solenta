@@ -760,3 +760,71 @@ describe("setBaseBranch", () => {
     );
   });
 });
+
+describe("setPendingWorktree (draft workspace strip)", () => {
+  let tmpDir;
+  let store;
+  let project;
+  let threadId;
+
+  beforeEach(async () => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "coder-pending-"));
+    store = new Store(path.join(tmpDir, "store.json"));
+    const repo = path.join(tmpDir, "repo");
+    fs.mkdirSync(repo);
+    git(repo, ["init"]);
+    project = await services.addProject(store, repo);
+    threadId = services.createThread(store, {
+      projectId: project.id,
+      title: "Draft",
+    }).id;
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("arms and drops the lazy worktree before the first send", () => {
+    assert.equal(
+      services.setPendingWorktree(store, { threadId, worktree: true }).pendingWorktree,
+      true,
+    );
+    assert.equal(store.getThread(threadId).pendingWorktree, true);
+    services.setPendingWorktree(store, { threadId, worktree: false });
+    assert.equal(store.getThread(threadId).pendingWorktree, false);
+  });
+
+  it("locks after the first user message", () => {
+    store.appendMessage(threadId, {
+      id: "m1",
+      role: "user",
+      text: "go",
+      createdAt: Date.now(),
+    });
+    assert.throws(
+      () => services.setPendingWorktree(store, { threadId, worktree: true }),
+      /locked after the first message/,
+    );
+  });
+
+  it("refuses once a worktree exists", () => {
+    store.updateThread(threadId, { worktreePath: path.join(tmpDir, "wt") });
+    assert.throws(
+      () => services.setPendingWorktree(store, { threadId, worktree: false }),
+      /already has a worktree/,
+    );
+  });
+
+  it("refuses to arm on a project that is not a git repo", async () => {
+    const plain = path.join(tmpDir, "plain");
+    fs.mkdirSync(plain);
+    const p2 = await services.addProject(store, plain);
+    // addProject git-inits a plain folder; a repo deleted later looks like this.
+    fs.rmSync(path.join(plain, ".git"), { recursive: true, force: true });
+    const t2 = services.createThread(store, { projectId: p2.id, title: "x" }).id;
+    assert.throws(
+      () => services.setPendingWorktree(store, { threadId: t2, worktree: true }),
+      /can't host a worktree/,
+    );
+  });
+});

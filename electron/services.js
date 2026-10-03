@@ -2358,6 +2358,40 @@ function setBaseBranch(store, input) {
 }
 
 /**
+ * Draft workspace choice (composer strip): arm or drop the lazy worktree
+ * before the first send. Locked once the thread has a worktree or any user
+ * message, so a running conversation never changes checkout underneath
+ * itself. Arming requires a local git project. Never bumps updatedAt.
+ *
+ * @param {import('./store').Store} store
+ * @param {{ threadId: string, worktree: boolean }} input
+ */
+function setPendingWorktree(store, input) {
+  const { threadId } = input || {};
+  const thread = store.getThread(threadId);
+  if (!thread) {
+    throw new Error(`Unknown thread: ${threadId}`);
+  }
+  const want = input.worktree === true;
+  if (Boolean(thread.pendingWorktree) === want && !thread.worktreePath) {
+    return { ...thread };
+  }
+  if (thread.worktreePath) {
+    throw new Error("This thread already has a worktree");
+  }
+  if (store.getMessages(threadId).some((m) => m.role === "user")) {
+    throw new Error("The workspace is locked after the first message");
+  }
+  if (want && !canHostWorktree(store.getProject(thread.projectId))) {
+    throw new Error("This project can't host a worktree (needs a local git repo)");
+  }
+  const patch = { pendingWorktree: want };
+  const updated = store.updateThread(threadId, patch);
+  store.save();
+  return updated ? { ...updated } : { ...thread, ...patch };
+}
+
+/**
  * Retarget an idle orchestration worker onto the lead's current committed
  * HEAD (#1110). Updates `leadSnapshotSha` only — never `baseBranch`.
  * Materialized worktrees reuse retargetWorktreeBase / #775 rebase-onto
@@ -5673,6 +5707,7 @@ module.exports = {
   setNotes,
   setMessagePins,
   setBaseBranch,
+  setPendingWorktree,
   refreshWorkerSnapshot,
   setFeltEstimate,
   setVerifyCommand,

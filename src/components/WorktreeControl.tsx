@@ -636,6 +636,21 @@ export function useWorktreeChrome(
     {refreshSnapshot}
     {leadPointer}
     </div>
+  ) : thread.pendingWorktree ? (
+    <div className={styles.toolbarCluster}>
+      <span
+        className={styles.pendingNote}
+        data-worktree-control="pending"
+        title="The worktree and its branch are created when the first message is sent"
+      >
+        <BranchGlyph />
+        Worktree on first send
+        {thread.baseBranch ? ` · from ${thread.baseBranch}` : ""}
+      </span>
+      {startSnapshot}
+      {startDirty}
+      {refreshSnapshot}
+    </div>
   ) : (
     <div className={styles.toolbarCluster}>
     <button

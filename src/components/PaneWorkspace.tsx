@@ -11,6 +11,7 @@ import {
   hasPaneType,
   leaves,
   movePane,
+  PANE_REGISTRY,
   PANE_TYPES,
   paneTitle,
   resizeSplit,
@@ -70,15 +71,33 @@ export function ViewsMenu({
         aria-haspopup="menu"
         aria-expanded={open}
         aria-label="Views"
+        title="Views: Git, Browser, Simulator, layout"
         data-views-btn=""
         onClick={() => setOpen((v) => !v)}
       >
-        Views
+        <svg
+          width="15"
+          height="15"
+          viewBox="0 0 16 16"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.5"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          aria-hidden="true"
+        >
+          <rect x="2.5" y="2.5" width="11" height="11" rx="2" />
+          <path d="M8 2.5v11M8 8h5.5" />
+        </svg>
       </button>
       {open && (
         <div className={styles.viewsMenu} role="menu">
           {PANE_TYPES.filter(
-            (type) => !(isWebMode() && type === "simulator"),
+            // Unbuilt panes stay out of the menu; a persisted layout that
+            // still holds one renders its placeholder.
+            (type) =>
+              PANE_REGISTRY[type].shipped &&
+              !(isWebMode() && type === "simulator"),
           ).map((type) => {
             const openAlready = hasPaneType(layout, type);
             return (

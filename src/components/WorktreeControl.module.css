@@ -498,3 +498,13 @@
     opacity: 0.7;
   }
 }
+
+.pendingNote {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  font-size: 12px;
+  color: var(--text-dim);
+  white-space: nowrap;
+}

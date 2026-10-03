@@ -31,7 +31,6 @@ import {
   formatElapsed,
   formatRelativeAge,
   formatWorkingLabel,
-  formatWorktreeUsage,
 } from "../format";
 import { formatQuotaWaitLabel } from "../quotaWait";
 import {
@@ -142,6 +141,8 @@ function formatTrashExpiry(expiresAt: number, now: number): string {
 const SEARCH_DEBOUNCE_MS = 250;
 const MIN_SEARCH_LEN = 2;
 const SCOPE_KEY = "sidebar:projectScope";
+const WORKING_OPEN_KEY = "sidebar:workingOpen";
+const FILTERS_OPEN_KEY = "sidebar:filtersOpen";
 const SNOOZED_OPEN_KEY = "sidebar:snoozedOpen";
 const SETTLED_OPEN_KEY = "sidebar:settledOpen";
 const WORKER_OPEN_KEY = "sidebar:workerOpen";
@@ -1851,6 +1852,12 @@ export const Sidebar = memo(function Sidebar({
   const [projectScope, setProjectScope] = useState<string | null>(() =>
     loadStored(SCOPE_KEY),
   );
+  const [workingOpen, setWorkingOpen] = useState(() =>
+    loadFlag(WORKING_OPEN_KEY, false),
+  );
+  const [filtersOpen, setFiltersOpen] = useState(() =>
+    loadFlag(FILTERS_OPEN_KEY, false),
+  );
   const [snoozedOpen, setSnoozedOpen] = useState(() =>
     loadFlag(SNOOZED_OPEN_KEY, false),
   );
@@ -2089,9 +2096,10 @@ export const Sidebar = memo(function Sidebar({
     [displayThreads, settleOpts],
   );
 
+  // Grouped views have no Working shelf: busy rows stay in their groups.
   const attentionThreads = useMemo(
-    () => [...flat.pinned, ...flat.active],
-    [flat.pinned, flat.active],
+    () => [...flat.pinned, ...flat.active, ...flat.working],
+    [flat.pinned, flat.active, flat.working],
   );
   const projectGroups = useMemo(
     () =>
@@ -2150,6 +2158,14 @@ export const Sidebar = memo(function Sidebar({
   const activeFamilies = useMemo(
     () => workerIdsByRoot(flat.active, liveById),
     [flat.active, liveById],
+  );
+  const visibleWorking = useMemo(
+    () => visibleFamilyRows(flat.working, familyOpts),
+    [flat.working, familyOpts],
+  );
+  const workingFamilies = useMemo(
+    () => workerIdsByRoot(flat.working, liveById),
+    [flat.working, liveById],
   );
   const searchFamilies = useMemo(
     () => workerIdsByRoot(displayThreads, liveById),
@@ -2240,6 +2256,17 @@ export const Sidebar = memo(function Sidebar({
 
   const filtersOn =
     statusFilter != null || providerFilter.length > 0 || tagFilter != null;
+  // Any narrowing keeps its controls on screen, so a filtered list explains
+  // itself; otherwise the filter bar folds behind the search-row funnel.
+  const filtersEngaged = filtersOn || groupBy !== "none" || activeViewId != null;
+  const filterBarShown = filtersOpen || filtersEngaged;
+  const toggleFilterBar = () => {
+    setFiltersOpen((open) => {
+      saveFlag(FILTERS_OPEN_KEY, !open);
+      return !open;
+    });
+  };
+  const workingExpanded = workingOpen || filtersOn;
   const snoozedExpanded = snoozedOpen || filtersOn;
   const settledExpanded = settledOpen || filtersOn;
 
@@ -2293,10 +2320,16 @@ export const Sidebar = memo(function Sidebar({
             : null;
     const navFlat =
       groupedRows != null
-        ? { ...flat, pinned: [], active: groupedRows }
-        : { ...flat, pinned: visiblePinned, active: visibleActive };
+        ? { ...flat, pinned: [], active: groupedRows, working: [] }
+        : {
+            ...flat,
+            pinned: visiblePinned,
+            active: visibleActive,
+            working: visibleWorking,
+          };
     return flatVisibleThreadIds({
       flat: navFlat,
+      workingOpen: workingExpanded,
       snoozedOpen: snoozedExpanded,
       settledOpen: settledExpanded,
       settledVisibleCount,
@@ -2314,6 +2347,8 @@ export const Sidebar = memo(function Sidebar({
     flat,
     visiblePinned,
     visibleActive,
+    visibleWorking,
+    workingExpanded,
     snoozedExpanded,
     settledExpanded,
     settledVisibleCount,
@@ -2719,6 +2754,13 @@ export const Sidebar = memo(function Sidebar({
     setViewEditor(null);
   };
 
+  const toggleWorking = () => {
+    setWorkingOpen((open) => {
+      saveFlag(WORKING_OPEN_KEY, !open);
+      return !open;
+    });
+  };
+
   const toggleSnoozed = () => {
     setSnoozedOpen((open) => {
       saveFlag(SNOOZED_OPEN_KEY, !open);
@@ -2802,6 +2844,9 @@ export const Sidebar = memo(function Sidebar({
   // The open thread never vanishes — and neither does a freshly revealed
   // one (new-thread reveal can land on a collapsed shelf).
   const keepIds = [activeThreadId, revealThreadId ?? null];
+  const workingCarve = workingExpanded
+    ? null
+    : flat.working.find((t) => keepIds.includes(t.id)) ?? null;
   const visibleSnoozed = snoozedExpanded ? flat.snoozed : [];
   const snoozedCarve = snoozedExpanded
     ? null
@@ -2887,20 +2932,11 @@ export const Sidebar = memo(function Sidebar({
     return m;
   }, [providerOptions]);
 
-  const worktreeCount = useMemo(() => {
-    let n = 0;
-    for (const t of threads) {
-      if (!t.worktreePath) continue;
-      if (projectScope && t.projectId !== projectScope) continue;
-      n += 1;
-    }
-    return n;
-  }, [threads, projectScope]);
-
   const listEmpty =
     !searching &&
     flat.pinned.length +
       flat.active.length +
+      flat.working.length +
       flat.snoozed.length +
       settledTail.length ===
       0;
@@ -3004,6 +3040,142 @@ export const Sidebar = memo(function Sidebar({
             onChange={(e) => setQuery(e.target.value)}
             aria-label="Search threads"
           />
+        </span>
+        <button
+          type="button"
+          className={styles.iconBtn}
+          data-filter-bar-toggle=""
+          data-active={filterBarShown ? "true" : undefined}
+          aria-expanded={filterBarShown}
+          aria-label="Filters, grouping and saved views"
+          title={
+            filtersEngaged
+              ? "Filters are on"
+              : "Filters, grouping and saved views"
+          }
+          disabled={filtersEngaged}
+          onClick={toggleFilterBar}
+        >
+          <Icon size={14}>
+            <path d="M4 5h16l-6 8v5l-4 2v-7Z" />
+          </Icon>
+        </button>
+        <span className={styles.scopeMenuHost}>
+          <button
+            type="button"
+            className={styles.iconBtn}
+            data-scope-trigger=""
+            data-active={projectScope != null ? "true" : undefined}
+            title={`Project: ${scopedSlug}`}
+            aria-haspopup="menu"
+            aria-expanded={scopeMenuOpen}
+            aria-label="Filter threads by project"
+            onClick={() => {
+              setCreateMenuOpen(false);
+              setFilterMenu(null);
+              setViewEditor(null);
+              setMoreOpen(false);
+              setScopeMenuOpen((open) => !open);
+            }}
+          >
+            {scopedProject?.iconUrl ? (
+              <ProjectIcon url={scopedProject.iconUrl} size={16} />
+            ) : (
+              <Icon size={15}>
+                <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+              </Icon>
+            )}
+            <span className={styles.srOnly}>{scopedSlug}</span>
+          </button>
+          {scopeMenuOpen && (
+            <div className={styles.menu} role="menu" data-scope-menu="">
+              <button
+                type="button"
+                className={styles.scopeItem}
+                role="menuitem"
+                data-scope-item="all"
+                onClick={() => setScope(null)}
+              >
+                All projects
+              </button>
+              {projects.map((p) => (
+                <div key={p.id} className={styles.scopeItemRow}>
+                  <button
+                    type="button"
+                    className={styles.scopeItem}
+                    role="menuitem"
+                    data-scope-item={p.id}
+                    onClick={() => setScope(p.id)}
+                  >
+                    <ProjectIcon url={p.iconUrl} size={16} />
+                    {p.slug || p.name}
+                    {p.scm?.kind === "jj" ? (
+                      <span
+                        className={styles.scmChip}
+                        data-scm-badge={p.scm.support}
+                        title={p.scm.detail || "Jujutsu"}
+                      >
+                        jj
+                      </span>
+                    ) : null}
+                  </button>
+                  {onEditProject && (
+                    <button
+                      type="button"
+                      className={styles.iconBtn}
+                      data-scope-edit={p.id}
+                      aria-label={`Edit project ${p.slug || p.name}`}
+                      title="Edit project"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setScopeMenuOpen(false);
+                        onEditProject(p.id);
+                      }}
+                    >
+                      <Icon size={12}>
+                        <path d="M12.3 6.7a1.4 1.4 0 0 1 2 2L8 15H6v-2l6.3-6.3Z" />
+                      </Icon>
+                    </button>
+                  )}
+                  {onRemoveProject && (
+                    <button
+                      type="button"
+                      className={styles.iconBtn}
+                      data-project-remove={p.id}
+                      aria-label={`Remove project ${p.slug || p.name}`}
+                      title="Remove project"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setRemoveConfirmId(p.id);
+                      }}
+                    >
+                      <Icon size={12}>
+                        <path d="M18 6 6 18M6 6l12 12" />
+                      </Icon>
+                    </button>
+                  )}
+                </div>
+              ))}
+              <div className={styles.menuSep} />
+              <button
+                type="button"
+                className={styles.scopeItem}
+                role="menuitem"
+                data-new-project=""
+                onClick={() => {
+                  setScopeMenuOpen(false);
+                  onAddProject();
+                }}
+              >
+                <Icon size={14}>
+                  <path d="M12 10v8" />
+                  <path d="M8 14h8" />
+                  <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+                </Icon>
+                New project…
+              </button>
+            </div>
+          )}
         </span>
         <span className={styles.searchCreate}>
           <button
@@ -3284,135 +3456,8 @@ export const Sidebar = memo(function Sidebar({
         </span>
       </div>
 
-      <div className={styles.scopeRow}>
-        <span className={styles.scopeMenuHost}>
-          <button
-            type="button"
-            className={styles.scopeTrigger}
-            data-scope-trigger=""
-            aria-haspopup="menu"
-            aria-expanded={scopeMenuOpen}
-            aria-label="Filter threads by project"
-            onClick={() => {
-              setCreateMenuOpen(false);
-              setFilterMenu(null);
-              setViewEditor(null);
-              setMoreOpen(false);
-              setScopeMenuOpen((open) => !open);
-            }}
-          >
-            {scopedProject?.iconUrl ? (
-              <ProjectIcon url={scopedProject.iconUrl} size={16} />
-            ) : (
-              <Icon size={14}>
-                <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
-              </Icon>
-            )}
-            <span className={styles.scopeLabel}>{scopedSlug}</span>
-            <Icon size={12}>
-              <path d="m6 9 6 6 6-6" />
-            </Icon>
-          </button>
-          {scopeMenuOpen && (
-            <div className={`${styles.menu} ${styles.menuLeft}`} role="menu" data-scope-menu="">
-              <button
-                type="button"
-                className={styles.scopeItem}
-                role="menuitem"
-                data-scope-item="all"
-                onClick={() => setScope(null)}
-              >
-                All projects
-              </button>
-              {projects.map((p) => (
-                <div key={p.id} className={styles.scopeItemRow}>
-                  <button
-                    type="button"
-                    className={styles.scopeItem}
-                    role="menuitem"
-                    data-scope-item={p.id}
-                    onClick={() => setScope(p.id)}
-                  >
-                    <ProjectIcon url={p.iconUrl} size={16} />
-                    {p.slug || p.name}
-                    {p.scm?.kind === "jj" ? (
-                      <span
-                        className={styles.scmChip}
-                        data-scm-badge={p.scm.support}
-                        title={p.scm.detail || "Jujutsu"}
-                      >
-                        jj
-                      </span>
-                    ) : null}
-                  </button>
-                  {onEditProject && (
-                    <button
-                      type="button"
-                      className={styles.iconBtn}
-                      data-scope-edit={p.id}
-                      aria-label={`Edit project ${p.slug || p.name}`}
-                      title="Edit project"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setScopeMenuOpen(false);
-                        onEditProject(p.id);
-                      }}
-                    >
-                      <Icon size={12}>
-                        <path d="M12.3 6.7a1.4 1.4 0 0 1 2 2L8 15H6v-2l6.3-6.3Z" />
-                      </Icon>
-                    </button>
-                  )}
-                  {onRemoveProject && (
-                    <button
-                      type="button"
-                      className={styles.iconBtn}
-                      data-project-remove={p.id}
-                      aria-label={`Remove project ${p.slug || p.name}`}
-                      title="Remove project"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setRemoveConfirmId(p.id);
-                      }}
-                    >
-                      <Icon size={12}>
-                        <path d="M18 6 6 18M6 6l12 12" />
-                      </Icon>
-                    </button>
-                  )}
-                </div>
-              ))}
-            </div>
-          )}
-        </span>
-        {worktreeCount > 0 && (
-          <button
-            type="button"
-            className={styles.worktreeUsage}
-            data-worktree-usage=""
-            title="Worktree disk usage — open Settings to clean up"
-            aria-label={`${worktreeCount} worktrees. Open Settings to clean up.`}
-            onClick={() => onOpenSettings?.("git")}
-          >
-            {formatWorktreeUsage(worktreeCount)}
-          </button>
-        )}
-        <button
-          type="button"
-          className={styles.iconBtn}
-          data-new-project=""
-          title="New project"
-          aria-label="New project"
-          onClick={onAddProject}
-        >
-          <Icon size={15}>
-            <path d="M12 10v8" />
-            <path d="M8 14h8" />
-            <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
-          </Icon>
-        </button>
-      </div>
-
+      {filterBarShown && (
+      <div className={styles.filterBar} data-filter-bar="">
       <div className={styles.viewRow}>
         <span className={styles.filterMenuHost}>
           <button
@@ -3813,106 +3858,9 @@ export const Sidebar = memo(function Sidebar({
           )}
         </span>
       </div>
+      </div>
+      )}
 
-      <nav className={styles.viewNav} aria-label="App">
-        <button
-          type="button"
-          className={styles.viewNavBtn}
-          data-view-nav="threads"
-          data-active={activeView === "thread" ? "true" : undefined}
-          aria-current={activeView === "thread" ? "page" : undefined}
-          onClick={() => onOpenThreads?.()}
-        >
-          <span className={styles.viewNavLabel}>Threads</span>
-        </button>
-        <button
-          type="button"
-          className={styles.viewNavBtn}
-          data-view-nav="planboard"
-          data-active={activeView === "planboard" ? "true" : undefined}
-          aria-current={activeView === "planboard" ? "page" : undefined}
-          onClick={() => onOpenPlanboard?.(projectScope)}
-        >
-          <span className={styles.viewNavLabel}>Planboard</span>
-        </button>
-        <button
-          type="button"
-          className={styles.viewNavBtn}
-          data-view-nav="review"
-          data-active={activeView === "prs" ? "true" : undefined}
-          aria-current={activeView === "prs" ? "page" : undefined}
-          onClick={() => onOpenReview?.()}
-        >
-          <span className={styles.viewNavLabel}>Review</span>
-        </button>
-        {moreDestinations.length > 0 && (
-          <span
-            className={styles.filterMenuHost}
-            ref={moreHostRef}
-            onBlur={onMoreBlur}
-          >
-            <button
-              type="button"
-              ref={moreTriggerRef}
-              className={`${styles.viewNavBtn} ${styles.viewNavMore}`}
-              data-app-more=""
-              aria-haspopup="menu"
-              aria-expanded={moreOpen}
-              aria-controls="app-more-menu"
-              aria-current={moreCurrentLabel ? "page" : undefined}
-              data-active={moreCurrentLabel ? "true" : undefined}
-              aria-label={
-                moreCurrentLabel ? `More, ${moreCurrentLabel}` : undefined
-              }
-              onClick={toggleMore}
-              onKeyDown={onMoreKeyDown}
-            >
-              <span className={styles.viewNavLabel}>More</span>
-              <Icon size={12}>
-                <path d="m6 9 6 6 6-6" />
-              </Icon>
-            </button>
-            {moreOpen && (
-              <div
-                id="app-more-menu"
-                className={`${styles.menu} ${styles.appMoreMenu}`}
-                role="menu"
-                aria-label="More"
-                data-app-more-menu=""
-                onKeyDown={onMoreKeyDown}
-              >
-                {moreDestinations.map((dest) => {
-                  const current = activeView === dest.view;
-                  return (
-                    <button
-                      key={dest.id}
-                      type="button"
-                      className={styles.menuItem}
-                      role="menuitem"
-                      data-view-nav={dest.id}
-                      data-active={current ? "true" : undefined}
-                      aria-current={current ? "page" : undefined}
-                      onClick={() => {
-                        closeMore(true);
-                        dest.run();
-                      }}
-                    >
-                      {dest.label}
-                      {current && (
-                        <span className={styles.filterCheck}>
-                          <Icon size={12}>
-                            <path d="M5 12.5 9 16.5 19 7.5" />
-                          </Icon>
-                        </span>
-                      )}
-                    </button>
-                  );
-                })}
-              </div>
-            )}
-          </span>
-        )}
-      </nav>
 
       {importCliProvider &&
         listCliSessions &&
@@ -4123,6 +4071,51 @@ export const Sidebar = memo(function Sidebar({
                     </>
                   )}
 
+              {listEmpty && projects.length > 0 && !viewUnavailable && (
+                <p className={styles.emptySearch}>
+                  {filtersOn
+                    ? "No threads match these filters"
+                    : projectScope
+                      ? `No threads in ${scopedSlug} yet`
+                      : "No threads yet"}
+                </p>
+              )}
+
+              {/* T3 inbox: the shelves sit at the foot of the list. */}
+              <div className={styles.shelves}>
+              {groupBy === "none" && flat.working.length > 0 && (
+                <div className={styles.shelf} ref={bindListAnimation}>
+                  <button
+                    type="button"
+                    className={styles.shelfToggle}
+                    data-working-shelf-toggle=""
+                    aria-expanded={workingExpanded}
+                    onClick={toggleWorking}
+                  >
+                    <span className={styles.shelfLabelSettled}>
+                      {workingExpanded
+                        ? "Working"
+                        : `Working (${flat.working.length})`}
+                    </span>
+                    <span className={styles.shelfRuleSettled} />
+                    <span
+                      className={styles.shelfChevron}
+                      data-open={workingExpanded}
+                      aria-hidden
+                    >
+                      <Icon size={12}>
+                        <path d="m6 9 6 6 6-6" />
+                      </Icon>
+                    </span>
+                  </button>
+                  {workingCarve && renderCard(workingCarve, workingFamilies)}
+                  {workingExpanded &&
+                    visibleWorking.map((thread) =>
+                      renderCard(thread, workingFamilies),
+                    )}
+                </div>
+              )}
+
               {flat.snoozed.length > 0 && (
                 <div className={styles.shelf}>
                   <button
@@ -4303,16 +4296,7 @@ export const Sidebar = memo(function Sidebar({
                     ))}
                 </div>
               )}
-
-              {listEmpty && projects.length > 0 && !viewUnavailable && (
-                <p className={styles.emptySearch}>
-                  {filtersOn
-                    ? "No threads match these filters"
-                    : projectScope
-                      ? `No threads in ${scopedSlug} yet`
-                      : "No threads yet"}
-                </p>
-              )}
+              </div>
             </>
           )}
       </div>
@@ -4486,6 +4470,7 @@ export const Sidebar = memo(function Sidebar({
           <button
             type="button"
             className={styles.settings}
+            title="Settings"
             onClick={() => onOpenSettings?.()}
           >
             <span className={styles.settingsIcon} aria-hidden>
@@ -4494,8 +4479,123 @@ export const Sidebar = memo(function Sidebar({
                 <circle cx="12" cy="12" r="3" />
               </Icon>
             </span>
-            Settings
+            <span className={styles.srOnly}>Settings</span>
           </button>
+          <nav className={styles.viewNav} aria-label="App">
+        <button
+          type="button"
+          className={styles.viewNavBtn}
+          data-view-nav="threads"
+          title="Threads"
+          data-active={activeView === "thread" ? "true" : undefined}
+          aria-current={activeView === "thread" ? "page" : undefined}
+          onClick={() => onOpenThreads?.()}
+        >
+          <Icon size={15}>
+            <path d="M4 6h16M4 12h16M4 18h10" />
+          </Icon>
+          <span className={styles.srOnly}>Threads</span>
+        </button>
+        <button
+          type="button"
+          className={styles.viewNavBtn}
+          data-view-nav="planboard"
+          title="Planboard"
+          data-active={activeView === "planboard" ? "true" : undefined}
+          aria-current={activeView === "planboard" ? "page" : undefined}
+          onClick={() => onOpenPlanboard?.(projectScope)}
+        >
+          <Icon size={15}>
+            <rect x="3" y="4" width="18" height="16" rx="2" />
+            <path d="M9 4v16M15 4v16" />
+          </Icon>
+          <span className={styles.srOnly}>Planboard</span>
+        </button>
+        <button
+          type="button"
+          className={styles.viewNavBtn}
+          data-view-nav="review"
+          title="Review"
+          data-active={activeView === "prs" ? "true" : undefined}
+          aria-current={activeView === "prs" ? "page" : undefined}
+          onClick={() => onOpenReview?.()}
+        >
+          <Icon size={15}>
+            <circle cx="6" cy="6" r="2" />
+            <circle cx="18" cy="18" r="2" />
+            <path d="M6 8v8a2 2 0 0 0 2 2h8M13 6h3a2 2 0 0 1 2 2v8" />
+          </Icon>
+          <span className={styles.srOnly}>Review</span>
+        </button>
+        {moreDestinations.length > 0 && (
+          <span
+            className={styles.filterMenuHost}
+            ref={moreHostRef}
+            onBlur={onMoreBlur}
+          >
+            <button
+              type="button"
+              ref={moreTriggerRef}
+              className={`${styles.viewNavBtn} ${styles.viewNavMore}`}
+              data-app-more=""
+              title="Activity, usage, automations and more"
+              aria-haspopup="menu"
+              aria-expanded={moreOpen}
+              aria-controls="app-more-menu"
+              aria-current={moreCurrentLabel ? "page" : undefined}
+              data-active={moreCurrentLabel ? "true" : undefined}
+              aria-label={
+                moreCurrentLabel ? `More, ${moreCurrentLabel}` : undefined
+              }
+              onClick={toggleMore}
+              onKeyDown={onMoreKeyDown}
+            >
+              <Icon size={15}>
+                <path d="M4 20V10M10 20V4M16 20v-7M22 20H2" />
+              </Icon>
+              <span className={styles.srOnly}>More</span>
+            </button>
+            {moreOpen && (
+              <div
+                id="app-more-menu"
+                className={`${styles.menu} ${styles.appMoreMenu} ${styles.appMoreMenuUp}`}
+                role="menu"
+                aria-label="More"
+                data-app-more-menu=""
+                onKeyDown={onMoreKeyDown}
+              >
+                {moreDestinations.map((dest) => {
+                  const current = activeView === dest.view;
+                  return (
+                    <button
+                      key={dest.id}
+                      type="button"
+                      className={styles.menuItem}
+                      role="menuitem"
+                      data-view-nav={dest.id}
+                      data-active={current ? "true" : undefined}
+                      aria-current={current ? "page" : undefined}
+                      onClick={() => {
+                        closeMore(true);
+                        dest.run();
+                      }}
+                    >
+                      {dest.label}
+                      {current && (
+                        <span className={styles.filterCheck}>
+                          <Icon size={12}>
+                            <path d="M5 12.5 9 16.5 19 7.5" />
+                          </Icon>
+                        </span>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </span>
+        )}
+          </nav>
           {stayAwake && onSetStayAwakeMode && (
             <StayAwakeControl state={stayAwake} onSetMode={onSetStayAwakeMode} />
           )}
@@ -4530,20 +4630,6 @@ export const Sidebar = memo(function Sidebar({
                 : updateState === "staged"
                   ? "Restart"
                   : "Update"}
-            </button>
-          )}
-          {projects.length > 0 && (
-            <button
-              type="button"
-              className={styles.footerAdd}
-              onClick={onAddProject}
-              title="Add project"
-              aria-label="Add project"
-            >
-              <Icon size={15}>
-                <path d="M12 5v14" />
-                <path d="M5 12h14" />
-              </Icon>
             </button>
           )}
         </div>

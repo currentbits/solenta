@@ -12,6 +12,7 @@ import {
   type KeyboardEvent,
   type RefObject,
   type SetStateAction,
+  type ReactNode,
 } from "react";
 import type {
   AgentProfile,
@@ -30,7 +31,6 @@ import {
   permissionPickerModes,
   providerDisplayName,
   providerPermissionModes,
-  shortSessionId,
   snapToHonouredPermissionMode,
 } from "../format";
 import {
@@ -191,8 +191,6 @@ function speechMicLabel(
 interface ComposerProps {
   /** Selected thread id; used for per-thread last-used template. */
   threadId: string;
-  /** Thread branch when known; null omits the branch chip (no invented default). */
-  branch: string | null;
   /** Sticky permission mode for this thread. */
   permissionMode: PermissionMode;
   /** Teach-mode autonomy cap on the permission picker (issue #373). */
@@ -224,10 +222,13 @@ interface ComposerProps {
   onRemoveWorkflow: (id: string) => Promise<void>;
   workflowListError?: string | null;
   onRetryWorkflows?: () => void | Promise<void>;
-  /** Provider session id (short form shown in meta). */
+  /** Provider session id; a live session locks the provider picker. */
   sessionId: string | null;
-  /** Whether a worktree has been set up. */
-  hasWorktree: boolean;
+  /**
+   * Draft-only lip under the composer (workspace + base branch). Absent once
+   * the thread has started: branch and worktree live in Thread details.
+   */
+  workspaceStrip?: ReactNode;
   /** Hard lock (archived thread): nothing can be typed or started. */
   disabled?: boolean;
   /**
@@ -473,7 +474,6 @@ function keepList<T>(
 
 export const Composer = memo(function Composer({
   threadId,
-  branch,
   permissionMode,
   teach = null,
   onPermissionModeChange,
@@ -492,7 +492,7 @@ export const Composer = memo(function Composer({
   workflowListError = null,
   onRetryWorkflows,
   sessionId,
-  hasWorktree,
+  workspaceStrip,
   disabled = false,
   busy = false,
   onSend,
@@ -1213,7 +1213,6 @@ export const Composer = memo(function Composer({
     ? "Build workflow"
     : "Add a prompt to run this workflow";
   const shownError = error ?? localError;
-  const shortSess = shortSessionId(sessionId);
   const sessionLocked = Boolean(sessionId);
   const providerName = providerDisplayName(provider, providers);
   const canSteer = Boolean(busy && currentProviderInfo?.supportsSteer);
@@ -3245,7 +3244,7 @@ export const Composer = memo(function Composer({
               <button
                 ref={optionsTriggerRef}
                 type="button"
-                className={styles.pill}
+                className={`${styles.pill} ${styles.pillIcon}`}
                 disabled={locked || sending}
                 aria-disabled={locked || sending ? "true" : undefined}
                 aria-haspopup="dialog"
@@ -3271,22 +3270,20 @@ export const Composer = memo(function Composer({
                   setViewOpen(false);
                 }}
               >
-                Options
-                <span className={styles.caret}>
-                  <svg
-                    width="10"
-                    height="10"
-                    viewBox="0 0 10 10"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="1.5"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    aria-hidden="true"
-                  >
-                    <path d="M2.5 3.5 5 6l2.5-2.5" />
-                  </svg>
-                </span>
+                <svg
+                  width="14"
+                  height="14"
+                  viewBox="0 0 16 16"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.5"
+                  strokeLinecap="round"
+                  aria-hidden="true"
+                >
+                  <path d="M2.5 4.5h6M11.5 4.5h2M2.5 11.5h2M7.5 11.5h6" />
+                  <circle cx="10" cy="4.5" r="1.5" />
+                  <circle cx="6" cy="11.5" r="1.5" />
+                </svg>
               </button>
               {optionsOpen && (
                 <div
@@ -3501,7 +3498,9 @@ export const Composer = memo(function Composer({
             <button
               type="button"
               className={`${styles.pill}${
-                transcriptView !== "normal" ? ` ${styles.pillAccent}` : ""
+                transcriptView !== "normal"
+                  ? ` ${styles.pillAccent}`
+                  : ` ${styles.pillIcon}`
               }`}
               data-transcript-view-trigger=""
               data-transcript-view-mode={transcriptView}
@@ -3517,22 +3516,39 @@ export const Composer = memo(function Composer({
                 setOptionsOpen(false);
               }}
             >
-              {TRANSCRIPT_VIEW_LABELS[transcriptView]}
-              <span className={styles.caret}>
+              {transcriptView === "normal" ? (
                 <svg
-                  width="10"
-                  height="10"
-                  viewBox="0 0 10 10"
+                  width="14"
+                  height="14"
+                  viewBox="0 0 16 16"
                   fill="none"
                   stroke="currentColor"
                   strokeWidth="1.5"
                   strokeLinecap="round"
-                  strokeLinejoin="round"
                   aria-hidden="true"
                 >
-                  <path d="M2.5 3.5 5 6l2.5-2.5" />
+                  <path d="M3 4.5h10M3 8h10M3 11.5h6" />
                 </svg>
-              </span>
+              ) : (
+                <>
+                  {TRANSCRIPT_VIEW_LABELS[transcriptView]}
+                  <span className={styles.caret}>
+                    <svg
+                      width="10"
+                      height="10"
+                      viewBox="0 0 10 10"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="1.5"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      aria-hidden="true"
+                    >
+                      <path d="M2.5 3.5 5 6l2.5-2.5" />
+                    </svg>
+                  </span>
+                </>
+              )}
             </button>
             {viewOpen && (
               <ul
@@ -3600,63 +3616,11 @@ export const Composer = memo(function Composer({
           </button>
           </div>
         </div>
-        <div className={styles.meta}>
-          <div className={styles.metaChips}>
-            {shortSess && (
-              <span className={`${styles.chip} ${styles.chipMono}`}>
-                {shortSess}
-              </span>
-            )}
-            <span className={styles.chip}>
-              <svg
-                className={styles.chipIcon}
-                width="12"
-                height="12"
-                viewBox="0 0 16 16"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="1.5"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                aria-hidden="true"
-              >
-                {hasWorktree ? (
-                  <>
-                    <circle cx="4.5" cy="3.5" r="1.5" />
-                    <circle cx="4.5" cy="12.5" r="1.5" />
-                    <circle cx="11.5" cy="5.5" r="1.5" />
-                    <path d="M4.5 5v6M11.5 7c0 2.2-2.8 2.3-4.6 3.4" />
-                  </>
-                ) : (
-                  <path d="M2.5 4A1.5 1.5 0 0 1 4 2.5h2.2a1.5 1.5 0 0 1 1.1.5l.8 1a1.5 1.5 0 0 0 1.1.5H12A1.5 1.5 0 0 1 13.5 6v5A1.5 1.5 0 0 1 12 12.5H4A1.5 1.5 0 0 1 2.5 11V4Z" />
-                )}
-              </svg>
-              {hasWorktree ? "Worktree" : "Project"}
-            </span>
-            {branch != null && branch !== "" && (
-              <span className={`${styles.chip} ${styles.chipMono}`}>
-                <svg
-                  className={styles.chipIcon}
-                  width="12"
-                  height="12"
-                  viewBox="0 0 16 16"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="1.5"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  aria-hidden="true"
-                >
-                  <circle cx="4.5" cy="3.5" r="1.5" />
-                  <circle cx="4.5" cy="12.5" r="1.5" />
-                  <circle cx="11.5" cy="5.5" r="1.5" />
-                  <path d="M4.5 5v6M11.5 7c0 2.2-2.8 2.3-4.6 3.4" />
-                </svg>
-                {branch}
-              </span>
-            )}
+        {workspaceStrip ? (
+          <div className={styles.meta} data-composer-workspace="">
+            {workspaceStrip}
           </div>
-        </div>
+        ) : null}
       </div>
 
       {stashToast === "stashed" && (

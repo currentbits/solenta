@@ -114,10 +114,11 @@
   align-items: center;
   gap: 5px;
   height: 28px;
-  padding: 0 10px;
-  border-radius: var(--radius-pill);
+  padding: 0 9px;
+  border-radius: 7px;
   background: transparent;
-  border: 1px solid var(--border);
+  /* Ghost pills (T3): the hover tint is the affordance, not a border. */
+  border: 1px solid transparent;
   color: var(--text-muted);
   font-size: 12px;
   font-weight: 500;
@@ -143,6 +144,13 @@
 .pill:disabled {
   opacity: 0.45;
   cursor: not-allowed;
+}
+
+/* Square icon-only pill (Options, transcript view at Normal). */
+.pillIcon {
+  width: 28px;
+  padding: 0;
+  justify-content: center;
 }
 
 .pillAccent {
@@ -852,50 +860,11 @@
   cursor: not-allowed;
 }
 
-/* Meta chips live INSIDE the composer card, as a footer row, so the scope and
-   branch read as part of the input instead of dangling below it. */
+/* Draft workspace lip (WorkspaceStrip) inside the card's footer. */
 .meta {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 8px;
-  margin-top: 10px;
-  padding: 8px 2px 0;
+  margin-top: 8px;
+  padding: 4px 0 0;
   border-top: 1px solid var(--border-soft);
-}
-
-.metaChips {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
-  flex: 1;
-}
-
-.chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  padding: 2px 8px;
-  border-radius: var(--radius-pill);
-  background: transparent;
-  border: 1px solid var(--border-soft);
-  color: var(--text-dim);
-  font-size: 11px;
-  max-width: 100%;
-  overflow: hidden;
-  white-space: nowrap;
-}
-
-.chipIcon {
-  display: inline-flex;
-  flex-shrink: 0;
-  opacity: 0.8;
-}
-
-.chipMono {
-  font-family: var(--mono);
 }
 
 /* Pending attachments sit inside the card, above the textarea, so they read

@@ -96,9 +96,11 @@ describe("Composer vim mode chip (#818)", () => {
   it("does not show the chip when the pref is off", async () => {
     const m = await mountComposer();
     assert.equal(modeChip(m), null);
-    assert.equal(
-      transcriptTrigger(m).textContent,
-      TRANSCRIPT_VIEW_LABELS.normal,
+    // At Normal the trigger is icon-only; its name lives on aria-label.
+    assert.equal(transcriptTrigger(m).textContent, "");
+    assert.match(
+      transcriptTrigger(m).getAttribute("aria-label") ?? "",
+      new RegExp(TRANSCRIPT_VIEW_LABELS.normal),
     );
   });
 

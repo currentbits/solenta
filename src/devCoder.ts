@@ -4187,6 +4187,19 @@ function buildDevCoder(): CoderApi {
             : null,
         });
       },
+      async setPendingWorktree(input: { threadId: string; worktree: boolean }) {
+        const detail = details.get(input.threadId);
+        if (!detail) throw new Error(`Thread not found: ${input.threadId}`);
+        if (detail.thread.worktreePath) {
+          throw new Error("This thread already has a worktree");
+        }
+        if (detail.messages.some((m) => m.role === "user")) {
+          throw new Error("The workspace is locked after the first message");
+        }
+        return patchThread(input.threadId, {
+          pendingWorktree: input.worktree === true,
+        });
+      },
       async refreshWorkerSnapshot(input: { threadId: string }) {
         const detail = details.get(input.threadId);
         if (!detail) throw new Error(`Thread not found: ${input.threadId}`);
