@@ -401,6 +401,31 @@ describe("eject stops a running Codex child (#960)", () => {
     assert.equal(store.getThread(orch.id).ejected, true);
   });
 
+  it("stops the running writer before setEjected can launch $TERMINAL", async () => {
+    const orch = lead();
+    await runner.startRun({ threadId: orch.id, prompt: "hold the writer" });
+    await waitFor(() => runner.isRunning(orch.id));
+    const order = [];
+    const realStop = runner.stopRun;
+    const realSetEjected = services.setEjected;
+    runner.stopRun = async (input) => {
+      order.push("stopRun");
+      return realStop(input);
+    };
+    services.setEjected = (...args) => {
+      order.push("setEjected");
+      return realSetEjected(...args);
+    };
+    try {
+      await eject(orch.id, true);
+    } finally {
+      runner.stopRun = realStop;
+      services.setEjected = realSetEjected;
+    }
+    assert.deepEqual(order, ["stopRun", "setEjected"]);
+    await waitFor(() => !runner.isRunning(orch.id));
+  });
+
   it("does not stop a running crew worker", async () => {
     delete process.env.CODER_FAKE_CODEX_LOCK_FILE;
     delete process.env.CODER_FAKE_CODEX_PID_FILE;

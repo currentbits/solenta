@@ -451,10 +451,12 @@ rl.on("line", async (line) => {
       });
     }
     if (scenario === "child-before-reply-hang") return;
-    if (scenario === "hang" || scenario === "steer-wait") return;
+    if (scenario === "hang" || scenario === "steer-wait" || scenario === "wedged") return;
     emitSuccess();
     return;
   }
+  // Wedged: the turn is live but nothing after turn/start is ever answered.
+  if (scenario === "wedged") return;
   if (msg.method === "turn/steer") {
     if (turnKind === "review" || turnKind === "compact") {
       replyError(msg.id, {
@@ -605,6 +607,71 @@ rl.on("line", async (line) => {
     handle.kill();
     await waitFor(() => exited);
     await rmTree(dir);
+  });
+
+  it("kill() still kills a wedged app-server that never answers shutdown RPCs", async () => {
+    const dir = tmp();
+    const bin = writeTurnFake(dir, `
+if (scenario === "wedged") {
+  process.on("SIGTERM", () => {});
+  require("node:fs").writeFileSync(${JSON.stringify(path.join(dir, "pid"))}, String(process.pid));
+}
+`);
+    let exited = false;
+    const handle = runCodexAppServerTurn({
+      binary: bin,
+      args: ["app-server", "--listen", "stdio://"],
+      cwd: dir,
+      envExtra: { CODER_FAKE_CODEX_SCENARIO: "wedged" },
+      prompt: "hello",
+      onEvent: () => {},
+      onExit: () => { exited = true; },
+    });
+    const pidFile = path.join(dir, "pid");
+    await waitFor(() => fs.existsSync(pidFile));
+    // Wait for turn/start so shutdown really sends turn/interrupt.
+    await waitFor(() => handle.send("probe") !== false);
+    const pid = Number(fs.readFileSync(pidFile, "utf8"));
+    handle.kill();
+    await waitFor(() => exited, { timeoutMs: 8_000 });
+    const alive = () => { try { process.kill(pid, 0); return true; } catch { return false; } };
+    await waitFor(() => !alive(), { timeoutMs: 8_000 });
+    await rmTree(dir);
+  });
+
+  it("during app quit kill() skips the shutdown RPCs and kills at once", async () => {
+    const { beginShutdown, resetShutdownForTests } = require("../proc.js");
+    const dir = tmp();
+    const rpcFile = path.join(dir, "rpc.jsonl");
+    const bin = writeTurnFake(dir);
+    let exited = false;
+    const handle = runCodexAppServerTurn({
+      binary: bin,
+      args: ["app-server", "--listen", "stdio://"],
+      cwd: dir,
+      envExtra: {
+        CODER_FAKE_CODEX_SCENARIO: "wedged",
+        CODER_FAKE_CODEX_RPC_FILE: rpcFile,
+      },
+      prompt: "hello",
+      onEvent: () => {},
+      onExit: () => { exited = true; },
+    });
+    try {
+      await waitFor(() => handle.send("probe") !== false);
+      beginShutdown();
+      const started = Date.now();
+      handle.kill();
+      await waitFor(() => exited, { timeoutMs: 3_000 });
+      assert.ok(Date.now() - started < 500, "quit must not wait on RPC timeouts");
+      const methods = fs.readFileSync(rpcFile, "utf8").trim().split("\n")
+        .map((l) => JSON.parse(l).method);
+      assert.equal(methods.includes("turn/interrupt"), false);
+      assert.equal(methods.includes("thread/unsubscribe"), false);
+    } finally {
+      resetShutdownForTests();
+      await rmTree(dir);
+    }
   });
 
   it("steer writes turn/steer with expectedTurnId on the same process", async () => {

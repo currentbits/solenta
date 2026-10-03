@@ -21,7 +21,20 @@ function sandboxFor(permissionMode) {
   return "workspace-write";
 }
 
+const { isShuttingDown } = require("./proc.js");
+
 const CLIENT_INFO = { name: "solenta", version: "1" };
+// Per shutdown RPC; a live app-server answers in milliseconds.
+const SHUTDOWN_RPC_TIMEOUT_MS = 1_000;
+
+function withTimeout(promise, ms) {
+  let timer;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error("shutdown RPC timed out")), ms);
+    if (typeof timer.unref === "function") timer.unref();
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
 const THREAD_SOURCE = "solenta";
 // Interactive only (#1208). exec / workflow / ask / commitmsg stay never.
 const APPROVAL_POLICY = "on-request";
@@ -405,20 +418,30 @@ function runCodexAppServerTurn(opts) {
   async function shutdown(code) {
     if (stopping) return;
     stopping = true;
+    // A wedged app-server may never answer these RPCs, and kill() below is
+    // what arms killTree. Bound each one, and skip them during app quit so
+    // the process is SIGKILLed before Electron exits (#1233).
+    const graceful = !isShuttingDown();
     try {
-      if (client && threadId && expectedTurnId && !turnCompleted) {
+      if (graceful && client && threadId && expectedTurnId && !turnCompleted) {
         try {
-          await client.send("turn/interrupt", {
-            threadId,
-            turnId: expectedTurnId,
-          });
+          await withTimeout(
+            client.send("turn/interrupt", {
+              threadId,
+              turnId: expectedTurnId,
+            }),
+            SHUTDOWN_RPC_TIMEOUT_MS,
+          );
         } catch {
           // still unsubscribe
         }
       }
-      if (client && threadId) {
+      if (graceful && client && threadId) {
         try {
-          await client.send("thread/unsubscribe", { threadId });
+          await withTimeout(
+            client.send("thread/unsubscribe", { threadId }),
+            SHUTDOWN_RPC_TIMEOUT_MS,
+          );
         } catch {
           // kill anyway
         }

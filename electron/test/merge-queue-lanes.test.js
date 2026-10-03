@@ -142,7 +142,7 @@ describe("merge queue lanes (#346)", () => {
     assert.equal(first.branch, "lane/1");
     assert.equal(
       first.path,
-      path.join(worktreeBase, "app-lane-1"),
+      path.join(worktreeBase, `app-${project.id.slice(0, 8)}-lane-1`),
     );
     assert.ok(fs.existsSync(path.join(first.path, "README.md")));
     assert.equal(store.getThread(a.id).worktreePath, first.path);
@@ -153,7 +153,7 @@ describe("merge queue lanes (#346)", () => {
     assert.equal(second.n, 2);
     assert.equal(second.port, 3002);
     assert.equal(second.branch, "lane/2");
-    assert.equal(second.path, path.join(worktreeBase, "app-lane-2"));
+    assert.equal(second.path, path.join(worktreeBase, `app-${project.id.slice(0, 8)}-lane-2`));
 
     const lanes = listLanes(store, project.id);
     assert.deepEqual(
@@ -186,7 +186,7 @@ describe("merge queue lanes (#346)", () => {
     });
     assert.equal(again.n, 1);
     assert.equal(again.branch, "lane/1");
-    assert.equal(again.path, path.join(worktreeBase, "app-lane-1"));
+    assert.equal(again.path, path.join(worktreeBase, `app-${project.id.slice(0, 8)}-lane-1`));
   });
 
   it("mirrors a lane onto the main checkout and restores it", () => {
@@ -218,6 +218,57 @@ describe("merge queue lanes (#346)", () => {
     restorePreview({ store, projectId: project.id });
     assert.equal(fs.existsSync(path.join(project.path, "feature.js")), false);
     assert.equal(head(project.path), mainBefore);
+    assert.equal(git(project.path, ["status", "--porcelain"]), "");
+  });
+
+  async function makeProjectNamedApp(parent) {
+    const repo = path.join(tmpDir, parent, "app");
+    fs.mkdirSync(repo, { recursive: true });
+    git(repo, ["init", "-b", "main"]);
+    git(repo, ["config", "user.email", "test@example.com"]);
+    git(repo, ["config", "user.name", "Test"]);
+    fs.writeFileSync(path.join(repo, "README.md"), "other\n");
+    git(repo, ["add", "README.md"]);
+    git(repo, ["commit", "-m", "init"]);
+    const other = await services.addProject(store, repo);
+    store.save();
+    return other;
+  }
+
+  it("gives two projects' first lanes different ports and directories", async () => {
+    // Same checkout basename ("app") on purpose: lane dirs must not collide.
+    const other = await makeProjectNamedApp("elsewhere");
+    const a = makeThread("A");
+    const b = services.createThread(store, { projectId: other.id, title: "B" });
+    store.save();
+    const first = claimLane({ store, threadId: a.id, worktreeBase, portBase: 3000 });
+    const second = claimLane({ store, threadId: b.id, worktreeBase, portBase: 3000 });
+    assert.equal(first.n, 1);
+    assert.equal(second.n, 1, "lane numbers stay per project");
+    assert.notEqual(second.port, first.port, "ports are allocated across projects");
+    assert.notEqual(second.path, first.path);
+    assert.ok(fs.existsSync(path.join(first.path, "README.md")));
+    assert.equal(fs.readFileSync(path.join(second.path, "README.md"), "utf8"), "other\n");
+  });
+
+  it("preview removes files the lane deleted and restore brings them back", () => {
+    const a = makeThread("A");
+    const lane = claimLane({ store, threadId: a.id, worktreeBase, now: 1_000 });
+    fs.writeFileSync(path.join(lane.path, "scratch.js"), "1\n");
+    previewLane({ store, projectId: project.id, lane: 1 });
+    assert.ok(fs.existsSync(path.join(project.path, "scratch.js")));
+
+    // The lane deletes a tracked file and the untracked file it had added.
+    fs.rmSync(path.join(lane.path, "README.md"));
+    fs.rmSync(path.join(lane.path, "scratch.js"));
+    previewLane({ store, projectId: project.id, lane: 1 });
+    assert.equal(fs.existsSync(path.join(project.path, "README.md")), false,
+      "a tracked file deleted in the lane must not show in the preview");
+    assert.equal(fs.existsSync(path.join(project.path, "scratch.js")), false,
+      "a file from an earlier preview of this lane must not linger");
+
+    restorePreview({ store, projectId: project.id });
+    assert.equal(fs.readFileSync(path.join(project.path, "README.md"), "utf8"), "hello\n");
     assert.equal(git(project.path, ["status", "--porcelain"]), "");
   });
 
