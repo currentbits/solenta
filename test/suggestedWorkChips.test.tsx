@@ -167,9 +167,14 @@ describe("App suggested-work chip wiring (issue #550)", () => {
       "t-source-chip",
       "starting a chip must keep the source thread selected",
     );
+    // The fork nests (collapsed) under the source it was started from.
+    const toggle = m.query('[data-family-toggle="t-source-chip"]');
+    assert.ok(toggle, "the source card gains a family toggle");
+    await m.click(toggle as HTMLElement);
+    await m.flush();
     assert.ok(
       m.query(`[data-thread-card="${resolveArg.startedThreadId}"]`),
-      "the started thread appears in the sidebar",
+      "the started thread appears in the sidebar under its source",
     );
 
     m.unmount();
