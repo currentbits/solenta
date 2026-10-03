@@ -102,8 +102,22 @@ function deferSetNotes(fake: ReturnType<typeof createFakeCoder>) {
   };
 }
 
+
+/** Notes lives in Thread details now (#1411): open the card when needed. */
+async function notesBtn(m: {
+  query: (sel: string) => Element | null;
+  click: (el: Element | null) => Promise<void>;
+}): Promise<Element | null> {
+  let btn = m.query("[data-thread-notes-btn]");
+  if (!btn) {
+    await m.click(m.query("[data-thread-details-btn]"));
+    btn = m.query("[data-thread-notes-btn]");
+  }
+  return btn;
+}
+
 describe("thread notes (issue #194)", () => {
-  it("header Notes button opens a textarea seeded with the thread's notes", async () => {
+  it("the Notes row in Thread details opens a textarea seeded with the thread's notes", async () => {
     const tOpen = thread({
       id: "t-notes",
       projectId: "p1",
@@ -122,8 +136,8 @@ describe("thread notes (issue #194)", () => {
     try {
       await m.flush();
 
-      const btn = m.query("[data-thread-notes-btn]");
-      assert.ok(btn, "Notes header button");
+      const btn = (await notesBtn(m));
+      assert.ok(btn, "Notes row in Thread details");
       assert.equal(btn!.getAttribute("data-has-notes"), "true");
       assert.equal(btn!.getAttribute("aria-expanded"), "false");
       await m.click(btn);
@@ -135,7 +149,7 @@ describe("thread notes (issue #194)", () => {
       assert.equal(ta!.value, "merge after #42 lands");
       assert.equal(ta!.getAttribute("aria-label"), "Thread notes");
       assert.equal(
-        m.query("[data-thread-notes-btn]")!.getAttribute("aria-expanded"),
+        (await notesBtn(m))!.getAttribute("aria-expanded"),
         "true",
       );
     } finally {
@@ -161,7 +175,7 @@ describe("thread notes (issue #194)", () => {
     try {
       await m.flush();
 
-      await m.click(m.query("[data-thread-notes-btn]"));
+      await m.click((await notesBtn(m)));
       const ta = m.query(
         "[data-thread-notes-input]",
       ) as HTMLTextAreaElement | null;
@@ -199,7 +213,7 @@ describe("thread notes (issue #194)", () => {
     try {
       await m.flush();
 
-      await m.click(m.query("[data-thread-notes-btn]"));
+      await m.click((await notesBtn(m)));
       const ta = m.query(
         "[data-thread-notes-input]",
       ) as HTMLTextAreaElement | null;
@@ -215,7 +229,7 @@ describe("thread notes (issue #194)", () => {
         "Escape must not save",
       );
 
-      await m.click(m.query("[data-thread-notes-btn]"));
+      await m.click((await notesBtn(m)));
       const again = m.query(
         "[data-thread-notes-input]",
       ) as HTMLTextAreaElement | null;
@@ -270,7 +284,7 @@ describe("thread notes (issue #194)", () => {
         await settle(m);
       }
 
-      await m.click(m.query("[data-thread-notes-btn]"));
+      await m.click((await notesBtn(m)));
       const ta = m.query(
         "[data-thread-notes-input]",
       ) as HTMLTextAreaElement | null;
@@ -307,7 +321,7 @@ describe("thread notes (issue #194)", () => {
         "panel closed on switch",
       );
 
-      await m.click(m.query("[data-thread-notes-btn]"));
+      await m.click((await notesBtn(m)));
       const onB = m.query(
         "[data-thread-notes-input]",
       ) as HTMLTextAreaElement | null;
@@ -339,13 +353,13 @@ describe("thread notes (issue #194)", () => {
     try {
       await m.flush();
 
-      await m.click(m.query("[data-thread-notes-btn]"));
+      await m.click((await notesBtn(m)));
       const ta = m.query(
         "[data-thread-notes-input]",
       ) as HTMLTextAreaElement | null;
       assert.ok(ta, "notes textarea");
       await m.type(ta, "Important unsaved investigation notes");
-      await m.click(m.query("[data-thread-notes-btn]"));
+      await m.click((await notesBtn(m)));
       await settle(m);
 
       const stillOpen = m.query(
@@ -379,7 +393,7 @@ describe("thread notes (issue #194)", () => {
         notes: "Important unsaved investigation notes",
       });
 
-      await m.click(m.query("[data-thread-notes-btn]"));
+      await m.click((await notesBtn(m)));
       const reopened = m.query(
         "[data-thread-notes-input]",
       ) as HTMLTextAreaElement | null;
@@ -432,7 +446,7 @@ describe("thread notes (issue #194)", () => {
         await selectThread(m, "t-a");
       }
 
-      await m.click(m.query("[data-thread-notes-btn]"));
+      await m.click((await notesBtn(m)));
       const ta = m.query(
         "[data-thread-notes-input]",
       ) as HTMLTextAreaElement | null;
@@ -446,7 +460,7 @@ describe("thread notes (issue #194)", () => {
         null,
         "panel closed on switch",
       );
-      await m.click(m.query("[data-thread-notes-btn]"));
+      await m.click((await notesBtn(m)));
       const onB = m.query(
         "[data-thread-notes-input]",
       ) as HTMLTextAreaElement | null;
@@ -456,7 +470,7 @@ describe("thread notes (issue #194)", () => {
       await settle(m);
 
       await selectThread(m, "t-a");
-      await m.click(m.query("[data-thread-notes-btn]"));
+      await m.click((await notesBtn(m)));
       const onA = m.query(
         "[data-thread-notes-input]",
       ) as HTMLTextAreaElement | null;
@@ -528,7 +542,7 @@ describe("thread notes (issue #194)", () => {
         await selectThread(m, "t-a");
       }
 
-      await m.click(m.query("[data-thread-notes-btn]"));
+      await m.click((await notesBtn(m)));
       await m.type(
         m.query("[data-thread-notes-input]"),
         "Important unsaved investigation notes",
@@ -536,7 +550,7 @@ describe("thread notes (issue #194)", () => {
       await selectThread(m, "t-b");
       assert.equal(gate.length, 1, "switch flushes A without waiting");
 
-      await m.click(m.query("[data-thread-notes-btn]"));
+      await m.click((await notesBtn(m)));
       const onB = m.query(
         "[data-thread-notes-input]",
       ) as HTMLTextAreaElement | null;
@@ -547,7 +561,7 @@ describe("thread notes (issue #194)", () => {
       await settle(m);
 
       await selectThread(m, "t-a");
-      await m.click(m.query("[data-thread-notes-btn]"));
+      await m.click((await notesBtn(m)));
       const onA = m.query(
         "[data-thread-notes-input]",
       ) as HTMLTextAreaElement | null;
@@ -622,7 +636,7 @@ describe("thread notes (issue #194)", () => {
         await selectThread(m, "t-a");
       }
 
-      await m.click(m.query("[data-thread-notes-btn]"));
+      await m.click((await notesBtn(m)));
       await m.type(
         m.query("[data-thread-notes-input]"),
         "Important unsaved investigation notes",
@@ -631,7 +645,7 @@ describe("thread notes (issue #194)", () => {
       await selectThread(m, "t-b");
       assert.equal(gate.length, 1);
 
-      await m.click(m.query("[data-thread-notes-btn]"));
+      await m.click((await notesBtn(m)));
       const onB = m.query(
         "[data-thread-notes-input]",
       ) as HTMLTextAreaElement | null;
@@ -659,7 +673,7 @@ describe("thread notes (issue #194)", () => {
       await m.press(stillB, "Escape");
       await settle(m);
       await selectThread(m, "t-a");
-      await m.click(m.query("[data-thread-notes-btn]"));
+      await m.click((await notesBtn(m)));
       const onA = m.query(
         "[data-thread-notes-input]",
       ) as HTMLTextAreaElement | null;

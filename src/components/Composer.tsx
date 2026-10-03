@@ -113,13 +113,7 @@ import { teachPermissionAllowed } from "../teach";
 import type { ThreadTeach } from "../shared/ipc";
 import { useFileDrop } from "../useFileDrop";
 import { isWebMode } from "../shared/wire";
-import {
-  cycleTranscriptViewMode,
-  TRANSCRIPT_VIEW_HINTS,
-  TRANSCRIPT_VIEW_LABELS,
-  TRANSCRIPT_VIEW_MODES,
-  type TranscriptViewMode,
-} from "../focusView";
+import { cycleTranscriptViewMode } from "../focusView";
 import {
   getComposerBusyAction,
   getLastReasoningEffort,
@@ -2501,75 +2495,10 @@ export const Composer = memo(function Composer({
         <div ref={hintsRef} className={styles.hints} data-kbd-hints="" hidden>
           {`⌘Enter ${canSteer && busyAction === "steer" ? "steer" : busy ? "queue" : "send"} · ⌥Enter side question · ⌘S stash${canSteer ? " · ⌘⇧Enter steer" : ""}${busy ? " · Esc stop" : ""}${vimEnabled ? ` · VIM ${vimMode}` : ""}`}
         </div>
-        <div className={styles.controls}>
+        {/* View mode lives in the thread title menu and ⌃O (#1411); the
+            current mode is mirrored here for keyboard-only callers. */}
+        <div className={styles.controls} data-transcript-view-mode={transcriptView}>
           <div className={styles.pills}>
-            {onPickAttachments && !ask && (
-              <div className={styles.modeWrap} ref={attachWrapRef}>
-                <button
-                  type="button"
-                  className={styles.pill}
-                  disabled={disabled || sending}
-                  aria-disabled={disabled || sending ? "true" : undefined}
-                  aria-label="Attach files or folders"
-                  title="Attach files or folders"
-                  aria-haspopup={
-                    canPickWebFolderNow() ? "menu" : undefined
-                  }
-                  aria-expanded={
-                    canPickWebFolderNow() ? attachOpen : undefined
-                  }
-                  onClick={pickAttachments}
-                >
-                  <svg
-                    width="13"
-                    height="13"
-                    viewBox="0 0 16 16"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="1.5"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    aria-hidden="true"
-                  >
-                    <path d="m12.5 7.5-4.95 4.95a3.5 3.5 0 0 1-4.95-4.95l5.3-5.3a2.33 2.33 0 0 1 3.3 3.3l-5.3 5.3a1.17 1.17 0 0 1-1.65-1.65l4.6-4.6" />
-                  </svg>
-                </button>
-                {attachOpen && (
-                  <ul
-                    className={styles.modeMenu}
-                    role="menu"
-                    aria-label="Attach"
-                  >
-                    <li>
-                      <button
-                        type="button"
-                        className={styles.modeOption}
-                        role="menuitem"
-                        onClick={() => {
-                          setAttachOpen(false);
-                          runAttachmentPick(onPickAttachments);
-                        }}
-                      >
-                        Files
-                      </button>
-                    </li>
-                    <li>
-                      <button
-                        type="button"
-                        className={styles.modeOption}
-                        role="menuitem"
-                        onClick={() => {
-                          setAttachOpen(false);
-                          runAttachmentPick(onPickFolderAttachments);
-                        }}
-                      >
-                        Folder
-                      </button>
-                    </li>
-                  </ul>
-                )}
-              </div>
-            )}
             {hasSpeech && speech && (
               <>
                 <button
@@ -3493,95 +3422,73 @@ export const Composer = memo(function Composer({
               </button>
             </div>
           )}
-          <div className={styles.modeWrap} data-transcript-view="">
-            <button
-              type="button"
-              className={`${styles.pill}${
-                transcriptView !== "normal"
-                  ? ` ${styles.pillAccent}`
-                  : ` ${styles.pillIcon}`
-              }`}
-              data-transcript-view-trigger=""
-              data-transcript-view-mode={transcriptView}
-              aria-haspopup="listbox"
-              aria-expanded={viewOpen}
-              aria-label={`Transcript view: ${TRANSCRIPT_VIEW_LABELS[transcriptView]}`}
-              title={`${TRANSCRIPT_VIEW_HINTS[transcriptView]}. Ctrl+O cycles.`}
-              onClick={() => {
-                setViewOpen((v) => !v);
-                setModeOpen(false);
-                setModelOpen(false);
-                setEffortOpen(false);
-                setOptionsOpen(false);
-              }}
-            >
-              {transcriptView === "normal" ? (
+          {onPickAttachments && !ask && (
+            <div className={styles.modeWrap} ref={attachWrapRef}>
+              <button
+                type="button"
+                className={styles.pill}
+                disabled={disabled || sending}
+                aria-disabled={disabled || sending ? "true" : undefined}
+                aria-label="Attach files or folders"
+                title="Attach files or folders"
+                aria-haspopup={
+                  canPickWebFolderNow() ? "menu" : undefined
+                }
+                aria-expanded={
+                  canPickWebFolderNow() ? attachOpen : undefined
+                }
+                onClick={pickAttachments}
+              >
                 <svg
-                  width="14"
-                  height="14"
+                  width="13"
+                  height="13"
                   viewBox="0 0 16 16"
                   fill="none"
                   stroke="currentColor"
                   strokeWidth="1.5"
                   strokeLinecap="round"
+                  strokeLinejoin="round"
                   aria-hidden="true"
                 >
-                  <path d="M3 4.5h10M3 8h10M3 11.5h6" />
+                  <path d="m12.5 7.5-4.95 4.95a3.5 3.5 0 0 1-4.95-4.95l5.3-5.3a2.33 2.33 0 0 1 3.3 3.3l-5.3 5.3a1.17 1.17 0 0 1-1.65-1.65l4.6-4.6" />
                 </svg>
-              ) : (
-                <>
-                  {TRANSCRIPT_VIEW_LABELS[transcriptView]}
-                  <span className={styles.caret}>
-                    <svg
-                      width="10"
-                      height="10"
-                      viewBox="0 0 10 10"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="1.5"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      aria-hidden="true"
-                    >
-                      <path d="M2.5 3.5 5 6l2.5-2.5" />
-                    </svg>
-                  </span>
-                </>
-              )}
-            </button>
-            {viewOpen && (
-              <ul
-                className={`${styles.modeMenu} ${styles.viewMenu}`}
-                role="listbox"
-                aria-label="Transcript view"
-              >
-                {TRANSCRIPT_VIEW_MODES.map((mode: TranscriptViewMode) => (
-                  <li
-                    key={mode}
-                    role="option"
-                    aria-selected={mode === transcriptView}
-                  >
+              </button>
+              {attachOpen && (
+                <ul
+                  className={styles.modeMenu}
+                  role="menu"
+                  aria-label="Attach"
+                >
+                  <li>
                     <button
                       type="button"
                       className={styles.modeOption}
-                      data-transcript-view-option={mode}
-                      data-active={mode === transcriptView}
-                      title={TRANSCRIPT_VIEW_HINTS[mode]}
+                      role="menuitem"
                       onClick={() => {
-                        setTranscriptViewMode(mode);
-                        setViewOpen(false);
+                        setAttachOpen(false);
+                        runAttachmentPick(onPickAttachments);
                       }}
                     >
-                      <span className={styles.checkSlot}>
-                        {mode === transcriptView ? "✓" : ""}
-                      </span>
-                      {TRANSCRIPT_VIEW_LABELS[mode]}
+                      Files
                     </button>
                   </li>
-                ))}
-              </ul>
-            )}
-          </div>
+                  <li>
+                    <button
+                      type="button"
+                      className={styles.modeOption}
+                      role="menuitem"
+                      onClick={() => {
+                        setAttachOpen(false);
+                        runAttachmentPick(onPickFolderAttachments);
+                      }}
+                    >
+                      Folder
+                    </button>
+                  </li>
+                </ul>
+              )}
+            </div>
+          )}
           <button
             type="button"
             className={styles.send}

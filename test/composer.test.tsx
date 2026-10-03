@@ -2473,46 +2473,21 @@ describe("Composer value displays (null-safe)", () => {
 });
 
 describe("Composer transcript view (issue #461)", () => {
-  it("lives next to the send arrow and defaults to Normal", async () => {
+  it("keeps the view control off the toolbar and mirrors the mode (#1411)", async () => {
     const h = makeHarness();
     const m = await mount(composer(h));
-    const send = m.query('button[aria-label="Send"]');
-    const trigger = m.query("[data-transcript-view-trigger]");
-    assert.ok(send, "send arrow");
-    assert.ok(trigger, "transcript view control");
-    assert.ok(
-      !trigger.closest(".meta"),
-      "view control sits on the send row, not in the footer chips",
-    );
-    assert.ok(
-      send.compareDocumentPosition(trigger) & Node.DOCUMENT_POSITION_PRECEDING,
-      "view control is immediately before send",
-    );
-    assert.equal(trigger.getAttribute("data-transcript-view-mode"), "normal");
-    assert.match(trigger.getAttribute("aria-label") || "", /Normal/);
-    m.unmount();
-  });
-
-  it("opens a Summary / Normal / Verbose menu", async () => {
-    const h = makeHarness();
-    const m = await mount(composer(h));
-    const trigger = m.query("[data-transcript-view-trigger]");
-    assert.ok(trigger);
-    await m.click(trigger);
-    assert.ok(m.query("[data-transcript-view-option='summary']"));
-    assert.ok(m.query("[data-transcript-view-option='normal']"));
-    assert.ok(m.query("[data-transcript-view-option='verbose']"));
-    await m.click(m.query("[data-transcript-view-option='summary']"));
-    assert.equal(trigger.getAttribute("data-transcript-view-mode"), "summary");
+    assert.equal(m.query("[data-transcript-view-trigger]"), null, "no toolbar control");
+    const mirror = m.query("[data-transcript-view-mode]");
+    assert.ok(mirror, "mode mirrored on the controls row");
+    assert.equal(mirror!.getAttribute("data-transcript-view-mode"), "normal");
     m.unmount();
   });
 
   it("cycles modes with Ctrl+O and toggles Summary with Ctrl+Alt+F", async () => {
     const h = makeHarness();
     const m = await mount(composer(h));
-    const trigger = m.query("[data-transcript-view-trigger]");
-    assert.ok(trigger);
-    assert.equal(trigger.getAttribute("data-transcript-view-mode"), "normal");
+    const mirror = () => m.query("[data-transcript-view-mode]")!.getAttribute("data-transcript-view-mode");
+    assert.equal(mirror(), "normal");
     await inAct(() => {
       window.dispatchEvent(
         new KeyboardEvent("keydown", {
@@ -2524,7 +2499,7 @@ describe("Composer transcript view (issue #461)", () => {
       );
     });
     await m.flush();
-    assert.equal(trigger.getAttribute("data-transcript-view-mode"), "verbose");
+    assert.equal(mirror(), "verbose");
     await inAct(() => {
       window.dispatchEvent(
         new KeyboardEvent("keydown", {
@@ -2537,7 +2512,7 @@ describe("Composer transcript view (issue #461)", () => {
       );
     });
     await m.flush();
-    assert.equal(trigger.getAttribute("data-transcript-view-mode"), "summary");
+    assert.equal(mirror(), "summary");
     m.unmount();
   });
 });

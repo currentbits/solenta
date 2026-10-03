@@ -1279,3 +1279,9 @@
   background: transparent;
   color: var(--text);
 }
+
+/* Attach sits beside Send now (#1411): its menu opens toward the left. */
+.modeMenuRight {
+  left: auto;
+  right: 0;
+}

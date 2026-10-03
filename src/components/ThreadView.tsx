@@ -18,6 +18,7 @@ import { BrowserPane } from "./BrowserPane";
 import { SimulatorPane } from "./SimulatorPane";
 import { useWorktreeChrome } from "./WorktreeControl";
 import { WorkspaceStrip } from "./WorkspaceStrip";
+import { ProjectIcon } from "./ProjectIcon";
 import {
   closePane,
   defaultPaneLayout,
@@ -211,10 +212,17 @@ import {
 import {
   latestTurnKey,
   mapFocusTurns,
+  TRANSCRIPT_VIEW_HINTS,
+  TRANSCRIPT_VIEW_LABELS,
+  TRANSCRIPT_VIEW_MODES,
   type FocusTurnSummary,
 } from "../focusView";
 import { routineWorkerActivitySummary } from "../workerActivity";
-import { useRunDurationEnabled, useTranscriptViewMode } from "../uiPrefs";
+import {
+  setTranscriptViewMode,
+  useRunDurationEnabled,
+  useTranscriptViewMode,
+} from "../uiPrefs";
 import { DROP_OVERLAY_MESSAGE, type DroppedFolder } from "../dropFiles";
 import { Composer } from "./Composer";
 import { repoRelativeDir } from "../mention";
@@ -1432,7 +1440,7 @@ const UserMessageBlock = memo(function UserMessageBlock({
               title={pinned ? "Unpin this message" : "Pin this message"}
               onClick={onTogglePin}
             >
-              {pinned ? "Unpin" : "Pin"}
+              <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M8 11v3.5M4.5 11h7l-1.25-3.5V3h-4.5v4.5Z" /></svg>
             </button>
           )}
         </div>
@@ -1490,7 +1498,7 @@ const UserMessageBlock = memo(function UserMessageBlock({
               title={pinned ? "Unpin this message" : "Pin this message"}
               onClick={onTogglePin}
             >
-              {pinned ? "Unpin" : "Pin"}
+              <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M8 11v3.5M4.5 11h7l-1.25-3.5V3h-4.5v4.5Z" /></svg>
             </button>
           </span>
         </footer>
@@ -1627,6 +1635,7 @@ const MessageBlock = memo(function MessageBlock({
 }) {
   // Latch at mount; see ToolCallCard for why.
   const [entered] = useState(Boolean(animateIn));
+  const [copied, setCopied] = useState(false);
   if (message.thinking) {
     return (
       <ThinkingCard
@@ -1720,6 +1729,26 @@ const MessageBlock = memo(function MessageBlock({
             message.text.trim() &&
             (onReply || onCiteSelection || onWaitWhat))) && (
           <span className={styles.msgActions}>
+            {!streaming && message.text.trim() && (
+              <button
+                type="button"
+                className={styles.msgAction}
+                data-msg-copy=""
+                aria-label={copied ? "Copied" : "Copy message"}
+                title={copied ? "Copied" : "Copy message"}
+                onClick={() => {
+                  void navigator.clipboard?.writeText(message.text).then(
+                    () => {
+                      setCopied(true);
+                      window.setTimeout(() => setCopied(false), 1200);
+                    },
+                    () => {},
+                  );
+                }}
+              >
+                {copied ? <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="m3.5 8.5 3 3 6-7" /></svg> : <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="5.5" y="5.5" width="8" height="8" rx="1.5" /><path d="M10.5 5.5V4a1.5 1.5 0 0 0-1.5-1.5H4A1.5 1.5 0 0 0 2.5 4v5A1.5 1.5 0 0 0 4 10.5h1.5" /></svg>}
+              </button>
+            )}
             {onTogglePin && (
               <button
                 type="button"
@@ -1730,7 +1759,7 @@ const MessageBlock = memo(function MessageBlock({
                 title={pinned ? "Unpin this message" : "Pin this message"}
                 onClick={onTogglePin}
               >
-                {pinned ? "Unpin" : "Pin"}
+                <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M8 11v3.5M4.5 11h7l-1.25-3.5V3h-4.5v4.5Z" /></svg>
               </button>
             )}
             {!streaming && onReply && message.text.trim() && (
@@ -1738,10 +1767,11 @@ const MessageBlock = memo(function MessageBlock({
                 type="button"
                 className={styles.msgAction}
                 data-msg-reply=""
-                title="Quote this message as context for the next send"
+                aria-label="Reply"
+                title="Reply: quote this message as context for the next send"
                 onClick={() => onReply(message)}
               >
-                Reply
+                <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M6 10 2.5 6.5 6 3" /><path d="M2.5 6.5h7a4 4 0 0 1 4 4v2" /></svg>
               </button>
             )}
             {!streaming && onCiteSelection && threadId && message.text.trim() && (
@@ -1763,8 +1793,9 @@ const MessageBlock = memo(function MessageBlock({
                   });
                   if (target) onCiteSelection(target);
                 }}
+                aria-label="Cite selection"
               >
-                Cite
+                <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M3 4.5h10M3 8h6M3 11.5h8" /></svg>
               </button>
             )}
             {!streaming && onWaitWhat && message.text.trim() && (
@@ -1772,10 +1803,11 @@ const MessageBlock = memo(function MessageBlock({
                 type="button"
                 className={styles.msgAction}
                 data-msg-wait-what=""
-                title="Re-explain this message in plain English"
+                aria-label="Wait, what?"
+                title="Wait, what? Re-explain this message in plain English"
                 onClick={() => onWaitWhat(message)}
               >
-                Wait, what?
+                <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><circle cx="8" cy="8" r="5.75" /><path d="M6.4 6.3a1.7 1.7 0 0 1 3.2.6c0 1.1-1.6 1.4-1.6 2.4M8 11.2h.01" /></svg>
               </button>
             )}
           </span>
@@ -2090,6 +2122,8 @@ function NextGitActionButton({
   onStartRun,
   providerName,
   onPushed,
+  onMore,
+  prRequest,
 }: {
   thread: ThreadInfo;
   isWorking: boolean;
@@ -2113,6 +2147,10 @@ function NextGitActionButton({
   onStartRun: (prompt: string) => void | Promise<void>;
   providerName: string;
   onPushed: () => void;
+  /** Split-button chevron: open Thread details, where every git step lives. */
+  onMore?: () => void;
+  /** Bumped by Thread details' Create PR: open the same PR dialog. */
+  prRequest?: number;
 }) {
   const [dirty, setDirty] = useState(false);
   const [fileCount, setFileCount] = useState(0);
@@ -2242,6 +2280,19 @@ function NextGitActionButton({
     void loadChecks();
   }, [loadChecks, thread.status]);
 
+  const lastPrRequest = useRef(prRequest ?? 0);
+  useEffect(() => {
+    if (!prRequest || prRequest === lastPrRequest.current) return;
+    lastPrRequest.current = prRequest;
+    if (onCreatePr) {
+      setComposerError(null);
+      setComposerOpen(true);
+    } else {
+      void onStartRun(createPrPrompt(providerName));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [prRequest]);
+
   const decided = suggestNextGitAction({
     dirty,
     fileCount,
@@ -2352,8 +2403,6 @@ function NextGitActionButton({
     }
   };
 
-  if (action.kind === "idle") return null;
-
   const submitPr = async (input: {
     title: string;
     body: string;
@@ -2394,6 +2443,32 @@ function NextGitActionButton({
     await submitPr({ ...lastSubmit.current, allowOversize: true });
   };
 
+  const prDialog = composerOpen ? (
+    <CreatePrDialog
+      initialTitle={thread.title}
+      loadTemplate={loadPrTemplate}
+      pending={pending}
+      error={composerError}
+      oversize={oversizeMsg != null}
+      onSubmit={(input) => void submitPr(input)}
+      onSplit={() => {
+        setComposerOpen(false);
+        setOversizeMsg(null);
+        void onStartRun(splitPrPrompt(providerName));
+      }}
+      onCreateAnyway={() => void createOversizePr()}
+      onClose={() => {
+        if (pending) return;
+        setComposerOpen(false);
+        setComposerError(null);
+      }}
+    />
+  ) : null;
+
+  // Nothing to suggest: no button, but a PR asked for from Thread details
+  // still gets its dialog.
+  if (action.kind === "idle") return prDialog;
+
   const disabled = isWorking || pending || !action.actionable;
   const label = pending
     ? action.kind === "push"
@@ -2410,6 +2485,7 @@ function NextGitActionButton({
     styles.btn,
     action.primary ? styles.btnPrimary : "",
     styles.pushBtn,
+    onMore ? styles.gitSplitMain : "",
   ]
     .filter(Boolean)
     .join(" ");
@@ -2488,6 +2564,31 @@ function NextGitActionButton({
         {pending && <span className={styles.pushSpinner} aria-hidden />}
         {label}
       </button>
+      {onMore ? (
+        <button
+          type="button"
+          className={styles.gitMore}
+          data-git-more=""
+          aria-label="More git actions"
+          title="Push, PR, merge and more in Thread details"
+          onMouseDown={(e) => e.stopPropagation()}
+          onClick={onMore}
+        >
+          <svg
+            width="11"
+            height="11"
+            viewBox="0 0 16 16"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.8"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden="true"
+          >
+            <path d="m4 6 4 4 4-4" />
+          </svg>
+        </button>
+      ) : null}
       {ciSignOff ? (
         <span
           className={styles.oversizeBar}
@@ -2556,27 +2657,7 @@ function NextGitActionButton({
           </button>
         </span>
       ) : null}
-      {composerOpen ? (
-        <CreatePrDialog
-          initialTitle={thread.title}
-          loadTemplate={loadPrTemplate}
-          pending={pending}
-          error={composerError}
-          oversize={oversizeMsg != null}
-          onSubmit={(input) => void submitPr(input)}
-          onSplit={() => {
-            setComposerOpen(false);
-            setOversizeMsg(null);
-            void onStartRun(splitPrPrompt(providerName));
-          }}
-          onCreateAnyway={() => void createOversizePr()}
-          onClose={() => {
-            if (pending) return;
-            setComposerOpen(false);
-            setComposerError(null);
-          }}
-        />
-      ) : null}
+      {prDialog}
     </>
   );
 }
@@ -6096,6 +6177,37 @@ export const ThreadView = memo(function ThreadView({
     return () => document.removeEventListener("mousedown", onDoc);
   }, [detailsOpen]);
   const closeDetails = useCallback(() => setDetailsOpen(false), []);
+  const [prRequest, setPrRequest] = useState(0);
+  const [detailsGit, setDetailsGit] = useState<{
+    changed: number;
+    sync: GitSyncInfo | null;
+  } | null>(null);
+  const detailsThreadId = detail?.thread.id ?? null;
+  useEffect(() => {
+    if (!detailsOpen || !detailsThreadId) return;
+    let live = true;
+    void (async () => {
+      let changed = 0;
+      try {
+        changed = (await onFetchDiff()).files.length;
+      } catch {
+        changed = 0;
+      }
+      let sync: GitSyncInfo | null = null;
+      if (gitSyncInfo) {
+        try {
+          sync = await gitSyncInfo(detailsThreadId);
+        } catch {
+          sync = null;
+        }
+      }
+      if (live) setDetailsGit({ changed, sync });
+    })();
+    return () => {
+      live = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [detailsOpen, detailsThreadId, syncRefreshNonce]);
   const ringWarn = ring?.view.warn === true;
   useEffect(() => {
     if (contextOpen && !ringWarn) setDetailsOpen(true);
@@ -6532,6 +6644,7 @@ export const ThreadView = memo(function ThreadView({
   const hasVersionControl =
     Boolean(gitSyncInfo && gitFetch) || headerCommands.length > 0;
   const hasDetails =
+    Boolean(onSetNotes) ||
     Boolean(worktree.toolbar) ||
     Boolean(thread.sandbox) ||
     Boolean(ring && !ring.view.warn) ||
@@ -6625,10 +6738,18 @@ export const ThreadView = memo(function ThreadView({
               aria-label={newThreadLabel}
               onClick={() => onCreateThread(thread.projectId)}
             >
+              {project?.iconUrl ? (
+                <ProjectIcon url={project.iconUrl} size={14} />
+              ) : null}
               {projectSlug}
             </button>
           ) : (
-            <span className={styles.project}>{projectSlug}</span>
+            <span className={styles.project}>
+              {project?.iconUrl ? (
+                <ProjectIcon url={project.iconUrl} size={14} />
+              ) : null}
+              {projectSlug}
+            </span>
           )}
           <span className={styles.sep} aria-hidden>
             /
@@ -6655,7 +6776,249 @@ export const ThreadView = memo(function ThreadView({
               }}
             />
           ) : (
-            <span className={styles.threadTitle}>{thread.title}</span>
+          <div className={styles.menuWrap} ref={menuRef}>
+              <button
+                type="button"
+                className={styles.titleMenuBtn}
+                aria-label="Thread actions"
+                title={thread.title}
+                aria-haspopup="menu"
+                aria-expanded={menuOpen}
+                data-thread-title-menu=""
+                onClick={() => {
+                  setMenuOpen((v) => !v);
+                  setDeleteConfirm(false);
+                }}
+              >
+                <span className={styles.threadTitle}>{thread.title}</span>
+                <svg
+                  className={styles.titleChevron}
+                  width="12"
+                  height="12"
+                  viewBox="0 0 16 16"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.7"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden="true"
+                >
+                  <path d="m4 6 4 4 4-4" />
+                </svg>
+              </button>
+              {menuOpen && (
+                <div className={`${styles.menu} ${styles.titleMenu}`} role="menu">
+                  {deleteConfirm ? (
+                    <div className={styles.menuConfirm}>
+                      <p className={styles.menuConfirmText}>
+                        Move to Recently deleted? You can restore for 7 days.
+                      </p>
+                      <div className={styles.menuConfirmActions}>
+                        <button
+                          type="button"
+                          className={`${styles.menuItem} ${styles.menuItemDanger}`}
+                          role="menuitem"
+                          onClick={() => {
+                            setMenuOpen(false);
+                            setDeleteConfirm(false);
+                            void onDeleteThread();
+                          }}
+                        >
+                          Confirm
+                        </button>
+                        <button
+                          type="button"
+                          className={styles.menuItem}
+                          role="menuitem"
+                          onClick={() => setDeleteConfirm(false)}
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <>
+                      {onStartSpec && !thread.spec && !thread.ask && (
+                        <button
+                          type="button"
+                          className={styles.menuItem}
+                          role="menuitem"
+                          data-spec-mode-btn=""
+                          onClick={() => {
+                            setMenuOpen(false);
+                            void onStartSpec(thread.id);
+                          }}
+                        >
+                          Spec mode
+                        </button>
+                      )}
+                      {onStartTeach && !thread.teach && !thread.ask && (
+                        <button
+                          type="button"
+                          className={styles.menuItem}
+                          role="menuitem"
+                          data-teach-mode-btn=""
+                          onClick={() => {
+                            setMenuOpen(false);
+                            void onStartTeach(thread.id);
+                          }}
+                        >
+                          Teach mode
+                        </button>
+                      )}
+                      {onStartAsk && !thread.ask && (
+                        <button
+                          type="button"
+                          className={styles.menuItem}
+                          role="menuitem"
+                          data-ask-mode-btn=""
+                          onClick={() => {
+                            setMenuOpen(false);
+                            void onStartAsk(thread.id);
+                          }}
+                        >
+                          Ask mode
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        className={styles.menuItem}
+                        role="menuitem"
+                        data-copy-thread-id=""
+                        onClick={() => void handleCopyThreadId()}
+                      >
+                        {copiedThreadId ? "Copied" : "Copy thread ID"}
+                      </button>
+                      {onRenameThread && !isWorking && (
+                        <button
+                          type="button"
+                          className={styles.menuItem}
+                          role="menuitem"
+                          data-rename-thread=""
+                          onClick={startRename}
+                        >
+                          Rename thread
+                        </button>
+                      )}
+                    <div className={styles.menuInbound} data-transcript-view-menu="">
+                      <div className={styles.menuInboundLabel}>
+                        Transcript view <span className={styles.menuKbd}>⌃O</span>
+                      </div>
+                      {TRANSCRIPT_VIEW_MODES.map((mode) => (
+                        <button
+                          key={mode}
+                          type="button"
+                          className={styles.menuItem}
+                          role="menuitemradio"
+                          aria-checked={transcriptView === mode}
+                          data-transcript-view-option={mode}
+                          data-active={transcriptView === mode ? "true" : undefined}
+                          title={TRANSCRIPT_VIEW_HINTS[mode]}
+                          onClick={() => {
+                            setMenuOpen(false);
+                            setTranscriptViewMode(mode);
+                          }}
+                        >
+                          {TRANSCRIPT_VIEW_LABELS[mode]}
+                        </button>
+                      ))}
+                    </div>
+                      {onSetCrossThreadInbound && (
+                        <div
+                          className={styles.menuInbound}
+                          data-inbound-policy-menu=""
+                        >
+                          <div className={styles.menuInboundLabel}>
+                            Messages from other threads
+                          </div>
+                          {(
+                            [
+                              ["accept", "Accept"],
+                              ["queue-only", "Queue only"],
+                              ["refuse", "Refuse"],
+                            ] as const
+                          ).map(([value, label]) => {
+                            const current =
+                              thread.crossThreadInbound === "queue-only" ||
+                              thread.crossThreadInbound === "refuse"
+                                ? thread.crossThreadInbound
+                                : "accept";
+                            return (
+                              <button
+                                key={value}
+                                type="button"
+                                className={styles.menuItem}
+                                role="menuitemradio"
+                                aria-checked={current === value}
+                                data-inbound-policy={value}
+                                data-active={current === value ? "true" : undefined}
+                                onClick={() => {
+                                  setMenuOpen(false);
+                                  void onSetCrossThreadInbound(value);
+                                }}
+                              >
+                                {label}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      )}
+                      {!isWorking && onRepeatSchedule && (
+                        <button
+                          type="button"
+                          className={styles.menuItem}
+                          role="menuitem"
+                          data-repeat-schedule=""
+                          onClick={() => {
+                            setMenuOpen(false);
+                            onRepeatSchedule();
+                          }}
+                        >
+                          Schedule this prompt…
+                        </button>
+                      )}
+                      {!isWorking && onDistillWorkflow && (
+                        <button
+                          type="button"
+                          className={styles.menuItem}
+                          role="menuitem"
+                          data-distill-workflow=""
+                          onClick={() => {
+                            setMenuOpen(false);
+                            onDistillWorkflow();
+                          }}
+                        >
+                          Distill into workflow…
+                        </button>
+                      )}
+                      {!isWorking && (
+                        <button
+                          type="button"
+                          className={styles.menuItem}
+                          role="menuitem"
+                          onClick={() => {
+                            setMenuOpen(false);
+                            void onSetArchived(!isArchived);
+                          }}
+                        >
+                          {isArchived ? "Unarchive thread" : "Archive thread"}
+                        </button>
+                      )}
+                      {!isWorking && (
+                        <button
+                          type="button"
+                          className={`${styles.menuItem} ${styles.menuItemDanger}`}
+                          role="menuitem"
+                          onClick={() => setDeleteConfirm(true)}
+                        >
+                          Delete thread
+                        </button>
+                      )}
+                    </>
+                  )}
+                </div>
+              )}
+            </div>
           )}
           </div>
           {workerCount > 0 && onOpenWorkers ? (
@@ -6699,6 +7062,8 @@ export const ThreadView = memo(function ThreadView({
               thread.provider
             }
             onPushed={() => setSyncRefreshNonce((n) => n + 1)}
+            onMore={hasDetails ? () => setDetailsOpen(true) : undefined}
+            prRequest={prRequest}
           />
           )}
           {onStopSpec && thread.spec && !thread.ask && (
@@ -6709,43 +7074,6 @@ export const ThreadView = memo(function ThreadView({
               onClick={() => void onStopSpec(thread.id)}
             >
               Exit spec mode
-            </button>
-          )}
-          {onSetNotes && (
-            <button
-              type="button"
-              className={styles.iconBtn}
-              data-thread-notes-btn=""
-              data-has-notes={thread.notes ? "true" : undefined}
-              data-has-pins={displayPins.length ? String(displayPins.length) : undefined}
-              data-active={notesOpen ? "true" : undefined}
-              aria-expanded={notesOpen}
-              aria-label="Thread notes"
-              title="Thread notes"
-              onMouseDown={(e) => {
-                // Keep the textarea from blurring before this click, so
-                // toggle-close does not immediately re-open.
-                if (notesOpenRef.current) e.preventDefault();
-              }}
-              onClick={toggleNotes}
-            >
-              <svg
-                width="14"
-                height="14"
-                viewBox="0 0 16 16"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="1.5"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                aria-hidden="true"
-              >
-                <path d="M4 2.5h8A1.5 1.5 0 0 1 13.5 4v9A1.5 1.5 0 0 1 12 14.5H4A1.5 1.5 0 0 1 2.5 13V4A1.5 1.5 0 0 1 4 2.5Z" />
-                <path d="M5.5 6h5M5.5 8.5h5M5.5 11h3" />
-              </svg>
-              {thread.notes ? (
-                <span className={styles.notesDot} data-notes-dot="" aria-hidden />
-              ) : null}
             </button>
           )}
           {ring?.view.warn ? ringBadge : null}
@@ -6776,6 +7104,9 @@ export const ThreadView = memo(function ThreadView({
                 <circle cx="8" cy="8" r="5.75" />
                 <path d="M8 7.25v3.5M8 5.25h.01" />
               </svg>
+              {thread.notes ? (
+                <span className={styles.notesDot} data-notes-dot="" aria-hidden />
+              ) : null}
             </button>
             {detailsOpen && (
               <div
@@ -6786,26 +7117,95 @@ export const ThreadView = memo(function ThreadView({
               >
                 <section className={styles.detailsSection}>
                   <div className={styles.detailsHeading}>Workspace</div>
-                  {worktree.toolbar ? (
+                  {worktree.rows ? (
+                    <div className={styles.detailsRow}>{worktree.rows.workspace}</div>
+                  ) : worktree.toolbar ? (
                     <div className={styles.detailsRow}>{worktree.toolbar}</div>
                   ) : null}
-                  <div className={styles.detailsRow}>
-                    {thread.sandbox && <SandboxBadge sandbox={thread.sandbox} />}
-                    {ring && !ring.view.warn ? ringBadge : null}
-                  </div>
+                  {thread.sandbox || (ring && !ring.view.warn) ? (
+                    <div className={styles.detailsKv}>
+                      <span className={styles.detailsKey}>
+                        {thread.sandbox ? "Sandbox" : "Context"}
+                      </span>
+                      {thread.sandbox && <SandboxBadge sandbox={thread.sandbox} />}
+                      <span className={styles.detailsKvEnd}>
+                        {ring && !ring.view.warn ? ringBadge : null}
+                      </span>
+                    </div>
+                  ) : null}
                 </section>
                 <section className={styles.detailsSection}>
                   <div className={styles.detailsHeading}>Version control</div>
-                  <div className={styles.detailsRow}>
-                    {gitSyncInfo && gitFetch && (
+                  {worktree.rows ? (
+                    <div className={styles.detailsRow}>{worktree.rows.versionControl}</div>
+                  ) : null}
+                  {gitSyncInfo && gitFetch ? (
+                    <div className={styles.detailsKv}>
+                      <span className={styles.detailsKey}>Status</span>
+                      <span className={styles.detailsStatus} data-details-status="">
+                        {detailsGit ? `${detailsGit.changed} changed · ` : ""}
+                      </span>
                       <SyncPill
                         threadId={thread.id}
                         gitSyncInfo={gitSyncInfo}
                         gitFetch={gitFetch}
                         refreshNonce={syncRefreshNonce}
                       />
-                    )}
-                    {headerCommands.length > 0 ? (
+                    </div>
+                  ) : null}
+                  {!thread.ask && !project?.remoteHost && detailsGit ? (
+                    <div className={styles.detailsActions}>
+                      {detailsGit.changed > 0 && onViewChanges ? (
+                        <button
+                          type="button"
+                          className={`${styles.btn} ${styles.btnPrimary}`}
+                          data-details-commit=""
+                          disabled={isWorking}
+                          onClick={() => {
+                            setDetailsOpen(false);
+                            onViewChanges();
+                          }}
+                        >
+                          Commit {detailsGit.changed}{" "}
+                          {detailsGit.changed === 1 ? "file" : "files"}
+                        </button>
+                      ) : null}
+                      {thread.branch &&
+                      (!detailsGit.sync?.hasUpstream ||
+                        (detailsGit.sync.ahead ?? 0) > 0) ? (
+                        <button
+                          type="button"
+                          className={styles.btn}
+                          data-details-push=""
+                          disabled={isWorking}
+                          onClick={() => {
+                            void onPush().then(
+                              () => setSyncRefreshNonce((n) => n + 1),
+                              () => {},
+                            );
+                          }}
+                        >
+                          Push
+                        </button>
+                      ) : null}
+                      {thread.worktreePath && thread.prNumber == null ? (
+                        <button
+                          type="button"
+                          className={styles.btn}
+                          data-details-create-pr=""
+                          disabled={isWorking}
+                          onClick={() => {
+                            setDetailsOpen(false);
+                            setPrRequest((n) => n + 1);
+                          }}
+                        >
+                          Create PR
+                        </button>
+                      ) : null}
+                    </div>
+                  ) : null}
+                  {headerCommands.length > 0 ? (
+                    <div className={styles.detailsRow}>
                       <div className={styles.quickActions} data-thread-commands="">
                         {headerCommands.map((action) => {
                           const running = commandRunningId === action.id;
@@ -6833,228 +7233,58 @@ export const ThreadView = memo(function ThreadView({
                           </span>
                         ) : null}
                       </div>
-                    ) : null}
-                  </div>
+                    </div>
+                  ) : null}
                 </section>
+                      {onSetNotes && (
+                        <button
+                          type="button"
+                          className={styles.detailsNotesBtn}
+                          data-thread-notes-btn=""
+                          data-has-notes={thread.notes ? "true" : undefined}
+                          data-has-pins={displayPins.length ? String(displayPins.length) : undefined}
+                          data-active={notesOpen ? "true" : undefined}
+                          aria-expanded={notesOpen}
+                          aria-label="Thread notes"
+                          title="Thread notes"
+                          onMouseDown={(e) => {
+                            // Keep the textarea from blurring before this click, so
+                            // toggle-close does not immediately re-open.
+                            if (notesOpenRef.current) e.preventDefault();
+                          }}
+                          onClick={toggleNotes}
+                        >
+                          <svg
+                            width="14"
+                            height="14"
+                            viewBox="0 0 16 16"
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth="1.5"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            aria-hidden="true"
+                          >
+                            <path d="M4 2.5h8A1.5 1.5 0 0 1 13.5 4v9A1.5 1.5 0 0 1 12 14.5H4A1.5 1.5 0 0 1 2.5 13V4A1.5 1.5 0 0 1 4 2.5Z" />
+                            <path d="M5.5 6h5M5.5 8.5h5M5.5 11h3" />
+                          </svg>
+                          <span>Notes</span>
+                          <span className={styles.detailsNotesMeta}>
+                            {thread.notes
+                              ? "1 note"
+                              : displayPins.length
+                                ? `${displayPins.length} pinned`
+                                : "Add a note"}
+                          </span>
+                        </button>
+                      )}
+                {worktree.rows ? (
+                  <div className={styles.detailsDanger}>{worktree.rows.danger}</div>
+                ) : null}
               </div>
             )}
           </div>
           ) : null}
-          <div className={styles.menuWrap} ref={menuRef}>
-            <button
-              type="button"
-              className={styles.menuBtn}
-              aria-label="Thread actions"
-              title="Thread actions"
-              aria-haspopup="menu"
-              aria-expanded={menuOpen}
-              onClick={() => {
-                setMenuOpen((v) => !v);
-                setDeleteConfirm(false);
-              }}
-            >
-              <svg
-                width="16"
-                height="16"
-                viewBox="0 0 16 16"
-                fill="currentColor"
-                aria-hidden="true"
-              >
-                <circle cx="3.5" cy="8" r="1.3" />
-                <circle cx="8" cy="8" r="1.3" />
-                <circle cx="12.5" cy="8" r="1.3" />
-              </svg>
-            </button>
-            {menuOpen && (
-              <div className={styles.menu} role="menu">
-                {deleteConfirm ? (
-                  <div className={styles.menuConfirm}>
-                    <p className={styles.menuConfirmText}>
-                      Move to Recently deleted? You can restore for 7 days.
-                    </p>
-                    <div className={styles.menuConfirmActions}>
-                      <button
-                        type="button"
-                        className={`${styles.menuItem} ${styles.menuItemDanger}`}
-                        role="menuitem"
-                        onClick={() => {
-                          setMenuOpen(false);
-                          setDeleteConfirm(false);
-                          void onDeleteThread();
-                        }}
-                      >
-                        Confirm
-                      </button>
-                      <button
-                        type="button"
-                        className={styles.menuItem}
-                        role="menuitem"
-                        onClick={() => setDeleteConfirm(false)}
-                      >
-                        Cancel
-                      </button>
-                    </div>
-                  </div>
-                ) : (
-                  <>
-                    {onStartSpec && !thread.spec && !thread.ask && (
-                      <button
-                        type="button"
-                        className={styles.menuItem}
-                        role="menuitem"
-                        data-spec-mode-btn=""
-                        onClick={() => {
-                          setMenuOpen(false);
-                          void onStartSpec(thread.id);
-                        }}
-                      >
-                        Spec mode
-                      </button>
-                    )}
-                    {onStartTeach && !thread.teach && !thread.ask && (
-                      <button
-                        type="button"
-                        className={styles.menuItem}
-                        role="menuitem"
-                        data-teach-mode-btn=""
-                        onClick={() => {
-                          setMenuOpen(false);
-                          void onStartTeach(thread.id);
-                        }}
-                      >
-                        Teach mode
-                      </button>
-                    )}
-                    {onStartAsk && !thread.ask && (
-                      <button
-                        type="button"
-                        className={styles.menuItem}
-                        role="menuitem"
-                        data-ask-mode-btn=""
-                        onClick={() => {
-                          setMenuOpen(false);
-                          void onStartAsk(thread.id);
-                        }}
-                      >
-                        Ask mode
-                      </button>
-                    )}
-                    <button
-                      type="button"
-                      className={styles.menuItem}
-                      role="menuitem"
-                      data-copy-thread-id=""
-                      onClick={() => void handleCopyThreadId()}
-                    >
-                      {copiedThreadId ? "Copied" : "Copy thread ID"}
-                    </button>
-                    {onRenameThread && !isWorking && (
-                      <button
-                        type="button"
-                        className={styles.menuItem}
-                        role="menuitem"
-                        data-rename-thread=""
-                        onClick={startRename}
-                      >
-                        Rename thread
-                      </button>
-                    )}
-                    {onSetCrossThreadInbound && (
-                      <div
-                        className={styles.menuInbound}
-                        data-inbound-policy-menu=""
-                      >
-                        <div className={styles.menuInboundLabel}>
-                          Messages from other threads
-                        </div>
-                        {(
-                          [
-                            ["accept", "Accept"],
-                            ["queue-only", "Queue only"],
-                            ["refuse", "Refuse"],
-                          ] as const
-                        ).map(([value, label]) => {
-                          const current =
-                            thread.crossThreadInbound === "queue-only" ||
-                            thread.crossThreadInbound === "refuse"
-                              ? thread.crossThreadInbound
-                              : "accept";
-                          return (
-                            <button
-                              key={value}
-                              type="button"
-                              className={styles.menuItem}
-                              role="menuitemradio"
-                              aria-checked={current === value}
-                              data-inbound-policy={value}
-                              data-active={current === value ? "true" : undefined}
-                              onClick={() => {
-                                setMenuOpen(false);
-                                void onSetCrossThreadInbound(value);
-                              }}
-                            >
-                              {label}
-                            </button>
-                          );
-                        })}
-                      </div>
-                    )}
-                    {!isWorking && onRepeatSchedule && (
-                      <button
-                        type="button"
-                        className={styles.menuItem}
-                        role="menuitem"
-                        data-repeat-schedule=""
-                        onClick={() => {
-                          setMenuOpen(false);
-                          onRepeatSchedule();
-                        }}
-                      >
-                        Schedule this prompt…
-                      </button>
-                    )}
-                    {!isWorking && onDistillWorkflow && (
-                      <button
-                        type="button"
-                        className={styles.menuItem}
-                        role="menuitem"
-                        data-distill-workflow=""
-                        onClick={() => {
-                          setMenuOpen(false);
-                          onDistillWorkflow();
-                        }}
-                      >
-                        Distill into workflow…
-                      </button>
-                    )}
-                    {!isWorking && (
-                      <button
-                        type="button"
-                        className={styles.menuItem}
-                        role="menuitem"
-                        onClick={() => {
-                          setMenuOpen(false);
-                          void onSetArchived(!isArchived);
-                        }}
-                      >
-                        {isArchived ? "Unarchive thread" : "Archive thread"}
-                      </button>
-                    )}
-                    {!isWorking && (
-                      <button
-                        type="button"
-                        className={`${styles.menuItem} ${styles.menuItemDanger}`}
-                        role="menuitem"
-                        onClick={() => setDeleteConfirm(true)}
-                      >
-                        Delete thread
-                      </button>
-                    )}
-                  </>
-                )}
-              </div>
-            )}
-          </div>
           </div>
           <div className={styles.headerDivider} aria-hidden />
           <button

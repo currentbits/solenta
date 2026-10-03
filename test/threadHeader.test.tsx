@@ -731,6 +731,93 @@ describe("draft workspace strip under the composer", () => {
   });
 });
 
+describe("thread title menu (#1411)", () => {
+  it("the title opens the thread menu; there is no separate … button", async () => {
+    const m = await mount(view({}));
+    await m.flush();
+    const title = m.query("[data-thread-title-menu]");
+    assert.ok(title, "title is the menu trigger");
+    assert.equal(title!.getAttribute("aria-label"), "Thread actions");
+    assert.match(title!.textContent ?? "", /header features/);
+    assert.equal(m.queryAll("[aria-label='Thread actions']").length, 1, "only one trigger");
+    await m.click(title);
+    assert.ok(m.query("[data-copy-thread-id]"), "menu items are there");
+    m.unmount();
+  });
+
+  it("picks Summary / Normal / Verbose from the title menu", async () => {
+    const m = await mount(view({}));
+    await m.flush();
+    await m.click(m.query("[data-thread-title-menu]"));
+    for (const mode of ["summary", "normal", "verbose"]) {
+      assert.ok(m.query(`[data-transcript-view-option='${mode}']`), mode);
+    }
+    await m.click(m.query("[data-transcript-view-option='summary']"));
+    assert.equal(
+      m.query("[data-transcript-view-mode]")?.getAttribute("data-transcript-view-mode"),
+      "summary",
+    );
+    await m.click(m.query("[data-thread-title-menu]"));
+    await m.click(m.query("[data-transcript-view-option='normal']"));
+    m.unmount();
+  });
+});
+
+describe("Thread details card rows (#1411)", () => {
+  it("lists worktree, branch → base and the delete action as rows", async () => {
+    const m = await mount(
+      view({
+        detail: detail({ thread: thread({ baseBranch: "release" }) }),
+        onSetupWorktree: async () => {},
+        onMergeWorktree: async () => {},
+        onRemoveWorktree: async () => {},
+      }),
+    );
+    await m.flush();
+    await m.click(m.query("[data-thread-details-btn]"));
+    const card = m.query("[data-thread-details]")!;
+    assert.match(card.textContent ?? "", /Worktree\/tmp\/wt/);
+    assert.match(card.textContent ?? "", /Branchcoder\/header-features-abc123→ release/);
+    assert.ok(card.querySelector("[data-worktree-copy-path]"));
+    assert.ok(card.querySelector("[data-worktree-merge]"));
+    assert.ok(card.querySelector("[data-worktree-delete]"));
+    assert.equal(card.querySelector("[data-worktree-menu]"), null, "no header pill inside the card");
+    m.unmount();
+  });
+
+  it("offers Commit / Push / Create PR from what the branch needs", async () => {
+    const opened: string[] = [];
+    const m = await mount(
+      view({
+        onViewChanges: () => opened.push("changes"),
+        gitFetch: async () => {},
+        gitSyncInfo: async () => ({ hasUpstream: true, ahead: 2, behind: 0 }),
+      }),
+    );
+    await m.flush();
+    await m.click(m.query("[data-thread-details-btn]"));
+    await m.flush();
+    assert.ok(m.query("[data-details-push]"), "ahead → Push");
+    assert.ok(m.query("[data-details-create-pr]"), "no PR yet → Create PR");
+    assert.equal(m.query("[data-details-commit]"), null, "clean tree → no Commit");
+    assert.match(m.query("[data-details-status]")?.textContent ?? "", /0 changed/);
+    m.unmount();
+  });
+
+  it("puts the notes dot on the details toggle when the thread has notes", async () => {
+    const m = await mount(
+      view({
+        detail: detail({ thread: thread({ notes: "ship after #42" }) }),
+        gitFetch: async () => {},
+        gitSyncInfo: async () => ({ hasUpstream: true, ahead: 0, behind: 0 }),
+      }),
+    );
+    await m.flush();
+    assert.ok(m.query("[data-thread-details-btn] [data-notes-dot]"));
+    m.unmount();
+  });
+});
+
 describe("worktree line at the top of the transcript (#1411)", () => {
   const sent = [msg({ id: "u1", role: "user", text: "go" })];
 

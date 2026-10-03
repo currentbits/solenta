@@ -997,9 +997,9 @@ describe("ThreadView mounted interactions", () => {
         }),
       }),
     );
-    const trigger = m.query("[data-transcript-view-trigger]");
-    assert.ok(trigger, "transcript view control is in the composer");
-    assert.equal(trigger.getAttribute("data-transcript-view-mode"), "normal");
+    const mode = () =>
+      m.query("[data-transcript-view-mode]")!.getAttribute("data-transcript-view-mode");
+    assert.equal(mode(), "normal");
     assert.ok(
       !m.text().includes("TOOL_A_SECRET_INPUT"),
       "tool A body hidden while Verbose is off",
@@ -1009,9 +1009,10 @@ describe("ThreadView mounted interactions", () => {
       "tool B body hidden while Verbose is off",
     );
 
-    await m.click(trigger);
+    // View mode lives in the thread title menu now (#1411).
+    await m.click(m.query("[data-thread-title-menu]"));
     await m.click(m.query("[data-transcript-view-option='verbose']"));
-    assert.equal(trigger.getAttribute("data-transcript-view-mode"), "verbose");
+    assert.equal(mode(), "verbose");
     assert.ok(m.text().includes("TOOL_A_SECRET_INPUT"), "tool A input");
     assert.ok(m.text().includes("TOOL_A_SECRET_OUTPUT"), "tool A output");
     assert.ok(m.text().includes("TOOL_B_SECRET_INPUT"), "tool B input");
@@ -1071,8 +1072,10 @@ describe("ThreadView mounted interactions", () => {
         }),
       }),
     );
-    const trigger = m.query("[data-transcript-view-trigger]");
-    assert.equal(trigger?.getAttribute("data-transcript-view-mode"), "normal");
+    assert.equal(
+      m.query("[data-transcript-view-mode]")?.getAttribute("data-transcript-view-mode"),
+      "normal",
+    );
     assert.ok(
       m.text().includes("Ran 2 commands"),
       "tools collapse to one sentence while Verbose is off",

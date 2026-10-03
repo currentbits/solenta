@@ -3659,3 +3659,201 @@ a.menuItem {
     animation: none;
   }
 }
+
+/* ---- #1411 header: project crumb, title menu, quiet git split ---------- */
+.breadcrumb button.project,
+.breadcrumb span.project {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 24px;
+  padding: 0 6px;
+  background: transparent;
+  font-family: inherit;
+  font-size: 13px;
+  letter-spacing: normal;
+  color: var(--text-dim);
+}
+
+.breadcrumb button.project:hover {
+  background: var(--overlay-hover);
+  color: var(--text);
+}
+
+.breadcrumb .menuWrap {
+  min-width: 0;
+  display: flex;
+}
+
+.titleMenuBtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  height: 26px;
+  padding: 0 6px;
+  margin-left: -6px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.titleMenuBtn:hover,
+.titleMenuBtn[aria-expanded="true"] {
+  background: var(--overlay-hover);
+}
+
+.titleMenuBtn:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.titleChevron {
+  flex-shrink: 0;
+  color: var(--text-dim);
+}
+
+.titleMenu {
+  left: 0;
+  right: auto;
+}
+
+/* Git next step: a quiet outline split button, not a blue CTA. */
+.gitSplitMain,
+.gitSplitMain.btnPrimary {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  border-radius: var(--radius-sm) 0 0 var(--radius-sm);
+}
+
+.gitSplitMain:hover:not(:disabled),
+.gitSplitMain.btnPrimary:hover:not(:disabled) {
+  background: var(--overlay-hover);
+  color: var(--text);
+}
+
+.gitMore {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 30px;
+  margin-left: -9px;
+  border: 1px solid var(--border);
+  border-left-color: var(--border-soft);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+
+.gitMore:hover {
+  background: var(--overlay-hover);
+  color: var(--text);
+}
+
+/* Notes row at the foot of Thread details. */
+.detailsNotesBtn {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  margin-top: 6px;
+  padding: 8px 0 2px;
+  border: none;
+  border-top: 1px solid var(--border-soft);
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 12.5px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.detailsNotesBtn:hover {
+  color: var(--text);
+}
+
+.detailsNotesMeta {
+  margin-left: auto;
+  color: var(--text-dim);
+}
+
+/* Thread details rows (#1411): key column + value, like the mockup. */
+.detailsKv {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 28px;
+  font-size: 12.5px;
+  color: var(--text-muted);
+}
+
+.detailsKey {
+  width: 72px;
+  flex-shrink: 0;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.detailsKvEnd {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+}
+
+.detailsStatus {
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.detailsActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 6px 0 2px;
+}
+
+.detailsDanger {
+  padding-top: 2px;
+}
+
+.menuKbd {
+  margin-left: 6px;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--text-dim);
+}
+
+/* Message actions as icons (#1411). */
+.msgActions {
+  gap: 1px;
+  align-items: center;
+}
+
+.msgAction {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 22px;
+  border-radius: 6px;
+  color: var(--text-dim);
+}
+
+.msgAction:hover {
+  background: var(--overlay-hover);
+  color: var(--text);
+}
+
+.msgAction[aria-pressed="true"] {
+  color: var(--blue);
+}
+
+/* A pinned message keeps its actions in view: pinned is state, not chrome. */
+.msgActions:has([aria-pressed="true"]) {
+  opacity: 1;
+}

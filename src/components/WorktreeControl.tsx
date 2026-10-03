@@ -51,6 +51,17 @@ export interface WorktreeControlProps {
 export interface WorktreeChrome {
   toolbar: ReactNode;
   banner: ReactNode;
+  /**
+   * Thread details layout (#1411): one row per fact / action instead of the
+   * header's pill + Merge split button. Same data attributes, so callers and
+   * tests reach the same controls. Null when there is no worktree yet (the
+   * setup / pending toolbar is used then).
+   */
+  rows: {
+    workspace: ReactNode;
+    versionControl: ReactNode;
+    danger: ReactNode;
+  } | null;
 }
 
 export function classifyGitError(msg: string): {
@@ -384,7 +395,7 @@ export function useWorktreeChrome(
   }, [thread?.worktreePath]);
 
   if (!visible || !thread) {
-    return { toolbar: null, banner: null };
+    return { toolbar: null, banner: null, rows: null };
   }
 
   const branch = thread.branch ?? null;
@@ -859,7 +870,188 @@ export function useWorktreeChrome(
     </>
   );
 
-  return { toolbar, banner };
+  const shortPath = path
+    ? path.length > 34
+      ? `…/${path.split(/[\\/]/).filter(Boolean).slice(-2).join("/")}`
+      : path
+    : "";
+  const rows = hasWorktree ? {
+    workspace: (
+    <div className={styles.rows} data-worktree-control="ready" data-worktree-rows="">
+      <div className={styles.row}>
+        <span className={styles.rowKey}>Worktree</span>
+        <span className={styles.rowMono} title={path ?? undefined}>
+          {shortPath}
+        </span>
+        {path ? (
+          <button
+            type="button"
+            className={styles.rowIcon}
+            data-worktree-copy-path=""
+            aria-label="Copy worktree path"
+            title={copiedPath ? "Copied" : "Copy path"}
+            onClick={() => void handleCopyPath()}
+          >
+            {copiedPath ? "Copied" : <CopyGlyph />}
+          </button>
+        ) : null}
+      </div>
+      {onOpenWorktree ? (
+        <div className={styles.row}>
+          <span className={styles.rowKey}>Open in</span>
+          <button
+            type="button"
+            className={styles.rowLink}
+            data-worktree-open=""
+            onClick={() => onOpenWorktree()}
+          >
+            Editor
+          </button>
+        </div>
+      ) : null}
+    </div>
+    ),
+    versionControl: (
+    <div className={styles.rows}>
+      <div className={styles.row}>
+        <span className={styles.rowKey}>Branch</span>
+        <span className={styles.rowMono} title={branch ?? undefined}>
+          {branch ?? "worktree"}
+        </span>
+        <span className={styles.rowFaint}>
+          →{" "}
+          <span
+            data-stacked-base=""
+            title={
+              thread.baseBranch
+                ? `Merge and PR land on ${thread.baseBranch}`
+                : "Merge and PR land on the repo default"
+            }
+          >
+            {thread.baseBranch || "repo default"}
+          </span>
+        </span>
+      </div>
+      {startSnapshot || startDirty || refreshSnapshot || leadPointer ? (
+        <div className={styles.row}>
+          <span className={styles.rowKey}>Snapshot</span>
+          {startSnapshot}
+          {startDirty}
+          {refreshSnapshot}
+          {leadPointer}
+        </div>
+      ) : null}
+      <div className={styles.rowButtons}>
+        <button
+          type="button"
+          className={styles.rowBtn}
+          data-worktree-merge=""
+          disabled={busy}
+          title={
+            thread.handoffFrom
+              ? `${mergeOntoLabel(thread.baseBranch)}. Crew staging is on the lead Integration section.`
+              : mergeOntoLabel(thread.baseBranch)
+          }
+          onClick={() => void runAction("merge", () => onMergeWorktree())}
+        >
+          {mergePending ? (
+            <>
+              <Spinner />
+              Merging…
+            </>
+          ) : (
+            mergeOntoLabel(thread.baseBranch)
+          )}
+        </button>
+        {onSetBaseBranch && !thread.prNumber ? (
+          <button
+            type="button"
+            className={styles.rowBtn}
+            data-change-base=""
+            aria-expanded={basePicker != null}
+            disabled={busy || !listBaseBranches}
+            onClick={() =>
+              basePicker ? setBasePicker(null) : void openBasePicker()
+            }
+          >
+            Change base
+          </button>
+        ) : null}
+      </div>
+      {basePicker ? (
+        <div className={styles.rowPicker} role="dialog" aria-label="Change base">
+          <input
+            className={styles.branchFilter}
+            type="search"
+            aria-label="Filter base branches"
+            placeholder="Filter branches…"
+            autoFocus
+            value={baseQuery}
+            onChange={(event) => setBaseQuery(event.target.value)}
+          />
+          <button
+            type="button"
+            className={`${styles.menuItem} ${styles.menuItemNested}`}
+            data-base-branch=""
+            disabled={busy}
+            onClick={() => void pickBase(null)}
+          >
+            Repo default
+          </button>
+          {baseMatches.map((name) => (
+            <button
+              key={name}
+              type="button"
+              className={`${styles.menuItem} ${styles.menuItemNested}`}
+              data-base-branch={name}
+              disabled={busy}
+              onClick={() => void pickBase(name)}
+            >
+              {name}
+            </button>
+          ))}
+          {baseMatches.length === 0 && (
+            <p className={styles.menuItem} role="status">
+              No matching branches
+            </p>
+          )}
+        </div>
+      ) : null}
+    </div>
+    ),
+    danger: (
+      <button
+        type="button"
+        className={styles.rowDanger}
+        data-worktree-delete=""
+        disabled={busy}
+        onClick={() => void runAction("remove", () => onRemoveWorktree(false))}
+      >
+        {removePending ? "Deleting…" : "Delete worktree…"}
+      </button>
+    ),
+  } : null;
+
+  return { toolbar, banner, rows };
+}
+
+function CopyGlyph() {
+  return (
+    <svg
+      width="13"
+      height="13"
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <rect x="5.5" y="5.5" width="8" height="8" rx="1.5" />
+      <path d="M10.5 5.5V4a1.5 1.5 0 0 0-1.5-1.5H4A1.5 1.5 0 0 0 2.5 4v5A1.5 1.5 0 0 0 4 10.5h1.5" />
+    </svg>
+  );
 }
 
 /** Stacked toolbar + banner for tests that do not mount ThreadView. */
