@@ -48,10 +48,10 @@ Two PRs, in this order:
   - Debounce the `threads:changed` reload to 1 s.
   - Switch `electron/crewIntegration.js` from blocking `gitTry` to the existing async git helpers (`gitTryAsync` / `gitOutAsync`).
 - **P2:**
-  - `threads:summaries` accepts `{ threadIds?: string[] }`. It filters on store metadata before calling `getLastAssistantMessage` and caps `lastActivity.text` at 200 characters.
-  - `RecapCard` passes its own id.
-  - The Agents team view passes the lead, its direct crew children and the `handoffFrom` thread.
-  - The 5 s team poll runs only while one of this crew's threads is working.
+  - `threads:summaries` accepts `{ projectId?: string, threadIds?: string[] }`. It filters on store metadata before calling `getLastAssistantMessage` and caps `lastActivity.text` at 200 characters.
+  - `RecapCard` passes `{ threadIds: [id] }`.
+  - The Agents team view passes `{ projectId }`.
+  - The 5 s team poll runs only while a thread in the selected project is working.
   - No argument keeps today's behavior for any other caller.
 - **P3:** `useCallback` the three crew handlers in `App.tsx`, keyed on `selectedThreadId`.
 - **P4:** remove the panel-level `LaneHeartbeat`. The app-level heartbeat covers the selected lane.
@@ -149,7 +149,7 @@ These components move as-is. Only their container changes. The unused `settings`
 
 ## Data flow and errors
 
-- No IPC contract changes except the optional `threadIds` filter on `threads:summaries`. Moved components keep their existing props and API calls.
+- No IPC contract changes except the optional `projectId` / `threadIds` filter on `threads:summaries`. Moved components keep their existing props and API calls.
 - Errors keep the existing in-component error lines. Banners hide when their data fails to load and never show a stale count.
 
 ## Testing
