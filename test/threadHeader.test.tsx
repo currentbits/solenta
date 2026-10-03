@@ -155,11 +155,19 @@ function view(props: {
   onOpenWorkers?: () => void;
   handoffSource?: ThreadInfo | null;
   onSelectThread?: (id: string) => void;
-  onSetPendingWorktree?: (threadId: string, worktree: boolean) => Promise<void>;
+  onSetPendingWorktree?: (
+    threadId: string,
+    worktree: boolean,
+    fromOrigin?: boolean,
+  ) => Promise<void>;
   listBaseBranches?: (
     projectId: string,
   ) => Promise<{ defaultBranch: string; branches: string[] }>;
   onSetBaseBranch?: (threadId: string, baseBranch: string | null) => Promise<void>;
+  previousWorktree?: { branch: string; title: string } | null;
+  heroProjects?: ProjectInfo[];
+  onMoveDraftToProject?: (threadId: string, projectId: string) => void;
+  onStartWithoutProject?: (threadId: string) => void;
 }) {
   return (
     <ThreadView
@@ -209,6 +217,10 @@ function view(props: {
       onSetPendingWorktree={props.onSetPendingWorktree}
       listBaseBranches={props.listBaseBranches}
       onSetBaseBranch={props.onSetBaseBranch}
+      previousWorktree={props.previousWorktree}
+      heroProjects={props.heroProjects}
+      onMoveDraftToProject={props.onMoveDraftToProject}
+      onStartWithoutProject={props.onStartWithoutProject}
     />
   );
 }
@@ -631,6 +643,84 @@ describe("draft workspace strip under the composer", () => {
     m.unmount();
   });
 
+  it("offers Previous worktree: a fresh worktree stacked on the last worktree branch", async () => {
+    const calls: unknown[] = [];
+    const prev = { branch: "coder/api-contract-1a2b3c", title: "API contract" };
+    const props = {
+      onSetPendingWorktree: async (id: string, worktree: boolean) => {
+        calls.push(["worktree", id, worktree]);
+      },
+      onSetBaseBranch: async (id: string, base: string | null) => {
+        calls.push(["base", id, base]);
+      },
+      previousWorktree: prev,
+    };
+    const m = await mount(view({ detail: draft(), ...props }));
+    await m.flush();
+    await m.click(m.query("[data-workspace-trigger]"));
+    const option = m.query('[data-workspace-option="previous"]');
+    assert.ok(option, "Previous worktree is offered");
+    assert.match(option!.textContent ?? "", /coder\/api-contract-1a2b3c/);
+    await m.click(option);
+    assert.deepEqual(calls, [
+      ["worktree", "t1", true],
+      ["base", "t1", "coder/api-contract-1a2b3c"],
+    ]);
+
+    // Armed + stacked on that branch reads as Previous worktree…
+    const stacked = draft();
+    stacked.thread = { ...stacked.thread, pendingWorktree: true, baseBranch: prev.branch };
+    await m.rerender(view({ detail: stacked, ...props }));
+    await m.flush();
+    assert.equal(m.query("[data-workspace-trigger]")!.getAttribute("data-workspace-trigger"), "previous");
+    assert.match(m.query("[data-workspace-trigger]")!.textContent ?? "", /Previous worktree/);
+
+    // …and switching to plain New worktree drops the stacked base.
+    calls.length = 0;
+    await m.click(m.query("[data-workspace-trigger]"));
+    await m.click(m.query('[data-workspace-option="worktree"]'));
+    assert.deepEqual(calls, [
+      ["worktree", "t1", true],
+      ["base", "t1", null],
+    ]);
+    m.unmount();
+  });
+
+  it("toggles Start from origin in the base picker", async () => {
+    const calls: unknown[] = [];
+    const armed = draft();
+    armed.thread = { ...armed.thread, pendingWorktree: true };
+    const m = await mount(
+      view({
+        detail: armed,
+        onSetPendingWorktree: async (id, worktree, fromOrigin) => {
+          calls.push([id, worktree, fromOrigin]);
+        },
+        listBaseBranches: async () => ({ defaultBranch: "main", branches: ["main"] }),
+        onSetBaseBranch: async () => {},
+      }),
+    );
+    await m.flush();
+    await m.click(m.query("[data-workspace-base]"));
+    await m.flush();
+    const toggle = m.query("[data-workspace-from-origin]") as HTMLInputElement;
+    assert.ok(toggle, "Start from origin switch");
+    assert.equal(toggle.checked, false);
+    await m.click(toggle);
+    assert.deepEqual(calls, [["t1", true, true]]);
+    m.unmount();
+  });
+
+  it("hides Previous worktree when the project has no other worktree thread", async () => {
+    const m = await mount(
+      view({ detail: draft(), onSetPendingWorktree: async () => {}, onSetBaseBranch: async () => {} }),
+    );
+    await m.flush();
+    await m.click(m.query("[data-workspace-trigger]"));
+    assert.equal(m.query('[data-workspace-option="previous"]'), null);
+    m.unmount();
+  });
+
   it("is gone once the thread has a user message", async () => {
     const m = await mount(
       view({
@@ -673,6 +763,211 @@ describe("draft workspace strip under the composer", () => {
     assert.ok(pending);
     assert.match(pending!.textContent ?? "", /Worktree on first send · from release/);
     m.unmount();
+  });
+});
+
+describe("thread title menu (#1411)", () => {
+  it("the title opens the thread menu; there is no separate … button", async () => {
+    const m = await mount(view({}));
+    await m.flush();
+    const title = m.query("[data-thread-title-menu]");
+    assert.ok(title, "title is the menu trigger");
+    assert.equal(title!.getAttribute("aria-label"), "Thread actions");
+    assert.match(title!.textContent ?? "", /header features/);
+    assert.equal(m.queryAll("[aria-label='Thread actions']").length, 1, "only one trigger");
+    await m.click(title);
+    assert.ok(m.query("[data-copy-thread-id]"), "menu items are there");
+    m.unmount();
+  });
+
+  it("picks Summary / Normal / Verbose from the title menu", async () => {
+    const m = await mount(view({}));
+    await m.flush();
+    await m.click(m.query("[data-thread-title-menu]"));
+    for (const mode of ["summary", "normal", "verbose"]) {
+      assert.ok(m.query(`[data-transcript-view-option='${mode}']`), mode);
+    }
+    await m.click(m.query("[data-transcript-view-option='summary']"));
+    assert.equal(
+      m.query("[data-transcript-view-mode]")?.getAttribute("data-transcript-view-mode"),
+      "summary",
+    );
+    await m.click(m.query("[data-thread-title-menu]"));
+    await m.click(m.query("[data-transcript-view-option='normal']"));
+    m.unmount();
+  });
+});
+
+describe("Thread details card rows (#1411)", () => {
+  it("lists worktree, branch → base and the delete action as rows", async () => {
+    const m = await mount(
+      view({
+        detail: detail({ thread: thread({ baseBranch: "release" }) }),
+        onSetupWorktree: async () => {},
+        onMergeWorktree: async () => {},
+        onRemoveWorktree: async () => {},
+      }),
+    );
+    await m.flush();
+    await m.click(m.query("[data-thread-details-btn]"));
+    const card = m.query("[data-thread-details]")!;
+    assert.match(card.textContent ?? "", /Worktree\/tmp\/wt/);
+    assert.match(card.textContent ?? "", /Branchcoder\/header-features-abc123→ release/);
+    assert.ok(card.querySelector("[data-worktree-copy-path]"));
+    assert.ok(card.querySelector("[data-worktree-merge]"));
+    assert.ok(card.querySelector("[data-worktree-delete]"));
+    assert.equal(card.querySelector("[data-worktree-menu]"), null, "no header pill inside the card");
+    m.unmount();
+  });
+
+  it("offers Commit / Push / Create PR from what the branch needs", async () => {
+    const opened: string[] = [];
+    const m = await mount(
+      view({
+        onViewChanges: () => opened.push("changes"),
+        gitFetch: async () => {},
+        gitSyncInfo: async () => ({ hasUpstream: true, ahead: 2, behind: 0 }),
+      }),
+    );
+    await m.flush();
+    await m.click(m.query("[data-thread-details-btn]"));
+    await m.flush();
+    assert.ok(m.query("[data-details-push]"), "ahead → Push");
+    assert.ok(m.query("[data-details-create-pr]"), "no PR yet → Create PR");
+    assert.equal(m.query("[data-details-commit]"), null, "clean tree → no Commit");
+    assert.match(m.query("[data-details-status]")?.textContent ?? "", /0 changed/);
+    m.unmount();
+  });
+
+  it("puts the notes dot on the details toggle when the thread has notes", async () => {
+    const m = await mount(
+      view({
+        detail: detail({ thread: thread({ notes: "ship after #42" }) }),
+        gitFetch: async () => {},
+        gitSyncInfo: async () => ({ hasUpstream: true, ahead: 0, behind: 0 }),
+      }),
+    );
+    await m.flush();
+    assert.ok(m.query("[data-thread-details-btn] [data-notes-dot]"));
+    m.unmount();
+  });
+});
+
+describe("new-thread hero (#1411)", () => {
+  it("centres the draft and moves it to another project from the chooser", async () => {
+    const moved: string[][] = [];
+    const other = { ...project, id: "p2", slug: "acme/billing", name: "billing" };
+    const m = await mount(
+      view({
+        detail: detail({ thread: thread({ worktreePath: null }), messages: [] }),
+        heroProjects: [project, other],
+        onMoveDraftToProject: (tid, pid) => moved.push([tid, pid]),
+      }),
+    );
+    await m.flush();
+    assert.ok(m.query("[data-pane-chat][data-draft-hero]"), "draft layout");
+    assert.match(m.query("[data-draft-hero-title]")?.textContent ?? "", /What should we build in/);
+    await m.click(m.query("[data-hero-project]"));
+    await m.click(m.query('[data-hero-project-option="p2"]'));
+    assert.deepEqual(moved, [["t1", "p2"]]);
+    m.unmount();
+  });
+
+  it("offers 'or start without a project' and renders the Scratch variant", async () => {
+    const started: string[] = [];
+    const m = await mount(
+      view({
+        detail: detail({ thread: thread({ worktreePath: null }), messages: [] }),
+        onStartWithoutProject: (id) => started.push(id),
+        onSetPendingWorktree: async () => {},
+      }),
+    );
+    await m.flush();
+    await m.click(m.query("[data-start-without-project]"));
+    assert.deepEqual(started, ["t1"]);
+    m.unmount();
+
+    const scratch = { ...project, id: "p-scratch", slug: "Scratch", name: "Scratch", scratch: true };
+    const s2 = await mount(
+      view({
+        project: scratch,
+        detail: detail({ thread: thread({ projectId: "p-scratch", worktreePath: null }), messages: [] }),
+        heroProjects: [project, scratch],
+        onMoveDraftToProject: () => {},
+        onSetPendingWorktree: async () => {},
+        onSetupWorktree: async () => {},
+        onMergeWorktree: async () => {},
+        onRemoveWorktree: async () => {},
+      }),
+    );
+    await s2.flush();
+    assert.match(s2.query("[data-draft-hero-title]")?.textContent ?? "", /What should we build\?/);
+    assert.ok(s2.query("[data-hero-scratch]"));
+    assert.equal(s2.query("[data-workspace-strip]"), null, "no worktree strip in Scratch");
+    assert.equal(s2.query("[data-start-without-project]"), null);
+    await s2.click(s2.query("[data-hero-project]"));
+    assert.equal(s2.query('[data-hero-project-option="p-scratch"]'), null, "Scratch is not a move target");
+    assert.ok(s2.query('[data-hero-project-option="p1"]'));
+    s2.unmount();
+  });
+
+  it("drops the hero once the thread has messages", async () => {
+    const m = await mount(
+      view({ detail: detail({ messages: [msg({ id: "u1", role: "user", text: "go" })] }) }),
+    );
+    await m.flush();
+    assert.equal(m.query("[data-draft-hero]"), null);
+    assert.equal(m.query("[data-draft-hero-title]"), null);
+    m.unmount();
+  });
+});
+
+describe("worktree line at the top of the transcript (#1411)", () => {
+  const sent = [msg({ id: "u1", role: "user", text: "go" })];
+
+  it("says Worktree ready with branch and base once the worktree exists", async () => {
+    const m = await mount(
+      view({ detail: detail({ thread: thread({ baseBranch: "release" }), messages: sent }) }),
+    );
+    await m.flush();
+    const line = m.query('[data-worktree-line="ready"]');
+    assert.ok(line);
+    assert.match(line!.textContent ?? "", /Worktree ready·coder\/header-features-abc123from release/);
+    m.unmount();
+  });
+
+  it("says Setting up worktree while the first send materializes it", async () => {
+    const m = await mount(
+      view({
+        detail: detail({
+          thread: thread({ worktreePath: null, pendingWorktree: true, status: "working" }),
+          messages: sent,
+        }),
+      }),
+    );
+    await m.flush();
+    assert.ok(m.query('[data-worktree-line="setup"]'));
+    m.unmount();
+  });
+
+  it("shows nothing for a draft, a plain thread, or a failed setup", async () => {
+    for (const t of [
+      { worktreePath: null, pendingWorktree: true },
+      { worktreePath: null },
+      { worktreePath: null, pendingWorktree: true, status: "failed" as const },
+    ]) {
+      const m = await mount(
+        view({
+          detail: detail({
+            thread: thread(t),
+            messages: t.pendingWorktree && !t.status ? [] : sent,
+          }),
+        }),
+      );
+      await m.flush();
+      assert.equal(m.query("[data-worktree-line]"), null, JSON.stringify(t));
+      m.unmount();
+    }
   });
 });
 

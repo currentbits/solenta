@@ -350,6 +350,37 @@ async function attachWindowsDoctor(project) {
   return report ? { ...project, windowsDoctor: report } : project;
 }
 
+/**
+ * The Scratch workspace (#1411, "start without a project"): one built-in
+ * project whose folder lives under Solenta's data dir. Deliberately not a
+ * git repo, so no worktree, diff or PR flow applies; threads just run in
+ * that folder. Idempotent: returns the existing row when there is one and
+ * recreates the folder if it went missing.
+ *
+ * @param {import('./store').Store} store
+ * @param {string} userDataPath
+ */
+function ensureScratchProject(store, userDataPath) {
+  if (!userDataPath) {
+    throw new Error("Scratch workspace is not available in this mode");
+  }
+  const dir = path.join(userDataPath, "scratch");
+  fs.mkdirSync(dir, { recursive: true });
+  const existing = store.getProjects().find((p) => p && p.scratch === true);
+  if (existing) return presentProject(existing);
+  const project = {
+    id: randomUUID(),
+    slug: "Scratch",
+    name: "Scratch",
+    path: dir,
+    scratch: true,
+    worktreeRetention: DEFAULT_WORKTREE_RETENTION,
+  };
+  store.setProjects([...store.getProjects(), project]);
+  store.save();
+  return presentProject(project);
+}
+
 async function presentAdded(project) {
   return presentProject(await attachWindowsDoctor(project));
 }
@@ -2071,6 +2102,8 @@ function setThreadProject(store, input) {
     projectId: id,
     sessionId: null,
     replayContext: true,
+    // Scratch has no git: a draft moved there cannot keep a worktree intent.
+    ...(project.scratch === true ? { pendingWorktree: false } : {}),
     branch: null,
     baseBranch: null,
     prNumber: null,
@@ -2359,12 +2392,13 @@ function setBaseBranch(store, input) {
 
 /**
  * Draft workspace choice (composer strip): arm or drop the lazy worktree
- * before the first send. Locked once the thread has a worktree or any user
+ * before the first send. `fromOrigin` (optional) starts it from the
+ * freshly fetched origin copy of the base instead of the local branch. Locked once the thread has a worktree or any user
  * message, so a running conversation never changes checkout underneath
  * itself. Arming requires a local git project. Never bumps updatedAt.
  *
  * @param {import('./store').Store} store
- * @param {{ threadId: string, worktree: boolean }} input
+ * @param {{ threadId: string, worktree: boolean, fromOrigin?: boolean }} input
  */
 function setPendingWorktree(store, input) {
   const { threadId } = input || {};
@@ -2373,7 +2407,13 @@ function setPendingWorktree(store, input) {
     throw new Error(`Unknown thread: ${threadId}`);
   }
   const want = input.worktree === true;
-  if (Boolean(thread.pendingWorktree) === want && !thread.worktreePath) {
+  const origin =
+    typeof input.fromOrigin === "boolean" ? input.fromOrigin : undefined;
+  if (
+    Boolean(thread.pendingWorktree) === want &&
+    !thread.worktreePath &&
+    (origin === undefined || Boolean(thread.worktreeFromOrigin) === origin)
+  ) {
     return { ...thread };
   }
   if (thread.worktreePath) {
@@ -2385,7 +2425,9 @@ function setPendingWorktree(store, input) {
   if (want && !canHostWorktree(store.getProject(thread.projectId))) {
     throw new Error("This project can't host a worktree (needs a local git repo)");
   }
+  /** @type {{ pendingWorktree: boolean, worktreeFromOrigin?: boolean }} */
   const patch = { pendingWorktree: want };
+  if (origin !== undefined) patch.worktreeFromOrigin = origin;
   const updated = store.updateThread(threadId, patch);
   store.save();
   return updated ? { ...updated } : { ...thread, ...patch };
@@ -5708,6 +5750,7 @@ module.exports = {
   setMessagePins,
   setBaseBranch,
   setPendingWorktree,
+  ensureScratchProject,
   refreshWorkerSnapshot,
   setFeltEstimate,
   setVerifyCommand,

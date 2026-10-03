@@ -1038,6 +1038,9 @@ function migrateProject(p) {
   else delete next.remotePath;
   // Spaces (#568): retired. Drop any leftover spaceId so old stores flatten.
   delete next.spaceId;
+  // Scratch (#1411): the one projectless workspace. Strictly boolean.
+  if (next.scratch === true) next.scratch = true;
+  else delete next.scratch;
   const retention = next.worktreeRetention;
   if (typeof retention === "number" && Number.isFinite(retention) && retention >= 0) {
     next.worktreeRetention = Math.floor(retention);

@@ -25,6 +25,12 @@ export interface ProjectInfo {
   remoteHost?: string;
   /** Absolute path on the remote host. Required when remoteHost is set. */
   remotePath?: string;
+  /**
+   * The built-in Scratch workspace (#1411): threads with no real project
+   * run in an empty folder under Solenta's data dir. Not a git repo, so
+   * worktree / diff / PR flows are hidden.
+   */
+  scratch?: boolean;
   /** Retired (#568). Stripped on store load; never written. */
   spaceId?: string;
   /** When true, a background poller starts a thread for every issue that enters plan:todo (issue #165). Absent = off. */
@@ -732,6 +738,11 @@ export interface ThreadInfo {
    * (lazy, t3-style), so a thread that never runs leaves nothing on disk.
    */
   pendingWorktree?: boolean;
+  /**
+   * Draft strip "Start from origin" (#1411): the lazy worktree starts from
+   * the freshly fetched origin copy of the base, not the local branch.
+   */
+  worktreeFromOrigin?: boolean;
   /**
    * Orchestrator thread: the first prompt is forked to a worker that holds
    * the worktree and does the work, instead of running here (issue #202).
@@ -3754,6 +3765,11 @@ export interface CoderApi {
     add(path: string, opts?: AddProjectOptions): Promise<ProjectInfo>;
     /** Create a new folder + git repo at parentDir/name, then add it as a project. */
     create(input: CreateProjectInput): Promise<ProjectInfo>;
+    /**
+     * The built-in Scratch workspace ("start without a project", #1411):
+     * created on first call under Solenta's data dir, no git. Idempotent.
+     */
+    ensureScratch(): Promise<ProjectInfo>;
     /** Patch name and/or SSH remote fields of an existing project. */
     update(input: ProjectUpdateInput): Promise<ProjectInfo>;
     /**
@@ -4081,6 +4097,8 @@ export interface CoderApi {
     setPendingWorktree(input: {
       threadId: string;
       worktree: boolean;
+      /** Start from origin's copy of the base (fetched at creation). */
+      fromOrigin?: boolean;
     }): Promise<ThreadInfo>;
     /**
      * Retarget an idle orchestration worker onto the lead's current

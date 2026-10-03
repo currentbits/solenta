@@ -1240,3 +1240,48 @@
 .overflowWarn {
   color: var(--danger-fg);
 }
+
+/* One model + effort pill (#1411): the group draws the hover so the two
+   targets read as a single control; effort drops its icon and gets a dot. */
+.modelGroup {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 7px;
+}
+
+.modelGroup[data-with-effort] > .modeWrap:first-child .caret {
+  display: none;
+}
+
+.modelGroup[data-with-effort] > .modeWrap:first-child .pill {
+  padding-right: 4px;
+}
+
+.effortSegment {
+  padding-left: 0;
+}
+
+.effortSegment .effortIcon {
+  display: none;
+}
+
+.effortSegment::before {
+  content: "·";
+  margin-right: 5px;
+  color: var(--text-dim);
+}
+
+.modelGroup[data-with-effort]:hover {
+  background: var(--card-hover);
+}
+
+.modelGroup[data-with-effort] .pill:hover:not(:disabled) {
+  background: transparent;
+  color: var(--text);
+}
+
+/* Attach sits beside Send now (#1411): its menu opens toward the left. */
+.modeMenuRight {
+  left: auto;
+  right: 0;
+}

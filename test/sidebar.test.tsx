@@ -1238,7 +1238,7 @@ describe("Sidebar app navigation", () => {
       null,
     );
     assert.equal(usage.query("[data-app-more]")?.getAttribute("aria-current"), "page");
-    assert.equal(usage.query("[data-app-more]")?.getAttribute("aria-label"), "More, Usage");
+    assert.equal(usage.query("[data-app-more]")?.getAttribute("aria-label"), "Insights, Usage");
     await openMoreMenu(usage);
     assert.equal(
       usage.query('[data-view-nav="usage"]')?.getAttribute("aria-current"),

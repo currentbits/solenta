@@ -98,6 +98,7 @@ import {
 import {
   commandQuery,
   matchSlashCommands,
+  pickerVerb,
   type SlashAction,
   type SlashCommand,
 } from "../slashCommands";
@@ -112,13 +113,7 @@ import { teachPermissionAllowed } from "../teach";
 import type { ThreadTeach } from "../shared/ipc";
 import { useFileDrop } from "../useFileDrop";
 import { isWebMode } from "../shared/wire";
-import {
-  cycleTranscriptViewMode,
-  TRANSCRIPT_VIEW_HINTS,
-  TRANSCRIPT_VIEW_LABELS,
-  TRANSCRIPT_VIEW_MODES,
-  type TranscriptViewMode,
-} from "../focusView";
+import { cycleTranscriptViewMode } from "../focusView";
 import {
   getComposerBusyAction,
   getLastReasoningEffort,
@@ -957,6 +952,8 @@ export const Composer = memo(function Composer({
   /** Type-in filter for the drilled-in model list. Empty on the provider screen. */
   const [modelQuery, setModelQuery] = useState("");
   const [optionsOpen, setOptionsOpen] = useState(false);
+  /** `/bestof` lands on the Best of N section, not Workflow. */
+  const bestOfFocusRef = useRef(false);
   const [attachOpen, setAttachOpen] = useState(false);
   const [bestIds, setBestIds] = useState<string[]>([]);
   const [manageOpen, setManageOpen] = useState(false);
@@ -987,7 +984,6 @@ export const Composer = memo(function Composer({
   const modelSearchRef = useRef<HTMLInputElement>(null);
   const providerListRef = useRef<HTMLUListElement>(null);
   const optionsWrapRef = useRef<HTMLDivElement>(null);
-  const optionsTriggerRef = useRef<HTMLButtonElement>(null);
   const optionsPopoverRef = useRef<HTMLDivElement>(null);
   /** Set when Manage workflows opens, so close can return to Options. */
   const returnFocusToOptions = useRef(false);
@@ -1493,6 +1489,16 @@ export const Composer = memo(function Composer({
       window.removeEventListener("scroll", place, true);
     };
   }, [optionsOpen]);
+  useEffect(() => {
+    if (!optionsOpen || !bestOfFocusRef.current) return;
+    bestOfFocusRef.current = false;
+    const first = optionsPopoverRef.current?.querySelector<HTMLInputElement>(
+      "input[data-best-of-n-profile]:not(:disabled), input[data-best-of-n-provider]",
+    );
+    first?.scrollIntoView?.({ block: "nearest" });
+    first?.focus();
+  }, [optionsOpen]);
+
   // The editor opens after Options unmounts, so the focused Manage control is
   // gone and the dialog restores to body. Run after that restore and land on
   // the Options button, which is still mounted.
@@ -1500,7 +1506,7 @@ export const Composer = memo(function Composer({
     if (manageOpen) return;
     if (!returnFocusToOptions.current) return;
     returnFocusToOptions.current = false;
-    optionsTriggerRef.current?.focus();
+    textareaRef.current?.focus();
   }, [manageOpen]);
 
   const popupOpen = anyMenuOpen || mentionOpen || commandOpen || manageOpen;
@@ -1614,6 +1620,25 @@ export const Composer = memo(function Composer({
 
   const submitSend = () => {
     if (!canSend) return;
+    // `/workflow …` and `/bestof …` open the picker instead of sending.
+    const verb = ask ? null : pickerVerb(readDraft());
+    if (verb && (verb.picker === "workflow" || onBestOfN)) {
+      writeDraft(verb.tail, verb.tail.length);
+      closeCommand();
+      if (locked || sending) {
+        setLocalError("Wait for this run to finish");
+        return;
+      }
+      setLocalError(null);
+      bestOfFocusRef.current = verb.picker === "bestof";
+      setOptionsOpen(true);
+      setModeOpen(false);
+      setModelOpen(false);
+      setEffortOpen(false);
+      setAttachOpen(false);
+      setViewOpen(false);
+      return;
+    }
     void runAction(async (prompt) => {
       // Delegation command: "@provider task" forks onto that provider instead
       // of sending to this thread (parseDelegate returns null for @file
@@ -2470,75 +2495,10 @@ export const Composer = memo(function Composer({
         <div ref={hintsRef} className={styles.hints} data-kbd-hints="" hidden>
           {`⌘Enter ${canSteer && busyAction === "steer" ? "steer" : busy ? "queue" : "send"} · ⌥Enter side question · ⌘S stash${canSteer ? " · ⌘⇧Enter steer" : ""}${busy ? " · Esc stop" : ""}${vimEnabled ? ` · VIM ${vimMode}` : ""}`}
         </div>
-        <div className={styles.controls}>
+        {/* View mode lives in the thread title menu and ⌃O (#1411); the
+            current mode is mirrored here for keyboard-only callers. */}
+        <div className={styles.controls} data-transcript-view-mode={transcriptView}>
           <div className={styles.pills}>
-            {onPickAttachments && !ask && (
-              <div className={styles.modeWrap} ref={attachWrapRef}>
-                <button
-                  type="button"
-                  className={styles.pill}
-                  disabled={disabled || sending}
-                  aria-disabled={disabled || sending ? "true" : undefined}
-                  aria-label="Attach files or folders"
-                  title="Attach files or folders"
-                  aria-haspopup={
-                    canPickWebFolderNow() ? "menu" : undefined
-                  }
-                  aria-expanded={
-                    canPickWebFolderNow() ? attachOpen : undefined
-                  }
-                  onClick={pickAttachments}
-                >
-                  <svg
-                    width="13"
-                    height="13"
-                    viewBox="0 0 16 16"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="1.5"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    aria-hidden="true"
-                  >
-                    <path d="m12.5 7.5-4.95 4.95a3.5 3.5 0 0 1-4.95-4.95l5.3-5.3a2.33 2.33 0 0 1 3.3 3.3l-5.3 5.3a1.17 1.17 0 0 1-1.65-1.65l4.6-4.6" />
-                  </svg>
-                </button>
-                {attachOpen && (
-                  <ul
-                    className={styles.modeMenu}
-                    role="menu"
-                    aria-label="Attach"
-                  >
-                    <li>
-                      <button
-                        type="button"
-                        className={styles.modeOption}
-                        role="menuitem"
-                        onClick={() => {
-                          setAttachOpen(false);
-                          runAttachmentPick(onPickAttachments);
-                        }}
-                      >
-                        Files
-                      </button>
-                    </li>
-                    <li>
-                      <button
-                        type="button"
-                        className={styles.modeOption}
-                        role="menuitem"
-                        onClick={() => {
-                          setAttachOpen(false);
-                          runAttachmentPick(onPickFolderAttachments);
-                        }}
-                      >
-                        Folder
-                      </button>
-                    </li>
-                  </ul>
-                )}
-              </div>
-            )}
             {hasSpeech && speech && (
               <>
                 <button
@@ -2607,6 +2567,13 @@ export const Composer = memo(function Composer({
                 )}
               </>
             )}
+            {/* Model + effort read as one pill ("Claude Opus 5.5 · High"):
+                two click targets, so each keeps its own picker. */}
+            <div
+              className={styles.modelGroup}
+              data-model-group=""
+              data-with-effort={reasoningVisible ? "" : undefined}
+            >
             <div className={styles.modeWrap} ref={modelWrapRef}>
               <button
                 ref={modelTriggerRef}
@@ -2998,7 +2965,7 @@ export const Composer = memo(function Composer({
               <div className={styles.modeWrap} ref={effortWrapRef}>
                 <button
                   type="button"
-                  className={styles.pill}
+                  className={`${styles.pill} ${styles.effortSegment}`}
                   disabled={locked || effortUnavailable}
                   aria-disabled={
                     locked || effortUnavailable ? "true" : undefined
@@ -3089,6 +3056,7 @@ export const Composer = memo(function Composer({
                 )}
               </div>
             )}
+            </div>
 
             {currentProviderInfo?.supportsSearch && onSetWebSearch && (
               <button
@@ -3240,51 +3208,11 @@ export const Composer = memo(function Composer({
             )}
 
             {!ask && (
-            <div className={styles.modeWrap} ref={optionsWrapRef}>
-              <button
-                ref={optionsTriggerRef}
-                type="button"
-                className={`${styles.pill} ${styles.pillIcon}`}
-                disabled={locked || sending}
-                aria-disabled={locked || sending ? "true" : undefined}
-                aria-haspopup="dialog"
-                aria-expanded={optionsOpen}
-                aria-label="Options"
-                title={
-                  busy
-                    ? "Wait for this run to finish"
-                    : disabled
-                      ? "This thread is archived"
-                      : onBestOfN
-                        ? "Workflow and Best of N"
-                        : "Workflow"
-                }
-                data-composer-options=""
-                onClick={() => {
-                  if (locked || sending) return;
-                  setOptionsOpen((open) => !open);
-                  setModeOpen(false);
-                  setModelOpen(false);
-                  setEffortOpen(false);
-                  setAttachOpen(false);
-                  setViewOpen(false);
-                }}
-              >
-                <svg
-                  width="14"
-                  height="14"
-                  viewBox="0 0 16 16"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="1.5"
-                  strokeLinecap="round"
-                  aria-hidden="true"
-                >
-                  <path d="M2.5 4.5h6M11.5 4.5h2M2.5 11.5h2M7.5 11.5h6" />
-                  <circle cx="10" cy="4.5" r="1.5" />
-                  <circle cx="6" cy="11.5" r="1.5" />
-                </svg>
-              </button>
+            <div
+              className={styles.modeWrap}
+              ref={optionsWrapRef}
+              data-composer-options-anchor=""
+            >
               {optionsOpen && (
                 <div
                   ref={optionsPopoverRef}
@@ -3494,95 +3422,73 @@ export const Composer = memo(function Composer({
               </button>
             </div>
           )}
-          <div className={styles.modeWrap} data-transcript-view="">
-            <button
-              type="button"
-              className={`${styles.pill}${
-                transcriptView !== "normal"
-                  ? ` ${styles.pillAccent}`
-                  : ` ${styles.pillIcon}`
-              }`}
-              data-transcript-view-trigger=""
-              data-transcript-view-mode={transcriptView}
-              aria-haspopup="listbox"
-              aria-expanded={viewOpen}
-              aria-label={`Transcript view: ${TRANSCRIPT_VIEW_LABELS[transcriptView]}`}
-              title={`${TRANSCRIPT_VIEW_HINTS[transcriptView]}. Ctrl+O cycles.`}
-              onClick={() => {
-                setViewOpen((v) => !v);
-                setModeOpen(false);
-                setModelOpen(false);
-                setEffortOpen(false);
-                setOptionsOpen(false);
-              }}
-            >
-              {transcriptView === "normal" ? (
+          {onPickAttachments && !ask && (
+            <div className={styles.modeWrap} ref={attachWrapRef}>
+              <button
+                type="button"
+                className={styles.pill}
+                disabled={disabled || sending}
+                aria-disabled={disabled || sending ? "true" : undefined}
+                aria-label="Attach files or folders"
+                title="Attach files or folders"
+                aria-haspopup={
+                  canPickWebFolderNow() ? "menu" : undefined
+                }
+                aria-expanded={
+                  canPickWebFolderNow() ? attachOpen : undefined
+                }
+                onClick={pickAttachments}
+              >
                 <svg
-                  width="14"
-                  height="14"
+                  width="13"
+                  height="13"
                   viewBox="0 0 16 16"
                   fill="none"
                   stroke="currentColor"
                   strokeWidth="1.5"
                   strokeLinecap="round"
+                  strokeLinejoin="round"
                   aria-hidden="true"
                 >
-                  <path d="M3 4.5h10M3 8h10M3 11.5h6" />
+                  <path d="m12.5 7.5-4.95 4.95a3.5 3.5 0 0 1-4.95-4.95l5.3-5.3a2.33 2.33 0 0 1 3.3 3.3l-5.3 5.3a1.17 1.17 0 0 1-1.65-1.65l4.6-4.6" />
                 </svg>
-              ) : (
-                <>
-                  {TRANSCRIPT_VIEW_LABELS[transcriptView]}
-                  <span className={styles.caret}>
-                    <svg
-                      width="10"
-                      height="10"
-                      viewBox="0 0 10 10"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="1.5"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      aria-hidden="true"
-                    >
-                      <path d="M2.5 3.5 5 6l2.5-2.5" />
-                    </svg>
-                  </span>
-                </>
-              )}
-            </button>
-            {viewOpen && (
-              <ul
-                className={`${styles.modeMenu} ${styles.viewMenu}`}
-                role="listbox"
-                aria-label="Transcript view"
-              >
-                {TRANSCRIPT_VIEW_MODES.map((mode: TranscriptViewMode) => (
-                  <li
-                    key={mode}
-                    role="option"
-                    aria-selected={mode === transcriptView}
-                  >
+              </button>
+              {attachOpen && (
+                <ul
+                  className={styles.modeMenu}
+                  role="menu"
+                  aria-label="Attach"
+                >
+                  <li>
                     <button
                       type="button"
                       className={styles.modeOption}
-                      data-transcript-view-option={mode}
-                      data-active={mode === transcriptView}
-                      title={TRANSCRIPT_VIEW_HINTS[mode]}
+                      role="menuitem"
                       onClick={() => {
-                        setTranscriptViewMode(mode);
-                        setViewOpen(false);
+                        setAttachOpen(false);
+                        runAttachmentPick(onPickAttachments);
                       }}
                     >
-                      <span className={styles.checkSlot}>
-                        {mode === transcriptView ? "✓" : ""}
-                      </span>
-                      {TRANSCRIPT_VIEW_LABELS[mode]}
+                      Files
                     </button>
                   </li>
-                ))}
-              </ul>
-            )}
-          </div>
+                  <li>
+                    <button
+                      type="button"
+                      className={styles.modeOption}
+                      role="menuitem"
+                      onClick={() => {
+                        setAttachOpen(false);
+                        runAttachmentPick(onPickFolderAttachments);
+                      }}
+                    >
+                      Folder
+                    </button>
+                  </li>
+                </ul>
+              )}
+            </div>
+          )}
           <button
             type="button"
             className={styles.send}

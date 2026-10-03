@@ -330,6 +330,8 @@ export interface UseCoderResult {
   ) => Promise<ProjectInfo | null>;
   /** Create a new folder + git repo (projects.create) and add it. */
   createProject: (input: CreateProjectInput) => Promise<ProjectInfo | null>;
+  /** The built-in Scratch workspace ("start without a project", #1411). */
+  ensureScratchProject: () => Promise<ProjectInfo | null>;
   /** Patch name, SSH remotes, or worktree retention of a project. */
   updateProject: (input: ProjectUpdateInput) => Promise<ProjectInfo | null>;
   /** Create in projectId when given; otherwise the currently selected project. */
@@ -510,7 +512,11 @@ export interface UseCoderResult {
   /** Change the recorded merge/PR base after create (#187). */
   setBaseBranch: (threadId: string, baseBranch: string | null) => Promise<void>;
   /** Draft workspace choice: arm or drop the lazy worktree before first send. */
-  setPendingWorktree: (threadId: string, worktree: boolean) => Promise<void>;
+  setPendingWorktree: (
+    threadId: string,
+    worktree: boolean,
+    fromOrigin?: boolean,
+  ) => Promise<void>;
   /** Retarget an idle worker onto the lead's current committed HEAD. */
   refreshWorkerSnapshot: (threadId: string) => Promise<void>;
   /**
@@ -1584,6 +1590,21 @@ export function useCoder(): UseCoderResult {
     }
   }, [api]);
 
+  const ensureScratchProject = useCallback(async () => {
+    try {
+      const p = await api.projects.ensureScratch();
+      setProjects((prev) => {
+        if (prev.some((x) => x.id === p.id)) return prev;
+        return [...prev, p];
+      });
+      setError(null);
+      return p;
+    } catch (err) {
+      setError({ scope: "project", message: errorMessage(err) });
+      return null;
+    }
+  }, [api]);
+
   const updateProject = useCallback(async (input: ProjectUpdateInput) => {
     try {
       const updated = await api.projects.update(input);
@@ -2564,9 +2585,13 @@ export function useCoder(): UseCoderResult {
   );
 
   const setPendingWorktree = useCallback(
-    async (threadId: string, worktree: boolean) => {
+    async (threadId: string, worktree: boolean, fromOrigin?: boolean) => {
       try {
-        const thread = await api.threads.setPendingWorktree({ threadId, worktree });
+        const thread = await api.threads.setPendingWorktree({
+          threadId,
+          worktree,
+          ...(fromOrigin === undefined ? {} : { fromOrigin }),
+        });
         applyThreads(
           threadsRef.current.map((t) => (t.id === thread.id ? thread : t)),
         );
@@ -4229,6 +4254,7 @@ export function useCoder(): UseCoderResult {
     clearError,
     addProject,
     createProject,
+    ensureScratchProject,
     updateProject,
     createThread,
     listBaseBranches,

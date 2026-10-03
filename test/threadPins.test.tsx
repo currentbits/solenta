@@ -173,6 +173,20 @@ function viewThread(d: ThreadDetail, onSetMessagePins?: (
   );
 }
 
+
+/** Notes lives in Thread details now (#1411): open the card when needed. */
+async function notesBtn(m: {
+  query: (sel: string) => Element | null;
+  click: (el: Element | null) => Promise<void>;
+}): Promise<Element | null> {
+  let btn = m.query("[data-thread-notes-btn]");
+  if (!btn) {
+    await m.click(m.query("[data-thread-details-btn]"));
+    btn = m.query("[data-thread-notes-btn]");
+  }
+  return btn;
+}
+
 describe("thread message pins (issue #1217)", () => {
   it("pins a message, lists it beside notes, and jumps including earlier history", async () => {
     const n = TRANSCRIPT_WINDOW + 40;
@@ -329,7 +343,7 @@ describe("thread message pins (issue #1217)", () => {
         "notes retry stays independent",
       );
 
-      await m.click(m.query("[data-thread-notes-btn]"));
+      await m.click((await notesBtn(m)));
       const ta = m.query("[data-thread-notes-input]") as HTMLTextAreaElement;
       assert.ok(ta);
       assert.equal(ta.value, "Original saved note");

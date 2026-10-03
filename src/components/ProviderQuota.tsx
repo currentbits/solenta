@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { providerDisplayName } from "../format";
+import { ProviderMark } from "./ProviderMark";
 import type { ProviderInfo } from "../shared/ipc";
 import {
   QUOTA_CLOCK_MS,
@@ -198,6 +199,12 @@ function QuotaRow({
       data-stale={stale ? "" : undefined}
     >
       <div className={styles.rowHead}>
+        <ProviderMark
+          providerId={row.provider}
+          size={13}
+          decorative
+          className={styles.mark}
+        />
         <span className={styles.name}>{label}</span>
         {active ? <span className={styles.active}>this thread</span> : null}
       </div>

@@ -18,6 +18,15 @@ export interface WorkspaceStripProps {
   listBaseBranches?: () => Promise<{ defaultBranch: string; branches: string[] }>;
   onSetWorktree: (worktree: boolean) => Promise<unknown>;
   onSetBaseBranch?: (baseBranch: string | null) => Promise<unknown>;
+  /**
+   * The project's most recent other worktree thread. "Previous worktree"
+   * starts a fresh worktree stacked on its branch: committed work carries
+   * over, uncommitted edits don't, and merge / PR land back on that branch.
+   */
+  previous?: { branch: string; title: string } | null;
+  /** "Start from origin": fetch the base at creation and start from it. */
+  fromOrigin?: boolean;
+  onSetFromOrigin?: (fromOrigin: boolean) => Promise<unknown>;
 }
 
 type Open = "workspace" | "base" | null;
@@ -29,6 +38,9 @@ export function WorkspaceStrip({
   listBaseBranches,
   onSetWorktree,
   onSetBaseBranch,
+  previous = null,
+  fromOrigin = false,
+  onSetFromOrigin,
 }: WorkspaceStripProps) {
   const [open, setOpen] = useState<Open>(null);
   const [branches, setBranches] = useState<{
@@ -75,6 +87,10 @@ export function WorkspaceStrip({
   };
 
   const baseLabel = baseBranch || branches?.defaultBranch || "repo default";
+  const stacked = Boolean(
+    worktree && previous && onSetBaseBranch && baseBranch === previous.branch,
+  );
+  const mode = !worktree ? "local" : stacked ? "previous" : "worktree";
   const q = query.trim().toLowerCase();
   const matches = (branches?.branches ?? []).filter(
     (b) => !q || b.toLowerCase().includes(q),
@@ -86,13 +102,23 @@ export function WorkspaceStrip({
         <button
           type="button"
           className={styles.trigger}
-          data-workspace-trigger={worktree ? "worktree" : "local"}
+          data-workspace-trigger={mode}
           aria-haspopup="menu"
           aria-expanded={open === "workspace"}
           onClick={() => setOpen((o) => (o === "workspace" ? null : "workspace"))}
         >
-          {worktree ? <WorktreeGlyph /> : <FolderGlyph />}
-          {worktree ? "New worktree" : "Local checkout"}
+          {mode === "local" ? (
+            <FolderGlyph />
+          ) : mode === "previous" ? (
+            <HistoryGlyph />
+          ) : (
+            <WorktreeGlyph />
+          )}
+          {mode === "local"
+            ? "Local checkout"
+            : mode === "previous"
+              ? "Previous worktree"
+              : "New worktree"}
           <Chevron />
         </button>
         {open === "workspace" && (
@@ -116,18 +142,47 @@ export function WorkspaceStrip({
             <button
               type="button"
               role="menuitemradio"
-              aria-checked={worktree}
+              aria-checked={mode === "worktree"}
               className={styles.item}
               data-workspace-option="worktree"
-              onClick={() => void run(() => onSetWorktree(true))}
+              onClick={() =>
+                void run(async () => {
+                  await onSetWorktree(true);
+                  // Leaving "Previous worktree" drops the stacked base too.
+                  if (stacked && onSetBaseBranch) await onSetBaseBranch(null);
+                })
+              }
             >
               <WorktreeGlyph />
               <span className={styles.itemText}>
                 New worktree
                 <small>Isolated branch, created when you send</small>
               </span>
-              {worktree && <Check />}
+              {mode === "worktree" && <Check />}
             </button>
+            {previous && onSetBaseBranch ? (
+              <button
+                type="button"
+                role="menuitemradio"
+                aria-checked={mode === "previous"}
+                className={styles.item}
+                data-workspace-option="previous"
+                title={`Stack on ${previous.branch}: its committed work carries over and merges land back on it. Uncommitted edits stay in the old worktree.`}
+                onClick={() =>
+                  void run(async () => {
+                    await onSetWorktree(true);
+                    await onSetBaseBranch(previous.branch);
+                  })
+                }
+              >
+                <HistoryGlyph />
+                <span className={styles.itemText}>
+                  Previous worktree
+                  <small className={styles.mono}>{previous.branch}</small>
+                </span>
+                {mode === "previous" && <Check />}
+              </button>
+            ) : null}
           </div>
         )}
       </div>
@@ -154,7 +209,8 @@ export function WorkspaceStrip({
             }}
           >
             <BranchGlyph />
-            From {baseLabel}
+            From {fromOrigin ? "origin/" : ""}
+            {baseLabel}
             <Chevron />
           </button>
           {open === "base" && (
@@ -199,6 +255,27 @@ export function WorkspaceStrip({
                   </p>
                 )}
               </div>
+              {onSetFromOrigin ? (
+                <label
+                  className={styles.originRow}
+                  title="Creates the worktree from the latest matching branch on origin instead of your local branch."
+                >
+                  <input
+                    type="checkbox"
+                    role="switch"
+                    data-workspace-from-origin=""
+                    checked={fromOrigin}
+                    onChange={(e) => {
+                      const next = e.currentTarget.checked;
+                      setError(null);
+                      void onSetFromOrigin(next).catch((err) =>
+                        setError(err instanceof Error ? err.message : String(err)),
+                      );
+                    }}
+                  />
+                  Start from origin
+                </label>
+              ) : null}
             </div>
           )}
         </div>
@@ -245,6 +322,16 @@ function WorktreeGlyph() {
     <Svg>
       <path d="M2.5 4A1.5 1.5 0 0 1 4 2.5h2.2a1.5 1.5 0 0 1 1.1.5l.8 1a1.5 1.5 0 0 0 1.1.5H12A1.5 1.5 0 0 1 13.5 6v5A1.5 1.5 0 0 1 12 12.5H4A1.5 1.5 0 0 1 2.5 11V4Z" />
       <circle cx="8" cy="8.5" r="1.3" />
+    </Svg>
+  );
+}
+
+function HistoryGlyph() {
+  return (
+    <Svg>
+      <path d="M2.5 8a5.5 5.5 0 1 0 1.6-3.9L2.5 5.7" />
+      <path d="M2.5 2.75v3h3" />
+      <path d="M8 5.25V8l2 1.25" />
     </Svg>
   );
 }

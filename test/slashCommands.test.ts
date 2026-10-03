@@ -9,6 +9,7 @@ import {
   SLASH_COMMANDS,
   commandQuery,
   matchSlashCommands,
+  pickerVerb,
 } from "../src/slashCommands.ts";
 
 describe("commandQuery", () => {
@@ -119,5 +120,20 @@ describe("matchSlashCommands", () => {
       SLASH_COMMANDS.find((c) => c.name === "/usage")?.action,
       "usage",
     );
+  });
+});
+
+describe("pickerVerb (#1411)", () => {
+  it("splits /workflow and /bestof from their prompt", () => {
+    assert.deepEqual(pickerVerb("/workflow ship the API"), { picker: "workflow", tail: "ship the API" });
+    assert.deepEqual(pickerVerb("/bestof compare\nthese two"), { picker: "bestof", tail: "compare\nthese two" });
+    assert.deepEqual(pickerVerb("/bestof "), { picker: "bestof", tail: "" });
+    assert.deepEqual(pickerVerb("  /workflow"), { picker: "workflow", tail: "" });
+  });
+
+  it("ignores everything else", () => {
+    assert.equal(pickerVerb("/workflows later"), null);
+    assert.equal(pickerVerb("please /bestof this"), null);
+    assert.equal(pickerVerb("/btw what is this"), null);
   });
 });

@@ -522,3 +522,13 @@
   color: var(--text-dim);
   max-width: 36ch;
 }
+
+.crumbParent {
+  font-size: 13px;
+  color: var(--text-dim);
+}
+
+.crumbSep {
+  color: var(--text-dim);
+  opacity: 0.7;
+}

@@ -125,6 +125,7 @@ const IPC_CHANNELS = Object.freeze([
   { ns: "projects", method: "list" },
   { ns: "projects", method: "add" },
   { ns: "projects", method: "create" },
+  { ns: "projects", method: "ensureScratch" },
   { ns: "projects", method: "update" },
   { ns: "projects", method: "pickIcon" },
   { ns: "projects", method: "resolveIcon" },
