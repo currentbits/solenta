@@ -2359,12 +2359,13 @@ function setBaseBranch(store, input) {
 
 /**
  * Draft workspace choice (composer strip): arm or drop the lazy worktree
- * before the first send. Locked once the thread has a worktree or any user
+ * before the first send. `fromOrigin` (optional) starts it from the
+ * freshly fetched origin copy of the base instead of the local branch. Locked once the thread has a worktree or any user
  * message, so a running conversation never changes checkout underneath
  * itself. Arming requires a local git project. Never bumps updatedAt.
  *
  * @param {import('./store').Store} store
- * @param {{ threadId: string, worktree: boolean }} input
+ * @param {{ threadId: string, worktree: boolean, fromOrigin?: boolean }} input
  */
 function setPendingWorktree(store, input) {
   const { threadId } = input || {};
@@ -2373,7 +2374,13 @@ function setPendingWorktree(store, input) {
     throw new Error(`Unknown thread: ${threadId}`);
   }
   const want = input.worktree === true;
-  if (Boolean(thread.pendingWorktree) === want && !thread.worktreePath) {
+  const origin =
+    typeof input.fromOrigin === "boolean" ? input.fromOrigin : undefined;
+  if (
+    Boolean(thread.pendingWorktree) === want &&
+    !thread.worktreePath &&
+    (origin === undefined || Boolean(thread.worktreeFromOrigin) === origin)
+  ) {
     return { ...thread };
   }
   if (thread.worktreePath) {
@@ -2385,7 +2392,9 @@ function setPendingWorktree(store, input) {
   if (want && !canHostWorktree(store.getProject(thread.projectId))) {
     throw new Error("This project can't host a worktree (needs a local git repo)");
   }
+  /** @type {{ pendingWorktree: boolean, worktreeFromOrigin?: boolean }} */
   const patch = { pendingWorktree: want };
+  if (origin !== undefined) patch.worktreeFromOrigin = origin;
   const updated = store.updateThread(threadId, patch);
   store.save();
   return updated ? { ...updated } : { ...thread, ...patch };

@@ -3857,3 +3857,165 @@ a.menuItem {
 .msgActions:has([aria-pressed="true"]) {
   opacity: 1;
 }
+
+/* Suggested work as dashed chips (#1411): click = start a thread; file /
+   dismiss are small icons revealed on hover or focus. */
+.suggestedWork {
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+}
+
+.suggestedLabel {
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.suggestedRow {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 0;
+}
+
+.suggestedChip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 420px;
+  height: 26px;
+  padding: 0 10px;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.suggestedChip:hover:not(:disabled) {
+  border-style: solid;
+  color: var(--text);
+}
+
+.suggestedIcon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+
+.suggestedIcon:hover:not(:disabled) {
+  background: var(--overlay-hover);
+  color: var(--text);
+}
+
+/* New-thread hero (#1411): the draft centres a headline with the composer
+   and workspace strip directly under it; the first send drops the layout
+   back to the normal transcript. */
+.chatSlot[data-draft-hero] {
+  justify-content: center;
+  padding-bottom: 6vh;
+}
+
+.chatSlot[data-draft-hero] > [data-thread-body] {
+  flex: 0 0 auto;
+  overflow: visible;
+}
+
+.heroDraft {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 0 16px 22px;
+  text-align: center;
+}
+
+.heroTitle {
+  margin: 0;
+  font-size: 26px;
+  font-weight: 400;
+  letter-spacing: -0.01em;
+  color: var(--text);
+}
+
+.heroHint {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-dim);
+}
+
+.heroChooser {
+  position: relative;
+  display: inline-block;
+}
+
+.heroProject {
+  padding: 0;
+  border: none;
+  background: transparent;
+  font: inherit;
+  color: inherit;
+  text-decoration: underline dotted var(--text-dim);
+  text-underline-offset: 6px;
+  text-decoration-thickness: 2px;
+}
+
+button.heroProject {
+  cursor: pointer;
+}
+
+button.heroProject:hover {
+  text-decoration-color: var(--text);
+}
+
+.heroMenu {
+  position: absolute;
+  top: calc(100% + 10px);
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  min-width: 200px;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-pop);
+  font-size: 13px;
+  text-align: left;
+}
+
+.heroMenuItem {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 8px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-muted);
+  font: inherit;
+  cursor: pointer;
+}
+
+.heroMenuItem:hover {
+  background: var(--overlay-hover);
+  color: var(--text);
+}
+
+/* The title menu hangs below the breadcrumb: let it escape the crumb's
+   clip. The title and project keep their own ellipsis. */
+.breadcrumb {
+  overflow: visible;
+}

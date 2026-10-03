@@ -104,6 +104,18 @@ export type AppView =
   | "insights"
   | "digest";
 
+/**
+ * Collapsed sidebar rail (window controls + Show sidebar). The macOS desktop
+ * window draws its traffic lights at x 16..72 (hiddenInset), so the rail is
+ * wide enough to hold them instead of letting them cover the page header.
+ */
+const SIDEBAR_RAIL_WIDTH =
+  !isWebMode() &&
+  typeof navigator !== "undefined" &&
+  /Mac/i.test(navigator.platform || navigator.userAgent || "")
+    ? 84
+    : 44;
+
 type DrawerId = "sidebar" | "agents";
 
 // CSS px, so Electron zoom (settings.uiScale) is included. minWidth 1100 DIP
@@ -481,6 +493,25 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     initialSidebarWidth,
   );
   const [agentsCollapsed, setAgentsCollapsed] = useState(true);
+  /** Wide layouts: the thread sidebar folds to a rail (#1411, ⌘B). */
+  const [sidebarHidden, setSidebarHidden] = useState(() => {
+    try {
+      return window.localStorage.getItem("app:sidebarHidden") === "1";
+    } catch {
+      return false;
+    }
+  });
+  const toggleSidebar = useCallback(() => {
+    setSidebarHidden((hidden) => {
+      const next = !hidden;
+      try {
+        window.localStorage.setItem("app:sidebarHidden", next ? "1" : "0");
+      } catch {
+        // storage blocked: still toggle for this session
+      }
+      return next;
+    });
+  }, []);
   /** Manual inspector tabs for this renderer session. Collapse unmounts the panel. */
   const [inspectorChoices, setInspectorChoices] = useState<
     Record<string, PanelTab>
@@ -1243,6 +1274,17 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      if (!(e.metaKey || e.ctrlKey) || e.altKey || e.shiftKey) return;
+      if (e.key.toLowerCase() !== "b" || narrow || dialogOpen()) return;
+      e.preventDefault();
+      toggleSidebar();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [toggleSidebar, narrow]);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
       if (!(e.metaKey || e.ctrlKey) || e.key !== ".") return;
       if (e.altKey || e.shiftKey) return;
       if (dialogOpen()) return;
@@ -1881,10 +1923,15 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         data-layout="app"
         data-drawer={drawer ?? ""}
         data-agents-collapsed={hideAgentsRail ? "true" : undefined}
+        data-sidebar-hidden={!narrow && sidebarHidden ? "true" : undefined}
         style={
           narrow
             ? undefined
-            : ({ "--sidebar-width": `${sidebarWidth}px` } as CSSProperties)
+            : ({
+                "--sidebar-width": sidebarHidden
+                  ? `${SIDEBAR_RAIL_WIDTH}px`
+                  : `${sidebarWidth}px`,
+              } as CSSProperties)
         }
       >
         <div className={styles.narrowBar} data-narrow-chrome="">
@@ -1935,9 +1982,42 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
           tabIndex={-1}
           inert={narrow && drawer !== "sidebar"}
         >
+          {!narrow && sidebarHidden ? (
+            <div className={styles.sidebarRail} data-sidebar-rail="">
+              <div className={styles.sidebarRailDrag} />
+              <button
+                type="button"
+                className={styles.sidebarRailBtn}
+                data-sidebar-show=""
+                aria-label="Show sidebar"
+                title="Show sidebar (⌘B)"
+                onClick={toggleSidebar}
+              >
+                <svg
+                  width="15"
+                  height="15"
+                  viewBox="0 0 16 16"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.5"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden="true"
+                >
+                  <rect x="2.5" y="2.5" width="11" height="11" rx="2" />
+                  <path d="M6 2.5v11" />
+                </svg>
+              </button>
+            </div>
+          ) : null}
+          <div
+            className={styles.sidebarBody}
+            hidden={!narrow && sidebarHidden}
+          >
           <ErrorBoundary pane="Sidebar">
             <Sidebar
         appName="Solenta"
+        onCollapseSidebar={narrow ? undefined : toggleSidebar}
         appVersion={appStatus?.build.version ?? null}
         channel={appStatus?.build.channel ?? null}
         updateState={updateStatus?.state ?? null}
@@ -2003,8 +2083,9 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         conflictForecast={forecast}
             />
           </ErrorBoundary>
+          </div>
         </div>
-        {!narrow && (
+        {!narrow && !sidebarHidden && (
           <div
             role="separator"
             aria-orientation="vertical"
@@ -2178,6 +2259,8 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         onSetBaseBranch={setBaseBranch}
         onSetPendingWorktree={setPendingWorktree}
         previousWorktree={previousWorktree}
+        heroProjects={projects}
+        onMoveDraftToProject={handleSetThreadProject}
         agentsPanelOpen={narrow ? drawer === "agents" : !agentsCollapsed}
         onToggleAgentsPanel={toggleAgents}
         onRefreshWorkerSnapshot={refreshWorkerSnapshot}
@@ -2470,11 +2553,6 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         discardHarnessImport={discardHarnessImport}
         activeView={view}
         onOpenPrs={openPrs}
-        onOpenAutomations={openAutomations}
-        onOpenUsage={openUsage}
-        onOpenFleet={openFleet}
-        onOpenInsights={openInsights}
-        onOpenDigest={openDigest}
         onFork={handleForkOpen}
           />
           </ErrorBoundary>

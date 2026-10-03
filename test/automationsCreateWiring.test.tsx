@@ -47,9 +47,8 @@ describe("Automations create wiring", () => {
     const m = await boot(fake);
     try {
       await expandAgents(m);
-      const pulse = m.query('[data-panel-tab="pulse"]');
-      assert.ok(pulse, "Pulse tab");
-      await m.click(pulse);
+      // Operational views live in the sidebar's Insights menu (#1411).
+      await m.click(m.query("[data-app-more]"));
       const nav = m.query('[data-view-nav="automations"]');
       assert.ok(nav, "Automations nav");
       await m.click(nav);

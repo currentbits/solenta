@@ -886,3 +886,79 @@ describe("Previous worktree: stack a draft on another thread's branch (#1411)", 
     assert.ok(!fs.existsSync(path.join(next.worktreePath, "scratch.md")), "uncommitted edits stay behind");
   });
 });
+
+describe("Start from origin (#1411)", () => {
+  let tmpDir;
+  let store;
+  let repo;
+  let project;
+  let worktreeBase;
+
+  beforeEach(async () => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "coder-origin-"));
+    store = new Store(path.join(tmpDir, "store.json"));
+    worktreeBase = path.join(tmpDir, "worktrees");
+    const remote = path.join(tmpDir, "remote.git");
+    git(tmpDir, ["init", "--bare", "-b", "main", remote]);
+    repo = path.join(tmpDir, "repo");
+    fs.mkdirSync(repo);
+    git(repo, ["init", "-b", "main"]);
+    git(repo, ["config", "user.email", "test@example.com"]);
+    git(repo, ["config", "user.name", "Test"]);
+    fs.writeFileSync(path.join(repo, "README.md"), "hello\n");
+    git(repo, ["add", "README.md"]);
+    git(repo, ["commit", "-m", "init"]);
+    git(repo, ["remote", "add", "origin", remote]);
+    git(repo, ["push", "-u", "origin", "main"]);
+    // Someone else lands a commit on origin/main; the local main is behind.
+    const other = path.join(tmpDir, "other");
+    git(tmpDir, ["clone", remote, other]);
+    git(other, ["config", "user.email", "o@example.com"]);
+    git(other, ["config", "user.name", "Other"]);
+    fs.writeFileSync(path.join(other, "upstream.md"), "new\n");
+    git(other, ["add", "upstream.md"]);
+    git(other, ["commit", "-m", "upstream"]);
+    git(other, ["push", "origin", "main"]);
+    project = await services.addProject(store, repo);
+  });
+
+  afterEach(() => {
+    for (const t of store.getThreads()) {
+      if (t && t.worktreePath && fs.existsSync(t.worktreePath)) {
+        try {
+          git(repo, ["worktree", "remove", "--force", t.worktreePath]);
+        } catch {
+          // ignore
+        }
+      }
+    }
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("fetches and starts from origin's copy of the base", () => {
+    const t = services.createThread(store, { projectId: project.id, title: "fresh" });
+    services.setPendingWorktree(store, { threadId: t.id, worktree: true, fromOrigin: true });
+    assert.equal(store.getThread(t.id).worktreeFromOrigin, true);
+    setupWorktree({ store, threadId: t.id, worktreeBase });
+    const wt = store.getThread(t.id).worktreePath;
+    assert.ok(fs.existsSync(path.join(wt, "upstream.md")), "has the commit only origin had");
+  });
+
+  it("without it, starts from the local branch", () => {
+    const t = services.createThread(store, { projectId: project.id, title: "local" });
+    services.setPendingWorktree(store, { threadId: t.id, worktree: true });
+    setupWorktree({ store, threadId: t.id, worktreeBase });
+    const wt = store.getThread(t.id).worktreePath;
+    assert.ok(!fs.existsSync(path.join(wt, "upstream.md")), "local main is behind origin");
+  });
+
+  it("falls back to the local branch when origin has no copy", () => {
+    git(repo, ["checkout", "-b", "local-only"]);
+    git(repo, ["checkout", "main"]);
+    const t = services.createThread(store, { projectId: project.id, title: "stacked" });
+    services.setPendingWorktree(store, { threadId: t.id, worktree: true, fromOrigin: true });
+    services.setBaseBranch(store, { threadId: t.id, baseBranch: "local-only" });
+    setupWorktree({ store, threadId: t.id, worktreeBase });
+    assert.ok(store.getThread(t.id).worktreePath, "created from local-only");
+  });
+});

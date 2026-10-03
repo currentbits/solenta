@@ -4187,7 +4187,11 @@ function buildDevCoder(): CoderApi {
             : null,
         });
       },
-      async setPendingWorktree(input: { threadId: string; worktree: boolean }) {
+      async setPendingWorktree(input: {
+        threadId: string;
+        worktree: boolean;
+        fromOrigin?: boolean;
+      }) {
         const detail = details.get(input.threadId);
         if (!detail) throw new Error(`Thread not found: ${input.threadId}`);
         if (detail.thread.worktreePath) {
@@ -4198,6 +4202,9 @@ function buildDevCoder(): CoderApi {
         }
         return patchThread(input.threadId, {
           pendingWorktree: input.worktree === true,
+          ...(typeof input.fromOrigin === "boolean"
+            ? { worktreeFromOrigin: input.fromOrigin }
+            : {}),
         });
       },
       async refreshWorkerSnapshot(input: { threadId: string }) {

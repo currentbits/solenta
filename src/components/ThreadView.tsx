@@ -776,7 +776,15 @@ interface ThreadViewProps {
   agentsPanelOpen?: boolean;
   onToggleAgentsPanel?: () => void;
   /** Draft workspace strip: arm or drop the lazy worktree before first send. */
-  onSetPendingWorktree?: (threadId: string, worktree: boolean) => Promise<void>;
+  onSetPendingWorktree?: (
+    threadId: string,
+    worktree: boolean,
+    fromOrigin?: boolean,
+  ) => Promise<void>;
+  /** New-thread hero: projects for the "What should we build in …?" chooser. */
+  heroProjects?: readonly ProjectInfo[];
+  /** Move a draft to another project from the hero chooser. */
+  onMoveDraftToProject?: (threadId: string, projectId: string) => void;
   /** Draft strip "Previous worktree" source (latest other worktree thread). */
   previousWorktree?: { branch: string; title: string } | null;
   /** Unmerged worktree files plus capped conflict-marker snippets. */
@@ -1905,45 +1913,84 @@ function SuggestedWorkStrip({
 
   return (
     <div className={styles.suggestedWork} data-suggested-work="">
+      <span className={styles.suggestedLabel}>Suggested</span>
       {open.map((s) => {
         const busy = inFlight.has(s.id);
         return (
-          <div
+          <span
             key={s.id}
             className={styles.suggestedRow}
             data-suggestion-id={s.id}
           >
-            <span className={styles.suggestedTitle}>{s.title}</span>
-            <div className={styles.suggestedActions}>
-              <button
-                type="button"
-                className={styles.reviewBtn}
-                data-suggestion-action="start"
-                disabled={busy}
-                onClick={() => run(s, onStart)}
+            <button
+              type="button"
+              className={styles.suggestedChip}
+              data-suggestion-action="start"
+              disabled={busy}
+              title={`Start a thread: ${s.title}`}
+              onClick={() => run(s, onStart)}
+            >
+              <svg
+                width="11"
+                height="11"
+                viewBox="0 0 16 16"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.8"
+                strokeLinecap="round"
+                aria-hidden="true"
               >
-                Start a thread
-              </button>
-              <button
-                type="button"
-                className={styles.reviewBtn}
-                data-suggestion-action="file"
-                disabled={busy}
-                onClick={() => run(s, onFile)}
+                <path d="M8 3v10M3 8h10" />
+              </svg>
+              <span className={styles.suggestedTitle}>{s.title}</span>
+            </button>
+            <button
+              type="button"
+              className={styles.suggestedIcon}
+              data-suggestion-action="file"
+              disabled={busy}
+              aria-label="File on planboard"
+              title="File on planboard"
+              onClick={() => run(s, onFile)}
+            >
+              <svg
+                width="12"
+                height="12"
+                viewBox="0 0 16 16"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.5"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
               >
-                File on planboard
-              </button>
-              <button
-                type="button"
-                className={styles.reviewBtn}
-                data-suggestion-action="dismiss"
-                disabled={busy}
-                onClick={() => run(s, onDismiss)}
+                <rect x="2.5" y="3" width="11" height="10" rx="1.5" />
+                <path d="M6.5 3v10M10 3v10" />
+              </svg>
+            </button>
+            <button
+              type="button"
+              className={styles.suggestedIcon}
+              data-suggestion-action="dismiss"
+              disabled={busy}
+              aria-label="Dismiss suggestion"
+              title="Dismiss"
+              onClick={() => run(s, onDismiss)}
+            >
+              <svg
+                width="11"
+                height="11"
+                viewBox="0 0 16 16"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.7"
+                strokeLinecap="round"
+                aria-hidden="true"
               >
-                Dismiss
-              </button>
-            </div>
-          </div>
+                <path d="M4 4l8 8M12 4l-8 8" />
+              </svg>
+            </button>
+          </span>
         );
       })}
     </div>
@@ -2104,6 +2151,69 @@ const CHECKS_POLL_MS = 8000;
  * One header control that always names the next git step (issue #382).
  * Replaces the always-visible Push + Create PR pair.
  */
+/** Dotted project name in the new-thread hero; picks move the draft. */
+function DraftProjectChooser({
+  current,
+  projects,
+  onPick,
+}: {
+  current: ProjectInfo | null;
+  projects: readonly ProjectInfo[];
+  onPick?: (projectId: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const wrapRef = useRef<HTMLSpanElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => {
+      if (!wrapRef.current?.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
+  }, [open]);
+  useEscapeClose(open, () => setOpen(false));
+  const label = current ? current.slug || current.name : "this project";
+  const others = projects.filter((p) => p.id !== current?.id && !p.remoteHost);
+  if (!onPick || others.length === 0) {
+    return <span className={styles.heroProject}>{label}</span>;
+  }
+  return (
+    <span className={styles.heroChooser} ref={wrapRef}>
+      <button
+        type="button"
+        className={styles.heroProject}
+        data-hero-project=""
+        aria-haspopup="menu"
+        aria-expanded={open}
+        title="Move this draft to another project"
+        onClick={() => setOpen((v) => !v)}
+      >
+        {label}
+      </button>
+      {open ? (
+        <span className={styles.heroMenu} role="menu" aria-label="Project">
+          {others.map((p) => (
+            <button
+              key={p.id}
+              type="button"
+              role="menuitem"
+              className={styles.heroMenuItem}
+              data-hero-project-option={p.id}
+              onClick={() => {
+                setOpen(false);
+                onPick(p.id);
+              }}
+            >
+              {p.iconUrl ? <ProjectIcon url={p.iconUrl} size={14} /> : null}
+              {p.slug || p.name}
+            </button>
+          ))}
+        </span>
+      ) : null}
+    </span>
+  );
+}
+
 function NextGitActionButton({
   thread,
   isWorking,
@@ -2495,6 +2605,32 @@ function NextGitActionButton({
     ? `${action.title} · ${blastRadiusTitle(blastRadius)}`
     : action.title;
 
+  const moreButton = onMore ? (
+      <button
+        type="button"
+        className={styles.gitMore}
+        data-git-more=""
+        aria-label="More git actions"
+        title="Push, PR, merge and more in Thread details"
+        onMouseDown={(e) => e.stopPropagation()}
+        onClick={onMore}
+      >
+        <svg
+          width="11"
+          height="11"
+          viewBox="0 0 16 16"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.8"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          aria-hidden="true"
+        >
+          <path d="m4 6 4 4 4-4" />
+        </svg>
+      </button>
+  ) : null;
+
   if (
     href &&
     (action.kind === "watch-checks" || action.kind === "checks-failed")
@@ -2530,6 +2666,7 @@ function NextGitActionButton({
         {pending && <span className={styles.pushSpinner} aria-hidden />}
         {label}
       </a>
+      {moreButton}
       </>
     );
   }
@@ -2564,31 +2701,7 @@ function NextGitActionButton({
         {pending && <span className={styles.pushSpinner} aria-hidden />}
         {label}
       </button>
-      {onMore ? (
-        <button
-          type="button"
-          className={styles.gitMore}
-          data-git-more=""
-          aria-label="More git actions"
-          title="Push, PR, merge and more in Thread details"
-          onMouseDown={(e) => e.stopPropagation()}
-          onClick={onMore}
-        >
-          <svg
-            width="11"
-            height="11"
-            viewBox="0 0 16 16"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="1.8"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            aria-hidden="true"
-          >
-            <path d="m4 6 4 4 4-4" />
-          </svg>
-        </button>
-      ) : null}
+      {moreButton}
       {ciSignOff ? (
         <span
           className={styles.oversizeBar}
@@ -4593,6 +4706,8 @@ export const ThreadView = memo(function ThreadView({
   onSetBaseBranch,
   onSetPendingWorktree,
   previousWorktree,
+  heroProjects,
+  onMoveDraftToProject,
   agentsPanelOpen,
   onToggleAgentsPanel,
   conflictContext,
@@ -7143,7 +7258,11 @@ export const ThreadView = memo(function ThreadView({
                     <div className={styles.detailsKv}>
                       <span className={styles.detailsKey}>Status</span>
                       <span className={styles.detailsStatus} data-details-status="">
-                        {detailsGit ? `${detailsGit.changed} changed · ` : ""}
+                        {detailsGit
+                          ? `${detailsGit.changed} changed${
+                              detailsGit.sync?.hasUpstream ? " · " : ""
+                            }`
+                          : ""}
                       </span>
                       <SyncPill
                         threadId={thread.id}
@@ -7577,7 +7696,11 @@ export const ThreadView = memo(function ThreadView({
             return <PanePlaceholder type={leaf.type} />;
           }
           return (
-            <div className={styles.chatSlot} data-pane-chat="">
+            <div
+              className={styles.chatSlot}
+              data-pane-chat=""
+              data-draft-hero={emptyMessages && !hasTimeline ? "" : undefined}
+            >
       {showWorkerNav && (
         <div className={styles.handoffBanner} data-worker-nav="">
           <span className={styles.handoffBannerText}>
@@ -7656,29 +7779,22 @@ export const ThreadView = memo(function ThreadView({
         }}
       >
         {emptyMessages && !hasTimeline && (
-          <div className={styles.emptyInline}>
-            <div
-              className={`${styles.emptyGlyph} ${styles.emptyGlyphSm}`}
-              aria-hidden="true"
-            >
-              <svg
-                width="18"
-                height="18"
-                viewBox="0 0 16 16"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="1.5"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              >
-                <path d="M8 2 9.6 6.4 14 8 9.6 9.6 8 14 6.4 9.6 2 8l4.4-1.6Z" />
-              </svg>
-            </div>
-            <p className={styles.emptyTitle}>
-              Start by describing what to build
-            </p>
-            <p className={styles.emptyHint}>
-              Type a prompt below, then send it with ⌘Enter.
+          <div className={styles.heroDraft} data-draft-hero-title="">
+            <h1 className={styles.heroTitle}>
+              What should we build in{" "}
+              <DraftProjectChooser
+                current={project}
+                projects={heroProjects ?? []}
+                onPick={
+                  onMoveDraftToProject
+                    ? (id) => onMoveDraftToProject(thread.id, id)
+                    : undefined
+                }
+              />
+              ?
+            </h1>
+            <p className={styles.heroHint}>
+              Describe the task, pick where it runs below, and send with ⌘Enter.
             </p>
           </div>
         )}
@@ -8481,6 +8597,10 @@ export const ThreadView = memo(function ThreadView({
                 listBaseBranches ? () => listBaseBranches(project.id) : undefined
               }
               onSetWorktree={(next) => onSetPendingWorktree(thread.id, next)}
+              fromOrigin={thread.worktreeFromOrigin === true}
+              onSetFromOrigin={(next) =>
+                onSetPendingWorktree(thread.id, true, next)
+              }
               onSetBaseBranch={
                 onSetBaseBranch
                   ? (base) => Promise.resolve(onSetBaseBranch(thread.id, base))

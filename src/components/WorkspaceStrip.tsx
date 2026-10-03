@@ -24,6 +24,9 @@ export interface WorkspaceStripProps {
    * over, uncommitted edits don't, and merge / PR land back on that branch.
    */
   previous?: { branch: string; title: string } | null;
+  /** "Start from origin": fetch the base at creation and start from it. */
+  fromOrigin?: boolean;
+  onSetFromOrigin?: (fromOrigin: boolean) => Promise<unknown>;
 }
 
 type Open = "workspace" | "base" | null;
@@ -36,6 +39,8 @@ export function WorkspaceStrip({
   onSetWorktree,
   onSetBaseBranch,
   previous = null,
+  fromOrigin = false,
+  onSetFromOrigin,
 }: WorkspaceStripProps) {
   const [open, setOpen] = useState<Open>(null);
   const [branches, setBranches] = useState<{
@@ -204,7 +209,8 @@ export function WorkspaceStrip({
             }}
           >
             <BranchGlyph />
-            From {baseLabel}
+            From {fromOrigin ? "origin/" : ""}
+            {baseLabel}
             <Chevron />
           </button>
           {open === "base" && (
@@ -249,6 +255,27 @@ export function WorkspaceStrip({
                   </p>
                 )}
               </div>
+              {onSetFromOrigin ? (
+                <label
+                  className={styles.originRow}
+                  title="Creates the worktree from the latest matching branch on origin instead of your local branch."
+                >
+                  <input
+                    type="checkbox"
+                    role="switch"
+                    data-workspace-from-origin=""
+                    checked={fromOrigin}
+                    onChange={(e) => {
+                      const next = e.currentTarget.checked;
+                      setError(null);
+                      void onSetFromOrigin(next).catch((err) =>
+                        setError(err instanceof Error ? err.message : String(err)),
+                      );
+                    }}
+                  />
+                  Start from origin
+                </label>
+              ) : null}
             </div>
           )}
         </div>

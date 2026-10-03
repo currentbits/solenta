@@ -588,7 +588,23 @@ function resolveWorktreeStart(thread, projectPath) {
   if (thread && thread.orchWorker) {
     throw new Error(MISSING_START_SNAPSHOT);
   }
-  return resolveStartPoint(projectPath, mergeBaseName(thread, projectPath));
+  const base = mergeBaseName(thread, projectPath);
+  // "Start from origin" (draft strip, #1411): fetch the base and start from
+  // origin's copy. Bounded and prompt-free; no remote copy (offline, local
+  // stacked branch) falls back to the local branch below.
+  if (thread && thread.worktreeFromOrigin === true && base) {
+    gitTry(projectPath, ["fetch", "origin", base], {
+      timeout: 10_000,
+      env: { GIT_TERMINAL_PROMPT: "0" },
+    });
+    const remote = gitTry(projectPath, [
+      "rev-parse",
+      "--verify",
+      `refs/remotes/origin/${base}^{commit}`,
+    ]);
+    if (remote.ok && remote.stdout) return `origin/${base}`;
+  }
+  return resolveStartPoint(projectPath, base);
 }
 
 /**

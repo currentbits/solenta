@@ -88,7 +88,7 @@ describe("wide agents panel collapse (#645)", () => {
       assert.equal(expand.tagName, "BUTTON");
       assert.equal(expand.getAttribute("aria-expanded"), "false");
       assert.ok(
-        !m.query('[data-panel-tab="pulse"]'),
+        !m.query('[data-panel-tab="git"]'),
         "Agents tabs stay hidden while collapsed",
       );
 
@@ -97,13 +97,13 @@ describe("wide agents panel collapse (#645)", () => {
       assert.ok(collapse, "wide layout must offer a Hide agents control");
       assert.equal(collapse.getAttribute("aria-expanded"), "true");
       assert.ok(
-        m.query('[data-panel-tab="pulse"]'),
+        m.query('[data-panel-tab="git"]'),
         "expand must bring the Agents tabs back",
       );
 
       await m.click(collapse);
       assert.ok(
-        !m.query('[data-panel-tab="pulse"]'),
+        !m.query('[data-panel-tab="git"]'),
         "collapsing must hide the Agents tabs",
       );
       assert.equal(
@@ -127,7 +127,7 @@ describe("wide agents panel collapse (#645)", () => {
         first.query("[data-agents-collapse]"),
         "open default must show Hide agents",
       );
-      assert.ok(first.query('[data-panel-tab="pulse"]'));
+      assert.ok(first.query('[data-panel-tab="git"]'));
     } finally {
       first.unmount();
     }
@@ -138,7 +138,7 @@ describe("wide agents panel collapse (#645)", () => {
         second.query("[data-agents-collapse]"),
         "a later mount must honor settings.agentsPanelDefault=open",
       );
-      assert.ok(second.query('[data-panel-tab="pulse"]'));
+      assert.ok(second.query('[data-panel-tab="git"]'));
     } finally {
       second.unmount();
     }
@@ -155,7 +155,7 @@ describe("wide agents panel collapse (#645)", () => {
       await inAct(() => dispatchModPeriod());
       await m.flush();
       assert.ok(
-        m.query('[data-panel-tab="pulse"]'),
+        m.query('[data-panel-tab="git"]'),
         "⌘. must expand the closed default even from the composer",
       );
       await inAct(() => dispatchModPeriod());
@@ -187,7 +187,7 @@ describe("wide agents panel collapse (#645)", () => {
         m.query("[data-agents-collapse]"),
         "saving Open must expand the panel now",
       );
-      assert.ok(m.query('[data-panel-tab="pulse"]'));
+      assert.ok(m.query('[data-panel-tab="git"]'));
       assert.equal(
         fake.api.settings && (await fake.api.settings.get()).agentsPanelDefault,
         "open",
@@ -235,7 +235,7 @@ describe("wide agents panel collapse (#645)", () => {
         m.query("[data-agents-collapse]"),
         "no last state → Open default",
       );
-      assert.ok(m.query('[data-panel-tab="pulse"]'));
+      assert.ok(m.query('[data-panel-tab="git"]'));
     } finally {
       m.unmount();
     }
@@ -264,7 +264,7 @@ describe("wide agents panel collapse (#645)", () => {
         second.query("[data-agents-collapse]"),
         "remember-last must restore the open toggle on the next launch",
       );
-      assert.ok(second.query('[data-panel-tab="pulse"]'));
+      assert.ok(second.query('[data-panel-tab="git"]'));
     } finally {
       second.unmount();
     }
@@ -555,7 +555,7 @@ describe("narrow agents drawer is unchanged (#645)", () => {
         "⌘. on a narrow window must open the Agents drawer",
       );
       assert.ok(
-        m.query('[data-panel-tab="pulse"]'),
+        m.query('[data-panel-tab="git"]'),
         "open drawer still shows Agents tabs",
       );
       const labels = m
@@ -566,7 +566,6 @@ describe("narrow agents drawer is unchanged (#645)", () => {
         "Agents",
         "Memory",
         "Skills",
-        "Pulse",
       ]);
     } finally {
       m.unmount();
@@ -659,7 +658,7 @@ describe("inspector tab defaults", () => {
     );
     assert.equal(
       defaultInspectorTab({ view: "usage", summary: lead, threads: rows, workflow: WORKFLOW }),
-      "pulse",
+      "git",
     );
     assert.notEqual(
       inspectorContextKey({ view: "thread", projectId: "p1", threadId: "a" }),
@@ -724,7 +723,7 @@ describe("inspector tab selection stays with the context", () => {
 
       await openMore(m);
       await m.click(m.query('[data-app-more-menu] [data-view-nav="usage"]'));
-      assert.equal(selectedInspectorTab(m), "pulse");
+      assert.equal(selectedInspectorTab(m), "git", "Usage opens on Environment (no Pulse tab, #1411)");
       assert.equal(m.query("[data-agents-expand]"), null, "route change does not collapse");
       await m.click(m.query('[data-view-nav="threads"]'));
       assert.equal(selectedInspectorTab(m), "memory");
@@ -775,7 +774,7 @@ describe("inspector tab selection stays with the context", () => {
     }
   });
 
-  it("uses Pulse for usage and Environment for Review without opening a collapsed panel", async () => {
+  it("uses Environment for usage and Review without opening a collapsed panel", async () => {
     const row = thread({ id: "t-plain", title: "Plain session" });
     const m = await boot(
       createFakeCoder({
@@ -794,7 +793,7 @@ describe("inspector tab selection stays with the context", () => {
       await m.click(m.query('[data-app-more-menu] [data-view-nav="usage"]'));
       assert.ok(m.query("[data-agents-expand]"));
       await showInspector(m);
-      assert.equal(selectedInspectorTab(m), "pulse");
+      assert.equal(selectedInspectorTab(m), "git");
     } finally {
       m.unmount();
     }
@@ -989,13 +988,13 @@ describe("inspector tab selection stays with the context", () => {
       assert.equal(selectedInspectorTab(m), "agents");
       assert.equal(document.activeElement, m.query('[data-panel-tab="agents"]'));
       await m.pressFocused("End");
-      assert.equal(selectedInspectorTab(m), "pulse");
-      assert.equal(document.activeElement, m.query('[data-panel-tab="pulse"]'));
+      assert.equal(selectedInspectorTab(m), "skills");
+      assert.equal(document.activeElement, m.query('[data-panel-tab="skills"]'));
       await m.pressFocused("Home");
       assert.equal(selectedInspectorTab(m), "git");
       assert.equal(document.activeElement, m.query('[data-panel-tab="git"]'));
       await m.pressFocused("ArrowLeft");
-      assert.equal(selectedInspectorTab(m), "pulse");
+      assert.equal(selectedInspectorTab(m), "skills");
     } finally {
       m.unmount();
     }

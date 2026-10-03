@@ -304,6 +304,10 @@ export function UsageView({
     >
       <header className={styles.header}>
         <div className={styles.crumb}>
+          <span className={styles.crumbParent}>Insights</span>
+          <span className={styles.crumbSep} aria-hidden>
+            /
+          </span>
           <h1 className={styles.title}>Usage</h1>
           {!limitsOpen && rangeLabel ? (
             <span className={styles.rangeLabel} data-usage-range-label="">

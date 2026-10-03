@@ -155,12 +155,18 @@ function view(props: {
   onOpenWorkers?: () => void;
   handoffSource?: ThreadInfo | null;
   onSelectThread?: (id: string) => void;
-  onSetPendingWorktree?: (threadId: string, worktree: boolean) => Promise<void>;
+  onSetPendingWorktree?: (
+    threadId: string,
+    worktree: boolean,
+    fromOrigin?: boolean,
+  ) => Promise<void>;
   listBaseBranches?: (
     projectId: string,
   ) => Promise<{ defaultBranch: string; branches: string[] }>;
   onSetBaseBranch?: (threadId: string, baseBranch: string | null) => Promise<void>;
   previousWorktree?: { branch: string; title: string } | null;
+  heroProjects?: ProjectInfo[];
+  onMoveDraftToProject?: (threadId: string, projectId: string) => void;
 }) {
   return (
     <ThreadView
@@ -211,6 +217,8 @@ function view(props: {
       listBaseBranches={props.listBaseBranches}
       onSetBaseBranch={props.onSetBaseBranch}
       previousWorktree={props.previousWorktree}
+      heroProjects={props.heroProjects}
+      onMoveDraftToProject={props.onMoveDraftToProject}
     />
   );
 }
@@ -676,6 +684,31 @@ describe("draft workspace strip under the composer", () => {
     m.unmount();
   });
 
+  it("toggles Start from origin in the base picker", async () => {
+    const calls: unknown[] = [];
+    const armed = draft();
+    armed.thread = { ...armed.thread, pendingWorktree: true };
+    const m = await mount(
+      view({
+        detail: armed,
+        onSetPendingWorktree: async (id, worktree, fromOrigin) => {
+          calls.push([id, worktree, fromOrigin]);
+        },
+        listBaseBranches: async () => ({ defaultBranch: "main", branches: ["main"] }),
+        onSetBaseBranch: async () => {},
+      }),
+    );
+    await m.flush();
+    await m.click(m.query("[data-workspace-base]"));
+    await m.flush();
+    const toggle = m.query("[data-workspace-from-origin]") as HTMLInputElement;
+    assert.ok(toggle, "Start from origin switch");
+    assert.equal(toggle.checked, false);
+    await m.click(toggle);
+    assert.deepEqual(calls, [["t1", true, true]]);
+    m.unmount();
+  });
+
   it("hides Previous worktree when the project has no other worktree thread", async () => {
     const m = await mount(
       view({ detail: draft(), onSetPendingWorktree: async () => {}, onSetBaseBranch: async () => {} }),
@@ -814,6 +847,37 @@ describe("Thread details card rows (#1411)", () => {
     );
     await m.flush();
     assert.ok(m.query("[data-thread-details-btn] [data-notes-dot]"));
+    m.unmount();
+  });
+});
+
+describe("new-thread hero (#1411)", () => {
+  it("centres the draft and moves it to another project from the chooser", async () => {
+    const moved: string[][] = [];
+    const other = { ...project, id: "p2", slug: "acme/billing", name: "billing" };
+    const m = await mount(
+      view({
+        detail: detail({ thread: thread({ worktreePath: null }), messages: [] }),
+        heroProjects: [project, other],
+        onMoveDraftToProject: (tid, pid) => moved.push([tid, pid]),
+      }),
+    );
+    await m.flush();
+    assert.ok(m.query("[data-pane-chat][data-draft-hero]"), "draft layout");
+    assert.match(m.query("[data-draft-hero-title]")?.textContent ?? "", /What should we build in/);
+    await m.click(m.query("[data-hero-project]"));
+    await m.click(m.query('[data-hero-project-option="p2"]'));
+    assert.deepEqual(moved, [["t1", "p2"]]);
+    m.unmount();
+  });
+
+  it("drops the hero once the thread has messages", async () => {
+    const m = await mount(
+      view({ detail: detail({ messages: [msg({ id: "u1", role: "user", text: "go" })] }) }),
+    );
+    await m.flush();
+    assert.equal(m.query("[data-draft-hero]"), null);
+    assert.equal(m.query("[data-draft-hero-title]"), null);
     m.unmount();
   });
 });

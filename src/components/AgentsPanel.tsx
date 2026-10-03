@@ -117,29 +117,14 @@ import {
 } from "../envSectionOrder";
 import styles from "./AgentsPanel.module.css";
 
-export type PanelTab = "agents" | "git" | "memory" | "skills" | "pulse";
-
-type PulseView = "automations" | "usage" | "fleet" | "insights" | "digest";
-
-const PULSE_VIEWS: readonly PulseView[] = [
-  "automations",
-  "usage",
-  "fleet",
-  "insights",
-  "digest",
-];
+export type PanelTab = "agents" | "git" | "memory" | "skills";
 
 const INSPECTOR_TABS: readonly { id: PanelTab; label: string }[] = [
   { id: "git", label: "Environment" },
   { id: "agents", label: "Agents" },
   { id: "memory", label: "Memory" },
   { id: "skills", label: "Skills" },
-  { id: "pulse", label: "Pulse" },
 ];
-
-function isPulseView(view: string | undefined): view is PulseView {
-  return (PULSE_VIEWS as readonly string[]).includes(view ?? "");
-}
 
 /** Session key for a manual inspector choice. Thread keys include the project so two projects never share a selection. Other destinations key the route the same way. */
 export function inspectorContextKey(input: {
@@ -165,7 +150,8 @@ type InspectorThreadSignal = {
 /**
  * Default tab when this context has no manual choice.
  * Crew/workflow → Agents. Ordinary threads, manual forks, and Review → Environment.
- * Operational destinations → Pulse. A null summary (detail still loading, or no thread) stays Environment and does not look at any other thread.
+ * Operational destinations (Usage, Automations…) → Environment; their one
+ * home is the sidebar's Insights menu (#1411). A null summary (detail still loading, or no thread) stays Environment and does not look at any other thread.
  */
 export function defaultInspectorTab(input: {
   view: string;
@@ -173,7 +159,6 @@ export function defaultInspectorTab(input: {
   threads: readonly InspectorThreadSignal[];
   workflow: unknown | null;
 }): PanelTab {
-  if (isPulseView(input.view)) return "pulse";
   if (input.view !== "thread") return "git";
   if (input.workflow) return "agents";
   const summary = input.summary;
@@ -341,17 +326,12 @@ interface AgentsPanelProps {
     input: HarnessInstallRequest,
   ) => Promise<HarnessInstallResult>;
   discardHarnessImport: (input: { previewId: string }) => Promise<void>;
-  /** Center-pane view, so Pulse/Environment can mark the active destination. */
+  /** Center-pane view, so Environment can mark the active destination. */
   activeView?: string;
   /** App-owned inspector tab. The panel unmounts when the desktop rail collapses. */
   tab: PanelTab;
   onTabChange: (tab: PanelTab) => void;
   onOpenPrs?: () => void;
-  onOpenAutomations?: () => void;
-  onOpenUsage?: () => void;
-  onOpenFleet?: () => void;
-  onOpenInsights?: () => void;
-  onOpenDigest?: () => void;
   /**
    * Fork / hand off the open thread. Plain call = same harness; pass
    * provider for hand-off. Absent hides the Environment Fork card.
@@ -3519,150 +3499,6 @@ export function AgentsContent({
   );
 }
 
-const PULSE_ITEMS: {
-  id: PulseView;
-  label: string;
-  hint: string;
-  icon: ReactNode;
-}[] = [
-  {
-    id: "automations",
-    label: "Automations",
-    hint: "Recurring prompts",
-    icon: (
-      <>
-        <path d="M13.5 8a5.5 5.5 0 1 1-1.61-3.89" />
-        <path d="M13.75 1.75v2.75h-2.75" />
-      </>
-    ),
-  },
-  {
-    id: "usage",
-    label: "Usage",
-    hint: "Spend by provider and model",
-    icon: (
-      <>
-        <path d="M2.25 13.75v-4" />
-        <path d="M6.25 13.75v-7.5" />
-        <path d="M10.25 13.75v-11" />
-        <path d="M14 13.75h-12" />
-      </>
-    ),
-  },
-  {
-    id: "fleet",
-    label: "Fleet",
-    hint: "Merge rate and cost",
-    icon: (
-      <>
-        <path d="M8 2.5v11" />
-        <rect x="2.25" y="6" width="4" height="6.5" rx="0.75" />
-        <rect x="9.75" y="4" width="4" height="8.5" rx="0.75" />
-      </>
-    ),
-  },
-  {
-    id: "insights",
-    label: "Insights",
-    hint: "Recurring failure modes",
-    icon: (
-      <>
-        <circle cx="4" cy="4" r="1.75" />
-        <circle cx="12" cy="4" r="1.75" />
-        <circle cx="8" cy="12" r="1.75" />
-        <path d="M5.5 5.1h5" />
-        <path d="M5.1 5.5 7.2 10.4" />
-        <path d="M10.9 5.5 8.8 10.4" />
-      </>
-    ),
-  },
-  {
-    id: "digest",
-    label: "Digest",
-    hint: "Unattended runs since last seen",
-    icon: (
-      <>
-        <rect x="3.5" y="2.25" width="9" height="11.5" rx="1.25" />
-        <path d="M6 5.5h4" />
-        <path d="M6 8h4" />
-        <path d="M6 10.5h2.5" />
-      </>
-    ),
-  },
-];
-
-function PulseTab({
-  activeView,
-  onOpenAutomations,
-  onOpenUsage,
-  onOpenFleet,
-  onOpenInsights,
-  onOpenDigest,
-}: {
-  activeView?: string;
-  onOpenAutomations?: () => void;
-  onOpenUsage?: () => void;
-  onOpenFleet?: () => void;
-  onOpenInsights?: () => void;
-  onOpenDigest?: () => void;
-}) {
-  const openers: Record<PulseView, (() => void) | undefined> = {
-    automations: onOpenAutomations,
-    usage: onOpenUsage,
-    fleet: onOpenFleet,
-    insights: onOpenInsights,
-    digest: onOpenDigest,
-  };
-
-  return (
-    <nav className={styles.pulseList} aria-label="Pulse">
-      {PULSE_ITEMS.map((item) => (
-        <button
-          key={item.id}
-          type="button"
-          className={styles.pulseRow}
-          data-view-nav={item.id}
-          data-active={activeView === item.id ? "true" : undefined}
-          onClick={() => openers[item.id]?.()}
-        >
-          <span className={styles.pulseIcon} aria-hidden>
-            <svg
-              width="16"
-              height="16"
-              viewBox="0 0 16 16"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1.5"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            >
-              {item.icon}
-            </svg>
-          </span>
-          <span className={styles.pulseCopy}>
-            <span className={styles.pulseLabel}>{item.label}</span>
-            <span className={styles.pulseHint}>{item.hint}</span>
-          </span>
-          <span className={styles.pulseChevron} aria-hidden>
-            <svg
-              width="12"
-              height="12"
-              viewBox="0 0 16 16"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1.5"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            >
-              <path d="M6.5 3.5 11 8 6.5 12.5" />
-            </svg>
-          </span>
-        </button>
-      ))}
-    </nav>
-  );
-}
-
 /**
  * memo'd: another thread's 700ms stream tick must not re-render this pane
  * (issue #91). It takes `rosterKey` instead of the thread list for the same
@@ -3740,11 +3576,6 @@ export const AgentsPanel = memo(function AgentsPanel({
   discardHarnessImport,
   activeView,
   onOpenPrs,
-  onOpenAutomations,
-  onOpenUsage,
-  onOpenFleet,
-  onOpenInsights,
-  onOpenDigest,
   onFork,
   claimLane,
   listLanes,
@@ -3960,16 +3791,7 @@ export const AgentsPanel = memo(function AgentsPanel({
           installHarnessImport={installHarnessImport}
           discardHarnessImport={discardHarnessImport}
         />
-      ) : (
-        <PulseTab
-          activeView={activeView}
-          onOpenAutomations={onOpenAutomations}
-          onOpenUsage={onOpenUsage}
-          onOpenFleet={onOpenFleet}
-          onOpenInsights={onOpenInsights}
-          onOpenDigest={onOpenDigest}
-        />
-      )}
+      ) : null}
       </div>
     </aside>
   );

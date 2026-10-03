@@ -2390,13 +2390,17 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
         return Promise.resolve(next);
       },
       setPendingWorktree: (input: unknown) => {
-        const i = input as { threadId: string; worktree: boolean };
+        const i = input as { threadId: string; worktree: boolean; fromOrigin?: boolean };
         calls.push({ channel: "threads.setPendingWorktree", args: [input] });
         const existing = threads.find((t) => t.id === i.threadId);
         if (!existing) {
           return Promise.reject(new Error(`Unknown thread: ${i.threadId}`));
         }
-        const next = { ...existing, pendingWorktree: i.worktree === true };
+        const next = {
+          ...existing,
+          pendingWorktree: i.worktree === true,
+          ...(typeof i.fromOrigin === "boolean" ? { worktreeFromOrigin: i.fromOrigin } : {}),
+        };
         threads = threads.map((t) => (t.id === i.threadId ? next : t));
         const d = details[i.threadId];
         if (d) details[i.threadId] = { ...d, thread: next };

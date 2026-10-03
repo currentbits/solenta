@@ -355,10 +355,10 @@ describe("ThreadView empty states", () => {
     assert.ok(html.includes('type="button"'));
   });
 
-  it("shows the start prompt when the open thread has no messages", () => {
+  it("shows the new-thread hero when the open thread has no messages (#1411)", () => {
     const html = render({ detail: detail({ messages: [], workLog: [] }) });
     assert.ok(
-      html.includes("Start by describing what to build"),
+      html.includes("What should we build in") && html.includes("owner/repo"),
       `expected empty-thread prompt, got: ${html.slice(0, 240)}`,
     );
   });
@@ -2780,7 +2780,7 @@ describe("ThreadView suggested-work chips (issue #550)", () => {
     assert.ok(html.includes('data-suggestion-id="s-empty"'));
     assert.ok(html.includes("Empty-transcript chip"));
     assert.ok(
-      html.includes("Start by describing what to build"),
+      html.includes("What should we build in") && html.includes("owner/repo"),
       "empty prompt stays visible next to the chips",
     );
   });

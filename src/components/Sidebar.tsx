@@ -322,6 +322,8 @@ function Icon({
 
 interface SidebarProps {
   appName: string;
+  /** Wide layouts: fold the sidebar to a rail (⌘B). Absent on narrow. */
+  onCollapseSidebar?: () => void;
   /** Running package version; rendered next to the wordmark. */
   appVersion?: string | null;
   /** Update channel of the running build; "nightly" tags the wordmark. */
@@ -1367,6 +1369,30 @@ export const ThreadCard = memo(function ThreadCard({
         )}
         {!compact && hasLine3 && (
           <div className={styles.cardLine3}>
+            {thread.worktreePath ? (
+              <span
+                className={styles.cardWorktree}
+                data-card-worktree=""
+                role="img"
+                aria-label="Worktree"
+                title={`Worktree: ${thread.worktreePath}`}
+              >
+                <svg
+                  width="12"
+                  height="12"
+                  viewBox="0 0 16 16"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.5"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden="true"
+                >
+                  <path d="M2.5 4A1.5 1.5 0 0 1 4 2.5h2.2a1.5 1.5 0 0 1 1.1.5l.8 1a1.5 1.5 0 0 0 1.1.5H12A1.5 1.5 0 0 1 13.5 6v5A1.5 1.5 0 0 1 12 12.5H4A1.5 1.5 0 0 1 2.5 11V4Z" />
+                  <circle cx="8" cy="8.5" r="1.3" />
+                </svg>
+              </span>
+            ) : null}
             {thread.branch ? (
               <span className={styles.cardBranch} data-card-branch="">
                 {thread.branch}
@@ -1694,6 +1720,7 @@ export function SnoozedRow({
  */
 export const Sidebar = memo(function Sidebar({
   appName,
+  onCollapseSidebar,
   appVersion,
   channel,
   updateState,
@@ -3022,6 +3049,21 @@ export const Sidebar = memo(function Sidebar({
             <span className={styles.brandChannel}>nightly</span>
           )}
         </div>
+        {onCollapseSidebar ? (
+          <button
+            type="button"
+            className={styles.iconBtn}
+            data-sidebar-collapse=""
+            aria-label="Hide sidebar"
+            title="Hide sidebar (⌘B)"
+            onClick={onCollapseSidebar}
+          >
+            <Icon size={15}>
+              <rect x="3" y="3" width="18" height="18" rx="2" />
+              <path d="M9 3v18" />
+            </Icon>
+          </button>
+        ) : null}
       </header>
 
       <div className={styles.searchRow}>
@@ -3040,6 +3082,14 @@ export const Sidebar = memo(function Sidebar({
             onChange={(e) => setQuery(e.target.value)}
             aria-label="Search threads"
           />
+          {query === "" ? (
+            <kbd
+              className={styles.searchKbd}
+              title="Search threads, projects and actions anywhere (⌘K)"
+            >
+              ⌘K
+            </kbd>
+          ) : null}
         </span>
         <button
           type="button"
@@ -4538,14 +4588,14 @@ export const Sidebar = memo(function Sidebar({
               ref={moreTriggerRef}
               className={`${styles.viewNavBtn} ${styles.viewNavMore}`}
               data-app-more=""
-              title="Activity, usage, automations and more"
+              title="Insights: activity, usage, automations and more"
               aria-haspopup="menu"
               aria-expanded={moreOpen}
               aria-controls="app-more-menu"
               aria-current={moreCurrentLabel ? "page" : undefined}
               data-active={moreCurrentLabel ? "true" : undefined}
               aria-label={
-                moreCurrentLabel ? `More, ${moreCurrentLabel}` : undefined
+                moreCurrentLabel ? `Insights, ${moreCurrentLabel}` : undefined
               }
               onClick={toggleMore}
               onKeyDown={onMoreKeyDown}
@@ -4553,14 +4603,14 @@ export const Sidebar = memo(function Sidebar({
               <Icon size={15}>
                 <path d="M4 20V10M10 20V4M16 20v-7M22 20H2" />
               </Icon>
-              <span className={styles.srOnly}>More</span>
+              <span className={styles.srOnly}>Insights</span>
             </button>
             {moreOpen && (
               <div
                 id="app-more-menu"
                 className={`${styles.menu} ${styles.appMoreMenu} ${styles.appMoreMenuUp}`}
                 role="menu"
-                aria-label="More"
+                aria-label="Insights"
                 data-app-more-menu=""
                 onKeyDown={onMoreKeyDown}
               >

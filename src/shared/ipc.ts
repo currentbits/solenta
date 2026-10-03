@@ -733,6 +733,11 @@ export interface ThreadInfo {
    */
   pendingWorktree?: boolean;
   /**
+   * Draft strip "Start from origin" (#1411): the lazy worktree starts from
+   * the freshly fetched origin copy of the base, not the local branch.
+   */
+  worktreeFromOrigin?: boolean;
+  /**
    * Orchestrator thread: the first prompt is forked to a worker that holds
    * the worktree and does the work, instead of running here (issue #202).
    * Cleared once that fork happens; later prompts run this thread's own LLM.
@@ -4069,6 +4074,8 @@ export interface CoderApi {
     setPendingWorktree(input: {
       threadId: string;
       worktree: boolean;
+      /** Start from origin's copy of the base (fetched at creation). */
+      fromOrigin?: boolean;
     }): Promise<ThreadInfo>;
     /**
      * Retarget an idle orchestration worker onto the lead's current
