@@ -6,6 +6,7 @@ import http from 'node:http'
 import os from 'node:os'
 import path from 'node:path'
 import { spawn } from 'node:child_process'
+import { rmTree } from '../../electron/test/support/rmTree.js'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 import { Memory } from '../src/memory.js'
@@ -292,12 +293,18 @@ describe('config validation', () => {
 })
 
 describe('standalone smoke via spawn', () => {
-  it('boots with temp config and serves /health', async () => {
+  it('boots with temp config and serves /health after a port collision', async (t) => {
+    const blocker = http.createServer((_req, res) => res.writeHead(503).end())
+    await new Promise((resolve, reject) => {
+      blocker.once('error', reject)
+      blocker.listen(0, '127.0.0.1', resolve)
+    })
+    t.after(() => new Promise((resolve) => blocker.close(resolve)))
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'coder-mem-smoke-'))
     const cfgPath = path.join(dir, 'cfg.json')
     const dbPath = path.join(dir, 'db.sqlite')
     const token = 'a'.repeat(64)
-    const port = 49550 + Math.floor(Math.random() * 40)
+    const port = blocker.address().port
     fs.writeFileSync(
       cfgPath,
       JSON.stringify({ port, token, dbPath }),
@@ -308,18 +315,34 @@ describe('standalone smoke via spawn', () => {
       env: { ...process.env, CODER_MEMORY_CONFIG: cfgPath },
       stdio: ['ignore', 'pipe', 'pipe'],
     })
+    // Register before readiness: startup can fail before cleanup begins.
+    const closed = new Promise((resolve) => child.once('close', resolve))
 
     try {
-      await waitForHealth(port, 8000)
-      const res = await fetch(`http://127.0.0.1:${port}/health`)
-      assert.equal(res.status, 200)
-      const body = await res.json()
+      const { port: actualPort, body } = await waitForHealth(cfgPath, child, 8000)
+      assert.notEqual(actualPort, port)
       assert.equal(body.ok, true)
       assert.ok(!('dbPath' in body))
     } finally {
       child.kill('SIGTERM')
-      await new Promise((r) => child.once('exit', r))
-      fs.rmSync(dir, { recursive: true, force: true })
+      await closed // includes stdout/stderr pipe closure, also on Windows
+      await rmTree(dir)
+    }
+  })
+
+  it('reports an early startup exit without missing pipe closure', async () => {
+    const child = spawn(process.execPath, ['-e', 'console.error("startup failed"); process.exitCode = 7'], {
+      stdio: ['ignore', 'pipe', 'pipe'],
+    })
+    const closed = new Promise((resolve) => child.once('close', resolve))
+    try {
+      await assert.rejects(
+        waitForHealth(path.join(os.tmpdir(), crypto.randomUUID(), 'cfg.json'), child, 8000),
+        /memory server exited \(7\): startup failed/,
+      )
+    } finally {
+      child.kill('SIGTERM')
+      await closed
     }
   })
 })
@@ -392,16 +415,34 @@ describe('EADDRINUSE port fallback', () => {
   })
 })
 
-async function waitForHealth(port, timeoutMs) {
+async function waitForHealth(cfgPath, child, timeoutMs) {
+  let stderr = ''
+  let spawnError
+  let closed = false
+  child.stdout.resume()
+  child.stderr.on('data', (chunk) => { stderr += chunk })
+  child.once('error', (err) => { spawnError = err })
+  child.once('close', () => { closed = true })
+  const nonce = crypto.randomBytes(16).toString('hex')
   const start = Date.now()
   while (Date.now() - start < timeoutMs) {
+    if (spawnError) throw spawnError
+    if (closed) {
+      throw new Error(`memory server exited (${child.exitCode ?? child.signalCode}): ${stderr}`)
+    }
     try {
-      const res = await fetch(`http://127.0.0.1:${port}/health`)
-      if (res.ok) return
+      // Startup may persist a fallback port after EADDRINUSE or Windows EACCES.
+      const { port, token } = JSON.parse(fs.readFileSync(cfgPath, 'utf8'))
+      const res = await fetch(`http://127.0.0.1:${port}/health?nonce=${nonce}`, {
+        signal: AbortSignal.timeout(Math.max(1, timeoutMs - (Date.now() - start))),
+      })
+      const body = await res.json()
+      const proof = crypto.createHmac('sha256', token).update(nonce).digest('hex')
+      if (res.ok && body.ok && body.proof === proof) return { port, body }
     } catch {
       // not up yet
     }
     await new Promise((r) => setTimeout(r, 50))
   }
-  throw new Error(`server on ${port} did not become healthy in ${timeoutMs}ms`)
+  throw new Error(`memory server did not become healthy in ${timeoutMs}ms: ${stderr}`)
 }

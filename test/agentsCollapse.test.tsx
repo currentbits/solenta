@@ -516,6 +516,7 @@ describe("Workers control opens the existing Agents team surface", () => {
         "parent worker is selected again",
       );
 
+      await expandFamily(m, "t-lead");
       await selectThreadByTitle(m, "Fork: Lead task");
       assert.equal(m.query("[data-worker-nav]"), null);
       assert.ok(m.query("[data-handoff-banner]"));
@@ -764,6 +765,7 @@ describe("inspector tab selection stays with the context", () => {
     try {
       await m.click(m.query("[data-thread-header] [data-open-workers]"));
       assert.equal(selectedInspectorTab(m), "agents");
+      await expandFamily(m, "t-lead");
       await selectThreadByTitle(m, "Fork: Lead task");
       await showInspector(m);
       assert.equal(selectedInspectorTab(m), "git");

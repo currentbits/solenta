@@ -1,5 +1,5 @@
 import { formatElapsed } from "./format";
-import { crewAncestorIds, isCrewWorker } from "./sidebarGroups";
+import { crewAncestorIds } from "./sidebarGroups";
 import type { SubagentInfo, ThreadStatus } from "./shared/ipc";
 
 /**
@@ -80,7 +80,6 @@ export function buildWaitStates(
   const byId = new Map(rows.map((row) => [row.id, row]));
 
   const reportToParents = (row: WaitRow, child: WaitChild, since?: number | null) => {
-    if (!isCrewWorker(row)) return;
     const ancestors = crewAncestorIds(row, byId);
     for (const parentId of ancestors) add(parentId, child, since);
   };

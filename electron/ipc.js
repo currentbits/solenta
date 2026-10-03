@@ -777,10 +777,11 @@ const IPC_HANDLERS = {
     return updated;
   },
   "threads:setEjected": async (ctx, input) => {
-    const updated = services.setEjected(ctx.store, input);
-    // #960: releasing the session writer is the point of eject. Stop this
-    // thread's child only — a crew cascade would kill workers the user did
-    // not ask to park.
+    // #960: releasing the session writer is the point of eject, and it must
+    // happen BEFORE setEjected, which may launch the resume command in
+    // $TERMINAL: a CLI started first meets the live writer lock and exits.
+    // Stop this thread's child only — a crew cascade would kill workers the
+    // user did not ask to park.
     if (
       input &&
       input.ejected === true &&
@@ -797,9 +798,10 @@ const IPC_HANDLERS = {
     // #979: an idle Claude keep-alive still holds the session writer after
     // the Solenta turn has ended (stopRun is a no-op then). Same retire as
     // settle/archive/delete — this thread only, no crew cascade.
-    if (updated && input && input.ejected === true) {
+    if (input && input.ejected === true && ctx.store.getThread(input.threadId)) {
       retireAgent(ctx, input.threadId);
     }
+    const updated = services.setEjected(ctx.store, input);
     ctx.broadcast("threads:changed", services.listThreads(ctx.store));
     if (updated && input && input.ejected === false) {
       try {

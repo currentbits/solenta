@@ -352,7 +352,29 @@ function nextFreeLane(store, projectId) {
  */
 function laneDirName(project, n) {
   const base = path.basename(project.path || "project");
-  return `${base}${DEFAULT_WORKTREE_SUFFIX}${n}`;
+  // Lane numbers are per project, and two checkouts can share a basename.
+  const id = String(project.id || "").slice(0, 8);
+  return `${base}${id ? `-${id}` : ""}${DEFAULT_WORKTREE_SUFFIX}${n}`;
+}
+
+/**
+ * Lowest lane port not held by any lane in ANY project. Lane numbers are
+ * per project, so portBase + n would give every project's lane 1 the same
+ * port and their dev servers would collide.
+ *
+ * @param {import('./store').Store} store
+ * @param {number} n
+ * @param {number} [portBase]
+ */
+function nextFreeLanePort(store, n, portBase) {
+  const taken = new Set();
+  for (const t of store.getThreads()) {
+    const lane = t && normalizeLane(t.lane);
+    if (lane) taken.add(lane.port);
+  }
+  let port = lanePort(n, portBase);
+  while (taken.has(port)) port += 1;
+  return port;
 }
 
 /**
@@ -385,7 +407,7 @@ function claimLane(opts) {
   const worktreeBase = opts.worktreeBase;
   if (!worktreeBase) throw new Error("worktreeBase is required");
   const n = nextFreeLane(store, thread.projectId);
-  const port = lanePort(n, opts.portBase);
+  const port = nextFreeLanePort(store, n, opts.portBase);
   const now = opts.now == null ? Date.now() : opts.now;
   const dir = path.join(worktreeBase, laneDirName(project, n));
   const branch = `${DEFAULT_BRANCH_PREFIX}${n}`;
@@ -503,12 +525,28 @@ function previewLane(opts) {
       ? opts.buildOutputDirs
       : DEFAULT_BUILD_OUTPUT_DIRS,
   );
-  const sha = gitOk(project.path, ["rev-parse", "HEAD"]);
+  const sha = already ? String(current.sha) : gitOk(project.path, ["rev-parse", "HEAD"]);
   const files = listMirrorFiles(row.path, skip);
+  // git paths use "/", listMirrorFiles uses path.sep ("\\" on Windows).
+  const slash = (rel) => rel.split(path.sep).join("/");
+  const inLane = new Set(files.map(slash));
   for (const rel of files) {
     const dest = path.join(project.path, rel);
     fs.mkdirSync(path.dirname(dest), { recursive: true });
     fs.copyFileSync(path.join(row.path, rel), dest);
+  }
+  // Copy-only would keep files the lane deleted. Tracked ones come back on
+  // restore (reset --hard); untracked ones left by an earlier preview of
+  // this lane are unlinked here.
+  const tracked = gitOk(project.path, ["ls-files", "-z"]).split("\0").filter(Boolean);
+  const stale = new Set(
+    tracked.filter((rel) => !rel.split("/").some((part) => skip.has(part))),
+  );
+  if (already && Array.isArray(current.files)) {
+    for (const rel of current.files) stale.add(slash(rel));
+  }
+  for (const rel of stale) {
+    if (!inLane.has(rel)) unlinkCopied(project.path, rel);
   }
   const next = patchProject(store, project.id, {
     mergePreview: { lane: n, sha, files },

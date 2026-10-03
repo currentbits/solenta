@@ -161,6 +161,10 @@ function beginShutdown() {
   shuttingDown = true;
 }
 
+function isShuttingDown() {
+  return shuttingDown;
+}
+
 /** Test isolation: node:test may reuse a process across cases in one file. */
 function resetShutdownForTests() {
   shuttingDown = false;
@@ -198,6 +202,7 @@ module.exports = {
   signalGroup,
   signalPid,
   beginShutdown,
+  isShuttingDown,
   resetShutdownForTests,
   WINDOWS_TREE_KILL_TIMEOUT_MS,
 };

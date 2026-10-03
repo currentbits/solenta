@@ -366,6 +366,9 @@ describe("App fork / hand-off wiring (round 49)", () => {
       },
     });
     const m = await boot(fake);
+    // Forks nest collapsed under their source.
+    await m.click(m.query('[data-family-toggle="t-source-fork"]') as HTMLElement);
+    await m.flush();
     await selectThread(m, "Fork: source handoff thread");
 
     const banner = m.query("[data-handoff-banner]");

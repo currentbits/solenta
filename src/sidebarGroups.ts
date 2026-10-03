@@ -61,19 +61,32 @@ export interface CrewLink {
   orchWorker?: boolean;
 }
 
+/** Backend orchestration worker (crew notices, spend caps, peer messaging). */
 export function isCrewWorker(t: { orchWorker?: boolean }): boolean {
   return t.orchWorker === true;
 }
 
 /**
- * Walk orchWorker handoffFrom toward the crew lead. Cycle, missing parent,
- * and cross-project hops stop the walk. Returns ancestor ids nearest-first.
+ * Sidebar family child: any thread started by another one — orchWorkers and
+ * plain forks (suggestion chips, the Fork button) alike. Renderer grouping
+ * only; it does not make a fork an orchWorker.
+ */
+export function isFamilyChild(t: {
+  id: string;
+  handoffFrom?: string | null;
+}): boolean {
+  return t.handoffFrom != null && t.handoffFrom !== t.id;
+}
+
+/**
+ * Walk handoffFrom toward the family lead. Cycle, missing parent, and
+ * cross-project hops stop the walk. Returns ancestor ids nearest-first.
  */
 export function crewAncestorIds(
   row: CrewLink,
   byId: ReadonlyMap<string, CrewLink>,
 ): string[] {
-  if (!isCrewWorker(row) || !row.handoffFrom || row.handoffFrom === row.id) {
+  if (!isFamilyChild(row)) {
     return [];
   }
   const out: string[] = [];
@@ -91,23 +104,18 @@ export function crewAncestorIds(
       break;
     }
     out.push(parent.id);
-    if (
-      !isCrewWorker(parent) ||
-      !parent.handoffFrom ||
-      parent.handoffFrom === parent.id
-    ) {
-      break;
-    }
-    cur = parent.handoffFrom;
+    if (!isFamilyChild(parent)) break;
+    cur = parent.handoffFrom!;
   }
   return out;
 }
 
 /**
  * Topmost ancestor that is in `inList`. Flattens grandchildren onto the
- * visible crew lead while preserving handoffFrom on the row.
- * A cycle of orchWorkers has no non-worker lead — return null so those
- * rows stay independent and discoverable when collapsed.
+ * visible family lead while preserving handoffFrom on the row.
+ * A handoffFrom cycle has no lead — return null so those rows stay
+ * independent and discoverable when collapsed. A walk that stops at a
+ * missing or cross-project parent still has its last ancestor as lead.
  */
 export function crewOwnerInList(
   row: CrewLink,
@@ -115,11 +123,11 @@ export function crewOwnerInList(
   inList: ReadonlySet<string>,
 ): string | null {
   const ancestors = crewAncestorIds(row, byId);
-  const hasLead = ancestors.some((id) => {
-    const node = byId.get(id);
-    return node != null && !isCrewWorker(node);
-  });
-  if (!hasLead) return null;
+  const top = byId.get(ancestors[ancestors.length - 1] ?? "");
+  if (!top) return null;
+  if (top.handoffFrom === row.id || ancestors.includes(top.handoffFrom ?? "")) {
+    return null;
+  }
   for (let i = ancestors.length - 1; i >= 0; i--) {
     const id = ancestors[i]!;
     if (inList.has(id)) return id;
@@ -128,8 +136,8 @@ export function crewOwnerInList(
 }
 
 /**
- * Reorder so orchWorker descendants sit under their visible crew lead,
- * flattened to one level. Manual forks (no orchWorker) keep list order.
+ * Reorder so family children (orchWorkers and plain forks) sit under their
+ * visible lead, flattened to one level.
  * `byIdFull` should include rows outside `list` so a missing intermediate
  * worker does not strand a grandchild (archived parent, other shelf).
  */
@@ -142,7 +150,7 @@ export function nestWorkerFamilies(
   const children = new Map<string, ThreadInfo[]>();
   const roots: ThreadInfo[] = [];
   for (const t of list) {
-    const owner = isCrewWorker(t) ? crewOwnerInList(t, byId, ids) : null;
+    const owner = isFamilyChild(t) ? crewOwnerInList(t, byId, ids) : null;
     if (owner) {
       const kids = children.get(owner) ?? [];
       kids.push(t);
@@ -165,7 +173,7 @@ export function nestWorkerFamilies(
   return out;
 }
 
-/** Root id → nested orchWorker ids in list order. */
+/** Root id → nested family child ids in list order. */
 export function workerIdsByRoot(
   list: readonly ThreadInfo[],
   byIdFull?: ReadonlyMap<string, CrewLink>,
@@ -174,7 +182,7 @@ export function workerIdsByRoot(
   const byId = byIdFull ?? new Map(list.map((t) => [t.id, t]));
   const families = new Map<string, string[]>();
   for (const t of list) {
-    if (!isCrewWorker(t)) continue;
+    if (!isFamilyChild(t)) continue;
     const owner = crewOwnerInList(t, byId, ids);
     if (!owner) continue;
     const kids = families.get(owner) ?? [];
@@ -185,7 +193,7 @@ export function workerIdsByRoot(
 }
 
 /**
- * Hide collapsed orchWorker rows. keepIds / keepWorkerIds keep those
+ * Hide collapsed family child rows. keepIds / keepWorkerIds keep those
  * specific workers discoverable without opening the rest of the family.
  */
 export function visibleFamilyRows(
@@ -218,7 +226,7 @@ export function visibleFamilyRows(
 }
 
 /**
- * Search hits plus the crew lead of any matching worker, nested for display.
+ * Search hits plus the family lead of any matching child, nested for display.
  */
 export function withCrewSearchContext(
   hits: readonly ThreadInfo[],
@@ -228,7 +236,7 @@ export function withCrewSearchContext(
   const ids = new Set(hits.map((t) => t.id));
   const extra: ThreadInfo[] = [];
   for (const t of hits) {
-    if (!isCrewWorker(t)) continue;
+    if (!isFamilyChild(t)) continue;
     const ancestors = crewAncestorIds(t, byId);
     const rootId = ancestors[ancestors.length - 1];
     if (!rootId || ids.has(rootId)) continue;
@@ -381,7 +389,7 @@ export function buildFlatSidebar(
     (a, b) => b.updatedAt - a.updatedAt || a.id.localeCompare(b.id),
   );
 
-  // Auto-settled orchWorkers (merged PR, inactivity) of a still-visible
+  // Auto-settled family children (merged PR, inactivity) of a still-visible
   // parent stay nested next to it. An explicit settle override files the
   // row to the Settled shelf — clicking Settle must leave Active (#1315).
   // Pinned is its own nest pass — a pinned lead must take the child in the
@@ -396,7 +404,7 @@ export function buildFlatSidebar(
   const visibleCrewOwnerKind = (
     t: ThreadInfo,
   ): "pinned" | "active" | null => {
-    if (!isCrewWorker(t)) return null;
+    if (!isFamilyChild(t)) return null;
     const ancestors = crewAncestorIds(t, byId);
     for (let i = ancestors.length - 1; i >= 0; i--) {
       const id = ancestors[i]!;
@@ -409,7 +417,7 @@ export function buildFlatSidebar(
   const nestActive: ThreadInfo[] = [];
   const settledRest: ThreadInfo[] = [];
   for (const t of settled) {
-    if (t.settledOverride === "settled" || !isCrewWorker(t)) {
+    if (t.settledOverride === "settled" || !isFamilyChild(t)) {
       settledRest.push(t);
       continue;
     }
@@ -420,24 +428,33 @@ export function buildFlatSidebar(
   }
   const activeRest: ThreadInfo[] = [];
   for (const t of active) {
-    if (isCrewWorker(t) && visibleCrewOwnerKind(t) === "pinned") {
+    if (visibleCrewOwnerKind(t) === "pinned") {
       nestPinned.push(t);
     } else {
       activeRest.push(t);
     }
   }
 
-  // Inbox vs Working shelf: a family files by its visible lead, so a busy
-  // lead takes its crew to the shelf and a done lead keeps it in the inbox.
+  // Inbox vs Working shelf: a family moves as one. It sits on the shelf
+  // while any member is quietly working — a lead that ended its turn is not
+  // done while its fork runs — unless some member needs the user.
   const inbox = nestWorkerFamilies([...activeRest, ...nestActive], byId);
   const inboxIds = new Set(inbox.map((t) => t.id));
-  const inboxById = new Map(inbox.map((t) => [t.id, t]));
+  const leadOf = (t: ThreadInfo) =>
+    (isFamilyChild(t) ? crewOwnerInList(t, byId, inboxIds) : null) ?? t.id;
+  const busy = new Set<string>();
+  const needsUser = new Set<string>();
+  for (const t of inbox) {
+    if (isQuietlyWorking(t)) busy.add(leadOf(t));
+    if (t.awaitingInput || t.stalledAt != null || t.status === "failed") {
+      needsUser.add(leadOf(t));
+    }
+  }
   const attention: ThreadInfo[] = [];
   const working: ThreadInfo[] = [];
   for (const t of inbox) {
-    const leadId =
-      (isCrewWorker(t) ? crewOwnerInList(t, byId, inboxIds) : null) ?? t.id;
-    (isQuietlyWorking(inboxById.get(leadId) ?? t) ? working : attention).push(t);
+    const lead = leadOf(t);
+    (busy.has(lead) && !needsUser.has(lead) ? working : attention).push(t);
   }
 
   return {
