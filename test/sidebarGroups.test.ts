@@ -592,6 +592,23 @@ describe("buildFlatSidebar (T3 flat sidebar)", () => {
     assert.deepEqual(flat.working.map((t) => t.id), ["lead2", "w-done", "w", "lead", "fork"]);
   });
 
+  it("files a finished turn with running background subagents to the Working shelf", () => {
+    const running = [{ id: "a1", description: "Research", agentType: null, status: "running" as const }];
+    const settledAgent = [{ id: "a1", description: "Research", agentType: null, status: "done" as const }];
+    const flat = buildFlatSidebar(
+      [
+        thread({ id: "bg", projectId: "p1", updatedAt: NOW, createdAt: NOW - 5, status: "done", subagents: running }),
+        thread({ id: "idle-bg", projectId: "p1", updatedAt: NOW, createdAt: NOW - 4, status: "idle", subagents: running }),
+        thread({ id: "finished", projectId: "p1", updatedAt: NOW, createdAt: NOW - 3, status: "done", subagents: settledAgent }),
+        thread({ id: "asks", projectId: "p1", updatedAt: NOW, createdAt: NOW - 2, status: "done", awaitingInput: true, subagents: running }),
+        thread({ id: "broke", projectId: "p1", updatedAt: NOW, createdAt: NOW - 1, status: "failed", subagents: running }),
+      ],
+      settleOpts,
+    );
+    assert.deepEqual(flat.working.map((t) => t.id).sort(), ["bg", "idle-bg"]);
+    assert.deepEqual(flat.active.map((t) => t.id).sort(), ["asks", "broke", "finished"]);
+  });
+
   it("keeps a busy family in the inbox while any member needs the user", () => {
     const flat = buildFlatSidebar(
       [
