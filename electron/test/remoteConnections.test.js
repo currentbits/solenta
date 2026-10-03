@@ -87,20 +87,40 @@ describe("remote Connections", () => {
     const ports = [];
     let down = false;
     let notListening = false;
+    let squatted = false;
+    const squatterSaw = [];
     let remoteFile = "";
     const fakeSpawn = (_cmd, args) => {
       const localPort = Number(args[args.indexOf("-L") + 1].split(":")[1]);
       ports.push(localPort);
       if (notListening) {
         const idle = Object.assign(new EventEmitter(), { stderr: new EventEmitter(), kill() {} });
-        setImmediate(() => idle.stderr.emit("data", "channel 2: open failed: connect failed: Connection refused\n"));
+        setImmediate(() => idle.stderr.emit("data",
+          "debug1: Entering interactive session.\nchannel 2: open failed: connect failed: Connection refused\n"));
         return idle;
+      }
+      if (squatted) {
+        // Another local process won ssh's port: it hears every probe, and
+        // ssh logs "listening" (pre-bind) and then dies on the bind.
+        const squatter = http.createServer();
+        new WebSocketServer({ server: squatter, path: "/ws" })
+          .on("connection", (ws) => ws.on("message", (raw) => squatterSaw.push(String(raw))));
+        const dead = Object.assign(new EventEmitter(), { stderr: new EventEmitter(), kill() {} });
+        squatter.listen(localPort, "127.0.0.1", () => {
+          dead.stderr.emit("data", `debug1: Local forwarding listening on 127.0.0.1 port ${localPort}.\n`);
+          setTimeout(() => {
+            dead.stderr.emit("data", `bind [127.0.0.1]:${localPort}: Address already in use\nCould not request local forwarding.\n`);
+            dead.emit("close", 255);
+            squatter.close();
+          }, 300);
+        });
+        return dead;
       }
       if (down) {
         const dead = Object.assign(new EventEmitter(), { stderr: new EventEmitter(), kill() {} });
         setImmediate(() => {
           dead.stderr.emit("data", "ssh: connect to host work port 22: Connection refused");
-          dead.emit("exit", 255);
+          dead.emit("close", 255);
         });
         return dead;
       }
@@ -108,7 +128,7 @@ describe("remote Connections", () => {
       tunnel.stderr = new EventEmitter();
       tunnel.kill = () => {
         server?.close();
-        tunnel.emit("exit", 0);
+        tunnel.emit("close", 0);
       };
       server = http.createServer((_req, res) => res.end("Solenta"));
       const wss = new WebSocketServer({ server, path: "/ws" });
@@ -116,7 +136,9 @@ describe("remote Connections", () => {
         if (JSON.parse(String(raw)).token === token) ws.send('{"kind":"auth-ok"}');
         else ws.close();
       }));
-      server.listen(localPort, "127.0.0.1");
+      // Real ssh -v prints this only after every forward is bound.
+      server.listen(localPort, "127.0.0.1",
+        () => tunnel.stderr.emit("data", "debug1: Entering interactive session.\n"));
       return tunnel;
     };
     class FakeWindow extends EventEmitter {
@@ -170,18 +192,23 @@ describe("remote Connections", () => {
       assert.equal(window.options.webPreferences.sandbox, true);
       assert.equal(window.options.webPreferences.preload, undefined);
       assert.ok(window.options.webPreferences.partition.startsWith("solenta-remote-"));
-      // A dropped tunnel respawns on the same loopback port; the window stays.
+      // The window talks to a front port this process holds, never ssh's.
+      assert.notEqual(Number(new URL(window.url).port), ports[0]);
+      assert.equal(await (await fetch(window.url)).text(), "Solenta");
+
+      // A dropped tunnel respawns behind the same front port; the window stays.
       const opened = window;
       tunnel.kill();
       await waitFor(() => ports.length === 2 && opened.title === "user@work · Solenta");
-      assert.equal(ports[1], ports[0]);
       assert.notEqual(opened.destroyed, true);
       assert.equal(dialogs.length, 0);
+      assert.equal(await (await fetch(opened.url)).text(), "Solenta", "front port routes to the new tunnel");
 
       // A host that stays unreachable gives up, closes and explains.
       down = true;
       tunnel.kill();
       await waitFor(() => opened.destroyed === true, 10_000);
+      await assert.rejects(fetch(opened.url), "the front port closes with the window");
       assert.equal(ports.length, 8, "one initial, one recovery, six failed retries");
       assert.match(dialogs[0].message, /SSH connection to user@work ended/);
       assert.match(dialogs[0].detail, /Connection refused/);
@@ -222,6 +249,16 @@ describe("remote Connections", () => {
       );
       assert.ok(Date.now() - started < 5_000, "must not wait for the 15 s timeout");
       notListening = false;
+
+      // ssh lost its port to another local process: the token is never sent.
+      squatted = true;
+      await assert.rejects(
+        openRemoteConnection({ host: "squat@work", token }, deps),
+        /Address already in use/,
+      );
+      squatted = false;
+      assert.deepEqual(squatterSaw, [], "the token must not reach a port ssh does not own");
+
       // A saved token the host now rejects is deleted.
       saved.set("stale@work:4620", "old-secret");
       await assert.rejects(

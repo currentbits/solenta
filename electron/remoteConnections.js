@@ -110,7 +110,9 @@ function explainSshFailure(host, stderr, code) {
 
 function sshArgs(host, localPort, remotePort) {
   return [
-    "-N", "-T",
+    // -v only for the "Entering interactive session" readiness line; debug
+    // lines are filtered out of every message shown to the user.
+    "-v", "-N", "-T",
     "-o", "BatchMode=yes",
     // The web token goes down this tunnel: refuse unknown or changed host
     // keys even if ~/.ssh/config relaxes checking for this host.
@@ -195,20 +197,27 @@ function probeToken(port, token) {
   });
 }
 
-async function waitForHost(child, port, token, getFailure) {
+// Never probe before ssh owns the forwarded port: until then another local
+// process could hold it and would receive the token. "Local forwarding
+// listening" is logged BEFORE bind(), so it proves nothing; with
+// ExitOnForwardFailure, ssh only enters the session once every bind worked.
+async function waitForHost(child, token) {
   const deadline = Date.now() + 15_000;
   while (Date.now() < deadline) {
-    const failure = getFailure();
-    if (failure) throw failure;
+    if (child.failure) throw child.failure;
+    if (!child.ready) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      continue;
+    }
     try {
-      await probeToken(port, token);
+      await probeToken(child.backPort, token);
       return;
     } catch (err) {
       if (!/SSH tunnel is not ready/.test(err.message)) throw err;
     }
     await new Promise((resolve) => setTimeout(resolve, 200));
   }
-  throw getFailure() || new Error("Timed out waiting for the remote Solenta host.");
+  throw child.failure || new Error("Timed out waiting for the remote Solenta host.");
 }
 
 async function openRemoteConnection(input, deps = {}) {
@@ -238,38 +247,75 @@ async function openRemoteConnection(input, deps = {}) {
 
   const entry = {
     child: null, win: null, promise: null, closing: false, reconnecting: false,
+    front: null, backPort: null, sockets: new Set(),
   };
   active.set(key, entry);
   const spawnFn = deps.spawn || spawn;
   const sleep = deps.sleep || ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
   const title = `${label} · Solenta`;
-  let port = 0;
+  // The window talks to a front port this process holds for the window's
+  // whole life, piped to ssh's current forward only once ssh owns it. ssh
+  // gets a fresh port per spawn, so no port is ever released and re-bound
+  // while the page (or the probe) could send its token to a squatter.
+  const startFront = () => new Promise((resolve, reject) => {
+    const front = net.createServer((sock) => {
+      const back = entry.backPort;
+      if (!back) return sock.destroy();
+      const up = net.connect(back, "127.0.0.1");
+      entry.sockets.add(sock);
+      const drop = () => {
+        entry.sockets.delete(sock);
+        sock.destroy();
+        up.destroy();
+      };
+      sock.on("error", drop).on("close", drop);
+      up.on("error", drop).on("close", drop);
+      sock.pipe(up).pipe(sock);
+    });
+    entry.front = front;
+    front.once("error", reject);
+    front.listen(0, "127.0.0.1", () => resolve(front.address().port));
+  });
 
-  const startTunnel = () => {
-    const child = spawnFn("ssh", sshArgs(host, port, remotePort), {
+  const startTunnel = async () => {
+    const backPort = await freeLoopbackPort();
+    const child = spawnFn("ssh", sshArgs(host, backPort, remotePort), {
       stdio: ["ignore", "ignore", "pipe"],
     });
     entry.child = child;
-    let stderr = "";
+    child.backPort = backPort;
+    child.ready = false;
     child.failure = null;
-    child.stderr?.on("data", (chunk) => {
-      stderr = (stderr + String(chunk)).slice(-1000);
+    let stderr = "";
+    let partial = "";
+    const onLine = (line) => {
+      if (/^debug\d: Entering interactive session/.test(line)) child.ready = true;
+      if (/^debug\d: /.test(line)) return;
+      stderr = `${stderr}${line}\n`.slice(-1000);
       // The forward is up but nothing listens on the remote port. Connect
       // never starts the host (#245): say so instead of timing out.
-      if (/open failed: connect failed/.test(stderr) && !child.failure) {
+      if (/open failed: connect failed/.test(line) && !child.failure) {
         child.failure = new Error(`Nothing is listening on port ${remotePort} on ${host}. Start Solenta there with --serve-web${remotePort === DEFAULT_REMOTE_PORT ? "" : `=${remotePort}`}, then connect again.`);
       }
+    };
+    child.stderr?.on("data", (chunk) => {
+      const lines = (partial + String(chunk)).split(/\r?\n/);
+      partial = lines.pop();
+      lines.forEach(onLine);
     });
     child.once("error", (err) => { child.failure = err; });
-    child.once("exit", (code) => {
+    child.once("close", (code) => {
+      if (partial) onLine(partial);
+      partial = "";
+      if (entry.backPort === backPort) entry.backPort = null;
       child.failure = new Error(explainSshFailure(host, stderr, code));
       if (entry.win && !entry.closing && !entry.reconnecting) void reconnect(child.failure);
     });
     return child;
   };
 
-  // Respawn ssh on the SAME loopback port so the window's origin is unchanged;
-  // the page's wire client reconnects its socket and resyncs on its own.
+  // Respawn ssh behind the same front port so the window's origin is
+  // unchanged; the page's wire client reconnects and resyncs on its own.
   const reconnect = async (failure) => {
     entry.reconnecting = true;
     let last = failure;
@@ -278,15 +324,17 @@ async function openRemoteConnection(input, deps = {}) {
       entry.win.setTitle(`${label} · Reconnecting… · Solenta`);
       await sleep(delay);
       if (entry.closing) return;
-      const child = startTunnel();
+      let child = null;
       try {
-        await waitForHost(child, port, token, () => child.failure);
+        child = await startTunnel();
+        await waitForHost(child, token);
+        entry.backPort = child.backPort;
         entry.reconnecting = false;
         if (!entry.win.isDestroyed()) entry.win.setTitle(title);
         return;
       } catch (err) {
         last = err;
-        child.kill();
+        child?.kill();
         // A restarted host with a new token will not heal by retrying.
         if (/rejected this token|not a Solenta Web host/.test(err.message)) break;
       }
@@ -303,10 +351,11 @@ async function openRemoteConnection(input, deps = {}) {
   };
 
   entry.promise = (async () => {
-    port = await freeLoopbackPort();
-    const child = startTunnel();
     try {
-      await waitForHost(child, port, token, () => child.failure);
+      const port = await startFront();
+      const child = await startTunnel();
+      await waitForHost(child, token);
+      entry.backPort = child.backPort;
       const { BrowserWindow, shell } = deps.electron || require("electron");
       const win = new BrowserWindow({
         width: 1440,
@@ -341,7 +390,7 @@ async function openRemoteConnection(input, deps = {}) {
       win.on("closed", () => {
         entry.closing = true;
         active.delete(key);
-        entry.child?.kill();
+        closeEntry(entry);
       });
       // Existing web hosts accept a query token and scrub it after boot.
       try {
@@ -361,7 +410,7 @@ async function openRemoteConnection(input, deps = {}) {
     } catch (err) {
       active.delete(key);
       if (entry.win && !entry.win.isDestroyed()) entry.win.destroy();
-      entry.child?.kill();
+      closeEntry(entry);
       if (fromKeychain && /rejected this token/.test(err.message)) {
         try { tokens.delete(key); } catch { /* best effort */ }
         throw new Error("The remote Solenta host rejected the saved token. Enter its current token.");
@@ -375,6 +424,14 @@ async function openRemoteConnection(input, deps = {}) {
   return entry.promise;
 }
 
+function closeEntry(entry) {
+  entry.backPort = null;
+  entry.child?.kill();
+  entry.front?.close();
+  for (const sock of entry.sockets) sock.destroy();
+  entry.sockets.clear();
+}
+
 function forgetRemoteConnection(input, deps = {}) {
   const { host, remotePort } = validateConnection({ ...input, token: "" });
   tokenStoreFor(deps).delete(`${host}:${remotePort}`);
@@ -383,7 +440,7 @@ function forgetRemoteConnection(input, deps = {}) {
 function closeRemoteConnections() {
   for (const entry of active.values()) {
     entry.closing = true;
-    entry.child?.kill();
+    closeEntry(entry);
   }
   active.clear();
 }
