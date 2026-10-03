@@ -4578,15 +4578,28 @@ function listThreads(store) {
 
 /**
  * Per-thread summaries for the Agents tab team view (threads:summaries).
- * lastActivity is the first line of the thread's last assistant message
- * (null when the thread has none). orchWorker and projectId ride along so
- * AgentsPanel can tell a true worker from an ordinary fork. Cheap: store only.
+ * lastActivity is the first line of the thread's last assistant message,
+ * capped at 200 characters (null when the thread has none). orchWorker and
+ * projectId ride along so AgentsPanel can tell a true worker from an
+ * ordinary fork. Cheap: store only.
+ *
+ * Optional input scopes the walk BEFORE any message read (#1398): projectId
+ * keeps one project's rows, threadIds keeps exact ids. Omitted = all rows.
  * @param {import('./store').Store} store
+ * @param {{ projectId?: string, threadIds?: string[] }} [input]
  */
-function threadSummaries(store) {
+function threadSummaries(store, input) {
+  const projectId = input && typeof input.projectId === "string" ? input.projectId : null;
+  const ids = input && Array.isArray(input.threadIds) ? new Set(input.threadIds) : null;
   return store
     .getThreads()
-    .filter((t) => !(t && t.memoryConsolidate === true) && !isTrashed(t))
+    .filter(
+      (t) =>
+        !(t && t.memoryConsolidate === true) &&
+        !isTrashed(t) &&
+        (!projectId || t.projectId === projectId) &&
+        (!ids || ids.has(t.id)),
+    )
     .map((t) => {
       const last = store.getLastAssistantMessage(t.id);
       return {
@@ -4603,7 +4616,7 @@ function threadSummaries(store) {
         stalledAt: t.stalledAt ?? null,
         lastActivity: last
           ? {
-              text: String(last.text).split(/\r?\n/, 1)[0].trim(),
+              text: String(last.text).split(/\r?\n/, 1)[0].trim().slice(0, 200),
               at: Number(last.createdAt) || t.updatedAt,
             }
           : null,
