@@ -467,9 +467,18 @@ export function buildFlatSidebar(
   };
 }
 
-/** Running and asking nothing of the user: no question, no stall. */
+/**
+ * Running and asking nothing of the user: no question, no stall. A turn
+ * that ended (done/idle) while background subagents still run counts as
+ * working too, the same rule isDelegating uses for the row pill.
+ */
 export function isQuietlyWorking(t: ThreadInfo): boolean {
-  return t.status === "working" && !t.awaitingInput && t.stalledAt == null;
+  if (t.awaitingInput || t.stalledAt != null) return false;
+  if (t.status === "working") return true;
+  return (
+    (t.status === "done" || t.status === "idle") &&
+    (t.subagents ?? []).some((s) => s.status === "running")
+  );
 }
 
 /** Default opts when a caller has no clock of its own (tests, pure helpers). */
