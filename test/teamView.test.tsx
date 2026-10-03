@@ -728,3 +728,25 @@ describe("Agents team view", () => {
     m.unmount();
   });
 });
+
+describe("team view scope (#1398)", () => {
+  it("team view fetches only its project's summaries (#1398)", async () => {
+    const calls: unknown[] = [];
+    const m = await mount(
+      <AgentsContent
+        workflow={null}
+        thread={thread({ id: "t-orch", projectId: "p1" })}
+        usage={null}
+        providers={PROVIDERS}
+        rosterKey="t-orch:idle"
+        listThreadSummaries={async (input?: unknown) => {
+          calls.push(input);
+          return [];
+        }}
+      />,
+    );
+    await m.flush();
+    assert.deepEqual(calls, [{ projectId: "p1" }]);
+    m.unmount();
+  });
+});

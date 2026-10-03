@@ -1471,6 +1471,17 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     [threads],
   );
 
+  /** Agents panel refetch key: only the selected thread's project, so a
+   *  working thread elsewhere does not keep the team poll alive (#1398). */
+  const panelRosterKey = useMemo(() => {
+    const pid = visibleDetail?.thread.projectId;
+    if (!pid) return "";
+    return threads
+      .filter((t) => t.projectId === pid)
+      .map((t) => `${t.id}:${t.status}`)
+      .join(",");
+  }, [threads, visibleDetail?.thread.projectId]);
+
   /**
    * Same-task siblings for the divergence card. Keyed on roster + the open
    * thread so a 700ms stream tick on an unrelated row does not rebuild this.
@@ -2475,7 +2486,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         usage={visibleDetail?.usage ?? null}
         providers={providers}
         project={project}
-        rosterKey={rosterKey}
+        rosterKey={panelRosterKey}
         listThreadSummaries={listThreadSummaries}
         listCrewTasks={listCrewTasks}
         crewIntegration={crewIntegration}
