@@ -8,6 +8,8 @@ const path = require("node:path");
 const { WebSocket } = require("ws");
 
 const DEFAULT_REMOTE_PORT = 4620;
+// Tunnel respawn backoff after an unexpected SSH exit, about a minute total.
+const RECONNECT_DELAYS_MS = [1_000, 2_000, 4_000, 8_000, 15_000, 30_000];
 const active = new Map();
 
 // Saved web tokens, keyed by host:port and encrypted with the OS keychain.
@@ -177,36 +179,72 @@ async function openRemoteConnection(input, deps = {}) {
     return prior.promise;
   }
 
-  const entry = { child: null, win: null, promise: null, closing: false };
+  const entry = {
+    child: null, win: null, promise: null, closing: false, reconnecting: false,
+  };
   active.set(key, entry);
-  entry.promise = (async () => {
-    const port = await freeLoopbackPort();
-    const child = (deps.spawn || spawn)("ssh", sshArgs(host, port, remotePort), {
+  const spawnFn = deps.spawn || spawn;
+  const sleep = deps.sleep || ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
+  const title = `${label} · Solenta`;
+  let port = 0;
+
+  const startTunnel = () => {
+    const child = spawnFn("ssh", sshArgs(host, port, remotePort), {
       stdio: ["ignore", "ignore", "pipe"],
     });
     entry.child = child;
     let stderr = "";
-    let failure = null;
+    child.failure = null;
     child.stderr?.on("data", (chunk) => {
       stderr = (stderr + String(chunk)).slice(-1000);
     });
-    child.once("error", (err) => { failure = err; });
+    child.once("error", (err) => { child.failure = err; });
     child.once("exit", (code) => {
-      failure = new Error(stderr.trim() || `SSH exited (${code ?? "unknown"}).`);
-      if (entry.win && !entry.win.isDestroyed() && !entry.closing) {
-        entry.win.close();
-        const { dialog } = deps.electron || require("electron");
-        void dialog.showMessageBox({
-          type: "warning",
-          title: "Remote connection ended",
-          message: `The SSH connection to ${label} ended. Reconnect from Settings → Connections.`,
-          detail: failure.message,
-        }).catch(() => {});
-      }
+      child.failure = new Error(stderr.trim() || `SSH exited (${code ?? "unknown"}).`);
+      if (entry.win && !entry.closing && !entry.reconnecting) void reconnect(child.failure);
     });
+    return child;
+  };
 
+  // Respawn ssh on the SAME loopback port so the window's origin is unchanged;
+  // the page's wire client reconnects its socket and resyncs on its own.
+  const reconnect = async (failure) => {
+    entry.reconnecting = true;
+    let last = failure;
+    for (const delay of RECONNECT_DELAYS_MS) {
+      if (entry.win.isDestroyed()) return;
+      entry.win.setTitle(`${label} · Reconnecting… · Solenta`);
+      await sleep(delay);
+      if (entry.closing) return;
+      const child = startTunnel();
+      try {
+        await waitForHost(child, port, token, () => child.failure);
+        entry.reconnecting = false;
+        if (!entry.win.isDestroyed()) entry.win.setTitle(title);
+        return;
+      } catch (err) {
+        last = err;
+        child.kill();
+        // A restarted host with a new token will not heal by retrying.
+        if (/rejected this token|not a Solenta Web host/.test(err.message)) break;
+      }
+    }
+    if (entry.closing || entry.win.isDestroyed()) return;
+    entry.win.close();
+    const { dialog } = deps.electron || require("electron");
+    void dialog.showMessageBox({
+      type: "warning",
+      title: "Remote connection ended",
+      message: `The SSH connection to ${label} ended. Reconnect from Settings → Connections.`,
+      detail: last.message,
+    }).catch(() => {});
+  };
+
+  entry.promise = (async () => {
+    port = await freeLoopbackPort();
+    const child = startTunnel();
     try {
-      await waitForHost(child, port, token, () => failure);
+      await waitForHost(child, port, token, () => child.failure);
       const { BrowserWindow, shell } = deps.electron || require("electron");
       const win = new BrowserWindow({
         width: 1440,
@@ -214,7 +252,7 @@ async function openRemoteConnection(input, deps = {}) {
         minWidth: 900,
         minHeight: 600,
         show: false,
-        title: `${label} · Solenta`,
+        title,
         webPreferences: {
           contextIsolation: true,
           nodeIntegration: false,
@@ -236,10 +274,12 @@ async function openRemoteConnection(input, deps = {}) {
         event.preventDefault();
         if (/^https?:\/\//.test(url)) void shell.openExternal(url);
       });
+      // Keep the window title ours; the remote page would overwrite it.
+      win.on("page-title-updated", (event) => event.preventDefault());
       win.on("closed", () => {
         entry.closing = true;
         active.delete(key);
-        child.kill();
+        entry.child?.kill();
       });
       // Existing web hosts accept a query token and scrub it after boot.
       try {
@@ -259,7 +299,7 @@ async function openRemoteConnection(input, deps = {}) {
     } catch (err) {
       active.delete(key);
       if (entry.win && !entry.win.isDestroyed()) entry.win.destroy();
-      child.kill();
+      entry.child?.kill();
       if (!typed && /rejected this token/.test(err.message)) {
         try { tokens.delete(key); } catch { /* best effort */ }
         throw new Error("The remote Solenta host rejected the saved token. Enter its current token.");

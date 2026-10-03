@@ -16,6 +16,14 @@ const {
   closeRemoteConnections,
 } = require("../remoteConnections.js");
 
+async function waitFor(check, timeoutMs = 5_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (!check()) {
+    if (Date.now() > deadline) throw new Error("timed out waiting for condition");
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+}
+
 describe("remote Connections", () => {
   it("rejects SSH option injection and only forwards loopback ports", () => {
     assert.throws(() => validateConnection({ host: "-F/tmp/config", token: "x" }), /SSH host/);
@@ -58,8 +66,19 @@ describe("remote Connections", () => {
     let tunnel;
     let window;
     const dialogs = [];
+    const ports = [];
+    let down = false;
     const fakeSpawn = (_cmd, args) => {
       const localPort = Number(args[args.indexOf("-L") + 1].split(":")[1]);
+      ports.push(localPort);
+      if (down) {
+        const dead = Object.assign(new EventEmitter(), { stderr: new EventEmitter(), kill() {} });
+        setImmediate(() => {
+          dead.stderr.emit("data", "ssh: connect to host work port 22: Connection refused");
+          dead.emit("exit", 255);
+        });
+        return dead;
+      }
       tunnel = new EventEmitter();
       tunnel.stderr = new EventEmitter();
       tunnel.kill = () => {
@@ -87,6 +106,7 @@ describe("remote Connections", () => {
       isDestroyed() { return this.destroyed === true; }
       async loadURL(url) { this.url = url; }
       show() { this.shown = true; }
+      setTitle(title) { this.title = title; }
       focus() {}
       close() { this.destroyed = true; this.emit("closed"); }
       destroy() { this.close(); }
@@ -100,6 +120,7 @@ describe("remote Connections", () => {
         delete: (key) => { saved.delete(key); },
       },
       spawn: fakeSpawn,
+      sleep: async () => {},
       electron: {
         BrowserWindow: FakeWindow,
         shell: { openExternal() {} },
@@ -116,9 +137,22 @@ describe("remote Connections", () => {
       assert.equal(window.options.webPreferences.sandbox, true);
       assert.equal(window.options.webPreferences.preload, undefined);
       assert.ok(window.options.webPreferences.partition.startsWith("solenta-remote-"));
-      tunnel.emit("exit", 1);
-      assert.equal(window.destroyed, true);
+      // A dropped tunnel respawns on the same loopback port; the window stays.
+      const opened = window;
+      tunnel.kill();
+      await waitFor(() => ports.length === 2 && opened.title === "user@work · Solenta");
+      assert.equal(ports[1], ports[0]);
+      assert.notEqual(opened.destroyed, true);
+      assert.equal(dialogs.length, 0);
+
+      // A host that stays unreachable gives up, closes and explains.
+      down = true;
+      tunnel.kill();
+      await waitFor(() => opened.destroyed === true, 10_000);
+      assert.equal(ports.length, 8, "one initial, one recovery, six failed retries");
       assert.match(dialogs[0].message, /SSH connection to user@work ended/);
+      assert.match(dialogs[0].detail, /Connection refused/);
+      down = false;
 
       // A blank token reuses the saved one.
       await openRemoteConnection({ host: "user@work", token: "" }, deps);
