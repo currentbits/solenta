@@ -3578,8 +3578,13 @@ export interface CoderApi {
       host: string;
       label?: string;
       remotePort?: number;
+      /** Blank uses the token saved for host:port, if any. */
       token: string;
-    }): Promise<{ host: string; remotePort: number }>;
+      /** Save the verified token encrypted with the OS keychain (default true). */
+      remember?: boolean;
+    }): Promise<{ host: string; remotePort: number; tokenSaved: boolean }>;
+    /** Delete the saved web token for host:port. */
+    forgetRemoteConnection(input: { host: string; remotePort?: number }): Promise<void>;
   };
   /**
    * Proxied to the local shared-memory server by the main process (the

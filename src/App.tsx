@@ -2503,6 +2503,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
           onTestWebhook={testWebhook}
           onShowOnboarding={showOnboarding}
           onOpenConnection={(input) => api.app.openRemoteConnection(input)}
+          onForgetConnection={(input) => api.app.forgetRemoteConnection(input)}
         />
         <OnboardingModal
           open={onboardingOpen}

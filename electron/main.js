@@ -75,7 +75,11 @@ const mediaProtocol = require("./media-protocol.js");
 const { createRunArtifactStore } = require("./run-artifact-store.js");
 const { createIOSSimulatorService } = require("./ios-simulator.js");
 const { createIOSSimulatorStreamBroker } = require("./ios-simulator-stream.js");
-const { openRemoteConnection, closeRemoteConnections } = require("./remoteConnections.js");
+const {
+  openRemoteConnection,
+  forgetRemoteConnection,
+  closeRemoteConnections,
+} = require("./remoteConnections.js");
 
 // Custom img protocol (issue #145): registerSchemesAsPrivileged MUST run
 // before app.ready or Electron ignores it.
@@ -728,6 +732,7 @@ app.whenReady().then(async () => {
     getOrchStatus: () =>
       orchServer ? orchServer.getStatus() : { running: false, port: null },
     openRemoteConnection,
+    forgetRemoteConnection,
   });
   // Recently deleted expiry (#940): reclaim after restart even if the
   // renderer has not listed threads yet.

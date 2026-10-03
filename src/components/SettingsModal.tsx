@@ -152,6 +152,7 @@ interface SettingsModalProps {
   /** Relaunch the first-run welcome tour (#628). */
   onShowOnboarding?: () => void;
   onOpenConnection?: CoderApi["app"]["openRemoteConnection"];
+  onForgetConnection?: CoderApi["app"]["forgetRemoteConnection"];
 }
 
 const UI_SCALE_MIN = 0.8;
@@ -359,6 +360,7 @@ export function SettingsModal({
   onDiscoverSourceControl,
   onShowOnboarding,
   onOpenConnection,
+  onForgetConnection,
 }: SettingsModalProps) {
   const [pane, setPane] = useState<SettingsPane>("general");
   const [navQuery, setNavQuery] = useState("");
@@ -1957,7 +1959,7 @@ export function SettingsModal({
           )}
 
           {pane === "connections" && !isWebMode() && (
-          <ConnectionsSection onOpen={onOpenConnection} />
+          <ConnectionsSection onOpen={onOpenConnection} onForget={onForgetConnection} />
           )}
 
           {pane === "memory" && (

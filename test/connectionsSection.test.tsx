@@ -12,7 +12,7 @@ it("saves an SSH host after connecting without persisting its web token", async 
   const calls: unknown[] = [];
   const m = await mount(<ConnectionsSection onOpen={async (input) => {
     calls.push(input);
-    return { host: input.host, remotePort: input.remotePort ?? 4620 };
+    return { host: input.host, remotePort: input.remotePort ?? 4620, tokenSaved: false };
   }} />);
   await m.type(m.query("[data-connection-label]"), "Build machine");
   await m.type(m.query("[data-connection-host]"), "user@work");
@@ -20,11 +20,35 @@ it("saves an SSH host after connecting without persisting its web token", async 
   await m.click(m.query("[data-connection-open]"));
   assert.deepEqual(calls, [{
     host: "user@work", label: "Build machine", remotePort: 4620,
-    token: "remote-secret",
+    token: "remote-secret", remember: true,
   }]);
   const saved = window.localStorage.getItem("coder.remoteConnections") || "";
   assert.match(saved, /user@work/);
   assert.doesNotMatch(saved, /remote-secret/);
   assert.equal((m.query("[data-connection-token]") as HTMLInputElement).value, "");
+  m.unmount();
+});
+
+it("connects with a saved token and forgets it with the host", async () => {
+  const calls: unknown[] = [];
+  const forgot: unknown[] = [];
+  const m = await mount(<ConnectionsSection
+    onOpen={async (input) => {
+      calls.push(input);
+      return { host: input.host, remotePort: input.remotePort ?? 4620, tokenSaved: true };
+    }}
+    onForget={async (input) => { forgot.push(input); }}
+  />);
+  await m.type(m.query("[data-connection-host]"), "user@work");
+  await m.type(m.query("[data-connection-token]"), "remote-secret");
+  await m.click(m.query("[data-connection-open]"));
+  assert.match(m.container.textContent || "", /token saved/);
+  const open = m.query("[data-connection-open]") as HTMLButtonElement;
+  assert.equal(open.disabled, false, "a saved token enables Connect with a blank field");
+  await m.click(open);
+  assert.equal((calls[1] as { token: string }).token, "");
+  await m.click(m.query('[aria-label="Forget user@work"]'));
+  assert.deepEqual(forgot, [{ host: "user@work", remotePort: 4620 }]);
+  assert.doesNotMatch(window.localStorage.getItem("coder.remoteConnections") || "", /user@work/);
   m.unmount();
 });

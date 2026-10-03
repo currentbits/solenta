@@ -200,6 +200,7 @@ function makeCtx(deps) {
         ? deps.getOrchStatus
         : () => ({ running: false, port: null }),
     openRemoteConnection: deps.openRemoteConnection,
+    forgetRemoteConnection: deps.forgetRemoteConnection,
     transport: "desktop",
   };
 }
@@ -1050,6 +1051,12 @@ const IPC_HANDLERS = {
       throw new Error("Remote Connections require the desktop app.");
     }
     return ctx.openRemoteConnection(input);
+  },
+  "app:forgetRemoteConnection": async (ctx, input) => {
+    if (ctx.transport !== "desktop" || !ctx.forgetRemoteConnection) {
+      throw new Error("Remote Connections require the desktop app.");
+    }
+    ctx.forgetRemoteConnection(input);
   },
   "memory:search": async (ctx, input) => {
     return ctx.memory.search(input || { query: "" });

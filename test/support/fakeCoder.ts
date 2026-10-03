@@ -727,7 +727,10 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
         rec("app.openRemoteConnection", [input], {
           host: "workstation",
           remotePort: 4620,
+          tokenSaved: true,
         }),
+      forgetRemoteConnection: (input: unknown) =>
+        rec("app.forgetRemoteConnection", [input], undefined),
     },
     memory: {
       search: (input: unknown) => rec("memory.search", [input], [] as MemoryEntryInfo[]),

@@ -2392,9 +2392,10 @@ function buildDevCoder(): CoderApi {
         return this.checkUpdate();
       },
       async applyUpdate(): Promise<void> {},
-      async openRemoteConnection(): Promise<{ host: string; remotePort: number }> {
+      async openRemoteConnection(): Promise<{ host: string; remotePort: number; tokenSaved: boolean }> {
         throw new Error("Remote Connections require the desktop app.");
       },
+      async forgetRemoteConnection(): Promise<void> {},
       async feedback(input: {
         text: string;
         threadId?: string;
