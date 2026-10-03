@@ -127,6 +127,16 @@ export const SLASH_COMMANDS: readonly SlashCommand[] = [
     kind: "insert",
   },
   {
+    name: "/workflow",
+    hint: "Run this prompt as a multi-phase workflow",
+    kind: "insert",
+  },
+  {
+    name: "/bestof",
+    hint: "Fork this prompt across several models (Best of N)",
+    kind: "insert",
+  },
+  {
     name: "/btw",
     hint: "Ask a side question without interrupting",
     kind: "insert",
@@ -143,6 +153,19 @@ export const SLASH_COMMANDS: readonly SlashCommand[] = [
     kind: "insert",
   },
 ];
+
+/**
+ * `/workflow <prompt>` / `/bestof <prompt>`: the composer intercepts these on
+ * send and opens the Workflow / Best of N picker with the tail as the prompt
+ * (they replaced the Options button). Null for anything else.
+ */
+export function pickerVerb(
+  text: string,
+): { picker: "workflow" | "bestof"; tail: string } | null {
+  const m = /^\s*\/(workflow|bestof)(?:\s+([\s\S]*))?$/.exec(text);
+  if (!m) return null;
+  return { picker: m[1] as "workflow" | "bestof", tail: (m[2] ?? "").trim() };
+}
 
 /**
  * The `/` token being typed, or null. Only at the very start of the draft,

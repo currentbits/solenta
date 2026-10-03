@@ -184,41 +184,32 @@ function composer(over: {
   );
 }
 
+/** `/bestof <prompt>` + ⌘Enter from the prompt opens the picker (#1411). */
 async function openBestOfN(
   m: Awaited<ReturnType<typeof mount>>,
   prompt = "compare this",
 ) {
-  const ta = m.query("textarea");
+  const ta = m.query("textarea") as HTMLTextAreaElement | null;
   assert.ok(ta, "composer textarea");
-  await m.type(ta, prompt);
-  const trigger = m.query("[data-composer-options]") as HTMLButtonElement | null;
-  assert.ok(trigger, "Options");
-  assert.equal(trigger.disabled, false, "Options opens without a separate Best of N trigger");
-  trigger.focus();
-  await m.click(trigger);
+  // The trailing space is what the `/` palette inserts on accept.
+  await m.type(ta, `/bestof ${prompt}`);
+  await inAct(() => ta.focus());
+  await m.press(ta, "Enter", { metaKey: true });
   const pop = m.query("[data-best-of-n-popover]");
-  assert.ok(pop, "Best of N stays inside Options");
+  assert.ok(pop, "/bestof opens the Best of N picker");
+  assert.equal(ta.value, prompt, "the verb is stripped; the prompt stays");
   return pop;
 }
 
 describe("Best of N popover", () => {
   it("opening Best of N moves focus inside; Tab stays inside; Escape restores", async () => {
     const m = await mount(composer());
-    const trigger = m.query("[data-composer-options]") as HTMLButtonElement;
     const ta = m.query("textarea");
-    assert.ok(ta, "composer textarea");
-    await m.type(ta, "compare this");
-    // jsdom click does not focus; a real click would. Seed the trigger so
-    // useModalFocus restores it the way a pointer open does.
-    trigger.focus();
-    await m.click(trigger);
-    const dialog = m.query("[data-best-of-n-popover]") as HTMLElement | null;
-    assert.ok(dialog, "popover");
+    const dialog = (await openBestOfN(m)) as HTMLElement;
     assert.ok(
       dialog.contains(document.activeElement),
       "opening the dialog must move focus inside it",
     );
-    assert.notEqual(document.activeElement, trigger);
 
     let sawInput = false;
     const first = document.activeElement as HTMLElement;
@@ -234,21 +225,16 @@ describe("Best of N popover", () => {
     await m.pressFocused("Escape");
     assert.equal(m.query("[data-best-of-n-popover]"), null);
     assert.ok(
-      document.activeElement === trigger,
-      `Escape restores the Options trigger (got ${document.activeElement?.tagName})`,
+      document.activeElement === ta,
+      `Escape restores the prompt (got ${document.activeElement?.tagName})`,
     );
     m.unmount();
   });
 
-  it("opens without a prompt and stays shut while archived or a run is active", async () => {
+  it("opens without a prompt, has no Options button, and stays shut while a run is active", async () => {
     const empty = await mount(composer());
-    const emptyOptions = empty.query(
-      "[data-composer-options]",
-    ) as HTMLButtonElement;
-    assert.ok(emptyOptions, "Options must exist");
-    assert.equal(emptyOptions.disabled, false, "empty prompt still opens Options");
-    emptyOptions.focus();
-    await empty.click(emptyOptions);
+    assert.equal(empty.query("[data-composer-options]"), null, "Options button is gone");
+    await openBestOfN(empty, "");
     const run = empty.query("[data-best-of-n-run]") as HTMLButtonElement;
     assert.equal(run.disabled, true, "empty prompt disables Best of N run");
     assert.match(run.title, /prompt/i);
@@ -261,19 +247,13 @@ describe("Best of N popover", () => {
     );
     empty.unmount();
 
-    const archived = await mount(composer({ disabled: true }));
-    const archivedOptions = archived.query(
-      "[data-composer-options]",
-    ) as HTMLButtonElement;
-    assert.equal(archivedOptions.disabled, true, "archived thread disables Options");
-    archived.unmount();
-
     const busy = await mount(composer({ busy: true }));
-    const busyOptions = busy.query(
-      "[data-composer-options]",
-    ) as HTMLButtonElement;
-    assert.equal(busyOptions.disabled, true, "active run disables Options");
-    assert.match(busyOptions.title, /wait/i);
+    const ta = busy.query("textarea") as HTMLTextAreaElement;
+    await busy.type(ta, "/bestof compare this");
+    await inAct(() => ta.focus());
+    await busy.press(ta, "Enter", { metaKey: true });
+    assert.equal(busy.query("[data-best-of-n-popover]"), null, "a live run keeps the picker shut");
+    assert.match(busy.text(), /wait for this run/i);
     busy.unmount();
   });
 
@@ -436,14 +416,7 @@ describe("Best of N popover", () => {
   it("moves focus out of the composer; Tab stays inside; Escape restores", async () => {
     const m = await mount(composer());
     const ta = m.query("textarea");
-    assert.ok(ta, "composer textarea");
-    await m.type(ta, "compare this");
-    const opener = m.query("[data-composer-options]") as HTMLButtonElement | null;
-    assert.ok(opener, "Options trigger");
-    await inAct(() => opener.focus());
-    await m.click(opener);
-    const dialog = m.query("[data-best-of-n-popover]") as HTMLElement | null;
-    assert.ok(dialog, "Best of N popover");
+    const dialog = (await openBestOfN(m)) as HTMLElement;
     assert.ok(
       dialog.contains(document.activeElement),
       "opening the dialog must move focus inside it",
@@ -471,11 +444,7 @@ describe("Best of N popover", () => {
 
     await m.pressFocused("Escape");
     assert.equal(m.query("[data-best-of-n-popover]"), null);
-    assert.equal(
-      document.activeElement,
-      opener,
-      "Escape restores the Options trigger",
-    );
+    assert.equal(document.activeElement, ta, "Escape restores the prompt");
     m.unmount();
   });
 });

@@ -676,6 +676,55 @@ describe("draft workspace strip under the composer", () => {
   });
 });
 
+describe("worktree line at the top of the transcript (#1411)", () => {
+  const sent = [msg({ id: "u1", role: "user", text: "go" })];
+
+  it("says Worktree ready with branch and base once the worktree exists", async () => {
+    const m = await mount(
+      view({ detail: detail({ thread: thread({ baseBranch: "release" }), messages: sent }) }),
+    );
+    await m.flush();
+    const line = m.query('[data-worktree-line="ready"]');
+    assert.ok(line);
+    assert.match(line!.textContent ?? "", /Worktree ready·coder\/header-features-abc123from release/);
+    m.unmount();
+  });
+
+  it("says Setting up worktree while the first send materializes it", async () => {
+    const m = await mount(
+      view({
+        detail: detail({
+          thread: thread({ worktreePath: null, pendingWorktree: true, status: "working" }),
+          messages: sent,
+        }),
+      }),
+    );
+    await m.flush();
+    assert.ok(m.query('[data-worktree-line="setup"]'));
+    m.unmount();
+  });
+
+  it("shows nothing for a draft, a plain thread, or a failed setup", async () => {
+    for (const t of [
+      { worktreePath: null, pendingWorktree: true },
+      { worktreePath: null },
+      { worktreePath: null, pendingWorktree: true, status: "failed" as const },
+    ]) {
+      const m = await mount(
+        view({
+          detail: detail({
+            thread: thread(t),
+            messages: t.pendingWorktree && !t.status ? [] : sent,
+          }),
+        }),
+      );
+      await m.flush();
+      assert.equal(m.query("[data-worktree-line]"), null, JSON.stringify(t));
+      m.unmount();
+    }
+  });
+});
+
 describe("Views menu pane workspace (issue #552)", () => {
   it("defaults to chat only, with a Views menu in the session toolbar", async () => {
     const m = await mount(view({}));

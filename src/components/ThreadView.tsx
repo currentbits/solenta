@@ -6533,6 +6533,46 @@ export const ThreadView = memo(function ThreadView({
     Boolean(thread.sandbox) ||
     Boolean(ring && !ring.view.warn) ||
     hasVersionControl;
+  // Worktree lifecycle as one transcript line (t3-style) instead of header
+  // churn. Derived from thread state, so no message is stored.
+  const worktreeBase =
+    thread.orchWorker && thread.leadSnapshotBranch
+      ? thread.leadSnapshotBranch
+      : thread.baseBranch || "repo default";
+  const worktreeLine = thread.worktreePath ? (
+    <div className={styles.worktreeLine} data-worktree-line="ready">
+      <svg
+        width="13"
+        height="13"
+        viewBox="0 0 16 16"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.7"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        aria-hidden="true"
+      >
+        <path d="m3.5 8.5 3 3 6-7" />
+      </svg>
+      <b>Worktree ready</b>
+      {thread.branch ? (
+        <>
+          <span aria-hidden>·</span>
+          <span className={styles.worktreeLineBranch}>{thread.branch}</span>
+        </>
+      ) : null}
+      <span>from {worktreeBase}</span>
+    </div>
+  ) : thread.pendingWorktree &&
+    thread.status !== "failed" &&
+    detail.messages.some((m) => m.role === "user") ? (
+    <div className={styles.worktreeLine} data-worktree-line="setup" role="status">
+      <span className={styles.worktreeLineSpinner} aria-hidden />
+      <b>Setting up worktree…</b>
+      <span>from {worktreeBase}</span>
+    </div>
+  ) : null;
+
   // A warning ring stays in the header (compaction is close); otherwise the
   // ring lives in Thread details.
   const ringBadge = ring ? (
@@ -7423,6 +7463,8 @@ export const ThreadView = memo(function ThreadView({
             </button>
           </div>
         )}
+
+        {hiddenCount === 0 && worktreeLine}
 
         {displayTimeline.map((entry) => {
           if (entry.kind === "group") {
