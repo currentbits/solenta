@@ -4621,7 +4621,13 @@ function createRunner(opts) {
           const usage = ev.usage || {};
           const turnIn = Number(usage.input_tokens) || 0;
           const turnOut = Number(usage.output_tokens) || 0;
-          const costDelta = Number(ev.total_cost_usd) || 0;
+          // total_cost_usd is the process's running total, and a warm process
+          // serves many turns (#1435): bill only the growth since its last
+          // result. A fresh handle starts at 0, so one-shot runs bill the total.
+          const totalCost = Number(ev.total_cost_usd) || 0;
+          const prevTotalCost = (handle && handle.lastTotalCostUsd) || 0;
+          const costDelta = Math.max(0, totalCost - prevTotalCost);
+          if (handle) handle.lastTotalCostUsd = Math.max(prevTotalCost, totalCost);
           runUsage.tokensIn += turnIn;
           runUsage.tokensOut += turnOut;
           runUsage.costUsd += costDelta;
