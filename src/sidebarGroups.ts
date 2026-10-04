@@ -250,89 +250,6 @@ export function withCrewSearchContext(
 }
 
 /**
- * Split non-archived threads into attention vs settled.
- * Order within each side is preserved (caller sorts first when needed).
- * Does NOT account for pin/snooze shelves — prefer partitionSidebar.
- */
-export function splitSettled(
-  threads: readonly ThreadInfo[],
-  opts: SettleOpts,
-): {
-  attention: ThreadInfo[];
-  settled: ThreadInfo[];
-} {
-  const attention: ThreadInfo[] = [];
-  const settled: ThreadInfo[] = [];
-  for (const t of threads) {
-    (effectiveSettled(t, opts) ? settled : attention).push(t);
-  }
-  return { attention, settled };
-}
-
-/** The single "not now" shelf (#567): snoozed wake-soonest, then settled
- *  newest, then archived newest. Rendered in that order. */
-export interface LaterPartition {
-  snoozed: ThreadInfo[];
-  settled: ThreadInfo[];
-  archived: ThreadInfo[];
-}
-
-/**
- * Global partition for the sidebar (#567: two zones, Active and Later).
- *
- * Precedence (first match wins):
- *   1. archived — Later, always
- *   2. snoozed  — Later (an explicit "not now" beats a pin)
- *   3. pinned   — Active, sorted first in its project group; beats settle
- *   4. settled  — Later (PR/inactivity/override)
- *   5. attention — Active, per-project groups
- */
-export function partitionSidebar(
-  threads: readonly ThreadInfo[],
-  opts: SettleOpts,
-): {
-  attentionThreads: ThreadInfo[];
-  later: LaterPartition;
-} {
-  const snoozed: ThreadInfo[] = [];
-  const attention: ThreadInfo[] = [];
-  const settled: ThreadInfo[] = [];
-  const archived: ThreadInfo[] = [];
-
-  for (const t of threads) {
-    if (t.archived) {
-      archived.push(t);
-      continue;
-    }
-    if (effectiveSnoozed(t, opts.now)) {
-      snoozed.push(t);
-      continue;
-    }
-    if (isPinned(t) || !effectiveSettled(t, opts)) {
-      attention.push(t);
-    } else {
-      settled.push(t);
-    }
-  }
-
-  snoozed.sort(compareSnoozedWakeSoonest);
-  settled.sort(compareSettledNewestFirst);
-  archived.sort(
-    (a, b) => b.updatedAt - a.updatedAt || a.id.localeCompare(b.id),
-  );
-
-  return {
-    attentionThreads: attention,
-    later: { snoozed, settled, archived },
-  };
-}
-
-/** Later shelf render order, flattened. */
-export function flattenLater(later: LaterPartition): ThreadInfo[] {
-  return [...later.snoozed, ...later.settled, ...later.archived];
-}
-
-/**
  * T3-style flat sidebar (no project group headers): one pinned block, one
  * flat active list, then the Snoozed and Settled shelves. Every card carries
  * its own project identity, so grouping happens per-card, not per-section.
@@ -354,8 +271,7 @@ export interface FlatSidebar {
 }
 
 /**
- * Partition for the flat T3 sidebar. Precedence (first match wins), same as
- * partitionSidebar (#567) except pinned is its own section:
+ * Partition for the flat T3 sidebar. Precedence (first match wins):
  *   archived > snoozed > pinned > settled > working > active
  * scopeProjectId filters every section ("All projects" = null).
  */

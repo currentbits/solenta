@@ -40,9 +40,6 @@ export type LayoutNode = PaneLeaf | PaneSplit;
 export type LayoutStorage = {
   getItem(key: string): string | null;
   setItem(key: string, value: string): void;
-  removeItem?(key: string): void;
-  key?(index: number): string | null;
-  length?: number;
 };
 
 export const PANE_REGISTRY: Record<
@@ -220,20 +217,6 @@ export function hydratePaneLayout(
     focusId:
       (opts?.openDiff && leafByType(layout, "diff")?.id) || firstLeafId(layout),
   };
-}
-
-export function clearPaneLayouts(
-  storage: LayoutStorage | null = resolveStorage(),
-): void {
-  if (!storage || typeof storage.key !== "function" || storage.length == null) {
-    return;
-  }
-  const keys: string[] = [];
-  for (let i = 0; i < storage.length; i++) {
-    const key = storage.key(i);
-    if (key && key.startsWith(LAYOUT_KEY_PREFIX)) keys.push(key);
-  }
-  for (const key of keys) storage.removeItem?.(key);
 }
 
 export function loadPaneLayout(

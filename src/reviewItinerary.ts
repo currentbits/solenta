@@ -842,10 +842,3 @@ export function orderedPatches(itinerary: ReviewItinerary): ReviewFilePatch[] {
   }
   return out;
 }
-
-export function chunkForPath(
-  itinerary: ReviewItinerary,
-  path: string,
-): ReviewChunk | null {
-  return itinerary.chunks.find((c) => c.files.some((f) => f.path === path)) || null;
-}
