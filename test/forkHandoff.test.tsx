@@ -480,6 +480,41 @@ describe("App fork / hand-off wiring (round 49)", () => {
     );
     m.unmount();
   });
+
+  it("the inspector has no Fork card; the header and card menu are the homes", async () => {
+    const d = decoy();
+    const s = source();
+    const o = otherProjectThread();
+    const fake = createFakeCoder({
+      projects: [
+        project({ id: "p1", slug: "acme/one", name: "one", path: "/tmp/one" }),
+        project({ id: "p2", slug: "acme/two", name: "two", path: "/tmp/two" }),
+      ],
+      providers,
+      threads: [d, s, o],
+      details: {
+        "t-decoy": detail({ thread: d }),
+        "t-source-fork": detail({ thread: s, messages: STARTED }),
+        "t-p2": detail({ thread: o }),
+      },
+    });
+    const m = await boot(fake);
+    await selectThread(m, "source handoff thread");
+    assert.equal(m.query("[data-thread-fork-card]"), null, "no Environment Fork card");
+    const forks = m.queryAll("[data-thread-fork]");
+    assert.equal(forks.length, 1, "exactly one Fork button on screen");
+    assert.ok(forks[0]!.closest("[data-thread-header]"), "and it is the header's");
+    await openCardMenu(m, "t-source-fork");
+    assert.ok(
+      document.querySelector('[data-fork-btn="t-source-fork"]'),
+      "card menu keeps Fork",
+    );
+    assert.ok(
+      document.querySelector('[data-handoff-provider="grok"]'),
+      "card menu keeps Hand off",
+    );
+    m.unmount();
+  });
 });
 
 afterEach(() => {

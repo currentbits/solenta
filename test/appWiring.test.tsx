@@ -1116,7 +1116,7 @@ describe("App selection stamps lastVisitedAt (round 43 unread)", () => {
     }
   });
 
-  it("Environment PR card opens the pull-requests view", async () => {
+  it("pull requests open from the sidebar Review nav, not an Environment card", async () => {
     const fake = createFakeCoder();
     const m = await boot(fake);
     try {
@@ -1126,9 +1126,10 @@ describe("App selection stamps lastVisitedAt (round 43 unread)", () => {
         null,
         "left bar must not keep a Pull requests row",
       );
-      const btn = m.query("[data-open-prs]");
-      assert.ok(btn, "Environment must offer a pull-requests card");
-      await m.click(btn as HTMLElement);
+      assert.equal(m.query("[data-open-prs]"), null, "Environment no longer duplicates it");
+      const review = m.query('[data-view-nav="review"]');
+      assert.ok(review, "the sidebar Review nav is the PR list's home");
+      await m.click(review as HTMLElement);
       await m.flush();
       await inAct(async () => {
         await Promise.resolve();
