@@ -16,7 +16,6 @@ import type {
   MergeLanePreview,
   MergeLaneRecycle,
   MergeLaneRestore,
-  MergeSpotlight,
 } from "../src/shared/ipc";
 
 function lane(over: Partial<MergeLaneInfo> = {}): MergeLaneInfo {
@@ -46,10 +45,6 @@ function card(opts: {
   restore?: (input: { projectId: string }) => Promise<MergeLaneRestore>;
   recycle?: (input: { projectId: string }) => Promise<MergeLaneRecycle[]>;
   spotlight?: boolean;
-  setSpotlight?: (input: {
-    projectId: string;
-    enabled: boolean;
-  }) => Promise<MergeSpotlight>;
   spotlightLane?: (input: {
     projectId: string;
     lane: number;
@@ -99,7 +94,6 @@ function card(opts: {
         opts.recycle ?? (async () => [])
       }
       spotlight={opts.spotlight}
-      setSpotlight={opts.setSpotlight}
       spotlightLane={opts.spotlightLane}
     />
   );
@@ -267,52 +261,28 @@ describe("MergeQueueCard (#346)", () => {
     m.unmount();
   });
 
-  it("opts into Spotlight per repo and previews through spotlightLane", async () => {
-    const toggles: { projectId: string; enabled: boolean }[] = [];
+  it("collapses with a 0 count when no lanes are claimed, opens once lanes exist", async () => {
+    const empty = await mount(card({ lanes: [] }));
+    await empty.flush();
+    const section = empty.query("[data-lanes]") as HTMLDetailsElement;
+    assert.equal(section.tagName, "DETAILS");
+    assert.equal(section.open, false);
+    assert.match(section.querySelector("summary")?.textContent ?? "", /Lanes\s*0/);
+    empty.unmount();
+    const full = await mount(card({ lanes: [lane()] }));
+    await full.flush();
+    assert.equal((full.query("[data-lanes]") as HTMLDetailsElement).open, true);
+    full.unmount();
+  });
+
+  // The opt-in half moved to Settings → Git (settingsModal.test.tsx Spotlight).
+  it("previews through spotlightLane when the project's Spotlight flag is on", async () => {
     const spots: { projectId: string; lane: number }[] = [];
     const previews: { projectId: string; lane: number }[] = [];
-    const m = await mount(
-      card({
-        lanes: [lane()],
-        spotlight: false,
-        setSpotlight: async (input) => {
-          toggles.push(input);
-          return { spotlight: input.enabled };
-        },
-        spotlightLane: async (input) => {
-          spots.push(input);
-          return {
-            lane: input.lane,
-            sha: "spot",
-            files: ["from-a.txt"],
-            path: "/tmp/repo",
-            spotlight: true,
-          };
-        },
-        preview: async (input) => {
-          previews.push(input);
-          return {
-            lane: input.lane,
-            sha: "abc",
-            files: ["src/a.ts"],
-            path: "/tmp/repo",
-          };
-        },
-      }),
-    );
-    await m.flush();
-    const box = m.query("[data-lane-spotlight]") as HTMLInputElement | null;
-    assert.ok(box, "Spotlight opt-in is on the Lanes card");
-    assert.equal(box.checked, false);
-    await m.click(box);
-    assert.deepEqual(toggles, [{ projectId: "p1", enabled: true }]);
-    m.unmount();
-
     const on = await mount(
       card({
         lanes: [lane()],
         spotlight: true,
-        setSpotlight: async (input) => ({ spotlight: input.enabled }),
         spotlightLane: async (input) => {
           spots.push(input);
           return {
@@ -335,8 +305,7 @@ describe("MergeQueueCard (#346)", () => {
       }),
     );
     await on.flush();
-    const onBox = on.query("[data-lane-spotlight]") as HTMLInputElement | null;
-    assert.ok(onBox && onBox.checked, "opt-in is checked when the project flag is on");
+    assert.equal(on.query("[data-lane-spotlight]"), null, "the opt-in lives in Settings");
     await on.click(on.query("[data-lane-preview='1']"));
     assert.deepEqual(spots, [{ projectId: "p1", lane: 1 }]);
     assert.deepEqual(previews, []);
