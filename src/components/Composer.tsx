@@ -224,6 +224,12 @@ interface ComposerProps {
    * the thread has started: branch and worktree live in Thread details.
    */
   workspaceStrip?: ReactNode;
+  /**
+   * Status lip on the composer's top edge (#1429): background agents, stalled,
+   * usage limit, run errors. ThreadView decides what goes here; Composer only
+   * attaches it to the card.
+   */
+  statusTab?: ReactNode;
   /** Hard lock (archived thread): nothing can be typed or started. */
   disabled?: boolean;
   /**
@@ -488,6 +494,7 @@ export const Composer = memo(function Composer({
   onRetryWorkflows,
   sessionId,
   workspaceStrip,
+  statusTab,
   disabled = false,
   busy = false,
   onSend,
@@ -2259,6 +2266,11 @@ export const Composer = memo(function Composer({
           </button>
         </div>
       )}
+      {statusTab ? (
+        <div className={styles.statusTab} data-composer-status="">
+          {statusTab}
+        </div>
+      ) : null}
       <div className={styles.card}>
         {mentionOpen && (
           <ul
