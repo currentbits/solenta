@@ -1345,6 +1345,9 @@ export function SkillsTab({
             onKeyDown={(e) => {
               if (e.key !== "Escape" || !filterOpen) return;
               e.preventDefault();
+              // Closing the menu already handled this Escape; stop it from
+              // also bubbling to App's window-level drawer-close listener.
+              e.stopPropagation();
               closeFilterMenu();
               filterSummaryRef.current?.focus();
             }}

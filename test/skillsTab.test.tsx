@@ -1492,6 +1492,53 @@ describe("SkillsTab skills", () => {
     m.unmount();
   });
 
+  it("Escape that closes the filter menu does not reach a window listener", async () => {
+    const seen: string[] = [];
+    const onWindowKeydown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") seen.push("escape");
+    };
+    window.addEventListener("keydown", onWindowKeydown);
+    try {
+      const m = await mount(<Harness />);
+      const details = m.query("[data-skills-filter-menu]") as HTMLDetailsElement;
+      const summary = details.querySelector("summary") as HTMLElement;
+      await m.click(summary);
+      assert.equal(details.open, true, "menu must open on click");
+      await m.press(details, "Escape");
+      assert.equal(details.open, false, "Escape must close the menu");
+      assert.deepEqual(
+        seen,
+        [],
+        "Escape that closes the menu must not bubble to a window listener",
+      );
+      m.unmount();
+    } finally {
+      window.removeEventListener("keydown", onWindowKeydown);
+    }
+  });
+
+  it("Escape with the filter menu closed still reaches a window listener", async () => {
+    const seen: string[] = [];
+    const onWindowKeydown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") seen.push("escape");
+    };
+    window.addEventListener("keydown", onWindowKeydown);
+    try {
+      const m = await mount(<Harness />);
+      const details = m.query("[data-skills-filter-menu]") as HTMLDetailsElement;
+      assert.equal(details.open, false, "menu starts closed");
+      await m.press(details, "Escape");
+      assert.deepEqual(
+        seen,
+        ["escape"],
+        "Escape must still reach the window listener when the menu is closed",
+      );
+      m.unmount();
+    } finally {
+      window.removeEventListener("keydown", onWindowKeydown);
+    }
+  });
+
   it("a pointerdown outside the filter menu closes it", async () => {
     const m = await mount(<Harness />);
     const details = m.query("[data-skills-filter-menu]") as HTMLDetailsElement;
