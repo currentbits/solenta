@@ -519,6 +519,7 @@
   height: 7px;
   margin-top: -3.5px;
   background: var(--accent);
+  box-shadow: var(--accent-mark-ring);
   border-radius: 1.5px;
   transform: rotate(45deg);
   pointer-events: none;
@@ -1773,6 +1774,7 @@
   margin: 0 1px;
   border-radius: 2px;
   background: var(--accent);
+  box-shadow: var(--accent-mark-ring);
   transform: rotate(45deg);
 }
 

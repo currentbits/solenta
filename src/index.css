@@ -39,6 +39,9 @@
   --accent-soft: rgba(242, 229, 31, 0.12);
   --accent-border: rgba(242, 229, 31, 0.45);
   --mark: rgba(242, 229, 31, 0.3);
+  /* Small yellow marks (diamonds, notches). Dark needs no edge; paper does. */
+  --accent-edge: var(--accent);
+  --accent-mark-ring: none;
   --blue: #3b82f6;
   --blue-soft: rgba(59, 130, 246, 0.15);
   --blue-border: rgba(59, 130, 246, 0.35);
@@ -126,6 +129,8 @@
   /* Yellow on paper is ~1.2:1, so borders and rings on light use olive. */
   --accent-border: rgba(133, 124, 0, 0.55);
   --mark: rgba(242, 229, 31, 0.7);
+  --accent-edge: #857c00;
+  --accent-mark-ring: 0 0 0 1px rgba(133, 124, 0, 0.65);
   --blue: #1e40af;
   --blue-soft: rgba(30, 64, 175, 0.1);
   --blue-border: rgba(30, 64, 175, 0.35);

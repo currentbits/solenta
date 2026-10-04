@@ -574,6 +574,7 @@
   height: 7px;
   border-radius: 1.5px;
   background: var(--accent);
+  box-shadow: var(--accent-mark-ring);
   transform: rotate(45deg);
 }
 
@@ -842,6 +843,7 @@
   margin: 0 0 1px 8px;
   border-radius: 1px;
   background: var(--accent);
+  box-shadow: var(--accent-mark-ring);
   transform: rotate(45deg);
 }
 
@@ -942,8 +944,11 @@
     0 0 0 4px var(--focus-ring-color);
 }
 
+/* Nothing to send: neutral, so yellow only ever means "ready". A dimmed
+   yellow reads as olive on ink. */
 .send:disabled {
-  opacity: 0.35;
+  background: var(--overlay-hover);
+  color: var(--text-dim);
   box-shadow: none;
   cursor: not-allowed;
 }

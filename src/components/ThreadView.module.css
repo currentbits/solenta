@@ -1034,6 +1034,7 @@ a.btn {
   border-radius: 1.5px;
   transform: rotate(45deg);
   background: var(--accent);
+  box-shadow: var(--accent-mark-ring);
 }
 
 .mark {
@@ -2971,7 +2972,7 @@ button.diffLineGutter:focus-visible {
 }
 
 .planStep[data-plan-step="doing"]::before {
-  border-color: var(--accent);
+  border-color: var(--accent-edge);
   background: linear-gradient(135deg, var(--accent) 50%, transparent 50%);
 }
 
