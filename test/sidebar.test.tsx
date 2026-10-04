@@ -201,6 +201,8 @@ function sidebar(
     trashedThreads?: import("../src/shared/ipc").TrashedThreadInfo[];
     onRestoreThread?: (threadId: string) => void;
     onPurgeThread?: (threadId: string) => void;
+    memoryEntries?: number | null;
+    stayAwake?: import("../src/shared/ipc").StayAwakeStatus | null;
   } = {},
 ) {
   const projects = over.projects ?? [p1];
@@ -209,6 +211,9 @@ function sidebar(
       appName="Solenta"
       appVersion={over.appVersion}
       channel={over.channel}
+      memoryEntries={over.memoryEntries}
+      stayAwake={over.stayAwake}
+      onSetStayAwakeMode={() => {}}
       searchPlaceholder="Search threads..."
       projectsHeader="All projects"
       projects={projects}
@@ -444,7 +449,7 @@ describe("Sidebar is a flat list (no project groups)", () => {
     const toggle = m.query("[data-working-shelf-toggle]")!;
     assert.ok(toggle, "Working shelf renders");
     assert.equal(toggle.getAttribute("aria-expanded"), "false");
-    assert.match(toggle.textContent ?? "", /^Working \(\d+\)/);
+    assert.match(toggle.textContent ?? "", /^Working · \d+/);
     assert.ok(!cardTitles(m).includes("busy"), "busy is folded away");
     assert.ok(cardTitles(m).includes("finished"), "done stays in the inbox");
     await m.click(toggle);
@@ -526,13 +531,13 @@ describe("Sidebar is a flat list (no project groups)", () => {
     const header = settledToggle(m);
     assert.match(
       header.textContent || "",
-      /Settled \(1\)/,
-      "archived counts into Settled (N) while collapsed",
+      /Settled · 1/,
+      "archived counts into Settled · N",
     );
     assert.equal(header.getAttribute("aria-expanded"), "false");
 
     await openSettledShelf(m);
-    assert.match(settledToggle(m).textContent || "", /^Settled$/);
+    assert.match(settledToggle(m).textContent || "", /^Settled · 1$/);
     const row = m.query('[data-thread-card="gone"]');
     assert.ok(row, "archived thread renders on the settled shelf");
     assert.equal(row!.getAttribute("data-archived"), "true");
@@ -593,7 +598,7 @@ describe("Sidebar snoozed + settled shelves", () => {
     const header = settledToggle(m);
     assert.match(
       header.textContent || "",
-      /Settled \(2\)/,
+      /Settled · 2/,
       "collapsed header counts settled from every project",
     );
     assert.equal(
@@ -605,7 +610,7 @@ describe("Sidebar snoozed + settled shelves", () => {
 
     await openSettledShelf(m);
     assert.equal(settledToggle(m).getAttribute("aria-expanded"), "true");
-    assert.match(settledToggle(m).textContent || "", /^Settled$/);
+    assert.match(settledToggle(m).textContent || "", /^Settled · 2$/);
     const ids = cardTitles(m);
     assert.ok(ids.includes("merged-p1"));
     assert.ok(ids.includes("merged-p2"));
@@ -671,7 +676,7 @@ describe("Sidebar snoozed + settled shelves", () => {
       }),
     );
     const m = await mount(sidebar(many, { projects: [p1, p2] }));
-    assert.match(settledToggle(m).textContent || "", /Settled \(40\)/);
+    assert.match(settledToggle(m).textContent || "", /Settled · 40/);
     await openSettledShelf(m);
     const shown = cardTitles(m).filter((id) => id.startsWith("s"));
     assert.equal(shown.length, 10, "initial expand shows exactly 10");
@@ -707,7 +712,7 @@ describe("Sidebar snoozed + settled shelves", () => {
       }),
     );
     const m = await mount(sidebar(many, { projects: [p1, p2] }));
-    assert.match(settledToggle(m).textContent || "", /Settled \(10\)/);
+    assert.match(settledToggle(m).textContent || "", /Settled · 10/);
     await openSettledShelf(m);
     assert.equal(
       cardTitles(m).filter((id) => id.startsWith("exact")).length,
@@ -851,12 +856,12 @@ describe("Sidebar snoozed + settled shelves", () => {
     const m = await mount(
       sidebar([THREADS[0]!, soon, latePinned], { projects: [p1, p2] }),
     );
-    assert.match(snoozedToggle(m).textContent || "", /Snoozed \(2\)/);
+    assert.match(snoozedToggle(m).textContent || "", /Snoozed · 2/);
     assert.equal(snoozedToggle(m).getAttribute("aria-expanded"), "false");
     assert.ok(!cardTitles(m).includes("snooze-soon"));
 
     await openSnoozedShelf(m);
-    assert.match(snoozedToggle(m).textContent || "", /^Snoozed$/);
+    assert.match(snoozedToggle(m).textContent || "", /^Snoozed · 2$/);
     const rows = m
       .queryAll("[data-snoozed='true']")
       .map((el) => el.getAttribute("data-thread-card"));
@@ -1132,18 +1137,35 @@ describe("Sidebar project scope", () => {
     assert.ok(item?.querySelector("[data-project-icon]"), "scope row glyph");
     const card = m.query('[data-thread-card="busy"]');
     assert.ok(card?.querySelector("[data-project-icon]"), "thread card glyph");
+    const p2Item = m.query('[data-scope-item="p2"]');
     assert.ok(
-      !m.query('[data-scope-item="p2"]')?.querySelector("[data-project-icon]"),
-      "a project without iconUrl stays text-only",
+      !p2Item?.querySelector("[data-project-icon]"),
+      "a project without iconUrl gets no image icon",
+    );
+    assert.ok(
+      p2Item?.querySelector("[data-project-avatar]"),
+      "but it does get an initials tile (#1429)",
     );
     m.unmount();
   });
 
-  it("keeps text-only scope rows and cards when no icon is resolved", async () => {
+  it("falls back to initials avatars on scope rows and cards when no icon is resolved (#1429)", async () => {
     await clearSidebarStorage();
     const m = await mount(sidebar(THREADS, { projects: [p1, p2] }));
     await openScopeMenu(m);
     assert.equal(m.queryAll("[data-project-icon]").length, 0);
+    assert.ok(
+      m.query('[data-scope-item="p1"] [data-project-avatar]'),
+      "scope row avatar",
+    );
+    const cards = m.queryAll("[data-thread-card]");
+    assert.ok(cards.length > 0);
+    for (const card of cards) {
+      assert.ok(
+        card.querySelector("[data-project-avatar]"),
+        `avatar on row ${card.getAttribute("data-thread-card")}`,
+      );
+    }
     m.unmount();
   });
 });
@@ -3917,7 +3939,7 @@ describe("Sidebar recently deleted shelf (#940)", () => {
     );
     const toggle = m.query("[data-trashed-shelf-toggle]");
     assert.ok(toggle, "Recently deleted shelf toggle is present");
-    assert.match(toggle!.textContent || "", /Recently deleted \(2\)/);
+    assert.match(toggle!.textContent || "", /Recently deleted · 2/);
     await m.click(toggle!);
     await m.flush();
     assert.ok(m.query('[data-trashed-row="gone-1"]'));
@@ -3935,6 +3957,29 @@ describe("Sidebar recently deleted shelf (#940)", () => {
     await m.click(m.query('[data-purge-btn="gone-1"]')!);
     await m.click(m.query('[data-purge-confirm="gone-1"]')!);
     assert.deepEqual(purged, ["gone-1"]);
+    m.unmount();
+  });
+
+  it("shows the shared-memory count in the footer beside a compact Awake (#1429)", async () => {
+    await clearSidebarStorage();
+    const stayAwake = { mode: "agent", blocking: true, onBattery: false, anyWorking: true } as const;
+    const m = await mount(sidebar(THREADS, { memoryEntries: 1284, stayAwake }));
+    const pulse = m.query("[data-memory-pulse]");
+    assert.ok(pulse, "memory pulse renders");
+    assert.match(pulse!.textContent || "", /1,284 memories/);
+    const awake = m.query("[data-stay-awake]");
+    assert.ok(awake, "Awake control still renders");
+    assert.ok(awake!.hasAttribute("data-compact"), "Awake goes compact");
+    assert.match(awake!.getAttribute("aria-label") || "", /^Stay awake: Agent/);
+    m.unmount();
+  });
+
+  it("hides the memory count when the server is down (null)", async () => {
+    await clearSidebarStorage();
+    const stayAwake = { mode: "agent", blocking: false, onBattery: false, anyWorking: true } as const;
+    const m = await mount(sidebar(THREADS, { memoryEntries: null, stayAwake }));
+    assert.equal(m.query("[data-memory-pulse]"), null);
+    assert.ok(!m.query("[data-stay-awake]")!.hasAttribute("data-compact"));
     m.unmount();
   });
 });

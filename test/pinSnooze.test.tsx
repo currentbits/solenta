@@ -281,7 +281,7 @@ describe("Sidebar pin + snooze shelves (round 44)", () => {
     assert.equal(m.query("[data-later-shelf]"), null, "Later shelf is gone");
     const snoozed = snoozedToggle(m);
     assert.ok(snoozed, "Snoozed shelf toggle");
-    assert.match(snoozed!.textContent || "", /Snoozed \(2\)/);
+    assert.match(snoozed!.textContent || "", /Snoozed · 2/);
     assert.equal(
       snoozed!.getAttribute("aria-expanded"),
       "false",
@@ -289,7 +289,7 @@ describe("Sidebar pin + snooze shelves (round 44)", () => {
     );
     const settledH = settledToggle(m);
     assert.ok(settledH, "Settled is a separate shelf");
-    assert.match(settledH!.textContent || "", /Settled \(1\)/);
+    assert.match(settledH!.textContent || "", /Settled · 1/);
 
     await openSnoozedShelf(m);
     const rows = m
@@ -368,7 +368,7 @@ describe("Sidebar pin + snooze shelves (round 44)", () => {
     try {
       const header = settledToggle(m);
       assert.ok(header, "Settled shelf present before pin");
-      assert.match(header!.textContent || "", /Settled \(1\)/);
+      assert.match(header!.textContent || "", /Settled · 1/);
       await openSettledShelf(m);
       assert.ok(
         m.query('[data-thread-card="t-was-settled"][data-settled="true"]'),
@@ -634,7 +634,7 @@ describe("fakeCoder setPinned/setSnoozed honesty (round 44)", () => {
 
         const header = snoozedToggle(m);
         assert.ok(header, "thread lands on the Snoozed shelf");
-        assert.match(header!.textContent || "", /Snoozed \(1\)/);
+        assert.match(header!.textContent || "", /Snoozed · 1/);
         await openSnoozedShelf(m);
         assert.ok(
           m.query('[data-thread-card="t-snooze-mid"][data-snoozed="true"]'),

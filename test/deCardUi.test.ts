@@ -120,9 +120,10 @@ describe("structural seams", () => {
 });
 
 describe("boxed surfaces flatten to fill, not outline", () => {
-  it("transcript, composer, kanban, memory, skills cards drop --border tiles", () => {
+  // The composer card is exempt since #1429: the approved shell is one
+  // hairline-bordered card that the status lip and worktree tab attach to.
+  it("transcript, kanban, memory, skills cards drop --border tiles", () => {
     const thread = loadCss("src/components/ThreadView.module.css");
-    const composer = loadCss("src/components/Composer.module.css");
     const kanban = loadCss("src/components/KanbanView.module.css");
     const memory = loadCss("src/components/MemoryTab.module.css");
     const skills = loadCss("src/components/SkillsTab.module.css");
@@ -132,7 +133,6 @@ describe("boxed surfaces flatten to fill, not outline", () => {
       ["ThreadView", thread, "card"],
       ["ThreadView", thread, "emptyGlyph"],
       ["ThreadView", thread, "diffComment"],
-      ["Composer", composer, "card"],
       ["KanbanView", kanban, "column"],
       ["SkillsTab", skills, "preview"],
       ["SkillsTab", skills, "instructionCode"],

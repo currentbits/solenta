@@ -52,9 +52,12 @@ function Icon({ children, size = 14 }: { children: ReactNode; size?: number }) {
 export function StayAwakeControl({
   state,
   onSetMode,
+  compact = false,
 }: {
   state: StayAwakeStatus;
   onSetMode: (mode: StayAwakeMode) => void;
+  /** Dot + cup only; the state word stays on the tooltip and aria-label. */
+  compact?: boolean;
 }) {
   const status = state.blocking
     ? "Keeping this Mac awake"
@@ -69,6 +72,7 @@ export function StayAwakeControl({
       data-stay-awake=""
       data-stay-awake-mode={state.mode}
       data-stay-awake-blocking={state.blocking ? "" : undefined}
+      data-compact={compact ? "" : undefined}
       title={title}
       aria-label={`Stay awake: ${MODE_LABEL[state.mode]}. ${status}`}
       onClick={() => onSetMode(nextMode(state.mode))}

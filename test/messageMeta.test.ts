@@ -3,6 +3,7 @@ import { describe, it } from "node:test";
 import {
   formatClock,
   messageMetaLine,
+  metaModelLabel,
   stripDurationPrefix,
 } from "../src/messageMeta.ts";
 
@@ -45,8 +46,21 @@ describe("messageMetaLine", () => {
         effort: "high",
         duration: "Worked for 1m 45s",
       }),
-      "Opus 5 · high · 1m 45s · 9:15 PM",
+      "opus 5 · high · 1m 45s · 9:15 PM",
     );
+  });
+
+  it("leads with the agent and shortens model ids (#1429)", () => {
+    assert.equal(
+      messageMetaLine({
+        createdAt: AT_9_15_PM,
+        agent: "claude",
+        model: "claude-opus-5-5",
+      }),
+      "claude · opus 5.5 · 9:15 PM",
+    );
+    assert.equal(metaModelLabel("claude-sonnet-5"), "sonnet 5");
+    assert.equal(metaModelLabel("gpt-5.1-codex"), "gpt-5.1-codex");
   });
 
   it("always shows the time, even when nothing else is known", () => {

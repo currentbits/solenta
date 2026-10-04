@@ -3,10 +3,10 @@ import { useEscapeClose } from "../useEscapeClose";
 import styles from "./WorkspaceStrip.module.css";
 
 /**
- * Draft-only lip under the composer (t3-style): pick where the first send
- * runs — the project checkout or a fresh worktree from a base branch. The
- * worktree itself is still created lazily on that first send; after it the
- * strip unmounts and the choice lives in Thread details.
+ * Tab under the composer (t3-style). On a draft it picks where the first send
+ * runs — the project checkout or a fresh worktree from a base branch; the
+ * worktree itself is still created lazily on that first send. After that,
+ * `started` turns it into a read-only label of where the thread runs.
  */
 export interface WorkspaceStripProps {
   /** Thread has pendingWorktree armed. */
@@ -16,7 +16,8 @@ export interface WorkspaceStripProps {
   /** Recorded merge/PR base; null = repo default. */
   baseBranch: string | null;
   listBaseBranches?: () => Promise<{ defaultBranch: string; branches: string[] }>;
-  onSetWorktree: (worktree: boolean) => Promise<unknown>;
+  /** Required while editable; unused once `started`. */
+  onSetWorktree?: (worktree: boolean) => Promise<unknown>;
   onSetBaseBranch?: (baseBranch: string | null) => Promise<unknown>;
   /**
    * The project's most recent other worktree thread. "Previous worktree"
@@ -27,6 +28,8 @@ export interface WorkspaceStripProps {
   /** "Start from origin": fetch the base at creation and start from it. */
   fromOrigin?: boolean;
   onSetFromOrigin?: (fromOrigin: boolean) => Promise<unknown>;
+  /** Thread has sent: show where it runs (read-only), with its branch. */
+  started?: { branch: string | null } | null;
 }
 
 type Open = "workspace" | "base" | null;
@@ -41,6 +44,7 @@ export function WorkspaceStrip({
   previous = null,
   fromOrigin = false,
   onSetFromOrigin,
+  started = null,
 }: WorkspaceStripProps) {
   const [open, setOpen] = useState<Open>(null);
   const [branches, setBranches] = useState<{
@@ -65,7 +69,7 @@ export function WorkspaceStrip({
 
   // Name the repo default ("From main") once, without waiting for a click.
   useEffect(() => {
-    if (!worktree || branches || !listBaseBranches) return;
+    if (!worktree || branches || !listBaseBranches || (started && baseBranch)) return;
     let live = true;
     listBaseBranches().then(
       (listed) => live && setBranches(listed),
@@ -95,6 +99,20 @@ export function WorkspaceStrip({
   const matches = (branches?.branches ?? []).filter(
     (b) => !q || b.toLowerCase().includes(q),
   );
+
+  if (started) {
+    return (
+      <div className={`${styles.strip} ${styles.readOnly}`} data-workspace-strip="readonly">
+        <span className={styles.label} data-workspace-label={worktree ? "worktree" : "local"}>
+          {worktree ? <WorktreeGlyph /> : <FolderGlyph />}
+          {worktree ? "worktree" : "local checkout"}
+          {started.branch ? ` · ${started.branch}` : ""}
+        </span>
+        <span className={styles.spacer} />
+        {worktree ? <span className={styles.label}>from {baseLabel}</span> : null}
+      </div>
+    );
+  }
 
   return (
     <div className={styles.strip} ref={rootRef} data-workspace-strip="">
@@ -130,7 +148,7 @@ export function WorkspaceStrip({
               aria-checked={!worktree}
               className={styles.item}
               data-workspace-option="local"
-              onClick={() => void run(() => onSetWorktree(false))}
+              onClick={() => void run(async () => onSetWorktree?.(false))}
             >
               <FolderGlyph />
               <span className={styles.itemText}>
@@ -147,7 +165,7 @@ export function WorkspaceStrip({
               data-workspace-option="worktree"
               onClick={() =>
                 void run(async () => {
-                  await onSetWorktree(true);
+                  await onSetWorktree?.(true);
                   // Leaving "Previous worktree" drops the stacked base too.
                   if (stacked && onSetBaseBranch) await onSetBaseBranch(null);
                 })
@@ -170,7 +188,7 @@ export function WorkspaceStrip({
                 title={`Stack on ${previous.branch}: its committed work carries over and merges land back on it. Uncommitted edits stay in the old worktree.`}
                 onClick={() =>
                   void run(async () => {
-                    await onSetWorktree(true);
+                    await onSetWorktree?.(true);
                     await onSetBaseBranch(previous.branch);
                   })
                 }

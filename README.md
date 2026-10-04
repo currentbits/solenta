@@ -342,8 +342,7 @@ welcome, and small PRs more so than large ones.
 ## Acknowledgments
 
 Solenta's design and some of its feature ideas are inspired by
-[t3code](https://github.com/pingdotgg/t3code) and
-[Synara](https://github.com/Emanuele-web04/synara). No code from either project
-is used; everything here is original work under the [MIT license](LICENSE).
+[t3code](https://github.com/pingdotgg/t3code). No code from that project is
+used; everything here is original work under the [MIT license](LICENSE).
 
 [issues]: https://github.com/currentbits/solenta/issues

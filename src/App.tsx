@@ -2071,6 +2071,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         onOpenSettings={openSettings}
         stayAwake={stayAwake}
         onSetStayAwakeMode={(mode) => void setStayAwakeMode(mode)}
+        memoryEntries={appStatus?.memory.entries ?? null}
         spendTodayUsd={appStatus?.spendTodayUsd ?? null}
         dailyBudgetUsd={settings?.dailyBudgetUsd ?? null}
         autoSettleAfterDays={

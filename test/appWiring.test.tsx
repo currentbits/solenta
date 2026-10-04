@@ -1956,6 +1956,7 @@ describe("start without a project (#1411)", () => {
       await m.flush();
       await m.click(m.query('button[aria-label="Select thread: New Thread"]') as HTMLElement);
       await m.flush();
+      await m.click(m.query("[data-hero-project]") as HTMLElement);
       await m.click(m.query("[data-start-without-project]") as HTMLElement);
       await m.flush();
       assert.equal(fake.of("projects.ensureScratch").length, 1);

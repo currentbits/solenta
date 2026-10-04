@@ -463,7 +463,10 @@ describe("ThreadView message roles", () => {
     });
     assert.ok(html.includes("EVENT_STATUS_LINE"));
     assert.ok(html.includes("eventLine"), "events use the event line class");
-    assert.ok(html.includes("eventTitle"), "events use the event title class");
+    assert.ok(
+      html.includes('data-step="tool"'),
+      "events render as quiet one-line steps (#1429)",
+    );
     const near = html.slice(
       html.indexOf("EVENT_STATUS_LINE") - 80,
       html.indexOf("EVENT_STATUS_LINE") + 20,

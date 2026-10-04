@@ -68,6 +68,9 @@ function normalizeEntry(raw) {
   if (typeof o.source === "string" && o.source) {
     entry.source = o.source;
   }
+  if (typeof o.agent === "string" && o.agent) {
+    entry.agent = o.agent;
+  }
   if (Array.isArray(o.citations)) {
     /** @type {import('../src/shared/ipc').MemoryCitation[]} */
     const citations = [];

@@ -21,7 +21,9 @@ export function liveWorkingLabel(input: LiveWorkingInput = {}): string {
   if (input.stalledElapsed) {
     return `No output for ${input.stalledElapsed} — the agent may be hung`;
   }
-  if (input.workflowRunning != null) {
+  // Zero means every workflow agent finished while the turn is still live:
+  // fall through to the tool / thinking label instead of "0 agents working".
+  if (input.workflowRunning) {
     const n = input.workflowRunning;
     return `${n} agent${n === 1 ? "" : "s"} working in the background`;
   }

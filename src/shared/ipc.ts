@@ -3376,6 +3376,8 @@ export interface MemoryEntryInfo {
   citations?: MemoryCitation[];
   /** Writer provenance (mcp/rest/app). Shown on expand when present. */
   source?: string | null;
+  /** Agent that wrote the entry ("claude", "codex"…), when recorded. */
+  agent?: string | null;
 }
 
 export type MemoryReviewResolution = "update" | "invalidate" | "noop";
