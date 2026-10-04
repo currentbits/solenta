@@ -1,29 +1,13 @@
 .main {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-  height: 100%;
-  background: var(--bg);
+  composes: main from "./pageShell.module.css";
 }
 
 .header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  padding: 0 24px;
-  border-bottom: 1px solid var(--border-soft);
-  background: var(--bg-elevated);
-  flex-shrink: 0;
-  height: 56px;
+  composes: header from "./pageShell.module.css";
 }
 
 .title {
-  margin: 0;
-  font-size: 14px;
-  font-weight: 650;
-  letter-spacing: -0.01em;
-  color: var(--text);
+  composes: title from "./pageShell.module.css";
 }
 
 .toolbar {
@@ -130,30 +114,12 @@
   color: var(--text-dim);
 }
 
-.refresh,
-.retry {
-  display: inline-flex;
-  align-items: center;
-  height: 28px;
-  padding: 0 12px;
-  border-radius: var(--radius-sm);
-  border: 1px solid var(--border);
-  background: var(--card);
-  color: var(--text-muted);
-  font-size: 12px;
-  font-weight: 550;
-  cursor: pointer;
-  transition:
-    background 0.12s ease,
-    color 0.12s ease,
-    border-color 0.12s ease;
+.refresh {
+  composes: refresh from "./pageShell.module.css";
 }
 
-.refresh:hover:not(:disabled),
-.retry:hover:not(:disabled) {
-  color: var(--text);
-  background: var(--card-hover);
-  border-color: var(--border);
+.retry {
+  composes: refresh from "./pageShell.module.css";
 }
 
 .workspace {
@@ -164,44 +130,20 @@
 }
 
 .list {
-  flex: 1;
-  min-height: 0;
+  composes: list from "./pageShell.module.css";
   min-width: 0;
-  overflow-y: auto;
-  padding: 16px 24px 24px;
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
 }
 
 .group {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
+  composes: group from "./pageShell.module.css";
 }
 
 .groupHeader {
-  margin: 0 4px 4px;
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  color: var(--text-muted);
-  font-family: var(--mono);
+  composes: groupHeader from "./pageShell.module.css";
 }
 
 .row {
-  position: relative;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  padding: 10px 12px;
-  border-radius: var(--radius);
-  border: 1px solid var(--border-soft);
-  background: var(--bg-elevated);
-  transition:
-    background 0.12s ease,
-    border-color 0.12s ease;
+  composes: row from "./pageShell.module.css";
 }
 
 .row:hover {
@@ -215,17 +157,7 @@
 }
 
 .rowSelect {
-  position: absolute;
-  inset: 0;
-  z-index: 0;
-  width: 100%;
-  height: 100%;
-  padding: 0;
-  margin: 0;
-  border: none;
-  border-radius: inherit;
-  background: transparent;
-  cursor: pointer;
+  composes: rowSelect from "./pageShell.module.css";
 }
 
 .rowSelect:disabled {
@@ -233,44 +165,20 @@
   opacity: 1;
 }
 
-.rowSelect:focus-visible {
-  outline: 2px solid var(--blue);
-  outline-offset: -2px;
-}
-
 .rowBody {
-  position: relative;
-  z-index: 1;
-  pointer-events: none;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  min-width: 0;
+  composes: rowBody from "./pageShell.module.css";
 }
 
 .rowTop {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-  min-width: 0;
+  composes: rowTop from "./pageShell.module.css";
 }
 
 .number {
-  flex-shrink: 0;
-  font-family: var(--mono);
-  font-size: 12px;
-  font-weight: 650;
-  color: var(--text-muted);
+  composes: slug from "./pageShell.module.css";
 }
 
 .prTitle {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 13px;
-  font-weight: 560;
-  color: var(--text);
+  composes: threadTitle from "./pageShell.module.css";
 }
 
 .draft {
@@ -287,12 +195,7 @@
 }
 
 .rowMeta {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  min-width: 0;
-  color: var(--text-dim);
-  font-size: 11px;
+  composes: rowMeta from "./pageShell.module.css";
 }
 
 .branch {
@@ -399,26 +302,14 @@
 }
 
 .empty {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  padding: 32px 24px;
-  text-align: center;
+  composes: empty from "./pageShell.module.css";
 }
 
 .emptyTitle {
-  margin: 0;
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--text);
+  composes: emptyTitle from "./pageShell.module.css";
 }
 
 .emptyHint {
-  margin: 0;
-  font-size: 12.5px;
-  color: var(--text-dim);
+  composes: emptyHint from "./pageShell.module.css";
   max-width: 36ch;
 }
