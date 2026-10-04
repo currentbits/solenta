@@ -1,9 +1,5 @@
 "use strict";
 
-// cross-spawn, not child_process: on Windows the agent CLIs install as
-// .cmd shims and Node refuses to exec those directly. cross-spawn routes
-// them through cmd.exe with correct escaping, which matters because the
-// prompt travels in argv (#442).
 const { runJsonLines, SIGKILL_AFTER_MS } = require("./agent.js");
 const { harvestToolResult } = require("./tool-images.js");
 const fs = require("node:fs");
