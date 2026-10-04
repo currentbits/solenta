@@ -998,6 +998,9 @@ function createRunner(opts) {
     if (changed) {
       store.save();
       pushDetail(threadId, workflow);
+      // Between turns nothing else pushes the list, and the sidebar files a
+      // done thread with running subagents on Working until they settle.
+      pushThreadsChanged();
     }
     return changed;
   }
@@ -1017,6 +1020,7 @@ function createRunner(opts) {
     });
     store.save();
     pushDetail(threadId, null);
+    pushThreadsChanged();
   }
 
   /** Arm the idle reaper after a turn settles; disarmed on reuse. */
