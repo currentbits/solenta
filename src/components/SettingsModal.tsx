@@ -18,7 +18,7 @@ import type {
 } from "../shared/ipc";
 import { useEscapeClose } from "../useEscapeClose";
 import { useModalFocus } from "../useModalFocus";
-import { type MemoryProjectToolsApi } from "./MemoryTab";
+import type { MemoryProjectToolsApi } from "./MemoryTab";
 import { SkillsManager, type SkillsManagerProps } from "./SkillsTab";
 import styles from "./SettingsModal.module.css";
 import { IntegrationsSection } from "./IntegrationsSection";
@@ -799,4 +799,3 @@ export function SettingsModal({
     </div>
   );
 }
-
