@@ -145,28 +145,6 @@
   display: none;
 }
 
-.reviewChip {
-  display: inline-flex;
-  align-items: center;
-  height: 28px;
-  padding: 0 10px;
-  border-radius: var(--radius-pill);
-  border: 1px solid var(--border);
-  background: var(--card);
-  color: var(--text);
-  font-size: 12px;
-  font-weight: 550;
-}
-
-.reviewChip:hover {
-  background: var(--card-hover);
-}
-
-.reviewChip:focus-visible {
-  outline: none;
-  box-shadow: var(--focus-ring);
-}
-
 .discardBanner {
   display: flex;
   flex-direction: column;
@@ -213,14 +191,6 @@
 
 .scroll > :first-child {
   border-top: none;
-}
-
-.sectionHead {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 8px;
-  min-width: 0;
 }
 
 .sectionTitle {
@@ -297,14 +267,6 @@
 .cardToggle:focus-visible {
   outline: none;
   box-shadow: var(--focus-ring);
-}
-
-.cardHead {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  min-width: 0;
 }
 
 .badge {
