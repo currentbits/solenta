@@ -1,9 +1,5 @@
 .main {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-  height: 100%;
-  background: var(--bg);
+  composes: main from "./pageShell.module.css";
 }
 
 .header {
@@ -19,11 +15,7 @@
 }
 
 .title {
-  margin: 0;
-  font-size: 14px;
-  font-weight: 650;
-  letter-spacing: -0.01em;
-  color: var(--text);
+  composes: title from "./pageShell.module.css";
 }
 
 .controls {
@@ -72,27 +64,7 @@
 }
 
 .refresh {
-  display: inline-flex;
-  align-items: center;
-  height: 28px;
-  padding: 0 12px;
-  border-radius: var(--radius-sm);
-  border: 1px solid var(--border);
-  background: var(--card);
-  color: var(--text-muted);
-  font-size: 12px;
-  font-weight: 550;
-  cursor: pointer;
-  transition:
-    background 0.12s ease,
-    color 0.12s ease,
-    border-color 0.12s ease;
-}
-
-.refresh:hover:not(:disabled) {
-  color: var(--text);
-  background: var(--card-hover);
-  border-color: var(--border);
+  composes: refresh from "./pageShell.module.css";
 }
 
 .refresh:disabled,
@@ -102,21 +74,7 @@
 }
 
 .retry {
-  display: inline-flex;
-  align-items: center;
-  height: 28px;
-  padding: 0 12px;
-  border-radius: var(--radius-sm);
-  border: 1px solid var(--border);
-  background: var(--card);
-  color: var(--text);
-  font-size: 12px;
-  font-weight: 550;
-  cursor: pointer;
-}
-
-.retry:hover:not(:disabled) {
-  background: var(--card-hover);
+  composes: retry from "./pageShell.module.css";
 }
 
 .body {
@@ -314,27 +272,15 @@
 }
 
 .empty {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  padding: 32px 24px;
-  text-align: center;
+  composes: empty from "./pageShell.module.css";
 }
 
 .emptyTitle {
-  margin: 0;
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--text);
+  composes: emptyTitle from "./pageShell.module.css";
 }
 
 .emptyHint {
-  margin: 0;
-  font-size: 12.5px;
-  color: var(--text-dim);
+  composes: emptyHint from "./pageShell.module.css";
   max-width: 42ch;
 }
 

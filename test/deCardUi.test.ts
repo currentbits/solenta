@@ -104,7 +104,7 @@ describe("structural seams", () => {
       ["src/components/AgentsPanel.module.css", "footer", /border-top:\s*1px solid var\(--border-soft\)/],
       ["src/components/ThreadView.module.css", "header", /border-bottom:\s*1px solid var\(--border-soft\)/],
       ["src/components/ThreadView.module.css", "changesHead", /border-bottom:\s*1px solid var\(--border-soft\)/],
-      ["src/components/KanbanView.module.css", "header", /border-bottom:\s*1px solid var\(--border-soft\)/],
+      ["src/components/pageShell.module.css", "header",/border-bottom:\s*1px solid var\(--border-soft\)/],
     ];
     for (const [file, name, re] of cases) {
       const body = ruleBody(loadCss(file), name);
