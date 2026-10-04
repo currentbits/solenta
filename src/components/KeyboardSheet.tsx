@@ -22,6 +22,8 @@ const APP_SHORTCUTS: readonly ShortcutRow[] = [
   { keys: "⌘ + ⇧ + F", action: "Search file contents" },
   { keys: "⌘ + Enter", action: "Send message" },
   { keys: "⌥ + Enter", action: "Ask a side question (/btw)" },
+  { keys: "⌘ + ⇧ + Enter", action: "Steer the live turn" },
+  { keys: "⌘ + S", action: "Stash the draft" },
   { keys: "Escape", action: "Stop the live turn · close menus" },
   { keys: "Escape Escape", action: "Rewind the last turn" },
   { keys: "Ctrl + C", action: "Stop the live turn" },

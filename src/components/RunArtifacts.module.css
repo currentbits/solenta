@@ -59,7 +59,7 @@
 
 .download {
   align-self: flex-start;
-  color: var(--accent);
+  color: var(--info-fg);
   font-size: 12px;
   text-decoration: none;
 }

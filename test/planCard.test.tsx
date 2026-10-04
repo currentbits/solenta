@@ -113,7 +113,7 @@ describe("PlanCard", () => {
   it("shows the steps and how many are done", async () => {
     const view = await mountView(detail({ planSteps: steps }));
     assert.ok(view.query("[data-plan-card][data-page-block]"));
-    assert.match(view.text(), /1\/3 done/);
+    assert.match(view.text(), /Plan1\/3/);
     assert.match(view.text(), /Read the runner/);
     assert.match(view.text(), /Render the card/);
     // Statuses drive the step markers.

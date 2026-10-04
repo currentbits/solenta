@@ -1,20 +1,47 @@
+/* Geist + Geist Mono (SIL OFL 1.1, see assets/fonts/OFL.txt): the solenta.app
+   typefaces, bundled so the app and the site share one voice (#1429). */
+@font-face {
+  font-family: "Geist";
+  src: url("./assets/fonts/Geist-Variable.woff2") format("woff2");
+  font-weight: 100 900;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Geist Mono";
+  src: url("./assets/fonts/GeistMono-Variable.woff2") format("woff2");
+  font-weight: 100 900;
+  font-display: swap;
+}
+
 :root {
   color-scheme: dark;
-  --bg: #0a0d13;
-  --bg-elevated: #10151f;
-  --panel: #10151f;
-  --card: #171d29;
-  --card-hover: #1d2534;
+  /* Warm ink neutrals from solenta.app, not a cool grey (#1429). */
+  --bg: #0f0f0e;
+  --bg-elevated: #131312;
+  --panel: #131312;
+  --card: #1c1c1b;
+  --card-hover: #242423;
   /* Controls (buttons, inputs, popovers) use --border.
      Structural seams and in-page grouping use --border-soft (hairline). */
-  --border: #1c2432;
-  --border-soft: #131a24;
-  --text: #e8ecf4;
-  /* ~8.5:1 on --card (AAA at ≤12px). Was #8b95a8 ~5.6:1. */
-  --text-muted: #b0b8c6;
-  /* ~7.4:1 on --card (AAA at ≤12px). Was #7d8798 ~4.7:1. */
-  --text-dim: #a4adb8;
-  --text-on-accent: #fff;
+  --border: #2a2a27;
+  --border-soft: #1e1e1c;
+  --text: #ebebe8;
+  /* ~8.3:1 on --card (AAA at ≤12px). */
+  --text-muted: #b5b5ae;
+  /* ~7.1:1 on --card (AAA at ≤12px). */
+  --text-dim: #a8a8a1;
+  /* Ink on the yellow accent (primary buttons, send). */
+  --text-on-accent: #191918;
+  /* Brand accent: the solenta.app marker yellow. Primary actions, focus,
+     the active plan step, favourites. --mark is the highlighter stripe. */
+  --accent: #f2e51f;
+  --accent-hover: #f7ed4a;
+  --accent-soft: rgba(242, 229, 31, 0.12);
+  --accent-border: rgba(242, 229, 31, 0.45);
+  --mark: rgba(242, 229, 31, 0.3);
+  /* Small yellow marks (diamonds, notches). Dark needs no edge; paper does. */
+  --accent-edge: var(--accent);
+  --accent-mark-ring: none;
   --blue: #3b82f6;
   --blue-soft: rgba(59, 130, 246, 0.15);
   --blue-border: rgba(59, 130, 246, 0.35);
@@ -24,6 +51,10 @@
   --amber: #fbbf24;
   --amber-soft: rgba(251, 191, 36, 0.08);
   --amber-border: rgba(251, 191, 36, 0.35);
+  /* Stalled: orange, so it never reads as the brand yellow. */
+  --orange: #fb923c;
+  --orange-soft: rgba(251, 146, 60, 0.1);
+  --orange-border: rgba(251, 146, 60, 0.38);
   /* Delegating (orchestrator waiting on workers) — its own colour, not blue. */
   --violet: #a78bfa;
   --violet-soft: rgba(167, 139, 250, 0.12);
@@ -41,20 +72,20 @@
   --diff-del-fg: #fca5a5;
   --diff-del-bg: rgba(248, 113, 113, 0.08);
   /* Overlay washes: white-on-dark. Light theme swaps to ink-on-paper. */
-  --overlay-soft: rgba(255, 255, 255, 0.04);
-  --overlay-hover: rgba(255, 255, 255, 0.07);
-  --overlay-strong: rgba(255, 255, 255, 0.14);
-  --track: #2a3344;
+  --overlay-soft: rgba(255, 255, 240, 0.04);
+  --overlay-hover: rgba(255, 255, 240, 0.07);
+  --overlay-strong: rgba(255, 255, 240, 0.14);
+  --track: #2e2e2b;
   --scrim: rgba(0, 0, 0, 0.55);
   --scrim-heavy: rgba(0, 0, 0, 0.78);
   --input-fill: rgba(0, 0, 0, 0.25);
   --spinner-track: rgba(255, 255, 255, 0.35);
-  --scrollbar-thumb: #2a3344;
-  --scrollbar-thumb-hover: #364155;
+  --scrollbar-thumb: #2e2e2b;
+  --scrollbar-thumb-hover: #3c3c38;
   /* Shared button + overlay primitives (restyle pass). */
-  --btn-primary-bg: #2563eb;
-  --btn-primary-hover: #3b82f6;
-  --focus-ring-color: rgba(59, 130, 246, 0.45);
+  --btn-primary-bg: var(--accent);
+  --btn-primary-hover: var(--accent-hover);
+  --focus-ring-color: rgba(242, 229, 31, 0.5);
   --focus-ring: 0 0 0 2px var(--focus-ring-color);
   --shadow-color: rgba(0, 0, 0, 0.35);
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.18);
@@ -64,30 +95,42 @@
   --radius: 10px;
   --radius-sm: 6px;
   --radius-pill: 999px;
+  /* Transcript + composer share one centred reading column (#1429). */
+  --thread-column: 736px;
   --sidebar-width: 300px;
   --agents-width: 380px;
   --agents-rail-width: 32px;
-  --font: "Inter", "SF Pro Text", -apple-system, BlinkMacSystemFont, "Segoe UI",
+  --font: "Geist", "SF Pro Text", -apple-system, BlinkMacSystemFont, "Segoe UI",
     system-ui, sans-serif;
-  --mono: "SF Mono", "JetBrains Mono", ui-monospace, Menlo, Consolas, monospace;
+  --mono: "Geist Mono", "SF Mono", "JetBrains Mono", ui-monospace, Menlo, Consolas,
+    monospace;
 }
 
 /* Same token names. No per-component branching (issue #651). */
 :root[data-theme="light"] {
   color-scheme: light;
-  --bg: #f3f5f8;
-  --bg-elevated: #ffffff;
-  --panel: #ffffff;
-  --card: #fafbfd;
-  --card-hover: #ebeef3;
-  --border: #e3e8ef;
-  --border-soft: #eceff4;
-  --text: #12161e;
-  /* ~7.5:1 on --card (AAA at ≤12px). */
-  --text-muted: #4b5568;
-  /* ~9.0:1 on --card (AAA at ≤12px). */
-  --text-dim: #3f4a5a;
-  --text-on-accent: #fff;
+  /* solenta.app paper and ink (#1429). */
+  --bg: #f5f5f2;
+  --bg-elevated: #fcfcfa;
+  --panel: #fcfcfa;
+  --card: #f9f9f6;
+  --card-hover: #ecece7;
+  --border: #e0e0da;
+  --border-soft: #eaeae5;
+  --text: #191918;
+  /* ~8.6:1 on --card (AAA at ≤12px). */
+  --text-muted: #4a4a45;
+  /* ~9.6:1 on --card (AAA at ≤12px). */
+  --text-dim: #42423d;
+  --text-on-accent: #191918;
+  --accent: #f2e51f;
+  --accent-hover: #e6d90f;
+  --accent-soft: rgba(242, 229, 31, 0.22);
+  /* Yellow on paper is ~1.2:1, so borders and rings on light use olive. */
+  --accent-border: rgba(133, 124, 0, 0.55);
+  --mark: rgba(242, 229, 31, 0.7);
+  --accent-edge: #857c00;
+  --accent-mark-ring: 0 0 0 1px rgba(133, 124, 0, 0.65);
   --blue: #1e40af;
   --blue-soft: rgba(30, 64, 175, 0.1);
   --blue-border: rgba(30, 64, 175, 0.35);
@@ -97,6 +140,9 @@
   --amber: #78350f;
   --amber-soft: rgba(120, 53, 15, 0.1);
   --amber-border: rgba(120, 53, 15, 0.35);
+  --orange: #9a3412;
+  --orange-soft: rgba(154, 52, 18, 0.1);
+  --orange-border: rgba(154, 52, 18, 0.35);
   --violet: #5b21b6;
   --violet-soft: rgba(91, 33, 182, 0.1);
   --violet-border: rgba(91, 33, 182, 0.3);
@@ -112,25 +158,25 @@
   --diff-add-bg: rgba(6, 95, 70, 0.1);
   --diff-del-fg: #991b1b;
   --diff-del-bg: rgba(153, 27, 27, 0.1);
-  --overlay-soft: rgba(15, 23, 42, 0.04);
-  --overlay-hover: rgba(15, 23, 42, 0.07);
-  --overlay-strong: rgba(15, 23, 42, 0.1);
-  --track: #d5dbe6;
-  --scrim: rgba(15, 23, 42, 0.4);
-  --scrim-heavy: rgba(15, 23, 42, 0.6);
-  --input-fill: rgba(15, 23, 42, 0.04);
-  --spinner-track: rgba(15, 23, 42, 0.25);
-  --scrollbar-thumb: #c5cdd8;
-  --scrollbar-thumb-hover: #a8b3c2;
-  --btn-primary-bg: #1e40af;
-  --btn-primary-hover: #1e3a8a;
-  --focus-ring-color: rgba(30, 64, 175, 0.45);
+  --overlay-soft: rgba(25, 25, 24, 0.04);
+  --overlay-hover: rgba(25, 25, 24, 0.07);
+  --overlay-strong: rgba(25, 25, 24, 0.1);
+  --track: #d9d9d3;
+  --scrim: rgba(25, 25, 24, 0.4);
+  --scrim-heavy: rgba(25, 25, 24, 0.6);
+  --input-fill: rgba(25, 25, 24, 0.04);
+  --spinner-track: rgba(25, 25, 24, 0.25);
+  --scrollbar-thumb: #cbcbc4;
+  --scrollbar-thumb-hover: #afafa8;
+  --btn-primary-bg: var(--accent);
+  --btn-primary-hover: var(--accent-hover);
+  --focus-ring-color: rgba(25, 25, 24, 0.55);
   --focus-ring: 0 0 0 2px var(--focus-ring-color);
-  --shadow-color: rgba(15, 23, 42, 0.12);
-  --shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.08);
+  --shadow-color: rgba(25, 25, 24, 0.12);
+  --shadow-sm: 0 1px 2px rgba(25, 25, 24, 0.08);
   --shadow-pop:
-    0 12px 32px rgba(15, 23, 42, 0.12), 0 2px 8px rgba(15, 23, 42, 0.06);
-  --shadow-modal: 0 24px 64px rgba(15, 23, 42, 0.16);
+    0 12px 32px rgba(25, 25, 24, 0.12), 0 2px 8px rgba(25, 25, 24, 0.06);
+  --shadow-modal: 0 24px 64px rgba(25, 25, 24, 0.16);
 }
 
 *,

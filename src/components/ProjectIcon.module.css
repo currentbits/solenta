@@ -6,3 +6,17 @@
   background: var(--card);
   pointer-events: none;
 }
+
+.avatar {
+  flex-shrink: 0;
+  display: inline-grid;
+  place-items: center;
+  border-radius: 4px;
+  color: #fff;
+  font-family: var(--font);
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: -0.02em;
+  pointer-events: none;
+  user-select: none;
+}

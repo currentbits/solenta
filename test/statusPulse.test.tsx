@@ -186,12 +186,33 @@ describe("ThreadCard status pulse", () => {
     return { m, t };
   }
 
-  it("puts a working pulse on the title line", async () => {
+  it("pulses the diamond marker inside the working status label (#1429)", async () => {
     const { m } = await card({ status: "working", runStartedAt: NOW });
     const dot = m.query("[data-status-dot]");
     assert.ok(dot, "working thread must show a pulse");
     assert.equal(dot!.getAttribute("data-status-dot"), "working");
-    assert.match(dot!.parentElement!.textContent || "", /pulse target/);
+    assert.equal(dot!.getAttribute("data-marker"), "working");
+    assert.ok(dot!.closest("[data-status-label]"), "marker sits in the label");
+    m.unmount();
+  });
+
+  it("marks stalled with a static orange-toned diamond, not attention amber (#1429)", async () => {
+    const { m } = await card({ status: "working", stalledAt: NOW - 60_000 });
+    const label = m.query("[data-status-label]");
+    assert.equal(label?.getAttribute("data-status-label"), "Stalled");
+    assert.equal(label?.getAttribute("data-tone"), "stalled");
+    assert.ok(label?.hasAttribute("data-stalled"));
+    assert.ok(label?.querySelector('[data-marker="stalled"]'));
+    assert.equal(m.query("[data-status-dot]"), null, "stalled never pulses");
+    m.unmount();
+  });
+
+  it("draws a hollow diamond for queued", async () => {
+    const { m } = await card({
+      status: "idle",
+      queued: { prompt: "next", queuedAt: NOW } as ThreadInfo["queued"],
+    });
+    assert.ok(m.query('[data-status-label="Queued"] [data-marker="queued"]'));
     m.unmount();
   });
 

@@ -56,17 +56,22 @@
   background: var(--danger-soft);
 }
 
+/* One shell (#1429): the card draws the only border; the textarea has none. */
 .card {
   position: relative;
   background: var(--card);
-  border: 1px solid transparent;
-  border-radius: 14px;
-  padding: 12px 12px 10px;
-  transition: border-color 0.15s ease;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 14px 14px 10px;
+  transition:
+    border-color 0.15s ease,
+    box-shadow 0.15s ease;
 }
 
-.card:focus-within {
-  border-color: var(--blue-border);
+/* Yellow focus edge (#1429 F3): only while typing, not when a pill has focus. */
+.card:has(.textarea:focus) {
+  border-color: var(--accent-border);
+  box-shadow: 0 0 0 3px var(--accent-soft);
 }
 
 .textarea {
@@ -83,15 +88,14 @@
   field-sizing: content;
 }
 
-.textarea::placeholder {
-  color: var(--text-dim);
+/* The card's yellow edge is the focus indicator; no second ring inside it. */
+.textarea:focus-visible,
+.modelSearch:focus-visible {
+  box-shadow: none;
 }
 
-.hints {
-  margin-top: 4px;
-  font-size: 11px;
+.textarea::placeholder {
   color: var(--text-dim);
-  user-select: none;
 }
 
 .controls {
@@ -105,8 +109,18 @@
 .pills {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
+  align-items: center;
+  gap: 2px;
   min-width: 0;
+}
+
+/* Hairline between the model, effort and access pills. */
+.sep {
+  flex-shrink: 0;
+  width: 1px;
+  height: 16px;
+  margin: 0 4px;
+  background: var(--border);
 }
 
 .pill {
@@ -161,7 +175,7 @@
 
 .pillAccent:hover:not(:disabled) {
   background: var(--blue-soft);
-  color: var(--text-on-accent);
+  color: var(--info-fg-strong);
 }
 
 .speechConfirm {
@@ -455,22 +469,21 @@
   display: none;
 }
 
-/* Two-pane model picker floating above the composer.
-   Height is pinned so OpenCode's longer, varying descriptions cannot
-   grow the bottom-anchored menu and jump the composer (#762). */
+/* Model picker (#1429): provider rail + one flat, searchable list + effort.
+   Height is pinned so filtering cannot grow the bottom-anchored menu and jump
+   the composer (#762). */
 .modelPopover {
   position: absolute;
   bottom: calc(100% + 8px);
   left: 0;
   z-index: 30;
-  display: flex;
-  align-items: stretch;
-  min-width: 420px;
-  max-width: min(520px, 92vw);
-  height: min(280px, calc(100vh - 140px));
+  display: grid;
+  grid-template-columns: 46px minmax(0, 1fr);
+  width: min(400px, 92vw);
+  height: min(400px, calc(100vh - 140px));
   margin: 0;
   padding: 0;
-  border-radius: 12px;
+  border-radius: 14px;
   border: 1px solid var(--border);
   background: var(--bg-elevated);
   box-shadow: var(--shadow-pop);
@@ -487,32 +500,7 @@
   }
 }
 
-/* Levels mount fresh on drill in/out, so a mount animation per list gives the
-   travel direction for free: models arrive from the right, providers return
-   from the left. */
-.levelEnterLeft {
-  animation: levelFromLeft 120ms ease-out;
-}
-
-.levelEnterRight {
-  animation: levelFromRight 120ms ease-out;
-}
-
-@keyframes levelFromLeft {
-  from {
-    opacity: 0;
-    transform: translateX(-8px);
-  }
-}
-
-@keyframes levelFromRight {
-  from {
-    opacity: 0;
-    transform: translateX(8px);
-  }
-}
-
-/* Rows cascade in behind the level travel; --i is the row index, set inline
+/* Rows cascade in on open; --i is the row index, set inline
    (capped in the component so long lists don't lag). backwards fill keeps a
    row hidden during its delay instead of flashing then animating. */
 .rowEnter {
@@ -520,19 +508,17 @@
   animation-delay: calc(var(--i, 0) * 18ms);
 }
 
+/* Opacity only: a transformed <li> becomes its row's offsetParent, which
+   breaks scrollChildIntoNearestView mid-cascade (a rail jump would not
+   scroll the list). */
 @keyframes rowIn {
   from {
     opacity: 0;
-    transform: translateY(4px);
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
   .modelPopover,
-  .levelEnterLeft,
-  .levelEnterRight,
-  .detailBody,
-  .detailBody > *,
   .rowEnter,
   .pillLabel {
     animation: none;
@@ -540,85 +526,89 @@
 
   .caret,
   .modelRow,
-  .providerRow,
-  .effortSegment,
   .effortBar,
-  .modelRowChevron,
   .highlightGlider {
     transition: none;
   }
 }
 
-.modelPopoverLeft {
-  flex: 1 1 48%;
-  min-width: 0;
-  min-height: 0;
-  padding: 10px 8px 10px 10px;
+.pickerRail {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 0;
   border-right: 1px solid var(--border-soft);
-  display: flex;
-  flex-direction: column;
+  overflow-y: auto;
 }
 
-.modelPopoverRight {
-  flex: 1 1 52%;
+.railButton {
+  position: relative;
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  color: var(--text-muted);
+  font-size: 13px;
+  background: transparent;
+}
+
+.railButton:hover {
+  background: var(--overlay-hover);
+  color: var(--text);
+}
+
+.railButton[data-active="true"] {
+  background: var(--overlay-hover);
+  color: var(--text);
+}
+
+/* Diamond notch (F4) on the active provider. */
+.railButton[data-active="true"]::before {
+  content: "";
+  position: absolute;
+  left: -8px;
+  width: 7px;
+  height: 7px;
+  border-radius: 1.5px;
+  background: var(--accent);
+  box-shadow: var(--accent-mark-ring);
+  transform: rotate(45deg);
+}
+
+.railButton[aria-pressed="true"] {
+  color: var(--accent);
+}
+
+.railButton[data-unavailable="true"] {
+  opacity: 0.4;
+}
+
+.railButton:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--focus-ring-color);
+}
+
+.pickerMain {
+  display: flex;
+  flex-direction: column;
   min-width: 0;
   min-height: 0;
-  padding: 14px 14px 12px;
+  padding: 8px;
+}
+
+.modelSearchRow {
   display: flex;
-  flex-direction: column;
-  gap: 4px;
-  overflow: hidden;
-}
-
-/* Keyed remount per highlighted row: the fade marks the pane following the
-   highlight instead of swapping text mid-frame. */
-.detailBody {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  flex: 1 1 auto;
-  min-height: 0;
-  overflow-y: auto;
-  animation: detailIn 120ms ease-out;
-}
-
-@keyframes detailIn {
-  from {
-    opacity: 0;
-    transform: translateY(3px);
-  }
-}
-
-/* The pane's lines land one after another behind the pane's own fade —
-   fade-only, so they don't fight the pane's slide. */
-.detailBody > * {
-  animation: detailChildIn 160ms ease-out backwards;
-}
-
-.detailBody > *:nth-child(2) {
-  animation-delay: 25ms;
-}
-
-.detailBody > *:nth-child(3) {
-  animation-delay: 50ms;
-}
-
-.detailBody > *:nth-child(4) {
-  animation-delay: 75ms;
-}
-
-@keyframes detailChildIn {
-  from {
-    opacity: 0;
-  }
-}
-
-.modelPaneHeader {
-  font-size: 10px;
-  font-weight: 600;
-  letter-spacing: 0.08em;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+  height: 32px;
+  margin-bottom: 6px;
+  padding: 0 6px;
+  border-bottom: 1px solid var(--border-soft);
   color: var(--text-dim);
-  padding: 2px 8px 8px;
 }
 
 .modelList {
@@ -628,7 +618,6 @@
   list-style: none;
   flex: 1 1 auto;
   min-height: 0;
-  max-height: 240px;
   overflow-y: auto;
   overflow-anchor: none;
   outline: none;
@@ -656,12 +645,13 @@
 }
 
 .modelGroupHeading {
-  font-size: 10px;
-  font-weight: 600;
-  letter-spacing: 0.06em;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  font-weight: 500;
+  letter-spacing: 0.08em;
   text-transform: uppercase;
   color: var(--text-dim);
-  padding: 10px 10px 4px;
+  padding: 8px 8px 4px;
   pointer-events: none;
   user-select: none;
 }
@@ -670,16 +660,23 @@
   padding-top: 2px;
 }
 
+/* Not positioned: the row's offsetParent must stay the scrolling list, which
+   scrollChildIntoNearestView measures against (#762). */
+.modelRowLine {
+  display: flex;
+  align-items: center;
+}
+
 .modelRow {
   position: relative;
   z-index: 1;
   display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 1px;
-  width: 100%;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
   text-align: left;
-  padding: 8px 10px;
+  padding: 7px 8px;
   border-radius: 8px;
   color: var(--text-muted);
   background: transparent;
@@ -701,6 +698,124 @@
   line-height: 1.3;
 }
 
+.modelPopover .modelRowLabel {
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.modelRowId {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-dim);
+  line-height: 1.35;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.star {
+  position: relative;
+  z-index: 1;
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+  margin-right: 2px;
+  border-radius: 6px;
+  color: var(--text-dim);
+  font-size: 13px;
+  background: transparent;
+}
+
+.star:hover {
+  color: var(--text);
+}
+
+.star[aria-pressed="true"] {
+  color: var(--accent);
+}
+
+/* Paper's yellow on white needs the darker accent edge to read. */
+:global(:root[data-theme="light"]) .star[aria-pressed="true"],
+:global(:root[data-theme="light"]) .railButton[aria-pressed="true"] {
+  color: var(--accent-border);
+}
+
+.star:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--focus-ring-color);
+}
+
+.pickerEmpty {
+  padding: 14px 8px;
+  color: var(--text-dim);
+  font-size: 12px;
+}
+
+.setupPanel {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0 8px 6px;
+  padding: 8px;
+  border-radius: 8px;
+  background: var(--overlay-soft);
+}
+
+.setupCommand {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text);
+  word-break: break-all;
+  user-select: all;
+}
+
+.pickerEffort {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+  margin-top: 6px;
+  padding: 8px 8px 2px;
+  border-top: 1px solid var(--border-soft);
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.pickerEffortLabel {
+  margin-right: 6px;
+}
+
+.effortChip {
+  padding: 3px 8px;
+  border-radius: 6px;
+  color: var(--text-muted);
+  font-size: 12px;
+  background: transparent;
+}
+
+.effortChip:hover:not(:disabled) {
+  background: var(--overlay-hover);
+  color: var(--text);
+}
+
+/* Chosen effort is the marker yellow with ink text (F3). */
+.effortChip[aria-pressed="true"] {
+  background: var(--accent);
+  color: var(--text-on-accent);
+  font-weight: 600;
+}
+
+.effortChip:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.effortChip:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--focus-ring-color);
+}
+
 .modelRowVendor {
   font-size: 11px;
   font-weight: 400;
@@ -715,18 +830,21 @@
   color: var(--text);
 }
 
+/* The thread's model: full-strength text and a small yellow diamond. */
 .modelRow[data-selected="true"] {
-  background: var(--green-soft);
-  color: var(--green);
+  color: var(--text);
 }
 
-.modelRow[data-selected="true"] .modelRowVendor {
-  color: var(--green);
-}
-
-.modelRow[data-selected="true"][data-highlighted="true"] {
-  background: var(--green-soft);
-  color: var(--green);
+.modelRow[data-selected="true"] .modelRowLabel::after {
+  content: "";
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin: 0 0 1px 8px;
+  border-radius: 1px;
+  background: var(--accent);
+  box-shadow: var(--accent-mark-ring);
+  transform: rotate(45deg);
 }
 
 .modelRow[data-disabled="true"],
@@ -739,33 +857,6 @@
 .modelRow[data-disabled="true"]:hover,
 .modelRow:disabled:hover {
   background: transparent;
-  color: var(--text-dim);
-}
-
-.detailLabel {
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--text);
-  line-height: 1.3;
-}
-
-.detailVendor {
-  font-size: 12px;
-  color: var(--text-dim);
-  margin-bottom: 4px;
-}
-
-.detailDesc {
-  font-size: 12px;
-  color: var(--text-muted);
-  line-height: 1.45;
-  margin-bottom: 4px;
-}
-
-.catalogNote {
-  margin-top: 8px;
-  font-size: 11.5px;
-  line-height: 1.4;
   color: var(--text-dim);
 }
 
@@ -822,11 +913,12 @@
   min-width: 168px;
 }
 
+/* Yellow squircle, ink arrow (#1429 F3). */
 .send {
-  width: 32px;
-  height: 32px;
-  border-radius: 50%;
-  background: var(--btn-primary-bg);
+  width: 30px;
+  height: 30px;
+  border-radius: 9px;
+  background: var(--accent);
   color: var(--text-on-accent);
   display: grid;
   place-items: center;
@@ -838,7 +930,7 @@
 }
 
 .send:hover:not(:disabled) {
-  background: var(--btn-primary-hover);
+  background: var(--accent-hover);
 }
 
 .send:active:not(:disabled) {
@@ -852,19 +944,23 @@
     0 0 0 4px var(--focus-ring-color);
 }
 
+/* Nothing to send: neutral, so yellow only ever means "ready". A dimmed
+   yellow reads as olive on ink. */
 .send:disabled {
-  background: var(--card-hover);
+  background: var(--overlay-hover);
   color: var(--text-dim);
-  opacity: 1;
   box-shadow: none;
   cursor: not-allowed;
 }
 
-/* Draft workspace lip (WorkspaceStrip) inside the card's footer. */
+/* Worktree tab tucked under the card (#1429 item 7): inset 14px, bottom
+   radius, no top border so it hangs off the card's own bottom edge. */
 .meta {
-  margin-top: 8px;
-  padding: 4px 0 0;
-  border-top: 1px solid var(--border-soft);
+  margin: 0 14px;
+  padding: 0 6px;
+  border: 1px solid var(--border);
+  border-top: 0;
+  border-radius: 0 0 10px 10px;
 }
 
 /* Pending attachments sit inside the card, above the textarea, so they read
@@ -968,45 +1064,16 @@
   opacity: 0.5;
 }
 
-/* Drill-down: a back control that reads as a header, and the chevron that
-   tells a user a provider row leads somewhere rather than selecting. */
-.modelBackHeader {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  width: 100%;
-  padding: 8px 10px 6px;
-  border: 0;
-  background: none;
-  color: var(--text-dim);
-  font-size: 11px;
-  letter-spacing: 0.08em;
-  text-align: left;
-  cursor: pointer;
-}
-
-.modelBackHeader:hover {
-  color: var(--text);
-}
-
-/* Filter for one provider's models. Lives only on the drilled-in level:
-   the provider screen is already short. */
+/* Search across every installed provider; the row draws its own hairline. */
 .modelSearch {
-  flex-shrink: 0;
-  width: 100%;
-  box-sizing: border-box;
-  margin: 0 2px 6px;
-  padding: 5px 8px;
-  border-radius: var(--radius-sm);
-  border: 1px solid var(--border);
-  background: var(--overlay-soft);
+  flex: 1;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
   color: var(--text);
-  font-size: 12px;
+  font-size: 13px;
   outline: none;
-}
-
-.modelSearch:focus {
-  border-color: var(--blue-border);
 }
 
 .modelSearch::placeholder {
@@ -1015,57 +1082,6 @@
 
 .modelSearch::-webkit-search-cancel-button {
   -webkit-appearance: none;
-}
-
-.modelRowChevron {
-  margin-left: auto;
-  color: var(--text-dim);
-  font-size: 13px;
-  transition:
-    transform 120ms ease,
-    color 120ms ease;
-}
-
-/* The chevron leans into the drill direction when its row is highlighted. */
-.providerRow[data-highlighted="true"] .modelRowChevron {
-  transform: translateX(3px);
-  color: var(--text);
-}
-
-/* Provider row: text column on the left, chevron pinned right and centred.
-   Reusing .modelRow (a column) pushed the chevron onto its own line. */
-.providerRow {
-  position: relative;
-  z-index: 1;
-  display: flex;
-  flex-direction: row;
-  align-items: center;
-  gap: 8px;
-  width: 100%;
-  padding: 8px 10px;
-  border: 0;
-  background: none;
-  color: var(--text);
-  text-align: left;
-  cursor: pointer;
-  transition:
-    background-color 100ms ease,
-    transform 100ms ease;
-}
-
-.providerRow:active:not(:disabled) {
-  transform: scale(0.98);
-}
-
-.providerRow:hover:not(:disabled),
-.providerRow[data-highlighted="true"] {
-  /* The glider supplies the background. */
-  background: transparent;
-}
-
-.providerRow:disabled {
-  opacity: 0.45;
-  cursor: default;
 }
 
 .providerRowMark {
@@ -1241,61 +1257,45 @@
   color: var(--danger-fg);
 }
 
-/* One model + effort pill (#1411): the group draws the hover so the two
-   targets read as a single control; effort drops its icon and gets a dot. */
-.modelGroup {
-  display: inline-flex;
-  align-items: center;
-  border-radius: 7px;
-}
-
-.modelGroup[data-with-effort] > .modeWrap:first-child .caret {
-  display: none;
-}
-
-.modelGroup[data-with-effort] > .modeWrap:first-child .pill {
-  padding-right: 4px;
-}
-
-.effortSegment {
-  padding-left: 0;
-}
-
-.effortSegment .effortIcon {
-  display: none;
-}
-
-.effortSegment::before {
-  content: "·";
-  margin-right: 5px;
-  color: var(--text-dim);
-}
-
-.modelGroup[data-with-effort]:hover {
-  background: var(--card-hover);
-}
-
-.modelGroup[data-with-effort] .pill:hover:not(:disabled) {
-  background: transparent;
-  color: var(--text);
-}
-
 /* Attach sits beside Send now (#1411): its menu opens toward the left. */
 .modeMenuRight {
   left: auto;
   right: 0;
 }
 
-/* Thin rule between the model·effort pill and the next pill (#1411). */
-.modelGroup + .modeWrap {
+/* Status lip on the card's top edge (#1429). Inset 14px so the card's radius
+   shows; no bottom border, so it sits flush on the card's own top border. */
+.statusTab {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 14px;
+  padding: 6px 12px;
+  border: 1px solid var(--border);
+  border-bottom: 0;
+  border-radius: 10px 10px 0 0;
+  background: var(--overlay-soft);
+  font-size: 12.5px;
+  color: var(--text-muted);
+}
+
+.modelGroup {
   display: inline-flex;
   align-items: center;
 }
 
-.modelGroup + .modeWrap::before {
-  content: "";
-  width: 1px;
-  height: 14px;
-  margin: 0 6px 0 0;
-  background: var(--border);
+/* The effort pill reads as a plain level ("High"), no icon. */
+.effortSegment .effortIcon {
+  display: none;
+}
+
+.catalogNote {
+  padding: 0 8px 4px;
+  font-size: 11.5px;
+  line-height: 1.4;
+  color: var(--text-dim);
+}
+
+.setupPanel a {
+  text-decoration: none;
 }

@@ -379,6 +379,8 @@ interface SidebarProps {
   onSetStayAwakeMode?: (mode: StayAwakeMode) => void;
   /** Aggregated spend today (USD); null while loading. */
   spendTodayUsd?: number | null;
+  /** Shared-memory entry count (AppStatus.memory.entries); null hides it. */
+  memoryEntries?: number | null;
   /** Daily budget cap; null = no cap. */
   dailyBudgetUsd?: number | null;
   /**
@@ -505,7 +507,14 @@ export type StatusDotInfo = {
 
 export type StatusLabelInfo = {
   text: string;
-  tone: "working" | "delegating" | "attention" | "failed" | "done" | "queued";
+  tone:
+    | "working"
+    | "delegating"
+    | "attention"
+    | "stalled"
+    | "failed"
+    | "done"
+    | "queued";
   title: string;
   spoken: string;
   flags: Record<string, string>;
@@ -667,7 +676,7 @@ export function statusLabelFor(
   if (thread.status === "working" && thread.stalledAt != null) {
     return {
       text: "Stalled",
-      tone: "attention",
+      tone: "stalled",
       title: dot?.label ?? "Stalled",
       spoken: "needs attention",
       flags: dot?.flags ?? { "data-stalled": "" },
@@ -769,6 +778,27 @@ export function statusPulseFor(
   if (!label || label.tone !== "working") return null;
   if (!label.text.startsWith("Working")) return null;
   return "working";
+}
+
+/**
+ * F4 diamond (#1429): the logo glyph as the status marker. Hollow when
+ * queued; only a live "Working" run pulses (statusPulseFor).
+ */
+function StatusMarker({
+  tone,
+  pulse,
+}: {
+  tone: StatusLabelInfo["tone"];
+  pulse: StatusPulseTone | null;
+}) {
+  return (
+    <span
+      className={styles.statusMarker}
+      data-marker={tone}
+      data-status-dot={pulse ?? undefined}
+      aria-hidden
+    />
+  );
 }
 
 function ConflictForecastBadge({
@@ -1099,7 +1129,7 @@ export const ThreadCard = memo(function ThreadCard({
       <div className={styles.cardBody}>
         {!compact && (
         <div className={styles.cardLine1}>
-          <ProjectIcon url={iconUrl} size={14} />
+          <ProjectIcon url={iconUrl} name={slug} seed={thread.projectId} size={16} />
           {showProject && (
             <span className={styles.cardSlug} data-card-slug="">
               {slug}
@@ -1129,6 +1159,7 @@ export const ThreadCard = memo(function ThreadCard({
                   title={label.title}
                   {...label.flags}
                 >
+                  <StatusMarker tone={label.tone} pulse={pulse} />
                   {label.text}
                 </span>
               ) : (
@@ -1246,14 +1277,6 @@ export const ThreadCard = memo(function ThreadCard({
         </div>
         )}
         <div className={styles.cardLine2}>
-          {pulse && (
-            <span
-              className={styles.statusPulse}
-              data-status-dot={pulse}
-              data-tone={pulse}
-              aria-hidden
-            />
-          )}
           {showUnread && <span className={styles.srOnly}>unread</span>}
           {renaming ? (
             <input
@@ -1298,6 +1321,7 @@ export const ThreadCard = memo(function ThreadCard({
                     title={label.title}
                     {...label.flags}
                   >
+                    <StatusMarker tone={label.tone} pulse={pulse} />
                     {label.text}
                   </span>
                 ) : (
@@ -1576,7 +1600,7 @@ export function SettledRow({
       <div className={styles.slimBody}>
         {showUnread && <span className={styles.srOnly}>unread</span>}
         <span className={styles.slimTitle}>{thread.title}</span>
-        <ProjectIcon url={iconUrl} size={12} />
+        <ProjectIcon url={iconUrl} name={slug} seed={thread.projectId} size={12} />
         <span className={styles.slimSlug}>{slug}</span>
         <span className={styles.slimSlot}>
           <span className={styles.slimAge}>
@@ -1691,7 +1715,7 @@ export function SnoozedRow({
       <div className={styles.slimBody}>
         {showUnread && <span className={styles.srOnly}>unread</span>}
         <span className={styles.slimTitle}>{thread.title}</span>
-        <ProjectIcon url={iconUrl} size={12} />
+        <ProjectIcon url={iconUrl} name={slug} seed={thread.projectId} size={12} />
         <span className={styles.slimSlug}>{slug}</span>
         <span className={styles.slimSlot}>
           <span className={styles.slimAge} data-wake-label={thread.id}>
@@ -1747,6 +1771,7 @@ export const Sidebar = memo(function Sidebar({
   onOpenSettings,
   stayAwake = null,
   onSetStayAwakeMode,
+  memoryEntries = null,
   autoSettleAfterDays,
   autoSettleOnMerge,
   searchThreads,
@@ -3133,8 +3158,13 @@ export const Sidebar = memo(function Sidebar({
               setScopeMenuOpen((open) => !open);
             }}
           >
-            {scopedProject?.iconUrl ? (
-              <ProjectIcon url={scopedProject.iconUrl} size={16} />
+            {scopedProject ? (
+              <ProjectIcon
+                url={scopedProject.iconUrl}
+                name={scopedProject.slug || scopedProject.name}
+                seed={scopedProject.id}
+                size={16}
+              />
             ) : (
               <Icon size={15}>
                 <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
@@ -3162,7 +3192,12 @@ export const Sidebar = memo(function Sidebar({
                     data-scope-item={p.id}
                     onClick={() => setScope(p.id)}
                   >
-                    <ProjectIcon url={p.iconUrl} size={16} />
+                    <ProjectIcon
+                      url={p.iconUrl}
+                      name={p.slug || p.name}
+                      seed={p.id}
+                      size={16}
+                    />
                     {p.slug || p.name}
                     {p.scm?.kind === "jj" ? (
                       <span
@@ -4050,8 +4085,13 @@ export const Sidebar = memo(function Sidebar({
                         ref={bindListAnimation}
                       >
                         <div className={styles.filterGroupHeader}>
-                          {g.project?.iconUrl ? (
-                            <ProjectIcon url={g.project.iconUrl} size={14} />
+                          {g.project ? (
+                            <ProjectIcon
+                              url={g.project.iconUrl}
+                              name={g.project.slug || g.project.name}
+                              seed={g.project.id}
+                              size={16}
+                            />
                           ) : null}
                           <span className={styles.filterGroupTitle}>{title}</span>
                           <span className={styles.filterGroupCount}>
@@ -4148,9 +4188,7 @@ export const Sidebar = memo(function Sidebar({
                     onClick={toggleWorking}
                   >
                     <span className={styles.shelfLabelSettled}>
-                      {workingExpanded
-                        ? "Working"
-                        : `Working (${flat.working.length})`}
+                      {`Working · ${flat.working.length}`}
                     </span>
                     <span className={styles.shelfRuleSettled} />
                     <span
@@ -4181,9 +4219,7 @@ export const Sidebar = memo(function Sidebar({
                     onClick={toggleSnoozed}
                   >
                     <span className={styles.shelfLabelSnoozed}>
-                      {snoozedExpanded
-                        ? "Snoozed"
-                        : `Snoozed (${flat.snoozed.length})`}
+                      {`Snoozed · ${flat.snoozed.length}`}
                     </span>
                     <span className={styles.shelfRuleSnoozed} />
                     <span
@@ -4212,9 +4248,7 @@ export const Sidebar = memo(function Sidebar({
                       onClick={toggleSettled}
                     >
                       <span className={styles.shelfLabelSettled}>
-                        {settledExpanded
-                          ? "Settled"
-                          : `Settled (${settledTail.length})`}
+                        {`Settled · ${settledTail.length}`}
                       </span>
                       <span className={styles.shelfRuleSettled} />
                       <span
@@ -4271,9 +4305,7 @@ export const Sidebar = memo(function Sidebar({
                       onClick={() => setTrashedOpen((open) => !open)}
                     >
                       <span className={styles.shelfLabelSettled}>
-                        {trashedOpen
-                          ? "Recently deleted"
-                          : `Recently deleted (${trashedThreads.length})`}
+                        {`Recently deleted · ${trashedThreads.length}`}
                       </span>
                       <span className={styles.shelfRuleSettled} />
                       <span
@@ -4658,8 +4690,23 @@ export const Sidebar = memo(function Sidebar({
           </span>
         )}
           </nav>
+          {memoryEntries != null && (
+            <span
+              className={styles.memoryPulse}
+              data-memory-pulse={memoryEntries}
+              title="Shared memories every agent in Solenta can recall"
+            >
+              <span className={styles.memoryDiamond} aria-hidden />
+              {memoryEntries.toLocaleString()}{" "}
+              {memoryEntries === 1 ? "memory" : "memories"}
+            </span>
+          )}
           {stayAwake && onSetStayAwakeMode && (
-            <StayAwakeControl state={stayAwake} onSetMode={onSetStayAwakeMode} />
+            <StayAwakeControl
+              state={stayAwake}
+              onSetMode={onSetStayAwakeMode}
+              compact={memoryEntries != null}
+            />
           )}
           {(updateState === "available" || updateState === "staged") && (
             <button
