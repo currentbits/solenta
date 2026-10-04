@@ -629,6 +629,54 @@ function ConfigDoctorCard({
   );
 }
 
+/** Code map + config doctor callbacks (Settings → Memory → Project tools). */
+export interface MemoryProjectToolsApi {
+  loadCodeMap?: (input: { projectId: string }) => Promise<ProjectCodeMap>;
+  lintAgentConfig?: (input: {
+    projectId: string;
+  }) => Promise<AgentConfigDoctorReport>;
+  previewAgentConfig?: (input: {
+    projectId: string;
+    targets?: string[];
+  }) => Promise<AgentConfigPreview>;
+  writeAgentConfig?: (input: {
+    projectId: string;
+    targets?: string[];
+  }) => Promise<AgentConfigWriteResult>;
+}
+
+/**
+ * One project's code map and config doctor. Both stay lazy disclosures
+ * (#1123), and both handle a projectId change in place (#1136), so the
+ * Settings picker can swap projects without a key.
+ */
+export function MemoryProjectTools({
+  projectId,
+  projectSlug,
+  loadCodeMap,
+  lintAgentConfig,
+  previewAgentConfig,
+  writeAgentConfig,
+}: { projectId: string; projectSlug: string | null } & MemoryProjectToolsApi) {
+  if (!loadCodeMap && !lintAgentConfig) return null;
+  return (
+    <div className={styles.secondary} data-memory-project-tools="">
+      {loadCodeMap ? (
+        <CodeMapCard projectId={projectId} loadCodeMap={loadCodeMap} />
+      ) : null}
+      {lintAgentConfig ? (
+        <ConfigDoctorCard
+          projectId={projectId}
+          projectLabel={projectLabelOf(projectSlug, projectId)}
+          lintAgentConfig={lintAgentConfig}
+          previewAgentConfig={previewAgentConfig}
+          writeAgentConfig={writeAgentConfig}
+        />
+      ) : null}
+    </div>
+  );
+}
+
 function ReviewQueueCard({
   projectSlug,
   maintenanceMemory,
@@ -1212,18 +1260,13 @@ export function MemoryTab({
     }
   };
 
-  const mapCard =
-    loadCodeMap && projectId ? (
-      <CodeMapCard projectId={projectId} loadCodeMap={loadCodeMap} />
-    ) : null;
-
   const secondary = (
     <div className={styles.secondary} data-memory-secondary="">
-      {mapCard}
-      {lintAgentConfig && projectId ? (
-        <ConfigDoctorCard
+      {projectId ? (
+        <MemoryProjectTools
           projectId={projectId}
-          projectLabel={projectLabelOf(projectSlug, projectId)}
+          projectSlug={projectSlug}
+          loadCodeMap={loadCodeMap}
           lintAgentConfig={lintAgentConfig}
           previewAgentConfig={previewAgentConfig}
           writeAgentConfig={writeAgentConfig}

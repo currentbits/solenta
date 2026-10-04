@@ -13,9 +13,23 @@ import { describe, it, afterEach } from "node:test";
 import { useState } from "react";
 import { mount, unmountAll } from "./support/dom.ts";
 import { SettingsModal, type SettingsPane } from "../src/components/SettingsModal";
+import type { MemoryProjectToolsApi } from "../src/components/MemoryTab";
+import {
+  getComposerVimEnabled,
+  getDivergenceCardEnabled,
+  getPasteCardsEnabled,
+  getRunDurationEnabled,
+  setComposerVimEnabled,
+  setDivergenceCardEnabled,
+  setPasteCardsEnabled,
+  setRunDurationEnabled,
+} from "../src/uiPrefs";
 import type {
+  AgentConfigDoctorReport,
   AppSettings,
   AppStatus,
+  MergeSpotlight,
+  ProjectInfo,
   ProviderInfo,
   SubagentPool,
   WebhookTestResult,
@@ -72,6 +86,13 @@ interface Stubs {
   onCheckUpdate?: () => Promise<void>;
   onTestWebhook?: () => Promise<WebhookTestResult>;
   onClose?: () => void;
+  projects?: ProjectInfo[];
+  currentProjectId?: string | null;
+  onSetSpotlight?: (input: {
+    projectId: string;
+    enabled: boolean;
+  }) => Promise<MergeSpotlight>;
+  projectTools?: MemoryProjectToolsApi;
 }
 
 function modal(stubs: Stubs = {}) {
@@ -89,6 +110,10 @@ function modal(stubs: Stubs = {}) {
       status={stubs.status === undefined ? status() : stubs.status}
       onCheckUpdate={stubs.onCheckUpdate}
       onTestWebhook={stubs.onTestWebhook}
+      projects={stubs.projects}
+      currentProjectId={stubs.currentProjectId}
+      onSetSpotlight={stubs.onSetSpotlight}
+      projectTools={stubs.projectTools}
       onSaveSettings={
         stubs.onSaveSettings ??
         (async (patch) => ({
@@ -2139,5 +2164,233 @@ describe("SettingsModal integrations", () => {
     assert.ok(m.query("[data-copy-claude-json]"), "copy JSON");
     assert.ok(m.query("[data-copy-pairing-prompt]"), "copy prompt");
     m.unmount();
+  });
+});
+
+function proj(over: Partial<ProjectInfo> = {}): ProjectInfo {
+  return {
+    id: "p1",
+    slug: "acme/one",
+    name: "one",
+    path: "/tmp/one",
+    ...over,
+  } as ProjectInfo;
+}
+
+const DOCTOR_REPORT: AgentConfigDoctorReport = {
+  projectId: "p1",
+  files: [
+    {
+      path: "AGENTS.md",
+      bytes: 120,
+      score: 42,
+      grade: "D",
+      axes: [],
+      issues: [],
+      recommendations: [],
+    },
+  ],
+  score: 42,
+  grade: "D",
+  memory: {
+    considered: 3,
+    covered: 1,
+    missing: [
+      { id: "c1", type: "convention", title: "Fail closed on worktrees" },
+    ],
+  },
+  issues: [],
+  recommendations: [],
+};
+
+// Moved from test/environmentCards.test.tsx "display prefs card (#779)".
+describe("SettingsModal Display group (moved from Environment)", () => {
+  afterEach(() => {
+    setDivergenceCardEnabled(false);
+    setRunDurationEnabled(false);
+    setPasteCardsEnabled(true);
+    setComposerVimEnabled(false);
+  });
+
+  it("offers vim motions off by default", async () => {
+    setComposerVimEnabled(false);
+    const m = await mount(modal());
+    const card = m.query("[data-display-prefs]");
+    assert.ok(card, "Display group on General");
+    const box = card.querySelector(
+      "[data-composer-vim-pref]",
+    ) as HTMLInputElement | null;
+    assert.ok(box, "vim motions checkbox");
+    assert.equal(box.checked, false);
+    assert.equal(getComposerVimEnabled(), false);
+    assert.match(card.textContent || "", /Vim motions in the composer/);
+    m.unmount();
+  });
+
+  it("turns the pref on from the Display group", async () => {
+    setComposerVimEnabled(false);
+    const m = await mount(modal());
+    const box = m.query("[data-composer-vim-pref]") as HTMLInputElement;
+    await m.click(box);
+    assert.equal(box.checked, true);
+    assert.equal(getComposerVimEnabled(), true);
+    m.unmount();
+  });
+
+  it("toggles the same uiPrefs keys the Environment card used", async () => {
+    setDivergenceCardEnabled(false);
+    setRunDurationEnabled(false);
+    setPasteCardsEnabled(true);
+    const m = await mount(modal());
+    await m.click(m.query("[data-divergence-pref]"));
+    await m.click(m.query("[data-run-duration-pref]"));
+    await m.click(m.query("[data-paste-cards-pref]"));
+    assert.equal(getDivergenceCardEnabled(), true);
+    assert.equal(getRunDurationEnabled(), true);
+    assert.equal(getPasteCardsEnabled(), false);
+    assert.equal(window.localStorage.getItem("coder.divergenceCard"), "on");
+    assert.equal(window.localStorage.getItem("coder.runDuration"), "on");
+    assert.equal(window.localStorage.getItem("coder.pasteCards"), "off");
+    m.unmount();
+  });
+});
+
+// The opt-in half of mergeQueueChips "opts into Spotlight per repo" moved here.
+describe("SettingsModal Spotlight (moved from the Lanes card)", () => {
+  it("defaults to the selected thread's project and toggles through setSpotlight", async () => {
+    const calls: Array<{ projectId: string; enabled: boolean }> = [];
+    const m = await mount(
+      modal({
+        initialPane: "git",
+        projects: [proj(), proj({ id: "p2", name: "two", path: "/tmp/two" })],
+        currentProjectId: "p2",
+        onSetSpotlight: async (input) => {
+          calls.push(input);
+          return { spotlight: input.enabled };
+        },
+      }),
+    );
+    const picker = m.query(
+      '[data-project-picker="spotlight-project"]',
+    ) as HTMLSelectElement;
+    assert.ok(picker, "Spotlight has a project picker");
+    assert.equal(picker.value, "p2");
+    const box = m.query("[data-lane-spotlight]") as HTMLInputElement;
+    assert.equal(box.checked, false);
+    await m.click(box);
+    assert.deepEqual(calls, [{ projectId: "p2", enabled: true }]);
+    assert.equal(
+      (m.query("[data-lane-spotlight]") as HTMLInputElement).checked,
+      true,
+    );
+    await m.change(picker, "p1");
+    await m.click(m.query("[data-lane-spotlight]"));
+    assert.deepEqual(calls[1], { projectId: "p1", enabled: true });
+  });
+
+  it("shows the saved flag and leaves remote projects out", async () => {
+    const m = await mount(
+      modal({
+        initialPane: "git",
+        projects: [
+          proj({ id: "r1", name: "remote", remoteHost: "dev@box" }),
+          proj({ spotlight: true }),
+        ],
+        onSetSpotlight: async (input) => ({ spotlight: input.enabled }),
+      }),
+    );
+    const picker = m.query(
+      '[data-project-picker="spotlight-project"]',
+    ) as HTMLSelectElement;
+    assert.deepEqual(
+      [...picker.options].map((o) => o.value),
+      ["p1"],
+      "lanes are local-only",
+    );
+    assert.equal(
+      (m.query("[data-lane-spotlight]") as HTMLInputElement).checked,
+      true,
+      "opt-in is checked when the project flag is on",
+    );
+  });
+
+  it("is absent without a setter", async () => {
+    const m = await mount(modal({ initialPane: "git", projects: [proj()] }));
+    assert.equal(m.query("[data-spotlight-settings]"), null);
+  });
+});
+
+describe("SettingsModal Project tools (moved from the Memory tab)", () => {
+  it("defaults to the selected thread's project, under the server status", async () => {
+    const linted: string[] = [];
+    const m = await mount(
+      modal({
+        initialPane: "memory",
+        status: status({ memory: { entries: 12 } }),
+        projects: [proj(), proj({ id: "p2", name: "two", path: "/tmp/two" })],
+        currentProjectId: "p2",
+        projectTools: {
+          lintAgentConfig: async (input) => {
+            linted.push(input.projectId);
+            return { ...DOCTOR_REPORT, projectId: input.projectId };
+          },
+          loadCodeMap: async (input) => ({
+            projectId: input.projectId,
+            updatedAt: Date.now(),
+            fileCount: 0,
+            symbolCount: 0,
+            modules: [],
+            dependencies: [],
+          }),
+        },
+      }),
+    );
+    const tools = m.query("[data-project-tools]");
+    assert.ok(tools, "Project tools section on the Memory pane");
+    assert.match(tools.textContent ?? "", /Project tools/);
+    assert.ok(m.text().includes("12 entries"), "server status still renders");
+    const pane = m.query('[data-settings-pane="memory"]')!;
+    assert.ok(
+      pane.textContent!.indexOf("12 entries") <
+        pane.textContent!.indexOf("Project tools"),
+      "server status stays at the top of the pane",
+    );
+    const picker = m.query(
+      '[data-project-picker="project-tools-project"]',
+    ) as HTMLSelectElement;
+    assert.equal(picker.value, "p2");
+    assert.ok(tools.querySelector("[data-code-map]"), "code map moved here");
+    await m.click(m.query("[data-config-doctor] summary"));
+    assert.deepEqual(linted, ["p2"]);
+    await m.change(picker, "p1");
+    assert.equal(linted.at(-1), "p1", "doctor follows the picked project");
+  });
+
+  it("falls back to the first project when no thread is selected", async () => {
+    const m = await mount(
+      modal({
+        initialPane: "memory",
+        projects: [proj(), proj({ id: "p2", name: "two", path: "/tmp/two" })],
+        projectTools: { lintAgentConfig: async () => DOCTOR_REPORT },
+      }),
+    );
+    assert.equal(
+      (
+        m.query(
+          '[data-project-picker="project-tools-project"]',
+        ) as HTMLSelectElement
+      ).value,
+      "p1",
+    );
+  });
+
+  it("is absent without projects or tools", async () => {
+    const none = await mount(modal({ initialPane: "memory" }));
+    assert.equal(none.query("[data-project-tools]"), null);
+    none.unmount();
+    const noTools = await mount(
+      modal({ initialPane: "memory", projects: [proj()] }),
+    );
+    assert.equal(noTools.query("[data-project-tools]"), null);
   });
 });

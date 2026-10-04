@@ -2622,6 +2622,15 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
           onShowOnboarding={showOnboarding}
           onOpenConnection={(input) => api.app.openRemoteConnection(input)}
           onForgetConnection={(input) => api.app.forgetRemoteConnection(input)}
+          projects={projects}
+          currentProjectId={project?.id ?? null}
+          onSetSpotlight={setSpotlight}
+          projectTools={{
+            loadCodeMap,
+            lintAgentConfig,
+            previewAgentConfig,
+            writeAgentConfig,
+          }}
         />
         <OnboardingModal
           open={onboardingOpen}
