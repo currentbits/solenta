@@ -1654,6 +1654,26 @@ describe("SkillsTab skills", () => {
     );
     m.unmount();
   });
+
+  it("clears the Remove action error after a successful Retry reload", async () => {
+    const m = await mount(
+      <Harness
+        onRemoveSkill={() => {
+          throw new Error("remove down");
+        }}
+      />,
+    );
+    await m.click(m.query('[data-skill="claude:review-pr"] [data-skill-toggle]'));
+    await m.click(m.query('button[aria-label="Remove review-pr"]'));
+    await m.click(m.byText("Confirm"));
+    assert.ok(m.text().includes("remove down"), "the action error line must show");
+    await m.click(m.byText("Retry"));
+    assert.ok(
+      !m.text().includes("remove down"),
+      "a successful Retry reload must clear the action error",
+    );
+    m.unmount();
+  });
 });
 
 describe("SkillsTab sections", () => {

@@ -1192,6 +1192,7 @@ export function SkillsTab({
       if (!mountedRef.current || gen !== genRef.current) return;
       setSkills(list);
       setLoadError(null);
+      setActionError(null);
     } catch (err) {
       if (!mountedRef.current || gen !== genRef.current) return;
       setLoadError(errorMessage(err));
