@@ -143,6 +143,13 @@ export default function TourStep({
       <p className={styles.stepBody}>
         Write your task, then press Send when you are ready.
       </p>
+      <p className={styles.stepBody} data-onboarding-orientation="">
+        The strip under the composer chooses Local checkout or a new
+        worktree. Quiet runs fold into Working at the bottom of the sidebar.
+        The panel on the right is the inspector: Environment, Agents, Memory,
+        and Skills. Display, Spotlight, the skill catalog, MCP servers, the
+        code map, and the config doctor are in Settings.
+      </p>
 
       <button
         type="button"

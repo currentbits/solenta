@@ -94,6 +94,15 @@ describe("Onboarding wizard", () => {
       m.query("[data-onboarding-create-thread]"),
       "Create first thread is the last-step primary action",
     );
+    assert.match(
+      m.query("[data-onboarding-orientation]")?.textContent ?? "",
+      /inspector/,
+      "the last step must say where the inspector and Settings live",
+    );
+    assert.match(
+      m.query("[data-onboarding-orientation]")?.textContent ?? "",
+      /Settings/,
+    );
 
     await m.click(back);
     assert.equal(stepId(m), "setup", "Back from tour must land on setup");

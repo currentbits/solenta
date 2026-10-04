@@ -56,7 +56,7 @@
     <nav class="docs-nav" id="docs-nav">
       <a href="#getting-started">Getting started</a>
       <a href="#memory">Shared memory</a>
-      <a href="#views">Kanban, Planboard, Pulse</a>
+      <a href="#views">Inbox, Planboard, Review</a>
       <a href="#threads">Threads and providers</a>
       <a href="#cli-sessions">Import, eject and reclaim</a>
       <a href="#codex">Codex sessions</a>
@@ -78,7 +78,7 @@
       <a href="#updates">Notifications and updates</a>
       <a href="#integrations">External MCP pairing</a>
       <a href="#web-mode">Web mode</a>
-      <a href="#ssh">SSH remote projects</a>
+      <a href="#ssh">SSH and Connections</a>
       <a href="#windows">Windows</a>
       <a href="#performance">Performance and memory use</a>
       <a href="#architecture">Architecture</a>
@@ -92,7 +92,7 @@
         the Planboard is the project's GitHub issues. Each thread can run
         Claude Code, Codex, Cursor, Kimi, Grok, OpenCode or Muse Code in its own git
         worktree.
-        Everything below is in the current release.
+        Everything below matches the current app.
       </p>
 
       <h2 id="getting-started">Getting started</h2>
@@ -117,13 +117,14 @@
         <li><strong>Muse Code</strong> (<code>muse</code>)</li>
       </ul>
       <p>
-        Add a project with the <strong>+</strong> button in the sidebar. The
-        destination path is typeable and browsable; a folder that is not a git
-        repository yet is initialized on add. Remove a project from Settings
-        when you no longer want it in the list. A project is local (or a
-        remote one, see
-        <a href="#ssh">SSH remote projects</a>). Create a thread, type a prompt,
-        and the run streams in live.
+        Add a project from the project menu in the sidebar
+        (<strong>New project</strong>). The destination path is typeable and
+        browsable; a folder that is not a git repository yet is initialized
+        on add. Remove a project from that same menu when you no longer want
+        it in the list. A project is local, or a remote one (see
+        <a href="#ssh">SSH and Connections</a>). <strong>New thread</strong>
+        is the button on the search row. Type a prompt and the run streams
+        in live.
       </p>
       <p>
         First launch opens a short wizard: pick an installed agent, add a
@@ -167,7 +168,8 @@
         that layer instead of leaving a pile of one-off observations.
       </p>
       <p>
-        The Memory tab's <strong>config doctor</strong> lints the repo's
+        <strong>Config doctor</strong> lives in Settings, Memory, under
+        Project tools, next to the code map. It lints the repo's
         <code>AGENTS.md</code>, <code>CLAUDE.md</code>, and sibling
         instruction files against a six-axis rubric (commands,
         architecture, patterns, conciseness, currency, actionability)
@@ -190,29 +192,34 @@
       <h3 id="memory-browser">Browse the full memory library</h3>
       <p>
         The Memory tab starts with your project's entries. Search by text or
-        filter by knowledge, convention, strategy or task. Use <strong>Load
-        older memories</strong> to browse beyond the first page. Expand an
-        entry to read its body and citations. Add memory opens the editor;
-        the secondary tools hold config doctor and the review queue.
+        filter by knowledge, convention, strategy or task. Use
+        <strong>+</strong> to add one, and load older memories to browse past
+        the first page. Expand an entry to read its body and citations. When
+        memories need a decision, a review banner opens the queue. The footer
+        shows when consolidation last ran and links to Settings for the code
+        map and config doctor.
       </p>
       <p>
-        Maintenance starts with a small summary. Open <strong>Review</strong>
-        for the detailed queue. Switching projects discards the previous
-        project's config-doctor preview and write confirmation, so a stale
-        preview cannot write another repository's instructions.
+        Switching projects discards the previous project's config-doctor
+        preview and write confirmation, so a stale preview cannot write
+        another repository's instructions.
       </p>
 
-      <h2 id="views">Kanban, Planboard, Pulse</h2>
+      <h2 id="views">Inbox, Planboard, Review</h2>
       <p>
-        Next to the thread view, the sidebar keeps the live work, and the
-        right panel's <strong>Pulse</strong> tab holds the rest:
+        The sidebar is the inbox. Threads that need you stay up top. Quiet
+        runs fold into a <strong>Working</strong> shelf at the bottom, next
+        to <strong>Snoozed</strong> and <strong>Settled</strong>. Footer
+        icons are Threads, Planboard, Review, and More. The right-hand
+        inspector is Environment, Agents, Memory, and Skills. It is not a
+        second home for settings.
       </p>
       <ul>
-        <li><strong>Kanban</strong> groups every thread by status (working, waiting on you, done, failed) so a pile of parallel runs stays readable.</li>
         <li><strong>Planboard</strong> shows one project's plan as its GitHub issues in Todo / In progress / Done. Cards open the issue on GitHub, and <strong>Start task</strong> on a Todo card opens a thread on it, in worktree, orchestrator or plain mode.</li>
-        <li><strong>Pull requests</strong> lists the open PRs per project with their checks, and jumps to the thread that opened one.</li>
+        <li><strong>Review</strong> lists the open PRs per project with their checks, and jumps to the thread that opened one.</li>
+        <li><strong>More</strong> holds Activity, Kanban, Automations, Usage, Fleet, Insights, and the morning digest.</li>
+        <li><strong>Kanban</strong> groups every thread by status (working, waiting on you, done, failed) so a pile of parallel runs stays readable.</li>
         <li><strong>Activity</strong> is a chronological feed, grouped by day, of everything your agents did.</li>
-        <li><strong>Pulse</strong> is Automations, Usage, Fleet, Insights and the morning digest: the overflow that used to compete with threads on the left.</li>
       </ul>
       <p>
         Planboard reads the board from labels. Agents on a GitHub-origin
@@ -311,11 +318,14 @@
         group-by sit next to it. Each card uses a small provider mark instead
         of the harness name. <strong>Pinned</strong> threads sit in their
         own block at the top (oldest pin first) and never auto-settle.
-        Below that, active threads; then a <strong>Snoozed</strong> shelf
-        (wake-soonest first) and a <strong>Settled</strong> shelf (newest
-        wrap-up first, archived threads at the tail). Subagents nest under
-        the thread that spawned them; idle stopped fork workers drop off
-        the list. Delegating, Orchestrating and Working show on the card.
+        Below that, threads that need attention, then a
+        <strong>Working</strong> shelf for quiet runs (a crew stays there
+        while a background worker is still going), a
+        <strong>Snoozed</strong> shelf (wake-soonest first) and a
+        <strong>Settled</strong> shelf (newest wrap-up first, archived
+        threads at the tail). Forks and subagents nest under the thread
+        that started them; idle stopped fork workers drop off the list.
+        Delegating, Orchestrating and Working show on the card.
         Right-click a card, or its overflow button, for the thread-actions
         menu: snooze (a nested submenu of presets), pin, fork or hand off,
         rename, mute, and settle. The menu is the native Electron menu
@@ -354,19 +364,24 @@
         this way.
       </p>
       <p>
-        The caret next to <strong>+</strong> in the sidebar creates a thread in
-        one of four modes:
+        <strong>New thread</strong> on the search row follows your defaults:
+        <em>Isolate new threads in a git worktree</em> and
+        <em>Delegate new threads to a worker</em> in Settings, the second
+        winning over the first. The caret beside it lists the other ways in:
       </p>
       <ul>
         <li><strong>New worktree thread</strong>: its own git worktree and branch, so the agent never touches your checkout.</li>
         <li><strong>New orchestrator thread</strong>: the thread hands its first prompt to a worker in a worktree and supervises instead of editing (see <a href="#orchestration">Orchestration</a>).</li>
         <li><strong>New plain thread</strong>: straight in the project checkout, no worktree.</li>
+        <li><strong>New teach thread</strong>: hints and review, not a finished solution (see <a href="#teach">Teach mode</a>).</li>
         <li><strong>New ask thread</strong>: read-only repo Q&amp;A; no worktree (see <a href="#ask">Ask mode</a>).</li>
+        <li><strong>From an issue</strong>: start from a GitHub or Linear issue.</li>
       </ul>
       <p>
-        Plain <strong>+</strong> follows your defaults: <em>Isolate new threads
-        in a git worktree</em> and <em>Delegate new threads to a worker</em> in
-        Settings, the second winning over the first.
+        On a draft, the strip under the composer chooses
+        <strong>Local checkout</strong>, <strong>New worktree</strong>, or
+        <strong>Previous worktree</strong> (stacked on the project's latest
+        other worktree branch). That choice locks after the first message.
       </p>
 
 
@@ -405,7 +420,7 @@
 
       <h2 id="cli-sessions">Import, eject and reclaim</h2>
       <p>
-        Open the caret beside <strong>+</strong> in the sidebar, choose the
+        Open the caret beside <strong>New thread</strong>, choose the
         project, then choose <strong>Import Codex session</strong> or another
         provider. Codex, Claude Code, Grok, Cursor, OpenCode, Kimi and Muse are
         supported. Select a session to import, or import all remaining ones.
@@ -594,8 +609,8 @@
         the checkout, so it is guarded against overwriting dirty work.
       </p>
       <p>
-        <strong>Spotlight</strong> is an explicit per-project opt-in for lane
-        preview. It does not merge or publish a lane. <strong>Recycle
+        <strong>Spotlight</strong> is a per-project opt-in in Settings, Git.
+        It does not merge or publish a lane. <strong>Recycle
         wedged</strong> reclaims eligible stale lanes; live runs and previews
         stay protected. Claimed lanes keep their heartbeat even when you
         switch away from Git or to another local project.
@@ -603,7 +618,7 @@
 
       <h2 id="workflows">Build workflows</h2>
       <p>
-        The <strong>Build</strong> button in the composer runs a multi-phase
+        Type <code>/workflow</code> in the composer to run a multi-phase
         workflow template instead of a single prompt. Phases run in order
         (seed, analyze, verify, judge, synthesize), phases can fan out to
         several agents, and each phase can use a different provider. A failed
@@ -633,7 +648,7 @@
       <p>
         Workers nest under the thread that spawned them in the sidebar. While
         any of them is still running, the parent reads <strong>Delegating</strong>
-        and stays in Working on the Kanban rather than reporting itself done.
+        and stays on the Working shelf rather than reporting itself done.
         Stopping an orchestrator stops its crew. Like worktrees, orchestrator
         threads are local-only: an <a href="#ssh">SSH remote project</a> always
         gets a plain thread.
@@ -816,14 +831,16 @@
 
       <h2 id="skills">Skills</h2>
       <p>
-        The Skills tab starts with installed skills. Search by name or
-        description and filter by provider or source; filters combine and
-        show counts. Catalog, Add skill and MCP servers have their own views.
+        The Skills tab is the installed list. Search by name or description,
+        and open the filter menu for source (user, project, catalog) and
+        provider. <strong>Manage</strong> opens Settings, Skills &amp; MCP,
+        which holds the catalog, add-skill, MCP servers, and import.
         Project skills remain read-only, while user-installed skills can be
         managed and synchronized to the provider directories on this machine.
+        When installed copies have drifted, a banner offers Sync.
       </p>
       <p>
-        Open <strong>Add skill</strong>, then <strong>Import from other
+        In Settings, open <strong>Import from other
         tools</strong> to scan Claude Code, Codex or Cursor. Preview skills,
         slash commands, MCP servers, memories and instruction files, select
         the items you want, and import them. This is a one-way copy; the source
@@ -838,7 +855,7 @@
         unlisted plugin-cache entries are not offered.
       </p>
       <p>
-        In <strong>MCP servers</strong>, local command arguments accept quoted
+        In Settings, <strong>MCP servers</strong>, local command arguments accept quoted
         paths and values containing spaces, or a JSON array of strings. Invalid
         quoting shows an error and preserves the draft. Trust the local command
         only after reviewing what it launches.
@@ -889,10 +906,10 @@
 
       <h2 id="panes">Terminal and Browser panes</h2>
       <p>
-        The thread centre is a split of panes, not one transcript. Chat and
-        Git are two of them; <strong>Terminal</strong> and
-        <strong>Browser</strong> open from the Views menu and sit beside the
-        transcript rather than under it.
+        The thread centre is a split of panes, not one transcript. Chat is
+        the transcript. <strong>Terminal</strong> and
+        <strong>Browser</strong> open from buttons in the thread header and
+        sit beside the transcript rather than under it.
       </p>
       <p>
         The <strong>Terminal</strong> pane is one long-lived shell per thread,
@@ -1003,8 +1020,9 @@
         both channels can sit side by side; they share one user-data
         directory. Checking is automatic; installing is not. Solenta
         downloads only when you click, verifies the archive against the
-        sha256 digest GitHub stamps on the asset, and then swaps the bundle
-        in place on macOS, Windows and Linux. Builds
+        sha256 digest GitHub stamps on the asset, then swaps the bundle in
+        place on macOS. Windows and Linux stage the new tree and swap it
+        in when you Restart. Builds
         from a dev tree carry no channel stamp and never self-update.
       </p>
 
@@ -1022,9 +1040,17 @@ solenta --serve-web --serve-host 0.0.0.0   # LAN, your call</code></pre>
         the operator's informed choice.
       </p>
 
-      <h2 id="ssh">SSH remote projects</h2>
+      <h2 id="ssh">SSH and Connections</h2>
       <p>
-        A project can live on another machine. Set <strong>remote host</strong>
+        <strong>Connections</strong> (Settings) opens another machine's
+        Solenta in its own window. Solenta tunnels to that host over SSH,
+        pins the host key, and reconnects if the tunnel drops. A saved token
+        stays in the OS keychain. This is the whole app on the remote
+        machine, not one project.
+      </p>
+      <p>
+        A project can also live on another machine while you stay in this
+        window. Set <strong>remote host</strong>
         (<code>user@host</code>) and <strong>remote path</strong> when adding or
         editing the project, and every command Solenta would run locally is
         wrapped as:
