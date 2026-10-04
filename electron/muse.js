@@ -11,19 +11,15 @@
  * process-wide HOME). Never follow those symlinks on reclaim.
  */
 
-const spawn = require("cross-spawn");
 const fs = require("node:fs");
 const path = require("node:path");
-const { killTree, agentSpawnOptions } = require("./proc.js");
+const { runJsonLines } = require("./agent.js");
 const { posixQuote } = require("./ssh.js");
 const {
   injectMuseGuardrailHooks,
   museGuardrailHookCommand,
 } = require("./muse-guardrail-hook.js");
 const remoteOverlay = require("./remote-overlay.js");
-
-const SIGKILL_AFTER_MS = 3000;
-const STDERR_TAIL_CHARS = 64 * 1024;
 
 function linkOrSkip(src, dst) {
   if (!fs.existsSync(src) || fs.existsSync(dst)) return;
@@ -422,126 +418,17 @@ function runMuse(opts) {
     onExit,
     onError,
   } = opts;
-  const childEnv = envOverride
-    ? { ...process.env, ...envOverride }
-    : undefined;
-
-  let stderrText = "";
-  let fullStdout = "";
-  let lineBuf = "";
-  let finished = false;
-  let killTimer = null;
-  let killed = false;
-  let gotJson = false;
-
-  function handleLine(line) {
-    const trimmed = line.trim();
-    if (!trimmed) return;
-    let obj;
-    try {
-      obj = JSON.parse(trimmed);
-    } catch {
-      return;
-    }
-    if (!obj || typeof obj !== "object") return;
-    gotJson = true;
-    emitEvent(obj);
-  }
-
-  /**
-   * @param {object} obj
-   */
-  function emitEvent(obj) {
-    if (typeof onEvent !== "function") return;
-    try {
-      onEvent(obj);
-    } catch {
-      // defensive: never crash the parser
-    }
-  }
-
-  function finish(code) {
-    if (finished) return;
-    finished = true;
-    if (killTimer) {
-      clearTimeout(killTimer);
-      killTimer = null;
-    }
-    if (lineBuf.trim()) {
-      handleLine(lineBuf);
-      lineBuf = "";
-    }
-    if (typeof onExit === "function") {
-      onExit({
-        code,
-        stderr: stderrText,
-        fullStdout,
-        gotJson,
-      });
-    }
-  }
-
-  let child;
-  try {
-    child = spawn(
-      binary,
-      args,
-      agentSpawnOptions({
-        cwd,
-        env: childEnv,
-        stdio: ["ignore", "pipe", "pipe"],
-      }),
-    );
-  } catch (err) {
-    const error = err instanceof Error ? err : new Error(String(err));
-    if (typeof onError === "function") onError(error);
-    if (typeof onExit === "function") {
-      onExit({
-        code: 1,
-        stderr: error.message,
-        fullStdout: "",
-        gotJson: false,
-      });
-    }
-    return { kill() {} };
-  }
-
-  child.stdout.setEncoding("utf8");
-  child.stderr.setEncoding("utf8");
-
-  child.stdout.on("data", (chunk) => {
-    const str = String(chunk);
-    fullStdout += str;
-    lineBuf += str;
-    let nl;
-    while ((nl = lineBuf.indexOf("\n")) >= 0) {
-      const line = lineBuf.slice(0, nl);
-      lineBuf = lineBuf.slice(nl + 1);
-      handleLine(line);
-    }
+  const { kill } = runJsonLines({
+    binary,
+    args,
+    cwd,
+    env: envOverride ? { ...process.env, ...envOverride } : undefined,
+    keepStdout: true,
+    onEvent,
+    onExit,
+    onError,
   });
-
-  child.stderr.on("data", (chunk) => {
-    const str = String(chunk);
-    stderrText = (stderrText + str).slice(-STDERR_TAIL_CHARS);
-  });
-
-  child.on("error", (err) => {
-    if (typeof onError === "function") onError(err);
-    finish(1);
-  });
-
-  child.on("close", (code) => {
-    finish(code);
-  });
-
-  return {
-    kill() {
-      if (killed || finished) return;
-      killed = true;
-      killTimer = killTree(child, SIGKILL_AFTER_MS);
-    },
-  };
+  return { kill };
 }
 
 module.exports = {
