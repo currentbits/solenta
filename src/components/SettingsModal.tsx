@@ -44,12 +44,10 @@ import {
   usePasteCardsEnabled,
   useRunDurationEnabled,
 } from "../uiPrefs";
-import { MemoryProjectTools, type MemoryProjectToolsApi } from "./MemoryTab";
+import { type MemoryProjectToolsApi } from "./MemoryTab";
 import { SkillsManager, type SkillsManagerProps } from "./SkillsTab";
 import styles from "./SettingsModal.module.css";
-import { WorktreeGcSection } from "./WorktreeGcSection";
 import { VibeKanbanSection } from "./VibeKanbanSection";
-import { SourceControlSection } from "./SourceControlSection";
 import { IntegrationsSection } from "./IntegrationsSection";
 import { ConnectionsSection } from "./ConnectionsSection";
 import { isWebMode } from "../shared/wire";
@@ -57,7 +55,8 @@ import type { CoderApi } from "../shared/ipc";
 import { PaneIcon } from "./settings/PaneIcon";
 import { SpendingPane } from "./settings/SpendingPane";
 import { ThreadsPane } from "./settings/ThreadsPane";
-import { ProjectPicker } from "./settings/shared";
+import { GitPane } from "./settings/GitPane";
+import { MemoryPane } from "./settings/MemoryPane";
 
 export const SETTINGS_PANES = [
   "general",
@@ -516,8 +515,6 @@ export function SettingsModal({
     );
   });
   const paneMeta = PANE_META[pane];
-  const toolsProject =
-    projects?.find((p) => p.id === toolsProjectId) ?? projects?.[0] ?? null;
   const updateWaiting =
     update?.state === "available" || update?.state === "staged";
 
@@ -591,19 +588,6 @@ export function SettingsModal({
       savingRef.current = false;
       setSaving(false);
     }
-  };
-
-  const onBlurPrCap = () => {
-    const current = settings?.prDiffCapLines ?? null;
-    const next = prCapText.trim() === "" ? null : Number(prCapText.trim());
-    const same =
-      (current == null && (prCapText.trim() === "" || next === null)) ||
-      (current != null &&
-        Number.isFinite(next) &&
-        next === current &&
-        prCapText.trim() !== "");
-    if (same && error == null) return;
-    void save();
   };
 
   const persistOtel = async (next: OtelSettings): Promise<boolean> => {
@@ -857,12 +841,6 @@ export function SettingsModal({
   };
 
   const memory = status?.memory;
-  const memoryLabel =
-    memory?.running && memory.port != null
-      ? `Memory server: running on port ${memory.port}${
-          memory.adopted ? " (adopted)" : ""
-        }`
-      : "Memory server: not running";
 
   return (
     <div
@@ -976,110 +954,26 @@ export function SettingsModal({
           )}
 
           {pane === "git" && (
-          <SourceControlSection
-            active={open && pane === "git"}
-            onDiscover={onDiscoverSourceControl}
+          <GitPane
+            settings={settings}
+            saving={saving}
+            error={error}
+            setError={setError}
+            prCapText={prCapText}
+            setPrCapText={setPrCapText}
+            linearKeyText={linearKeyText}
+            setLinearKeyText={setLinearKeyText}
+            dirtyDrafts={dirtyDrafts}
+            save={save}
+            saveLinearKey={saveLinearKey}
+            projects={projects}
+            onGcScan={onGcScan}
+            onGcClean={onGcClean}
+            onDiscoverSourceControl={onDiscoverSourceControl}
+            onSetSpotlight={onSetSpotlight}
+            toolsProjectId={toolsProjectId}
+            setToolsProjectId={setToolsProjectId}
           />
-          )}
-
-          {pane === "git" && (
-          <section className={styles.section}>
-            <h3 className={styles.sectionLabel}>Pull requests</h3>
-            <div className={styles.field}>
-              <label className={styles.fieldLabel} htmlFor="pr-diff-cap">
-                PR size cap (lines changed)
-              </label>
-              <div className={styles.fieldRow}>
-                <input
-                  id="pr-diff-cap"
-                  className={styles.input}
-                  type="number"
-                  inputMode="numeric"
-                  min="1"
-                  step="1"
-                  placeholder="No cap"
-                  value={prCapText}
-                  disabled={saving}
-                  data-pr-diff-cap=""
-                  onChange={(e) => {
-                    dirtyDrafts.current.add("pr");
-                    setPrCapText(e.target.value);
-                    setError(null);
-                  }}
-                  onBlur={() => onBlurPrCap()}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") {
-                      e.preventDefault();
-                      void save();
-                    }
-                  }}
-                />
-                <span className={styles.note}>lines</span>
-                <button
-                  type="button"
-                  className={`${styles.btn} ${styles.btnPrimary}`}
-                  disabled={saving}
-                  onClick={() => void save()}
-                >
-                  {saving ? "Saving…" : "Save"}
-                </button>
-              </div>
-              <p className={styles.note}>
-                PRs created from the app larger than this are refused with an
-                offer to split them into stacked PRs — small batches keep
-                human review affordable. Default 400; empty means no cap.
-              </p>
-            </div>
-          </section>
-          )}
-
-          {pane === "git" && (
-          <section className={styles.section}>
-            <h3 className={styles.sectionLabel}>Linear</h3>
-            <div className={styles.field}>
-              <label className={styles.fieldLabel} htmlFor="linear-api-key">
-                API key
-              </label>
-              <div className={styles.fieldRow}>
-                <input
-                  id="linear-api-key"
-                  className={styles.input}
-                  type="password"
-                  autoComplete="off"
-                  spellCheck={false}
-                  placeholder="lin_api_…"
-                  value={linearKeyText}
-                  disabled={saving}
-                  data-linear-api-key=""
-                  onChange={(e) => {
-                    dirtyDrafts.current.add("linear");
-                    setLinearKeyText(e.target.value);
-                    setError(null);
-                  }}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") {
-                      e.preventDefault();
-                      void saveLinearKey();
-                    }
-                  }}
-                />
-                <button
-                  type="button"
-                  className={`${styles.btn} ${styles.btnPrimary}`}
-                  disabled={saving}
-                  data-linear-api-key-save=""
-                  onClick={() => void saveLinearKey()}
-                >
-                  {saving ? "Saving…" : "Save key"}
-                </button>
-              </div>
-              <p className={styles.note}>
-                Used to start threads from Linear issues. LINEAR_API_KEY in
-                the environment also works. Empty and Save key clears a
-                stored key.
-              </p>
-            </div>
-          </section>
           )}
 
           {pane === "threads" && (
@@ -1535,24 +1429,6 @@ export function SettingsModal({
           </section>
           )}
 
-          {pane === "git" && (
-          <WorktreeGcSection
-            active={open && pane === "git"}
-            projects={projects}
-            onGcScan={onGcScan}
-            onGcClean={onGcClean}
-          />
-          )}
-
-          {pane === "git" && onSetSpotlight && projects && (
-          <SpotlightSection
-            projects={projects}
-            value={toolsProjectId}
-            onPick={setToolsProjectId}
-            onSetSpotlight={onSetSpotlight}
-          />
-          )}
-
           {pane === "advanced" && (
           <VibeKanbanSection active={open && pane === "advanced"} />
           )}
@@ -1569,48 +1445,13 @@ export function SettingsModal({
           )}
 
           {pane === "memory" && (
-          <section className={styles.section}>
-            <div className={styles.memoryRow}>
-              <span
-                className={styles.memoryDot}
-                data-on={memory?.running ? "true" : undefined}
-                aria-hidden
-              />
-              <span>{memoryLabel}</span>
-            </div>
-            {memory?.running && (
-              <p className={styles.note}>
-                {memory.entries != null ? `${memory.entries} entries` : "entries unknown"}
-                {memory.vectors != null ? `, ${memory.vectors} embedded` : ""}
-              </p>
-            )}
-            {memory?.lastError && (
-              <p className={styles.fieldError} role="alert">
-                Janitor error: {memory.lastError}
-              </p>
-            )}
-            <p className={styles.note}>
-              Shared memory is project-scoped and injected into agents
-              automatically.
-            </p>
-          </section>
-          )}
-
-          {pane === "memory" && projectTools && projects && toolsProject && (
-          <section className={styles.section} data-project-tools="">
-            <h3 className={styles.sectionLabel}>Project tools</h3>
-            <ProjectPicker
-              id="project-tools-project"
-              projects={projects}
-              value={toolsProject.id}
-              onChange={setToolsProjectId}
-            />
-            <MemoryProjectTools
-              projectId={toolsProject.id}
-              projectSlug={toolsProject.path}
-              {...projectTools}
-            />
-          </section>
+          <MemoryPane
+            status={status}
+            projects={projects}
+            projectTools={projectTools}
+            toolsProjectId={toolsProjectId}
+            setToolsProjectId={setToolsProjectId}
+          />
           )}
 
           {pane === "skills" && skills && (
@@ -2140,84 +1981,6 @@ function DisplayPrefsSection() {
         />
         <span>Vim motions in the composer</span>
       </label>
-    </section>
-  );
-}
-
-/**
- * Per-project Spotlight opt-in (moved from the Environment Lanes card).
- * Lanes are local-only, so remote projects are not offered.
- */
-function SpotlightSection({
-  projects,
-  value,
-  onPick,
-  onSetSpotlight,
-}: {
-  projects: ProjectInfo[];
-  value: string | null;
-  onPick: (projectId: string) => void;
-  onSetSpotlight: (input: {
-    projectId: string;
-    enabled: boolean;
-  }) => Promise<MergeSpotlight>;
-}) {
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  // Shown until useCoder's projects.list refresh brings the saved flag back.
-  const [saved, setSaved] = useState<{
-    projectId: string;
-    enabled: boolean;
-  } | null>(null);
-  const local = projects.filter((p) => !p.remoteHost);
-  const project = local.find((p) => p.id === value) ?? local[0] ?? null;
-  if (!project) return null;
-  const checked =
-    saved?.projectId === project.id ? saved.enabled : project.spotlight === true;
-  return (
-    <section className={styles.section} data-spotlight-settings="">
-      <h3 className={styles.sectionLabel}>Spotlight</h3>
-      <ProjectPicker
-        id="spotlight-project"
-        projects={local}
-        value={project.id}
-        onChange={onPick}
-      />
-      <label className={styles.fieldRow}>
-        <input
-          type="checkbox"
-          data-lane-spotlight=""
-          checked={checked}
-          disabled={busy}
-          onChange={(e) => {
-            const enabled = e.target.checked;
-            const projectId = project.id;
-            setBusy(true);
-            setError(null);
-            void onSetSpotlight({ projectId, enabled })
-              .then(() => setSaved({ projectId, enabled }))
-              .catch((err) =>
-                setError(
-                  err instanceof Error && err.message
-                    ? err.message
-                    : "Failed to save Spotlight",
-                ),
-              )
-              .finally(() => setBusy(false));
-          }}
-        />
-        <span>Preview lanes on the project checkout</span>
-      </label>
-      <p className={styles.note}>
-        When on, Preview on the Environment Lanes section hot-swaps the
-        claimed lane onto this project&apos;s checkout, so one running app
-        serves whichever lane you pick.
-      </p>
-      {error ? (
-        <p className={styles.fieldError} role="alert">
-          {error}
-        </p>
-      ) : null}
     </section>
   );
 }
