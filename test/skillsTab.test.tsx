@@ -689,6 +689,50 @@ describe("SkillsTab lists", () => {
   });
 });
 
+describe("SkillsTab refreshKey", () => {
+  it("reloads the list when refreshKey changes (stale list after Settings)", async () => {
+    let revision = 0;
+    const seen: Array<{ projectPath?: string } | undefined> = [];
+    const listSkills = async (input?: { projectPath?: string }) => {
+      seen.push(input);
+      return revision === 0 ? [SKILLS[0]] : [SKILLS[0], SKILLS[1]];
+    };
+    const m = await mount(
+      <SkillsTab
+        projectPath="/repo"
+        refreshKey={0}
+        listSkills={listSkills}
+        removeSkill={async () => {}}
+        syncSkills={async () => ({ copied: 0, skills: [] })}
+      />,
+    );
+    assert.equal(seen.length, 1, "listSkills must run once on mount");
+    assert.ok(m.text().includes("review-pr"));
+    assert.equal(m.text().includes("write-tests"), false);
+
+    revision = 1;
+    await m.rerender(
+      <SkillsTab
+        projectPath="/repo"
+        refreshKey={1}
+        listSkills={listSkills}
+        removeSkill={async () => {}}
+        syncSkills={async () => ({ copied: 0, skills: [] })}
+      />,
+    );
+    assert.equal(
+      seen.length,
+      2,
+      "listSkills must be called again when refreshKey changes",
+    );
+    assert.ok(
+      m.text().includes("write-tests"),
+      "the new row must render after the refresh",
+    );
+    m.unmount();
+  });
+});
+
 describe("SkillsTab MCP servers", () => {
   it("uses dedicated mcp methods and never sends mcpServers through saveSettings", () => {
     const src = fs.readFileSync(
@@ -1277,6 +1321,24 @@ describe("SkillsTab skills", () => {
     m.unmount();
   });
 
+  it("reports the status message for a successful add", async () => {
+    const m = await mount(<ManagerHarness />);
+    await openWriteManually(m);
+    await m.type(m.query('input[aria-label="Skill name"]'), "ship-it");
+    await m.type(
+      m.query('input[aria-label="Skill description"]'),
+      "Ship the change",
+    );
+    await m.type(m.query('textarea[aria-label="Skill body"]'), "Do the thing.");
+    await m.click(m.query('[data-skill-section="add"] button[type="submit"]'));
+
+    const live = m
+      .queryAll("[aria-live]")
+      .find((el) => (el.textContent || "").includes("Added ship-it"));
+    assert.ok(live, "a successful add must announce `Added <name>`");
+    m.unmount();
+  });
+
   it("validates the add form before calling addSkill", async () => {
     const added: SkillWrite[] = [];
     const m = await mount(<ManagerHarness onAddSkill={(i) => added.push(i)} />);
@@ -1414,6 +1476,60 @@ describe("SkillsTab skills", () => {
     m.unmount();
   });
 
+  it("Escape closes the open filter menu and returns focus to its summary", async () => {
+    const m = await mount(<Harness />);
+    const details = m.query("[data-skills-filter-menu]") as HTMLDetailsElement;
+    const summary = details.querySelector("summary") as HTMLElement;
+    await m.click(summary);
+    assert.equal(details.open, true, "menu must open on click");
+    await m.press(details, "Escape");
+    assert.equal(details.open, false, "Escape must close the menu");
+    assert.equal(
+      document.activeElement,
+      summary,
+      "focus must return to the summary",
+    );
+    m.unmount();
+  });
+
+  it("a pointerdown outside the filter menu closes it", async () => {
+    const m = await mount(<Harness />);
+    const details = m.query("[data-skills-filter-menu]") as HTMLDetailsElement;
+    const summary = details.querySelector("summary") as HTMLElement;
+    await m.click(summary);
+    assert.equal(details.open, true, "menu must open on click");
+    const outside = m.query(
+      'input[aria-label="Search installed skills"]',
+    ) as HTMLElement;
+    await inAct(async () => {
+      outside.dispatchEvent(
+        new (globalThis as any).MouseEvent("pointerdown", { bubbles: true }),
+      );
+    });
+    await m.flush();
+    assert.equal(details.open, false, "a click outside must close the menu");
+    m.unmount();
+  });
+
+  it("a pointerdown inside the filter menu does not close it", async () => {
+    const m = await mount(<Harness />);
+    const details = m.query("[data-skills-filter-menu]") as HTMLDetailsElement;
+    const summary = details.querySelector("summary") as HTMLElement;
+    await m.click(summary);
+    assert.equal(details.open, true, "menu must open on click");
+    const inside = details.querySelector(
+      '[data-source-filter]',
+    ) as HTMLElement;
+    await inAct(async () => {
+      inside.dispatchEvent(
+        new (globalThis as any).MouseEvent("pointerdown", { bubbles: true }),
+      );
+    });
+    await m.flush();
+    assert.equal(details.open, true, "a click inside the menu must not close it");
+    m.unmount();
+  });
+
   it("shows no drift banner when no skill has drift", async () => {
     const m = await mount(
       <Harness
@@ -1441,6 +1557,40 @@ describe("SkillsTab skills", () => {
   });
 
   it("hides the drift banner when the last load failed (no stale count)", async () => {
+    let calls = 0;
+    const listSkills = async () => {
+      calls += 1;
+      if (calls === 1) {
+        return SKILLS.map((s) => ({
+          ...s,
+          installedIn: [...s.installedIn],
+          missingFrom: [...s.missingFrom],
+        }));
+      }
+      throw new Error("list down");
+    };
+    const props = {
+      projectPath: "/repo",
+      listSkills,
+      removeSkill: async () => {},
+      syncSkills: async () => ({ copied: 0, skills: [] }),
+    };
+    const m = await mount(<SkillsTab {...props} refreshKey={0} />);
+    assert.ok(
+      m.query("[data-skills-drift]"),
+      "drift banner shows after the first, successful load",
+    );
+    await m.rerender(<SkillsTab {...props} refreshKey={1} />);
+    assert.ok(m.text().includes("list down"), "the in-tab error line stays");
+    assert.equal(
+      m.query("[data-skills-drift]"),
+      null,
+      "no stale count while the last load failed",
+    );
+    m.unmount();
+  });
+
+  it("a failed Sync keeps the banner and shows the error", async () => {
     const m = await mount(
       <Harness
         onSyncSkills={() => {
@@ -1450,8 +1600,11 @@ describe("SkillsTab skills", () => {
     );
     assert.ok(m.query("[data-skills-drift]"));
     await m.click(m.query('button[aria-label="Sync missing skills"]'));
-    assert.ok(m.text().includes("sync down"), "the in-tab error line stays");
-    assert.equal(m.query("[data-skills-drift]"), null);
+    assert.ok(m.text().includes("sync down"), "the action error line must show");
+    assert.ok(
+      m.query("[data-skills-drift]"),
+      "a failed action (not a failed load) must not hide the drift banner",
+    );
     m.unmount();
   });
 });

@@ -432,6 +432,10 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
   const [changesNonce, setChangesNonce] = useState(0);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsPane, setSettingsPane] = useState<SettingsPane | null>(null);
+  // Bumped on every Settings close so the Skills tab (mounted behind the
+  // modal the whole time) reloads instead of showing what it had before an
+  // install/import/add happened in Settings → Skills & MCP.
+  const [skillsRefreshKey, setSkillsRefreshKey] = useState(0);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [paletteMode, setPaletteMode] = useState<PaletteMode>("command");
   const paletteModeRef = useRef<PaletteMode>("command");
@@ -790,7 +794,10 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     setSettingsPane(pane ?? "general");
     setSettingsOpen(true);
   }, []);
-  const closeSettings = useCallback(() => setSettingsOpen(false), []);
+  const closeSettings = useCallback(() => {
+    setSettingsOpen(false);
+    setSkillsRefreshKey((n) => n + 1);
+  }, []);
   const closeChanges = useCallback(() => setChangesOpen(false), []);
   const openChanges = useCallback(() => {
     setChangesOpen(true);
@@ -2575,6 +2582,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         onOpenPrs={openPrs}
         onFork={handleForkOpen}
         onOpenSettings={openSettings}
+        skillsRefreshKey={skillsRefreshKey}
           />
           </ErrorBoundary>
           )}

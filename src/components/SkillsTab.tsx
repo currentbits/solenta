@@ -1113,6 +1113,12 @@ export interface SkillsTabProps {
   syncSkills: () => Promise<{ copied: number; skills: string[] }>;
   /** Opens Settings → Skills & MCP. Absent hides Manage ›. */
   onManage?: () => void;
+  /**
+   * Bumped by the caller when Settings closes, so the tab (which stays
+   * mounted behind the modal) reloads instead of showing a stale list
+   * after an install/import/add happened there.
+   */
+  refreshKey?: number;
 }
 
 /**
@@ -1126,10 +1132,14 @@ export function SkillsTab({
   removeSkill,
   syncSkills,
   onManage,
+  refreshKey,
 }: SkillsTabProps) {
   const [skills, setSkills] = useState<SkillInfo[]>([]);
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  /** Set only by reload(); a failed load makes the drift count untrustworthy. */
+  const [loadError, setLoadError] = useState<string | null>(null);
+  /** Set by a failed Remove or Sync; the list itself is still good. */
+  const [actionError, setActionError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   /** Inline remove confirm: row key of the skill asking. */
@@ -1144,8 +1154,28 @@ export function SkillsTab({
   const [expandedKeys, setExpandedKeys] = useState<Set<string>>(
     () => new Set(),
   );
+  const [filterOpen, setFilterOpen] = useState(false);
+  const filterDetailsRef = useRef<HTMLDetailsElement | null>(null);
+  const filterSummaryRef = useRef<HTMLElement | null>(null);
   const mountedRef = useRef(true);
   const genRef = useRef(0);
+
+  const closeFilterMenu = useCallback(() => {
+    if (filterDetailsRef.current) filterDetailsRef.current.open = false;
+    setFilterOpen(false);
+  }, []);
+
+  // Document listener only while open, so a click anywhere else dismisses
+  // the menu; removed on close (including Escape) and on unmount.
+  useEffect(() => {
+    if (!filterOpen) return;
+    const onPointerDown = (e: PointerEvent) => {
+      const el = filterDetailsRef.current;
+      if (el && !el.contains(e.target as Node)) closeFilterMenu();
+    };
+    document.addEventListener("pointerdown", onPointerDown);
+    return () => document.removeEventListener("pointerdown", onPointerDown);
+  }, [filterOpen, closeFilterMenu]);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -1161,10 +1191,10 @@ export function SkillsTab({
       const list = await listSkills(projectPath ? { projectPath } : undefined);
       if (!mountedRef.current || gen !== genRef.current) return;
       setSkills(list);
-      setError(null);
+      setLoadError(null);
     } catch (err) {
       if (!mountedRef.current || gen !== genRef.current) return;
-      setError(errorMessage(err));
+      setLoadError(errorMessage(err));
     } finally {
       if (mountedRef.current && gen === genRef.current) setLoading(false);
     }
@@ -1175,7 +1205,8 @@ export function SkillsTab({
     setExpandedKeys(new Set());
     setConfirmRemove(null);
     void reload();
-  }, [reload]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- refreshKey is a signal, not a value `reload` reads
+  }, [reload, refreshKey]);
 
   const handleRemove = async (skill: SkillInfo) => {
     if (skill.provenance === "project" || skill.source === "project") return;
@@ -1185,16 +1216,17 @@ export function SkillsTab({
       if (!mountedRef.current) return;
       setConfirmRemove(null);
       setStatusMessage(null);
+      setActionError(null);
       await reload();
     } catch (err) {
-      if (mountedRef.current) setError(errorMessage(err));
+      if (mountedRef.current) setActionError(errorMessage(err));
     } finally {
       if (mountedRef.current) setBusy(false);
     }
   };
 
   const handleSync = async () => {
-    setError(null);
+    setActionError(null);
     setStatusMessage(null);
     setBusy(true);
     try {
@@ -1204,7 +1236,7 @@ export function SkillsTab({
       if (!mountedRef.current) return;
       setStatusMessage(copiedMessage(result.copied));
     } catch (err) {
-      if (mountedRef.current) setError(errorMessage(err));
+      if (mountedRef.current) setActionError(errorMessage(err));
     } finally {
       if (mountedRef.current) setBusy(false);
     }
@@ -1217,22 +1249,24 @@ export function SkillsTab({
   })
     .slice()
     .sort((a, b) => a.name.localeCompare(b.name) || a.source.localeCompare(b.source));
-  // Never a stale count: a failed load or action hides the banner.
-  const drifted = error
+  // Never a stale count: a failed LOAD (not a failed action) hides the
+  // banner, since only a load failure makes `skills` untrustworthy.
+  const drifted = loadError
     ? 0
     : skills.filter((s) => s.provenance !== "project" && s.missingFrom.length > 0)
         .length;
   const activeFilters = sourceFilters.size + providerFilters.size;
+  const displayError = actionError ?? loadError;
 
   const library = (() => {
     if (loading && skills.length === 0) {
       return <p className={styles.empty}>Loading…</p>;
     }
-    if (error && skills.length === 0) {
+    if (loadError && skills.length === 0) {
       return (
         <div className={styles.downWrap}>
           <p className={styles.formError} role="alert">
-            {error}
+            {loadError}
           </p>
           <button
             type="button"
@@ -1301,8 +1335,21 @@ export function SkillsTab({
               ? "…"
               : `${visible.length}/${skills.length}`}
           </span>
-          <details className={styles.filterMenu} data-skills-filter-menu="">
-            <summary className={styles.ghostBtn} aria-label="Filter skills">
+          <details
+            ref={filterDetailsRef}
+            className={styles.filterMenu}
+            data-skills-filter-menu=""
+            onToggle={(e) =>
+              setFilterOpen((e.currentTarget as HTMLDetailsElement).open)
+            }
+            onKeyDown={(e) => {
+              if (e.key !== "Escape" || !filterOpen) return;
+              e.preventDefault();
+              closeFilterMenu();
+              filterSummaryRef.current?.focus();
+            }}
+          >
+            <summary ref={filterSummaryRef} className={styles.ghostBtn}>
               {activeFilters > 0 ? `Filter · ${activeFilters}` : "Filter"}
             </summary>
             <div className={styles.filterMenuList}>
@@ -1391,10 +1438,10 @@ export function SkillsTab({
             }}
           />
         ) : null}
-        {error && skills.length > 0 ? (
+        {displayError && skills.length > 0 ? (
           <div className={styles.downWrap}>
             <p className={styles.formError} role="alert">
-              {error}
+              {displayError}
             </p>
             <button
               type="button"

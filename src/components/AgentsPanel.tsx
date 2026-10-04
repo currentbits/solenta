@@ -366,6 +366,8 @@ interface AgentsPanelProps {
   onCollapse?: () => void;
   /** Opens Settings at a pane (Skills → Manage ›, Memory → Project tools). */
   onOpenSettings?: (pane?: SettingsPane) => void;
+  /** Bumped when Settings closes, so the Skills tab reloads behind it. */
+  skillsRefreshKey?: number;
 }
 
 type PhaseChipStatus = "done" | "active" | "pending" | "failed";
@@ -3612,6 +3614,7 @@ export const AgentsPanel = memo(function AgentsPanel({
   spotlightLane,
   onCollapse,
   onOpenSettings,
+  skillsRefreshKey,
 }: AgentsPanelProps) {
   const tabListRef = useRef<HTMLDivElement>(null);
   const focusRequest = useRef<PanelTab | null>(null);
@@ -3797,6 +3800,7 @@ export const AgentsPanel = memo(function AgentsPanel({
           removeSkill={removeSkill}
           syncSkills={syncSkills}
           onManage={onOpenSettings ? () => onOpenSettings("skills") : undefined}
+          refreshKey={skillsRefreshKey}
         />
       ) : null}
       </div>

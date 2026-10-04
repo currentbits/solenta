@@ -447,6 +447,47 @@ describe("App memory wiring", () => {
     assert.ok(m.query("[data-skills-manager]"), "moved sections render in Settings");
     m.unmount();
   });
+
+  it("refreshes the Skills tab after adding a skill in Settings and closing it (stale list)", async () => {
+    const fake = createFakeCoder({
+      projects: [project()],
+      threads: [thread()],
+    });
+    const m = await boot(fake);
+    await expandAgents(m);
+    await m.click(m.query('[data-panel-tab="skills"]'));
+    assert.equal(
+      m.text().includes("fresh-skill"),
+      false,
+      "the new skill must not exist yet",
+    );
+    await m.click(m.query("[data-skills-manage]"));
+    assert.equal(
+      m.query("[data-settings-pane]")?.getAttribute("data-settings-pane"),
+      "skills",
+    );
+    const writeManually = m.byText("Write manually");
+    assert.ok(writeManually, "Write manually disclosure must render");
+    await m.click(writeManually);
+    await m.type(m.query('input[aria-label="Skill name"]'), "fresh-skill");
+    await m.type(
+      m.query('input[aria-label="Skill description"]'),
+      "Added in Settings",
+    );
+    await m.type(m.query('textarea[aria-label="Skill body"]'), "Do the thing.");
+    await m.click(m.query('[data-skill-section="add"] button[type="submit"]'));
+    assert.ok(
+      m.text().includes("Added fresh-skill"),
+      "add must have succeeded inside Settings",
+    );
+    await m.click(m.query('button[aria-label="Close"]'));
+    assert.equal(m.query("[data-settings]"), null, "Settings must have closed");
+    assert.ok(
+      m.text().includes("fresh-skill"),
+      "the inspector Skills tab must reload after Settings closes, not show the stale list",
+    );
+    m.unmount();
+  });
 });
 
 describe("App archive undo toast wiring", () => {
