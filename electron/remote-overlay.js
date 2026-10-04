@@ -11,6 +11,7 @@
 const path = require("node:path");
 const { execCommand, posixQuote } = require("./ssh.js");
 const { wslTarget } = require("./wsl.js");
+const { isLiveOverlayThread } = require("./overlayHomes.js");
 
 /** Overlay buckets written by #835 / #836 / #837 / #873. */
 const REMOTE_OVERLAY_KINDS = [
@@ -102,18 +103,6 @@ function writeRemoteOverlay(project, dest, files, extraCmds) {
  */
 function projectCrossesBoundary(project) {
   return Boolean(project && (project.remoteHost || wslTarget(project)));
-}
-
-/**
- * Overlay must stay: a remote CLI may still be reading it.
- * @param {object | null | undefined} store
- * @param {string} threadId
- */
-function isLiveOverlayThread(store, threadId) {
-  if (!store || typeof store.getThread !== "function") return false;
-  const thread = store.getThread(threadId);
-  if (!thread) return false;
-  return thread.status === "working" || thread.status === "quota-wait";
 }
 
 /**

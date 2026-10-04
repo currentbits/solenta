@@ -4,6 +4,7 @@ const { runJsonLines, SIGKILL_AFTER_MS } = require("./agent.js");
 const { harvestToolResult } = require("./tool-images.js");
 const fs = require("node:fs");
 const path = require("node:path");
+const { reclaimOverlayHomes } = require("./overlayHomes.js");
 
 const INPUT_TRUNCATE = 2000;
 const OUTPUT_TRUNCATE = 4000;
@@ -476,59 +477,6 @@ function materializeCursorHome(opts) {
 }
 
 /**
- * True when the overlay must stay on disk: a cursor child may still be
- * reading it. Matches worktree GC's live-thread skip.
- * @param {object | null | undefined} store
- * @param {string} threadId
- */
-function isLiveCursorThread(store, threadId) {
-  if (!store || typeof store.getThread !== "function") return false;
-  const thread = store.getThread(threadId);
-  if (!thread) return false;
-  return thread.status === "working" || thread.status === "quota-wait";
-}
-
-/**
- * Remove `target` without following symlinks. Unlink a symlink (even one
- * pointing at a directory) instead of descending into the target — the
- * overlay's home links go into the real $HOME / ~/.cursor.
- * @param {string} target
- */
-function rmWithoutFollowing(target) {
-  let st;
-  try {
-    st = fs.lstatSync(target);
-  } catch (err) {
-    if (err && err.code === "ENOENT") return;
-    throw err;
-  }
-  if (st.isSymbolicLink() || !st.isDirectory()) {
-    fs.unlinkSync(target);
-    return;
-  }
-  let entries = [];
-  try {
-    entries = fs.readdirSync(target, { withFileTypes: true });
-  } catch (err) {
-    if (err && err.code === "ENOENT") return;
-    throw err;
-  }
-  for (const ent of entries) {
-    const child = path.join(target, ent.name);
-    if (ent.isSymbolicLink() || !ent.isDirectory()) {
-      try {
-        fs.unlinkSync(child);
-      } catch {
-        // best-effort
-      }
-    } else {
-      rmWithoutFollowing(child);
-    }
-  }
-  fs.rmdirSync(target);
-}
-
-/**
  * Reclaim stale cursor-homes overlays (#700).
  *
  * One dir per thread that has ever run cursor, under
@@ -542,47 +490,7 @@ function rmWithoutFollowing(target) {
  * @returns {{ removed: string[], skipped: string[] }}
  */
 function reclaimCursorHomes(opts) {
-  const userDataPath = String((opts && opts.userDataPath) || "");
-  if (!userDataPath) return { removed: [], skipped: [] };
-  const store = opts && opts.store;
-  if (!store || typeof store.getThread !== "function") {
-    return { removed: [], skipped: [] };
-  }
-  const base = path.join(userDataPath, "cursor-homes");
-  let baseStat;
-  try {
-    baseStat = fs.lstatSync(base);
-  } catch (err) {
-    if (err && err.code === "ENOENT") return { removed: [], skipped: [] };
-    throw err;
-  }
-  if (!baseStat.isDirectory() || baseStat.isSymbolicLink()) {
-    return { removed: [], skipped: [] };
-  }
-
-  const removed = [];
-  const skipped = [];
-  let names = [];
-  try {
-    names = fs.readdirSync(base);
-  } catch {
-    return { removed, skipped };
-  }
-  for (const name of names) {
-    if (!name || name !== path.basename(name)) continue;
-    const dest = path.join(base, name);
-    if (isLiveCursorThread(store, name)) {
-      skipped.push(dest);
-      continue;
-    }
-    try {
-      rmWithoutFollowing(dest);
-      removed.push(dest);
-    } catch {
-      // housekeeping; a busy overlay is retried on the next pass
-    }
-  }
-  return { removed, skipped };
+  return reclaimOverlayHomes(opts, "cursor-homes");
 }
 
 /**
