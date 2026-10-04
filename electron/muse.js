@@ -331,6 +331,36 @@ function runMuse(opts) {
   return { kill };
 }
 
+/**
+ * Muse exec --json JSONL → assistant text via extractAssistantText (ask /
+ * commitmsg one-shot runs).
+ * Echo delta and terminal carry the same full payload.text; terminal is a
+ * snapshot (replace), matching startMuseRun — do not double-concatenate.
+ * @param {string} stdout
+ * @returns {string}
+ */
+function extractStdoutText(stdout) {
+  let text = "";
+  for (const line of String(stdout || "").split("\n")) {
+    const t = line.trim();
+    if (!t.startsWith("{")) continue;
+    let ev;
+    try {
+      ev = JSON.parse(t);
+    } catch {
+      continue;
+    }
+    const piece = extractAssistantText(ev);
+    if (!piece) continue;
+    if (ev.payload_type === "run.terminal.completed") {
+      if (piece !== text) text = piece;
+    } else {
+      text += piece;
+    }
+  }
+  return text;
+}
+
 module.exports = {
   materializeMuseHome,
   museChildEnv,
@@ -345,4 +375,5 @@ module.exports = {
   extractUsage,
   toolCardKey,
   runMuse,
+  extractStdoutText,
 };
