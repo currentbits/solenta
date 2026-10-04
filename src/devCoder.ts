@@ -252,6 +252,7 @@ interface MemoryRow {
   createdAt: string;
   updatedAt: string;
   citations?: MemoryEntryInfo["citations"];
+  agent?: string;
 }
 
 function toIso(ms: number): string {
@@ -274,6 +275,7 @@ function toListEntry(row: MemoryRow): MemoryEntryInfo {
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
     citations: row.citations,
+    agent: row.agent ?? null,
   };
 }
 
@@ -288,6 +290,7 @@ function toFullEntry(row: MemoryRow): MemoryEntryInfo {
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
     citations: row.citations,
+    agent: row.agent ?? null,
   };
 }
 
@@ -305,6 +308,7 @@ function seedMemoryEntries(t0: number): MemoryRow[] {
       title: "Rewriting auth was ruled out. Cookie sessions stay",
       body: "Thread 1 costed a move to token auth and dropped it. Refresh lives in src/lib/auth.ts and the 401 retry in src/lib/api.ts. Do not re-open the rewrite without new evidence.",
       project: DEMO_NEBULA,
+      agent: "codex",
       importance: 5,
       createdAt: hours(48),
       updatedAt: hours(6),
@@ -315,6 +319,7 @@ function seedMemoryEntries(t0: number): MemoryRow[] {
       title: "Per-device overrides read from the settings store, not the env",
       body: "src/settings/store.ts is the single source for per-device overrides. The env reader was a migration shim and is gone. Anything reading process.env for a device key is stale.",
       project: DEMO_NEBULA,
+      agent: "grok",
       importance: 4,
       createdAt: hours(36),
       updatedAt: hours(12),
@@ -365,6 +370,7 @@ function seedMemoryEntries(t0: number): MemoryRow[] {
       title: "Backfill the migration test before the schema lands",
       body: "The key-schema patch needs a fixture that runs the old rows through the migration. Blocked until the store move in #842 merges.",
       project: DEMO_NEBULA,
+      agent: "claude",
       importance: 3,
       createdAt: hours(4),
       updatedAt: hours(1),
@@ -1463,6 +1469,48 @@ function seedDetail(thread: ThreadInfo): ThreadDetail {
       text: "Modernize per-device provider settings storage.",
       createdAt: t0 - 130_000,
       runId,
+    },
+    // A shared-memory recall, so the dev renderer shows a memory moment (#1429).
+    {
+      id: "tool-memory-seed",
+      role: "tool",
+      text: "memory_search: per-device provider settings",
+      createdAt: t0 - 120_000,
+      runId,
+      tool: {
+        id: "tc-memory-seed",
+        name: "mcp__coder-memory__memory_search",
+        input: JSON.stringify({ query: "per-device provider settings" }),
+        output: JSON.stringify(
+          [
+            ["Provider overrides live in electron/store.js, not the renderer", "codex", 2 * 24],
+            ["Per-device keys must survive a store migration (#613)", "claude", 5 * 24],
+            ["Settings tests need core/dist built first", "grok", 8 * 24],
+          ].map(([title, agent, hoursAgo], i) => ({
+            id: `mem-demo-${i}`,
+            title,
+            agent,
+            created_at: toIso(t0 - Number(hoursAgo) * 3_600_000),
+          })),
+        ),
+        done: true,
+        isError: false,
+      },
+    },
+    {
+      id: "tool-read-seed",
+      role: "tool",
+      text: "Read: src/settings/providerStore.ts",
+      createdAt: t0 - 110_000,
+      runId,
+      tool: {
+        id: "tc-read-seed",
+        name: "Read",
+        input: "src/settings/providerStore.ts",
+        output: "export const providerStore = createStore();",
+        done: true,
+        isError: false,
+      },
     },
     {
       id: "evt-kickoff",

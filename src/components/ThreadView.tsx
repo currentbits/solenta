@@ -7,6 +7,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type ReactNode,
 } from "react";
 import {
   PanePlaceholder,
@@ -43,6 +44,7 @@ import type {
   DiffResult,
   FileChange,
   GitSyncInfo,
+  MemoryEntryInfo,
   PrChecksResult,
   PrInfo,
   PrTemplateResult,
@@ -89,7 +91,7 @@ import {
   nearestScrollTop,
   offsetTopWithin,
 } from "../scrollNearest";
-import { resolveCoderApi } from "../coderApi";
+import { isDevBuild, resolveCoderApi } from "../coderApi";
 import { TEACH_AUTONOMY_LABELS } from "../teach";
 import type { TeachAutonomy } from "../shared/ipc";
 import type { WorkflowSaveInput } from "../useCoder";
@@ -127,9 +129,15 @@ import {
   collapseTimeline,
   liveGroupLabel,
   summarizeToolGroup,
+  toolAction,
   type DisplayEntry,
   type ToolGroup,
 } from "../toolGroups";
+import {
+  isMemoryToolMessage,
+  memoryStepText,
+  parseMemoryStep,
+} from "../memorySteps";
 import { RunArtifacts } from "./RunArtifacts";
 import { QuestionPrompt } from "./QuestionPrompt";
 import { InputPrompt } from "./InputPrompt";
@@ -195,7 +203,7 @@ import {
   ChunkRationale,
   ReviewItineraryView,
 } from "./ReviewItinerary";
-import { formatElapsed } from "../format";
+import { formatElapsed, formatRelativeAge } from "../format";
 import { liveWorkingLabel } from "../workingLabel";
 import { useEscapeClose } from "../useEscapeClose";
 import { useModalFocus } from "../useModalFocus";
@@ -1095,8 +1103,15 @@ function ToolGroupRow({
 }) {
   const [entered] = useState(Boolean(animateIn));
   const open = verbose || expanded;
-  const live = working ? liveGroupLabel(group.messages) : null;
-  const label = live ?? summarizeToolGroup(group.messages);
+  // Shared-memory calls get their own "memory moment" lines (#1429 F5).
+  const memory = group.messages.filter(isMemoryToolMessage);
+  const rest =
+    memory.length > 0
+      ? group.messages.filter((m) => !isMemoryToolMessage(m))
+      : group.messages;
+  const live = working ? liveGroupLabel(rest) : null;
+  const label = live ?? summarizeToolGroup(rest);
+  const restTools = rest.filter((m) => m.role === "tool");
   return (
     <section
       className={`${styles.toolGroup}${entered ? ` ${styles.streamIn}` : ""}`}
@@ -1110,30 +1125,24 @@ function ToolGroupRow({
       }
       data-stream-in={entered ? "" : undefined}
     >
-      <button
-        type="button"
-        className={styles.toolGroupToggle}
-        aria-expanded={open}
-        onClick={onToggle}
-      >
-        <span className={styles.chevron} data-open={open} aria-hidden="true">
-          <svg
-            width="9"
-            height="9"
-            viewBox="0 0 10 10"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="1.6"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          >
-            <path d="M3.5 2 6.5 5 3.5 8" />
-          </svg>
-        </span>
-        <span>{label}</span>
-      </button>
+      {memory.map((m) => (
+        <MemoryStepRow key={m.id} message={m} />
+      ))}
+      {rest.length > 0 && (
+        <StepLine
+          icon={
+            restTools.length === 0
+              ? "thinking"
+              : stepIconForTools(restTools.map((m) => m.tool?.name ?? ""))
+          }
+          open={open}
+          onToggle={onToggle}
+        >
+          {label}
+        </StepLine>
+      )}
       {open &&
-        group.messages.map((message) =>
+        rest.map((message) =>
           message.thinking ? (
             <ThinkingCard
               key={message.id}
@@ -1152,6 +1161,154 @@ function ToolGroupRow({
           ),
         )}
     </section>
+  );
+}
+
+type StepIconKind =
+  | "file"
+  | "edit"
+  | "terminal"
+  | "search"
+  | "agents"
+  | "thinking"
+  | "tool";
+
+function stepIconForTools(names: string[]): StepIconKind {
+  const actions = new Set(names.map(toolAction));
+  if (actions.size !== 1) return "tool";
+  const [only] = actions;
+  if (only === "read") return "file";
+  if (only === "edit") return "edit";
+  if (only === "command") return "terminal";
+  if (only === "code-search" || only === "search") return "search";
+  return "tool";
+}
+
+const STEP_ICON_PATHS: Record<StepIconKind, ReactNode> = {
+  file: (
+    <>
+      <path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z" />
+      <path d="M14 3v6h6" />
+    </>
+  ),
+  edit: <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z" />,
+  terminal: (
+    <>
+      <rect x="3" y="4" width="18" height="16" rx="2" />
+      <path d="m7 9 3 3-3 3M13 15h4" />
+    </>
+  ),
+  search: (
+    <>
+      <circle cx="11" cy="11" r="7" />
+      <path d="m20 20-4-4" />
+    </>
+  ),
+  agents: (
+    <>
+      <circle cx="9" cy="8" r="3" />
+      <circle cx="17" cy="9" r="2.5" />
+      <path d="M3 20a6 6 0 0 1 12 0M14 20a4.5 4.5 0 0 1 7 0" />
+    </>
+  ),
+  thinking: (
+    <path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M5.6 18.4l2.1-2.1M16.3 7.7l2.1-2.1" />
+  ),
+  tool: (
+    <path d="M14.7 6.3a4 4 0 0 0-5.4 5.4L3 18l3 3 6.3-6.3a4 4 0 0 0 5.4-5.4l-2.5 2.5-2.4-.6-.6-2.4z" />
+  ),
+};
+
+/**
+ * One muted work step (#1429 item 4): small icon, text, and a right-aligned
+ * Show/Hide when there is something to expand. Replaces bold headings.
+ */
+function StepLine({
+  icon,
+  open,
+  onToggle,
+  children,
+}: {
+  icon: StepIconKind | "memory";
+  open?: boolean;
+  onToggle?: () => void;
+  children: ReactNode;
+}) {
+  const glyph =
+    icon === "memory" ? (
+      <span className={styles.stepIcon} aria-hidden="true">
+        <i className={styles.memoryDiamond} />
+      </span>
+    ) : (
+      <svg
+        className={styles.stepIcon}
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        aria-hidden="true"
+      >
+        {STEP_ICON_PATHS[icon]}
+      </svg>
+    );
+  if (!onToggle) {
+    return (
+      <div className={styles.step} data-step={icon}>
+        {glyph}
+        <span className={styles.stepText}>{children}</span>
+      </div>
+    );
+  }
+  return (
+    <button
+      type="button"
+      className={`${styles.step} ${styles.toolGroupToggle}`}
+      data-step={icon}
+      aria-expanded={open}
+      onClick={onToggle}
+    >
+      {glyph}
+      <span className={styles.stepText}>{children}</span>
+      <span className={styles.stepMore}>{open ? "Hide" : "Show"}</span>
+    </button>
+  );
+}
+
+/** Shared-memory recall/store as a yellow-marker step (#1429 F5). */
+function MemoryStepRow({ message }: { message: ChatMessage }) {
+  const step = parseMemoryStep(message);
+  const items = step?.kind === "recall" ? step.items : [];
+  const [open, setOpen] = useState(items.length > 0 && items.length <= 3);
+  if (!step) return null;
+  const text = memoryStepText(step);
+  return (
+    <div className={styles.memoryStep} data-memory-step={step.kind}>
+      <StepLine
+        icon="memory"
+        open={open}
+        onToggle={items.length > 0 ? () => setOpen((v) => !v) : undefined}
+      >
+        {text.before}
+        {text.mark ? <span className={styles.mark}>{text.mark}</span> : null}
+        {text.after}
+      </StepLine>
+      {open && items.length > 0 ? (
+        <ul className={styles.memoryList} data-memory-list="">
+          {items.map((item, i) => (
+            <li key={i}>
+              {item.title}
+              {item.agent || item.age ? (
+                <span className={styles.memoryMeta}>
+                  {[item.agent, item.age].filter(Boolean).join(" · ")}
+                </span>
+              ) : null}
+            </li>
+          ))}
+        </ul>
+      ) : null}
+    </div>
   );
 }
 
@@ -1605,6 +1762,7 @@ const MessageBlock = memo(function MessageBlock({
   confirming,
   onRequestResubmit,
   onCancelConfirm,
+  metaAgent = null,
   metaModel = null,
   metaEffort = null,
   metaDuration = null,
@@ -1637,6 +1795,7 @@ const MessageBlock = memo(function MessageBlock({
   onRequestResubmit?: (messageId: string, prompt: string) => void;
   onCancelConfirm?: () => void;
   /** Assistant footer segments; null fields are omitted inside. */
+  metaAgent?: string | null;
   metaModel?: string | null;
   metaEffort?: string | null;
   metaDuration?: string | null;
@@ -1653,6 +1812,7 @@ const MessageBlock = memo(function MessageBlock({
   // Latch at mount; see ToolCallCard for why.
   const [entered] = useState(Boolean(animateIn));
   const [copied, setCopied] = useState(false);
+  const [eventOpen, setEventOpen] = useState(false);
   if (message.thinking) {
     return (
       <ThinkingCard
@@ -1661,6 +1821,9 @@ const MessageBlock = memo(function MessageBlock({
         animateIn={entered}
       />
     );
+  }
+  if (isMemoryToolMessage(message)) {
+    return <MemoryStepRow message={message} />;
   }
   if (message.role === "tool") {
     return (
@@ -1692,13 +1855,27 @@ const MessageBlock = memo(function MessageBlock({
   }
 
   if (message.role === "event") {
+    // Quiet one-line step (#1429). Only the subagent kickoff folds its
+    // phase list behind Show; any other notice body (failures, "Not
+    // delivered") stays visible.
+    const [eventHead, ...eventRest] = message.text.split(/\r?\n/);
+    const eventBody = eventRest.join("\n").trim();
+    const kickoff = /^kicked off \d+ subagent/i.test(eventHead ?? "");
     return (
       <section
         className={`${styles.eventLine}${entered ? ` ${styles.streamIn}` : ""}`}
         data-stream-in={entered ? "" : undefined}
       >
         <div className={styles.eventRow}>
-          <div className={styles.eventTitle}>{message.text}</div>
+          <StepLine
+            icon={kickoff ? "agents" : "tool"}
+            open={eventOpen}
+            onToggle={
+              kickoff && eventBody ? () => setEventOpen((v) => !v) : undefined
+            }
+          >
+            {eventHead}
+          </StepLine>
           {eventActionLabel && onEventAction && (
             <button
               type="button"
@@ -1710,12 +1887,16 @@ const MessageBlock = memo(function MessageBlock({
             </button>
           )}
         </div>
+        {eventBody && (eventOpen || !kickoff) ? (
+          <div className={styles.eventTitle}>{eventBody}</div>
+        ) : null}
       </section>
     );
   }
 
   const metaLine = messageMetaLine({
     createdAt: message.createdAt,
+    agent: metaAgent,
     model: metaModel,
     effort: metaEffort,
     duration: metaDuration,
@@ -2156,20 +2337,115 @@ function SyncPill({
 
 const CHECKS_POLL_MS = 8000;
 
+const NO_LINE_TOTALS = { added: 0, removed: 0 };
+
+/** "48s", "2m 14s", then formatElapsed's "1h 4m" past the hour. */
+export function formatRunClock(from: number, now = Date.now()): string {
+  const sec = Math.max(0, Math.floor((now - from) / 1000));
+  if (sec < 60) return `${sec}s`;
+  if (sec < 3600) return `${Math.floor(sec / 60)}m ${sec % 60}s`;
+  return formatElapsed(from, now);
+}
+
+/** Self-ticking so a running turn doesn't re-render the whole ThreadView. */
+function ElapsedClock({ since }: { since: number }) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const id = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(id);
+  }, []);
+  return (
+    <span className={styles.statusElapsed} data-run-elapsed="">
+      {formatRunClock(since, now)}
+    </span>
+  );
+}
+
+/** Sum of per-file +/− lines for the header commit button (#1429). */
+export function diffLineTotals(
+  files: readonly { additions?: number; deletions?: number }[],
+): { added: number; removed: number } {
+  let added = 0;
+  let removed = 0;
+  for (const f of files) {
+    added += f.additions || 0;
+    removed += f.deletions || 0;
+  }
+  return { added, removed };
+}
+
 /**
  * One header control that always names the next git step (issue #382).
  * Replaces the always-visible Push + Create PR pair.
  */
+/** recent() caps at 50 server-side; a full page reads as "50+". */
+const MEMORY_PILL_LIMIT = 50;
+
+/**
+ * New-thread memory pill (#1429 F8): what this project's agents already know.
+ * Hidden when the memory server is down or the project has no entries.
+ */
+function MemoryPill({
+  projectPath,
+  label,
+}: {
+  projectPath: string;
+  label: string;
+}) {
+  const [entries, setEntries] = useState<MemoryEntryInfo[] | null>(null);
+  useEffect(() => {
+    let live = true;
+    setEntries(null);
+    // Only an existing bridge (or the dev mock): never open a wire socket
+    // just for a decorative pill.
+    const api =
+      (window as unknown as { coder?: CoderApi }).coder ??
+      (isDevBuild() ? resolveCoderApi() : undefined);
+    const recent = api?.memory?.recent;
+    if (typeof recent !== "function") return;
+    recent({ project: projectPath, limit: MEMORY_PILL_LIMIT }).then(
+      (list) => {
+        if (live) setEntries(list);
+      },
+      () => {},
+    );
+    return () => {
+      live = false;
+    };
+  }, [projectPath]);
+  if (!entries || entries.length === 0) return null;
+  const n = entries.length;
+  const count = n >= MEMORY_PILL_LIMIT ? `${n}+` : String(n);
+  const last = entries[0]!;
+  const at = Date.parse(last.createdAt);
+  const age = Number.isFinite(at) ? formatRelativeAge(at) : null;
+  const when = age == null ? "" : age === "now" ? " just now" : ` ${age} ago`;
+  const tail = last.agent
+    ? ` · last from ${last.agent}${when}`
+    : when
+      ? ` · last saved${when}`
+      : "";
+  return (
+    <span className={styles.memoryPill} data-memory-pill="">
+      <i className={styles.memoryDiamond} aria-hidden="true" />
+      {`${count} ${n === 1 ? "memory" : "memories"} in ${label}${tail}`}
+    </span>
+  );
+}
+
 /** Dotted project name in the new-thread hero; picks move the draft. */
 function DraftProjectChooser({
   current,
   projects,
   onPick,
+  onStartWithoutProject,
   label: labelOverride,
 }: {
   current: ProjectInfo | null;
   projects: readonly ProjectInfo[];
   onPick?: (projectId: string) => void;
+  /** "Start without a project" lives in this menu since #1429. */
+  onStartWithoutProject?: () => void;
   /** Visible trigger text when there is no current project (Scratch). */
   label?: string;
 }) {
@@ -2186,21 +2462,26 @@ function DraftProjectChooser({
   useEscapeClose(open, () => setOpen(false));
   const label =
     labelOverride ?? (current ? current.slug || current.name : "this project");
-  const others = projects.filter(
-    (p) => p.id !== current?.id && !p.remoteHost && !p.scratch,
-  );
-  if (!onPick || others.length === 0) {
-    return <span className={styles.heroProject}>{label}</span>;
+  const others = onPick
+    ? projects.filter((p) => p.id !== current?.id && !p.remoteHost && !p.scratch)
+    : [];
+  const markCls = current ? ` ${styles.mark}` : "";
+  if (others.length === 0 && !onStartWithoutProject) {
+    return <span className={`${styles.heroProject}${markCls}`}>{label}</span>;
   }
   return (
     <span className={styles.heroChooser} ref={wrapRef}>
       <button
         type="button"
-        className={styles.heroProject}
+        className={`${styles.heroProject}${markCls}`}
         data-hero-project=""
         aria-haspopup="menu"
         aria-expanded={open}
-        title="Move this draft to another project"
+        title={
+          others.length > 0
+            ? "Move this draft to another project"
+            : "Project options"
+        }
         onClick={() => setOpen((v) => !v)}
       >
         {label}
@@ -2216,13 +2497,32 @@ function DraftProjectChooser({
               data-hero-project-option={p.id}
               onClick={() => {
                 setOpen(false);
-                onPick(p.id);
+                onPick?.(p.id);
               }}
             >
-              {p.iconUrl ? <ProjectIcon url={p.iconUrl} size={14} /> : null}
+              <ProjectIcon
+                url={p.iconUrl}
+                name={p.slug || p.name}
+                seed={p.id}
+                size={14}
+              />
               {p.slug || p.name}
             </button>
           ))}
+          {onStartWithoutProject ? (
+            <button
+              type="button"
+              role="menuitem"
+              className={`${styles.heroMenuItem}${others.length > 0 ? ` ${styles.heroMenuSplit}` : ""}`}
+              data-start-without-project=""
+              onClick={() => {
+                setOpen(false);
+                onStartWithoutProject();
+              }}
+            >
+              Start without a project
+            </button>
+          ) : null}
         </span>
       ) : null}
     </span>
@@ -2281,6 +2581,7 @@ function NextGitActionButton({
 }) {
   const [dirty, setDirty] = useState(false);
   const [fileCount, setFileCount] = useState(0);
+  const [lineTotals, setLineTotals] = useState(NO_LINE_TOTALS);
   const [sync, setSync] = useState<GitSyncInfo | null>(null);
   const [checks, setChecks] = useState<PrChecksResult | null>(null);
   const [pending, setPending] = useState(false);
@@ -2326,6 +2627,7 @@ function NextGitActionButton({
   useEffect(() => {
     setDirty(false);
     setFileCount(0);
+    setLineTotals(NO_LINE_TOTALS);
     setSync(null);
     setChecks(null);
     setPending(false);
@@ -2345,11 +2647,13 @@ function NextGitActionButton({
       if (threadRef.current !== id) return;
       setDirty(!isEmptyDiff(diff));
       setFileCount(diff.files.length);
+      setLineTotals(diffLineTotals(diff.files));
       setBlastRadius(diff.blastRadius ?? null);
     } catch {
       if (threadRef.current !== id) return;
       setDirty(false);
       setFileCount(0);
+      setLineTotals(NO_LINE_TOTALS);
       setBlastRadius(null);
     }
     if (!gitSyncInfo) {
@@ -2639,7 +2943,9 @@ function NextGitActionButton({
     : (flash ?? action.label);
   const className = [
     styles.btn,
-    action.primary ? styles.btnPrimary : "",
+    // The mock's commit button is a neutral surface so the green/red line
+    // counts stay legible; push/PR/merge keep the yellow primary.
+    action.primary && action.kind !== "commit" ? styles.btnPrimary : "",
     styles.pushBtn,
     onMore ? styles.gitSplitMain : "",
   ]
@@ -2746,6 +3052,13 @@ function NextGitActionButton({
       >
         {pending && <span className={styles.pushSpinner} aria-hidden />}
         {label}
+        {action.kind === "commit" && label === action.label &&
+        (lineTotals.added > 0 || lineTotals.removed > 0) ? (
+          <span className={styles.gitLines} data-git-line-counts="">
+            <span className={styles.gitAdded}>+{lineTotals.added}</span>
+            <span className={styles.gitRemoved}>−{lineTotals.removed}</span>
+          </span>
+        ) : null}
       </button>
       {moreButton}
       {ciSignOff ? (
@@ -3090,8 +3403,11 @@ function PlanCard({ thread }: { thread: ThreadInfo }) {
       <div className={styles.planCardHead}>
         <span className={styles.planCardTitle}>Plan</span>
         {steps.length > 0 && (
-          <span className={styles.planProgress}>
-            {done}/{steps.length} done
+          <span
+            className={styles.planProgress}
+            title={`${done} of ${steps.length} steps done`}
+          >
+            {done}/{steps.length}
           </span>
         )}
         {thread.plan && (
@@ -6906,6 +7222,65 @@ export const ThreadView = memo(function ThreadView({
     />
   ) : null;
 
+  // Run status rides on the composer's top edge (#1429), not the transcript.
+  const composerStatus =
+    detail.thread.status === "quota-wait" ? (
+      <div
+        className={`${styles.statusStrip} ${styles.statusStripQuotaWait}`}
+        data-quota-wait-strip=""
+      >
+        <span className={styles.statusDiamond} aria-hidden />
+        <span className={styles.statusText}>
+          Usage limit reached. Resuming at{" "}
+          {detail.thread.quotaWaitUntil != null
+            ? formatQuotaWaitLabel(detail.thread.quotaWaitUntil, Date.now())
+            : "the reset"}
+          .
+        </span>
+        {onResumeQuotaWait ? (
+          <button
+            type="button"
+            className={styles.statusAction}
+            onClick={() => void onResumeQuotaWait()}
+            data-resume-quota-wait=""
+          >
+            Resume now
+          </button>
+        ) : null}
+        {onSetQuotaWaitAutoResume &&
+        detail.thread.quotaWaitAutoResume !== false ? (
+          <button
+            type="button"
+            className={styles.stopBtn}
+            onClick={() => void onSetQuotaWaitAutoResume(false)}
+            data-quota-wait-opt-out=""
+          >
+            Don&apos;t auto-resume
+          </button>
+        ) : null}
+      </div>
+    ) : isWorking ? (
+      <div
+        className={`${styles.statusStrip}${stalledAt != null ? ` ${styles.statusStripStalled}` : ""}`}
+        data-stalled={stalledAt != null ? "" : undefined}
+      >
+        <span className={styles.statusDiamond} aria-hidden />
+        <span className={styles.statusText}>{workingLabel}</span>
+        {detail.thread.runStartedAt != null ? (
+          <ElapsedClock since={detail.thread.runStartedAt} />
+        ) : null}
+        <button
+          type="button"
+          className={styles.stopBtn}
+          title="Stop (Esc · Ctrl+C)"
+          aria-keyshortcuts="Escape Control+C"
+          onClick={() => void onStopRun()}
+        >
+          Stop
+        </button>
+      </div>
+    ) : null;
+
   return (
     <PathLinkProvider
       threadId={detail.thread.id}
@@ -6942,17 +7317,27 @@ export const ThreadView = memo(function ThreadView({
               aria-label={newThreadLabel}
               onClick={() => onCreateThread(thread.projectId)}
             >
-              {project?.iconUrl ? (
-                <ProjectIcon url={project.iconUrl} size={14} />
+              {project ? (
+                <ProjectIcon
+                  url={project.iconUrl}
+                  name={projectSlug}
+                  seed={project.id}
+                  size={16}
+                />
               ) : null}
-              {projectSlug}
+              <span className={styles.projectName}>{projectSlug}</span>
             </button>
           ) : (
             <span className={styles.project}>
-              {project?.iconUrl ? (
-                <ProjectIcon url={project.iconUrl} size={14} />
+              {project ? (
+                <ProjectIcon
+                  url={project.iconUrl}
+                  name={projectSlug}
+                  seed={project.id}
+                  size={16}
+                />
               ) : null}
-              {projectSlug}
+              <span className={styles.projectName}>{projectSlug}</span>
             </span>
           )}
           <span className={styles.sep} aria-hidden>
@@ -7910,6 +8295,9 @@ export const ThreadView = memo(function ThreadView({
               </>
             ) : (
               <>
+                {project ? (
+                  <MemoryPill projectPath={project.path} label={projectSlug} />
+                ) : null}
                 <h1 className={styles.heroTitle}>
                   What should we build in{" "}
                   <DraftProjectChooser
@@ -7920,23 +8308,17 @@ export const ThreadView = memo(function ThreadView({
                         ? (id) => onMoveDraftToProject(thread.id, id)
                         : undefined
                     }
+                    onStartWithoutProject={
+                      onStartWithoutProject
+                        ? () => onStartWithoutProject(thread.id)
+                        : undefined
+                    }
                   />
                   ?
                 </h1>
-                {onStartWithoutProject ? (
-                  <button
-                    type="button"
-                    className={styles.heroLink}
-                    data-start-without-project=""
-                    onClick={() => onStartWithoutProject(thread.id)}
-                  >
-                    or start without a project
-                  </button>
-                ) : (
-                  <p className={styles.heroHint}>
-                    Describe the task, pick where it runs below, and send with ⌘Enter.
-                  </p>
-                )}
+                <p className={styles.heroHint}>
+                  Every agent here starts where the last one stopped.
+                </p>
               </>
             )}
           </div>
@@ -8134,6 +8516,7 @@ export const ThreadView = memo(function ThreadView({
                           : undefined
                       }
                       onCancelConfirm={handleRewindCancel}
+                      metaAgent={detail?.thread.provider ?? null}
                       metaModel={
                         detail?.usage?.model ?? detail?.thread.model ?? null
                       }
@@ -8342,71 +8725,6 @@ export const ThreadView = memo(function ThreadView({
             onRespond={onRespondPermission}
           />
         ) : null}
-
-        {detail && detail.thread.status === "quota-wait" && (
-          <div
-            className={`${styles.statusStrip} ${styles.statusStripQuotaWait}`}
-            data-quota-wait-strip=""
-          >
-            <div className={styles.statusLeft}>
-              <span className={styles.statusDot} aria-hidden />
-              <span>
-                Usage limit reached. Resuming at{" "}
-                {detail.thread.quotaWaitUntil != null
-                  ? formatQuotaWaitLabel(
-                      detail.thread.quotaWaitUntil,
-                      Date.now(),
-                    )
-                  : "the reset"}
-                .
-              </span>
-            </div>
-            <div className={styles.statusLeft}>
-              {onResumeQuotaWait ? (
-                <button
-                  type="button"
-                  className={styles.retryBtn}
-                  onClick={() => void onResumeQuotaWait()}
-                  data-resume-quota-wait=""
-                >
-                  Resume now
-                </button>
-              ) : null}
-              {onSetQuotaWaitAutoResume &&
-              detail.thread.quotaWaitAutoResume !== false ? (
-                <button
-                  type="button"
-                  className={styles.stopBtn}
-                  onClick={() => void onSetQuotaWaitAutoResume(false)}
-                  data-quota-wait-opt-out=""
-                >
-                  Don&apos;t auto-resume
-                </button>
-              ) : null}
-            </div>
-          </div>
-        )}
-
-        {isWorking && (
-          <div
-            className={`${styles.statusStrip} ${styles.streamIn}${stalledAt != null ? ` ${styles.statusStripStalled}` : ""}`}
-            data-stalled={stalledAt != null ? "" : undefined}
-          >
-            <div className={styles.statusLeft}>
-              <span className={styles.statusDot} aria-hidden />
-              <span>{workingLabel}</span>
-            </div>
-            <button
-              type="button"
-              className={styles.stopBtn}
-              title="Stop (Esc · Ctrl+C)"
-              aria-keyshortcuts="Escape Control+C"
-              onClick={() => void onStopRun()}
-            >
-              Stop
-            </button>
-          </div>
-        )}
 
         {queuedPrompt != null && (
           <div
@@ -8702,6 +9020,7 @@ export const ThreadView = memo(function ThreadView({
         )}
       </div>
 
+      <div className={styles.composerColumn}>
       <Composer
         threadId={thread.id}
         permissionMode={thread.permissionMode}
@@ -8723,6 +9042,7 @@ export const ThreadView = memo(function ThreadView({
         workflowListError={workflowListError}
         onRetryWorkflows={onRetryWorkflows}
         sessionId={thread.sessionId}
+        statusTab={composerStatus}
         workspaceStrip={
           !project ||
           project.remoteHost ||
@@ -8815,6 +9135,7 @@ export const ThreadView = memo(function ThreadView({
         dropHostRef={dropHostRef}
         onFileDragChange={setFileDrag}
       />
+      </div>
             </div>
           );
         }}

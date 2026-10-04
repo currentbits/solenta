@@ -1,5 +1,6 @@
 /**
- * Meta line under an assistant message, e.g. "Opus 5 · high · 1m 45s · 9:15 PM".
+ * Meta line under an assistant message, e.g.
+ * "claude · opus 5.5 · high · 1m 45s · 9:15 PM" (agent first since #1429).
  * Pure so the omission rules are testable without a DOM.
  *
  * Rules:
@@ -10,6 +11,8 @@
  */
 export interface MessageMetaInput {
   createdAt: number;
+  /** Provider id, e.g. "claude". */
+  agent?: string | null;
   model?: string | null;
   effort?: string | null;
   duration?: string | null;
@@ -36,10 +39,22 @@ export function formatClock(timestamp: number): string {
 
 export function messageMetaLine(input: MessageMetaInput): string {
   const segments: string[] = [];
-  if (input.model != null && input.model !== "") segments.push(input.model);
+  if (input.agent) segments.push(input.agent);
+  if (input.model != null && input.model !== "") {
+    segments.push(metaModelLabel(input.model));
+  }
   if (input.effort != null && input.effort !== "") segments.push(input.effort);
   const duration = stripDurationPrefix(input.duration);
   if (duration != null) segments.push(duration);
   segments.push(formatClock(input.createdAt));
   return segments.join(" · ");
+}
+
+/** "claude-opus-5-5" → "opus 5.5"; "Opus 5" → "opus 5"; other ids lowercased. */
+export function metaModelLabel(model: string): string {
+  return model
+    .toLowerCase()
+    .replace(/^claude-/, "")
+    .replace(/-(\d+)-(\d+)$/, " $1.$2")
+    .replace(/-(\d+)$/, " $1");
 }

@@ -945,7 +945,7 @@ describe("new-thread hero (#1411)", () => {
     m.unmount();
   });
 
-  it("offers 'or start without a project' and renders the Scratch variant", async () => {
+  it("offers 'start without a project' in the project menu and renders the Scratch variant", async () => {
     const started: string[] = [];
     const m = await mount(
       view({
@@ -955,6 +955,13 @@ describe("new-thread hero (#1411)", () => {
       }),
     );
     await m.flush();
+    assert.equal(
+      m.query("[data-start-without-project]"),
+      null,
+      "moved into the project menu (#1429)",
+    );
+    assert.match(m.text(), /Every agent here starts where the last one stopped\./);
+    await m.click(m.query("[data-hero-project]"));
     await m.click(m.query("[data-start-without-project]"));
     assert.deepEqual(started, ["t1"]);
     m.unmount();
@@ -981,6 +988,45 @@ describe("new-thread hero (#1411)", () => {
     assert.equal(s2.query('[data-hero-project-option="p-scratch"]'), null, "Scratch is not a move target");
     assert.ok(s2.query('[data-hero-project-option="p1"]'));
     s2.unmount();
+  });
+
+  it("shows the memory pill from memory.recent and hides it when down (#1429 F8)", async () => {
+    const w = window as unknown as { coder?: unknown };
+    const prev = w.coder;
+    const calls: unknown[] = [];
+    try {
+      w.coder = {
+        memory: {
+          recent: async (input: unknown) => {
+            calls.push(input);
+            return [
+              { id: "m1", title: "a", createdAt: new Date(Date.now() - 2 * 3600e3).toISOString(), agent: "codex" },
+              { id: "m2", title: "b", createdAt: new Date(0).toISOString() },
+            ];
+          },
+        },
+      };
+      const m = await mount(
+        view({ detail: detail({ thread: thread({ worktreePath: null }), messages: [] }) }),
+      );
+      await m.flush();
+      assert.deepEqual(calls, [{ project: project.path, limit: 50 }]);
+      assert.equal(
+        m.query("[data-memory-pill]")?.textContent,
+        "2 memories in owner/repo · last from codex 2h ago",
+      );
+      m.unmount();
+
+      w.coder = { memory: { recent: async () => { throw new Error("Memory server is not running."); } } };
+      const down = await mount(
+        view({ detail: detail({ thread: thread({ worktreePath: null }), messages: [] }) }),
+      );
+      await down.flush();
+      assert.equal(down.query("[data-memory-pill]"), null);
+      down.unmount();
+    } finally {
+      w.coder = prev;
+    }
   });
 
   it("drops the hero once the thread has messages", async () => {
@@ -1371,7 +1417,12 @@ describe("breadcrumb new thread (issue #445)", () => {
     const slug = m.query("[data-new-thread-in]") as HTMLButtonElement | null;
     assert.ok(slug, "project slug is a create control");
     assert.equal(slug!.tagName, "BUTTON");
-    assert.equal(slug!.textContent?.trim(), "owner/repo");
+    assert.equal(
+      slug!.querySelector("[data-project-avatar]")?.getAttribute("aria-hidden"),
+      "true",
+      "breadcrumb leads with the decorative project avatar (#1429)",
+    );
+    assert.match(slug!.textContent?.trim() ?? "", /owner\/repo$/);
     assert.equal(slug!.getAttribute("aria-label"), "New thread in owner/repo");
     assert.equal(slug!.getAttribute("title"), "New thread in owner/repo");
     m.unmount();

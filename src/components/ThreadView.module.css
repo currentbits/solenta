@@ -382,12 +382,18 @@
 }
 
 .project {
-  color: var(--text-dim);
-  font-family: var(--mono);
-  font-size: 11px;
-  letter-spacing: 0.01em;
+  color: var(--text-muted);
+  font-family: var(--font);
+  font-size: 13.5px;
   white-space: nowrap;
-  max-width: 45%;
+  /* A fixed cap, not 45%: the crumb shrinks to a short title like
+     "New Thread" and a percentage then clipped the slug. */
+  max-width: 240px;
+  min-width: 0;
+  flex-shrink: 0;
+}
+
+.projectName {
   overflow: hidden;
   text-overflow: ellipsis;
 }
@@ -395,15 +401,17 @@
 button.project,
 span.project {
   appearance: none;
-  display: block;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
   line-height: 20px;
-  height: 22px;
-  padding: 0 7px;
+  height: 26px;
+  padding: 0 6px;
   margin: 0;
   border: 1px solid transparent;
   border-radius: var(--radius-sm);
-  background: var(--overlay-soft);
-  color: var(--text-dim);
+  background: transparent;
+  color: var(--text-muted);
 }
 
 button.project {
@@ -802,6 +810,23 @@ a.btn {
   justify-content: center;
 }
 
+.gitLines {
+  display: inline-flex;
+  gap: 6px;
+  margin-left: 2px;
+  font-family: var(--mono);
+  font-size: 11.5px;
+  font-weight: 400;
+}
+
+.gitAdded {
+  color: var(--green);
+}
+
+.gitRemoved {
+  color: var(--danger);
+}
+
 .blastBadge {
   display: inline-flex;
   align-items: center;
@@ -957,6 +982,87 @@ a.btn {
 
 .toolGroupToggle:hover {
   color: var(--text);
+}
+
+/* Quiet work step (#1429): icon + text + right-aligned Show/Hide. */
+.step {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  min-width: 0;
+  padding: 3px 0;
+  font-size: 13px;
+  font-weight: 400;
+  color: var(--text-muted);
+  text-align: left;
+}
+
+.stepIcon {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+  color: var(--text-dim);
+  display: inline-grid;
+  place-items: center;
+}
+
+.stepText {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.stepMore {
+  margin-left: auto;
+  padding-left: 12px;
+  flex-shrink: 0;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.toolGroupToggle:hover .stepMore {
+  color: var(--text-muted);
+}
+
+/* Memory moments (#1429 F5): the yellow diamond and the marker stripe. */
+.memoryDiamond {
+  display: block;
+  width: 8px;
+  height: 8px;
+  border-radius: 1.5px;
+  transform: rotate(45deg);
+  background: var(--accent);
+}
+
+.mark {
+  padding: 0 2px;
+  color: var(--text);
+  background-image: linear-gradient(var(--mark), var(--mark));
+  background-repeat: no-repeat;
+  background-size: 100% 46%;
+  background-position: 0 85%;
+}
+
+.memoryList {
+  list-style: none;
+  margin: 2px 0 8px 6px;
+  padding: 0 0 0 16px;
+  border-left: 1px solid var(--border);
+  font-size: 12.5px;
+  color: var(--text-muted);
+}
+
+.memoryList li {
+  padding: 2px 0;
+}
+
+.memoryMeta {
+  margin-left: 8px;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-dim);
 }
 
 .toolHeader {
@@ -1604,7 +1710,7 @@ button.diffLineGutter:focus-visible {
 /* Comfortable reading column: every timeline block shares one centered measure. */
 .body > * {
   width: 100%;
-  max-width: 800px;
+  max-width: var(--thread-column);
   margin-left: auto;
   margin-right: auto;
   /* A flex column child with overflow:hidden (tool cards) gets an automatic
@@ -1707,13 +1813,15 @@ button.diffLineGutter:focus-visible {
 
 .eventRow {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
   gap: 12px;
 }
 
 .eventTitle {
-  font-weight: 600;
+  margin: 2px 0 6px 23px;
+  font-size: 12.5px;
+  color: var(--text-muted);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   line-height: 1.45;
@@ -1834,7 +1942,8 @@ button.diffLineGutter:focus-visible {
 
 .msgMeta {
   margin-top: 6px;
-  font-size: 11px;
+  font-family: var(--mono);
+  font-size: 11.5px;
   color: var(--text-dim);
   display: flex;
   align-items: baseline;
@@ -1994,7 +2103,8 @@ button.diffLineGutter:focus-visible {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  margin: 8px 0 4px;
+  /* auto keeps it inside the shared reading column (#1429). */
+  margin: 8px auto 4px;
 }
 
 .suggestedRow {
@@ -2358,8 +2468,8 @@ button.diffLineGutter:focus-visible {
   max-width: min(72ch, 85%);
   padding: 10px 14px;
   border-radius: 14px 14px 4px 14px;
-  background: var(--blue-soft);
-  color: var(--info-fg-strong);
+  background: var(--overlay-hover);
+  color: var(--text);
   line-height: 1.55;
   font-size: 13.5px;
   white-space: pre-wrap;
@@ -2806,7 +2916,8 @@ button.diffLineGutter:focus-visible {
 }
 
 .planProgress {
-  color: var(--text-muted);
+  color: var(--text-dim);
+  font-family: var(--mono);
   font-size: 11.5px;
 }
 
@@ -2836,16 +2947,23 @@ button.diffLineGutter:focus-visible {
 
 .planStep {
   display: flex;
-  gap: 6px;
+  align-items: baseline;
+  gap: 10px;
   line-height: 1.4;
   color: var(--text-muted);
   overflow-wrap: anywhere;
 }
 
+/* Plan diamonds (#1429 F4): todo hollow, doing half-yellow, done green. */
 .planStep::before {
-  content: "○";
+  content: "";
   flex-shrink: 0;
-  color: var(--text-dim);
+  width: 9px;
+  height: 9px;
+  box-sizing: border-box;
+  border: 1.5px solid var(--text-dim);
+  border-radius: 2px;
+  transform: translateY(1px) rotate(45deg);
 }
 
 .planStep[data-plan-step="doing"] {
@@ -2853,17 +2971,13 @@ button.diffLineGutter:focus-visible {
 }
 
 .planStep[data-plan-step="doing"]::before {
-  content: "◐";
-  color: var(--blue);
-}
-
-.planStep[data-plan-step="done"] {
-  color: var(--text-dim);
+  border-color: var(--accent);
+  background: linear-gradient(135deg, var(--accent) 50%, transparent 50%);
 }
 
 .planStep[data-plan-step="done"]::before {
-  content: "●";
-  color: var(--green);
+  border-color: var(--green);
+  background: var(--green);
 }
 
 .permissionActions {
@@ -3066,39 +3180,82 @@ button.diffLineGutter:focus-visible {
 }
 
 .statusStrip {
+  /* Content of the composer's status lip (#1429); the lip draws the box. */
+  flex: 1;
+  min-width: 0;
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 10px 12px;
-  border-radius: var(--radius);
+  gap: 9px;
+  color: var(--text);
+  font-size: 12.5px;
+}
+
+.statusText {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.statusDiamond {
+  width: 7px;
+  height: 7px;
+  flex-shrink: 0;
+  border-radius: 1.5px;
+  transform: rotate(45deg);
+  background: var(--blue);
+  animation: pulse 1.6s ease-in-out infinite;
+}
+
+.statusElapsed {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+
+.statusStrip .stopBtn,
+.statusAction {
+  margin-left: auto;
+  padding: 2px 6px;
   border: none;
-  background: var(--blue-soft);
-  color: var(--info-fg-strong);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--danger);
   font-size: 12.5px;
   font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
 }
 
-.statusStripStalled {
-  background: var(--amber-soft);
-  color: var(--warning-fg);
+.statusAction {
+  color: var(--text);
 }
 
-.statusStripStalled .statusDot {
-  background: var(--amber);
-  box-shadow: 0 0 0 3px var(--amber-soft);
+.statusAction + .stopBtn {
+  margin-left: 0;
+}
+
+.statusStrip .stopBtn:hover,
+.statusAction:hover {
+  background: var(--overlay-hover);
+}
+
+.statusStripStalled .statusDiamond,
+.statusStripQuotaWait .statusDiamond {
+  background: var(--orange);
   animation: none;
 }
 
-.statusStripQuotaWait {
-  background: var(--amber-soft);
-  color: var(--warning-fg);
+.statusStripStalled .statusText,
+.statusStripQuotaWait .statusText {
+  color: var(--orange);
 }
 
-.statusStripQuotaWait .statusDot {
-  background: var(--amber);
-  box-shadow: 0 0 0 3px var(--amber-soft);
-  animation: none;
+@media (prefers-reduced-motion: reduce) {
+  .statusDiamond {
+    animation: none;
+  }
 }
 
 /* Queued follow-up: the status strip, muted — it is waiting, not running. */
@@ -3195,16 +3352,6 @@ button.diffLineGutter:focus-visible {
   align-items: center;
   gap: 8px;
   min-width: 0;
-}
-
-.statusDot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--blue);
-  box-shadow: 0 0 0 3px var(--blue-soft);
-  animation: pulse 1.4s ease-in-out infinite;
-  flex-shrink: 0;
 }
 
 .stopBtn {
@@ -3922,9 +4069,57 @@ a.menuItem {
 /* New-thread hero (#1411): the draft centres a headline with the composer
    and workspace strip directly under it; the first send drops the layout
    back to the normal transcript. */
+/* The composer shares the transcript's reading column (#1429). Composer
+   pads itself 20px a side, so the column grows by that to line up. */
+.composerColumn {
+  width: 100%;
+  max-width: calc(var(--thread-column) + 40px);
+  margin: 0 auto;
+  flex-shrink: 0;
+}
+
 .chatSlot[data-draft-hero] {
   justify-content: center;
   padding-bottom: 6vh;
+  position: relative;
+  /* Grid + diamond paint at z -1 inside this context: below the headline
+     and composer without giving either its own stacking layer, so the
+     project menu still opens over the composer. */
+  isolation: isolate;
+}
+
+/* Blueprint empty state (#1429 F6): faint engineering grid, radial fade. */
+.chatSlot[data-draft-hero]::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background-image:
+    linear-gradient(var(--hero-grid) 1px, transparent 1px),
+    linear-gradient(90deg, var(--hero-grid) 1px, transparent 1px);
+  background-size: 72px 72px;
+  -webkit-mask-image: radial-gradient(ellipse 70% 65% at 50% 45%, #000 30%, transparent 80%);
+  mask-image: radial-gradient(ellipse 70% 65% at 50% 45%, #000 30%, transparent 80%);
+}
+
+/* …and one oversized diamond outline off the top-right corner. */
+.chatSlot[data-draft-hero]::after {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  top: -150px;
+  right: -230px;
+  width: 440px;
+  aspect-ratio: 1;
+  border: 2px solid color-mix(in srgb, var(--text) 8%, transparent);
+  border-radius: 26px;
+  transform: rotate(45deg);
+  pointer-events: none;
+}
+
+.chatSlot[data-draft-hero] {
+  --hero-grid: color-mix(in srgb, var(--text) 4%, transparent);
 }
 
 .chatSlot[data-draft-hero] > [data-thread-body] {
@@ -3943,16 +4138,36 @@ a.menuItem {
 
 .heroTitle {
   margin: 0;
-  font-size: 26px;
-  font-weight: 400;
-  letter-spacing: -0.01em;
+  font-size: 34px;
+  font-weight: 650;
+  letter-spacing: -0.032em;
+  line-height: 1.2;
   color: var(--text);
 }
 
 .heroHint {
-  margin: 0;
-  font-size: 13px;
-  color: var(--text-dim);
+  margin: 0 0 6px;
+  font-size: 14px;
+  color: var(--text-muted);
+}
+
+/* F8: mono memory pill above the headline. */
+.memoryPill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+  padding: 5px 14px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--text-muted);
+}
+
+.memoryPill .memoryDiamond {
+  width: 7px;
+  height: 7px;
 }
 
 .heroChooser {
@@ -3963,12 +4178,19 @@ a.menuItem {
 .heroProject {
   padding: 0;
   border: none;
-  background: transparent;
+  /* background-color only: the .mark stripe is a background-image. */
+  background-color: transparent;
   font: inherit;
   color: inherit;
   text-decoration: underline dotted var(--text-dim);
   text-underline-offset: 6px;
   text-decoration-thickness: 2px;
+}
+
+/* The highlighter replaces the dotted underline on a real project. */
+.heroProject.mark {
+  text-decoration: none;
+  padding: 0 2px;
 }
 
 button.heroProject {
@@ -4010,6 +4232,13 @@ button.heroProject:hover {
   cursor: pointer;
 }
 
+.heroMenuSplit {
+  margin-top: 4px;
+  border-top: 1px solid var(--border);
+  border-radius: 0 0 6px 6px;
+  padding-top: 9px;
+}
+
 .heroMenuItem:hover {
   background: var(--overlay-hover);
   color: var(--text);
@@ -4031,21 +4260,7 @@ button.heroProject:hover {
   border-radius: var(--radius-sm) 0 0 var(--radius-sm);
 }
 
-.heroLink {
-  padding: 0;
-  border: none;
-  background: transparent;
-  color: var(--text-dim);
-  font: inherit;
-  font-size: 13px;
-  cursor: pointer;
-}
 
-.heroLink:hover {
-  color: var(--text);
-  text-decoration: underline;
-  text-underline-offset: 3px;
-}
 
 /* Amber attention dot on the details toggle (#1411): behind upstream. */
 .attentionDot {

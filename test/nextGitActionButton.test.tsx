@@ -7,7 +7,7 @@ import assert from "node:assert/strict";
 import { describe, it, afterEach } from "node:test";
 import { useCallback, useState } from "react";
 import { mount, unmountAll } from "./support/dom.ts";
-import { ThreadView } from "../src/components/ThreadView";
+import { ThreadView, diffLineTotals } from "../src/components/ThreadView";
 import type {
   DiffResult,
   GitSyncInfo,
@@ -202,6 +202,18 @@ describe("next-git-action button", () => {
     }
   });
 
+  it("sums per-file additions and deletions for the commit button", () => {
+    assert.deepEqual(
+      diffLineTotals([
+        { additions: 40, deletions: 2 },
+        { additions: 8, deletions: 10 },
+        {},
+      ]),
+      { added: 48, removed: 12 },
+    );
+    assert.deepEqual(diffLineTotals([]), { added: 0, removed: 0 });
+  });
+
   it("offers Create PR on a worktree when sync has not loaded", async () => {
     const m = await mount(view({}));
     await m.flush();
@@ -249,7 +261,9 @@ describe("next-git-action button", () => {
     await m.flush();
     const btn = m.query('[data-next-git-action="commit"]');
     assert.ok(btn, "commit action");
-    assert.equal((btn!.textContent || "").trim(), "Commit 1 file");
+    assert.equal((btn!.textContent || "").trim(), "Commit 1 file+2−1");
+    const counts = btn!.querySelector("[data-git-line-counts]");
+    assert.equal(counts?.textContent, "+2−1", "mono +added −removed (#1429)");
     await m.click(btn);
     await m.flush();
     assert.deepEqual(opens, [1]);
