@@ -138,7 +138,9 @@ details[open] > summary .chevron {
   margin: 8px 0 0;
   padding: 6px 10px;
   border-radius: var(--radius-sm);
-  background: var(--blue-soft);
+  /* Attention notices use the marker-yellow accent (#1434), not info blue. */
+  background: var(--accent-soft);
+  box-shadow: inset 2px 0 0 var(--accent-edge);
   color: var(--text);
   font-size: 12px;
 }
@@ -154,9 +156,14 @@ details[open] > summary .chevron {
   background: none;
   font: inherit;
   font-weight: 600;
-  color: var(--info-fg);
+  color: var(--text);
   cursor: pointer;
   white-space: nowrap;
+  /* Same marker underline as #1434's .mark. */
+  background-image: linear-gradient(var(--mark), var(--mark));
+  background-repeat: no-repeat;
+  background-size: 100% 46%;
+  background-position: 0 85%;
 }
 
 .bannerAction:only-child {
@@ -164,7 +171,7 @@ details[open] > summary .chevron {
 }
 
 .bannerAction:hover:not(:disabled) {
-  color: var(--info-fg-strong);
+  background-size: 100% 100%;
 }
 
 .bannerAction:disabled {
