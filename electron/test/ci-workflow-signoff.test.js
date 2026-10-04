@@ -223,6 +223,27 @@ describe("CI workflow sign-off fails closed", () => {
     assert.equal(landed(), true);
   });
 
+  it("an approval is consumed by a merge that fails after the gate; the identical retry asks again", async () => {
+    const { lead, args } = leadWithWorkflowWorker("Lead");
+    await assertBlocked(args);
+    const first = runner.getPendingPermission(lead.id);
+    runner.respondPermission({ threadId: lead.id, requestId: first.requestId, decision: "allow" });
+
+    // The squash commit runs hooks, so this fails after the sign-off check.
+    const hook = path.join(project.path, ".git/hooks/pre-commit");
+    fs.writeFileSync(hook, "#!/bin/sh\nexit 1\n", { mode: 0o755 });
+    const before = git(project.path, ["rev-parse", "HEAD"]);
+    await assert.rejects(() => handlers.thread_merge(args), /Failed to commit merge/);
+    assert.equal(git(project.path, ["rev-parse", "HEAD"]), before);
+    fs.rmSync(hook);
+
+    // Same worker, same patch, same destination: the click was single use.
+    await assertBlocked(args);
+    const second = runner.getPendingPermission(lead.id);
+    assert.equal(second?.toolName, "CI workflow merge");
+    assert.notEqual(second.requestId, first.requestId);
+  });
+
   it("an approval is single use and does not cover a changed patch", async () => {
     const { lead, file, wt, args } = leadWithWorkflowWorker("Lead");
     await assertBlocked(args);
