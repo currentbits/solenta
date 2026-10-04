@@ -1,16 +1,8 @@
 "use strict";
 
-// cross-spawn, not child_process: on Windows the agent CLIs install as
-// .cmd shims and Node refuses to exec those directly. cross-spawn routes
-// them through cmd.exe with correct escaping, which matters because the
-// prompt travels in argv (#442).
-const spawn = require("cross-spawn");
 const { getClaudeMcpArgs } = require("./memory-sup.js");
-const { killTree, agentSpawnOptions } = require("./proc.js");
+const { runJsonLines, SIGKILL_AFTER_MS } = require("./agent.js");
 
-const SIGKILL_AFTER_MS = 3000;
-// Max stderr retained per child process (tail), for error reporting.
-const STDERR_TAIL_CHARS = 64 * 1024;
 const INPUT_TRUNCATE = 2000;
 const OUTPUT_TRUNCATE = 4000;
 
@@ -157,16 +149,14 @@ function runClaude(opts) {
         return a;
       })();
 
-  let stderrText = "";
-  let lineBuf = "";
-  let finished = false;
-  let killTimer = null;
-  let killed = false;
   let gotResult = false;
+  /** @type {ReturnType<typeof runJsonLines> | null} */
+  let run = null;
 
   /** Write one NDJSON line to the CLI's stdin; false when stdin is gone. */
   function writeLine(obj) {
-    if (!child || !child.stdin || child.stdin.destroyed || finished) {
+    const child = run && run.child;
+    if (!child || !child.stdin || child.stdin.destroyed || run.isFinished()) {
       return false;
     }
     try {
@@ -177,22 +167,14 @@ function runClaude(opts) {
     }
   }
 
-  function handleLine(line) {
-    const trimmed = line.trim();
-    if (!trimmed) return;
-    let obj;
-    try {
-      obj = JSON.parse(trimmed);
-    } catch {
-      return;
-    }
-    if (!obj || typeof obj !== "object") return;
+  function handleEvent(obj) {
     if (obj.type === "result") {
       gotResult = true;
       // Interactive mode: the CLI waits for more stdin messages after a
       // result; end stdin so the process exits and the turn finishes.
       // keepAlive skips this so the process (and its background tasks)
       // survives the turn and can take the next one via send().
+      const child = run && run.child;
       if (interactive && !keepAlive && child && child.stdin && !child.stdin.destroyed) {
         try {
           child.stdin.end();
@@ -201,30 +183,7 @@ function runClaude(opts) {
         }
       }
     }
-    if (typeof onEvent === "function") {
-      try {
-        onEvent(obj);
-      } catch {
-        // defensive: never crash the parser
-      }
-    }
-  }
-
-  function finish(code) {
-    if (finished) return;
-    finished = true;
-    if (killTimer) {
-      clearTimeout(killTimer);
-      killTimer = null;
-    }
-    // Flush incomplete line if it is valid JSON
-    if (lineBuf.trim()) {
-      handleLine(lineBuf);
-      lineBuf = "";
-    }
-    if (typeof onExit === "function") {
-      onExit({ code, stderr: stderrText, gotResult });
-    }
+    if (typeof onEvent === "function") onEvent(obj);
   }
 
   /** Deliver one user turn on stdin; resets per-turn result tracking. */
@@ -238,23 +197,21 @@ function runClaude(opts) {
     });
   }
 
-  let child;
-  try {
-    child = spawn(
-      binary,
-      args,
-      agentSpawnOptions({
-        cwd,
-        stdio: [interactive ? "pipe" : "ignore", "pipe", "pipe"],
-        env: envExtra ? { ...process.env, ...envExtra } : undefined,
-      }),
-    );
-  } catch (err) {
-    const error = err instanceof Error ? err : new Error(String(err));
-    if (typeof onError === "function") onError(error);
-    if (typeof onExit === "function") {
-      onExit({ code: 1, stderr: error.message, gotResult: false });
-    }
+  run = runJsonLines({
+    binary,
+    args,
+    cwd,
+    stdin: interactive ? "pipe" : "ignore",
+    env: envExtra ? { ...process.env, ...envExtra } : undefined,
+    onEvent: handleEvent,
+    onExit:
+      typeof onExit === "function"
+        ? ({ code, stderr }) => onExit({ code, stderr, gotResult })
+        : undefined,
+    onError,
+  });
+  const child = run.child;
+  if (!child) {
     return {
       kill() {},
       send: () => false,
@@ -265,39 +222,11 @@ function runClaude(opts) {
     };
   }
 
-  child.stdout.setEncoding("utf8");
-  child.stderr.setEncoding("utf8");
-
   if (interactive) {
     // EPIPE from a dying CLI must not crash the main process.
     child.stdin.on("error", () => {});
     sendUser(prompt);
   }
-
-  child.stdout.on("data", (chunk) => {
-    lineBuf += chunk;
-    let nl;
-    while ((nl = lineBuf.indexOf("\n")) >= 0) {
-      const line = lineBuf.slice(0, nl);
-      lineBuf = lineBuf.slice(nl + 1);
-      handleLine(line);
-    }
-  });
-
-  child.stderr.on("data", (chunk) => {
-    // Tail-keep: stderr feeds error reporting, and a noisy CLI would
-    // otherwise grow this buffer for the life of a long-lived process.
-    stderrText = (stderrText + chunk).slice(-STDERR_TAIL_CHARS);
-  });
-
-  child.on("error", (err) => {
-    if (typeof onError === "function") onError(err);
-    finish(1);
-  });
-
-  child.on("close", (code) => {
-    finish(code);
-  });
 
   return {
     child,
@@ -334,14 +263,8 @@ function runClaude(opts) {
         },
       });
     },
-    kill() {
-      if (killed || finished) return;
-      killed = true;
-      killTimer = killTree(child, SIGKILL_AFTER_MS);
-    },
-    getStderr() {
-      return stderrText;
-    },
+    kill: run.kill,
+    getStderr: run.getStderr,
   };
 }
 
