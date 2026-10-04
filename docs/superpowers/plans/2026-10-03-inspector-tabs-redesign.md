@@ -100,10 +100,10 @@ Engineering constraints:
 - CSS-module breakage only shows in `npx vite build`. Run it in Task 9 and after any task that touched `*.module.css`.
 - Worktree setup before the first test run (from the main checkout):
   ```bash
-  cp -Rc /Users/willem/code/coder/node_modules ./node_modules
-  cp -Rc /Users/willem/code/coder/core/node_modules ./core/node_modules
-  cp -Rc /Users/willem/code/coder/memory-server/node_modules ./memory-server/node_modules
-  cp -Rc /Users/willem/code/coder/core/dist ./core/dist
+  cp -Rc ~/code/coder/node_modules ./node_modules
+  cp -Rc ~/code/coder/core/node_modules ./core/node_modules
+  cp -Rc ~/code/coder/memory-server/node_modules ./memory-server/node_modules
+  cp -Rc ~/code/coder/core/dist ./core/dist
   ```
 
 ## File map
@@ -6042,7 +6042,7 @@ Wait until `curl -s -o /dev/null -w '%{http_code}' http://localhost:5391/` print
 - [ ] **Step 3: Write the screenshot script.** Create `/tmp/inspector-shots.cjs`. It lives outside the repo, so it is not committed.
 
 ```js
-const { chromium } = require("/Users/willem/.npm/_npx/6bcb61ec6d5aea22/node_modules/playwright");
+const { chromium } = require("playwright"); // resolve from the npx-cached playwright package
 const fs = require("fs");
 
 (async () => {
