@@ -14,6 +14,8 @@ import type {
 } from "../shared/ipc";
 import { formatRelativeAge } from "../format";
 import styles from "./MemoryTab.module.css";
+import inspector from "./Inspector.module.css";
+import { InspectorBanner, InspectorSection } from "./InspectorSection";
 import {
   actionErrorFor,
   afterCollapse,
@@ -124,8 +126,6 @@ export interface MemoryTabProps {
    *  agents store under — while a display slug like "owner/solenta" resolves
    *  to a scope no agent ever writes to. */
   projectSlug: string | null;
-  /** Project id for the config doctor. Absent = no doctor card. */
-  projectId?: string | null;
   /** The project's sleep-time consolidation fields (#1384). */
   consolidation?: ConsolidationFields | null;
   searchMemory: (input: {
@@ -152,18 +152,8 @@ export interface MemoryTabProps {
     body: string;
     project?: string;
   }) => Promise<{ id: string }>;
-  loadCodeMap?: (input: { projectId: string }) => Promise<ProjectCodeMap>;
-  lintAgentConfig?: (input: {
-    projectId: string;
-  }) => Promise<AgentConfigDoctorReport>;
-  previewAgentConfig?: (input: {
-    projectId: string;
-    targets?: string[];
-  }) => Promise<AgentConfigPreview>;
-  writeAgentConfig?: (input: {
-    projectId: string;
-    targets?: string[];
-  }) => Promise<AgentConfigWriteResult>;
+  /** Opens Settings → Memory → Project tools (code map + config doctor). */
+  onOpenProjectTools?: () => void;
   maintenanceMemory?: (input?: {
     project?: string;
     summary?: boolean;
@@ -750,27 +740,31 @@ function ReviewQueueCard({
   const activity = report?.autoResolved
     ? autoResolvedActivity(report.autoResolved)
     : null;
-  if (!error && report && open === 0 && !activity) return null;
+
+  if (!opened) {
+    // One line, only for a queue that loaded non-empty: a failed load never
+    // shows a stale count.
+    if (error || !report || open === 0) return null;
+    return (
+      <InspectorBanner
+        data-review-banner=""
+        actionLabel={`${open} ${open === 1 ? "memory needs" : "memories need"} review`}
+        onAction={() => {
+          setOpened(true);
+          if (!detailLoaded) void load(true);
+        }}
+        actionProps={{ "data-review-open": "" }}
+      />
+    );
+  }
 
   return (
-    <section className={styles.section} data-review-queue="">
-      <div className={styles.sectionHead}>
-        <button
-          type="button"
-          className={styles.reviewChip}
-          data-review-open=""
-          aria-expanded={opened}
-          onClick={() => {
-            const next = !opened;
-            setOpened(next);
-            if (next && !detailLoaded) void load(true);
-          }}
-        >
-          {open > 0
-            ? `${open} need${open === 1 ? "s" : ""} your call`
-            : "Review"}
-        </button>
-        {opened ? (
+    <InspectorSection
+      title="Needs your call"
+      count={open}
+      data-review-queue=""
+      action={
+        <>
           <button
             type="button"
             className={styles.retryBtn}
@@ -778,10 +772,17 @@ function ReviewQueueCard({
           >
             Refresh
           </button>
-        ) : null}
-      </div>
-      {opened ? (
-        <>
+          <button
+            type="button"
+            className={styles.retryBtn}
+            data-review-close=""
+            onClick={() => setOpened(false)}
+          >
+            Close
+          </button>
+        </>
+      }
+    >
       {error ? (
         <p className={styles.formError} role="alert">
           {error}
@@ -834,16 +835,15 @@ function ReviewQueueCard({
             </li>
           ))}
         </ul>
-      ) : null}
-        </>
-      ) : null}
-    </section>
+      ) : (
+        <p className={styles.mapEmpty}>Nothing left to review.</p>
+      )}
+    </InspectorSection>
   );
 }
 
 export function MemoryTab({
   projectSlug,
-  projectId,
   consolidation,
   searchMemory,
   recentMemory,
@@ -851,12 +851,9 @@ export function MemoryTab({
   updateMemory,
   removeMemory,
   storeMemory,
-  loadCodeMap,
-  lintAgentConfig,
-  previewAgentConfig,
-  writeAgentConfig,
   maintenanceMemory,
   resolveMemory,
+  onOpenProjectTools,
 }: MemoryTabProps) {
   const snap = sessionSnap;
   const [entries, setEntries] = useState<MemoryEntryInfo[]>([]);
@@ -1260,26 +1257,40 @@ export function MemoryTab({
     }
   };
 
-  const secondary = (
-    <div className={styles.secondary} data-memory-secondary="">
-      {projectId ? (
-        <MemoryProjectTools
-          projectId={projectId}
-          projectSlug={projectSlug}
-          loadCodeMap={loadCodeMap}
-          lintAgentConfig={lintAgentConfig}
-          previewAgentConfig={previewAgentConfig}
-          writeAgentConfig={writeAgentConfig}
-        />
+  const review = maintenanceMemory ? (
+    <ReviewQueueCard
+      projectSlug={projectSlug}
+      maintenanceMemory={maintenanceMemory}
+      resolveMemory={resolveMemory}
+    />
+  ) : null;
+
+  const consolidationLine =
+    consolidation !== undefined ? consolidationStatus(consolidation) : null;
+  const footer = (
+    <footer className={inspector.footer} data-memory-footer="">
+      <span className={styles.filterLabel} title="Memory is scoped to this project">
+        {scopeLabel(projectSlug)}
+      </span>
+      {consolidationLine ? (
+        <span
+          data-memory-consolidation={consolidationLine.failed ? "failed" : "ok"}
+          role={consolidationLine.failed ? "alert" : "status"}
+        >
+          {consolidationLine.text}
+        </span>
       ) : null}
-      {maintenanceMemory ? (
-        <ReviewQueueCard
-          projectSlug={projectSlug}
-          maintenanceMemory={maintenanceMemory}
-          resolveMemory={resolveMemory}
-        />
+      {onOpenProjectTools ? (
+        <button
+          type="button"
+          className={inspector.linkBtn}
+          data-memory-project-tools-link=""
+          onClick={onOpenProjectTools}
+        >
+          {"Code map & config doctor ›"}
+        </button>
       ) : null}
-    </div>
+    </footer>
   );
 
   const toolbar = (
@@ -1304,16 +1315,16 @@ export function MemoryTab({
         <option value="strategy">strategy</option>
         <option value="task">task</option>
       </select>
-      <span className={styles.filterLabel} title="Memory is scoped to this project">
-        {scopeLabel(projectSlug)}
-      </span>
       <button
         type="button"
         className={styles.addBtn}
+        data-memory-add=""
+        aria-label="Add memory"
+        title={adding ? "Close the form" : "Remember something"}
         aria-expanded={adding}
         onClick={() => setAdding((on) => !on)}
       >
-        {adding ? "Close" : "Add memory"}
+        {adding ? "×" : "+"}
       </button>
     </div>
   );
@@ -1398,8 +1409,8 @@ export function MemoryTab({
               Retry
             </button>
           </div>
-          {secondary}
         </div>
+        {footer}
       </div>
     );
   }
@@ -1427,25 +1438,14 @@ export function MemoryTab({
             </button>
           </div>
         ) : null}
+        {review}
         {rememberForm}
 
-      <section className={styles.section} data-memory-list="">
-        <div className={styles.sectionHead}>
-          <h2 className={styles.sectionTitle}>Memories</h2>
-          <span className={styles.sectionMeta}>{entryCountLabel}</span>
-        </div>
-      {consolidation !== undefined ? (() => {
-        const c = consolidationStatus(consolidation);
-        return (
-          <p
-            className={styles.searchHint}
-            data-memory-consolidation={c.failed ? "failed" : "ok"}
-            role={c.failed ? "alert" : "status"}
-          >
-            {c.text}
-          </p>
-        );
-      })() : null}
+      <InspectorSection
+        title="Memories"
+        action={<span className={styles.sectionMeta}>{entryCountLabel}</span>}
+        data-memory-list=""
+      >
       {shortQuery ? (
         <p className={styles.searchHint} role="status">
           Type 3 or more characters to search. Showing recent memories.
@@ -1681,9 +1681,9 @@ export function MemoryTab({
           </button>
         ) : null}
       </div>
-      </section>
-      {secondary}
+      </InspectorSection>
       </div>
+      {footer}
     </div>
   );
 }

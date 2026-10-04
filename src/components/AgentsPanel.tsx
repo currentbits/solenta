@@ -2990,10 +2990,6 @@ export const AgentsPanel = memo(function AgentsPanel({
   storeMemory,
   maintenanceMemory,
   resolveMemory,
-  loadCodeMap,
-  lintAgentConfig,
-  previewAgentConfig,
-  writeAgentConfig,
   listSkills,
   removeSkill,
   syncSkills,
@@ -3164,7 +3160,6 @@ export const AgentsPanel = memo(function AgentsPanel({
       ) : tab === "memory" ? (
         <MemoryTab
           projectSlug={project?.path ?? project?.slug ?? null}
-          projectId={project?.id ?? null}
           consolidation={project ?? null}
           searchMemory={searchMemory}
           recentMemory={recentMemory}
@@ -3174,10 +3169,9 @@ export const AgentsPanel = memo(function AgentsPanel({
           storeMemory={storeMemory}
           maintenanceMemory={maintenanceMemory}
           resolveMemory={resolveMemory}
-          loadCodeMap={loadCodeMap}
-          lintAgentConfig={lintAgentConfig}
-          previewAgentConfig={previewAgentConfig}
-          writeAgentConfig={writeAgentConfig}
+          onOpenProjectTools={
+            onOpenSettings ? () => onOpenSettings("memory") : undefined
+          }
         />
       ) : tab === "skills" ? (
         <SkillsTab

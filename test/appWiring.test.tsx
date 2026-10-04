@@ -429,6 +429,36 @@ describe("App memory wiring", () => {
     m.unmount();
   });
 
+  it("Memory footer opens Settings → Memory → Project tools on this project", async () => {
+    const fake = createFakeCoder({
+      projects: [project({ id: "p1", slug: "owner/repo" })],
+      threads: [thread({ id: "t1", projectId: "p1" })],
+    });
+    const m = await boot(fake);
+    await expandAgents(m);
+    const target = m.query('button[aria-label="Select thread: first thread"]');
+    assert.ok(target, "the thread card must be present");
+    await m.click(target);
+    await m.click(m.query('[data-panel-tab="memory"]'));
+    const link = m.query("[data-memory-project-tools-link]");
+    assert.ok(link, "the Memory footer links to Project tools");
+    await m.click(link);
+    assert.equal(
+      m.query("[data-settings-pane]")?.getAttribute("data-settings-pane"),
+      "memory",
+    );
+    assert.equal(
+      (
+        m.query(
+          '[data-project-picker="project-tools-project"]',
+        ) as HTMLSelectElement | null
+      )?.value,
+      "p1",
+      "the picker defaults to the selected thread's project",
+    );
+    m.unmount();
+  });
+
   it("Skills tab Manage › opens Settings on Skills & MCP", async () => {
     const fake = createFakeCoder({
       projects: [project()],
