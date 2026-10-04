@@ -33,6 +33,7 @@ const { materializeGrokHome, deployGrokGuardrailOverlay } = require("./grok.js")
 const cursorParse = require("./cursor.js");
 const { runCursor, materializeCursorHome } = cursorParse;
 const { heartbeatLane } = require("./mergeQueue.js");
+const { createWatchdogs } = require("./runner-watchdogs.js");
 const {
   materializeCursorPinPlugin,
   cursorPinPluginDir,
@@ -8905,7 +8906,7 @@ function createRunner(opts) {
   }
 
   function stopAll() {
-    clearInterval(stallTimer);
+    disposeWatchdogs();
     for (const entry of btwActive.values()) {
       entry.stopping = true;
       if (entry.handle && typeof entry.handle.kill === "function") {
@@ -9053,67 +9054,11 @@ function createRunner(opts) {
     if (t.orchWorker && t.handoffFrom) sweepCrew(String(t.handoffFrom));
   }
 
-  /**
-   * Advisory stall sweep (issue #314). Scans every thread, not just `active`:
-   * a working row with no live run is the zombie this issue names. Never
-   * kills the CLI — a slow-but-alive stream clears stalledAt via stampLastEvent.
-   * STALL_MS is read at check time so a test can shorten the window.
-   */
-  function checkStalls() {
-    const stallMs = Number(process.env.CODER_STALL_MS) || 10 * 60 * 1000;
-    const now = Date.now();
-    for (const thread of store.getThreads()) {
-      if (thread.status !== "working") continue;
-      if (thread.awaitingInput) continue;
-      if (thread.stalledAt) continue;
-      const last = thread.lastEventAt ?? thread.runStartedAt ?? now;
-      if (now - last <= stallMs) continue;
-      store.updateThread(thread.id, { stalledAt: now });
-      const provider = resolveProvider(thread);
-      const mins = Math.max(1, Math.round((now - last) / 60000));
-      appendMessage(
-        thread.id,
-        "event",
-        `No output from the ${provider} CLI for ${mins} min — the turn may be hung. Stop and retry if it stays quiet.`,
-      );
-      store.save();
-      pushDetail(thread.id, undefined, { skipStamp: true });
-      pushThreadsChanged();
-    }
-  }
-
-  /**
-   * Reset lastBeat on every active lane thread so the 30-minute watchdog
-   * does not recycle a live run. Idle / wedged lanes are left alone.
-   * @param {{ now?: number }} [opts]
-   */
-  function heartbeatActiveLanes(opts) {
-    const at = opts && opts.now != null ? opts.now : nowFn();
-    for (const threadId of active.keys()) {
-      const live = store.getThread(threadId);
-      if (!live || !live.lane) continue;
-      try {
-        heartbeatLane({ store, threadId, now: at });
-      } catch {
-        // never break the runner
-      }
-    }
-  }
-
-  // Native timer (not setIntervalFn): tests replace that hook for sim ticks.
-  const stallTimer = setInterval(() => {
-    try {
-      checkStalls();
-    } catch {
-      // never break the runner
-    }
-    try {
-      heartbeatActiveLanes();
-    } catch {
-      // never break the runner
-    }
-  }, 15_000);
-  if (typeof stallTimer.unref === "function") stallTimer.unref();
+  const {
+    checkStalls,
+    heartbeatActiveLanes,
+    dispose: disposeWatchdogs,
+  } = createWatchdogs(ctx);
 
   refreshAllQuotaWaits();
 
