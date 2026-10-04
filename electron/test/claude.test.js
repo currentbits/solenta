@@ -62,6 +62,17 @@ function waitFor(predicate, { timeoutMs = 15000, intervalMs = 20 } = {}) {
   });
 }
 
+// Undefined until the file exists AND holds complete JSON. The fake CLIs write
+// with plain writeFileSync, so an existsSync poll can land between the create
+// and the write and JSON.parse sees an empty file (#1437).
+function readJsonIfComplete(file) {
+  try {
+    return JSON.parse(fs.readFileSync(file, "utf8"));
+  } catch {
+    return undefined;
+  }
+}
+
 /**
  * Write a fake claude CLI script. Reads CODER_FAKE_CLAUDE_SCENARIO and optional
  * CODER_FAKE_CLAUDE_ARGV_FILE. Emits stream-json NDJSON on stdout.
@@ -2480,8 +2491,10 @@ describe("runner claude provider", () => {
       // The CLI raises can_use_tool after the run slot cleared. The runner
       // must answer with an error response (retryable, distinguishable from
       // a user deny) instead of dropping it on the floor.
-      await waitFor(() => fs.existsSync(ctrlFile), { timeoutMs: 5000 });
-      const msg = JSON.parse(fs.readFileSync(ctrlFile, "utf8"));
+      let msg;
+      await waitFor(() => (msg = readJsonIfComplete(ctrlFile)) !== undefined, {
+        timeoutMs: 5000,
+      });
       assert.equal(msg.type, "control_response");
       assert.equal(msg.response.subtype, "error");
       assert.equal(msg.response.request_id, "req-late-1");

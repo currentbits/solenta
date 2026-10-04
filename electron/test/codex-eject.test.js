@@ -49,6 +49,17 @@ function waitFor(predicate, { timeoutMs = 15000, intervalMs = 20 } = {}) {
   });
 }
 
+// Undefined until the file exists AND holds complete JSON. The fake CLIs write
+// with plain writeFileSync, so an existsSync poll can land between the create
+// and the write and JSON.parse sees an empty file (#1437).
+function readJsonIfComplete(file) {
+  try {
+    return JSON.parse(fs.readFileSync(file, "utf8"));
+  } catch {
+    return undefined;
+  }
+}
+
 function userTexts(store, threadId) {
   return (store.getMessages(threadId) || [])
     .filter((m) => m.role === "user")
@@ -239,8 +250,8 @@ describe("ejected Codex lead does not resume (#554)", () => {
   it("user send starts a fresh session and does not resume the ejected id", async () => {
     const orch = lead();
     await runner.startRun({ threadId: orch.id, prompt: "human turn" });
-    await waitFor(() => fs.existsSync(argvFile));
-    const argv = JSON.parse(fs.readFileSync(argvFile, "utf8"));
+    let argv;
+    await waitFor(() => (argv = readJsonIfComplete(argvFile)) !== undefined);
     assert.ok(argv.includes("app-server"), JSON.stringify(argv));
     assert.equal(argv.includes(EJECTED_SESSION), false, JSON.stringify(argv));
     await waitFor(() => store.getThread(orch.id).status === "done");

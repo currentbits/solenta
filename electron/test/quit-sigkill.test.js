@@ -132,7 +132,7 @@ const deadline = Date.now() + 5000;
     });
     let victimPid = 0;
     try {
-      await waitFor(() => fs.existsSync(readyFile));
+      await waitFor(() => fs.existsSync(readyFile) && Number(fs.readFileSync(readyFile, "utf8").trim()) > 0);
       victimPid = Number(fs.readFileSync(readyFile, "utf8").trim());
       assert.ok(Number.isFinite(victimPid) && victimPid > 0);
       const helperExit = await new Promise((resolve, reject) => {
@@ -180,7 +180,7 @@ const deadline = Date.now() + 5000;
       const thread = store.getThreads()[0];
       const pidPath = path.join(project.path, "agent.pid");
       await runner.startRun({ threadId: thread.id, prompt: "linger" });
-      await waitFor(() => fs.existsSync(pidPath));
+      await waitFor(() => fs.existsSync(pidPath) && Number(fs.readFileSync(pidPath, "utf8").trim()) > 0);
       const pid = Number(fs.readFileSync(pidPath, "utf8").trim());
       assert.ok(Number.isFinite(pid) && pid > 0);
       pids.push(pid);

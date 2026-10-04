@@ -1365,7 +1365,9 @@ describe("runner real agent mode", () => {
       const t = store.getThread(thread.id);
       return t && t.status === "working";
     });
-    await waitFor(() => fs.existsSync(pidPath), { timeoutMs: 5000 });
+    await waitFor(() => fs.existsSync(pidPath) && Number(fs.readFileSync(pidPath, "utf8").trim()) > 0, {
+      timeoutMs: 5000,
+    });
     const pid = Number(fs.readFileSync(pidPath, "utf8").trim());
     assert.ok(Number.isFinite(pid) && pid > 0);
     assert.equal(processAlive(pid), true, "child must be alive before stopAll");
