@@ -4,12 +4,17 @@
  * Run: node --import=./test/support/disable-grok-mcp.mjs --import=./test/support/render.mjs --experimental-strip-types --test test/inspectorSection.test.tsx
  */
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
 import { afterEach, describe, it } from "node:test";
+import { fileURLToPath } from "node:url";
 import { mount, unmountAll } from "./support/dom.ts";
 import {
   InspectorBanner,
   InspectorSection,
 } from "../src/components/InspectorSection";
+
+const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 
 afterEach(unmountAll);
 
@@ -100,5 +105,48 @@ describe("InspectorBanner", () => {
       />,
     );
     assert.equal(m.query("[data-probe]")?.textContent, "1 memory needs review ›");
+  });
+});
+
+describe("inspector cleanup", () => {
+  it("has no reorder module, drag MIME, Fork card or settings plumbing left", () => {
+    assert.equal(fs.existsSync(path.join(ROOT, "src/envSectionOrder.ts")), false);
+    const panel = fs.readFileSync(
+      path.join(ROOT, "src/components/AgentsPanel.tsx"),
+      "utf8",
+    );
+    for (const gone of [
+      "envSectionOrder",
+      "ENV_DRAG_MIME",
+      "data-env-grip",
+      "function ForkCard",
+      "saveSettings",
+      "listMcpServers",
+      "lintAgentConfig",
+      "onOpenPrs",
+      "setSpotlight",
+    ]) {
+      assert.equal(panel.includes(gone), false, `${gone} must be gone from AgentsPanel.tsx`);
+    }
+    const lib = fs.readFileSync(
+      path.join(ROOT, "src/components/skillsLibrary.ts"),
+      "utf8",
+    );
+    assert.equal(lib.includes("SkillsView"), false);
+  });
+
+  it("nothing reads the old coder.envSectionOrder key", () => {
+    const hits: string[] = [];
+    const walk = (dir: string) => {
+      for (const name of fs.readdirSync(dir)) {
+        const full = path.join(dir, name);
+        if (fs.statSync(full).isDirectory()) walk(full);
+        else if (/\.(ts|tsx)$/.test(name) && fs.readFileSync(full, "utf8").includes("coder.envSectionOrder")) {
+          hits.push(full);
+        }
+      }
+    };
+    walk(path.join(ROOT, "src"));
+    assert.deepEqual(hits, [], "a stale key is ignored: no code may read it");
   });
 });

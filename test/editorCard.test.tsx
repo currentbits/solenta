@@ -47,32 +47,11 @@ function thread(over: Partial<ThreadInfo> = {}): ThreadInfo {
 }
 
 describe("EditorCard", () => {
-  it("disables both buttons and shows a hint when no thread is selected", async () => {
-    const m = await mount(
-      <EditorCard hasThread={false} onReveal={() => {}} onOpen={() => {}} />,
-    );
-    await m.flush();
-    assert.ok(m.query("[data-editor]"), "card is present");
-    assert.ok(m.query("[data-editor-hint]"), "hint is present");
-    assert.match(
-      (m.query("[data-editor-hint]")?.textContent || "").trim(),
-      /Select a thread/,
-    );
-    const reveal = m.query("[data-editor-reveal]") as HTMLButtonElement | null;
-    const open = m.query("[data-editor-open]") as HTMLButtonElement | null;
-    assert.ok(reveal, "Finder button");
-    assert.ok(open, "Editor button");
-    assert.equal(reveal!.disabled, true);
-    assert.equal(open!.disabled, true);
-    m.unmount();
-  });
-
-  it("enables both buttons for a selected thread and fires the handlers", async () => {
+  it("renders both buttons and fires the handlers", async () => {
     let revealed = 0;
     let opened = 0;
     const m = await mount(
       <EditorCard
-        hasThread
         onReveal={() => {
           revealed += 1;
         }}

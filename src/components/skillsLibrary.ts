@@ -1,7 +1,5 @@
 import type { SkillInfo, SkillProvenance, SkillTarget } from "../shared/ipc";
 
-export type SkillsView = "library" | "catalog" | "mcp" | "add";
-
 export const SOURCE_FILTERS: Array<{ id: SkillProvenance; label: string }> = [
   { id: "added", label: "User" },
   { id: "project", label: "Project" },

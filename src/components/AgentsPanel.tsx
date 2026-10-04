@@ -9,7 +9,6 @@ import {
 } from "react";
 import type {
   AgentStatus,
-  AppSettings,
   CheckpointInfo,
   DiffResult,
   GitSyncInfo,
@@ -23,38 +22,14 @@ import type {
   MergeLanePreview,
   MergeLaneRecycle,
   MergeLaneRestore,
-  MergeSpotlight,
-  McpCatalogEntry,
-  McpImportPreview,
-  McpInstallRequest,
-  McpInstallResult,
-  McpPreviewImportInput,
-  McpServerDefinition,
-  McpServerSaveInput,
   MemoryEntryInfo,
   MemoryMaintenanceReport,
   MemoryReviewResolution,
-  AgentConfigDoctorReport,
-  AgentConfigPreview,
-  AgentConfigWriteResult,
-  ProjectCodeMap,
   PhaseView,
   ProjectInfo,
   ProviderInfo,
   SessionUsage,
-  SkillCatalogEntry,
-  SkillImportPreview,
-  SkillInstallRequest,
-  SkillInstallResult,
   SkillInfo,
-  SkillPreviewImportInput,
-  SkillTarget,
-  SkillWrite,
-  HarnessSourceId,
-  HarnessSourceInfo,
-  HarnessImportPreview,
-  HarnessInstallRequest,
-  HarnessInstallResult,
   ThreadInfo,
   ThreadSummariesInput,
   ThreadSummaryInfo,
@@ -157,19 +132,6 @@ export function defaultInspectorTab(input: {
   return "git";
 }
 
-/** Shared props for the 14px line icons in Environment card labels. */
-const LABEL_ICON_PROPS = {
-  width: 14,
-  height: 14,
-  viewBox: "0 0 16 16",
-  fill: "none",
-  stroke: "currentColor",
-  strokeWidth: 1.5,
-  strokeLinecap: "round",
-  strokeLinejoin: "round",
-  "aria-hidden": true,
-} as const;
-
 interface AgentsPanelProps {
   workflow: WorkflowView | null;
   thread: ThreadInfo | null;
@@ -257,70 +219,12 @@ interface AgentsPanelProps {
     id: number;
     resolution: MemoryReviewResolution;
   }) => Promise<{ ok: boolean; id: number; resolution: string }>;
-  loadCodeMap?: (input: { projectId: string }) => Promise<ProjectCodeMap>;
-  lintAgentConfig?: (input: {
-    projectId: string;
-  }) => Promise<AgentConfigDoctorReport>;
-  previewAgentConfig?: (input: {
-    projectId: string;
-    targets?: string[];
-  }) => Promise<AgentConfigPreview>;
-  writeAgentConfig?: (input: {
-    projectId: string;
-    targets?: string[];
-  }) => Promise<AgentConfigWriteResult>;
-  /** Skills tab: settings surface for MCP servers + skills CRUD. */
-  settings: AppSettings | null;
-  saveSettings: (patch: Partial<AppSettings>) => Promise<AppSettings>;
-  listMcpServers: () => Promise<McpServerDefinition[]>;
-  saveMcpServer: (input: McpServerSaveInput) => Promise<McpServerDefinition>;
-  removeMcpServer: (input: { name: string }) => Promise<void>;
-  setMcpEnabled: (input: {
-    name: string;
-    enabled: boolean;
-  }) => Promise<McpServerDefinition>;
-  listMcpCatalog: () => Promise<McpCatalogEntry[]>;
-  pickMcpImport: () => Promise<McpImportPreview | null>;
-  previewMcpImport: (input: McpPreviewImportInput) => Promise<McpImportPreview>;
-  installMcpImport: (input: McpInstallRequest) => Promise<McpInstallResult>;
-  discardMcpImport: (input: { previewId: string }) => Promise<void>;
   listSkills: (input?: { projectPath?: string }) => Promise<SkillInfo[]>;
-  addSkill: (
-    input: SkillWrite,
-  ) => Promise<{ name: string; installedIn: SkillTarget[] }>;
   removeSkill: (input: { name: string }) => Promise<void>;
   syncSkills: () => Promise<{ copied: number; skills: string[] }>;
-  listSkillCatalog: () => Promise<SkillCatalogEntry[]>;
-  pickSkillImport: () => Promise<SkillImportPreview | null>;
-  previewSkillImport: (
-    input: SkillPreviewImportInput,
-  ) => Promise<SkillImportPreview>;
-  installSkillImport: (
-    input: SkillInstallRequest,
-  ) => Promise<SkillInstallResult>;
-  discardSkillImport: (input: { previewId: string }) => Promise<void>;
-  detectHarnessSources: () => Promise<HarnessSourceInfo[]>;
-  previewHarnessImport: (input: {
-    source: HarnessSourceId;
-    projectPath?: string;
-  }) => Promise<HarnessImportPreview>;
-  installHarnessImport: (
-    input: HarnessInstallRequest,
-  ) => Promise<HarnessInstallResult>;
-  discardHarnessImport: (input: { previewId: string }) => Promise<void>;
-  /** Center-pane view, so Environment can mark the active destination. */
-  activeView?: string;
   /** App-owned inspector tab. The panel unmounts when the desktop rail collapses. */
   tab: PanelTab;
   onTabChange: (tab: PanelTab) => void;
-  onOpenPrs?: () => void;
-  /**
-   * Fork / hand off the open thread. Plain call = same harness; pass
-   * provider for hand-off. Absent hides the Environment Fork card.
-   */
-  onFork?: (
-    opts?: { provider?: string; model?: string | null },
-  ) => void | Promise<void | ThreadInfo | null>;
   /** Merge-queue lanes (#346). Absent hides the Environment Lanes card. */
   claimLane?: (input: { threadId: string }) => Promise<MergeLaneClaim>;
   listLanes?: (input: { projectId: string }) => Promise<MergeLaneInfo[]>;
@@ -332,11 +236,6 @@ interface AgentsPanelProps {
   recycleWedgedLanes?: (input: {
     projectId: string;
   }) => Promise<MergeLaneRecycle[]>;
-  spotlight?: boolean;
-  setSpotlight?: (input: {
-    projectId: string;
-    enabled: boolean;
-  }) => Promise<MergeSpotlight>;
   spotlightLane?: (input: {
     projectId: string;
     lane: number;
@@ -447,144 +346,16 @@ function SessionLine({
   );
 }
 
-export function ForkCard({
-  thread,
-  providers,
-  onFork,
-}: {
-  thread: ThreadInfo | null;
-  providers: ProviderInfo[];
-  onFork: (
-    opts?: { provider?: string; model?: string | null },
-  ) => void | Promise<void | ThreadInfo | null>;
-}) {
-  const menuRef = useRef<HTMLDivElement>(null);
-  const [handoffMenuOpen, setHandoffMenuOpen] = useState(false);
-  const isWorking = thread?.status === "working";
-  const otherProviders = thread
-    ? providers.filter((p) => p.id !== thread.provider)
-    : [];
-
-  useEffect(() => {
-    if (!handoffMenuOpen) return;
-    const onDoc = (e: MouseEvent) => {
-      if (!menuRef.current?.contains(e.target as Node)) {
-        setHandoffMenuOpen(false);
-      }
-    };
-    document.addEventListener("mousedown", onDoc);
-    return () => {
-      document.removeEventListener("mousedown", onDoc);
-    };
-  }, [handoffMenuOpen]);
-  useEscapeClose(handoffMenuOpen, () => setHandoffMenuOpen(false));
-
-  return (
-    <section className={styles.gitCard} data-thread-fork-card="">
-      <div className={styles.gitCardLabel}>
-        <svg {...LABEL_ICON_PROPS} className={styles.labelIcon}>
-          <circle cx="4.5" cy="3.5" r="1.5" />
-          <circle cx="4.5" cy="12.5" r="1.5" />
-          <circle cx="11.5" cy="5.5" r="1.5" />
-          <path d="M4.5 5v6M11.5 7c0 2.2-2.8 2.3-4.6 3.4" />
-        </svg>
-        Fork
-      </div>
-      {!thread ? (
-        <p className={styles.gitHint}>Select a thread to fork it.</p>
-      ) : (
-        <div className={styles.gitActions}>
-          <button
-            type="button"
-            className={styles.gitBtn}
-            data-thread-fork=""
-            disabled={isWorking}
-            aria-disabled={isWorking ? "true" : undefined}
-            title="Fork thread (same harness)"
-            onClick={() => {
-              if (isWorking) return;
-              void onFork();
-            }}
-          >
-            Fork
-          </button>
-          <div className={styles.menuWrap} ref={menuRef}>
-            <button
-              type="button"
-              className={styles.gitBtn}
-              data-thread-handoff=""
-              disabled={isWorking || otherProviders.length === 0}
-              aria-disabled={
-                isWorking || otherProviders.length === 0 ? "true" : undefined
-              }
-              aria-haspopup="menu"
-              aria-expanded={handoffMenuOpen}
-              title="Hand off to another provider"
-              onClick={() => {
-                if (isWorking || otherProviders.length === 0) return;
-                setHandoffMenuOpen((v) => !v);
-              }}
-            >
-              Hand off to…
-            </button>
-            {handoffMenuOpen && (
-              <div
-                className={styles.menu}
-                role="menu"
-                data-thread-handoff-menu=""
-              >
-                {otherProviders.map((p) => {
-                  const disabled = !p.available;
-                  return (
-                    <button
-                      key={p.id}
-                      type="button"
-                      className={styles.menuItem}
-                      role="menuitem"
-                      data-handoff-provider={p.id}
-                      disabled={disabled}
-                      aria-disabled={disabled ? "true" : undefined}
-                      title={
-                        disabled
-                          ? `${p.name} is not installed`
-                          : `Hand off to ${p.name}`
-                      }
-                      onClick={() => {
-                        if (disabled) return;
-                        setHandoffMenuOpen(false);
-                        void onFork({ provider: p.id });
-                      }}
-                    >
-                      {p.name}
-                    </button>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-        </div>
-      )}
-    </section>
-  );
-}
-
 /** Finder + editor icon links for the selected thread (status header row). */
 export function EditorCard({
-  hasThread,
   onReveal,
   onOpen,
 }: {
-  hasThread: boolean;
   onReveal: () => void;
   onOpen: () => void;
 }) {
   return (
     <span className={inspector.row} data-editor="">
-      {!hasThread ? (
-        <span className={inspector.muted} data-editor-hint="">
-          Select a thread to open its folder.
-        </span>
-      ) : null}
       <button
         type="button"
         className={inspector.iconBtn}
@@ -592,7 +363,6 @@ export function EditorCard({
         aria-label="Open in Finder"
         title="Open in Finder"
         onClick={onReveal}
-        disabled={!hasThread}
       >
         <svg
           width="14"
@@ -615,7 +385,6 @@ export function EditorCard({
         aria-label="Open in Editor"
         title="Open in Editor"
         onClick={onOpen}
-        disabled={!hasThread}
       >
         <svg
           width="14"
@@ -1352,7 +1121,6 @@ function laneFromClaim(
 export function MergeQueueCard({
   threadId,
   projectId,
-  remote,
   claimLane,
   listLanes,
   previewLane,
@@ -1363,7 +1131,6 @@ export function MergeQueueCard({
 }: {
   threadId: string | null;
   projectId: string | null;
-  remote?: boolean;
   claimLane: (input: { threadId: string }) => Promise<MergeLaneClaim>;
   listLanes: (input: { projectId: string }) => Promise<MergeLaneInfo[]>;
   previewLane: (input: {
@@ -1405,7 +1172,7 @@ export function MergeQueueCard({
     void refresh();
   }, [refresh, threadId]);
 
-  if (remote || !projectId) return null;
+  if (!projectId) return null;
 
   const mine = threadId
     ? lanes.find((row) => row.threadId === threadId)
@@ -2003,7 +1770,6 @@ export function GitTab({
             <RepositoryLink threadId={thread.id} gitRepoInfo={gitRepoInfo} />
             {remote ? null : (
               <EditorCard
-                hasThread
                 onReveal={() => void revealInFinder?.()}
                 onOpen={() => void openInEditor?.()}
               />

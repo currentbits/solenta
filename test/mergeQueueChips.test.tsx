@@ -34,7 +34,6 @@ function lane(over: Partial<MergeLaneInfo> = {}): MergeLaneInfo {
 function card(opts: {
   threadId?: string | null;
   projectId?: string | null;
-  remote?: boolean;
   lanes?: MergeLaneInfo[];
   claim?: (input: { threadId: string }) => Promise<MergeLaneClaim>;
   list?: (input: { projectId: string }) => Promise<MergeLaneInfo[]>;
@@ -55,7 +54,6 @@ function card(opts: {
     <MergeQueueCard
       threadId={opts.threadId === undefined ? "t1" : opts.threadId}
       projectId={opts.projectId === undefined ? "p1" : opts.projectId}
-      remote={opts.remote}
       claimLane={
         opts.claim ??
         (async (input) => {
@@ -243,14 +241,6 @@ describe("MergeQueueCard (#346)", () => {
     const labels = (m.text() || "").toLowerCase();
     assert.ok(!labels.includes("promote"));
     assert.ok(!labels.includes("merge worktree"));
-    m.unmount();
-  });
-
-  it("is hidden on a remote project", async () => {
-    const m = await mount(card({ remote: true, lanes: [lane()] }));
-    await m.flush();
-    assert.equal(m.query("[data-lanes]"), null);
-    assert.equal(m.query("[data-lane-claim]"), null);
     m.unmount();
   });
 
