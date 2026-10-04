@@ -103,6 +103,14 @@ import {
 import { Icon } from "./sidebar/Icon";
 import { ThreadCard, type SelectOpts } from "./sidebar/ThreadCard";
 import { SettledRow, SnoozedRow } from "./sidebar/rows";
+import {
+  loadFlag,
+  loadOpenSet,
+  loadStored,
+  saveFlag,
+  saveOpenSet,
+  saveStored,
+} from "./sidebar/storage";
 import styles from "./Sidebar.module.css";
 
 export { displayWorkerTitle, statusPulseFor } from "./sidebar/status";
@@ -231,47 +239,6 @@ function countIdChurn(
   for (const id of nextSet) if (!prevSet.has(id)) n += 1;
   for (const id of prevSet) if (!nextSet.has(id)) n += 1;
   return n;
-}
-
-function loadStored(key: string): string | null {
-  try {
-    return window.localStorage.getItem(key);
-  } catch {
-    return null;
-  }
-}
-
-function saveStored(key: string, value: string | null): void {
-  try {
-    if (value == null) window.localStorage.removeItem(key);
-    else window.localStorage.setItem(key, value);
-  } catch {
-    // Quota/private mode: UI state just stops persisting.
-  }
-}
-
-function loadFlag(key: string, fallback: boolean): boolean {
-  const raw = loadStored(key);
-  if (raw == null) return fallback;
-  return raw === "1" || raw === "true";
-}
-
-function saveFlag(key: string, value: boolean): void {
-  saveStored(key, value ? "1" : "0");
-}
-
-function loadOpenSet(key: string): Set<string> {
-  try {
-    const raw = JSON.parse(loadStored(key) || "[]") as unknown;
-    if (!Array.isArray(raw)) return new Set();
-    return new Set(raw.filter((id): id is string => typeof id === "string"));
-  } catch {
-    return new Set();
-  }
-}
-
-function saveOpenSet(key: string, ids: ReadonlySet<string>): void {
-  saveStored(key, JSON.stringify([...ids]));
 }
 
 interface SidebarProps {
