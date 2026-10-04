@@ -4,7 +4,6 @@ import {
   providerPermissionModes,
   snapToHonouredPermissionMode,
 } from "../format";
-import { formatUsd } from "../digest";
 import {
   CUSTOM_MODEL_ID,
   effortDisplayLabel,
@@ -55,6 +54,10 @@ import { IntegrationsSection } from "./IntegrationsSection";
 import { ConnectionsSection } from "./ConnectionsSection";
 import { isWebMode } from "../shared/wire";
 import type { CoderApi } from "../shared/ipc";
+import { PaneIcon } from "./settings/PaneIcon";
+import { SpendingPane } from "./settings/SpendingPane";
+import { ThreadsPane } from "./settings/ThreadsPane";
+import { ProjectPicker } from "./settings/shared";
 
 export const SETTINGS_PANES = [
   "general",
@@ -139,7 +142,7 @@ function isSettingsPane(value: string | null | undefined): value is SettingsPane
   );
 }
 
-interface SettingsModalProps {
+export interface SettingsModalProps {
   open: boolean;
   onClose: () => void;
   /** Open onto a specific pane (sidebar worktree usage deep-links to Git). */
@@ -210,7 +213,7 @@ function parseNumericDraft(text: string): number | null {
   return raw === "" ? null : Number(raw);
 }
 
-type SettingsDraftKey =
+export type SettingsDraftKey =
   | "daily"
   | "orch"
   | "settle"
@@ -515,21 +518,6 @@ export function SettingsModal({
   const paneMeta = PANE_META[pane];
   const toolsProject =
     projects?.find((p) => p.id === toolsProjectId) ?? projects?.[0] ?? null;
-  const spent = status?.spendTodayUsd;
-  const spendCopy =
-    spent == null
-      ? null
-      : settings?.dailyBudgetUsd != null
-        ? `Spent ${formatUsd(spent)} of ${formatUsd(settings.dailyBudgetUsd)} today`
-        : spent === 0
-          ? "No spend today"
-          : `Spent ${formatUsd(spent)} today`;
-  const spendRatio =
-    spent != null &&
-    settings?.dailyBudgetUsd != null &&
-    settings.dailyBudgetUsd > 0
-      ? Math.min(1, Math.max(0, spent / settings.dailyBudgetUsd))
-      : null;
   const updateWaiting =
     update?.state === "available" || update?.state === "staged";
 
@@ -603,49 +591,6 @@ export function SettingsModal({
       savingRef.current = false;
       setSaving(false);
     }
-  };
-
-  const onBlurBudget = () => {
-    // Skip if unchanged from last known settings value.
-    const current = settings?.dailyBudgetUsd ?? null;
-    const next = budgetText.trim() === "" ? null : Number(budgetText.trim());
-    const same =
-      (current == null && (budgetText.trim() === "" || next === null)) ||
-      (current != null &&
-        Number.isFinite(next) &&
-        next === current &&
-        budgetText.trim() !== "");
-    if (same && error == null) return;
-    void save();
-  };
-
-  const onBlurOrchBudget = () => {
-    // Skip if unchanged from last known settings value.
-    const current = settings?.orchestrationBudgetUsd ?? null;
-    const next =
-      orchBudgetText.trim() === "" ? null : Number(orchBudgetText.trim());
-    const same =
-      (current == null && (orchBudgetText.trim() === "" || next === null)) ||
-      (current != null &&
-        Number.isFinite(next) &&
-        next === current &&
-        orchBudgetText.trim() !== "");
-    if (same && error == null) return;
-    void save();
-  };
-
-  const onBlurSettleDays = () => {
-    const current = settings?.autoSettleAfterDays ?? null;
-    const next =
-      settleDaysText.trim() === "" ? null : Number(settleDaysText.trim());
-    const same =
-      (current == null && (settleDaysText.trim() === "" || next === null)) ||
-      (current != null &&
-        Number.isFinite(next) &&
-        next === current &&
-        settleDaysText.trim() !== "");
-    if (same && error == null) return;
-    void save();
   };
 
   const onBlurPrCap = () => {
@@ -1015,112 +960,19 @@ export function SettingsModal({
             ) : null}
             <div className={styles.paneBody} data-settings-pane={pane}>
           {pane === "spending" && (
-          <section className={styles.section}>
-            {spendCopy ? (
-              <div className={styles.spendBlock} data-spend-today="">
-                <p className={styles.spendLine}>{spendCopy}</p>
-                {spendRatio != null ? (
-                  <div
-                    className={styles.spendTrack}
-                    aria-hidden
-                  >
-                    <span
-                      className={styles.spendFill}
-                      data-hot={spendRatio >= 1 ? "true" : undefined}
-                      style={{ width: `${Math.round(spendRatio * 100)}%` }}
-                    />
-                  </div>
-                ) : null}
-              </div>
-            ) : null}
-            <div className={styles.field}>
-              <label className={styles.fieldLabel} htmlFor="daily-budget">
-                Daily budget (USD)
-              </label>
-              <div className={styles.fieldRow}>
-                <input
-                  id="daily-budget"
-                  className={styles.input}
-                  type="number"
-                  inputMode="decimal"
-                  min="0"
-                  step="any"
-                  placeholder="No cap"
-                  value={budgetText}
-                  disabled={saving}
-                  onChange={(e) => {
-                    dirtyDrafts.current.add("daily");
-                    setBudgetText(e.target.value);
-                    setError(null);
-                  }}
-                  onBlur={() => onBlurBudget()}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") {
-                      e.preventDefault();
-                      void save();
-                    }
-                  }}
-                />
-                <button
-                  type="button"
-                  className={`${styles.btn} ${styles.btnPrimary}`}
-                  disabled={saving}
-                  onClick={() => void save()}
-                >
-                  {saving ? "Saving…" : "Save"}
-                </button>
-              </div>
-              <p className={styles.note} data-budget-unmetered-note="">
-                Kimi and Cursor report no USD, so their turns never count toward
-                this cap.
-              </p>
-            </div>
-            <div className={styles.field}>
-              <label className={styles.fieldLabel} htmlFor="orch-budget">
-                Per-orchestration budget (USD)
-              </label>
-              <div className={styles.fieldRow}>
-                <input
-                  id="orch-budget"
-                  className={styles.input}
-                  type="number"
-                  inputMode="decimal"
-                  min="0"
-                  step="any"
-                  placeholder="No cap"
-                  value={orchBudgetText}
-                  disabled={saving}
-                  data-orch-budget=""
-                  onChange={(e) => {
-                    dirtyDrafts.current.add("orch");
-                    setOrchBudgetText(e.target.value);
-                    setError(null);
-                  }}
-                  onBlur={() => onBlurOrchBudget()}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") {
-                      e.preventDefault();
-                      void save();
-                    }
-                  }}
-                />
-                <button
-                  type="button"
-                  className={`${styles.btn} ${styles.btnPrimary}`}
-                  disabled={saving}
-                  onClick={() => void save()}
-                >
-                  {saving ? "Saving…" : "Save"}
-                </button>
-              </div>
-              <p className={styles.note}>
-                Caps the combined spend of one orchestrator thread and its
-                fan-out workers. When a crew reaches it, the next worker
-                wake-up is refused and the thread lands failed with the
-                reason — raise or clear the cap, then Retry turn.
-              </p>
-            </div>
-          </section>
+          <SpendingPane
+            settings={settings}
+            status={status}
+            saving={saving}
+            error={error}
+            setError={setError}
+            budgetText={budgetText}
+            setBudgetText={setBudgetText}
+            orchBudgetText={orchBudgetText}
+            setOrchBudgetText={setOrchBudgetText}
+            dirtyDrafts={dirtyDrafts}
+            save={save}
+          />
           )}
 
           {pane === "git" && (
@@ -1231,313 +1083,18 @@ export function SettingsModal({
           )}
 
           {pane === "threads" && (
-          <section className={styles.section}>
-            <h3 className={styles.sectionLabel}>Sidebar</h3>
-            <div className={styles.field}>
-              <label className={styles.fieldLabel} htmlFor="auto-settle-days">
-                Auto-settle quiet threads after
-              </label>
-              <div className={styles.fieldRow}>
-                <input
-                  id="auto-settle-days"
-                  className={styles.input}
-                  type="number"
-                  inputMode="numeric"
-                  min="1"
-                  step="1"
-                  placeholder="Never"
-                  value={settleDaysText}
-                  disabled={saving}
-                  data-auto-settle-days=""
-                  onChange={(e) => {
-                    dirtyDrafts.current.add("settle");
-                    setSettleDaysText(e.target.value);
-                    setError(null);
-                  }}
-                  onBlur={() => onBlurSettleDays()}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") {
-                      e.preventDefault();
-                      void save();
-                    }
-                  }}
-                />
-                <span className={styles.note}>days</span>
-                <button
-                  type="button"
-                  className={`${styles.btn} ${styles.btnPrimary}`}
-                  disabled={saving}
-                  onClick={() => void save()}
-                >
-                  {saving ? "Saving…" : "Save"}
-                </button>
-              </div>
-              <p className={styles.note}>
-                Empty means Never — quiet threads only settle via PR state or
-                an explicit settle.
-              </p>
-              <label className={styles.fieldRow}>
-                <input
-                  type="checkbox"
-                  data-auto-settle-on-merge=""
-                  checked={settings?.autoSettleOnMerge !== false}
-                  disabled={saving || settings == null}
-                  onChange={(e) => {
-                    setError(null);
-                    void onSaveSettings({
-                      autoSettleOnMerge: e.target.checked,
-                    }).catch((err) => {
-                      setError(
-                        err instanceof Error && err.message
-                          ? err.message
-                          : "Failed to save settings",
-                      );
-                    });
-                  }}
-                />
-                <span>Settle a thread when its pull request merges</span>
-              </label>
-              <p className={styles.note}>
-                Closed pull requests still settle automatically. Turn this
-                off to keep a merged thread in the attention list until you
-                settle it yourself.
-              </p>
-            </div>
-          </section>
-          )}
-
-          {pane === "threads" && (
-          <section className={styles.section}>
-            <h3 className={styles.sectionLabel}>Threads</h3>
-            <div className={styles.field}>
-              <label className={styles.fieldRow}>
-                <input
-                  type="checkbox"
-                  data-default-worktree=""
-                  checked={settings?.defaultWorktree ?? false}
-                  disabled={saving || settings == null}
-                  onChange={(e) => {
-                    setError(null);
-                    void onSaveSettings({
-                      defaultWorktree: e.target.checked,
-                    }).catch((err) => {
-                      setError(
-                        err instanceof Error && err.message
-                          ? err.message
-                          : "Failed to save settings",
-                      );
-                    });
-                  }}
-                />
-                <span>Isolate new threads in a git worktree</span>
-              </label>
-              <p className={styles.note}>
-                New threads get their own branch and working directory, so
-                parallel agents never touch your checkout. Local projects
-                only.
-              </p>
-              <label className={styles.fieldRow}>
-                <input
-                  type="checkbox"
-                  data-default-orchestrate=""
-                  checked={settings?.defaultOrchestrate ?? false}
-                  disabled={saving || settings == null}
-                  onChange={(e) => {
-                    setError(null);
-                    void onSaveSettings({
-                      defaultOrchestrate: e.target.checked,
-                    }).catch((err) => {
-                      setError(
-                        err instanceof Error && err.message
-                          ? err.message
-                          : "Failed to save settings",
-                      );
-                    });
-                  }}
-                />
-                <span>Delegate new threads to a worker</span>
-              </label>
-              <p className={styles.note}>
-                The thread&apos;s first prompt is handed to a worker thread in
-                its own worktree; the thread itself supervises. Wins over the
-                worktree option above.
-              </p>
-            </div>
-            <div className={styles.field}>
-              <label className={styles.fieldLabel} htmlFor="default-provider">
-                Default provider
-              </label>
-              <select
-                id="default-provider"
-                className={styles.input}
-                data-default-provider=""
-                value={settings?.defaultProvider ?? ""}
-                disabled={saving || settings == null || providers.length === 0}
-                onChange={(e) => {
-                  const provider = e.target.value || null;
-                  setError(null);
-                  void onSaveSettings({
-                    defaultProvider: provider,
-                    defaultModel: null,
-                  }).catch((err) => {
-                    setError(
-                      err instanceof Error && err.message
-                        ? err.message
-                        : "Failed to save settings",
-                    );
-                  });
-                }}
-              >
-                <option value="">Claude Code (built-in)</option>
-                {providers.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.name}
-                    {!p.available ? " (not installed)" : ""}
-                  </option>
-                ))}
-              </select>
-              <p className={styles.note}>
-                Used when a new thread cannot inherit from the selected one:
-                autodispatch, issue-created threads, and the first thread in a
-                project.
-              </p>
-              {(() => {
-                const providerId = settings?.defaultProvider || "";
-                const selected = providers.find((p) => p.id === providerId);
-                const modelInfo = selected?.modelInfo ?? [];
-                if (!providerId) return null;
-                const known = modelInfo.some((m) => m.id === settings?.defaultModel);
-                return (
-                  <>
-                    <label className={styles.fieldLabel} htmlFor="default-model">
-                      Default model
-                    </label>
-                    <select
-                      id="default-model"
-                      className={styles.input}
-                      data-default-model=""
-                      value={settings?.defaultModel ?? ""}
-                      disabled={saving || settings == null}
-                      onChange={(e) => {
-                        const value = e.target.value;
-                        setError(null);
-                        void onSaveSettings({
-                          defaultModel: value === "" ? null : value,
-                        }).catch((err) => {
-                          setError(
-                            err instanceof Error && err.message
-                              ? err.message
-                              : "Failed to save settings",
-                          );
-                        });
-                      }}
-                    >
-                      <option value="">Provider default</option>
-                      {modelInfo.map((m) => (
-                        <option key={m.id} value={m.id}>
-                          {m.label}
-                        </option>
-                      ))}
-                      {settings?.defaultModel && !known && (
-                        <option value={settings.defaultModel}>
-                          {settings.defaultModel}
-                        </option>
-                      )}
-                    </select>
-                  </>
-                );
-              })()}
-              {providers.some((p) => p.catalogNote) ? (
-                <ul className={styles.doctorList} data-catalog-doctor="">
-                  {providers
-                    .filter((p) => p.catalogNote)
-                    .map((p) => (
-                      <li
-                        key={p.id}
-                        className={styles.doctorItem}
-                        data-catalog-doctor-row={p.id}
-                      >
-                        <p className={styles.note}>{p.catalogNote}</p>
-                      </li>
-                    ))}
-                </ul>
-              ) : null}
-            </div>
-            <div className={styles.field}>
-              <label className={styles.fieldRow}>
-                <input
-                  type="checkbox"
-                  data-quota-wait-auto-resume=""
-                  checked={settings?.quotaWaitAutoResume !== false}
-                  disabled={saving || settings == null}
-                  onChange={(e) => {
-                    setError(null);
-                    void onSaveSettings({
-                      quotaWaitAutoResume: e.target.checked,
-                    }).catch((err) => {
-                      setError(
-                        err instanceof Error && err.message
-                          ? err.message
-                          : "Failed to save settings",
-                      );
-                    });
-                  }}
-                />
-                <span>Continue automatically when usage limit resets</span>
-              </label>
-              <p className={styles.note}>
-                Parks a thread until the provider&apos;s reset time, then
-                sends the same prompt once. Off = fail the turn. Distinct
-                from the daily budget cap above.
-              </p>
-            </div>
-            {providers.length > 0 && (
-              <div className={styles.field} data-quota-failover="">
-                <span className={styles.fieldLabel}>Quota failover</span>
-                {providers.map((p) => {
-                  const chain = settings?.quotaFailover ?? [];
-                  return (
-                    <label className={styles.fieldRow} key={p.id}>
-                      <input
-                        type="checkbox"
-                        data-quota-failover-id={p.id}
-                        checked={chain.includes(p.id)}
-                        disabled={saving || settings == null}
-                        onChange={(e) => {
-                          const checked = e.target.checked;
-                          const next = providers
-                            .map((row) => row.id)
-                            .filter((id) =>
-                              id === p.id ? checked : chain.includes(id),
-                            );
-                          setError(null);
-                          void onSaveSettings({ quotaFailover: next }).catch(
-                            (err) => {
-                              setError(
-                                err instanceof Error && err.message
-                                  ? err.message
-                                  : "Failed to save settings",
-                              );
-                            },
-                          );
-                        }}
-                      />
-                      <span>
-                        {p.name}
-                        {!p.available ? " (not installed)" : ""}
-                      </span>
-                    </label>
-                  );
-                })}
-                <p className={styles.note}>
-                  When a turn hits a usage limit or exhausted balance, try
-                  these providers in the order shown instead of parking or
-                  failing. The current provider is skipped. Empty = no
-                  failover.
-                </p>
-              </div>
-            )}
-          </section>
+          <ThreadsPane
+            settings={settings}
+            providers={providers}
+            saving={saving}
+            error={error}
+            setError={setError}
+            settleDaysText={settleDaysText}
+            setSettleDaysText={setSettleDaysText}
+            dirtyDrafts={dirtyDrafts}
+            save={save}
+            onSaveSettings={onSaveSettings}
+          />
           )}
 
           {pane === "advanced" && (
@@ -2538,81 +2095,6 @@ export function SettingsModal({
   );
 }
 
-function PaneIcon({ id }: { id: SettingsPane }) {
-  return (
-    <svg
-      className={styles.navIcon}
-      width="16"
-      height="16"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.75"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden
-    >
-      {id === "general" ? (
-        <>
-          <circle cx="12" cy="12" r="3" />
-          <path d="M12 2v3M12 19v3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M2 12h3M19 12h3M4.9 19.1 7 17M17 7l2.1-2.1" />
-        </>
-      ) : id === "threads" ? (
-        <>
-          <path d="M8 6h13M8 12h13M8 18h13" />
-          <path d="M3 6h.01M3 12h.01M3 18h.01" />
-        </>
-      ) : id === "spending" ? (
-        <>
-          <circle cx="12" cy="12" r="9" />
-          <path d="M14.5 9.5a2.5 2.5 0 0 0-5 0c0 3.5 5 1.5 5 5a2.5 2.5 0 0 1-5 0M12 7v1.5M12 15.5V17" />
-        </>
-      ) : id === "git" ? (
-        <>
-          <circle cx="6" cy="6" r="2.2" />
-          <circle cx="18" cy="6" r="2.2" />
-          <circle cx="12" cy="18" r="2.2" />
-          <path d="M8 7.5v3.2A6 6 0 0 0 12 16M16 7.5v3.2A6 6 0 0 1 12 16" />
-        </>
-      ) : id === "agents" ? (
-        <>
-          <circle cx="8" cy="9" r="2.4" />
-          <circle cx="16" cy="9" r="2.4" />
-          <path d="M4 18c.4-2.4 2.4-4 4-4s3.6 1.6 4 4M12 18c.4-2.4 2.4-4 4-4s3.6 1.6 4 4" />
-        </>
-      ) : id === "memory" ? (
-        <>
-          <rect x="4" y="5" width="16" height="14" rx="2" />
-          <path d="M8 9h8M8 13h5" />
-        </>
-      ) : id === "integrations" ? (
-        <>
-          <path d="M8 7h3v3H8zM13 14h3v3h-3z" />
-          <path d="M11 8.5h2.5A2.5 2.5 0 0 1 16 11M13 15.5h-2.5A2.5 2.5 0 0 1 8 13" />
-        </>
-      ) : id === "connections" ? (
-        <>
-          <rect x="3" y="5" width="8" height="6" rx="1" />
-          <rect x="13" y="13" width="8" height="6" rx="1" />
-          <path d="M11 8h3a3 3 0 0 1 3 3v2" />
-        </>
-      ) : id === "skills" ? (
-        <>
-          <path d="M9 3v4M15 3v4" />
-          <path d="M7 7h10v4a5 5 0 0 1-10 0V7Z" />
-          <path d="M12 16v5" />
-        </>
-      ) : (
-        <>
-          <circle cx="12" cy="12" r="3" />
-          <path d="M4.5 12H8M16 12h3.5M12 4.5V8M12 16v3.5" />
-          <path d="m7 7 2.2 2.2M14.8 14.8 17 17M17 7l-2.2 2.2M9.2 14.8 7 17" />
-        </>
-      )}
-    </svg>
-  );
-}
-
 /** Display prefs (moved from the Environment tab). Same uiPrefs keys. */
 function DisplayPrefsSection() {
   const divergence = useDivergenceCardEnabled();
@@ -2659,39 +2141,6 @@ function DisplayPrefsSection() {
         <span>Vim motions in the composer</span>
       </label>
     </section>
-  );
-}
-
-function ProjectPicker({
-  id,
-  projects,
-  value,
-  onChange,
-}: {
-  id: string;
-  projects: ProjectInfo[];
-  value: string;
-  onChange: (projectId: string) => void;
-}) {
-  return (
-    <div className={styles.field}>
-      <label className={styles.fieldLabel} htmlFor={id}>
-        Project
-      </label>
-      <select
-        id={id}
-        className={styles.input}
-        data-project-picker={id}
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-      >
-        {projects.map((p) => (
-          <option key={p.id} value={p.id}>
-            {p.name}
-          </option>
-        ))}
-      </select>
-    </div>
   );
 }
 
