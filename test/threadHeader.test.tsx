@@ -179,13 +179,18 @@ function view(props: {
   onStartWithoutProject?: (threadId: string) => void;
   listEditors?: () => Promise<{ id: "cursor" | "vscode" | "zed" | "terminal" | "finder"; name: string }[]>;
   onOpenWorktreeIn?: (editor: "cursor" | "vscode" | "zed" | "terminal" | "finder") => void;
+  providers?: ProviderInfo[];
+  onFork?: (opts?: {
+    provider?: string;
+    model?: string | null;
+  }) => void | Promise<void | ThreadInfo | null>;
 }) {
   return (
     <ThreadView
       detail={props.detail === undefined ? detail() : props.detail}
       project={props.project ?? project}
       onRunCommand={props.onRunCommand}
-      providers={providers}
+      providers={props.providers ?? providers}
       workflows={[]}
       hasProjects={true}
       onAddProject={() => {}}
@@ -234,6 +239,7 @@ function view(props: {
       onStartWithoutProject={props.onStartWithoutProject}
       listEditors={props.listEditors}
       onOpenWorktreeIn={props.onOpenWorktreeIn}
+      onFork={props.onFork}
     />
   );
 }
@@ -456,8 +462,30 @@ describe("sync pill", () => {
   });
 });
 
-describe("header no longer hosts Environment actions", () => {
-  it("does not render a dev menu, Fork, or Hand off in the thread header", async () => {
+const HANDOFF_PROVIDERS: ProviderInfo[] = [
+  ...providers,
+  {
+    id: "grok",
+    name: "Grok",
+    available: true,
+    supportsResume: true,
+    models: [],
+    modelInfo: [],
+    efforts: [],
+  },
+  {
+    id: "kimi",
+    name: "Kimi",
+    available: false,
+    supportsResume: true,
+    models: [],
+    modelInfo: [],
+    efforts: [],
+  },
+];
+
+describe("header Fork / Hand off (moved from the Environment tab)", () => {
+  it("has no dev menu, and no Fork or Hand off without onFork", async () => {
     const m = await mount(view({}));
     await m.flush();
     const header = m.query("header");
@@ -465,6 +493,78 @@ describe("header no longer hosts Environment actions", () => {
     assert.equal(header!.querySelector("[data-dev-menu]"), null);
     assert.equal(header!.querySelector("[data-thread-fork]"), null);
     assert.equal(header!.querySelector("[data-thread-handoff]"), null);
+    m.unmount();
+  });
+
+  it("forks with the same harness and hands off to another provider", async () => {
+    const forks: Array<{ provider?: string; model?: string | null } | undefined> = [];
+    const m = await mount(
+      view({
+        providers: HANDOFF_PROVIDERS,
+        onFork: (opts) => {
+          forks.push(opts);
+        },
+      }),
+    );
+    await m.flush();
+    const header = m.query("[data-thread-header]")!;
+    const fork = header.querySelector("[data-thread-fork]");
+    assert.ok(fork, "Fork sits in the thread header");
+    assert.equal(fork.getAttribute("title"), "Fork thread (same harness)");
+    await m.click(fork);
+    assert.deepEqual(forks, [undefined], "plain Fork passes no provider");
+
+    const handoff = header.querySelector("[data-thread-handoff]");
+    assert.ok(handoff, "Hand off to… sits next to Fork");
+    assert.equal(handoff.getAttribute("aria-expanded"), "false");
+    await m.click(handoff);
+    const entries = m
+      .queryAll("[data-thread-handoff-menu] [data-handoff-provider]")
+      .map((el) => el.getAttribute("data-handoff-provider"));
+    assert.deepEqual(entries, ["grok", "kimi"], "the current provider is not offered");
+    const kimi = m.query('[data-handoff-provider="kimi"]') as HTMLButtonElement;
+    assert.equal(kimi.disabled, true);
+    assert.equal(kimi.getAttribute("title"), "Kimi is not installed");
+    await m.click(kimi);
+    assert.deepEqual(forks, [undefined], "a disabled entry is click-dead");
+    await m.click(m.query('[data-handoff-provider="grok"]'));
+    assert.deepEqual(forks, [undefined, { provider: "grok" }]);
+    assert.equal(m.query("[data-thread-handoff-menu]"), null, "a pick closes the menu");
+    m.unmount();
+  });
+
+  it("hides Fork and Hand off while the thread is working", async () => {
+    const m = await mount(
+      view({
+        detail: detail({ thread: thread({ status: "working" }) }),
+        providers: HANDOFF_PROVIDERS,
+        onFork: () => {},
+      }),
+    );
+    await m.flush();
+    assert.equal(m.query("[data-thread-fork]"), null);
+    assert.equal(m.query("[data-thread-handoff]"), null);
+    m.unmount();
+  });
+
+  it("hides them on a draft header with no conversation yet", async () => {
+    const m = await mount(
+      view({
+        detail: detail({ messages: [] }),
+        providers: HANDOFF_PROVIDERS,
+        onFork: () => {},
+      }),
+    );
+    await m.flush();
+    assert.equal(m.query("[data-thread-fork]"), null);
+    m.unmount();
+  });
+
+  it("offers Fork but no Hand off when no other provider exists", async () => {
+    const m = await mount(view({ onFork: () => {} }));
+    await m.flush();
+    assert.ok(m.query("[data-thread-header] [data-thread-fork]"));
+    assert.equal(m.query("[data-thread-handoff]"), null);
     m.unmount();
   });
 });

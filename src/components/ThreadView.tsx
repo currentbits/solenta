@@ -4922,6 +4922,96 @@ function DivergenceCard({
   );
 }
 
+/**
+ * Fork / Hand off in the thread header (moved from the Environment tab's
+ * Fork card, same behaviour). The caller hides it while the thread is
+ * working and on a draft header.
+ */
+function HeaderForkControl({
+  thread,
+  providers,
+  onFork,
+}: {
+  thread: ThreadInfo;
+  providers: ProviderInfo[];
+  onFork: (
+    opts?: { provider?: string; model?: string | null },
+  ) => void | Promise<void | ThreadInfo | null>;
+}) {
+  const menuRef = useRef<HTMLDivElement>(null);
+  const [open, setOpen] = useState(false);
+  const others = providers.filter((p) => p.id !== thread.provider);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDoc = (e: MouseEvent) => {
+      if (!menuRef.current?.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, [open]);
+  useEscapeClose(open, () => setOpen(false));
+
+  return (
+    <>
+      <button
+        type="button"
+        className={styles.btn}
+        data-thread-fork=""
+        title="Fork thread (same harness)"
+        onClick={() => void onFork()}
+      >
+        Fork
+      </button>
+      {others.length > 0 ? (
+        <div className={styles.menuWrap} ref={menuRef}>
+          <button
+            type="button"
+            className={styles.btn}
+            data-thread-handoff=""
+            aria-haspopup="menu"
+            aria-expanded={open}
+            title="Hand off to another provider"
+            onClick={() => setOpen((v) => !v)}
+          >
+            Hand off to…
+          </button>
+          {open && (
+            <div className={styles.menu} role="menu" data-thread-handoff-menu="">
+              {others.map((p) => {
+                const disabled = !p.available;
+                return (
+                  <button
+                    key={p.id}
+                    type="button"
+                    className={styles.menuItem}
+                    role="menuitem"
+                    data-handoff-provider={p.id}
+                    disabled={disabled}
+                    aria-disabled={disabled ? "true" : undefined}
+                    title={
+                      disabled
+                        ? `${p.name} is not installed`
+                        : `Hand off to ${p.name}`
+                    }
+                    onClick={() => {
+                      if (disabled) return;
+                      setOpen(false);
+                      void onFork({ provider: p.id });
+                    }}
+                  >
+                    {p.name}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      ) : null}
+    </>
+  );
+}
+
 function ReturnToViewButton({
   view,
   onClick,
@@ -7666,6 +7756,13 @@ export const ThreadView = memo(function ThreadView({
               Exit spec mode
             </button>
           )}
+          {onFork && !isWorking && !isDraftHeader ? (
+            <HeaderForkControl
+              thread={thread}
+              providers={providers}
+              onFork={onFork}
+            />
+          ) : null}
           {ring?.view.warn ? ringBadge : null}
           {hasDetails ? (
           <div className={styles.detailsWrap} ref={detailsRef}>
