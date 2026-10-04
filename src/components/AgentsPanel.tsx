@@ -67,11 +67,8 @@ import {
   formatCostUsd,
   formatRelativeAge,
   formatTokenSum,
-  permissionModeLabel,
   providerDisplayName,
-  shortSessionId,
 } from "../format";
-import { contextRing, threadContextWindow } from "../contextRing";
 import { buildWaitStates, waitLabel, type WaitState } from "../waiting";
 import {
   isDirectCrewChild,
@@ -394,7 +391,11 @@ function groupKey(phaseName: string, index: number): string {
   return `${index}:${phaseName}`;
 }
 
-function SessionCard({
+/**
+ * One session line: provider · status · turns · cost, and a muted token
+ * line. Model and Permission live in the composer; context in the header ring.
+ */
+function SessionLine({
   thread,
   usage,
   providers,
@@ -406,18 +407,6 @@ function SessionCard({
   /** Team role chip ("Orchestrator" / "Worker"); absent renders no chip. */
   role?: string;
 }) {
-  const sess = shortSessionId(thread.sessionId);
-  const providerName = providerDisplayName(thread.provider, providers);
-  const modelLabel = thread.model ?? usage?.model ?? "n/a";
-  const ring = contextRing({
-    used: usage?.contextTokens ?? null,
-    window: threadContextWindow(
-      usage?.contextWindow,
-      providers,
-      thread.provider,
-      thread.model ?? usage?.model,
-    ),
-  });
   const usageUnreported =
     usage != null &&
     usage.turns > 0 &&
@@ -431,76 +420,29 @@ function SessionCard({
     (usage.inputTokens > 0 ||
       usage.outputTokens > 0 ||
       Number(usage.contextTokens) > 0);
+  const parts = [providerDisplayName(thread.provider, providers), thread.status];
+  if (usageUnreported) parts.push("usage not reported");
+  else if (usage) {
+    parts.push(
+      `${usage.turns} ${usage.turns === 1 ? "turn" : "turns"}`,
+      costUnmetered ? "unmetered" : formatCostUsd(usage.costUsd),
+    );
+  } else parts.push("No usage yet");
   return (
-    <section className={styles.sessionCard}>
-      <div className={styles.sessionHead}>
-        <div className={styles.sessionLabel}>
-          Session
-          {role && <span className={styles.roleChip}>{role}</span>}
-        </div>
-        {sess && (
-          <span className={styles.sessionId} title={thread.sessionId ?? undefined}>
-            {sess}
-          </span>
-        )}
-      </div>
-      <div className={styles.sessionTitle}>{thread.title}</div>
-
-      <dl className={styles.sessionMeta}>
-        <div className={styles.sessionRow}>
-          <dt>Provider</dt>
-          <dd className={styles.sessionProvider}>{providerName}</dd>
-        </div>
-        <div className={styles.sessionRow}>
-          <dt>Status</dt>
-          <dd>{thread.status}</dd>
-        </div>
-        <div className={styles.sessionRow}>
-          <dt>Model</dt>
-          <dd>{modelLabel}</dd>
-        </div>
-        <div className={styles.sessionRow}>
-          <dt>Permission</dt>
-          <dd>{permissionModeLabel(thread.permissionMode)}</dd>
-        </div>
-      </dl>
-
-      <div className={styles.usageBlock}>
-        {usageUnreported ? (
-          <p className={styles.usageEmpty}>usage not reported</p>
-        ) : usage ? (
-          <dl className={styles.usageList}>
-            <div className={styles.sessionRow}>
-              <dt>Input tokens</dt>
-              <dd>{usage.inputTokens.toLocaleString()}</dd>
-            </div>
-            <div className={styles.sessionRow}>
-              <dt>Output tokens</dt>
-              <dd>{usage.outputTokens.toLocaleString()}</dd>
-            </div>
-            <div className={styles.sessionRow}>
-              <dt>Turns</dt>
-              <dd>{usage.turns}</dd>
-            </div>
-            <div className={styles.sessionRow}>
-              <dt>Cost</dt>
-              <dd className={styles.cost}>
-                {costUnmetered ? "unmetered" : formatCostUsd(usage.costUsd)}
-              </dd>
-            </div>
-            {ring && (
-              <div className={styles.sessionRow}>
-                <dt>Context</dt>
-                <dd>
-                  {ring.percentLabel} of {ring.windowLabel} (last turn)
-                </dd>
-              </div>
-            )}
-          </dl>
-        ) : (
-          <p className={styles.usageEmpty}>No usage yet</p>
-        )}
-      </div>
+    <section className={inspector.section} aria-label="Session">
+      <p className={inspector.line} data-session-line="">
+        {role ? <span className={styles.roleChip}>{role}</span> : null}
+        {parts.join(" · ")}
+      </p>
+      {usage && !usageUnreported ? (
+        <p
+          className={`${inspector.line} ${inspector.muted}`}
+          data-session-tokens=""
+        >
+          {usage.inputTokens.toLocaleString()} in ·{" "}
+          {usage.outputTokens.toLocaleString()} out tokens
+        </p>
+      ) : null}
     </section>
   );
 }
@@ -2247,16 +2189,13 @@ function HypothesisLedgerCard({
   if (!hypotheses?.length) return null;
   const groups = groupHypotheses(hypotheses);
   return (
-    <section className={styles.gitCard} data-hypothesis-ledger="">
-      <div className={styles.gitCardLabel}>
-        <svg {...LABEL_ICON_PROPS} className={styles.labelIcon}>
-          <path d="M3.5 4.5 5 6l3-3.5" />
-          <path d="M10 5h3" />
-          <path d="M4 11.5h3.5M4 11.5 3 12.5M7.5 11.5 8.5 12.5" />
-          <path d="M10 12h3" />
-        </svg>
-        Hypotheses
-      </div>
+    <InspectorSection
+      title="Hypotheses"
+      count={hypotheses.length}
+      collapsible
+      defaultOpen={false}
+      data-hypothesis-ledger=""
+    >
       <p className={styles.hypothesisSummary}>
         {formatHypothesisSummary(hypotheses)}
       </p>
@@ -2284,7 +2223,7 @@ function HypothesisLedgerCard({
           </ul>
         </div>
       ))}
-    </section>
+    </InspectorSection>
   );
 }
 
@@ -2301,8 +2240,7 @@ function CrewTaskList({
 }) {
   if (tasks.length === 0) return null;
   return (
-    <section className={styles.teamSection} aria-label="Tasks" data-crew-tasks="">
-      <div className={styles.sessionLabel}>Tasks</div>
+    <InspectorSection title="Tasks" count={tasks.length} data-crew-tasks="">
       <ul className={styles.teamList}>
         {tasks.map((task) => {
           const pill = crewTaskPill(task);
@@ -2336,7 +2274,7 @@ function CrewTaskList({
           );
         })}
       </ul>
-    </section>
+    </InspectorSection>
   );
 }
 
@@ -2575,8 +2513,7 @@ export function AgentsContent({
   }, [thread, summaries]);
   const subagentSection =
     subagents.length > 0 ? (
-      <section className={styles.teamSection} aria-label="Subagents">
-        <div className={styles.sessionLabel}>Subagents</div>
+      <InspectorSection title="Subagents" count={subagents.length}>
         {/* Orchestrators show the wait line above their Team roster instead. */}
         {!team && wait && <WaitLine wait={wait} />}
         <ul className={styles.teamList}>
@@ -2597,7 +2534,7 @@ export function AgentsContent({
             />
           ))}
         </ul>
-      </section>
+      </InspectorSection>
     ) : null;
 
   // ponytail: Date.now() at render; 60s ticker if ages look frozen in long-open panes.
@@ -2641,7 +2578,7 @@ export function AgentsContent({
     setManual((prev) => ({ ...prev, [id]: !currentlyOpen }));
   };
 
-  const pane = `${styles.scroll} ${styles.inspector}`;
+  const pane = inspector.pane;
 
   if (!workflow) {
     if (!thread) {
@@ -2654,14 +2591,16 @@ export function AgentsContent({
     if (team?.kind === "orchestrator") {
       return (
         <div className={pane}>
-          <SessionCard
+          <SessionLine
             thread={thread}
             usage={usage}
             providers={providers}
             role="Orchestrator"
           />
-          <section className={styles.teamSection} aria-label="Team">
-            <div className={styles.sessionLabel}>Team</div>
+          <InspectorSection
+            title="Team"
+            count={team.workers.length + team.doneWorkers.length}
+          >
             {wait && <WaitLine wait={wait} />}
             <ul className={styles.teamList}>
               {team.workers.map((w) => (
@@ -2696,7 +2635,6 @@ export function AgentsContent({
                   : `${team.doneWorkers.length} done`}
               </button>
             )}
-          </section>
           {crewIntegration ? (
             <CrewIntegration
               key={thread.id}
@@ -2814,6 +2752,7 @@ export function AgentsContent({
               }
             />
           ) : null}
+          </InspectorSection>
           <CrewTaskList tasks={crewTasks} ownerTitle={crewOwnerTitle} />
           {subagentSection}
           {hypothesisSection}
@@ -2823,22 +2762,22 @@ export function AgentsContent({
     if (team?.kind === "worker") {
       return (
         <div className={pane}>
-          <SessionCard
+          <SessionLine
             thread={thread}
             usage={usage}
             providers={providers}
             role="Worker"
           />
-          <section className={styles.teamSection} aria-label="Team">
-            <div className={styles.sessionLabel}>Team</div>
-            <ul className={styles.teamList}>
-              <TeamRow
-                summary={team.orchestrator}
-                role="Orchestrator"
-                providers={providers}
-                onSelect={onSelectThread}
-              />
-            </ul>
+          <section className={inspector.section} aria-label="Lead">
+            <button
+              type="button"
+              className={inspector.linkBtn}
+              data-crew-lead={team.orchestrator.id}
+              title={team.orchestrator.title}
+              onClick={() => onSelectThread?.(team.orchestrator.id)}
+            >
+              Lead: {team.orchestrator.title} ›
+            </button>
           </section>
           <CrewTaskList tasks={crewTasks} ownerTitle={crewOwnerTitle} />
           {subagentSection}
@@ -2848,7 +2787,7 @@ export function AgentsContent({
     }
     return (
       <div className={pane}>
-        <SessionCard thread={thread} usage={usage} providers={providers} />
+        <SessionLine thread={thread} usage={usage} providers={providers} />
         <CrewTaskList tasks={crewTasks} ownerTitle={crewOwnerTitle} />
         {subagentSection}
         {hypothesisSection}
@@ -2864,17 +2803,16 @@ export function AgentsContent({
   return (
     <>
       <div className={pane}>
-        <section className={styles.workflow}>
-          <div className={styles.workflowHead}>
-            <div>
-              <div className={styles.workflowLabel}>Workflow</div>
-              <div className={styles.workflowName}>{workflow.name}</div>
-            </div>
-            <div className={styles.settled}>
+        <InspectorSection
+          title={`Workflow · ${workflow.name}`}
+          action={
+            <span className={styles.settled}>
               {workflow.settled}/{workflow.total} settled
-            </div>
-          </div>
-
+            </span>
+          }
+          data-workflow=""
+        >
+          <div className={styles.workflow}>
           <div
             className={styles.pipeline}
             role="list"
@@ -2917,9 +2855,8 @@ export function AgentsContent({
               );
             })}
           </div>
-        </section>
-
-        <div className={styles.groups}>
+          </div>
+          <div className={styles.groups}>
           {groups.map((group) => {
             const open = isOpen(group.id, group.status);
             return (
@@ -2987,7 +2924,8 @@ export function AgentsContent({
               </section>
             );
           })}
-        </div>
+          </div>
+        </InspectorSection>
         <CrewTaskList tasks={crewTasks} ownerTitle={crewOwnerTitle} />
         {hypothesisSection}
       </div>
