@@ -47,4 +47,12 @@ describe("liveWorkingLabel", () => {
       "3 agents working in the background",
     );
   });
+
+  it("drops the background count once every workflow agent has finished", () => {
+    assert.equal(liveWorkingLabel({ workflowRunning: 0 }), "Agent working…");
+    assert.equal(
+      liveWorkingLabel({ workflowRunning: 0, thinking: true }),
+      "Thinking…",
+    );
+  });
 });
