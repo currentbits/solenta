@@ -373,6 +373,61 @@ async function main() {
     return;
   }
 
+  // The turn ends while a background Agent still runs; its notification
+  // lands between turns on the kept-alive CLI (sidebar Working shelf).
+  if (scenario === "subagent-after-result") {
+    emit({ type: "system", subtype: "init", session_id: "sess-sub-late", model: "claude-opus-test" });
+    await delay(20);
+    emit({
+      type: "assistant",
+      message: {
+        content: [
+          {
+            type: "tool_use",
+            id: "toolu_late_bg",
+            name: "Agent",
+            input: { description: "Late research", subagent_type: "general-purpose" },
+          },
+        ],
+      },
+    });
+    await delay(20);
+    emit({
+      type: "user",
+      message: {
+        content: [
+          {
+            type: "tool_result",
+            tool_use_id: "toolu_late_bg",
+            content: [{ type: "text", text: "Async agent launched successfully. agentId: late1 The agent is working in the background." }],
+            is_error: false,
+          },
+        ],
+      },
+    });
+    await delay(20);
+    emit({ type: "result", subtype: "success", result: "Launched.", usage: { input_tokens: 1, output_tokens: 1 }, total_cost_usd: 0, num_turns: 1 });
+    await delay(150);
+    emit({
+      type: "user",
+      message: {
+        content: [
+          {
+            type: "text",
+            text:
+              "<task-notification>\\n<task-id>late1</task-id>\\n" +
+              "<tool-use-id>toolu_late_bg</tool-use-id>\\n" +
+              "<status>completed</status>\\n" +
+              "</task-notification>",
+          },
+        ],
+      },
+    });
+    await delay(50);
+    process.exit(0);
+    return;
+  }
+
   if (scenario === "subagents") {
     emit({
       type: "system",
@@ -1313,6 +1368,29 @@ describe("runner claude provider", () => {
     ]);
     // The run itself bumps updatedAt; the mirror must not be the reason.
     assert.ok(store.getThread(thread.id).updatedAt >= updatedBefore);
+  });
+
+  it("pushes threads:changed when a background subagent settles after the turn", async () => {
+    process.env.CODER_FAKE_CLAUDE_SCENARIO = "subagent-after-result";
+    const thread = store.getThreads()[0];
+    await runner.startRun({ threadId: thread.id, prompt: "launch one" });
+    // Turn over, agent still running: the sidebar files this on Working.
+    await waitFor(() => {
+      const t = store.getThread(thread.id);
+      return t.status !== "working" && (t.subagents || []).some((s) => s.id === "toolu_late_bg" && s.status === "running");
+    });
+    const mark = pushes.length;
+    await waitFor(() => (store.getThread(thread.id).subagents || []).every((s) => s.status !== "running"));
+    await waitFor(() =>
+      pushes.slice(mark).some(
+        (p) =>
+          p.channel === "threads:changed" &&
+          Array.isArray(p.payload) &&
+          p.payload.some(
+            (row) => row.id === thread.id && (row.subagents || []).every((s) => s.status !== "running"),
+          ),
+      ),
+    );
   });
 
   it("tracks Agent-tool subagents on the thread: sync → done, background runs until its task-notification (issue #21)", async () => {

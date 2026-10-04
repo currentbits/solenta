@@ -82,6 +82,7 @@ import type {
   ThreadInfo,
   ThreadMessagePin,
   TrashedThreadInfo,
+  ThreadSummariesInput,
   ThreadSummaryInfo,
   CrewTaskView,
   CrewIntegration,
@@ -1744,11 +1745,14 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
     threads: {
       list: () => rec("threads.list", [], threads.map((t) => ({ ...t }))),
       /** Mirror electron services.threadSummaries (team view). */
-      summaries: () =>
+      summaries: (input?: ThreadSummariesInput) =>
         rec(
           "threads.summaries",
-          [],
-          threads.map((t): ThreadSummaryInfo => {
+          [input],
+          threads
+            .filter((t) => !input?.projectId || t.projectId === input.projectId)
+            .filter((t) => !input?.threadIds || input.threadIds.includes(t.id))
+            .map((t): ThreadSummaryInfo => {
             const msgs = details[t.id]?.messages ?? [];
             let last: (typeof msgs)[number] | null = null;
             for (let i = msgs.length - 1; i >= 0; i--) {

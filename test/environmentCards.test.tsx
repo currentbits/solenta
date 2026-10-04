@@ -398,6 +398,21 @@ describe("recap card", () => {
     assert.equal(m.query("[data-recap-card]"), null);
     m.unmount();
   });
+
+  it("asks only for its own thread's summary (#1398)", async () => {
+    const calls: unknown[] = [];
+    const m = await mount(
+      tab({
+        onSummaries: async (input?: unknown) => {
+          calls.push(input);
+          return [];
+        },
+      }),
+    );
+    await m.flush();
+    assert.deepEqual(calls, [{ threadIds: ["t1"] }]);
+    m.unmount();
+  });
 });
 
 describe("pull requests card", () => {

@@ -500,8 +500,8 @@ const IPC_HANDLERS = {
     });
     return services.listThreads(ctx.store);
   },
-  "threads:summaries": async (ctx) => {
-    return services.threadSummaries(ctx.store);
+  "threads:summaries": async (ctx, input) => {
+    return services.threadSummaries(ctx.store, input || undefined);
   },
   "threads:crewTasks": async (ctx, input) => {
     return services.listCrewTasks(ctx.store, input || {});

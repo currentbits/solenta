@@ -197,7 +197,7 @@ describe("crew integration (#954)", () => {
     assert.equal(receipts[0].sourceSha, workerSha);
   });
 
-  it("receipt survives reload and worker archive", () => {
+  it("receipt survives reload and worker archive", async () => {
     workOn(lead, "lead.txt", "lead\n");
     const worker = workOn(forkWorker("A"), "a.txt", "a\n");
     integrateWorker({
@@ -209,7 +209,7 @@ describe("crew integration (#954)", () => {
     store.saveNow();
 
     const reloaded = new Store(store.filePath);
-    const view = crewIntegration(reloaded, { threadId: lead.id });
+    const view = await crewIntegration(reloaded, { threadId: lead.id });
     const row = view.workers.find((w) => w.workerId === worker.id);
     assert.ok(row, "archived worker still listed");
     assert.equal(row.state, "integrated");
@@ -218,7 +218,7 @@ describe("crew integration (#954)", () => {
     assert.ok(view.receipts.some((r) => r.workerId === worker.id));
   });
 
-  it("conflict leaves the lead HEAD intact and marks the worker conflicted", () => {
+  it("conflict leaves the lead HEAD intact and marks the worker conflicted", async () => {
     const leadWt = workOn(lead, "lead.txt", "lead\n");
     // Fork before the lead diverges so the worker stays on the original
     // snapshot (#948). Parallel edits of README.md then conflict on integrate.
@@ -263,7 +263,7 @@ describe("crew integration (#954)", () => {
     ]);
     assert.match(unmerged.stdout || "", /README\.md/);
 
-    const view = crewIntegration(store, { threadId: lead.id });
+    const view = await crewIntegration(store, { threadId: lead.id });
     const row = view.workers.find((w) => w.workerId === worker.id);
     assert.equal(row.state, "conflicted");
     assert.equal(view.landed, false);
@@ -290,7 +290,7 @@ describe("crew integration (#954)", () => {
     assert.equal(store.getThread(lead.id).integrationReceipts.length, 1);
   });
 
-  it("missing worker path with no receipt is Missing, never Landed", () => {
+  it("missing worker path with no receipt is Missing, never Landed", async () => {
     workOn(lead, "lead.txt", "lead\n");
     const wt = workOn(forkWorker("A"), "a.txt", "a\n");
     const worker = wt;
@@ -298,7 +298,7 @@ describe("crew integration (#954)", () => {
     store.updateThread(worker.id, { worktreePath: null, branch: null });
     store.save();
 
-    const view = crewIntegration(store, { threadId: lead.id });
+    const view = await crewIntegration(store, { threadId: lead.id });
     const row = view.workers.find((w) => w.workerId === worker.id);
     assert.equal(row.state, "missing");
     assert.notEqual(row.state, "landed");
@@ -306,7 +306,7 @@ describe("crew integration (#954)", () => {
     assert.match(row.missingReason || "", /worktree/i);
   });
 
-  it("crew task needs block Integrate on the dependent worker", () => {
+  it("crew task needs block Integrate on the dependent worker", async () => {
     workOn(lead, "lead.txt", "lead\n");
     const b = workOn(forkWorker("B work"), "b.txt", "b\n");
     const c = workOn(forkWorker("C work"), "c.txt", "c\n");
@@ -321,7 +321,7 @@ describe("crew integration (#954)", () => {
     store.setCrewTasks(lead.id, list);
     store.save();
 
-    const view = crewIntegration(store, { threadId: lead.id });
+    const view = await crewIntegration(store, { threadId: lead.id });
     const rowC = view.workers.find((w) => w.workerId === c.id);
     assert.equal(rowC.blocked, true);
     assert.deepEqual(rowC.needs, ["t1"]);
@@ -329,11 +329,11 @@ describe("crew integration (#954)", () => {
     assert.equal(rowB.blocked, false);
   });
 
-  it("Ready for review is not Integrated, and worker-to-lead does not flip Landed", () => {
+  it("Ready for review is not Integrated, and worker-to-lead does not flip Landed", async () => {
     workOn(lead, "lead.txt", "lead\n");
     const a = workOn(forkWorker("A"), "a.txt", "a\n");
 
-    let view = crewIntegration(store, { threadId: lead.id });
+    let view = await crewIntegration(store, { threadId: lead.id });
     const ready = view.workers.find((w) => w.workerId === a.id);
     assert.equal(ready.state, "ready");
     assert.equal(view.landed, false);
@@ -343,13 +343,30 @@ describe("crew integration (#954)", () => {
       leadThreadId: lead.id,
       workerThreadId: a.id,
     });
-    view = crewIntegration(store, { threadId: lead.id });
+    view = await crewIntegration(store, { threadId: lead.id });
     const integrated = view.workers.find((w) => w.workerId === a.id);
     assert.equal(integrated.state, "integrated");
     assert.equal(view.landed, false);
   });
 
-  it("combined verify is stale after the lead HEAD moves", () => {
+  it("crewIntegration yields to the event loop while it runs git", async () => {
+    workOn(lead, "lead.txt", "lead\n");
+    workOn(forkWorker("A"), "a.txt", "a\n");
+    const pending = crewIntegration(store, { threadId: lead.id });
+    assert.ok(pending && typeof pending.then === "function", "returns a promise");
+    // A sync body wrapped in a promise resolves before any setImmediate.
+    // Real async git (execFile callbacks) lets the immediate run first.
+    let yielded = false;
+    setImmediate(() => {
+      yielded = true;
+    });
+    const view = await pending;
+    assert.ok(Array.isArray(view.workers));
+    assert.equal(view.workers.length, 1);
+    assert.equal(yielded, true, "main kept serving events during the git reads");
+  });
+
+  it("combined verify is stale after the lead HEAD moves", async () => {
     const leadWt = workOn(lead, "lead.txt", "lead\n");
     const sha = head(leadWt.worktreePath);
     store.updateThread(lead.id, {
@@ -366,7 +383,7 @@ describe("crew integration (#954)", () => {
         attempt: 0,
       },
     });
-    let view = crewIntegration(store, { threadId: lead.id });
+    let view = await crewIntegration(store, { threadId: lead.id });
     assert.equal(view.verifyStale, false);
 
     const worker = workOn(forkWorker("A"), "a.txt", "a\n");
@@ -375,7 +392,7 @@ describe("crew integration (#954)", () => {
       leadThreadId: lead.id,
       workerThreadId: worker.id,
     });
-    view = crewIntegration(store, { threadId: lead.id });
+    view = await crewIntegration(store, { threadId: lead.id });
     assert.equal(view.verifyStale, true);
     assert.notEqual(view.leadHeadSha, sha);
   });
