@@ -10,6 +10,7 @@ import { describe, it } from "node:test";
 import { useState } from "react";
 import { mount } from "./support/dom.ts";
 import { AgentsContent } from "../src/components/AgentsPanel";
+import { shortSessionId } from "../src/format";
 import type {
   ProviderInfo,
   ThreadInfo,
@@ -781,6 +782,26 @@ describe("Agents team view", () => {
     assert.doesNotMatch(text, /opus-x/, "model lives in the composer");
     assert.doesNotMatch(text, /Permission|Accept edits/, "permission lives in the composer");
     assert.doesNotMatch(text, /Context|of 200/, "context lives in the header ring");
+    m.unmount();
+  });
+
+  it("session line: shows the short session id with the full id as a tooltip, even with no usage", async () => {
+    const sessionId = "abc12345-full-session-id";
+    const m = await mount(
+      <AgentsContent
+        workflow={null}
+        thread={thread({ sessionId })}
+        usage={null}
+        providers={PROVIDERS}
+        rosterKey=""
+        listThreadSummaries={async () => []}
+      />,
+    );
+    await m.flush();
+    const tokens = m.query("[data-session-tokens]");
+    assert.ok(tokens, "muted session line renders even with no usage");
+    assert.equal(tokens.textContent, shortSessionId(sessionId));
+    assert.equal(tokens.getAttribute("title"), sessionId);
     m.unmount();
   });
 

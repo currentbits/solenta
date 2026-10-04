@@ -43,6 +43,7 @@ import {
   formatRelativeAge,
   formatTokenSum,
   providerDisplayName,
+  shortSessionId,
 } from "../format";
 import { buildWaitStates, waitLabel, type WaitState } from "../waiting";
 import {
@@ -327,19 +328,24 @@ function SessionLine({
       costUnmetered ? "unmetered" : formatCostUsd(usage.costUsd),
     );
   } else parts.push("No usage yet");
+  const shortId = shortSessionId(thread.sessionId);
+  const tokenLine =
+    usage && !usageUnreported
+      ? `${usage.inputTokens.toLocaleString()} in · ${usage.outputTokens.toLocaleString()} out tokens`
+      : null;
   return (
     <section className={inspector.section} aria-label="Session">
       <p className={inspector.line} data-session-line="">
         {role ? <span className={styles.roleChip}>{role}</span> : null}
         {parts.join(" · ")}
       </p>
-      {usage && !usageUnreported ? (
+      {tokenLine || shortId ? (
         <p
           className={`${inspector.line} ${inspector.muted}`}
           data-session-tokens=""
+          title={thread.sessionId ?? undefined}
         >
-          {usage.inputTokens.toLocaleString()} in ·{" "}
-          {usage.outputTokens.toLocaleString()} out tokens
+          {[tokenLine, shortId].filter(Boolean).join(" · ")}
         </p>
       ) : null}
     </section>
