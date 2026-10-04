@@ -59,16 +59,17 @@
         Every notable change to Solenta, newest first.
       </p>
 
-      <h2 id="nightly-2026-10-04">Nightly <small>2026-10-04</small></h2>
-      <p>
-        These changes are in the current app. Nightly picks them up as new
-        prereleases ship. Prod stays on 0.22.0 until the next release.
-      </p>
+      <h2 id="v0-23-0">0.23.0 <small>2026-10-04</small></h2>
       <h3>Added</h3>
       <ul>
-        <li><strong>Inbox.</strong> Threads that need you stay up top. Quiet runs fold into a Working shelf beside Snoozed and Settled. Footer icons are Threads, Planboard, Review, and More.</li>
-        <li><strong>Workspace choice.</strong> A draft picks Local checkout, New worktree, or Previous worktree in a strip under the composer. The choice locks after the first message.</li>
-        <li><strong>Details card.</strong> Worktree, merge, sandbox, context, and sync sit in one card off the header. Fork and Hand off live in the header while the thread is idle.</li>
+        <li><strong>A calmer app.</strong> The whole interface was redesigned. A default thread view went from about 35 always-visible controls to about 15. Warm ink dark theme and paper light theme, Geist and Geist Mono, and one marker-yellow accent.</li>
+        <li><strong>One reading column.</strong> Transcript and composer share one centred column. Tool calls and subagent launches are quiet one-line steps, and message actions show on hover.</li>
+        <li><strong>Inbox.</strong> Threads that need you stay up top. Quiet runs fold into a Working shelf beside Snoozed and Settled. Planboard, Review, and Insights are footer icons, and ⌘B folds the sidebar to a rail.</li>
+        <li><strong>New thread hero.</strong> A new thread opens on "What should we build in ‹project›?" with the composer under it. Start without a project to use the built-in Scratch space.</li>
+        <li><strong>Workspace choice.</strong> A draft picks Local checkout, New worktree, or Previous worktree, plus the base branch, in a tab under the composer. The choice locks after the first message.</li>
+        <li><strong>Model picker.</strong> A provider rail with favourites, search across every provider, and the effort row in one place. Model and effort read as one pill.</li>
+        <li><strong>Details card.</strong> Worktree, merge, sandbox, context, sync, notes, and Open in your editor sit in one card off the header. The header ends in three controls: details, terminal, and the right panel.</li>
+        <li><strong>Usage page.</strong> Insights › Usage shows a total, per-provider rows, and a daily chart. Account limits have their own tab.</li>
         <li><strong>Inspector, one job per tab.</strong> Environment is status, run, checkpoints, and lanes. Agents is the session and the team. Memory is search and the list. Skills is the installed list. Display, Spotlight, the code map, config doctor, the skill catalog, and MCP servers moved to Settings.</li>
         <li><strong>Connections.</strong> Settings opens another machine's Solenta through SSH, in its own window, with a saved token and a pinned host key. A dropped tunnel reconnects.</li>
       </ul>
@@ -77,6 +78,8 @@
         <li><strong>Working stays working.</strong> A thread with a running background subagent stays on the Working shelf. Forks nest under the thread that started them.</li>
         <li><strong>Updates.</strong> A macOS update relaunches into the new bundle. Prod and Nightly stay separate apps and share one library of threads.</li>
         <li><strong>Quieter inspector.</strong> Opening a thread and refreshing the sidebar no longer re-reads every worker's git state.</li>
+        <li><strong>PRs show up again.</strong> A PR opened by an agent with gh, or on github.com, appears on its thread again.</li>
+        <li><strong>Suggested work.</strong> Starting a suggested-work chip keeps you on the thread you were reading.</li>
       </ul>
 
       <h2 id="v0-22-0">0.22.0 <small>2026-09-30</small></h2>
