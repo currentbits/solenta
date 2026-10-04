@@ -59,7 +59,6 @@ export const useDivergenceCardEnabled = divergenceCard.use;
 
 /** "1m 45s" segment in the assistant message footer at the end of a run. */
 const runDuration = makeFlagPref("coder.runDuration", false);
-export const getRunDurationEnabled = runDuration.get;
 export const setRunDurationEnabled = runDuration.set;
 export const useRunDurationEnabled = runDuration.use;
 
@@ -125,18 +124,6 @@ export function useTranscriptViewMode(): TranscriptViewMode {
   );
 }
 
-export function getVerboseToolCards(): boolean {
-  return getTranscriptViewMode() === "verbose";
-}
-
-export function setVerboseToolCards(on: boolean): void {
-  setTranscriptViewMode(on ? "verbose" : "normal");
-}
-
-export function useVerboseToolCards(): boolean {
-  return useTranscriptViewMode() === "verbose";
-}
-
 /**
  * Collapse large pastes into labeled cards (issue #381). On by default;
  * Settings → General → Display can turn it off so a paste lands in the textarea as text.
@@ -151,7 +138,6 @@ export const usePasteCardsEnabled = pasteCards.use;
  * the typing path must stay ordinary unless the user opts in.
  */
 const composerVim = makeFlagPref("coder.composerVim", false);
-export const getComposerVimEnabled = composerVim.get;
 export const setComposerVimEnabled = composerVim.set;
 export const useComposerVimEnabled = composerVim.use;
 

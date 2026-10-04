@@ -306,7 +306,6 @@ function startScheduler(ctx) {
 }
 
 module.exports = {
-  PRESETS,
   MAX_THREADS_PER_AUTOMATION,
   nextFire,
   dueAutomations,

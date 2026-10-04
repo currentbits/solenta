@@ -9079,7 +9079,6 @@ function createRunner(opts) {
     // interruption event so the next launch's recoverInterruptedRuns (crash
     // path only) does not re-stamp them as generic failures. Kill + flush
     // below are unchanged battle-tested behavior — only marking is added.
-    let marked = false;
     for (const threadId of [...active.keys()]) {
       const entry = active.get(threadId);
       const runId = entry && entry.runId ? entry.runId : null;
@@ -9122,7 +9121,6 @@ function createRunner(opts) {
         { status: "idle", runStartedAt: null, stoppedAt: Date.now() },
         { touch: true },
       );
-      marked = true;
     }
     for (const id of [...quotaTimers.keys()]) {
       cancelQuotaWake(id);

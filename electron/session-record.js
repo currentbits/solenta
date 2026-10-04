@@ -407,22 +407,6 @@ function createSessionRecorder(opts = {}) {
 /** @type {ReturnType<typeof createSessionRecorder> | null} */
 let defaultRecorder = null;
 
-/**
- * Configure (or reconfigure) the process-wide session recorder.
- * @param {Parameters<typeof createSessionRecorder>[0]} opts
- */
-function configureSessionRecord(opts) {
-  if (defaultRecorder) {
-    try {
-      defaultRecorder.dispose();
-    } catch {
-      // ignore
-    }
-  }
-  defaultRecorder = createSessionRecorder(opts || {});
-  return defaultRecorder;
-}
-
 function ensureDefaultRecorder() {
   if (!defaultRecorder) {
     defaultRecorder = createSessionRecorder({});
@@ -471,7 +455,6 @@ function resetSessionRecordForTests() {
 
 module.exports = {
   createSessionRecorder,
-  configureSessionRecord,
   recordTranscript,
   flushSessionRecord,
   resetSessionRecordForTests,

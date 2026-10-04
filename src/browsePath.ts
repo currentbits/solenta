@@ -472,16 +472,3 @@ export function createBrowseNavigationCoordinator() {
     },
   };
 }
-
-/** Path used as the browse cursor once a clone folder is pinned onto it. */
-export function browseQueryForSubmit(
-  query: string,
-  exactEntry: FilesystemBrowseEntry | null,
-  parentPath: string | null,
-): string {
-  const trimmed = query.trim();
-  if (hasTrailingPathSeparator(trimmed) || trimmed === "~") {
-    return parentPath || normalizeProjectPathForDispatch(trimmed);
-  }
-  return exactEntry?.fullPath ?? trimmed;
-}

@@ -16,10 +16,8 @@ import { SettingsModal, type SettingsPane } from "../src/components/SettingsModa
 import type { MemoryProjectToolsApi } from "../src/components/MemoryTab";
 import type { SkillsManagerProps } from "../src/components/SkillsTab";
 import {
-  getComposerVimEnabled,
   getDivergenceCardEnabled,
   getPasteCardsEnabled,
-  getRunDurationEnabled,
   setComposerVimEnabled,
   setDivergenceCardEnabled,
   setPasteCardsEnabled,
@@ -2225,7 +2223,7 @@ describe("SettingsModal Display group (moved from Environment)", () => {
     ) as HTMLInputElement | null;
     assert.ok(box, "vim motions checkbox");
     assert.equal(box.checked, false);
-    assert.equal(getComposerVimEnabled(), false);
+    assert.equal(window.localStorage.getItem("coder.composerVim"), "off");
     assert.match(card.textContent || "", /Vim motions in the composer/);
     m.unmount();
   });
@@ -2236,7 +2234,7 @@ describe("SettingsModal Display group (moved from Environment)", () => {
     const box = m.query("[data-composer-vim-pref]") as HTMLInputElement;
     await m.click(box);
     assert.equal(box.checked, true);
-    assert.equal(getComposerVimEnabled(), true);
+    assert.equal(window.localStorage.getItem("coder.composerVim"), "on");
     m.unmount();
   });
 
@@ -2249,7 +2247,6 @@ describe("SettingsModal Display group (moved from Environment)", () => {
     await m.click(m.query("[data-run-duration-pref]"));
     await m.click(m.query("[data-paste-cards-pref]"));
     assert.equal(getDivergenceCardEnabled(), true);
-    assert.equal(getRunDurationEnabled(), true);
     assert.equal(getPasteCardsEnabled(), false);
     assert.equal(window.localStorage.getItem("coder.divergenceCard"), "on");
     assert.equal(window.localStorage.getItem("coder.runDuration"), "on");

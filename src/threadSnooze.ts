@@ -35,18 +35,6 @@ const HOUR_MS = 60 * 60 * 1000;
 const EVENING_HOUR = 18;
 const MORNING_HOUR = 9;
 
-/** Catalog of every preset id (menus use resolveSnoozePresets, which hides evening when too close). */
-export const SNOOZE_PRESETS: ReadonlyArray<{
-  id: SnoozePresetId;
-  label: string;
-}> = [
-  { id: "hour", label: "In 1 hour" },
-  { id: "three-hours", label: "In 3 hours" },
-  { id: "evening", label: "This evening" },
-  { id: "tomorrow", label: "Tomorrow" },
-  { id: "next-week", label: "Next week" },
-];
-
 type SnoozeFields = Pick<
   ThreadInfo,
   "snoozedUntil" | "snoozedAt" | "status" | "updatedAt" | "awaitingInput"

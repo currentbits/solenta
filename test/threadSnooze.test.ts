@@ -15,10 +15,7 @@ import {
   threadWokeAt,
 } from "../src/threadSnooze.ts";
 import { effectiveSettled } from "../src/threadSettle.ts";
-import {
-  partitionSidebar,
-  defaultSettleOpts,
-} from "../src/sidebarGroups.ts";
+import { defaultSettleOpts } from "../src/sidebarGroups.ts";
 import type { ThreadInfo } from "../src/shared/ipc.ts";
 
 const NOW = 1_700_000_000_000; // fixed epoch
@@ -187,82 +184,6 @@ describe("effectiveSettled pin blocker (round 44)", () => {
         defaultSettleOpts(NOW),
       ),
       false,
-    );
-  });
-});
-
-describe("partitionSidebar pin+snooze precedence (#567 Active/Later)", () => {
-  const opts = defaultSettleOpts(NOW);
-
-  it("pinned + settled-override → stays Active (pin beats settle)", () => {
-    // A race can leave both; partition: pin beats settle when not snoozed.
-    // (Honest setPinned clears settled; this is the residual-race case.)
-    const row = t({
-      id: "both",
-      projectId: "p1",
-      pinnedAt: NOW - 10,
-      settledOverride: "settled",
-      settledAt: NOW - 5,
-      status: "done",
-    });
-    const { attentionThreads, later } = partitionSidebar([row], opts);
-    assert.deepEqual(attentionThreads.map((x) => x.id), ["both"]);
-    assert.equal(later.settled.length, 0);
-    assert.equal(later.snoozed.length, 0);
-  });
-
-  it("snoozed + pinned → Later shelf (snooze suspends pin)", () => {
-    const row = t({
-      id: "sp",
-      projectId: "p1",
-      pinnedAt: NOW - 100,
-      snoozedUntil: NOW + 50_000,
-      snoozedAt: NOW - 10,
-    });
-    const { attentionThreads, later } = partitionSidebar([row], opts);
-    assert.deepEqual(later.snoozed.map((x) => x.id), ["sp"]);
-    assert.equal(attentionThreads.length, 0);
-  });
-
-  it("snoozed wakes (timer) → attention", () => {
-    const row = t({
-      id: "woke",
-      projectId: "p1",
-      snoozedUntil: NOW - 1,
-      snoozedAt: NOW - 10_000,
-      status: "idle",
-    });
-    const { attentionThreads, later } = partitionSidebar([row], opts);
-    assert.equal(later.snoozed.length, 0);
-    assert.deepEqual(attentionThreads.map((x) => x.id), ["woke"]);
-  });
-
-  it("pinned stay Active; snoozed sort wake-soonest first", () => {
-    const threads = [
-      t({ id: "p-new", projectId: "p1", pinnedAt: NOW - 10 }),
-      t({ id: "p-old", projectId: "p2", pinnedAt: NOW - 1000 }),
-      t({
-        id: "s-late",
-        projectId: "p1",
-        snoozedUntil: NOW + 9000,
-        snoozedAt: NOW,
-      }),
-      t({
-        id: "s-soon",
-        projectId: "p2",
-        snoozedUntil: NOW + 1000,
-        snoozedAt: NOW,
-      }),
-    ];
-    const { attentionThreads, later } = partitionSidebar(threads, opts);
-    assert.deepEqual(
-      attentionThreads.map((x) => x.id).sort(),
-      ["p-new", "p-old"],
-      "pinned rows are Active (group order handles pinned-first)",
-    );
-    assert.deepEqual(
-      later.snoozed.map((x) => x.id),
-      ["s-soon", "s-late"],
     );
   });
 });

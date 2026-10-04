@@ -9,7 +9,7 @@ const { createRequire } = require("node:module");
 const { registerMcpServer, unregisterMcpServer } = require("./memory-sup.js");
 const pairing = require("./pairing.js");
 const { startWithPoolFailover } = require("./subagentPool.js");
-const { getProvider, resolveBin, isBinAvailable } = require("./providers.js");
+const { resolveBin, isBinAvailable } = require("./providers.js");
 const {
   forkWorkerThread,
   setProvider,
