@@ -734,27 +734,42 @@ describe("draft workspace strip under the composer", () => {
     m.unmount();
   });
 
-  it("is gone once the thread has a user message", async () => {
+  it("turns read-only once the thread has a user message", async () => {
     const m = await mount(
       view({
         detail: detail({
-          thread: thread({ worktreePath: null }),
+          thread: thread({ worktreePath: null, branch: "main" }),
           messages: [msg({ id: "u1", role: "user", text: "go" })],
         }),
         onSetPendingWorktree: async () => {},
       }),
     );
     await m.flush();
-    assert.equal(m.query("[data-workspace-strip]"), null);
+    const strip = m.query("[data-workspace-strip]");
+    assert.equal(strip?.getAttribute("data-workspace-strip"), "readonly");
+    assert.equal(strip?.textContent, "local checkout · main");
+    assert.equal(m.query("[data-workspace-trigger]"), null, "no picker after send");
     m.unmount();
   });
 
-  it("is gone once a worktree exists", async () => {
+  it("names the worktree branch and its base once a worktree exists", async () => {
     const m = await mount(
-      view({ detail: detail({ messages: [] }), onSetPendingWorktree: async () => {} }),
+      view({
+        detail: detail({
+          thread: thread({ baseBranch: "release" }),
+          messages: [],
+        }),
+        onSetPendingWorktree: async () => {},
+      }),
     );
     await m.flush();
-    assert.equal(m.query("[data-workspace-strip]"), null);
+    const strip = m.query("[data-workspace-strip]");
+    assert.equal(strip?.getAttribute("data-workspace-strip"), "readonly");
+    assert.equal(
+      strip?.textContent,
+      "worktree · coder/header-features-abc123from release",
+    );
+    assert.equal(m.query("[data-workspace-base]"), null, "base is not editable");
     m.unmount();
   });
 

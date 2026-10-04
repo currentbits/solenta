@@ -8724,15 +8724,22 @@ export const ThreadView = memo(function ThreadView({
         onRetryWorkflows={onRetryWorkflows}
         sessionId={thread.sessionId}
         workspaceStrip={
-          onSetPendingWorktree &&
-          project &&
-          !project.remoteHost &&
-          !project.scratch &&
-          !thread.worktreePath &&
-          !thread.ask &&
-          !thread.pendingFork &&
-          !thread.orchWorker &&
-          !detail.messages.some((m) => m.role === "user") ? (
+          !project ||
+          project.remoteHost ||
+          project.scratch ||
+          thread.ask ||
+          thread.pendingFork ? undefined : thread.worktreePath ||
+            detail.messages.some((m) => m.role === "user") ? (
+            <WorkspaceStrip
+              started={{ branch: thread.branch }}
+              worktree={Boolean(thread.worktreePath)}
+              projectPath={project.path}
+              baseBranch={thread.baseBranch ?? null}
+              listBaseBranches={
+                listBaseBranches ? () => listBaseBranches(project.id) : undefined
+              }
+            />
+          ) : onSetPendingWorktree && !thread.orchWorker ? (
             <WorkspaceStrip
               worktree={Boolean(thread.pendingWorktree)}
               projectPath={project.path}

@@ -34,36 +34,34 @@ import {
   snapToHonouredPermissionMode,
 } from "../format";
 import {
-  buildModelRows,
-  buildUnifiedModelRows,
+  buildPickerRows,
+  canFavourite,
   clampHighlightIndex,
-  detailModelRow,
-  filterModelRows,
   CUSTOM_MODEL_ID,
   buildProfileRows,
-  buildProviderRows,
   effortDisplayLabel,
   effortHint,
   effortsForModel,
+  favouriteKey,
   supportsImagesForModel,
-  providerDetail,
   effortOptions,
   firstSelectableIndex,
   initialHighlightIndex,
-  initialProviderIndex,
-  stepProviderIndex,
   isRowSelected,
   lastSelectableIndex,
   modelTriggerLabel,
+  readModelFavourites,
   rowKey,
   showReasoningControl,
   stepHighlightIndex,
+  writeModelFavourites,
   type ModelRow,
   type ProfileRow,
 } from "../modelPicker";
 import { useEscapeClose } from "../useEscapeClose";
 import { useModalFocus } from "../useModalFocus";
 import { ProviderMark } from "./ProviderMark";
+import { hintFor } from "./onboarding/installHints";
 import { applyMention, getMentionQuery, type MentionQuery } from "../mention";
 import { ArchiveToast } from "./ArchiveToast";
 import type { ReplyTarget } from "../replyContext";
@@ -220,8 +218,8 @@ interface ComposerProps {
   /** Provider session id; a live session locks the provider picker. */
   sessionId: string | null;
   /**
-   * Draft-only lip under the composer (workspace + base branch). Absent once
-   * the thread has started: branch and worktree live in Thread details.
+   * Tab under the card: editable workspace + base branch on a draft, a
+   * read-only "where this runs" label once the thread has started.
    */
   workspaceStrip?: ReactNode;
   /**
@@ -821,13 +819,6 @@ export const Composer = memo(function Composer({
     writeDraft(restoreDraft.text, restoreDraft.text.length);
   }, [restoreDraft, threadId, readDraft, writeDraft]);
   /**
-   * Keyboard hints show only while the textarea is focused (issue #364).
-   * Toggled by direct DOM mutation, not state: the field is uncontrolled so
-   * that typing never re-renders the picker chrome (#654), and a focus
-   * setState would add a render to that same hot path.
-   */
-  const hintsRef = useRef<HTMLDivElement>(null);
-  /**
    * Pending attachments keyed by thread, mirroring draftsRef: chips must
    * not leak across a thread switch. Cleared together with the draft on a
    * successful action.
@@ -946,18 +937,17 @@ export const Composer = memo(function Composer({
   const [effortOpen, setEffortOpen] = useState(false);
   /** Provider whose Custom... row was picked; null when not entering one. */
   const [customFor, setCustomFor] = useState<string | null>(null);
-  /**
-   * Which provider's models are showing. null means the FIRST level, the
-   * provider list. A flat list of every provider's models ran to 26 rows;
-   * drilling shows five to start and one harness's models after that.
-   */
-  const [drillProvider, setDrillProvider] = useState<string | null>(null);
-  const [providerIndex, setProviderIndex] = useState(0);
   const [customDraft, setCustomDraft] = useState("");
   /** Index of the row under keyboard/hover focus in the model list. */
   const [highlightIndex, setHighlightIndex] = useState(0);
-  /** Type-in filter for the drilled-in model list. Empty on the provider screen. */
+  /** Type-in filter across every installed provider's models (#1429). */
   const [modelQuery, setModelQuery] = useState("");
+  /** Starred `${provider}:${model}` keys, persisted in localStorage. */
+  const [favourites, setFavourites] = useState<string[]>(readModelFavourites);
+  /** The rail's ★: show only starred models. */
+  const [favouritesOnly, setFavouritesOnly] = useState(false);
+  /** Missing provider whose install hint is expanded in the list. */
+  const [setupFor, setSetupFor] = useState<string | null>(null);
   const [optionsOpen, setOptionsOpen] = useState(false);
   /** `/bestof` lands on the Best of N section, not Workflow. */
   const bestOfFocusRef = useRef(false);
@@ -989,7 +979,6 @@ export const Composer = memo(function Composer({
   const effortWrapRef = useRef<HTMLDivElement>(null);
   const modelListRef = useRef<HTMLUListElement>(null);
   const modelSearchRef = useRef<HTMLInputElement>(null);
-  const providerListRef = useRef<HTMLUListElement>(null);
   const optionsWrapRef = useRef<HTMLDivElement>(null);
   const optionsPopoverRef = useRef<HTMLDivElement>(null);
   /** Set when Manage workflows opens, so close can return to Options. */
@@ -1219,58 +1208,27 @@ export const Composer = memo(function Composer({
   const sessionLocked = Boolean(sessionId);
   const providerName = providerDisplayName(provider, providers);
   const canSteer = Boolean(busy && currentProviderInfo?.supportsSteer);
-  const providerRows = buildProviderRows(
-    providers,
-    provider,
-    sessionLocked,
-    providerName,
-  );
   const profileRows = buildProfileRows(agentProfiles, providers);
-  const firstLevel = [...profileRows, ...providerRows];
-  const drillInfo = drillProvider
-    ? providers.find((p) => p.id === drillProvider)
-    : undefined;
-  // Second level shows exactly one provider's models; the flat list is kept for
-  // the case where the drill target vanished (provider list changed under us).
-  const catalogRows = drillInfo
-    ? buildModelRows(drillInfo)
-    : buildUnifiedModelRows(providers, provider, sessionLocked, providerName);
-  const modelRows = drillProvider
-    ? filterModelRows(catalogRows, modelQuery)
-    : catalogRows;
+  const favouriteSet = new Set(favourites);
+  const pickerRowsFor = (query: string, favOnly: boolean) =>
+    buildPickerRows({
+      providers,
+      currentProviderId: provider,
+      sessionLocked,
+      currentProviderName: providerName,
+      profiles: profileRows,
+      query,
+      favourites: favOnly ? favouriteSet : null,
+    });
+  const modelRows = pickerRowsFor(modelQuery, favouritesOnly);
   const triggerLabel = modelTriggerLabel(model, currentProviderInfo);
   const hi = clampHighlightIndex(modelRows, highlightIndex);
-  const detailRow = detailModelRow(modelRows, provider, model, hi);
-  // At the provider level the pane must describe the highlighted PROVIDER.
-  // It used to index the flat model list with the model-level highlight, so a
-  // Grok thread showed "Fable, Anthropic": a confident description of something
-  // the user was not pointing at.
-  const highlightedProfile =
-    !drillProvider && providerIndex < profileRows.length
-      ? profileRows[providerIndex]
+  // The rail's diamond follows the highlighted row's provider.
+  const railActive = favouritesOnly
+    ? "favourites"
+    : modelRows[hi] && !modelRows[hi]!.profile
+      ? modelRows[hi]!.providerId
       : null;
-  const providerPane = drillProvider
-    ? null
-    : highlightedProfile
-      ? {
-          providerId: highlightedProfile.provider,
-          label: highlightedProfile.name,
-          vendor: highlightedProfile.disabled ? "not installed" : "profile",
-          description: highlightedProfile.summary,
-        }
-      : providerDetail(
-          providerRows,
-          Math.max(0, providerIndex - profileRows.length),
-          providers,
-        );
-  const detail = providerPane ?? {
-    providerId: detailRow.providerId,
-    label: detailRow.label,
-    vendor: detailRow.vendor,
-    description: detailRow.description,
-  };
-  const catalogNote = providers.find((p) => p.id === detail.providerId)
-    ?.catalogNote;
   // The effort pill follows the selected model: a per-model list when the
   // catalog publishes one, otherwise the provider list. It does not follow
   // the highlighted picker row.
@@ -1335,35 +1293,17 @@ export const Composer = memo(function Composer({
     setCustomFor(null);
     // Same reason as customFor: reset on OPEN so every close path is covered,
     // including ones added later.
-    setDrillProvider(null);
     setModelQuery("");
-    setProviderIndex(
-      profileRows.length + initialProviderIndex(providerRows, provider),
-    );
-    setHighlightIndex(initialHighlightIndex(modelRows, provider, model));
-    // Focus the listbox so arrow keys work immediately.
+    setFavouritesOnly(false);
+    setSetupFor(null);
+    const rows = pickerRowsFor("", false);
+    setHighlightIndex(initialHighlightIndex(rows, provider, model));
+    // Search takes focus so typing filters at once; arrows work from there.
+    const t = window.setTimeout(() => modelSearchRef.current?.focus(), 0);
+    return () => window.clearTimeout(t);
     // modelRows is rebuilt each render; the reset only needs the open edge.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [modelOpen]);
-
-  // Focus the list that is ACTUALLY showing, on every level change.
-  //
-  // Focusing only on the open edge left focus on <body> after drilling in or
-  // backing out, because the list that had focus unmounts. That is worse than
-  // it sounds: the keydown handler lives on the <ul>, so arrows died, and the
-  // Escape handler that stops propagation was never reached, so the document
-  // listener closed the entire picker instead of stepping back a level.
-  useEffect(() => {
-    if (!modelOpen) return;
-    const t = window.setTimeout(() => {
-      if (drillProvider) {
-        (modelSearchRef.current ?? modelListRef.current)?.focus();
-      } else {
-        providerListRef.current?.focus();
-      }
-    }, 0);
-    return () => window.clearTimeout(t);
-  }, [modelOpen, drillProvider]);
 
   /**
    * Gliding highlight: one indicator that slides to the highlighted row
@@ -1377,59 +1317,60 @@ export const Composer = memo(function Composer({
   );
   useEffect(() => {
     if (!modelOpen) return;
-    const list = (drillProvider ? modelListRef : providerListRef).current;
+    const list = modelListRef.current;
     const hl = list?.querySelector<HTMLElement>('[data-highlighted="true"]');
-    setGlider(hl ? { top: hl.offsetTop, height: hl.offsetHeight } : null);
-  }, [modelOpen, drillProvider, providerIndex, hi, modelRows.length]);
+    // The row sits under a heading inside its <li>, so offsetTop is relative
+    // to the wrong box: measure against the list's scrolled content instead.
+    setGlider(
+      list && hl
+        ? {
+            top:
+              hl.getBoundingClientRect().top -
+              list.getBoundingClientRect().top +
+              list.scrollTop,
+            height: hl.offsetHeight,
+          }
+        : null,
+    );
+  }, [modelOpen, hi, modelRows.length, setupFor]);
 
-  // A new query is a new list: land on the selected model if it still
-  // matches, otherwise the first selectable hit.
-  useEffect(() => {
-    if (!modelOpen || !drillProvider) return;
-    setHighlightIndex(initialHighlightIndex(modelRows, provider, model));
-    // modelRows is rebuilt each render; only the query edge needs a reseed.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [modelQuery]);
 
-  /** Enter a provider's models, seeding the highlight on its selected row. */
-  const enterProvider = (id: string) => {
-    setModelQuery("");
-    setDrillProvider(id);
-    // Seed on the selected model, not on row 0. The comment used to claim this
-    // while the code sent every drill-in to Default, so the detail pane and the
-    // meter described Default while aria-selected sat on the real model.
-    const rows = buildModelRows(providers.find((p) => p.id === id));
-    setHighlightIndex(initialHighlightIndex(rows, provider, model));
+  /**
+   * Rail click: show every provider again and land on this one's first row
+   * (its setup row when the CLI is missing, with the hint expanded).
+   */
+  /**
+   * A new filter is a new list: land on the selected model if it still
+   * matches, otherwise the first selectable hit. Seeded here, not in an
+   * effect, so a rail jump that clears the filter keeps its own highlight.
+   */
+  const refilter = (query: string, favOnly: boolean) => {
+    setModelQuery(query);
+    setFavouritesOnly(favOnly);
+    setHighlightIndex(
+      initialHighlightIndex(pickerRowsFor(query, favOnly), provider, model),
+    );
   };
 
-  const onProviderListKeyDown = (e: KeyboardEvent<HTMLUListElement>) => {
-    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
-      e.preventDefault();
-      setProviderIndex((i) =>
-        stepProviderIndex(firstLevel, i, e.key === "ArrowDown" ? 1 : -1),
-      );
-      return;
-    }
-    if (e.key === "Enter" || e.key === "ArrowRight") {
-      e.preventDefault();
-      const profile = profileRows[providerIndex];
-      if (profile) {
-        if (!profile.disabled) void pickProfile(profile);
-        return;
-      }
-      const row = providerRows[providerIndex - profileRows.length];
-      if (row && !row.disabled) enterProvider(row.id);
-      return;
-    }
-    if (e.key === "Escape") {
-      e.preventDefault();
-      // Cheap insurance only: closeAllMenus is idempotent, so the document
-      // listener firing as well changes nothing. This branch is NOT what closes
-      // the picker at this level, and a comment claiming otherwise would send
-      // the next reader looking for behaviour that is not here.
-      e.stopPropagation();
-      closeModelPicker(true);
-    }
+  const jumpToProvider = (id: string) => {
+    setFavouritesOnly(false);
+    setModelQuery("");
+    const rows = pickerRowsFor("", false);
+    const at = rows.findIndex((r) => r.providerId === id && !r.profile);
+    if (at >= 0) setHighlightIndex(at);
+    if (rows[at]?.setup) setSetupFor(id);
+    modelSearchRef.current?.focus();
+  };
+
+  const toggleFavourite = (row: ModelRow) => {
+    const key = favouriteKey(row);
+    setFavourites((prev) => {
+      const next = prev.includes(key)
+        ? prev.filter((k) => k !== key)
+        : [...prev, key];
+      writeModelFavourites(next);
+      return next;
+    });
   };
 
   const closeModelPicker = useCallback((returnFocus: boolean) => {
@@ -2074,6 +2015,14 @@ export const Composer = memo(function Composer({
 
   const pickRow = async (row: ModelRow) => {
     if (row.disabled) return;
+    if (row.setup) {
+      setSetupFor((cur) => (cur === row.providerId ? null : row.providerId));
+      return;
+    }
+    if (row.profile) {
+      void pickProfile(row.profile);
+      return;
+    }
     if (row.id === CUSTOM_MODEL_ID) {
       // Swap the popover for a free-text field rather than selecting a model.
       setCustomFor(row.providerId);
@@ -2149,33 +2098,12 @@ export const Composer = memo(function Composer({
     }
   };
 
-  /** Leave a provider's models and return to the provider list. */
-  const leaveProvider = () => {
-    const at =
-      profileRows.length +
-      initialProviderIndex(providerRows, drillProvider ?? provider);
-    setDrillProvider(null);
-    setModelQuery("");
-    setProviderIndex(at);
-    setCustomFor(null);
-    // Deliberately NOT re-seeding highlightIndex: the provider level reads
-    // providerDetail, and enterProvider re-seeds on every drill-in, so the
-    // stale value is never read. Adding a reset here survived its own mutation,
-    // which is the signature of a line that looks load-bearing and is not.
-  };
-
   const onModelListKeyDown = (e: KeyboardEvent<HTMLUListElement>) => {
     if (handleModelNavKey(e, false)) return;
     // A printable key while the list is focused is a search, not a dead key.
-    if (
-      drillProvider &&
-      e.key.length === 1 &&
-      !e.metaKey &&
-      !e.ctrlKey &&
-      !e.altKey
-    ) {
+    if (e.key.length === 1 && !e.metaKey && !e.ctrlKey && !e.altKey) {
       e.preventDefault();
-      setModelQuery((q) => q + e.key);
+      refilter(modelQuery + e.key, favouritesOnly);
       modelSearchRef.current?.focus();
     }
   };
@@ -2221,25 +2149,14 @@ export const Composer = memo(function Composer({
     }
     if (e.key === "Escape") {
       e.preventDefault();
-      // Stop this reaching the popover's own Escape handler, or backing out of
-      // a provider closes the whole picker instead of stepping up one level.
+      // Stop this reaching the document's Escape handler, so clearing the
+      // query does not also close the picker.
       e.stopPropagation();
       if (fromSearch && modelQuery.trim()) {
-        setModelQuery("");
-        return true;
-      }
-      if (drillProvider) {
-        leaveProvider();
+        refilter("", favouritesOnly);
         return true;
       }
       closeModelPicker(true);
-      return true;
-    }
-    if (fromSearch) return false;
-    if (drillProvider && e.key === "ArrowLeft") {
-      e.preventDefault();
-      e.stopPropagation();
-      leaveProvider();
       return true;
     }
     return false;
@@ -2490,8 +2407,6 @@ export const Composer = memo(function Composer({
             refreshMention();
             refreshCommand();
           }}
-          onFocus={() => hintsRef.current?.removeAttribute("hidden")}
-          onBlur={() => hintsRef.current?.setAttribute("hidden", "")}
           onKeyDown={onKeyDown}
           onPaste={onPaste}
           disabled={disabled || sending}
@@ -2504,9 +2419,6 @@ export const Composer = memo(function Composer({
           data-paste-overflow=""
           hidden
         />
-        <div ref={hintsRef} className={styles.hints} data-kbd-hints="" hidden>
-          {`⌘Enter ${canSteer && busyAction === "steer" ? "steer" : busy ? "queue" : "send"} · ⌥Enter side question · ⌘S stash${canSteer ? " · ⌘⇧Enter steer" : ""}${busy ? " · Esc stop" : ""}${vimEnabled ? ` · VIM ${vimMode}` : ""}`}
-        </div>
         {/* View mode lives in the thread title menu and ⌃O (#1411); the
             current mode is mirrored here for keyboard-only callers. */}
         <div className={styles.controls} data-transcript-view-mode={transcriptView}>
@@ -2579,8 +2491,8 @@ export const Composer = memo(function Composer({
                 )}
               </>
             )}
-            {/* Model + effort read as one pill ("Claude Opus 5.5 · High"):
-                two click targets, so each keeps its own picker. */}
+            {/* Model, effort and access are ghost pills split by hairlines
+                (#1429); each keeps its own picker. */}
             <div
               className={styles.modelGroup}
               data-model-group=""
@@ -2618,18 +2530,12 @@ export const Composer = memo(function Composer({
                       textContent prefix, so this trigger's text must not start
                       with the model label. The visible icon is the SVG. */}
                   <span className={styles.legacyGlyph}>◇</span>
-                  <svg
-                    width="13"
-                    height="13"
-                    viewBox="0 0 16 16"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="1.5"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  >
-                    <path d="M8 2 9.6 6.4 14 8 9.6 9.6 8 14 6.4 9.6 2 8l4.4-1.6Z" />
-                  </svg>
+                  <ProviderMark
+                    providerId={provider}
+                    providers={providers}
+                    size={14}
+                    decorative
+                  />
                 </span>
                 {/* Keyed so a model swap replays the pop instead of swapping
                     text mid-frame. */}
@@ -2661,159 +2567,84 @@ export const Composer = memo(function Composer({
                   id={modelListId}
                   tabIndex={-1}
                 >
-                  <div className={styles.modelPopoverLeft}>
-                    {drillProvider ? (
+                  <div
+                    className={styles.pickerRail}
+                    role="group"
+                    aria-label="Providers"
+                  >
+                    <button
+                      type="button"
+                      className={styles.railButton}
+                      aria-label="Favourites"
+                      title="Favourites"
+                      aria-pressed={favouritesOnly}
+                      data-active={railActive === "favourites" ? "true" : undefined}
+                      onClick={() => {
+                        refilter("", !favouritesOnly);
+                        modelSearchRef.current?.focus();
+                      }}
+                    >
+                      <span aria-hidden="true">★</span>
+                    </button>
+                    {providers.map((p) => (
                       <button
+                        key={p.id}
                         type="button"
-                        className={styles.modelBackHeader}
-                        aria-label="Back to providers"
-                        title="Back to providers"
-                        onClick={leaveProvider}
+                        className={styles.railButton}
+                        aria-label={`Provider ${p.name}`}
+                        title={
+                          p.available === false
+                            ? `${p.name}: not installed`
+                            : p.name
+                        }
+                        data-active={railActive === p.id ? "true" : undefined}
+                        data-unavailable={
+                          p.available === false ? "true" : undefined
+                        }
+                        onClick={() => jumpToProvider(p.id)}
                       >
-                        <span aria-hidden="true">‹ </span>
-                        {(drillInfo?.name ?? drillProvider).toUpperCase()}
+                        <ProviderMark
+                          providerId={p.id}
+                          providers={providers}
+                          size={16}
+                          decorative
+                        />
                       </button>
-                    ) : (
-                      <div className={styles.modelPaneHeader}>MODEL</div>
-                    )}
-                    {drillProvider && !customFor ? (
+                    ))}
+                  </div>
+                  <div className={styles.pickerMain}>
+                    <div className={styles.modelSearchRow}>
+                      <svg
+                        width="13"
+                        height="13"
+                        viewBox="0 0 16 16"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="1.5"
+                        strokeLinecap="round"
+                        aria-hidden="true"
+                      >
+                        <circle cx="7" cy="7" r="4.5" />
+                        <path d="m10.5 10.5 3 3" />
+                      </svg>
                       <input
                         ref={modelSearchRef}
                         className={styles.modelSearch}
                         type="search"
                         value={modelQuery}
-                        placeholder="Search models"
+                        placeholder={
+                          favouritesOnly ? "Search favourites…" : "Search models…"
+                        }
                         aria-label="Search models"
                         autoComplete="off"
                         spellCheck={false}
-                        onChange={(e) => setModelQuery(e.target.value)}
+                        onChange={(e) =>
+                          refilter(e.target.value, favouritesOnly)
+                        }
                         onKeyDown={onModelSearchKeyDown}
                       />
-                    ) : null}
-                    {!drillProvider ? (
-                      <ul
-                        className={`${styles.modelList} ${styles.levelEnterLeft}`}
-                        role="listbox"
-                        aria-label="Provider"
-                        tabIndex={0}
-                        ref={providerListRef}
-                        onKeyDown={onProviderListKeyDown}
-                      >
-                        {glider && (
-                          <div
-                            className={styles.highlightGlider}
-                            aria-hidden="true"
-                            style={{
-                              height: glider.height,
-                              transform: `translateY(${glider.top}px)`,
-                            }}
-                          />
-                        )}
-                        {profileRows.map((row, index) => (
-                          <li
-                            key={`profile:${row.id}`}
-                            role="option"
-                            aria-selected={false}
-                          >
-                            {index === 0 ? (
-                              <div
-                                className={styles.modelGroupHeading}
-                                aria-hidden="true"
-                              >
-                                Profiles
-                              </div>
-                            ) : null}
-                            <button
-                              type="button"
-                              className={styles.providerRow}
-                              tabIndex={-1}
-                              data-highlighted={
-                                index === providerIndex ? "true" : undefined
-                              }
-                              data-disabled={row.disabled ? "true" : undefined}
-                              disabled={row.disabled}
-                              title={row.disabledReason ?? undefined}
-                              aria-label={`Profile ${row.name}`}
-                              onMouseEnter={() => setProviderIndex(index)}
-                              onClick={() => void pickProfile(row)}
-                            >
-                              <ProviderMark
-                                providerId={row.provider}
-                                providers={providers}
-                                size={16}
-                                decorative
-                                className={styles.providerRowMark}
-                              />
-                              <span className={styles.providerRowText}>
-                                <span className={styles.modelRowLabel}>
-                                  {row.name}
-                                </span>
-                                <span className={styles.modelRowVendor}>
-                                  {row.summary}
-                                </span>
-                              </span>
-                            </button>
-                          </li>
-                        ))}
-                        {providerRows.map((row, index) => (
-                          <li key={row.id} role="option" aria-selected={row.current}>
-                            <button
-                              type="button"
-                              className={styles.providerRow}
-                              tabIndex={-1}
-                              data-selected={row.current ? "true" : undefined}
-                              data-highlighted={
-                                index + profileRows.length === providerIndex
-                                  ? "true"
-                                  : undefined
-                              }
-                              data-disabled={row.disabled ? "true" : undefined}
-                              disabled={row.disabled}
-                              title={row.disabledReason ?? undefined}
-                              aria-label={`Provider ${row.name}`}
-                              onMouseEnter={() =>
-                                setProviderIndex(index + profileRows.length)
-                              }
-                              onClick={() => enterProvider(row.id)}
-                            >
-                              <ProviderMark
-                                providerId={row.id}
-                                providers={providers}
-                                size={16}
-                                decorative
-                                className={styles.providerRowMark}
-                              />
-                              <span className={styles.providerRowText}>
-                                <span className={styles.modelRowLabel}>
-                                  {row.name}
-                                </span>
-                                <span className={styles.modelRowVendor}>
-                                  {row.badge}
-                                </span>
-                              </span>
-                              <span
-                                className={styles.modelRowChevron}
-                                aria-hidden="true"
-                              >
-                                <svg
-                                  width="12"
-                                  height="12"
-                                  viewBox="0 0 10 10"
-                                  fill="none"
-                                  stroke="currentColor"
-                                  strokeWidth="1.5"
-                                  strokeLinecap="round"
-                                  strokeLinejoin="round"
-                                >
-                                  <path d="M3.5 2 6.5 5 3.5 8" />
-                                </svg>
-                              </span>
-                            </button>
-                          </li>
-                        ))}
-                      </ul>
-                    ) : null}
-                    {drillProvider && customFor ? (
+                    </div>
+                    {customFor ? (
                       <div className={styles.customModelWrap}>
                         <input
                           className={styles.customModelInput}
@@ -2862,10 +2693,9 @@ export const Composer = memo(function Composer({
                         </div>
                       </div>
                     ) : null}
-                    {drillProvider ? (
                     <ul
                       ref={modelListRef}
-                      className={`${styles.modelList} ${styles.levelEnterRight}`}
+                      className={styles.modelList}
                       role="listbox"
                       aria-label="Model"
                       tabIndex={0}
@@ -2881,19 +2711,48 @@ export const Composer = memo(function Composer({
                           }}
                         />
                       )}
+                      {modelRows.length === 0 ? (
+                        <li className={styles.pickerEmpty} role="status">
+                          {favouritesOnly && !modelQuery.trim()
+                            ? "No favourites yet. Star a model with ☆."
+                            : "No matching models"}
+                        </li>
+                      ) : null}
                       {modelRows.map((row, index) => {
                         const selected = isRowSelected(row, provider, model);
                         const highlighted = index === hi;
+                        const starrable = canFavourite(row);
+                        const starred =
+                          starrable && favouriteSet.has(favouriteKey(row));
+                        const note = row.groupHeading
+                          ? providers.find((p) => p.id === row.providerId)
+                              ?.catalogNote
+                          : null;
+                        const hint =
+                          row.setup && setupFor === row.providerId
+                            ? hintFor(row.providerId)
+                            : null;
+                        const sub = row.profile
+                          ? row.vendor
+                          : row.setup
+                            ? "not installed · set up"
+                            : row.id === CUSTOM_MODEL_ID
+                              ? "type a model id"
+                              : row.id == null
+                                ? "provider default"
+                                : row.id === row.label
+                                  ? null
+                                  : row.id;
                         return (
                           <li
-                            key={rowKey(row)}
+                            key={row.profile ? row.id : rowKey(row)}
                             role="option"
                             aria-selected={selected}
                             aria-disabled={row.disabled ? true : undefined}
                             className={styles.rowEnter}
                             style={rowEnterStyle(index)}
                           >
-                            {row.groupHeading && !drillProvider ? (
+                            {row.groupHeading ? (
                               <div
                                 className={styles.modelGroupHeading}
                                 aria-hidden="true"
@@ -2901,78 +2760,169 @@ export const Composer = memo(function Composer({
                                 {row.groupHeading}
                               </div>
                             ) : null}
-                            <button
-                              type="button"
-                              className={styles.modelRow}
-                              tabIndex={-1}
-                              // The list scrolls (26 rows in a 240px box) and
-                              // opens focused, so arrow keys are the first
-                              // affordance. Scroll the list only: scrollIntoView
-                              // walks up to .chatSlot and lifts the composer
-                              // (#762).
-                              ref={(el) => {
-                                if (highlighted && el) {
+                            {note ? (
+                              <div
+                                className={styles.catalogNote}
+                                data-catalog-note=""
+                              >
+                                {note}
+                              </div>
+                            ) : null}
+                            <div className={styles.modelRowLine}>
+                              <button
+                                type="button"
+                                className={styles.modelRow}
+                                tabIndex={-1}
+                                // Scroll the list only: scrollIntoView walks up
+                                // to .chatSlot and lifts the composer (#762).
+                                ref={(el) => {
+                                  if (highlighted && el) {
+                                    scrollChildIntoNearestView(
+                                      modelListRef.current,
+                                      el,
+                                    );
+                                  }
+                                }}
+                                aria-label={
+                                  row.profile
+                                    ? `Profile ${row.label}`
+                                    : row.setup
+                                      ? `Set up ${row.label}`
+                                      : undefined
+                                }
+                                data-selected={selected ? "true" : undefined}
+                                data-highlighted={
+                                  highlighted ? "true" : undefined
+                                }
+                                data-disabled={
+                                  row.disabled ? "true" : undefined
+                                }
+                                data-setup={row.setup ? "true" : undefined}
+                                data-profile={
+                                  row.profile ? row.profile.id : undefined
+                                }
+                                disabled={row.disabled}
+                                title={
+                                  row.disabledReason ??
+                                  (row.description || undefined)
+                                }
+                                onMouseEnter={() => setHighlightIndex(index)}
+                                onClick={() => void pickRow(row)}
+                              >
+                                {row.profile ? (
+                                  <ProviderMark
+                                    providerId={row.profile.provider}
+                                    providers={providers}
+                                    size={14}
+                                    decorative
+                                    className={styles.providerRowMark}
+                                  />
+                                ) : null}
+                                <span className={styles.providerRowText}>
+                                  <span className={styles.modelRowLabel}>
+                                    {row.label}
+                                  </span>
+                                  {sub ? (
+                                    <span className={styles.modelRowId}>
+                                      {sub}
+                                    </span>
+                                  ) : null}
+                                </span>
+                              </button>
+                              {starrable ? (
+                                <button
+                                  type="button"
+                                  className={styles.star}
+                                  aria-label={`Favourite ${row.providerName} ${row.label}`}
+                                  aria-pressed={starred}
+                                  data-favourite={favouriteKey(row)}
+                                  onClick={() => toggleFavourite(row)}
+                                >
+                                  {starred ? "★" : "☆"}
+                                </button>
+                              ) : null}
+                            </div>
+                            {hint ? (
+                              <div
+                                className={styles.setupPanel}
+                                data-provider-setup={row.providerId}
+                                ref={(el) =>
                                   scrollChildIntoNearestView(
                                     modelListRef.current,
                                     el,
-                                  );
+                                  )
                                 }
-                              }}
-                              data-selected={selected ? "true" : undefined}
-                              data-highlighted={
-                                highlighted ? "true" : undefined
-                              }
-                              data-disabled={
-                                row.disabled ? "true" : undefined
-                              }
-                              disabled={row.disabled}
-                              title={row.disabledReason ?? undefined}
-                              onMouseEnter={() => setHighlightIndex(index)}
-                              onClick={() => void pickRow(row)}
-                            >
-                              <span className={styles.modelRowLabel}>
-                                {row.label}
-                              </span>
-                              <span className={styles.modelRowVendor}>
-                                {row.vendor}
-                                {row.unavailable ? " · not installed" : ""}
-                              </span>
-                            </button>
+                              >
+                                <code className={styles.setupCommand}>
+                                  {hint.command}
+                                </code>
+                                <div className={styles.customModelActions}>
+                                  <button
+                                    type="button"
+                                    className={styles.customModelBtn}
+                                    onClick={() =>
+                                      void navigator.clipboard
+                                        ?.writeText(hint.command)
+                                        .catch(() => {})
+                                    }
+                                  >
+                                    Copy
+                                  </button>
+                                  {hint.url ? (
+                                    <a
+                                      className={styles.customModelBtn}
+                                      href={hint.url}
+                                      target="_blank"
+                                      rel="noreferrer"
+                                    >
+                                      Docs
+                                    </a>
+                                  ) : null}
+                                  <button
+                                    type="button"
+                                    className={styles.customModelBtn}
+                                    title="Look for the CLI again"
+                                    onClick={() => onModelPickerOpen?.()}
+                                  >
+                                    Check again
+                                  </button>
+                                </div>
+                              </div>
+                            ) : null}
                           </li>
                         );
                       })}
                     </ul>
+                    {reasoningVisible ? (
+                      <div
+                        className={styles.pickerEffort}
+                        role="group"
+                        aria-label="Effort"
+                        data-picker-effort=""
+                      >
+                        <span className={styles.pickerEffortLabel}>Effort</span>
+                        {effortOptions(efforts).map((level) => (
+                          <button
+                            key={level ?? "auto"}
+                            type="button"
+                            className={styles.effortChip}
+                            aria-pressed={level === reasoningEffort}
+                            data-effort-chip={level ?? "auto"}
+                            disabled={effortUnavailable}
+                            title={effortHint(level) ?? undefined}
+                            onClick={() => void pickEffort(level)}
+                          >
+                            {effortDisplayLabel(level)}
+                          </button>
+                        ))}
+                      </div>
                     ) : null}
-                  </div>
-                  <div className={styles.modelPopoverRight}>
-                    {/* Keyed on the highlighted row so a highlight move
-                        remounts the pane and replays the detailIn fade. */}
-                    <div
-                      className={styles.detailBody}
-                      key={`${detail.providerId}::${detail.label}`}
-                    >
-                      <div className={styles.detailLabel}>{detail.label}</div>
-                      {detail.vendor ? (
-                        <div className={styles.detailVendor}>
-                          {detail.vendor}
-                        </div>
-                      ) : null}
-                      {detail.description ? (
-                        <div className={styles.detailDesc}>
-                          {detail.description}
-                        </div>
-                      ) : null}
-                      {catalogNote ? (
-                        <div className={styles.catalogNote} data-catalog-note="">
-                          {catalogNote}
-                        </div>
-                      ) : null}
-                    </div>
                   </div>
                 </div>
               )}
             </div>
 
+            {reasoningVisible && <span className={styles.sep} aria-hidden="true" />}
             {reasoningVisible && (
               <div className={styles.modeWrap} ref={effortWrapRef}>
                 <button
@@ -3071,6 +3021,9 @@ export const Composer = memo(function Composer({
             </div>
 
             {currentProviderInfo?.supportsSearch && onSetWebSearch && (
+              <span className={styles.sep} aria-hidden="true" />
+            )}
+            {currentProviderInfo?.supportsSearch && onSetWebSearch && (
               <button
                 type="button"
                 className={
@@ -3122,6 +3075,7 @@ export const Composer = memo(function Composer({
               </button>
             )}
 
+            {!ask && <span className={styles.sep} aria-hidden="true" />}
             {!ask && (
             <div className={styles.modeWrap} ref={modeWrapRef}>
               <button
@@ -3512,9 +3466,9 @@ export const Composer = memo(function Composer({
                 ? "Steer the live turn (⌘Enter). ⌘⇧Enter also steers."
                 : busy
                   ? canSteer
-                    ? "Queue for when this run lands (⌘Enter). ⌘⇧Enter steers."
-                    : "Queue for when this run lands (⌘Enter). ⌥Enter asks a side question."
-                  : "Send (⌘Enter). ⌥Enter asks a side question."
+                    ? "Queue for when this run lands (⌘Enter). ⌘⇧Enter steers. Esc stops the run."
+                    : "Queue for when this run lands (⌘Enter). ⌥Enter asks a side question. Esc stops the run."
+                  : "Send (⌘Enter). ⌥Enter asks a side question. ⌘S stashes the draft."
             }
             onClick={() => submitSend()}
           >
@@ -3534,12 +3488,12 @@ export const Composer = memo(function Composer({
           </button>
           </div>
         </div>
-        {workspaceStrip ? (
-          <div className={styles.meta} data-composer-workspace="">
-            {workspaceStrip}
-          </div>
-        ) : null}
       </div>
+      {workspaceStrip ? (
+        <div className={styles.meta} data-composer-workspace="">
+          {workspaceStrip}
+        </div>
+      ) : null}
 
       {stashToast === "stashed" && (
         <ArchiveToast

@@ -9,6 +9,8 @@
  *    efforts list on the thread's provider means no effort pill at all.
  * 5. Unavailable providers are listed but not selectable.
  * 6. With a sessionId, other providers' rows are locked; current provider stays open.
+ * 7. The popover is one flat list (#1429): profiles, then every installed
+ *    provider's models, one "set up" row per missing CLI. Search spans them all.
  */
 import type {
   AgentProfile,
@@ -39,6 +41,10 @@ export interface ModelRow {
    * Null for subsequent rows in the same provider.
    */
   groupHeading: string | null;
+  /** Set on a saved-profile row: picking applies the whole profile. */
+  profile?: ProfileRow;
+  /** Stand-in row for a provider whose CLI is missing: picking opens setup. */
+  setup?: boolean;
 }
 
 /** Stable key for React lists and selection compare. */
@@ -682,5 +688,123 @@ export function buildProfileRows(
       disabled: unavailable,
       disabledReason: unavailable ? "not installed" : null,
     };
+  });
+}
+
+/** localStorage key for starred models: an array of `${provider}:${model}`. */
+export const MODEL_FAVOURITES_KEY = "solenta.modelFavourites";
+
+/** Default (null id) is stored as an empty model part: `claude:`. */
+export function favouriteKey(row: Pick<ModelRow, "providerId" | "id">): string {
+  return `${row.providerId}:${row.id ?? ""}`;
+}
+
+export function readModelFavourites(): string[] {
+  try {
+    const raw = JSON.parse(
+      window.localStorage.getItem(MODEL_FAVOURITES_KEY) ?? "[]",
+    ) as unknown;
+    return Array.isArray(raw)
+      ? raw.filter((k): k is string => typeof k === "string")
+      : [];
+  } catch {
+    return [];
+  }
+}
+
+export function writeModelFavourites(keys: readonly string[]): void {
+  try {
+    window.localStorage.setItem(MODEL_FAVOURITES_KEY, JSON.stringify(keys));
+  } catch {
+    // Private mode / quota: the star still toggles for this session.
+  }
+}
+
+/** Rows a ★ can go on: real models and Default, not profiles/setup/Custom. */
+export function canFavourite(row: ModelRow): boolean {
+  return !row.profile && !row.setup && row.id !== CUSTOM_MODEL_ID;
+}
+
+/**
+ * The picker's one flat list (#1429), grouped by provider in registry order.
+ *
+ * - Profiles first (filtered by the query like any row).
+ * - A missing CLI collapses to one setup row; hidden while searching or
+ *   showing favourites, since none of its models can run.
+ * - Custom stays at the end of each installed provider's group; while
+ *   searching only the thread's own provider keeps it, so a miss still has a
+ *   path to name an id the catalogue does not know.
+ * - `favourites` non-null shows only starred rows.
+ */
+export function buildPickerRows(input: {
+  providers: readonly ProviderInfo[];
+  currentProviderId: string;
+  sessionLocked: boolean;
+  currentProviderName?: string;
+  profiles: readonly ProfileRow[];
+  query: string;
+  favourites: ReadonlySet<string> | null;
+}): ModelRow[] {
+  const q = input.query.trim().toLowerCase();
+  const favs = input.favourites;
+  const out: ModelRow[] = [];
+
+  if (!favs) {
+    for (const p of input.profiles) {
+      const row: ModelRow = {
+        id: `profile:${p.id}`,
+        label: p.name,
+        vendor: p.summary,
+        description: p.summary,
+        providerId: p.provider,
+        providerName: "Profiles",
+        unavailable: p.disabled,
+        disabled: p.disabled,
+        disabledReason: p.disabledReason,
+        groupHeading: null,
+        profile: p,
+      };
+      if (!q || rowMatchesQuery(row, q)) out.push(row);
+    }
+  }
+
+  const seenSetup = new Set<string>();
+  for (const row of buildUnifiedModelRows(
+    input.providers,
+    input.currentProviderId,
+    input.sessionLocked,
+    input.currentProviderName,
+  )) {
+    if (row.unavailable) {
+      if (q || favs || seenSetup.has(row.providerId)) continue;
+      seenSetup.add(row.providerId);
+      out.push({
+        ...row,
+        id: null,
+        label: row.providerName,
+        vendor: "not installed · set up",
+        description: "",
+        disabled: false,
+        setup: true,
+      });
+      continue;
+    }
+    if (row.id === CUSTOM_MODEL_ID) {
+      if (favs) continue;
+      if (q && row.providerId !== input.currentProviderId) continue;
+      out.push(row);
+      continue;
+    }
+    if (favs && !favs.has(favouriteKey(row))) continue;
+    if (q && !rowMatchesQuery(row, q)) continue;
+    out.push(row);
+  }
+
+  let prev: string | null = null;
+  return out.map((row) => {
+    const group = row.providerName;
+    const heading = group !== prev ? group : null;
+    prev = group;
+    return { ...row, groupHeading: heading };
   });
 }
