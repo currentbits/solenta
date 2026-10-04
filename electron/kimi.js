@@ -4,8 +4,7 @@
 // .cmd shims and Node refuses to exec those directly. cross-spawn routes
 // them through cmd.exe with correct escaping, which matters because the
 // prompt travels in argv (#442).
-const spawn = require("cross-spawn");
-const { killTree, agentSpawnOptions } = require("./proc.js");
+const { runJsonLines, SIGKILL_AFTER_MS } = require("./agent.js");
 const { harvestToolResult } = require("./tool-images.js");
 const fs = require("node:fs");
 const os = require("node:os");
@@ -22,9 +21,6 @@ const {
   writeRemoteOverlay,
 } = require("./remote-overlay.js");
 
-const SIGKILL_AFTER_MS = 3000;
-// Max stderr retained per child process (tail), for error reporting.
-const STDERR_TAIL_CHARS = 64 * 1024;
 const INPUT_TRUNCATE = 2000;
 const OUTPUT_TRUNCATE = 4000;
 
@@ -1008,29 +1004,8 @@ function runKimi(opts) {
     ? { ...process.env, ...envOverride }
     : undefined;
 
-  let stderrText = "";
-  let fullStdout = "";
-  let lineBuf = "";
   let stderrLineBuf = "";
   const stderrThink = createStderrThinkingParser();
-  let finished = false;
-  let killTimer = null;
-  let killed = false;
-  let gotJson = false;
-
-  function handleLine(line) {
-    const trimmed = line.trim();
-    if (!trimmed) return;
-    let obj;
-    try {
-      obj = JSON.parse(trimmed);
-    } catch {
-      return;
-    }
-    if (!obj || typeof obj !== "object") return;
-    gotJson = true;
-    emitEvent(obj);
-  }
 
   /**
    * @param {object} obj
@@ -1054,85 +1029,35 @@ function runKimi(opts) {
     emitEvent({ reasoning_content: thinking });
   }
 
-  function finish(code) {
-    if (finished) return;
-    finished = true;
-    restoreEffort();
-    if (killTimer) {
-      clearTimeout(killTimer);
-      killTimer = null;
-    }
-    if (lineBuf.trim()) {
-      handleLine(lineBuf);
-      lineBuf = "";
-    }
-    if (stderrLineBuf.trim()) {
-      emitStderrThinking(stderrLineBuf);
-      stderrLineBuf = "";
-    }
-    if (typeof onExit === "function") {
-      onExit({
-        code,
-        stderr: stderrText,
-        fullStdout,
-        gotJson,
-      });
-    }
-  }
-
   // Kimi reads config.toml once at startup; the flip holds until first
-  // output (proof the child is past startup), with finish() as the backstop.
+  // output (proof the child is past startup), with finish as the backstop.
   const restoreEffort = flipKimiEffort(reasoningEffort, childEnv || process.env);
 
-  let child;
-  try {
-    child = spawn(
-      binary,
-      args,
-      agentSpawnOptions({
-        cwd,
-        env: childEnv,
-        stdio: ["ignore", "pipe", "pipe"],
-      }),
-    );
-  } catch (err) {
-    restoreEffort();
-    const error = err instanceof Error ? err : new Error(String(err));
-    if (typeof onError === "function") onError(error);
-    if (typeof onExit === "function") {
-      onExit({
-        code: 1,
-        stderr: error.message,
-        fullStdout: "",
-        gotJson: false,
-      });
-    }
-    return { kill() {} };
-  }
-
-  child.stdout.setEncoding("utf8");
-  child.stderr.setEncoding("utf8");
-
-  child.stdout.on("data", (chunk) => {
-    restoreEffort();
-    const str = String(chunk);
-    fullStdout += str;
-    lineBuf += str;
-    let nl;
-    while ((nl = lineBuf.indexOf("\n")) >= 0) {
-      const line = lineBuf.slice(0, nl);
-      lineBuf = lineBuf.slice(nl + 1);
-      handleLine(line);
-    }
+  const run = runJsonLines({
+    binary,
+    args,
+    cwd,
+    env: childEnv,
+    keepStdout: true,
+    onEvent,
+    onExit: (info) => {
+      restoreEffort();
+      if (stderrLineBuf.trim()) {
+        emitStderrThinking(stderrLineBuf);
+        stderrLineBuf = "";
+      }
+      if (typeof onExit === "function") onExit(info);
+    },
+    onError,
   });
+  const child = run.child;
+  if (!child) return { kill() {} };
 
+  // prepend: restore before the shared listeners parse the chunk.
+  child.stdout.prependListener("data", () => restoreEffort());
+  child.stderr.prependListener("data", () => restoreEffort());
   child.stderr.on("data", (chunk) => {
-    restoreEffort();
-    // Tail-keep: stderr feeds error reporting, and a noisy CLI would
-    // otherwise grow this buffer for the life of a long-lived process.
-    const str = String(chunk);
-    stderrText = (stderrText + str).slice(-STDERR_TAIL_CHARS);
-    stderrLineBuf += str;
+    stderrLineBuf += String(chunk);
     let nl;
     while ((nl = stderrLineBuf.indexOf("\n")) >= 0) {
       const line = stderrLineBuf.slice(0, nl);
@@ -1141,22 +1066,7 @@ function runKimi(opts) {
     }
   });
 
-  child.on("error", (err) => {
-    if (typeof onError === "function") onError(err);
-    finish(1);
-  });
-
-  child.on("close", (code) => {
-    finish(code);
-  });
-
-  return {
-    kill() {
-      if (killed || finished) return;
-      killed = true;
-      killTimer = killTree(child, SIGKILL_AFTER_MS);
-    },
-  };
+  return { kill: run.kill };
 }
 
 /**
