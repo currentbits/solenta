@@ -9032,6 +9032,20 @@ function createRunner(opts) {
     return mapWorkflowView(workflow, core);
   }
 
+  // Shared context for the seam modules (`electron/runner-<seam>.js`, #1447).
+  // Built here, after every owned const, so seam factories may destructure
+  // it eagerly. Holds only what a seam consumes; the lazy-read rule is in
+  // the header of electron/runner-watchdogs.js.
+  const ctx = {
+    store,
+    active,
+    nowFn,
+    resolveProvider,
+    appendMessage,
+    pushDetail,
+    pushThreadsChanged,
+  };
+
   // Boot: nothing runs yet, so every crew is quiet. Archives workers whose
   // sweep never came — the app died mid-orchestration, or a sibling hung and
   // the orchestrator was already finished for good (issue #15).
