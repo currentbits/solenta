@@ -24,8 +24,8 @@ async function run(win, source) {
   return win.webContents.executeJavaScript(source);
 }
 
-async function waitFor(win, expression, label) {
-  const deadline = Date.now() + 20_000;
+async function waitFor(win, expression, label, timeoutMs = 20_000) {
+  const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     if (await run(win, `Boolean(${expression})`)) return;
     await sleep(150);
@@ -47,28 +47,42 @@ async function click(win, selector, label) {
   await sleep(250);
 }
 
-async function clickTab(win, label) {
-  const clicked = await run(
-    win,
-    `(() => {
-      const button = [...document.querySelectorAll("button")].find(
-        (candidate) =>
-          candidate.textContent.trim() === ${JSON.stringify(label)} &&
-          candidate.hasAttribute("data-active") &&
-          !candidate.hasAttribute("data-drawer-open")
-      );
-      if (!button) return false;
-      button.click();
-      return true;
-    })()`,
-  );
-  if (!clicked) throw new Error(`could not click ${label} tab`);
+// The inspector is closed by default since the calm UI (#1410). Its tabs are
+// [data-panel-tab] buttons; the header's "Right panel" button toggles it.
+async function openInspectorTab(win, tab) {
+  const open = await run(win, `Boolean(document.querySelector("[data-panel-tab]"))`);
+  if (!open) await click(win, "button[aria-label='Right panel']", "Right panel");
+  await click(win, `[data-panel-tab="${tab}"]`, `${tab} tab`);
   await waitFor(
     win,
-    `[...document.querySelectorAll("button")].some((candidate) => candidate.textContent.trim() === ${JSON.stringify(label)} && candidate.getAttribute("data-active") === "true")`,
-    `${label} tab active`,
+    `document.querySelector('[data-panel-tab="${tab}"]').getAttribute("aria-selected") === "true"`,
+    `${tab} tab active`,
   );
   await sleep(250);
+}
+
+async function closeInspector(win) {
+  const open = await run(win, `Boolean(document.querySelector("[data-panel-tab]"))`);
+  if (open) await click(win, "button[aria-label='Right panel']", "Right panel");
+  await waitFor(win, `!document.querySelector("[data-panel-tab]")`, "inspector closed");
+}
+
+// Views (Kanban, Automations, ...) live in the footer Insights menu.
+async function openView(win, id) {
+  if (!(await run(win, `Boolean(document.querySelector('[data-view-nav="${id}"]'))`))) {
+    const opened = await run(
+      win,
+      `(() => {
+        const b = [...document.querySelectorAll("button")].find((x) => x.textContent.trim() === "Insights");
+        if (!b) return false;
+        b.click();
+        return true;
+      })()`,
+    );
+    if (!opened) throw new Error("could not open the Insights menu");
+    await sleep(250);
+  }
+  await click(win, `[data-view-nav="${id}"]`, id);
 }
 
 async function selectThread(win) {
@@ -94,7 +108,7 @@ async function forceLightTheme(win) {
   );
   await waitFor(
     win,
-    `document.documentElement.getAttribute("data-theme") === "light" && getComputedStyle(document.documentElement).getPropertyValue("--bg").trim() === "#f3f5f8"`,
+    `document.documentElement.getAttribute("data-theme") === "light" && getComputedStyle(document.documentElement).getPropertyValue("--bg").trim() === "#f5f5f2"`,
     "light theme tokens",
   );
 }
@@ -203,11 +217,21 @@ async function prepare(win) {
   await selectThread(win);
   await waitFor(
     win,
-    `document.body.textContent.includes("Kicked off 5 subagents") && document.body.textContent.includes("Work Log") && document.body.textContent.includes("Modernize per-device provider settings storage.")`,
+    `document.body.textContent.includes("Kicked off 5 subagents") && document.body.textContent.includes("Modernize per-device provider settings storage.")`,
     "stable seeded transcript",
   );
+}
+
+// Let the simulated workflow finish so every phase reads settled and the
+// header shows the commit, then freeze so nothing moves between shots.
+async function settle(win) {
+  await waitFor(
+    win,
+    `document.body.textContent.includes("Run complete")`,
+    "simulated run complete",
+    60_000,
+  );
   await freezeFixture(win);
-  await pinUserPrompt(win);
 }
 
 app.whenReady().then(async () => {
@@ -217,7 +241,7 @@ app.whenReady().then(async () => {
     height: HEIGHT,
     useContentSize: true,
     show: false,
-    backgroundColor: "#f3f5f8",
+    backgroundColor: "#f5f5f2",
     webPreferences: {
       offscreen: true,
       partition: `site-shots-${Date.now()}`,
@@ -227,22 +251,27 @@ app.whenReady().then(async () => {
   try {
     await prepare(win);
 
-    await clickTab(win, "Environment");
+    // Kanban first, while the seeded run is still working, so the board has
+    // threads in more than one column.
+    await openView(win, "kanban");
+    await capture(win, "screen-kanban.png", "[data-kanban]");
+
+    // Leave via Insights › Back to threads so the thread view has no
+    // "Back to Kanban" crumb.
+    await openView(win, "threads");
+    await selectThread(win);
+    await settle(win);
+    await closeInspector(win);
     await pinUserPrompt(win);
     await capture(win, "screen-main.png", `[data-thread-card="${THREAD_ID}"]`);
 
-    await clickTab(win, "Agents");
+    await openInspectorTab(win, "agents");
     await pinUserPrompt(win);
     await capture(win, "screen-agents.png", "[data-crew-tasks]");
 
-    await click(win, "[data-panel-tab='pulse']", "Pulse tab");
-    await click(win, "[data-view-nav='automations']", "Automations");
-    await clickTab(win, "Environment");
+    await closeInspector(win);
+    await openView(win, "automations");
     await capture(win, "screen-automations.png", "[data-automations]");
-
-    await click(win, "[data-view-nav='kanban']", "Kanban");
-    await clickTab(win, "Environment");
-    await capture(win, "screen-kanban.png", "[data-kanban]");
   } catch (error) {
     console.error("site screenshot capture failed:", error?.stack || error);
     process.exitCode = 1;
