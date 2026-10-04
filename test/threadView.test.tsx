@@ -16,7 +16,7 @@ import { fileURLToPath } from "node:url";
 import { useState } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { inAct, mount, unmountAll } from "./support/dom.ts";
-import { setTranscriptViewMode, setVerboseToolCards } from "../src/uiPrefs";
+import { setTranscriptViewMode } from "../src/uiPrefs";
 import { ThreadView } from "../src/components/ThreadView";
 import styles from "../src/components/ThreadView.module.css";
 import { routineWorkerActivitySummary } from "../src/workerActivity";
@@ -301,7 +301,6 @@ function assertNoNestedInteractive(html: string): void {
 afterEach(() => {
   unmountAll();
   setTranscriptViewMode("normal");
-  setVerboseToolCards(false);
 });
 
 describe("ThreadView empty states", () => {

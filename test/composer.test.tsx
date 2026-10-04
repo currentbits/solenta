@@ -17,7 +17,6 @@ import {
   setComposerBusyAction,
   setLastReasoningEffort,
   setTranscriptViewMode,
-  setVerboseToolCards,
 } from "../src/uiPrefs";
 import type {
   AgentProfile,
@@ -440,7 +439,6 @@ function mic(m: Awaited<ReturnType<typeof mount>>) {
 afterEach(() => {
   unmountAll();
   setTranscriptViewMode("normal");
-  setVerboseToolCards(false);
   setComposerBusyAction("queue");
   restoreSpeechMedia();
   delete (window as { coder?: unknown }).coder;
