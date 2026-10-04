@@ -4,18 +4,16 @@
  * Run: npm run test:renderer
  */
 import assert from "node:assert/strict";
-import { afterEach, describe, it } from "node:test";
+import { describe, it } from "node:test";
 import { mount } from "./support/dom.ts";
 import { GitTab } from "../src/components/AgentsPanel";
-import {
-  getComposerVimEnabled,
-  setComposerVimEnabled,
-} from "../src/uiPrefs";
 import type {
+  CheckpointInfo,
+  DiffResult,
   GitPullResult,
   GitRepoInfo,
+  MergeLaneInfo,
   ProjectInfo,
-  ProviderInfo,
   ThreadInfo,
   ThreadSummaryInfo,
 } from "../src/shared/ipc";
@@ -76,19 +74,39 @@ function tab(opts: {
   onRepoInfo?: (id: string) => Promise<GitRepoInfo>;
   onPull?: (id: string) => Promise<GitPullResult>;
   summaries?: ThreadSummaryInfo[];
-  onSummaries?: () => Promise<ThreadSummaryInfo[]>;
-  onOpenPrs?: () => void;
-  prsActive?: boolean;
-  providers?: ProviderInfo[];
-  onFork?: (opts?: { provider?: string; model?: string | null }) => void;
+  onSummaries?: (input?: unknown) => Promise<ThreadSummaryInfo[]>;
+  onFetchDiff?: () => Promise<DiffResult>;
+  onViewChanges?: () => void;
+  checkpoints?: CheckpointInfo[];
+  lanes?: MergeLaneInfo[];
 }) {
   const repoInfo = opts.repoInfo ?? { ok: false as const };
+  const laneProps = opts.lanes
+    ? {
+        claimLane: async () => ({
+          n: 1,
+          port: 3001,
+          path: "/tmp/lane-1",
+          branch: "lane/1",
+        }),
+        listLanes: async () => opts.lanes!,
+        previewLane: async (input: { lane: number }) => ({
+          lane: input.lane,
+          sha: "abc",
+          files: [],
+          path: "/tmp/repo",
+        }),
+        restorePreview: async () => ({ restored: true }),
+        recycleWedgedLanes: async () => [],
+      }
+    : {};
   return (
     <GitTab
       thread={opts.thread === undefined ? thread() : opts.thread}
       project={opts.project ?? project}
-      onViewChanges={() => {}}
-      listCheckpoints={async () => []}
+      onViewChanges={opts.onViewChanges ?? (() => {})}
+      fetchDiff={opts.onFetchDiff}
+      listCheckpoints={async () => opts.checkpoints ?? []}
       restoreCheckpoint={async () => {}}
       listLocalServers={async () => []}
       gitRepoInfo={opts.onRepoInfo ?? (async () => repoInfo)}
@@ -96,10 +114,11 @@ function tab(opts: {
       listThreadSummaries={
         opts.onSummaries ?? (async () => opts.summaries ?? [summary()])
       }
-      onOpenPrs={opts.onOpenPrs}
-      prsActive={opts.prsActive}
-      providers={opts.providers}
-      onFork={opts.onFork}
+      listDevScripts={async () => []}
+      startDevServer={async () => ({ running: false })}
+      stopDevServer={async () => ({ running: false })}
+      devServerStatus={async () => ({ running: false })}
+      {...laneProps}
     />
   );
 }
@@ -279,11 +298,14 @@ describe("pull card", () => {
     m.unmount();
   });
 
-  it("shows a hint instead of the button when no thread is selected", async () => {
+  it("no thread: no Pull button, one empty-state line", async () => {
     const m = await mount(tab({ thread: null }));
     await m.flush();
     assert.equal(m.query("[data-pull-btn]"), null);
-    assert.ok(m.text().includes("Select a thread to pull its branch."));
+    assert.equal(
+      m.query("[data-env-empty]")?.textContent,
+      "Select a thread to see its workspace.",
+    );
     m.unmount();
   });
 });
@@ -322,17 +344,21 @@ describe("recap card", () => {
     m.unmount();
   });
 
-  it("lists branch, PR, and status in the facts line", async () => {
+  it("shows branch and PR in the status header, and the failure line when failed", async () => {
     const m = await mount(
       tab({
-        thread: thread({ prNumber: 7, prState: "OPEN", status: "working" }),
+        thread: thread({
+          prNumber: 7,
+          prState: "OPEN",
+          status: "failed",
+          lastError: "Run error:\n  boom",
+        }),
       }),
     );
     await m.flush();
-    assert.equal(
-      (m.query("[data-recap-facts]")?.textContent || "").trim(),
-      "coder/ship-it · #7 open · working",
-    );
+    assert.equal(m.query("[data-env-branch]")?.textContent, "coder/ship-it");
+    assert.equal(m.query("[data-env-pr]")?.textContent, "#7 open");
+    assert.equal(m.query("[data-env-error]")?.textContent, "Run error: boom");
     m.unmount();
   });
 
@@ -348,9 +374,9 @@ describe("recap card", () => {
     );
     await m.flush();
     const link = m.query("[data-recap-pr]") as HTMLAnchorElement | null;
-    assert.ok(link, "PR fact is a link");
+    assert.ok(link, "PR is a link");
     assert.equal(link!.getAttribute("href"), "https://github.com/owner/repo/pull/7");
-    assert.equal((link!.textContent || "").trim(), "#7 open");
+    assert.equal((link!.textContent || "").trim(), "#7 open ›");
     m.unmount();
   });
 
@@ -360,20 +386,15 @@ describe("recap card", () => {
     );
     await m.flush();
     assert.equal(m.query("[data-recap-pr]"), null);
-    assert.match(
-      (m.query("[data-recap-facts]")?.textContent || "").trim(),
-      /#7 open/,
-    );
+    assert.equal(m.query("[data-env-pr]")?.textContent, "#7 open");
     m.unmount();
   });
 
-  it("omits the PR from the facts line when none is recorded", async () => {
+  it("omits the PR when none is recorded", async () => {
     const m = await mount(tab({}));
     await m.flush();
-    assert.equal(
-      (m.query("[data-recap-facts]")?.textContent || "").trim(),
-      "coder/ship-it · idle",
-    );
+    assert.equal(m.query("[data-env-pr]"), null);
+    assert.equal(m.query("[data-env-branch]")?.textContent, "coder/ship-it");
     m.unmount();
   });
 
@@ -395,7 +416,7 @@ describe("recap card", () => {
   it("is hidden when no thread is selected", async () => {
     const m = await mount(tab({ thread: null }));
     await m.flush();
-    assert.equal(m.query("[data-recap-card]"), null);
+    assert.equal(m.query("[data-recap-activity]"), null);
     m.unmount();
   });
 
@@ -415,148 +436,115 @@ describe("recap card", () => {
   });
 });
 
-describe("pull requests card", () => {
-  it("is hidden when no opener is passed", async () => {
-    const m = await mount(tab({}));
+
+describe("Environment layout (inspector redesign)", () => {
+  it("renders Status, Run, Checkpoints, Lanes in a fixed order", async () => {
+    const m = await mount(tab({ lanes: [] }));
     await m.flush();
-    assert.equal(m.query("[data-prs-card]"), null);
+    const pane = m.query("[data-env-tools]")!;
+    assert.deepEqual(
+      [...pane.children].map((el) => el.getAttribute("aria-label")),
+      ["Status", "Run", "Checkpoints", "Lanes"],
+    );
     m.unmount();
   });
 
-  it("opens the PR list even with no thread selected", async () => {
+  it("drops the duplicate cards and the reorder chrome", async () => {
+    const m = await mount(tab({}));
+    await m.flush();
+    for (const sel of [
+      "[data-prs-card]",
+      "[data-open-prs]",
+      "[data-thread-fork-card]",
+      "[data-thread-fork]",
+      "[data-thread-handoff]",
+      "[data-display-prefs]",
+      "[data-lane-spotlight]",
+      "[data-env-grip]",
+      "[data-env-reset]",
+      "[data-env-section]",
+      "[data-git-status]",
+      "[data-recap-card]",
+      "[data-recap-facts]",
+    ]) {
+      assert.equal(m.query(sel), null, `${sel} must be gone`);
+    }
+    assert.doesNotMatch(m.text(), /Drag to reorder|Reset order|Open Git/);
+    m.unmount();
+  });
+
+  it("status header: branch, Pull, changed-files link that opens Git", async () => {
     let opened = 0;
     const m = await mount(
       tab({
-        thread: null,
-        onOpenPrs: () => {
+        onFetchDiff: async () =>
+          ({ files: [{}, {}, {}], patch: "", truncated: false }) as unknown as DiffResult,
+        onViewChanges: () => {
           opened += 1;
         },
       }),
     );
     await m.flush();
-    const btn = m.query("[data-open-prs]");
-    assert.ok(btn, "PR opener");
-    await m.click(btn);
-    assert.equal(opened, 1);
+    const status = m.query("[data-env-status]")!;
+    assert.equal(status.querySelector("[data-env-branch]")?.textContent, "coder/ship-it");
+    assert.ok(status.querySelector("[data-pull-btn]"), "Pull exists nowhere else, so it stays");
+    const changes = status.querySelector("[data-env-changes]")!;
+    assert.equal(changes.textContent, "3 changed files ›");
+    await m.click(changes);
+    assert.equal(opened, 1, "the link opens the Git view");
     m.unmount();
   });
 
-  it("marks the opener active when the PR view is showing", async () => {
-    const m = await mount(tab({ onOpenPrs: () => {}, prsActive: true }));
-    await m.flush();
-    assert.equal(
-      m.query("[data-open-prs]")?.getAttribute("data-active"),
-      "true",
-    );
-    m.unmount();
-  });
-});
-
-describe("fork card", () => {
-  const providers: ProviderInfo[] = [
-    {
-      id: "claude",
-      name: "Claude Code",
-      available: true,
-      supportsResume: true,
-      models: [],
-      modelInfo: [],
-      efforts: [],
-    },
-    {
-      id: "grok",
-      name: "Grok",
-      available: true,
-      supportsResume: true,
-      models: [],
-      modelInfo: [],
-      efforts: [],
-    },
-  ];
-
-  it("is hidden when onFork is not wired", async () => {
+  it("changes link reads Changes › until a diff count arrives", async () => {
     const m = await mount(tab({}));
     await m.flush();
-    assert.equal(m.query("[data-thread-fork-card]"), null);
+    assert.equal(m.query("[data-env-changes]")?.textContent, "Changes ›");
     m.unmount();
   });
 
-  it("forks the open thread and lists other providers for hand-off", async () => {
-    const forks: Array<{ provider?: string } | undefined> = [];
+  it("checkpoints start collapsed and show their count", async () => {
     const m = await mount(
       tab({
-        providers,
-        onFork: (opts) => {
-          forks.push(opts);
-        },
+        checkpoints: [
+          { sha: "abc1234ffff", turn: 1, message: "turn 1", at: Date.now() },
+        ],
       }),
     );
     await m.flush();
-    assert.ok(m.query("[data-thread-fork-card]"), "Fork card present");
-    await m.click(m.query("[data-thread-fork]"));
-    assert.deepEqual(forks, [undefined]);
-
-    await m.click(m.query("[data-thread-handoff]"));
-    await m.flush();
-    const entries = m
-      .queryAll("[data-thread-handoff-menu] [data-handoff-provider]")
-      .map((el) => el.getAttribute("data-handoff-provider"));
-    assert.deepEqual(entries, ["grok"]);
-    await m.click(m.query('[data-handoff-provider="grok"]'));
-    assert.deepEqual(forks, [undefined, { provider: "grok" }]);
+    const cp = m.query("[data-checkpoints]") as HTMLDetailsElement;
+    assert.equal(cp.tagName, "DETAILS");
+    assert.equal(cp.open, false);
+    assert.equal(cp.querySelector("[data-section-count]")?.textContent, "1");
     m.unmount();
   });
 
-  it("disables Fork while the thread is working", async () => {
+  it("no thread: one empty line, Lanes still offered for the project", async () => {
+    const m = await mount(tab({ thread: null, lanes: [] }));
+    await m.flush();
+    assert.ok(m.query("[data-env-empty]"));
+    assert.equal(m.query("[data-env-status]"), null);
+    assert.equal(m.query("[data-env-run]"), null);
+    assert.ok(m.query("[data-lanes]"));
+    m.unmount();
+  });
+
+  // Migrated from envSectionReorder "still hides remote-only tools on an SSH project".
+  it("remote project: notice line; no Run, Checkpoints, Lanes, Pull or Finder", async () => {
     const m = await mount(
       tab({
-        thread: thread({ status: "working" }),
-        providers,
-        onFork: () => {},
+        project: { ...project, remoteHost: "dev@box", remotePath: "/srv/app" },
+        lanes: [],
       }),
     );
     await m.flush();
-    assert.equal(
-      (m.query("[data-thread-fork]") as HTMLButtonElement).disabled,
-      true,
-    );
-    assert.equal(
-      (m.query("[data-thread-handoff]") as HTMLButtonElement).disabled,
-      true,
-    );
-    m.unmount();
-  });
-});
-
-describe("display prefs card (#779)", () => {
-  afterEach(() => {
-    setComposerVimEnabled(false);
-  });
-
-  it("offers vim motions off by default", async () => {
-    setComposerVimEnabled(false);
-    const m = await mount(tab({}));
-    await m.flush();
-    const card = m.query("[data-display-prefs]");
-    assert.ok(card, "Display card");
-    const box = card.querySelector(
-      "[data-composer-vim-pref]",
-    ) as HTMLInputElement | null;
-    assert.ok(box, "vim motions checkbox");
-    assert.equal(box.checked, false);
-    assert.equal(getComposerVimEnabled(), false);
-    assert.match(card.textContent || "", /Vim motions in the composer/);
-    m.unmount();
-  });
-
-  it("turns the pref on from the Display card", async () => {
-    setComposerVimEnabled(false);
-    const m = await mount(tab({}));
-    await m.flush();
-    const box = m.query("[data-composer-vim-pref]") as HTMLInputElement;
-    await m.click(box);
-    assert.equal(box.checked, true);
-    assert.equal(getComposerVimEnabled(), true);
+    assert.ok(m.query("[data-remote-unavailable]"));
+    assert.ok(m.query("[data-env-changes]"), "changes link stays");
+    assert.equal(m.query("[data-env-run]"), null);
+    assert.equal(m.query("[data-local-servers]"), null);
+    assert.equal(m.query("[data-checkpoints]"), null);
+    assert.equal(m.query("[data-lanes]"), null, "lanes are local-only");
+    assert.equal(m.query("[data-pull-btn]"), null);
+    assert.equal(m.query("[data-editor]"), null);
     m.unmount();
   });
 });

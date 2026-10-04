@@ -2520,6 +2520,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         onTabChange={rememberInspectorTab}
         onSelectThread={handleSelectThread}
         onViewChanges={openChanges}
+        fetchDiff={fetchDiff}
         listCheckpoints={listCheckpoints}
         restoreCheckpoint={restoreCheckpoint}
         listLocalServers={listLocalServers}

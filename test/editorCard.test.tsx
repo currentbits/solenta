@@ -87,8 +87,11 @@ describe("EditorCard", () => {
     const open = m.query("[data-editor-open]") as HTMLButtonElement;
     assert.equal(reveal.disabled, false);
     assert.equal(open.disabled, false);
-    assert.equal((reveal.textContent || "").trim(), "Open in Finder");
-    assert.equal((open.textContent || "").trim(), "Open in Editor");
+    // Icon buttons: the label lives in aria-label and the tooltip.
+    assert.equal(reveal.getAttribute("aria-label"), "Open in Finder");
+    assert.equal(reveal.getAttribute("title"), "Open in Finder");
+    assert.equal(open.getAttribute("aria-label"), "Open in Editor");
+    assert.equal(open.getAttribute("title"), "Open in Editor");
     await m.click(reveal);
     await m.click(open);
     assert.equal(revealed, 1);
@@ -97,8 +100,10 @@ describe("EditorCard", () => {
   });
 });
 
-describe("Git tab places the Editor card after Local Servers", () => {
-  it("renders the Editor card on the Environment tab", async () => {
+describe("Environment keeps Finder and Editor in the status header", () => {
+  it("renders both links in the header and fires the App callbacks", async () => {
+    let revealed = 0;
+    let opened = 0;
     const m = await mount(
       <GitTab
         thread={thread()}
@@ -107,24 +112,23 @@ describe("Git tab places the Editor card after Local Servers", () => {
         listCheckpoints={async () => []}
         restoreCheckpoint={async () => {}}
         listLocalServers={async () => []}
+        revealInFinder={async () => {
+          revealed += 1;
+        }}
+        openInEditor={async () => {
+          opened += 1;
+        }}
       />,
     );
     await m.flush();
-    const editor = m.query("[data-editor]");
-    const servers = m.query("[data-local-servers]");
-    assert.ok(editor, "Editor card present");
-    assert.ok(servers, "Local Servers card present");
     assert.ok(
-      Boolean(
-        servers &&
-          editor &&
-          Boolean(
-            servers.compareDocumentPosition(editor) &
-              Node.DOCUMENT_POSITION_FOLLOWING,
-          ),
-      ),
-      "Editor card follows Local Servers",
+      m.query("[data-env-status] [data-editor]"),
+      "Finder/Editor live in the status header (Finder has no other home)",
     );
+    await m.click(m.query("[data-editor-reveal]"));
+    await m.click(m.query("[data-editor-open]"));
+    assert.equal(revealed, 1);
+    assert.equal(opened, 1);
     m.unmount();
   });
 });

@@ -139,7 +139,7 @@ export function useVerboseToolCards(): boolean {
 
 /**
  * Collapse large pastes into labeled cards (issue #381). On by default;
- * Environment can turn it off so a paste lands in the textarea as text.
+ * Settings → General → Display can turn it off so a paste lands in the textarea as text.
  */
 const pasteCards = makeFlagPref("coder.pasteCards", true);
 export const getPasteCardsEnabled = pasteCards.get;
