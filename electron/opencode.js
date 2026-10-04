@@ -1,16 +1,8 @@
 "use strict";
 
-// cross-spawn, not child_process: on Windows the agent CLIs install as
-// .cmd shims and Node refuses to exec those directly. cross-spawn routes
-// them through cmd.exe with correct escaping, which matters because the
-// prompt travels in argv (#442).
-const spawn = require("cross-spawn");
-const { killTree, agentSpawnOptions } = require("./proc.js");
+const { runJsonLines, SIGKILL_AFTER_MS } = require("./agent.js");
 const { harvestToolResult } = require("./tool-images.js");
 
-const SIGKILL_AFTER_MS = 3000;
-// Max stderr retained per child process (tail), for error reporting.
-const STDERR_TAIL_CHARS = 64 * 1024;
 const INPUT_TRUNCATE = 2000;
 const OUTPUT_TRUNCATE = 4000;
 
@@ -262,120 +254,17 @@ function runOpencode(opts) {
     onExit,
     onError,
   } = opts;
-
-  let stderrText = "";
-  let fullStdout = "";
-  let lineBuf = "";
-  let finished = false;
-  let killTimer = null;
-  let killed = false;
-  let gotJson = false;
-
-  function handleLine(line) {
-    const trimmed = line.trim();
-    if (!trimmed) return;
-    let obj;
-    try {
-      obj = JSON.parse(trimmed);
-    } catch {
-      return;
-    }
-    if (!obj || typeof obj !== "object") return;
-    gotJson = true;
-    if (typeof onEvent === "function") {
-      try {
-        onEvent(obj);
-      } catch {
-        // defensive: never crash the parser
-      }
-    }
-  }
-
-  function finish(code) {
-    if (finished) return;
-    finished = true;
-    if (killTimer) {
-      clearTimeout(killTimer);
-      killTimer = null;
-    }
-    if (lineBuf.trim()) {
-      handleLine(lineBuf);
-      lineBuf = "";
-    }
-    if (typeof onExit === "function") {
-      onExit({
-        code,
-        stderr: stderrText,
-        fullStdout,
-        gotJson,
-      });
-    }
-  }
-
-  let child;
-  try {
-    child = spawn(
-      binary,
-      args,
-      agentSpawnOptions({
-        cwd,
-        stdio: ["ignore", "pipe", "pipe"],
-        env: envOverride
-          ? { ...process.env, ...envOverride }
-          : undefined,
-      }),
-    );
-  } catch (err) {
-    const error = err instanceof Error ? err : new Error(String(err));
-    if (typeof onError === "function") onError(error);
-    if (typeof onExit === "function") {
-      onExit({
-        code: 1,
-        stderr: error.message,
-        fullStdout: "",
-        gotJson: false,
-      });
-    }
-    return { kill() {} };
-  }
-
-  child.stdout.setEncoding("utf8");
-  child.stderr.setEncoding("utf8");
-
-  child.stdout.on("data", (chunk) => {
-    const str = String(chunk);
-    fullStdout += str;
-    lineBuf += str;
-    let nl;
-    while ((nl = lineBuf.indexOf("\n")) >= 0) {
-      const line = lineBuf.slice(0, nl);
-      lineBuf = lineBuf.slice(nl + 1);
-      handleLine(line);
-    }
+  const { kill } = runJsonLines({
+    binary,
+    args,
+    cwd,
+    env: envOverride ? { ...process.env, ...envOverride } : undefined,
+    keepStdout: true,
+    onEvent,
+    onExit,
+    onError,
   });
-
-  child.stderr.on("data", (chunk) => {
-    // Tail-keep: stderr feeds error reporting, and a noisy CLI would
-    // otherwise grow this buffer for the life of a long-lived process.
-    stderrText = (stderrText + chunk).slice(-STDERR_TAIL_CHARS);
-  });
-
-  child.on("error", (err) => {
-    if (typeof onError === "function") onError(err);
-    finish(1);
-  });
-
-  child.on("close", (code) => {
-    finish(code);
-  });
-
-  return {
-    kill() {
-      if (killed || finished) return;
-      killed = true;
-      killTimer = killTree(child, SIGKILL_AFTER_MS);
-    },
-  };
+  return { kill };
 }
 
 module.exports = {

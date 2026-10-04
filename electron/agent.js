@@ -157,6 +157,150 @@ function runAgent(opts) {
 }
 
 /**
+ * Spawn a CLI that writes one JSON object per stdout line (NDJSON / JSONL).
+ * Shared plumbing for the stream-json provider adapters.
+ *
+ * Non-JSON and non-object lines are skipped. onEvent throwing never breaks
+ * the parser. On exit (or spawn/runtime error) the trailing partial line is
+ * flushed, the SIGKILL escalation timer is cleared and onExit fires exactly
+ * once with { code, stderr, fullStdout, gotJson }. Adapters map that to
+ * their own payload. kill() sends SIGTERM to the tree, then SIGKILL after
+ * SIGKILL_AFTER_MS.
+ *
+ * @param {object} opts
+ * @param {string} opts.binary
+ * @param {string[]} [opts.args]
+ * @param {string} [opts.cwd]
+ * @param {NodeJS.ProcessEnv} [opts.env] - full child env; undefined inherits
+ * @param {"ignore" | "pipe"} [opts.stdin="ignore"]
+ * @param {boolean} [opts.keepStdout=false] - accumulate fullStdout (one-shot
+ *   runs only; a long-lived child would grow it without bound)
+ * @param {(obj: object) => void} [opts.onEvent]
+ * @param {(info: { code: number | null, stderr: string, fullStdout: string, gotJson: boolean }) => void} [opts.onExit]
+ * @param {(err: Error) => void} [opts.onError]
+ * @returns {{ child: import("node:child_process").ChildProcess | null, kill: () => void, getStderr: () => string, isFinished: () => boolean }}
+ *   child is null when spawn threw (onExit already fired with code 1)
+ */
+function runJsonLines(opts) {
+  const {
+    binary,
+    args = [],
+    cwd,
+    env,
+    stdin = "ignore",
+    keepStdout = false,
+    onEvent,
+    onExit,
+    onError,
+  } = opts;
+
+  let stderrText = "";
+  let fullStdout = "";
+  let lineBuf = "";
+  let finished = false;
+  let killTimer = null;
+  let killed = false;
+  let gotJson = false;
+
+  function handleLine(line) {
+    const trimmed = line.trim();
+    if (!trimmed) return;
+    let obj;
+    try {
+      obj = JSON.parse(trimmed);
+    } catch {
+      return;
+    }
+    if (!obj || typeof obj !== "object") return;
+    gotJson = true;
+    if (typeof onEvent === "function") {
+      try {
+        onEvent(obj);
+      } catch {
+        // defensive: never crash the parser
+      }
+    }
+  }
+
+  function finish(code) {
+    if (finished) return;
+    finished = true;
+    if (killTimer) {
+      clearTimeout(killTimer);
+      killTimer = null;
+    }
+    if (lineBuf.trim()) {
+      handleLine(lineBuf);
+      lineBuf = "";
+    }
+    if (typeof onExit === "function") {
+      onExit({ code, stderr: stderrText, fullStdout, gotJson });
+    }
+  }
+
+  let child;
+  try {
+    child = spawn(
+      binary,
+      args,
+      agentSpawnOptions({ cwd, env, stdio: [stdin, "pipe", "pipe"] }),
+    );
+  } catch (err) {
+    const error = err instanceof Error ? err : new Error(String(err));
+    if (typeof onError === "function") onError(error);
+    if (typeof onExit === "function") {
+      onExit({ code: 1, stderr: error.message, fullStdout: "", gotJson: false });
+    }
+    return {
+      child: null,
+      kill() {},
+      getStderr: () => "",
+      isFinished: () => true,
+    };
+  }
+
+  child.stdout.setEncoding("utf8");
+  child.stderr.setEncoding("utf8");
+
+  child.stdout.on("data", (chunk) => {
+    if (keepStdout) fullStdout += chunk;
+    lineBuf += chunk;
+    let nl;
+    while ((nl = lineBuf.indexOf("\n")) >= 0) {
+      const line = lineBuf.slice(0, nl);
+      lineBuf = lineBuf.slice(nl + 1);
+      handleLine(line);
+    }
+  });
+
+  child.stderr.on("data", (chunk) => {
+    // Tail-keep: stderr feeds error reporting, and a noisy CLI would
+    // otherwise grow this buffer for the life of a long-lived process.
+    stderrText = (stderrText + chunk).slice(-STDERR_TAIL_CHARS);
+  });
+
+  child.on("error", (err) => {
+    if (typeof onError === "function") onError(err);
+    finish(1);
+  });
+
+  child.on("close", (code) => {
+    finish(code);
+  });
+
+  return {
+    child,
+    kill() {
+      if (killed || finished) return;
+      killed = true;
+      killTimer = killTree(child, SIGKILL_AFTER_MS);
+    },
+    getStderr: () => stderrText,
+    isFinished: () => finished,
+  };
+}
+
+/**
  * Parse CODER_AGENT_CMD style string: first token = binary, rest = leading args.
  * @param {string} [cmd]
  * @returns {{ command: string, args: string[] }}
@@ -172,6 +316,7 @@ function parseAgentCommand(cmd) {
 
 module.exports = {
   runAgent,
+  runJsonLines,
   parseAgentCommand,
   CHUNK_THROTTLE_MS,
   SIGKILL_AFTER_MS,

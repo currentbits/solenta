@@ -11,19 +11,16 @@
  * process-wide HOME). Never follow those symlinks on reclaim.
  */
 
-const spawn = require("cross-spawn");
 const fs = require("node:fs");
 const path = require("node:path");
-const { killTree, agentSpawnOptions } = require("./proc.js");
+const { reclaimOverlayHomes } = require("./overlayHomes.js");
+const { runJsonLines } = require("./agent.js");
 const { posixQuote } = require("./ssh.js");
 const {
   injectMuseGuardrailHooks,
   museGuardrailHookCommand,
 } = require("./muse-guardrail-hook.js");
 const remoteOverlay = require("./remote-overlay.js");
-
-const SIGKILL_AFTER_MS = 3000;
-const STDERR_TAIL_CHARS = 64 * 1024;
 
 function linkOrSkip(src, dst) {
   if (!fs.existsSync(src) || fs.existsSync(dst)) return;
@@ -211,62 +208,6 @@ function deployMuseGuardrailOverlay(opts) {
 }
 
 /**
- * True when the overlay must stay on disk: a muse child may still be
- * reading it. Matches worktree GC's live-thread skip.
- * @param {object | null | undefined} store
- * @param {string} threadId
- */
-function isLiveMuseThread(store, threadId) {
-  if (!store || typeof store.getThread !== "function") return false;
-  const thread = store.getThread(threadId);
-  if (!thread) return false;
-  return thread.status === "working" || thread.status === "quota-wait";
-}
-
-/**
- * Remove `target` without following symlinks. Unlink a symlink (even one
- * pointing at a directory) instead of descending into the target — the
- * overlay's auth.json/sessions links go into ~/.config/muse and
- * ~/.local/share/muse.
- * @param {string} target
- */
-function rmWithoutFollowing(target) {
-  let st;
-  try {
-    st = fs.lstatSync(target);
-  } catch (err) {
-    if (err && err.code === "ENOENT") return;
-    throw err;
-  }
-  if (st.isSymbolicLink() || !st.isDirectory()) {
-    fs.unlinkSync(target);
-    return;
-  }
-  let entries = [];
-  try {
-    entries = fs.readdirSync(target, { withFileTypes: true });
-  } catch (err) {
-    if (err && err.code === "ENOENT") return;
-    throw err;
-  }
-  for (const ent of entries) {
-    const child = path.join(target, ent.name);
-    // isSymbolicLink first: a junction/link-to-dir can also report as a
-    // directory on Windows, and following it would wipe ~/.config/muse.
-    if (ent.isSymbolicLink() || !ent.isDirectory()) {
-      try {
-        fs.unlinkSync(child);
-      } catch {
-        // best-effort
-      }
-    } else {
-      rmWithoutFollowing(child);
-    }
-  }
-  fs.rmdirSync(target);
-}
-
-/**
  * Reclaim stale Muse XDG overlays (#873).
  *
  * One dir per thread that has ever run muse, under
@@ -280,52 +221,7 @@ function rmWithoutFollowing(target) {
  * @returns {{ removed: string[], skipped: string[] }}
  */
 function reclaimMuseHomes(opts) {
-  const userDataPath = String((opts && opts.userDataPath) || "");
-  if (!userDataPath) return { removed: [], skipped: [] };
-  const store = opts && opts.store;
-  // Without a store we cannot tell a live muse turn from a stale overlay.
-  // Refuse rather than risk deleting an in-use home.
-  if (!store || typeof store.getThread !== "function") {
-    return { removed: [], skipped: [] };
-  }
-  const base = path.join(userDataPath, "muse-homes");
-  let baseStat;
-  try {
-    baseStat = fs.lstatSync(base);
-  } catch (err) {
-    if (err && err.code === "ENOENT") return { removed: [], skipped: [] };
-    throw err;
-  }
-  // A symlinked muse-homes/ would make readdir walk the target. Refuse.
-  if (!baseStat.isDirectory() || baseStat.isSymbolicLink()) {
-    return { removed: [], skipped: [] };
-  }
-
-  const removed = [];
-  const skipped = [];
-  let names = [];
-  try {
-    names = fs.readdirSync(base);
-  } catch {
-    return { removed, skipped };
-  }
-  for (const name of names) {
-    // path.basename guard: readdir cannot return ".." on POSIX, but a
-    // crafted name with a separator must never walk outside muse-homes.
-    if (!name || name !== path.basename(name)) continue;
-    const dest = path.join(base, name);
-    if (isLiveMuseThread(store, name)) {
-      skipped.push(dest);
-      continue;
-    }
-    try {
-      rmWithoutFollowing(dest);
-      removed.push(dest);
-    } catch {
-      // housekeeping; a busy overlay is retried on the next pass
-    }
-  }
-  return { removed, skipped };
+  return reclaimOverlayHomes(opts, "muse-homes");
 }
 
 /**
@@ -422,126 +318,47 @@ function runMuse(opts) {
     onExit,
     onError,
   } = opts;
-  const childEnv = envOverride
-    ? { ...process.env, ...envOverride }
-    : undefined;
+  const { kill } = runJsonLines({
+    binary,
+    args,
+    cwd,
+    env: envOverride ? { ...process.env, ...envOverride } : undefined,
+    keepStdout: true,
+    onEvent,
+    onExit,
+    onError,
+  });
+  return { kill };
+}
 
-  let stderrText = "";
-  let fullStdout = "";
-  let lineBuf = "";
-  let finished = false;
-  let killTimer = null;
-  let killed = false;
-  let gotJson = false;
-
-  function handleLine(line) {
-    const trimmed = line.trim();
-    if (!trimmed) return;
-    let obj;
+/**
+ * Muse exec --json JSONL → assistant text via extractAssistantText (ask /
+ * commitmsg one-shot runs).
+ * Echo delta and terminal carry the same full payload.text; terminal is a
+ * snapshot (replace), matching startMuseRun — do not double-concatenate.
+ * @param {string} stdout
+ * @returns {string}
+ */
+function extractStdoutText(stdout) {
+  let text = "";
+  for (const line of String(stdout || "").split("\n")) {
+    const t = line.trim();
+    if (!t.startsWith("{")) continue;
+    let ev;
     try {
-      obj = JSON.parse(trimmed);
+      ev = JSON.parse(t);
     } catch {
-      return;
+      continue;
     }
-    if (!obj || typeof obj !== "object") return;
-    gotJson = true;
-    emitEvent(obj);
-  }
-
-  /**
-   * @param {object} obj
-   */
-  function emitEvent(obj) {
-    if (typeof onEvent !== "function") return;
-    try {
-      onEvent(obj);
-    } catch {
-      // defensive: never crash the parser
+    const piece = extractAssistantText(ev);
+    if (!piece) continue;
+    if (ev.payload_type === "run.terminal.completed") {
+      if (piece !== text) text = piece;
+    } else {
+      text += piece;
     }
   }
-
-  function finish(code) {
-    if (finished) return;
-    finished = true;
-    if (killTimer) {
-      clearTimeout(killTimer);
-      killTimer = null;
-    }
-    if (lineBuf.trim()) {
-      handleLine(lineBuf);
-      lineBuf = "";
-    }
-    if (typeof onExit === "function") {
-      onExit({
-        code,
-        stderr: stderrText,
-        fullStdout,
-        gotJson,
-      });
-    }
-  }
-
-  let child;
-  try {
-    child = spawn(
-      binary,
-      args,
-      agentSpawnOptions({
-        cwd,
-        env: childEnv,
-        stdio: ["ignore", "pipe", "pipe"],
-      }),
-    );
-  } catch (err) {
-    const error = err instanceof Error ? err : new Error(String(err));
-    if (typeof onError === "function") onError(error);
-    if (typeof onExit === "function") {
-      onExit({
-        code: 1,
-        stderr: error.message,
-        fullStdout: "",
-        gotJson: false,
-      });
-    }
-    return { kill() {} };
-  }
-
-  child.stdout.setEncoding("utf8");
-  child.stderr.setEncoding("utf8");
-
-  child.stdout.on("data", (chunk) => {
-    const str = String(chunk);
-    fullStdout += str;
-    lineBuf += str;
-    let nl;
-    while ((nl = lineBuf.indexOf("\n")) >= 0) {
-      const line = lineBuf.slice(0, nl);
-      lineBuf = lineBuf.slice(nl + 1);
-      handleLine(line);
-    }
-  });
-
-  child.stderr.on("data", (chunk) => {
-    const str = String(chunk);
-    stderrText = (stderrText + str).slice(-STDERR_TAIL_CHARS);
-  });
-
-  child.on("error", (err) => {
-    if (typeof onError === "function") onError(err);
-    finish(1);
-  });
-
-  child.on("close", (code) => {
-    finish(code);
-  });
-
-  return {
-    kill() {
-      if (killed || finished) return;
-      killed = true;
-      killTimer = killTree(child, SIGKILL_AFTER_MS);
-    },
-  };
+  return text;
 }
 
 module.exports = {
@@ -558,4 +375,5 @@ module.exports = {
   extractUsage,
   toolCardKey,
   runMuse,
+  extractStdoutText,
 };
