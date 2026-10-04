@@ -33,3 +33,11 @@
 .dotBlocking {
   background: var(--success-fg);
 }
+
+.stayAwake[data-compact] {
+  padding: 0 8px;
+}
+
+.stayAwake[data-compact] .label {
+  display: none;
+}

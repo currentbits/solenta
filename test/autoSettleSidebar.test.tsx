@@ -92,7 +92,7 @@ describe("Sidebar auto-settle window (round 45)", () => {
     assert.ok(header, "Settled shelf present under default 3");
     assert.match(
       header!.textContent || "",
-      /Settled \(1\)/,
+      /Settled · 1/,
       `settled thread counts into Settled, got: ${header!.textContent}`,
     );
     if (header!.getAttribute("aria-expanded") !== "true") {
