@@ -611,20 +611,6 @@ function withQuery(url, query) {
 }
 
 /**
- * Bind coder-memory to a live working directory so the server, not the
- * model, owns project scope (issue #671 / #710). Other servers stay bare.
- * @param {string} url
- * @param {string} name
- * @param {string} [projectPath]
- */
-function boundCoderMemoryUrl(url, name, projectPath) {
-  if (name === "coder-memory" && projectPath) {
-    return withQuery(url, { project: projectPath });
-  }
-  return url;
-}
-
-/**
  * Bind Solenta HTTP MCP URLs for a grok run. coder-memory gets `?project=`
  * (working directory); coder-threads gets `?projectId=` so the server, not
  * the model, owns the scope (issue #706). Other servers stay bare.
@@ -2044,7 +2030,6 @@ module.exports = {
   ensureKimiMcpConfig,
   kimiMcpServersForRun,
   withQuery,
-  boundCoderMemoryUrl,
   boundSolentaMcpUrl,
   ensureGrokMcpConfig,
   ensureCursorMcpConfig,

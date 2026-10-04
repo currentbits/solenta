@@ -230,28 +230,6 @@ function gitOut(cwd, args, opts) {
 }
 
 /**
- * gitOut for the diff path: prefix git with ssh when the project is remote.
- * WSL-side cwds wrap inside gitOut via resolveGitCommand. Other worktrees
- * operations stay local (worktrees/PRs are out of scope on remotes).
- * @param {{ remoteHost?: string, remotePath?: string, path?: string } | null} project
- * @param {string} cwd
- * @param {string[]} args
- * @param {{ raw?: boolean }} [opts]
- */
-function gitOutForDiff(project, cwd, args, opts) {
-  if (project && project.remoteHost) {
-    const out = execCommand(project, "git", args, {
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "pipe"],
-      maxBuffer: GIT_MAX_BUFFER,
-    });
-    const text = out == null ? "" : String(out);
-    return opts && opts.raw ? text : text.trim();
-  }
-  return gitOut(cwd, args, opts);
-}
-
-/**
  * Run git without throwing. Returns { ok, stdout, stderr, combined }.
  * @param {string} cwd
  * @param {string[]} args
@@ -311,7 +289,9 @@ function gitOutAsync(cwd, args, opts) {
 }
 
 /**
- * Async gitOutForDiff: prefix git with ssh when the project is remote.
+ * gitOut for the diff path: prefix git with ssh when the project is remote.
+ * WSL-side cwds wrap inside gitOut via resolveGitCommand. Other worktrees
+ * operations stay local (worktrees/PRs are out of scope on remotes).
  * @param {{ remoteHost?: string, remotePath?: string, path?: string } | null} project
  * @param {string} cwd
  * @param {string[]} args
@@ -327,7 +307,7 @@ function gitOutForDiffAsync(project, cwd, args, opts) {
 
 /**
  * execFile through wrapCommand. Drops cwd on remotes (same as execCommand).
- * Throws on failure so callers match gitOut / gitOutForDiff.
+ * Throws on failure so callers match gitOut / gitOutForDiffAsync.
  * @param {{ remoteHost?: string, remotePath?: string, path?: string } | null} project
  * @param {string} cwd
  * @param {string[]} args
