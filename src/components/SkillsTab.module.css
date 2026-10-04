@@ -18,8 +18,7 @@
   min-width: 0;
 }
 
-.toolbarRow,
-.filterRow {
+.toolbarRow {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -50,8 +49,6 @@
 }
 
 .searchInput:focus-visible,
-.viewBtn:focus-visible,
-.filterChip:focus-visible,
 .rowToggle:focus-visible {
   outline: none;
   box-shadow: var(--focus-ring);
@@ -62,33 +59,6 @@
   font-size: 12px;
   font-variant-numeric: tabular-nums;
   color: var(--text-muted);
-}
-
-.viewBtn,
-.filterChip {
-  flex: 0 1 auto;
-  min-width: 0;
-  min-height: 28px;
-  padding: 0 8px;
-  border-radius: 6px;
-  border: 1px solid var(--border-soft);
-  background: transparent;
-  color: var(--text-muted);
-  font-size: 11px;
-  font-weight: 550;
-}
-
-.viewBtn:hover,
-.filterChip:hover {
-  color: var(--text);
-  background: var(--card-hover);
-}
-
-.viewBtn[aria-pressed="true"],
-.filterChip[data-on="true"] {
-  color: var(--text);
-  border-color: var(--border);
-  background: var(--card);
 }
 
 .scroll {
@@ -124,15 +94,6 @@
   margin-top: 8px;
   padding-top: 12px;
   border-top: 1px solid var(--border-soft);
-}
-
-.sectionHead {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  flex-wrap: wrap;
-  gap: 8px;
-  min-width: 0;
 }
 
 .sectionLabel,
@@ -292,14 +253,6 @@
   color: var(--text-dim);
 }
 
-.badgeClaude {
-  color: var(--info-fg);
-}
-
-.badgeAgents {
-  color: var(--amber);
-}
-
 .coverage,
 .tokens {
   flex-shrink: 0;
@@ -396,7 +349,6 @@
 }
 
 .input,
-.select,
 .textarea {
   min-width: 0;
   min-height: 32px;
@@ -416,11 +368,6 @@
   width: auto;
 }
 
-.formRow > .select {
-  flex: 0 1 auto;
-  width: auto;
-}
-
 .formRow > .textarea {
   flex: 1 1 100%;
   width: 100%;
@@ -432,29 +379,21 @@
 }
 
 .input:hover:not(:disabled),
-.select:hover:not(:disabled),
 .textarea:hover:not(:disabled) {
   border-color: var(--border);
   background: var(--card-hover);
 }
 
 .input:focus,
-.select:focus,
 .textarea:focus {
   border-color: var(--blue-border);
   box-shadow: var(--focus-ring);
 }
 
 .input:disabled,
-.select:disabled,
 .textarea:disabled {
   opacity: 0.55;
   cursor: not-allowed;
-}
-
-.select {
-  max-width: 100%;
-  font-size: 12px;
 }
 
 .textarea {
@@ -720,4 +659,45 @@
   background: var(--card);
   border: 1px solid transparent;
   border-radius: 6px;
+}
+
+/* Settings → Skills & MCP: the moved sections, stacked. */
+.manager {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+}
+
+/* One filter menu replaces the source and provider chip rows. */
+.filterMenu {
+  position: relative;
+  flex-shrink: 0;
+}
+
+.filterMenu > summary {
+  list-style: none;
+  cursor: pointer;
+}
+
+.filterMenu > summary::-webkit-details-marker {
+  display: none;
+}
+
+.filterMenuList {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 4px);
+  z-index: 20;
+  min-width: 180px;
+  max-height: 320px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 10px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-pop);
 }

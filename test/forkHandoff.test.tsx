@@ -20,10 +20,15 @@ import {
   type FakeCoder,
 } from "./support/fakeCoder.ts";
 import App from "../src/App";
-import type { ProviderInfo, ThreadInfo } from "../src/shared/ipc";
+import type { ProviderInfo, ThreadDetail, ThreadInfo } from "../src/shared/ipc";
 import { expandAgents } from "./support/expandAgents.ts";
 
 const NOW = Date.now();
+
+/** A started thread: a message-less detail is a draft, whose header has no Fork (#1411). */
+const STARTED = [
+  { id: "u-start", role: "user", text: "start", createdAt: 1 },
+] as ThreadDetail["messages"];
 
 const providers: ProviderInfo[] = [
   {
@@ -234,7 +239,7 @@ describe("App fork / hand-off wiring (round 49)", () => {
     m.unmount();
   });
 
-  it("Environment Hand off submenu excludes current provider (and lists others)", async () => {
+  it("Header Hand off submenu excludes current provider (and lists others)", async () => {
     const d = decoy();
     const s = source();
     const o = otherProjectThread();
@@ -247,34 +252,30 @@ describe("App fork / hand-off wiring (round 49)", () => {
       threads: [d, s, o],
       details: {
         "t-decoy": detail({ thread: d }),
-        "t-source-fork": detail({ thread: s }),
+        "t-source-fork": detail({ thread: s, messages: STARTED }),
         "t-p2": detail({ thread: o }),
       },
     });
     const m = await boot(fake);
     await selectThread(m, "source handoff thread");
 
-    const envHandoff = m.query("[data-thread-handoff]");
-    assert.ok(envHandoff, "Environment Hand off to… must render");
-    assert.ok(
-      envHandoff!.closest("[data-thread-fork-card]"),
-      "Hand off lives on the Environment Fork card",
-    );
-    await m.click(envHandoff as HTMLElement);
+    const headerHandoff = m.query("[data-thread-header] [data-thread-handoff]");
+    assert.ok(headerHandoff, "Header Hand off to… must render");
+    await m.click(headerHandoff as HTMLElement);
     await m.flush();
 
-    assert.ok(m.query("[data-thread-handoff-menu]"), "Environment hand-off menu open");
-    const envMenu = m.query("[data-thread-handoff-menu]")!;
-    const envEntries = Array.from(
-      envMenu.querySelectorAll("[data-handoff-provider]"),
+    const menu = m.query("[data-thread-header] [data-thread-handoff-menu]");
+    assert.ok(menu, "Header hand-off menu open");
+    const entries = Array.from(
+      menu.querySelectorAll("[data-handoff-provider]"),
     ).map((el) => el.getAttribute("data-handoff-provider"));
     assert.ok(
-      !envEntries.includes("claude"),
-      `current provider must not appear in Environment Hand off menu, got: ${envEntries.join(",")}`,
+      !entries.includes("claude"),
+      `current provider must not appear in the header Hand off menu, got: ${entries.join(",")}`,
     );
     assert.ok(
-      envEntries.includes("grok") && envEntries.includes("kimi"),
-      "other providers must still be listed in Environment menu (positive control)",
+      entries.includes("grok") && entries.includes("kimi"),
+      "other providers must still be listed in the header menu (positive control)",
     );
     m.unmount();
   });
@@ -444,7 +445,7 @@ describe("App fork / hand-off wiring (round 49)", () => {
     m.unmount();
   });
 
-  it("Environment Fork also hits threads.fork without provider", async () => {
+  it("Header Fork also hits threads.fork without provider", async () => {
     const d = decoy();
     const s = source();
     const o = otherProjectThread();
@@ -457,20 +458,16 @@ describe("App fork / hand-off wiring (round 49)", () => {
       threads: [d, s, o],
       details: {
         "t-decoy": detail({ thread: d }),
-        "t-source-fork": detail({ thread: s }),
+        "t-source-fork": detail({ thread: s, messages: STARTED }),
         "t-p2": detail({ thread: o }),
       },
     });
     const m = await boot(fake);
     await selectThread(m, "source handoff thread");
 
-    const envFork = m.query("[data-thread-fork]");
-    assert.ok(envFork, "Environment Fork must render");
-    assert.ok(
-      envFork!.closest("[data-thread-fork-card]"),
-      "Fork lives on the Environment card",
-    );
-    await m.click(envFork as HTMLElement);
+    const headerFork = m.query("[data-thread-header] [data-thread-fork]");
+    assert.ok(headerFork, "Header Fork must render");
+    await m.click(headerFork as HTMLElement);
     await m.flush();
 
     const forks = fake.of("threads.fork");
@@ -480,6 +477,41 @@ describe("App fork / hand-off wiring (round 49)", () => {
     assert.equal(
       Object.prototype.hasOwnProperty.call(arg, "provider"),
       false,
+    );
+    m.unmount();
+  });
+
+  it("the inspector has no Fork card; the header and card menu are the homes", async () => {
+    const d = decoy();
+    const s = source();
+    const o = otherProjectThread();
+    const fake = createFakeCoder({
+      projects: [
+        project({ id: "p1", slug: "acme/one", name: "one", path: "/tmp/one" }),
+        project({ id: "p2", slug: "acme/two", name: "two", path: "/tmp/two" }),
+      ],
+      providers,
+      threads: [d, s, o],
+      details: {
+        "t-decoy": detail({ thread: d }),
+        "t-source-fork": detail({ thread: s, messages: STARTED }),
+        "t-p2": detail({ thread: o }),
+      },
+    });
+    const m = await boot(fake);
+    await selectThread(m, "source handoff thread");
+    assert.equal(m.query("[data-thread-fork-card]"), null, "no Environment Fork card");
+    const forks = m.queryAll("[data-thread-fork]");
+    assert.equal(forks.length, 1, "exactly one Fork button on screen");
+    assert.ok(forks[0]!.closest("[data-thread-header]"), "and it is the header's");
+    await openCardMenu(m, "t-source-fork");
+    assert.ok(
+      document.querySelector('[data-fork-btn="t-source-fork"]'),
+      "card menu keeps Fork",
+    );
+    assert.ok(
+      document.querySelector('[data-handoff-provider="grok"]'),
+      "card menu keeps Hand off",
     );
     m.unmount();
   });

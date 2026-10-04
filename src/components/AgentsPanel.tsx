@@ -5,15 +5,12 @@ import {
   useMemo,
   useRef,
   useState,
-  type DragEvent as ReactDragEvent,
   type KeyboardEvent as ReactKeyboardEvent,
-  type MutableRefObject,
-  type ReactNode,
 } from "react";
 import type {
   AgentStatus,
-  AppSettings,
   CheckpointInfo,
+  DiffResult,
   GitSyncInfo,
   GitRepoInfo,
   GitPullResult,
@@ -25,38 +22,14 @@ import type {
   MergeLanePreview,
   MergeLaneRecycle,
   MergeLaneRestore,
-  MergeSpotlight,
-  McpCatalogEntry,
-  McpImportPreview,
-  McpInstallRequest,
-  McpInstallResult,
-  McpPreviewImportInput,
-  McpServerDefinition,
-  McpServerSaveInput,
   MemoryEntryInfo,
   MemoryMaintenanceReport,
   MemoryReviewResolution,
-  AgentConfigDoctorReport,
-  AgentConfigPreview,
-  AgentConfigWriteResult,
-  ProjectCodeMap,
   PhaseView,
   ProjectInfo,
   ProviderInfo,
   SessionUsage,
-  SkillCatalogEntry,
-  SkillImportPreview,
-  SkillInstallRequest,
-  SkillInstallResult,
   SkillInfo,
-  SkillPreviewImportInput,
-  SkillTarget,
-  SkillWrite,
-  HarnessSourceId,
-  HarnessSourceInfo,
-  HarnessImportPreview,
-  HarnessInstallRequest,
-  HarnessInstallResult,
   ThreadInfo,
   ThreadSummariesInput,
   ThreadSummaryInfo,
@@ -69,11 +42,9 @@ import {
   formatCostUsd,
   formatRelativeAge,
   formatTokenSum,
-  permissionModeLabel,
   providerDisplayName,
   shortSessionId,
 } from "../format";
-import { contextRing, threadContextWindow } from "../contextRing";
 import { buildWaitStates, waitLabel, type WaitState } from "../waiting";
 import {
   isDirectCrewChild,
@@ -83,6 +54,9 @@ import {
 import { CrewIntegration } from "./CrewIntegration";
 import { MemoryTab } from "./MemoryTab";
 import { SkillsTab } from "./SkillsTab";
+import { InspectorSection } from "./InspectorSection";
+import inspector from "./Inspector.module.css";
+import type { SettingsPane } from "./SettingsModal";
 import {
   formatPostMergeLine,
   formatVerifySummary,
@@ -96,26 +70,6 @@ import {
 } from "../hypothesisLedger";
 import { useEscapeClose } from "../useEscapeClose";
 import { useModalFocus } from "../useModalFocus";
-import {
-  setDivergenceCardEnabled,
-  useDivergenceCardEnabled,
-  setRunDurationEnabled,
-  useRunDurationEnabled,
-  setPasteCardsEnabled,
-  usePasteCardsEnabled,
-  setComposerVimEnabled,
-  useComposerVimEnabled,
-} from "../uiPrefs";
-import {
-  ENV_SECTION_LABELS,
-  isDefaultEnvSectionOrder,
-  moveEnvSection,
-  moveEnvSectionAmong,
-  resetEnvSectionOrder,
-  setEnvSectionOrder,
-  useEnvSectionOrder,
-  type EnvSectionId,
-} from "../envSectionOrder";
 import styles from "./AgentsPanel.module.css";
 
 export type PanelTab = "agents" | "git" | "memory" | "skills";
@@ -179,19 +133,6 @@ export function defaultInspectorTab(input: {
   return "git";
 }
 
-/** Shared props for the 14px line icons in Environment card labels. */
-const LABEL_ICON_PROPS = {
-  width: 14,
-  height: 14,
-  viewBox: "0 0 16 16",
-  fill: "none",
-  stroke: "currentColor",
-  strokeWidth: 1.5,
-  strokeLinecap: "round",
-  strokeLinejoin: "round",
-  "aria-hidden": true,
-} as const;
-
 interface AgentsPanelProps {
   workflow: WorkflowView | null;
   thread: ThreadInfo | null;
@@ -227,6 +168,8 @@ interface AgentsPanelProps {
   onRetryAgent?: (agentId: string) => void;
   /** Opens the Git pane (fresh load). */
   onViewChanges: () => void;
+  /** Selected thread's working diff, for the Environment "N changed files ›" link. */
+  fetchDiff?: () => Promise<DiffResult>;
   /** Worktree checkpoints (newest-first). */
   listCheckpoints: (threadId: string) => Promise<CheckpointInfo[]>;
   restoreCheckpoint: (threadId: string, sha: string) => Promise<void>;
@@ -277,70 +220,12 @@ interface AgentsPanelProps {
     id: number;
     resolution: MemoryReviewResolution;
   }) => Promise<{ ok: boolean; id: number; resolution: string }>;
-  loadCodeMap?: (input: { projectId: string }) => Promise<ProjectCodeMap>;
-  lintAgentConfig?: (input: {
-    projectId: string;
-  }) => Promise<AgentConfigDoctorReport>;
-  previewAgentConfig?: (input: {
-    projectId: string;
-    targets?: string[];
-  }) => Promise<AgentConfigPreview>;
-  writeAgentConfig?: (input: {
-    projectId: string;
-    targets?: string[];
-  }) => Promise<AgentConfigWriteResult>;
-  /** Skills tab: settings surface for MCP servers + skills CRUD. */
-  settings: AppSettings | null;
-  saveSettings: (patch: Partial<AppSettings>) => Promise<AppSettings>;
-  listMcpServers: () => Promise<McpServerDefinition[]>;
-  saveMcpServer: (input: McpServerSaveInput) => Promise<McpServerDefinition>;
-  removeMcpServer: (input: { name: string }) => Promise<void>;
-  setMcpEnabled: (input: {
-    name: string;
-    enabled: boolean;
-  }) => Promise<McpServerDefinition>;
-  listMcpCatalog: () => Promise<McpCatalogEntry[]>;
-  pickMcpImport: () => Promise<McpImportPreview | null>;
-  previewMcpImport: (input: McpPreviewImportInput) => Promise<McpImportPreview>;
-  installMcpImport: (input: McpInstallRequest) => Promise<McpInstallResult>;
-  discardMcpImport: (input: { previewId: string }) => Promise<void>;
   listSkills: (input?: { projectPath?: string }) => Promise<SkillInfo[]>;
-  addSkill: (
-    input: SkillWrite,
-  ) => Promise<{ name: string; installedIn: SkillTarget[] }>;
   removeSkill: (input: { name: string }) => Promise<void>;
   syncSkills: () => Promise<{ copied: number; skills: string[] }>;
-  listSkillCatalog: () => Promise<SkillCatalogEntry[]>;
-  pickSkillImport: () => Promise<SkillImportPreview | null>;
-  previewSkillImport: (
-    input: SkillPreviewImportInput,
-  ) => Promise<SkillImportPreview>;
-  installSkillImport: (
-    input: SkillInstallRequest,
-  ) => Promise<SkillInstallResult>;
-  discardSkillImport: (input: { previewId: string }) => Promise<void>;
-  detectHarnessSources: () => Promise<HarnessSourceInfo[]>;
-  previewHarnessImport: (input: {
-    source: HarnessSourceId;
-    projectPath?: string;
-  }) => Promise<HarnessImportPreview>;
-  installHarnessImport: (
-    input: HarnessInstallRequest,
-  ) => Promise<HarnessInstallResult>;
-  discardHarnessImport: (input: { previewId: string }) => Promise<void>;
-  /** Center-pane view, so Environment can mark the active destination. */
-  activeView?: string;
   /** App-owned inspector tab. The panel unmounts when the desktop rail collapses. */
   tab: PanelTab;
   onTabChange: (tab: PanelTab) => void;
-  onOpenPrs?: () => void;
-  /**
-   * Fork / hand off the open thread. Plain call = same harness; pass
-   * provider for hand-off. Absent hides the Environment Fork card.
-   */
-  onFork?: (
-    opts?: { provider?: string; model?: string | null },
-  ) => void | Promise<void | ThreadInfo | null>;
   /** Merge-queue lanes (#346). Absent hides the Environment Lanes card. */
   claimLane?: (input: { threadId: string }) => Promise<MergeLaneClaim>;
   listLanes?: (input: { projectId: string }) => Promise<MergeLaneInfo[]>;
@@ -352,17 +237,16 @@ interface AgentsPanelProps {
   recycleWedgedLanes?: (input: {
     projectId: string;
   }) => Promise<MergeLaneRecycle[]>;
-  spotlight?: boolean;
-  setSpotlight?: (input: {
-    projectId: string;
-    enabled: boolean;
-  }) => Promise<MergeSpotlight>;
   spotlightLane?: (input: {
     projectId: string;
     lane: number;
   }) => Promise<MergeLanePreview>;
   /** Wide-window Hide control. Absent on the narrow drawer (issue #645). */
   onCollapse?: () => void;
+  /** Opens Settings at a pane (Skills → Manage ›, Memory → Project tools). */
+  onOpenSettings?: (pane?: SettingsPane) => void;
+  /** Bumped when Settings closes, so the Skills tab reloads behind it. */
+  skillsRefreshKey?: number;
 }
 
 type PhaseChipStatus = "done" | "active" | "pending" | "failed";
@@ -407,7 +291,11 @@ function groupKey(phaseName: string, index: number): string {
   return `${index}:${phaseName}`;
 }
 
-function SessionCard({
+/**
+ * One session line: provider · status · turns · cost, and a muted token
+ * line. Model and Permission live in the composer; context in the header ring.
+ */
+function SessionLine({
   thread,
   usage,
   providers,
@@ -419,18 +307,6 @@ function SessionCard({
   /** Team role chip ("Orchestrator" / "Worker"); absent renders no chip. */
   role?: string;
 }) {
-  const sess = shortSessionId(thread.sessionId);
-  const providerName = providerDisplayName(thread.provider, providers);
-  const modelLabel = thread.model ?? usage?.model ?? "n/a";
-  const ring = contextRing({
-    used: usage?.contextTokens ?? null,
-    window: threadContextWindow(
-      usage?.contextWindow,
-      providers,
-      thread.provider,
-      thread.model ?? usage?.model,
-    ),
-  });
   const usageUnreported =
     usage != null &&
     usage.turns > 0 &&
@@ -444,362 +320,93 @@ function SessionCard({
     (usage.inputTokens > 0 ||
       usage.outputTokens > 0 ||
       Number(usage.contextTokens) > 0);
+  const parts = [providerDisplayName(thread.provider, providers), thread.status];
+  if (usageUnreported) parts.push("usage not reported");
+  else if (usage) {
+    parts.push(
+      `${usage.turns} ${usage.turns === 1 ? "turn" : "turns"}`,
+      costUnmetered ? "unmetered" : formatCostUsd(usage.costUsd),
+    );
+  } else parts.push("No usage yet");
+  const shortId = shortSessionId(thread.sessionId);
+  const tokenLine =
+    usage && !usageUnreported
+      ? `${usage.inputTokens.toLocaleString()} in · ${usage.outputTokens.toLocaleString()} out tokens`
+      : null;
   return (
-    <section className={styles.sessionCard}>
-      <div className={styles.sessionHead}>
-        <div className={styles.sessionLabel}>
-          Session
-          {role && <span className={styles.roleChip}>{role}</span>}
-        </div>
-        {sess && (
-          <span className={styles.sessionId} title={thread.sessionId ?? undefined}>
-            {sess}
-          </span>
-        )}
-      </div>
-      <div className={styles.sessionTitle}>{thread.title}</div>
-
-      <dl className={styles.sessionMeta}>
-        <div className={styles.sessionRow}>
-          <dt>Provider</dt>
-          <dd className={styles.sessionProvider}>{providerName}</dd>
-        </div>
-        <div className={styles.sessionRow}>
-          <dt>Status</dt>
-          <dd>{thread.status}</dd>
-        </div>
-        <div className={styles.sessionRow}>
-          <dt>Model</dt>
-          <dd>{modelLabel}</dd>
-        </div>
-        <div className={styles.sessionRow}>
-          <dt>Permission</dt>
-          <dd>{permissionModeLabel(thread.permissionMode)}</dd>
-        </div>
-      </dl>
-
-      <div className={styles.usageBlock}>
-        {usageUnreported ? (
-          <p className={styles.usageEmpty}>usage not reported</p>
-        ) : usage ? (
-          <dl className={styles.usageList}>
-            <div className={styles.sessionRow}>
-              <dt>Input tokens</dt>
-              <dd>{usage.inputTokens.toLocaleString()}</dd>
-            </div>
-            <div className={styles.sessionRow}>
-              <dt>Output tokens</dt>
-              <dd>{usage.outputTokens.toLocaleString()}</dd>
-            </div>
-            <div className={styles.sessionRow}>
-              <dt>Turns</dt>
-              <dd>{usage.turns}</dd>
-            </div>
-            <div className={styles.sessionRow}>
-              <dt>Cost</dt>
-              <dd className={styles.cost}>
-                {costUnmetered ? "unmetered" : formatCostUsd(usage.costUsd)}
-              </dd>
-            </div>
-            {ring && (
-              <div className={styles.sessionRow}>
-                <dt>Context</dt>
-                <dd>
-                  {ring.percentLabel} of {ring.windowLabel} (last turn)
-                </dd>
-              </div>
-            )}
-          </dl>
-        ) : (
-          <p className={styles.usageEmpty}>No usage yet</p>
-        )}
-      </div>
-    </section>
-  );
-}
-
-function PullRequestsCard({
-  active,
-  onOpen,
-}: {
-  active: boolean;
-  onOpen: () => void;
-}) {
-  return (
-    <section className={styles.gitCard} data-prs-card="">
-      <div className={styles.gitCardLabel}>
-        <svg {...LABEL_ICON_PROPS} className={styles.labelIcon}>
-          <circle cx="4" cy="3.5" r="1.75" />
-          <circle cx="4" cy="12.5" r="1.75" />
-          <circle cx="12" cy="5.5" r="1.75" />
-          <path d="M4 5.25v5.5" />
-          <path d="M12 7.25c0 2.5-2.75 3-4.5 3" />
-        </svg>
-        Pull requests
-      </div>
-      <div className={styles.gitActions}>
-        <button
-          type="button"
-          className={styles.gitBtn}
-          data-open-prs=""
-          data-active={active ? "true" : undefined}
-          onClick={onOpen}
+    <section className={inspector.section} aria-label="Session">
+      <p className={inspector.line} data-session-line="">
+        {role ? <span className={styles.roleChip}>{role}</span> : null}
+        {parts.join(" · ")}
+      </p>
+      {tokenLine || shortId ? (
+        <p
+          className={`${inspector.line} ${inspector.muted}`}
+          data-session-tokens=""
+          title={thread.sessionId ?? undefined}
         >
-          View pull requests
-        </button>
-      </div>
+          {[tokenLine, shortId].filter(Boolean).join(" · ")}
+        </p>
+      ) : null}
     </section>
   );
 }
 
-function ChangesCard({
-  hasThread,
-  onViewChanges,
-}: {
-  hasThread: boolean;
-  onViewChanges: () => void;
-}) {
-  return (
-    <section className={styles.gitCard}>
-      <div className={styles.gitCardLabel}>
-        <svg {...LABEL_ICON_PROPS} className={styles.labelIcon}>
-          <path d="M11.3 2.7a1.4 1.4 0 0 1 2 2L5 13H3v-2l8.3-8.3Z" />
-          <path d="M10 4l2 2" />
-        </svg>
-        Changes
-      </div>
-      <div className={styles.gitActions}>
-        <button
-          type="button"
-          className={styles.gitBtn}
-          onClick={onViewChanges}
-          disabled={!hasThread}
-        >
-          Open Git
-        </button>
-      </div>
-    </section>
-  );
-}
-
-function DisplayPrefsCard() {
-  const divergence = useDivergenceCardEnabled();
-  const runDuration = useRunDurationEnabled();
-  const pasteCards = usePasteCardsEnabled();
-  const composerVim = useComposerVimEnabled();
-  return (
-    <section className={styles.gitCard} data-display-prefs="">
-      <div className={styles.gitCardLabel}>
-        <svg {...LABEL_ICON_PROPS} className={styles.labelIcon}>
-          <path d="M2.5 8h2c4.5 0 3.5-4.5 9-4.5" />
-          <path d="M4.5 8c4.5 0 3.5 4.5 9 4.5" />
-          <path d="M11.5 1.5l2 2-2 2" />
-          <path d="M11.5 10.5l2 2-2 2" />
-        </svg>
-        Display
-      </div>
-      <label className={styles.checkboxLabel}>
-        <input
-          type="checkbox"
-          checked={divergence}
-          onChange={(e) => setDivergenceCardEnabled(e.target.checked)}
-        />
-        Show divergence compare on threads
-      </label>
-      <label className={styles.checkboxLabel}>
-        <input
-          type="checkbox"
-          checked={runDuration}
-          onChange={(e) => setRunDurationEnabled(e.target.checked)}
-        />
-        Show time spent at the end of a run
-      </label>
-      <label className={styles.checkboxLabel}>
-        <input
-          type="checkbox"
-          checked={pasteCards}
-          onChange={(e) => setPasteCardsEnabled(e.target.checked)}
-        />
-        Collapse large pastes into cards
-      </label>
-      <label className={styles.checkboxLabel}>
-        <input
-          type="checkbox"
-          data-composer-vim-pref=""
-          checked={composerVim}
-          onChange={(e) => setComposerVimEnabled(e.target.checked)}
-        />
-        Vim motions in the composer
-      </label>
-    </section>
-  );
-}
-
-export function ForkCard({
-  thread,
-  providers,
-  onFork,
-}: {
-  thread: ThreadInfo | null;
-  providers: ProviderInfo[];
-  onFork: (
-    opts?: { provider?: string; model?: string | null },
-  ) => void | Promise<void | ThreadInfo | null>;
-}) {
-  const menuRef = useRef<HTMLDivElement>(null);
-  const [handoffMenuOpen, setHandoffMenuOpen] = useState(false);
-  const isWorking = thread?.status === "working";
-  const otherProviders = thread
-    ? providers.filter((p) => p.id !== thread.provider)
-    : [];
-
-  useEffect(() => {
-    if (!handoffMenuOpen) return;
-    const onDoc = (e: MouseEvent) => {
-      if (!menuRef.current?.contains(e.target as Node)) {
-        setHandoffMenuOpen(false);
-      }
-    };
-    document.addEventListener("mousedown", onDoc);
-    return () => {
-      document.removeEventListener("mousedown", onDoc);
-    };
-  }, [handoffMenuOpen]);
-  useEscapeClose(handoffMenuOpen, () => setHandoffMenuOpen(false));
-
-  return (
-    <section className={styles.gitCard} data-thread-fork-card="">
-      <div className={styles.gitCardLabel}>
-        <svg {...LABEL_ICON_PROPS} className={styles.labelIcon}>
-          <circle cx="4.5" cy="3.5" r="1.5" />
-          <circle cx="4.5" cy="12.5" r="1.5" />
-          <circle cx="11.5" cy="5.5" r="1.5" />
-          <path d="M4.5 5v6M11.5 7c0 2.2-2.8 2.3-4.6 3.4" />
-        </svg>
-        Fork
-      </div>
-      {!thread ? (
-        <p className={styles.gitHint}>Select a thread to fork it.</p>
-      ) : (
-        <div className={styles.gitActions}>
-          <button
-            type="button"
-            className={styles.gitBtn}
-            data-thread-fork=""
-            disabled={isWorking}
-            aria-disabled={isWorking ? "true" : undefined}
-            title="Fork thread (same harness)"
-            onClick={() => {
-              if (isWorking) return;
-              void onFork();
-            }}
-          >
-            Fork
-          </button>
-          <div className={styles.menuWrap} ref={menuRef}>
-            <button
-              type="button"
-              className={styles.gitBtn}
-              data-thread-handoff=""
-              disabled={isWorking || otherProviders.length === 0}
-              aria-disabled={
-                isWorking || otherProviders.length === 0 ? "true" : undefined
-              }
-              aria-haspopup="menu"
-              aria-expanded={handoffMenuOpen}
-              title="Hand off to another provider"
-              onClick={() => {
-                if (isWorking || otherProviders.length === 0) return;
-                setHandoffMenuOpen((v) => !v);
-              }}
-            >
-              Hand off to…
-            </button>
-            {handoffMenuOpen && (
-              <div
-                className={styles.menu}
-                role="menu"
-                data-thread-handoff-menu=""
-              >
-                {otherProviders.map((p) => {
-                  const disabled = !p.available;
-                  return (
-                    <button
-                      key={p.id}
-                      type="button"
-                      className={styles.menuItem}
-                      role="menuitem"
-                      data-handoff-provider={p.id}
-                      disabled={disabled}
-                      aria-disabled={disabled ? "true" : undefined}
-                      title={
-                        disabled
-                          ? `${p.name} is not installed`
-                          : `Hand off to ${p.name}`
-                      }
-                      onClick={() => {
-                        if (disabled) return;
-                        setHandoffMenuOpen(false);
-                        void onFork({ provider: p.id });
-                      }}
-                    >
-                      {p.name}
-                    </button>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-        </div>
-      )}
-    </section>
-  );
-}
-
+/** Finder + editor icon links for the selected thread (status header row). */
 export function EditorCard({
-  hasThread,
   onReveal,
   onOpen,
 }: {
-  hasThread: boolean;
   onReveal: () => void;
   onOpen: () => void;
 }) {
   return (
-    <section className={styles.gitCard} data-editor="">
-      <div className={styles.gitCardLabel}>
-        <svg {...LABEL_ICON_PROPS} className={styles.labelIcon}>
-          <path d="M7 3.5H4A1.5 1.5 0 0 0 2.5 5v7A1.5 1.5 0 0 0 4 13.5h8a1.5 1.5 0 0 0 1.5-1.5V9" />
-          <path d="M11 2.8a1.3 1.3 0 0 1 1.9 1.9L8 9.6 5.7 10.2 6.3 7.9 11 2.8Z" />
+    <span className={inspector.row} data-editor="">
+      <button
+        type="button"
+        className={inspector.iconBtn}
+        data-editor-reveal=""
+        aria-label="Open in Finder"
+        title="Open in Finder"
+        onClick={onReveal}
+      >
+        <svg
+          width="14"
+          height="14"
+          viewBox="0 0 16 16"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.5"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          aria-hidden="true"
+        >
+          <path d="M2.5 4.5A1.5 1.5 0 0 1 4 3h2.5l1.5 1.5h4A1.5 1.5 0 0 1 13.5 6v5.5A1.5 1.5 0 0 1 12 13H4a1.5 1.5 0 0 1-1.5-1.5v-7Z" />
         </svg>
-        Editor
-      </div>
-      {!hasThread && (
-        <p className={styles.gitHint} data-editor-hint="">
-          Select a thread to open its folder.
-        </p>
-      )}
-      <div className={styles.gitActions}>
-        <button
-          type="button"
-          className={styles.gitBtn}
-          data-editor-reveal=""
-          onClick={onReveal}
-          disabled={!hasThread}
+      </button>
+      <button
+        type="button"
+        className={inspector.iconBtn}
+        data-editor-open=""
+        aria-label="Open in Editor"
+        title="Open in Editor"
+        onClick={onOpen}
+      >
+        <svg
+          width="14"
+          height="14"
+          viewBox="0 0 16 16"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.5"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          aria-hidden="true"
         >
-          Open in Finder
-        </button>
-        <button
-          type="button"
-          className={styles.gitBtn}
-          data-editor-open=""
-          onClick={onOpen}
-          disabled={!hasThread}
-        >
-          Open in Editor
-        </button>
-      </div>
-    </section>
+          <path d="m5.5 5-3 3 3 3M10.5 5l3 3-3 3" />
+        </svg>
+      </button>
+    </span>
   );
 }
 
@@ -965,14 +572,8 @@ export function DevServerCard({
         : "stopped";
 
   return (
-    <section className={styles.gitCard} data-dev-server="">
-      <div className={styles.gitCardLabel}>
-        <svg {...LABEL_ICON_PROPS} className={styles.labelIcon}>
-          <rect x="2" y="3" width="12" height="10" rx="2" />
-          <path d="m5.5 7 2 2-2 2M9 11h2" />
-        </svg>
-        Dev server
-      </div>
+    <div className={inspector.block} data-dev-server="">
+      <div className={inspector.subhead}>Dev server</div>
       {!threadId ? (
         <p className={styles.gitHint}>Select a thread to run its dev server.</p>
       ) : scripts.length === 0 ? (
@@ -1055,7 +656,7 @@ export function DevServerCard({
           {failLine}
         </p>
       )}
-    </section>
+    </div>
   );
 }
 
@@ -1140,14 +741,8 @@ export function VerifyCard({
   }
 
   return (
-    <section className={styles.gitCard} data-verify-card="">
-      <div className={styles.gitCardLabel}>
-        <svg {...LABEL_ICON_PROPS} className={styles.labelIcon}>
-          <path d="M4.5 8.5 7 11l4.5-5.5" />
-          <circle cx="8" cy="8" r="6" />
-        </svg>
-        Verification
-      </div>
+    <div className={inspector.block} data-verify-card="">
+      <div className={inspector.subhead}>Verification</div>
       {!thread ? (
         <p className={styles.gitHint}>Select a thread to set a verify command.</p>
       ) : (
@@ -1238,7 +833,7 @@ export function VerifyCard({
           {errorLine}
         </p>
       )}
-    </section>
+    </div>
   );
 }
 
@@ -1292,13 +887,8 @@ export function LocalServersCard({
   }, [threadId, listLocalServers]);
 
   return (
-    <section className={styles.gitCard} data-local-servers="">
-      <div className={`${styles.gitCardLabel} ${styles.serverLabel}`}>
-        <svg {...LABEL_ICON_PROPS} className={styles.labelIcon}>
-          <rect x="3" y="3" width="10" height="4" rx="1" />
-          <rect x="3" y="9" width="10" height="4" rx="1" />
-          <path d="M5.5 5h.01M5.5 11h.01" />
-        </svg>
+    <div className={inspector.block} data-local-servers="">
+      <div className={inspector.subhead}>
         Local servers
         <span className={styles.serverCount} data-local-servers-count="">
           {servers.length}
@@ -1325,47 +915,32 @@ export function LocalServersCard({
           ))}
         </ul>
       )}
-    </section>
+    </div>
   );
 }
 
 /**
- * Per-project source-control badge (issue #521). Hidden for plain git —
- * that's the assumed default. Jujutsu (colocated or not) is unsupported.
+ * Per-project source-control notice (issue #521): one inline line, only for
+ * Jujutsu (unsupported). Plain git is the assumed default and renders nothing.
  */
-function ScmCard({ project }: { project: ProjectInfo | null }) {
+function ScmNotice({ project }: { project: ProjectInfo | null }) {
   const scm = project?.scm;
   if (!scm || scm.kind !== "jj") return null;
   return (
-    <section className={styles.gitCard} data-scm-card="">
-      <div className={styles.gitCardLabel}>
-        <svg {...LABEL_ICON_PROPS} className={styles.labelIcon}>
-          <path d="M3 4.5A1.5 1.5 0 0 1 4.5 3H13v10H4.5A1.5 1.5 0 0 0 3 14.5v-10Z" />
-          <path d="M3 14.5A1.5 1.5 0 0 1 4.5 13H13" />
-        </svg>
-        Source control
-      </div>
-      <span
-        className={styles.scmBadge}
-        data-scm-badge={scm.support}
-        title={scm.detail}
-      >
+    <p className={inspector.line} data-scm-card="" title={scm.detail}>
+      <span className={styles.scmBadge} data-scm-badge={scm.support}>
         jj · unsupported
       </span>
-      {scm.detail ? (
-        <p className={styles.gitHint} data-scm-detail="">
-          {scm.detail}
-        </p>
-      ) : null}
-    </section>
+      {scm.detail ? <span data-scm-detail=""> {scm.detail}</span> : null}
+    </p>
   );
 }
 
 /**
- * Repository row: the thread root's git origin as owner/repo with an
- * external link to the host. Hidden when there is no origin (or no thread).
+ * Repository link: the thread root's git origin as owner/repo, linking to
+ * the host. Renders nothing without an origin. No other surface shows it.
  */
-function RepositoryCard({
+function RepositoryLink({
   threadId,
   gitRepoInfo,
 }: {
@@ -1395,395 +970,35 @@ function RepositoryCard({
   if (!info || !info.ok) return null;
 
   return (
-    <section className={styles.gitCard} data-repo-card="">
-      <div className={styles.gitCardLabel}>
-        <svg {...LABEL_ICON_PROPS} className={styles.labelIcon}>
-          <path d="M3 4.5A1.5 1.5 0 0 1 4.5 3H13v10H4.5A1.5 1.5 0 0 0 3 14.5v-10Z" />
-          <path d="M3 14.5A1.5 1.5 0 0 1 4.5 13H13" />
-        </svg>
-        Repository
-      </div>
-      <a
-        className={styles.repoLink}
-        href={info.webUrl}
-        target="_blank"
-        rel="noreferrer"
-        title={info.webUrl}
-        data-repo-link=""
-      >
-        <span className={styles.repoSlug}>
-          {info.owner}/{info.repo}
-        </span>
-        <svg
-          width="12"
-          height="12"
-          viewBox="0 0 16 16"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="1.5"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          aria-hidden="true"
-          className={styles.repoExternal}
-        >
-          <path d="M6.5 3.5H4A1.5 1.5 0 0 0 2.5 5v7A1.5 1.5 0 0 0 4 13.5h7a1.5 1.5 0 0 0 1.5-1.5V9.5" />
-          <path d="M9.5 2.5h4v4" />
-          <path d="M13.5 2.5 8 8" />
-        </svg>
-      </a>
-    </section>
-  );
-}
-
-/**
- * Pull action: `git pull --ff-only` in the thread root, result inline.
- * Failures (dirty tree, no upstream, diverged) arrive in-band, never thrown.
- */
-function PullCard({
-  threadId,
-  gitPull,
-}: {
-  threadId: string | null;
-  gitPull?: (threadId: string) => Promise<GitPullResult>;
-}) {
-  const [pulling, setPulling] = useState(false);
-  const [result, setResult] = useState<GitPullResult | null>(null);
-
-  useEffect(() => {
-    setPulling(false);
-    setResult(null);
-  }, [threadId]);
-
-  if (!gitPull) return null;
-
-  const onPull = async () => {
-    if (!threadId || pulling) return;
-    setPulling(true);
-    setResult(null);
-    try {
-      setResult(await gitPull(threadId));
-    } catch (err) {
-      setResult({
-        ok: false,
-        reason:
-          err instanceof Error && err.message ? err.message : "Pull failed",
-      });
-    } finally {
-      setPulling(false);
-    }
-  };
-
-  return (
-    <section className={styles.gitCard} data-pull-card="">
-      <div className={styles.gitCardLabel}>
-        <svg {...LABEL_ICON_PROPS} className={styles.labelIcon}>
-          <path d="M8 2.5V10" />
-          <path d="m4.5 6.5 3.5 3.5 3.5-3.5" />
-          <path d="M3 13.5h10" />
-        </svg>
-        Pull
-      </div>
-      {!threadId ? (
-        <p className={styles.gitHint}>Select a thread to pull its branch.</p>
-      ) : (
-        <>
-          <div className={styles.gitActions}>
-            <button
-              type="button"
-              className={styles.gitBtn}
-              data-pull-btn=""
-              onClick={() => void onPull()}
-              disabled={pulling}
-              title="Pull from upstream (fast-forward only)"
-            >
-              {pulling ? (
-                <>
-                  <span className={styles.btnSpinner} aria-hidden />
-                  Pulling…
-                </>
-              ) : (
-                "Pull"
-              )}
-            </button>
-          </div>
-          {result && (
-            <p
-              className={result.ok ? styles.pullResult : styles.pullError}
-              data-pull-result=""
-              role={result.ok ? undefined : "alert"}
-            >
-              {result.ok ? result.summary : result.reason}
-            </p>
-          )}
-        </>
-      )}
-    </section>
-  );
-}
-
-/**
- * Recap: where the thread stands at a glance, derived without any LLM call.
- * The activity line is the first line of the last assistant message (from
- * threads:summaries); the facts line is branch, PR, and thread status.
- * Refreshes when the selected thread changes or its status changes.
- */
-function RecapCard({
-  thread,
-  listThreadSummaries,
-}: {
-  thread: ThreadInfo | null;
-  listThreadSummaries?: (input?: ThreadSummariesInput) => Promise<ThreadSummaryInfo[]>;
-}) {
-  const threadId = thread?.id ?? null;
-  const threadStatus = thread?.status ?? null;
-  const [activity, setActivity] = useState<{ text: string; at: number } | null>(
-    null,
-  );
-
-  useEffect(() => {
-    let cancelled = false;
-    if (!threadId || !listThreadSummaries) {
-      setActivity(null);
-      return;
-    }
-    listThreadSummaries({ threadIds: [threadId] })
-      .then((list) => {
-        if (cancelled) return;
-        const entry = Array.isArray(list)
-          ? list.find((s) => s && s.id === threadId)
-          : undefined;
-        setActivity(entry?.lastActivity ?? null);
-      })
-      .catch(() => {
-        if (!cancelled) setActivity(null);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [threadId, threadStatus, listThreadSummaries]);
-
-  if (!thread) return null;
-
-  const facts: ReactNode[] = [];
-  if (thread.branch) facts.push(thread.branch);
-  if (thread.prNumber != null) {
-    const prLabel = thread.prState
-      ? `#${thread.prNumber} ${thread.prState.toLowerCase()}`
-      : `#${thread.prNumber}`;
-    // Link out when a URL was recorded; never invent one (same rule as the
-    // sidebar chip in prUi.ts).
-    facts.push(
-      thread.prUrl ? (
-        <a
-          key="pr"
-          className={styles.recapPrLink}
-          data-recap-pr=""
-          href={thread.prUrl}
-          target="_blank"
-          rel="noreferrer"
-          title={thread.prUrl}
-        >
-          {prLabel}
-        </a>
-      ) : (
-        prLabel
-      ),
-    );
-  }
-  facts.push(thread.status);
-  if (thread.status === "failed" && thread.lastError) {
-    facts.push(thread.lastError.replace(/\s+/g, " ").trim());
-  }
-
-  return (
-    <section className={styles.gitCard} data-recap-card="">
-      <div className={styles.gitCardLabel}>
-        <svg {...LABEL_ICON_PROPS} className={styles.labelIcon}>
-          <circle cx="8" cy="8" r="5.5" />
-          <path d="M8 5.5V8l2 1.5" />
-        </svg>
-        Recap
-      </div>
-      <p className={styles.recapActivity} data-recap-activity="">
-        {activity?.text ?? "No activity yet"}
-      </p>
-      <div
-        className={styles.recapFacts}
-        data-recap-facts=""
-        title={
-          thread.status === "failed" && thread.lastError
-            ? thread.lastError
-            : undefined
-        }
-      >
-        {facts.map((fact, i) => (
-          <span key={i}>
-            {i > 0 ? " · " : null}
-            {fact}
-          </span>
-        ))}
-      </div>
-    </section>
-  );
-}
-
-export const ENV_DRAG_MIME = "application/x-solenta-env-section";
-const ENV_REORDER_HELP_ID = "env-reorder-help";
-
-function isEnvDrag(dt: DataTransfer | null | undefined): boolean {
-  if (!dt?.types) return false;
-  return Array.from(dt.types).includes(ENV_DRAG_MIME);
-}
-
-function envDragSectionId(dt: DataTransfer | null | undefined): string | null {
-  if (!isEnvDrag(dt) || !dt) return null;
-  const id = dt.getData(ENV_DRAG_MIME);
-  return id || null;
-}
-
-function dropEdgeFor(e: ReactDragEvent<HTMLElement>): "before" | "after" {
-  const rect = e.currentTarget.getBoundingClientRect();
-  if (!rect.height) return "before";
-  return e.clientY > rect.top + rect.height / 2 ? "after" : "before";
-}
-
-function envSectionFilled(section: Element | null): boolean {
-  const body = section?.querySelector("[data-env-body]");
-  return Boolean(body && body.childElementCount > 0);
-}
-
-function visibleEnvSectionIds(
-  root: HTMLElement | null,
-  order: readonly string[],
-): string[] {
-  if (!root) return [...order];
-  return order.filter((id) =>
-    envSectionFilled(root.querySelector(`[data-env-section="${id}"]`)),
-  );
-}
-
-function EnvSection({
-  id,
-  label,
-  dropEdge,
-  dragging,
-  sourceRef,
-  children,
-  onHighlight,
-  onDropped,
-  onKeyboardMove,
-  onDragHandleStart,
-  onDragHandleEnd,
-}: {
-  id: string;
-  label: string;
-  dropEdge: "before" | "after" | null;
-  dragging: boolean;
-  sourceRef: MutableRefObject<string | null>;
-  children: ReactNode;
-  onHighlight: (id: string | null, edge: "before" | "after" | null) => void;
-  onDropped: (fromId: string, targetId: string, edge: "before" | "after") => void;
-  onKeyboardMove: (id: string, dir: -1 | 1) => void;
-  onDragHandleStart: (id: string) => void;
-  onDragHandleEnd: () => void;
-}) {
-  if (children == null) return null;
-
-  const onDragOver = (e: ReactDragEvent<HTMLDivElement>) => {
-    if (!isEnvDrag(e.dataTransfer) || !sourceRef.current || sourceRef.current === id) return;
-    if (!envSectionFilled(e.currentTarget)) return;
-    e.preventDefault();
-    if (e.dataTransfer) e.dataTransfer.dropEffect = "move";
-    onHighlight(id, dropEdgeFor(e));
-  };
-
-  const onDragLeave = (e: ReactDragEvent<HTMLDivElement>) => {
-    const next = e.relatedTarget;
-    if (next instanceof Node && e.currentTarget.contains(next)) return;
-    onHighlight(null, null);
-  };
-
-  const onDrop = (e: ReactDragEvent<HTMLDivElement>) => {
-    if (!isEnvDrag(e.dataTransfer)) return;
-    e.preventDefault();
-    const fromId = envDragSectionId(e.dataTransfer);
-    const sourceId = sourceRef.current;
-    onDragHandleEnd();
-    onHighlight(null, null);
-    if (!sourceId || !fromId || fromId !== sourceId || fromId === id) return;
-    if (!envSectionFilled(e.currentTarget)) return;
-    onDropped(fromId, id, dropEdgeFor(e));
-  };
-
-  const onHandleDragStart = (e: ReactDragEvent<HTMLButtonElement>) => {
-    const row = e.currentTarget.closest("[data-env-section]");
-    if (!envSectionFilled(row) || !e.dataTransfer) {
-      e.preventDefault();
-      return;
-    }
-    e.dataTransfer.effectAllowed = "move";
-    e.dataTransfer.setData(ENV_DRAG_MIME, id);
-    if (row instanceof HTMLElement && e.dataTransfer.setDragImage) {
-      e.dataTransfer.setDragImage(row, 16, 12);
-    }
-    onDragHandleStart(id);
-  };
-
-  const onHandleKeyDown = (e: ReactKeyboardEvent<HTMLButtonElement>) => {
-    if (!e.altKey) return;
-    const row = e.currentTarget.closest("[data-env-section]");
-    if (!envSectionFilled(row)) return;
-    if (e.key === "ArrowUp") {
-      e.preventDefault();
-      onKeyboardMove(id, -1);
-    } else if (e.key === "ArrowDown") {
-      e.preventDefault();
-      onKeyboardMove(id, 1);
-    }
-  };
-
-  return (
-    <div
-      className={styles.envSection}
-      data-env-section={id}
-      data-drop={dropEdge ?? undefined}
-      data-dragging={dragging ? "true" : undefined}
-      onDragOver={onDragOver}
-      onDragLeave={onDragLeave}
-      onDrop={onDrop}
+    <a
+      className={styles.repoLink}
+      href={info.webUrl}
+      target="_blank"
+      rel="noreferrer"
+      title={info.webUrl}
+      data-repo-card=""
+      data-repo-link=""
     >
-      <button
-        type="button"
-        className={styles.envGrip}
-        data-env-grip=""
-        draggable
-        aria-label={`Reorder ${label}`}
-        aria-describedby={ENV_REORDER_HELP_ID}
-        aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown"
-        title="Drag to reorder"
-        onDragStart={onHandleDragStart}
-        onDragEnd={onDragHandleEnd}
-        onKeyDown={onHandleKeyDown}
+      <span className={styles.repoSlug}>
+        {info.owner}/{info.repo}
+      </span>
+      <svg
+        width="12"
+        height="12"
+        viewBox="0 0 16 16"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        aria-hidden="true"
+        className={styles.repoExternal}
       >
-        <svg
-          width="10"
-          height="16"
-          viewBox="0 0 10 16"
-          fill="currentColor"
-          aria-hidden="true"
-        >
-          <circle cx="3" cy="3" r="1.15" />
-          <circle cx="7" cy="3" r="1.15" />
-          <circle cx="3" cy="8" r="1.15" />
-          <circle cx="7" cy="8" r="1.15" />
-          <circle cx="3" cy="13" r="1.15" />
-          <circle cx="7" cy="13" r="1.15" />
-        </svg>
-      </button>
-      <div className={styles.envBody} data-env-body="">
-        {children}
-      </div>
-    </div>
+        <path d="M6.5 3.5H4A1.5 1.5 0 0 0 2.5 5v7A1.5 1.5 0 0 0 4 13.5h7a1.5 1.5 0 0 0 1.5-1.5V9.5" />
+        <path d="M9.5 2.5h4v4" />
+        <path d="M13.5 2.5 8 8" />
+      </svg>
+    </a>
   );
 }
 
@@ -1824,13 +1039,13 @@ function CheckpointsCard({
   if (!thread || !hasWorktree) return null;
 
   return (
-    <section className={styles.gitCard} data-checkpoints="">
-      <div className={styles.gitCardLabel}>
-        <svg {...LABEL_ICON_PROPS} className={styles.labelIcon}>
-          <path d="M4.5 2.5h7a.5.5 0 0 1 .5.5v10l-4-2.6L4 13V3a.5.5 0 0 1 .5-.5Z" />
-        </svg>
-        Checkpoints
-      </div>
+    <InspectorSection
+      title="Checkpoints"
+      count={checkpoints.length}
+      collapsible
+      defaultOpen={false}
+      data-checkpoints=""
+    >
       {loading && checkpoints.length === 0 ? (
         <p className={styles.gitHint}>Loading…</p>
       ) : checkpoints.length === 0 ? (
@@ -1890,7 +1105,7 @@ function CheckpointsCard({
           </button>
         </div>
       )}
-    </section>
+    </InspectorSection>
   );
 }
 
@@ -1912,19 +1127,16 @@ function laneFromClaim(
 export function MergeQueueCard({
   threadId,
   projectId,
-  remote,
   claimLane,
   listLanes,
   previewLane,
   restorePreview,
   recycleWedgedLanes,
   spotlight,
-  setSpotlight,
   spotlightLane,
 }: {
   threadId: string | null;
   projectId: string | null;
-  remote?: boolean;
   claimLane: (input: { threadId: string }) => Promise<MergeLaneClaim>;
   listLanes: (input: { projectId: string }) => Promise<MergeLaneInfo[]>;
   previewLane: (input: {
@@ -1936,10 +1148,6 @@ export function MergeQueueCard({
     projectId: string;
   }) => Promise<MergeLaneRecycle[]>;
   spotlight?: boolean;
-  setSpotlight?: (input: {
-    projectId: string;
-    enabled: boolean;
-  }) => Promise<MergeSpotlight>;
   spotlightLane?: (input: {
     projectId: string;
     lane: number;
@@ -1948,11 +1156,6 @@ export function MergeQueueCard({
   const [lanes, setLanes] = useState<MergeLaneInfo[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [spotlightOn, setSpotlightOn] = useState(Boolean(spotlight));
-
-  useEffect(() => {
-    setSpotlightOn(Boolean(spotlight));
-  }, [spotlight]);
 
   const refresh = useCallback(async () => {
     if (!projectId) {
@@ -1975,7 +1178,7 @@ export function MergeQueueCard({
     void refresh();
   }, [refresh, threadId]);
 
-  if (remote || !projectId) return null;
+  if (!projectId) return null;
 
   const mine = threadId
     ? lanes.find((row) => row.threadId === threadId)
@@ -1997,17 +1200,13 @@ export function MergeQueueCard({
   };
 
   return (
-    <section className={styles.gitCard} data-lanes="">
-      <div className={styles.gitCardLabel}>
-        <svg {...LABEL_ICON_PROPS} className={styles.labelIcon}>
-          <path d="M3 4.5h6.5" />
-          <path d="M3 8h10" />
-          <path d="M3 11.5h6.5" />
-          <circle cx="12.5" cy="4.5" r="1.4" />
-          <circle cx="12.5" cy="11.5" r="1.4" />
-        </svg>
-        Lanes
-      </div>
+    <InspectorSection
+      title="Lanes"
+      count={lanes.length}
+      collapsible
+      defaultOpen={lanes.length > 0}
+      data-lanes=""
+    >
       {lanes.length > 0 ? (
         <div className={styles.laneRow} data-lane-list="">
           {lanes.map((row) => (
@@ -2089,7 +1288,7 @@ export function MergeQueueCard({
             disabled={busy}
             onClick={() =>
               void run(async () => {
-                if (spotlightOn && spotlightLane) {
+                if (spotlight && spotlightLane) {
                   await spotlightLane({ projectId, lane: row.n });
                 } else {
                   await previewLane({ projectId, lane: row.n });
@@ -2129,24 +1328,6 @@ export function MergeQueueCard({
             Recycle wedged
           </button>
         ) : null}
-        {setSpotlight ? (
-          <label className={styles.gitHint} data-lane-spotlight-label="">
-            <input
-              type="checkbox"
-              data-lane-spotlight=""
-              checked={spotlightOn}
-              disabled={busy}
-              onChange={(e) =>
-                void run(async () => {
-                  const enabled = e.target.checked;
-                  await setSpotlight({ projectId, enabled });
-                  setSpotlightOn(enabled);
-                })
-              }
-            />
-            Spotlight
-          </label>
-        ) : null}
       </div>
       {error ? (
         <div className={styles.cardError} role="alert" data-lane-error="">
@@ -2162,7 +1343,7 @@ export function MergeQueueCard({
           </button>
         </div>
       ) : null}
-    </section>
+    </InspectorSection>
   );
 }
 
@@ -2170,6 +1351,7 @@ export function GitTab({
   thread,
   project,
   onViewChanges,
+  fetchDiff,
   listCheckpoints,
   restoreCheckpoint,
   listLocalServers,
@@ -2186,21 +1368,18 @@ export function GitTab({
   devServerStatus,
   setVerifyCommand,
   runVerify,
-  onOpenPrs,
-  prsActive,
-  providers = [],
-  onFork,
   claimLane,
   listLanes,
   previewLane,
   restorePreview,
   recycleWedgedLanes,
-  setSpotlight,
   spotlightLane,
 }: {
   thread: ThreadInfo | null;
   project: ProjectInfo | null;
   onViewChanges: () => void;
+  /** Selected thread's diff; only `files.length` is read ("N changed files ›"). */
+  fetchDiff?: () => Promise<DiffResult>;
   listCheckpoints: (threadId: string) => Promise<CheckpointInfo[]>;
   restoreCheckpoint: (threadId: string, sha: string) => Promise<void>;
   listLocalServers: (threadId: string) => Promise<LocalServerInfo[]>;
@@ -2210,7 +1389,7 @@ export function GitTab({
   gitFetch?: (threadId: string) => Promise<void>;
   gitRepoInfo?: (threadId: string) => Promise<GitRepoInfo>;
   gitPull?: (threadId: string) => Promise<GitPullResult>;
-  /** threads:summaries passthrough powering the Recap card. */
+  /** threads:summaries passthrough for the one-line recap (#1398 scoped). */
   listThreadSummaries?: (input?: ThreadSummariesInput) => Promise<ThreadSummaryInfo[]>;
   claimLane?: (input: { threadId: string }) => Promise<MergeLaneClaim>;
   listLanes?: (input: { projectId: string }) => Promise<MergeLaneInfo[]>;
@@ -2222,11 +1401,6 @@ export function GitTab({
   recycleWedgedLanes?: (input: {
     projectId: string;
   }) => Promise<MergeLaneRecycle[]>;
-  spotlight?: boolean;
-  setSpotlight?: (input: {
-    projectId: string;
-    enabled: boolean;
-  }) => Promise<MergeSpotlight>;
   spotlightLane?: (input: {
     projectId: string;
     lane: number;
@@ -2240,12 +1414,6 @@ export function GitTab({
     command: string | null,
   ) => Promise<void>;
   runVerify?: (threadId: string) => Promise<VerifyResult>;
-  onOpenPrs?: () => void;
-  prsActive?: boolean;
-  providers?: ProviderInfo[];
-  onFork?: (
-    opts?: { provider?: string; model?: string | null },
-  ) => void | Promise<void | ThreadInfo | null>;
 }) {
   const [checkpoints, setCheckpoints] = useState<CheckpointInfo[]>([]);
   const [checkpointsLoading, setCheckpointsLoading] = useState(false);
@@ -2267,29 +1435,16 @@ export function GitTab({
   const [now, setNow] = useState(() => Date.now());
   const [sync, setSync] = useState<GitSyncInfo | null>(null);
   const [syncing, setSyncing] = useState(false);
-  const order = useEnvSectionOrder();
-  const listRef = useRef<HTMLDivElement>(null);
-  const dragSourceRef = useRef<string | null>(null);
-  const [dropHint, setDropHint] = useState<{
-    id: string;
-    edge: "before" | "after";
-  } | null>(null);
-  const [draggingId, setDraggingId] = useState<string | null>(null);
-  const [liveMsg, setLiveMsg] = useState("");
+  const [pulling, setPulling] = useState(false);
+  const [pullResult, setPullResult] = useState<GitPullResult | null>(null);
+  const [changed, setChanged] = useState<number | null>(null);
+  const [activity, setActivity] = useState<{ text: string; at: number } | null>(
+    null,
+  );
 
-  const endEnvDrag = useCallback(() => {
-    dragSourceRef.current = null;
-    setDraggingId(null);
-    setDropHint(null);
-  }, []);
-
-  useEffect(() => {
-    return () => {
-      dragSourceRef.current = null;
-    };
-  }, []);
-
-  const isWorking = thread?.status === "working";
+  const threadId = thread?.id ?? null;
+  const threadStatus = thread?.status ?? null;
+  const isWorking = threadStatus === "working";
 
   // Clear per-thread state when the selected thread changes so a stale
   // error from row A never shows on row B.
@@ -2300,7 +1455,10 @@ export function GitTab({
     setRestorePending(false);
     setSync(null);
     setSyncing(false);
-  }, [thread?.id]);
+    setPulling(false);
+    setPullResult(null);
+    setChanged(null);
+  }, [threadId]);
 
   // Relative ages tick (same 60s cadence as the sidebar).
   useEffect(() => {
@@ -2329,8 +1487,8 @@ export function GitTab({
     }
   }, [thread?.id, thread?.worktreePath, listCheckpoints]);
 
-  // Fetch on Git tab mount / thread change / after a run settles (status).
-  // GitTab only mounts while the Git tab is selected, so open = mount.
+  // Fetch on tab mount / thread change / after a run settles (status).
+  // GitTab only mounts while the Environment tab is selected.
   useEffect(() => {
     void refreshCheckpoints();
   }, [refreshCheckpoints, thread?.status]);
@@ -2359,28 +1517,75 @@ export function GitTab({
       await gitFetch(thread.id);
       await refreshSync();
     } catch {
-      // Keep last badge; fetch errors stay quiet in the footer.
+      // Keep the last badge; fetch errors stay quiet.
     } finally {
       setSyncing(false);
     }
   };
 
-  const statusLine = (() => {
-    if (!thread) return "No thread selected";
-    const provider = thread.provider;
-    if (thread.worktreePath && thread.branch) {
-      return `${provider} · ${thread.branch}`;
+  // One-line recap: this thread's last assistant line, scoped (#1398).
+  useEffect(() => {
+    let cancelled = false;
+    if (!threadId || !listThreadSummaries) {
+      setActivity(null);
+      return;
     }
-    if (thread.branch) {
-      return `${provider} · ${thread.branch}`;
-    }
-    if (project) {
-      return `${provider} · ${project.slug}`;
-    }
-    return provider;
-  })();
+    listThreadSummaries({ threadIds: [threadId] })
+      .then((list) => {
+        if (cancelled) return;
+        const entry = Array.isArray(list)
+          ? list.find((s) => s && s.id === threadId)
+          : undefined;
+        setActivity(entry?.lastActivity ?? null);
+      })
+      .catch(() => {
+        if (!cancelled) setActivity(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [threadId, threadStatus, listThreadSummaries]);
 
-  const syncLabelText = sync ? syncLabel(sync) : null;
+  // "N changed files ›": the same git:diff the Git view and the details card
+  // read. Thread switch and status change only, never on a timer.
+  useEffect(() => {
+    if (!threadId || !fetchDiff) {
+      setChanged(null);
+      return;
+    }
+    let live = true;
+    fetchDiff()
+      .then((diff) => {
+        if (live) {
+          setChanged(Array.isArray(diff?.files) ? diff.files.length : null);
+        }
+      })
+      .catch(() => {
+        if (live) setChanged(null);
+      });
+    return () => {
+      live = false;
+    };
+  }, [threadId, threadStatus, fetchDiff]);
+
+  // `git pull --ff-only`; failures (dirty tree, no upstream, diverged)
+  // arrive in-band.
+  const handlePull = async () => {
+    if (!threadId || !gitPull || pulling) return;
+    setPulling(true);
+    setPullResult(null);
+    try {
+      setPullResult(await gitPull(threadId));
+    } catch (err) {
+      setPullResult({
+        ok: false,
+        reason:
+          err instanceof Error && err.message ? err.message : "Pull failed",
+      });
+    } finally {
+      setPulling(false);
+    }
+  };
 
   const handleRestoreConfirm = async () => {
     if (!thread || !restoreConfirm || restorePending || isWorking) return;
@@ -2406,249 +1611,219 @@ export function GitTab({
   };
 
   const remote = Boolean(project?.remoteHost);
-  const defaultOrder = isDefaultEnvSectionOrder(order);
+  // Lanes are local-only and project-scoped, so they show without a thread too.
+  const lanes =
+    remote ||
+    !project ||
+    !claimLane ||
+    !listLanes ||
+    !previewLane ||
+    !restorePreview ||
+    !recycleWedgedLanes ? null : (
+      <MergeQueueCard
+        threadId={threadId}
+        projectId={project.id}
+        claimLane={claimLane}
+        listLanes={listLanes}
+        previewLane={previewLane}
+        restorePreview={restorePreview}
+        recycleWedgedLanes={recycleWedgedLanes}
+        spotlight={project.spotlight === true}
+        spotlightLane={spotlightLane}
+      />
+    );
 
-  const sectionNodes: Record<EnvSectionId, ReactNode> = {
-      scm: <ScmCard project={project} />,
-      repository: (
-        <RepositoryCard
-          threadId={thread?.id ?? null}
-          gitRepoInfo={gitRepoInfo}
-        />
-      ),
-      pullRequests: onOpenPrs ? (
-        <PullRequestsCard active={Boolean(prsActive)} onOpen={onOpenPrs} />
-      ) : null,
-      recap: (
-        <RecapCard thread={thread} listThreadSummaries={listThreadSummaries} />
-      ),
-      fork: onFork ? (
-        <ForkCard thread={thread} providers={providers} onFork={onFork} />
-      ) : null,
-      changes: (
-        <ChangesCard
-          hasThread={Boolean(thread)}
-          onViewChanges={onViewChanges}
-        />
-      ),
-      lanes:
-        remote ||
-        !claimLane ||
-        !listLanes ||
-        !previewLane ||
-        !restorePreview ||
-        !recycleWedgedLanes
-          ? null
-          : (
-            <MergeQueueCard
-              threadId={thread?.id ?? null}
-              projectId={project?.id ?? null}
-              remote={remote}
-              claimLane={claimLane}
-              listLanes={listLanes}
-              previewLane={previewLane}
-              restorePreview={restorePreview}
-              recycleWedgedLanes={recycleWedgedLanes}
-              spotlight={project?.spotlight === true}
-              setSpotlight={setSpotlight}
-              spotlightLane={spotlightLane}
-            />
-          ),
-      display: <DisplayPrefsCard />,
-      remote: remote ? (
-        <section className={styles.gitCard} data-remote-unavailable="">
-          <div className={styles.gitCardLabel}>
-            <svg {...LABEL_ICON_PROPS} className={styles.labelIcon}>
-              <path d="M5 12.5h6a3 3 0 0 0 .6-5.9A4.2 4.2 0 0 0 3.6 8 2.6 2.6 0 0 0 5 12.5Z" />
-            </svg>
-            Remote
-          </div>
-          <p className={styles.gitHint}>Not available on remote projects</p>
-        </section>
-      ) : null,
-      pull: remote ? null : (
-        <PullCard threadId={thread?.id ?? null} gitPull={gitPull} />
-      ),
-      devServer: remote ? null : (
-        <DevServerCard
-          threadId={thread?.id ?? null}
-          listDevScripts={listDevScripts}
-          startDevServer={startDevServer}
-          stopDevServer={stopDevServer}
-          devServerStatus={devServerStatus}
-        />
-      ),
-      verify:
-        remote || !setVerifyCommand || !runVerify ? null : (
-          <VerifyCard
-            thread={thread}
-            setVerifyCommand={setVerifyCommand}
-            runVerify={runVerify}
-          />
-        ),
-      localServers: remote ? null : (
-        <LocalServersCard
-          threadId={thread?.id ?? null}
-          listLocalServers={listLocalServers}
-        />
-      ),
-      editor: remote ? null : (
-        <EditorCard
-          hasThread={Boolean(thread)}
-          onReveal={() => {
-            if (!thread) return;
-            void revealInFinder?.();
-          }}
-          onOpen={() => {
-            if (!thread) return;
-            void openInEditor?.();
-          }}
-        />
-      ),
-      checkpoints: remote ? null : (
-        <CheckpointsCard
-          thread={thread}
-          checkpoints={checkpoints}
-          loading={checkpointsLoading}
-          restorePending={restorePending}
-          cardError={checkpointError}
-          isWorking={isWorking}
-          onRestoreRequest={(cp) => {
-            if (isWorking || restorePending) return;
-            setCheckpointError(null);
-            setRestoreConfirm(cp);
-          }}
-          onDismissError={() => setCheckpointError(null)}
-          now={now}
-        />
-      ),
-    };
+  if (!thread) {
+    return (
+      <div className={inspector.pane} data-env-tools="">
+        <p className={inspector.empty} data-env-empty="">
+          Select a thread to see its workspace.
+        </p>
+        {lanes}
+      </div>
+    );
+  }
 
-  const highlight = useCallback(
-    (id: string | null, edge: "before" | "after" | null) => {
-      if (!id || !edge) {
-        setDropHint(null);
-        return;
-      }
-      setDropHint((prev) =>
-        prev?.id === id && prev.edge === edge ? prev : { id, edge },
-      );
-    },
-    [],
-  );
-
-  const applyOrder = useCallback((next: string[], message: string) => {
-    setEnvSectionOrder(next);
-    setLiveMsg(message);
-  }, []);
-
-  const onDropped = useCallback(
-    (fromId: string, targetId: string, edge: "before" | "after") => {
-      const next = moveEnvSection(order, fromId, targetId, edge);
-      const label = ENV_SECTION_LABELS[fromId as EnvSectionId] ?? fromId;
-      applyOrder(next, `${label} moved`);
-      endEnvDrag();
-    },
-    [applyOrder, endEnvDrag, order],
-  );
-
-  const onKeyboardMove = useCallback(
-    (id: string, dir: -1 | 1) => {
-      const visible = visibleEnvSectionIds(listRef.current, order);
-      const next = moveEnvSectionAmong(order, visible, id, dir);
-      const label = ENV_SECTION_LABELS[id as EnvSectionId] ?? id;
-      if (!next) {
-        setLiveMsg(
-          dir < 0 ? `${label} is already at the top` : `${label} is already at the bottom`,
-        );
-        return;
-      }
-      applyOrder(next, dir < 0 ? `${label} moved up` : `${label} moved down`);
-      requestAnimationFrame(() => {
-        const handle = listRef.current?.querySelector(
-          `[data-env-section="${id}"] [data-env-grip]`,
-        );
-        if (handle instanceof HTMLElement) handle.focus();
-      });
-    },
-    [applyOrder, order],
-  );
+  const syncLabelText = sync ? syncLabel(sync) : null;
+  const branchLabel = thread.branch ?? project?.slug ?? thread.provider;
+  const changesLabel =
+    changed == null
+      ? "Changes"
+      : changed === 0
+        ? "No changed files"
+        : `${changed} changed ${changed === 1 ? "file" : "files"}`;
+  const prLabel =
+    thread.prNumber == null
+      ? null
+      : thread.prState
+        ? `#${thread.prNumber} ${thread.prState.toLowerCase()}`
+        : `#${thread.prNumber}`;
 
   return (
     <>
-      <div className={`${styles.scroll} ${styles.envScroll}`} data-env-tools="">
-        <div className={styles.envToolbar}>
-          <p className={styles.envHint}>Drag to reorder sections</p>
-          <button
-            type="button"
-            className={styles.envReset}
-            data-env-reset=""
-            disabled={defaultOrder}
-            onClick={() => {
-              resetEnvSectionOrder();
-              setLiveMsg("Order reset to default");
-            }}
-          >
-            Reset order
-          </button>
-        </div>
-        <p className={styles.envSrOnly} id={ENV_REORDER_HELP_ID}>
-          Drag a section handle to reorder, or focus a handle and press
-          Alt+Arrow Up or Alt+Arrow Down.
-        </p>
-        <div className={styles.envList} data-env-list="" ref={listRef}>
-          {order.map((id) => (
-            <EnvSection
-              key={id}
-              id={id}
-              label={ENV_SECTION_LABELS[id as EnvSectionId] ?? id}
-              dropEdge={dropHint?.id === id ? dropHint.edge : null}
-              dragging={draggingId === id}
-              sourceRef={dragSourceRef}
-              onHighlight={highlight}
-              onDropped={onDropped}
-              onKeyboardMove={onKeyboardMove}
-              onDragHandleStart={(id) => {
-                dragSourceRef.current = id;
-                setDraggingId(id);
-              }}
-              onDragHandleEnd={endEnvDrag}
-            >
-              {sectionNodes[id as EnvSectionId] ?? null}
-            </EnvSection>
-          ))}
-        </div>
-        <div
-          className={styles.envSrOnly}
-          aria-live="polite"
-          data-env-live=""
+      <div className={inspector.pane} data-env-tools="">
+        <section
+          className={inspector.section}
+          aria-label="Status"
+          data-env-status=""
         >
-          {liveMsg}
-        </div>
+          <div className={inspector.row}>
+            <span
+              className={styles.gitStatusLine}
+              data-env-branch=""
+              title={branchLabel}
+            >
+              {branchLabel}
+            </span>
+            {syncLabelText ? (
+              <span className={styles.syncBadge} data-sync-badge="">
+                {syncLabelText}
+              </span>
+            ) : null}
+            <span className={inspector.action}>
+              {gitFetch ? (
+                <button
+                  type="button"
+                  className={styles.syncBtn}
+                  data-sync-btn=""
+                  onClick={() => void handleSync()}
+                  disabled={syncing}
+                  title="Fetch from remote"
+                >
+                  {syncing ? "Syncing…" : "Sync"}
+                </button>
+              ) : null}
+              {!remote && gitPull ? (
+                <button
+                  type="button"
+                  className={styles.syncBtn}
+                  data-pull-btn=""
+                  onClick={() => void handlePull()}
+                  disabled={pulling}
+                  title="Pull from upstream (fast-forward only)"
+                >
+                  {pulling ? (
+                    <>
+                      <span className={styles.btnSpinner} aria-hidden />
+                      Pulling…
+                    </>
+                  ) : (
+                    "Pull"
+                  )}
+                </button>
+              ) : null}
+            </span>
+          </div>
+          {pullResult ? (
+            <p
+              className={pullResult.ok ? styles.pullResult : styles.pullError}
+              data-pull-result=""
+              role={pullResult.ok ? undefined : "alert"}
+            >
+              {pullResult.ok ? pullResult.summary : pullResult.reason}
+            </p>
+          ) : null}
+          <div className={inspector.row}>
+            <button
+              type="button"
+              className={inspector.linkBtn}
+              data-env-changes=""
+              onClick={onViewChanges}
+            >
+              {changesLabel} ›
+            </button>
+            {prLabel ? (
+              <span data-env-pr="">
+                {thread.prUrl ? (
+                  // Link out only when a URL was recorded; never invent one.
+                  <a
+                    className={styles.recapPrLink}
+                    data-recap-pr=""
+                    href={thread.prUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    title={thread.prUrl}
+                  >
+                    {prLabel} ›
+                  </a>
+                ) : (
+                  prLabel
+                )}
+              </span>
+            ) : null}
+          </div>
+          <p className={inspector.line} data-recap-activity="">
+            {activity?.text ?? "No activity yet"}
+          </p>
+          {thread.status === "failed" && thread.lastError ? (
+            <p
+              className={styles.pullError}
+              data-env-error=""
+              role="alert"
+              title={thread.lastError}
+            >
+              {thread.lastError.replace(/\s+/g, " ").trim()}
+            </p>
+          ) : null}
+          <ScmNotice project={project} />
+          {remote ? (
+            <p className={inspector.line} data-remote-unavailable="">
+              Not available on remote projects: dev server, verification,
+              checkpoints and lanes.
+            </p>
+          ) : null}
+          <div className={inspector.row} data-env-links="">
+            <RepositoryLink threadId={thread.id} gitRepoInfo={gitRepoInfo} />
+            {remote ? null : (
+              <EditorCard
+                onReveal={() => void revealInFinder?.()}
+                onOpen={() => void openInEditor?.()}
+              />
+            )}
+          </div>
+        </section>
+        {remote ? null : (
+          <InspectorSection title="Run" data-env-run="">
+            <DevServerCard
+              threadId={thread.id}
+              listDevScripts={listDevScripts}
+              startDevServer={startDevServer}
+              stopDevServer={stopDevServer}
+              devServerStatus={devServerStatus}
+            />
+            {setVerifyCommand && runVerify ? (
+              <VerifyCard
+                thread={thread}
+                setVerifyCommand={setVerifyCommand}
+                runVerify={runVerify}
+              />
+            ) : null}
+            <LocalServersCard
+              threadId={thread.id}
+              listLocalServers={listLocalServers}
+            />
+          </InspectorSection>
+        )}
+        {remote ? null : (
+          <CheckpointsCard
+            thread={thread}
+            checkpoints={checkpoints}
+            loading={checkpointsLoading}
+            restorePending={restorePending}
+            cardError={checkpointError}
+            isWorking={isWorking}
+            onRestoreRequest={(cp) => {
+              if (isWorking || restorePending) return;
+              setCheckpointError(null);
+              setRestoreConfirm(cp);
+            }}
+            onDismissError={() => setCheckpointError(null)}
+            now={now}
+          />
+        )}
+        {lanes}
       </div>
-      <footer className={styles.gitStatus} data-git-status="">
-        <span className={styles.gitStatusLine} title={statusLine}>
-          {statusLine}
-        </span>
-        {syncLabelText && (
-          <span className={styles.syncBadge} data-sync-badge="">
-            {syncLabelText}
-          </span>
-        )}
-        {thread && gitFetch && (
-          <button
-            type="button"
-            className={styles.syncBtn}
-            data-sync-btn=""
-            onClick={() => void handleSync()}
-            disabled={syncing}
-            title="Fetch from remote"
-          >
-            {syncing ? "Syncing…" : "Sync"}
-          </button>
-        )}
-      </footer>
-      {restoreConfirm && thread && (
+      {restoreConfirm && (
         <div
           className={styles.confirmOverlay}
           role="presentation"
@@ -2786,16 +1961,13 @@ function HypothesisLedgerCard({
   if (!hypotheses?.length) return null;
   const groups = groupHypotheses(hypotheses);
   return (
-    <section className={styles.gitCard} data-hypothesis-ledger="">
-      <div className={styles.gitCardLabel}>
-        <svg {...LABEL_ICON_PROPS} className={styles.labelIcon}>
-          <path d="M3.5 4.5 5 6l3-3.5" />
-          <path d="M10 5h3" />
-          <path d="M4 11.5h3.5M4 11.5 3 12.5M7.5 11.5 8.5 12.5" />
-          <path d="M10 12h3" />
-        </svg>
-        Hypotheses
-      </div>
+    <InspectorSection
+      title="Hypotheses"
+      count={hypotheses.length}
+      collapsible
+      defaultOpen={false}
+      data-hypothesis-ledger=""
+    >
       <p className={styles.hypothesisSummary}>
         {formatHypothesisSummary(hypotheses)}
       </p>
@@ -2823,7 +1995,7 @@ function HypothesisLedgerCard({
           </ul>
         </div>
       ))}
-    </section>
+    </InspectorSection>
   );
 }
 
@@ -2840,8 +2012,7 @@ function CrewTaskList({
 }) {
   if (tasks.length === 0) return null;
   return (
-    <section className={styles.teamSection} aria-label="Tasks" data-crew-tasks="">
-      <div className={styles.sessionLabel}>Tasks</div>
+    <InspectorSection title="Tasks" count={tasks.length} data-crew-tasks="">
       <ul className={styles.teamList}>
         {tasks.map((task) => {
           const pill = crewTaskPill(task);
@@ -2875,7 +2046,7 @@ function CrewTaskList({
           );
         })}
       </ul>
-    </section>
+    </InspectorSection>
   );
 }
 
@@ -3114,8 +2285,7 @@ export function AgentsContent({
   }, [thread, summaries]);
   const subagentSection =
     subagents.length > 0 ? (
-      <section className={styles.teamSection} aria-label="Subagents">
-        <div className={styles.sessionLabel}>Subagents</div>
+      <InspectorSection title="Subagents" count={subagents.length}>
         {/* Orchestrators show the wait line above their Team roster instead. */}
         {!team && wait && <WaitLine wait={wait} />}
         <ul className={styles.teamList}>
@@ -3136,7 +2306,7 @@ export function AgentsContent({
             />
           ))}
         </ul>
-      </section>
+      </InspectorSection>
     ) : null;
 
   // ponytail: Date.now() at render; 60s ticker if ages look frozen in long-open panes.
@@ -3180,7 +2350,7 @@ export function AgentsContent({
     setManual((prev) => ({ ...prev, [id]: !currentlyOpen }));
   };
 
-  const pane = `${styles.scroll} ${styles.inspector}`;
+  const pane = inspector.pane;
 
   if (!workflow) {
     if (!thread) {
@@ -3193,14 +2363,16 @@ export function AgentsContent({
     if (team?.kind === "orchestrator") {
       return (
         <div className={pane}>
-          <SessionCard
+          <SessionLine
             thread={thread}
             usage={usage}
             providers={providers}
             role="Orchestrator"
           />
-          <section className={styles.teamSection} aria-label="Team">
-            <div className={styles.sessionLabel}>Team</div>
+          <InspectorSection
+            title="Team"
+            count={team.workers.length + team.doneWorkers.length}
+          >
             {wait && <WaitLine wait={wait} />}
             <ul className={styles.teamList}>
               {team.workers.map((w) => (
@@ -3235,7 +2407,6 @@ export function AgentsContent({
                   : `${team.doneWorkers.length} done`}
               </button>
             )}
-          </section>
           {crewIntegration ? (
             <CrewIntegration
               key={thread.id}
@@ -3353,6 +2524,7 @@ export function AgentsContent({
               }
             />
           ) : null}
+          </InspectorSection>
           <CrewTaskList tasks={crewTasks} ownerTitle={crewOwnerTitle} />
           {subagentSection}
           {hypothesisSection}
@@ -3362,22 +2534,22 @@ export function AgentsContent({
     if (team?.kind === "worker") {
       return (
         <div className={pane}>
-          <SessionCard
+          <SessionLine
             thread={thread}
             usage={usage}
             providers={providers}
             role="Worker"
           />
-          <section className={styles.teamSection} aria-label="Team">
-            <div className={styles.sessionLabel}>Team</div>
-            <ul className={styles.teamList}>
-              <TeamRow
-                summary={team.orchestrator}
-                role="Orchestrator"
-                providers={providers}
-                onSelect={onSelectThread}
-              />
-            </ul>
+          <section className={inspector.section} aria-label="Lead">
+            <button
+              type="button"
+              className={inspector.linkBtn}
+              data-crew-lead={team.orchestrator.id}
+              title={team.orchestrator.title}
+              onClick={() => onSelectThread?.(team.orchestrator.id)}
+            >
+              Lead: {team.orchestrator.title} ›
+            </button>
           </section>
           <CrewTaskList tasks={crewTasks} ownerTitle={crewOwnerTitle} />
           {subagentSection}
@@ -3387,7 +2559,7 @@ export function AgentsContent({
     }
     return (
       <div className={pane}>
-        <SessionCard thread={thread} usage={usage} providers={providers} />
+        <SessionLine thread={thread} usage={usage} providers={providers} />
         <CrewTaskList tasks={crewTasks} ownerTitle={crewOwnerTitle} />
         {subagentSection}
         {hypothesisSection}
@@ -3403,17 +2575,16 @@ export function AgentsContent({
   return (
     <>
       <div className={pane}>
-        <section className={styles.workflow}>
-          <div className={styles.workflowHead}>
-            <div>
-              <div className={styles.workflowLabel}>Workflow</div>
-              <div className={styles.workflowName}>{workflow.name}</div>
-            </div>
-            <div className={styles.settled}>
+        <InspectorSection
+          title={`Workflow · ${workflow.name}`}
+          action={
+            <span className={styles.settled}>
               {workflow.settled}/{workflow.total} settled
-            </div>
-          </div>
-
+            </span>
+          }
+          data-workflow=""
+        >
+          <div className={styles.workflow}>
           <div
             className={styles.pipeline}
             role="list"
@@ -3456,9 +2627,8 @@ export function AgentsContent({
               );
             })}
           </div>
-        </section>
-
-        <div className={styles.groups}>
+          </div>
+          <div className={styles.groups}>
           {groups.map((group) => {
             const open = isOpen(group.id, group.status);
             return (
@@ -3526,7 +2696,8 @@ export function AgentsContent({
               </section>
             );
           })}
-        </div>
+          </div>
+        </InspectorSection>
         <CrewTaskList tasks={crewTasks} ownerTitle={crewOwnerTitle} />
         {hypothesisSection}
       </div>
@@ -3565,6 +2736,7 @@ export const AgentsPanel = memo(function AgentsPanel({
   onSelectThread,
   onRetryAgent,
   onViewChanges,
+  fetchDiff,
   tab,
   onTabChange,
   listCheckpoints,
@@ -3590,45 +2762,18 @@ export const AgentsPanel = memo(function AgentsPanel({
   storeMemory,
   maintenanceMemory,
   resolveMemory,
-  loadCodeMap,
-  lintAgentConfig,
-  previewAgentConfig,
-  writeAgentConfig,
-  settings,
-  saveSettings,
-  listMcpServers,
-  saveMcpServer,
-  removeMcpServer,
-  setMcpEnabled,
-  listMcpCatalog,
-  pickMcpImport,
-  previewMcpImport,
-  installMcpImport,
-  discardMcpImport,
   listSkills,
-  addSkill,
   removeSkill,
   syncSkills,
-  listSkillCatalog,
-  pickSkillImport,
-  previewSkillImport,
-  installSkillImport,
-  discardSkillImport,
-  detectHarnessSources,
-  previewHarnessImport,
-  installHarnessImport,
-  discardHarnessImport,
-  activeView,
-  onOpenPrs,
-  onFork,
   claimLane,
   listLanes,
   previewLane,
   restorePreview,
   recycleWedgedLanes,
-  setSpotlight,
   spotlightLane,
   onCollapse,
+  onOpenSettings,
+  skillsRefreshKey,
 }: AgentsPanelProps) {
   const tabListRef = useRef<HTMLDivElement>(null);
   const focusRequest = useRef<PanelTab | null>(null);
@@ -3760,6 +2905,7 @@ export const AgentsPanel = memo(function AgentsPanel({
           thread={thread}
           project={project}
           onViewChanges={onViewChanges}
+          fetchDiff={fetchDiff}
           listCheckpoints={listCheckpoints}
           restoreCheckpoint={restoreCheckpoint}
           listLocalServers={listLocalServers}
@@ -3776,23 +2922,16 @@ export const AgentsPanel = memo(function AgentsPanel({
           devServerStatus={devServerStatus}
           setVerifyCommand={setVerifyCommand}
           runVerify={runVerify}
-          onOpenPrs={onOpenPrs}
-          prsActive={activeView === "prs"}
-          providers={providers}
           claimLane={claimLane}
           listLanes={listLanes}
           previewLane={previewLane}
           restorePreview={restorePreview}
           recycleWedgedLanes={recycleWedgedLanes}
-          spotlight={project?.spotlight === true}
-          setSpotlight={setSpotlight}
           spotlightLane={spotlightLane}
-          onFork={onFork}
         />
       ) : tab === "memory" ? (
         <MemoryTab
           projectSlug={project?.path ?? project?.slug ?? null}
-          projectId={project?.id ?? null}
           consolidation={project ?? null}
           searchMemory={searchMemory}
           recentMemory={recentMemory}
@@ -3802,38 +2941,18 @@ export const AgentsPanel = memo(function AgentsPanel({
           storeMemory={storeMemory}
           maintenanceMemory={maintenanceMemory}
           resolveMemory={resolveMemory}
-          loadCodeMap={loadCodeMap}
-          lintAgentConfig={lintAgentConfig}
-          previewAgentConfig={previewAgentConfig}
-          writeAgentConfig={writeAgentConfig}
+          onOpenProjectTools={
+            onOpenSettings ? () => onOpenSettings("memory") : undefined
+          }
         />
       ) : tab === "skills" ? (
         <SkillsTab
           projectPath={project?.path ?? null}
-          settings={settings}
-          saveSettings={saveSettings}
-          listMcpServers={listMcpServers}
-          saveMcpServer={saveMcpServer}
-          removeMcpServer={removeMcpServer}
-          setMcpEnabled={setMcpEnabled}
-          listMcpCatalog={listMcpCatalog}
-          pickMcpImport={pickMcpImport}
-          previewMcpImport={previewMcpImport}
-          installMcpImport={installMcpImport}
-          discardMcpImport={discardMcpImport}
           listSkills={listSkills}
-          addSkill={addSkill}
           removeSkill={removeSkill}
           syncSkills={syncSkills}
-          listSkillCatalog={listSkillCatalog}
-          pickSkillImport={pickSkillImport}
-          previewSkillImport={previewSkillImport}
-          installSkillImport={installSkillImport}
-          discardSkillImport={discardSkillImport}
-          detectHarnessSources={detectHarnessSources}
-          previewHarnessImport={previewHarnessImport}
-          installHarnessImport={installHarnessImport}
-          discardHarnessImport={discardHarnessImport}
+          onManage={onOpenSettings ? () => onOpenSettings("skills") : undefined}
+          refreshKey={skillsRefreshKey}
         />
       ) : null}
       </div>

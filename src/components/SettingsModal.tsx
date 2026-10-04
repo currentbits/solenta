@@ -19,6 +19,7 @@ import type {
   GcCleanInput,
   GcCleanResult,
   GcScanResult,
+  MergeSpotlight,
   OtelSettings,
   WebhookSettings,
   WebhookTestResult,
@@ -34,6 +35,18 @@ import type {
 import { syncTheme, type ThemePreference } from "../theme";
 import { useEscapeClose } from "../useEscapeClose";
 import { useModalFocus } from "../useModalFocus";
+import {
+  setComposerVimEnabled,
+  setDivergenceCardEnabled,
+  setPasteCardsEnabled,
+  setRunDurationEnabled,
+  useComposerVimEnabled,
+  useDivergenceCardEnabled,
+  usePasteCardsEnabled,
+  useRunDurationEnabled,
+} from "../uiPrefs";
+import { MemoryProjectTools, type MemoryProjectToolsApi } from "./MemoryTab";
+import { SkillsManager, type SkillsManagerProps } from "./SkillsTab";
 import styles from "./SettingsModal.module.css";
 import { WorktreeGcSection } from "./WorktreeGcSection";
 import { VibeKanbanSection } from "./VibeKanbanSection";
@@ -50,6 +63,7 @@ export const SETTINGS_PANES = [
   "git",
   "agents",
   "memory",
+  "skills",
   "connections",
   "integrations",
   "advanced",
@@ -63,9 +77,9 @@ const PANE_META: Record<
 > = {
   general: {
     label: "General",
-    hint: "Notifications, the welcome tour, and this build.",
+    hint: "Display, notifications, the welcome tour, and this build.",
     keywords:
-      "notifications tour welcome update version build channel nightly prod felt estimate time saved webhook slack discord ntfy push phone agents panel sidebar collapse remember last quit confirm accidental close",
+      "notifications tour welcome update version build channel nightly prod felt estimate time saved webhook slack discord ntfy push phone agents panel sidebar collapse remember last quit confirm accidental close display divergence compare run duration paste cards vim motions",
   },
   threads: {
     label: "Threads",
@@ -80,9 +94,9 @@ const PANE_META: Record<
   },
   git: {
     label: "Git",
-    hint: "Source control, Linear tickets, PR size, and worktree disk.",
+    hint: "Source control, Linear tickets, PR size, worktree disk, and Spotlight.",
     keywords:
-      "github gitlab bitbucket azure source control pr pull request worktree gc disk cleanup linear ticket api key",
+      "github gitlab bitbucket azure source control pr pull request worktree gc disk cleanup linear ticket api key spotlight lanes preview",
   },
   agents: {
     label: "Agents",
@@ -92,8 +106,14 @@ const PANE_META: Record<
   },
   memory: {
     label: "Memory",
-    hint: "The local memory server injected into every session.",
-    keywords: "memory entries vectors janitor server port embed",
+    hint: "The local memory server, plus each project's code map and config doctor.",
+    keywords: "memory entries vectors janitor server port embed code map config doctor agents.md claude.md project tools",
+  },
+  skills: {
+    label: "Skills & MCP",
+    hint: "The skill catalog, MCP servers, and imports every agent shares.",
+    keywords:
+      "skills mcp server catalog curated import harness plugin add skill write manually github claude codex cursor grok kimi",
   },
   connections: {
     label: "Connections",
@@ -153,6 +173,17 @@ interface SettingsModalProps {
   onShowOnboarding?: () => void;
   onOpenConnection?: CoderApi["app"]["openRemoteConnection"];
   onForgetConnection?: CoderApi["app"]["forgetRemoteConnection"];
+  /** Project picker default for Spotlight and Project tools: the selected thread's project. */
+  currentProjectId?: string | null;
+  /** Per-project Spotlight opt-in (moved from the Environment Lanes card). */
+  onSetSpotlight?: (input: {
+    projectId: string;
+    enabled: boolean;
+  }) => Promise<MergeSpotlight>;
+  /** Code map + config doctor (moved from the Memory tab). */
+  projectTools?: MemoryProjectToolsApi;
+  /** Catalog, MCP servers, imports and Add skill (moved from the Skills tab). */
+  skills?: Omit<SkillsManagerProps, "projectPath">;
 }
 
 const UI_SCALE_MIN = 0.8;
@@ -361,6 +392,10 @@ export function SettingsModal({
   onShowOnboarding,
   onOpenConnection,
   onForgetConnection,
+  currentProjectId = null,
+  onSetSpotlight,
+  projectTools,
+  skills,
 }: SettingsModalProps) {
   const [pane, setPane] = useState<SettingsPane>("general");
   const [navQuery, setNavQuery] = useState("");
@@ -386,6 +421,8 @@ export function SettingsModal({
   const [saving, setSaving] = useState(false);
   const [checkingUpdate, setCheckingUpdate] = useState(false);
   const [downloadingUpdate, setDownloadingUpdate] = useState(false);
+  /** Shared by Git → Spotlight and Memory → Project tools; reset on open. */
+  const [toolsProjectId, setToolsProjectId] = useState<string | null>(null);
   const wasOpen = useRef(false);
   /** True once drafts have been filled from a real settings object. */
   const hydrated = useRef(false);
@@ -428,6 +465,7 @@ export function SettingsModal({
 
     if (justOpened) {
       setPane(isSettingsPane(initialPane) ? initialPane : "general");
+      setToolsProjectId(currentProjectId);
       setNavQuery("");
       applyDrafts(settings, false);
       setWebhookTest("idle");
@@ -475,6 +513,8 @@ export function SettingsModal({
     );
   });
   const paneMeta = PANE_META[pane];
+  const toolsProject =
+    projects?.find((p) => p.id === toolsProjectId) ?? projects?.[0] ?? null;
   const spent = status?.spendTodayUsd;
   const spendCopy =
     spent == null
@@ -1947,6 +1987,15 @@ export function SettingsModal({
           />
           )}
 
+          {pane === "git" && onSetSpotlight && projects && (
+          <SpotlightSection
+            projects={projects}
+            value={toolsProjectId}
+            onPick={setToolsProjectId}
+            onSetSpotlight={onSetSpotlight}
+          />
+          )}
+
           {pane === "advanced" && (
           <VibeKanbanSection active={open && pane === "advanced"} />
           )}
@@ -1988,6 +2037,32 @@ export function SettingsModal({
               automatically.
             </p>
           </section>
+          )}
+
+          {pane === "memory" && projectTools && projects && toolsProject && (
+          <section className={styles.section} data-project-tools="">
+            <h3 className={styles.sectionLabel}>Project tools</h3>
+            <ProjectPicker
+              id="project-tools-project"
+              projects={projects}
+              value={toolsProject.id}
+              onChange={setToolsProjectId}
+            />
+            <MemoryProjectTools
+              projectId={toolsProject.id}
+              projectSlug={toolsProject.path}
+              {...projectTools}
+            />
+          </section>
+          )}
+
+          {pane === "skills" && skills && (
+          <SkillsManager
+            projectPath={
+              projects?.find((p) => p.id === currentProjectId)?.path ?? null
+            }
+            {...skills}
+          />
           )}
 
           {pane === "general" && (
@@ -2453,6 +2528,8 @@ export function SettingsModal({
             )}
           </section>
           )}
+
+          {pane === "general" && <DisplayPrefsSection />}
             </div>
           </div>
         </div>
@@ -2519,6 +2596,12 @@ function PaneIcon({ id }: { id: SettingsPane }) {
           <rect x="13" y="13" width="8" height="6" rx="1" />
           <path d="M11 8h3a3 3 0 0 1 3 3v2" />
         </>
+      ) : id === "skills" ? (
+        <>
+          <path d="M9 3v4M15 3v4" />
+          <path d="M7 7h10v4a5 5 0 0 1-10 0V7Z" />
+          <path d="M12 16v5" />
+        </>
       ) : (
         <>
           <circle cx="12" cy="12" r="3" />
@@ -2527,6 +2610,166 @@ function PaneIcon({ id }: { id: SettingsPane }) {
         </>
       )}
     </svg>
+  );
+}
+
+/** Display prefs (moved from the Environment tab). Same uiPrefs keys. */
+function DisplayPrefsSection() {
+  const divergence = useDivergenceCardEnabled();
+  const runDuration = useRunDurationEnabled();
+  const pasteCards = usePasteCardsEnabled();
+  const composerVim = useComposerVimEnabled();
+  return (
+    <section className={styles.section} data-display-prefs="">
+      <h3 className={styles.sectionLabel}>Display</h3>
+      <label className={styles.fieldRow}>
+        <input
+          type="checkbox"
+          data-divergence-pref=""
+          checked={divergence}
+          onChange={(e) => setDivergenceCardEnabled(e.target.checked)}
+        />
+        <span>Show divergence compare on threads</span>
+      </label>
+      <label className={styles.fieldRow}>
+        <input
+          type="checkbox"
+          data-run-duration-pref=""
+          checked={runDuration}
+          onChange={(e) => setRunDurationEnabled(e.target.checked)}
+        />
+        <span>Show time spent at the end of a run</span>
+      </label>
+      <label className={styles.fieldRow}>
+        <input
+          type="checkbox"
+          data-paste-cards-pref=""
+          checked={pasteCards}
+          onChange={(e) => setPasteCardsEnabled(e.target.checked)}
+        />
+        <span>Collapse large pastes into cards</span>
+      </label>
+      <label className={styles.fieldRow}>
+        <input
+          type="checkbox"
+          data-composer-vim-pref=""
+          checked={composerVim}
+          onChange={(e) => setComposerVimEnabled(e.target.checked)}
+        />
+        <span>Vim motions in the composer</span>
+      </label>
+    </section>
+  );
+}
+
+function ProjectPicker({
+  id,
+  projects,
+  value,
+  onChange,
+}: {
+  id: string;
+  projects: ProjectInfo[];
+  value: string;
+  onChange: (projectId: string) => void;
+}) {
+  return (
+    <div className={styles.field}>
+      <label className={styles.fieldLabel} htmlFor={id}>
+        Project
+      </label>
+      <select
+        id={id}
+        className={styles.input}
+        data-project-picker={id}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+      >
+        {projects.map((p) => (
+          <option key={p.id} value={p.id}>
+            {p.name}
+          </option>
+        ))}
+      </select>
+    </div>
+  );
+}
+
+/**
+ * Per-project Spotlight opt-in (moved from the Environment Lanes card).
+ * Lanes are local-only, so remote projects are not offered.
+ */
+function SpotlightSection({
+  projects,
+  value,
+  onPick,
+  onSetSpotlight,
+}: {
+  projects: ProjectInfo[];
+  value: string | null;
+  onPick: (projectId: string) => void;
+  onSetSpotlight: (input: {
+    projectId: string;
+    enabled: boolean;
+  }) => Promise<MergeSpotlight>;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  // Shown until useCoder's projects.list refresh brings the saved flag back.
+  const [saved, setSaved] = useState<{
+    projectId: string;
+    enabled: boolean;
+  } | null>(null);
+  const local = projects.filter((p) => !p.remoteHost);
+  const project = local.find((p) => p.id === value) ?? local[0] ?? null;
+  if (!project) return null;
+  const checked =
+    saved?.projectId === project.id ? saved.enabled : project.spotlight === true;
+  return (
+    <section className={styles.section} data-spotlight-settings="">
+      <h3 className={styles.sectionLabel}>Spotlight</h3>
+      <ProjectPicker
+        id="spotlight-project"
+        projects={local}
+        value={project.id}
+        onChange={onPick}
+      />
+      <label className={styles.fieldRow}>
+        <input
+          type="checkbox"
+          data-lane-spotlight=""
+          checked={checked}
+          disabled={busy}
+          onChange={(e) => {
+            const enabled = e.target.checked;
+            const projectId = project.id;
+            setBusy(true);
+            setError(null);
+            void onSetSpotlight({ projectId, enabled })
+              .then(() => setSaved({ projectId, enabled }))
+              .catch((err) =>
+                setError(
+                  err instanceof Error && err.message
+                    ? err.message
+                    : "Failed to save Spotlight",
+                ),
+              )
+              .finally(() => setBusy(false));
+          }}
+        />
+        <span>Preview lanes on the project checkout</span>
+      </label>
+      <p className={styles.note}>
+        When on, Preview on the Environment Lanes section hot-swaps the
+        claimed lane onto this project&apos;s checkout, so one running app
+        serves whichever lane you pick.
+      </p>
+      {error ? (
+        <p className={styles.fieldError} role="alert">
+          {error}
+        </p>
+      ) : null}
+    </section>
   );
 }
 

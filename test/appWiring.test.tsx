@@ -428,6 +428,96 @@ describe("App memory wiring", () => {
     );
     m.unmount();
   });
+
+  it("Memory footer opens Settings → Memory → Project tools on this project", async () => {
+    const fake = createFakeCoder({
+      projects: [project({ id: "p1", slug: "owner/repo" })],
+      threads: [thread({ id: "t1", projectId: "p1" })],
+    });
+    const m = await boot(fake);
+    await expandAgents(m);
+    const target = m.query('button[aria-label="Select thread: first thread"]');
+    assert.ok(target, "the thread card must be present");
+    await m.click(target);
+    await m.click(m.query('[data-panel-tab="memory"]'));
+    const link = m.query("[data-memory-project-tools-link]");
+    assert.ok(link, "the Memory footer links to Project tools");
+    await m.click(link);
+    assert.equal(
+      m.query("[data-settings-pane]")?.getAttribute("data-settings-pane"),
+      "memory",
+    );
+    assert.equal(
+      (
+        m.query(
+          '[data-project-picker="project-tools-project"]',
+        ) as HTMLSelectElement | null
+      )?.value,
+      "p1",
+      "the picker defaults to the selected thread's project",
+    );
+    m.unmount();
+  });
+
+  it("Skills tab Manage › opens Settings on Skills & MCP", async () => {
+    const fake = createFakeCoder({
+      projects: [project()],
+      threads: [thread()],
+    });
+    const m = await boot(fake);
+    await expandAgents(m);
+    await m.click(m.query('[data-panel-tab="skills"]'));
+    const manage = m.query("[data-skills-manage]");
+    assert.ok(manage, "Manage › sits on the Skills toolbar");
+    await m.click(manage);
+    assert.equal(
+      m.query("[data-settings-pane]")?.getAttribute("data-settings-pane"),
+      "skills",
+    );
+    assert.ok(m.query("[data-skills-manager]"), "moved sections render in Settings");
+    m.unmount();
+  });
+
+  it("refreshes the Skills tab after adding a skill in Settings and closing it (stale list)", async () => {
+    const fake = createFakeCoder({
+      projects: [project()],
+      threads: [thread()],
+    });
+    const m = await boot(fake);
+    await expandAgents(m);
+    await m.click(m.query('[data-panel-tab="skills"]'));
+    assert.equal(
+      m.text().includes("fresh-skill"),
+      false,
+      "the new skill must not exist yet",
+    );
+    await m.click(m.query("[data-skills-manage]"));
+    assert.equal(
+      m.query("[data-settings-pane]")?.getAttribute("data-settings-pane"),
+      "skills",
+    );
+    const writeManually = m.byText("Write manually");
+    assert.ok(writeManually, "Write manually disclosure must render");
+    await m.click(writeManually);
+    await m.type(m.query('input[aria-label="Skill name"]'), "fresh-skill");
+    await m.type(
+      m.query('input[aria-label="Skill description"]'),
+      "Added in Settings",
+    );
+    await m.type(m.query('textarea[aria-label="Skill body"]'), "Do the thing.");
+    await m.click(m.query('[data-skill-section="add"] button[type="submit"]'));
+    assert.ok(
+      m.text().includes("Added fresh-skill"),
+      "add must have succeeded inside Settings",
+    );
+    await m.click(m.query('button[aria-label="Close"]'));
+    assert.equal(m.query("[data-settings]"), null, "Settings must have closed");
+    assert.ok(
+      m.text().includes("fresh-skill"),
+      "the inspector Skills tab must reload after Settings closes, not show the stale list",
+    );
+    m.unmount();
+  });
 });
 
 describe("App archive undo toast wiring", () => {
@@ -1056,7 +1146,7 @@ describe("App selection stamps lastVisitedAt (round 43 unread)", () => {
     }
   });
 
-  it("Environment PR card opens the pull-requests view", async () => {
+  it("pull requests open from the sidebar Review nav, not an Environment card", async () => {
     const fake = createFakeCoder();
     const m = await boot(fake);
     try {
@@ -1066,9 +1156,10 @@ describe("App selection stamps lastVisitedAt (round 43 unread)", () => {
         null,
         "left bar must not keep a Pull requests row",
       );
-      const btn = m.query("[data-open-prs]");
-      assert.ok(btn, "Environment must offer a pull-requests card");
-      await m.click(btn as HTMLElement);
+      assert.equal(m.query("[data-open-prs]"), null, "Environment no longer duplicates it");
+      const review = m.query('[data-view-nav="review"]');
+      assert.ok(review, "the sidebar Review nav is the PR list's home");
+      await m.click(review as HTMLElement);
       await m.flush();
       await inAct(async () => {
         await Promise.resolve();

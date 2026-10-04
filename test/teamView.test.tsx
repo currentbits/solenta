@@ -10,6 +10,7 @@ import { describe, it } from "node:test";
 import { useState } from "react";
 import { mount } from "./support/dom.ts";
 import { AgentsContent } from "../src/components/AgentsPanel";
+import { shortSessionId } from "../src/format";
 import type {
   ProviderInfo,
   ThreadInfo,
@@ -139,7 +140,7 @@ describe("Agents team view", () => {
     m.unmount();
   });
 
-  it("worker: links back to the orchestrator row", async () => {
+  it("worker: Worker chip and a Lead line back to the orchestrator; no Team section", async () => {
     const selected: string[] = [];
     const m = await mount(
       content(
@@ -154,14 +155,35 @@ describe("Agents team view", () => {
       ),
     );
     await m.flush();
+    assert.match(
+      m.query("[data-session-line]")?.textContent ?? "",
+      /Worker/,
+      "selected card carries the Worker chip",
+    );
+    assert.equal(m.query('[aria-label="Team"]'), null, "Team is for crew leads only");
+    const lead = m.query("[data-crew-lead]");
+    assert.ok(lead, "a worker links back to its lead");
+    assert.equal(lead.textContent, "Lead: Plan the fix ›", "orchestrator row title");
+    await m.click(lead);
+    assert.deepEqual(selected, ["t-orch"], "clicking the Lead line selects the orchestrator");
+    m.unmount();
+  });
 
-    const text = m.text();
-    assert.match(text, /Worker/, "selected card carries the Worker chip");
-    assert.match(text, /Orchestrator/);
-    assert.match(text, /Plan the fix/, "orchestrator row title");
-
-    await m.click(m.byText("Plan the fix"));
-    assert.deepEqual(selected, ["t-orch"], "clicking the row selects the orchestrator");
+  it("worker whose lead is not in the project shows no Lead line", async () => {
+    const m = await mount(
+      content(
+        thread({
+          id: "t-work",
+          title: "Fork: Plan the fix",
+          handoffFrom: "t-orch",
+          orchWorker: true,
+        }),
+        [WORKER],
+      ),
+    );
+    await m.flush();
+    assert.equal(m.query("[data-crew-lead]"), null);
+    assert.equal(m.query('[aria-label="Team"]'), null);
     m.unmount();
   });
 
@@ -172,7 +194,7 @@ describe("Agents team view", () => {
     const text = m.text();
     assert.doesNotMatch(text, /Orchestrator/);
     assert.doesNotMatch(text, /Worker/);
-    assert.match(text, /Session/, "plain session card still renders");
+    assert.ok(m.query("[data-session-line]"), "plain session line still renders");
     m.unmount();
   });
 
@@ -703,13 +725,13 @@ describe("Agents team view", () => {
     assert.match(m.text(), /Hypotheses/);
     assert.match(m.text(), /2 ruled out · 1 worked/);
     assert.doesNotMatch(m.text(), /inconclusive/);
+    assert.equal(card.tagName, "DETAILS");
     assert.equal(
-      card.querySelector("[data-env-grip]"),
-      null,
-      "ledger is not a reorderable Environment section",
+      (card as HTMLDetailsElement).open,
+      false,
+      "hypotheses start collapsed",
     );
-    assert.equal(card.getAttribute("draggable"), null);
-    assert.equal(m.query("[data-env-list]"), null);
+    assert.equal(card.querySelector("[data-section-count]")?.textContent, "3");
 
     const rows = m.queryAll("[data-hypothesis-status]");
     assert.equal(rows.length, 3);
@@ -725,6 +747,119 @@ describe("Agents team view", () => {
     assert.match(rows[1]!.textContent ?? "", /Flush is sync/);
     assert.equal(rows[2]!.getAttribute("data-hypothesis-status"), "validated");
     assert.match(rows[2]!.textContent ?? "", /execFile/);
+    m.unmount();
+  });
+
+  it("session line: provider · status · turns · cost; tokens muted; no Model, Permission or Context", async () => {
+    const m = await mount(
+      <AgentsContent
+        workflow={null}
+        thread={thread({ model: "opus-x", permissionMode: "acceptEdits" })}
+        usage={{
+          model: "opus-x",
+          inputTokens: 1200,
+          outputTokens: 34,
+          costUsd: 0.5,
+          turns: 2,
+          contextTokens: 50_000,
+          contextWindow: 200_000,
+        }}
+        providers={PROVIDERS}
+        rosterKey=""
+        listThreadSummaries={async () => []}
+      />,
+    );
+    await m.flush();
+    assert.equal(
+      m.query("[data-session-line]")?.textContent,
+      "Claude Code · idle · 2 turns · $0.50",
+    );
+    assert.equal(
+      m.query("[data-session-tokens]")?.textContent,
+      "1,200 in · 34 out tokens",
+    );
+    const text = m.text();
+    assert.doesNotMatch(text, /opus-x/, "model lives in the composer");
+    assert.doesNotMatch(text, /Permission|Accept edits/, "permission lives in the composer");
+    assert.doesNotMatch(text, /Context|of 200/, "context lives in the header ring");
+    m.unmount();
+  });
+
+  it("session line: shows the short session id with the full id as a tooltip, even with no usage", async () => {
+    const sessionId = "abc12345-full-session-id";
+    const m = await mount(
+      <AgentsContent
+        workflow={null}
+        thread={thread({ sessionId })}
+        usage={null}
+        providers={PROVIDERS}
+        rosterKey=""
+        listThreadSummaries={async () => []}
+      />,
+    );
+    await m.flush();
+    const tokens = m.query("[data-session-tokens]");
+    assert.ok(tokens, "muted session line renders even with no usage");
+    assert.equal(tokens.textContent, shortSessionId(sessionId));
+    assert.equal(tokens.getAttribute("title"), sessionId);
+    m.unmount();
+  });
+
+  it("crew lead: Session, Team, Tasks, Subagents, Hypotheses in that order", async () => {
+    const m = await mount(
+      <AgentsContent
+        workflow={null}
+        thread={thread({
+          subagents: [
+            {
+              id: "s1",
+              description: "Scan the repo",
+              agentType: null,
+              status: "running",
+            },
+          ],
+          hypotheses: [
+            {
+              id: "h1",
+              claim: "Flush races the stream",
+              status: "validated",
+              reason: "",
+              at: Date.now(),
+            },
+          ],
+        })}
+        usage={null}
+        providers={PROVIDERS}
+        rosterKey="t-orch:idle,t-work:working"
+        listThreadSummaries={async () => [ORCHESTRATOR, WORKER]}
+        listCrewTasks={async () => ({
+          rootThreadId: "t-orch",
+          tasks: [
+            {
+              id: "T1",
+              title: "Split the parser",
+              needs: [],
+              status: "open",
+              owner: null,
+              note: "",
+              attempts: [],
+              createdAt: 1,
+              updatedAt: 1,
+              blocked: false,
+            },
+          ],
+        })}
+      />,
+    );
+    await m.flush();
+    // [data-session-line] is the <p>; its section is a direct child of the pane.
+    const pane = m.query("[data-session-line]")!.parentElement!.parentElement!;
+    assert.deepEqual(
+      [...pane.children].map((el) => el.getAttribute("aria-label")),
+      ["Session", "Team", "Tasks", "Subagents", "Hypotheses"],
+    );
+    const team = m.query('[aria-label="Team"]')!;
+    assert.equal(team.querySelector("[data-section-count]")?.textContent, "1");
     m.unmount();
   });
 });

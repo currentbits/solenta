@@ -432,6 +432,10 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
   const [changesNonce, setChangesNonce] = useState(0);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsPane, setSettingsPane] = useState<SettingsPane | null>(null);
+  // Bumped on every Settings close so the Skills tab (mounted behind the
+  // modal the whole time) reloads instead of showing what it had before an
+  // install/import/add happened in Settings → Skills & MCP.
+  const [skillsRefreshKey, setSkillsRefreshKey] = useState(0);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [paletteMode, setPaletteMode] = useState<PaletteMode>("command");
   const paletteModeRef = useRef<PaletteMode>("command");
@@ -790,7 +794,10 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     setSettingsPane(pane ?? "general");
     setSettingsOpen(true);
   }, []);
-  const closeSettings = useCallback(() => setSettingsOpen(false), []);
+  const closeSettings = useCallback(() => {
+    setSettingsOpen(false);
+    setSkillsRefreshKey((n) => n + 1);
+  }, []);
   const closeChanges = useCallback(() => setChangesOpen(false), []);
   const openChanges = useCallback(() => {
     setChangesOpen(true);
@@ -2513,6 +2520,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         onTabChange={rememberInspectorTab}
         onSelectThread={handleSelectThread}
         onViewChanges={openChanges}
+        fetchDiff={fetchDiff}
         listCheckpoints={listCheckpoints}
         restoreCheckpoint={restoreCheckpoint}
         listLocalServers={listLocalServers}
@@ -2527,7 +2535,6 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         previewLane={previewLane}
         restorePreview={restorePreview}
         recycleWedgedLanes={recycleWedgedLanes}
-        setSpotlight={setSpotlight}
         spotlightLane={spotlightLane}
         listDevScripts={listDevScripts}
         startDevServer={startDevServer}
@@ -2543,37 +2550,11 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         storeMemory={storeMemory}
         maintenanceMemory={maintenanceMemory}
         resolveMemory={resolveMemory}
-        loadCodeMap={loadCodeMap}
-        lintAgentConfig={lintAgentConfig}
-        previewAgentConfig={previewAgentConfig}
-        writeAgentConfig={writeAgentConfig}
-        settings={settings}
-        saveSettings={saveSettings}
-        listMcpServers={listMcpServers}
-        saveMcpServer={saveMcpServer}
-        removeMcpServer={removeMcpServer}
-        setMcpEnabled={setMcpEnabled}
-        listMcpCatalog={listMcpCatalog}
-        pickMcpImport={pickMcpImport}
-        previewMcpImport={previewMcpImport}
-        installMcpImport={installMcpImport}
-        discardMcpImport={discardMcpImport}
         listSkills={listSkills}
-        addSkill={addSkill}
         removeSkill={removeSkill}
         syncSkills={syncSkills}
-        listSkillCatalog={listSkillCatalog}
-        pickSkillImport={pickSkillImport}
-        previewSkillImport={previewSkillImport}
-        installSkillImport={installSkillImport}
-        discardSkillImport={discardSkillImport}
-        detectHarnessSources={detectHarnessSources}
-        previewHarnessImport={previewHarnessImport}
-        installHarnessImport={installHarnessImport}
-        discardHarnessImport={discardHarnessImport}
-        activeView={view}
-        onOpenPrs={openPrs}
-        onFork={handleForkOpen}
+        onOpenSettings={openSettings}
+        skillsRefreshKey={skillsRefreshKey}
           />
           </ErrorBoundary>
           )}
@@ -2622,6 +2603,37 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
           onShowOnboarding={showOnboarding}
           onOpenConnection={(input) => api.app.openRemoteConnection(input)}
           onForgetConnection={(input) => api.app.forgetRemoteConnection(input)}
+          projects={projects}
+          currentProjectId={project?.id ?? null}
+          onSetSpotlight={setSpotlight}
+          projectTools={{
+            loadCodeMap,
+            lintAgentConfig,
+            previewAgentConfig,
+            writeAgentConfig,
+          }}
+          skills={{
+            listMcpServers,
+            saveMcpServer,
+            removeMcpServer,
+            setMcpEnabled,
+            listMcpCatalog,
+            pickMcpImport,
+            previewMcpImport,
+            installMcpImport,
+            discardMcpImport,
+            listSkills,
+            addSkill,
+            listSkillCatalog,
+            pickSkillImport,
+            previewSkillImport,
+            installSkillImport,
+            discardSkillImport,
+            detectHarnessSources,
+            previewHarnessImport,
+            installHarnessImport,
+            discardHarnessImport,
+          }}
         />
         <OnboardingModal
           open={onboardingOpen}

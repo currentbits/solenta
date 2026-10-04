@@ -128,6 +128,7 @@ describe("boxed surfaces flatten to fill, not outline", () => {
     const memory = loadCss("src/components/MemoryTab.module.css");
     const skills = loadCss("src/components/SkillsTab.module.css");
     const agents = loadCss("src/components/AgentsPanel.module.css");
+    const inspector = loadCss("src/components/Inspector.module.css");
 
     for (const [file, css, name] of [
       ["ThreadView", thread, "card"],
@@ -136,10 +137,9 @@ describe("boxed surfaces flatten to fill, not outline", () => {
       ["KanbanView", kanban, "column"],
       ["SkillsTab", skills, "preview"],
       ["SkillsTab", skills, "instructionCode"],
-      ["AgentsPanel", agents, "sessionCard"],
-      ["AgentsPanel", agents, "gitCard"],
+      ["Inspector", inspector, "section"],
+      ["Inspector", inspector, "banner"],
       ["AgentsPanel", agents, "workflow"],
-      ["AgentsPanel", agents, "teamSection"],
     ] as const) {
       const bodies = allRuleBodies(css, name);
       assert.ok(bodies.length > 0, `${file} .${name} must exist`);
