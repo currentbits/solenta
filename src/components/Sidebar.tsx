@@ -104,6 +104,11 @@ import { Icon } from "./sidebar/Icon";
 import { ThreadCard, type SelectOpts } from "./sidebar/ThreadCard";
 import { SettledRow, SnoozedRow } from "./sidebar/rows";
 import {
+  MORE_DESTINATIONS,
+  moveAppMenuFocus,
+  type SidebarNavView,
+} from "./sidebar/nav";
+import {
   countIdChurn,
   listMotionBlocked,
   releaseAbortedRows,
@@ -143,59 +148,6 @@ const FAMILY_MOTION_MS = 160;
 const BULK_ROW_DELTA = 40;
 type FilterMenu = "status" | "provider" | "group" | "tag" | "views";
 type ViewEditor = { mode: "save" | "rename"; name: string };
-
-/** Main app destination. Kept local so Sidebar does not import App. */
-type SidebarNavView =
-  | "thread"
-  | "kanban"
-  | "planboard"
-  | "prs"
-  | "automations"
-  | "activity"
-  | "usage"
-  | "fleet"
-  | "insights"
-  | "digest";
-
-const MORE_DESTINATIONS: readonly {
-  id:
-    | "activity"
-    | "kanban"
-    | "automations"
-    | "usage"
-    | "fleet"
-    | "insights"
-    | "digest";
-  label: string;
-  view: SidebarNavView;
-}[] = [
-  { id: "activity", label: "Activity", view: "activity" },
-  { id: "kanban", label: "Kanban", view: "kanban" },
-  { id: "automations", label: "Automations", view: "automations" },
-  { id: "usage", label: "Usage", view: "usage" },
-  { id: "fleet", label: "Fleet", view: "fleet" },
-  { id: "insights", label: "Insights", view: "insights" },
-  { id: "digest", label: "Digest", view: "digest" },
-];
-
-function moveAppMenuFocus(menu: HTMLElement, key: string): boolean {
-  const items = [
-    ...menu.querySelectorAll<HTMLElement>(
-      '[role="menuitem"]:not([disabled])',
-    ),
-  ];
-  if (items.length === 0) return false;
-  const from = items.findIndex((el) => el === document.activeElement);
-  let next = -1;
-  if (key === "ArrowDown") next = from < 0 ? 0 : (from + 1) % items.length;
-  else if (key === "ArrowUp") {
-    next = from < 0 ? items.length - 1 : (from - 1 + items.length) % items.length;
-  } else if (key === "Home") next = 0;
-  else if (key === "End") next = items.length - 1;
-  else return false;
-  items[next]?.focus();
-  return true;
-}
 
 interface SidebarProps {
   appName: string;
