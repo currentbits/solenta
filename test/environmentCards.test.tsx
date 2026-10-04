@@ -449,6 +449,22 @@ describe("Environment layout (inspector redesign)", () => {
     m.unmount();
   });
 
+  it("ignores a stale coder.envSectionOrder localStorage key", async () => {
+    window.localStorage.setItem(
+      "coder.envSectionOrder",
+      JSON.stringify(["lanes", "checkpoints", "run", "status"]),
+    );
+    const m = await mount(tab({ lanes: [] }));
+    await m.flush();
+    const pane = m.query("[data-env-tools]")!;
+    assert.deepEqual(
+      [...pane.children].map((el) => el.getAttribute("aria-label")),
+      ["Status", "Run", "Checkpoints", "Lanes"],
+    );
+    window.localStorage.removeItem("coder.envSectionOrder");
+    m.unmount();
+  });
+
   it("drops the duplicate cards and the reorder chrome", async () => {
     const m = await mount(tab({}));
     await m.flush();
@@ -500,6 +516,34 @@ describe("Environment layout (inspector redesign)", () => {
     await m.flush();
     assert.equal(m.query("[data-env-changes]")?.textContent, "Changes ›");
     m.unmount();
+  });
+
+  it("changed-files label: 0 is 'No changed files', 1 is '1 changed file'", async () => {
+    const zero = await mount(
+      tab({
+        onFetchDiff: async () =>
+          ({ files: [], patch: "", truncated: false }) as unknown as DiffResult,
+      }),
+    );
+    await zero.flush();
+    assert.equal(
+      zero.query("[data-env-changes]")?.textContent,
+      "No changed files ›",
+    );
+    zero.unmount();
+
+    const one = await mount(
+      tab({
+        onFetchDiff: async () =>
+          ({ files: [{}], patch: "", truncated: false }) as unknown as DiffResult,
+      }),
+    );
+    await one.flush();
+    assert.equal(
+      one.query("[data-env-changes]")?.textContent,
+      "1 changed file ›",
+    );
+    one.unmount();
   });
 
   it("checkpoints start collapsed and show their count", async () => {
