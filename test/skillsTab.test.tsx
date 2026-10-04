@@ -9,7 +9,7 @@ import fs from "node:fs";
 import { describe, it, afterEach } from "node:test";
 import { useRef, useState } from "react";
 import { inAct, mount, unmountAll } from "./support/dom.ts";
-import { SkillsTab } from "../src/components/SkillsTab";
+import { SkillsManager, SkillsTab } from "../src/components/SkillsTab";
 import {
   filterInstalledSkills,
   providerFilterCount,
@@ -221,6 +221,8 @@ interface HarnessOptions {
     input: HarnessInstallRequest,
   ) => HarnessInstallResult | void;
   onDiscardHarnessImport?: (input: { previewId: string }) => void;
+  surface?: "inspector" | "settings";
+  onManage?: () => void;
 }
 
 /**
@@ -244,9 +246,12 @@ function Harness(opts: HarnessOptions) {
       missingFrom: [...s.missingFrom],
     })),
   );
+  // Both surfaces read only the props they declare, so one prop bag drives either.
+  const Surface = (opts.surface === "settings" ? SkillsManager : SkillsTab) as typeof SkillsManager;
   return (
-    <SkillsTab
+    <Surface
       projectPath="/repo"
+      onManage={opts.onManage}
       settings={settings}
       saveSettings={async (patch) => {
         opts.onSaveSettings?.(patch);
@@ -496,13 +501,24 @@ function Harness(opts: HarnessOptions) {
   );
 }
 
+function ManagerHarness(opts: HarnessOptions) {
+  return <Harness {...opts} surface="settings" />;
+}
+
+/**
+ * Catalog, MCP and Add skill live on Settings → Skills & MCP (SkillsManager);
+ * the installed library is the inspector tab. Asserts the mount is the right one.
+ */
 async function openSkillsView(
   m: Awaited<ReturnType<typeof mount>>,
   view: "library" | "catalog" | "mcp" | "add",
 ): Promise<void> {
-  const btn = m.query(`[data-skills-view-btn="${view}"]`);
-  assert.ok(btn, `${view} view control must render`);
-  await m.click(btn);
+  const onSettings = Boolean(m.query("[data-skills-manager]"));
+  assert.equal(
+    onSettings,
+    view !== "library",
+    `${view} lives on the ${view === "library" ? "inspector tab" : "Settings pane"}`,
+  );
 }
 
 async function expandSkill(
@@ -518,7 +534,7 @@ async function expandSkill(
 }
 
 describe("SkillsTab lists", () => {
-  it("renders installed skills first; MCP stays on a secondary view", async () => {
+  it("renders installed skills in the tab; MCP lives in Settings → Skills & MCP", async () => {
     const m = await mount(
       <Harness mcpServers={[httpDef()]} />,
     );
@@ -549,16 +565,18 @@ describe("SkillsTab lists", () => {
       false,
       "user skills no longer carry a per-provider source badge",
     );
-    await openSkillsView(m, "mcp");
-    assert.ok(m.text().includes("coder-memory"), "built-in must render");
-    assert.ok(m.text().includes("coder-threads"), "built-in must render");
-    assert.ok(m.text().includes("Built-in"), "built-in badge must render");
-    assert.ok(m.text().includes("team-tools"), "user server must render");
+    assert.equal(m.query("[data-skills-manager]"), null, "no MCP surface in the tab");
+    m.unmount();
+    const s = await mount(<ManagerHarness mcpServers={[httpDef()]} />);
+    assert.ok(s.text().includes("coder-memory"), "built-in must render");
+    assert.ok(s.text().includes("coder-threads"), "built-in must render");
+    assert.ok(s.text().includes("Built-in"), "built-in badge must render");
+    assert.ok(s.text().includes("team-tools"), "user server must render");
     assert.ok(
-      m.text().includes("https://tools.example.com/mcp"),
+      s.text().includes("https://tools.example.com/mcp"),
       "user server URL must render",
     );
-    m.unmount();
+    s.unmount();
   });
 
   it("scopes the skills list to the current project path", async () => {
@@ -699,7 +717,7 @@ describe("SkillsTab MCP servers", () => {
     const listed: string[] = [];
     const settingsPatches: Partial<AppSettings>[] = [];
     const m = await mount(
-      <Harness
+      <ManagerHarness
         settings={settingsWith([
           {
             name: "from-settings",
@@ -743,7 +761,7 @@ describe("SkillsTab MCP servers", () => {
     const saved: McpServerSaveInput[] = [];
     const settingsPatches: Partial<AppSettings>[] = [];
     const m = await mount(
-      <Harness
+      <ManagerHarness
         onSaveMcpServer={(p) => saved.push(p)}
         onSaveSettings={(p) => settingsPatches.push(p)}
       />,
@@ -775,7 +793,7 @@ describe("SkillsTab MCP servers", () => {
   it("saves a quoted script path and spaced label as one argv element each (#1139)", async () => {
     const saved: McpServerSaveInput[] = [];
     const m = await mount(
-      <Harness onSaveMcpServer={(p) => saved.push(p)} />,
+      <ManagerHarness onSaveMcpServer={(p) => saved.push(p)} />,
     );
     await openSkillsView(m, "mcp");
     await openLocalCommand(m);
@@ -802,7 +820,7 @@ describe("SkillsTab MCP servers", () => {
   it("accepts a JSON string array in the local arguments field", async () => {
     const saved: McpServerSaveInput[] = [];
     const m = await mount(
-      <Harness onSaveMcpServer={(p) => saved.push(p)} />,
+      <ManagerHarness onSaveMcpServer={(p) => saved.push(p)} />,
     );
     await openSkillsView(m, "mcp");
     await openLocalCommand(m);
@@ -826,7 +844,7 @@ describe("SkillsTab MCP servers", () => {
   it("keeps the local draft and shows an error when quoting is malformed", async () => {
     const saved: McpServerSaveInput[] = [];
     const m = await mount(
-      <Harness onSaveMcpServer={(p) => saved.push(p)} />,
+      <ManagerHarness onSaveMcpServer={(p) => saved.push(p)} />,
     );
     await openSkillsView(m, "mcp");
     await openLocalCommand(m);
@@ -860,7 +878,7 @@ describe("SkillsTab MCP servers", () => {
   it("shows a local quoting error inside the Local command disclosure", async () => {
     const saved: McpServerSaveInput[] = [];
     const m = await mount(
-      <Harness onSaveMcpServer={(p) => saved.push(p)} />,
+      <ManagerHarness onSaveMcpServer={(p) => saved.push(p)} />,
     );
     await openSkillsView(m, "mcp");
     await openLocalCommand(m);
@@ -906,7 +924,7 @@ describe("SkillsTab MCP servers", () => {
   it("trust still enables a local server after quoted args parse", async () => {
     const saved: McpServerSaveInput[] = [];
     const m = await mount(
-      <Harness onSaveMcpServer={(p) => saved.push(p)} />,
+      <ManagerHarness onSaveMcpServer={(p) => saved.push(p)} />,
     );
     await openSkillsView(m, "mcp");
     await openLocalCommand(m);
@@ -929,7 +947,7 @@ describe("SkillsTab MCP servers", () => {
   it("rejects bad names, duplicate names, and non-http URLs without saving", async () => {
     const saved: McpServerSaveInput[] = [];
     const m = await mount(
-      <Harness
+      <ManagerHarness
         mcpServers={[
           httpDef({ name: "taken", url: "https://a.example.com/mcp" }),
         ]}
@@ -969,7 +987,7 @@ describe("SkillsTab MCP servers", () => {
     const enabled: Array<{ name: string; enabled: boolean }> = [];
     const settingsPatches: Partial<AppSettings>[] = [];
     const m = await mount(
-      <Harness
+      <ManagerHarness
         mcpServers={[httpDef({ url: "https://a.example.com/mcp" })]}
         onSetMcpEnabled={(p) => enabled.push(p)}
         onSaveSettings={(p) => settingsPatches.push(p)}
@@ -996,7 +1014,7 @@ describe("SkillsTab MCP servers", () => {
     const removed: Array<{ name: string }> = [];
     const settingsPatches: Partial<AppSettings>[] = [];
     const m = await mount(
-      <Harness
+      <ManagerHarness
         mcpServers={[httpDef({ url: "https://a.example.com/mcp" })]}
         onRemoveMcpServer={(p) => removed.push(p)}
         onSaveSettings={(p) => settingsPatches.push(p)}
@@ -1034,7 +1052,7 @@ describe("SkillsTab MCP servers", () => {
       trusted: true,
     };
     const m = await mount(
-      <Harness
+      <ManagerHarness
         mcpServers={[stdio]}
         onSetMcpEnabled={(p) => enabled.push(p)}
         onRemoveMcpServer={(p) => removed.push(p)}
@@ -1072,7 +1090,7 @@ describe("SkillsTab MCP servers", () => {
 
   it("splits built-in, curated, and added MCP sections", async () => {
     const m = await mount(
-      <Harness mcpServers={[httpDef()]} mcpCatalog={[]} />,
+      <ManagerHarness mcpServers={[httpDef()]} mcpCatalog={[]} />,
     );
     await openSkillsView(m, "mcp");
     assert.ok(m.query('[data-mcp-section="curated"]'));
@@ -1085,7 +1103,7 @@ describe("SkillsTab MCP servers", () => {
   it("previews JSON without echoing secret values", async () => {
     const seen: McpPreviewImportInput[] = [];
     const m = await mount(
-      <Harness
+      <ManagerHarness
         onPreviewMcpImport={(input) => {
           seen.push(input);
           return {
@@ -1138,7 +1156,7 @@ describe("SkillsTab MCP servers", () => {
 
   it("shows grok is unsupported for a stdio MCP server that needs cwd (#705)", async () => {
     const m = await mount(
-      <Harness
+      <ManagerHarness
         onPreviewMcpImport={() => ({
           previewId: "n".repeat(32),
           source: { kind: "json", label: "JSON" },
@@ -1191,7 +1209,7 @@ describe("SkillsTab MCP servers", () => {
 
   it("shows a backend validation error instead of pretending success", async () => {
     const m = await mount(
-      <Harness
+      <ManagerHarness
         onSaveMcpServer={() => {
           throw new Error(
             "Error invoking remote method 'mcp:save': Error: MCP server URL must be http(s)",
@@ -1230,7 +1248,7 @@ async function openWriteManually(
 describe("SkillsTab skills", () => {
   it("adds a skill with name, description, and body, and no target field", async () => {
     const added: SkillWrite[] = [];
-    const m = await mount(<Harness onAddSkill={(i) => added.push(i)} />);
+    const m = await mount(<ManagerHarness onAddSkill={(i) => added.push(i)} />);
     await openWriteManually(m);
     assert.equal(
       m.query('select[aria-label="Skill target"]'),
@@ -1261,7 +1279,7 @@ describe("SkillsTab skills", () => {
 
   it("validates the add form before calling addSkill", async () => {
     const added: SkillWrite[] = [];
-    const m = await mount(<Harness onAddSkill={(i) => added.push(i)} />);
+    const m = await mount(<ManagerHarness onAddSkill={(i) => added.push(i)} />);
     await openWriteManually(m);
     await m.type(m.query('input[aria-label="Skill name"]'), "Bad Name");
     await m.type(
@@ -1320,7 +1338,7 @@ describe("SkillsTab skills", () => {
     m.unmount();
   });
 
-  it("Sync calls skills.sync, reloads, and reports what it copied", async () => {
+  it("Sync in the drift banner calls skills.sync, reloads, and reports what it copied", async () => {
     const listed: Array<{ projectPath?: string } | undefined> = [];
     let syncs = 0;
     const m = await mount(
@@ -1332,15 +1350,20 @@ describe("SkillsTab skills", () => {
       />,
     );
     assert.equal(listed.length, 1, "listSkills once on mount");
+    const banner = m.query("[data-skills-drift]");
+    assert.ok(banner, "drift banner shows while a skill is missing somewhere");
+    assert.match(banner.textContent ?? "", /1 skill out of sync/);
     const syncBtn = m.query(
       'button[aria-label="Sync missing skills"]',
     ) as HTMLButtonElement | null;
-    assert.ok(syncBtn, "Sync button must render");
-    assert.ok(
+    assert.ok(syncBtn, "Sync action must render");
+    assert.ok(banner.contains(syncBtn), "Sync lives in the drift banner");
+    assert.equal(
       m.query("[data-skills-toolbar]")?.contains(syncBtn),
-      "Sync belongs on the installed library toolbar",
+      false,
+      "the toolbar no longer carries Sync",
     );
-    assert.equal(syncBtn.disabled, false, "Sync is enabled when there is drift");
+    assert.equal(syncBtn.disabled, false);
     await m.click(syncBtn);
     assert.equal(syncs, 1, "syncSkills must fire once");
     assert.equal(listed.length, 2, "listSkills must reload after sync");
@@ -1359,14 +1382,39 @@ describe("SkillsTab skills", () => {
       null,
       "drift marker clears after sync reloads",
     );
-    const after = m.query(
-      'button[aria-label="Sync missing skills"]',
-    ) as HTMLButtonElement;
-    assert.equal(after.disabled, true, "Sync disables once nothing has drift");
+    assert.equal(m.query("[data-skills-drift]"), null, "banner hides once nothing has drift");
     m.unmount();
   });
 
-  it("disables Sync when no skill has drift", async () => {
+  it("toolbar is search, one filter menu and Manage ›", async () => {
+    let managed = 0;
+    const m = await mount(
+      <Harness
+        onManage={() => {
+          managed += 1;
+        }}
+      />,
+    );
+    const toolbar = m.query("[data-skills-toolbar]")!;
+    assert.ok(toolbar.querySelector('input[aria-label="Search installed skills"]'));
+    const menus = toolbar.querySelectorAll("[data-skills-filter-menu]");
+    assert.equal(menus.length, 1, "one filter menu replaces the chips");
+    assert.equal(
+      menus[0]!.querySelectorAll("[data-source-filter], [data-provider-filter]")
+        .length,
+      11,
+      "3 sources + 8 providers live inside the menu",
+    );
+    assert.equal(m.query("[data-skills-view-btn]"), null, "no view buttons");
+    assert.equal(m.query('[data-skill-section="add"]'), null, "Add skill moved to Settings");
+    const manage = m.query("[data-skills-manage]");
+    assert.equal(manage?.textContent, "Manage ›");
+    await m.click(manage);
+    assert.equal(managed, 1);
+    m.unmount();
+  });
+
+  it("shows no drift banner when no skill has drift", async () => {
     const m = await mount(
       <Harness
         skills={[
@@ -1382,11 +1430,8 @@ describe("SkillsTab skills", () => {
         ]}
       />,
     );
-    const syncBtn = m.query(
-      'button[aria-label="Sync missing skills"]',
-    ) as HTMLButtonElement | null;
-    assert.ok(syncBtn, "Sync button must render");
-    assert.equal(syncBtn.disabled, true);
+    assert.equal(m.query("[data-skills-drift]"), null);
+    assert.equal(m.query('button[aria-label="Sync missing skills"]'), null);
     assert.equal(
       m.query('[data-skill="project:local-rules"]'),
       null,
@@ -1394,35 +1439,50 @@ describe("SkillsTab skills", () => {
     );
     m.unmount();
   });
+
+  it("hides the drift banner when the last load failed (no stale count)", async () => {
+    const m = await mount(
+      <Harness
+        onSyncSkills={() => {
+          throw new Error("sync down");
+        }}
+      />,
+    );
+    assert.ok(m.query("[data-skills-drift]"));
+    await m.click(m.query('button[aria-label="Sync missing skills"]'));
+    assert.ok(m.text().includes("sync down"), "the in-tab error line stays");
+    assert.equal(m.query("[data-skills-drift]"), null);
+    m.unmount();
+  });
 });
 
 describe("SkillsTab sections", () => {
   it("keeps curated, added, and project skills in distinct sections without duplication", async () => {
+    const skills: SkillInfo[] = [
+      {
+        name: "review-pr",
+        description: "Review a pull request end to end",
+        source: "claude",
+        installedIn: [...ALL_TARGETS],
+        missingFrom: [],
+        bytes: 4800,
+        provenance: "curated",
+        origin: { catalogId: "ponytail" },
+      },
+      SKILLS[1],
+      SKILLS[2],
+    ];
     const m = await mount(
-      <Harness
-        catalog={[catalogEntry({ installed: true })]}
-        skills={[
-          {
-            name: "review-pr",
-            description: "Review a pull request end to end",
-            source: "claude",
-            installedIn: [...ALL_TARGETS],
-            missingFrom: [],
-            bytes: 4800,
-            provenance: "curated",
-            origin: { catalogId: "ponytail" },
-          },
-          SKILLS[1],
-          SKILLS[2],
-        ]}
-      />,
+      <Harness catalog={[catalogEntry({ installed: true })]} skills={skills} />,
     );
     assert.ok(m.query('[data-skill="claude:review-pr"]'));
     assert.ok(m.query('[data-skill="agents:write-tests"]'));
     assert.ok(m.query('[data-skill="project:local-rules"]'));
-    await openSkillsView(m, "catalog");
-    const curated = m.query('[data-skill-section="curated"]');
-    assert.ok(curated, "Curated section must render in the catalog view");
+    const s = await mount(
+      <ManagerHarness catalog={[catalogEntry({ installed: true })]} skills={skills} />,
+    );
+    const curated = s.query('[data-skill-section="curated"]');
+    assert.ok(curated, "Curated section must render in Settings → Skills & MCP");
     assert.ok(curated.textContent?.includes("Curated skills"));
     assert.ok(curated.textContent?.includes("Ponytail"));
     assert.ok(curated.textContent?.includes("Dietrich Gebert"));
@@ -1435,7 +1495,7 @@ describe("SkillsTab sections", () => {
       curated.querySelector("[data-tokens]")?.textContent,
       "~1.2k tokens",
     );
-    await openSkillsView(m, "library");
+    s.unmount();
     await m.click(m.query('[data-source-filter="added"]'));
     assert.ok(m.query('[data-skill="agents:write-tests"]'));
     assert.equal(
@@ -1456,73 +1516,73 @@ describe("SkillsTab sections", () => {
   it("loads catalog independently and does not erase installed skills on catalog failure", async () => {
     const listed: unknown[] = [];
     const catalogs: unknown[] = [];
-    const m = await mount(
-      <Harness
-        catalog={[catalogEntry()]}
-        catalogError="Error invoking remote method 'skills:catalog': Error: catalog down"
-        onListSkills={() => listed.push(1)}
-        onListSkillCatalog={() => catalogs.push(1)}
-      />,
-    );
+    const opts = {
+      catalog: [catalogEntry()],
+      catalogError:
+        "Error invoking remote method 'skills:catalog': Error: catalog down",
+      onListSkills: () => {
+        listed.push(1);
+      },
+      onListSkillCatalog: () => {
+        catalogs.push(1);
+      },
+    };
+    const m = await mount(<Harness {...opts} />);
     assert.equal(listed.length, 1);
-    assert.equal(catalogs.length, 0, "catalog stays unloaded until Browse catalog");
+    assert.equal(catalogs.length, 0, "the inspector tab never loads the catalog");
     assert.ok(
       m.query('[data-skill="claude:review-pr"]'),
       "installed skills must still render",
     );
-    await openSkillsView(m, "catalog");
-    assert.equal(catalogs.length, 1);
-    const curated = m.query('[data-skill-section="curated"]');
+    m.unmount();
+    const s = await mount(<ManagerHarness {...opts} />);
+    assert.equal(catalogs.length, 1, "Settings → Skills & MCP loads it once");
+    const curated = s.query('[data-skill-section="curated"]');
     assert.ok(curated?.textContent?.toLowerCase().includes("unavailable"));
     assert.equal(
       curated?.textContent?.includes("Error invoking remote method"),
       false,
     );
     assert.equal(curated?.textContent?.includes("Ponytail"), false);
-    m.unmount();
+    s.unmount();
   });
 
   it("keeps catalog rows when installed skills fail to load", async () => {
-    const m = await mount(
-      <Harness
-        catalog={[catalogEntry()]}
-        skillsError="Error invoking remote method 'skills:list': Error: skills down"
-      />,
-    );
+    const opts = {
+      catalog: [catalogEntry()],
+      skillsError: "Error invoking remote method 'skills:list': Error: skills down",
+    };
+    const m = await mount(<Harness {...opts} />);
     assert.ok(m.text().includes("skills down"));
-    assert.equal(
-      m.text().includes("Error invoking remote method"),
-      false,
-    );
-    await openSkillsView(m, "catalog");
-    assert.ok(
-      m.query('[data-skill-section="curated"]')?.textContent?.includes("Ponytail"),
-    );
+    assert.equal(m.text().includes("Error invoking remote method"), false);
     assert.equal(m.query('[data-skill="claude:review-pr"]'), null);
     m.unmount();
+    const s = await mount(<ManagerHarness {...opts} />);
+    assert.ok(
+      s.query('[data-skill-section="curated"]')?.textContent?.includes("Ponytail"),
+    );
+    s.unmount();
   });
 
   it("does not mention catalog unavailable when the catalog loaded empty", async () => {
     const m = await mount(<Harness catalog={[]} skills={[]} />);
-    assert.ok(
-      m.text().toLowerCase().includes("add skill"),
-      "empty library invites Add skill",
-    );
-    await openSkillsView(m, "catalog");
-    const curated = m.query('[data-skill-section="curated"]');
+    assert.match(m.text(), /manage/i, "empty library points at Manage");
+    m.unmount();
+    const s = await mount(<ManagerHarness catalog={[]} skills={[]} />);
+    const curated = s.query('[data-skill-section="curated"]');
     assert.ok(curated);
     assert.equal(
       curated.textContent?.toLowerCase().includes("unavailable"),
       false,
     );
-    const live = m.query("[aria-live]");
+    const live = s.query("[aria-live]");
     assert.ok(live, "aria-live status is always mounted");
     assert.equal((live.textContent || "").trim(), "");
     assert.ok(
       live.hasAttribute("data-empty"),
       "empty live region must collapse via data-empty",
     );
-    m.unmount();
+    s.unmount();
   });
 
   it("falls back to installed curated skills when the catalog fails or is empty", async () => {
@@ -1540,13 +1600,23 @@ describe("SkillsTab sections", () => {
         sourceUrl: "https://github.com/DietrichGebert/ponytail",
       },
     };
+    const failedTab = await mount(
+      <Harness catalogError="catalog down" skills={[curatedInstalled, SKILLS[1]]} />,
+    );
+    await failedTab.click(failedTab.query('[data-source-filter="added"]'));
+    assert.equal(
+      failedTab.query('[data-skill="claude:review-pr"]'),
+      null,
+      "fallback curated rows must not be duplicated as User skills",
+    );
+    failedTab.unmount();
+
     const failed = await mount(
-      <Harness
+      <ManagerHarness
         catalogError="catalog down"
         skills={[curatedInstalled, SKILLS[1]]}
       />,
     );
-    await openSkillsView(failed, "catalog");
     const curated = failed.query('[data-skill-section="curated"]');
     assert.ok(curated?.textContent?.toLowerCase().includes("unavailable"));
     const row = failed.query('[data-catalog="ponytail"]');
@@ -1554,19 +1624,11 @@ describe("SkillsTab sections", () => {
     assert.ok(row.textContent?.includes("Ponytail"));
     assert.ok(row.textContent?.includes("Installed"));
     assert.equal(row.querySelector("[data-coverage]")?.textContent, "7/7");
-    await openSkillsView(failed, "library");
-    await failed.click(failed.query('[data-source-filter="added"]'));
-    assert.equal(
-      failed.query('[data-skill="claude:review-pr"]'),
-      null,
-      "fallback curated rows must not be duplicated as User skills",
-    );
     failed.unmount();
 
     const empty = await mount(
-      <Harness catalog={[]} skills={[curatedInstalled, SKILLS[1]]} />,
+      <ManagerHarness catalog={[]} skills={[curatedInstalled, SKILLS[1]]} />,
     );
-    await openSkillsView(empty, "catalog");
     assert.ok(empty.query('[data-catalog="ponytail"]'));
     assert.equal(
       empty
@@ -1579,24 +1641,24 @@ describe("SkillsTab sections", () => {
   });
 
   it("does not treat an added skill as curated just because names match", async () => {
-    const m = await mount(
-      <Harness
+    const skills: SkillInfo[] = [
+      {
+        name: "Ponytail",
+        description: "User-added skill that happens to share a name",
+        source: "claude",
+        installedIn: [...ALL_TARGETS],
+        missingFrom: [],
+        bytes: 4800,
+        provenance: "added",
+      },
+    ];
+    const s = await mount(
+      <ManagerHarness
         catalog={[catalogEntry({ name: "Ponytail", installed: true })]}
-        skills={[
-          {
-            name: "Ponytail",
-            description: "User-added skill that happens to share a name",
-            source: "claude",
-            installedIn: [...ALL_TARGETS],
-            missingFrom: [],
-            bytes: 4800,
-            provenance: "added",
-          },
-        ]}
+        skills={skills}
       />,
     );
-    await openSkillsView(m, "catalog");
-    const row = m.query('[data-catalog="ponytail"]');
+    const row = s.query('[data-catalog="ponytail"]');
     assert.ok(row);
     assert.ok(row.textContent?.includes("Installed"));
     assert.equal(
@@ -1604,7 +1666,8 @@ describe("SkillsTab sections", () => {
       null,
       "name-only match must not borrow an added skill's coverage",
     );
-    await openSkillsView(m, "library");
+    s.unmount();
+    const m = await mount(<Harness skills={skills} />);
     assert.ok(m.query('[data-skill="claude:Ponytail"]'));
     m.unmount();
   });
@@ -1617,19 +1680,25 @@ describe("SkillsTab sections", () => {
     const m = await mount(
       <Harness catalog={[catalogEntry()]} pendingCatalog={pending} />,
     );
-    assert.ok(m.query('[data-skill="claude:review-pr"]'));
-    await openSkillsView(m, "catalog");
     assert.ok(
-      m.query('[data-skill-section="curated"]')?.textContent?.includes("Loading"),
+      m.query('[data-skill="claude:review-pr"]'),
+      "the tab lists installed skills without waiting on the catalog",
+    );
+    m.unmount();
+    const s = await mount(
+      <ManagerHarness catalog={[catalogEntry()]} pendingCatalog={pending} />,
+    );
+    assert.ok(
+      s.query('[data-skill-section="curated"]')?.textContent?.includes("Loading"),
     );
     await inAct(async () => {
       resolveCatalog([catalogEntry()]);
     });
-    await m.flush();
+    await s.flush();
     assert.ok(
-      m.query('[data-skill-section="curated"]')?.textContent?.includes("Ponytail"),
+      s.query('[data-skill-section="curated"]')?.textContent?.includes("Ponytail"),
     );
-    m.unmount();
+    s.unmount();
   });
 });
 
@@ -1637,7 +1706,7 @@ describe("SkillsTab import preview", () => {
   it("previews a catalog install by id", async () => {
     const previews: SkillPreviewImportInput[] = [];
     const m = await mount(
-      <Harness
+      <ManagerHarness
         catalog={[catalogEntry()]}
         onPreviewSkillImport={(input) => {
           previews.push(input);
@@ -1682,7 +1751,7 @@ describe("SkillsTab import preview", () => {
   it("ignores a canceled file picker and shows a picked preview", async () => {
     const picks: Array<SkillImportPreview | null> = [];
     const m = await mount(
-      <Harness
+      <ManagerHarness
         onPickSkillImport={() => {
           picks.push(null);
           return null;
@@ -1700,7 +1769,7 @@ describe("SkillsTab import preview", () => {
       skills: [previewSkill({ name: "review-pr", files: ["SKILL.md"] })],
     });
     const m2 = await mount(
-      <Harness
+      <ManagerHarness
         onPickSkillImport={() => {
           picks.push(shown);
           return shown;
@@ -1719,7 +1788,7 @@ describe("SkillsTab import preview", () => {
   it("previews a GitHub URL as a github source", async () => {
     const previews: SkillPreviewImportInput[] = [];
     const m = await mount(
-      <Harness
+      <ManagerHarness
         onPreviewSkillImport={(input) => {
           previews.push(input);
           return preview({
@@ -1745,7 +1814,7 @@ describe("SkillsTab import preview", () => {
 
   it("selects detected skills by default and disables install at zero selection", async () => {
     const m = await mount(
-      <Harness
+      <ManagerHarness
         onPickSkillImport={() =>
           preview({
             skills: [
@@ -1778,7 +1847,7 @@ describe("SkillsTab import preview", () => {
 
   it("gates install on replace when a selected skill collides", async () => {
     const m = await mount(
-      <Harness
+      <ManagerHarness
         onPickSkillImport={() =>
           preview({
             skills: [previewSkill({ name: "review-pr", collision: true })],
@@ -1808,7 +1877,7 @@ describe("SkillsTab import preview", () => {
 
   it("requires risk acknowledgement and says plugin extras stay inactive", async () => {
     const m = await mount(
-      <Harness
+      <ManagerHarness
         onPickSkillImport={() =>
           preview({
             skills: [
@@ -1867,7 +1936,7 @@ describe("SkillsTab import preview", () => {
   it("Cancel discards the staged preview", async () => {
     const discarded: Array<{ previewId: string }> = [];
     const m = await mount(
-      <Harness
+      <ManagerHarness
         onPickSkillImport={() => preview({ previewId: "preview-9" })}
         onDiscardSkillImport={(input) => discarded.push(input)}
       />,
@@ -1886,7 +1955,7 @@ describe("SkillsTab import preview", () => {
     const listed: unknown[] = [];
     const catalogs: unknown[] = [];
     const m = await mount(
-      <Harness
+      <ManagerHarness
         catalog={[catalogEntry()]}
         onListSkills={() => listed.push(1)}
         onListSkillCatalog={() => catalogs.push(1)}
@@ -1903,7 +1972,7 @@ describe("SkillsTab import preview", () => {
       />,
     );
     assert.equal(listed.length, 1);
-    assert.equal(catalogs.length, 0, "catalog is not fetched for the installed library");
+    assert.equal(catalogs.length, 1, "Settings shows the catalog, so it loads once on open");
     await m.click(m.byText("Import file"));
     await m.click(m.byText("Install selected"));
     assert.deepEqual(installed, [
@@ -1915,11 +1984,7 @@ describe("SkillsTab import preview", () => {
       },
     ]);
     assert.equal(listed.length, 2, "skills reload after install");
-    assert.equal(
-      catalogs.length,
-      0,
-      "file install does not fetch a hidden catalog",
-    );
+    assert.equal(catalogs.length, 2, "the visible catalog reloads to mark the new install");
     assert.equal(m.query("[data-import-preview]"), null);
     assert.deepEqual(
       discarded,
@@ -1942,7 +2007,7 @@ describe("SkillsTab import preview", () => {
   it("sends trustPluginCode after ack and summarizes a successful plugin activation", async () => {
     const installed: SkillInstallRequest[] = [];
     const m = await mount(
-      <Harness
+      <ManagerHarness
         onPickSkillImport={() =>
           preview({
             previewId: "preview-trust",
@@ -2002,7 +2067,7 @@ describe("SkillsTab import preview", () => {
 
   it("keeps a failed plugin action on the live status after skills install", async () => {
     const m = await mount(
-      <Harness
+      <ManagerHarness
         onPickSkillImport={() =>
           preview({
             previewId: "preview-fail",
@@ -2051,7 +2116,7 @@ describe("SkillsTab import preview", () => {
       "/plugin install ponytail@ponytail",
     ];
     const m = await mount(
-      <Harness
+      <ManagerHarness
         onPickSkillImport={() =>
           preview({
             previewId: "preview-claude",
@@ -2111,7 +2176,7 @@ describe("SkillsTab import preview", () => {
 
   it("renders covered and unsupported extras in the result panel", async () => {
     const m = await mount(
-      <Harness
+      <ManagerHarness
         onPickSkillImport={() =>
           preview({
             previewId: "preview-honest",
@@ -2163,7 +2228,7 @@ describe("SkillsTab import preview", () => {
 
   it("strips transport noise from preview and install errors", async () => {
     const m = await mount(
-      <Harness
+      <ManagerHarness
         onPreviewSkillImport={() => {
           throw new Error(
             "Error invoking remote method 'skills:previewImport': Error: Unsupported GitHub URL",
@@ -2181,7 +2246,7 @@ describe("SkillsTab import preview", () => {
     m.unmount();
 
     const m2 = await mount(
-      <Harness
+      <ManagerHarness
         onPickSkillImport={() => preview({ previewId: "preview-bad" })}
         onInstallSkillImport={() => {
           throw new Error(
@@ -2198,27 +2263,19 @@ describe("SkillsTab import preview", () => {
   });
 
   it("labels catalog source links and unique row actions for focus", async () => {
-    const m = await mount(
-      <Harness
-        catalog={[catalogEntry()]}
-        skills={[
-          SKILLS[0],
-          {
-            ...SKILLS[1],
-            name: "other-skill",
-          },
-        ]}
-      />,
+    const skills = [SKILLS[0], { ...SKILLS[1], name: "other-skill" }];
+    const s = await mount(
+      <ManagerHarness catalog={[catalogEntry()]} skills={skills} />,
     );
-    await openSkillsView(m, "catalog");
-    const link = m.query('[data-catalog="ponytail"] a');
+    const link = s.query('[data-catalog="ponytail"] a');
     assert.ok(link);
     assert.ok(link.getAttribute("href")?.includes("github.com"));
     assert.ok(
       link.getAttribute("aria-label")?.includes("Ponytail"),
       "catalog source link must include the entry name",
     );
-    await openSkillsView(m, "library");
+    s.unmount();
+    const m = await mount(<Harness skills={skills} />);
     await expandSkill(m, "claude:review-pr");
     await expandSkill(m, "agents:other-skill");
     const labels = m
@@ -2233,7 +2290,7 @@ describe("SkillsTab import preview", () => {
   it("discards the open preview on unmount and ignores a stale result", async () => {
     const discarded: Array<{ previewId: string }> = [];
     const m = await mount(
-      <Harness
+      <ManagerHarness
         onPickSkillImport={() =>
           new Promise((resolve) => {
             setTimeout(() => {
@@ -2264,7 +2321,7 @@ describe("SkillsTab import preview", () => {
   it("discards a shown preview on unmount exactly once", async () => {
     const discarded: Array<{ previewId: string }> = [];
     const m = await mount(
-      <Harness
+      <ManagerHarness
         onPickSkillImport={() => preview({ previewId: "open-1" })}
         onDiscardSkillImport={(input) => discarded.push(input)}
       />,
@@ -2279,7 +2336,7 @@ describe("SkillsTab import preview", () => {
     const discarded: Array<{ previewId: string }> = [];
     let picks = 0;
     const m = await mount(
-      <Harness
+      <ManagerHarness
         onPickSkillImport={() => {
           picks += 1;
           return preview({
@@ -2309,7 +2366,7 @@ describe("SkillsTab import preview", () => {
     const discarded: Array<{ previewId: string }> = [];
     let picks = 0;
     const m = await mount(
-      <Harness
+      <ManagerHarness
         onPickSkillImport={() => {
           picks += 1;
           return new Promise((resolve) => {
@@ -2354,7 +2411,7 @@ describe("SkillsTab import preview", () => {
     const discarded: Array<{ previewId: string }> = [];
     let picks = 0;
     const m = await mount(
-      <Harness
+      <ManagerHarness
         onPickSkillImport={() => {
           picks += 1;
           if (picks === 1) {
@@ -2411,7 +2468,7 @@ describe("SkillsTab import preview", () => {
   it("does not discard when unmounting during a pending install", async () => {
     const discarded: Array<{ previewId: string }> = [];
     const m = await mount(
-      <Harness
+      <ManagerHarness
         onPickSkillImport={() =>
           preview({
             previewId: "installing-1",
@@ -2454,7 +2511,7 @@ describe("SkillsTab import preview", () => {
     const discarded: Array<{ previewId: string }> = [];
     let rejectInstall: ((err: Error) => void) | null = null;
     const m = await mount(
-      <Harness
+      <ManagerHarness
         onPickSkillImport={() =>
           preview({
             previewId: "install-fail-1",
@@ -2487,7 +2544,7 @@ describe("SkillsTab import preview", () => {
     const discarded: Array<{ previewId: string }> = [];
     let installs = 0;
     const m = await mount(
-      <Harness
+      <ManagerHarness
         onPickSkillImport={() =>
           preview({
             previewId: "install-retry-1",
@@ -2523,7 +2580,7 @@ describe("SkillsTab harness import", () => {
   it("scans Claude Code, selects remaining, and installs them", async () => {
     const installed: HarnessInstallRequest[] = [];
     const m = await mount(
-      <Harness
+      <ManagerHarness
         onInstallHarnessImport={(input) => {
           installed.push(input);
         }}
@@ -2560,7 +2617,7 @@ describe("SkillsTab harness import", () => {
   it("requires plugin trust and sends trustPluginCode", async () => {
     const installed: HarnessInstallRequest[] = [];
     const m = await mount(
-      <Harness
+      <ManagerHarness
         onPreviewHarnessImport={() => ({
           previewId: "h".repeat(32),
           source: { id: "claude" as const, label: "Claude Code" },
@@ -2631,7 +2688,7 @@ describe("SkillsTab harness import", () => {
   it("lists slash commands and leaves already-imported ones unchecked", async () => {
     const installed: HarnessInstallRequest[] = [];
     const m = await mount(
-      <Harness
+      <ManagerHarness
         onPreviewHarnessImport={() => ({
           previewId: "c".repeat(32),
           source: { id: "claude", label: "Claude Code" },
@@ -2686,7 +2743,7 @@ describe("SkillsTab harness import", () => {
   it("lists Codex prompt rows in the Commands section", async () => {
     const installed: HarnessInstallRequest[] = [];
     const m = await mount(
-      <Harness
+      <ManagerHarness
         harnessSources={[
           { id: "claude", label: "Claude Code", present: false },
           { id: "cursor", label: "Cursor", present: false },
@@ -2749,7 +2806,7 @@ describe("SkillsTab harness import", () => {
   it("lists plugin slash commands on the harness preview", async () => {
     const installed: HarnessInstallRequest[] = [];
     const m = await mount(
-      <Harness
+      <ManagerHarness
         onPreviewHarnessImport={() => ({
           previewId: "d".repeat(32),
           source: { id: "claude", label: "Claude Code" },
@@ -2879,13 +2936,14 @@ describe("SkillsTab library search and filters", () => {
     m.unmount();
   });
 
-  it("preserves search when moving between library and catalog", async () => {
+  it("keeps the search while the catalog lives in Settings", async () => {
     const m = await mount(<Harness catalog={[catalogEntry()]} />);
     await m.type(m.query('input[aria-label="Search installed skills"]'), "write-tests");
     assert.equal(m.queryAll("[data-skill]").length, 1);
-    await openSkillsView(m, "catalog");
-    assert.ok(m.query('[data-catalog="ponytail"]'));
-    await openSkillsView(m, "library");
+    assert.equal(m.query('[data-catalog="ponytail"]'), null, "catalog is not in the tab");
+    const s = await mount(<ManagerHarness catalog={[catalogEntry()]} />);
+    assert.ok(s.query('[data-catalog="ponytail"]'));
+    s.unmount();
     assert.equal(
       (m.query('input[aria-label="Search installed skills"]') as HTMLInputElement)
         .value,

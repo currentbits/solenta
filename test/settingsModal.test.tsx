@@ -14,6 +14,7 @@ import { useState } from "react";
 import { mount, unmountAll } from "./support/dom.ts";
 import { SettingsModal, type SettingsPane } from "../src/components/SettingsModal";
 import type { MemoryProjectToolsApi } from "../src/components/MemoryTab";
+import type { SkillsManagerProps } from "../src/components/SkillsTab";
 import {
   getComposerVimEnabled,
   getDivergenceCardEnabled,
@@ -93,6 +94,7 @@ interface Stubs {
     enabled: boolean;
   }) => Promise<MergeSpotlight>;
   projectTools?: MemoryProjectToolsApi;
+  skills?: Omit<SkillsManagerProps, "projectPath">;
 }
 
 function modal(stubs: Stubs = {}) {
@@ -114,6 +116,7 @@ function modal(stubs: Stubs = {}) {
       currentProjectId={stubs.currentProjectId}
       onSetSpotlight={stubs.onSetSpotlight}
       projectTools={stubs.projectTools}
+      skills={stubs.skills}
       onSaveSettings={
         stubs.onSaveSettings ??
         (async (patch) => ({
@@ -2392,5 +2395,90 @@ describe("SettingsModal Project tools (moved from the Memory tab)", () => {
       modal({ initialPane: "memory", projects: [proj()] }),
     );
     assert.equal(noTools.query("[data-project-tools]"), null);
+  });
+});
+
+function skillsApi(calls: string[]): Omit<SkillsManagerProps, "projectPath"> {
+  const unused = async (): Promise<never> => {
+    throw new Error("unused");
+  };
+  return {
+    listMcpServers: async () => {
+      calls.push("mcp");
+      return [];
+    },
+    saveMcpServer: unused,
+    removeMcpServer: async () => {},
+    setMcpEnabled: unused,
+    listMcpCatalog: async () => [],
+    pickMcpImport: async () => null,
+    previewMcpImport: unused,
+    installMcpImport: async () => ({ installed: [] }),
+    discardMcpImport: async () => {},
+    listSkills: async (input) => {
+      calls.push(`skills:${input?.projectPath ?? ""}`);
+      return [];
+    },
+    addSkill: async (input) => ({ name: input.name, installedIn: [] }),
+    listSkillCatalog: async () => {
+      calls.push("catalog");
+      return [];
+    },
+    pickSkillImport: async () => null,
+    previewSkillImport: unused,
+    installSkillImport: async () => ({ installed: [], plugins: [] }),
+    discardSkillImport: async () => {},
+    detectHarnessSources: async () => {
+      calls.push("harness");
+      return [];
+    },
+    previewHarnessImport: unused,
+    installHarnessImport: async () => ({
+      skills: [],
+      commands: [],
+      mcp: [],
+      memories: [],
+      instructions: [],
+      settings: null,
+      plugins: [],
+    }),
+    discardHarnessImport: async () => {},
+  };
+}
+
+describe("SettingsModal Skills & MCP pane (moved from the Skills tab)", () => {
+  it("renders catalog, MCP servers, import and Add skill, scoped to the current project", async () => {
+    const calls: string[] = [];
+    const m = await mount(
+      modal({
+        initialPane: "skills",
+        projects: [proj(), proj({ id: "p2", name: "two", path: "/tmp/two" })],
+        currentProjectId: "p2",
+        skills: skillsApi(calls),
+      }),
+    );
+    assert.equal(
+      m.query("[data-settings-pane]")?.getAttribute("data-settings-pane"),
+      "skills",
+    );
+    assert.equal(
+      m.query('[data-settings-nav="skills"]')?.textContent?.trim(),
+      "Skills & MCP",
+    );
+    assert.ok(m.query("[data-skills-manager]"));
+    assert.ok(m.query('[data-skill-section="curated"]'), "Browse catalog");
+    assert.ok(m.query('section[aria-label="MCP servers"]'), "MCP servers");
+    assert.ok(m.query("[data-harness-import]"), "Import from other tools");
+    assert.ok(m.query('[data-skill-section="add"]'), "Add skill");
+    assert.equal(m.query("[data-skill]"), null, "the installed list stays in the tab");
+    assert.ok(calls.includes("catalog") && calls.includes("mcp"));
+    assert.ok(calls.includes("harness"));
+    assert.ok(calls.includes("skills:/tmp/two"), "uses the current project path");
+  });
+
+  it("is found by Find a setting", async () => {
+    const m = await mount(modal({ skills: skillsApi([]) }));
+    await m.type(m.query("[data-settings-search]"), "mcp server");
+    assert.ok(m.query('[data-settings-nav="skills"]'));
   });
 });

@@ -428,6 +428,25 @@ describe("App memory wiring", () => {
     );
     m.unmount();
   });
+
+  it("Skills tab Manage › opens Settings on Skills & MCP", async () => {
+    const fake = createFakeCoder({
+      projects: [project()],
+      threads: [thread()],
+    });
+    const m = await boot(fake);
+    await expandAgents(m);
+    await m.click(m.query('[data-panel-tab="skills"]'));
+    const manage = m.query("[data-skills-manage]");
+    assert.ok(manage, "Manage › sits on the Skills toolbar");
+    await m.click(manage);
+    assert.equal(
+      m.query("[data-settings-pane]")?.getAttribute("data-settings-pane"),
+      "skills",
+    );
+    assert.ok(m.query("[data-skills-manager]"), "moved sections render in Settings");
+    m.unmount();
+  });
 });
 
 describe("App archive undo toast wiring", () => {

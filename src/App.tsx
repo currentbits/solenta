@@ -2574,6 +2574,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         activeView={view}
         onOpenPrs={openPrs}
         onFork={handleForkOpen}
+        onOpenSettings={openSettings}
           />
           </ErrorBoundary>
           )}
@@ -2630,6 +2631,28 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
             lintAgentConfig,
             previewAgentConfig,
             writeAgentConfig,
+          }}
+          skills={{
+            listMcpServers,
+            saveMcpServer,
+            removeMcpServer,
+            setMcpEnabled,
+            listMcpCatalog,
+            pickMcpImport,
+            previewMcpImport,
+            installMcpImport,
+            discardMcpImport,
+            listSkills,
+            addSkill,
+            listSkillCatalog,
+            pickSkillImport,
+            previewSkillImport,
+            installSkillImport,
+            discardSkillImport,
+            detectHarnessSources,
+            previewHarnessImport,
+            installHarnessImport,
+            discardHarnessImport,
           }}
         />
         <OnboardingModal

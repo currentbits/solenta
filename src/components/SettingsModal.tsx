@@ -46,6 +46,7 @@ import {
   useRunDurationEnabled,
 } from "../uiPrefs";
 import { MemoryProjectTools, type MemoryProjectToolsApi } from "./MemoryTab";
+import { SkillsManager, type SkillsManagerProps } from "./SkillsTab";
 import styles from "./SettingsModal.module.css";
 import { WorktreeGcSection } from "./WorktreeGcSection";
 import { VibeKanbanSection } from "./VibeKanbanSection";
@@ -62,6 +63,7 @@ export const SETTINGS_PANES = [
   "git",
   "agents",
   "memory",
+  "skills",
   "connections",
   "integrations",
   "advanced",
@@ -106,6 +108,12 @@ const PANE_META: Record<
     label: "Memory",
     hint: "The local memory server, plus each project's code map and config doctor.",
     keywords: "memory entries vectors janitor server port embed code map config doctor agents.md claude.md project tools",
+  },
+  skills: {
+    label: "Skills & MCP",
+    hint: "The skill catalog, MCP servers, and imports every agent shares.",
+    keywords:
+      "skills mcp server catalog curated import harness plugin add skill write manually github claude codex cursor grok kimi",
   },
   connections: {
     label: "Connections",
@@ -174,6 +182,8 @@ interface SettingsModalProps {
   }) => Promise<MergeSpotlight>;
   /** Code map + config doctor (moved from the Memory tab). */
   projectTools?: MemoryProjectToolsApi;
+  /** Catalog, MCP servers, imports and Add skill (moved from the Skills tab). */
+  skills?: Omit<SkillsManagerProps, "projectPath">;
 }
 
 const UI_SCALE_MIN = 0.8;
@@ -385,6 +395,7 @@ export function SettingsModal({
   currentProjectId = null,
   onSetSpotlight,
   projectTools,
+  skills,
 }: SettingsModalProps) {
   const [pane, setPane] = useState<SettingsPane>("general");
   const [navQuery, setNavQuery] = useState("");
@@ -2045,6 +2056,15 @@ export function SettingsModal({
           </section>
           )}
 
+          {pane === "skills" && skills && (
+          <SkillsManager
+            projectPath={
+              projects?.find((p) => p.id === currentProjectId)?.path ?? null
+            }
+            {...skills}
+          />
+          )}
+
           {pane === "general" && (
           <section className={styles.section}>
             <div className={styles.field}>
@@ -2575,6 +2595,12 @@ function PaneIcon({ id }: { id: SettingsPane }) {
           <rect x="3" y="5" width="8" height="6" rx="1" />
           <rect x="13" y="13" width="8" height="6" rx="1" />
           <path d="M11 8h3a3 3 0 0 1 3 3v2" />
+        </>
+      ) : id === "skills" ? (
+        <>
+          <path d="M9 3v4M15 3v4" />
+          <path d="M7 7h10v4a5 5 0 0 1-10 0V7Z" />
+          <path d="M12 16v5" />
         </>
       ) : (
         <>

@@ -721,3 +721,44 @@
   border: 1px solid transparent;
   border-radius: 6px;
 }
+
+/* Settings → Skills & MCP: the moved sections, stacked. */
+.manager {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+}
+
+/* One filter menu replaces the source and provider chip rows. */
+.filterMenu {
+  position: relative;
+  flex-shrink: 0;
+}
+
+.filterMenu > summary {
+  list-style: none;
+  cursor: pointer;
+}
+
+.filterMenu > summary::-webkit-details-marker {
+  display: none;
+}
+
+.filterMenuList {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 4px);
+  z-index: 20;
+  min-width: 180px;
+  max-height: 320px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 10px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-pop);
+}

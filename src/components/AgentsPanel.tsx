@@ -83,6 +83,7 @@ import {
 import { CrewIntegration } from "./CrewIntegration";
 import { MemoryTab } from "./MemoryTab";
 import { SkillsTab } from "./SkillsTab";
+import type { SettingsPane } from "./SettingsModal";
 import {
   formatPostMergeLine,
   formatVerifySummary,
@@ -363,6 +364,8 @@ interface AgentsPanelProps {
   }) => Promise<MergeLanePreview>;
   /** Wide-window Hide control. Absent on the narrow drawer (issue #645). */
   onCollapse?: () => void;
+  /** Opens Settings at a pane (Skills → Manage ›, Memory → Project tools). */
+  onOpenSettings?: (pane?: SettingsPane) => void;
 }
 
 type PhaseChipStatus = "done" | "active" | "pending" | "failed";
@@ -3594,30 +3597,9 @@ export const AgentsPanel = memo(function AgentsPanel({
   lintAgentConfig,
   previewAgentConfig,
   writeAgentConfig,
-  settings,
-  saveSettings,
-  listMcpServers,
-  saveMcpServer,
-  removeMcpServer,
-  setMcpEnabled,
-  listMcpCatalog,
-  pickMcpImport,
-  previewMcpImport,
-  installMcpImport,
-  discardMcpImport,
   listSkills,
-  addSkill,
   removeSkill,
   syncSkills,
-  listSkillCatalog,
-  pickSkillImport,
-  previewSkillImport,
-  installSkillImport,
-  discardSkillImport,
-  detectHarnessSources,
-  previewHarnessImport,
-  installHarnessImport,
-  discardHarnessImport,
   activeView,
   onOpenPrs,
   onFork,
@@ -3629,6 +3611,7 @@ export const AgentsPanel = memo(function AgentsPanel({
   setSpotlight,
   spotlightLane,
   onCollapse,
+  onOpenSettings,
 }: AgentsPanelProps) {
   const tabListRef = useRef<HTMLDivElement>(null);
   const focusRequest = useRef<PanelTab | null>(null);
@@ -3810,30 +3793,10 @@ export const AgentsPanel = memo(function AgentsPanel({
       ) : tab === "skills" ? (
         <SkillsTab
           projectPath={project?.path ?? null}
-          settings={settings}
-          saveSettings={saveSettings}
-          listMcpServers={listMcpServers}
-          saveMcpServer={saveMcpServer}
-          removeMcpServer={removeMcpServer}
-          setMcpEnabled={setMcpEnabled}
-          listMcpCatalog={listMcpCatalog}
-          pickMcpImport={pickMcpImport}
-          previewMcpImport={previewMcpImport}
-          installMcpImport={installMcpImport}
-          discardMcpImport={discardMcpImport}
           listSkills={listSkills}
-          addSkill={addSkill}
           removeSkill={removeSkill}
           syncSkills={syncSkills}
-          listSkillCatalog={listSkillCatalog}
-          pickSkillImport={pickSkillImport}
-          previewSkillImport={previewSkillImport}
-          installSkillImport={installSkillImport}
-          discardSkillImport={discardSkillImport}
-          detectHarnessSources={detectHarnessSources}
-          previewHarnessImport={previewHarnessImport}
-          installHarnessImport={installHarnessImport}
-          discardHarnessImport={discardHarnessImport}
+          onManage={onOpenSettings ? () => onOpenSettings("skills") : undefined}
         />
       ) : null}
       </div>
