@@ -642,6 +642,47 @@ describe("MemoryTab review queue", () => {
     m.unmount();
   });
 
+  it("shows Loading… instead of a false-empty state while the full load is in flight", async () => {
+    let resolveFull: ((report: MemoryMaintenanceReport) => void) | null = null;
+    const m = await mount(
+      <MemoryTab
+        projectSlug="coder"
+        searchMemory={async () => []}
+        recentMemory={async () => []}
+        getMemory={async (input) => entry({ id: input.id })}
+        updateMemory={async () => ({ id: "x" })}
+        removeMemory={async () => {}}
+        storeMemory={async () => ({ id: "x" })}
+        maintenanceMemory={async (input) => {
+          if (input?.summary) {
+            return maintenanceReport({
+              queue: { open: 1, oldestAgeDays: 2, items: [] },
+            });
+          }
+          return new Promise((resolve) => {
+            resolveFull = resolve;
+          });
+        }}
+      />,
+    );
+    await openReview(m);
+    assert.ok(m.query("[data-review-queue]"), "queue card must render");
+    assert.match(m.text(), /Loading/, "shows Loading… while the full load is pending");
+    assert.doesNotMatch(
+      m.text(),
+      /Nothing left to review/,
+      "must not flash a false-empty state before the full load returns",
+    );
+    assert.ok(resolveFull, "the full load must have been requested");
+    await inAct(async () => {
+      resolveFull!(maintenanceReport());
+    });
+    await m.flush();
+    assert.doesNotMatch(m.text(), /Loading/);
+    assert.match(m.text(), /Nothing left to review/);
+    m.unmount();
+  });
+
   it("renders the auto-resolution activity line and keeps the queue buttons", async () => {
     const resolved: Array<{ id: number; resolution: string }> = [];
     const m = await mount(

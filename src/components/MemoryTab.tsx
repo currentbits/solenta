@@ -793,7 +793,9 @@ function ReviewQueueCard({
           {activity}
         </p>
       ) : null}
-      {items.length > 0 ? (
+      {!detailLoaded && !error ? (
+        <p className={styles.mapEmpty}>Loading…</p>
+      ) : items.length > 0 ? (
         <ul className={styles.queueList} data-needs-your-call="">
           {items.map((item) => (
             <li key={item.id} className={styles.queueItem}>
@@ -835,9 +837,9 @@ function ReviewQueueCard({
             </li>
           ))}
         </ul>
-      ) : (
+      ) : detailLoaded ? (
         <p className={styles.mapEmpty}>Nothing left to review.</p>
-      )}
+      ) : null}
     </InspectorSection>
   );
 }
