@@ -65,13 +65,14 @@ Grok · thread 6
 - **Embeddings** — near-dup and contradiction detection so the store does not
   bloat with repeated or conflicting facts.
 - **memory_distill** — collapse raw entries into strategy notes.
-- **Memory tab** — reads the same SQLite file. A config doctor lints and
-  regenerates CLAUDE.md / AGENTS.md from shared memory.
+- **Memory tab** — reads the same SQLite file. Search, filter, and add
+  entries there. The config doctor and code map live in Settings, Memory,
+  and lint or regenerate CLAUDE.md / AGENTS.md from shared memory.
 - **Per-repo code index** — a symbol index built once and injected into every
   dispatched prompt, so a fresh worker starts knowing where things live.
 
 <p align="center">
-  <img src="assets/screenshot-memory.png" alt="The Memory tab: shared entries scoped to the project, typed as strategy, knowledge, convention or task, with the config doctor above them" width="100%" />
+  <img src="assets/screenshot-memory.png" alt="The Memory tab: shared entries scoped to the project, typed as strategy, knowledge, convention or task" width="100%" />
 </p>
 
 ## The rest of the desk
@@ -150,9 +151,9 @@ Grab an archive from the [latest release](https://github.com/currentbits/solenta
 
 Builds are stamped with a channel. **prod** follows the newest normal release;
 **nightly** follows the newest prerelease and never migrates itself onto prod.
-On macOS the app downloads and swaps itself in place. On Windows it
-downloads beside the portable folder and swaps after you Restart (the
-running exe locks those files). Linux still opens the release page. A
+On macOS the app downloads and swaps itself in place. On Windows and
+Linux it downloads beside the portable folder and swaps after you Restart
+(the running files stay locked until then). A
 window that reloads into a new renderer against an old preload hard-blocks
 until you Restart. Builds from a dev tree carry no stamp and never
 self-update.
@@ -170,8 +171,13 @@ renamed, the app name inside it is not.
 ```
 
 The session token is printed to stdout on start (`solenta-web: token …`) and
-persisted at `<userData>/web-token`. There is no TLS in v1 — binding beyond
+persisted at `<userData>/web-token`. There is no TLS in v1. Binding beyond
 loopback puts a token-gated API on your LAN, which is your call to make.
+
+Settings, Connections opens that same UI on another machine through SSH:
+its own window, a saved token, a pinned host key, and a reconnect if the
+tunnel drops. A remote project is different. It keeps this window and runs
+the agent CLI on the remote host.
 
 ## How it works
 

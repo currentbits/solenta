@@ -59,6 +59,26 @@
         Every notable change to Solenta, newest first.
       </p>
 
+      <h2 id="nightly-2026-10-04">Nightly <small>2026-10-04</small></h2>
+      <p>
+        These changes are in the current app. Nightly picks them up as new
+        prereleases ship. Prod stays on 0.22.0 until the next release.
+      </p>
+      <h3>Added</h3>
+      <ul>
+        <li><strong>Inbox.</strong> Threads that need you stay up top. Quiet runs fold into a Working shelf beside Snoozed and Settled. Footer icons are Threads, Planboard, Review, and More.</li>
+        <li><strong>Workspace choice.</strong> A draft picks Local checkout, New worktree, or Previous worktree in a strip under the composer. The choice locks after the first message.</li>
+        <li><strong>Details card.</strong> Worktree, merge, sandbox, context, and sync sit in one card off the header. Fork and Hand off live in the header while the thread is idle.</li>
+        <li><strong>Inspector, one job per tab.</strong> Environment is status, run, checkpoints, and lanes. Agents is the session and the team. Memory is search and the list. Skills is the installed list. Display, Spotlight, the code map, config doctor, the skill catalog, and MCP servers moved to Settings.</li>
+        <li><strong>Connections.</strong> Settings opens another machine's Solenta through SSH, in its own window, with a saved token and a pinned host key. A dropped tunnel reconnects.</li>
+      </ul>
+      <h3>Fixed</h3>
+      <ul>
+        <li><strong>Working stays working.</strong> A thread with a running background subagent stays on the Working shelf. Forks nest under the thread that started them.</li>
+        <li><strong>Updates.</strong> A macOS update relaunches into the new bundle. Prod and Nightly stay separate apps and share one library of threads.</li>
+        <li><strong>Quieter inspector.</strong> Opening a thread and refreshing the sidebar no longer re-reads every worker's git state.</li>
+      </ul>
+
       <h2 id="v0-22-0">0.22.0 <small>2026-09-30</small></h2>
       <h3>Added</h3>
       <ul>
