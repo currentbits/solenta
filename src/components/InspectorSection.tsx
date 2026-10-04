@@ -99,7 +99,7 @@ export function InspectorBanner({
   };
 } & DataAttrs) {
   return (
-    <div className={styles.banner} role="status" {...data}>
+    <div className={styles.banner} {...data}>
       {text != null ? <span className={styles.bannerText}>{text}</span> : null}
       <button
         type="button"

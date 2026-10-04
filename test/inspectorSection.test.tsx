@@ -88,6 +88,11 @@ describe("InspectorBanner", () => {
     );
     const banner = m.query("[data-probe]");
     assert.ok(banner);
+    assert.equal(
+      banner.getAttribute("role"),
+      null,
+      "an actionable control, not a live region",
+    );
     assert.match(banner.textContent ?? "", /2 skills out of sync/);
     const btn = m.query("[data-act]") as HTMLButtonElement;
     assert.equal(btn.textContent, "Sync ›");
