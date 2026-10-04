@@ -46,6 +46,17 @@ function waitFor(predicate, { timeoutMs = 10000, intervalMs = 30 } = {}) {
   });
 }
 
+// Undefined until the file exists AND holds complete JSON. The fake CLIs write
+// with plain writeFileSync, so an existsSync poll can land between the create
+// and the write and JSON.parse sees an empty file (#1437).
+function readJsonIfComplete(file) {
+  try {
+    return JSON.parse(fs.readFileSync(file, "utf8"));
+  } catch {
+    return undefined;
+  }
+}
+
 /** Fake grok that holds the process ~80ms so overlapping spawns are observable. */
 function slowGrokMcpBody() {
   return `#!/usr/bin/env node
@@ -1280,8 +1291,10 @@ process.exit(0);
       });
       assert.equal(ok, true, "should kick off async mcp add");
       // Fire-and-forget: poll the fake binary's argv capture file.
-      await waitFor(() => fs.existsSync(mcpArgvFile), { timeoutMs: 3000 });
-      const argv = JSON.parse(fs.readFileSync(mcpArgvFile, "utf8"));
+      let argv;
+      await waitFor(() => (argv = readJsonIfComplete(mcpArgvFile)) !== undefined, {
+        timeoutMs: 3000,
+      });
       const mcpIdx = argv.indexOf("mcp");
       assert.ok(mcpIdx >= 0, `expected mcp in ${JSON.stringify(argv)}`);
       assert.deepEqual(argv.slice(mcpIdx), [
@@ -1408,8 +1421,10 @@ process.exit(0);
     });
     try {
       assert.equal(sup.getStatus().running, true);
-      await waitFor(() => fs.existsSync(mcpArgvFile), { timeoutMs: 3000 });
-      const argv = JSON.parse(fs.readFileSync(mcpArgvFile, "utf8"));
+      let argv;
+      await waitFor(() => (argv = readJsonIfComplete(mcpArgvFile)) !== undefined, {
+        timeoutMs: 3000,
+      });
       const mcpIdx = argv.indexOf("mcp");
       assert.ok(mcpIdx >= 0);
       assert.equal(argv[mcpIdx + 1], "add");
@@ -1658,14 +1673,14 @@ process.exit(0);
       log: (m) => logs.push(m),
       env,
     });
-    await waitFor(() => fs.existsSync(mcpArgvFile), { timeoutMs: 3000 });
+    await waitFor(() => readJsonIfComplete(mcpArgvFile) !== undefined, {
+      timeoutMs: 3000,
+    });
 
     unregisterMcpServer("coder-threads", { log: (m) => logs.push(m), env });
     await waitFor(
       () =>
-        JSON.parse(fs.readFileSync(mcpArgvFile, "utf8")).some(
-          (a) => a[1] === "remove",
-        ),
+        readJsonIfComplete(mcpArgvFile)?.some((a) => a[1] === "remove"),
       { timeoutMs: 3000 },
     );
     const calls = JSON.parse(fs.readFileSync(mcpArgvFile, "utf8"));

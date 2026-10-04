@@ -628,7 +628,7 @@ if (scenario === "wedged") {
       onExit: () => { exited = true; },
     });
     const pidFile = path.join(dir, "pid");
-    await waitFor(() => fs.existsSync(pidFile));
+    await waitFor(() => fs.existsSync(pidFile) && Number(fs.readFileSync(pidFile, "utf8").trim()) > 0);
     // Wait for turn/start so shutdown really sends turn/interrupt.
     await waitFor(() => handle.send("probe") !== false);
     const pid = Number(fs.readFileSync(pidFile, "utf8"));

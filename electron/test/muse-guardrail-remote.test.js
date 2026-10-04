@@ -57,6 +57,17 @@ function waitFor(predicate, { timeoutMs = 15000, intervalMs = 20 } = {}) {
   });
 }
 
+// Undefined until the file exists AND holds complete JSON. The fake CLIs write
+// with plain writeFileSync, so an existsSync poll can land between the create
+// and the write and JSON.parse sees an empty file (#1437).
+function readJsonIfComplete(file) {
+  try {
+    return JSON.parse(fs.readFileSync(file, "utf8"));
+  } catch {
+    return undefined;
+  }
+}
+
 describe("resolveSpawn muse XDG overlay across a boundary", () => {
   it("prefixes env XDG_CONFIG_HOME and XDG_DATA_HOME onto the ssh wrap", () => {
     const out = resolveSpawn(
@@ -345,8 +356,8 @@ describe("muse runner: overlay on a crossesBoundary turn", () => {
       const settingsPath = path.join(dest, "config", "muse", "settings.json");
       await runner.startRun({ threadId: thread.id, prompt: "hello" });
       // Snapshot before run-end reclaim deletes muse-homes (#838 / #873).
-      await waitFor(() => fs.existsSync(settingsPath));
-      const settings = JSON.parse(fs.readFileSync(settingsPath, "utf8"));
+      let settings;
+      await waitFor(() => (settings = readJsonIfComplete(settingsPath)) !== undefined);
       assert.equal(settings.schema_version, 1);
       assert.ok(
         fs.lstatSync(path.join(dest, "config", "muse", "auth.json")).isSymbolicLink(),
