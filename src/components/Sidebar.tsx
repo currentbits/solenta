@@ -104,6 +104,13 @@ import { Icon } from "./sidebar/Icon";
 import { ThreadCard, type SelectOpts } from "./sidebar/ThreadCard";
 import { SettledRow, SnoozedRow } from "./sidebar/rows";
 import {
+  countIdChurn,
+  listMotionBlocked,
+  releaseAbortedRows,
+  type ListAnimCtrl,
+  type ListMotionSkip,
+} from "./sidebar/motion";
+import {
   loadFlag,
   loadOpenSet,
   loadStored,
@@ -188,57 +195,6 @@ function moveAppMenuFocus(menu: HTMLElement, key: string): boolean {
   else return false;
   items[next]?.focus();
   return true;
-}
-
-function prefersReducedMotion(): boolean {
-  return (
-    typeof window !== "undefined" &&
-    typeof window.matchMedia === "function" &&
-    window.matchMedia("(prefers-reduced-motion: reduce)").matches
-  );
-}
-
-type ListAnimCtrl = {
-  enable: () => void;
-  disable: () => void;
-  destroy?: () => void;
-};
-
-type ListMotionSkip = {
-  hydrate: boolean;
-  bulk: boolean;
-  keyboard: boolean;
-};
-
-function listMotionBlocked(skip: ListMotionSkip): boolean {
-  return prefersReducedMotion() || skip.hydrate || skip.bulk || skip.keyboard;
-}
-
-/**
- * auto-animate reinserts a removed row for the exit animation and marks it
- * `__aa_del`. disable() cancels that animation and does not take the
- * placeholder back out, so a keyboard snap, bulk replace, or reduced-motion
- * change during the exit leaves a second copy of the row in the list.
- */
-function releaseAbortedRows(parent: HTMLElement): void {
-  for (const child of [...parent.children]) {
-    if (!("__aa_del" in child)) continue;
-    delete (child as HTMLElement & { __aa_del?: unknown }).__aa_del;
-    if (child instanceof HTMLElement) child.removeAttribute("style");
-    child.remove();
-  }
-}
-
-function countIdChurn(
-  prev: readonly string[],
-  next: readonly string[],
-): number {
-  const prevSet = new Set(prev);
-  const nextSet = new Set(next);
-  let n = 0;
-  for (const id of nextSet) if (!prevSet.has(id)) n += 1;
-  for (const id of prevSet) if (!nextSet.has(id)) n += 1;
-  return n;
 }
 
 interface SidebarProps {
