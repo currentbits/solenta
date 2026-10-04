@@ -1206,8 +1206,22 @@ export function SkillsTab({
     setExpandedKeys(new Set());
     setConfirmRemove(null);
     void reload();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- reload identity changes only with projectPath/listSkills, which is what this reset is for
+  }, [reload]);
+
+  // A Settings close just bumps refreshKey to pick up out-of-band changes
+  // (e.g. a sync done from the Manage surface). Unlike a projectPath/
+  // listSkills change, it must not collapse expanded rows or flash
+  // Loading…, so it only re-fetches; the initial mount is handled above.
+  const refreshKeyMounted = useRef(false);
+  useEffect(() => {
+    if (!refreshKeyMounted.current) {
+      refreshKeyMounted.current = true;
+      return;
+    }
+    void reload();
     // eslint-disable-next-line react-hooks/exhaustive-deps -- refreshKey is a signal, not a value `reload` reads
-  }, [reload, refreshKey]);
+  }, [refreshKey]);
 
   const handleRemove = async (skill: SkillInfo) => {
     if (skill.provenance === "project" || skill.source === "project") return;

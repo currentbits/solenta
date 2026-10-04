@@ -1637,6 +1637,38 @@ describe("SkillsTab skills", () => {
     m.unmount();
   });
 
+  it("a refreshKey bump reloads without collapsing an expanded row", async () => {
+    let calls = 0;
+    const listSkills = async () => {
+      calls += 1;
+      return SKILLS.map((s) => ({
+        ...s,
+        installedIn: [...s.installedIn],
+        missingFrom: [...s.missingFrom],
+      }));
+    };
+    const props = {
+      projectPath: "/repo",
+      listSkills,
+      removeSkill: async () => {},
+      syncSkills: async () => ({ copied: 0, skills: [] }),
+    };
+    const m = await mount(<SkillsTab {...props} refreshKey={0} />);
+    assert.equal(calls, 1, "initial mount loads once");
+    await m.click(m.query('[data-skill="claude:review-pr"] [data-skill-toggle]'));
+    assert.ok(
+      m.query('[data-skill="claude:review-pr"][data-expanded]'),
+      "row expanded before the refresh",
+    );
+    await m.rerender(<SkillsTab {...props} refreshKey={1} />);
+    assert.equal(calls, 2, "a refreshKey bump reloads");
+    assert.ok(
+      m.query('[data-skill="claude:review-pr"][data-expanded]'),
+      "row stays expanded after a refreshKey bump",
+    );
+    m.unmount();
+  });
+
   it("a failed Sync keeps the banner and shows the error", async () => {
     const m = await mount(
       <Harness
