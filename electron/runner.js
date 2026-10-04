@@ -1338,6 +1338,9 @@ function createRunner(opts) {
     flushOrchNotices(parentId);
   }
 
+  const NOTICE_FOOTER_LINE =
+    "\nContinue orchestrating. thread_status only repeats the reply line above, so do not call it for a finished worker; review its branch with git (log/diff against your branch) before reporting.";
+
   /**
    * Join queued lines into the run prompt. Lines that already start with
    * `[` (peer / caller-prefixed) keep that prefix; worker-finished lines
@@ -1348,7 +1351,9 @@ function createRunner(opts) {
   function noticePrompt(notes) {
     const body = notes.join("\n");
     const headed = /^\s*\[/.test(body) ? body : "[orchestration] " + body;
-    return headed + "\nContinue orchestrating; thread_status has full details.";
+    // #1436: thread_status only echoes the reply line; never invite polling.
+    // src/workerActivity.ts NOTICE_FOOTER must match this exactly to fold.
+    return headed + NOTICE_FOOTER_LINE;
   }
 
   /**

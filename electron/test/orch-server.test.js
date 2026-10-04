@@ -378,8 +378,10 @@ describe("refresh_worker_snapshot MCP tool", () => {
 
 describe("orch-server tool handlers", () => {
   it("instructions tell the orchestrator it is woken when workers finish", () => {
-    assert.match(INSTRUCTIONS, /woken on a new turn/);
-    assert.match(INSTRUCTIONS, /do not sit idle waiting for the user/);
+    assert.match(INSTRUCTIONS, /end your turn: each worker's finish \(done or failed\) wakes you/);
+    // #1436: no polling invitation, no false "full details" claim.
+    assert.match(INSTRUCTIONS, /Do not poll thread_status, sleep, or start watchers/);
+    assert.doesNotMatch(INSTRUCTIONS, /full details|goes quiet/);
     assert.match(INSTRUCTIONS, /hypothesis_record/);
     assert.match(INSTRUCTIONS, /teach_review/);
     assert.match(INSTRUCTIONS, /TODO\(human\)/);

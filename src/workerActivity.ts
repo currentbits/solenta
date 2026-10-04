@@ -11,7 +11,7 @@ import type { ChatMessage } from "./shared/ipc";
  * the reply itself, and anything unrecognized stay fully visible. The caller
  * still renders the original text unchanged.
  */
-const NOTICE_FOOTER = "Continue orchestrating; thread_status has full details.";
+const NOTICE_FOOTER = "Continue orchestrating. thread_status only repeats the reply line above, so do not call it for a finished worker; review its branch with git (log/diff against your branch) before reporting.";
 
 /** Signals in the reply or crew note. Not applied to the landing paragraph. */
 const REAL_ACTION =
