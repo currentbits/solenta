@@ -1084,6 +1084,9 @@ export interface SubagentInfo {
   status: "running" | "done" | "failed";
 }
 
+/** Scope for threads:summaries (#1398). Omitted = every thread. */
+export type ThreadSummariesInput = { projectId?: string; threadIds?: string[] };
+
 /**
  * Lightweight per-thread row for the Agents tab team view (threads:summaries).
  * Crew workers set orchWorker: true. handoffFrom alone is an ordinary fork,
@@ -3853,7 +3856,7 @@ export interface CoderApi {
      * message. Cheap: no git or provider calls. Crew roles use orchWorker;
      * handoffFrom alone is an ordinary fork.
      */
-    summaries(): Promise<ThreadSummaryInfo[]>;
+    summaries(input?: ThreadSummariesInput): Promise<ThreadSummaryInfo[]>;
     /**
      * Shared crew task list for the selected thread (issue #277). Read-only
      * from the renderer — agents claim and complete via MCP. Tasks belong

@@ -89,6 +89,7 @@ import type {
   ThreadDetail,
   ThreadInfo,
   ThreadMessagePin,
+  ThreadSummariesInput,
   ThreadSummaryInfo,
   TrashedThreadInfo,
   CrewTaskView,
@@ -744,7 +745,7 @@ export interface UseCoderResult {
   /** Close the digest window so the next one starts now. */
   markDigestSeen: () => Promise<{ seenAt: number }>;
   /** Per-thread summaries for the Agents tab team view. */
-  listThreadSummaries: () => Promise<ThreadSummaryInfo[]>;
+  listThreadSummaries: (input?: ThreadSummariesInput) => Promise<ThreadSummaryInfo[]>;
   /** Shared crew task list for the selected thread (issue #277). Read-only. */
   listCrewTasks: (
     threadId: string,
@@ -3604,9 +3605,10 @@ export function useCoder(): UseCoderResult {
     return api.digest.markSeen();
   }, [api]);
 
-  const listThreadSummaries = useCallback(async () => {
-    return api.threads.summaries();
-  }, [api]);
+  const listThreadSummaries = useCallback(
+    async (input?: ThreadSummariesInput) => api.threads.summaries(input),
+    [api],
+  );
 
   const listCrewTasks = useCallback(
     async (threadId: string) => {
