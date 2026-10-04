@@ -7,7 +7,6 @@ import {
   useMemo,
   useRef,
   useState,
-  type ReactNode,
 } from "react";
 import autoAnimate from "@formkit/auto-animate";
 import type {
@@ -128,6 +127,7 @@ import {
   type StatusLabelInfo,
   type StatusPulseTone,
 } from "./sidebar/status";
+import { Icon } from "./sidebar/Icon";
 import styles from "./Sidebar.module.css";
 
 export { displayWorkerTitle, statusPulseFor };
@@ -296,30 +296,6 @@ function loadOpenSet(key: string): Set<string> {
 
 function saveOpenSet(key: string, ids: ReadonlySet<string>): void {
   saveStored(key, JSON.stringify([...ids]));
-}
-
-function Icon({
-  children,
-  size = 14,
-}: {
-  children: ReactNode;
-  size?: number;
-}) {
-  return (
-    <svg
-      width={size}
-      height={size}
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.5"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-    >
-      {children}
-    </svg>
-  );
 }
 
 interface SidebarProps {
