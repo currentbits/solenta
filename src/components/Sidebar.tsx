@@ -116,6 +116,7 @@ import { useProviderOptions } from "./sidebar/useProviderOptions";
 import { useListAnimation } from "./sidebar/useListAnimation";
 import { useSidebarRows } from "./sidebar/useSidebarRows";
 import { useMoreMenuFocus } from "./sidebar/useMoreMenuFocus";
+import { useThreadSearch } from "./sidebar/useThreadSearch";
 import styles from "./Sidebar.module.css";
 
 export { displayWorkerTitle, statusPulseFor } from "./sidebar/status";
@@ -129,8 +130,6 @@ function formatTrashExpiry(expiresAt: number, now: number): string {
   if (days <= 0) return "Expires today";
   return days === 1 ? "Expires in 1d" : `Expires in ${days}d`;
 }
-const SEARCH_DEBOUNCE_MS = 250;
-const MIN_SEARCH_LEN = 2;
 const SCOPE_KEY = "sidebar:projectScope";
 const WORKING_OPEN_KEY = "sidebar:workingOpen";
 const FILTERS_OPEN_KEY = "sidebar:filtersOpen";
@@ -531,43 +530,14 @@ export const Sidebar = memo(function Sidebar({
 
   const waitStates = useMemo(() => buildWaitStates(threads), [threads]);
 
-  const trimmedQuery = query.trim();
-  const searching = trimmedQuery.length >= MIN_SEARCH_LEN;
-
-  const runSearch = useCallback(
-    async (q: string) => {
-      const gen = ++searchGen.current;
-      setSearchLoading(true);
-      try {
-        const list = await searchThreads({ query: q });
-        if (!mountedRef.current || searchGen.current !== gen) return;
-        setSearchResults(list);
-      } catch {
-        if (!mountedRef.current || searchGen.current !== gen) return;
-        setSearchResults([]);
-      } finally {
-        if (mountedRef.current && searchGen.current === gen) {
-          setSearchLoading(false);
-        }
-      }
-    },
-    [searchThreads],
-  );
-
-  useEffect(() => {
-    const q = query.trim();
-    if (q.length < MIN_SEARCH_LEN) {
-      searchGen.current += 1;
-      setSearchResults(null);
-      setSearchLoading(false);
-      return;
-    }
-
-    const handle = window.setTimeout(() => {
-      void runSearch(q);
-    }, SEARCH_DEBOUNCE_MS);
-    return () => window.clearTimeout(handle);
-  }, [query, runSearch]);
+  const { trimmedQuery, searching } = useThreadSearch({
+    query,
+    searchThreads,
+    searchGen,
+    mountedRef,
+    setSearchResults,
+    setSearchLoading,
+  });
 
   const keepThreadIds = useMemo(() => {
     const ids: (string | null | undefined)[] = [activeThreadId, revealThreadId];
