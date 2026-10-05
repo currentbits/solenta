@@ -114,6 +114,7 @@ import { useComposerAttachments } from "./composer/useComposerAttachments";
 import { useComposerVim } from "./composer/useComposerVim";
 import { useMentionMenu } from "./composer/useMentionMenu";
 import { useSlashMenu } from "./composer/useSlashMenu";
+import { useEscapeInterrupt } from "./composer/useEscapeInterrupt";
 import { useTranscriptViewShortcuts } from "./composer/useTranscriptViewShortcuts";
 import { usePasteCards } from "./composer/usePasteCards";
 import {
@@ -292,34 +293,6 @@ const DEFAULT_TEMPLATE_ID = "standard";
 /** Capped cascade index: row 30 shouldn't wait half a second to appear. */
 const rowEnterStyle = (index: number): CSSProperties =>
   ({ "--i": String(Math.min(index, 10)) }) as CSSProperties;
-
-/** Two distinct Esc presses within this window rewind when idle (#478). */
-const DOUBLE_ESC_MS = 500;
-
-/**
- * Esc must not steal from a modal, the narrow-window drawer, or another
- * field (notes, rename, edit-resubmit). The composer textarea itself is
- * allowed through — that is the interrupt surface.
- */
-function escapeConsumedByChrome(
-  target: EventTarget | null,
-  composerField: HTMLTextAreaElement | null,
-): boolean {
-  if (typeof document !== "undefined") {
-    if (document.querySelector('[role="dialog"][aria-modal="true"]')) {
-      return true;
-    }
-    if (document.querySelector("[data-drawer-open]")) return true;
-  }
-  if (!(target instanceof HTMLElement)) return false;
-  const tag = target.tagName;
-  const typing =
-    tag === "INPUT" ||
-    tag === "TEXTAREA" ||
-    tag === "SELECT" ||
-    target.isContentEditable;
-  return typing && target !== composerField;
-}
 
 export const Composer = memo(function Composer({
   threadId,
@@ -906,43 +879,17 @@ export const Composer = memo(function Composer({
   }, [manageOpen]);
 
   const popupOpen = anyMenuOpen || mentionOpen || commandOpen || manageOpen;
-  useEffect(() => {
-    if (disabled) return;
-    const onKey = (e: globalThis.KeyboardEvent) => {
-      if (e.key !== "Escape" || e.repeat) return;
-      if (e.defaultPrevented) return;
-      // Mention / command / pill menus own Esc; do not stop or rewind.
-      if (popupOpen) return;
-      if (escapeConsumedByChrome(e.target, textareaRef.current)) return;
-
-      if (snapshotRef.current) {
-        e.preventDefault();
-        lastEscAt.current = 0;
-        void cancelDictationRef.current();
-        return;
-      }
-
-      if (busy && onStopRun) {
-        e.preventDefault();
-        lastEscAt.current = 0;
-        void onStopRun();
-        return;
-      }
-
-      if (!busy && onSlashAction) {
-        const now = Date.now();
-        if (now - lastEscAt.current < DOUBLE_ESC_MS) {
-          lastEscAt.current = 0;
-          e.preventDefault();
-          onSlashAction("rewind");
-        } else {
-          lastEscAt.current = now;
-        }
-      }
-    };
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
-  }, [disabled, busy, popupOpen, onStopRun, onSlashAction]);
+  useEscapeInterrupt({
+    disabled,
+    busy,
+    popupOpen,
+    onStopRun,
+    onSlashAction,
+    textareaRef,
+    snapshotRef,
+    cancelDictationRef,
+    lastEscAt,
+  });
 
   useTranscriptViewShortcuts();
 

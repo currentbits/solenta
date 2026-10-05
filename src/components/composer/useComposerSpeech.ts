@@ -25,7 +25,7 @@ function coderOn(): CoderApi["on"] | undefined {
   return (window as unknown as { coder?: CoderApi }).coder?.on;
 }
 
-type SpeechSnapshot = {
+export type SpeechSnapshot = {
   threadId: string;
   draft: string;
   caret: number;
