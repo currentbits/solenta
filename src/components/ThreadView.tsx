@@ -129,8 +129,6 @@ import { Composer } from "./Composer";
 import { repoRelativeDir } from "../mention";
 import { createDoubleOptionTracker } from "../appsnapHotkey";
 import {
-  captureCiteFromSelection,
-  citeBodyFromSelection,
   makeReplyTarget,
   replySourceUnavailable,
   type ReplyTarget,
@@ -175,6 +173,7 @@ import { ChangesPanel } from "./thread/ChangesPanel";
 import { useRetryAnchors } from "./thread/useRetryAnchors";
 import { useTranscriptAnnotations } from "./thread/useTranscriptAnnotations";
 import { useCliCommands } from "./thread/useCliCommands";
+import { useCiteShortcut } from "./thread/useCiteShortcut";
 import styles from "./ThreadView.module.css";
 
 const EMPTY_COMPARE_PEERS: ComparePeer[] = [];
@@ -1521,46 +1520,7 @@ export const ThreadView = memo(function ThreadView({
     [onStartRun],
   );
 
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.defaultPrevented) return;
-      if (!(e.metaKey || e.ctrlKey) || !e.shiftKey) return;
-      if (e.key.toLowerCase() !== "c") return;
-      const t = e.target;
-      if (
-        t instanceof HTMLTextAreaElement ||
-        t instanceof HTMLInputElement ||
-        (t instanceof HTMLElement && t.isContentEditable)
-      ) {
-        return;
-      }
-      const sel = window.getSelection();
-      const citeBody = citeBodyFromSelection(sel);
-      if (!citeBody) return;
-      const article = citeBody.closest("[data-msg]");
-      if (!(article instanceof HTMLElement)) return;
-      if (article.hasAttribute("data-streaming")) return;
-      const messageId = article.getAttribute("data-msg");
-      const originThreadId = article.getAttribute("data-thread");
-      if (!messageId || !originThreadId) return;
-      const message = detail?.messages.find((row) => row.id === messageId);
-      if (!message || message.role !== "assistant" || !message.text.trim()) {
-        return;
-      }
-      const target = captureCiteFromSelection({
-        selection: sel,
-        messageId,
-        threadId: originThreadId,
-        sourceText: message.text,
-        citeBody,
-      });
-      if (!target) return;
-      e.preventDefault();
-      storeReply(target);
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [detail?.messages, storeReply]);
+  useCiteShortcut(detail, storeReply);
 
   const pickMentionFolder = useCallback(async () => {
     if (!onPickDirectory) return null;
