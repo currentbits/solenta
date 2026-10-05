@@ -110,6 +110,7 @@ import {
 import { applyComposerVim } from "../composerVim";
 import { formatSpeechModelSize } from "../speechDraft";
 import { AttachmentChip } from "./composer/AttachmentChip";
+import { CommandList, MentionList } from "./composer/ComposerPopups";
 import { useComposerAttachments } from "./composer/useComposerAttachments";
 import { useComposerVim } from "./composer/useComposerVim";
 import { useMentionMenu } from "./composer/useMentionMenu";
@@ -1525,84 +1526,22 @@ export const Composer = memo(function Composer({
       ) : null}
       <div className={styles.card}>
         {mentionOpen && (
-          <ul
-            className={styles.mentionList}
-            role="listbox"
-            aria-label="Mention a file or folder"
-          >
-            {mentionFiles.map((f, i) => (
-              <li key={f} role="option" aria-selected={i === mentionIndex}>
-                <button
-                  type="button"
-                  className={styles.mentionRow}
-                  // Same overflow box as the slash palette (16+ rows in 240px).
-                  // Without this the highlight walks off-screen and the list
-                  // looks frozen. Matches the model picker.
-                  ref={(el) => {
-                    if (i === mentionIndex && el) {
-                      scrollChildIntoNearestView(
-                        el.closest<HTMLElement>('[role="listbox"]'),
-                        el,
-                      );
-                    }
-                  }}
-                  data-highlighted={i === mentionIndex ? "true" : undefined}
-                  data-mention-kind={f.endsWith("/") ? "folder" : "file"}
-                  onMouseEnter={() => setMentionIndex(i)}
-                  onClick={() => acceptMention(f)}
-                >
-                  {f}
-                </button>
-              </li>
-            ))}
-            {onPickMentionFolder && (
-              <li role="option" aria-selected={false}>
-                <button
-                  type="button"
-                  className={styles.mentionRow}
-                  data-mention-browse=""
-                  onClick={browseMentionFolder}
-                >
-                  Browse folder…
-                </button>
-              </li>
-            )}
-          </ul>
+          <MentionList
+            mentionFiles={mentionFiles}
+            mentionIndex={mentionIndex}
+            setMentionIndex={setMentionIndex}
+            acceptMention={acceptMention}
+            onPickMentionFolder={onPickMentionFolder}
+            browseMentionFolder={browseMentionFolder}
+          />
         )}
         {commandOpen && (
-          <ul
-            className={styles.mentionList}
-            role="listbox"
-            aria-label="Commands"
-          >
-            {commandMatches.map((cmd, i) => (
-              <li key={cmd.name} role="option" aria-selected={i === commandIndex}>
-                <button
-                  type="button"
-                  className={styles.mentionRow}
-                  // 16 slash rows in a 240px box. Arrow keys only bump
-                  // commandIndex; without this the highlight walks off-screen
-                  // and the palette looks frozen. Matches the model picker.
-                  ref={(el) => {
-                    if (i === commandIndex && el) {
-                      scrollChildIntoNearestView(
-                        el.closest<HTMLElement>('[role="listbox"]'),
-                        el,
-                      );
-                    }
-                  }}
-                  data-highlighted={i === commandIndex ? "true" : undefined}
-                  onMouseEnter={() => setCommandIndex(i)}
-                  onClick={() => acceptCommand(cmd)}
-                >
-                  <span className={styles.providerRowText}>
-                    <span className={styles.modelRowLabel}>{cmd.name}</span>
-                    <span className={styles.modelRowVendor}>{cmd.hint}</span>
-                  </span>
-                </button>
-              </li>
-            ))}
-          </ul>
+          <CommandList
+            commandMatches={commandMatches}
+            commandIndex={commandIndex}
+            setCommandIndex={setCommandIndex}
+            acceptCommand={acceptCommand}
+          />
         )}
         {replyTo && (
           <div
