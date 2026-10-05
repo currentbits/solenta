@@ -302,4 +302,63 @@ describe("threads:changed row patches (#1475)", () => {
     assert.equal(fake.of("threads.list").length, listsBefore + 1);
     m.unmount();
   });
+
+  it("retries a resync when a patch lands before the list reply", async () => {
+    let main = [
+      thread({ id: "t1", title: "one" }),
+      thread({ id: "t2", title: "two" }),
+    ];
+    const fake = createFakeCoder({ threads: main });
+    let latest: ThreadInfo[] = [];
+    const m = await bootProbe(fake, (r) => {
+      latest = r;
+    });
+    await inAct(() => fake.emitThreads({ seq: 1, threads: latest.slice() }));
+    await m.flush();
+
+    // The first list call is held: main snapshots its list at request time,
+    // then sends push 4 before the reply goes out.
+    let release: () => void = () => {};
+    let calls = 0;
+    fake.api.threads.list = () => {
+      const snapshot = main.map((t) => ({ ...t }));
+      if (calls++ > 0) return Promise.resolve(snapshot);
+      return new Promise((resolve) => {
+        release = () => resolve(snapshot);
+      });
+    };
+    const set = (id: string, title: string) => {
+      main = main.map((t) => (t.id === id ? { ...t, title } : t));
+      return main.find((t) => t.id === id)!;
+    };
+
+    // Push 2 was missed, so push 3 cannot apply and starts a resync.
+    set("t1", "one-v2");
+    const p3 = set("t1", "one-v3");
+    await inAct(() =>
+      fake.emitThreads({ seq: 3, base: 2, upserts: [p3], removedIds: [] }),
+    );
+    // The held list predates push 4, which arrives before the reply.
+    const listAtRequest = main;
+    const p4 = set("t2", "two-v4");
+    await inAct(() =>
+      fake.emitThreads({ seq: 4, base: 3, upserts: [p4], removedIds: [] }),
+    );
+    assert.equal(listAtRequest[1].title, "two");
+    await inAct(() => release());
+    await m.flush();
+
+    const p5 = set("t1", "one-v5");
+    await inAct(() =>
+      fake.emitThreads({ seq: 5, base: 4, upserts: [p5], removedIds: [] }),
+    );
+    await m.flush();
+
+    assert.equal(calls, 2, "the raced reply is discarded and refetched");
+    assert.deepEqual(
+      latest.map((t) => t.title),
+      main.map((t) => t.title),
+    );
+    m.unmount();
+  });
 });

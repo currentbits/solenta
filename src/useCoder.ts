@@ -1159,26 +1159,31 @@ export function useCoder(): UseCoderResult {
     let unsubBoot: (() => void) | undefined;
     let unsubSimulator: (() => void) | undefined;
 
-    // A list reply reflects every push that arrived before it (one ordered
-    // channel), so it is current as of the last push seq seen at reply time.
-    const fetchThreads = () =>
-      api.threads.list().then((list) => ({
+    // A list reply is current as of the last push seq only when no push
+    // arrived while it was in flight: main may build the list, then send a
+    // push before the reply, and that push is not in the list.
+    const fetchThreads = () => {
+      const gen = threadsListGen.current;
+      return api.threads.list().then((list) => ({
         list,
-        gen: threadsListGen.current,
+        gen,
         seq: lastThreadsPushSeqRef.current,
       }));
+    };
 
     const resyncThreads = () => {
       if (threadsResyncRef.current) return;
       threadsResyncRef.current = true;
       void fetchThreads()
-        .then(({ list, seq }) => {
+        .then(({ list, gen, seq }) => {
+          threadsResyncRef.current = false;
           if (cancelled) return;
+          // A push raced the reply: retry. Pushes are rare, so it converges.
+          if (threadsListGen.current !== gen) return resyncThreads();
           applyThreads(list);
           threadsSeqRef.current = seq;
         })
-        .catch(() => {})
-        .finally(() => {
+        .catch(() => {
           threadsResyncRef.current = false;
         });
     };
@@ -1216,8 +1221,8 @@ export function useCoder(): UseCoderResult {
           for (const t of list) {
             prevStatusRef.current.set(t.id, t.status);
           }
-          // A push after the reply is newer than `list`; it was applied (or
-          // started a resync) on arrival.
+          // A push since the request may be newer than `list`; it was
+          // applied (or started a resync) on arrival.
           const fresh = threadsListGen.current === loaded.gen;
           if (fresh) {
             applyThreads(list);
