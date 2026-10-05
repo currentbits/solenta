@@ -83,6 +83,7 @@ import { useThreadRemoval } from "./app/useThreadRemoval";
 import { useSuggestionHandlers } from "./app/useSuggestionHandlers";
 import { useThreadRoster } from "./app/useThreadRoster";
 import { useCrewHandlers } from "./app/useCrewHandlers";
+import { useOnboarding } from "./app/useOnboarding";
 import { useAppShortcuts } from "./app/useAppShortcuts";
 import { useSidebarResize } from "./app/useSidebarResize";
 
@@ -1308,60 +1309,26 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     ],
   );
 
-  const finishOnboarding = useCallback(async () => {
-    await saveSettings({ onboardingSeen: true });
-    createdFirstThreadRef.current = null;
-    setOnboardingDismissed(true);
-    setOnboardingForceOpen(false);
-  }, [saveSettings]);
-
-  const handleCreateFirstThread = useCallback(
-    async (input: { projectId: string; provider: string }) => {
-      const existing = createdFirstThreadRef.current;
-      let threadId =
-        existing && existing.projectId === input.projectId
-          ? existing.id
-          : null;
-      if (!threadId) {
-        const thread = await createThread("New Thread", input.projectId, {
-          inheritProvider: false,
-        });
-        if (!thread) {
-          throw new Error("Could not create thread");
-        }
-        threadId = thread.id;
-      }
-      createdFirstThreadRef.current = {
-        id: threadId,
-        projectId: input.projectId,
-      };
-      try {
-        await setProvider({ threadId, provider: input.provider });
-      } catch (err) {
-        const message =
-          err instanceof Error && err.message
-            ? err.message
-            : "Could not set the thread agent";
-        throw err instanceof Error ? err : new Error(message);
-      }
-      selectThread(threadId);
-      setView("thread");
-      setRevealThreadId(threadId);
-    },
-    [createThread, selectThread, setProvider],
-  );
-
-  const showOnboarding = useCallback(() => {
-    setSettingsOpen(false);
-    setOnboardingForceOpen(true);
-    createdFirstThreadRef.current = null;
-  }, []);
-
-  const onboardingOpen =
-    onboardingForceOpen ||
-    (settings !== null &&
-      settings.onboardingSeen !== true &&
-      !onboardingDismissed);
+  const {
+    finishOnboarding,
+    handleCreateFirstThread,
+    showOnboarding,
+    onboardingOpen,
+  } = useOnboarding({
+    settings,
+    saveSettings,
+    createThread,
+    selectThread,
+    setProvider,
+    createdFirstThreadRef,
+    onboardingDismissed,
+    setOnboardingDismissed,
+    onboardingForceOpen,
+    setOnboardingForceOpen,
+    setSettingsOpen,
+    setView,
+    setRevealThreadId,
+  });
 
   const submitAddPath = useCallback(
     async (
