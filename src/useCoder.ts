@@ -104,6 +104,7 @@ import {
   mergeThreadPatch,
   patchThreadList,
   reconcileThreadList,
+  applyThreadListPush,
 } from "./threadPatch";
 import type { DroppedFolder } from "./dropFiles";
 import type { EditorId, EditorOption, ProviderUsage } from "./shared/ipc";
@@ -883,6 +884,12 @@ export function useCoder(): UseCoderResult {
   );
   /** Bumped on every threads:changed push so a late initial list cannot clobber it. */
   const threadsListGen = useRef(0);
+  /** Seq of the threads:changed push our list reflects; null = unknown (#1475). */
+  const threadsSeqRef = useRef<number | null>(null);
+  /** Seq of the last threads:changed push received (null: none, or seq-less). */
+  const lastThreadsPushSeqRef = useRef<number | null>(null);
+  /** A threads.list resync is in flight; patches that miss wait for it. */
+  const threadsResyncRef = useRef(false);
   const threadsRef = useRef<ThreadInfo[]>(bootSnapshot?.threads ?? []);
   /** Prior status by thread id; used to detect working → settled for spend refresh. */
   const prevStatusRef = useRef<Map<string, ThreadInfo["status"]>>(new Map());
@@ -1152,17 +1159,40 @@ export function useCoder(): UseCoderResult {
     let unsubBoot: (() => void) | undefined;
     let unsubSimulator: (() => void) | undefined;
 
+    // A list reply reflects every push that arrived before it (one ordered
+    // channel), so it is current as of the last push seq seen at reply time.
+    const fetchThreads = () =>
+      api.threads.list().then((list) => ({
+        list,
+        gen: threadsListGen.current,
+        seq: lastThreadsPushSeqRef.current,
+      }));
+
+    const resyncThreads = () => {
+      if (threadsResyncRef.current) return;
+      threadsResyncRef.current = true;
+      void fetchThreads()
+        .then(({ list, seq }) => {
+          if (cancelled) return;
+          applyThreads(list);
+          threadsSeqRef.current = seq;
+        })
+        .catch(() => {})
+        .finally(() => {
+          threadsResyncRef.current = false;
+        });
+    };
+
     const loadBootLists = () => {
-      const loadGen = threadsListGen.current;
       return (async () => {
         try {
           // status/settings are best-effort: missing IPC handlers (merge before
           // backend) must not blank the whole boot (no catch on this IIFE).
           // projects/threads/providers/workflows may also reject when the
           // window beat registerIpc (#618); boot:ready retries.
-          const [p, list, prov, wfs, autos, status, sett] = await Promise.all([
+          const [p, loaded, prov, wfs, autos, status, sett] = await Promise.all([
             api.projects.list(),
-            api.threads.list(),
+            fetchThreads(),
             api.providers.list(),
             api.workflows.list(),
             api.automations.list().catch(() => [] as AutomationInfo[]),
@@ -1182,15 +1212,19 @@ export function useCoder(): UseCoderResult {
           if (status != null) setAppStatus(status);
           if (sett != null) setSettings(sett);
           if (awake != null) setStayAwake(awake);
+          const { list } = loaded;
           for (const t of list) {
             prevStatusRef.current.set(t.id, t.status);
           }
-          if (threadsListGen.current === loadGen) {
+          // A push after the reply is newer than `list`; it was applied (or
+          // started a resync) on arrival.
+          const fresh = threadsListGen.current === loaded.gen;
+          if (fresh) {
             applyThreads(list);
+            threadsSeqRef.current = loaded.seq;
           }
           refreshTrashed();
-          const source =
-            threadsListGen.current === loadGen ? list : threadsRef.current;
+          const source = fresh ? list : threadsRef.current;
           const preferred =
             source.find((t) => !t.archived && t.status === "working")?.id ??
             source.find((t) => !t.archived)?.id ??
@@ -1212,9 +1246,22 @@ export function useCoder(): UseCoderResult {
       })();
     };
 
-    unsubChanged = api.on("threads:changed", (next) => {
+    unsubChanged = api.on("threads:changed", (push) => {
       threadsListGen.current += 1;
-      applyThreads(next);
+      const seq = Array.isArray(push) ? null : push.seq;
+      lastThreadsPushSeqRef.current = seq;
+      const next = applyThreadListPush(
+        threadsRef.current,
+        push,
+        threadsSeqRef.current,
+      );
+      if (next) {
+        applyThreads(next);
+        threadsSeqRef.current = seq;
+      } else {
+        // Missed a push (boot race, web reconnect): the patch has no base.
+        resyncThreads();
+      }
       refreshTrashed();
       // Import (and any other main-process mint) can add projects without
       // going through projects.add. Refresh so the sidebar sees them.

@@ -80,6 +80,7 @@ import type {
   ThreadDetail,
   ThreadPatch,
   ThreadInfo,
+  ThreadListPush,
   ThreadMessagePin,
   TrashedThreadInfo,
   ThreadSummariesInput,
@@ -130,7 +131,7 @@ export interface FakeCoder {
   /** The single call to a channel; throws unless there is exactly one. */
   only(channel: string): Call;
   /** Push a threads:changed event to whatever subscribed. */
-  emitThreads(threads: ThreadInfo[]): void;
+  emitThreads(push: ThreadListPush): void;
   /** Push a thread:updated event (a full detail is a valid ThreadPatch). */
   emitThread(detail: ThreadPatch): void;
   /** Push boot:ready so useCoder refetches lists (#618). */
@@ -574,7 +575,7 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
     },
   ];
 
-  const threadSubs: Array<(t: ThreadInfo[]) => void> = [];
+  const threadSubs: Array<(t: ThreadListPush) => void> = [];
   const detailSubs: Array<(d: ThreadPatch) => void> = [];
   const bootReadySubs: Array<() => void> = [];
   const stayAwakeSubs: Array<(s: StayAwakeStatus) => void> = [];
@@ -3793,9 +3794,9 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
     on: (channel: string, cb: unknown) => {
       calls.push({ channel: `on:${channel}`, args: [] });
       if (channel === "threads:changed") {
-        threadSubs.push(cb as (t: ThreadInfo[]) => void);
+        threadSubs.push(cb as (t: ThreadListPush) => void);
         return () => {
-          const i = threadSubs.indexOf(cb as (t: ThreadInfo[]) => void);
+          const i = threadSubs.indexOf(cb as (t: ThreadListPush) => void);
           if (i >= 0) threadSubs.splice(i, 1);
         };
       }

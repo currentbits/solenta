@@ -73,6 +73,7 @@ const { bootFirstPaint } = require("./boot.js");
 const { applyZoom, clampUiScale } = require("./zoom.js");
 const mediaProtocol = require("./media-protocol.js");
 const { createRunArtifactStore } = require("./run-artifact-store.js");
+const { createThreadListEncoder } = require("./threadListPush.js");
 const { createIOSSimulatorService } = require("./ios-simulator.js");
 const { createIOSSimulatorStreamBroker } = require("./ios-simulator-stream.js");
 const {
@@ -338,7 +339,13 @@ function createWindow() {
   }
 }
 
+const encodeThreadList = createThreadListEncoder();
+
 function broadcast(channel, payload) {
+  // Row patches instead of the whole list (#1475); see threadListPush.js.
+  if (channel === "threads:changed" && Array.isArray(payload)) {
+    payload = encodeThreadList(payload);
+  }
   for (const win of BrowserWindow.getAllWindows()) {
     if (!win.isDestroyed() && !win.solentaRemote) {
       win.webContents.send(channel, payload);
