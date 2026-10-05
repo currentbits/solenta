@@ -85,8 +85,10 @@ function makeCtx(deps) {
  *
  * Thin clients (preload, wireClient) iterate src/shared/ipcChannels.ts
  * rather than restating these names. Adding a channel means: a row in
- * that table, a handler here, CoderApi JSDoc, and (if the renderer
- * needs a fixture) devCoder/fakeCoder. Run scripts/sync-ipc-preload.js.
+ * that table, a handler in the namespace's ipc-<namespace>.js (one key
+ * per module: a later spread silently wins), CoderApi JSDoc, and (if the
+ * renderer needs a fixture) devCoder/fakeCoder. Run
+ * scripts/sync-ipc-preload.js.
  *
  * First argument is always ctx. Bodies match the previous ipcMain closures
  * so throw strings and return shapes stay byte-identical.
