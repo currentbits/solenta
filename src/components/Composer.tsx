@@ -83,8 +83,6 @@ import { asBtwPrompt } from "../btw";
 import { buildBestOfNEntries, providerVendor } from "../bestOfN";
 import { keptDrafts } from "../composerSession";
 import {
-  commandQuery,
-  matchSlashCommands,
   pickerVerb,
   type SlashAction,
   type SlashCommand,
@@ -118,6 +116,7 @@ import { AttachmentChip } from "./composer/AttachmentChip";
 import { useComposerAttachments } from "./composer/useComposerAttachments";
 import { useComposerVim } from "./composer/useComposerVim";
 import { useMentionMenu } from "./composer/useMentionMenu";
+import { useSlashMenu } from "./composer/useSlashMenu";
 import { usePasteCards } from "./composer/usePasteCards";
 import {
   speechMicLabel,
@@ -575,86 +574,30 @@ export const Composer = memo(function Composer({
     setLocalError,
   });
 
-  /** `/` command popup: `command` null means closed. */
-  const [command, setCommand] = useState<string | null>(null);
-  const [commandIndex, setCommandIndex] = useState(0);
-  /**
-   * Escape must stay closed while the same text is still in the box —
-   * without this the onSelect that follows the key would reopen it. Cleared
-   * by the next edit and by a thread switch. Accepting needs no such guard:
-   * the inserted trailing space ends the token on its own.
-   */
-  const commandDismissed = useRef(false);
+  const {
+    commandIndex,
+    setCommandIndex,
+    commandDismissed,
+    commandMatches,
+    commandOpen,
+    closeCommand,
+    refreshCommand,
+    acceptCommand,
+  } = useSlashMenu({
+    textareaRef,
+    cliCommands,
+    disabled,
+    busy,
+    writeDraft,
+    setModelOpen,
+    setModeOpen,
+    setEffortOpen,
+    setOptionsOpen,
+    onModelPickerOpen,
+    onSlashAction,
+  });
   /** Last idle Esc; a second press within DOUBLE_ESC_MS rewinds (#478). */
   const lastEscAt = useRef(0);
-  const commandMatches = command
-    ? matchSlashCommands(command, cliCommands)
-    : [];
-  const commandOpen = commandMatches.length > 0;
-
-  const closeCommand = useCallback(() => {
-    setCommand(null);
-    setCommandIndex(0);
-  }, []);
-
-  /** Recompute the active `/` token from the live textarea. */
-  const refreshCommand = useCallback(() => {
-    const el = textareaRef.current;
-    const q =
-      el && !disabled && !commandDismissed.current
-        ? commandQuery(el.value)
-        : null;
-    if (q === null) {
-      closeCommand();
-      return;
-    }
-    setCommand(q);
-    setCommandIndex(0);
-  }, [disabled, closeCommand]);
-
-  const acceptCommand = useCallback(
-    (cmd: SlashCommand) => {
-      if (cmd.kind === "insert") {
-        const inserted = `${cmd.name} `;
-        writeDraft(inserted, inserted.length);
-        closeCommand();
-        return;
-      }
-      // Run verbs must not remain in the draft: sending `/compact` as a
-      // prompt is the bug this palette exists to stop.
-      writeDraft("", 0);
-      closeCommand();
-      const action = cmd.action;
-      if (!action) return;
-      if (action === "model") {
-        if (disabled || busy) return;
-        setModelOpen(true);
-        setModeOpen(false);
-        setEffortOpen(false);
-        setOptionsOpen(false);
-        onModelPickerOpen?.();
-        return;
-      }
-      if (action === "effort") {
-        if (disabled || busy) return;
-        setEffortOpen(true);
-        setModelOpen(false);
-        setModeOpen(false);
-        setOptionsOpen(false);
-        return;
-      }
-      if (action === "permissions") {
-        if (disabled || busy) return;
-        setModeOpen(true);
-        setModelOpen(false);
-        setEffortOpen(false);
-        setOptionsOpen(false);
-        return;
-      }
-      onSlashAction?.(action);
-    },
-    [writeDraft, closeCommand, disabled, busy, onModelPickerOpen, onSlashAction],
-  );
 
   useEffect(() => {
     commandDismissed.current = false;
