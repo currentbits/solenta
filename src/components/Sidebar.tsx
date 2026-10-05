@@ -8,7 +8,6 @@ import {
   useRef,
   useState,
 } from "react";
-import autoAnimate from "@formkit/auto-animate";
 import type {
   CliSessionCandidate,
   ConflictForecast,
@@ -22,34 +21,22 @@ import type {
 } from "../shared/ipc";
 import { isWebMode } from "../shared/wire";
 import {
-  buildFlatSidebar,
   crewAncestorIds,
-  nestWorkerFamilies,
   visibleFamilyRows,
   withCrewSearchContext,
   workerIdsByRoot,
 } from "../sidebarGroups";
-import { ProviderMark } from "./ProviderMark";
 import {
   GROUP_BY_KEY,
-  GROUP_BY_OPTIONS,
   PROVIDER_FILTER_KEY,
   STATUS_FILTER_KEY,
-  STATUS_FILTERS,
   TAG_FILTER_KEY,
   allTags,
   filterThreads,
-  groupByLabel,
-  groupThreadsByProject,
-  groupThreadsByStatus,
-  groupThreadsByTag,
   parseGroupBy,
   parseProviderFilter,
   parseStatusFilter,
-  providerFilterLabel,
   serializeProviderFilter,
-  statusFilterLabel,
-  tagFilterLabel,
   threadMatchesFilter,
   type GroupBy,
   type StatusFilter,
@@ -63,7 +50,6 @@ import {
   parseActiveSavedViewId,
   parseSavedViews,
   renameSavedView,
-  savedViewTriggerLabel,
   savedViewUnavailable,
   serializeSavedViews,
   updateSavedView,
@@ -88,10 +74,8 @@ import { useModalFocus } from "../useModalFocus";
 import {
   flatVisibleThreadIds,
   formatBatchSettleFeedback,
-  isShortcutBlocked,
   planBatchSettle,
   rangeSelectIds,
-  stepVisibleId,
   toggleIdInSet,
 } from "../sidebarSelection";
 import { KeyboardSheet } from "./KeyboardSheet";
@@ -108,13 +92,7 @@ import {
   moveAppMenuFocus,
   type SidebarNavView,
 } from "./sidebar/nav";
-import {
-  countIdChurn,
-  listMotionBlocked,
-  releaseAbortedRows,
-  type ListAnimCtrl,
-  type ListMotionSkip,
-} from "./sidebar/motion";
+import { countIdChurn } from "./sidebar/motion";
 import {
   loadFlag,
   loadOpenSet,
@@ -123,33 +101,39 @@ import {
   saveOpenSet,
   saveStored,
 } from "./sidebar/storage";
+import { useStableThreadTitles } from "./sidebar/useStableThreadTitles";
+import { useProviderOptions } from "./sidebar/useProviderOptions";
+import { useListAnimation } from "./sidebar/useListAnimation";
+import { useSidebarRows } from "./sidebar/useSidebarRows";
+import { useMoreMenuFocus } from "./sidebar/useMoreMenuFocus";
+import { useThreadSearch } from "./sidebar/useThreadSearch";
+import { useSidebarShortcuts } from "./sidebar/useSidebarShortcuts";
+import { ScopeMenu } from "./sidebar/ScopeMenu";
+import { BatchBar } from "./sidebar/BatchBar";
+import { TrashedShelf } from "./sidebar/TrashedShelf";
+import { RemoveProjectConfirm } from "./sidebar/RemoveProjectConfirm";
+import { InsightsMenu } from "./sidebar/InsightsMenu";
+import {
+  FilterBar,
+  type FilterMenu,
+  type ViewEditor,
+} from "./sidebar/FilterBar";
+import { CreateThreadMenu } from "./sidebar/CreateThreadMenu";
 import styles from "./Sidebar.module.css";
 
 export { displayWorkerTitle, statusPulseFor } from "./sidebar/status";
 export { SettledRow, ThreadCard };
 
 const TICK_MS = 5000;
-const DAY_MS = 24 * 60 * 60 * 1000;
-
-function formatTrashExpiry(expiresAt: number, now: number): string {
-  const days = Math.max(0, Math.ceil((expiresAt - now) / DAY_MS));
-  if (days <= 0) return "Expires today";
-  return days === 1 ? "Expires in 1d" : `Expires in ${days}d`;
-}
-const SEARCH_DEBOUNCE_MS = 250;
-const MIN_SEARCH_LEN = 2;
 const SCOPE_KEY = "sidebar:projectScope";
 const WORKING_OPEN_KEY = "sidebar:workingOpen";
 const FILTERS_OPEN_KEY = "sidebar:filtersOpen";
 const SNOOZED_OPEN_KEY = "sidebar:snoozedOpen";
 const SETTLED_OPEN_KEY = "sidebar:settledOpen";
 const WORKER_OPEN_KEY = "sidebar:workerOpen";
-const FAMILY_MOTION_MS = 160;
 const BULK_ROW_DELTA = 40;
-type FilterMenu = "status" | "provider" | "group" | "tag" | "views";
-type ViewEditor = { mode: "save" | "rename"; name: string };
 
-interface SidebarProps {
+export interface SidebarProps {
   appName: string;
   /** Wide layouts: fold the sidebar to a rail (⌘B). Absent on narrow. */
   onCollapseSidebar?: () => void;
@@ -439,28 +423,7 @@ export const Sidebar = memo(function Sidebar({
       setViewEditor(null);
     },
   );
-  useLayoutEffect(() => {
-    if (!moreOpen) return;
-    const menu = moreHostRef.current?.querySelector<HTMLElement>(
-      "[data-app-more-menu]",
-    );
-    if (!menu) return;
-    const current = menu.querySelector<HTMLElement>('[aria-current="page"]');
-    const first = menu.querySelector<HTMLElement>('[role="menuitem"]');
-    (current ?? first)?.focus();
-  }, [moreOpen]);
-  useEffect(() => {
-    if (!moreOpen) return;
-    const onPointer = (e: MouseEvent) => {
-      if (moreHostRef.current?.contains(e.target as Node)) return;
-      const menu = moreHostRef.current?.querySelector("[data-app-more-menu]");
-      const restore = Boolean(menu?.contains(document.activeElement));
-      setMoreOpen(false);
-      if (restore) moreTriggerRef.current?.focus();
-    };
-    document.addEventListener("mousedown", onPointer, true);
-    return () => document.removeEventListener("mousedown", onPointer, true);
-  }, [moreOpen]);
+  useMoreMenuFocus(moreOpen, setMoreOpen, moreHostRef, moreTriggerRef);
   const [importCliProvider, setImportCliProvider] =
     useState<CliImportProvider | null>(null);
   const [issueFormFor, setIssueFormFor] = useState<string | null>(null);
@@ -500,45 +463,8 @@ export const Sidebar = memo(function Sidebar({
   const [workerOpen, setWorkerOpen] = useState<Set<string>>(
     () => loadOpenSet(WORKER_OPEN_KEY),
   );
-  const listAnimCtrls = useRef(new Map<HTMLElement, ListAnimCtrl>());
-  const listAnimSkip = useRef<ListMotionSkip>({
-    hydrate: true,
-    bulk: false,
-    keyboard: false,
-  });
-  const prevRowIds = useRef<string[]>([]);
-  const applyListMotion = useCallback(() => {
-    const enable = !listMotionBlocked(listAnimSkip.current);
-    for (const [node, ctrl] of listAnimCtrls.current) {
-      if (enable) ctrl.enable();
-      else {
-        ctrl.disable();
-        releaseAbortedRows(node);
-      }
-    }
-  }, []);
-  const bindListAnimation = useCallback((node: HTMLElement | null) => {
-    if (!node) return;
-    if (typeof ResizeObserver === "undefined") return;
-    // The library samples prefers-reduced-motion only while binding and, when
-    // it matches, never installs an observer. enable() cannot bring that
-    // observer back, so a session that starts reduced stays frozen after the
-    // user turns motion on. Own the gate instead.
-    const ctrl = autoAnimate(node, {
-      duration: FAMILY_MOTION_MS,
-      easing: "ease-out",
-      disrespectUserMotionPreference: true,
-    });
-    listAnimCtrls.current.set(node, ctrl);
-    if (listMotionBlocked(listAnimSkip.current)) {
-      ctrl.disable();
-      releaseAbortedRows(node);
-    }
-    return () => {
-      ctrl.destroy?.();
-      listAnimCtrls.current.delete(node);
-    };
-  }, []);
+  const { listAnimSkip, prevRowIds, applyListMotion, bindListAnimation } =
+    useListAnimation();
   const [trashedOpen, setTrashedOpen] = useState(false);
   const [purgeConfirmId, setPurgeConfirmId] = useState<string | null>(null);
   const [settledVisibleCount, setSettledVisibleCount] = useState(
@@ -562,24 +488,7 @@ export const Sidebar = memo(function Sidebar({
     }),
     [now, autoSettleAfterDays, autoSettleOnMerge],
   );
-  const threadTitlesRef = useRef<Map<string, string>>(new Map());
-  const threadTitles = useMemo(() => {
-    const prev = threadTitlesRef.current;
-    let same = prev.size === threads.length;
-    if (same) {
-      for (const t of threads) {
-        if (prev.get(t.id) !== t.title) {
-          same = false;
-          break;
-        }
-      }
-    }
-    if (same) return prev;
-    const titles = new Map<string, string>();
-    for (const t of threads) titles.set(t.id, t.title);
-    threadTitlesRef.current = titles;
-    return titles;
-  }, [threads]);
+  const threadTitles = useStableThreadTitles(threads);
   const [searchResults, setSearchResults] = useState<ThreadInfo[] | null>(null);
   const [searchLoading, setSearchLoading] = useState(false);
 
@@ -614,43 +523,14 @@ export const Sidebar = memo(function Sidebar({
 
   const waitStates = useMemo(() => buildWaitStates(threads), [threads]);
 
-  const trimmedQuery = query.trim();
-  const searching = trimmedQuery.length >= MIN_SEARCH_LEN;
-
-  const runSearch = useCallback(
-    async (q: string) => {
-      const gen = ++searchGen.current;
-      setSearchLoading(true);
-      try {
-        const list = await searchThreads({ query: q });
-        if (!mountedRef.current || searchGen.current !== gen) return;
-        setSearchResults(list);
-      } catch {
-        if (!mountedRef.current || searchGen.current !== gen) return;
-        setSearchResults([]);
-      } finally {
-        if (mountedRef.current && searchGen.current === gen) {
-          setSearchLoading(false);
-        }
-      }
-    },
-    [searchThreads],
-  );
-
-  useEffect(() => {
-    const q = query.trim();
-    if (q.length < MIN_SEARCH_LEN) {
-      searchGen.current += 1;
-      setSearchResults(null);
-      setSearchLoading(false);
-      return;
-    }
-
-    const handle = window.setTimeout(() => {
-      void runSearch(q);
-    }, SEARCH_DEBOUNCE_MS);
-    return () => window.clearTimeout(handle);
-  }, [query, runSearch]);
+  const { trimmedQuery, searching } = useThreadSearch({
+    query,
+    searchThreads,
+    searchGen,
+    mountedRef,
+    setSearchResults,
+    setSearchLoading,
+  });
 
   const keepThreadIds = useMemo(() => {
     const ids: (string | null | undefined)[] = [activeThreadId, revealThreadId];
@@ -724,86 +604,31 @@ export const Sidebar = memo(function Sidebar({
     setSettledVisibleCount(SETTLED_TAIL_INITIAL_COUNT);
   }, [projectScope, statusFilter, providerFilter]);
 
-  const flat = useMemo(
-    () => buildFlatSidebar(displayThreads, settleOpts),
-    [displayThreads, settleOpts],
-  );
-
-  // Grouped views have no Working shelf: busy rows stay in their groups.
-  const attentionThreads = useMemo(
-    () => [...flat.pinned, ...flat.active, ...flat.working],
-    [flat.pinned, flat.active, flat.working],
-  );
-  const projectGroups = useMemo(
-    () =>
-      groupBy === "project"
-        ? groupThreadsByProject(projects, attentionThreads)
-        : [],
-    [groupBy, projects, attentionThreads],
-  );
-  const statusGroups = useMemo(
-    () =>
-      groupBy === "status"
-        ? groupThreadsByStatus(attentionThreads, waitStates).map((g) => ({
-            ...g,
-            threads: nestWorkerFamilies(g.threads, liveById),
-          }))
-        : [],
-    [groupBy, attentionThreads, waitStates, liveById],
-  );
-  const tagGroups = useMemo(
-    () =>
-      groupBy === "tag"
-        ? groupThreadsByTag(attentionThreads).map((g) => ({
-            ...g,
-            threads: nestWorkerFamilies(g.threads, liveById),
-          }))
-        : [],
-    [groupBy, attentionThreads, liveById],
-  );
-  const searchHitIds = useMemo(() => {
-    if (!searching || searchResults == null) return undefined;
-    return new Set(searchResults.map((t) => t.id));
-  }, [searching, searchResults]);
-
-  const familyOpts = useMemo(
-    () => ({
-      expandedRootIds: workerOpen,
-      keepIds: keepThreadIds,
-      keepWorkerIds: searchHitIds,
-      byIdFull: liveById,
-    }),
-    [workerOpen, keepThreadIds, searchHitIds, liveById],
-  );
-
-  const visiblePinned = useMemo(
-    () => visibleFamilyRows(flat.pinned, familyOpts),
-    [flat.pinned, familyOpts],
-  );
-  const visibleActive = useMemo(
-    () => visibleFamilyRows(flat.active, familyOpts),
-    [flat.active, familyOpts],
-  );
-  const pinnedFamilies = useMemo(
-    () => workerIdsByRoot(flat.pinned, liveById),
-    [flat.pinned, liveById],
-  );
-  const activeFamilies = useMemo(
-    () => workerIdsByRoot(flat.active, liveById),
-    [flat.active, liveById],
-  );
-  const visibleWorking = useMemo(
-    () => visibleFamilyRows(flat.working, familyOpts),
-    [flat.working, familyOpts],
-  );
-  const workingFamilies = useMemo(
-    () => workerIdsByRoot(flat.working, liveById),
-    [flat.working, liveById],
-  );
-  const searchFamilies = useMemo(
-    () => workerIdsByRoot(displayThreads, liveById),
-    [displayThreads, liveById],
-  );
+  const {
+    flat,
+    projectGroups,
+    statusGroups,
+    tagGroups,
+    familyOpts,
+    visiblePinned,
+    visibleActive,
+    pinnedFamilies,
+    activeFamilies,
+    visibleWorking,
+    workingFamilies,
+    searchFamilies,
+  } = useSidebarRows({
+    displayThreads,
+    settleOpts,
+    groupBy,
+    projects,
+    waitStates,
+    liveById,
+    workerOpen,
+    keepThreadIds,
+    searching,
+    searchResults,
+  });
 
   const toggleFamily = useCallback(
     (threadId: string, snap = false) => {
@@ -1090,78 +915,18 @@ export const Sidebar = memo(function Sidebar({
     createInTargetProject();
   }, [createInTargetProject]);
 
-  useEffect(() => {
-    const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Meta" || e.key === "Control") {
-        setCmdHeld(true);
-        return;
-      }
-      if (isShortcutBlocked(e.target)) return;
-      if (keyboardSheetOpen && e.key !== "Escape") return;
-
-      const mod = e.metaKey || e.ctrlKey;
-
-      if (e.key === "?" && !mod) {
-        e.preventDefault();
-        setKeyboardSheetOpen(true);
-        return;
-      }
-
-      if (!mod) return;
-
-      if (e.key >= "1" && e.key <= "9") {
-        const n = Number(e.key);
-        const id = visibleIds[n - 1];
-        if (id) {
-          e.preventDefault();
-          setMultiSelected(new Set());
-          setSelectAnchor(id);
-          onSelectThread(id);
-        }
-        return;
-      }
-
-      const key = e.key.toLowerCase();
-      if (key === "j") {
-        e.preventDefault();
-        const delta = e.shiftKey ? -1 : 1;
-        const next = stepVisibleId(visibleIds, activeThreadId, delta as 1 | -1);
-        if (next) {
-          setMultiSelected(new Set());
-          setSelectAnchor(next);
-          onSelectThread(next);
-        }
-        return;
-      }
-
-      if (key === "n") {
-        e.preventDefault();
-        if (e.shiftKey) createInTargetProject();
-        else handleBrandCreate();
-      }
-    };
-    const onKeyUp = (e: KeyboardEvent) => {
-      if (e.key === "Meta" || e.key === "Control") {
-        setCmdHeld(false);
-      }
-    };
-    const onBlur = () => setCmdHeld(false);
-    window.addEventListener("keydown", onKeyDown);
-    window.addEventListener("keyup", onKeyUp);
-    window.addEventListener("blur", onBlur);
-    return () => {
-      window.removeEventListener("keydown", onKeyDown);
-      window.removeEventListener("keyup", onKeyUp);
-      window.removeEventListener("blur", onBlur);
-    };
-  }, [
+  useSidebarShortcuts({
     visibleIds,
     activeThreadId,
     onSelectThread,
     keyboardSheetOpen,
+    setKeyboardSheetOpen,
+    setCmdHeld,
+    setMultiSelected,
+    setSelectAnchor,
     createInTargetProject,
     handleBrandCreate,
-  ]);
+  });
 
   const indexHintFor = (id: string): number | null => {
     if (!cmdHeld) return null;
@@ -1534,36 +1299,10 @@ export const Sidebar = memo(function Sidebar({
     ? scopedProject.slug || scopedProject.name
     : "All projects";
 
-  const providerOptions = useMemo(() => {
-    const seen = new Set<string>();
-    const out: { id: string; name: string }[] = [];
-    const rank = ["claude", "codex", "grok", "kimi", "opencode", "cursor", "muse"];
-    for (const p of providers) {
-      if (seen.has(p.id)) continue;
-      seen.add(p.id);
-      out.push({ id: p.id, name: p.name });
-    }
-    for (const t of threads) {
-      const id = t.provider;
-      if (!id || seen.has(id)) continue;
-      seen.add(id);
-      out.push({ id, name: id });
-    }
-    out.sort((a, b) => {
-      const ia = rank.indexOf(a.id);
-      const ib = rank.indexOf(b.id);
-      return (
-        (ia === -1 ? rank.length : ia) - (ib === -1 ? rank.length : ib) ||
-        a.id.localeCompare(b.id)
-      );
-    });
-    return out;
-  }, [providers, threads]);
-  const providerNames = useMemo(() => {
-    const m = new Map<string, string>();
-    for (const p of providerOptions) m.set(p.id, p.name);
-    return m;
-  }, [providerOptions]);
+  const { providerOptions, providerNames } = useProviderOptions(
+    providers,
+    threads,
+  );
 
   const listEmpty =
     !searching &&
@@ -1749,98 +1488,15 @@ export const Sidebar = memo(function Sidebar({
             <span className={styles.srOnly}>{scopedSlug}</span>
           </button>
           {scopeMenuOpen && (
-            <div className={styles.menu} role="menu" data-scope-menu="">
-              <button
-                type="button"
-                className={styles.scopeItem}
-                role="menuitem"
-                data-scope-item="all"
-                onClick={() => setScope(null)}
-              >
-                All projects
-              </button>
-              {projects.map((p) => (
-                <div key={p.id} className={styles.scopeItemRow}>
-                  <button
-                    type="button"
-                    className={styles.scopeItem}
-                    role="menuitem"
-                    data-scope-item={p.id}
-                    onClick={() => setScope(p.id)}
-                  >
-                    <ProjectIcon
-                      url={p.iconUrl}
-                      name={p.slug || p.name}
-                      seed={p.id}
-                      size={16}
-                    />
-                    {p.slug || p.name}
-                    {p.scm?.kind === "jj" ? (
-                      <span
-                        className={styles.scmChip}
-                        data-scm-badge={p.scm.support}
-                        title={p.scm.detail || "Jujutsu"}
-                      >
-                        jj
-                      </span>
-                    ) : null}
-                  </button>
-                  {onEditProject && (
-                    <button
-                      type="button"
-                      className={styles.iconBtn}
-                      data-scope-edit={p.id}
-                      aria-label={`Edit project ${p.slug || p.name}`}
-                      title="Edit project"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setScopeMenuOpen(false);
-                        onEditProject(p.id);
-                      }}
-                    >
-                      <Icon size={12}>
-                        <path d="M12.3 6.7a1.4 1.4 0 0 1 2 2L8 15H6v-2l6.3-6.3Z" />
-                      </Icon>
-                    </button>
-                  )}
-                  {onRemoveProject && (
-                    <button
-                      type="button"
-                      className={styles.iconBtn}
-                      data-project-remove={p.id}
-                      aria-label={`Remove project ${p.slug || p.name}`}
-                      title="Remove project"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setRemoveConfirmId(p.id);
-                      }}
-                    >
-                      <Icon size={12}>
-                        <path d="M18 6 6 18M6 6l12 12" />
-                      </Icon>
-                    </button>
-                  )}
-                </div>
-              ))}
-              <div className={styles.menuSep} />
-              <button
-                type="button"
-                className={styles.scopeItem}
-                role="menuitem"
-                data-new-project=""
-                onClick={() => {
-                  setScopeMenuOpen(false);
-                  onAddProject();
-                }}
-              >
-                <Icon size={14}>
-                  <path d="M12 10v8" />
-                  <path d="M8 14h8" />
-                  <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
-                </Icon>
-                New project…
-              </button>
-            </div>
+            <ScopeMenu
+              projects={projects}
+              setScope={setScope}
+              onEditProject={onEditProject}
+              onRemoveProject={onRemoveProject}
+              setScopeMenuOpen={setScopeMenuOpen}
+              setRemoveConfirmId={setRemoveConfirmId}
+              onAddProject={onAddProject}
+            />
           )}
         </span>
         <span className={styles.searchCreate}>
@@ -1886,236 +1542,20 @@ export const Sidebar = memo(function Sidebar({
                 </Icon>
               </button>
               {createMenuOpen && (
-                <div
-                  className={styles.menu}
-                  role="menu"
-                  data-new-thread-menu=""
-                >
-                  {!remoteTarget && (
-                    <>
-                      <button
-                        type="button"
-                        className={styles.menuItem}
-                        role="menuitem"
-                        data-create-worktree-thread={createProjectId}
-                        title="New thread in an isolated git worktree + branch"
-                        onClick={() => {
-                          setCreateMenuOpen(false);
-                          setBasePicker(null);
-                          onCreateThread(createProjectId, { worktree: true });
-                        }}
-                      >
-                        New worktree thread
-                      </button>
-                      {listBaseBranches && createProjectId && (
-                        <>
-                          <button
-                            type="button"
-                            className={styles.menuItem}
-                            role="menuitem"
-                            data-create-base-branch=""
-                            title="New worktree thread stacked on a branch other than the repo default"
-                            onClick={() => {
-                              const pid = createProjectId;
-                              void listBaseBranches(pid).then((listed) => {
-                                setBasePicker(listed);
-                              });
-                            }}
-                          >
-                            On another base…
-                          </button>
-                          {basePicker &&
-                            basePicker.branches
-                              .filter((name) => name !== basePicker.defaultBranch)
-                              .map((name) => (
-                                <button
-                                  key={name}
-                                  type="button"
-                                  className={`${styles.menuItem} ${styles.menuItemNested}`}
-                                  role="menuitem"
-                                  data-base-branch={name}
-                                  title={`Stack this thread on ${name}`}
-                                  onClick={() => {
-                                    setCreateMenuOpen(false);
-                                    setBasePicker(null);
-                                    onCreateThread(createProjectId, {
-                                      worktree: true,
-                                      baseBranch: name,
-                                    });
-                                  }}
-                                >
-                                  {name}
-                                </button>
-                              ))}
-                        </>
-                      )}
-                      <button
-                        type="button"
-                        className={styles.menuItem}
-                        role="menuitem"
-                        data-create-orchestrator-thread={createProjectId}
-                        title="New thread that hands its first prompt to a worker in its own worktree"
-                        onClick={() => {
-                          setCreateMenuOpen(false);
-                          onCreateThread(createProjectId, { orchestrate: true });
-                        }}
-                      >
-                        New orchestrator thread
-                      </button>
-                    </>
-                  )}
-                  <button
-                    type="button"
-                    className={styles.menuItem}
-                    role="menuitem"
-                    data-create-plain-thread={createProjectId}
-                    title="New thread directly in the project checkout (no worktree)"
-                    onClick={() => {
-                      setCreateMenuOpen(false);
-                      onCreateThread(createProjectId, { worktree: false });
-                    }}
-                  >
-                    New plain thread
-                  </button>
-                  {!remoteTarget && (
-                    <button
-                      type="button"
-                      className={styles.menuItem}
-                      role="menuitem"
-                      data-create-teach-thread={createProjectId}
-                      title="New thread that teaches: hints, TODO(human) markers, reviews your code"
-                      onClick={() => {
-                        setCreateMenuOpen(false);
-                        onCreateThread(createProjectId, {
-                          worktree: true,
-                          teach: true,
-                        });
-                      }}
-                    >
-                      New teach thread
-                    </button>
-                  )}
-                  <button
-                    type="button"
-                    className={styles.menuItem}
-                    role="menuitem"
-                    data-create-ask-thread={createProjectId}
-                    title="New read-only Ask thread: repo Q&A from the index and memory, no worktree"
-                    onClick={() => {
-                      setCreateMenuOpen(false);
-                      onCreateThread(createProjectId, { ask: true });
-                    }}
-                  >
-                    New ask thread
-                  </button>
-                  {onCreateThreadFromIssue && createProjectId && (
-                    <button
-                      type="button"
-                      className={styles.menuItem}
-                      role="menuitem"
-                      data-create-from-issue={createProjectId}
-                      title="New thread from a GitHub or Linear issue"
-                      onClick={() => openIssueForm(createProjectId)}
-                    >
-                      From issue
-                    </button>
-                  )}
-                  {listCliSessions && importCliSession && createProjectId && (
-                    <>
-                      <button
-                        type="button"
-                        className={styles.menuItem}
-                        role="menuitem"
-                        data-import-cli-session={createProjectId}
-                        title="Import a Codex CLI session from disk"
-                        onClick={() => {
-                          setCreateMenuOpen(false);
-                          setImportCliProvider("codex");
-                        }}
-                      >
-                        Import Codex session…
-                      </button>
-                      <button
-                        type="button"
-                        className={styles.menuItem}
-                        role="menuitem"
-                        data-import-grok-session={createProjectId}
-                        title="Import a Grok CLI session from disk"
-                        onClick={() => {
-                          setCreateMenuOpen(false);
-                          setImportCliProvider("grok");
-                        }}
-                      >
-                        Import Grok session…
-                      </button>
-                      <button
-                        type="button"
-                        className={styles.menuItem}
-                        role="menuitem"
-                        data-import-claude-session={createProjectId}
-                        title="Import a Claude Code session from disk"
-                        onClick={() => {
-                          setCreateMenuOpen(false);
-                          setImportCliProvider("claude");
-                        }}
-                      >
-                        Import Claude session…
-                      </button>
-                      <button
-                        type="button"
-                        className={styles.menuItem}
-                        role="menuitem"
-                        data-import-cursor-session={createProjectId}
-                        title="Import a Cursor CLI session from disk"
-                        onClick={() => {
-                          setCreateMenuOpen(false);
-                          setImportCliProvider("cursor");
-                        }}
-                      >
-                        Import Cursor session…
-                      </button>
-                      <button
-                        type="button"
-                        className={styles.menuItem}
-                        role="menuitem"
-                        data-import-opencode-session={createProjectId}
-                        title="Import an OpenCode CLI session from disk"
-                        onClick={() => {
-                          setCreateMenuOpen(false);
-                          setImportCliProvider("opencode");
-                        }}
-                      >
-                        Import OpenCode session…
-                      </button>
-                      <button
-                        type="button"
-                        className={styles.menuItem}
-                        role="menuitem"
-                        data-import-kimi-session={createProjectId}
-                        title="Import a Kimi CLI session from disk"
-                        onClick={() => {
-                          setCreateMenuOpen(false);
-                          setImportCliProvider("kimi");
-                        }}
-                      >
-                        Import Kimi session…
-                      </button>
-                      <button
-                        type="button"
-                        className={styles.menuItem}
-                        role="menuitem"
-                        data-import-muse-session={createProjectId}
-                        title="Import a Muse CLI session from disk"
-                        onClick={() => {
-                          setCreateMenuOpen(false);
-                          setImportCliProvider("muse");
-                        }}
-                      >
-                        Import Muse session…
-                      </button>
-                    </>
-                  )}
-                </div>
+                <CreateThreadMenu
+                  remoteTarget={remoteTarget}
+                  createProjectId={createProjectId}
+                  setCreateMenuOpen={setCreateMenuOpen}
+                  setBasePicker={setBasePicker}
+                  onCreateThread={onCreateThread}
+                  listBaseBranches={listBaseBranches}
+                  basePicker={basePicker}
+                  onCreateThreadFromIssue={onCreateThreadFromIssue}
+                  openIssueForm={openIssueForm}
+                  listCliSessions={listCliSessions}
+                  importCliSession={importCliSession}
+                  setImportCliProvider={setImportCliProvider}
+                />
               )}
             </span>
           )}
@@ -2123,408 +1563,33 @@ export const Sidebar = memo(function Sidebar({
       </div>
 
       {filterBarShown && (
-      <div className={styles.filterBar} data-filter-bar="">
-      <div className={styles.viewRow}>
-        <span className={styles.filterMenuHost}>
-          <button
-            type="button"
-            className={styles.viewTrigger}
-            data-saved-views-trigger=""
-            data-active={activeSavedView ? "true" : undefined}
-            data-modified={viewModified ? "true" : undefined}
-            aria-haspopup="menu"
-            aria-expanded={filterMenu === "views"}
-            aria-label={
-              activeSavedView
-                ? viewModified
-                  ? `Saved views, ${activeSavedView.name}, modified`
-                  : `Saved views, ${activeSavedView.name}`
-                : "Saved views"
-            }
-            onClick={() => toggleFilterMenu("views")}
-          >
-            <span className={styles.filterTriggerLabel}>
-              {savedViewTriggerLabel(
-                activeSavedView ? { name: activeSavedView.name } : null,
-                viewModified,
-              )}
-            </span>
-            <Icon size={12}>
-              <path d="m6 9 6 6 6-6" />
-            </Icon>
-          </button>
-          {filterMenu === "views" && (
-            <div
-              className={`${styles.menu} ${styles.menuLeft} ${styles.viewMenu}`}
-              role="menu"
-              data-saved-views-menu=""
-            >
-              {savedViews.length === 0 && !viewEditor && (
-                <p className={styles.viewEmpty}>No saved views</p>
-              )}
-              {savedViews.map((view) => (
-                <button
-                  key={view.id}
-                  type="button"
-                  className={styles.menuItem}
-                  role="menuitem"
-                  data-saved-view={view.id}
-                  data-saved-view-label={view.name}
-                  data-selected={
-                    view.id === activeViewId ? "true" : undefined
-                  }
-                  onClick={() => recallSavedView(view)}
-                >
-                  {view.name}
-                  {view.id === activeViewId && !viewModified && (
-                    <span className={styles.filterCheck}>
-                      <Icon size={12}>
-                        <path d="M5 12.5 9 16.5 19 7.5" />
-                      </Icon>
-                    </span>
-                  )}
-                </button>
-              ))}
-              {viewEditor ? (
-                <form
-                  className={styles.viewNameForm}
-                  onSubmit={(e) => {
-                    e.preventDefault();
-                    submitViewEditor();
-                  }}
-                >
-                  <input
-                    className={styles.viewNameInput}
-                    data-saved-view-name=""
-                    value={viewEditor.name}
-                    onChange={(e) =>
-                      setViewEditor({ ...viewEditor, name: e.target.value })
-                    }
-                    placeholder="View name"
-                    aria-label="View name"
-                    autoFocus
-                  />
-                  <button
-                    type="submit"
-                    className={styles.viewNameSave}
-                    data-saved-view-save-confirm=""
-                    disabled={viewEditor.name.trim() === ""}
-                  >
-                    Save
-                  </button>
-                </form>
-              ) : (
-                <>
-                  {savedViews.length > 0 && (
-                    <div className={styles.menuSep} />
-                  )}
-                  <button
-                    type="button"
-                    className={styles.menuItem}
-                    role="menuitem"
-                    data-saved-view-save=""
-                    onClick={() =>
-                      setViewEditor({ mode: "save", name: "" })
-                    }
-                  >
-                    Save current as…
-                  </button>
-                  {activeSavedView && viewModified && (
-                    <button
-                      type="button"
-                      className={styles.menuItem}
-                      role="menuitem"
-                      data-saved-view-update=""
-                      onClick={updateActiveView}
-                    >
-                      Update view
-                    </button>
-                  )}
-                  {activeSavedView && (
-                    <button
-                      type="button"
-                      className={styles.menuItem}
-                      role="menuitem"
-                      data-saved-view-rename=""
-                      onClick={() =>
-                        setViewEditor({
-                          mode: "rename",
-                          name: activeSavedView.name,
-                        })
-                      }
-                    >
-                      Rename…
-                    </button>
-                  )}
-                  {activeSavedView && (
-                    <button
-                      type="button"
-                      className={styles.menuItem}
-                      role="menuitem"
-                      data-saved-view-delete=""
-                      onClick={deleteActiveView}
-                    >
-                      Delete view
-                    </button>
-                  )}
-                </>
-              )}
-            </div>
-          )}
-        </span>
-      </div>
-
-      <div className={styles.filterRow} data-filter-row="">
-        <span className={styles.filterMenuHost}>
-          <button
-            type="button"
-            className={styles.filterTrigger}
-            data-status-filter-trigger=""
-            data-active={statusFilter != null ? "true" : undefined}
-            aria-haspopup="menu"
-            aria-expanded={filterMenu === "status"}
-            aria-label="Filter threads by status"
-            onClick={() => toggleFilterMenu("status")}
-          >
-            <span className={styles.filterTriggerLabel}>
-              {statusFilterLabel(statusFilter)}
-            </span>
-            <Icon size={12}>
-              <path d="m6 9 6 6 6-6" />
-            </Icon>
-          </button>
-          {filterMenu === "status" && (
-            <div
-              className={`${styles.menu} ${styles.menuLeft} ${styles.filterMenu}`}
-              role="menu"
-              data-status-filter-menu=""
-            >
-              <button
-                type="button"
-                className={styles.menuItem}
-                role="menuitem"
-                data-status-filter="all"
-                data-selected={statusFilter == null ? "true" : undefined}
-                onClick={() => applyStatusFilter(null)}
-              >
-                All statuses
-                {statusFilter == null && (
-                  <span className={styles.filterCheck}>
-                    <Icon size={12}>
-                      <path d="M5 12.5 9 16.5 19 7.5" />
-                    </Icon>
-                  </span>
-                )}
-              </button>
-              {STATUS_FILTERS.map((opt) => (
-                <button
-                  key={opt.id}
-                  type="button"
-                  className={styles.menuItem}
-                  role="menuitem"
-                  data-status-filter={opt.id}
-                  data-selected={statusFilter === opt.id ? "true" : undefined}
-                  onClick={() => applyStatusFilter(opt.id)}
-                >
-                  {opt.label}
-                  {statusFilter === opt.id && (
-                    <span className={styles.filterCheck}>
-                      <Icon size={12}>
-                        <path d="M5 12.5 9 16.5 19 7.5" />
-                      </Icon>
-                    </span>
-                  )}
-                </button>
-              ))}
-            </div>
-          )}
-        </span>
-        <span className={styles.filterMenuHost}>
-          <button
-            type="button"
-            className={styles.filterTrigger}
-            data-provider-filter-trigger=""
-            data-active={providerFilter.length > 0 ? "true" : undefined}
-            aria-haspopup="menu"
-            aria-expanded={filterMenu === "provider"}
-            aria-label="Filter threads by provider"
-            onClick={() => toggleFilterMenu("provider")}
-          >
-            <span className={styles.filterTriggerLabel}>
-              {providerFilterLabel(providerFilter, providerNames)}
-            </span>
-            <Icon size={12}>
-              <path d="m6 9 6 6 6-6" />
-            </Icon>
-          </button>
-          {filterMenu === "provider" && (
-            <div
-              className={`${styles.menu} ${styles.menuLeft} ${styles.filterMenu}`}
-              role="menu"
-              data-provider-filter-menu=""
-            >
-              <button
-                type="button"
-                className={styles.menuItem}
-                role="menuitem"
-                data-provider-filter="all"
-                data-selected={providerFilter.length === 0 ? "true" : undefined}
-                onClick={() => {
-                  setProviderFilter([]);
-                  saveStored(PROVIDER_FILTER_KEY, null);
-                }}
-              >
-                All providers
-                {providerFilter.length === 0 && (
-                  <span className={styles.filterCheck}>
-                    <Icon size={12}>
-                      <path d="M5 12.5 9 16.5 19 7.5" />
-                    </Icon>
-                  </span>
-                )}
-              </button>
-              <div className={styles.filterChipRow} data-provider-chips="">
-                {providerOptions.map((p) => {
-                  const on = providerFilter.includes(p.id);
-                  return (
-                    <button
-                      key={p.id}
-                      type="button"
-                      className={styles.filterChip}
-                      data-provider-filter={p.id}
-                      data-on={on ? "true" : undefined}
-                      aria-pressed={on}
-                      onClick={() => toggleProviderFilter(p.id)}
-                    >
-                      <ProviderMark
-                        providerId={p.id}
-                        providers={providers}
-                        size={12}
-                        decorative
-                      />
-                      {p.name}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-          )}
-        </span>
-        {(knownTags.length > 0 || tagFilter != null) && (
-          <span className={styles.filterMenuHost}>
-            <button
-              type="button"
-              className={styles.filterTrigger}
-              data-tag-filter-trigger=""
-              data-active={tagFilter != null ? "true" : undefined}
-              aria-haspopup="menu"
-              aria-expanded={filterMenu === "tag"}
-              aria-label="Filter threads by tag"
-              onClick={() => toggleFilterMenu("tag")}
-            >
-              <span className={styles.filterTriggerLabel}>
-                {tagFilterLabel(tagFilter)}
-              </span>
-              <Icon size={12}>
-                <path d="m6 9 6 6 6-6" />
-              </Icon>
-            </button>
-            {filterMenu === "tag" && (
-              <div
-                className={`${styles.menu} ${styles.menuLeft} ${styles.filterMenu}`}
-                role="menu"
-                data-tag-filter-menu=""
-              >
-                <button
-                  type="button"
-                  className={styles.menuItem}
-                  role="menuitem"
-                  data-tag-filter="all"
-                  data-selected={tagFilter == null ? "true" : undefined}
-                  onClick={() => applyTagFilter(null)}
-                >
-                  All tags
-                  {tagFilter == null && (
-                    <span className={styles.filterCheck}>
-                      <Icon size={12}>
-                        <path d="M5 12.5 9 16.5 19 7.5" />
-                      </Icon>
-                    </span>
-                  )}
-                </button>
-                {knownTags.map((tag) => (
-                  <button
-                    key={tag}
-                    type="button"
-                    className={styles.menuItem}
-                    role="menuitem"
-                    data-tag-filter={tag}
-                    data-selected={tagFilter === tag ? "true" : undefined}
-                    onClick={() => applyTagFilter(tag)}
-                  >
-                    {tag}
-                    {tagFilter === tag && (
-                      <span className={styles.filterCheck}>
-                        <Icon size={12}>
-                          <path d="M5 12.5 9 16.5 19 7.5" />
-                        </Icon>
-                      </span>
-                    )}
-                  </button>
-                ))}
-              </div>
-            )}
-          </span>
-        )}
-        <span className={styles.filterMenuHost}>
-          <button
-            type="button"
-            className={styles.filterTrigger}
-            data-group-by-trigger=""
-            data-active={groupBy !== "none" ? "true" : undefined}
-            aria-haspopup="menu"
-            aria-expanded={filterMenu === "group"}
-            aria-label="Group threads"
-            onClick={() => toggleFilterMenu("group")}
-          >
-            <span className={styles.filterTriggerLabel}>
-              {groupByLabel(groupBy)}
-            </span>
-            <Icon size={12}>
-              <path d="m6 9 6 6 6-6" />
-            </Icon>
-          </button>
-          {filterMenu === "group" && (
-            <div
-              className={`${styles.menu} ${styles.menuLeft} ${styles.filterMenu}`}
-              role="menu"
-              data-group-by-menu=""
-            >
-              {GROUP_BY_OPTIONS.map((opt) => (
-                <button
-                  key={opt.id}
-                  type="button"
-                  className={styles.menuItem}
-                  role="menuitem"
-                  data-group-by={opt.id}
-                  data-selected={groupBy === opt.id ? "true" : undefined}
-                  onClick={() => applyGroupBy(opt.id)}
-                >
-                  {opt.label}
-                  {groupBy === opt.id && (
-                    <span className={styles.filterCheck}>
-                      <Icon size={12}>
-                        <path d="M5 12.5 9 16.5 19 7.5" />
-                      </Icon>
-                    </span>
-                  )}
-                </button>
-              ))}
-            </div>
-          )}
-        </span>
-      </div>
-      </div>
+      <FilterBar
+        activeSavedView={activeSavedView}
+        viewModified={viewModified}
+        filterMenu={filterMenu}
+        toggleFilterMenu={toggleFilterMenu}
+        savedViews={savedViews}
+        viewEditor={viewEditor}
+        activeViewId={activeViewId}
+        recallSavedView={recallSavedView}
+        submitViewEditor={submitViewEditor}
+        setViewEditor={setViewEditor}
+        updateActiveView={updateActiveView}
+        deleteActiveView={deleteActiveView}
+        statusFilter={statusFilter}
+        applyStatusFilter={applyStatusFilter}
+        providerFilter={providerFilter}
+        providerNames={providerNames}
+        setProviderFilter={setProviderFilter}
+        providerOptions={providerOptions}
+        toggleProviderFilter={toggleProviderFilter}
+        providers={providers}
+        knownTags={knownTags}
+        tagFilter={tagFilter}
+        applyTagFilter={applyTagFilter}
+        groupBy={groupBy}
+        applyGroupBy={applyGroupBy}
+      />
       )}
 
 
@@ -2871,246 +1936,44 @@ export const Sidebar = memo(function Sidebar({
               )}
 
               {trashedThreads.length > 0 && (
-                <div className={styles.shelf} data-trashed-shelf="">
-                  <div className={styles.shelfHeaderRow}>
-                    <button
-                      type="button"
-                      className={styles.shelfToggle}
-                      data-trashed-shelf-toggle=""
-                      aria-expanded={trashedOpen}
-                      onClick={() => setTrashedOpen((open) => !open)}
-                    >
-                      <span className={styles.shelfLabelSettled}>
-                        {`Recently deleted · ${trashedThreads.length}`}
-                      </span>
-                      <span className={styles.shelfRuleSettled} />
-                      <span
-                        className={styles.shelfChevron}
-                        data-open={trashedOpen}
-                        aria-hidden
-                      >
-                        <Icon size={12}>
-                          <path d="m6 9 6 6 6-6" />
-                        </Icon>
-                      </span>
-                    </button>
-                  </div>
-                  {trashedOpen &&
-                    trashedThreads.map((row) => (
-                      <div
-                        key={row.id}
-                        className={styles.slimRow}
-                        data-trashed-row={row.id}
-                      >
-                        <div className={styles.slimBody}>
-                          <span className={styles.slimTitle}>{row.title}</span>
-                          <span className={styles.slimSlug}>
-                            {row.projectMissing
-                              ? "Project unavailable"
-                              : (row.projectSlug ?? "unknown")}
-                          </span>
-                          <span className={styles.slimSlot}>
-                            <span className={styles.slimAge}>
-                              {formatTrashExpiry(row.expiresAt, now)}
-                            </span>
-                            {onRestoreThread && (
-                              <button
-                                type="button"
-                                className={styles.slimAction}
-                                data-restore-btn={row.id}
-                                disabled={row.projectMissing}
-                                title={
-                                  row.projectMissing
-                                    ? "Cannot restore: project is no longer available"
-                                    : "Restore thread"
-                                }
-                                onClick={() => void onRestoreThread(row.id)}
-                              >
-                                Restore
-                              </button>
-                            )}
-                            {onPurgeThread &&
-                              (purgeConfirmId === row.id ? (
-                                <button
-                                  type="button"
-                                  className={`${styles.slimAction} ${styles.trashPurge}`}
-                                  data-purge-confirm={row.id}
-                                  onClick={() => {
-                                    setPurgeConfirmId(null);
-                                    void onPurgeThread(row.id);
-                                  }}
-                                >
-                                  Confirm
-                                </button>
-                              ) : (
-                                <button
-                                  type="button"
-                                  className={`${styles.slimAction} ${styles.trashPurge}`}
-                                  data-purge-btn={row.id}
-                                  title="Delete permanently"
-                                  onClick={() => setPurgeConfirmId(row.id)}
-                                >
-                                  Delete
-                                </button>
-                              ))}
-                          </span>
-                        </div>
-                      </div>
-                    ))}
-                </div>
+                <TrashedShelf
+                  trashedThreads={trashedThreads}
+                  trashedOpen={trashedOpen}
+                  setTrashedOpen={setTrashedOpen}
+                  now={now}
+                  onRestoreThread={onRestoreThread}
+                  onPurgeThread={onPurgeThread}
+                  purgeConfirmId={purgeConfirmId}
+                  setPurgeConfirmId={setPurgeConfirmId}
+                />
               )}
               </div>
             </>
           )}
       </div>
 
-      {removeConfirmId &&
-        (() => {
-          const confirmProject = projectById.get(removeConfirmId);
-          if (!confirmProject) return null;
-          const projectThreads = threads.filter(
-            (t) => t.projectId === confirmProject.id,
-          );
-          const count = projectThreads.length;
-          const worktreeCount = projectThreads.filter(
-            (t) => t.worktreePath,
-          ).length;
-          const threadWord = count === 1 ? "thread" : "threads";
-          const title = `Remove project ${confirmProject.slug} and delete its ${count} ${threadWord}?`;
-          return (
-            <div
-              className={styles.removeConfirmOverlay}
-              role="presentation"
-              onClick={closeRemoveConfirm}
-            >
-              <div
-                ref={removeConfirmRef}
-                className={styles.removeConfirm}
-                role="dialog"
-                aria-modal="true"
-                aria-labelledby="remove-project-title"
-                tabIndex={-1}
-                data-remove-confirm={confirmProject.id}
-                onClick={(e) => e.stopPropagation()}
-              >
-                <h2
-                  id="remove-project-title"
-                  className={styles.removeConfirmTitle}
-                >
-                  {title}
-                </h2>
-                <p className={styles.removeConfirmMeta}>{confirmProject.path}</p>
-                <p className={styles.removeConfirmBody}>
-                  This permanently clears conversation history for those
-                  threads.
-                </p>
-                <p className={styles.removeConfirmBody}>
-                  This removes only this project entry.
-                </p>
-                {worktreeCount > 0 && (
-                  <p
-                    className={styles.removeConfirmBody}
-                    data-remove-worktree-note
-                  >
-                    {worktreeCount === 1
-                      ? "Its 1 worktree folder is deleted too."
-                      : `Its ${worktreeCount} worktree folders are deleted too.`}{" "}
-                    Branches and the repository are kept; a worktree with
-                    uncommitted changes is left alone.
-                  </p>
-                )}
-                <div className={styles.removeConfirmActions}>
-                  <button
-                    type="button"
-                    className={styles.removeConfirmDanger}
-                    data-remove-confirm-submit={confirmProject.id}
-                    disabled={removePending}
-                    aria-busy={removePending || undefined}
-                    onClick={() => {
-                      if (removePending || !onRemoveProject) return;
-                      const id = confirmProject.id;
-                      setRemovePending(true);
-                      void Promise.resolve(onRemoveProject(id))
-                        .catch(() => {
-                          // Failure toast is the caller's job; always close.
-                        })
-                        .finally(() => {
-                          setRemovePending(false);
-                          setRemoveConfirmId(null);
-                        });
-                    }}
-                  >
-                    {removePending ? "Removing…" : "Remove project"}
-                  </button>
-                  <button
-                    type="button"
-                    className={styles.removeConfirmCancel}
-                    disabled={removePending}
-                    onClick={closeRemoveConfirm}
-                  >
-                    Cancel
-                  </button>
-                </div>
-              </div>
-            </div>
-          );
-        })()}
+      {removeConfirmId && (
+        <RemoveProjectConfirm
+          removeConfirmId={removeConfirmId}
+          projectById={projectById}
+          threads={threads}
+          closeRemoveConfirm={closeRemoveConfirm}
+          removeConfirmRef={removeConfirmRef}
+          removePending={removePending}
+          setRemovePending={setRemovePending}
+          onRemoveProject={onRemoveProject}
+          setRemoveConfirmId={setRemoveConfirmId}
+        />
+      )}
 
-      {multiSelected.size >= 2 && (
-        <div className={styles.batchBar} data-batch-bar="">
-          <span className={styles.batchCount} data-batch-count="">
-            {multiSelected.size} selected
-          </span>
-          {batchFeedback && (
-            <span className={styles.batchFeedback} data-batch-feedback="">
-              {batchFeedback}
-            </span>
-          )}
-          <button
-            type="button"
-            className={styles.batchBtn}
-            data-batch-archive=""
-            onClick={() => void runBatchArchive()}
-          >
-            Archive
-          </button>
-          <button
-            type="button"
-            className={styles.batchBtn}
-            data-batch-settle=""
-            onClick={() => void runBatchSettle()}
-          >
-            Settle
-          </button>
-          <button
-            type="button"
-            className={styles.batchBtn}
-            data-batch-clear=""
-            onClick={clearMulti}
-          >
-            Clear
-          </button>
-        </div>
-      )}
-      {batchFeedback && multiSelected.size < 2 && (
-        <div
-          className={styles.batchBar}
-          data-batch-bar=""
-          data-batch-feedback-only=""
-        >
-          <span className={styles.batchFeedback} data-batch-feedback="">
-            {batchFeedback}
-          </span>
-          <button
-            type="button"
-            className={styles.batchBtn}
-            data-batch-clear=""
-            onClick={() => setBatchFeedback(null)}
-          >
-            Clear
-          </button>
-        </div>
-      )}
+      <BatchBar
+        multiSelected={multiSelected}
+        batchFeedback={batchFeedback}
+        runBatchArchive={runBatchArchive}
+        runBatchSettle={runBatchSettle}
+        clearMulti={clearMulti}
+        setBatchFeedback={setBatchFeedback}
+      />
 
       <footer className={styles.footer}>
         {projectError && (
@@ -3184,86 +2047,19 @@ export const Sidebar = memo(function Sidebar({
           <span className={styles.srOnly}>Review</span>
         </button>
         {moreDestinations.length > 0 && (
-          <span
-            className={styles.filterMenuHost}
-            ref={moreHostRef}
-            onBlur={onMoreBlur}
-          >
-            <button
-              type="button"
-              ref={moreTriggerRef}
-              className={`${styles.viewNavBtn} ${styles.viewNavMore}`}
-              data-app-more=""
-              title="Insights: activity, usage, automations and more"
-              aria-haspopup="menu"
-              aria-expanded={moreOpen}
-              aria-controls="app-more-menu"
-              aria-current={moreCurrentLabel ? "page" : undefined}
-              data-active={moreCurrentLabel ? "true" : undefined}
-              aria-label={
-                moreCurrentLabel ? `Insights, ${moreCurrentLabel}` : undefined
-              }
-              onClick={toggleMore}
-              onKeyDown={onMoreKeyDown}
-            >
-              <Icon size={15}>
-                <path d="M4 20V10M10 20V4M16 20v-7M22 20H2" />
-              </Icon>
-              <span className={styles.srOnly}>Insights</span>
-            </button>
-            {moreOpen && (
-              <div
-                id="app-more-menu"
-                className={`${styles.menu} ${styles.appMoreMenu} ${styles.appMoreMenuUp}`}
-                role="menu"
-                aria-label="Insights"
-                data-app-more-menu=""
-                onKeyDown={onMoreKeyDown}
-              >
-                {moreCurrentLabel ? (
-                  <button
-                    type="button"
-                    className={styles.menuItem}
-                    role="menuitem"
-                    data-view-nav="threads"
-                    onClick={() => {
-                      closeMore(true);
-                      onOpenThreads?.();
-                    }}
-                  >
-                    Back to threads
-                  </button>
-                ) : null}
-                {moreDestinations.map((dest) => {
-                  const current = activeView === dest.view;
-                  return (
-                    <button
-                      key={dest.id}
-                      type="button"
-                      className={styles.menuItem}
-                      role="menuitem"
-                      data-view-nav={dest.id}
-                      data-active={current ? "true" : undefined}
-                      aria-current={current ? "page" : undefined}
-                      onClick={() => {
-                        closeMore(true);
-                        dest.run();
-                      }}
-                    >
-                      {dest.label}
-                      {current && (
-                        <span className={styles.filterCheck}>
-                          <Icon size={12}>
-                            <path d="M5 12.5 9 16.5 19 7.5" />
-                          </Icon>
-                        </span>
-                      )}
-                    </button>
-                  );
-                })}
-              </div>
-            )}
-          </span>
+          <InsightsMenu
+            moreHostRef={moreHostRef}
+            moreTriggerRef={moreTriggerRef}
+            onMoreBlur={onMoreBlur}
+            moreOpen={moreOpen}
+            moreCurrentLabel={moreCurrentLabel}
+            toggleMore={toggleMore}
+            onMoreKeyDown={onMoreKeyDown}
+            closeMore={closeMore}
+            onOpenThreads={onOpenThreads}
+            moreDestinations={moreDestinations}
+            activeView={activeView}
+          />
         )}
           </nav>
           {memoryEntries != null && (
