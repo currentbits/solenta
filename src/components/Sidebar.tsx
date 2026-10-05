@@ -123,6 +123,7 @@ import {
   saveOpenSet,
   saveStored,
 } from "./sidebar/storage";
+import { useStableThreadTitles } from "./sidebar/useStableThreadTitles";
 import styles from "./Sidebar.module.css";
 
 export { displayWorkerTitle, statusPulseFor } from "./sidebar/status";
@@ -562,24 +563,7 @@ export const Sidebar = memo(function Sidebar({
     }),
     [now, autoSettleAfterDays, autoSettleOnMerge],
   );
-  const threadTitlesRef = useRef<Map<string, string>>(new Map());
-  const threadTitles = useMemo(() => {
-    const prev = threadTitlesRef.current;
-    let same = prev.size === threads.length;
-    if (same) {
-      for (const t of threads) {
-        if (prev.get(t.id) !== t.title) {
-          same = false;
-          break;
-        }
-      }
-    }
-    if (same) return prev;
-    const titles = new Map<string, string>();
-    for (const t of threads) titles.set(t.id, t.title);
-    threadTitlesRef.current = titles;
-    return titles;
-  }, [threads]);
+  const threadTitles = useStableThreadTitles(threads);
   const [searchResults, setSearchResults] = useState<ThreadInfo[] | null>(null);
   const [searchLoading, setSearchLoading] = useState(false);
 
