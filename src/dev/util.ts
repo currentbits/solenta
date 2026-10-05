@@ -1,4 +1,6 @@
 /** Shared helpers for the browser-dev fixture (src/devCoder.ts). */
+import type { ThreadDetail } from "../shared/ipc";
+
 export function toIso(ms: number): string {
   return new Date(ms).toISOString();
 }
@@ -16,4 +18,8 @@ export function id(prefix: string): string {
 export function capitalize(name: string): string {
   if (!name) return name;
   return name.charAt(0).toUpperCase() + name.slice(1);
+}
+
+export function cloneDetail(d: ThreadDetail): ThreadDetail {
+  return structuredClone(d);
 }
