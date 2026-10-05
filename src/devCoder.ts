@@ -14,7 +14,6 @@
  */
 import type {
   ActivityItem,
-  AppSettings,
   AppStatus,
   AttachmentInfo,
   AutomationInfo,
@@ -46,15 +45,11 @@ import type {
   AgentConfigPreview,
   AgentConfigWriteResult,
   ProjectCodeMap,
-  AgentProfile,
   McpServerInfo,
   PairingCreated,
   PairingCreateInput,
   PairingInfo,
   PairingList,
-  SubagentPool,
-  OtelSettings,
-  WebhookSettings,
   PlanIssue,
   PlanStatus,
   SetPlanStatusResult,
@@ -88,13 +83,8 @@ import { SPEC_ARTIFACTS, SPEC_DIR } from "./shared/ipc";
 import { normalizeMessagePins } from "./messagePins";
 import { buildActivity } from "./activity.ts";
 import { mockData } from "./mockData.ts";
-import {
-  mergeMcpSettingsPatch,
-  redactSettings,
-  validateMcpServers,
-} from "./shared/mcpModel.ts";
 import type { DevCtx } from "./dev/context.ts";
-import { redactDevMcp, createMcp } from "./dev/mcp.ts";
+import { createMcp } from "./dev/mcp.ts";
 import type { MemoryRow } from "./dev/memory.ts";
 import { seedMemoryEntries, createMemory } from "./dev/memory.ts";
 import type { RunState } from "./dev/runs.ts";
@@ -123,6 +113,7 @@ import {
   fakeDiff,
   EMPTY_DIFF,
 } from "./dev/seed.ts";
+import { createSettings } from "./dev/settings.ts";
 import { createSkills } from "./dev/skills.ts";
 import { TRAILER, TITLE_MAX, now, id, capitalize } from "./dev/util.ts";
 export { DEV_MCP_CATALOG, devMcpCatalogRows } from "./dev/mcp.ts";
@@ -160,11 +151,6 @@ const STANDARD_TEMPLATE: WorkflowTemplateInfo = {
 
 const WORKTREE_DELAY_MS = 450;
 const PUSH_DELAY_MS = 350;
-const SETTINGS_BUDGET_ERROR =
-  "Daily budget must be a positive number or null";
-const SETTINGS_ORCH_BUDGET_ERROR =
-  "Orchestration budget must be a positive number or null";
-
 type TemplateSaveInput = Omit<WorkflowTemplateInfo, "id" | "builtin"> & {
   id?: string;
 };
@@ -320,56 +306,11 @@ function buildDevCoder(): CoderApi {
   /** Aggregated cost of finished fake runs this session (stands in for "today"). */
   let spendTodayUsd = 0;
   let dailyBudgetUsd: number | null = null;
-  /** Per-orchestration crew spend ceiling (Settings); null = no cap. */
-  let orchestrationBudgetUsd: number | null = null;
-  /** Default 3 = AUTO_SETTLE_AFTER_DAYS; null disables. */
-  let autoSettleAfterDays: number | null = 3;
-  /** Default true = MERGED PRs auto-settle. */
-  let autoSettleOnMerge = true;
-  /** PR size cap in lines (issue #402); default 400, null disables. */
-  let prDiffCapLines: number | null = 400;
   /** User MCP servers (Skills tab), in-memory. */
   let mcpServers: McpServerInfo[] = [];
   let pairings: PairingInfo[] = [];
 
-  /** Default new threads into a fake worktree (Settings toggle). */
-  let defaultWorktree = false;
-  /** Default new threads as orchestrators (Settings toggle). */
-  let defaultOrchestrate = false;
-  let defaultProvider: string | null = null;
-  let defaultModel: string | null = null;
-  let quotaFailover: string[] = [];
-  /** First-run onboarding wizard finished or skipped. */
-  let onboardingSeen = false;
-  /** Update channel override; null follows the (absent) dev stamp. */
-  let updateChannel: "prod" | "nightly" | null = null;
-  let notifications = true;
-  let feltEstimatePrompt = false;
-  let uiScale = 1;
-  let theme: AppSettings["theme"] = "dark";
-  let agentsPanelDefault: AppSettings["agentsPanelDefault"] = "closed";
-  let agentsPanelRememberLast = false;
-  let stayAwake: AppSettings["stayAwake"] = "agent";
   let quotaWaitAutoResume = true;
-  let confirmQuitWithActiveWork = true;
-  let guardrailsEnabled = true;
-  let otel: OtelSettings = { endpoint: null, headers: {}, claudeMetrics: false };
-  let webhook: WebhookSettings = {
-    url: null,
-    onDone: true,
-    onFailed: true,
-    onWaiting: true,
-  };
-  /** Saved agent profiles (Settings tab), in-memory. */
-  let agentProfiles: AgentProfile[] = [];
-  /** Planboard Orchestrator: Default (#725). */
-  let defaultOrchestratorProfileId: string | null = null;
-  /** Described worker-model pool (Settings), in-memory. */
-  let subagentPool: SubagentPool = {
-    defaultAlias: null,
-    force: false,
-    entries: [],
-  };
   /** Shared-memory stub (always running in dev). */
   let memoryEntries: MemoryRow[] = seedMemoryEntries(now());
   /** Live PR state keyed by thread id (state can change after create). */
@@ -666,52 +607,6 @@ function buildDevCoder(): CoderApi {
     }
   };
 
-  const parseBudgetPatch = (patch: Partial<AppSettings>): number | null => {
-    if (!Object.prototype.hasOwnProperty.call(patch, "dailyBudgetUsd")) {
-      return dailyBudgetUsd;
-    }
-    const v = patch.dailyBudgetUsd;
-    if (v === null) return null;
-    if (typeof v !== "number" || !Number.isFinite(v) || v <= 0) {
-      throw new Error(SETTINGS_BUDGET_ERROR);
-    }
-    return v;
-  };
-
-  const parseOrchBudgetPatch = (patch: Partial<AppSettings>): number | null => {
-    if (!Object.prototype.hasOwnProperty.call(patch, "orchestrationBudgetUsd")) {
-      return orchestrationBudgetUsd;
-    }
-    const v = patch.orchestrationBudgetUsd;
-    if (v === null) return null;
-    if (typeof v !== "number" || !Number.isFinite(v) || v <= 0) {
-      throw new Error(SETTINGS_ORCH_BUDGET_ERROR);
-    }
-    return v;
-  };
-
-  const SETTINGS_SETTLE_ERROR =
-    "Auto-settle days must be a positive integer or null";
-
-  const parseSettleDaysPatch = (
-    patch: Partial<AppSettings>,
-  ): number | null => {
-    if (!Object.prototype.hasOwnProperty.call(patch, "autoSettleAfterDays")) {
-      return autoSettleAfterDays;
-    }
-    const v = patch.autoSettleAfterDays;
-    if (v === null) return null;
-    if (
-      typeof v !== "number" ||
-      !Number.isFinite(v) ||
-      !Number.isInteger(v) ||
-      !(v > 0)
-    ) {
-      throw new Error(`${SETTINGS_SETTLE_ERROR} (got ${String(v)})`);
-    }
-    return v;
-  };
-
   /** Prompt from the user message of the active run (for workflow final answer). */
   const runPrompt = (detail: ThreadDetail, runId: string): string => {
     const user = [...detail.messages]
@@ -945,329 +840,7 @@ function buildDevCoder(): CoderApi {
       },
     },
     ...createMemory(ctx),
-    settings: {
-      async get(): Promise<AppSettings> {
-        return redactSettings({
-          dailyBudgetUsd,
-          orchestrationBudgetUsd,
-          autoSettleAfterDays,
-          autoSettleOnMerge,
-          prDiffCapLines,
-          mcpServers,
-          defaultWorktree,
-          defaultOrchestrate,
-          defaultProvider,
-          defaultModel,
-          quotaFailover: quotaFailover.slice(),
-          onboardingSeen,
-          updateChannel,
-          notifications,
-          feltEstimatePrompt,
-          uiScale,
-          theme,
-          agentsPanelDefault,
-          agentsPanelRememberLast,
-          stayAwake,
-          quotaWaitAutoResume,
-          confirmQuitWithActiveWork,
-          guardrailsEnabled,
-          agentProfiles: agentProfiles.map((p) => ({ ...p })),
-          defaultOrchestratorProfileId,
-          subagentPool: {
-            ...subagentPool,
-            entries: subagentPool.entries.map((e) => ({ ...e })),
-          },
-          otel: { ...otel, headers: { ...otel.headers } },
-          webhook: { ...webhook },
-        }) as AppSettings;
-      },
-      async set(patch: Partial<AppSettings>): Promise<AppSettings> {
-        dailyBudgetUsd = parseBudgetPatch(patch);
-        orchestrationBudgetUsd = parseOrchBudgetPatch(patch);
-        autoSettleAfterDays = parseSettleDaysPatch(patch);
-        if (Object.prototype.hasOwnProperty.call(patch, "autoSettleOnMerge")) {
-          if (typeof patch.autoSettleOnMerge !== "boolean") {
-            throw new Error("autoSettleOnMerge must be a boolean");
-          }
-          autoSettleOnMerge = patch.autoSettleOnMerge;
-        }
-        if (Object.prototype.hasOwnProperty.call(patch, "prDiffCapLines")) {
-          const v = patch.prDiffCapLines;
-          if (
-            v !== null &&
-            (typeof v !== "number" || !Number.isInteger(v) || v <= 0)
-          ) {
-            throw new Error("PR diff cap must be a positive integer or null");
-          }
-          prDiffCapLines = v;
-        }
-        if (Object.prototype.hasOwnProperty.call(patch, "mcpServers")) {
-          if (!Array.isArray(patch.mcpServers)) {
-            throw new Error("mcpServers must be an array");
-          }
-          mcpServers = validateMcpServers(
-            mergeMcpSettingsPatch(mcpServers, patch.mcpServers),
-          ) as McpServerInfo[];
-        }
-        if (Object.prototype.hasOwnProperty.call(patch, "defaultWorktree")) {
-          if (typeof patch.defaultWorktree !== "boolean") {
-            throw new Error("defaultWorktree must be a boolean");
-          }
-          defaultWorktree = patch.defaultWorktree;
-        }
-        if (Object.prototype.hasOwnProperty.call(patch, "defaultOrchestrate")) {
-          if (typeof patch.defaultOrchestrate !== "boolean") {
-            throw new Error("defaultOrchestrate must be a boolean");
-          }
-          defaultOrchestrate = patch.defaultOrchestrate;
-        }
-        if (Object.prototype.hasOwnProperty.call(patch, "defaultProvider")) {
-          const v = patch.defaultProvider;
-          if (v !== null && typeof v !== "string") {
-            throw new Error("defaultProvider must be a string or null");
-          }
-          defaultProvider = v && v.trim() ? v.trim() : null;
-        }
-        if (Object.prototype.hasOwnProperty.call(patch, "defaultModel")) {
-          const v = patch.defaultModel;
-          if (v !== null && typeof v !== "string") {
-            throw new Error("defaultModel must be a string or null");
-          }
-          defaultModel = v && v.trim() ? v.trim() : null;
-        }
-        if (Object.prototype.hasOwnProperty.call(patch, "quotaFailover")) {
-          if (!Array.isArray(patch.quotaFailover)) {
-            throw new Error("quotaFailover must be an array");
-          }
-          const seen = new Set<string>();
-          quotaFailover = [];
-          for (const item of patch.quotaFailover) {
-            if (typeof item !== "string" || !item.trim()) {
-              throw new Error("quotaFailover entries must be non-empty strings");
-            }
-            const id = item.trim();
-            if (seen.has(id)) continue;
-            seen.add(id);
-            quotaFailover.push(id);
-          }
-        }
-        if (Object.prototype.hasOwnProperty.call(patch, "onboardingSeen")) {
-          if (typeof patch.onboardingSeen !== "boolean") {
-            throw new Error("onboardingSeen must be a boolean");
-          }
-          onboardingSeen = patch.onboardingSeen;
-        }
-        if (Object.prototype.hasOwnProperty.call(patch, "updateChannel")) {
-          const v = patch.updateChannel;
-          if (v !== null && v !== "prod" && v !== "nightly") {
-            throw new Error('updateChannel must be "prod", "nightly", or null');
-          }
-          updateChannel = v ?? null;
-        }
-        if (Object.prototype.hasOwnProperty.call(patch, "notifications")) {
-          if (typeof patch.notifications !== "boolean") {
-            throw new Error("notifications must be a boolean");
-          }
-          notifications = patch.notifications;
-        }
-        if (
-          Object.prototype.hasOwnProperty.call(patch, "feltEstimatePrompt")
-        ) {
-          if (typeof patch.feltEstimatePrompt !== "boolean") {
-            throw new Error("feltEstimatePrompt must be a boolean");
-          }
-          feltEstimatePrompt = patch.feltEstimatePrompt;
-        }
-        if (Object.prototype.hasOwnProperty.call(patch, "uiScale")) {
-          const v = patch.uiScale;
-          if (typeof v !== "number" || !Number.isFinite(v)) {
-            throw new Error("uiScale must be a number");
-          }
-          const stepped = Math.round(v * 10) / 10;
-          uiScale = Math.min(1.6, Math.max(0.8, stepped));
-        }
-        if (Object.prototype.hasOwnProperty.call(patch, "theme")) {
-          const v = patch.theme;
-          if (v !== "system" && v !== "light" && v !== "dark") {
-            throw new Error('theme must be "system", "light", or "dark"');
-          }
-          theme = v;
-        }
-        if (Object.prototype.hasOwnProperty.call(patch, "agentsPanelDefault")) {
-          const v = patch.agentsPanelDefault;
-          if (v !== "closed" && v !== "open") {
-            throw new Error('agentsPanelDefault must be "closed" or "open"');
-          }
-          agentsPanelDefault = v;
-        }
-        if (Object.prototype.hasOwnProperty.call(patch, "agentsPanelRememberLast")) {
-          if (typeof patch.agentsPanelRememberLast !== "boolean") {
-            throw new Error("agentsPanelRememberLast must be a boolean");
-          }
-          agentsPanelRememberLast = patch.agentsPanelRememberLast;
-        }
-        if (Object.prototype.hasOwnProperty.call(patch, "stayAwake")) {
-          const v = patch.stayAwake;
-          if (v !== "agent" && v !== "on" && v !== "off") {
-            throw new Error('stayAwake must be "agent", "on", or "off"');
-          }
-          stayAwake = v;
-        }
-        if (Object.prototype.hasOwnProperty.call(patch, "quotaWaitAutoResume")) {
-          if (typeof patch.quotaWaitAutoResume !== "boolean") {
-            throw new Error("quotaWaitAutoResume must be a boolean");
-          }
-          quotaWaitAutoResume = patch.quotaWaitAutoResume;
-        }
-        if (Object.prototype.hasOwnProperty.call(patch, "confirmQuitWithActiveWork")) {
-          if (typeof patch.confirmQuitWithActiveWork !== "boolean") {
-            throw new Error("confirmQuitWithActiveWork must be a boolean");
-          }
-          confirmQuitWithActiveWork = patch.confirmQuitWithActiveWork;
-        }
-        if (Object.prototype.hasOwnProperty.call(patch, "guardrailsEnabled")) {
-          if (typeof patch.guardrailsEnabled !== "boolean") {
-            throw new Error("guardrailsEnabled must be a boolean");
-          }
-          guardrailsEnabled = patch.guardrailsEnabled;
-        }
-        if (Object.prototype.hasOwnProperty.call(patch, "agentProfiles")) {
-          if (!Array.isArray(patch.agentProfiles)) {
-            throw new Error("agentProfiles must be an array");
-          }
-          agentProfiles = patch.agentProfiles.map((p) => ({ ...p }));
-          if (
-            defaultOrchestratorProfileId &&
-            !agentProfiles.some((p) => p.id === defaultOrchestratorProfileId)
-          ) {
-            defaultOrchestratorProfileId = null;
-          }
-        }
-        if (
-          Object.prototype.hasOwnProperty.call(
-            patch,
-            "defaultOrchestratorProfileId",
-          )
-        ) {
-          const v = patch.defaultOrchestratorProfileId;
-          if (v !== null && typeof v !== "string") {
-            throw new Error(
-              "defaultOrchestratorProfileId must be a string or null",
-            );
-          }
-          const id = v != null ? v.trim() : "";
-          if (id && !agentProfiles.some((p) => p.id === id)) {
-            throw new Error(
-              "defaultOrchestratorProfileId must match an agent profile or be null",
-            );
-          }
-          defaultOrchestratorProfileId = id || null;
-        }
-        if (Object.prototype.hasOwnProperty.call(patch, "subagentPool")) {
-          const v = patch.subagentPool;
-          if (!v || typeof v !== "object" || Array.isArray(v)) {
-            throw new Error("subagentPool must be an object");
-          }
-          if (!Array.isArray(v.entries)) {
-            throw new Error("subagentPool.entries must be an array");
-          }
-          subagentPool = {
-            defaultAlias: v.defaultAlias ?? null,
-            force: v.force === true,
-            entries: v.entries.map((e) => ({ ...e })),
-          };
-        }
-        if (Object.prototype.hasOwnProperty.call(patch, "otel")) {
-          const v = patch.otel;
-          if (!v || typeof v !== "object") {
-            throw new Error("otel must be an object");
-          }
-          if (
-            v.endpoint != null &&
-            !/^https?:\/\/\S+$/.test(String(v.endpoint).trim())
-          ) {
-            throw new Error("OTLP endpoint must be an http(s) URL or null");
-          }
-          otel = {
-            endpoint: v.endpoint ? String(v.endpoint).trim().replace(/\/+$/, "") : null,
-            headers: { ...(v.headers ?? {}) },
-            claudeMetrics: v.claudeMetrics === true,
-          };
-        }
-        if (Object.prototype.hasOwnProperty.call(patch, "webhook")) {
-          const v = patch.webhook;
-          if (!v || typeof v !== "object") {
-            throw new Error("webhook must be an object");
-          }
-          if (
-            v.url != null &&
-            v.url !== "" &&
-            !/^https?:\/\/\S+$/.test(String(v.url).trim())
-          ) {
-            throw new Error("Webhook URL must be an http(s) URL or empty");
-          }
-          webhook = {
-            url: v.url ? String(v.url).trim() : null,
-            onDone: v.onDone !== false,
-            onFailed: v.onFailed !== false,
-            onWaiting: v.onWaiting !== false,
-          };
-        }
-        return {
-          dailyBudgetUsd,
-          orchestrationBudgetUsd,
-          autoSettleAfterDays,
-          autoSettleOnMerge,
-          prDiffCapLines,
-          mcpServers: mcpServers.map(redactDevMcp) as AppSettings["mcpServers"],
-          defaultWorktree,
-          defaultOrchestrate,
-          defaultProvider,
-          defaultModel,
-          quotaFailover: quotaFailover.slice(),
-          onboardingSeen,
-          updateChannel,
-          notifications,
-          feltEstimatePrompt,
-          uiScale,
-          theme,
-          agentsPanelDefault,
-          agentsPanelRememberLast,
-          stayAwake,
-          quotaWaitAutoResume,
-          confirmQuitWithActiveWork,
-          guardrailsEnabled,
-          agentProfiles: agentProfiles.map((p) => ({ ...p })),
-          defaultOrchestratorProfileId,
-          subagentPool: {
-            ...subagentPool,
-            entries: subagentPool.entries.map((e) => ({ ...e })),
-          },
-          otel: { ...otel, headers: { ...otel.headers } },
-          webhook: { ...webhook },
-        };
-      },
-      async testWebhook() {
-        // ponytail: dev browser has no main process to POST from; report the
-        // shape the real handler returns so the Settings row stays exercisable.
-        if (!webhook.url) return { ok: false, error: "Save an http(s) webhook URL first" };
-        return { ok: true, status: 200 };
-      },
-    },
-    stayAwake: {
-      // ponytail: no real power blocker in the dev browser; mirror the shape
-      // main returns so the sidebar control stays exercisable.
-      async status() {
-        const anyWorking = threads.some((t) => t.status === "working");
-        return {
-          mode: stayAwake,
-          blocking:
-            stayAwake === "on" || (stayAwake === "agent" && anyWorking),
-          onBattery: false,
-          anyWorking,
-        };
-      },
-    },
+    ...createSettings(ctx),
     ...createMcp(ctx),
     ...createSkills(),
     providers: {
