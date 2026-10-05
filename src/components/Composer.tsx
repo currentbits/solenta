@@ -60,7 +60,7 @@ import { ProviderMark } from "./ProviderMark";
 import { hintFor } from "./onboarding/installHints";
 import { ArchiveToast } from "./ArchiveToast";
 import type { ReplyTarget } from "../replyContext";
-import { excerptReply, wrapReplyContext } from "../replyContext";
+import { wrapReplyContext } from "../replyContext";
 import {
   composePastePrompt,
   formatOverflow,
@@ -111,6 +111,7 @@ import { applyComposerVim } from "../composerVim";
 import { formatSpeechModelSize } from "../speechDraft";
 import { AttachmentChip } from "./composer/AttachmentChip";
 import { CommandList, MentionList } from "./composer/ComposerPopups";
+import { ReplyChip } from "./composer/ReplyChip";
 import { useComposerAttachments } from "./composer/useComposerAttachments";
 import { useComposerVim } from "./composer/useComposerVim";
 import { useMentionMenu } from "./composer/useMentionMenu";
@@ -1544,63 +1545,12 @@ export const Composer = memo(function Composer({
           />
         )}
         {replyTo && (
-          <div
-            className={styles.replyChip}
-            data-reply-chip=""
-            data-reply-kind={replyTo.kind ?? "message"}
-            data-reply-source={
-              replySourceUnavailable ? "unavailable" : "ok"
-            }
-            data-reply-truncated={replyTo.truncated ? "" : undefined}
-            onClick={() => {
-              if (replySourceUnavailable) return;
-              onRevealReply?.();
-            }}
-          >
-            <span className={styles.replyChipLabel}>
-              {replyTo.kind === "selection" ? "Cite" : "Reply"}
-            </span>
-            <button
-              type="button"
-              className={styles.replyChipSource}
-              data-reply-source=""
-              disabled={replySourceUnavailable}
-              aria-label={
-                replySourceUnavailable
-                  ? "Quoted source is unavailable"
-                  : "Show quoted message"
-              }
-              title={
-                replySourceUnavailable
-                  ? "Quoted source is unavailable"
-                  : "Show quoted message"
-              }
-              onClick={(e) => {
-                e.stopPropagation();
-                if (replySourceUnavailable) return;
-                onRevealReply?.();
-              }}
-            >
-              {excerptReply(replyTo.text)}
-            </button>
-            {replyTo.truncated && (
-              <span className={styles.replyChipTruncated} data-reply-truncated="">
-                truncated
-              </span>
-            )}
-            <button
-              type="button"
-              className={styles.attachmentRemove}
-              aria-label="Cancel reply"
-              title="Cancel reply"
-              onClick={(e) => {
-                e.stopPropagation();
-                onClearReply?.();
-              }}
-            >
-              ×
-            </button>
-          </div>
+          <ReplyChip
+            replyTo={replyTo}
+            replySourceUnavailable={replySourceUnavailable}
+            onRevealReply={onRevealReply}
+            onClearReply={onClearReply}
+          />
         )}
         {pasteCards.length > 0 && (
           <div className={styles.pasteCardList} aria-label="Pasted context">
