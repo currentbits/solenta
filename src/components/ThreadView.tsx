@@ -69,10 +69,6 @@ import {
   pinsOf,
   unpinMessage,
 } from "../messagePins";
-import {
-  nearestScrollTop,
-  offsetTopWithin,
-} from "../scrollNearest";
 import type { WorkflowSaveInput } from "../useCoder";
 import type { ReturnableView } from "../viewReturn";
 import { contextBreakdown } from "../contextBreakdown";
@@ -91,7 +87,6 @@ import {
 import {
   clampWindowStart,
   ensureVisibleStart,
-  extendWindowStart,
   initialWindowStart,
 } from "../transcriptWindow";
 import { lastUserMessage } from "../retryTurn";
@@ -170,6 +165,7 @@ import { useHeaderGitStatus } from "./thread/useHeaderGitStatus";
 import { useQueuedEdit } from "./thread/useQueuedEdit";
 import { usePaneLayoutActions } from "./thread/usePaneLayoutActions";
 import { useAppSnap } from "./thread/useAppSnap";
+import { useStickToBottom } from "./thread/useStickToBottom";
 import styles from "./ThreadView.module.css";
 
 const EMPTY_COMPARE_PEERS: ComparePeer[] = [];
@@ -179,8 +175,6 @@ const COPY_FLASH_MS = 1500;
 function shortSha(sha: string): string {
   return sha.length > 7 ? sha.slice(0, 7) : sha;
 }
-
-const STICK_BOTTOM_PX = 80;
 
 function swapQueuedItem(items: string[], index: number, delta: number): string[] {
   const dest = index + delta;
@@ -762,10 +756,6 @@ export const ThreadView = memo(function ThreadView({
    * onto the bottom; a leftover scroll must not clear stickToBottom (#607).
    */
   const forceStick = useRef(false);
-  const pinning = useRef(false);
-  const prevLayoutThreadId = useRef<string | null>(null);
-  const seenThread = useRef(false);
-  const prevPermReq = useRef<string | null>(null);
   const prevThreadId = useRef<string | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -1002,7 +992,6 @@ export const ThreadView = memo(function ThreadView({
   const [windowStart, setWindowStart] = useState(() =>
     initialWindowStart(timeline.length),
   );
-  const pendingPrepend = useRef<number | null>(null);
   const revealTargetId = revealMessageId ?? jumpMessageId;
   const revealIndex = useMemo(() => {
     if (!revealTargetId) return -1;
@@ -1879,121 +1868,17 @@ export const ThreadView = memo(function ThreadView({
     reviewUndoDialogRef,
   );
 
-  const pinIfStuck = () => {
-    const el = bodyRef.current;
-    if (!el || !stickToBottom.current) return;
-    const distance = el.scrollHeight - el.scrollTop - el.clientHeight;
-    if (distance <= 0) return;
-    pinning.current = true;
-    const before = el.scrollTop;
-    el.scrollTop = el.scrollHeight;
-    const landed =
-      el.scrollHeight - el.scrollTop - el.clientHeight <= STICK_BOTTOM_PX;
-    if (el.scrollTop !== before && landed) {
-      forceStick.current = false;
-    }
-    requestAnimationFrame(() => {
-      pinning.current = false;
-    });
-  };
-  const pinIfStuckRef = useRef(pinIfStuck);
-  pinIfStuckRef.current = pinIfStuck;
-
-  const showEarlier = () => {
-    stickToBottom.current = false;
-    forceStick.current = false;
-    const el = bodyRef.current;
-    pendingPrepend.current = el ? el.scrollHeight : 0;
-    setWindowStart((s) => extendWindowStart(s));
-  };
-
-  useLayoutEffect(() => {
-    const prev = pendingPrepend.current;
-    if (prev == null) return;
-    pendingPrepend.current = null;
-    const el = bodyRef.current;
-    if (!el) return;
-    el.scrollTop += el.scrollHeight - prev;
-  }, [start]);
-
-  /**
-   * Pin before paint so a remounted body (thread switch) and a newly
-   * inserted permission card never flash at the wrong scrollTop. #408's
-   * ResizeObserver still covers post-paint growth.
-   */
-  useLayoutEffect(() => {
-    const id = detail?.thread.id ?? null;
-    if (id !== prevLayoutThreadId.current) {
-      const switching =
-        prevLayoutThreadId.current !== null &&
-        id !== null &&
-        prevLayoutThreadId.current !== id;
-      const recovering =
-        prevLayoutThreadId.current === null &&
-        id !== null &&
-        seenThread.current;
-      prevLayoutThreadId.current = id;
-      if (id) seenThread.current = true;
-      if (switching || recovering) {
-        stickToBottom.current = true;
-        forceStick.current = true;
-      } else if (id) {
-        stickToBottom.current = true;
-      }
-    }
-    const req = detail?.pendingPermission?.requestId ?? null;
-    if (req && req !== prevPermReq.current) {
-      stickToBottom.current = true;
-      forceStick.current = true;
-    }
-    prevPermReq.current = req;
-    pinIfStuck();
-  }, [
+  const { showEarlier, onBodyScroll } = useStickToBottom({
+    bodyRef,
+    stickToBottom,
+    forceStick,
+    detail,
     timeline,
     isWorking,
-    detail?.messages,
-    detail?.workLog,
-    detail?.pendingPermission,
-    detail?.thread.id,
-  ]);
-
-  useLayoutEffect(() => {
-    if (!revealTargetId) return;
-    const container = bodyRef.current;
-    if (!container) return;
-    const child = container.querySelector(
-      `[data-message-id="${revealTargetId.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"]`,
-    );
-    if (!(child instanceof HTMLElement)) return;
-    stickToBottom.current = false;
-    forceStick.current = false;
-    const next = nearestScrollTop(
-      { scrollTop: container.scrollTop, clientHeight: container.clientHeight },
-      {
-        offsetTop: offsetTopWithin(container, child),
-        offsetHeight: child.offsetHeight,
-      },
-    );
-    if (next !== container.scrollTop) container.scrollTop = next;
-  }, [revealTargetId, start, timeline.length]);
-
-  /**
-   * Content can grow after paint with no React state change (images, syntax
-   * highlight, webfonts). Observe the scroll body and its children so a
-   * pinned view stays pinned. Re-attach when the timeline replaces children.
-   */
-  useEffect(() => {
-    const el = bodyRef.current;
-    if (!el || typeof ResizeObserver === "undefined") return;
-
-    const onResize = () => pinIfStuckRef.current();
-    const ro = new ResizeObserver(onResize);
-    ro.observe(el);
-    for (const child of el.children) {
-      ro.observe(child);
-    }
-    return () => ro.disconnect();
-  }, [timeline, start, detail?.pendingPermission, isWorking]);
+    start,
+    revealTargetId,
+    setWindowStart,
+  });
 
   /**
    * Delegated: any image in the timeline (tool output, attachment thumb,
@@ -2004,22 +1889,6 @@ export const ThreadView = memo(function ThreadView({
     if (!img || img.tagName !== "IMG") return false;
     setLightbox({ src: img.src, alt: img.alt });
     return true;
-  };
-
-  const onBodyScroll = () => {
-    const el = bodyRef.current;
-    if (!el || pinning.current) return;
-    const distance = el.scrollHeight - el.scrollTop - el.clientHeight;
-    if (forceStick.current) {
-      if (distance <= STICK_BOTTOM_PX) {
-        forceStick.current = false;
-        stickToBottom.current = true;
-        return;
-      }
-      pinIfStuck();
-      return;
-    }
-    stickToBottom.current = distance <= STICK_BOTTOM_PX;
   };
 
   if (!hasProjects) {
