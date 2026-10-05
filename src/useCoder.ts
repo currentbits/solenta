@@ -120,10 +120,12 @@ import {
   saveCachedThreadDetail,
 } from "./bootSnapshot";
 import { createThreadDetailCache } from "./threadDetailCache";
+import { errorMessage } from "./coder/errorMessage";
 import { useCoderMemory } from "./coder/useCoderMemory";
 import { useCoderAgentTools } from "./coder/useCoderAgentTools";
 import { useCoderInsights } from "./coder/useCoderInsights";
 import { useCoderRepoTools } from "./coder/useCoderRepoTools";
+import { useCoderProjects } from "./coder/useCoderProjects";
 
 const STATUS_POLL_MS = 60_000;
 /** Debounce on the localStorage boot-snapshot writes (#364). */
@@ -275,19 +277,6 @@ function upsertWorkflow(
 
 function resolveApi(): CoderApi {
   return resolveCoderApi();
-}
-
-function errorMessage(err: unknown): string {
-  const raw = err instanceof Error && err.message ? err.message : String(err);
-  for (const marker of [
-    "MERGE_CONFLICT:",
-    "WORKTREE_DIRTY:",
-    "WORKTREE_REBASE_CONFLICT:",
-  ]) {
-    const at = raw.indexOf(marker);
-    if (at !== -1) return raw.slice(at + marker.length).trim();
-  }
-  return raw;
 }
 
 /** A follow-up typed during a run, waiting for that run to land. */
@@ -1554,85 +1543,12 @@ export function useCoder(): UseCoderResult {
     setDetailRetryNonce((n) => n + 1);
   }, []);
 
-  const addProject = useCallback(async (
-    path?: string,
-    opts?: { remoteHost?: string; remotePath?: string },
-  ) => {
-    try {
-      const trimmed = typeof path === "string" ? path.trim() : "";
-      const remoteHost = opts?.remoteHost?.trim() || "";
-      const remotes = remoteHost
-        ? {
-            remoteHost,
-            remotePath: opts?.remotePath?.trim() || undefined,
-          }
-        : undefined;
-      // Native folder picker cannot run without Electron. Web callers must
-      // pass a path (the path-input modal). Never fall through to addViaDialog.
-      if (isWebMode() && !trimmed && !remoteHost) return null;
-      const p = trimmed || remoteHost
-        ? await api.projects.add(trimmed || remotes?.remotePath || "", remotes)
-        : await api.projects.addViaDialog();
-      if (p) {
-        setProjects((prev) => {
-          if (prev.some((x) => x.id === p.id)) return prev;
-          return [...prev, p];
-        });
-        setError(null);
-      }
-      return p;
-    } catch (err) {
-      setError({ scope: "project", message: errorMessage(err) });
-      return null;
-    }
-  }, [api]);
-
-  const createProject = useCallback(async (input: CreateProjectInput) => {
-    try {
-      const p = await api.projects.create({
-        name: input.name.trim(),
-        parentDir: input.parentDir.trim(),
-      });
-      setProjects((prev) => {
-        if (prev.some((x) => x.id === p.id)) return prev;
-        return [...prev, p];
-      });
-      setError(null);
-      return p;
-    } catch (err) {
-      setError({ scope: "project", message: errorMessage(err) });
-      return null;
-    }
-  }, [api]);
-
-  const ensureScratchProject = useCallback(async () => {
-    try {
-      const p = await api.projects.ensureScratch();
-      setProjects((prev) => {
-        if (prev.some((x) => x.id === p.id)) return prev;
-        return [...prev, p];
-      });
-      setError(null);
-      return p;
-    } catch (err) {
-      setError({ scope: "project", message: errorMessage(err) });
-      return null;
-    }
-  }, [api]);
-
-  const updateProject = useCallback(async (input: ProjectUpdateInput) => {
-    try {
-      const updated = await api.projects.update(input);
-      setProjects((prev) =>
-        prev.map((p) => (p.id === updated.id ? updated : p)),
-      );
-      setError(null);
-      return updated;
-    } catch (err) {
-      setError({ scope: "project", message: errorMessage(err) });
-      return null;
-    }
-  }, [api]);
+  const {
+    addProject,
+    createProject,
+    ensureScratchProject,
+    updateProject,
+  } = useCoderProjects({ api, setProjects, setError });
 
   const createThread = useCallback(
     async (
