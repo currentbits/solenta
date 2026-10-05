@@ -349,3 +349,48 @@ describe("cached thread detail write (#1475)", () => {
     }
   });
 });
+
+describe("boot snapshot without archived threads (#1475)", () => {
+  it("drops archived rows but keeps the selection and live rows' handoff chain", async () => {
+    const shell = await mount(<div />);
+    try {
+      const { saveBootSnapshot, loadBootSnapshot } = await import(
+        "../src/bootSnapshot"
+      );
+      const threads = [
+        thread({ id: "live" }),
+        thread({ id: "old", archived: true }),
+        thread({ id: "picked", archived: true }),
+        // live grandchild → archived worker → archived lead
+        thread({ id: "lead", archived: true }),
+        thread({ id: "mid", archived: true, handoffFrom: "lead", orchWorker: true }),
+        thread({ id: "kid", handoffFrom: "mid", orchWorker: true }),
+      ];
+      saveBootSnapshot({ projects: [], threads, selectedThreadId: "picked" });
+      assert.deepEqual(
+        loadBootSnapshot()?.threads.map((t) => t.id),
+        ["live", "picked", "lead", "mid", "kid"],
+      );
+    } finally {
+      shell.unmount();
+    }
+  });
+
+  it("boots with the Settled shelf filled in once the list loads", async () => {
+    const live = thread({ id: "t1", title: "live title" });
+    const gone = thread({ id: "t2", title: "archived title", archived: true });
+    const fake = createFakeCoder({
+      threads: [live, gone],
+      details: { t1: detail({ thread: live }) },
+    });
+    const m = await boot(fake, () => {
+      seedSnapshot({ threads: [live], selectedThreadId: "t1" });
+    });
+    try {
+      await m.flush();
+      assert.match(m.text(), /Settled · 1/);
+    } finally {
+      m.unmount();
+    }
+  });
+});
