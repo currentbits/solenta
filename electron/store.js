@@ -3,7 +3,6 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const { randomUUID } = require("node:crypto");
-const { validateSubagentPool } = require("./subagentPool");
 const { getDefaultSecrets } = require("./secrets.js");
 const {
   splitMessagesByThread,
@@ -13,11 +12,9 @@ const {
   peekLastAssistantValue,
   appendJsonArrayItem,
 } = require("./jsonEnvelope.js");
-const { clampUiScale } = require("./zoom.js");
 const {
   normalizeMcpServers,
   validateMcpServers,
-  mergeMcpSettingsPatch,
   RESERVED_MCP_NAMES,
 } = require("./mcp.js");
 const {
@@ -41,16 +38,8 @@ const {
   isSafeThreadId,
 } = require("./store-util.js");
 const {
-  isHttpUrl,
-  validateAgentProfiles,
-  matchingProfileId,
   DEFAULT_AUTO_SETTLE_AFTER_DAYS,
-  normalizeDefaultProvider,
-  normalizeDefaultModel,
-  validateQuotaFailover,
   normalizeSettings,
-  normalizeOtel,
-  normalizeWebhook,
 } = require("./store-normalize.js");
 const {
   STANDARD_TEMPLATE,
@@ -65,6 +54,7 @@ const {
   migrateThread,
 } = require("./store-migrate.js");
 const StoreUsageMethods = require("./store-usage-methods.js");
+const StoreSettingsMethods = require("./store-settings-methods.js");
 
 const EMPTY = {
   projects: [],
@@ -1815,347 +1805,6 @@ class Store {
   }
 
   /**
-   * @returns {{ dailyBudgetUsd: number | null, orchestrationBudgetUsd: number | null, autoSettleAfterDays: number | null, prDiffCapLines: number | null, mcpServers: Array<{ name: string, url: string, token?: string, enabled: boolean }>, defaultWorktree: boolean, defaultOrchestrate: boolean }}
-   */
-  getSettings() {
-    if (!this.data.settings || typeof this.data.settings !== "object") {
-      this.data.settings = {
-        dailyBudgetUsd: null,
-        orchestrationBudgetUsd: null,
-        autoSettleAfterDays: DEFAULT_AUTO_SETTLE_AFTER_DAYS,
-        mcpServers: [],
-        agentProfiles: [],
-      };
-    }
-    // Re-normalize so a partial in-memory shape still exposes every key.
-    const n = normalizeSettings(this.data.settings);
-    this.data.settings = n;
-    return {
-      dailyBudgetUsd: n.dailyBudgetUsd,
-      orchestrationBudgetUsd: n.orchestrationBudgetUsd,
-      autoSettleAfterDays: n.autoSettleAfterDays,
-      autoSettleOnMerge: n.autoSettleOnMerge,
-      mcpServers: n.mcpServers,
-      defaultWorktree: n.defaultWorktree,
-      defaultOrchestrate: n.defaultOrchestrate,
-      defaultProvider: n.defaultProvider,
-      defaultModel: n.defaultModel,
-      quotaFailover: n.quotaFailover,
-      onboardingSeen: n.onboardingSeen,
-      updateChannel: n.updateChannel,
-      notifications: n.notifications,
-      feltEstimatePrompt: n.feltEstimatePrompt,
-      uiScale: n.uiScale,
-      theme: n.theme,
-      agentsPanelDefault: n.agentsPanelDefault,
-      agentsPanelRememberLast: n.agentsPanelRememberLast,
-      stayAwake: n.stayAwake,
-      quotaWaitAutoResume: n.quotaWaitAutoResume,
-      confirmQuitWithActiveWork: n.confirmQuitWithActiveWork,
-      guardrailsEnabled: n.guardrailsEnabled,
-      prDiffCapLines: n.prDiffCapLines,
-      agentProfiles: n.agentProfiles,
-      defaultOrchestratorProfileId: n.defaultOrchestratorProfileId,
-      subagentPool: n.subagentPool,
-      otel: n.otel,
-      linearApiKey: n.linearApiKey,
-      webhook: n.webhook,
-    };
-  }
-
-  /**
-   * Validate and merge settings. Does not touch threads.
-   * Does not save; caller must save.
-   * @param {Partial<{ dailyBudgetUsd: number | null, orchestrationBudgetUsd: number | null, autoSettleAfterDays: number | null, prDiffCapLines: number | null, mcpServers: Array<{ name: string, url: string, token?: string, enabled: boolean }>, defaultWorktree: boolean, defaultOrchestrate: boolean }>} patch
-   * @returns {{ dailyBudgetUsd: number | null, orchestrationBudgetUsd: number | null, autoSettleAfterDays: number | null, prDiffCapLines: number | null, mcpServers: Array<{ name: string, url: string, token?: string, enabled: boolean }>, defaultWorktree: boolean, defaultOrchestrate: boolean }}
-   */
-  setSettings(patch, opts = {}) {
-    if (!patch || typeof patch !== "object") {
-      return this.getSettings();
-    }
-    if (!this.data.settings || typeof this.data.settings !== "object") {
-      this.data.settings = {
-        dailyBudgetUsd: null,
-        orchestrationBudgetUsd: null,
-        autoSettleAfterDays: DEFAULT_AUTO_SETTLE_AFTER_DAYS,
-        mcpServers: [],
-        agentProfiles: [],
-      };
-    }
-    // Ensure both keys exist before partial patch.
-    this.data.settings = normalizeSettings(this.data.settings);
-
-    if (Object.prototype.hasOwnProperty.call(patch, "dailyBudgetUsd")) {
-      const v = patch.dailyBudgetUsd;
-      if (v !== null) {
-        if (typeof v !== "number" || !Number.isFinite(v) || !(v > 0)) {
-          throw new Error(
-            "Daily budget must be a positive number or null",
-          );
-        }
-      }
-      this.data.settings.dailyBudgetUsd = v === null ? null : v;
-    }
-    if (Object.prototype.hasOwnProperty.call(patch, "orchestrationBudgetUsd")) {
-      const v = patch.orchestrationBudgetUsd;
-      if (v !== null) {
-        if (typeof v !== "number" || !Number.isFinite(v) || !(v > 0)) {
-          throw new Error(
-            "Orchestration budget must be a positive number or null",
-          );
-        }
-      }
-      this.data.settings.orchestrationBudgetUsd = v === null ? null : v;
-    }
-    if (Object.prototype.hasOwnProperty.call(patch, "autoSettleAfterDays")) {
-      const v = patch.autoSettleAfterDays;
-      if (v !== null) {
-        // Positive integer only (reject 0, negatives, fractions, NaN, strings).
-        if (
-          typeof v !== "number" ||
-          !Number.isFinite(v) ||
-          !Number.isInteger(v) ||
-          !(v > 0)
-        ) {
-          throw new Error(
-            `Auto-settle days must be a positive integer or null (got ${String(v)})`,
-          );
-        }
-      }
-      this.data.settings.autoSettleAfterDays = v === null ? null : v;
-    }
-    if (Object.prototype.hasOwnProperty.call(patch, "prDiffCapLines")) {
-      const v = patch.prDiffCapLines;
-      if (v !== null) {
-        // Positive integer only (reject 0, negatives, fractions, NaN, strings).
-        if (
-          typeof v !== "number" ||
-          !Number.isFinite(v) ||
-          !Number.isInteger(v) ||
-          !(v > 0)
-        ) {
-          throw new Error(
-            `PR diff cap must be a positive integer or null (got ${String(v)})`,
-          );
-        }
-      }
-      this.data.settings.prDiffCapLines = v === null ? null : v;
-    }
-    if (Object.prototype.hasOwnProperty.call(patch, "autoSettleOnMerge")) {      const v = patch.autoSettleOnMerge;
-      if (typeof v !== "boolean") {
-        throw new Error("autoSettleOnMerge must be a boolean");
-      }
-      this.data.settings.autoSettleOnMerge = v;
-    }
-    if (Object.prototype.hasOwnProperty.call(patch, "mcpServers")) {
-      this.data.settings.mcpServers = validateMcpServers(
-        opts.replaceMcpServers
-          ? patch.mcpServers
-          : mergeMcpSettingsPatch(
-              this.data.settings.mcpServers,
-              patch.mcpServers,
-            ),
-      );
-    }
-    if (Object.prototype.hasOwnProperty.call(patch, "agentProfiles")) {
-      this.data.settings.agentProfiles = validateAgentProfiles(
-        patch.agentProfiles,
-      );
-      this.data.settings.defaultOrchestratorProfileId = matchingProfileId(
-        this.data.settings.defaultOrchestratorProfileId,
-        this.data.settings.agentProfiles,
-      );
-    }
-    if (Object.prototype.hasOwnProperty.call(patch, "defaultOrchestratorProfileId")) {
-      const v = patch.defaultOrchestratorProfileId;
-      if (v !== null && typeof v !== "string") {
-        throw new Error(
-          "defaultOrchestratorProfileId must be a string or null",
-        );
-      }
-      const id = matchingProfileId(v, this.data.settings.agentProfiles);
-      if (v != null && String(v).trim() && id == null) {
-        throw new Error(
-          "defaultOrchestratorProfileId must match an agent profile or be null",
-        );
-      }
-      this.data.settings.defaultOrchestratorProfileId = id;
-    }
-    if (Object.prototype.hasOwnProperty.call(patch, "subagentPool")) {
-      this.data.settings.subagentPool = validateSubagentPool(
-        patch.subagentPool,
-      );
-    }
-    if (Object.prototype.hasOwnProperty.call(patch, "defaultWorktree")) {
-      const v = patch.defaultWorktree;
-      if (typeof v !== "boolean") {
-        throw new Error("defaultWorktree must be a boolean");
-      }
-      this.data.settings.defaultWorktree = v;
-    }
-    if (Object.prototype.hasOwnProperty.call(patch, "defaultOrchestrate")) {
-      const v = patch.defaultOrchestrate;
-      if (typeof v !== "boolean") {
-        throw new Error("defaultOrchestrate must be a boolean");
-      }
-      this.data.settings.defaultOrchestrate = v;
-    }
-    if (Object.prototype.hasOwnProperty.call(patch, "defaultProvider")) {
-      const v = patch.defaultProvider;
-      if (v !== null && typeof v !== "string") {
-        throw new Error("defaultProvider must be a string or null");
-      }
-      this.data.settings.defaultProvider = normalizeDefaultProvider(v);
-    }
-    if (Object.prototype.hasOwnProperty.call(patch, "defaultModel")) {
-      const v = patch.defaultModel;
-      if (v !== null && typeof v !== "string") {
-        throw new Error("defaultModel must be a string or null");
-      }
-      this.data.settings.defaultModel = normalizeDefaultModel(v);
-    }
-    if (Object.prototype.hasOwnProperty.call(patch, "quotaFailover")) {
-      this.data.settings.quotaFailover = validateQuotaFailover(
-        patch.quotaFailover,
-      );
-    }
-    if (Object.prototype.hasOwnProperty.call(patch, "onboardingSeen")) {
-      const v = patch.onboardingSeen;
-      if (typeof v !== "boolean") {
-        throw new Error("onboardingSeen must be a boolean");
-      }
-      this.data.settings.onboardingSeen = v;
-    }
-    if (Object.prototype.hasOwnProperty.call(patch, "updateChannel")) {
-      const v = patch.updateChannel;
-      if (v !== null && v !== "prod" && v !== "nightly") {
-        throw new Error('updateChannel must be "prod", "nightly", or null');
-      }
-      this.data.settings.updateChannel = v;
-    }
-    if (Object.prototype.hasOwnProperty.call(patch, "otel")) {
-      const v = /** @type {{ endpoint?: unknown }} */ (patch.otel);
-      if (!v || typeof v !== "object") {
-        throw new Error("otel must be an object");
-      }
-      if (
-        v.endpoint != null &&
-        !(typeof v.endpoint === "string" && /^https?:\/\/\S+$/.test(v.endpoint.trim()))
-      ) {
-        throw new Error("OTLP endpoint must be an http(s) URL or null");
-      }
-      this.data.settings.otel = normalizeOtel(v);
-    }
-    if (Object.prototype.hasOwnProperty.call(patch, "notifications")) {
-      const v = patch.notifications;
-      if (typeof v !== "boolean") {
-        throw new Error("notifications must be a boolean");
-      }
-      this.data.settings.notifications = v;
-    }
-    if (Object.prototype.hasOwnProperty.call(patch, "feltEstimatePrompt")) {
-      const v = patch.feltEstimatePrompt;
-      if (typeof v !== "boolean") {
-        throw new Error("feltEstimatePrompt must be a boolean");
-      }
-      this.data.settings.feltEstimatePrompt = v;
-    }
-    if (Object.prototype.hasOwnProperty.call(patch, "uiScale")) {
-      const v = patch.uiScale;
-      if (typeof v !== "number" || !Number.isFinite(v)) {
-        throw new Error("uiScale must be a number");
-      }
-      this.data.settings.uiScale = clampUiScale(v);
-    }
-    if (Object.prototype.hasOwnProperty.call(patch, "theme")) {
-      const v = patch.theme;
-      if (v !== "system" && v !== "light" && v !== "dark") {
-        throw new Error('theme must be "system", "light", or "dark"');
-      }
-      this.data.settings.theme = v;
-    }
-    if (Object.prototype.hasOwnProperty.call(patch, "agentsPanelDefault")) {
-      const v = patch.agentsPanelDefault;
-      if (v !== "closed" && v !== "open") {
-        throw new Error('agentsPanelDefault must be "closed" or "open"');
-      }
-      this.data.settings.agentsPanelDefault = v;
-    }
-    if (Object.prototype.hasOwnProperty.call(patch, "agentsPanelRememberLast")) {
-      const v = patch.agentsPanelRememberLast;
-      if (typeof v !== "boolean") {
-        throw new Error("agentsPanelRememberLast must be a boolean");
-      }
-      this.data.settings.agentsPanelRememberLast = v;
-    }
-    if (Object.prototype.hasOwnProperty.call(patch, "stayAwake")) {
-      const v = patch.stayAwake;
-      if (v !== "agent" && v !== "on" && v !== "off") {
-        throw new Error('stayAwake must be "agent", "on", or "off"');
-      }
-      this.data.settings.stayAwake = v;
-    }
-    if (Object.prototype.hasOwnProperty.call(patch, "quotaWaitAutoResume")) {
-      const v = patch.quotaWaitAutoResume;
-      if (typeof v !== "boolean") {
-        throw new Error("quotaWaitAutoResume must be a boolean");
-      }
-      this.data.settings.quotaWaitAutoResume = v;
-    }
-    if (Object.prototype.hasOwnProperty.call(patch, "confirmQuitWithActiveWork")) {
-      const v = patch.confirmQuitWithActiveWork;
-      if (typeof v !== "boolean") {
-        throw new Error("confirmQuitWithActiveWork must be a boolean");
-      }
-      this.data.settings.confirmQuitWithActiveWork = v;
-    }
-    if (Object.prototype.hasOwnProperty.call(patch, "guardrailsEnabled")) {
-      const v = patch.guardrailsEnabled;
-      if (typeof v !== "boolean") {
-        throw new Error("guardrailsEnabled must be a boolean");
-      }
-      this.data.settings.guardrailsEnabled = v;
-    }
-    if (Object.prototype.hasOwnProperty.call(patch, "linearApiKey")) {
-      const v = patch.linearApiKey;
-      if (v === null || v === "") {
-        this.data.settings.linearApiKey = null;
-      } else if (typeof v === "string") {
-        const t = v.trim();
-        this.data.settings.linearApiKey = t || null;
-      } else {
-        throw new Error("linearApiKey must be a string or null");
-      }
-    }
-    if (Object.prototype.hasOwnProperty.call(patch, "webhook")) {
-      const v = patch.webhook;
-      if (!v || typeof v !== "object" || Array.isArray(v)) {
-        throw new Error("webhook must be an object");
-      }
-      if (Object.prototype.hasOwnProperty.call(v, "url")) {
-        if (v.url != null && v.url !== "") {
-          if (!(typeof v.url === "string" && isHttpUrl(v.url.trim()))) {
-            throw new Error("Webhook URL must be an http(s) URL or empty");
-          }
-        }
-      }
-      for (const key of ["onDone", "onFailed", "onWaiting"]) {
-        if (
-          Object.prototype.hasOwnProperty.call(v, key) &&
-          typeof v[key] !== "boolean"
-        ) {
-          throw new Error(`${key} must be a boolean`);
-        }
-      }
-      this.data.settings.webhook = normalizeWebhook({
-        ...this.data.settings.webhook,
-        ...v,
-      });
-    }
-    return this.getSettings();
-  }
-
-  /**
    * Patch an existing message by id. No-op if missing.
    * @param {string} threadId
    * @param {string} messageId
@@ -2580,6 +2229,7 @@ class Store {
 // declared in the class body.
 for (const Methods of [
   StoreUsageMethods,
+  StoreSettingsMethods,
 ]) {
   for (const name of Object.getOwnPropertyNames(Methods.prototype)) {
     if (name === "constructor") continue;
