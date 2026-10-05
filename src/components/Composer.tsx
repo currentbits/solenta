@@ -82,11 +82,7 @@ import {
 import { parseDelegate } from "../delegate";
 import { asBtwPrompt } from "../btw";
 import { buildBestOfNEntries, providerVendor } from "../bestOfN";
-import {
-  copyListRecord,
-  keptDrafts,
-  keptPasteCards,
-} from "../composerSession";
+import { keptDrafts } from "../composerSession";
 import {
   commandQuery,
   matchSlashCommands,
@@ -120,9 +116,9 @@ import {
 import { applyComposerVim } from "../composerVim";
 import { formatSpeechModelSize } from "../speechDraft";
 import { AttachmentChip } from "./composer/AttachmentChip";
-import { keepList } from "./composer/keepList";
 import { useComposerAttachments } from "./composer/useComposerAttachments";
 import { useComposerVim } from "./composer/useComposerVim";
+import { usePasteCards } from "./composer/usePasteCards";
 import {
   speechMicLabel,
   useComposerSpeech,
@@ -497,45 +493,14 @@ export const Composer = memo(function Composer({
       incomingAttachmentThreadId,
       onIncomingAttachmentsConsumed,
     });
-  const [pasteCardsByThread, setPasteCardsState] = useState(() =>
-    copyListRecord(keptPasteCards),
-  );
-  const setPasteCardsByThread = useCallback(
-    keepList(keptPasteCards, setPasteCardsState),
-    [],
-  );
-  const [expandedCardIds, setExpandedCardIds] = useState<
-    Record<string, boolean>
-  >({});
-  const pasteCards = pasteCardsByThread[threadId] ?? [];
-  pasteCardsRef.current = pasteCards;
-  useEffect(() => {
-    syncOverflow(readDraft());
-  }, [pasteCards, threadId, syncOverflow, readDraft]);
-  const addPasteCard = useCallback(
-    (card: PasteCard) => {
-      setPasteCardsByThread((prev) => ({
-        ...prev,
-        [threadId]: [...(prev[threadId] ?? []), card],
-      }));
-    },
-    [threadId],
-  );
-  const removePasteCard = useCallback(
-    (id: string) =>
-      setPasteCardsByThread((prev) => ({
-        ...prev,
-        [threadId]: (prev[threadId] ?? []).filter((c) => c.id !== id),
-      })),
-    [threadId],
-  );
-  const clearPasteCards = useCallback(
-    () =>
-      setPasteCardsByThread((prev) =>
-        (prev[threadId] ?? []).length ? { ...prev, [threadId]: [] } : prev,
-      ),
-    [threadId],
-  );
+  const {
+    pasteCards,
+    expandedCardIds,
+    setExpandedCardIds,
+    addPasteCard,
+    removePasteCard,
+    clearPasteCards,
+  } = usePasteCards({ threadId, pasteCardsRef, syncOverflow, readDraft });
   const [stashToast, setStashToast] = useState<"stashed" | "restored" | null>(
     null,
   );
