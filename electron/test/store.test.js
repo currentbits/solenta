@@ -3,7 +3,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
-const { Store, MAX_MESSAGES_PER_THREAD, MESSAGE_OVERFLOW_SLACK, MAX_WORKLOG_ITEMS_PER_THREAD, WORKLOG_OVERFLOW_SLACK, SAVE_DEBOUNCE_MS, SAVE_DEBOUNCE_MAX_MS } = require("../store.js");
+const { Store, MAX_MESSAGES_PER_THREAD, MESSAGE_OVERFLOW_SLACK, MAX_WORKLOG_ITEMS_PER_THREAD, WORKLOG_OVERFLOW_SLACK, SAVE_DEBOUNCE_MS, SAVE_DEBOUNCE_MAX_MS, ENVELOPE_THROTTLE_MS } = require("../store.js");
 const services = require("../services.js");
 
 describe("Store", () => {
@@ -2517,7 +2517,8 @@ describe("Store", () => {
         store.save();
         release();
         await store.flushPending();
-        await new Promise((r) => setTimeout(r, SAVE_DEBOUNCE_MS + 50));
+        // The envelope follow-up waits out the throttle window (#1475).
+        await new Promise((r) => setTimeout(r, ENVELOPE_THROTTLE_MS + 50));
         await store.flushPending();
       } finally {
         fs.promises.open = realOpen;

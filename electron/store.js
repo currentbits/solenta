@@ -85,6 +85,28 @@ const EMPTY = {
 const SAVE_DEBOUNCE_MS = 250;
 const SAVE_DEBOUNCE_MAX_MS = SAVE_DEBOUNCE_MS;
 
+/**
+ * Minimum gap between two debounced (save()) writes of coder-store.json
+ * (#1475); saveNow() is not throttled and does not start a window.
+ * The envelope is ~6 MB on a real store and costs ~18 ms of synchronous
+ * stringify per write; a stream calls save() several times a second, so
+ * rewriting it on every 250 ms flush was ~19 MiB/s of disk writes. Shards
+ * keep the 250 ms debounce; the envelope is written at most once per window.
+ * Durability trade-off: a crash (not a quit — saveNow() still writes at
+ * once) loses at most the last ENVELOPE_THROTTLE_MS of envelope changes
+ * (thread rows, usage, settings). Transcripts and work logs are unaffected.
+ */
+const ENVELOPE_THROTTLE_MS = 2000;
+
+/**
+ * Most parsed transcripts kept in memory (#1475). A large thread costs
+ * 3–5 MB of heap once hydrated, and browsing used to keep every one for the
+ * session. Past this count the least recently read clean, non-running
+ * thread drops back to its shard and is re-parsed on the next read.
+ * ponytail: count cap, not bytes; 8 × the largest real shard is ~40 MB.
+ */
+const MAX_HYDRATED_THREADS = 8;
+
 /** Per-thread transcript files live next to coder-store.json (#225). */
 const MESSAGES_DIR = "messages";
 /** Per-thread work-log files live next to coder-store.json (#1204). */
@@ -187,7 +209,8 @@ function writeAtomicSync(filePath, contents, seq) {
  * and a sibling *.bak (last good snapshot from a prior successful load)
  * is tried before falling back to empty. Transcripts live in
  * messages/<threadId>.json and work logs in worklogs/<threadId>.json.
- * A flush writes only dirty shards plus the small envelope. Atomic save:
+ * A flush writes only dirty shards; the envelope at most once per
+ * ENVELOPE_THROTTLE_MS. Atomic save:
  * write tmp, fsync, then rename. Debounced flushes (save()) write off the
  * event loop; saveNow() is the synchronous exit/shutdown/test path.
  */
@@ -201,7 +224,12 @@ class Store {
     this._secrets = (opts && opts.secrets) || getDefaultSecrets();
     this._secretsMigrated = 0;
     this._dirty = false;
+    // Envelope (coder-store.json) needs a write. Shard dirtiness lives in the
+    // _dirty*Ids sets; _dirty means "anything pending" (drives the exit hook).
+    this._envelopeDirty = false;
+    this._lastEnvelopeWriteAt = 0;
     this._timer = null;
+    this._timerDue = 0;
     this._flushing = false;
     this._flushPromise = null;
     this._flushDelayMs = SAVE_DEBOUNCE_MS;
@@ -223,6 +251,8 @@ class Store {
     // _messagesRaw; still-lazy blob slices on _messagesLazy (legacy envelope
     // only, dropped after the shard split).
     this._messagesHydrated = {};
+    // Read order of hydrated ids, oldest first (LRU for _evictHydrated).
+    this._hydratedReads = new Map();
     this._messagesLazy = null;
     this._messagesRaw = new Map();
     this._messageShards = new Set();
@@ -335,7 +365,6 @@ class Store {
         if (prop === "constructor" || prop === "__proto__" || prop === "toJSON") {
           return Reflect.get(t, prop, recv);
         }
-        if (Object.prototype.hasOwnProperty.call(t, prop)) return t[prop];
         return store._hydrateMessages(prop);
       },
       set(t, prop, value) {
@@ -351,6 +380,7 @@ class Store {
         if (typeof prop !== "string") return Reflect.deleteProperty(t, prop);
         store._ensureMessagesIndexed();
         delete t[prop];
+        store._hydratedReads.delete(prop);
         store._invalidateLazy(prop);
         store._messagesRaw.delete(prop);
         store._markMessagesDeleted(prop);
@@ -953,6 +983,8 @@ class Store {
    */
   _hydrateMessages(threadId) {
     if (Object.prototype.hasOwnProperty.call(this._messagesHydrated, threadId)) {
+      this._hydratedReads.delete(threadId);
+      this._hydratedReads.set(threadId, true);
       return this._messagesHydrated[threadId];
     }
     let json = null;
@@ -985,7 +1017,49 @@ class Store {
     }
     this._messagesHydrated[threadId] = val;
     this._messagesRaw.delete(threadId);
+    this._hydratedReads.set(threadId, true);
+    this._evictHydrated();
     return val;
+  }
+
+  /**
+   * Drop least recently read transcripts past MAX_HYDRATED_THREADS back to
+   * their shard. Only a thread whose shard on disk is current is eligible:
+   * never one that is working, dirty, mid-flush, or still on the legacy blob.
+   */
+  _evictHydrated() {
+    const hydrated = this._messagesHydrated;
+    const ids = Object.keys(hydrated);
+    let excess = ids.length - MAX_HYDRATED_THREADS;
+    if (excess <= 0) return;
+    const working = new Set(
+      (this.data ? this.data.threads : [])
+        .filter((t) => t && t.status === "working")
+        .map((t) => t.id),
+    );
+    const lazy = this._messagesLazy;
+    // Never-read ids (legacy inline load) first, then least recently read.
+    const order = [
+      ...ids.filter((id) => !this._hydratedReads.has(id)),
+      ...this._hydratedReads.keys(),
+    ];
+    for (const id of order) {
+      if (excess <= 0) break;
+      if (
+        !Object.prototype.hasOwnProperty.call(hydrated, id) ||
+        working.has(id) ||
+        !this._messageShards.has(id) ||
+        this._dirtyMessageIds.has(id) ||
+        this._deletedMessageIds.has(id) ||
+        (this._inflightShardIds && this._inflightShardIds.has(id)) ||
+        (lazy && lazy.ranges.has(id))
+      ) {
+        continue;
+      }
+      delete hydrated[id];
+      this._hydratedReads.delete(id);
+      excess -= 1;
+    }
   }
 
   /**
@@ -1204,6 +1278,10 @@ class Store {
    */
   markDirty() {
     this._dirty = true;
+    // ponytail: every markDirty/save() counts as an envelope change, because
+    // callers mutate store.data directly and the store cannot see that. The
+    // throttle, not change detection, is what bounds envelope writes.
+    this._envelopeDirty = true;
     // At most one exit hook no matter how often markDirty()/save() run.
     if (!this._exitHookArmed) {
       this._exitHookArmed = true;
@@ -1222,14 +1300,42 @@ class Store {
     this._scheduleFlush();
   }
 
-  _scheduleFlush() {
-    if (this._timer) return;
+  /**
+   * @param {number} [delayMs] defaults to the shard debounce. An earlier
+   *   request replaces a later pending timer (a deferred envelope must not
+   *   hold back a shard write).
+   */
+  _scheduleFlush(delayMs = this._flushDelayMs) {
+    const due = Date.now() + delayMs;
+    if (this._timer) {
+      if (this._timerDue <= due) return;
+      clearTimeout(this._timer);
+    }
+    this._timerDue = due;
     this._timer = setTimeout(() => {
       this._timer = null;
       this._flushAsync();
-    }, this._flushDelayMs);
+    }, delayMs);
     // Never hold the event loop open; the exit hook is what guarantees the write.
     this._timer.unref?.();
+  }
+
+  /** @returns {boolean} */
+  _shardsDirty() {
+    return (
+      this._dirtyMessageIds.size > 0 ||
+      this._deletedMessageIds.size > 0 ||
+      this._dirtyWorkLogIds.size > 0 ||
+      this._deletedWorkLogIds.size > 0
+    );
+  }
+
+  /** @returns {number} ms until the envelope may be written again (0 = now) */
+  _envelopeWait() {
+    return Math.max(
+      0,
+      this._lastEnvelopeWriteAt + ENVELOPE_THROTTLE_MS - Date.now(),
+    );
   }
 
   /**
@@ -1238,6 +1344,8 @@ class Store {
    * A flush that turns stale mid-flight (a synchronous saveNow bumping
    * `_writeGen`) drops its tmp files instead of renaming over newer data.
    * An unrelated later `_dirty` does not invalidate this shard snapshot.
+   * The envelope rides along only when its throttle window is open (or the
+   * flush deletes a shard); otherwise this writes dirty shards alone.
    * Never throws: failures re-mark dirty so the next save()/exit hook retries.
    */
   _flushAsync() {
@@ -1247,8 +1355,21 @@ class Store {
       return;
     }
     if (!this._dirty) return;
+    // Deletes commit together with the envelope, so a crash cannot leave a
+    // thread row whose transcript is already gone. They are rare.
+    const hasDeletes =
+      this._deletedMessageIds.size > 0 || this._deletedWorkLogIds.size > 0;
+    const writeEnvelope =
+      this._envelopeDirty && (hasDeletes || this._envelopeWait() === 0);
+    if (!writeEnvelope && !this._shardsDirty()) {
+      // Only a throttled envelope is pending: wake when its window opens.
+      if (this._envelopeDirty) this._scheduleNextFlush();
+      else this._dirty = false;
+      return;
+    }
     this._flushing = true;
-    this._dirty = false;
+    if (writeEnvelope) this._envelopeDirty = false;
+    this._dirty = this._envelopeDirty;
     const gen = this._writeGen;
     const snapshot = this._snapshotDirtyShards();
     this._inflightShardIds = new Set(
@@ -1263,8 +1384,10 @@ class Store {
     this._inflightDeletedWorkLogIds = new Set(
       snapshot.deleted.filter((d) => d.kind === "worklogs").map((d) => d.id),
     );
-    const payload = this._serialize();
-    const envelopeTmp = `${this.filePath}.${process.pid}.${++this._atomicSeq}.tmp`;
+    const payload = writeEnvelope ? this._serialize() : null;
+    const envelopeTmp = writeEnvelope
+      ? `${this.filePath}.${process.pid}.${++this._atomicSeq}.tmp`
+      : null;
     const shardTmps = snapshot.writes.map((w) => ({
       id: w.id,
       kind: w.kind,
@@ -1294,7 +1417,7 @@ class Store {
             await handle.close();
           }
         };
-        await writeTmp(envelopeTmp, payload);
+        if (envelopeTmp) await writeTmp(envelopeTmp, payload);
         for (const s of shardTmps) await writeTmp(s.tmp, s.json);
         // Synchronous commit: saveNow cannot interleave inside this block.
         // A later unrelated `_dirty` (settings, lastVisitedAt, …) does not
@@ -1315,9 +1438,13 @@ class Store {
             else this._messageShards.add(s.id);
           }
           if (failedDeletes.length === 0) {
-            fs.renameSync(envelopeTmp, this.filePath);
+            if (envelopeTmp) {
+              fs.renameSync(envelopeTmp, this.filePath);
+              this._lastEnvelopeWriteAt = Date.now();
+            }
           } else {
             this._dirty = true;
+            if (writeEnvelope) this._envelopeDirty = true;
             for (const d of failedDeletes) {
               if (d.kind === "worklogs") this._deletedWorkLogIds.add(d.id);
               else this._deletedMessageIds.add(d.id);
@@ -1328,6 +1455,7 @@ class Store {
       } catch (err) {
         if (this._writeGen === gen) {
           this._dirty = true;
+          if (writeEnvelope) this._envelopeDirty = true;
           for (const w of snapshot.writes) {
             if (w.kind === "worklogs") this._dirtyWorkLogIds.add(w.id);
             else this._dirtyMessageIds.add(w.id);
@@ -1341,7 +1469,7 @@ class Store {
           );
         }
       } finally {
-        await fs.promises.unlink(envelopeTmp).catch(() => {});
+        if (envelopeTmp) await fs.promises.unlink(envelopeTmp).catch(() => {});
         for (const s of shardTmps) {
           await fs.promises.unlink(s.tmp).catch(() => {});
         }
@@ -1351,9 +1479,18 @@ class Store {
         this._inflightDeletedWorkLogIds = null;
         this._flushing = false;
         this._flushPromise = null;
-        if (this._dirty) this._scheduleFlush();
+        if (this._dirty) this._scheduleNextFlush();
       }
     })();
+  }
+
+  /** Shards debounce at 250 ms; an envelope-only flush waits for its window. */
+  _scheduleNextFlush() {
+    this._scheduleFlush(
+      this._shardsDirty()
+        ? this._flushDelayMs
+        : Math.max(this._flushDelayMs, this._envelopeWait()),
+    );
   }
 
   /**
@@ -1426,6 +1563,9 @@ class Store {
       );
       if (!deletesPending) {
         writeAtomicSync(this.filePath, this._serialize(), ++this._atomicSeq);
+        // Not a throttle tick: an explicit write does not delay the next
+        // debounced one (the throttle bounds the save() path only).
+        this._envelopeDirty = false;
       }
       for (const w of snapshot.writes) {
         if (!landedWrites.has(shardKey(w))) continue;
@@ -1563,6 +1703,8 @@ class Store {
       `Older messages were dropped to cap this transcript at ${MAX_MESSAGES_PER_THREAD}.`,
     );
     this._markMessagesDirty(threadId);
+    this._hydratedReads.delete(threadId);
+    this._hydratedReads.set(threadId, true);
   }
 
   /**
@@ -2049,4 +2191,6 @@ module.exports = {
   WORKLOG_OVERFLOW_SLACK,
   SAVE_DEBOUNCE_MS,
   SAVE_DEBOUNCE_MAX_MS,
+  ENVELOPE_THROTTLE_MS,
+  MAX_HYDRATED_THREADS,
 };
