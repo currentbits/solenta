@@ -5,12 +5,22 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
+  TRANSCRIPT_CHAR_BUDGET,
   TRANSCRIPT_WINDOW,
   clampWindowStart,
   ensureVisibleStart,
   extendWindowStart,
   initialWindowStart,
+  tailWindowStart,
 } from "../src/transcriptWindow.ts";
+import type { TimelineEntry } from "../src/timeline.ts";
+
+const entries = (sizes: number[]): TimelineEntry[] =>
+  sizes.map((n, i) => ({
+    kind: "message",
+    timestamp: i,
+    message: { id: `m${i}`, role: "assistant", text: "x".repeat(n), createdAt: i },
+  }));
 
 describe("transcriptWindow", () => {
   it("starts at 0 when the timeline fits in one window", () => {
@@ -39,5 +49,19 @@ describe("transcriptWindow", () => {
     assert.equal(clampWindowStart(380, 500), 380);
     assert.equal(clampWindowStart(380, 10), 0);
     assert.equal(clampWindowStart(380, 0), 0);
+  });
+
+  it("tail window stops at the character budget (#1475)", () => {
+    // Six 45 KB streamed answers: a 120-entry window would mount all six.
+    const big = entries([...Array(200).fill(10), ...Array(6).fill(45_000)]);
+    const start = tailWindowStart(big);
+    assert.equal(big.length - start, Math.floor(TRANSCRIPT_CHAR_BUDGET / 45_000));
+  });
+
+  it("tail window keeps the count cap for small entries and always the last entry", () => {
+    assert.equal(tailWindowStart(entries(Array(500).fill(10))), 500 - TRANSCRIPT_WINDOW);
+    assert.equal(tailWindowStart(entries(Array(40).fill(10))), 0);
+    const huge = entries([10, 10, TRANSCRIPT_CHAR_BUDGET * 3]);
+    assert.equal(tailWindowStart(huge), 2);
   });
 });

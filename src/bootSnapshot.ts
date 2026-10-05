@@ -86,6 +86,7 @@ export function saveBootSnapshot(snap: Omit<BootSnapshot, "savedAt">): void {
  */
 export function loadCachedThreadDetail(id: string | null): ThreadDetail | null {
   if (!id) return null;
+  if (pendingDetail?.thread.id === id) return pendingDetail;
   try {
     const raw = window.localStorage.getItem(DETAIL_KEY);
     if (!raw || raw.length > MAX_SNAPSHOT_CHARS) return null;
@@ -99,11 +100,34 @@ export function loadCachedThreadDetail(id: string | null): ThreadDetail | null {
   }
 }
 
+/** Detail waiting for an idle slot; undefined when no write is scheduled. */
+let pendingDetail: ThreadDetail | null | undefined;
+/** Longest an idle write may wait on a renderer that never goes idle. */
+const IDLE_WRITE_TIMEOUT_MS = 2000;
+
+/**
+ * Stringifying a big transcript costs ~17 ms (#1475), so the write waits for
+ * an idle slot. The key holds one thread, so saves before that slot coalesce
+ * into one write of the latest detail.
+ */
 export function saveCachedThreadDetail(d: ThreadDetail | null): void {
-  try {
-    if (d == null) window.localStorage.removeItem(DETAIL_KEY);
-    else window.localStorage.setItem(DETAIL_KEY, JSON.stringify(d));
-  } catch {
-    // Quota/private mode: a switch just shows the empty pane until the fetch.
+  const scheduled = pendingDetail !== undefined;
+  pendingDetail = d;
+  if (scheduled) return;
+  const write = () => {
+    const next = pendingDetail;
+    pendingDetail = undefined;
+    try {
+      if (next == null) window.localStorage.removeItem(DETAIL_KEY);
+      else window.localStorage.setItem(DETAIL_KEY, JSON.stringify(next));
+    } catch {
+      // Quota/private mode: a switch just shows the empty pane until the fetch.
+    }
+  };
+  // Safari (web mode) has no requestIdleCallback.
+  if (typeof window.requestIdleCallback === "function") {
+    window.requestIdleCallback(write, { timeout: IDLE_WRITE_TIMEOUT_MS });
+  } else {
+    window.setTimeout(write, 0);
   }
 }

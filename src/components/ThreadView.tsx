@@ -87,7 +87,7 @@ import {
 import {
   clampWindowStart,
   ensureVisibleStart,
-  initialWindowStart,
+  tailWindowStart,
 } from "../transcriptWindow";
 import { lastUserMessage } from "../retryTurn";
 import {
@@ -985,12 +985,14 @@ export const ThreadView = memo(function ThreadView({
 
   /**
    * One integer: index of the first mounted timeline entry. Thread switches
-   * reset to the tail window; streaming appends leave it alone so the top
-   * does not creep; Show earlier / revealMessageId only move it down.
+   * reset to the tail window. Appends while stuck to the bottom advance it so
+   * the mounted tail stays bounded (#1475); scrolled up, it stays put so the
+   * content being read does not move. Show earlier / revealMessageId only
+   * move it down.
    */
   const [windowThreadId, setWindowThreadId] = useState(threadId);
   const [windowStart, setWindowStart] = useState(() =>
-    initialWindowStart(timeline.length),
+    tailWindowStart(timeline),
   );
   const revealTargetId = revealMessageId ?? jumpMessageId;
   const revealIndex = useMemo(() => {
@@ -1004,8 +1006,10 @@ export const ThreadView = memo(function ThreadView({
   const start = clampWindowStart(
     ensureVisibleStart(
       threadId !== windowThreadId
-        ? initialWindowStart(timeline.length)
-        : windowStart,
+        ? tailWindowStart(timeline)
+        : stickToBottom.current
+          ? Math.max(windowStart, tailWindowStart(timeline))
+          : windowStart,
       revealIndex,
     ),
     timeline.length,
@@ -1014,7 +1018,7 @@ export const ThreadView = memo(function ThreadView({
     setWindowThreadId(threadId);
     setWindowStart(start);
     setJumpMessageId(null);
-  } else if (start < windowStart) {
+  } else if (start !== windowStart) {
     setWindowStart(start);
   }
 

@@ -304,3 +304,48 @@ describe("render-first boot (#364)", () => {
     }
   });
 });
+
+describe("cached thread detail write (#1475)", () => {
+  it("writes on idle, coalescing saves into one write of the latest detail", async () => {
+    const shell = await mount(<div />);
+    const w = window as unknown as {
+      requestIdleCallback?: (cb: () => void, opts?: { timeout?: number }) => number;
+    };
+    const prevIdle = w.requestIdleCallback;
+    const idle: Array<{ cb: () => void; timeout?: number }> = [];
+    w.requestIdleCallback = (cb, opts) => idle.push({ cb, timeout: opts?.timeout });
+    // Assigning onto the Storage instance would just store an item.
+    const store = Object.getPrototypeOf(window.localStorage) as Storage;
+    const prevSet = store.setItem;
+    const writes: string[] = [];
+    store.setItem = function (key: string, value: string) {
+      if (key === DETAIL_KEY) writes.push(value);
+      return prevSet.call(this, key, value);
+    };
+    try {
+      const { saveCachedThreadDetail, loadCachedThreadDetail } = await import(
+        "../src/bootSnapshot"
+      );
+      const first = detail({ thread: thread({ id: "t-idle" }), messages: [marker("FIRST")] });
+      const second = detail({ thread: thread({ id: "t-idle" }), messages: [marker("SECOND")] });
+      saveCachedThreadDetail(first);
+      saveCachedThreadDetail(second);
+      assert.equal(writes.length, 0, "no synchronous setItem on the save path");
+      assert.equal(idle.length, 1, "saves before the idle slot share one callback");
+      assert.ok(idle[0]!.timeout! > 0, "the idle write has a timeout fallback");
+      assert.equal(
+        loadCachedThreadDetail("t-idle")?.messages[0]?.text,
+        "SECOND",
+        "a load before the write sees the pending detail",
+      );
+      idle[0]!.cb();
+      assert.equal(writes.length, 1);
+      assert.ok(writes[0]!.includes("SECOND") && !writes[0]!.includes("FIRST"));
+    } finally {
+      store.setItem = prevSet;
+      if (prevIdle) w.requestIdleCallback = prevIdle;
+      else delete w.requestIdleCallback;
+      shell.unmount();
+    }
+  });
+});

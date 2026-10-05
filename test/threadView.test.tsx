@@ -2371,6 +2371,97 @@ describe("ThreadView stick-to-bottom on content resize (issue #408)", () => {
     );
     m.unmount();
   });
+
+  /**
+   * Issue #1475: reading scrollHeight in the pin layout effect forced a
+   * synchronous layout on every streamed push. Plain appends now leave the
+   * pin to the ResizeObserver; #607's two cases still pin before paint.
+   */
+  it("pins thread switches and permission cards before paint but leaves appends to the ResizeObserver (#1475)", async () => {
+    const pending: PendingPermissionInfo = {
+      requestId: "req-1475",
+      toolName: "Bash",
+      summary: "Bash: npm test",
+      input: '{"command":"npm test"}',
+      command: "npm test",
+    };
+    const threadB = detail({
+      thread: thread({ id: "t2", title: "other thread" }),
+      messages: [msg({ id: "b1", role: "user", text: "THREAD_B", createdAt: 10 })],
+    });
+
+    function Harness() {
+      const [open, setOpen] = useState(sizedDetail());
+      return (
+        <div>
+          <button
+            type="button"
+            data-append=""
+            onClick={() =>
+              setOpen((prev) => ({
+                ...prev,
+                messages: [
+                  ...prev.messages,
+                  msg({ id: "a2", role: "assistant", text: "APPENDED", createdAt: 30 }),
+                ],
+              }))
+            }
+          >
+            append
+          </button>
+          <button
+            type="button"
+            data-perm=""
+            onClick={() => setOpen((prev) => ({ ...prev, pendingPermission: pending }))}
+          >
+            perm
+          </button>
+          <button type="button" data-switch="" onClick={() => setOpen(threadB)}>
+            switch
+          </button>
+          {view({ detail: open })}
+        </div>
+      );
+    }
+
+    const m = await mount(<Harness />);
+    const body = m.query(".body") as HTMLElement;
+    const layout = { clientHeight: 400, scrollHeight: 1000, scrollTop: 600 };
+    fakeScrollMetrics(body, layout);
+    let reads = 0;
+    Object.defineProperty(body, "scrollHeight", {
+      configurable: true,
+      get: () => {
+        reads++;
+        return layout.scrollHeight;
+      },
+    });
+
+    layout.scrollHeight = 1400;
+    await inAct(async () => {
+      (m.query("[data-append]") as HTMLButtonElement).click();
+    });
+    assert.ok(m.text().includes("APPENDED"));
+    assert.equal(reads, 0, "a plain append must not force a layout read");
+    fireObservedResizes();
+    assert.equal(layout.scrollTop, 1400, "the ResizeObserver pins the append");
+
+    layout.scrollHeight = 2400;
+    await inAct(async () => {
+      (m.query("[data-perm]") as HTMLButtonElement).click();
+    });
+    assert.ok(m.query("[data-permission-card]"));
+    assert.equal(layout.scrollTop, 2400, "a permission card pins before paint");
+
+    layout.scrollHeight = 3500;
+    await inAct(async () => {
+      (m.query("[data-switch]") as HTMLButtonElement).click();
+    });
+    assert.ok(m.text().includes("THREAD_B"));
+    assert.equal(m.query(".body"), body, "a direct switch keeps the scroll body");
+    assert.equal(layout.scrollTop, 3500, "a thread switch pins before paint");
+    m.unmount();
+  });
 });
 
 /**
@@ -3011,53 +3102,110 @@ describe("ThreadView transcript windowing (issue #564)", () => {
     m.unmount();
   });
 
-  it("appends a streamed message at the tail without revealing earlier entries", async () => {
-    const n = 500;
+  /** Thread of `n` bulk messages plus a button that appends one streamed tail message. */
+  function streamHarness(n: number) {
     const initial = bulkMessages(n);
-
-    function StreamHarness() {
+    let appended = 0;
+    return function StreamHarness() {
       const [messages, setMessages] = useState(initial);
       return (
         <div>
           <button
             type="button"
             data-append-stream=""
-            onClick={() =>
+            onClick={() => {
+              appended++;
+              const k = appended;
               setMessages((prev) => [
                 ...prev,
                 msg({
-                  id: "streamed-tail",
+                  id: `streamed-tail-${k}`,
                   role: "user",
-                  text: "STREAMED_TAIL",
-                  createdAt: n + 1,
+                  text: `STREAMED_TAIL_${k}`,
+                  createdAt: n + k,
                 }),
-              ])
-            }
+              ]);
+            }}
           >
             append
           </button>
           {view({ detail: detail({ messages }) })}
         </div>
       );
-    }
+    };
+  }
 
-    const m = await mount(<StreamHarness />);
-    assert.ok(!m.html().includes("#0#"), "pre-stream: oldest is windowed out");
-    assert.ok(m.html().includes("#499#"), "pre-stream: tail is mounted");
+  it("advances the window start on appends while stuck to the bottom (#1475)", async () => {
+    const n = 500;
+    const Harness = streamHarness(n);
+    const m = await mount(<Harness />);
+    assert.ok(m.html().includes("#380#"), "pre-stream: head of the window mounted");
     await m.click(m.query("[data-append-stream]"));
+    await m.click(m.query("[data-append-stream]"));
+    assert.ok(m.text().includes("STREAMED_TAIL_2"), "the streamed message mounts at the tail");
     assert.ok(
-      m.text().includes("STREAMED_TAIL"),
-      "the streamed message mounts at the tail",
+      !m.html().includes("#380#") && !m.html().includes("#381#"),
+      "a pinned append drops the oldest mounted entries",
     );
     assert.ok(
-      !m.html().includes("#0#"),
-      "append must not extend the top of the window",
-    );
-    assert.ok(
-      m.text().includes("Show earlier — 380 messages"),
-      "hidden count stays put across a tail append",
+      m.text().includes("Show earlier — 382 messages"),
+      "the mounted tail stays at TRANSCRIPT_WINDOW entries",
     );
     m.unmount();
+  });
+
+  it("keeps the window start on appends after the user scrolled up (#1475)", async () => {
+    const n = 500;
+    const Harness = streamHarness(n);
+    const m = await mount(<Harness />);
+    const body = m.query(".body") as HTMLElement;
+    fakeScrollMetrics(body, { clientHeight: 400, scrollHeight: 20_000, scrollTop: 100 });
+    body.dispatchEvent(new Event("scroll"));
+    await m.click(m.query("[data-append-stream]"));
+    assert.ok(m.text().includes("STREAMED_TAIL_1"));
+    assert.ok(
+      m.html().includes("#380#"),
+      "content above a reader who scrolled up must not be unmounted",
+    );
+    assert.ok(m.text().includes("Show earlier — 380 messages"));
+    m.unmount();
+  });
+
+  it("Show earlier still pages older entries in after the head was trimmed (#1475)", async () => {
+    const n = 500;
+    const Harness = streamHarness(n);
+    const m = await mount(<Harness />);
+    await m.click(m.query("[data-append-stream]"));
+    assert.ok(m.text().includes("Show earlier — 381 messages"));
+    await m.click(m.query("[data-show-earlier]"));
+    assert.ok(m.text().includes("Show earlier — 261 messages"));
+    assert.ok(m.html().includes("#261#") && m.html().includes("#380#"));
+    // Show earlier unsticks, so the next append must not trim it away again.
+    await m.click(m.query("[data-append-stream]"));
+    assert.ok(m.text().includes("STREAMED_TAIL_2"));
+    assert.ok(
+      m.text().includes("Show earlier — 261 messages"),
+      "paged-in entries survive an append",
+    );
+    m.unmount();
+  });
+
+  it("bounds the mounted tail by message text, not just entry count (#1475)", async () => {
+    const answers = Array.from({ length: 6 }, (_, i) =>
+      msg({
+        id: `long-${i}`,
+        role: "assistant",
+        text: `LONG_ANSWER_${i} ${"word ".repeat(9_000)}`,
+        createdAt: 10 + i,
+      }),
+    );
+    const html = render({ detail: detail({ messages: answers }) });
+    assert.ok(html.includes("LONG_ANSWER_5") && html.includes("LONG_ANSWER_4"));
+    assert.ok(
+      !html.includes("LONG_ANSWER_0"),
+      "six 45 KB answers must not all mount",
+    );
+    assert.ok(html.includes("data-show-earlier"));
   });
 
   it("extends the window to include a jump-to-anchor above it", async () => {

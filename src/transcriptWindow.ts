@@ -3,9 +3,37 @@
  * at the bottom, so we mount the last N timeline entries and grow upward
  * on demand. State is one integer (the first visible index).
  */
+import type { TimelineEntry } from "./timeline";
 
 /** Last N entries on first paint. Covers several screens of a typical thread. */
 export const TRANSCRIPT_WINDOW = 120;
+
+/**
+ * Message text the tail window keeps mounted (#1475). A count alone let six
+ * streamed 45 KB answers grow one open transcript to 62k DOM nodes; rendered
+ * markdown runs ~140 nodes per KB, so this caps the window near 15k nodes.
+ * Tool output is not counted: tool cards mount collapsed.
+ */
+export const TRANSCRIPT_CHAR_BUDGET = 100_000;
+
+/**
+ * First index of the tail window: at most `windowSize` entries and at most
+ * `budget` characters of message text, but always the last entry.
+ */
+export function tailWindowStart(
+  timeline: readonly TimelineEntry[],
+  windowSize = TRANSCRIPT_WINDOW,
+  budget = TRANSCRIPT_CHAR_BUDGET,
+): number {
+  const min = initialWindowStart(timeline.length, windowSize);
+  let chars = 0;
+  for (let i = timeline.length - 1; i >= min; i--) {
+    const entry = timeline[i]!;
+    if (entry.kind === "message") chars += entry.message.text.length;
+    if (chars > budget && i < timeline.length - 1) return i + 1;
+  }
+  return min;
+}
 
 /** First index to mount so the tail window is N entries (0 when it all fits). */
 export function initialWindowStart(
@@ -26,8 +54,7 @@ export function extendWindowStart(
 }
 
 /**
- * Raise the window so `index` is included. Streaming appends do not call
- * this — they keep the start index and grow the tail.
+ * Lower the window start so `index` is included.
  */
 export function ensureVisibleStart(start: number, index: number): number {
   if (!Number.isFinite(index) || index < 0) return start;
