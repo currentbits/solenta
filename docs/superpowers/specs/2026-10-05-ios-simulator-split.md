@@ -127,3 +127,36 @@ await), not a verbatim move, so it is out of scope for this pass.
 - Eager-destructure check: every key a seam destructures from `ctx` is on `ctx` at that seam's call.
 - `ios-simulator*` tests and the other simulator tests alone, then the full electron suite and
   typecheck.
+
+## 6. Pass V2 result
+
+All seven rows of section 3 landed, one commit each, in table order. `ios-simulator.js` went from
+2,781 to 1,697 lines. What is left is exactly the section 4 lease state machine plus the small
+helpers it shares with the seams (`resolveThread`, `mutate`, `delay`, `logJournalWarning`, the
+`helper*`/`lease*` predicates, `discardStagedArtifactBestEffort`, `clearRecordingJournalBestEffort`,
+`finalizeRecording`, `finalizeIfRecorderClosed`). The pass stops there, as section 4 says.
+
+| # | Module | Lines |
+|---|---|---|
+| 1 | `ios-simulator-journal.js` | 209 |
+| 2 | `ios-simulator-devices.js` | 153 |
+| 3 | `ios-simulator-app-bundle.js` | 165 |
+| 4 | `ios-simulator-recovery.js` | 257 |
+| 5 | `ios-simulator-recording.js` | 269 |
+| 6 | `ios-simulator-helper.js` | 135 |
+| 7 | `ios-simulator-input.js` | 278 |
+
+Where the result differs from the table above:
+
+- No seam reads or writes a factory `let`, so no ctx getter/setter was needed. `journalTail` moved
+  into `createJournal` with its only owner and is still initialized right after the other `let`s.
+- `runRecordingFinalization` is also returned by `createRecording`: `finalizeRecording` stays (it
+  retires `recording`/`finishedRecording`) and calls it.
+- `callProcess`, `recordingFailed`, `helperDisconnected` and `recoverySummary` are module-level
+  helpers shared with ios-simulator.js, so they go through ctx. Helpers used by one seam only
+  (`requireCoord`, `interruptRecording`, `recordingFinalizeFailed`, `isTrustedRecorderPrefix`,
+  `isTrustedSimctlPath`) and their constants moved into that seam.
+- Pure parse.js imports and `ios-simulator-protocol.js` are required directly by the seams.
+
+The checks for each commit were the ones in section 5, plus a free-identifier and unused-binding scan
+of every file. The scan caught the `runRecordingFinalization` back-reference before the tests did.

@@ -6,92 +6,39 @@ const crypto = require("node:crypto");
 const childProcess = require("node:child_process");
 const {
   createIOSSimulatorProcess,
-  recordingArgumentTail,
 } = require("./ios-simulator-process.js");
 const { createIOSSimulatorToolchain } = require("./ios-simulator-toolchain.js");
 const protocol = require("./ios-simulator-protocol.js");
+const { createJournal } = require("./ios-simulator-journal.js");
+const { createDevices } = require("./ios-simulator-devices.js");
+const { createAppBundle } = require("./ios-simulator-app-bundle.js");
+const { createRecovery } = require("./ios-simulator-recovery.js");
+const { createRecording } = require("./ios-simulator-recording.js");
+const { createHelper } = require("./ios-simulator-helper.js");
+const { createInput } = require("./ios-simulator-input.js");
 const worktrees = require("./worktrees.js");
 const {
   BUNDLE_ID_RE,
   IOSSimulatorError,
   iosError,
-  remapToolchainError,
   parseXcodeVersion,
   parseSimulatorList,
   capabilitySnapshot,
-  adapterFailureText,
-  runActiveDeveloperDir,
-  runXcodeVersion,
-  runFirstLaunchStatus,
-  runFindSimctl,
-  runListDevices,
   validateUserDataPath,
-  validateCandidateDeveloperDir,
-  validatePersistedDeveloperDir,
-  isWithin,
-  invalidAppPath,
   invalidBundle,
   leaseStale,
   validateSimulatorUrl,
   parseLaunchPid,
   helperSpawnArgs,
-  helperArgumentTail,
-  isTrustedHelperPrefix,
-  parseLeaseJournal,
-  validateRelativeAppPath,
 } = require("./ios-simulator-parse.js");
 
-const BUNDLE_WALK_LIMIT = 20_000;
-
-const TAP_HOLD_MS = 50;
-const SWIPE_MIN_DURATION_MS = 50;
-const SWIPE_MAX_DURATION_MS = 2000;
-const SWIPE_MAX_MOVES = 16;
-const TYPE_TEXT_MAX_BYTES = 4096;
-const HELPER_READY_TIMEOUT_MS = 5_000;
-const HELPER_RPC_TIMEOUT_MS = 10_000;
-const COORD_ABS_MAX = 1e6;
-const HARDWARE_BUTTONS = new Set([
-  "home",
-  "lock",
-  "volumeUp",
-  "volumeDown",
-  "action",
-  "shake",
-]);
-const SIMULATOR_KEY_USAGE = Object.freeze({
-  enter: 0x28,
-  escape: 0x29,
-  backspace: 0x2a,
-  tab: 0x2b,
-  space: 0x2c,
-  delete: 0x4c,
-  pageUp: 0x4b,
-  pageDown: 0x4e,
-  home: 0x4a,
-  end: 0x4d,
-  arrowRight: 0x4f,
-  arrowLeft: 0x50,
-  arrowDown: 0x51,
-  arrowUp: 0x52,
-});
 const DEFAULT_SANDBOX_PROFILE = path.resolve(
   __dirname,
   "../native/ios-simulator-helper/Resources/helper.sb",
 );
 
-const MAX_RECORDING_BYTES = 250 * 1024 * 1024;
-const RECORDING_POLL_INTERVAL_MS = 1_000;
 const RECORDING_MAX_DURATION_MS = 5 * 60 * 1_000;
-const RECORDING_FINALIZE_TIMEOUT_MS = 10_000;
-const RECOVERY_SIGNAL_GRACE_MS = 2_000;
-const QUARANTINE_MAX_ATTEMPTS = 8;
 const ARTIFACT_STAGING_SEGMENTS = ["run-artifacts", ".staging"];
-// simctl reports an absent or already-shut-down device through these phrases.
-// Recovery inherited from a failed boot intent must tolerate them instead of
-// wedging the journal forever.
-const DEVICE_ALREADY_OFF_RE =
-  /current state:\s*Shutdown|already shut ?down|not booted|no devices are booted|invalid device|device not found/i;
 
 function cloneLease(value) {
   return value ? { ...value } : null;
@@ -187,16 +134,6 @@ function failHelperWaiters(session, err) {
   session.pending.clear();
 }
 
-function requireCoord(value, label) {
-  if (typeof value !== "number" || !Number.isFinite(value)) {
-    throw iosError("unexpected", `Simulator ${label} is invalid`);
-  }
-  if (Math.abs(value) > COORD_ABS_MAX) {
-    throw iosError("unexpected", `Simulator ${label} is invalid`);
-  }
-  return value;
-}
-
 function viewerStreamInfoFromSession(session) {
   if (!session || !session.streamInfo) {
     throw iosError(
@@ -234,13 +171,6 @@ function recordingFailed() {
   );
 }
 
-function recordingFinalizeFailed() {
-  return iosError(
-    "recording_finalize_failed",
-    "Failed to finalize the simulator recording",
-  );
-}
-
 function noActiveRecording() {
   return iosError("recording_failed", "No simulator recording is active");
 }
@@ -270,42 +200,6 @@ function createRecordingContext(fields) {
     pollTimer: null,
     autoStopTimer: null,
   };
-}
-
-function interruptRecording(context) {
-  if (context.interrupted) return;
-  context.interrupted = true;
-  // A recorder already seen exiting is never signalled again: there is
-  // nothing to interrupt and its pid may already belong to someone else.
-  if (context.closeObserved !== null) return;
-  if (!context.handle) return;
-  try {
-    context.handle.interrupt();
-  } catch {
-    // Already gone; the bounded close wait decides whether to escalate.
-  }
-}
-
-// `xcrun` resolves `simctl` through a chain, so `ps -o command=` reports the
-// live recorder under one of a few executables: `/usr/bin/xcrun simctl`, a
-// `/bin/bash` wrapper in front of the developer-dir `simctl`, or the
-// CoreSimulator `simctl` binary itself. Only those shapes are trusted.
-function isTrustedSimctlPath(candidate) {
-  if (!candidate.startsWith("/")) return false;
-  if (candidate.includes(" ")) return false;
-  if (candidate.includes("/../")) return false;
-  if (candidate.endsWith("/usr/bin/simctl")) return true;
-  if (!candidate.endsWith("/bin/simctl")) return false;
-  return candidate.includes("CoreSimulator");
-}
-
-function isTrustedRecorderPrefix(prefix) {
-  if (prefix === "/usr/bin/xcrun simctl") return true;
-  const wrapper = "/bin/bash ";
-  const executable = prefix.startsWith(wrapper)
-    ? prefix.slice(wrapper.length)
-    : prefix;
-  return isTrustedSimctlPath(executable);
 }
 
 function recoverySummary(fields = {}) {
@@ -387,6 +281,115 @@ function createIOSSimulatorService({
   /** @type {object | null} */
   let helper = null;
 
+  // Shared context for the seam modules (`electron/ios-simulator-<seam>.js`,
+  // #1447). Built after the derived consts and the `let`s; seam factories
+  // destructure only what is on it when they run (see the header of
+  // electron/runner-watchdogs.js). Hoisted function declarations of this
+  // factory exist already, so they go on the literal.
+  const ctx = {
+    fsApi,
+    randomUUID,
+    now,
+    leaseJournalFile,
+    processAdapter,
+    preferencesFile,
+    resolvedToolchain,
+    resolveThread,
+    helperCapsForSnapshot,
+    store,
+    prepareThreadWorktree,
+    resolvedWorktreeBase,
+    broadcast,
+    stagingRoot,
+    sandboxProfilePath,
+    signalPid,
+    delay,
+    recoverySummary,
+    setTimer,
+    clearTimer,
+    artifactStore,
+    callProcess,
+    recordingFailed,
+    discardStagedArtifactBestEffort,
+    clearRecordingJournalBestEffort,
+    finalizeRecording,
+    finalizeIfRecorderClosed,
+    streamBroker,
+    getStreamBroker,
+    helperSessionWritable,
+    helperDisconnected,
+    mutate,
+    withHelper,
+    assertHelperSession,
+    touchLeaseActivityBestEffort,
+  };
+
+  const {
+    readPreferences,
+    writePreferences,
+    writeJournal,
+    removeJournal,
+    readLeaseJournalRecord,
+    quarantineJournal,
+    removeJournalStrict,
+  } = createJournal(ctx);
+  // createDevices destructures these eagerly.
+  Object.assign(ctx, { readPreferences, writePreferences });
+
+  const {
+    selectedDeveloperDirectory,
+    discoverRaw,
+    getCapabilities,
+    selectDeveloperDirectory,
+    listDevices,
+    discoverToolchains,
+    fingerprintToolchain,
+    ensureHelper,
+  } = createDevices(ctx);
+  // createAppBundle destructures this eagerly.
+  ctx.selectedDeveloperDirectory = selectedDeveloperDirectory;
+
+  const { prepareAppBundle } = createAppBundle(ctx);
+  // createRecovery destructures these eagerly.
+  Object.assign(ctx, { quarantineJournal, writeJournal });
+
+  const {
+    resolveRecoveryTempPath,
+    stopRecoveredHelperProcess,
+    stopRecoveredRecordingProcess,
+    removeRecoveredTempFile,
+    trustedRecoveryDeveloperDir,
+    shutdownRecoveredDevice,
+    quarantineSummary,
+    retainJournalWithoutRecording,
+  } = createRecovery(ctx);
+
+  const {
+    observeRecordingClose,
+    scheduleRecordingPoll,
+    runRecordingFinalization,
+    beginFinalization,
+  } = createRecording(ctx);
+
+  const {
+    currentStreamBroker,
+    disconnectHelperSession,
+    waitForHelperReady,
+    helperRpcWithSession,
+  } = createHelper(ctx);
+  // createInput destructures this eagerly.
+  ctx.helperRpcWithSession = helperRpcWithSession;
+
+  const {
+    tap,
+    swipe,
+    typeText,
+    pressButton,
+    sendInput,
+    accessibility,
+    scrollTo,
+  } = createInput(ctx);
+
   function leasePresent() {
     return lease !== null;
   }
@@ -455,343 +458,6 @@ function createIOSSimulatorService({
     return { thread, project, threadId: normalizedThreadId };
   }
 
-  async function readPreferences(file) {
-    try {
-      const stat = await fsApi.promises.lstat(file);
-      if (!stat.isFile()) {
-        throw iosError("unexpected", "Simulator preferences are invalid");
-      }
-      const parsed = JSON.parse(await fsApi.promises.readFile(file, "utf8"));
-      if (!parsed || parsed.version !== 1) {
-        throw iosError("unexpected", "Simulator preferences are invalid");
-      }
-      const developerDir = validatePersistedDeveloperDir(parsed.developerDir);
-      return { version: 1, developerDir };
-    } catch (error) {
-      if (error instanceof IOSSimulatorError) throw error;
-      if (error && error.code === "ENOENT") return null;
-      throw iosError("unexpected", "Simulator preferences are invalid");
-    }
-  }
-
-  async function syncParentDirectory(file) {
-    try {
-      const parent = path.dirname(file);
-      const handle = await fsApi.promises.open(parent, "r");
-      try {
-        await handle.sync();
-      } finally {
-        await handle.close();
-      }
-    } catch {
-      // fsync parent directory is best-effort.
-    }
-  }
-
-  async function atomicWriteJson(file, value, failureMessage) {
-    const maxAttempts = 5;
-    for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
-      const temp = `${file}.${randomUUID()}.tmp`;
-      let handle;
-      try {
-        await fsApi.promises.mkdir(path.dirname(file), { recursive: true });
-        handle = await fsApi.promises.open(temp, "wx", 0o600);
-        await handle.writeFile(`${JSON.stringify(value)}\n`, "utf8");
-        await handle.sync();
-        await handle.close();
-        handle = null;
-        await fsApi.promises.rename(temp, file);
-        await syncParentDirectory(file);
-        return;
-      } catch (error) {
-        if (handle) {
-          try {
-            await handle.close();
-          } catch {
-            // best-effort
-          }
-        }
-        await fsApi.promises.unlink(temp).catch(() => {});
-        if (error instanceof IOSSimulatorError) throw error;
-        if (attempt + 1 >= maxAttempts) {
-          throw iosError("unexpected", failureMessage);
-        }
-      }
-    }
-  }
-
-  async function writePreferences(file, value) {
-    return atomicWriteJson(file, value, "Simulator preferences are invalid");
-  }
-
-  // Journal mutations run one at a time in call order. Takeover invalidates the
-  // lease synchronously and then writes outside the `mutate` queue, so without
-  // this an in-flight write from the superseded generation could win the rename
-  // race and put the old owner back on disk. Ordering by call gives the newest
-  // record the last rename, which is what makes the identity checks in
-  // `clearRecordingJournalBestEffort` and the intent rollback sufficient.
-  let journalTail = Promise.resolve();
-
-  function enqueueJournalOp(op) {
-    const run = journalTail.then(op, op);
-    journalTail = run.then(
-      () => undefined,
-      () => undefined,
-    );
-    return run;
-  }
-
-  async function writeJournal(value) {
-    return enqueueJournalOp(() =>
-      atomicWriteJson(
-        leaseJournalFile,
-        value,
-        "Simulator lease journal is invalid",
-      ),
-    );
-  }
-
-  async function removeJournal() {
-    try {
-      await enqueueJournalOp(() => fsApi.promises.unlink(leaseJournalFile));
-    } catch {
-      // Best-effort: an in-memory lease release still succeeds if the
-      // journal file cannot be removed; a corrupt/absent journal is
-      // handled by future crash recovery, never by re-erasing a device.
-    }
-  }
-
-  async function selectedDeveloperDirectory() {
-    const saved = await readPreferences(preferencesFile);
-    if (saved) {
-      return saved.developerDir;
-    }
-    return String(
-      await runActiveDeveloperDir(() => processAdapter.activeDeveloperDir()),
-    ).trim();
-  }
-
-  async function discoverRaw(developerDir) {
-    const dir = developerDir ?? (await selectedDeveloperDirectory());
-    const versionText = String(
-      await runXcodeVersion(() => processAdapter.xcodeVersion(dir)),
-    ).trim();
-    await runFirstLaunchStatus(() => processAdapter.firstLaunchStatus(dir));
-    await runFindSimctl(() => processAdapter.findSimctl(dir));
-    let doc;
-    try {
-      const listText = await runListDevices(() => processAdapter.listDevices(dir));
-      doc = JSON.parse(listText);
-    } catch (err) {
-      if (err instanceof IOSSimulatorError) throw err;
-      throw iosError("unexpected", "Simulator device list is invalid");
-    }
-    return {
-      developerDir: dir,
-      xcode: parseXcodeVersion(versionText),
-      ...parseSimulatorList(doc),
-    };
-  }
-
-  async function discoverDevices() {
-    return (await discoverRaw()).devices;
-  }
-
-  async function discoverCapabilities() {
-    const raw = await discoverRaw();
-    return capabilitySnapshot(raw, helperCapsForSnapshot());
-  }
-
-  async function validateDeveloperDirectory(developerDir) {
-    const selected = validateCandidateDeveloperDir(developerDir);
-    return discoverRaw(selected);
-  }
-
-  async function validateAndPersistDeveloperDirectory(developerDir) {
-    const raw = await validateDeveloperDirectory(developerDir);
-    await writePreferences(preferencesFile, {
-      version: 1,
-      developerDir: raw.developerDir,
-    });
-    return capabilitySnapshot(raw);
-  }
-
-  async function getCapabilities(input) {
-    const threadId = input && input.threadId;
-    resolveThread(threadId);
-    return discoverCapabilities();
-  }
-
-  async function selectDeveloperDirectory(input) {
-    const threadId = input && input.threadId;
-    const developerDir = input && input.developerDir;
-    resolveThread(threadId);
-    return validateAndPersistDeveloperDirectory(developerDir);
-  }
-
-  async function listDevices(input) {
-    const threadId = input && input.threadId;
-    resolveThread(threadId);
-    return discoverDevices();
-  }
-
-  async function discoverToolchains(input) {
-    resolveThread(input && input.threadId);
-    const developerDir = await selectedDeveloperDirectory();
-    try {
-      return await resolvedToolchain.discoverToolchains(developerDir);
-    } catch (err) {
-      throw remapToolchainError(err);
-    }
-  }
-
-  async function fingerprintToolchain(input) {
-    resolveThread(input && input.threadId);
-    const developerDir = await selectedDeveloperDirectory();
-    try {
-      return await resolvedToolchain.fingerprintToolchain(developerDir);
-    } catch (err) {
-      throw remapToolchainError(err);
-    }
-  }
-
-  async function ensureHelper(input) {
-    resolveThread(input && input.threadId);
-    const developerDir = await selectedDeveloperDirectory();
-    try {
-      return await resolvedToolchain.ensureHelper(developerDir);
-    } catch (err) {
-      throw remapToolchainError(err);
-    }
-  }
-
-  async function resolveExecutionRoot(inputThreadId) {
-    let { thread, project, threadId } = resolveThread(inputThreadId);
-    const isolated = Boolean(thread.pendingWorktree || thread.worktreePath);
-    if (isolated) {
-      await prepareThreadWorktree({
-        store,
-        threadId,
-        worktreeBase: resolvedWorktreeBase,
-        broadcast,
-      });
-      thread = store.getThread(threadId);
-      if (!thread || !thread.worktreePath) {
-        throw iosError("worktree_missing", "Thread worktree is unavailable");
-      }
-    }
-    const root = isolated ? thread.worktreePath : project.path;
-    let canonical;
-    try {
-      canonical = await fsApi.promises.realpath(root);
-    } catch {
-      if (isolated) {
-        throw iosError("worktree_missing", "Thread worktree is unavailable");
-      }
-      throw iosError("unexpected", "Project path is unavailable");
-    }
-    return { thread, project, root: canonical, threadId };
-  }
-
-  async function validateBundleWithinRoot(root, bundlePath) {
-    const infoPlistPath = path.join(bundlePath, "Info.plist");
-    let infoStat;
-    try {
-      infoStat = await fsApi.promises.lstat(infoPlistPath);
-    } catch {
-      throw invalidBundle();
-    }
-    if (!infoStat.isFile() || infoStat.isSymbolicLink()) {
-      throw invalidBundle();
-    }
-
-    const queue = [bundlePath];
-    let entries = 0;
-    while (queue.length > 0) {
-      const current = queue.shift();
-      let names;
-      try {
-        names = await fsApi.promises.readdir(current);
-      } catch {
-        throw invalidBundle();
-      }
-      for (const name of names) {
-        entries += 1;
-        if (entries > BUNDLE_WALK_LIMIT) throw invalidBundle();
-        const entryPath = path.join(current, name);
-        let stat;
-        try {
-          stat = await fsApi.promises.lstat(entryPath);
-        } catch {
-          throw invalidBundle();
-        }
-        if (stat.isSymbolicLink()) {
-          let target;
-          try {
-            target = await fsApi.promises.realpath(entryPath);
-          } catch {
-            throw invalidBundle();
-          }
-          if (!isWithin(root, target)) throw invalidBundle();
-          let targetStat;
-          try {
-            targetStat = await fsApi.promises.lstat(target);
-          } catch {
-            throw invalidBundle();
-          }
-          if (targetStat.isDirectory()) {
-            throw invalidBundle();
-          }
-          continue;
-        }
-        if (stat.isDirectory()) {
-          queue.push(entryPath);
-        }
-      }
-    }
-  }
-
-  async function prepareAppBundle(input) {
-    const threadId = input && input.threadId;
-    const relativeAppPath = input && input.relativeAppPath;
-    validateRelativeAppPath(relativeAppPath);
-    const { root } = await resolveExecutionRoot(threadId);
-    const candidate = path.resolve(root, relativeAppPath);
-    if (!isWithin(root, candidate)) throw invalidAppPath();
-    let canonical;
-    try {
-      canonical = await fsApi.promises.realpath(candidate);
-    } catch {
-      throw invalidAppPath();
-    }
-    if (!isWithin(root, canonical)) throw invalidAppPath();
-    if (!canonical.endsWith(".app")) throw invalidAppPath();
-    let bundleStat;
-    try {
-      bundleStat = await fsApi.promises.lstat(canonical);
-    } catch {
-      throw invalidAppPath();
-    }
-    if (!bundleStat.isDirectory() || bundleStat.isSymbolicLink()) {
-      throw invalidAppPath();
-    }
-    await validateBundleWithinRoot(root, canonical);
-    const developerDir = await selectedDeveloperDirectory();
-    let bundleIdText;
-    try {
-      bundleIdText = String(
-        await processAdapter.readBundleId(
-          developerDir,
-          path.join(canonical, "Info.plist"),
-        ),
-      ).trim();
-    } catch {
-      throw invalidBundle();
-    }
-    if (!BUNDLE_ID_RE.test(bundleIdText)) throw invalidBundle();
-    return Object.freeze({ bundleId: bundleIdText, appPath: canonical });
-  }
-
   function currentLeaseSnapshot() {
     if (!lease) return null;
     return leaseSnapshot(lease);
@@ -820,11 +486,6 @@ function createIOSSimulatorService({
     const generation = lastGeneration + 1;
     lastGeneration = generation;
     return generation;
-  }
-
-  function currentStreamBroker() {
-    if (typeof getStreamBroker === "function") return getStreamBroker();
-    return streamBroker;
   }
 
   function helperConnectionState() {
@@ -868,21 +529,6 @@ function createIOSSimulatorService({
       broadcast("simulator:changed", payload);
     } catch {
       // broadcast is best-effort
-    }
-  }
-
-  function disconnectHelperSession(session) {
-    session.stream = "disconnected";
-    session.input = "disconnected";
-    session.accessibility = "disconnected";
-    const broker = currentStreamBroker();
-    if (session.streamInfo && broker && typeof broker.closeSession === "function") {
-      try {
-        broker.closeSession(session.streamInfo.generation);
-      } catch {
-        // ignore
-      }
-      session.streamInfo = null;
     }
   }
 
@@ -952,83 +598,6 @@ function createIOSSimulatorService({
         // ignore
       }
     }
-  }
-
-  function waitForHelperReady(session) {
-    if (session.ready) return Promise.resolve();
-    if (session.exited) return Promise.reject(helperDisconnected());
-    return new Promise((resolve, reject) => {
-      const timer = setTimer(() => {
-        session.readyResolve = null;
-        session.readyReject = null;
-        reject(iosError("timeout", "Simulator helper did not become ready"));
-      }, HELPER_READY_TIMEOUT_MS);
-      session.readyResolve = () => {
-        clearTimer(timer);
-        resolve();
-      };
-      session.readyReject = (err) => {
-        clearTimer(timer);
-        reject(err);
-      };
-      if (session.exited) {
-        session.readyReject(helperDisconnected());
-      }
-    });
-  }
-
-  function helperRpcWithSession(session, method, payload) {
-    if (!session || !session.child) {
-      return Promise.reject(helperDisconnected());
-    }
-    const controlIn = session.child.stdio && session.child.stdio[3];
-    if (!controlIn || typeof controlIn.write !== "function") {
-      return Promise.reject(helperDisconnected());
-    }
-    if (!helperSessionWritable(session)) {
-      return Promise.reject(leaseStale());
-    }
-    const id = session.nextId;
-    session.nextId += 1;
-    const frame = {
-      id,
-      method,
-      generation: session.generation,
-      token: session.controlToken,
-      ...(payload && typeof payload === "object" ? payload : {}),
-    };
-    if (payload && typeof payload === "object") {
-      frame.payload = payload;
-    }
-    return new Promise((resolve, reject) => {
-      const timer = setTimer(() => {
-        session.pending.delete(id);
-        reject(iosError("timeout", "Simulator helper did not respond"));
-      }, HELPER_RPC_TIMEOUT_MS);
-      session.pending.set(id, {
-        resolve(result) {
-          clearTimer(timer);
-          resolve(result);
-        },
-        reject(err) {
-          clearTimer(timer);
-          reject(err);
-        },
-      });
-      try {
-        if (!helperSessionWritable(session)) {
-          session.pending.delete(id);
-          clearTimer(timer);
-          reject(leaseStale());
-          return;
-        }
-        controlIn.write(protocol.encodeControl(frame));
-      } catch (err) {
-        session.pending.delete(id);
-        clearTimer(timer);
-        reject(helperDisconnected());
-      }
-    });
   }
 
   async function withHelper(threadId, generation, fn) {
@@ -1725,26 +1294,6 @@ function createIOSSimulatorService({
     });
   }
 
-  // An unexpected recorder exit must retire the recording slot and the journal
-  // now rather than at the five-minute auto-stop. The reaction waits for the
-  // start to settle so a start that ultimately failed can never publish an
-  // artifact its caller was never told about.
-  // The adapter maps every child outcome onto a resolved value, but a rejection
-  // handler is attached anyway so a future adapter change can never turn an
-  // early exit into an unhandled rejection that skips the teardown.
-  function observeRecordingClose(context) {
-    context.closed.then(
-      (result) => {
-        context.closeObserved = result;
-        finalizeIfRecorderClosed(context);
-      },
-      () => {
-        context.closeObserved = { finalized: false, failed: true };
-        finalizeIfRecorderClosed(context);
-      },
-    );
-  }
-
   function finalizeIfRecorderClosed(context) {
     if (!context.startSettled) return;
     if (context.closeObserved === null) return;
@@ -1760,92 +1309,6 @@ function createIOSSimulatorService({
     if (!finishedRecording) return;
     finishedRecording.handle = null;
     finishedRecording = null;
-  }
-
-  function clearRecordingTimers(context) {
-    if (context.timersCleared) return;
-    context.timersCleared = true;
-    if (context.pollTimer != null) {
-      clearTimer(context.pollTimer);
-      context.pollTimer = null;
-    }
-    if (context.autoStopTimer != null) {
-      clearTimer(context.autoStopTimer);
-      context.autoStopTimer = null;
-    }
-  }
-
-  function scheduleRecordingPoll(context) {
-    if (context.timersCleared || context.finalization) return;
-    context.pollTimer = setTimer(() => {
-      context.pollTimer = null;
-      void pollRecordingSize(context);
-    }, RECORDING_POLL_INTERVAL_MS);
-  }
-
-  // Missing, unreadable, and empty all read as zero bytes: nothing worth
-  // committing.
-  async function recordedVideoSize(context) {
-    try {
-      const stat = await fsApi.promises.stat(context.videoPath);
-      if (stat && typeof stat.size === "number") return stat.size;
-    } catch {
-      // The recorder may not have created the file yet, or it vanished.
-    }
-    return 0;
-  }
-
-  async function pollRecordingSize(context) {
-    if (context.timersCleared || context.finalization) return;
-    let size = null;
-    try {
-      const stat = await fsApi.promises.stat(context.videoPath);
-      if (stat && typeof stat.size === "number") size = stat.size;
-    } catch {
-      // The recorder may not have created the file yet, or it vanished; the
-      // next poll or the finalize path handles both.
-    }
-    if (size !== null && size > MAX_RECORDING_BYTES) {
-      beginFinalization(context, "limit");
-      return;
-    }
-    scheduleRecordingPoll(context);
-  }
-
-  // `recordVideo` spawns the recorder detached, so it leads its own process
-  // group and `simctl` may have children of its own. A live forced stop targets
-  // that whole group; only post-restart recovery, which has no handle and only
-  // a pid it has verified, falls back to signalling the pid directly.
-  function killRecording(context) {
-    if (context.killed) return;
-    context.killed = true;
-    if (!Number.isSafeInteger(context.pid) || context.pid <= 0) return;
-    try {
-      signalPid(-context.pid, "SIGKILL");
-      return;
-    } catch {
-      // The recorder is not a group leader (or the group is already gone).
-    }
-    try {
-      signalPid(context.pid, "SIGKILL");
-    } catch {
-      // Already gone.
-    }
-  }
-
-  async function waitForRecordingClose(context) {
-    let timerHandle = null;
-    const expired = new Promise((resolve) => {
-      timerHandle = setTimer(
-        () => resolve({ finalized: false, failed: false }),
-        RECORDING_FINALIZE_TIMEOUT_MS,
-      );
-    });
-    try {
-      return await Promise.race([context.closed, expired]);
-    } finally {
-      if (timerHandle != null) clearTimer(timerHandle);
-    }
   }
 
   // Writes `recording: null` only while this context still owns the journal.
@@ -1865,94 +1328,6 @@ function createIOSSimulatorService({
     }
   }
 
-  async function runRecordingFinalization(context) {
-    clearRecordingTimers(context);
-    let videoToken = context.videoToken;
-    let posterToken = null;
-    try {
-      interruptRecording(context);
-      const closed = await waitForRecordingClose(context);
-      if (!closed.finalized) killRecording(context);
-      // The size cap is the terminal outcome even when the recorder had to be
-      // forced: the caller asked for a recording that is not allowed to exist.
-      if (context.reason === "limit") {
-        throw iosError(
-          "artifact_limit",
-          "Simulator recording exceeded its size limit",
-        );
-      }
-      // A start that never returned must not leave an artifact behind.
-      if (context.reason === "aborted") throw recordingFailed();
-      if (!closed.finalized) throw recordingFinalizeFailed();
-      if (closed.failed) throw recordingFinalizeFailed();
-      // A recorder that exited without producing any bytes failed to record;
-      // reporting the media layer's size complaint instead would read as if the
-      // recording had been too large.
-      if ((await recordedVideoSize(context)) <= 0) {
-        throw iosError(
-          "recording_failed",
-          "The simulator recording produced no video",
-        );
-      }
-      const poster = await artifactStore.stage({
-        kind: "image",
-        mimeType: "image/png",
-      });
-      posterToken = poster.token;
-      await callProcess(
-        () =>
-          processAdapter.screenshot(
-            context.developerDir,
-            context.deviceUdid,
-            poster.path,
-          ),
-        "Failed to finalize the simulator recording",
-      );
-      const batch = {
-        threadId: context.threadId,
-        runId: context.runId,
-        source: "simulator",
-        items: [
-          {
-            key: "video",
-            stagingToken: videoToken,
-            kind: "video",
-            mimeType: "video/mp4",
-            name: "Simulator recording.mp4",
-            posterKey: "poster",
-          },
-          {
-            key: "poster",
-            stagingToken: posterToken,
-            kind: "image",
-            mimeType: "image/png",
-            name: "Simulator recording poster.png",
-          },
-        ],
-      };
-      if (context.toolCallId != null) batch.toolCallId = context.toolCallId;
-      const [video, poster2] = await artifactStore.commitBatch(batch);
-      videoToken = null;
-      posterToken = null;
-      await clearRecordingJournalBestEffort(context);
-      return Object.freeze({
-        video: Object.freeze({ ...video }),
-        poster: Object.freeze({ ...poster2 }),
-      });
-    } catch (err) {
-      if (videoToken != null) {
-        await discardStagedArtifactBestEffort(videoToken);
-      }
-      if (posterToken != null) {
-        await discardStagedArtifactBestEffort(posterToken);
-      }
-      await clearRecordingJournalBestEffort(context);
-      if (err && err.name === "RunArtifactError") throw err;
-      if (err instanceof IOSSimulatorError) throw err;
-      throw recordingFinalizeFailed();
-    }
-  }
-
   async function finalizeRecording(context) {
     try {
       return await runRecordingFinalization(context);
@@ -1968,16 +1343,6 @@ function createIOSSimulatorService({
       // The child is gone by now, so stop holding its handle alive.
       context.handle = null;
     }
-  }
-
-  function beginFinalization(context, reason) {
-    if (!context.finalization) {
-      context.reason = reason;
-      context.finalization = finalizeRecording(context);
-      // Timer- and handoff-driven finalizations have no awaiting caller.
-      context.finalization.catch(() => {});
-    }
-    return context.finalization;
   }
 
   // Used by takeover and detach: stop and finalize the outgoing recording
@@ -2164,257 +1529,10 @@ function createIOSSimulatorService({
     throw noActiveRecording();
   }
 
-  async function readLeaseJournalRecord() {
-    let stat;
-    try {
-      stat = await fsApi.promises.lstat(leaseJournalFile);
-    } catch (err) {
-      if (err && err.code === "ENOENT") return { status: "absent" };
-      return { status: "unreadable" };
-    }
-    if (!stat.isFile() || stat.isSymbolicLink()) return { status: "invalid" };
-    let text;
-    try {
-      text = await fsApi.promises.readFile(leaseJournalFile, "utf8");
-    } catch {
-      return { status: "unreadable" };
-    }
-    const record = parseLeaseJournal(text);
-    if (!record) return { status: "invalid" };
-    return { status: "valid", record };
-  }
-
-  // Reserves each quarantine name exclusively before moving the journal onto
-  // it, so a second corrupt journal in the same millisecond can never destroy
-  // the evidence from the first. Runs inside the journal queue so the
-  // reserve-then-rename pair cannot interleave with another journal write.
-  async function quarantineJournalLocked() {
-    for (let attempt = 0; attempt < QUARANTINE_MAX_ATTEMPTS; attempt += 1) {
-      const suffix = attempt === 0 ? "" : `-${attempt}`;
-      const target = `${leaseJournalFile}.corrupt-${now()}-${String(
-        randomUUID(),
-      )}${suffix}`;
-      let reserved;
-      try {
-        reserved = await fsApi.promises.open(target, "wx", 0o600);
-      } catch (err) {
-        if (err && err.code === "EEXIST") continue;
-        return false;
-      }
-      try {
-        await reserved.close();
-      } catch {
-        // The reservation still holds the name.
-      }
-      try {
-        await fsApi.promises.rename(leaseJournalFile, target);
-        return true;
-      } catch {
-        await fsApi.promises.unlink(target).catch(() => {});
-        return false;
-      }
-    }
-    return false;
-  }
-
-  async function quarantineJournal() {
-    return enqueueJournalOp(() => quarantineJournalLocked());
-  }
-
-  async function removeJournalStrict() {
-    return enqueueJournalOp(async () => {
-      try {
-        await fsApi.promises.unlink(leaseJournalFile);
-        return true;
-      } catch (err) {
-        return Boolean(err && err.code === "ENOENT");
-      }
-    });
-  }
-
-  // Only a regular file directly inside this app's staging root may be touched
-  // by recovery. Traversal, NUL, symlinks, and symlinked ancestors are treated
-  // as tampering so the caller quarantines instead of deleting or signaling.
-  async function resolveRecoveryTempPath(tempPath) {
-    if (typeof tempPath !== "string" || !tempPath) return null;
-    if (tempPath.includes("\0")) return null;
-    if (!path.isAbsolute(tempPath)) return null;
-    const resolved = path.resolve(tempPath);
-    if (resolved === stagingRoot) return null;
-    if (!resolved.startsWith(stagingRoot + path.sep)) return null;
-    if (path.dirname(resolved) !== stagingRoot) return null;
-    let stat;
-    try {
-      stat = await fsApi.promises.lstat(resolved);
-    } catch (err) {
-      if (err && err.code === "ENOENT") return resolved;
-      return null;
-    }
-    if (stat.isSymbolicLink() || !stat.isFile()) return null;
-    let realRoot;
-    let realParent;
-    try {
-      realRoot = await fsApi.promises.realpath(stagingRoot);
-      realParent = await fsApi.promises.realpath(path.dirname(resolved));
-    } catch {
-      return null;
-    }
-    if (realRoot !== realParent) return null;
-    return resolved;
-  }
-
-  // Only a process whose `ps` command line is a trusted recorder executable
-  // followed by exactly the argv tail Solenta spawns may be signalled. Anchoring
-  // the whole tail rather than searching for substrings rejects pid reuse by a
-  // neighbouring device (`UDID-suffix`), a neighbouring staged file
-  // (`path.extra`), extra trailing arguments, an `echo`/`sh -c` of the same
-  // words, and anything unrelated — and because the staged path terminates the
-  // command, it stays exact for paths containing spaces, which `ps` renders
-  // unquoted.
-  async function recoveredProcessMatches(pid, deviceUdid, tempPath) {
-    let output;
-    try {
-      output = String(await processAdapter.inspectProcess(pid));
-    } catch {
-      return false;
-    }
-    const command = output.trim();
-    if (!command) return false;
-    const tail = ` ${recordingArgumentTail(deviceUdid, tempPath)}`;
-    if (!command.endsWith(tail)) return false;
-    const prefix = command.slice(0, command.length - tail.length);
-    return isTrustedRecorderPrefix(prefix);
-  }
-
-  async function recoveredHelperProcessMatches(pid, developerDir) {
-    let output;
-    try {
-      output = String(await processAdapter.inspectProcess(pid));
-    } catch {
-      return false;
-    }
-    const command = output.trim();
-    if (!command) return false;
-    const profile = path.resolve(String(sandboxProfilePath || ""));
-    if (!path.isAbsolute(profile)) return false;
-    const tail = ` ${helperArgumentTail(profile, developerDir)}`;
-    if (!command.endsWith(tail)) return false;
-    const prefix = command.slice(0, command.length - tail.length);
-    return isTrustedHelperPrefix(prefix);
-  }
-
-  async function stopRecoveredHelperProcess(record) {
-    const pid = record.helperPid;
-    if (pid == null) return "gone";
-    const matches = () => recoveredHelperProcessMatches(pid, record.developerDir);
-    if (!(await matches())) return "gone";
-    if (!signalRecoveredPid(pid, "SIGTERM")) {
-      return (await matches()) ? "alive" : "gone";
-    }
-    await delay(RECOVERY_SIGNAL_GRACE_MS);
-    if (!(await matches())) return "gone";
-    signalRecoveredPid(pid, "SIGKILL");
-    await delay(RECOVERY_SIGNAL_GRACE_MS);
-    return (await matches()) ? "alive" : "gone";
-  }
-
-  function signalRecoveredPid(pid, signal) {
-    try {
-      signalPid(pid, signal);
-      return true;
-    } catch {
-      return false;
-    }
-  }
-
   function delay(ms) {
     return new Promise((resolve) => {
       setTimer(() => resolve(undefined), ms);
     });
-  }
-
-  // Returns "gone" when no matching recorder is left to worry about, or "alive"
-  // when one survived every signal. A survivor is still writing to the staged
-  // file, so the caller must leave both the file and the journal alone.
-  async function stopRecoveredRecordingProcess(record, tempPath) {
-    const pid = record.recording.pid;
-    if (pid == null) return "gone";
-    const matches = () =>
-      recoveredProcessMatches(pid, record.deviceUdid, tempPath);
-    if (!(await matches())) return "gone";
-    if (!signalRecoveredPid(pid, "SIGINT")) {
-      return (await matches()) ? "alive" : "gone";
-    }
-    await delay(RECOVERY_SIGNAL_GRACE_MS);
-    if (!(await matches())) return "gone";
-    signalRecoveredPid(pid, "SIGKILL");
-    await delay(RECOVERY_SIGNAL_GRACE_MS);
-    return (await matches()) ? "alive" : "gone";
-  }
-
-  async function removeRecoveredTempFile(tempPath) {
-    try {
-      await fsApi.promises.unlink(tempPath);
-      return true;
-    } catch (err) {
-      return Boolean(err && err.code === "ENOENT");
-    }
-  }
-
-  // The journal is attacker-writable in the threat model, so its developer
-  // directory is never handed to `xcrun`. Recovery instead resolves the
-  // directory the app currently trusts — a persisted custom Xcode selection or
-  // the active `xcode-select` one — and requires the journalled value to name
-  // exactly that. A journalled directory is never passed to `xcrun` on its own.
-  async function trustedRecoveryDeveloperDir(record) {
-    let trusted;
-    try {
-      trusted = await selectedDeveloperDirectory();
-    } catch {
-      return { status: "unresolved" };
-    }
-    if (typeof trusted !== "string" || !trusted) {
-      return { status: "unresolved" };
-    }
-    if (
-      typeof record.developerDir !== "string" ||
-      record.developerDir === "" ||
-      path.resolve(record.developerDir) !== path.resolve(trusted)
-    ) {
-      return { status: "untrusted" };
-    }
-    return { status: "trusted", developerDir: trusted };
-  }
-
-  async function shutdownRecoveredDevice(record, developerDir) {
-    try {
-      await processAdapter.shutdown(developerDir, record.deviceUdid);
-      return "shutdown";
-    } catch (err) {
-      if (DEVICE_ALREADY_OFF_RE.test(adapterFailureText(err))) {
-        return "already-off";
-      }
-      return "failed";
-    }
-  }
-
-  // A journal we could not move aside is still on disk, so the next launch
-  // sees it again.
-  async function quarantineSummary() {
-    const quarantined = await quarantineJournal();
-    return recoverySummary({ quarantined, journalRetained: !quarantined });
-  }
-
-  // Keeps boot ownership for a later retry while durably dropping the recording
-  // work this launch already finished, so a repeat recovery never re-signals a
-  // pid that has since been reused.
-  async function retainJournalWithoutRecording(record) {
-    try {
-      await writeJournal({ ...record, recording: null });
-    } catch {
-      // The unchanged journal is still retryable; recovery tolerates a
-      // recording entry whose process and file are already gone.
-    }
   }
 
   async function recover() {
@@ -2530,208 +1648,6 @@ function createIOSSimulatorService({
       await startHelperBestEffort();
       assertOwnedLease(threadId, generation);
       return viewerStreamInfoFromSession(helper);
-    });
-  }
-
-  async function tap(input) {
-    const threadId = input && input.threadId;
-    const generation = input && input.generation;
-    const x = requireCoord(input && input.x, "x");
-    const y = requireCoord(input && input.y, "y");
-    return mutate(async () => {
-      await withHelper(threadId, generation, async (session) => {
-        await helperRpcWithSession(session, "touch", {
-          phase: "down",
-          x,
-          y,
-          pointerId: 1,
-        });
-        await delay(TAP_HOLD_MS);
-        assertHelperSession(threadId, generation, session);
-        await helperRpcWithSession(session, "touch", {
-          phase: "up",
-          x,
-          y,
-          pointerId: 1,
-        });
-      });
-      await touchLeaseActivityBestEffort();
-      return Object.freeze({ ok: true });
-    });
-  }
-
-  async function swipe(input) {
-    const threadId = input && input.threadId;
-    const generation = input && input.generation;
-    const x1 = requireCoord(input && input.x1, "x1");
-    const y1 = requireCoord(input && input.y1, "y1");
-    const x2 = requireCoord(input && input.x2, "x2");
-    const y2 = requireCoord(input && input.y2, "y2");
-    let durationMs = input && input.durationMs;
-    if (durationMs == null) durationMs = 200;
-    if (typeof durationMs !== "number" || !Number.isFinite(durationMs)) {
-      throw iosError("unexpected", "Simulator swipe duration is invalid");
-    }
-    durationMs = Math.min(
-      SWIPE_MAX_DURATION_MS,
-      Math.max(SWIPE_MIN_DURATION_MS, durationMs),
-    );
-    const moves = Math.min(
-      SWIPE_MAX_MOVES,
-      Math.max(1, Math.round(durationMs / 40)),
-    );
-    return mutate(async () => {
-      await withHelper(threadId, generation, async (session) => {
-        await helperRpcWithSession(session, "touch", {
-          phase: "down",
-          x: x1,
-          y: y1,
-          pointerId: 1,
-        });
-        for (let i = 1; i <= moves; i += 1) {
-          const t = i / (moves + 1);
-          assertHelperSession(threadId, generation, session);
-          await helperRpcWithSession(session, "touch", {
-            phase: "move",
-            x: x1 + (x2 - x1) * t,
-            y: y1 + (y2 - y1) * t,
-            pointerId: 1,
-          });
-        }
-        assertHelperSession(threadId, generation, session);
-        await helperRpcWithSession(session, "touch", {
-          phase: "up",
-          x: x2,
-          y: y2,
-          pointerId: 1,
-        });
-      });
-      await touchLeaseActivityBestEffort();
-      return Object.freeze({ ok: true });
-    });
-  }
-
-  async function typeText(input) {
-    const threadId = input && input.threadId;
-    const generation = input && input.generation;
-    const text = input && input.text;
-    if (typeof text !== "string") {
-      throw iosError("unexpected", "Simulator text is invalid");
-    }
-    if (Buffer.byteLength(text, "utf8") > TYPE_TEXT_MAX_BYTES) {
-      throw iosError("unexpected", "Simulator text is too long");
-    }
-    return mutate(async () => {
-      await withHelper(threadId, generation, async (session) => {
-        await helperRpcWithSession(session, "text", { text });
-      });
-      await touchLeaseActivityBestEffort();
-      return Object.freeze({ ok: true });
-    });
-  }
-
-  async function pressButton(input) {
-    const threadId = input && input.threadId;
-    const generation = input && input.generation;
-    const button = input && input.button;
-    if (!HARDWARE_BUTTONS.has(button)) {
-      throw iosError("unexpected", "Simulator hardware button is invalid");
-    }
-    return mutate(async () => {
-      await withHelper(threadId, generation, async (session) => {
-        await helperRpcWithSession(session, "pressButton", { button });
-      });
-      await touchLeaseActivityBestEffort();
-      return Object.freeze({ ok: true });
-    });
-  }
-
-  async function sendInput(input) {
-    const threadId = input && input.threadId;
-    const generation = input && input.generation;
-    const event = input && input.input;
-    if (!event || typeof event !== "object") {
-      throw iosError("unexpected", "Simulator input is invalid");
-    }
-    if (event.kind === "touch") {
-      const x = requireCoord(event.x, "x");
-      const y = requireCoord(event.y, "y");
-      if (event.phase !== "down" && event.phase !== "move" && event.phase !== "up") {
-        throw iosError("unexpected", "Simulator input is invalid");
-      }
-      if (typeof event.pointerId !== "number" || !Number.isFinite(event.pointerId)) {
-        throw iosError("unexpected", "Simulator input is invalid");
-      }
-      return mutate(async () => {
-        await withHelper(threadId, generation, async (session) => {
-          await helperRpcWithSession(session, "touch", {
-            phase: event.phase,
-            x,
-            y,
-            pointerId: event.pointerId,
-          });
-        });
-        await touchLeaseActivityBestEffort();
-        return Object.freeze({ ok: true });
-      });
-    }
-    if (event.kind === "text") {
-      return typeText({ threadId, generation, text: event.text });
-    }
-    if (event.kind === "key") {
-      const usage = SIMULATOR_KEY_USAGE[event.key];
-      if (usage == null) {
-        throw iosError("unexpected", "Simulator key is invalid");
-      }
-      if (event.phase !== "down" && event.phase !== "up") {
-        throw iosError("unexpected", "Simulator input is invalid");
-      }
-      return mutate(async () => {
-        await withHelper(threadId, generation, async (session) => {
-          await helperRpcWithSession(session, "key", {
-            usage,
-            down: event.phase === "down",
-            modifiers: 0,
-          });
-        });
-        await touchLeaseActivityBestEffort();
-        return Object.freeze({ ok: true });
-      });
-    }
-    if (event.kind === "button") {
-      return pressButton({ threadId, generation, button: event.button });
-    }
-    throw iosError("unexpected", "Simulator input is invalid");
-  }
-
-  async function accessibility(input) {
-    const threadId = input && input.threadId;
-    const generation = input && input.generation;
-    const maxDepth = input && input.maxDepth;
-    return mutate(async () => {
-      const result = await withHelper(threadId, generation, async (session) => {
-        return helperRpcWithSession(session, "accessibility", {
-          maxDepth: maxDepth == null ? 8 : maxDepth,
-        });
-      });
-      await touchLeaseActivityBestEffort();
-      return result;
-    });
-  }
-
-  async function scrollTo(input) {
-    const threadId = input && input.threadId;
-    const generation = input && input.generation;
-    const x = requireCoord(input && input.x, "x");
-    const y = requireCoord(input && input.y, "y");
-    const dx = input && input.dx != null ? requireCoord(input.dx, "dx") : 0;
-    const dy = input && input.dy != null ? requireCoord(input.dy, "dy") : 0;
-    return mutate(async () => {
-      await withHelper(threadId, generation, async (session) => {
-        await helperRpcWithSession(session, "scrollTo", { x, y, dx, dy });
-      });
-      await touchLeaseActivityBestEffort();
-      return Object.freeze({ ok: true });
     });
   }
 
