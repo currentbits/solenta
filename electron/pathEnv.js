@@ -212,7 +212,7 @@ function enrichProcessPath(opts = {}) {
  * the real PATH await whenPathReady() first, so a fresh install (no cache)
  * or a changed rc file still gets the shell's PATH.
  *
- * @type {null | { env: NodeJS.ProcessEnv, home: string, platform: NodeJS.Platform, launch: string[], cacheFile: string, execFn?: typeof execFile, existsFn?: (p: string) => boolean }}
+ * @type {null | { env: NodeJS.ProcessEnv, home: string, platform: NodeJS.Platform, launch: string[], cached: boolean, cacheFile: string, execFn?: typeof execFile, existsFn?: (p: string) => boolean }}
  */
 let primed = null;
 /** @type {Promise<string[] | null> | null} */
@@ -268,6 +268,7 @@ function primeProcessPath(opts) {
     home,
     platform,
     launch,
+    cached: Boolean(cached),
     cacheFile: opts.cacheFile,
     execFn: opts.execFn,
     existsFn: opts.existsFn,
@@ -314,11 +315,15 @@ function refreshLoginPath() {
  * The in-flight (or not yet started) capture to await before a provider
  * spawn, or null once it has settled or when nothing was primed (tests,
  * win32), so callers skip the await and keep their synchronous prefix.
+ * ifUncached: only wait on a first run (no cached PATH), for read-only
+ * probes that should not stall a normal boot.
  *
+ * @param {{ ifUncached?: boolean }} [opts]
  * @returns {Promise<unknown> | null}
  */
-function whenPathReady() {
+function whenPathReady(opts = {}) {
   if (!primed || refreshed) return null;
+  if (opts.ifUncached && primed.cached) return null;
   return refreshLoginPath();
 }
 

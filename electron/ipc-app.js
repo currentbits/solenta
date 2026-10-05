@@ -9,6 +9,7 @@ const updater = require("./updater.js");
 const feedback = require("./feedback.js");
 const { discoverSourceControl } = require("./sourceControl.js");
 const { applyZoom } = require("./zoom.js");
+const { whenPathReady } = require("./pathEnv.js");
 
 /** Version stamped in the embedded package.json; "dev" outside a build. */
 function appVersion() {
@@ -187,6 +188,9 @@ module.exports = {
     });
   },
   "providers:list": async (ctx) => {
+    // First launch: `which` each CLI only once the login-shell PATH is in (#1475).
+    const pathWait = whenPathReady({ ifUncached: true });
+    if (pathWait) await pathWait;
     return services.listProvidersForApi(ctx.store);
   },
   "sourceControl:discover": async (_ctx, input) => {

@@ -190,6 +190,8 @@ describe("primeProcessPath / refreshLoginPath (#1475)", () => {
     assert.equal(r.source, "cache");
     assert.equal(env.PATH, "/cached/bin:/usr/bin");
     assert.equal(shell.calls.length, 0);
+    assert.equal(whenPathReady({ ifUncached: true }), null, "cached boot: probes do not wait");
+    assert.ok(whenPathReady(), "spawns still wait for the recapture");
   });
 
   it("first run without a cache: launch PATH now, login PATH after the async capture, then cached", async () => {
@@ -206,6 +208,7 @@ describe("primeProcessPath / refreshLoginPath (#1475)", () => {
     // A spawn before the capture finishes gets a pending promise and waits.
     const wait = whenPathReady();
     assert.ok(wait, "spawn must wait while the capture is in flight");
+    assert.equal(whenPathReady({ ifUncached: true }), wait, "first run: probes wait too");
     assert.deepEqual(shell.calls, ["/bin/zsh"], "whenPathReady starts the capture");
     let done = false;
     void wait.then(() => { done = true; });
