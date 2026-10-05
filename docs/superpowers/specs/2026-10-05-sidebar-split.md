@@ -152,9 +152,15 @@ passed in, so no state moves. Wrapping JSX in a component adds a React
 boundary but no DOM node; the element type at each spot is stable across
 renders, so nothing remounts.
 
-Left for later: the filter bar (≈400 lines, ~25 props across saved views and
-four filter menus) and the create-thread menu (≈270 lines). Both are safe in
-principle; they are large prop surfaces and deserve their own pass.
+| 13 | `FilterBar` | `[data-filter-bar]` (saved views + four filter menus) | 25 props; `FilterMenu`/`ViewEditor` types move with it |
+| 14 | `CreateThreadMenu` | `[data-new-thread-menu]` | 12 props; types via exported `SidebarProps` |
+
+Left in `Sidebar`: the list body (grouped views, pinned/active rows, the
+Working/Snoozed/Settled shelves). It closes over `renderCard`,
+`renderSettled`, `renderSnoozed`, the carve locals and `bindListAnimation`;
+moving it means first moving those render helpers, which read ~20 values each.
+The issue form (≈50 lines) and the footer update button hold
+`issuePending`/`updating` flows that are small enough to leave inline.
 
 ## Verification per extraction
 
