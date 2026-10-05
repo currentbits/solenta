@@ -98,15 +98,12 @@ import { teachPermissionAllowed } from "../teach";
 import type { ThreadTeach } from "../shared/ipc";
 import { useFileDrop } from "../useFileDrop";
 import { isWebMode } from "../shared/wire";
-import { cycleTranscriptViewMode } from "../focusView";
 import {
   getComposerBusyAction,
   getLastReasoningEffort,
   getPasteCardsEnabled,
-  getTranscriptViewMode,
   setComposerBusyAction,
   setLastReasoningEffort,
-  setTranscriptViewMode,
   useTranscriptViewMode,
   type ComposerBusyAction,
 } from "../uiPrefs";
@@ -117,6 +114,7 @@ import { useComposerAttachments } from "./composer/useComposerAttachments";
 import { useComposerVim } from "./composer/useComposerVim";
 import { useMentionMenu } from "./composer/useMentionMenu";
 import { useSlashMenu } from "./composer/useSlashMenu";
+import { useTranscriptViewShortcuts } from "./composer/useTranscriptViewShortcuts";
 import { usePasteCards } from "./composer/usePasteCards";
 import {
   speechMicLabel,
@@ -946,37 +944,7 @@ export const Composer = memo(function Composer({
     return () => document.removeEventListener("keydown", onKey);
   }, [disabled, busy, popupOpen, onStopRun, onSlashAction]);
 
-  useEffect(() => {
-    const onKey = (e: globalThis.KeyboardEvent) => {
-      if (e.defaultPrevented || e.repeat) return;
-      const key = e.key.toLowerCase();
-      if (
-        e.ctrlKey &&
-        e.altKey &&
-        !e.metaKey &&
-        !e.shiftKey &&
-        key === "f"
-      ) {
-        e.preventDefault();
-        setTranscriptViewMode(
-          getTranscriptViewMode() === "summary" ? "normal" : "summary",
-        );
-        return;
-      }
-      if (
-        e.ctrlKey &&
-        !e.metaKey &&
-        !e.altKey &&
-        !e.shiftKey &&
-        key === "o"
-      ) {
-        e.preventDefault();
-        setTranscriptViewMode(cycleTranscriptViewMode(getTranscriptViewMode()));
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, []);
+  useTranscriptViewShortcuts();
 
   const composeOutgoing = useCallback(
     (draft: string) => {
