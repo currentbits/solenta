@@ -11,12 +11,14 @@
  * When unsure, don't split:
  * - a list marker never starts a chunk if the current chunk already has one
  *   (`- a\n\n- b` is ONE loose list);
- * - a line starting with `<` never starts a chunk, and a chunk that starts
- *   with `<` never ends: a chunk of only raw HTML renders nothing, which would
- *   leave a stray separator;
+ * - never split right after indented code (a tab or 4+ spaces): an indented
+ *   last line may belong to a container the scan doesn't model, and what
+ *   follows (`3. z`) parses differently there;
  * - the whole text stays one chunk if it has a link reference or footnote
- *   definition (it can resolve `[x]` in ANY chunk, even earlier ones) or an
- *   HTML block that may span blank lines (`<!--`, `<pre`, `<script`, ...).
+ *   definition (it can resolve `[x]` in ANY chunk, even earlier ones) or any
+ *   line starting with raw HTML. An HTML block swallows lines up to the next
+ *   blank one, fence markers included, and an HTML-only chunk renders nothing.
+ *   Few replies have one (3 of 600 sampled).
  *
  * ponytail: fence tracking strips list/quote prefixes and doesn't model
  * indented code, so a fence-like line inside indented code can desync it.
@@ -24,33 +26,33 @@
  * so a desync shows at worst until the reply finishes.
  */
 const DEFINITION = /^[ \t>]*(?:(?:[-+*]|\d{1,9}[.)])[ \t]+)?\[[^\]]+\]:/m;
-const SPANNING_HTML = /^ {0,3}<(?:[!?]|(?:pre|script|style|textarea)(?:[\s>]|$))/im;
+const HTML_LINE = /^[ \t>]*(?:(?:[-+*]|\d{1,9}[.)])[ \t]+)?</m;
+const INDENTED = /^(?: {0,3}\t| {4})/;
 const LIST_ITEM = /^ {0,3}(?:[-+*]|\d{1,9}[.)])(?:[ \t]|$)/;
 const CONTAINER_PREFIX = /^[ \t]*(?:(?:>|[-+*]|\d{1,9}[.)])[ \t]*)*/;
 const FENCE = /^(`{3,}|~{3,})(.*)$/;
 
 export function markdownChunks(text: string): string[] {
-  if (DEFINITION.test(text) || SPANNING_HTML.test(text)) return [text];
+  if (DEFINITION.test(text) || HTML_LINE.test(text)) return [text];
   const chunks: string[] = [];
   let start = 0;
   let fence: string | null = null;
   let afterBlank = false;
   let hasList = false;
-  let startsHtml = false;
+  let afterIndented = false;
   let pos = 0;
   for (const line of text.split("\n")) {
     if (
       fence === null &&
       afterBlank &&
-      !startsHtml &&
-      /^[^\s<]/.test(line) &&
+      !afterIndented &&
+      /^\S/.test(line) &&
       !(hasList && LIST_ITEM.test(line))
     ) {
       chunks.push(text.slice(start, pos));
       start = pos;
       hasList = false;
     }
-    if (pos === start) startsHtml = /^ {0,3}</.test(line);
     if (LIST_ITEM.test(line)) hasList = true;
     const f = FENCE.exec(line.replace(CONTAINER_PREFIX, ""));
     if (f) {
@@ -66,6 +68,7 @@ export function markdownChunks(text: string): string[] {
       }
     }
     afterBlank = line.trim() === "";
+    if (!afterBlank) afterIndented = INDENTED.test(line);
     pos += line.length + 1;
   }
   chunks.push(text.slice(start));

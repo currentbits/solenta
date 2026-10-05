@@ -156,10 +156,18 @@ describe("streaming markdown chunks", () => {
   });
 
   it("keeps indented continuations with their block", () => {
-    assert.deepEqual(markdownChunks("- a\n\n  more\n\n    code\n\nx"), [
-      "- a\n\n  more\n\n    code\n\n",
+    assert.deepEqual(markdownChunks("- a\n\n  more\n\nx"), [
+      "- a\n\n  more\n\n",
       "x",
     ]);
+  });
+
+  it("never splits right after indented code", () => {
+    assert.deepEqual(markdownChunks("    code\n\n3. z\n\nx"), [
+      "    code\n\n3. z\n\n",
+      "x",
+    ]);
+    assert.equal(markdownChunks("\t- tab list\n\n\n3. z").length, 1);
   });
 
   it("falls back to one chunk for definitions and spanning HTML", () => {
@@ -169,14 +177,36 @@ describe("streaming markdown chunks", () => {
       "> [x]: /u\n\nb",
       "a\n\n<!--\n\nb\n\n-->",
       "a\n\n<pre>\n\nb\n</pre>",
+      "a\n\n<div>\n\nb",
+      "<div>\n\nb\n\nc",
+      "> q\n<div>\n```js\nx\n\ny\n```\n\nz",
     ]) {
       assert.deepEqual(markdownChunks(text), [text], text);
     }
   });
 
-  it("never starts or ends a chunk on a raw HTML line", () => {
-    assert.deepEqual(markdownChunks("a\n\n<div>\n\nb"), ["a\n\n<div>\n\n", "b"]);
-    assert.deepEqual(markdownChunks("<div>\n\nb\n\nc"), ["<div>\n\nb\n\nc"]);
+  it("random block mixes render like one parse (seeded fuzz)", () => {
+    const blocks = [
+      "para one\nlazy line", "Setext\n===", "---", "- a\n- b", "- a\n\n  cont",
+      "1. x\n2. y", "3. z", "  - nested", "> quote\nlazy", "> q\n>\n> - li",
+      "```js\nx\n\ny\n```", "~~~\n```\n~~~", "    indented\n\n    code",
+      "| a | b |\n|---|---|\n| 1 | 2 |", "<div>\nhtml\n</div>", "<!-- c -->",
+      "text <b>x</b>", "* star", "+ plus", "Term\n: def", "[x]", "  indented para",
+      "\t- tab list", "***", "# H", "line  \nbreak", "```\nunclosed",
+    ];
+    let seed = 7;
+    const rand = (n: number) => {
+      seed = (seed * 1103515245 + 12345) & 0x7fffffff;
+      return seed % n;
+    };
+    const seps = ["\n", "\n\n", "\n\n\n"];
+    for (let i = 0; i < 10_000; i++) {
+      let text = "";
+      for (let k = 2 + rand(6); k > 0; k--) {
+        text += (text ? seps[rand(3)] : "") + blocks[rand(blocks.length)];
+      }
+      assert.equal(html(text, true), html(text, false), JSON.stringify(text));
+    }
   });
 
   it("final DOM after a chunked stream equals a one-shot mount", async () => {
