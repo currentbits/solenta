@@ -115,6 +115,7 @@ import { useStableThreadTitles } from "./sidebar/useStableThreadTitles";
 import { useProviderOptions } from "./sidebar/useProviderOptions";
 import { useListAnimation } from "./sidebar/useListAnimation";
 import { useSidebarRows } from "./sidebar/useSidebarRows";
+import { useMoreMenuFocus } from "./sidebar/useMoreMenuFocus";
 import styles from "./Sidebar.module.css";
 
 export { displayWorkerTitle, statusPulseFor } from "./sidebar/status";
@@ -430,28 +431,7 @@ export const Sidebar = memo(function Sidebar({
       setViewEditor(null);
     },
   );
-  useLayoutEffect(() => {
-    if (!moreOpen) return;
-    const menu = moreHostRef.current?.querySelector<HTMLElement>(
-      "[data-app-more-menu]",
-    );
-    if (!menu) return;
-    const current = menu.querySelector<HTMLElement>('[aria-current="page"]');
-    const first = menu.querySelector<HTMLElement>('[role="menuitem"]');
-    (current ?? first)?.focus();
-  }, [moreOpen]);
-  useEffect(() => {
-    if (!moreOpen) return;
-    const onPointer = (e: MouseEvent) => {
-      if (moreHostRef.current?.contains(e.target as Node)) return;
-      const menu = moreHostRef.current?.querySelector("[data-app-more-menu]");
-      const restore = Boolean(menu?.contains(document.activeElement));
-      setMoreOpen(false);
-      if (restore) moreTriggerRef.current?.focus();
-    };
-    document.addEventListener("mousedown", onPointer, true);
-    return () => document.removeEventListener("mousedown", onPointer, true);
-  }, [moreOpen]);
+  useMoreMenuFocus(moreOpen, setMoreOpen, moreHostRef, moreTriggerRef);
   const [importCliProvider, setImportCliProvider] =
     useState<CliImportProvider | null>(null);
   const [issueFormFor, setIssueFormFor] = useState<string | null>(null);
