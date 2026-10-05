@@ -270,12 +270,34 @@ function refuseJjDetached(projectPath) {
  * @returns {{ defaultBranch: string, branches: string[] }}
  */
 function listBranches(projectPath) {
-  const defaultName = fallbackDefaultBranchName(projectPath) || "";
-  const raw = gitOut(projectPath, [
-    "for-each-ref",
-    "--format=%(refname:short)",
-    "refs/heads",
+  return branchList(
+    fallbackDefaultBranchName(projectPath) || "",
+    gitOut(projectPath, FOR_EACH_HEAD),
+  );
+}
+
+/**
+ * listBranches off the event loop: the `git:listBranches` IPC fires on
+ * boot and every picker open, 2–4 git spawns at ~37 ms each (#1475).
+ *
+ * @param {string} projectPath
+ * @returns {Promise<{ defaultBranch: string, branches: string[] }>}
+ */
+async function listBranchesAsync(projectPath) {
+  const [defaultName, raw] = await Promise.all([
+    fallbackDefaultBranchNameAsync(projectPath),
+    gitOutAsync(projectPath, FOR_EACH_HEAD),
   ]);
+  return branchList(defaultName || "", raw);
+}
+
+const FOR_EACH_HEAD = ["for-each-ref", "--format=%(refname:short)", "refs/heads"];
+
+/**
+ * @param {string} defaultName
+ * @param {string} raw
+ */
+function branchList(defaultName, raw) {
   const branches = splitLines(raw)
     .map((line) => line.trim())
     .filter(Boolean)
@@ -459,6 +481,7 @@ module.exports = {
   resolveWorktreeStart,
   refuseJjDetached,
   listBranches,
+  listBranchesAsync,
   defaultBranch,
   defaultBranchAsync,
   worktreePathForBranch,

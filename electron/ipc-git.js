@@ -4,7 +4,7 @@ const fs = require("node:fs");
 const services = require("./services.js");
 const {
   setupWorktree,
-  listBranches,
+  listBranchesAsync,
   diff,
   commit,
   revertFile,
@@ -54,15 +54,6 @@ const { runRetention, resolveThreadRoot } = require("./ipc-shared.js");
 
 /** IPC_HANDLERS rows for git:*, issues:*, mergeQueue:*, vibeKanban:*; ipc.js spreads them in. */
 module.exports = {
-  "git:listBranches": async (ctx, input) => {
-    const projectId =
-      input && typeof input === "object" ? input.projectId : input;
-    const project = ctx.store.getProject(projectId);
-    if (!project || !project.path) {
-      throw new Error(`Unknown project: ${projectId}`);
-    }
-    return listBranches(project.path);
-  },
   "git:status": async (ctx, projectId) => {
     const project = ctx.store.getProject(projectId);
     if (!project) {
@@ -76,7 +67,7 @@ module.exports = {
     if (!project || !project.path) {
       return { defaultBranch: "main", branches: [] };
     }
-    return listBranches(project.path);
+    return listBranchesAsync(project.path);
   },
   "git:setupWorktree": async (ctx, input) => {
     if (!ctx.worktreeBase) {
