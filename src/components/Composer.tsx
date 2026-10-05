@@ -8,20 +8,16 @@ import {
   useState,
   type ClipboardEvent,
   type CSSProperties,
-  type Dispatch,
   type KeyboardEvent,
   type RefObject,
-  type SetStateAction,
   type ReactNode,
 } from "react";
 import type {
   AgentProfile,
   AttachmentInfo,
-  CoderApi,
   PermissionMode,
   ProviderInfo,
   ReasoningEffort,
-  SpeechStatus,
   WorkflowTemplateInfo,
 } from "../shared/ipc";
 import type { WorkflowSaveInput } from "../useCoder";
@@ -62,16 +58,14 @@ import { useEscapeClose } from "../useEscapeClose";
 import { useModalFocus } from "../useModalFocus";
 import { ProviderMark } from "./ProviderMark";
 import { hintFor } from "./onboarding/installHints";
-import { applyMention, getMentionQuery, type MentionQuery } from "../mention";
 import { ArchiveToast } from "./ArchiveToast";
 import type { ReplyTarget } from "../replyContext";
-import { excerptReply, wrapReplyContext } from "../replyContext";
+import { wrapReplyContext } from "../replyContext";
 import {
   composePastePrompt,
   formatOverflow,
   makePasteCard,
   overflowWarn,
-  pasteCardLabel,
   payloadChars,
   shouldCollapsePaste,
   type PasteCard,
@@ -86,16 +80,8 @@ import {
 import { parseDelegate } from "../delegate";
 import { asBtwPrompt } from "../btw";
 import { buildBestOfNEntries, providerVendor } from "../bestOfN";
+import { keptDrafts } from "../composerSession";
 import {
-  copyListRecord,
-  keptAttachments,
-  keptDrafts,
-  keptPasteCards,
-  syncListRecord,
-} from "../composerSession";
-import {
-  commandQuery,
-  matchSlashCommands,
   pickerVerb,
   type SlashAction,
   type SlashCommand,
@@ -111,75 +97,32 @@ import { teachPermissionAllowed } from "../teach";
 import type { ThreadTeach } from "../shared/ipc";
 import { useFileDrop } from "../useFileDrop";
 import { isWebMode } from "../shared/wire";
-import { cycleTranscriptViewMode } from "../focusView";
 import {
   getComposerBusyAction,
   getLastReasoningEffort,
   getPasteCardsEnabled,
-  getTranscriptViewMode,
   setComposerBusyAction,
   setLastReasoningEffort,
-  setTranscriptViewMode,
-  useComposerVimEnabled,
   useTranscriptViewMode,
   type ComposerBusyAction,
 } from "../uiPrefs";
-import {
-  INITIAL_VIM,
-  applyComposerVim,
-  type VimState,
-} from "../composerVim";
-import {
-  applySpeechDelta,
-  applySpeechTranscript,
-  formatSpeechModelSize,
-} from "../speechDraft";
-import {
-  speechCaptureError,
-  startSpeechCapture,
-  type SpeechCapture,
-} from "../speechCapture";
+import { applyComposerVim } from "../composerVim";
+import { AttachmentChip } from "./composer/AttachmentChip";
+import { CommandList, MentionList } from "./composer/ComposerPopups";
+import { ReplyChip } from "./composer/ReplyChip";
+import { PasteCardList } from "./composer/PasteCardList";
+import { SpeechControls } from "./composer/SpeechControls";
+import { useComposerAttachments } from "./composer/useComposerAttachments";
+import { useComposerSpeech } from "./composer/useComposerSpeech";
+import { useComposerVim } from "./composer/useComposerVim";
+import { useMentionMenu } from "./composer/useMentionMenu";
+import { useOptionsPopoverPlacement } from "./composer/useOptionsPopoverPlacement";
+import { useSlashMenu } from "./composer/useSlashMenu";
+import { useEscapeInterrupt } from "./composer/useEscapeInterrupt";
+import { useTranscriptViewShortcuts } from "./composer/useTranscriptViewShortcuts";
+import { usePasteCards } from "./composer/usePasteCards";
+
 import styles from "./Composer.module.css";
-
-function coderSpeech(): CoderApi["speech"] | undefined {
-  if (typeof window === "undefined") return undefined;
-  return (window as unknown as { coder?: CoderApi }).coder?.speech;
-}
-
-function coderOn(): CoderApi["on"] | undefined {
-  if (typeof window === "undefined") return undefined;
-  return (window as unknown as { coder?: CoderApi }).coder?.on;
-}
-
-type SpeechSnapshot = {
-  threadId: string;
-  draft: string;
-  caret: number;
-  prefix: string;
-  suffix: string;
-  accumulated: string;
-  sessionId: string;
-};
-
-function speechMicLabel(
-  status: SpeechStatus | null,
-  dictating: boolean,
-): string {
-  if (dictating) return "Stop dictation";
-  if (status?.state === "downloading") {
-    const d = status.download;
-    if (d && d.bytesTotal > 0) {
-      const pct = Math.round((100 * d.bytesReceived) / d.bytesTotal);
-      return `Downloading speech model, ${pct}%`;
-    }
-    return "Downloading speech model";
-  }
-  if (!status || status.state === "missing") return "Download speech model";
-  if (status.state === "error" && !status.modelReady) {
-    return "Download speech model";
-  }
-  return "Start dictation";
-}
 
 interface ComposerProps {
   /** Selected thread id; used for per-thread last-used template. */
@@ -352,125 +295,6 @@ const DEFAULT_TEMPLATE_ID = "standard";
 const rowEnterStyle = (index: number): CSSProperties =>
   ({ "--i": String(Math.min(index, 10)) }) as CSSProperties;
 
-/** Two distinct Esc presses within this window rewind when idle (#478). */
-const DOUBLE_ESC_MS = 500;
-
-/**
- * Esc must not steal from a modal, the narrow-window drawer, or another
- * field (notes, rename, edit-resubmit). The composer textarea itself is
- * allowed through — that is the interrupt surface.
- */
-function escapeConsumedByChrome(
-  target: EventTarget | null,
-  composerField: HTMLTextAreaElement | null,
-): boolean {
-  if (typeof document !== "undefined") {
-    if (document.querySelector('[role="dialog"][aria-modal="true"]')) {
-      return true;
-    }
-    if (document.querySelector("[data-drawer-open]")) return true;
-  }
-  if (!(target instanceof HTMLElement)) return false;
-  const tag = target.tagName;
-  const typing =
-    tag === "INPUT" ||
-    tag === "TEXTAREA" ||
-    tag === "SELECT" ||
-    target.isContentEditable;
-  return typing && target !== composerField;
-}
-
-/** One pending attachment: thumbnail for images, glyph for files/folders. */
-function AttachmentChip({
-  attachment,
-  onRemove,
-  onLoadImage,
-}: {
-  attachment: AttachmentInfo;
-  onRemove: () => void;
-  onLoadImage?: (path: string) => Promise<string | null>;
-}) {
-  const [thumb, setThumb] = useState<string | null>(null);
-  useEffect(() => {
-    if (attachment.kind !== "image" || !onLoadImage) return;
-    let live = true;
-    void onLoadImage(attachment.path)
-      .then((url) => {
-        if (live) setThumb(url);
-      })
-      .catch(() => {});
-    return () => {
-      live = false;
-    };
-  }, [attachment.kind, attachment.path, onLoadImage]);
-  return (
-    <span
-      className={styles.attachmentChip}
-      data-attachment-kind={attachment.kind}
-      title={attachment.path}
-    >
-      {attachment.kind === "image" && thumb ? (
-        <img
-          className={styles.attachmentThumb}
-          src={thumb}
-          alt={attachment.name}
-        />
-      ) : (
-        <svg
-          className={styles.attachmentIcon}
-          width="12"
-          height="12"
-          viewBox="0 0 16 16"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="1.5"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          aria-hidden="true"
-        >
-          {attachment.kind === "folder" ? (
-            <path d="M2.5 4A1.5 1.5 0 0 1 4 2.5h2.2a1.5 1.5 0 0 1 1.1.5l.8 1a1.5 1.5 0 0 0 1.1.5H12A1.5 1.5 0 0 1 13.5 6v5A1.5 1.5 0 0 1 12 12.5H4A1.5 1.5 0 0 1 2.5 11V4Z" />
-          ) : attachment.kind === "file" ? (
-            <>
-              <path d="M4.5 2.5h5l4 4v7A1.5 1.5 0 0 1 12 15H4.5A1.5 1.5 0 0 1 3 13.5v-10A1.5 1.5 0 0 1 4.5 2.5Z" />
-              <path d="M9.5 2.5V7h4" />
-            </>
-          ) : (
-            <>
-              <rect x="2.5" y="2.5" width="11" height="11" rx="1.5" />
-              <circle cx="5.8" cy="6" r="1" />
-              <path d="m3 12 3.5-3.5 2.5 2.5 2-2L13.5 12" />
-            </>
-          )}
-        </svg>
-      )}
-      <span className={styles.attachmentName}>{attachment.name}</span>
-      <button
-        type="button"
-        className={styles.attachmentRemove}
-        aria-label={`Remove ${attachment.name}`}
-        title={`Remove ${attachment.name}`}
-        onClick={onRemove}
-      >
-        ×
-      </button>
-    </span>
-  );
-}
-
-function keepList<T>(
-  store: Record<string, T[]>,
-  set: Dispatch<SetStateAction<Record<string, T[]>>>,
-): Dispatch<SetStateAction<Record<string, T[]>>> {
-  return (action) => {
-    set((prev) => {
-      const next = typeof action === "function" ? action(prev) : action;
-      syncListRecord(store, next);
-      return next;
-    });
-  };
-}
-
 export const Composer = memo(function Composer({
   threadId,
   permissionMode,
@@ -528,13 +352,8 @@ export const Composer = memo(function Composer({
   const currentProviderInfo = providers.find((p) => p.id === provider);
   const canAttachImages = supportsImagesForModel(currentProviderInfo, model);
   const transcriptView = useTranscriptViewMode();
-  const vimEnabled = useComposerVimEnabled();
-  const [vimMode, setVimMode] = useState(INITIAL_VIM.mode);
-  const vimStateRef = useRef<VimState>(INITIAL_VIM);
-  useEffect(() => {
-    vimStateRef.current = INITIAL_VIM;
-    setVimMode(INITIAL_VIM.mode);
-  }, [threadId, vimEnabled]);
+  const { vimEnabled, vimMode, setVimMode, vimStateRef } =
+    useComposerVim(threadId);
   const [viewOpen, setViewOpen] = useState(false);
   /**
    * Unsent drafts keyed by thread: one Composer instance serves every thread
@@ -602,209 +421,28 @@ export const Composer = memo(function Composer({
     getComposerBusyAction,
   );
   const [localError, setLocalError] = useState<string | null>(null);
-  const hasSpeech = Boolean(coderSpeech());
-  const [speech, setSpeech] = useState<SpeechStatus | null>(null);
-  const [speechConfirm, setSpeechConfirm] = useState(false);
-  const [dictating, setDictating] = useState(false);
-  const snapshotRef = useRef<SpeechSnapshot | null>(null);
-  const captureRef = useRef<SpeechCapture | null>(null);
-  const dictatingRef = useRef(false);
-  const writeDraftFor = useCallback(
-    (tid: string, text: string, caret?: number) => {
-      draftsRef.current[tid] = text;
-      if (liveThreadIdRef.current !== tid) return;
-      const el = textareaRef.current;
-      if (el) {
-        el.value = text;
-        if (caret != null) {
-          el.focus();
-          el.setSelectionRange(caret, caret);
-        }
-      }
-      syncHasPrompt(text);
-      syncOverflow(text);
-    },
-    [syncHasPrompt, syncOverflow],
-  );
-  const cancelDictation = useCallback(async () => {
-    if (!snapshotRef.current && !captureRef.current && !dictatingRef.current) {
-      return;
-    }
-    const snap = snapshotRef.current;
-    const capture = captureRef.current;
-    snapshotRef.current = null;
-    captureRef.current = null;
-    dictatingRef.current = false;
-    setDictating(false);
-    setSpeechConfirm(false);
-    capture?.close();
-    if (snap) writeDraftFor(snap.threadId, snap.draft, snap.caret);
-    const api = coderSpeech();
-    if (snap?.sessionId && api) {
-      try {
-        await api.cancel({ sessionId: snap.sessionId });
-      } catch {
-        // session already gone
-      }
-    }
-  }, [writeDraftFor]);
-  const cancelDictationRef = useRef(cancelDictation);
-  cancelDictationRef.current = cancelDictation;
-  const applySpeechStatus = useCallback(
-    (status: SpeechStatus) => {
-      setSpeech(status);
-      if (status.state === "downloading" || status.state === "ready") {
-        setSpeechConfirm(false);
-      }
-      const snap = snapshotRef.current;
-      if (!snap) return;
-      if (status.state === "error") {
-        void cancelDictationRef.current();
-        if (status.error) setLocalError(status.error);
-        return;
-      }
-      if (status.delta) {
-        const next = applySpeechDelta({
-          prefix: snap.prefix,
-          suffix: snap.suffix,
-          accumulated: snap.accumulated,
-          delta: status.delta,
-        });
-        snap.accumulated = next.accumulated;
-        writeDraftFor(snap.threadId, next.text, next.caret);
-      }
-      if (status.transcript !== undefined) {
-        const next = applySpeechTranscript({
-          prefix: snap.prefix,
-          suffix: snap.suffix,
-          original: snap.draft,
-          originalCaret: snap.caret,
-          transcript: status.transcript,
-        });
-        writeDraftFor(snap.threadId, next.text, next.caret);
-        snapshotRef.current = null;
-        dictatingRef.current = false;
-        setDictating(false);
-        captureRef.current?.close();
-        captureRef.current = null;
-      }
-    },
-    [writeDraftFor],
-  );
-  useEffect(() => {
-    const api = coderSpeech();
-    const on = coderOn();
-    if (!api || !on) return;
-    let live = true;
-    void api
-      .status()
-      .then((s) => {
-        if (live) setSpeech(s);
-      })
-      .catch(() => {});
-    const off = on("speech:changed", (s) => {
-      if (live) applySpeechStatus(s);
-    });
-    return () => {
-      live = false;
-      off();
-    };
-  }, [applySpeechStatus]);
-  useEffect(() => {
-    if (disabled) void cancelDictationRef.current();
-  }, [disabled]);
-  const startDictation = useCallback(async () => {
-    const api = coderSpeech();
-    if (!api || dictatingRef.current || disabled) return;
-    setSpeechConfirm(false);
-    const el = textareaRef.current;
-    const draft = readDraft();
-    const caret = el?.selectionStart ?? draft.length;
-    snapshotRef.current = {
-      threadId,
-      draft,
-      caret,
-      prefix: draft.slice(0, caret),
-      suffix: draft.slice(caret),
-      accumulated: "",
-      sessionId: "",
-    };
-    dictatingRef.current = true;
-    setDictating(true);
-    try {
-      const capture = await startSpeechCapture({
-        write: (pcm, seq) => {
-          const id = snapshotRef.current?.sessionId;
-          if (!id) return;
-          return api.write({ sessionId: id, pcm, seq });
-        },
-      });
-      if (!snapshotRef.current) {
-        capture.close();
-        return;
-      }
-      captureRef.current = capture;
-      const started = await api.start();
-      if (!snapshotRef.current) {
-        capture.close();
-        captureRef.current = null;
-        try {
-          await api.cancel({ sessionId: started.sessionId });
-        } catch {
-          // already cancelled
-        }
-        return;
-      }
-      snapshotRef.current.sessionId = started.sessionId;
-    } catch (err) {
-      captureRef.current?.close();
-      captureRef.current = null;
-      const snap = snapshotRef.current;
-      snapshotRef.current = null;
-      dictatingRef.current = false;
-      setDictating(false);
-      if (snap) writeDraftFor(snap.threadId, snap.draft, snap.caret);
-      setLocalError(speechCaptureError(err));
-    }
-  }, [disabled, readDraft, threadId, writeDraftFor]);
-  const stopDictation = useCallback(async () => {
-    const snap = snapshotRef.current;
-    const api = coderSpeech();
-    if (!snap || !api) return;
-    const capture = captureRef.current;
-    captureRef.current = null;
-    if (capture) await capture.flushAndStop();
-    try {
-      if (snap.sessionId) await api.stop({ sessionId: snap.sessionId });
-    } catch (err) {
-      await cancelDictation();
-      setLocalError(speechCaptureError(err));
-    }
-  }, [cancelDictation]);
-  const onMicClick = useCallback(() => {
-    if (disabled || sending) return;
-    if (dictatingRef.current) {
-      void stopDictation();
-      return;
-    }
-    const state = speech?.state ?? "missing";
-    if (state === "downloading") return;
-    if (state === "ready" || state === "recording") {
-      void startDictation();
-      return;
-    }
-    if (state === "missing" || (state === "error" && !speech?.modelReady)) {
-      setSpeechConfirm(true);
-    }
-  }, [disabled, sending, speech, startDictation, stopDictation]);
-  const confirmSpeechDownload = useCallback(() => {
-    const api = coderSpeech();
-    if (!api) return;
-    setSpeechConfirm(false);
-    void api.download().catch((err) => {
-      setLocalError(speechCaptureError(err));
-    });
-  }, []);
+  const {
+    hasSpeech,
+    speech,
+    speechConfirm,
+    setSpeechConfirm,
+    dictating,
+    snapshotRef,
+    cancelDictationRef,
+    onMicClick,
+    confirmSpeechDownload,
+  } = useComposerSpeech({
+    threadId,
+    disabled,
+    sending,
+    draftsRef,
+    textareaRef,
+    liveThreadIdRef,
+    readDraft,
+    syncHasPrompt,
+    syncOverflow,
+    setLocalError,
+  });
   /**
    * A cancelled queued follow-up lands here (issue #364): put its text back
    * into the draft, but only onto an empty one — an in-progress draft always
@@ -818,117 +456,22 @@ export const Composer = memo(function Composer({
     if (readDraft().trim()) return;
     writeDraft(restoreDraft.text, restoreDraft.text.length);
   }, [restoreDraft, threadId, readDraft, writeDraft]);
-  /**
-   * Pending attachments keyed by thread, mirroring draftsRef: chips must
-   * not leak across a thread switch. Cleared together with the draft on a
-   * successful action.
-   */
-  const [attachmentsByThread, setAttachmentsState] = useState(() =>
-    copyListRecord(keptAttachments),
-  );
-  const setAttachmentsByThread = useCallback(
-    keepList(keptAttachments, setAttachmentsState),
-    [],
-  );
-  const attachments = attachmentsByThread[threadId] ?? [];
-  const addAttachments = useCallback(
-    (items: AttachmentInfo[]) => {
-      const accepted = canAttachImages
-        ? items
-        : items.filter((a) => a.kind !== "image");
-      if (!accepted.length) return;
-      setAttachmentsByThread((prev) => {
-        const existing = prev[threadId] ?? [];
-        const seen = new Set(existing.map((a) => a.path));
-        const fresh = accepted.filter((a) => !seen.has(a.path));
-        return fresh.length
-          ? { ...prev, [threadId]: [...existing, ...fresh] }
-          : prev;
-      });
-    },
-    [threadId, canAttachImages],
-  );
-  useEffect(() => {
-    if (canAttachImages) return;
-    setAttachmentsByThread((prev) => {
-      const existing = prev[threadId] ?? [];
-      const next = existing.filter((a) => a.kind !== "image");
-      if (next.length === existing.length) return prev;
-      return { ...prev, [threadId]: next };
+  const { attachments, addAttachments, removeAttachment, clearAttachments } =
+    useComposerAttachments({
+      threadId,
+      canAttachImages,
+      incomingAttachments,
+      incomingAttachmentThreadId,
+      onIncomingAttachmentsConsumed,
     });
-  }, [canAttachImages, threadId]);
-  useEffect(() => {
-    if (!incomingAttachments?.length) return;
-    if (
-      incomingAttachmentThreadId &&
-      incomingAttachmentThreadId !== threadId
-    ) {
-      onIncomingAttachmentsConsumed?.();
-      return;
-    }
-    addAttachments(incomingAttachments);
-    onIncomingAttachmentsConsumed?.();
-  }, [
-    incomingAttachments,
-    incomingAttachmentThreadId,
-    threadId,
-    addAttachments,
-    onIncomingAttachmentsConsumed,
-  ]);
-  const removeAttachment = useCallback(
-    (path: string) =>
-      setAttachmentsByThread((prev) => ({
-        ...prev,
-        [threadId]: (prev[threadId] ?? []).filter((a) => a.path !== path),
-      })),
-    [threadId],
-  );
-  const clearAttachments = useCallback(
-    () =>
-      setAttachmentsByThread((prev) =>
-        (prev[threadId] ?? []).length ? { ...prev, [threadId]: [] } : prev,
-      ),
-    [threadId],
-  );
-  const [pasteCardsByThread, setPasteCardsState] = useState(() =>
-    copyListRecord(keptPasteCards),
-  );
-  const setPasteCardsByThread = useCallback(
-    keepList(keptPasteCards, setPasteCardsState),
-    [],
-  );
-  const [expandedCardIds, setExpandedCardIds] = useState<
-    Record<string, boolean>
-  >({});
-  const pasteCards = pasteCardsByThread[threadId] ?? [];
-  pasteCardsRef.current = pasteCards;
-  useEffect(() => {
-    syncOverflow(readDraft());
-  }, [pasteCards, threadId, syncOverflow, readDraft]);
-  const addPasteCard = useCallback(
-    (card: PasteCard) => {
-      setPasteCardsByThread((prev) => ({
-        ...prev,
-        [threadId]: [...(prev[threadId] ?? []), card],
-      }));
-    },
-    [threadId],
-  );
-  const removePasteCard = useCallback(
-    (id: string) =>
-      setPasteCardsByThread((prev) => ({
-        ...prev,
-        [threadId]: (prev[threadId] ?? []).filter((c) => c.id !== id),
-      })),
-    [threadId],
-  );
-  const clearPasteCards = useCallback(
-    () =>
-      setPasteCardsByThread((prev) =>
-        (prev[threadId] ?? []).length ? { ...prev, [threadId]: [] } : prev,
-      ),
-    [threadId],
-  );
+  const {
+    pasteCards,
+    expandedCardIds,
+    setExpandedCardIds,
+    addPasteCard,
+    removePasteCard,
+    clearPasteCards,
+  } = usePasteCards({ threadId, pasteCardsRef, syncOverflow, readDraft });
   const [stashToast, setStashToast] = useState<"stashed" | "restored" | null>(
     null,
   );
@@ -985,97 +528,48 @@ export const Composer = memo(function Composer({
   const returnFocusToOptions = useRef(false);
   const modelListId = useId();
 
-  /** @-mention popup state; `mention` null means closed. */
-  const [mention, setMention] = useState<MentionQuery | null>(null);
-  const [mentionFiles, setMentionFiles] = useState<string[]>([]);
-  const [mentionIndex, setMentionIndex] = useState(0);
-  const mentionTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  /** Stale-response guard: only the latest lookup may paint the popup. */
-  const mentionSeq = useRef(0);
-  const mentionOpen =
-    mention != null &&
-    (mentionFiles.length > 0 || Boolean(onPickMentionFolder));
+  const {
+    mentionFiles,
+    mentionIndex,
+    setMentionIndex,
+    mentionOpen,
+    closeMention,
+    refreshMention,
+    acceptMention,
+    browseMentionFolder,
+  } = useMentionMenu({
+    textareaRef,
+    onListFiles,
+    onPickMentionFolder,
+    disabled,
+    writeDraft,
+    setLocalError,
+  });
 
-  /** `/` command popup: `command` null means closed. */
-  const [command, setCommand] = useState<string | null>(null);
-  const [commandIndex, setCommandIndex] = useState(0);
-  /**
-   * Escape must stay closed while the same text is still in the box —
-   * without this the onSelect that follows the key would reopen it. Cleared
-   * by the next edit and by a thread switch. Accepting needs no such guard:
-   * the inserted trailing space ends the token on its own.
-   */
-  const commandDismissed = useRef(false);
+  const {
+    commandIndex,
+    setCommandIndex,
+    commandDismissed,
+    commandMatches,
+    commandOpen,
+    closeCommand,
+    refreshCommand,
+    acceptCommand,
+  } = useSlashMenu({
+    textareaRef,
+    cliCommands,
+    disabled,
+    busy,
+    writeDraft,
+    setModelOpen,
+    setModeOpen,
+    setEffortOpen,
+    setOptionsOpen,
+    onModelPickerOpen,
+    onSlashAction,
+  });
   /** Last idle Esc; a second press within DOUBLE_ESC_MS rewinds (#478). */
   const lastEscAt = useRef(0);
-  const commandMatches = command
-    ? matchSlashCommands(command, cliCommands)
-    : [];
-  const commandOpen = commandMatches.length > 0;
-
-  const closeCommand = useCallback(() => {
-    setCommand(null);
-    setCommandIndex(0);
-  }, []);
-
-  /** Recompute the active `/` token from the live textarea. */
-  const refreshCommand = useCallback(() => {
-    const el = textareaRef.current;
-    const q =
-      el && !disabled && !commandDismissed.current
-        ? commandQuery(el.value)
-        : null;
-    if (q === null) {
-      closeCommand();
-      return;
-    }
-    setCommand(q);
-    setCommandIndex(0);
-  }, [disabled, closeCommand]);
-
-  const acceptCommand = useCallback(
-    (cmd: SlashCommand) => {
-      if (cmd.kind === "insert") {
-        const inserted = `${cmd.name} `;
-        writeDraft(inserted, inserted.length);
-        closeCommand();
-        return;
-      }
-      // Run verbs must not remain in the draft: sending `/compact` as a
-      // prompt is the bug this palette exists to stop.
-      writeDraft("", 0);
-      closeCommand();
-      const action = cmd.action;
-      if (!action) return;
-      if (action === "model") {
-        if (disabled || busy) return;
-        setModelOpen(true);
-        setModeOpen(false);
-        setEffortOpen(false);
-        setOptionsOpen(false);
-        onModelPickerOpen?.();
-        return;
-      }
-      if (action === "effort") {
-        if (disabled || busy) return;
-        setEffortOpen(true);
-        setModelOpen(false);
-        setModeOpen(false);
-        setOptionsOpen(false);
-        return;
-      }
-      if (action === "permissions") {
-        if (disabled || busy) return;
-        setModeOpen(true);
-        setModelOpen(false);
-        setEffortOpen(false);
-        setOptionsOpen(false);
-        return;
-      }
-      onSlashAction?.(action);
-    },
-    [writeDraft, closeCommand, disabled, busy, onModelPickerOpen, onSlashAction],
-  );
 
   useEffect(() => {
     commandDismissed.current = false;
@@ -1085,78 +579,6 @@ export const Composer = memo(function Composer({
       void cancelDictationRef.current();
     };
   }, [threadId, syncHasPrompt]);
-
-  const closeMention = useCallback(() => {
-    if (mentionTimer.current) {
-      clearTimeout(mentionTimer.current);
-      mentionTimer.current = null;
-    }
-    setMention((prev) => (prev == null ? prev : null));
-    setMentionFiles((prev) => (prev.length === 0 ? prev : []));
-    setMentionIndex((prev) => (prev === 0 ? prev : 0));
-  }, []);
-
-  /** Recompute the active @token from the live textarea and (re)fetch files. */
-  const refreshMention = useCallback(() => {
-    const el = textareaRef.current;
-    if (!el || !onListFiles || disabled) {
-      closeMention();
-      return;
-    }
-    const q = getMentionQuery(el.value, el.selectionStart ?? el.value.length);
-    if (!q) {
-      closeMention();
-      return;
-    }
-    setMention((prev) =>
-      prev && prev.start === q.start && prev.query === q.query ? prev : q,
-    );
-    if (mentionTimer.current) clearTimeout(mentionTimer.current);
-    const seq = ++mentionSeq.current;
-    mentionTimer.current = setTimeout(() => {
-      onListFiles(q.query)
-        .then((files) => {
-          if (mentionSeq.current !== seq) return;
-          setMentionFiles(files);
-          setMentionIndex(0);
-        })
-        .catch(() => {
-          if (mentionSeq.current !== seq) return;
-          setMentionFiles([]);
-        });
-    }, 150);
-  }, [onListFiles, disabled, closeMention]);
-
-  const acceptMention = useCallback(
-    (path: string) => {
-      const el = textareaRef.current;
-      if (!el || !mention) return;
-      const next = applyMention(
-        el.value,
-        el.selectionStart ?? el.value.length,
-        mention.start,
-        path,
-      );
-      writeDraft(next.text, next.caret);
-      closeMention();
-    },
-    [mention, closeMention, writeDraft],
-  );
-
-  const browseMentionFolder = useCallback(() => {
-    if (!onPickMentionFolder || disabled) return;
-    void onPickMentionFolder()
-      .then((path) => {
-        if (path) acceptMention(path);
-      })
-      .catch((err) => {
-        const msg =
-          err instanceof Error && err.message
-            ? err.message
-            : "Failed to pick folder";
-        setLocalError(msg);
-      });
-  }, [onPickMentionFolder, disabled, acceptMention]);
 
   /**
    * Focus the input when a thread is opened (mount, or ThreadView swapping
@@ -1405,38 +827,7 @@ export const Composer = memo(function Composer({
   // and restore would fight closeModelPicker / Escape-back.
   useModalFocus(modelOpen, modelPopoverRef, false);
   useModalFocus(optionsOpen, optionsPopoverRef);
-  // The pill wraps with the others, so its left edge is not the window's.
-  // Keep the panel on screen; the panel itself scrolls.
-  useLayoutEffect(() => {
-    if (!optionsOpen) return;
-    const pop = optionsPopoverRef.current;
-    const anchor = optionsWrapRef.current;
-    if (!pop || !anchor) return;
-    const place = () => {
-      const rect = anchor.getBoundingClientRect();
-      const margin = 8;
-      const width = Math.min(
-        320,
-        Math.max(160, window.innerWidth - margin * 2),
-      );
-      let left = 0;
-      if (rect.left + width > window.innerWidth - margin) {
-        left = window.innerWidth - margin - width - rect.left;
-      }
-      if (rect.left + left < margin) left = margin - rect.left;
-      const above = rect.top - margin;
-      pop.style.left = `${Math.round(left)}px`;
-      pop.style.width = `${Math.round(width)}px`;
-      pop.style.maxHeight = `${Math.round(Math.min(420, Math.max(0, above)))}px`;
-    };
-    place();
-    window.addEventListener("resize", place);
-    window.addEventListener("scroll", place, true);
-    return () => {
-      window.removeEventListener("resize", place);
-      window.removeEventListener("scroll", place, true);
-    };
-  }, [optionsOpen]);
+  useOptionsPopoverPlacement(optionsOpen, optionsPopoverRef, optionsWrapRef);
   useEffect(() => {
     if (!optionsOpen || !bestOfFocusRef.current) return;
     bestOfFocusRef.current = false;
@@ -1458,75 +849,19 @@ export const Composer = memo(function Composer({
   }, [manageOpen]);
 
   const popupOpen = anyMenuOpen || mentionOpen || commandOpen || manageOpen;
-  useEffect(() => {
-    if (disabled) return;
-    const onKey = (e: globalThis.KeyboardEvent) => {
-      if (e.key !== "Escape" || e.repeat) return;
-      if (e.defaultPrevented) return;
-      // Mention / command / pill menus own Esc; do not stop or rewind.
-      if (popupOpen) return;
-      if (escapeConsumedByChrome(e.target, textareaRef.current)) return;
+  useEscapeInterrupt({
+    disabled,
+    busy,
+    popupOpen,
+    onStopRun,
+    onSlashAction,
+    textareaRef,
+    snapshotRef,
+    cancelDictationRef,
+    lastEscAt,
+  });
 
-      if (snapshotRef.current) {
-        e.preventDefault();
-        lastEscAt.current = 0;
-        void cancelDictationRef.current();
-        return;
-      }
-
-      if (busy && onStopRun) {
-        e.preventDefault();
-        lastEscAt.current = 0;
-        void onStopRun();
-        return;
-      }
-
-      if (!busy && onSlashAction) {
-        const now = Date.now();
-        if (now - lastEscAt.current < DOUBLE_ESC_MS) {
-          lastEscAt.current = 0;
-          e.preventDefault();
-          onSlashAction("rewind");
-        } else {
-          lastEscAt.current = now;
-        }
-      }
-    };
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
-  }, [disabled, busy, popupOpen, onStopRun, onSlashAction]);
-
-  useEffect(() => {
-    const onKey = (e: globalThis.KeyboardEvent) => {
-      if (e.defaultPrevented || e.repeat) return;
-      const key = e.key.toLowerCase();
-      if (
-        e.ctrlKey &&
-        e.altKey &&
-        !e.metaKey &&
-        !e.shiftKey &&
-        key === "f"
-      ) {
-        e.preventDefault();
-        setTranscriptViewMode(
-          getTranscriptViewMode() === "summary" ? "normal" : "summary",
-        );
-        return;
-      }
-      if (
-        e.ctrlKey &&
-        !e.metaKey &&
-        !e.altKey &&
-        !e.shiftKey &&
-        key === "o"
-      ) {
-        e.preventDefault();
-        setTranscriptViewMode(cycleTranscriptViewMode(getTranscriptViewMode()));
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, []);
+  useTranscriptViewShortcuts();
 
   const composeOutgoing = useCallback(
     (draft: string) => {
@@ -2190,189 +1525,38 @@ export const Composer = memo(function Composer({
       ) : null}
       <div className={styles.card}>
         {mentionOpen && (
-          <ul
-            className={styles.mentionList}
-            role="listbox"
-            aria-label="Mention a file or folder"
-          >
-            {mentionFiles.map((f, i) => (
-              <li key={f} role="option" aria-selected={i === mentionIndex}>
-                <button
-                  type="button"
-                  className={styles.mentionRow}
-                  // Same overflow box as the slash palette (16+ rows in 240px).
-                  // Without this the highlight walks off-screen and the list
-                  // looks frozen. Matches the model picker.
-                  ref={(el) => {
-                    if (i === mentionIndex && el) {
-                      scrollChildIntoNearestView(
-                        el.closest<HTMLElement>('[role="listbox"]'),
-                        el,
-                      );
-                    }
-                  }}
-                  data-highlighted={i === mentionIndex ? "true" : undefined}
-                  data-mention-kind={f.endsWith("/") ? "folder" : "file"}
-                  onMouseEnter={() => setMentionIndex(i)}
-                  onClick={() => acceptMention(f)}
-                >
-                  {f}
-                </button>
-              </li>
-            ))}
-            {onPickMentionFolder && (
-              <li role="option" aria-selected={false}>
-                <button
-                  type="button"
-                  className={styles.mentionRow}
-                  data-mention-browse=""
-                  onClick={browseMentionFolder}
-                >
-                  Browse folder…
-                </button>
-              </li>
-            )}
-          </ul>
+          <MentionList
+            mentionFiles={mentionFiles}
+            mentionIndex={mentionIndex}
+            setMentionIndex={setMentionIndex}
+            acceptMention={acceptMention}
+            onPickMentionFolder={onPickMentionFolder}
+            browseMentionFolder={browseMentionFolder}
+          />
         )}
         {commandOpen && (
-          <ul
-            className={styles.mentionList}
-            role="listbox"
-            aria-label="Commands"
-          >
-            {commandMatches.map((cmd, i) => (
-              <li key={cmd.name} role="option" aria-selected={i === commandIndex}>
-                <button
-                  type="button"
-                  className={styles.mentionRow}
-                  // 16 slash rows in a 240px box. Arrow keys only bump
-                  // commandIndex; without this the highlight walks off-screen
-                  // and the palette looks frozen. Matches the model picker.
-                  ref={(el) => {
-                    if (i === commandIndex && el) {
-                      scrollChildIntoNearestView(
-                        el.closest<HTMLElement>('[role="listbox"]'),
-                        el,
-                      );
-                    }
-                  }}
-                  data-highlighted={i === commandIndex ? "true" : undefined}
-                  onMouseEnter={() => setCommandIndex(i)}
-                  onClick={() => acceptCommand(cmd)}
-                >
-                  <span className={styles.providerRowText}>
-                    <span className={styles.modelRowLabel}>{cmd.name}</span>
-                    <span className={styles.modelRowVendor}>{cmd.hint}</span>
-                  </span>
-                </button>
-              </li>
-            ))}
-          </ul>
+          <CommandList
+            commandMatches={commandMatches}
+            commandIndex={commandIndex}
+            setCommandIndex={setCommandIndex}
+            acceptCommand={acceptCommand}
+          />
         )}
         {replyTo && (
-          <div
-            className={styles.replyChip}
-            data-reply-chip=""
-            data-reply-kind={replyTo.kind ?? "message"}
-            data-reply-source={
-              replySourceUnavailable ? "unavailable" : "ok"
-            }
-            data-reply-truncated={replyTo.truncated ? "" : undefined}
-            onClick={() => {
-              if (replySourceUnavailable) return;
-              onRevealReply?.();
-            }}
-          >
-            <span className={styles.replyChipLabel}>
-              {replyTo.kind === "selection" ? "Cite" : "Reply"}
-            </span>
-            <button
-              type="button"
-              className={styles.replyChipSource}
-              data-reply-source=""
-              disabled={replySourceUnavailable}
-              aria-label={
-                replySourceUnavailable
-                  ? "Quoted source is unavailable"
-                  : "Show quoted message"
-              }
-              title={
-                replySourceUnavailable
-                  ? "Quoted source is unavailable"
-                  : "Show quoted message"
-              }
-              onClick={(e) => {
-                e.stopPropagation();
-                if (replySourceUnavailable) return;
-                onRevealReply?.();
-              }}
-            >
-              {excerptReply(replyTo.text)}
-            </button>
-            {replyTo.truncated && (
-              <span className={styles.replyChipTruncated} data-reply-truncated="">
-                truncated
-              </span>
-            )}
-            <button
-              type="button"
-              className={styles.attachmentRemove}
-              aria-label="Cancel reply"
-              title="Cancel reply"
-              onClick={(e) => {
-                e.stopPropagation();
-                onClearReply?.();
-              }}
-            >
-              ×
-            </button>
-          </div>
+          <ReplyChip
+            replyTo={replyTo}
+            replySourceUnavailable={replySourceUnavailable}
+            onRevealReply={onRevealReply}
+            onClearReply={onClearReply}
+          />
         )}
         {pasteCards.length > 0 && (
-          <div className={styles.pasteCardList} aria-label="Pasted context">
-            {pasteCards.map((card) => {
-              const open = Boolean(expandedCardIds[card.id]);
-              return (
-                <div
-                  key={card.id}
-                  className={styles.pasteCard}
-                  data-paste-card={card.id}
-                  data-compressed={card.compressed ? "" : undefined}
-                >
-                  <div className={styles.pasteCardHead}>
-                    <button
-                      type="button"
-                      className={styles.pasteCardToggle}
-                      aria-expanded={open}
-                      onClick={() =>
-                        setExpandedCardIds((prev) => ({
-                          ...prev,
-                          [card.id]: !prev[card.id],
-                        }))
-                      }
-                    >
-                      <span>{pasteCardLabel(card)}</span>
-                      <span className={styles.pasteCardChars}>
-                        {card.chars.toLocaleString("en-US")} chars
-                      </span>
-                    </button>
-                    <button
-                      type="button"
-                      className={styles.attachmentRemove}
-                      aria-label="Remove paste"
-                      title="Remove paste"
-                      onClick={() => removePasteCard(card.id)}
-                    >
-                      ×
-                    </button>
-                  </div>
-                  {open && (
-                    <pre className={styles.pasteCardBody}>{card.text}</pre>
-                  )}
-                </div>
-              );
-            })}
-          </div>
+          <PasteCardList
+            pasteCards={pasteCards}
+            expandedCardIds={expandedCardIds}
+            setExpandedCardIds={setExpandedCardIds}
+            removePasteCard={removePasteCard}
+          />
         )}
         {attachments.length > 0 && (
           <div className={styles.attachmentRow} aria-label="Attachments">
@@ -2424,72 +1608,16 @@ export const Composer = memo(function Composer({
         <div className={styles.controls} data-transcript-view-mode={transcriptView}>
           <div className={styles.pills}>
             {hasSpeech && speech && (
-              <>
-                <button
-                  type="button"
-                  className={`${styles.pill}${dictating ? ` ${styles.pillAccent}` : ""}`}
-                  data-speech-mic=""
-                  disabled={
-                    disabled ||
-                    sending ||
-                    speech.state === "downloading"
-                  }
-                  aria-disabled={
-                    disabled || sending || speech.state === "downloading"
-                      ? "true"
-                      : undefined
-                  }
-                  aria-label={speechMicLabel(speech, dictating)}
-                  aria-pressed={dictating ? "true" : "false"}
-                  title={speechMicLabel(speech, dictating)}
-                  onClick={onMicClick}
-                >
-                  <svg
-                    width="13"
-                    height="13"
-                    viewBox="0 0 16 16"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="1.5"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    aria-hidden="true"
-                  >
-                    <path d="M8 2.5a2.2 2.2 0 0 0-2.2 2.2v3.1a2.2 2.2 0 1 0 4.4 0V4.7A2.2 2.2 0 0 0 8 2.5Z" />
-                    <path d="M4.2 8.2a3.8 3.8 0 0 0 7.6 0" />
-                    <path d="M8 12v1.8" />
-                  </svg>
-                  {speech.state === "downloading" && speech.download?.bytesTotal
-                    ? `${Math.round((100 * speech.download.bytesReceived) / speech.download.bytesTotal)}%`
-                    : null}
-                </button>
-                {speechConfirm && (
-                  <span
-                    className={styles.speechConfirm}
-                    data-speech-confirm=""
-                    role="group"
-                    aria-label="Download speech model"
-                  >
-                    <span>Download {formatSpeechModelSize()}?</span>
-                    <button
-                      type="button"
-                      className={styles.pill}
-                      aria-label="Confirm download"
-                      onClick={confirmSpeechDownload}
-                    >
-                      Download
-                    </button>
-                    <button
-                      type="button"
-                      className={styles.pill}
-                      aria-label="Cancel download"
-                      onClick={() => setSpeechConfirm(false)}
-                    >
-                      Cancel
-                    </button>
-                  </span>
-                )}
-              </>
+              <SpeechControls
+                speech={speech}
+                dictating={dictating}
+                disabled={disabled}
+                sending={sending}
+                speechConfirm={speechConfirm}
+                setSpeechConfirm={setSpeechConfirm}
+                onMicClick={onMicClick}
+                confirmSpeechDownload={confirmSpeechDownload}
+              />
             )}
             {/* Model, effort and access are ghost pills split by hairlines
                 (#1429); each keeps its own picker. */}
