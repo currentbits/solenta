@@ -43,7 +43,6 @@ import { WorkflowsModal } from "./components/WorkflowsModal";
 import { CommandPalette } from "./components/CommandPalette";
 import {
   PALETTE_ACTIONS,
-  matchPaletteShortcut,
   type PaletteMode,
 } from "./commandPalette";
 import { WebTokenGate } from "./components/WebTokenGate";
@@ -92,6 +91,7 @@ import {
   agentsPanelStartsCollapsed,
   saveLastAgentsCollapsed,
 } from "./app/agentsPanelStorage";
+import { useAppShortcuts } from "./app/useAppShortcuts";
 
 const EMPTY_FORECAST: ConflictForecast = { pairs: [], computedAt: 0 };
 const EMPTY_AGENT_PROFILES: AgentProfile[] = [];
@@ -121,13 +121,6 @@ const SIDEBAR_RAIL_WIDTH =
     : 44;
 
 type DrawerId = "sidebar" | "agents";
-
-function dialogOpen(): boolean {
-  return (
-    typeof document !== "undefined" &&
-    document.querySelector('[role="dialog"]') != null
-  );
-}
 
 type AppProps = {
   /**
@@ -1228,47 +1221,14 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     if (agentsCollapsed && !narrow) agentsExpandRef.current?.focus();
   }, [agentsCollapsed, narrow]);
 
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (!(e.metaKey || e.ctrlKey) || e.altKey || e.shiftKey) return;
-      if (e.key.toLowerCase() !== "b" || narrow || dialogOpen()) return;
-      e.preventDefault();
-      toggleSidebar();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [toggleSidebar, narrow]);
-
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (!(e.metaKey || e.ctrlKey) || e.key !== ".") return;
-      if (e.altKey || e.shiftKey) return;
-      if (dialogOpen()) return;
-      e.preventDefault();
-      toggleAgents();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [toggleAgents]);
-
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      const next = matchPaletteShortcut(e);
-      if (!next) return;
-      const paletteEl = document.querySelector("[data-command-palette]");
-      if (dialogOpen() && !paletteEl) return;
-      e.preventDefault();
-      e.stopPropagation();
-      if (paletteEl && paletteModeRef.current === next) {
-        setPaletteOpen(false);
-        return;
-      }
-      setPaletteMode(next);
-      setPaletteOpen(true);
-    };
-    window.addEventListener("keydown", onKey, true);
-    return () => window.removeEventListener("keydown", onKey, true);
-  }, []);
+  useAppShortcuts({
+    toggleSidebar,
+    narrow,
+    toggleAgents,
+    paletteModeRef,
+    setPaletteMode,
+    setPaletteOpen,
+  });
 
   // ponytail: restore to the trigger, not a focus trap. Tab can leave the pane.
   useEffect(() => {
