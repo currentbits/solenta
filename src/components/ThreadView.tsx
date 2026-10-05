@@ -20,17 +20,10 @@ import { useWorktreeChrome } from "./WorktreeControl";
 import { WorkspaceStrip } from "./WorkspaceStrip";
 import { ProjectIcon } from "./ProjectIcon";
 import {
-  closePane,
-  defaultPaneLayout,
-  findLeaf,
-  firstLeafId,
   hasPaneType,
   hydratePaneLayout,
   leaves,
-  openPane,
-  savePaneLayout,
   type LayoutNode,
-  type PaneType,
 } from "../paneLayout";
 import type {
   AttachmentInfo,
@@ -58,7 +51,6 @@ import type {
   ThreadDetail,
   ThreadInfo,
   ThreadMessagePin,
-  WorkLogItem,
   WorkSuggestion,
   WorkflowTemplateInfo,
   EditorId,
@@ -77,20 +69,11 @@ import {
   pinsOf,
   unpinMessage,
 } from "../messagePins";
-import {
-  nearestScrollTop,
-  offsetTopWithin,
-} from "../scrollNearest";
 import type { WorkflowSaveInput } from "../useCoder";
 import type { ReturnableView } from "../viewReturn";
 import { contextBreakdown } from "../contextBreakdown";
 import { contextRing, threadContextWindow } from "../contextRing";
-import {
-  buildTimeline,
-  workLogDurationLabel,
-  type TimelineEntry,
-  type WorkLogGroup,
-} from "../timeline";
+import { buildTimeline, type TimelineEntry } from "../timeline";
 import { collapseTimeline, type DisplayEntry } from "../toolGroups";
 import { RunArtifacts } from "./RunArtifacts";
 import { QuestionPrompt } from "./QuestionPrompt";
@@ -104,60 +87,35 @@ import {
 import {
   clampWindowStart,
   ensureVisibleStart,
-  extendWindowStart,
   initialWindowStart,
 } from "../transcriptWindow";
-import {
-  failedWorkflowRetryAgentId,
-  isWorkflowLastRun,
-  lastUserMessage,
-  retryActionTitle,
-  retryAnchorEventId,
-  retryTarget,
-} from "../retryTurn";
+import { lastUserMessage } from "../retryTurn";
 import {
   isEditableUserMessage,
   rewindConfirmText,
   rewindDroppedCount,
 } from "../editResubmit";
 import { mapReviewBars, type ReviewBar } from "../reviewBar";
-import {
-  isRunCollapsed,
-  mapRunHeaders,
-  toggleRunCollapsed,
-  type RunHeader,
-} from "../runHeader";
-import type { SlashAction, SlashCommand } from "../slashCommands";
+import { isRunCollapsed, toggleRunCollapsed } from "../runHeader";
+import type { SlashAction } from "../slashCommands";
 import { ProviderQuotaDialog } from "./ProviderQuota";
 import type { ProviderLimitsLoader } from "../providerUsage";
 import { buildBestOfNEntries } from "../bestOfN";
 import { formatQuotaWaitLabel } from "../quotaWait";
 import type { ReviewSymbol } from "../reviewItinerary";
-import { formatElapsed } from "../format";
-import { liveWorkingLabel } from "../workingLabel";
 import { useEscapeClose } from "../useEscapeClose";
 import { useModalFocus } from "../useModalFocus";
 import type { ComparePeer } from "../divergence";
 import {
-  latestTurnKey,
-  mapFocusTurns,
   TRANSCRIPT_VIEW_HINTS,
   TRANSCRIPT_VIEW_LABELS,
   TRANSCRIPT_VIEW_MODES,
-  type FocusTurnSummary,
 } from "../focusView";
-import {
-  setTranscriptViewMode,
-  useRunDurationEnabled,
-  useTranscriptViewMode,
-} from "../uiPrefs";
+import { setTranscriptViewMode, useTranscriptViewMode } from "../uiPrefs";
 import { DROP_OVERLAY_MESSAGE, type DroppedFolder } from "../dropFiles";
 import { Composer } from "./Composer";
 import { repoRelativeDir } from "../mention";
-import { createDoubleOptionTracker } from "../appsnapHotkey";
 import {
-  captureCiteFromSelection,
-  citeBodyFromSelection,
   makeReplyTarget,
   replySourceUnavailable,
   type ReplyTarget,
@@ -165,7 +123,6 @@ import {
 import { waitWhatPrompt } from "../waitWhat";
 import { sessionImagePathsFromMessages } from "../sessionImages";
 import { PathLinkProvider } from "./PathLinks";
-import { messageProvenance, type MessageProvenance } from "../provenance";
 import {
   SandboxBadge,
   ContextRingBadge,
@@ -200,6 +157,15 @@ import {
   DivergenceCard,
 } from "./thread/cards";
 import { ChangesPanel } from "./thread/ChangesPanel";
+import { useRetryAnchors } from "./thread/useRetryAnchors";
+import { useTranscriptAnnotations } from "./thread/useTranscriptAnnotations";
+import { useCliCommands } from "./thread/useCliCommands";
+import { useCiteShortcut } from "./thread/useCiteShortcut";
+import { useHeaderGitStatus } from "./thread/useHeaderGitStatus";
+import { useQueuedEdit } from "./thread/useQueuedEdit";
+import { usePaneLayoutActions } from "./thread/usePaneLayoutActions";
+import { useAppSnap } from "./thread/useAppSnap";
+import { useStickToBottom } from "./thread/useStickToBottom";
 import styles from "./ThreadView.module.css";
 
 const EMPTY_COMPARE_PEERS: ComparePeer[] = [];
@@ -208,18 +174,6 @@ const COPY_FLASH_MS = 1500;
 
 function shortSha(sha: string): string {
   return sha.length > 7 ? sha.slice(0, 7) : sha;
-}
-
-const STICK_BOTTOM_PX = 80;
-
-/** items[] when persisted (#809); else split prompt once (legacy rows). */
-function queuedThoughts(
-  prompt: string | null | undefined,
-  items?: string[] | null,
-): string[] {
-  if (items && items.length) return items;
-  if (prompt == null) return [];
-  return prompt.split("\n\n");
 }
 
 function swapQueuedItem(items: string[], index: number, delta: number): string[] {
@@ -802,10 +756,6 @@ export const ThreadView = memo(function ThreadView({
    * onto the bottom; a leftover scroll must not clear stickToBottom (#607).
    */
   const forceStick = useRef(false);
-  const pinning = useRef(false);
-  const prevLayoutThreadId = useRef<string | null>(null);
-  const seenThread = useRef(false);
-  const prevPermReq = useRef<string | null>(null);
   const prevThreadId = useRef<string | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -815,29 +765,27 @@ export const ThreadView = memo(function ThreadView({
   const [renaming, setRenaming] = useState(false);
   const [renameDraft, setRenameDraft] = useState("");
   const renamingRef = useRef(false);
-  /** Inline edit of a queued follow-up item (issue #364 / #780). */
-  const [editingQueued, setEditingQueued] = useState<number | null>(null);
-  const [queuedEditDraft, setQueuedEditDraft] = useState("");
-  const [queuedEditSaving, setQueuedEditSaving] = useState(false);
-  const [queuedEditError, setQueuedEditError] = useState<string | null>(null);
-  const queuedEditSavingRef = useRef(false);
-  const queuedWriteInFlight = useRef(false);
-  const queuedWriteGen = useRef(0);
-  const [queuedWritePending, setQueuedWritePending] = useState(false);
-  const [queuedWriteError, setQueuedWriteError] = useState<string | null>(null);
-  // The edit is bound to the blob it was seeded from: a thread switch or a
-  // drained/cancelled queue ends it. Bump writeGen so a late reject cannot
-  // lock or error a different thread's strip (#1144).
-  useEffect(() => {
-    setEditingQueued(null);
-    queuedEditSavingRef.current = false;
-    setQueuedEditSaving(false);
-    setQueuedEditError(null);
-    queuedWriteGen.current += 1;
-    queuedWriteInFlight.current = false;
-    setQueuedWritePending(false);
-    setQueuedWriteError(null);
-  }, [detail?.thread.id, queuedPrompt == null]);
+  const {
+    editingQueued,
+    setEditingQueued,
+    queuedEditDraft,
+    setQueuedEditDraft,
+    queuedEditSaving,
+    queuedEditError,
+    setQueuedEditError,
+    queuedWritePending,
+    queuedWriteError,
+    queuedItems,
+    writeQueuedItems,
+    closeQueuedEdit,
+    saveQueuedEdit,
+  } = useQueuedEdit({
+    detail,
+    queuedPrompt,
+    queuedItemsProp,
+    onEditQueued,
+    onCancelQueued,
+  });
   const [notesOpen, setNotesOpen] = useState(false);
   const [notesDraft, setNotesDraft] = useState("");
   const [notesError, setNotesError] = useState<string | null>(null);
@@ -920,7 +868,6 @@ export const ThreadView = memo(function ThreadView({
   const [lightbox, setLightbox] = useState<{ src: string; alt: string } | null>(
     null,
   );
-  const [cliCommands, setCliCommands] = useState<SlashCommand[]>([]);
   const copyFlashTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const threadId = detail?.thread.id ?? null;
   if (threadId !== focusThreadId) {
@@ -936,30 +883,12 @@ export const ThreadView = memo(function ThreadView({
     setContextOpen(false);
   }, [threadId]);
 
-  useEffect(() => {
-    if (!onListCliCommands) {
-      setCliCommands([]);
-      return;
-    }
-    let cancelled = false;
-    onListCliCommands({ projectPath: project?.path, provider: detail?.thread.provider })
-      .then((rows) => {
-        if (cancelled) return;
-        setCliCommands(
-          rows.map((r) => ({
-            name: r.name,
-            hint: r.hint,
-            kind: "insert" as const,
-          })),
-        );
-      })
-      .catch(() => {
-        if (!cancelled) setCliCommands([]);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [onListCliCommands, project?.path, threadId, detail?.thread.provider]);
+  const cliCommands = useCliCommands({
+    onListCliCommands,
+    project,
+    threadId,
+    detail,
+  });
   const [incomingHandoff, setIncomingHandoff] = useState<{
     threadId: string;
     items: AttachmentInfo[];
@@ -1063,7 +992,6 @@ export const ThreadView = memo(function ThreadView({
   const [windowStart, setWindowStart] = useState(() =>
     initialWindowStart(timeline.length),
   );
-  const pendingPrepend = useRef<number | null>(null);
   const revealTargetId = revealMessageId ?? jumpMessageId;
   const revealIndex = useMemo(() => {
     if (!revealTargetId) return -1;
@@ -1173,237 +1101,27 @@ export const ThreadView = memo(function ThreadView({
     el?.scrollIntoView({ block: "nearest" });
   }, [revealTargetId, start]);
 
-  /** Run duration per runId, for assistant-message meta footers. Opt-in. */
-  const showRunDuration = useRunDurationEnabled();
-  const focusTurns = useMemo(() => {
-    if (!detail || !summaryMode) return [];
-    return mapFocusTurns(detail.messages, {
-      liveTurnKey: isWorking ? latestTurnKey(detail.messages) : null,
-    });
-  }, [detail, summaryMode, isWorking]);
-  const hiddenFocusActivity = useMemo(() => {
-    const hidden = new Set<string>();
-    if (!summaryMode) return hidden;
-    for (const turn of focusTurns) {
-      if (turn.live || expandedFocusTurns.has(turn.key)) continue;
-      for (const id of turn.activityIds) hidden.add(id);
-    }
-    return hidden;
-  }, [summaryMode, focusTurns, expandedFocusTurns]);
-  const focusTurnByFirstId = useMemo(() => {
-    const map = new Map<string, FocusTurnSummary>();
-    for (const turn of focusTurns) map.set(turn.firstActivityId, turn);
-    return map;
-  }, [focusTurns]);
-  const durationByRunId = useMemo(() => {
-    const map = new Map<string, string>();
-    if (!detail || !showRunDuration) return map;
-    const byRun = new Map<string, WorkLogItem[]>();
-    for (const item of detail.workLog) {
-      const list = byRun.get(item.runId);
-      if (list) list.push(item);
-      else byRun.set(item.runId, [item]);
-    }
-    for (const [runId, items] of byRun) {
-      const label = workLogDurationLabel(items);
-      if (label) map.set(runId, label);
-    }
-    return map;
-  }, [detail, showRunDuration]);
-
-  /** "Worked for" header per completed run, keyed by its first message. */
-  const headerByMessageId = useMemo(() => {
-    const map = new Map<string, RunHeader>();
-    if (!detail) return map;
-    for (const header of mapRunHeaders(detail.messages, detail.thread.status)) {
-      map.set(header.firstMessageId, header);
-    }
-    return map;
-  }, [detail]);
-
-  /**
-   * Provenance tiers per assistant message (issue #404), computed over the
-   * raw message list so turn boundaries (previous user message) are intact.
-   */
-  const provenanceById = useMemo(() => {
-    const map = new Map<string, MessageProvenance>();
-    if (!detail) return map;
-    for (let i = 0; i < detail.messages.length; i++) {
-      if (detail.messages[i].role !== "assistant") continue;
-      const prov = messageProvenance(detail.messages, i);
-      if (prov) map.set(detail.messages[i].id, prov);
-    }
-    return map;
-  }, [detail]);
-
-  const latestWorkLogRunId = useMemo(() => {
-    let latest: WorkLogGroup | null = null;
-    for (const entry of timeline) {
-      if (entry.kind === "worklog") {
-        if (!latest || entry.timestamp >= latest.timestamp) latest = entry;
-      }
-    }
-    return latest?.runId ?? null;
-  }, [timeline]);
-
-  /**
-   * Latest tool message of the most recent run; that card auto-expands and
-   * stays open through completion (tool output and done arrive in the same
-   * update, so keying off !done would collapse it before output ever shows).
-   */
-  const latestRunningToolId = useMemo(() => {
-    if (!detail || !latestWorkLogRunId) return null;
-    let latest: ChatMessage | null = null;
-    for (const m of detail.messages) {
-      if (m.role === "tool" && m.tool && m.runId === latestWorkLogRunId) {
-        if (!latest || m.createdAt >= latest.createdAt) latest = m;
-      }
-    }
-    return latest?.id ?? null;
-  }, [detail, latestWorkLogRunId]);
-
-  const latestThinkingId = useMemo(() => {
-    if (!isWorking || !detail || !latestWorkLogRunId) return null;
-    let latest: ChatMessage | null = null;
-    for (const m of detail.messages) {
-      if (m.thinking && m.runId === latestWorkLogRunId) {
-        if (!latest || m.createdAt >= latest.createdAt) latest = m;
-      }
-    }
-    if (!latest) return null;
-    for (const m of detail.messages) {
-      if (m.runId !== latestWorkLogRunId) continue;
-      if (m.createdAt > latest.createdAt && !m.thinking) return null;
-    }
-    return latest.id;
-  }, [detail, isWorking, latestWorkLogRunId]);
-  const runningToolSummary = useMemo(() => {
-    if (!isWorking || !detail || !latestWorkLogRunId) return null;
-    let latest: ChatMessage | null = null;
-    for (const m of detail.messages) {
-      if (
-        m.role === "tool" &&
-        m.tool &&
-        !m.tool.done &&
-        m.runId === latestWorkLogRunId
-      ) {
-        if (!latest || m.createdAt >= latest.createdAt) latest = m;
-      }
-    }
-    return latest?.text ?? null;
-  }, [detail, isWorking, latestWorkLogRunId]);
-  const thinkingLive = Boolean(latestThinkingId);
-  /**
-   * The assistant message currently being written. While a tool runs the
-   * last message is the tool call itself, so the caret correctly disappears.
-   */
-  const streamingMessageId = (() => {
-    if (!isWorking || !detail || detail.messages.length === 0) return null;
-    const last = detail.messages[detail.messages.length - 1];
-    return last.role === "assistant" ? last.id : null;
-  })();
-  const stalledAt =
-    isWorking && detail?.thread.stalledAt != null
-      ? detail.thread.stalledAt
-      : null;
-  const workingLabel = liveWorkingLabel({
-    stalledElapsed: stalledAt != null ? formatElapsed(stalledAt) : null,
-    workflowRunning: detail?.workflow ? runningAgents : null,
-    toolSummary: runningToolSummary,
-    thinking: thinkingLive,
+  const {
+    hiddenFocusActivity,
+    focusTurnByFirstId,
+    durationByRunId,
+    headerByMessageId,
+    provenanceById,
+    latestRunningToolId,
+    latestThinkingId,
+    streamingMessageId,
+    stalledAt,
+    workingLabel,
+  } = useTranscriptAnnotations({
+    detail,
+    timeline,
+    summaryMode,
+    isWorking,
+    expandedFocusTurns,
+    runningAgents,
   });
   const isArchived = Boolean(detail?.thread.archived);
   const emptyMessages = detail != null && detail.messages.length === 0;
-
-  const queuedItems = queuedThoughts(queuedPrompt, queuedItemsProp);
-
-  const writeQueuedItems = (items: string[]) => {
-    if (queuedWriteInFlight.current || queuedEditSavingRef.current) return;
-    if (items.length === 0) {
-      onCancelQueued?.();
-      return;
-    }
-    const next = items.join("\n\n");
-    if (next === queuedPrompt || !onEditQueued) return;
-    queuedWriteInFlight.current = true;
-    const gen = queuedWriteGen.current;
-    setQueuedWritePending(true);
-    setQueuedWriteError(null);
-    void Promise.resolve(onEditQueued(next, items))
-      .then(() => {
-        if (gen !== queuedWriteGen.current) return;
-        setQueuedWriteError(null);
-      })
-      .catch((err: unknown) => {
-        if (gen !== queuedWriteGen.current) return;
-        setQueuedWriteError(
-          err instanceof Error && err.message ? err.message : String(err),
-        );
-      })
-      .finally(() => {
-        if (gen !== queuedWriteGen.current) return;
-        queuedWriteInFlight.current = false;
-        setQueuedWritePending(false);
-      });
-  };
-
-  const closeQueuedEdit = () => {
-    if (queuedEditSavingRef.current) return;
-    setEditingQueued(null);
-    setQueuedEditError(null);
-  };
-
-  const persistQueuedEdit = async (prompt: string, items?: string[]) => {
-    if (!onEditQueued) {
-      setEditingQueued(null);
-      setQueuedEditError(null);
-      return;
-    }
-    if (queuedEditSavingRef.current || queuedWriteInFlight.current) return;
-    queuedEditSavingRef.current = true;
-    setQueuedEditSaving(true);
-    setQueuedEditError(null);
-    try {
-      await onEditQueued(prompt, items);
-      setEditingQueued(null);
-      setQueuedEditError(null);
-    } catch (err) {
-      setQueuedEditError(
-        err instanceof Error && err.message ? err.message : String(err),
-      );
-    } finally {
-      queuedEditSavingRef.current = false;
-      setQueuedEditSaving(false);
-    }
-  };
-
-  // Empty save means cancel: editing must never blank the queue (#364).
-  // Close the editor only after the write lands so a rejected persist
-  // keeps the revised draft (#926).
-  const saveQueuedEdit = () => {
-    if (queuedEditSavingRef.current || queuedWriteInFlight.current) return;
-    const text = queuedEditDraft.trim();
-    const index = editingQueued;
-    if (!text || queuedPrompt == null || index == null) {
-      closeQueuedEdit();
-      return;
-    }
-    if (queuedItems.length <= 1) {
-      if (text === queuedPrompt) {
-        closeQueuedEdit();
-        return;
-      }
-      void persistQueuedEdit(text);
-      return;
-    }
-    if (text === queuedItems[index]) {
-      closeQueuedEdit();
-      return;
-    }
-    const next = queuedItems.slice();
-    next[index] = text;
-    void persistQueuedEdit(next.join("\n\n"), next);
-  };
 
   /** Header context ring; null hides it (unknown window or no measured turn). */
   const ring = useMemo(() => {
@@ -1476,71 +1194,15 @@ export const ThreadView = memo(function ThreadView({
         : undefined,
   });
 
-  /** Prompt Retry turn will re-send, plus the event card that carries it. */
-  const retrySend = useMemo(
-    () => (detail ? retryTarget(detail.messages) : null),
-    [detail],
-  );
-  const retryEventId = useMemo(
-    () =>
-      detail
-        ? retryAnchorEventId(
-            detail.thread.status,
-            detail.messages,
-            detail.workflow,
-          )
-        : null,
-    [detail],
-  );
-  const workflowRetryAgentId = useMemo(() => {
-    if (!detail || !isWorkflowLastRun(detail.messages, detail.workflow)) {
-      return null;
-    }
-    return failedWorkflowRetryAgentId(
-      detail.workflow,
-      detail.thread.status,
-    );
-  }, [detail]);
-  const overflowEventId = useMemo(() => {
-    if (
-      !detail ||
-      detail.thread.status !== "failed" ||
-      detail.thread.lastErrorKind !== "context-overflow"
-    ) {
-      return null;
-    }
-    const last = detail.messages[detail.messages.length - 1];
-    return last?.role === "event" && !last.thinking ? last.id : null;
-  }, [detail]);
-  const upgradeEventId = useMemo(() => {
-    if (
-      !detail ||
-      detail.thread.status !== "failed" ||
-      detail.thread.lastErrorKind !== "cli-upgrade"
-    ) {
-      return null;
-    }
-    const last = detail.messages[detail.messages.length - 1];
-    return last?.role === "event" && !last.thinking ? last.id : null;
-  }, [detail]);
-  // Writer-lock (#953): hide Retry so it cannot resume the same locked
-  // session. No replacement button; wait, then send. /fork is the hatch
-  // (#554 eject-to-terminal is unimplemented).
-  const writerLockEventId = useMemo(() => {
-    if (
-      !detail ||
-      detail.thread.status !== "failed" ||
-      detail.thread.lastErrorKind !== "writer-lock"
-    ) {
-      return null;
-    }
-    const last = detail.messages[detail.messages.length - 1];
-    return last?.role === "event" && !last.thinking ? last.id : null;
-  }, [detail]);
-  const retryTitle = useMemo(
-    () => (retrySend ? retryActionTitle(retrySend) : ""),
-    [retrySend],
-  );
+  const {
+    retrySend,
+    retryEventId,
+    workflowRetryAgentId,
+    overflowEventId,
+    upgradeEventId,
+    writerLockEventId,
+    retryTitle,
+  } = useRetryAnchors(detail);
   const handleRetry = useCallback(() => {
     if (isWorking) return;
     if (workflowRetryAgentId) {
@@ -1741,46 +1403,7 @@ export const ThreadView = memo(function ThreadView({
     [onStartRun],
   );
 
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.defaultPrevented) return;
-      if (!(e.metaKey || e.ctrlKey) || !e.shiftKey) return;
-      if (e.key.toLowerCase() !== "c") return;
-      const t = e.target;
-      if (
-        t instanceof HTMLTextAreaElement ||
-        t instanceof HTMLInputElement ||
-        (t instanceof HTMLElement && t.isContentEditable)
-      ) {
-        return;
-      }
-      const sel = window.getSelection();
-      const citeBody = citeBodyFromSelection(sel);
-      if (!citeBody) return;
-      const article = citeBody.closest("[data-msg]");
-      if (!(article instanceof HTMLElement)) return;
-      if (article.hasAttribute("data-streaming")) return;
-      const messageId = article.getAttribute("data-msg");
-      const originThreadId = article.getAttribute("data-thread");
-      if (!messageId || !originThreadId) return;
-      const message = detail?.messages.find((row) => row.id === messageId);
-      if (!message || message.role !== "assistant" || !message.text.trim()) {
-        return;
-      }
-      const target = captureCiteFromSelection({
-        selection: sel,
-        messageId,
-        threadId: originThreadId,
-        sourceText: message.text,
-        citeBody,
-      });
-      if (!target) return;
-      e.preventDefault();
-      storeReply(target);
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [detail?.messages, storeReply]);
+  useCiteShortcut(detail, storeReply);
 
   const pickMentionFolder = useCallback(async () => {
     if (!onPickDirectory) return null;
@@ -1789,111 +1412,22 @@ export const ThreadView = memo(function ThreadView({
     return repoRelativeDir(project?.path ?? "", dir);
   }, [onPickDirectory, project?.path]);
 
-  const openAppSnap = useCallback(async () => {
-    if (!onListSnapWindows) return;
-    setSnapError(null);
-    setSnapOpen(true);
-    try {
-      const windows = await onListSnapWindows();
-      setSnapWindows(windows);
-      if (windows.length === 0) {
-        setSnapError("No windows to capture. Grant screen recording if asked.");
-      }
-    } catch (err) {
-      setSnapWindows([]);
-      setSnapError(
-        err instanceof Error && err.message
-          ? err.message
-          : "Failed to list windows",
-      );
-    }
-  }, [onListSnapWindows]);
-
-  const isLiveScreenshotHandoff = (
-    originThreadId: string | null,
-    generation: number,
-  ) =>
-    originThreadId != null &&
-    originThreadId === screenshotHandoffThreadId.current &&
-    generation === screenshotHandoffGen.current;
-
-  const deliverIncomingAttachment = (
-    originThreadId: string,
-    generation: number,
-    att: AttachmentInfo,
-  ) => {
-    if (!isLiveScreenshotHandoff(originThreadId, generation)) return;
-    setIncomingHandoff({ threadId: originThreadId, items: [att] });
-  };
-
-  const attachBrowserScreenshot = useCallback(
-    async (dataUrl: string, originThreadId: string) => {
-      if (!onSaveAttachmentImage) return;
-      const generation = screenshotHandoffGen.current;
-      const att = await onSaveAttachmentImage(dataUrl);
-      if (!att) return;
-      deliverIncomingAttachment(originThreadId, generation, att);
-    },
-    [onSaveAttachmentImage],
-  );
-
-  const captureAppSnap = useCallback(
-    async (sourceId: string) => {
-      if (!onCaptureSnapWindow) return;
-      const originThreadId = screenshotHandoffThreadId.current;
-      const generation = screenshotHandoffGen.current;
-      setSnapBusy(true);
-      setSnapError(null);
-      try {
-        const att = await onCaptureSnapWindow(sourceId);
-        if (!isLiveScreenshotHandoff(originThreadId, generation)) return;
-        if (att && originThreadId) {
-          deliverIncomingAttachment(originThreadId, generation, att);
-          setSnapOpen(false);
-        } else if (!att) {
-          setSnapError("Could not capture that window");
-        }
-      } catch (err) {
-        if (!isLiveScreenshotHandoff(originThreadId, generation)) return;
-        setSnapError(
-          err instanceof Error && err.message
-            ? err.message
-            : "Failed to capture the window",
-        );
-      } finally {
-        if (isLiveScreenshotHandoff(originThreadId, generation)) {
-          setSnapBusy(false);
-        }
-      }
-    },
-    [onCaptureSnapWindow],
-  );
-
-  useEffect(() => {
-    if (!onListSnapWindows || isArchived) return;
-    const tracker = createDoubleOptionTracker();
-    const onKey = (e: KeyboardEvent) => {
-      if (
-        tracker.note(e.key, e.type as "keydown" | "keyup", {
-          meta: e.metaKey,
-          ctrl: e.ctrlKey,
-          shift: e.shiftKey,
-        })
-      ) {
-        e.preventDefault();
-        void openAppSnap();
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    window.addEventListener("keyup", onKey);
-    return () => {
-      window.removeEventListener("keydown", onKey);
-      window.removeEventListener("keyup", onKey);
-    };
-  }, [onListSnapWindows, isArchived, openAppSnap]);
-
-  useEscapeClose(snapOpen && !snapBusy, () => setSnapOpen(false));
-  useModalFocus(snapOpen, snapDialogRef);
+  const { attachBrowserScreenshot, captureAppSnap } = useAppSnap({
+    onListSnapWindows,
+    onCaptureSnapWindow,
+    onSaveAttachmentImage,
+    isArchived,
+    snapOpen,
+    setSnapOpen,
+    setSnapWindows,
+    setSnapError,
+    snapBusy,
+    setSnapBusy,
+    snapDialogRef,
+    setIncomingHandoff,
+    screenshotHandoffGen,
+    screenshotHandoffThreadId,
+  });
 
   /**
    * Fork one thread per selected provider or profile, then start the same
@@ -2173,66 +1707,25 @@ export const ThreadView = memo(function ThreadView({
     }
   }, [detail?.thread.id]);
 
-  useEffect(() => {
-    if (threadId && threadId === layoutThreadId) {
-      savePaneLayout(threadId, layout);
-    }
-  }, [threadId, layoutThreadId, layout]);
-
-  useEffect(() => {
-    if (!changesOpen) return;
-    // A newly opened pane needs the width the agents rail is holding.
-    if (!hasPaneType(layout, "diff")) onPanesNeedRoom?.();
-    setLayout((prev) => {
-      if (hasPaneType(prev, "diff")) return prev;
-      const next = openPane(prev, "diff", focusedId);
-      setFocusedId(next.focusId);
-      return next.layout;
-    });
-  }, [changesOpen, changesNonce]);
-
-  const applyLayout = useCallback(
-    (next: LayoutNode, focusId: string) => {
-      setLayout(next);
-      setFocusedId(findLeaf(next, focusId) ? focusId : firstLeafId(next));
-      if (!hasPaneType(next, "diff")) onCloseChanges();
-    },
-    [onCloseChanges],
-  );
-
-  const handlePaneChange = useCallback(
-    (next: LayoutNode) => {
-      applyLayout(next, focusedId);
-    },
-    [applyLayout, focusedId],
-  );
-
-  const handleOpenPane = useCallback(
-    (type: PaneType) => {
-      const fresh = !hasPaneType(layout, type);
-      const next = openPane(layout, type, focusedId);
-      applyLayout(next.layout, next.focusId);
-      // Git, Terminal, Browser, … all want the width the agents rail holds.
-      if (fresh) onPanesNeedRoom?.();
-      if (type === "diff") onViewChanges?.();
-    },
-    [layout, focusedId, applyLayout, onViewChanges, onPanesNeedRoom],
-  );
-
-  const terminalLeaf = leaves(layout).find((l) => l.type === "terminal") ?? null;
-  const handleToggleTerminal = useCallback(() => {
-    if (!terminalLeaf) {
-      handleOpenPane("terminal");
-      return;
-    }
-    const next = closePane(layout, terminalLeaf.id);
-    if (next.closed) applyLayout(next.layout, next.focusId);
-  }, [terminalLeaf, layout, applyLayout, handleOpenPane]);
-
-  const handleResetLayout = useCallback(() => {
-    const next = defaultPaneLayout();
-    applyLayout(next, firstLeafId(next));
-  }, [applyLayout]);
+  const {
+    handlePaneChange,
+    handleOpenPane,
+    terminalLeaf,
+    handleToggleTerminal,
+    handleResetLayout,
+  } = usePaneLayoutActions({
+    threadId,
+    layoutThreadId,
+    layout,
+    setLayout,
+    focusedId,
+    setFocusedId,
+    changesOpen,
+    changesNonce,
+    onPanesNeedRoom,
+    onCloseChanges,
+    onViewChanges,
+  });
 
   const refreshRunStats = useCallback(async () => {
     const threadId = detail?.thread.id;
@@ -2355,59 +1848,13 @@ export const ThreadView = memo(function ThreadView({
   }, [detailsOpen]);
   const closeDetails = useCallback(() => setDetailsOpen(false), []);
   const [prRequest, setPrRequest] = useState(0);
-  /** Header attention (#1411): the branch is behind its upstream. Local read,
-   *  no fetch; refreshed when the thread opens and when a run settles. */
-  const [headerBehind, setHeaderBehind] = useState(0);
-  const attentionThreadId = detail?.thread.id ?? null;
-  const attentionStatus = detail?.thread.status;
-  useEffect(() => {
-    if (!attentionThreadId || !gitSyncInfo || attentionStatus === "working") {
-      if (!attentionThreadId) setHeaderBehind(0);
-      return;
-    }
-    let live = true;
-    gitSyncInfo(attentionThreadId).then(
-      (info) => {
-        if (live) setHeaderBehind(info.hasUpstream ? info.behind ?? 0 : 0);
-      },
-      () => {
-        if (live) setHeaderBehind(0);
-      },
-    );
-    return () => {
-      live = false;
-    };
-  }, [attentionThreadId, attentionStatus, gitSyncInfo, syncRefreshNonce]);
-  const [detailsGit, setDetailsGit] = useState<{
-    changed: number;
-    sync: GitSyncInfo | null;
-  } | null>(null);
-  const detailsThreadId = detail?.thread.id ?? null;
-  useEffect(() => {
-    if (!detailsOpen || !detailsThreadId) return;
-    let live = true;
-    void (async () => {
-      let changed = 0;
-      try {
-        changed = (await onFetchDiff()).files.length;
-      } catch {
-        changed = 0;
-      }
-      let sync: GitSyncInfo | null = null;
-      if (gitSyncInfo) {
-        try {
-          sync = await gitSyncInfo(detailsThreadId);
-        } catch {
-          sync = null;
-        }
-      }
-      if (live) setDetailsGit({ changed, sync });
-    })();
-    return () => {
-      live = false;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [detailsOpen, detailsThreadId, syncRefreshNonce]);
+  const { headerBehind, detailsGit } = useHeaderGitStatus({
+    detail,
+    detailsOpen,
+    gitSyncInfo,
+    onFetchDiff,
+    syncRefreshNonce,
+  });
   const ringWarn = ring?.view.warn === true;
   useEffect(() => {
     if (contextOpen && !ringWarn) setDetailsOpen(true);
@@ -2421,121 +1868,17 @@ export const ThreadView = memo(function ThreadView({
     reviewUndoDialogRef,
   );
 
-  const pinIfStuck = () => {
-    const el = bodyRef.current;
-    if (!el || !stickToBottom.current) return;
-    const distance = el.scrollHeight - el.scrollTop - el.clientHeight;
-    if (distance <= 0) return;
-    pinning.current = true;
-    const before = el.scrollTop;
-    el.scrollTop = el.scrollHeight;
-    const landed =
-      el.scrollHeight - el.scrollTop - el.clientHeight <= STICK_BOTTOM_PX;
-    if (el.scrollTop !== before && landed) {
-      forceStick.current = false;
-    }
-    requestAnimationFrame(() => {
-      pinning.current = false;
-    });
-  };
-  const pinIfStuckRef = useRef(pinIfStuck);
-  pinIfStuckRef.current = pinIfStuck;
-
-  const showEarlier = () => {
-    stickToBottom.current = false;
-    forceStick.current = false;
-    const el = bodyRef.current;
-    pendingPrepend.current = el ? el.scrollHeight : 0;
-    setWindowStart((s) => extendWindowStart(s));
-  };
-
-  useLayoutEffect(() => {
-    const prev = pendingPrepend.current;
-    if (prev == null) return;
-    pendingPrepend.current = null;
-    const el = bodyRef.current;
-    if (!el) return;
-    el.scrollTop += el.scrollHeight - prev;
-  }, [start]);
-
-  /**
-   * Pin before paint so a remounted body (thread switch) and a newly
-   * inserted permission card never flash at the wrong scrollTop. #408's
-   * ResizeObserver still covers post-paint growth.
-   */
-  useLayoutEffect(() => {
-    const id = detail?.thread.id ?? null;
-    if (id !== prevLayoutThreadId.current) {
-      const switching =
-        prevLayoutThreadId.current !== null &&
-        id !== null &&
-        prevLayoutThreadId.current !== id;
-      const recovering =
-        prevLayoutThreadId.current === null &&
-        id !== null &&
-        seenThread.current;
-      prevLayoutThreadId.current = id;
-      if (id) seenThread.current = true;
-      if (switching || recovering) {
-        stickToBottom.current = true;
-        forceStick.current = true;
-      } else if (id) {
-        stickToBottom.current = true;
-      }
-    }
-    const req = detail?.pendingPermission?.requestId ?? null;
-    if (req && req !== prevPermReq.current) {
-      stickToBottom.current = true;
-      forceStick.current = true;
-    }
-    prevPermReq.current = req;
-    pinIfStuck();
-  }, [
+  const { showEarlier, onBodyScroll } = useStickToBottom({
+    bodyRef,
+    stickToBottom,
+    forceStick,
+    detail,
     timeline,
     isWorking,
-    detail?.messages,
-    detail?.workLog,
-    detail?.pendingPermission,
-    detail?.thread.id,
-  ]);
-
-  useLayoutEffect(() => {
-    if (!revealTargetId) return;
-    const container = bodyRef.current;
-    if (!container) return;
-    const child = container.querySelector(
-      `[data-message-id="${revealTargetId.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"]`,
-    );
-    if (!(child instanceof HTMLElement)) return;
-    stickToBottom.current = false;
-    forceStick.current = false;
-    const next = nearestScrollTop(
-      { scrollTop: container.scrollTop, clientHeight: container.clientHeight },
-      {
-        offsetTop: offsetTopWithin(container, child),
-        offsetHeight: child.offsetHeight,
-      },
-    );
-    if (next !== container.scrollTop) container.scrollTop = next;
-  }, [revealTargetId, start, timeline.length]);
-
-  /**
-   * Content can grow after paint with no React state change (images, syntax
-   * highlight, webfonts). Observe the scroll body and its children so a
-   * pinned view stays pinned. Re-attach when the timeline replaces children.
-   */
-  useEffect(() => {
-    const el = bodyRef.current;
-    if (!el || typeof ResizeObserver === "undefined") return;
-
-    const onResize = () => pinIfStuckRef.current();
-    const ro = new ResizeObserver(onResize);
-    ro.observe(el);
-    for (const child of el.children) {
-      ro.observe(child);
-    }
-    return () => ro.disconnect();
-  }, [timeline, start, detail?.pendingPermission, isWorking]);
+    start,
+    revealTargetId,
+    setWindowStart,
+  });
 
   /**
    * Delegated: any image in the timeline (tool output, attachment thumb,
@@ -2546,22 +1889,6 @@ export const ThreadView = memo(function ThreadView({
     if (!img || img.tagName !== "IMG") return false;
     setLightbox({ src: img.src, alt: img.alt });
     return true;
-  };
-
-  const onBodyScroll = () => {
-    const el = bodyRef.current;
-    if (!el || pinning.current) return;
-    const distance = el.scrollHeight - el.scrollTop - el.clientHeight;
-    if (forceStick.current) {
-      if (distance <= STICK_BOTTOM_PX) {
-        forceStick.current = false;
-        stickToBottom.current = true;
-        return;
-      }
-      pinIfStuck();
-      return;
-    }
-    stickToBottom.current = distance <= STICK_BOTTOM_PX;
   };
 
   if (!hasProjects) {
