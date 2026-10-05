@@ -3011,53 +3011,110 @@ describe("ThreadView transcript windowing (issue #564)", () => {
     m.unmount();
   });
 
-  it("appends a streamed message at the tail without revealing earlier entries", async () => {
-    const n = 500;
+  /** Thread of `n` bulk messages plus a button that appends one streamed tail message. */
+  function streamHarness(n: number) {
     const initial = bulkMessages(n);
-
-    function StreamHarness() {
+    let appended = 0;
+    return function StreamHarness() {
       const [messages, setMessages] = useState(initial);
       return (
         <div>
           <button
             type="button"
             data-append-stream=""
-            onClick={() =>
+            onClick={() => {
+              appended++;
+              const k = appended;
               setMessages((prev) => [
                 ...prev,
                 msg({
-                  id: "streamed-tail",
+                  id: `streamed-tail-${k}`,
                   role: "user",
-                  text: "STREAMED_TAIL",
-                  createdAt: n + 1,
+                  text: `STREAMED_TAIL_${k}`,
+                  createdAt: n + k,
                 }),
-              ])
-            }
+              ]);
+            }}
           >
             append
           </button>
           {view({ detail: detail({ messages }) })}
         </div>
       );
-    }
+    };
+  }
 
-    const m = await mount(<StreamHarness />);
-    assert.ok(!m.html().includes("#0#"), "pre-stream: oldest is windowed out");
-    assert.ok(m.html().includes("#499#"), "pre-stream: tail is mounted");
+  it("advances the window start on appends while stuck to the bottom (#1475)", async () => {
+    const n = 500;
+    const Harness = streamHarness(n);
+    const m = await mount(<Harness />);
+    assert.ok(m.html().includes("#380#"), "pre-stream: head of the window mounted");
     await m.click(m.query("[data-append-stream]"));
+    await m.click(m.query("[data-append-stream]"));
+    assert.ok(m.text().includes("STREAMED_TAIL_2"), "the streamed message mounts at the tail");
     assert.ok(
-      m.text().includes("STREAMED_TAIL"),
-      "the streamed message mounts at the tail",
+      !m.html().includes("#380#") && !m.html().includes("#381#"),
+      "a pinned append drops the oldest mounted entries",
     );
     assert.ok(
-      !m.html().includes("#0#"),
-      "append must not extend the top of the window",
-    );
-    assert.ok(
-      m.text().includes("Show earlier — 380 messages"),
-      "hidden count stays put across a tail append",
+      m.text().includes("Show earlier — 382 messages"),
+      "the mounted tail stays at TRANSCRIPT_WINDOW entries",
     );
     m.unmount();
+  });
+
+  it("keeps the window start on appends after the user scrolled up (#1475)", async () => {
+    const n = 500;
+    const Harness = streamHarness(n);
+    const m = await mount(<Harness />);
+    const body = m.query(".body") as HTMLElement;
+    fakeScrollMetrics(body, { clientHeight: 400, scrollHeight: 20_000, scrollTop: 100 });
+    body.dispatchEvent(new Event("scroll"));
+    await m.click(m.query("[data-append-stream]"));
+    assert.ok(m.text().includes("STREAMED_TAIL_1"));
+    assert.ok(
+      m.html().includes("#380#"),
+      "content above a reader who scrolled up must not be unmounted",
+    );
+    assert.ok(m.text().includes("Show earlier — 380 messages"));
+    m.unmount();
+  });
+
+  it("Show earlier still pages older entries in after the head was trimmed (#1475)", async () => {
+    const n = 500;
+    const Harness = streamHarness(n);
+    const m = await mount(<Harness />);
+    await m.click(m.query("[data-append-stream]"));
+    assert.ok(m.text().includes("Show earlier — 381 messages"));
+    await m.click(m.query("[data-show-earlier]"));
+    assert.ok(m.text().includes("Show earlier — 261 messages"));
+    assert.ok(m.html().includes("#261#") && m.html().includes("#380#"));
+    // Show earlier unsticks, so the next append must not trim it away again.
+    await m.click(m.query("[data-append-stream]"));
+    assert.ok(m.text().includes("STREAMED_TAIL_2"));
+    assert.ok(
+      m.text().includes("Show earlier — 261 messages"),
+      "paged-in entries survive an append",
+    );
+    m.unmount();
+  });
+
+  it("bounds the mounted tail by message text, not just entry count (#1475)", async () => {
+    const answers = Array.from({ length: 6 }, (_, i) =>
+      msg({
+        id: `long-${i}`,
+        role: "assistant",
+        text: `LONG_ANSWER_${i} ${"word ".repeat(9_000)}`,
+        createdAt: 10 + i,
+      }),
+    );
+    const html = render({ detail: detail({ messages: answers }) });
+    assert.ok(html.includes("LONG_ANSWER_5") && html.includes("LONG_ANSWER_4"));
+    assert.ok(
+      !html.includes("LONG_ANSWER_0"),
+      "six 45 KB answers must not all mount",
+    );
+    assert.ok(html.includes("data-show-earlier"));
   });
 
   it("extends the window to include a jump-to-anchor above it", async () => {
