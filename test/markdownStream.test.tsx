@@ -200,7 +200,10 @@ describe("streaming markdown chunks", () => {
       return seed % n;
     };
     const seps = ["\n", "\n\n", "\n\n\n"];
-    for (let i = 0; i < 6_000; i++) {
+    // ponytail: 1,500 keeps the file under the 20 s per-file limit on Windows
+    // CI (6,000 took ~8 s locally, >20 s there). 24k mixes over 3 seeds ran
+    // clean offline before merge; raise this locally when changing the splitter.
+    for (let i = 0; i < 1_500; i++) {
       let text = "";
       for (let k = 2 + rand(6); k > 0; k--) {
         text += (text ? seps[rand(3)] : "") + blocks[rand(blocks.length)];
