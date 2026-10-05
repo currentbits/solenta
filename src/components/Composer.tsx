@@ -66,7 +66,6 @@ import {
   formatOverflow,
   makePasteCard,
   overflowWarn,
-  pasteCardLabel,
   payloadChars,
   shouldCollapsePaste,
   type PasteCard,
@@ -112,6 +111,7 @@ import { formatSpeechModelSize } from "../speechDraft";
 import { AttachmentChip } from "./composer/AttachmentChip";
 import { CommandList, MentionList } from "./composer/ComposerPopups";
 import { ReplyChip } from "./composer/ReplyChip";
+import { PasteCardList } from "./composer/PasteCardList";
 import { useComposerAttachments } from "./composer/useComposerAttachments";
 import { useComposerVim } from "./composer/useComposerVim";
 import { useMentionMenu } from "./composer/useMentionMenu";
@@ -1553,50 +1553,12 @@ export const Composer = memo(function Composer({
           />
         )}
         {pasteCards.length > 0 && (
-          <div className={styles.pasteCardList} aria-label="Pasted context">
-            {pasteCards.map((card) => {
-              const open = Boolean(expandedCardIds[card.id]);
-              return (
-                <div
-                  key={card.id}
-                  className={styles.pasteCard}
-                  data-paste-card={card.id}
-                  data-compressed={card.compressed ? "" : undefined}
-                >
-                  <div className={styles.pasteCardHead}>
-                    <button
-                      type="button"
-                      className={styles.pasteCardToggle}
-                      aria-expanded={open}
-                      onClick={() =>
-                        setExpandedCardIds((prev) => ({
-                          ...prev,
-                          [card.id]: !prev[card.id],
-                        }))
-                      }
-                    >
-                      <span>{pasteCardLabel(card)}</span>
-                      <span className={styles.pasteCardChars}>
-                        {card.chars.toLocaleString("en-US")} chars
-                      </span>
-                    </button>
-                    <button
-                      type="button"
-                      className={styles.attachmentRemove}
-                      aria-label="Remove paste"
-                      title="Remove paste"
-                      onClick={() => removePasteCard(card.id)}
-                    >
-                      ×
-                    </button>
-                  </div>
-                  {open && (
-                    <pre className={styles.pasteCardBody}>{card.text}</pre>
-                  )}
-                </div>
-              );
-            })}
-          </div>
+          <PasteCardList
+            pasteCards={pasteCards}
+            expandedCardIds={expandedCardIds}
+            setExpandedCardIds={setExpandedCardIds}
+            removePasteCard={removePasteCard}
+          />
         )}
         {attachments.length > 0 && (
           <div className={styles.attachmentRow} aria-label="Attachments">
