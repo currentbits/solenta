@@ -4,6 +4,7 @@ import {
   useMemo,
   useRef,
   useState,
+  Suspense,
   type CSSProperties,
 } from "react";
 import { useCoder } from "./useCoder";
@@ -12,15 +13,7 @@ import { demoProviderLimits } from "./providerUsageDemo";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { Sidebar } from "./components/Sidebar";
 import { ThreadView } from "./components/ThreadView";
-import { PrListView } from "./components/PrListView";
-import { KanbanView } from "./components/KanbanView";
-import { PlanboardView } from "./components/PlanboardView";
-import { AutomationsView } from "./components/AutomationsView";
-import { ActivityView } from "./components/ActivityView";
-import { InsightsView } from "./components/InsightsView";
-import { UsageView, type UsageReportControls } from "./components/UsageView";
-import { FleetView } from "./components/FleetView";
-import { DigestView } from "./components/DigestView";
+import type { UsageReportControls } from "./components/UsageView";
 import {
   AgentsPanel,
   defaultInspectorTab,
@@ -28,16 +21,9 @@ import {
   type PanelTab,
 } from "./components/AgentsPanel";
 import { ClaimedLanesHeartbeat } from "./components/LaneHeartbeat";
-import {
-  SettingsModal,
-  type SettingsPane,
-} from "./components/SettingsModal";
-import { OnboardingModal } from "./components/onboarding/OnboardingModal";
+import type { SettingsPane } from "./components/SettingsModal";
 import { ArchiveToast } from "./components/ArchiveToast";
-import { AddProjectPathModal } from "./components/AddProjectPathModal";
-import { EditProjectModal } from "./components/EditProjectModal";
 import { WorkflowsModal } from "./components/WorkflowsModal";
-import { CommandPalette } from "./components/CommandPalette";
 import {
   PALETTE_ACTIONS,
   type PaletteMode,
@@ -83,6 +69,52 @@ import { useOnboarding } from "./app/useOnboarding";
 import { useIssueStarters } from "./app/useIssueStarters";
 import { useAppShortcuts } from "./app/useAppShortcuts";
 import { useSidebarResize } from "./app/useSidebarResize";
+import { lazyNamed } from "./lazyNamed";
+
+// Views and dialogs that are closed at boot load on first use, so their code
+// stays out of the cold-start parse (#1475 finding 7).
+const PrListView = lazyNamed(() =>
+  import("./components/PrListView").then((m) => m.PrListView),
+);
+const KanbanView = lazyNamed(() =>
+  import("./components/KanbanView").then((m) => m.KanbanView),
+);
+const PlanboardView = lazyNamed(() =>
+  import("./components/PlanboardView").then((m) => m.PlanboardView),
+);
+const AutomationsView = lazyNamed(() =>
+  import("./components/AutomationsView").then((m) => m.AutomationsView),
+);
+const ActivityView = lazyNamed(() =>
+  import("./components/ActivityView").then((m) => m.ActivityView),
+);
+const InsightsView = lazyNamed(() =>
+  import("./components/InsightsView").then((m) => m.InsightsView),
+);
+const UsageView = lazyNamed(() =>
+  import("./components/UsageView").then((m) => m.UsageView),
+);
+const FleetView = lazyNamed(() =>
+  import("./components/FleetView").then((m) => m.FleetView),
+);
+const DigestView = lazyNamed(() =>
+  import("./components/DigestView").then((m) => m.DigestView),
+);
+const SettingsModal = lazyNamed(() =>
+  import("./components/SettingsModal").then((m) => m.SettingsModal),
+);
+const OnboardingModal = lazyNamed(() =>
+  import("./components/onboarding/OnboardingModal").then((m) => m.OnboardingModal),
+);
+const AddProjectPathModal = lazyNamed(() =>
+  import("./components/AddProjectPathModal").then((m) => m.AddProjectPathModal),
+);
+const EditProjectModal = lazyNamed(() =>
+  import("./components/EditProjectModal").then((m) => m.EditProjectModal),
+);
+const CommandPalette = lazyNamed(() =>
+  import("./components/CommandPalette").then((m) => m.CommandPalette),
+);
 
 const EMPTY_AGENT_PROFILES: AgentProfile[] = [];
 
@@ -120,6 +152,16 @@ type AppProps = {
    */
   rendererSha?: string | null;
 };
+
+/**
+ * Latches true the first time `open` is true, so a lazy dialog loads on first
+ * use and then stays mounted (dialogs keep in-flight callbacks across close).
+ */
+function useOpenedOnce(open: boolean): boolean {
+  const [opened, setOpened] = useState(open);
+  if (open && !opened) setOpened(true);
+  return opened || open;
+}
 
 export default function App({ rendererSha: rendererShaOverride }: AppProps = {}) {
   const {
@@ -1250,6 +1292,9 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     createPr,
     mergeWorktree,
   });
+  const paletteLoaded = useOpenedOnce(paletteOpen);
+  const settingsLoaded = useOpenedOnce(settingsOpen);
+  const onboardingLoaded = useOpenedOnce(onboardingOpen);
 
   if (buildMismatch) {
     return (
@@ -1453,6 +1498,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
           inert={narrow && drawer !== null}
         >
           <ErrorBoundary pane="Thread view">
+          <Suspense fallback={null}>
           {view === "activity" ? (
             <ActivityView
               projects={projects}
@@ -1741,6 +1787,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         onSettleThread={selectedThreadId ? handleSettleOpenThread : undefined}
             />
           )}
+          </Suspense>
           </ErrorBoundary>
         </div>
         <ClaimedLanesHeartbeat
@@ -1860,6 +1907,8 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
           listError={workflowListError}
           onRetryList={refreshWorkflows}
         />
+        <Suspense fallback={null}>
+        {paletteLoaded && (
         <CommandPalette
           open={paletteOpen}
           mode={paletteMode}
@@ -1877,6 +1926,10 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
           onOpenFile={handlePaletteFile}
           actions={PALETTE_ACTIONS}
         />
+        )}
+        </Suspense>
+        <Suspense fallback={null}>
+        {settingsLoaded && (
         <SettingsModal
           open={settingsOpen}
           onClose={closeSettings}
@@ -1925,6 +1978,10 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
             discardHarnessImport,
           }}
         />
+        )}
+        </Suspense>
+        <Suspense fallback={null}>
+        {onboardingLoaded && (
         <OnboardingModal
           open={onboardingOpen}
           suspended={addPathOpen}
@@ -1937,6 +1994,8 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
           onSaveSettings={saveSettings}
           onCreateFirstThread={handleCreateFirstThread}
         />
+        )}
+        </Suspense>
         {archiveToastIds && (
           <ArchiveToast
             key={`archive-${archiveToastIds.join(",")}`}
@@ -1981,6 +2040,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
             onDismiss={dismissChipError}
           />
         )}
+        <Suspense fallback={null}>
         {addPathOpen && (
           <AddProjectPathModal
             onClose={() => setAddPathOpen(false)}
@@ -2016,6 +2076,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
             }}
           />
         )}
+        </Suspense>
       </div>
     </div>
   );
