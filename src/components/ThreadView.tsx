@@ -58,7 +58,6 @@ import type {
   ThreadDetail,
   ThreadInfo,
   ThreadMessagePin,
-  WorkLogItem,
   WorkSuggestion,
   WorkflowTemplateInfo,
   EditorId,
@@ -85,12 +84,7 @@ import type { WorkflowSaveInput } from "../useCoder";
 import type { ReturnableView } from "../viewReturn";
 import { contextBreakdown } from "../contextBreakdown";
 import { contextRing, threadContextWindow } from "../contextRing";
-import {
-  buildTimeline,
-  workLogDurationLabel,
-  type TimelineEntry,
-  type WorkLogGroup,
-} from "../timeline";
+import { buildTimeline, type TimelineEntry } from "../timeline";
 import { collapseTimeline, type DisplayEntry } from "../toolGroups";
 import { RunArtifacts } from "./RunArtifacts";
 import { QuestionPrompt } from "./QuestionPrompt";
@@ -114,36 +108,22 @@ import {
   rewindDroppedCount,
 } from "../editResubmit";
 import { mapReviewBars, type ReviewBar } from "../reviewBar";
-import {
-  isRunCollapsed,
-  mapRunHeaders,
-  toggleRunCollapsed,
-  type RunHeader,
-} from "../runHeader";
+import { isRunCollapsed, toggleRunCollapsed } from "../runHeader";
 import type { SlashAction, SlashCommand } from "../slashCommands";
 import { ProviderQuotaDialog } from "./ProviderQuota";
 import type { ProviderLimitsLoader } from "../providerUsage";
 import { buildBestOfNEntries } from "../bestOfN";
 import { formatQuotaWaitLabel } from "../quotaWait";
 import type { ReviewSymbol } from "../reviewItinerary";
-import { formatElapsed } from "../format";
-import { liveWorkingLabel } from "../workingLabel";
 import { useEscapeClose } from "../useEscapeClose";
 import { useModalFocus } from "../useModalFocus";
 import type { ComparePeer } from "../divergence";
 import {
-  latestTurnKey,
-  mapFocusTurns,
   TRANSCRIPT_VIEW_HINTS,
   TRANSCRIPT_VIEW_LABELS,
   TRANSCRIPT_VIEW_MODES,
-  type FocusTurnSummary,
 } from "../focusView";
-import {
-  setTranscriptViewMode,
-  useRunDurationEnabled,
-  useTranscriptViewMode,
-} from "../uiPrefs";
+import { setTranscriptViewMode, useTranscriptViewMode } from "../uiPrefs";
 import { DROP_OVERLAY_MESSAGE, type DroppedFolder } from "../dropFiles";
 import { Composer } from "./Composer";
 import { repoRelativeDir } from "../mention";
@@ -158,7 +138,6 @@ import {
 import { waitWhatPrompt } from "../waitWhat";
 import { sessionImagePathsFromMessages } from "../sessionImages";
 import { PathLinkProvider } from "./PathLinks";
-import { messageProvenance, type MessageProvenance } from "../provenance";
 import {
   SandboxBadge,
   ContextRingBadge,
@@ -194,6 +173,7 @@ import {
 } from "./thread/cards";
 import { ChangesPanel } from "./thread/ChangesPanel";
 import { useRetryAnchors } from "./thread/useRetryAnchors";
+import { useTranscriptAnnotations } from "./thread/useTranscriptAnnotations";
 import styles from "./ThreadView.module.css";
 
 const EMPTY_COMPARE_PEERS: ComparePeer[] = [];
@@ -1167,144 +1147,24 @@ export const ThreadView = memo(function ThreadView({
     el?.scrollIntoView({ block: "nearest" });
   }, [revealTargetId, start]);
 
-  /** Run duration per runId, for assistant-message meta footers. Opt-in. */
-  const showRunDuration = useRunDurationEnabled();
-  const focusTurns = useMemo(() => {
-    if (!detail || !summaryMode) return [];
-    return mapFocusTurns(detail.messages, {
-      liveTurnKey: isWorking ? latestTurnKey(detail.messages) : null,
-    });
-  }, [detail, summaryMode, isWorking]);
-  const hiddenFocusActivity = useMemo(() => {
-    const hidden = new Set<string>();
-    if (!summaryMode) return hidden;
-    for (const turn of focusTurns) {
-      if (turn.live || expandedFocusTurns.has(turn.key)) continue;
-      for (const id of turn.activityIds) hidden.add(id);
-    }
-    return hidden;
-  }, [summaryMode, focusTurns, expandedFocusTurns]);
-  const focusTurnByFirstId = useMemo(() => {
-    const map = new Map<string, FocusTurnSummary>();
-    for (const turn of focusTurns) map.set(turn.firstActivityId, turn);
-    return map;
-  }, [focusTurns]);
-  const durationByRunId = useMemo(() => {
-    const map = new Map<string, string>();
-    if (!detail || !showRunDuration) return map;
-    const byRun = new Map<string, WorkLogItem[]>();
-    for (const item of detail.workLog) {
-      const list = byRun.get(item.runId);
-      if (list) list.push(item);
-      else byRun.set(item.runId, [item]);
-    }
-    for (const [runId, items] of byRun) {
-      const label = workLogDurationLabel(items);
-      if (label) map.set(runId, label);
-    }
-    return map;
-  }, [detail, showRunDuration]);
-
-  /** "Worked for" header per completed run, keyed by its first message. */
-  const headerByMessageId = useMemo(() => {
-    const map = new Map<string, RunHeader>();
-    if (!detail) return map;
-    for (const header of mapRunHeaders(detail.messages, detail.thread.status)) {
-      map.set(header.firstMessageId, header);
-    }
-    return map;
-  }, [detail]);
-
-  /**
-   * Provenance tiers per assistant message (issue #404), computed over the
-   * raw message list so turn boundaries (previous user message) are intact.
-   */
-  const provenanceById = useMemo(() => {
-    const map = new Map<string, MessageProvenance>();
-    if (!detail) return map;
-    for (let i = 0; i < detail.messages.length; i++) {
-      if (detail.messages[i].role !== "assistant") continue;
-      const prov = messageProvenance(detail.messages, i);
-      if (prov) map.set(detail.messages[i].id, prov);
-    }
-    return map;
-  }, [detail]);
-
-  const latestWorkLogRunId = useMemo(() => {
-    let latest: WorkLogGroup | null = null;
-    for (const entry of timeline) {
-      if (entry.kind === "worklog") {
-        if (!latest || entry.timestamp >= latest.timestamp) latest = entry;
-      }
-    }
-    return latest?.runId ?? null;
-  }, [timeline]);
-
-  /**
-   * Latest tool message of the most recent run; that card auto-expands and
-   * stays open through completion (tool output and done arrive in the same
-   * update, so keying off !done would collapse it before output ever shows).
-   */
-  const latestRunningToolId = useMemo(() => {
-    if (!detail || !latestWorkLogRunId) return null;
-    let latest: ChatMessage | null = null;
-    for (const m of detail.messages) {
-      if (m.role === "tool" && m.tool && m.runId === latestWorkLogRunId) {
-        if (!latest || m.createdAt >= latest.createdAt) latest = m;
-      }
-    }
-    return latest?.id ?? null;
-  }, [detail, latestWorkLogRunId]);
-
-  const latestThinkingId = useMemo(() => {
-    if (!isWorking || !detail || !latestWorkLogRunId) return null;
-    let latest: ChatMessage | null = null;
-    for (const m of detail.messages) {
-      if (m.thinking && m.runId === latestWorkLogRunId) {
-        if (!latest || m.createdAt >= latest.createdAt) latest = m;
-      }
-    }
-    if (!latest) return null;
-    for (const m of detail.messages) {
-      if (m.runId !== latestWorkLogRunId) continue;
-      if (m.createdAt > latest.createdAt && !m.thinking) return null;
-    }
-    return latest.id;
-  }, [detail, isWorking, latestWorkLogRunId]);
-  const runningToolSummary = useMemo(() => {
-    if (!isWorking || !detail || !latestWorkLogRunId) return null;
-    let latest: ChatMessage | null = null;
-    for (const m of detail.messages) {
-      if (
-        m.role === "tool" &&
-        m.tool &&
-        !m.tool.done &&
-        m.runId === latestWorkLogRunId
-      ) {
-        if (!latest || m.createdAt >= latest.createdAt) latest = m;
-      }
-    }
-    return latest?.text ?? null;
-  }, [detail, isWorking, latestWorkLogRunId]);
-  const thinkingLive = Boolean(latestThinkingId);
-  /**
-   * The assistant message currently being written. While a tool runs the
-   * last message is the tool call itself, so the caret correctly disappears.
-   */
-  const streamingMessageId = (() => {
-    if (!isWorking || !detail || detail.messages.length === 0) return null;
-    const last = detail.messages[detail.messages.length - 1];
-    return last.role === "assistant" ? last.id : null;
-  })();
-  const stalledAt =
-    isWorking && detail?.thread.stalledAt != null
-      ? detail.thread.stalledAt
-      : null;
-  const workingLabel = liveWorkingLabel({
-    stalledElapsed: stalledAt != null ? formatElapsed(stalledAt) : null,
-    workflowRunning: detail?.workflow ? runningAgents : null,
-    toolSummary: runningToolSummary,
-    thinking: thinkingLive,
+  const {
+    hiddenFocusActivity,
+    focusTurnByFirstId,
+    durationByRunId,
+    headerByMessageId,
+    provenanceById,
+    latestRunningToolId,
+    latestThinkingId,
+    streamingMessageId,
+    stalledAt,
+    workingLabel,
+  } = useTranscriptAnnotations({
+    detail,
+    timeline,
+    summaryMode,
+    isWorking,
+    expandedFocusTurns,
+    runningAgents,
   });
   const isArchived = Boolean(detail?.thread.archived);
   const emptyMessages = detail != null && detail.messages.length === 0;
