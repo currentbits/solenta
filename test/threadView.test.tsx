@@ -2371,6 +2371,97 @@ describe("ThreadView stick-to-bottom on content resize (issue #408)", () => {
     );
     m.unmount();
   });
+
+  /**
+   * Issue #1475: reading scrollHeight in the pin layout effect forced a
+   * synchronous layout on every streamed push. Plain appends now leave the
+   * pin to the ResizeObserver; #607's two cases still pin before paint.
+   */
+  it("pins thread switches and permission cards before paint but leaves appends to the ResizeObserver (#1475)", async () => {
+    const pending: PendingPermissionInfo = {
+      requestId: "req-1475",
+      toolName: "Bash",
+      summary: "Bash: npm test",
+      input: '{"command":"npm test"}',
+      command: "npm test",
+    };
+    const threadB = detail({
+      thread: thread({ id: "t2", title: "other thread" }),
+      messages: [msg({ id: "b1", role: "user", text: "THREAD_B", createdAt: 10 })],
+    });
+
+    function Harness() {
+      const [open, setOpen] = useState(sizedDetail());
+      return (
+        <div>
+          <button
+            type="button"
+            data-append=""
+            onClick={() =>
+              setOpen((prev) => ({
+                ...prev,
+                messages: [
+                  ...prev.messages,
+                  msg({ id: "a2", role: "assistant", text: "APPENDED", createdAt: 30 }),
+                ],
+              }))
+            }
+          >
+            append
+          </button>
+          <button
+            type="button"
+            data-perm=""
+            onClick={() => setOpen((prev) => ({ ...prev, pendingPermission: pending }))}
+          >
+            perm
+          </button>
+          <button type="button" data-switch="" onClick={() => setOpen(threadB)}>
+            switch
+          </button>
+          {view({ detail: open })}
+        </div>
+      );
+    }
+
+    const m = await mount(<Harness />);
+    const body = m.query(".body") as HTMLElement;
+    const layout = { clientHeight: 400, scrollHeight: 1000, scrollTop: 600 };
+    fakeScrollMetrics(body, layout);
+    let reads = 0;
+    Object.defineProperty(body, "scrollHeight", {
+      configurable: true,
+      get: () => {
+        reads++;
+        return layout.scrollHeight;
+      },
+    });
+
+    layout.scrollHeight = 1400;
+    await inAct(async () => {
+      (m.query("[data-append]") as HTMLButtonElement).click();
+    });
+    assert.ok(m.text().includes("APPENDED"));
+    assert.equal(reads, 0, "a plain append must not force a layout read");
+    fireObservedResizes();
+    assert.equal(layout.scrollTop, 1400, "the ResizeObserver pins the append");
+
+    layout.scrollHeight = 2400;
+    await inAct(async () => {
+      (m.query("[data-perm]") as HTMLButtonElement).click();
+    });
+    assert.ok(m.query("[data-permission-card]"));
+    assert.equal(layout.scrollTop, 2400, "a permission card pins before paint");
+
+    layout.scrollHeight = 3500;
+    await inAct(async () => {
+      (m.query("[data-switch]") as HTMLButtonElement).click();
+    });
+    assert.ok(m.text().includes("THREAD_B"));
+    assert.equal(m.query(".body"), body, "a direct switch keeps the scroll body");
+    assert.equal(layout.scrollTop, 3500, "a thread switch pins before paint");
+    m.unmount();
+  });
 });
 
 /**

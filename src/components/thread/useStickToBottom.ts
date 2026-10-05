@@ -85,12 +85,15 @@ export function useStickToBottom({
 
   /**
    * Pin before paint so a remounted body (thread switch) and a newly
-   * inserted permission card never flash at the wrong scrollTop. #408's
-   * ResizeObserver still covers post-paint growth.
+   * inserted permission card never flash at the wrong scrollTop. Plain
+   * appends skip this: reading scrollHeight here forces a synchronous
+   * layout on every streamed push (#1475), and #408's ResizeObserver pins
+   * them once the browser has laid out anyway.
    */
   useLayoutEffect(() => {
     const id = detail?.thread.id ?? null;
-    if (id !== prevLayoutThreadId.current) {
+    const opened = id !== prevLayoutThreadId.current;
+    if (opened) {
       const switching =
         prevLayoutThreadId.current !== null &&
         id !== null &&
@@ -114,7 +117,7 @@ export function useStickToBottom({
       forceStick.current = true;
     }
     prevPermReq.current = req;
-    pinIfStuck();
+    if (opened || forceStick.current) pinIfStuck();
   }, [
     timeline,
     isWorking,
