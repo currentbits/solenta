@@ -85,9 +85,6 @@ const {
   mergePrAt,
 } = require("./prWorkspace.js");
 const automations = require("./automations.js");
-const { buildActivity } = require("./activity.js");
-const { collectDigest } = require("./digest.js");
-const { collectFleet } = require("./fleet.js");
 const { distillThread } = require("./distill.js");
 const { integrateWorker } = require("./crewIntegration.js");
 const updater = require("./updater.js");
@@ -117,6 +114,7 @@ for (const id of Object.keys(require.cache)) {
 const { runRetention, resolveThreadRoot } = require("./ipc-shared.js");
 const projectsHandlers = require("./ipc-projects.js");
 const threadsHandlers = require("./ipc-threads.js");
+const insightsHandlers = require("./ipc-insights.js");
 
 /**
  * Default window fan-out (desktop transport). main.js replaces this with a
@@ -293,48 +291,7 @@ function tryResolveWorkspaceFile(store, threadId, rawPath) {
 const IPC_HANDLERS = {
   ...projectsHandlers,
   ...threadsHandlers,
-  "activity:list": async (ctx) => {
-    const threads = ctx.store.getThreads();
-    return buildActivity(threads, ctx.store.data.workLogByThread, Date.now());
-  },
-  "usage:byDay": async (ctx) => {
-    return {
-      byDay: ctx.store.getUsageByDay(),
-      threadsByDay: ctx.store.getUsageThreadsByDay(),
-    };
-  },
-  "usage:providerLimits": async () => {
-    const { fetchProviderLimits } = require("./providerUsage.js");
-    return fetchProviderLimits();
-  },
-  "insights:failureModes": async (ctx) => {
-    const { clusterFailureModes } = require("./failuremodes.js");
-    return clusterFailureModes({
-      threads: ctx.store.getThreads(),
-      messagesByThread: ctx.store.data.messagesByThread,
-    });
-  },
-  "fleet:evidence": async (ctx, input) => {
-    return collectFleet({
-      store: ctx.store,
-      nowMs: Date.now(),
-      days: input && input.days,
-    });
-  },
-  "digest:list": async (ctx, input) => {
-    return collectDigest({
-      store: ctx.store,
-      sinceMs: input && input.sinceMs,
-      nowMs: Date.now(),
-    });
-  },
-  "digest:markSeen": async (ctx, input) => {
-    const at =
-      input && Number.isFinite(input.atMs) ? input.atMs : Date.now();
-    ctx.store.setDigestSeenAt(at);
-    ctx.store.save();
-    return { seenAt: at };
-  },
+  ...insightsHandlers,
   "app:status": async (ctx) => {
     return services.appStatus(ctx.store);
   },
