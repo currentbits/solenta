@@ -26,24 +26,17 @@ import {
   withCrewSearchContext,
   workerIdsByRoot,
 } from "../sidebarGroups";
-import { ProviderMark } from "./ProviderMark";
 import {
   GROUP_BY_KEY,
-  GROUP_BY_OPTIONS,
   PROVIDER_FILTER_KEY,
   STATUS_FILTER_KEY,
-  STATUS_FILTERS,
   TAG_FILTER_KEY,
   allTags,
   filterThreads,
-  groupByLabel,
   parseGroupBy,
   parseProviderFilter,
   parseStatusFilter,
-  providerFilterLabel,
   serializeProviderFilter,
-  statusFilterLabel,
-  tagFilterLabel,
   threadMatchesFilter,
   type GroupBy,
   type StatusFilter,
@@ -57,7 +50,6 @@ import {
   parseActiveSavedViewId,
   parseSavedViews,
   renameSavedView,
-  savedViewTriggerLabel,
   savedViewUnavailable,
   serializeSavedViews,
   updateSavedView,
@@ -121,6 +113,11 @@ import { BatchBar } from "./sidebar/BatchBar";
 import { TrashedShelf } from "./sidebar/TrashedShelf";
 import { RemoveProjectConfirm } from "./sidebar/RemoveProjectConfirm";
 import { InsightsMenu } from "./sidebar/InsightsMenu";
+import {
+  FilterBar,
+  type FilterMenu,
+  type ViewEditor,
+} from "./sidebar/FilterBar";
 import styles from "./Sidebar.module.css";
 
 export { displayWorkerTitle, statusPulseFor } from "./sidebar/status";
@@ -134,8 +131,6 @@ const SNOOZED_OPEN_KEY = "sidebar:snoozedOpen";
 const SETTLED_OPEN_KEY = "sidebar:settledOpen";
 const WORKER_OPEN_KEY = "sidebar:workerOpen";
 const BULK_ROW_DELTA = 40;
-type FilterMenu = "status" | "provider" | "group" | "tag" | "views";
-type ViewEditor = { mode: "save" | "rename"; name: string };
 
 interface SidebarProps {
   appName: string;
@@ -1783,408 +1778,33 @@ export const Sidebar = memo(function Sidebar({
       </div>
 
       {filterBarShown && (
-      <div className={styles.filterBar} data-filter-bar="">
-      <div className={styles.viewRow}>
-        <span className={styles.filterMenuHost}>
-          <button
-            type="button"
-            className={styles.viewTrigger}
-            data-saved-views-trigger=""
-            data-active={activeSavedView ? "true" : undefined}
-            data-modified={viewModified ? "true" : undefined}
-            aria-haspopup="menu"
-            aria-expanded={filterMenu === "views"}
-            aria-label={
-              activeSavedView
-                ? viewModified
-                  ? `Saved views, ${activeSavedView.name}, modified`
-                  : `Saved views, ${activeSavedView.name}`
-                : "Saved views"
-            }
-            onClick={() => toggleFilterMenu("views")}
-          >
-            <span className={styles.filterTriggerLabel}>
-              {savedViewTriggerLabel(
-                activeSavedView ? { name: activeSavedView.name } : null,
-                viewModified,
-              )}
-            </span>
-            <Icon size={12}>
-              <path d="m6 9 6 6 6-6" />
-            </Icon>
-          </button>
-          {filterMenu === "views" && (
-            <div
-              className={`${styles.menu} ${styles.menuLeft} ${styles.viewMenu}`}
-              role="menu"
-              data-saved-views-menu=""
-            >
-              {savedViews.length === 0 && !viewEditor && (
-                <p className={styles.viewEmpty}>No saved views</p>
-              )}
-              {savedViews.map((view) => (
-                <button
-                  key={view.id}
-                  type="button"
-                  className={styles.menuItem}
-                  role="menuitem"
-                  data-saved-view={view.id}
-                  data-saved-view-label={view.name}
-                  data-selected={
-                    view.id === activeViewId ? "true" : undefined
-                  }
-                  onClick={() => recallSavedView(view)}
-                >
-                  {view.name}
-                  {view.id === activeViewId && !viewModified && (
-                    <span className={styles.filterCheck}>
-                      <Icon size={12}>
-                        <path d="M5 12.5 9 16.5 19 7.5" />
-                      </Icon>
-                    </span>
-                  )}
-                </button>
-              ))}
-              {viewEditor ? (
-                <form
-                  className={styles.viewNameForm}
-                  onSubmit={(e) => {
-                    e.preventDefault();
-                    submitViewEditor();
-                  }}
-                >
-                  <input
-                    className={styles.viewNameInput}
-                    data-saved-view-name=""
-                    value={viewEditor.name}
-                    onChange={(e) =>
-                      setViewEditor({ ...viewEditor, name: e.target.value })
-                    }
-                    placeholder="View name"
-                    aria-label="View name"
-                    autoFocus
-                  />
-                  <button
-                    type="submit"
-                    className={styles.viewNameSave}
-                    data-saved-view-save-confirm=""
-                    disabled={viewEditor.name.trim() === ""}
-                  >
-                    Save
-                  </button>
-                </form>
-              ) : (
-                <>
-                  {savedViews.length > 0 && (
-                    <div className={styles.menuSep} />
-                  )}
-                  <button
-                    type="button"
-                    className={styles.menuItem}
-                    role="menuitem"
-                    data-saved-view-save=""
-                    onClick={() =>
-                      setViewEditor({ mode: "save", name: "" })
-                    }
-                  >
-                    Save current as…
-                  </button>
-                  {activeSavedView && viewModified && (
-                    <button
-                      type="button"
-                      className={styles.menuItem}
-                      role="menuitem"
-                      data-saved-view-update=""
-                      onClick={updateActiveView}
-                    >
-                      Update view
-                    </button>
-                  )}
-                  {activeSavedView && (
-                    <button
-                      type="button"
-                      className={styles.menuItem}
-                      role="menuitem"
-                      data-saved-view-rename=""
-                      onClick={() =>
-                        setViewEditor({
-                          mode: "rename",
-                          name: activeSavedView.name,
-                        })
-                      }
-                    >
-                      Rename…
-                    </button>
-                  )}
-                  {activeSavedView && (
-                    <button
-                      type="button"
-                      className={styles.menuItem}
-                      role="menuitem"
-                      data-saved-view-delete=""
-                      onClick={deleteActiveView}
-                    >
-                      Delete view
-                    </button>
-                  )}
-                </>
-              )}
-            </div>
-          )}
-        </span>
-      </div>
-
-      <div className={styles.filterRow} data-filter-row="">
-        <span className={styles.filterMenuHost}>
-          <button
-            type="button"
-            className={styles.filterTrigger}
-            data-status-filter-trigger=""
-            data-active={statusFilter != null ? "true" : undefined}
-            aria-haspopup="menu"
-            aria-expanded={filterMenu === "status"}
-            aria-label="Filter threads by status"
-            onClick={() => toggleFilterMenu("status")}
-          >
-            <span className={styles.filterTriggerLabel}>
-              {statusFilterLabel(statusFilter)}
-            </span>
-            <Icon size={12}>
-              <path d="m6 9 6 6 6-6" />
-            </Icon>
-          </button>
-          {filterMenu === "status" && (
-            <div
-              className={`${styles.menu} ${styles.menuLeft} ${styles.filterMenu}`}
-              role="menu"
-              data-status-filter-menu=""
-            >
-              <button
-                type="button"
-                className={styles.menuItem}
-                role="menuitem"
-                data-status-filter="all"
-                data-selected={statusFilter == null ? "true" : undefined}
-                onClick={() => applyStatusFilter(null)}
-              >
-                All statuses
-                {statusFilter == null && (
-                  <span className={styles.filterCheck}>
-                    <Icon size={12}>
-                      <path d="M5 12.5 9 16.5 19 7.5" />
-                    </Icon>
-                  </span>
-                )}
-              </button>
-              {STATUS_FILTERS.map((opt) => (
-                <button
-                  key={opt.id}
-                  type="button"
-                  className={styles.menuItem}
-                  role="menuitem"
-                  data-status-filter={opt.id}
-                  data-selected={statusFilter === opt.id ? "true" : undefined}
-                  onClick={() => applyStatusFilter(opt.id)}
-                >
-                  {opt.label}
-                  {statusFilter === opt.id && (
-                    <span className={styles.filterCheck}>
-                      <Icon size={12}>
-                        <path d="M5 12.5 9 16.5 19 7.5" />
-                      </Icon>
-                    </span>
-                  )}
-                </button>
-              ))}
-            </div>
-          )}
-        </span>
-        <span className={styles.filterMenuHost}>
-          <button
-            type="button"
-            className={styles.filterTrigger}
-            data-provider-filter-trigger=""
-            data-active={providerFilter.length > 0 ? "true" : undefined}
-            aria-haspopup="menu"
-            aria-expanded={filterMenu === "provider"}
-            aria-label="Filter threads by provider"
-            onClick={() => toggleFilterMenu("provider")}
-          >
-            <span className={styles.filterTriggerLabel}>
-              {providerFilterLabel(providerFilter, providerNames)}
-            </span>
-            <Icon size={12}>
-              <path d="m6 9 6 6 6-6" />
-            </Icon>
-          </button>
-          {filterMenu === "provider" && (
-            <div
-              className={`${styles.menu} ${styles.menuLeft} ${styles.filterMenu}`}
-              role="menu"
-              data-provider-filter-menu=""
-            >
-              <button
-                type="button"
-                className={styles.menuItem}
-                role="menuitem"
-                data-provider-filter="all"
-                data-selected={providerFilter.length === 0 ? "true" : undefined}
-                onClick={() => {
-                  setProviderFilter([]);
-                  saveStored(PROVIDER_FILTER_KEY, null);
-                }}
-              >
-                All providers
-                {providerFilter.length === 0 && (
-                  <span className={styles.filterCheck}>
-                    <Icon size={12}>
-                      <path d="M5 12.5 9 16.5 19 7.5" />
-                    </Icon>
-                  </span>
-                )}
-              </button>
-              <div className={styles.filterChipRow} data-provider-chips="">
-                {providerOptions.map((p) => {
-                  const on = providerFilter.includes(p.id);
-                  return (
-                    <button
-                      key={p.id}
-                      type="button"
-                      className={styles.filterChip}
-                      data-provider-filter={p.id}
-                      data-on={on ? "true" : undefined}
-                      aria-pressed={on}
-                      onClick={() => toggleProviderFilter(p.id)}
-                    >
-                      <ProviderMark
-                        providerId={p.id}
-                        providers={providers}
-                        size={12}
-                        decorative
-                      />
-                      {p.name}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-          )}
-        </span>
-        {(knownTags.length > 0 || tagFilter != null) && (
-          <span className={styles.filterMenuHost}>
-            <button
-              type="button"
-              className={styles.filterTrigger}
-              data-tag-filter-trigger=""
-              data-active={tagFilter != null ? "true" : undefined}
-              aria-haspopup="menu"
-              aria-expanded={filterMenu === "tag"}
-              aria-label="Filter threads by tag"
-              onClick={() => toggleFilterMenu("tag")}
-            >
-              <span className={styles.filterTriggerLabel}>
-                {tagFilterLabel(tagFilter)}
-              </span>
-              <Icon size={12}>
-                <path d="m6 9 6 6 6-6" />
-              </Icon>
-            </button>
-            {filterMenu === "tag" && (
-              <div
-                className={`${styles.menu} ${styles.menuLeft} ${styles.filterMenu}`}
-                role="menu"
-                data-tag-filter-menu=""
-              >
-                <button
-                  type="button"
-                  className={styles.menuItem}
-                  role="menuitem"
-                  data-tag-filter="all"
-                  data-selected={tagFilter == null ? "true" : undefined}
-                  onClick={() => applyTagFilter(null)}
-                >
-                  All tags
-                  {tagFilter == null && (
-                    <span className={styles.filterCheck}>
-                      <Icon size={12}>
-                        <path d="M5 12.5 9 16.5 19 7.5" />
-                      </Icon>
-                    </span>
-                  )}
-                </button>
-                {knownTags.map((tag) => (
-                  <button
-                    key={tag}
-                    type="button"
-                    className={styles.menuItem}
-                    role="menuitem"
-                    data-tag-filter={tag}
-                    data-selected={tagFilter === tag ? "true" : undefined}
-                    onClick={() => applyTagFilter(tag)}
-                  >
-                    {tag}
-                    {tagFilter === tag && (
-                      <span className={styles.filterCheck}>
-                        <Icon size={12}>
-                          <path d="M5 12.5 9 16.5 19 7.5" />
-                        </Icon>
-                      </span>
-                    )}
-                  </button>
-                ))}
-              </div>
-            )}
-          </span>
-        )}
-        <span className={styles.filterMenuHost}>
-          <button
-            type="button"
-            className={styles.filterTrigger}
-            data-group-by-trigger=""
-            data-active={groupBy !== "none" ? "true" : undefined}
-            aria-haspopup="menu"
-            aria-expanded={filterMenu === "group"}
-            aria-label="Group threads"
-            onClick={() => toggleFilterMenu("group")}
-          >
-            <span className={styles.filterTriggerLabel}>
-              {groupByLabel(groupBy)}
-            </span>
-            <Icon size={12}>
-              <path d="m6 9 6 6 6-6" />
-            </Icon>
-          </button>
-          {filterMenu === "group" && (
-            <div
-              className={`${styles.menu} ${styles.menuLeft} ${styles.filterMenu}`}
-              role="menu"
-              data-group-by-menu=""
-            >
-              {GROUP_BY_OPTIONS.map((opt) => (
-                <button
-                  key={opt.id}
-                  type="button"
-                  className={styles.menuItem}
-                  role="menuitem"
-                  data-group-by={opt.id}
-                  data-selected={groupBy === opt.id ? "true" : undefined}
-                  onClick={() => applyGroupBy(opt.id)}
-                >
-                  {opt.label}
-                  {groupBy === opt.id && (
-                    <span className={styles.filterCheck}>
-                      <Icon size={12}>
-                        <path d="M5 12.5 9 16.5 19 7.5" />
-                      </Icon>
-                    </span>
-                  )}
-                </button>
-              ))}
-            </div>
-          )}
-        </span>
-      </div>
-      </div>
+      <FilterBar
+        activeSavedView={activeSavedView}
+        viewModified={viewModified}
+        filterMenu={filterMenu}
+        toggleFilterMenu={toggleFilterMenu}
+        savedViews={savedViews}
+        viewEditor={viewEditor}
+        activeViewId={activeViewId}
+        recallSavedView={recallSavedView}
+        submitViewEditor={submitViewEditor}
+        setViewEditor={setViewEditor}
+        updateActiveView={updateActiveView}
+        deleteActiveView={deleteActiveView}
+        statusFilter={statusFilter}
+        applyStatusFilter={applyStatusFilter}
+        providerFilter={providerFilter}
+        providerNames={providerNames}
+        setProviderFilter={setProviderFilter}
+        providerOptions={providerOptions}
+        toggleProviderFilter={toggleProviderFilter}
+        providers={providers}
+        knownTags={knownTags}
+        tagFilter={tagFilter}
+        applyTagFilter={applyTagFilter}
+        groupBy={groupBy}
+        applyGroupBy={applyGroupBy}
+      />
       )}
 
 
