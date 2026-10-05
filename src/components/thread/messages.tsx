@@ -1116,7 +1116,7 @@ export const MessageBlock = memo(function MessageBlock({
       data-streaming={streaming ? "" : undefined}
     >
       <div data-cite-body="">
-        <Markdown text={message.text} />
+        <Markdown text={message.text} streaming={streaming} />
       </div>
       {streaming && (
         <span

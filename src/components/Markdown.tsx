@@ -1,4 +1,5 @@
 import {
+  Fragment,
   isValidElement,
   memo,
   useContext,
@@ -8,9 +9,13 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import ReactMarkdown, { defaultUrlTransform } from "react-markdown";
+import ReactMarkdown, {
+  defaultUrlTransform,
+  type Components,
+} from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { isAbsolutePath } from "../pathLinks";
+import { markdownChunks } from "./markdownChunks";
 import { linkifyNode, PathLinkContext, useResolvedMap } from "./PathLinks";
 import styles from "./Markdown.module.css";
 
@@ -154,18 +159,16 @@ function CodeBlock({ children }: { children?: ReactNode }) {
 /**
  * Hold `text` steady between parses.
  *
- * A streaming message pushes new text several times a second and ReactMarkdown
- * re-parses ALL of it every time, so a run costs O(n^2) parse work on the
- * renderer's main thread: 50KB of markdown is ~35ms per parse, which is what
- * users feel as typing lag while an agent writes. Waiting `lastCost * 6` in
- * between caps that at roughly a sixth of the main thread whatever the message
- * length, and the trailing timer means the final text always lands.
+ * A streaming message pushes new text several times a second. A whole-text
+ * parse of 50KB of markdown is ~35ms, which is what users feel as typing lag
+ * while an agent writes. Waiting `lastCost * 6` in between caps that at
+ * roughly a sixth of the main thread, and the trailing timer means the final
+ * text always lands. Since #1475 the streaming message re-parses only its last
+ * chunk, so lastCost stays small and this mostly sits at the 60ms floor; it
+ * still guards a reply that falls back to one chunk (see markdownChunks).
  *
  * The first change after mount is not delayed, so a reply still starts drawing
  * the moment its first chunk arrives.
- *
- * ponytail: the streaming tail lags by up to one interval. Parse only the
- * settled prefix incrementally if that ever reads as stutter.
  */
 function useThrottledText(text: string, lastCost: { current: number }): string {
   const [shown, setShown] = useState(text);
@@ -183,15 +186,90 @@ function useThrottledText(text: string, lastCost: { current: number }): string {
   return shown;
 }
 
+const REMARK_PLUGINS = [remarkGfm];
+
+const COMPONENTS: Components = {
+  pre: (props) => <CodeBlock>{props.children}</CodeBlock>,
+  code: (props) => (
+    <code className={styles.inlineCode}>{linkifyNode(props.children)}</code>
+  ),
+  p: (props) => <p>{linkifyNode(props.children)}</p>,
+  li: (props) => <li>{linkifyNode(props.children)}</li>,
+  td: (props) => <td>{linkifyNode(props.children)}</td>,
+  th: (props) => <th>{linkifyNode(props.children)}</th>,
+  h1: (props) => <h1>{linkifyNode(props.children)}</h1>,
+  h2: (props) => <h2>{linkifyNode(props.children)}</h2>,
+  h3: (props) => <h3>{linkifyNode(props.children)}</h3>,
+  h4: (props) => <h4>{linkifyNode(props.children)}</h4>,
+  blockquote: (props) => <blockquote>{linkifyNode(props.children)}</blockquote>,
+  a: (props) => (
+    <a href={props.href} target="_blank" rel="noreferrer">
+      {props.children}
+    </a>
+  ),
+  img: (props) => <MarkdownImage src={props.src} alt={props.alt} />,
+};
+
+/** Test hook: how many times a markdown chunk has been parsed. */
+export const markdownParses = { count: 0 };
+
+/** One parse. memo: a settled chunk of a streaming reply keeps its text. */
+const MarkdownChunk = memo(function MarkdownChunk({ text }: { text: string }) {
+  markdownParses.count++;
+  return (
+    <ReactMarkdown
+      remarkPlugins={REMARK_PLUGINS}
+      urlTransform={markdownUrlTransform}
+      components={COMPONENTS}
+    >
+      {text}
+    </ReactMarkdown>
+  );
+});
+
+/**
+ * The parse, unthrottled. A streaming reply is split at settled block
+ * boundaries (see markdownChunks) so each push re-parses only the last chunk
+ * instead of the whole reply. Every other message is one parse, as before.
+ *
+ * The "\n" between chunks is the text node react-markdown puts between
+ * top-level blocks, so the DOM matches a one-shot parse exactly.
+ */
+export function MarkdownBody({
+  text,
+  streaming = false,
+}: {
+  text: string;
+  streaming?: boolean;
+}) {
+  const chunks = streaming ? markdownChunks(text) : [text];
+  return (
+    <div className={styles.md}>
+      {chunks.map((chunk, i) => (
+        <Fragment key={i}>
+          {i > 0 && "\n"}
+          <MarkdownChunk text={chunk} />
+        </Fragment>
+      ))}
+    </div>
+  );
+}
+
 /**
  * Assistant-message markdown. react-markdown renders to React elements (no
  * dangerouslySetInnerHTML), so raw HTML in agent output is dropped, not
  * executed.
  *
  * memo: parsing is the expensive part of a streamed update, and only the
- * message being written has new text.
+ * message being written has new text. `streaming` marks that message.
  */
-export const Markdown = memo(function Markdown({ text }: { text: string }) {
+export const Markdown = memo(function Markdown({
+  text,
+  streaming = false,
+}: {
+  text: string;
+  streaming?: boolean;
+}) {
   // Measured across this subtree's render + commit, i.e. the parse we are
   // pacing. Declared before the throttle so its effect runs first.
   const lastCost = useRef(0);
@@ -200,40 +278,5 @@ export const Markdown = memo(function Markdown({ text }: { text: string }) {
     lastCost.current = performance.now() - started;
   });
   const shown = useThrottledText(text, lastCost);
-
-  return (
-    <div className={styles.md}>
-      <ReactMarkdown
-        remarkPlugins={[remarkGfm]}
-        urlTransform={markdownUrlTransform}
-        components={{
-          pre: (props) => <CodeBlock>{props.children}</CodeBlock>,
-          code: (props) => (
-            <code className={styles.inlineCode}>
-              {linkifyNode(props.children)}
-            </code>
-          ),
-          p: (props) => <p>{linkifyNode(props.children)}</p>,
-          li: (props) => <li>{linkifyNode(props.children)}</li>,
-          td: (props) => <td>{linkifyNode(props.children)}</td>,
-          th: (props) => <th>{linkifyNode(props.children)}</th>,
-          h1: (props) => <h1>{linkifyNode(props.children)}</h1>,
-          h2: (props) => <h2>{linkifyNode(props.children)}</h2>,
-          h3: (props) => <h3>{linkifyNode(props.children)}</h3>,
-          h4: (props) => <h4>{linkifyNode(props.children)}</h4>,
-          blockquote: (props) => (
-            <blockquote>{linkifyNode(props.children)}</blockquote>
-          ),
-          a: (props) => (
-            <a href={props.href} target="_blank" rel="noreferrer">
-              {props.children}
-            </a>
-          ),
-          img: (props) => <MarkdownImage src={props.src} alt={props.alt} />,
-        }}
-      >
-        {shown}
-      </ReactMarkdown>
-    </div>
-  );
+  return <MarkdownBody text={shown} streaming={streaming} />;
 });
