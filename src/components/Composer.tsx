@@ -8,10 +8,8 @@ import {
   useState,
   type ClipboardEvent,
   type CSSProperties,
-  type Dispatch,
   type KeyboardEvent,
   type RefObject,
-  type SetStateAction,
   type ReactNode,
 } from "react";
 import type {
@@ -86,10 +84,8 @@ import { asBtwPrompt } from "../btw";
 import { buildBestOfNEntries, providerVendor } from "../bestOfN";
 import {
   copyListRecord,
-  keptAttachments,
   keptDrafts,
   keptPasteCards,
-  syncListRecord,
 } from "../composerSession";
 import {
   commandQuery,
@@ -124,6 +120,8 @@ import {
 import { applyComposerVim } from "../composerVim";
 import { formatSpeechModelSize } from "../speechDraft";
 import { AttachmentChip } from "./composer/AttachmentChip";
+import { keepList } from "./composer/keepList";
+import { useComposerAttachments } from "./composer/useComposerAttachments";
 import { useComposerVim } from "./composer/useComposerVim";
 import {
   speechMicLabel,
@@ -330,19 +328,6 @@ function escapeConsumedByChrome(
   return typing && target !== composerField;
 }
 
-function keepList<T>(
-  store: Record<string, T[]>,
-  set: Dispatch<SetStateAction<Record<string, T[]>>>,
-): Dispatch<SetStateAction<Record<string, T[]>>> {
-  return (action) => {
-    set((prev) => {
-      const next = typeof action === "function" ? action(prev) : action;
-      syncListRecord(store, next);
-      return next;
-    });
-  };
-}
-
 export const Composer = memo(function Composer({
   threadId,
   permissionMode,
@@ -504,78 +489,14 @@ export const Composer = memo(function Composer({
     if (readDraft().trim()) return;
     writeDraft(restoreDraft.text, restoreDraft.text.length);
   }, [restoreDraft, threadId, readDraft, writeDraft]);
-  /**
-   * Pending attachments keyed by thread, mirroring draftsRef: chips must
-   * not leak across a thread switch. Cleared together with the draft on a
-   * successful action.
-   */
-  const [attachmentsByThread, setAttachmentsState] = useState(() =>
-    copyListRecord(keptAttachments),
-  );
-  const setAttachmentsByThread = useCallback(
-    keepList(keptAttachments, setAttachmentsState),
-    [],
-  );
-  const attachments = attachmentsByThread[threadId] ?? [];
-  const addAttachments = useCallback(
-    (items: AttachmentInfo[]) => {
-      const accepted = canAttachImages
-        ? items
-        : items.filter((a) => a.kind !== "image");
-      if (!accepted.length) return;
-      setAttachmentsByThread((prev) => {
-        const existing = prev[threadId] ?? [];
-        const seen = new Set(existing.map((a) => a.path));
-        const fresh = accepted.filter((a) => !seen.has(a.path));
-        return fresh.length
-          ? { ...prev, [threadId]: [...existing, ...fresh] }
-          : prev;
-      });
-    },
-    [threadId, canAttachImages],
-  );
-  useEffect(() => {
-    if (canAttachImages) return;
-    setAttachmentsByThread((prev) => {
-      const existing = prev[threadId] ?? [];
-      const next = existing.filter((a) => a.kind !== "image");
-      if (next.length === existing.length) return prev;
-      return { ...prev, [threadId]: next };
+  const { attachments, addAttachments, removeAttachment, clearAttachments } =
+    useComposerAttachments({
+      threadId,
+      canAttachImages,
+      incomingAttachments,
+      incomingAttachmentThreadId,
+      onIncomingAttachmentsConsumed,
     });
-  }, [canAttachImages, threadId]);
-  useEffect(() => {
-    if (!incomingAttachments?.length) return;
-    if (
-      incomingAttachmentThreadId &&
-      incomingAttachmentThreadId !== threadId
-    ) {
-      onIncomingAttachmentsConsumed?.();
-      return;
-    }
-    addAttachments(incomingAttachments);
-    onIncomingAttachmentsConsumed?.();
-  }, [
-    incomingAttachments,
-    incomingAttachmentThreadId,
-    threadId,
-    addAttachments,
-    onIncomingAttachmentsConsumed,
-  ]);
-  const removeAttachment = useCallback(
-    (path: string) =>
-      setAttachmentsByThread((prev) => ({
-        ...prev,
-        [threadId]: (prev[threadId] ?? []).filter((a) => a.path !== path),
-      })),
-    [threadId],
-  );
-  const clearAttachments = useCallback(
-    () =>
-      setAttachmentsByThread((prev) =>
-        (prev[threadId] ?? []).length ? { ...prev, [threadId]: [] } : prev,
-      ),
-    [threadId],
-  );
   const [pasteCardsByThread, setPasteCardsState] = useState(() =>
     copyListRecord(keptPasteCards),
   );
