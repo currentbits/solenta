@@ -98,6 +98,15 @@ const SAVE_DEBOUNCE_MAX_MS = SAVE_DEBOUNCE_MS;
  */
 const ENVELOPE_THROTTLE_MS = 2000;
 
+/**
+ * Most parsed transcripts kept in memory (#1475). A large thread costs
+ * 3–5 MB of heap once hydrated, and browsing used to keep every one for the
+ * session. Past this count the least recently read clean, non-running
+ * thread drops back to its shard and is re-parsed on the next read.
+ * ponytail: count cap, not bytes; 8 × the largest real shard is ~40 MB.
+ */
+const MAX_HYDRATED_THREADS = 8;
+
 /** Per-thread transcript files live next to coder-store.json (#225). */
 const MESSAGES_DIR = "messages";
 /** Per-thread work-log files live next to coder-store.json (#1204). */
@@ -242,6 +251,8 @@ class Store {
     // _messagesRaw; still-lazy blob slices on _messagesLazy (legacy envelope
     // only, dropped after the shard split).
     this._messagesHydrated = {};
+    // Read order of hydrated ids, oldest first (LRU for _evictHydrated).
+    this._hydratedReads = new Map();
     this._messagesLazy = null;
     this._messagesRaw = new Map();
     this._messageShards = new Set();
@@ -354,7 +365,6 @@ class Store {
         if (prop === "constructor" || prop === "__proto__" || prop === "toJSON") {
           return Reflect.get(t, prop, recv);
         }
-        if (Object.prototype.hasOwnProperty.call(t, prop)) return t[prop];
         return store._hydrateMessages(prop);
       },
       set(t, prop, value) {
@@ -370,6 +380,7 @@ class Store {
         if (typeof prop !== "string") return Reflect.deleteProperty(t, prop);
         store._ensureMessagesIndexed();
         delete t[prop];
+        store._hydratedReads.delete(prop);
         store._invalidateLazy(prop);
         store._messagesRaw.delete(prop);
         store._markMessagesDeleted(prop);
@@ -972,6 +983,8 @@ class Store {
    */
   _hydrateMessages(threadId) {
     if (Object.prototype.hasOwnProperty.call(this._messagesHydrated, threadId)) {
+      this._hydratedReads.delete(threadId);
+      this._hydratedReads.set(threadId, true);
       return this._messagesHydrated[threadId];
     }
     let json = null;
@@ -1004,7 +1017,49 @@ class Store {
     }
     this._messagesHydrated[threadId] = val;
     this._messagesRaw.delete(threadId);
+    this._hydratedReads.set(threadId, true);
+    this._evictHydrated();
     return val;
+  }
+
+  /**
+   * Drop least recently read transcripts past MAX_HYDRATED_THREADS back to
+   * their shard. Only a thread whose shard on disk is current is eligible:
+   * never one that is working, dirty, mid-flush, or still on the legacy blob.
+   */
+  _evictHydrated() {
+    const hydrated = this._messagesHydrated;
+    const ids = Object.keys(hydrated);
+    let excess = ids.length - MAX_HYDRATED_THREADS;
+    if (excess <= 0) return;
+    const working = new Set(
+      (this.data ? this.data.threads : [])
+        .filter((t) => t && t.status === "working")
+        .map((t) => t.id),
+    );
+    const lazy = this._messagesLazy;
+    // Never-read ids (legacy inline load) first, then least recently read.
+    const order = [
+      ...ids.filter((id) => !this._hydratedReads.has(id)),
+      ...this._hydratedReads.keys(),
+    ];
+    for (const id of order) {
+      if (excess <= 0) break;
+      if (
+        !Object.prototype.hasOwnProperty.call(hydrated, id) ||
+        working.has(id) ||
+        !this._messageShards.has(id) ||
+        this._dirtyMessageIds.has(id) ||
+        this._deletedMessageIds.has(id) ||
+        (this._inflightShardIds && this._inflightShardIds.has(id)) ||
+        (lazy && lazy.ranges.has(id))
+      ) {
+        continue;
+      }
+      delete hydrated[id];
+      this._hydratedReads.delete(id);
+      excess -= 1;
+    }
   }
 
   /**
@@ -1648,6 +1703,8 @@ class Store {
       `Older messages were dropped to cap this transcript at ${MAX_MESSAGES_PER_THREAD}.`,
     );
     this._markMessagesDirty(threadId);
+    this._hydratedReads.delete(threadId);
+    this._hydratedReads.set(threadId, true);
   }
 
   /**
@@ -2135,4 +2192,5 @@ module.exports = {
   SAVE_DEBOUNCE_MS,
   SAVE_DEBOUNCE_MAX_MS,
   ENVELOPE_THROTTLE_MS,
+  MAX_HYDRATED_THREADS,
 };
