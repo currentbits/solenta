@@ -93,6 +93,231 @@ const ARTIFACT_STAGING_SEGMENTS = ["run-artifacts", ".staging"];
 const DEVICE_ALREADY_OFF_RE =
   /current state:\s*Shutdown|already shut ?down|not booted|no devices are booted|invalid device|device not found/i;
 
+function cloneLease(value) {
+  return value ? { ...value } : null;
+}
+
+function leaseSnapshot(value) {
+  return Object.freeze({
+    generation: value.generation,
+    deviceUdid: value.deviceUdid,
+    bootedBySolenta: value.bootedBySolenta,
+  });
+}
+
+async function callProcess(fn, failureMessage) {
+  try {
+    return await fn();
+  } catch (err) {
+    if (err instanceof IOSSimulatorError) throw err;
+    throw iosError("unexpected", failureMessage);
+  }
+}
+
+function disconnectedHelperState() {
+  return {
+    stream: "disconnected",
+    input: "disconnected",
+    accessibility: "disconnected",
+  };
+}
+
+function mapHelperError(code) {
+  if (code === "generation_mismatch" || code === "token_mismatch") {
+    return leaseStale();
+  }
+  if (code === "capability_unavailable" || code === "unknown_method") {
+    return iosError(
+      "capability_unavailable",
+      "Simulator capability is unavailable",
+    );
+  }
+  if (code === "device_missing") {
+    return iosError("device_missing", "Simulator device was not found");
+  }
+  if (code === "stream_disconnected") {
+    return iosError(
+      "stream_disconnected",
+      "Simulator helper is disconnected",
+    );
+  }
+  return iosError("unexpected", "Simulator helper request failed");
+}
+
+function onHelperControl(session, value) {
+  if (value && value.kind === "ready") {
+    session.ready = true;
+    if (typeof session.readyResolve === "function") {
+      const resolve = session.readyResolve;
+      session.readyResolve = null;
+      session.readyReject = null;
+      resolve();
+    }
+    return;
+  }
+  const id = value && value.id;
+  const pending = session.pending.get(id);
+  if (!pending) return;
+  session.pending.delete(id);
+  if (value.ok === false) {
+    pending.reject(mapHelperError(value.error));
+  } else {
+    pending.resolve(value.result);
+  }
+}
+
+function helperDisconnected() {
+  return iosError(
+    "stream_disconnected",
+    "Simulator helper is disconnected",
+  );
+}
+
+function failHelperWaiters(session, err) {
+  session.exited = true;
+  if (typeof session.readyReject === "function") {
+    const reject = session.readyReject;
+    session.readyResolve = null;
+    session.readyReject = null;
+    reject(err);
+  }
+  for (const pending of session.pending.values()) {
+    pending.reject(err);
+  }
+  session.pending.clear();
+}
+
+function requireCoord(value, label) {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    throw iosError("unexpected", `Simulator ${label} is invalid`);
+  }
+  if (Math.abs(value) > COORD_ABS_MAX) {
+    throw iosError("unexpected", `Simulator ${label} is invalid`);
+  }
+  return value;
+}
+
+function viewerStreamInfoFromSession(session) {
+  if (!session || !session.streamInfo) {
+    throw iosError(
+      "stream_disconnected",
+      "Simulator helper is disconnected",
+    );
+  }
+  return Object.freeze({
+    url: session.streamInfo.url,
+    token: session.streamInfo.viewerToken,
+    generation: session.streamInfo.generation,
+    protocolVersion: 1,
+    maxMessageBytes: protocol.limits.maxVideoBytes,
+  });
+}
+
+function releaseSummary(fields = {}) {
+  return Object.freeze({
+    released: fields.released === true,
+    stoppedRecording: fields.stoppedRecording === true,
+    shutDownDevice: fields.shutDownDevice === true,
+    journalCleared: fields.journalCleared === true,
+  });
+}
+
+function normalizeRunId(rawRunId) {
+  if (rawRunId == null || rawRunId === "") return null;
+  return String(rawRunId);
+}
+
+function recordingFailed() {
+  return iosError(
+    "recording_failed",
+    "Failed to start the simulator recording",
+  );
+}
+
+function recordingFinalizeFailed() {
+  return iosError(
+    "recording_finalize_failed",
+    "Failed to finalize the simulator recording",
+  );
+}
+
+function noActiveRecording() {
+  return iosError("recording_failed", "No simulator recording is active");
+}
+
+function createRecordingContext(fields) {
+  return {
+    id: fields.id,
+    threadId: fields.threadId,
+    generation: fields.generation,
+    runId: fields.runId,
+    toolCallId: fields.toolCallId,
+    developerDir: fields.developerDir,
+    deviceUdid: fields.deviceUdid,
+    videoToken: fields.videoToken,
+    videoPath: fields.videoPath,
+    handle: fields.handle,
+    closed: fields.closed,
+    pid: fields.pid,
+    startedAt: fields.startedAt,
+    reason: null,
+    finalization: null,
+    interrupted: false,
+    killed: false,
+    timersCleared: false,
+    startSettled: false,
+    closeObserved: null,
+    pollTimer: null,
+    autoStopTimer: null,
+  };
+}
+
+function interruptRecording(context) {
+  if (context.interrupted) return;
+  context.interrupted = true;
+  // A recorder already seen exiting is never signalled again: there is
+  // nothing to interrupt and its pid may already belong to someone else.
+  if (context.closeObserved !== null) return;
+  if (!context.handle) return;
+  try {
+    context.handle.interrupt();
+  } catch {
+    // Already gone; the bounded close wait decides whether to escalate.
+  }
+}
+
+// `xcrun` resolves `simctl` through a chain, so `ps -o command=` reports the
+// live recorder under one of a few executables: `/usr/bin/xcrun simctl`, a
+// `/bin/bash` wrapper in front of the developer-dir `simctl`, or the
+// CoreSimulator `simctl` binary itself. Only those shapes are trusted.
+function isTrustedSimctlPath(candidate) {
+  if (!candidate.startsWith("/")) return false;
+  if (candidate.includes(" ")) return false;
+  if (candidate.includes("/../")) return false;
+  if (candidate.endsWith("/usr/bin/simctl")) return true;
+  if (!candidate.endsWith("/bin/simctl")) return false;
+  return candidate.includes("CoreSimulator");
+}
+
+function isTrustedRecorderPrefix(prefix) {
+  if (prefix === "/usr/bin/xcrun simctl") return true;
+  const wrapper = "/bin/bash ";
+  const executable = prefix.startsWith(wrapper)
+    ? prefix.slice(wrapper.length)
+    : prefix;
+  return isTrustedSimctlPath(executable);
+}
+
+function recoverySummary(fields = {}) {
+  return Object.freeze({
+    recovered: fields.recovered === true,
+    quarantined: fields.quarantined === true,
+    cleanedRecording: fields.cleanedRecording === true,
+    shutDownDevice: fields.shutDownDevice === true,
+    journalRetained: fields.journalRetained === true,
+  });
+}
+
 function createIOSSimulatorService({
   store,
   userDataPath,
@@ -161,18 +386,6 @@ function createIOSSimulatorService({
   let shutdownPromise = null;
   /** @type {object | null} */
   let helper = null;
-
-  function cloneLease(value) {
-    return value ? { ...value } : null;
-  }
-
-  function leaseSnapshot(value) {
-    return Object.freeze({
-      generation: value.generation,
-      deviceUdid: value.deviceUdid,
-      bootedBySolenta: value.bootedBySolenta,
-    });
-  }
 
   function leasePresent() {
     return lease !== null;
@@ -603,15 +816,6 @@ function createIOSSimulatorService({
     return result;
   }
 
-  async function callProcess(fn, failureMessage) {
-    try {
-      return await fn();
-    } catch (err) {
-      if (err instanceof IOSSimulatorError) throw err;
-      throw iosError("unexpected", failureMessage);
-    }
-  }
-
   function nextGeneration() {
     const generation = lastGeneration + 1;
     lastGeneration = generation;
@@ -621,14 +825,6 @@ function createIOSSimulatorService({
   function currentStreamBroker() {
     if (typeof getStreamBroker === "function") return getStreamBroker();
     return streamBroker;
-  }
-
-  function disconnectedHelperState() {
-    return {
-      stream: "disconnected",
-      input: "disconnected",
-      accessibility: "disconnected",
-    };
   }
 
   function helperConnectionState() {
@@ -673,71 +869,6 @@ function createIOSSimulatorService({
     } catch {
       // broadcast is best-effort
     }
-  }
-
-  function mapHelperError(code) {
-    if (code === "generation_mismatch" || code === "token_mismatch") {
-      return leaseStale();
-    }
-    if (code === "capability_unavailable" || code === "unknown_method") {
-      return iosError(
-        "capability_unavailable",
-        "Simulator capability is unavailable",
-      );
-    }
-    if (code === "device_missing") {
-      return iosError("device_missing", "Simulator device was not found");
-    }
-    if (code === "stream_disconnected") {
-      return iosError(
-        "stream_disconnected",
-        "Simulator helper is disconnected",
-      );
-    }
-    return iosError("unexpected", "Simulator helper request failed");
-  }
-
-  function onHelperControl(session, value) {
-    if (value && value.kind === "ready") {
-      session.ready = true;
-      if (typeof session.readyResolve === "function") {
-        const resolve = session.readyResolve;
-        session.readyResolve = null;
-        session.readyReject = null;
-        resolve();
-      }
-      return;
-    }
-    const id = value && value.id;
-    const pending = session.pending.get(id);
-    if (!pending) return;
-    session.pending.delete(id);
-    if (value.ok === false) {
-      pending.reject(mapHelperError(value.error));
-    } else {
-      pending.resolve(value.result);
-    }
-  }
-
-  function helperDisconnected() {
-    return iosError(
-      "stream_disconnected",
-      "Simulator helper is disconnected",
-    );
-  }
-
-  function failHelperWaiters(session, err) {
-    session.exited = true;
-    if (typeof session.readyReject === "function") {
-      const reject = session.readyReject;
-      session.readyResolve = null;
-      session.readyReject = null;
-      reject(err);
-    }
-    for (const pending of session.pending.values()) {
-      pending.reject(err);
-    }
-    session.pending.clear();
   }
 
   function disconnectHelperSession(session) {
@@ -1022,32 +1153,6 @@ function createIOSSimulatorService({
     }
   }
 
-  function requireCoord(value, label) {
-    if (typeof value !== "number" || !Number.isFinite(value)) {
-      throw iosError("unexpected", `Simulator ${label} is invalid`);
-    }
-    if (Math.abs(value) > COORD_ABS_MAX) {
-      throw iosError("unexpected", `Simulator ${label} is invalid`);
-    }
-    return value;
-  }
-
-  function viewerStreamInfoFromSession(session) {
-    if (!session || !session.streamInfo) {
-      throw iosError(
-        "stream_disconnected",
-        "Simulator helper is disconnected",
-      );
-    }
-    return Object.freeze({
-      url: session.streamInfo.url,
-      token: session.streamInfo.viewerToken,
-      generation: session.streamInfo.generation,
-      protocolVersion: 1,
-      maxMessageBytes: protocol.limits.maxVideoBytes,
-    });
-  }
-
   async function getStatus(input) {
     const threadId = input && input.threadId;
     const { threadId: normalizedThreadId } = resolveThread(threadId);
@@ -1312,15 +1417,6 @@ function createIOSSimulatorService({
     });
   }
 
-  function releaseSummary(fields = {}) {
-    return Object.freeze({
-      released: fields.released === true,
-      stoppedRecording: fields.stoppedRecording === true,
-      shutDownDevice: fields.shutDownDevice === true,
-      journalCleared: fields.journalCleared === true,
-    });
-  }
-
   /**
    * Revoke ownership of a lease this app can no longer justify holding, then
    * clean up what that lease owned.
@@ -1554,11 +1650,6 @@ function createIOSSimulatorService({
     });
   }
 
-  function normalizeRunId(rawRunId) {
-    if (rawRunId == null || rawRunId === "") return null;
-    return String(rawRunId);
-  }
-
   async function discardStagedArtifactBestEffort(token) {
     if (!artifactStore || typeof artifactStore.discard !== "function") return;
     try {
@@ -1632,51 +1723,6 @@ function createIOSSimulatorService({
         );
       }
     });
-  }
-
-  function recordingFailed() {
-    return iosError(
-      "recording_failed",
-      "Failed to start the simulator recording",
-    );
-  }
-
-  function recordingFinalizeFailed() {
-    return iosError(
-      "recording_finalize_failed",
-      "Failed to finalize the simulator recording",
-    );
-  }
-
-  function noActiveRecording() {
-    return iosError("recording_failed", "No simulator recording is active");
-  }
-
-  function createRecordingContext(fields) {
-    return {
-      id: fields.id,
-      threadId: fields.threadId,
-      generation: fields.generation,
-      runId: fields.runId,
-      toolCallId: fields.toolCallId,
-      developerDir: fields.developerDir,
-      deviceUdid: fields.deviceUdid,
-      videoToken: fields.videoToken,
-      videoPath: fields.videoPath,
-      handle: fields.handle,
-      closed: fields.closed,
-      pid: fields.pid,
-      startedAt: fields.startedAt,
-      reason: null,
-      finalization: null,
-      interrupted: false,
-      killed: false,
-      timersCleared: false,
-      startSettled: false,
-      closeObserved: null,
-      pollTimer: null,
-      autoStopTimer: null,
-    };
   }
 
   // An unexpected recorder exit must retire the recording slot and the journal
@@ -1764,20 +1810,6 @@ function createIOSSimulatorService({
       return;
     }
     scheduleRecordingPoll(context);
-  }
-
-  function interruptRecording(context) {
-    if (context.interrupted) return;
-    context.interrupted = true;
-    // A recorder already seen exiting is never signalled again: there is
-    // nothing to interrupt and its pid may already belong to someone else.
-    if (context.closeObserved !== null) return;
-    if (!context.handle) return;
-    try {
-      context.handle.interrupt();
-    } catch {
-      // Already gone; the bounded close wait decides whether to escalate.
-    }
   }
 
   // `recordVideo` spawns the recorder detached, so it leads its own process
@@ -2231,28 +2263,6 @@ function createIOSSimulatorService({
     return resolved;
   }
 
-  // `xcrun` resolves `simctl` through a chain, so `ps -o command=` reports the
-  // live recorder under one of a few executables: `/usr/bin/xcrun simctl`, a
-  // `/bin/bash` wrapper in front of the developer-dir `simctl`, or the
-  // CoreSimulator `simctl` binary itself. Only those shapes are trusted.
-  function isTrustedSimctlPath(candidate) {
-    if (!candidate.startsWith("/")) return false;
-    if (candidate.includes(" ")) return false;
-    if (candidate.includes("/../")) return false;
-    if (candidate.endsWith("/usr/bin/simctl")) return true;
-    if (!candidate.endsWith("/bin/simctl")) return false;
-    return candidate.includes("CoreSimulator");
-  }
-
-  function isTrustedRecorderPrefix(prefix) {
-    if (prefix === "/usr/bin/xcrun simctl") return true;
-    const wrapper = "/bin/bash ";
-    const executable = prefix.startsWith(wrapper)
-      ? prefix.slice(wrapper.length)
-      : prefix;
-    return isTrustedSimctlPath(executable);
-  }
-
   // Only a process whose `ps` command line is a trusted recorder executable
   // followed by exactly the argv tail Solenta spawns may be signalled. Anchoring
   // the whole tail rather than searching for substrings rejects pid reuse by a
@@ -2405,16 +2415,6 @@ function createIOSSimulatorService({
       // The unchanged journal is still retryable; recovery tolerates a
       // recording entry whose process and file are already gone.
     }
-  }
-
-  function recoverySummary(fields = {}) {
-    return Object.freeze({
-      recovered: fields.recovered === true,
-      quarantined: fields.quarantined === true,
-      cleanedRecording: fields.cleanedRecording === true,
-      shutDownDevice: fields.shutDownDevice === true,
-      journalRetained: fields.journalRetained === true,
-    });
   }
 
   async function recover() {
