@@ -21,9 +21,7 @@ import type {
 } from "../shared/ipc";
 import { isWebMode } from "../shared/wire";
 import {
-  buildFlatSidebar,
   crewAncestorIds,
-  nestWorkerFamilies,
   visibleFamilyRows,
   withCrewSearchContext,
   workerIdsByRoot,
@@ -39,9 +37,6 @@ import {
   allTags,
   filterThreads,
   groupByLabel,
-  groupThreadsByProject,
-  groupThreadsByStatus,
-  groupThreadsByTag,
   parseGroupBy,
   parseProviderFilter,
   parseStatusFilter,
@@ -119,6 +114,7 @@ import {
 import { useStableThreadTitles } from "./sidebar/useStableThreadTitles";
 import { useProviderOptions } from "./sidebar/useProviderOptions";
 import { useListAnimation } from "./sidebar/useListAnimation";
+import { useSidebarRows } from "./sidebar/useSidebarRows";
 import styles from "./Sidebar.module.css";
 
 export { displayWorkerTitle, statusPulseFor } from "./sidebar/status";
@@ -665,86 +661,31 @@ export const Sidebar = memo(function Sidebar({
     setSettledVisibleCount(SETTLED_TAIL_INITIAL_COUNT);
   }, [projectScope, statusFilter, providerFilter]);
 
-  const flat = useMemo(
-    () => buildFlatSidebar(displayThreads, settleOpts),
-    [displayThreads, settleOpts],
-  );
-
-  // Grouped views have no Working shelf: busy rows stay in their groups.
-  const attentionThreads = useMemo(
-    () => [...flat.pinned, ...flat.active, ...flat.working],
-    [flat.pinned, flat.active, flat.working],
-  );
-  const projectGroups = useMemo(
-    () =>
-      groupBy === "project"
-        ? groupThreadsByProject(projects, attentionThreads)
-        : [],
-    [groupBy, projects, attentionThreads],
-  );
-  const statusGroups = useMemo(
-    () =>
-      groupBy === "status"
-        ? groupThreadsByStatus(attentionThreads, waitStates).map((g) => ({
-            ...g,
-            threads: nestWorkerFamilies(g.threads, liveById),
-          }))
-        : [],
-    [groupBy, attentionThreads, waitStates, liveById],
-  );
-  const tagGroups = useMemo(
-    () =>
-      groupBy === "tag"
-        ? groupThreadsByTag(attentionThreads).map((g) => ({
-            ...g,
-            threads: nestWorkerFamilies(g.threads, liveById),
-          }))
-        : [],
-    [groupBy, attentionThreads, liveById],
-  );
-  const searchHitIds = useMemo(() => {
-    if (!searching || searchResults == null) return undefined;
-    return new Set(searchResults.map((t) => t.id));
-  }, [searching, searchResults]);
-
-  const familyOpts = useMemo(
-    () => ({
-      expandedRootIds: workerOpen,
-      keepIds: keepThreadIds,
-      keepWorkerIds: searchHitIds,
-      byIdFull: liveById,
-    }),
-    [workerOpen, keepThreadIds, searchHitIds, liveById],
-  );
-
-  const visiblePinned = useMemo(
-    () => visibleFamilyRows(flat.pinned, familyOpts),
-    [flat.pinned, familyOpts],
-  );
-  const visibleActive = useMemo(
-    () => visibleFamilyRows(flat.active, familyOpts),
-    [flat.active, familyOpts],
-  );
-  const pinnedFamilies = useMemo(
-    () => workerIdsByRoot(flat.pinned, liveById),
-    [flat.pinned, liveById],
-  );
-  const activeFamilies = useMemo(
-    () => workerIdsByRoot(flat.active, liveById),
-    [flat.active, liveById],
-  );
-  const visibleWorking = useMemo(
-    () => visibleFamilyRows(flat.working, familyOpts),
-    [flat.working, familyOpts],
-  );
-  const workingFamilies = useMemo(
-    () => workerIdsByRoot(flat.working, liveById),
-    [flat.working, liveById],
-  );
-  const searchFamilies = useMemo(
-    () => workerIdsByRoot(displayThreads, liveById),
-    [displayThreads, liveById],
-  );
+  const {
+    flat,
+    projectGroups,
+    statusGroups,
+    tagGroups,
+    familyOpts,
+    visiblePinned,
+    visibleActive,
+    pinnedFamilies,
+    activeFamilies,
+    visibleWorking,
+    workingFamilies,
+    searchFamilies,
+  } = useSidebarRows({
+    displayThreads,
+    settleOpts,
+    groupBy,
+    projects,
+    waitStates,
+    liveById,
+    workerOpen,
+    keepThreadIds,
+    searching,
+    searchResults,
+  });
 
   const toggleFamily = useCallback(
     (threadId: string, snap = false) => {
