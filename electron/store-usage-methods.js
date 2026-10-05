@@ -97,6 +97,8 @@ class StoreUsageMethods {
     const threadId =
       input && typeof input.threadId === "string" ? input.threadId : "";
     if (threadId) {
+      // Side-file change marker (#1475): the cells below mutate in place.
+      this._usageThreadsGen += 1;
       if (!this.data.usageThreadsByDay || typeof this.data.usageThreadsByDay !== "object") {
         this.data.usageThreadsByDay = {};
       }
@@ -155,6 +157,8 @@ class StoreUsageMethods {
     const threadId =
       input && typeof input.threadId === "string" ? input.threadId : "";
     if (threadId) {
+      // Side-file change marker (#1475): the cells below mutate in place.
+      this._usageThreadsGen += 1;
       if (!this.data.usageThreadsByDay || typeof this.data.usageThreadsByDay !== "object") {
         this.data.usageThreadsByDay = {};
       }

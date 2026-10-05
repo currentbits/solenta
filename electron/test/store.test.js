@@ -2918,6 +2918,145 @@ describe("Store", () => {
     });
   });
 
+  describe("side files for thread notes and usageThreadsByDay (#1475)", () => {
+    const notesPath = () => path.join(tmpDir, "thread-notes.json");
+    const usagePath = () => path.join(tmpDir, "usage-threads.json");
+    const hyp = (id) => ({ id, claim: `c-${id}`, status: "open", reason: "", at: 1 });
+    const sug = (id) => ({ id, title: `s-${id}`, prompt: "p", status: "open", at: 1 });
+    const USAGE = {
+      "2026-10-01": {
+        "t-1": { costUsd: 1, inputTokens: 2, cachedInputTokens: 0, cacheWriteTokens: 0, outputTokens: 3, turns: 1, wastedUsd: 0, projectId: "p1", projectName: "P", title: "One", provider: "claude", model: "m" },
+      },
+    };
+
+    function row(id, extra = {}) {
+      return { id, projectId: "p1", title: id, status: "idle", createdAt: 1, updatedAt: 2, ...extra };
+    }
+
+    function writeLegacy(threads, usageThreadsByDay = USAGE) {
+      fs.writeFileSync(
+        filePath,
+        JSON.stringify({ projects: [], threads, messagesByThread: {}, workLogByThread: {}, usageThreadsByDay }),
+        "utf8",
+      );
+    }
+
+    it("migrates inline notes and usage into side files and strips the envelope", () => {
+      writeLegacy([
+        row("t-1", { hypotheses: [hyp("h1")], suggestions: [sug("s1")] }),
+        row("t-2"),
+      ]);
+      const legacy = fs.readFileSync(filePath, "utf8");
+      const store = new Store(filePath);
+      assert.deepEqual(store.getThread("t-1").hypotheses, [hyp("h1")]);
+      assert.deepEqual(store.getThread("t-1").suggestions, [sug("s1")]);
+      assert.deepEqual(store.getUsageThreadsByDay(), USAGE);
+      const envelope = JSON.parse(fs.readFileSync(filePath, "utf8"));
+      assert.equal("hypotheses" in envelope.threads[0], false);
+      assert.equal("suggestions" in envelope.threads[0], false);
+      assert.deepEqual(envelope.usageThreadsByDay, {});
+      assert.deepEqual(JSON.parse(fs.readFileSync(notesPath(), "utf8")), {
+        hypotheses: { "t-1": [hyp("h1")] },
+        suggestions: { "t-1": [sug("s1")] },
+      });
+      assert.deepEqual(JSON.parse(fs.readFileSync(usagePath(), "utf8")), USAGE);
+      // The pre-migration envelope is kept as .bak.
+      assert.equal(fs.readFileSync(`${filePath}.bak`, "utf8"), legacy);
+
+      const reloaded = new Store(filePath);
+      assert.deepEqual(reloaded.getThread("t-1").hypotheses, [hyp("h1")]);
+      assert.deepEqual(reloaded.getThread("t-1").suggestions, [sug("s1")]);
+      assert.equal(reloaded.getThread("t-2").hypotheses, undefined);
+      assert.deepEqual(reloaded.getUsageThreadsByDay(), USAGE);
+    });
+
+    it("keeps notes inline when the side files cannot be written", () => {
+      writeLegacy([row("t-1", { hypotheses: [hyp("h1")] })]);
+      fs.mkdirSync(notesPath()); // a directory: the atomic rename fails
+      const store = new Store(filePath);
+      assert.deepEqual(store.getThread("t-1").hypotheses, [hyp("h1")]);
+      store.saveNow();
+      const envelope = JSON.parse(fs.readFileSync(filePath, "utf8"));
+      assert.deepEqual(envelope.threads[0].hypotheses, [hyp("h1")]);
+      assert.deepEqual(envelope.usageThreadsByDay, USAGE);
+    });
+
+    it("rewrites a side file only when its data changed", async () => {
+      writeLegacy([row("t-1", { hypotheses: [hyp("h1")] })]);
+      const store = new Store(filePath);
+      const notesBefore = fs.statSync(notesPath()).mtimeMs;
+      const usageBefore = fs.readFileSync(usagePath(), "utf8");
+      fs.utimesSync(notesPath(), 1, 1);
+      fs.utimesSync(usagePath(), 1, 1);
+      store.updateThread("t-1", { title: "renamed" });
+      store.saveNow();
+      assert.equal(fs.statSync(notesPath()).mtimeMs, 1000, "notes untouched");
+      assert.equal(fs.statSync(usagePath()).mtimeMs, 1000, "usage untouched");
+      assert.ok(notesBefore > 1000);
+
+      store.updateThread("t-1", { hypotheses: [hyp("h1"), hyp("h2")] });
+      store.recordUsage({ provider: "claude", model: "m", costUsd: 1, threadId: "t-1" }, new Date(2026, 9, 2));
+      store.save();
+      await new Promise((r) => setTimeout(r, SAVE_DEBOUNCE_MS + 50));
+      await store.flushPending();
+      store.saveNow();
+      assert.equal(
+        JSON.parse(fs.readFileSync(notesPath(), "utf8")).hypotheses["t-1"].length,
+        2,
+      );
+      assert.notEqual(fs.readFileSync(usagePath(), "utf8"), usageBefore);
+      assert.ok(JSON.parse(fs.readFileSync(usagePath(), "utf8"))["2026-10-02"]["t-1"]);
+
+      store.setThreads(store.getThreads().filter((t) => t.id !== "t-1"));
+      store.removeThread("t-1");
+      store.saveNow();
+      assert.deepEqual(JSON.parse(fs.readFileSync(notesPath(), "utf8")).hypotheses, {});
+    });
+
+    it("merges notes an older build wrote inline after a downgrade", () => {
+      writeLegacy([row("t-1", { hypotheses: [hyp("h1")], suggestions: [sug("s1")] })]);
+      new Store(filePath);
+      // An older build keeps no side data: it appends h2 inline, patches s1,
+      // and records a usage row for a new day.
+      const env = JSON.parse(fs.readFileSync(filePath, "utf8"));
+      env.threads[0].hypotheses = [hyp("h2")];
+      env.threads[0].suggestions = [{ ...sug("s1"), status: "dismissed" }];
+      env.usageThreadsByDay = { "2026-10-03": { "t-1": USAGE["2026-10-01"]["t-1"] } };
+      fs.writeFileSync(filePath, JSON.stringify(env), "utf8");
+
+      const store = new Store(filePath);
+      assert.deepEqual(store.getThread("t-1").hypotheses.map((h) => h.id), ["h1", "h2"]);
+      assert.deepEqual(store.getThread("t-1").suggestions, [{ ...sug("s1"), status: "dismissed" }]);
+      assert.deepEqual(Object.keys(store.getUsageThreadsByDay()).sort(), ["2026-10-01", "2026-10-03"]);
+      const envelope = JSON.parse(fs.readFileSync(filePath, "utf8"));
+      assert.equal("hypotheses" in envelope.threads[0], false);
+      assert.deepEqual(envelope.usageThreadsByDay, {});
+    });
+
+    it("falls back to the side file's .bak when it is corrupt", async () => {
+      writeLegacy([row("t-1", { hypotheses: [hyp("h1")] })]);
+      new Store(filePath);
+      const second = new Store(filePath);
+      await second._bakCopy;
+      assert.ok(fs.existsSync(`${notesPath()}.bak`));
+      fs.writeFileSync(notesPath(), "{broken", "utf8");
+      const store = new Store(filePath);
+      assert.deepEqual(store.getThread("t-1").hypotheses, [hyp("h1")]);
+      await store._bakCopy;
+      // The corrupt file is never cloned over the good backup.
+      assert.equal(
+        JSON.parse(fs.readFileSync(`${notesPath()}.bak`, "utf8")).hypotheses["t-1"][0].id,
+        "h1",
+      );
+      store.saveNow();
+      assert.equal(
+        JSON.parse(fs.readFileSync(notesPath(), "utf8")).hypotheses["t-1"][0].id,
+        "h1",
+        "the corrupt main copy is rewritten from the recovered data",
+      );
+    });
+  });
+
   it("persists run artifacts, retains archive evidence, and removes deleted threads", () => {
     const store = new Store(filePath);
     const thread = {
