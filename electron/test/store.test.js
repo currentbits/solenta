@@ -3033,6 +3033,41 @@ describe("Store", () => {
       assert.deepEqual(envelope.usageThreadsByDay, {});
     });
 
+    it("round-trips every field of a legacy store through migrate, save and reload", () => {
+      fs.mkdirSync(path.join(tmpDir, "worklogs"), { recursive: true });
+      fs.writeFileSync(
+        path.join(tmpDir, "worklogs", "t-2.json"),
+        JSON.stringify([{ id: "w1", runId: "r", label: "x", done: false, timestamp: 1 }]),
+      );
+      writeLegacy([
+        row("t-1", { hypotheses: [hyp("h1"), hyp("h2")], suggestions: [sug("s1")], pinned: true }),
+        row("t-2", { status: "working", runStartedAt: 3, suggestions: [] }),
+        row("t-3", { archived: true }),
+      ]);
+      const snap = (s) => {
+        const { messagesByThread: _m, workLogByThread: _w, ...rest } = s.data;
+        const ids = s.data.threads.map((t) => t.id);
+        const canon = (v) =>
+          Array.isArray(v)
+            ? v.map(canon)
+            : v && typeof v === "object"
+              ? Object.fromEntries(Object.keys(v).sort().map((k) => [k, canon(v[k])]))
+              : v;
+        return canon({
+          rest,
+          work: ids.map((id) => s.getWorkLog(id)),
+          msgs: ids.map((id) => s.getMessages(id)),
+        });
+      };
+      const first = new Store(filePath);
+      // Crash recovery (t-2 was working) ran on this load; persist it.
+      first.saveNow();
+      const before = snap(first);
+      assert.equal(before.rest.threads[1].status, "failed");
+      assert.equal(before.work[1][0].done, true);
+      assert.deepEqual(snap(new Store(filePath)), before);
+    });
+
     it("falls back to the side file's .bak when it is corrupt", async () => {
       writeLegacy([row("t-1", { hypotheses: [hyp("h1")] })]);
       new Store(filePath);
