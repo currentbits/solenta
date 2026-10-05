@@ -13,7 +13,6 @@
 
 const fs = require("node:fs");
 const path = require("node:path");
-const { execFileSync } = require("node:child_process");
 const { attachScm } = require("./scm.js");
 
 const ICON_EXTENSIONS = [
@@ -111,33 +110,45 @@ function clearIconCache() {
   commonDirCache.clear();
 }
 
+/**
+ * The repo's git common dir, read off disk the way git's own discovery does:
+ * nearest `.git` upward, follow a `gitdir:` file (worktree, submodule), then
+ * its `commondir`. No git spawn: `projects:list` calls this per project on
+ * the boot critical path, where execFileSync cost ~10 ms each (#1475).
+ *
+ * ponytail: ignores GIT_DIR / GIT_COMMON_DIR and bare repos; both fall back
+ * to cwd, which only means a worktree project misses the main checkout's
+ * icon. Shell out to `git rev-parse` (async) if that ever matters.
+ *
+ * @param {string} cwd
+ */
 function defaultGitCommonDir(cwd) {
-  try {
-    const out = execFileSync(
-      "git",
-      ["rev-parse", "--path-format=absolute", "--git-common-dir"],
-      {
-        cwd,
-        encoding: "utf8",
-        timeout: 2000,
-        stdio: ["ignore", "pipe", "pipe"],
-      },
-    ).trim();
-    if (out) return path.resolve(out);
-  } catch {
+  const abs = path.resolve(cwd);
+  for (let dir = abs; ; dir = path.dirname(dir)) {
+    const dotGit = path.join(dir, ".git");
+    let gitDir = null;
     try {
-      const out = execFileSync("git", ["rev-parse", "--git-common-dir"], {
-        cwd,
-        encoding: "utf8",
-        timeout: 2000,
-        stdio: ["ignore", "pipe", "pipe"],
-      }).trim();
-      if (out) return path.resolve(cwd, out);
+      if (fs.statSync(dotGit).isDirectory()) {
+        gitDir = dotGit;
+      } else {
+        const m = /^gitdir:\s*(.+?)\s*$/m.exec(fs.readFileSync(dotGit, "utf8"));
+        if (!m) return abs;
+        gitDir = path.resolve(dir, m[1]);
+      }
     } catch {
-      // not a git dir, or git missing
+      // no .git here; keep walking up
     }
+    if (gitDir) {
+      try {
+        const common = fs.readFileSync(path.join(gitDir, "commondir"), "utf8").trim();
+        if (common) return path.resolve(gitDir, common);
+      } catch {
+        // a main checkout's .git has no commondir: it is the common dir
+      }
+      return gitDir;
+    }
+    if (path.dirname(dir) === dir) return abs;
   }
-  return path.resolve(cwd);
 }
 
 function gitCommonDir(cwd) {
@@ -409,7 +420,10 @@ function resolveIconPath(root, iconPath) {
 function cacheKey(root, iconPath) {
   const override =
     typeof iconPath === "string" && iconPath.trim() ? iconPath.trim() : "";
-  return `${gitCommonDir(root)}\0${override}`;
+  // Root first: two checkouts of one repo scan different roots, so they
+  // must not share an entry. The common dir keeps a re-pointed .git from
+  // serving the old icon.
+  return `${path.resolve(root)}\0${gitCommonDir(root)}\0${override}`;
 }
 
 function overrideFile(root, iconPath) {

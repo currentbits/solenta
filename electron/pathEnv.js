@@ -2,7 +2,7 @@
 
 const fs = require("node:fs");
 const os = require("node:os");
-const { execFileSync } = require("node:child_process");
+const { execFile, execFileSync } = require("node:child_process");
 
 /**
  * GUI apps on macOS launch with a bare launchd PATH (/usr/bin:/bin:...), so
@@ -110,22 +110,48 @@ function captureLoginPath(env, execFn = execFileSync, platform = process.platfor
   // the macOS/launchd kind; spawning SHELL || /bin/zsh would only fail
   // closed after SHELL_TIMEOUT_MS. Honest no-op, not a pretend try.
   if (platform === "win32") return null;
-  const shell = env.SHELL || "/bin/zsh";
   try {
-    const out = execFn(
-      shell,
-      ["-lic", `printf '%s' '${MARK_BEGIN}'"$PATH"'${MARK_END}'`],
-      {
-        encoding: "utf8",
-        stdio: ["ignore", "pipe", "pipe"],
-        timeout: SHELL_TIMEOUT_MS,
-        env,
-      },
-    );
-    return parseLoginPath(out);
+    return parseLoginPath(execFn(...loginShellCall(env)));
   } catch {
     return null;
   }
+}
+
+/** @param {NodeJS.ProcessEnv} env */
+function loginShellCall(env) {
+  return /** @type {const} */ ([
+    env.SHELL || "/bin/zsh",
+    ["-lic", `printf '%s' '${MARK_BEGIN}'"$PATH"'${MARK_END}'`],
+    {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+      timeout: SHELL_TIMEOUT_MS,
+      env,
+    },
+  ]);
+}
+
+/**
+ * captureLoginPath without blocking the event loop (#1475): the user's rc
+ * files cost ~0.7 s on a typical oh-my-zsh/nvm setup. Never rejects.
+ *
+ * @param {NodeJS.ProcessEnv} env
+ * @param {typeof execFile} [execFn] - test hook, execFile-shaped
+ * @param {NodeJS.Platform} [platform]
+ * @returns {Promise<string[] | null>}
+ */
+function captureLoginPathAsync(env, execFn = execFile, platform = process.platform) {
+  if (platform === "win32") return Promise.resolve(null);
+  return new Promise((resolve) => {
+    try {
+      const [file, args, opts] = loginShellCall(env);
+      execFn(file, args, opts, (err, stdout) => {
+        resolve(err ? null : parseLoginPath(stdout));
+      });
+    } catch {
+      resolve(null);
+    }
+  });
 }
 
 /**
@@ -179,9 +205,135 @@ function enrichProcessPath(opts = {}) {
   return { source: login ? "login-shell" : "fallback", entries: merged.length };
 }
 
+/**
+ * Boot-time PATH state (#1475). primeProcessPath applies the login PATH the
+ * last launch captured, synchronously and without a shell; refreshLoginPath
+ * re-captures it in the background and rewrites the cache. Spawns that need
+ * the real PATH await whenPathReady() first, so a fresh install (no cache)
+ * or a changed rc file still gets the shell's PATH.
+ *
+ * @type {null | { env: NodeJS.ProcessEnv, home: string, platform: NodeJS.Platform, launch: string[], cached: boolean, cacheFile: string, execFn?: typeof execFile, existsFn?: (p: string) => boolean }}
+ */
+let primed = null;
+/** @type {Promise<string[] | null> | null} */
+let refreshing = null;
+let refreshed = false;
+
+/** @param {string} file @returns {string[] | null} */
+function readCachedPath(file) {
+  try {
+    const entries = JSON.parse(fs.readFileSync(file, "utf8")).path;
+    if (!Array.isArray(entries)) return null;
+    const clean = entries.filter((e) => typeof e === "string" && e);
+    return clean.length > 0 ? clean : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Same result shape as enrichProcessPath, from the cached login PATH instead
+ * of a blocking shell. Arms refreshLoginPath / whenPathReady.
+ *
+ * @param {object} opts
+ * @param {string} opts.cacheFile
+ * @param {NodeJS.ProcessEnv} [opts.env]
+ * @param {typeof execFile} [opts.execFn]
+ * @param {(p: string) => boolean} [opts.existsFn]
+ * @param {string} [opts.home]
+ * @param {NodeJS.Platform} [opts.platform]
+ * @returns {{ source: "cache" | "fallback" | "win32", entries: number }}
+ */
+function primeProcessPath(opts) {
+  const env = opts.env || process.env;
+  const platform = opts.platform || process.platform;
+  primed = null;
+  refreshing = null;
+  refreshed = false;
+  if (platform === "win32") {
+    const r = enrichProcessPath({ env, platform });
+    return { source: "win32", entries: r.entries };
+  }
+  const home = opts.home || os.homedir();
+  const launch = String(env.PATH || "").split(":").filter(Boolean);
+  const cached = readCachedPath(opts.cacheFile);
+  const merged = mergePathEntries(
+    cached || [],
+    launch,
+    fallbackBinDirs(home, opts.existsFn),
+  );
+  env.PATH = merged.join(":");
+  primed = {
+    env,
+    home,
+    platform,
+    launch,
+    cached: Boolean(cached),
+    cacheFile: opts.cacheFile,
+    execFn: opts.execFn,
+    existsFn: opts.existsFn,
+  };
+  return { source: cached ? "cache" : "fallback", entries: merged.length };
+}
+
+/**
+ * Start (once) the background login-shell capture. On success PATH becomes
+ * login + launch PATH + fallback dirs, exactly what enrichProcessPath built,
+ * and the cache is rewritten. On failure the primed PATH stays. Never rejects.
+ *
+ * @returns {Promise<string[] | null>}
+ */
+function refreshLoginPath() {
+  if (!primed) return Promise.resolve(null);
+  if (!refreshing) {
+    const p = primed;
+    refreshing = captureLoginPathAsync(p.env, p.execFn, p.platform)
+      .then((login) => {
+        if (login) {
+          p.env.PATH = mergePathEntries(
+            login,
+            p.launch,
+            fallbackBinDirs(p.home, p.existsFn),
+          ).join(":");
+          try {
+            fs.writeFileSync(p.cacheFile, JSON.stringify({ path: login }));
+          } catch {
+            // next launch just re-captures
+          }
+        }
+        return login;
+      })
+      .catch(() => null)
+      .finally(() => {
+        refreshed = true;
+      });
+  }
+  return refreshing;
+}
+
+/**
+ * The in-flight (or not yet started) capture to await before a provider
+ * spawn, or null once it has settled or when nothing was primed (tests,
+ * win32), so callers skip the await and keep their synchronous prefix.
+ * ifUncached: only wait on a first run (no cached PATH), for read-only
+ * probes that should not stall a normal boot.
+ *
+ * @param {{ ifUncached?: boolean }} [opts]
+ * @returns {Promise<unknown> | null}
+ */
+function whenPathReady(opts = {}) {
+  if (!primed || refreshed) return null;
+  if (opts.ifUncached && primed.cached) return null;
+  return refreshLoginPath();
+}
+
 module.exports = {
   enrichProcessPath,
+  primeProcessPath,
+  refreshLoginPath,
+  whenPathReady,
   captureLoginPath,
+  captureLoginPathAsync,
   parseLoginPath,
   fallbackBinDirs,
   newestNvmBin,

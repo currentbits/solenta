@@ -51,7 +51,7 @@ const { startScheduler } = require("./automations.js");
 const { startAutoDispatch } = require("./autodispatch.js");
 const { startPostMergeScheduler } = require("./postmerge.js");
 const { startMemoryConsolidateScheduler } = require("./memory-consolidate.js");
-const { enrichProcessPath } = require("./pathEnv.js");
+const { primeProcessPath, refreshLoginPath } = require("./pathEnv.js");
 const {
   parseServeWebArgs,
   startWebServer,
@@ -108,8 +108,13 @@ startLoopLag();
 const serveOpts = parseServeWebArgs(process.argv);
 
 // GUI launches get a bare launchd PATH; rebuild the user's real PATH before
-// any provider binary resolution (`which`) or agent spawn happens.
-enrichProcessPath();
+// any provider binary resolution (`which`) or agent spawn happens. The last
+// launch's login-shell PATH applies here without a shell; the ~0.7 s rc
+// capture re-runs async after first paint (startMemory below) and runner
+// start awaits it (#1475).
+primeProcessPath({
+  cacheFile: path.join(app.getPath("userData"), "login-path.json"),
+});
 
 const isDev = !app.isPackaged && !process.env.CODER_PROD;
 
@@ -544,8 +549,12 @@ app.whenReady().then(async () => {
       });
     },
     // Never block or fail app start on memory supervision.
-    startMemory: () =>
-      memorySupervisor ? memorySupervisor.start() : undefined,
+    // Kicks the async login-shell PATH capture now that the window has
+    // painted; the supervisor probes kimi/cursor CLIs, so it waits for it.
+    startMemory: async () => {
+      await refreshLoginPath();
+      return memorySupervisor ? memorySupervisor.start() : undefined;
+    },
     onMemoryError: (err) => {
       console.warn(
         "memory-server: supervisor start error; continuing without memory:",

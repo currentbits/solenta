@@ -4,6 +4,7 @@ const path = require("node:path");
 const { randomUUID } = require("node:crypto");
 const services = require("./services.js");
 const { runAgent } = require("./agent.js");
+const { whenPathReady } = require("./pathEnv.js");
 const { truncate, toolSummary } = require("./claude.js");
 const { runCodexAppServerTurn } = require("./codex-appserver.js");
 const { heartbeatLane } = require("./mergeQueue.js");
@@ -1480,6 +1481,9 @@ function createRunner(opts) {
   }
 
   async function startRun(input) {
+    // First spawn after launch waits for the login-shell PATH (#1475).
+    const pathWait = whenPathReady();
+    if (pathWait) await pathWait;
     const { threadId } = input;
     let prompt = input.prompt;
     let attachments = sanitizeAttachments(input.attachments);
@@ -1983,6 +1987,8 @@ function createRunner(opts) {
    * @returns {Promise<{ runId: string }>}
    */
   async function startWorkflowRun(input) {
+    const pathWait = whenPathReady();
+    if (pathWait) await pathWait;
     try {
       materializePendingWorktree(input.threadId);
     } catch (err) {

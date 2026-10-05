@@ -19,6 +19,7 @@ const {
   mergeWorktree,
   createPr,
   listBranches,
+  listBranchesAsync,
 } = require("../worktrees.js");
 const { writeFakeBin } = require("./support/fakeBin.js");
 const { rmTree } = require("./support/rmTree.js");
@@ -152,6 +153,9 @@ describe("base-branch (#187)", () => {
     assert.ok(listed.branches.includes("main"));
     assert.ok(listed.branches.includes("stacked-base"));
     assert.equal(listed.branches[0], "main");
+    return listBranchesAsync(repo).then((viaAsync) => {
+      assert.deepEqual(viaAsync, listed, "the async IPC path lists the same");
+    });
   });
 
   it("setupWorktree without a base starts from origin/HEAD, not the checkout branch", () => {
