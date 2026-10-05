@@ -7,6 +7,7 @@ import { describe, it } from "node:test";
 import type { ChatMessage, ToolCallInfo } from "../src/shared/ipc";
 import {
   messageProvenance,
+  provenanceByMessageId,
   provenanceVisible,
   PRIOR_MIN_CHARS,
 } from "../src/provenance";
@@ -196,5 +197,86 @@ describe("messageProvenance (#404)", () => {
       provenanceVisible({ ...prov, grounded: true }, "tiny"),
       true,
     );
+  });
+});
+
+describe("provenanceByMessageId (#1475)", () => {
+  /** The per-message definition the incremental pass must match. */
+  function scratch(messages: ChatMessage[]) {
+    const map = new Map<string, ReturnType<typeof messageProvenance>>();
+    messages.forEach((m, i) => {
+      if (m.role === "assistant") map.set(m.id, messageProvenance(messages, i));
+    });
+    return map;
+  }
+
+  function fixture(): ChatMessage[] {
+    const out: ChatMessage[] = [];
+    for (let turn = 0; turn < 4; turn++) {
+      out.push(msg({ role: "user", text: `turn ${turn}` }));
+      for (let k = 0; k < 9; k++) {
+        out.push(tool("Read", { file_path: `src/f${turn}-${k}.ts` }));
+        if (k % 3 === 0) out.push(tool("mcp__coder-memory__memory_get", {}));
+        if (k === 4) out.push(tool("Bash", { command: `gh issue view ${k}0` }));
+        out.push(msg({ role: "assistant", text: `Step ${k}, see #${turn}${k}.` }));
+      }
+      out.push(msg({ role: "event", text: "run done" }));
+      out.push(msg({ role: "assistant", text: LONG_CLAIM }));
+    }
+    return out;
+  }
+
+  it("matches a from-scratch pass after every append and streamed update", () => {
+    const all = fixture();
+    let messages: ChatMessage[] = [];
+    for (const next of all) {
+      messages = [...messages, next];
+      assert.deepEqual(provenanceByMessageId(messages), scratch(messages));
+      if (next.role !== "assistant") continue;
+      // Streaming: the tail arrives as a fresh object with longer text.
+      for (const extra of [" Edited `src/a.ts`", " and #77."]) {
+        const last = messages[messages.length - 1];
+        messages = [...messages.slice(0, -1), { ...last, text: last.text + extra }];
+        assert.deepEqual(provenanceByMessageId(messages), scratch(messages));
+      }
+    }
+  });
+
+  it("invalidates when a rewind changes the tools before a kept message", () => {
+    const messages = fixture();
+    provenanceByMessageId(messages);
+    // Drop every tool call: the same assistant objects must lose their refs.
+    const rewound = messages.filter((m) => m.role !== "tool");
+    const result = provenanceByMessageId(rewound);
+    assert.deepEqual(result, scratch(rewound));
+    const first = rewound.find((m) => m.role === "assistant")!;
+    assert.deepEqual(result.get(first.id)?.repo, []);
+  });
+
+  it("invalidates after an edit-and-resubmit replaces the turn", () => {
+    const messages = fixture();
+    provenanceByMessageId(messages);
+    const cut = messages.findIndex((m, i) => i > 0 && m.role === "user");
+    const resubmitted = [
+      ...messages.slice(0, cut),
+      msg({ role: "user", text: "edited" }),
+      tool("Grep", { pattern: "needle" }),
+      ...messages.slice(cut + 1).filter((m) => m.role === "assistant"),
+    ];
+    assert.deepEqual(provenanceByMessageId(resubmitted), scratch(resubmitted));
+  });
+
+  it("returns the same object for unchanged messages across pushes", () => {
+    const messages = fixture();
+    const before = provenanceByMessageId(messages);
+    const last = messages[messages.length - 1];
+    const after = provenanceByMessageId([
+      ...messages.slice(0, -1),
+      { ...last, text: last.text + " more" },
+    ]);
+    for (const m of messages.slice(0, -1)) {
+      if (m.role === "assistant") assert.equal(after.get(m.id), before.get(m.id));
+    }
+    assert.notEqual(after.get(last.id), before.get(last.id));
   });
 });

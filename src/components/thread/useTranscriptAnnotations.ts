@@ -14,7 +14,7 @@ import {
   type FocusTurnSummary,
 } from "../../focusView";
 import { useRunDurationEnabled } from "../../uiPrefs";
-import { messageProvenance, type MessageProvenance } from "../../provenance";
+import { provenanceByMessageId, type MessageProvenance } from "../../provenance";
 
 /** Per-message transcript annotations and the live working label. */
 export function useTranscriptAnnotations({
@@ -84,16 +84,13 @@ export function useTranscriptAnnotations({
    * Provenance tiers per assistant message (issue #404), computed over the
    * raw message list so turn boundaries (previous user message) are intact.
    */
-  const provenanceById = useMemo(() => {
-    const map = new Map<string, MessageProvenance>();
-    if (!detail) return map;
-    for (let i = 0; i < detail.messages.length; i++) {
-      if (detail.messages[i].role !== "assistant") continue;
-      const prov = messageProvenance(detail.messages, i);
-      if (prov) map.set(detail.messages[i].id, prov);
-    }
-    return map;
-  }, [detail]);
+  const provenanceById = useMemo(
+    () =>
+      detail
+        ? provenanceByMessageId(detail.messages)
+        : new Map<string, MessageProvenance>(),
+    [detail],
+  );
 
   const latestWorkLogRunId = useMemo(() => {
     let latest: WorkLogGroup | null = null;
