@@ -109,7 +109,7 @@ import {
 } from "../editResubmit";
 import { mapReviewBars, type ReviewBar } from "../reviewBar";
 import { isRunCollapsed, toggleRunCollapsed } from "../runHeader";
-import type { SlashAction, SlashCommand } from "../slashCommands";
+import type { SlashAction } from "../slashCommands";
 import { ProviderQuotaDialog } from "./ProviderQuota";
 import type { ProviderLimitsLoader } from "../providerUsage";
 import { buildBestOfNEntries } from "../bestOfN";
@@ -174,6 +174,7 @@ import {
 import { ChangesPanel } from "./thread/ChangesPanel";
 import { useRetryAnchors } from "./thread/useRetryAnchors";
 import { useTranscriptAnnotations } from "./thread/useTranscriptAnnotations";
+import { useCliCommands } from "./thread/useCliCommands";
 import styles from "./ThreadView.module.css";
 
 const EMPTY_COMPARE_PEERS: ComparePeer[] = [];
@@ -894,7 +895,6 @@ export const ThreadView = memo(function ThreadView({
   const [lightbox, setLightbox] = useState<{ src: string; alt: string } | null>(
     null,
   );
-  const [cliCommands, setCliCommands] = useState<SlashCommand[]>([]);
   const copyFlashTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const threadId = detail?.thread.id ?? null;
   if (threadId !== focusThreadId) {
@@ -910,30 +910,12 @@ export const ThreadView = memo(function ThreadView({
     setContextOpen(false);
   }, [threadId]);
 
-  useEffect(() => {
-    if (!onListCliCommands) {
-      setCliCommands([]);
-      return;
-    }
-    let cancelled = false;
-    onListCliCommands({ projectPath: project?.path, provider: detail?.thread.provider })
-      .then((rows) => {
-        if (cancelled) return;
-        setCliCommands(
-          rows.map((r) => ({
-            name: r.name,
-            hint: r.hint,
-            kind: "insert" as const,
-          })),
-        );
-      })
-      .catch(() => {
-        if (!cancelled) setCliCommands([]);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [onListCliCommands, project?.path, threadId, detail?.thread.provider]);
+  const cliCommands = useCliCommands({
+    onListCliCommands,
+    project,
+    threadId,
+    detail,
+  });
   const [incomingHandoff, setIncomingHandoff] = useState<{
     threadId: string;
     items: AttachmentInfo[];
