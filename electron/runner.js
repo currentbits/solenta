@@ -18,15 +18,6 @@ const {
   runCodexAppServerTurn,
   isCodexChildThread,
 } = require("./codex-appserver.js");
-const { pendingFromInput } = require("./codexInput.js");
-const {
-  classifyServerRequest,
-  pendingFromCommand,
-  pendingFromMcp,
-  approvalResponse,
-  mapSolentaDecision,
-  unsupportedError,
-} = require("./codexApprovals.js");
 const kimiParse = require("./kimi.js");
 const { runKimi, materializeKimiHome, deployKimiGuardrailOverlay } = kimiParse;
 const { materializeGrokHome, deployGrokGuardrailOverlay } = require("./grok.js");
@@ -38,6 +29,11 @@ const { createAskRuns } = require("./runner-ask-runs.js");
 const { createTurnSetup } = require("./runner-turn-setup.js");
 const { createSubagents } = require("./runner-subagents.js");
 const { createSessionRecording } = require("./runner-session-recording.js");
+const { createClaudeSessions } = require("./runner-claude-sessions.js");
+const { createVerifyGate } = require("./runner-verify-gate.js");
+const { createQuotaWait } = require("./runner-quota-wait.js");
+const { createOrchNotices } = require("./runner-orch-notices.js");
+const { createPermissions } = require("./runner-permissions.js");
 const {
   materializeCursorPinPlugin,
   cursorPinPluginDir,
@@ -47,7 +43,6 @@ const {
   resolveBin,
   isBinAvailable,
   listProviders,
-  snapPermissionMode,
   sessionIdForResume,
   codexModelAcceptsImages,
   honouredEfforts,
@@ -85,14 +80,6 @@ const { wslTarget } = require("./wsl.js");
 const { resolveSandbox } = require("./sandbox.js");
 const { killTree } = require("./proc.js");
 const { stop: stopDevServer } = require("./devservers.js");
-const {
-  runVerifyCommand,
-  buildFixPrompt,
-  normalizeCommand,
-  MAX_FIX_ATTEMPTS,
-} = require("./verify.js");
-const { prepareVerifyRun } = require("./verifyEfficiency.js");
-const { maybeApplyFmTitle } = require("./fm-title.js");
 const { classifyTool, guardrailsEnabled } = require("./guardrails.js");
 const { insertBeforeLast, guardrailNotice } = require("./guardrail-hook-core.js");
 const {
@@ -130,30 +117,16 @@ const {
 } = require("./muse.js");
 const { museGuardrailHookCommand } = require("./muse-guardrail-hook.js");
 const {
-  extractCommand,
-  resolveEditedCommand,
-  sessionAllowRule,
-} = require("./permissionCommand.js");
-const {
   classifyContextOverflow,
   classifyCliUpgrade,
   classifyWriterLock,
   decideQuotaWait,
   formatQuotaWaitClock,
-  nextQuotaFailover,
-  quotaWaitEnabled,
 } = require("./quotaWait.js");
 const { startWithPoolFailover } = require("./subagentPool.js");
-const { normalizeQuestions } = require("./questions.js");
 const {
-  PLAN_TRUNCATE,
-  noticePrompt,
   formatQueuedPrompt,
   firstChanged,
-  planText,
-  questionInfo,
-  replyCodexJsonRpc,
-  replyCodexJsonRpcError,
   cancelCodexServerRequests,
   sanitizeAttachments,
   attachmentPromptSection,
@@ -215,17 +188,6 @@ function upsertThinkingCard(appendMessage, store, threadId, runId, state, chunk,
   }
   return true;
 }
-
-/**
- * Approved plan kept on the thread for its plan card. Tighter than the prompt's
- * budget: this one rides every threads:changed push, for every thread.
- */
-const PLAN_STORE = 4000;
-
-// Issue #213: keep only the newest N worker threads per orchestrator so
-// fan-out cannot grow the store without bound. No settings knob; skipped
-// threads still occupy a keep slot.
-const MAX_WORKERS_PER_ORCHESTRATOR = 20;
 
 /** Badge tooltip: first ~2 lines, ~300 chars. */
 function shortError(text) {
@@ -364,15 +326,6 @@ function looksWriterLock(text) {
     /already has a live local writer/i.test(s)
   );
 }
-
-const CODEX_WRITER_LOCK_COPY =
-  "This Codex session is still owned by another process. Quit Codex Desktop or the other CLI that has it open. The worker notice is waiting and will resume once the session is free.";
-
-const CODEX_EJECTED_COPY =
-  "This Codex session was ejected. Solenta will not resume it. The worker notice is waiting.";
-
-/** Flock can lag Solenta's child exit; one bounded re-flush, no loop. */
-const CODEX_WRITER_RELEASE_MS = 400;
 
 /**
  * Map a claude-stream result event's errors[] (+ optional result/stderr) into
@@ -779,17 +732,6 @@ function createRunner(opts) {
    * @type {Map<string, object>}
    */
   const active = new Map();
-  // Host-only, across turns. Restart fails closed and requires a fresh click;
-  // neither agent-editable store data nor MCP arguments can mint a sign-off.
-  const ciWorkflowSignOffs = new Map();
-  /**
-   * Threads whose live ExitPlanMode prompt was already answered this turn.
-   * Blocks the post-run fallback card so a claude deny does not reopen a
-   * "plan" made of the result string (issue #707).
-   * @type {Set<string>}
-   */
-  const planPromptHandled = new Set();
-
   // OTel GenAI spans (issue #280). Inert while settings.otel.endpoint is null,
   // and every method swallows its own failures, so no call site below guards.
   const otel = createOtel({
@@ -826,87 +768,6 @@ function createRunner(opts) {
     });
   }
 
-  /**
-   * Live interactive Claude CLI processes per thread, kept across turns so
-   * harness background tasks survive turn settle and the permission channel
-   * never closes mid-request (issue #8). Reused when the spawn parameters
-   * still match; killed on param change, thread delete, idle timeout, or
-   * app quit. `dispatch` rebinds to the current turn's handlers on reuse.
-   * @type {Map<string, { handle: object, dispatch: { onEvent: Function, onExit: Function, onError: Function }, key: string, idleTimer: ReturnType<typeof setTimeout> | null }>}
-   */
-  const claudeSessions = new Map();
-
-  // ponytail: fixed idle ceiling — background work longer than this must
-  // detach (nohup); add child-process introspection if that ever hurts.
-  const CLAUDE_IDLE_REAP_MS = 30 * 60 * 1000;
-  // A reused warm CLI answers a stdin turn in milliseconds (measured on 2.1.219:
-  // command_lifecycle at 0ms, system/init at ~31-46ms), so this is ~1000x the
-  // real ACK. Read at arm time so a test can shorten the window.
-  const CLAUDE_ACK_MS = 60_000;
-
-  // ponytail: fixed LRU cap — an 8-worker fan-out otherwise leaves 8 idle CLIs
-  // resident for the full half hour (issue #36). Make it a setting if 3 chafes.
-  const CLAUDE_IDLE_MAX = 3;
-
-  /** Kill and forget a thread's kept-alive Claude CLI (if any). */
-  function disposeClaudeSession(threadId) {
-    const sess = claudeSessions.get(threadId);
-    if (!sess) return;
-    claudeSessions.delete(threadId);
-    if (sess.idleTimer) clearTimeout(sess.idleTimer);
-    try {
-      if (sess.handle) sess.handle.kill();
-    } catch {
-      // already dead
-    }
-    finishRunningSubagents(threadId);
-  }
-
-  /**
-   * Release a thread's kept-alive Claude CLI because the thread was archived,
-   * settled, or deleted (#1383). A thread can archive ITSELF through the
-   * thread_archive tool, so its turn may still be live: killing now SIGTERMs
-   * the process making that call and the turn lands as "Run error (exit
-   * 143)". Mid-turn, flag the session; scheduleClaudeIdleReap disposes it as
-   * soon as the turn settles.
-   */
-  function retireClaudeSession(threadId) {
-    const sess = claudeSessions.get(threadId);
-    if (!sess) return;
-    if (active.has(threadId)) {
-      sess.retireAfterTurn = true;
-      return;
-    }
-    disposeClaudeSession(threadId);
-  }
-
-  /** Arm the idle reaper after a turn settles; disarmed on reuse. */
-  function scheduleClaudeIdleReap(threadId) {
-    const sess = claudeSessions.get(threadId);
-    if (sess && sess.retireAfterTurn) {
-      disposeClaudeSession(threadId);
-      return;
-    }
-    if (!sess || sess.idleTimer) return;
-    sess.idleTimer = setTimeout(
-      () => disposeClaudeSession(threadId),
-      CLAUDE_IDLE_REAP_MS,
-    );
-    // Never hold the process open for a reap timer.
-    if (typeof sess.idleTimer.unref === "function") sess.idleTimer.unref();
-    // Re-insert so Map order reads least → most recently idled, then reap
-    // everything past the cap. Sessions mid-turn have no timer: never counted,
-    // never killed.
-    claudeSessions.delete(threadId);
-    claudeSessions.set(threadId, sess);
-    const idle = [...claudeSessions]
-      .filter(([, s]) => s.idleTimer)
-      .map(([id]) => id);
-    for (const id of idle.slice(0, Math.max(0, idle.length - CLAUDE_IDLE_MAX))) {
-      disposeClaudeSession(id);
-    }
-  }
-
   /** Last known workflow (core Workflow or real state) per thread. */
   /** @type {Map<string, object>} */
   const lastWorkflowByThread = new Map();
@@ -918,701 +779,6 @@ function createRunner(opts) {
    * @type {Map<string, { messages: object[], workLog: object[], seq: number }>}
    */
   const lastPushByThread = new Map();
-
-  /**
-   * Pending wake-ups: threadId -> notice lines. Worker-finished notices,
-   * peer messages, and task-unblock pokes share this one queue. Idle
-   * threads start a run immediately; a running thread flushes at its own
-   * terminal. The orchestrator no longer needs the user to relay.
-   * @type {Map<string, string[]>}
-   */
-  const orchNotices = new Map();
-
-  /**
-   * Consecutive machine-delivered turns per thread (issue #277). A notice
-   * flush increments; a user-initiated startRun resets to 0. At
-   * CREW_AUTO_TURN_CAP the next flush is refused through the same
-   * undeliverable path as the orchestration-budget gate.
-   * @type {Map<string, number>}
-   */
-  const autoTurns = new Map();
-
-  /** sessionId -> Date.now() when a Solenta Codex child left `active`. */
-  const recentlyReleasedCodex = new Map();
-  /** threadId -> timeout for one bounded post-release flush. */
-  const codexReleaseFlush = new Map();
-  /** threadId: recovery copy already posted for a parked notice. */
-  const codexParkNotified = new Set();
-
-  function cancelCodexReleaseFlush(threadId) {
-    const timer = codexReleaseFlush.get(threadId);
-    if (!timer) return;
-    clearTimeout(timer);
-    codexReleaseFlush.delete(threadId);
-  }
-
-  function noteCodexRelease(sessionId) {
-    const sid = sessionId != null ? String(sessionId) : "";
-    if (!sid) return;
-    recentlyReleasedCodex.set(sid, Date.now());
-  }
-
-  function scheduleCodexReleaseFlush(threadId) {
-    if (codexReleaseFlush.has(threadId)) return;
-    const timer = setTimeout(() => {
-      codexReleaseFlush.delete(threadId);
-      try {
-        flushOrchNotices(threadId);
-      } catch {
-        // silent
-      }
-    }, CODEX_WRITER_RELEASE_MS);
-    if (typeof timer.unref === "function") timer.unref();
-    codexReleaseFlush.set(threadId, timer);
-  }
-
-  /**
-   * True when another Solenta Codex child still holds this sessionId
-   * (live or shutting down).
-   * @param {string} sessionId
-   * @param {string} exceptThreadId
-   */
-  function codexSessionHeld(sessionId, exceptThreadId) {
-    const sid = String(sessionId || "");
-    if (!sid) return false;
-    for (const [id, entry] of active) {
-      if (id === exceptThreadId) continue;
-      if (!entry || entry.kind !== "codex") continue;
-      if (entry.sessionId && String(entry.sessionId) === sid) return true;
-      const t = store.getThread(id);
-      if (t && t.sessionId && String(t.sessionId) === sid) return true;
-    }
-    return false;
-  }
-
-  /**
-   * Park a machine-delivered Codex wake-up: writer-lock, eject, or a
-   * sibling Solenta child still owns the session. `{ wait: true }` is the
-   * one-shot delay after our own child just released.
-   * @param {object} thread
-   * @returns {{ copy?: string, wait?: boolean } | null}
-   */
-  function parkCodexFromNotice(thread) {
-    if (!thread) return null;
-    if (resolveProvider(thread) !== "codex") return null;
-    if (thread.ejected === true) return { copy: CODEX_EJECTED_COPY };
-    const sid = thread.sessionId ? String(thread.sessionId) : "";
-    if (sid && recentlyReleasedCodex.has(sid)) {
-      const age = Date.now() - recentlyReleasedCodex.get(sid);
-      if (age >= 0 && age < CODEX_WRITER_RELEASE_MS) return { wait: true };
-    }
-    if (sid && codexSessionHeld(sid, thread.id)) {
-      return { copy: CODEX_WRITER_LOCK_COPY };
-    }
-    if (
-      thread.lastErrorKind === "writer-lock" ||
-      looksWriterLock(thread.lastError)
-    ) {
-      return { copy: CODEX_WRITER_LOCK_COPY };
-    }
-    return null;
-  }
-
-  /**
-   * Append a line to the notice queue. Caller already checked the thread
-   * exists. Does not flush.
-   * @param {string} threadId
-   * @param {string} line
-   */
-  function enqueueNotice(threadId, line) {
-    const notes = orchNotices.get(threadId) || [];
-    notes.push(line);
-    orchNotices.set(threadId, notes);
-  }
-
-  /**
-   * Queue a line for a thread and try to deliver it as a run. Same rules as
-   * worker-finished notices: idle threads start immediately, a running
-   * thread flushes at its own terminal. The caller owns the prefix (peer
-   * lines arrive as `[peer from …]`); do not add `[orchestration]`.
-   * Unknown threadId is a silent no-op. Never throws.
-   * @param {{ threadId?: unknown, line?: unknown }} [input]
-   */
-  function deliverNotice(input) {
-    try {
-      const threadId =
-        input && input.threadId != null ? String(input.threadId) : "";
-      if (!threadId || !store.getThread(threadId)) return;
-      const line = input && input.line != null ? String(input.line) : "";
-      if (!line) return;
-      enqueueNotice(threadId, line);
-      flushOrchNotices(threadId);
-    } catch {
-      // silent
-    }
-  }
-
-  /**
-   * Queue a worker-finished notice for the worker's orchestrator, then try
-   * to deliver. No-op for non-workers. Never throws.
-   * @param {string} threadId - the worker whose run just landed
-   * @param {"done" | "failed"} status
-   */
-  function queueOrchNotice(threadId, status) {
-    const thread = store.getThread(threadId);
-    if (!thread || !thread.orchWorker || !thread.handoffFrom) return;
-    const parentId = String(thread.handoffFrom);
-    if (!store.getThread(parentId)) return;
-    let line = "";
-    const msgs = store.getMessages(threadId) || [];
-    for (let i = msgs.length - 1; i >= 0; i--) {
-      const m = msgs[i];
-      if (m && m.role === "assistant" && m.text != null && String(m.text)) {
-        line = String(m.text).split(/\r?\n/)[0];
-        break;
-      }
-    }
-    const title = thread.title ? ` ("${thread.title}")` : "";
-    // Its commits are on its own branch and nowhere else until someone lands
-    // them — say so at the one moment the lead is awake and looking at this
-    // worker. But this notice is machine-delivered: telling the lead to merge
-    // here is what put 13 worker branches on main in a day. Landing is the
-    // user's call, so what the lead owes them right now is the report.
-    const merge =
-      status === "done" && thread.worktreePath
-        ? ` Its work is still only on branch ${thread.branch || "(its own)"}:` +
-          ` check it, then tell the user what it built and ask whether to merge` +
-          ` it (thread_merge) or open a pull request (thread_pr) with` +
-          ` workerThreadId ${threadId}. Do not land it before they answer —` +
-          ` not even onto your own branch. If other workers have finished too,` +
-          ` ask about all of them in one question and name the order you would` +
-          ` land them in.`
-        : "";
-    enqueueNotice(
-      parentId,
-      `Worker thread ${threadId}${title} finished with status ${status}.` +
-        (line ? ` Last reply: ${line}` : "") +
-        merge,
-    );
-    flushOrchNotices(parentId);
-  }
-
-  /**
-   * Deliver queued worker notices as one run on the orchestrator thread.
-   * Skips while the orchestrator is mid-run (every terminal path calls
-   * clearRun before this hook, so its own terminal re-flushes). Never throws.
-   * @param {string} threadId - the orchestrator thread
-   */
-  function flushOrchNotices(threadId) {
-    const notes = orchNotices.get(threadId);
-    if (!notes || notes.length === 0) return;
-    if (active.has(threadId)) return;
-    const thread = store.getThread(threadId);
-    if (!thread) {
-      orchNotices.delete(threadId);
-      return;
-    }
-    const park = parkCodexFromNotice(thread);
-    if (park) {
-      if (park.wait) {
-        scheduleCodexReleaseFlush(threadId);
-        return;
-      }
-      if (!codexParkNotified.has(threadId)) {
-        codexParkNotified.add(threadId);
-        try {
-          appendMessage(threadId, "event", park.copy);
-          store.save();
-          pushDetail(threadId, lastWorkflowByThread.get(threadId) || null);
-          pushThreadsChanged();
-        } catch {
-          // silent
-        }
-      }
-      return;
-    }
-    codexParkNotified.delete(threadId);
-    orchNotices.delete(threadId);
-    const prompt = noticePrompt(notes);
-    // Per-orchestration ceiling (issue #67) and consecutive auto-turn cap
-    // (issue #277): refuse the wake-up here, not in startRun, so user-sent
-    // turns (and "Retry turn" after raising a cap) still run. The catch
-    // below surfaces the refusal exactly like the daily-budget gate.
-    Promise.resolve()
-      .then(() => {
-        services.assertUnderOrchestrationBudget(store, threadId);
-        const n = autoTurns.get(threadId) || 0;
-        if (n >= services.CREW_AUTO_TURN_CAP) {
-          throw new Error(
-            `Crew auto-turn cap reached (${services.CREW_AUTO_TURN_CAP} consecutive machine-delivered turns). A human turn resets it.`,
-          );
-        }
-        autoTurns.set(threadId, n + 1);
-        return startRun({ threadId, prompt, fromNotice: true });
-      })
-      .catch((err) => {
-      // Undeliverable (budget gate, missing CLI): the orchestration stops
-      // advancing right here, so say why and land the thread "failed" —
-      // that badges the sidebar, arms "Retry turn", and fires the desktop
-      // notification (issue #34). A quiet event alone reads as "still going".
-      try {
-        const reason = err && err.message ? String(err.message) : String(err);
-        appendMessage(threadId, "event", `${prompt}\n\nNot delivered: ${reason}`, null, null, null, { fromNotice: true });
-        // A run that raced in after the active guard above owns the status;
-        // only an idle orchestrator is really stalled.
-        if (!active.has(threadId)) {
-          store.updateThread(
-            threadId,
-            {
-              status: "failed",
-              lastError: shortError(`Not delivered: ${reason}`),
-            },
-            { touch: true },
-          );
-        }
-        store.save();
-        pushDetail(threadId, lastWorkflowByThread.get(threadId) || null);
-        pushThreadsChanged();
-      } catch {
-        // silent
-      }
-    });
-  }
-
-  /**
-   * Failed worker (or any failed terminal) queues a notice. Never throws.
-   * Does not drain a leftover follow-up (issue #1203).
-   * @param {string} threadId
-   */
-  function afterFailedTurn(threadId) {
-    try {
-      const failed = store.getThread(threadId);
-      const outcome =
-        failed && failed.lastError ? String(failed.lastError) : "failed";
-      services.releaseCrewTasks(store, { threadId, outcome });
-    } catch {
-      // silent
-    }
-    try {
-      queueOrchNotice(threadId, "failed");
-      flushOrchNotices(threadId);
-    } catch {
-      // silent
-    }
-    sweepDoneWorkers(threadId);
-  }
-
-  /**
-   * After a successful turn lands status "done": best-effort worktree
-   * checkpoint commit and orchestrator wake-up. Shared across every
-   * provider path (and sim). Never throws into the run lifecycle.
-   *
-   * When the thread has a verifyCommand the gate runs here, after the
-   * checkpoint so the evidence can pin to a sha that already exists.
-   * Status flips back to "working" first: the thread must not sit green
-   * while the command is in flight. Orch wake-up waits for the proof.
-   * @param {string} threadId
-   */
-  function afterSuccessfulTurn(threadId) {
-    // First completed assistant reply: best-effort fm title. Never blocks
-    // checkpoint / verify; push if a title actually landed.
-    void maybeApplyFmTitle(store, threadId)
-      .then((title) => {
-        if (!title) return;
-        try {
-          pushDetail(threadId);
-          pushThreadsChanged();
-        } catch {
-          // silent
-        }
-      })
-      .catch(() => {});
-
-    let gated = false;
-    try {
-      gated = shouldVerify(threadId);
-    } catch {
-      gated = false;
-    }
-    if (gated) {
-      try {
-        // runStartedAt was cleared at the terminal; restamp it or the
-        // sidebar shows "Working" with no elapsed time for however many
-        // minutes the verify command takes.
-        store.updateThread(
-          threadId,
-          { status: "working", runStartedAt: Date.now() },
-          { touch: true },
-        );
-        store.save();
-        pushThreadsChanged();
-      } catch {
-        // still try to run the command
-      }
-      void (async () => {
-        let sha = null;
-        try {
-          const { maybeCreateCheckpoint } = require("./worktrees.js");
-          const ckpt = await maybeCreateCheckpoint(store, threadId);
-          if (ckpt && ckpt.sha) sha = ckpt.sha;
-        } catch {
-          // silent
-        }
-        if (!sha) sha = await worktreeHeadSha(threadId);
-        await runVerifyGate(threadId, sha);
-      })().catch((err) => {
-        try {
-          settleVerifyCrash(threadId, err);
-        } catch {
-          // silent
-        }
-      });
-      return;
-    }
-    try {
-      const { maybeCreateCheckpoint } = require("./worktrees.js");
-      void maybeCreateCheckpoint(store, threadId);
-    } catch {
-      // silent
-    }
-    finishSuccessfulTurn(threadId);
-  }
-
-  /**
-   * Armed when the thread has a non-empty verifyCommand and this was not
-   * a simulate run. Simulate settles on the agent's word alone.
-   * @param {string} threadId
-   */
-  function shouldVerify(threadId) {
-    const thread = store.getThread(threadId);
-    if (!thread) return false;
-    if (resolveProvider(thread) === "simulate") return false;
-    return Boolean(normalizeCommand(thread.verifyCommand));
-  }
-
-  /**
-   * HEAD of the thread worktree, or null. Used when the tree was already
-   * clean so maybeCreateCheckpoint made no commit to pin to.
-   *
-   * Async on purpose: an execFileSync here blocks the main process for the
-   * length of a git call on every gated turn, which is the freeze the PR
-   * refresher was rewritten to avoid.
-   * @param {string} threadId
-   */
-  async function worktreeHeadSha(threadId) {
-    try {
-      const thread = store.getThread(threadId);
-      if (!thread || !thread.worktreePath) return null;
-      const { gitTryAsync } = require("./worktrees.js");
-      const rev = await gitTryAsync(thread.worktreePath, ["rev-parse", "HEAD"]);
-      if (!rev.ok || !rev.stdout) return null;
-      return String(rev.stdout).trim() || null;
-    } catch {
-      return null;
-    }
-  }
-
-  function lastRunIdFor(threadId) {
-    const msgs = store.getMessages(threadId) || [];
-    for (let i = msgs.length - 1; i >= 0; i--) {
-      if (msgs[i].runId) return String(msgs[i].runId);
-    }
-    return "unknown";
-  }
-
-  /**
-   * Attempt 0 on a fresh user turn. Increment only when the stored verify
-   * is a failure from this same turn (the last user message is the fix
-   * prompt we handed back). A new user prompt resets the counter so a
-   * thread's whole life does not accumulate toward the cap.
-   * @param {object} thread
-   */
-  function nextVerifyAttempt(thread) {
-    const prev = thread.verify;
-    if (!prev || prev.ok) return 0;
-    const msgs = store.getMessages(thread.id) || [];
-    for (let i = msgs.length - 1; i >= 0; i--) {
-      if (msgs[i].role !== "user") continue;
-      if (String(msgs[i].text || "").startsWith("[verification failed]")) {
-        return (Number(prev.attempt) || 0) + 1;
-      }
-      return 0;
-    }
-    return 0;
-  }
-
-  function finishSuccessfulTurn(threadId) {
-    try {
-      queueOrchNotice(threadId, "done");
-      flushOrchNotices(threadId);
-    } catch {
-      // silent
-    }
-    sweepDoneWorkers(threadId);
-    maybeDrainQueued(threadId);
-  }
-
-  function settleVerifyCrash(threadId, err) {
-    const reason = err && err.message ? String(err.message) : String(err);
-    appendMessage(threadId, "event", `Verification error: ${reason}`);
-    store.updateThread(
-      threadId,
-      {
-        status: "failed",
-        runStartedAt: null,
-        lastError: shortError(`Verification error: ${reason}`),
-      },
-      { touch: true },
-    );
-    store.save();
-    pushThreadsChanged();
-    afterFailedTurn(threadId);
-  }
-
-  /**
-   * Run the thread's verify command and settle or hand a fix turn back.
-   * Never rejects to the caller: spawn failures become an ok:false result.
-   * @param {string} threadId
-   * @param {string | null} sha
-   */
-  async function runVerifyGate(threadId, sha) {
-    const thread = store.getThread(threadId);
-    if (!thread) return;
-    const command = normalizeCommand(thread.verifyCommand);
-    // Cleared mid-flight: settle as if the gate was never armed.
-    if (!command) {
-      store.updateThread(
-        threadId,
-        { status: "done", runStartedAt: null },
-        { touch: true },
-      );
-      store.save();
-      finishSuccessfulTurn(threadId);
-      return;
-    }
-    const project = store.getProject(thread.projectId);
-    const cwd =
-      thread.worktreePath || (project && project.path) || process.cwd();
-    const attempt = nextVerifyAttempt(thread);
-    const runId = lastRunIdFor(threadId);
-    const prepared = prepareVerifyRun({ command, cwd, project });
-    let raw;
-    try {
-      raw = await runVerifyCommand({
-        command: prepared.command,
-        cwd,
-        project,
-        env: prepared.env,
-      });
-    } catch (err) {
-      raw = {
-        ok: false,
-        exitCode: null,
-        timedOut: false,
-        log: err && err.message ? String(err.message) : String(err),
-        durationMs: 0,
-      };
-    }
-    const latest = store.getThread(threadId);
-    if (!latest || !normalizeCommand(latest.verifyCommand)) {
-      if (latest) {
-        store.updateThread(
-        threadId,
-        { status: "done", runStartedAt: null },
-        { touch: true },
-      );
-        store.save();
-        finishSuccessfulTurn(threadId);
-      }
-      return;
-    }
-    if (prepared.reason && raw && raw.log != null) {
-      raw.log = `[verify] ${prepared.reason}\n${raw.log}`;
-    }
-    /** @type {import('../src/shared/ipc').VerifyResult} */
-    const result = {
-      runId,
-      command: prepared.command,
-      ok: Boolean(raw.ok),
-      exitCode: raw.exitCode,
-      timedOut: Boolean(raw.timedOut),
-      log: raw.log || "",
-      sha,
-      durationMs: Number(raw.durationMs) || 0,
-      at: Date.now(),
-      attempt,
-    };
-
-    if (result.ok) {
-      const secs = Math.round(result.durationMs / 1000);
-      appendMessage(
-        threadId,
-        "event",
-        `Verified: ${prepared.command} passed in ${secs}s`,
-      );
-      store.updateThread(
-        threadId,
-        { verify: result, status: "done", runStartedAt: null },
-        { touch: true },
-      );
-      store.save();
-      pushDetail(threadId);
-      pushThreadsChanged();
-      finishSuccessfulTurn(threadId);
-      return;
-    }
-
-    // `attempt` is how many fix prompts already went back, so this hands
-    // out exactly MAX_FIX_ATTEMPTS of them — matching the "Fix attempt N
-    // of M" line buildFixPrompt shows the agent.
-    if (attempt < MAX_FIX_ATTEMPTS) {
-      appendMessage(threadId, "event", `Verification failed: ${prepared.command}`);
-      store.updateThread(threadId, { verify: result }, { touch: true });
-      store.save();
-      pushDetail(threadId);
-      pushThreadsChanged();
-      const prompt = buildFixPrompt(result);
-      Promise.resolve()
-        .then(() => startRun({ threadId, prompt }))
-        .catch((err) => {
-          try {
-            const reason =
-              err && err.message ? String(err.message) : String(err);
-            appendMessage(
-              threadId,
-              "event",
-              `${prompt}\n\nNot delivered: ${reason}`,
-            );
-            if (!active.has(threadId)) {
-              store.updateThread(
-                threadId,
-                {
-                  status: "failed",
-                  lastError: shortError(`Not delivered: ${reason}`),
-                },
-                { touch: true },
-              );
-            }
-            store.save();
-            pushDetail(threadId, lastWorkflowByThread.get(threadId) || null);
-            pushThreadsChanged();
-          } catch {
-            // silent
-          }
-        });
-      return;
-    }
-
-    appendMessage(threadId, "event", `Verification failed: ${command}`);
-    store.updateThread(
-      threadId,
-      {
-        verify: result,
-        status: "failed",
-        runStartedAt: null,
-        lastError: shortError(`Verification failed: ${prepared.command}`),
-      },
-      { touch: true },
-    );
-    store.save();
-    pushDetail(threadId);
-    pushThreadsChanged();
-    afterFailedTurn(threadId);
-  }
-
-  /**
-   * Archive one orchestrator's finished workers once its crew is quiet.
-   * "Quiet" means no crew member has a LIVE run: a worker left at "working"
-   * by a crash or a CLI that never lands would otherwise pin the whole crew
-   * open forever (issue #15).
-   * @param {string} threadId - the orchestrator thread
-   */
-  function sweepCrew(threadId) {
-    const crew = store
-      .getThreads()
-      .filter((t) => t.orchWorker && t.handoffFrom === threadId);
-    if (crew.length === 0) return;
-    // Every terminal path calls clearRun before this hook, so a worker that
-    // just landed is already out of `active`.
-    if (crew.some((t) => t.status === "working" && active.has(t.id))) return;
-    let changed = false;
-    const simReleaseOpts = {
-      getIosSimulator,
-      log: (msg) => {
-        try {
-          console.warn(msg);
-        } catch {
-          // never throw from logging
-        }
-      },
-    };
-    for (const t of crew) {
-      // Done is finished. Idle is finished only after the worker has run:
-      // stoppedAt (#183), a session, or a transcript. getMessages hydrates
-      // a shard, so only an unarchived idle row with neither cheaper mark
-      // pays for it. A fresh fork and a pendingFork stay visible (#979).
-      if (t.archived || t.pendingFork) continue;
-      let finished = t.status === "done";
-      if (!finished && t.status === "idle") {
-        finished =
-          Boolean(t.stoppedAt) ||
-          Boolean(t.sessionId) ||
-          (store.getMessages(t.id) || []).length > 0;
-      }
-      if (finished && !t.archived) {
-        // Not real activity: no touch, same as threads:setArchived.
-        store.updateThread(t.id, { archived: true });
-        void services.scheduleSimulatorRelease(simReleaseOpts, "releaseThread", {
-          threadId: t.id,
-        });
-        changed = true;
-      }
-    }
-    // Newest first. Equal createdAt (same-ms forks) break ties by insertion
-    // index so the later-minted worker is kept.
-    const indexed = crew.map((t, i) => ({ t, i }));
-    indexed.sort((a, b) => (b.t.createdAt - a.t.createdAt) || (b.i - a.i));
-    for (let i = MAX_WORKERS_PER_ORCHESTRATOR; i < indexed.length; i++) {
-      const t = indexed[i].t;
-      if (
-        t.status !== "done" &&
-        t.status !== "failed" &&
-        t.status !== "stopped"
-      ) {
-        continue;
-      }
-      if (active.has(t.id) || t.worktreePath || t.pinnedAt) continue;
-      services.purgeThread(store, t.id);
-      void services.scheduleSimulatorRelease(simReleaseOpts, "releaseThread", {
-        threadId: t.id,
-      });
-      changed = true;
-    }
-    if (changed) {
-      store.save();
-      pushThreadsChanged();
-    }
-  }
-
-  /**
-   * Sweep the crews this run terminal can settle: the thread's own workers
-   * (it is an orchestrator) and, when the thread is itself a worker, its
-   * orchestrator's crew — the orchestrator can be finished for good, in
-   * which case its terminal never comes again and waiting for it leaves the
-   * workers open forever (issue #15). Never throws.
-   * @param {string} threadId
-   */
-  function sweepDoneWorkers(threadId) {
-    try {
-      sweepCrew(threadId);
-      const self = store.getThread(threadId);
-      if (self && self.orchWorker && self.handoffFrom) {
-        sweepCrew(String(self.handoffFrom));
-      }
-    } catch {
-      // silent
-    }
-  }
 
   /**
    * The run id this terminal belongs to. `active` is often already cleared by
@@ -2014,530 +1180,6 @@ function createRunner(opts) {
     return detail;
   }
 
-  /**
-   * Oldest unanswered permission prompt of the thread's active run, shaped
-   * for the renderer (no rawInput), or null.
-   * @param {string} threadId
-   * @returns {{
-   *   requestId: string,
-   *   toolName: string,
-   *   summary: string,
-   *   input: string,
-   *   command: string | null,
-   *   questions: ReturnType<typeof questionInfo>,
-   *   plan: ReturnType<typeof planText>,
-   *   guardrail: { rule: string | null, reason: string } | null,
-   * } | null}
-   */
-  function getPendingPermission(threadId) {
-    const ci = ciWorkflowSignOffs.get(threadId);
-    if (ci && !ci.approved) {
-      return {
-        requestId: ci.id, toolName: "CI workflow merge",
-        summary: "Sign off the workflow patch and merge destination",
-        input: ci.input, command: null, acceptAlways: false,
-        questions: null, plan: null,
-        guardrail: { rule: "CI_WORKFLOW", reason: "Accept signs off only this patch and destination, then resumes orchestration. Changes require a new sign-off." },
-      };
-    }
-    const e = active.get(threadId);
-    if (
-      e &&
-      (e.kind === "claude" || e.kind === "codex") &&
-      Array.isArray(e.pendingPermissions)
-    ) {
-      const p = e.pendingPermissions[0];
-      if (p) {
-        return {
-          requestId: p.id,
-          toolName: p.toolName,
-          summary: p.summary,
-          input: p.input,
-          command:
-            p.command !== undefined ? p.command : extractCommand(p.rawInput),
-          commandEditable: p.commandEditable !== false,
-          acceptAlways: p.acceptAlways !== false,
-          questions: questionInfo(p.toolName, p.rawInput),
-          inputRequest: p.inputRequest || null,
-          plan: planText(p.toolName, p.rawInput),
-          guardrail: p.guardrail || null,
-        };
-      }
-    }
-    return pendingPlanAsPermission(threadId);
-  }
-
-  /**
-   * Synthesize the live PlanPrompt shape from a persisted pendingPlan so
-   * the renderer and respondPermission stay on one channel (issue #707).
-   * @param {string} threadId
-   */
-  function pendingPlanAsPermission(threadId) {
-    const thread = store.getThread(threadId);
-    const pending = thread && thread.pendingPlan;
-    if (!pending || typeof pending.plan !== "string" || !pending.plan) {
-      return null;
-    }
-    return {
-      requestId: String(pending.id || "plan"),
-      toolName: "ExitPlanMode",
-      summary: "Plan approval",
-      input: "",
-      command: null,
-      questions: null,
-      plan: pending.plan,
-      guardrail: null,
-    };
-  }
-
-  /**
-   * Inbound Codex app-server ServerRequest (issue #1171). Command
-   * kind=command becomes pendingPermission; unknown methods fail closed.
-   * #1170 attaches this to the long-lived JSON-RPC session. Exec --json
-   * never emits these.
-   *
-   * @param {string} threadId
-   * @param {{ id?: unknown, method?: string, params?: unknown }} msg
-   * @returns {boolean} true if this request is handled (replied or queued)
-   */
-  function handleCodexServerRequest(threadId, msg) {
-    const e = active.get(threadId);
-    const id = msg && Object.prototype.hasOwnProperty.call(msg, "id") ? msg.id : undefined;
-    const method = msg && typeof msg.method === "string" ? msg.method : "";
-    if (!e || e.kind !== "codex" || e.stopping || !e.handle) {
-      return false;
-    }
-    if (id === undefined || id === null) return false;
-
-    const classified = classifyServerRequest(method, msg && msg.params);
-    if (!["command", "mcp", "input"].includes(classified.action)) {
-      try {
-        replyCodexJsonRpcError(
-          e,
-          id,
-          unsupportedError(classified.method, classified.reason),
-        );
-      } catch {
-        return false;
-      }
-      return true;
-    }
-
-    let pending;
-    try {
-      pending = classified.action === "input" ? pendingFromInput(id, method, msg.params)
-        : classified.action === "mcp" ? pendingFromMcp(id, msg.params) : pendingFromCommand(id, msg.params);
-    } catch {
-      replyCodexJsonRpcError(e, id, unsupportedError(method, `${method}: unsupported input schema or URL`));
-      return true;
-    }
-    let inputStr = pending.input;
-    try {
-      inputStr = truncate(pending.input, INPUT_TRUNCATE);
-    } catch {
-      inputStr = pending.input;
-    }
-    pending.input = inputStr;
-
-    /** @type {{ decision: string, rule: string | null, reason: string } | null} */
-    let verdict = null;
-    try {
-      const live = store.getThread(threadId);
-      const worktreePath = (live && live.worktreePath) || null;
-      verdict = classifyTool({
-        toolName: pending.toolName,
-        input: pending.rawInput,
-        worktreePath,
-      });
-    } catch {
-      verdict = null;
-    }
-
-    if (verdict && verdict.decision === "deny") {
-      const rule = verdict.rule || "policy";
-      const reason = verdict.reason || "blocked";
-      try {
-        replyCodexJsonRpc(e, id, approvalResponse(pending.method,
-          mapSolentaDecision("deny", pending.availableDecisions)));
-      } catch {
-        return false;
-      }
-      appendMessage(
-        threadId,
-        "event",
-        `Guardrail blocked command: ${rule}: ${reason}`,
-        e.runId,
-      );
-      store.save();
-      pushDetail(threadId, e.codexState || null);
-      return true;
-    }
-
-    if (verdict && verdict.decision === "ask") {
-      pending.guardrail = {
-        rule: verdict.rule,
-        reason: verdict.reason,
-      };
-    }
-
-    if (!Array.isArray(e.pendingPermissions)) e.pendingPermissions = [];
-    e.pendingPermissions.push(pending);
-    if (e.pendingPermissions.length === 1) {
-      store.updateThread(threadId, { awaitingInput: true }, { touch: true });
-      pushThreadsChanged();
-    }
-    store.save();
-    pushDetail(threadId, e.codexState || null);
-    return true;
-  }
-
-  function respondCodexPermission(e, threadId, input) {
-    const { requestId, decision } = input || {};
-    if (!Array.isArray(e.pendingPermissions)) {
-      throw new Error("Permission request no longer pending");
-    }
-    const idx = e.pendingPermissions.findIndex((p) => p.id === requestId);
-    if (idx < 0) {
-      throw new Error("Permission request no longer pending");
-    }
-    const pending = e.pendingPermissions[idx];
-    const mapped = mapSolentaDecision(decision, pending.availableDecisions);
-    const content = pending.inputRequest && mapped === "accept" ? pending.validateInput(input.inputValues) : undefined;
-    replyCodexJsonRpc(
-      e,
-      pending.rpcId !== undefined ? pending.rpcId : pending.id,
-      approvalResponse(pending.method, mapped, content),
-    );
-    e.pendingPermissions.splice(idx, 1);
-    const label =
-      pending.inputRequest ? `${mapped === "accept" ? "Answered" : mapped === "cancel" ? "Cancelled" : "Declined"}: ${pending.summary}` : decision === "deny"
-        ? `Denied: ${pending.summary}`
-        : mapped === "acceptForSession"
-          ? `Allowed for session: ${pending.summary}`
-          : `Allowed: ${pending.summary}`;
-    appendMessage(threadId, "event", label, e.runId);
-    if (e.pendingPermissions.length === 0) {
-      store.updateThread(threadId, { awaitingInput: false });
-    }
-    store.save();
-    pushDetail(threadId, e.codexState || null);
-    pushThreadsChanged();
-  }
-
-  /**
-   * Answer a pending permission prompt. For question prompts, `answers`
-   * (question text -> chosen label) rides back as updatedInput.answers.
-   * `updatedCommand` (#509) replaces the shell command in updatedInput;
-   * allow-always after an edit keys the session rule on the edited prefix.
-   * Codex JSON-RPC ignores `updatedCommand` (the reply cannot rewrite the
-   * command).
-   * @param {{ threadId: string, requestId: string, decision: "allow" | "allowAlways" | "deny", answers?: Record<string, string>, updatedCommand?: string }} input
-   */
-  function respondPermission(input) {
-    const { threadId, requestId, decision, answers, updatedCommand } =
-      input || {};
-    const ci = ciWorkflowSignOffs.get(threadId);
-    if (ci && !ci.approved && ci.id === requestId) {
-      if (decision !== "allow" && decision !== "deny") {
-        throw new Error("CI workflow sign-off requires a one-time Accept or Deny");
-      }
-      if (decision === "allow") {
-        ci.approved = true;
-        const r = ci.review;
-        services.setQueued(store, { threadId, prompt:
-          `I signed off the CI workflow patch from worker ${r.workerThreadId} (${r.sourceSha}) ` +
-          `into ${r.destinationPath} on ${r.destinationBranch} (${r.destinationSha}). ` +
-          `Resume thread_merge with approved:true, workerThreadId ${r.workerThreadId}, ` +
-          `expectedPath ${JSON.stringify(r.destinationPath)}, expectedBranch ${JSON.stringify(r.destinationBranch)}. ` +
-          "This approval covers only that worker and destination; changed inputs require fresh sign-off.",
-        });
-      } else {
-        ciWorkflowSignOffs.delete(threadId);
-      }
-      appendMessage(threadId, "event", decision === "allow" ? "CI workflow merge signed off" : "CI workflow merge sign-off denied");
-      store.updateThread(threadId, { awaitingInput: getPendingPermission(threadId) != null });
-      store.save();
-      pushDetail(threadId);
-      pushThreadsChanged();
-      if (decision === "allow") maybeDrainQueued(threadId);
-      return;
-    }
-    const e = active.get(threadId);
-    if (!e || !e.handle) {
-      return respondPersistedPlan(threadId, requestId, decision);
-    }
-    if (e.kind === "codex") {
-      return respondCodexPermission(e, threadId, input);
-    }
-    if (e.kind !== "claude") {
-      return respondPersistedPlan(threadId, requestId, decision);
-    }
-    const idx = e.pendingPermissions.findIndex((p) => p.id === requestId);
-    if (idx < 0) {
-      throw new Error("Permission request no longer pending");
-    }
-    const pending = e.pendingPermissions[idx];
-    const resolved = resolveEditedCommand(pending.rawInput, updatedCommand);
-    if (
-      (decision === "allow" || decision === "allowAlways") &&
-      resolved.field &&
-      resolved.next === ""
-    ) {
-      throw new Error("Command cannot be empty");
-    }
-    e.pendingPermissions.splice(idx, 1);
-    const answerMap =
-      answers && typeof answers === "object" && !Array.isArray(answers)
-        ? answers
-        : null;
-    const isPlan = pending.toolName === "ExitPlanMode";
-    let response;
-    if (decision === "allow" || decision === "allowAlways") {
-      response = {
-        behavior: "allow",
-        updatedInput: answerMap
-          ? { ...resolved.input, answers: answerMap }
-          : resolved.input,
-      };
-      if (decision === "allowAlways") {
-        // Unedited: whole-tool session rule (matches today's Accept all).
-        // Edited: prefix of the *edited* command, never the original (#509).
-        response.updatedPermissions = [
-          sessionAllowRule(pending.toolName, resolved.next, {
-            edited: resolved.edited,
-          }),
-        ];
-      }
-    } else {
-      response = {
-        behavior: "deny",
-        message: isPlan
-          ? "Plan rejected by user in Coder; keep planning"
-          : "Denied by user in Coder",
-      };
-    }
-    e.handle.respond(pending.id, response);
-    if (isPlan) planPromptHandled.add(threadId);
-    if (isPlan && decision !== "deny") {
-      const t = store.getThread(threadId);
-      const patch = {};
-      // The approved plan outlives this prompt: the thread's plan card shows
-      // it once the prompt is answered and gone (issue #75).
-      const approved = planText(pending.toolName, pending.rawInput);
-      if (approved) patch.plan = truncate(approved, PLAN_STORE);
-      // Approving the plan leaves plan mode, so the next run must not re-enter
-      // it — the CLI only exits for the process that asked.
-      if (t && t.permissionMode === "plan") patch.permissionMode = "default";
-      if (t && Object.keys(patch).length > 0) {
-        store.updateThread(threadId, patch);
-      }
-    }
-    const label = isPlan
-      ? decision === "deny"
-        ? "Plan rejected"
-        : "Plan approved"
-      : decision === "deny"
-        ? `Denied: ${pending.summary}`
-        : answerMap
-          ? `Answered: ${truncate(Object.values(answerMap).join("; "), 200)}`
-          : resolved.edited
-            ? `${
-                decision === "allowAlways"
-                  ? "Allowed for session (edited)"
-                  : "Allowed (edited)"
-              }: ${truncate(resolved.original, 200)} → ${truncate(resolved.next, 200)}`
-            : decision === "allowAlways"
-              ? `Allowed for session: ${pending.summary}`
-              : `Allowed: ${pending.summary}`;
-    appendMessage(threadId, "event", label, e.runId);
-    if (e.pendingPermissions.length === 0) {
-      store.updateThread(threadId, { awaitingInput: false });
-    }
-    store.save();
-    pushDetail(threadId, e.claudeState);
-    pushThreadsChanged();
-  }
-
-  /**
-   * Post an agent question that outlives the run (issue #647).
-   *
-   * claude asks over the permission channel and BLOCKS, so its questions ride
-   * on the ephemeral pendingPermissions list. No other CLI can do that:
-   * headless `grok -p` answers its own ask_user_question with "No user is
-   * available", and `kimi -p` forbids its question tool outright. Their turn
-   * therefore ENDS with the question unanswered, so it is persisted on the
-   * thread and the answer arrives as the next turn (sessions resume, so the
-   * agent still has its context). Cleared by startRun / setQueued: any user
-   * message supersedes the card.
-   *
-   * @param {{ threadId: string, questions: unknown }} input
-   * @returns {{ asked: true, questions: number }}
-   */
-  function askUser(input) {
-    const threadId = String((input && input.threadId) || "");
-    const thread = store.getThread(threadId);
-    if (!thread) {
-      throw new Error(`Unknown thread: ${threadId}`);
-    }
-    const questions = normalizeQuestions(input && input.questions);
-    if (!questions) {
-      throw new Error(
-        "questions must be a non-empty array of " +
-          "{ question, options: [{ label, description }] }",
-      );
-    }
-    store.updateThread(
-      threadId,
-      {
-        pendingQuestion: {
-          id: randomUUID(),
-          questions,
-          askedAt: Date.now(),
-        },
-        // Same badge as a permission prompt: the thread needs the user.
-        awaitingInput: true,
-      },
-      { touch: true },
-    );
-    store.save();
-    pushThreadsChanged();
-    refreshDetail(threadId);
-    return { asked: true, questions: questions.length };
-  }
-
-  /** Called only by the host merge guard; renderer respondPermission grants it. */
-  function requestCiWorkflowSignOff(threadId, review) {
-    const key = JSON.stringify(review);
-    const previous = ciWorkflowSignOffs.get(threadId);
-    if (previous?.key === key) {
-      if (!previous.approved || isAutoTurn(threadId)) return false;
-      ciWorkflowSignOffs.delete(threadId); // Single use, including failed merges.
-      return true;
-    }
-    const input = `Worker: ${review.workerThreadId}\nSource: ${review.sourceBranch} (${review.sourceSha})\n` +
-      `Destination: ${review.destinationPath}\nBranch: ${review.destinationBranch} (${review.destinationSha})\n` +
-      `Workflow files: ${review.files.join(", ")}\n\n${review.patch || "(No net workflow change at this destination.)"}`;
-    ciWorkflowSignOffs.set(threadId, { id: randomUUID(), key, review, input, approved: false });
-    store.updateThread(threadId, { awaitingInput: true });
-    store.save();
-    pushDetail(threadId);
-    pushThreadsChanged();
-    return false;
-  }
-
-  /**
-   * Drop the question card without answering it (the Dismiss button).
-   * @param {{ threadId: string }} input
-   */
-  function clearQuestion(input) {
-    const threadId = String((input && input.threadId) || "");
-    const thread = store.getThread(threadId);
-    if (!thread || !thread.pendingQuestion) return;
-    store.updateThread(threadId, {
-      pendingQuestion: null,
-      awaitingInput: false,
-    });
-    store.save();
-    pushThreadsChanged();
-    refreshDetail(threadId);
-  }
-
-  /**
-   * After a plan-mode turn with no ExitPlanMode prompt, persist the last
-   * assistant text as an approval card (issue #707).
-   * @param {string} threadId
-   * @param {string} [text]
-   */
-  function maybePersistPlanApproval(threadId, text) {
-    if (planPromptHandled.has(threadId)) {
-      planPromptHandled.delete(threadId);
-      return;
-    }
-    const thread = store.getThread(threadId);
-    if (!thread) return;
-    if (thread.permissionMode !== "plan") return;
-    if (thread.pendingQuestion) return;
-    // Prefer this turn's last assistant message. A cancelled turn with no
-    // new prose must not reuse an earlier answer, and notifyRunTerminal's
-    // fallback label "Run stopped" is not a plan (issue #707).
-    const msgs = store.getMessages(threadId) || [];
-    let thisRunId;
-    for (let i = msgs.length - 1; i >= 0; i--) {
-      if (msgs[i].role === "user") {
-        thisRunId = msgs[i].runId;
-        break;
-      }
-    }
-    const fromMsgs = String(lastAssistantText(threadId, thisRunId) || "").trim();
-    const fromNotify = String(text || "").trim();
-    const plan =
-      fromMsgs ||
-      (fromNotify && fromNotify !== "Run stopped" ? fromNotify : "");
-    if (!plan) return;
-    store.updateThread(
-      threadId,
-      {
-        pendingPlan: {
-          id: randomUUID(),
-          plan: truncate(plan, PLAN_TRUNCATE),
-          askedAt: Date.now(),
-        },
-        awaitingInput: true,
-      },
-      { touch: true },
-    );
-    store.save();
-    pushDetail(threadId);
-    pushThreadsChanged();
-  }
-
-  /**
-   * Answer a persisted plan card. Same decisions as ExitPlanMode: allow
-   * stores the plan and leaves plan mode; deny keeps planning.
-   * @param {string} threadId
-   * @param {string} requestId
-   * @param {string} decision
-   */
-  function respondPersistedPlan(threadId, requestId, decision) {
-    const thread = store.getThread(threadId);
-    const pending = thread && thread.pendingPlan;
-    if (
-      !pending ||
-      String(pending.id) !== String(requestId) ||
-      typeof pending.plan !== "string" ||
-      !pending.plan
-    ) {
-      throw new Error("No active agent run for this thread");
-    }
-    /** @type {Record<string, unknown>} */
-    const patch = {
-      pendingPlan: null,
-      awaitingInput: false,
-    };
-    const approved = decision !== "deny";
-    if (approved) {
-      patch.plan = truncate(pending.plan, PLAN_STORE);
-      // Snap to a mode the provider honours: cursor has no asking "default"
-      // (#177), so leaving plan lands on bypassPermissions there.
-      if (thread.permissionMode === "plan") {
-        patch.permissionMode = snapPermissionMode(
-          getProvider(thread.provider),
-          "default",
-        );
-      }
-    }
-    store.updateThread(threadId, patch);
-    appendMessage(
-      threadId,
-      "event",
-      approved ? "Plan approved" : "Plan rejected",
-    );
-    store.save();
-    pushDetail(threadId);
-    pushThreadsChanged();
-    maybeDrainQueued(threadId);
-  }
-
   function pushThreadsChanged() {
     pushFn("threads:changed", services.listThreads(store));
   }
@@ -2685,28 +1327,6 @@ function createRunner(opts) {
   }
 
   /**
-   * Quota-wait (#462): one timer per parked thread. Wake once; a second
-   * quota error on the same prompt fails. Distinct from #286 / #294.
-   * @type {Map<string, ReturnType<typeof setTimeout>>}
-   */
-  const quotaTimers = new Map();
-
-  function cancelQuotaWake(threadId) {
-    const t = quotaTimers.get(threadId);
-    if (!t) return;
-    clearTimeout(t);
-    quotaTimers.delete(threadId);
-  }
-
-  function lastUserOnThread(threadId) {
-    const msgs = store.getMessages(threadId) || [];
-    for (let i = msgs.length - 1; i >= 0; i--) {
-      if (msgs[i] && msgs[i].role === "user") return msgs[i];
-    }
-    return null;
-  }
-
-  /**
    * Record one provider failure event, then park quota failures or mark failed.
    * @param {string} threadId
    * @param {string} errText
@@ -2795,218 +1415,6 @@ function createRunner(opts) {
     );
     appendMessage(threadId, "event", text, runId);
     return { parked: false, failover: false, text, kind };
-  }
-
-  /**
-   * Switch to the next available quotaFailover provider and schedule a
-   * same-prompt resume. Returns true when the switch landed.
-   */
-  function tryQuotaFailover(threadId, errText, runId, extraPatch) {
-    const thread = store.getThread(threadId);
-    if (!thread) return false;
-    const settings = store.getSettings();
-    let probe = thread;
-    let candidate = null;
-    for (let i = 0; i < 8; i++) {
-      candidate = nextQuotaFailover({
-        text: errText,
-        thread: probe,
-        settings,
-      });
-      if (!candidate) return false;
-      if (getProvider(candidate.provider)) break;
-      probe = { ...probe, quotaFailoverTried: candidate.tried };
-      candidate = null;
-    }
-    if (!candidate) return false;
-    const fromProvider = String(thread.provider || "provider");
-    // The run has already left `active`, but status is still "working"
-    // until this function patches it. setProvider refuses a live run.
-    store.updateThread(threadId, {
-      status: "idle",
-      runStartedAt: null,
-    });
-    try {
-      services.setProvider(store, {
-        threadId,
-        provider: candidate.provider,
-      });
-    } catch {
-      return false;
-    }
-    const switched = store.getThread(threadId);
-    if (!switched || switched.provider !== candidate.provider) return false;
-    store.updateThread(
-      threadId,
-      {
-        ...(extraPatch || {}),
-        status: "idle",
-        runStartedAt: null,
-        lastError: null,
-        lastErrorKind: null,
-        quotaWaitUntil: null,
-        quotaFailoverTried: candidate.tried,
-        quotaFailoverPending: true,
-      },
-      { touch: true },
-    );
-    appendMessage(threadId, "event", errText, runId);
-    appendMessage(
-      threadId,
-      "event",
-      `Quota failover: ${fromProvider} exhausted, switching to ${candidate.provider}.`,
-    );
-    scheduleFailoverResume(threadId);
-    return true;
-  }
-
-  function scheduleFailoverResume(threadId) {
-    cancelQuotaWake(threadId);
-    const timer = setTimeout(() => {
-      quotaTimers.delete(threadId);
-      void fireFailoverResume(threadId);
-    }, 50);
-    if (typeof timer.unref === "function") timer.unref();
-    quotaTimers.set(threadId, timer);
-  }
-
-  async function fireFailoverResume(threadId) {
-    const thread = store.getThread(threadId);
-    if (!thread || thread.quotaFailoverPending !== true) return;
-    if (active.has(threadId)) return;
-    const user = lastUserOnThread(threadId);
-    if (!user || !String(user.text || "").trim()) {
-      store.updateThread(
-        threadId,
-        {
-          status: "failed",
-          quotaFailoverPending: false,
-          lastError: shortError("Quota failover: nothing to resume"),
-        },
-        { touch: true },
-      );
-      store.save();
-      pushDetail(threadId);
-      pushThreadsChanged();
-      return;
-    }
-    try {
-      await startRun({
-        threadId,
-        prompt: user.text,
-        attachments: user.attachments,
-        fromQuotaFailover: true,
-      });
-    } catch (err) {
-      const reason = err && err.message ? String(err.message) : String(err);
-      store.updateThread(
-        threadId,
-        {
-          status: "failed",
-          quotaFailoverPending: false,
-          lastError: shortError(`Quota failover: resume failed: ${reason}`),
-        },
-        { touch: true },
-      );
-      appendMessage(
-        threadId,
-        "event",
-        `Quota failover: resume failed: ${reason}`,
-      );
-      store.save();
-      pushDetail(threadId);
-      pushThreadsChanged();
-    }
-  }
-
-  function scheduleQuotaWake(threadId, until) {
-    cancelQuotaWake(threadId);
-    const delay = Math.max(1000, Number(until) + 2000 - Date.now());
-    const cap = Math.min(delay, 2147483647);
-    const timer = setTimeout(() => {
-      quotaTimers.delete(threadId);
-      void fireQuotaWake(threadId);
-    }, cap);
-    if (typeof timer.unref === "function") timer.unref();
-    quotaTimers.set(threadId, timer);
-  }
-
-  async function fireQuotaWake(threadId) {
-    const thread = store.getThread(threadId);
-    if (!thread || thread.status !== "quota-wait") return;
-    if (!quotaWaitEnabled(thread, store.getSettings())) return;
-    if (active.has(threadId)) return;
-    const user = lastUserOnThread(threadId);
-    if (!user || !String(user.text || "").trim()) {
-      store.updateThread(
-        threadId,
-        {
-          status: "failed",
-          quotaWaitUntil: null,
-          lastError: shortError("Quota wait: nothing to resume"),
-        },
-        { touch: true },
-      );
-      store.save();
-      pushDetail(threadId);
-      pushThreadsChanged();
-      return;
-    }
-    try {
-      await startRun({
-        threadId,
-        prompt: user.text,
-        attachments: user.attachments,
-        fromQuotaWait: true,
-      });
-    } catch (err) {
-      const reason = err && err.message ? String(err.message) : String(err);
-      store.updateThread(
-        threadId,
-        {
-          status: "failed",
-          quotaWaitUntil: null,
-          quotaWaitResumed: true,
-          lastError: shortError(`Quota wait: resume failed: ${reason}`),
-        },
-        { touch: true },
-      );
-      appendMessage(
-        threadId,
-        "event",
-        `Quota wait: resume failed: ${reason}`,
-      );
-      store.save();
-      pushDetail(threadId);
-      pushThreadsChanged();
-    }
-  }
-
-  /**
-   * Resume a parked quota-wait now (banner / IPC). Counts as the one-shot.
-   * @param {{ threadId: string }} input
-   */
-  async function resumeQuotaWait(input) {
-    const threadId = input && input.threadId;
-    const thread = store.getThread(threadId);
-    if (!thread) throw new Error(`Unknown thread: ${threadId}`);
-    if (thread.status !== "quota-wait") {
-      throw new Error("Thread is not waiting on a provider quota reset");
-    }
-    cancelQuotaWake(threadId);
-    if (active.has(threadId)) {
-      throw new Error("A run is already active on this thread");
-    }
-    const user = lastUserOnThread(threadId);
-    if (!user || !String(user.text || "").trim()) {
-      throw new Error("Quota wait: nothing to resume");
-    }
-    return startRun({
-      threadId,
-      prompt: user.text,
-      attachments: user.attachments,
-      fromQuotaWait: true,
-    });
   }
 
   /**
@@ -7810,42 +6218,6 @@ function createRunner(opts) {
   }
 
   /**
-   * Stop is sacred (issue #32): stopping an orchestrator takes its crew with
-   * it. Depth-first, so a worker that is itself an orchestrator brings its own
-   * crew down too. Every stopped worker lands as "stopped", which queues no
-   * wake-up notice, and pending ones are demoted to an event once the crew is
-   * down, so nothing restarts the orchestrator the user just stopped.
-   * @param {string} threadId - the orchestrator being stopped
-   * @param {Set<string>} seen - guards a handoffFrom cycle
-   * @returns {Promise<{ stopped: number, traced: boolean }>} workers whose
-   *   live run was stopped, and whether a notice trace was written
-   */
-  async function stopCrew(threadId, seen) {
-    if (seen.has(threadId)) return { stopped: 0, traced: false };
-    seen.add(threadId);
-    const crew = store
-      .getThreads()
-      .filter((t) => t.orchWorker && String(t.handoffFrom) === threadId);
-    let stopped = 0;
-    for (const worker of crew) {
-      const id = String(worker.id);
-      const wasActive = active.has(id);
-      await stopRun({ threadId: id }, seen);
-      if (wasActive) stopped++;
-    }
-    const pending = orchNotices.get(threadId);
-    orchNotices.delete(threadId);
-    if (pending && pending.length > 0) {
-      // Same trace as flushOrchNotices' undeliverable path: the orchestrator
-      // still sees what its crew did, as an event that starts no run.
-      const body = pending.join("\n");
-      const headed = /^\s*\[/.test(body) ? body : "[orchestration] " + body;
-      appendMessage(threadId, "event", headed);
-    }
-    return { stopped, traced: !!(pending && pending.length > 0) };
-  }
-
-  /**
    * Inject guidance into a live turn (issue #156). Writes a user line to
    * the running CLI's stdin and appends a `steer: true` user row on the
    * current runId — not a second run, not a queued follow-up.
@@ -8061,41 +6433,6 @@ function createRunner(opts) {
     return entry && typeof entry.runId === "string" ? entry.runId : null;
   }
 
-  /**
-   * True while the thread's current turn chain was delivered by the machine
-   * (a worker-finished or peer notice) rather than started by a human. Read
-   * by orchServer to refuse a worker merge/PR the user never approved: on an
-   * auto turn, nobody has answered the lead's question yet.
-   * @param {string} threadId
-   */
-  function isAutoTurn(threadId) {
-    return (autoTurns.get(threadId) || 0) > 0;
-  }
-
-  function refreshQuotaWait(threadId) {
-    const thread = store.getThread(threadId);
-    if (
-      !thread ||
-      services.isTrashed(thread) ||
-      thread.status !== "quota-wait" ||
-      !thread.quotaWaitUntil
-    ) {
-      cancelQuotaWake(threadId);
-      return;
-    }
-    if (!quotaWaitEnabled(thread, store.getSettings())) {
-      cancelQuotaWake(threadId);
-      return;
-    }
-    scheduleQuotaWake(threadId, thread.quotaWaitUntil);
-  }
-
-  function refreshAllQuotaWaits() {
-    for (const t of store.getThreads()) {
-      if (t.status === "quota-wait") refreshQuotaWait(t.id);
-    }
-  }
-
   function stopAll() {
     disposeWatchdogs();
     stopAllBtw();
@@ -8146,14 +6483,8 @@ function createRunner(opts) {
         { touch: true },
       );
     }
-    for (const id of [...quotaTimers.keys()]) {
-      cancelQuotaWake(id);
-    }
-    for (const id of [...codexReleaseFlush.keys()]) {
-      cancelCodexReleaseFlush(id);
-    }
-    recentlyReleasedCodex.clear();
-    codexParkNotified.clear();
+    cancelAllQuotaWakes();
+    cancelAllOrchNotices();
     // Kept-alive Claude sessions (idle between turns): kill + clear timers.
     for (const threadId of [...claudeSessions.keys()]) {
       disposeClaudeSession(threadId);
@@ -8235,13 +6566,66 @@ function createRunner(opts) {
     tryReadCodeIndex,
     clearRun,
     markRunFailed,
-    finishSuccessfulTurn,
     pushFn,
     shortError,
     providerBinAvailable,
     startRun,
     getMemStatus,
+    lastWorkflowByThread,
+    maybeDrainQueued,
+    getIosSimulator,
+    looksWriterLock,
+    stopRun,
+    refreshDetail,
+    lastAssistantText,
   };
+
+  const {
+    autoTurns,
+    noteCodexRelease,
+    codexSessionHeld,
+    deliverNotice,
+    queueOrchNotice,
+    flushOrchNotices,
+    sweepCrew,
+    sweepDoneWorkers,
+    stopCrew,
+    isAutoTurn,
+    cancelAll: cancelAllOrchNotices,
+  } = createOrchNotices(ctx);
+  // Read lazily by runner-verify-gate.js.
+  Object.assign(ctx, { queueOrchNotice, flushOrchNotices, sweepDoneWorkers });
+  // createPermissions destructures this eagerly.
+  ctx.isAutoTurn = isAutoTurn;
+
+  const {
+    ciWorkflowSignOffs,
+    getPendingPermission,
+    handleCodexServerRequest,
+    respondPermission,
+    askUser,
+    requestCiWorkflowSignOff,
+    clearQuestion,
+    maybePersistPlanApproval,
+  } = createPermissions(ctx);
+
+  const {
+    afterFailedTurn,
+    afterSuccessfulTurn,
+    finishSuccessfulTurn,
+  } = createVerifyGate(ctx);
+  // createAskRuns destructures this eagerly, so it must be set before that call.
+  ctx.finishSuccessfulTurn = finishSuccessfulTurn;
+
+  const {
+    cancelQuotaWake,
+    tryQuotaFailover,
+    scheduleQuotaWake,
+    resumeQuotaWait,
+    refreshQuotaWait,
+    refreshAllQuotaWaits,
+    cancelAll: cancelAllQuotaWakes,
+  } = createQuotaWait(ctx);
 
   const {
     startAskRun,
@@ -8265,12 +6649,21 @@ function createRunner(opts) {
     ingestTaskNotifications,
     finishRunningSubagents,
   } = createSubagents(ctx);
+  ctx.finishRunningSubagents = finishRunningSubagents;
 
   const {
     sessionRecorder,
     recordSessionOnAppend,
     recordSessionAtTerminal,
   } = createSessionRecording(ctx);
+
+  const {
+    claudeSessions,
+    CLAUDE_ACK_MS,
+    disposeClaudeSession,
+    retireClaudeSession,
+    scheduleClaudeIdleReap,
+  } = createClaudeSessions(ctx);
 
   // Boot: nothing runs yet, so every crew is quiet. Archives workers whose
   // sweep never came — the app died mid-orchestration, or a sibling hung and
