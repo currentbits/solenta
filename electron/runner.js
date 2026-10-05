@@ -34,6 +34,10 @@ const cursorParse = require("./cursor.js");
 const { runCursor, materializeCursorHome } = cursorParse;
 const { heartbeatLane } = require("./mergeQueue.js");
 const { createWatchdogs } = require("./runner-watchdogs.js");
+const { createAskRuns } = require("./runner-ask-runs.js");
+const { createTurnSetup } = require("./runner-turn-setup.js");
+const { createSubagents } = require("./runner-subagents.js");
+const { createSessionRecording } = require("./runner-session-recording.js");
 const {
   materializeCursorPinPlugin,
   cursorPinPluginDir,
@@ -75,10 +79,6 @@ const { runOpencode } = opencodeParse;
 const { recordRunOutcome } = require("./memory-record.js");
 const { createOtel } = require("./otel.js");
 const { extractImages, saveToolImages } = require("./tool-images.js");
-const {
-  createSessionRecorder,
-  mapMessageRole,
-} = require("./session-record.js");
 const workflowEngine = require("./workflow.js");
 const { wrapCommand } = require("./ssh.js");
 const { wslTarget } = require("./wsl.js");
@@ -147,7 +147,6 @@ const { startWithPoolFailover } = require("./subagentPool.js");
 const { normalizeQuestions } = require("./questions.js");
 const {
   PLAN_TRUNCATE,
-  shouldRecordSession,
   noticePrompt,
   formatQueuedPrompt,
   firstChanged,
@@ -790,12 +789,6 @@ function createRunner(opts) {
    * @type {Set<string>}
    */
   const planPromptHandled = new Set();
-  /**
-   * In-flight `/btw` cards, keyed `${threadId}:${cardId}`. Separate from
-   * `active` so a side question never occupies the live turn (issue #471).
-   * @type {Map<string, { threadId: string, id: string, handle?: { kill?: () => void }, stopping?: boolean }>}
-   */
-  const btwActive = new Map();
 
   // OTel GenAI spans (issue #280). Inert while settings.otel.endpoint is null,
   // and every method swallows its own failures, so no call site below guards.
@@ -887,153 +880,6 @@ function createRunner(opts) {
     disposeClaudeSession(threadId);
   }
 
-  /**
-   * In-session subagents spawned via the Agent tool (issue #21). The CLI
-   * runs them internally, so the only trace is its stream: the spawning
-   * tool_use, its tool_result, and — for background agents — a later
-   * <task-notification> user text. Rows live on the thread record (keyed by
-   * tool_use id) so the Agents panel can list them; capped to the newest 20
-   * so a long thread never accumulates unbounded rows.
-   */
-  const SUBAGENT_ROWS_MAX = 20;
-
-  function subagentRows(threadId) {
-    const thread = store.getThread(threadId);
-    return thread && Array.isArray(thread.subagents) ? thread.subagents : [];
-  }
-
-  function addSubagentRow(threadId, row) {
-    if (!store.getThread(threadId)) return;
-    store.updateThread(threadId, {
-      subagents: [...subagentRows(threadId), row].slice(-SUBAGENT_ROWS_MAX),
-    });
-  }
-
-  /**
-   * Cursor Task/Agent is the same in-CLI subagent as Claude's Agent tool
-   * (issue #685). Track it on the thread so the Agents panel lists it as a
-   * subagent instead of looking like the parent model.
-   * @param {string} threadId
-   * @param {{ id: string, name: string }} tool
-   * @param {Record<string, unknown> | null} args
-   * @param {"running" | "done" | "failed"} status
-   */
-  function noteCursorSubagent(threadId, tool, args, status) {
-    if (tool.name !== "Task" && tool.name !== "Agent") return;
-    const description =
-      typeof args?.description === "string" && args.description
-        ? args.description
-        : tool.name;
-    const agentType =
-      typeof args?.subagent_type === "string"
-        ? args.subagent_type
-        : typeof args?.subagentType === "string"
-          ? args.subagentType
-          : null;
-    const rows = subagentRows(threadId);
-    if (!rows.some((r) => r.id === tool.id)) {
-      addSubagentRow(threadId, {
-        id: tool.id,
-        description,
-        agentType,
-        status,
-      });
-      return;
-    }
-    if (status !== "running") {
-      setSubagentStatus(threadId, tool.id, status);
-    }
-  }
-
-  /** Flip a running row's status; false when no such row (not a subagent). */
-  function setSubagentStatus(threadId, toolUseId, status) {
-    const rows = subagentRows(threadId);
-    if (!rows.some((r) => r.id === toolUseId && r.status === "running")) {
-      return false;
-    }
-    store.updateThread(threadId, {
-      subagents: rows.map((r) =>
-        r.id === toolUseId ? { ...r, status } : r,
-      ),
-    });
-    return true;
-  }
-
-  /**
-   * A <task-notification> block pairs back to the Agent call that spawned
-   * the finished background agent via its <tool-use-id>.
-   */
-  function applyTaskNotifications(threadId, text) {
-    let changed = false;
-    const blocks = text.matchAll(
-      /<task-notification>([\s\S]*?)<\/task-notification>/g,
-    );
-    for (const [, body] of blocks) {
-      const id = body.match(/<tool-use-id>\s*([^<\s]+)\s*<\/tool-use-id>/);
-      if (!id) continue;
-      const status = body.match(/<status>\s*([^<\s]+)\s*<\/status>/);
-      const failed = status ? /fail|error|cancel|kill/i.test(status[1]) : false;
-      changed =
-        setSubagentStatus(threadId, id[1], failed ? "failed" : "done") ||
-        changed;
-    }
-    return changed;
-  }
-
-  /**
-   * Scan a stream-json user event for <task-notification> blocks and settle
-   * matching running subagent rows. Claude keeps the CLI alive so these can
-   * land between turns (guard() is null then). Cursor Task rows otherwise
-   * stay running until tool_call/completed or run exit (#708).
-   */
-  function ingestTaskNotifications(threadId, ev, workflow) {
-    if (!ev || ev.type !== "user" || !ev.message) return false;
-    const c = ev.message.content;
-    const texts =
-      typeof c === "string"
-        ? [c]
-        : Array.isArray(c)
-          ? c
-              .filter(
-                (b) =>
-                  b && b.type === "text" && typeof b.text === "string",
-              )
-              .map((b) => b.text)
-          : [];
-    let changed = false;
-    for (const t of texts) {
-      if (t.includes("<task-notification>")) {
-        changed = applyTaskNotifications(threadId, t) || changed;
-      }
-    }
-    if (changed) {
-      store.save();
-      pushDetail(threadId, workflow);
-      // Between turns nothing else pushes the list, and the sidebar files a
-      // done thread with running subagents on Working until they settle.
-      pushThreadsChanged();
-    }
-    return changed;
-  }
-
-  /**
-   * CLI death (idle reap, param change, thread delete, quit) takes its
-   * background subagents with it — settle any still-running rows so the
-   * panel never shows a live badge for a dead agent.
-   */
-  function finishRunningSubagents(threadId) {
-    const rows = subagentRows(threadId);
-    if (!rows.some((r) => r.status === "running")) return;
-    store.updateThread(threadId, {
-      subagents: rows.map((r) =>
-        r.status === "running" ? { ...r, status: "done" } : r,
-      ),
-    });
-    store.save();
-    pushDetail(threadId, null);
-    pushThreadsChanged();
-  }
-
   /** Arm the idle reaper after a turn settles; disarmed on reuse. */
   function scheduleClaudeIdleReap(threadId) {
     const sess = claudeSessions.get(threadId);
@@ -1072,91 +918,6 @@ function createRunner(opts) {
    * @type {Map<string, { messages: object[], workLog: object[], seq: number }>}
    */
   const lastPushByThread = new Map();
-
-  /** Batched session transcript recorder (POST /api/session). */
-  const sessionRecorder = createSessionRecorder({
-    userDataPath,
-    getStatus: getMemStatus,
-  });
-
-  /**
-   * Build base session fields from thread + project at record time.
-   * @param {object} thread
-   */
-  function sessionBaseFields(thread) {
-    const project = store.getProject(thread.projectId);
-    return {
-      sessionId: thread.id,
-      // Raw repo path; the memory server canonicalizes it (see project-key.js there).
-      project: project && project.path ? String(project.path) : null,
-      threadTitle: thread.title != null ? String(thread.title) : "",
-      agent: thread.provider != null ? String(thread.provider) : "unknown",
-    };
-  }
-
-  /**
-   * Record user/event messages immediately on append (batched HTTP).
-   * Assistant/tool are deferred to run-terminal (see notifyRunTerminal).
-   * @param {string} threadId
-   * @param {string} role
-   * @param {string} text
-   */
-  function recordSessionOnAppend(threadId, role, text) {
-    try {
-      if (role !== "user" && role !== "event") return;
-      const thread = store.getThread(threadId);
-      if (!shouldRecordSession(thread)) return;
-      const mapped = mapMessageRole(role);
-      if (!mapped) return;
-      const content = text == null ? "" : String(text);
-      if (!content) return;
-      sessionRecorder.recordTranscript([
-        {
-          ...sessionBaseFields(thread),
-          role: mapped,
-          content,
-        },
-      ]);
-    } catch {
-      // never affect the run path
-    }
-  }
-
-  /**
-   * Record final assistant + tool messages for a run once at terminal.
-   * @param {string} threadId
-   * @param {string | null | undefined} runId
-   * @param {object} thread
-   */
-  function recordSessionAtTerminal(threadId, runId, thread) {
-    try {
-      if (!shouldRecordSession(thread)) return;
-      const base = sessionBaseFields(thread);
-      const msgs = store.getMessages(threadId) || [];
-      /** @type {object[]} */
-      const entries = [];
-      for (const m of msgs) {
-        if (!m || (m.role !== "assistant" && m.role !== "tool")) continue;
-        // Prefer this run's messages when runId is known.
-        if (runId && m.runId && m.runId !== runId) continue;
-        if (runId && !m.runId) continue;
-        const mapped = mapMessageRole(m.role);
-        if (!mapped) continue;
-        const content = m.text == null ? "" : String(m.text);
-        if (!content) continue;
-        entries.push({
-          ...base,
-          role: mapped,
-          content,
-        });
-      }
-      if (entries.length > 0) {
-        sessionRecorder.recordTranscript(entries);
-      }
-    } catch {
-      // never affect the run path
-    }
-  }
 
   /**
    * Pending wake-ups: threadId -> notice lines. Worker-finished notices,
@@ -7488,571 +7249,6 @@ function createRunner(opts) {
     return { runId };
   }
 
-  /**
-   * Create or rematerialize the worktree for a thread that asked for one.
-   * No-op for plain checkout threads. Throws on setup failure so the run
-   * never silently drops the isolation the user asked for (#511).
-   * @param {string} threadId
-   */
-  function materializePendingWorktree(threadId) {
-    const thread = store.getThread(threadId);
-    if (!thread) return;
-    const wantsWorktree =
-      Boolean(thread.pendingWorktree) || Boolean(thread.worktreePath);
-    if (!wantsWorktree) return;
-    if (!userDataPath) {
-      throw new Error("worktreeBase is not configured");
-    }
-    const { prepareThreadWorktree } = require("./worktrees.js");
-    prepareThreadWorktree({
-      store,
-      threadId,
-      worktreeBase: path.join(userDataPath, "worktrees"),
-      broadcast: pushFn,
-    });
-  }
-
-  /**
-   * Record a worktree-setup failure in the thread (user prompt + verbatim
-   * git stderr event + status failed) so Retry-turn can fire, then throw
-   * so callers (fork, drainQueued) know the agent never started.
-   * @param {string} threadId
-   * @param {string} prompt
-   * @param {{ kind: string, path: string, name: string }[] | undefined} attachments
-   * @param {any} err
-   * @param {{ fromQuotaWait?: boolean, fromQuotaFailover?: boolean }} [opts]
-   */
-  function failWorktreeSetup(threadId, prompt, attachments, err, opts) {
-    const errText = String((err && err.message) || err);
-    const live = store.getThread(threadId);
-    const runId = randomUUID();
-    otel.startRun({
-      threadId,
-      runId,
-      provider: live ? resolveProvider(live) : "claude",
-      model: (live && live.model) || null,
-    });
-    if (!isReplayTurn(opts)) {
-      appendMessage(threadId, "user", prompt, runId, null, attachments);
-    }
-    appendMessage(threadId, "event", errText, runId);
-    store.updateThread(
-      threadId,
-      {
-        status: "failed",
-        runStartedAt: null,
-        lastError: shortError(errText),
-      },
-      { touch: true },
-    );
-    store.save();
-    pushDetail(threadId);
-    pushThreadsChanged();
-    otel.endRun({
-      threadId,
-      runId,
-      status: "failed",
-      error: shortError(errText),
-    });
-    throw err instanceof Error ? err : new Error(errText);
-  }
-
-  /**
-   * Dispatch one orchestration command (issue #338): fork a worker per
-   * provider, start each with its role prompt, and let the ordinary
-   * worker-finished notices wake this thread with the results.
-   *
-   * Only `/handoff` gets a worktree. `/advisor` and `/committee` are
-   * read-only by contract and a worker worktree branches from the default
-   * branch — a second opinion on the default branch is not a second opinion
-   * on the work in progress — so they run in the project checkout instead
-   * and are pointed at the caller's checkout in the prompt.
-   *
-   * @param {string} threadId - the lead thread
-   * @param {any} thread
-   * @param {import('./orchcommands.js').OrchCommand} cmd
-   * @param {string} prompt - the raw prompt, kept verbatim in the transcript
-   * @param {{ kind: string, path: string, name: string }[]} attachments
-   */
-  async function dispatchOrchCommand(
-    threadId,
-    thread,
-    cmd,
-    prompt,
-    attachments,
-  ) {
-    // Fork every worker BEFORE starting any: committee members argue with
-    // each other directly, so each one's prompt needs its peers' ids.
-    const workers = cmd.providers.map((provider) =>
-      services.forkWorkerThread(store, {
-        threadId,
-        provider,
-        worktree: cmd.kind === "handoff",
-        title: cmd.task,
-      }),
-    );
-    const ids = workers.map((w) => w.id);
-    const where =
-      cmd.kind !== "handoff" && thread.worktreePath
-        ? `\n\nThe thread that asked works in ${thread.worktreePath}. Inspect that checkout — do not edit it.`
-        : "";
-
-    // The fan-out is a span of the lead thread and parents every worker run,
-    // so the crew reads as one trace tree (same shape as the pendingFork hop).
-    const forkRunId = randomUUID();
-    otel.startRun({
-      threadId,
-      runId: forkRunId,
-      provider: resolveProvider(thread),
-      model: thread.model || null,
-    });
-
-    let started = null;
-    /** @type {string[]} */
-    const failures = [];
-    for (let i = 0; i < workers.length; i++) {
-      const workerPrompt =
-        orchcommands.workerPrompt(cmd.kind, cmd.task, {
-          index: i,
-          total: workers.length,
-          peerIds: ids.filter((_, j) => j !== i),
-        }) + where;
-      try {
-        const run = await startWithPoolFailover({
-          store,
-          worker: workers[i],
-          prompt: workerPrompt,
-          extra: { attachments, parentRunId: forkRunId },
-          startRun,
-          setProvider: services.setProvider,
-          isAvailable: providerBinAvailable,
-        });
-        started = started || run;
-      } catch (err) {
-        // A worker that never started is an orphan: drop it, same contract
-        // as the pendingFork path. Peers that DID start keep running — they
-        // are real work, and killing them to report a clean failure would
-        // throw away more than it explains.
-        failures.push(
-          `${workers[i].provider}: ${shortError(String((err && err.message) || err))}`,
-        );
-        try {
-          // Worker never started a run; no durable artifacts to reclaim.
-          services.deleteThread(store, { threadId: workers[i].id });
-        } catch {
-          /* best effort */
-        }
-      }
-    }
-
-    if (!started) {
-      otel.endRun({
-        threadId,
-        runId: forkRunId,
-        status: "failed",
-        error: shortError(failures.join("; ")),
-      });
-      pushThreadsChanged();
-      throw new Error(
-        `/${cmd.kind} dispatched no workers — ${failures.join("; ")}`,
-      );
-    }
-
-    otel.endRun({ threadId, runId: forkRunId, status: "done" });
-    appendMessage(threadId, "user", prompt, forkRunId, null, attachments);
-    const live = workers.filter((w) => store.getThread(w.id));
-    appendMessage(
-      threadId,
-      "event",
-      orchcommands.dispatchNote(
-        cmd.kind,
-        live.map((w) => ({ id: w.id, provider: w.provider })),
-      ) + (failures.length ? `\nNot dispatched — ${failures.join("; ")}` : ""),
-      forkRunId,
-    );
-    store.updateThread(
-      threadId,
-      { ...services.clearSettledOnActivity(thread) },
-      { touch: true },
-    );
-    pushDetail(threadId);
-    pushThreadsChanged();
-    return started;
-  }
-
-  /**
-   * Ask-mode turn (issue #392): no budget, no worktree, no tool loop, no
-   * usage row. fm → print-mode → retrieval-only. Returns { runId } the
-   * same way every other start*Run does; completion is async.
-   *
-   * @param {object} input
-   * @param {object} thread
-   */
-  async function startAskRun(input, thread) {
-    const { threadId, prompt } = input;
-    const attachments = sanitizeAttachments(input.attachments);
-    const project = store.getProject(thread.projectId);
-    const repoRoot = (project && project.path) || "";
-    if (userDataPath && repoRoot) {
-      try {
-        require("./codeindex.js").maybeRefreshIndex({ userDataPath, repoRoot });
-      } catch {
-        /* never block */
-      }
-    }
-
-    const runId = randomUUID();
-    otel.startRun({
-      threadId,
-      runId,
-      provider: "ask",
-      model: thread.model || null,
-      parentRunId: input.parentRunId || null,
-    });
-    if (!isReplayTurn(input)) {
-      appendMessage(threadId, "user", prompt, runId, null, attachments);
-    }
-
-    let title = thread.title;
-    if (title === "New Thread") {
-      const firstLine = String(prompt).split(/\r?\n/)[0].trim();
-      const max = services.THREAD_TITLE_MAX || 60;
-      title = firstLine.slice(0, max) || "New Thread";
-    }
-    store.updateThread(
-      threadId,
-      {
-        status: "working",
-        title,
-        runStartedAt: Date.now(),
-        awaitingInput: false,
-        // Any user turn supersedes an open question card (issue #647):
-        // answering it IS this message, and so is changing the subject.
-        pendingQuestion: null,
-        pendingPlan: null,
-        lastEventAt: null,
-        stalledAt: null,
-        stoppedAt: null,
-        quotaWaitUntil: null,
-        quotaWaitResumed: input.fromQuotaWait === true,
-        pendingWorktree: false,
-        ...services.clearSettledOnActivity(thread),
-      },
-      { touch: true },
-    );
-    store.save();
-    pushDetail(threadId);
-    pushThreadsChanged();
-
-    /** @type {{ kill?: () => void }} */
-    const handle = {};
-    const entry = {
-      kind: "ask",
-      runId,
-      handle: {
-        kill() {
-          if (typeof handle.kill === "function") handle.kill();
-        },
-      },
-    };
-    active.set(threadId, entry);
-
-    const index = userDataPath && repoRoot
-      ? tryReadCodeIndex(userDataPath, repoRoot)
-      : null;
-    const indexNote = services.codeIndexNoteFor(index);
-    const matchNote = ask.formatMatchingFiles(index, prompt);
-    const digestNote = ask.formatThreadDigest(store.getMessages(threadId));
-
-    void (async () => {
-      let memoryNote = "";
-      try {
-        const search =
-          searchMemory ||
-          (async (query, projectPath) => {
-            if (!userDataPath) return [];
-            const { createMemoryProxy } = require("./memory-proxy.js");
-            const proxy = createMemoryProxy({ userDataPath });
-            return await proxy.search({
-              query,
-              project: projectPath || undefined,
-            });
-          });
-        const hits = await search(String(prompt || ""), repoRoot);
-        memoryNote = ask.formatMemoryHits(hits);
-      } catch {
-        memoryNote = "";
-      }
-      try {
-        const bootNote = await ask.prefetchBootstrapNote({
-          userDataPath,
-          projectPath: repoRoot,
-          firstTurn: true,
-          bootstrapMemory,
-        });
-        if (bootNote) {
-          memoryNote = (memoryNote ? memoryNote + "\n" : "") + bootNote.trim();
-        }
-      } catch {
-        // Fail-open: search hits still go out.
-      }
-
-      const pack = {
-        question: String(prompt || ""),
-        indexNote,
-        memoryNote,
-        digestNote,
-        matchNote,
-      };
-      const askPrompt = ask.buildAskPrompt(pack);
-
-      let answer = "";
-      let source = "retrieval";
-      try {
-        const result = await askComplete({
-          prompt: askPrompt,
-          provider: resolveProvider(thread),
-          model: thread.model,
-          onHandle: (h) => {
-            handle.kill = h && h.kill;
-          },
-        });
-        if (result && result.text) {
-          answer = result.text;
-          source = result.source || "print";
-        }
-      } catch {
-        answer = "";
-      }
-      if (!answer) answer = ask.retrievalFallback(pack);
-
-      if (!active.has(threadId) || active.get(threadId) !== entry) return;
-      if (entry.stopping) return;
-
-      appendMessage(threadId, "assistant", answer, runId);
-      if (source === "retrieval") {
-        appendMessage(
-          threadId,
-          "event",
-          "Answered from the repo map and memory (no model).",
-          runId,
-        );
-      }
-      clearRun(threadId);
-      store.updateThread(
-        threadId,
-        { status: "done", runStartedAt: null },
-        { touch: true },
-      );
-      store.save();
-      pushDetail(threadId);
-      pushThreadsChanged();
-      otel.endRun({ threadId, runId, status: "done" });
-      // Skip notifyRunTerminal: that path checkpoints the worktree and
-      // records agent spend. Ask must do neither.
-      finishSuccessfulTurn(threadId);
-    })().catch((err) => {
-      if (!active.has(threadId) || active.get(threadId) !== entry) return;
-      const errText = `Ask error: ${err && err.message ? err.message : String(err)}`;
-      clearRun(threadId);
-      const failure = markRunFailed(threadId, errText, runId);
-      store.save();
-      pushDetail(threadId);
-      pushThreadsChanged();
-      otel.endRun({
-        threadId,
-        runId,
-        status: "failed",
-        error: failure.text,
-      });
-    });
-
-    return { runId };
-  }
-
-  /**
-   * Side question (issue #471). Does not take `active`, does not change
-   * thread.status, does not append transcript messages, does not spend.
-   * @param {{ threadId: string, question: string }} input
-   */
-  async function startBtw(input) {
-    const threadId = input && input.threadId;
-    const thread = store.getThread(threadId);
-    if (!thread) {
-      throw new Error(`Unknown thread: ${threadId}`);
-    }
-    const { thread: next, card } = services.addBtw(store, {
-      threadId,
-      question: input.question,
-    });
-    const key = `${threadId}:${card.id}`;
-    const entry = { threadId, id: card.id };
-    btwActive.set(key, entry);
-    pushDetail(threadId, undefined, { skipStamp: true });
-    pushThreadsChanged();
-
-    const project = store.getProject(thread.projectId);
-    const repoRoot = (project && project.path) || "";
-    if (userDataPath && repoRoot) {
-      try {
-        require("./codeindex.js").maybeRefreshIndex({ userDataPath, repoRoot });
-      } catch {
-        /* never block */
-      }
-    }
-    const index =
-      userDataPath && repoRoot
-        ? tryReadCodeIndex(userDataPath, repoRoot)
-        : null;
-    const indexNote = services.codeIndexNoteFor(index);
-    const matchNote = ask.formatMatchingFiles(index, card.question);
-    const digestNote = ask.formatThreadDigest(store.getMessages(threadId));
-
-    void (async () => {
-      let memoryNote = "";
-      try {
-        const search =
-          searchMemory ||
-          (async (query, projectPath) => {
-            if (!userDataPath) return [];
-            const { createMemoryProxy } = require("./memory-proxy.js");
-            const proxy = createMemoryProxy({ userDataPath });
-            return await proxy.search({
-              query,
-              project: projectPath || undefined,
-            });
-          });
-        const hits = await search(String(card.question || ""), repoRoot);
-        memoryNote = ask.formatMemoryHits(hits);
-      } catch {
-        memoryNote = "";
-      }
-      try {
-        const bootNote = await ask.prefetchBootstrapNote({
-          userDataPath,
-          projectPath: repoRoot,
-          firstTurn: true,
-          bootstrapMemory,
-        });
-        if (bootNote) {
-          memoryNote = (memoryNote ? memoryNote + "\n" : "") + bootNote.trim();
-        }
-      } catch {
-        // Fail-open: search hits still go out.
-      }
-
-      const pack = {
-        question: String(card.question || ""),
-        indexNote,
-        memoryNote,
-        digestNote,
-        matchNote,
-      };
-      const askPrompt = btw.buildBtwPrompt(pack);
-
-      let answer = "";
-      let source = "retrieval";
-      let errText = "";
-      try {
-        const result = await askComplete({
-          prompt: askPrompt,
-          provider: resolveProvider(thread),
-          model: thread.model,
-          onHandle: (h) => {
-            const live = btwActive.get(key);
-            if (!live || live.stopping) {
-              if (h && typeof h.kill === "function") h.kill();
-              return;
-            }
-            live.handle = h;
-          },
-        });
-        if (result && result.text) {
-          answer = result.text;
-          source = result.source || "print";
-        }
-      } catch (err) {
-        errText = err && err.message ? String(err.message) : String(err);
-      }
-      if (!answer && !errText) answer = ask.retrievalFallback(pack);
-
-      const live = btwActive.get(key);
-      if (!live || live.stopping) return;
-      btwActive.delete(key);
-      if (!store.getThread(threadId)) return;
-      services.finishBtw(store, {
-        threadId,
-        id: card.id,
-        answer,
-        error: errText || undefined,
-        source: answer ? source : undefined,
-      });
-      pushDetail(threadId, undefined, { skipStamp: true });
-      pushThreadsChanged();
-    })().catch(() => {
-      const live = btwActive.get(key);
-      if (!live || live.stopping) return;
-      btwActive.delete(key);
-      if (!store.getThread(threadId)) return;
-      services.finishBtw(store, {
-        threadId,
-        id: card.id,
-        error: "Side question failed",
-      });
-      pushDetail(threadId, undefined, { skipStamp: true });
-      pushThreadsChanged();
-    });
-
-    return store.getThread(threadId) || next;
-  }
-
-  /**
-   * Kill an in-flight side question (if any) and drop the card.
-   * @param {{ threadId: string, id: string }} input
-   */
-  function cancelBtw(input) {
-    const threadId = input && input.threadId;
-    const id = input && input.id;
-    const key = `${threadId}:${id}`;
-    const entry = btwActive.get(key);
-    if (entry) {
-      entry.stopping = true;
-      if (entry.handle && typeof entry.handle.kill === "function") {
-        try {
-          entry.handle.kill();
-        } catch {
-          /* ignore */
-        }
-      }
-      btwActive.delete(key);
-    }
-    return services.dismissBtw(store, { threadId, id });
-  }
-
-  /**
-   * Queue the side question as a follow-up and drop the card. Cancels
-   * an in-flight completeAsk first so it cannot rewrite a gone card.
-   * @param {{ threadId: string, id: string }} input
-   */
-  function promoteBtw(input) {
-    const threadId = input && input.threadId;
-    const id = input && input.id;
-    const key = `${threadId}:${id}`;
-    const entry = btwActive.get(key);
-    if (entry) {
-      entry.stopping = true;
-      if (entry.handle && typeof entry.handle.kill === "function") {
-        try {
-          entry.handle.kill();
-        } catch {
-          /* ignore */
-        }
-      }
-      btwActive.delete(key);
-    }
-    return services.promoteBtw(store, { threadId, id });
-  }
-
   async function startRun(input) {
     const { threadId } = input;
     let prompt = input.prompt;
@@ -8860,11 +8056,6 @@ function createRunner(opts) {
     return [...active.keys()];
   }
 
-  /** In-flight side questions (btw). Killed by stopAll, so they count as work. */
-  function listActiveBtwCount() {
-    return btwActive.size;
-  }
-
   function activeRunId(threadId) {
     const entry = active.get(String(threadId));
     return entry && typeof entry.runId === "string" ? entry.runId : null;
@@ -8907,17 +8098,7 @@ function createRunner(opts) {
 
   function stopAll() {
     disposeWatchdogs();
-    for (const entry of btwActive.values()) {
-      entry.stopping = true;
-      if (entry.handle && typeof entry.handle.kill === "function") {
-        try {
-          entry.handle.kill();
-        } catch {
-          /* ignore */
-        }
-      }
-    }
-    btwActive.clear();
+    stopAllBtw();
     // Clean app quit (main.js before-quit). Mark each active run idle with an
     // interruption event so the next launch's recoverInterruptedRuns (crash
     // path only) does not re-stamp them as generic failures. Kill + flush
@@ -9045,7 +8226,51 @@ function createRunner(opts) {
     appendMessage,
     pushDetail,
     pushThreadsChanged,
+    userDataPath,
+    askComplete,
+    searchMemory,
+    bootstrapMemory,
+    otel,
+    isReplayTurn,
+    tryReadCodeIndex,
+    clearRun,
+    markRunFailed,
+    finishSuccessfulTurn,
+    pushFn,
+    shortError,
+    providerBinAvailable,
+    startRun,
+    getMemStatus,
   };
+
+  const {
+    startAskRun,
+    startBtw,
+    cancelBtw,
+    promoteBtw,
+    listActiveBtwCount,
+    stopAllBtw,
+  } = createAskRuns(ctx);
+
+  const {
+    materializePendingWorktree,
+    failWorktreeSetup,
+    dispatchOrchCommand,
+  } = createTurnSetup(ctx);
+
+  const {
+    addSubagentRow,
+    noteCursorSubagent,
+    setSubagentStatus,
+    ingestTaskNotifications,
+    finishRunningSubagents,
+  } = createSubagents(ctx);
+
+  const {
+    sessionRecorder,
+    recordSessionOnAppend,
+    recordSessionAtTerminal,
+  } = createSessionRecording(ctx);
 
   // Boot: nothing runs yet, so every crew is quiet. Archives workers whose
   // sweep never came — the app died mid-orchestration, or a sibling hung and
