@@ -34,7 +34,16 @@ function resolveAllowedShellPath(store, input) {
     throw new Error("threadId is required");
   }
   const { root } = resolveThreadRoot(store, input.threadId);
-  const raw = input.path != null ? String(input.path) : root;
+  return resolveUnderRoot(root, input.path != null ? String(input.path) : root);
+}
+
+/**
+ * Path checks for resolveAllowedShellPath against an already-resolved root.
+ * @param {string} root
+ * @param {string} raw
+ * @returns {string}
+ */
+function resolveUnderRoot(root, raw) {
   if (!raw) throw new Error("Path is required");
   const expanded = expandUserPath(stripLineSuffix(raw));
   const resolved = path.isAbsolute(expanded)
@@ -52,19 +61,31 @@ function resolveAllowedShellPath(store, input) {
 }
 
 /**
- * Same as resolveAllowedShellPath, but missing / outside paths are null.
+ * Batch form of resolveAllowedShellPath: missing / outside paths are null.
+ * The thread root is looked up once per call, not once per path (#1475).
  * @param {import('./store').Store} store
  * @param {string} threadId
- * @param {string} rawPath
- * @returns {string | null}
+ * @param {string[]} rawPaths
+ * @returns {Array<string | null>}
  */
-function tryResolveWorkspaceFile(store, threadId, rawPath) {
+function tryResolveWorkspaceFiles(store, threadId, rawPaths) {
+  let root;
   try {
-    return resolveAllowedShellPath(store, { threadId, path: rawPath });
+    root = resolveThreadRoot(store, threadId).root;
   } catch {
-    return null;
+    return rawPaths.map(() => null);
   }
+  return rawPaths.map((raw) => {
+    try {
+      return resolveUnderRoot(root, raw);
+    } catch {
+      return null;
+    }
+  });
 }
+
+/** Max paths per files:resolve call; the renderer chunks at the same size. */
+const RESOLVE_PATHS_MAX = 500;
 
 /** IPC_HANDLERS rows for files:*, attachments:*, shell:*; ipc.js spreads them in. */
 module.exports = {
@@ -86,13 +107,11 @@ module.exports = {
   "files:resolve": async (ctx, input) => {
     const threadId = input && input.threadId;
     if (!threadId) throw new Error("threadId is required");
-    const raws = Array.isArray(input.paths) ? input.paths.slice(0, 80) : [];
-    return {
-      resolved: raws.map((raw) => {
-        const p = String(raw ?? "");
-        return { path: p, abs: tryResolveWorkspaceFile(ctx.store, threadId, p) };
-      }),
-    };
+    const raws = Array.isArray(input.paths)
+      ? input.paths.slice(0, RESOLVE_PATHS_MAX).map((raw) => String(raw ?? ""))
+      : [];
+    const abs = tryResolveWorkspaceFiles(ctx.store, threadId, raws);
+    return { resolved: raws.map((p, i) => ({ path: p, abs: abs[i] })) };
   },
   "files:image": async (ctx, input) => {
     const name = input && input.name;

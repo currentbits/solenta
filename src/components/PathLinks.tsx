@@ -37,6 +37,9 @@ export interface PathLinkHandlers {
 
 export const PathLinkContext = createContext<PathLinkHandlers | null>(null);
 
+/** Paths per resolver call; electron/ipc-files.js caps files:resolve at the same size. */
+const RESOLVE_BATCH_MAX = 500;
+
 export function PathLinkProvider({
   children,
   resolvePaths,
@@ -46,6 +49,13 @@ export function PathLinkProvider({
   threadId,
 }: PathLinkHandlers & { children: ReactNode; threadId?: string }) {
   const cacheRef = useRef(new Map<string, string | null>());
+  /** In-flight lookups, so a path asked for twice is fetched once. */
+  const pendingRef = useRef(new Map<string, Promise<string | null>>());
+  /** Paths queued for the next microtask flush → one resolver call (#1475). */
+  const queueRef = useRef<Map<string, (abs: string | null) => void> | null>(
+    null,
+  );
+  const genRef = useRef(0);
   const resolveRef = useRef(resolvePaths);
   resolveRef.current = resolvePaths;
   const openRef = useRef(openPath);
@@ -55,40 +65,68 @@ export function PathLinkProvider({
 
   useEffect(() => {
     cacheRef.current.clear();
+    pendingRef.current.clear();
+    genRef.current += 1;
   }, [threadId]);
 
-  const value = useMemo<PathLinkHandlers>(
-    () => ({
-      resolvePaths: (paths) => {
-        const missing = paths.filter((p) => !cacheRef.current.has(p));
-        const finish = () =>
-          Object.fromEntries(
-            paths.map((p) => [p, cacheRef.current.get(p) ?? null]),
-          );
-        if (missing.length === 0) return finish();
-        const result = resolveRef.current(missing);
-        if (result && typeof (result as Promise<unknown>).then === "function") {
-          return Promise.resolve(result).then((map) => {
-            for (const [p, abs] of Object.entries(map)) {
-              cacheRef.current.set(p, abs);
+  const value = useMemo<PathLinkHandlers>(() => {
+    const flush = (queue: Map<string, (abs: string | null) => void>) => {
+      queueRef.current = null;
+      const gen = genRef.current;
+      const all = [...queue.keys()];
+      for (let i = 0; i < all.length; i += RESOLVE_BATCH_MAX) {
+        const chunk = all.slice(i, i + RESOLVE_BATCH_MAX);
+        void Promise.resolve()
+          .then(() => resolveRef.current(chunk))
+          .catch(() => null)
+          .then((map) => {
+            for (const p of chunk) {
+              const abs = map?.[p] ?? null;
+              if (gen === genRef.current) {
+                // A failed lookup is not cached, so a later render retries it.
+                if (map) cacheRef.current.set(p, abs);
+                pendingRef.current.delete(p);
+              }
+              queue.get(p)!(abs);
             }
-            return finish();
           });
+      }
+    };
+    const request = (p: string) => {
+      let pending = pendingRef.current.get(p);
+      if (pending) return pending;
+      pending = new Promise<string | null>((resolve) => {
+        let queue = queueRef.current;
+        if (!queue) {
+          const fresh = new Map<string, (abs: string | null) => void>();
+          queueRef.current = queue = fresh;
+          queueMicrotask(() => flush(fresh));
         }
-        for (const [p, abs] of Object.entries(
-          result as Record<string, string | null>,
-        )) {
-          cacheRef.current.set(p, abs);
+        queue.set(p, resolve);
+      });
+      pendingRef.current.set(p, pending);
+      return pending;
+    };
+    return {
+      resolvePaths: (paths) => {
+        const cache = cacheRef.current;
+        if (paths.every((p) => cache.has(p))) {
+          return Object.fromEntries(
+            paths.map((p) => [p, cache.get(p) ?? null]),
+          );
         }
-        return finish();
+        return Promise.all(
+          paths.map((p) =>
+            cache.has(p) ? (cache.get(p) ?? null) : request(p),
+          ),
+        ).then((abs) => Object.fromEntries(paths.map((p, i) => [p, abs[i]])));
       },
       openPath: (abs, opts) => openRef.current(abs, opts),
       loadImage: (abs) =>
         loadRef.current ? loadRef.current(abs) : Promise.resolve(null),
       sessionImages,
-    }),
-    [sessionImages],
-  );
+    };
+  }, [sessionImages]);
 
   return (
     <PathLinkContext.Provider value={value}>{children}</PathLinkContext.Provider>

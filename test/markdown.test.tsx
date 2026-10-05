@@ -163,6 +163,91 @@ describe("Markdown path links", () => {
   });
 });
 
+describe("PathLinkProvider batching (#1475)", () => {
+  const blocks = [
+    "see `src/foo.ts` and `src/missing.ts`",
+    "again `src/foo.ts:3`",
+    "`README.md` then `src/foo.ts`",
+    "![chart](images/1.jpg) and `docs/a.md`",
+    "only `src/missing.ts`",
+  ];
+
+  function linkSnapshot(container: Element) {
+    return [...container.querySelectorAll("[data-path-link]")].map(
+      (el) => `${el.textContent}->${el.getAttribute("title")}`,
+    );
+  }
+
+  it("resolves every block's paths in one deduped call, with the same links", async () => {
+    const calls: string[][] = [];
+    const m = await mount(
+      <PathLinkProvider
+        resolvePaths={async (paths) => {
+          calls.push([...paths]);
+          return Object.fromEntries(
+            paths.map((p) => [p, EXISTING.has(p) ? `/wt/${p}` : null]),
+          );
+        }}
+        openPath={() => {}}
+        loadImage={async () => null}
+      >
+        {blocks.map((b) => (
+          <Markdown key={b} text={b} />
+        ))}
+      </PathLinkProvider>,
+    );
+    await m.flush();
+    await m.flush();
+    assert.equal(calls.length, 1, `one resolver call, got ${calls.length}`);
+    assert.deepEqual(
+      [...calls[0]].sort(),
+      [
+        "README.md",
+        "docs/a.md",
+        "images/1.jpg",
+        "src/foo.ts",
+        "src/missing.ts",
+      ],
+    );
+
+    // Same links as the unbatched sync resolver produces block by block.
+    const expected: string[] = [];
+    for (const b of blocks) {
+      const one = await mount(linked(b));
+      await one.flush();
+      expected.push(...linkSnapshot(one.container));
+    }
+    assert.deepEqual(linkSnapshot(m.container), expected);
+    assert.ok(expected.length >= 3);
+  });
+
+  it("does not cache a failed lookup", async () => {
+    let fail = true;
+    let calls = 0;
+    const tree = (text: string) => (
+      <PathLinkProvider
+        resolvePaths={async (paths) => {
+          calls += 1;
+          if (fail) throw new Error("ipc down");
+          return Object.fromEntries(paths.map((p) => [p, `/wt/${p}`]));
+        }}
+        openPath={() => {}}
+      >
+        <Markdown text={text} />
+      </PathLinkProvider>
+    );
+    const m = await mount(tree("see `src/foo.ts`"));
+    await m.flush();
+    assert.equal(m.container.querySelector("[data-path-link]"), null);
+    fail = false;
+    await m.rerender(tree("see `src/foo.ts` now"));
+    await m.flush();
+    await m.flush();
+    assert.equal(calls, 2);
+    assert.ok(m.container.querySelector("[data-path-link]"));
+  });
+});
+
 describe("Markdown images", () => {
   it("keeps https srcs", async () => {
     const m = await mount(

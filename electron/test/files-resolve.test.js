@@ -139,4 +139,44 @@ describe("files:resolve", () => {
     });
     assert.deepEqual(out.resolved, [{ path: escape, abs: null }]);
   });
+
+  it("a batch returns exactly what one call per path returns (#1475)", async () => {
+    const { handlers, thread, wt } = await setup();
+    const escape = path.join(tmp, "outside.txt");
+    fs.writeFileSync(escape, "nope\n");
+    const paths = [
+      "src/foo.ts",
+      "src/foo.ts:3:4",
+      "src/missing.ts",
+      "",
+      ".",
+      "../outside.txt",
+      escape,
+      path.join(wt, "src", "foo.ts"),
+      "src/foo.ts",
+    ];
+    const batch = await handlers["files:resolve"]({ threadId: thread.id, paths });
+    const single = [];
+    for (const p of paths) {
+      const out = await handlers["files:resolve"]({
+        threadId: thread.id,
+        paths: [p],
+      });
+      single.push(...out.resolved);
+    }
+    assert.deepEqual(batch.resolved, single);
+    assert.equal(batch.resolved[4].abs, wt);
+  });
+
+  it("an unknown thread resolves every path to null", async () => {
+    const { handlers } = await setup();
+    const out = await handlers["files:resolve"]({
+      threadId: "nope",
+      paths: ["src/foo.ts", "README.md"],
+    });
+    assert.deepEqual(out.resolved, [
+      { path: "src/foo.ts", abs: null },
+      { path: "README.md", abs: null },
+    ]);
+  });
 });
