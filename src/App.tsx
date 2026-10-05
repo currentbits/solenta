@@ -60,7 +60,6 @@ import type {
   ConflictForecast,
   DistilledWorkflow,
   ProjectUpdateInput,
-  WorkSuggestion,
 } from "./shared/ipc";
 import styles from "./App.module.css";
 import { syncTheme } from "./theme";
@@ -83,6 +82,7 @@ import {
 } from "./app/useConflictForecast";
 import { useViewNavigation } from "./app/useViewNavigation";
 import { useThreadRemoval } from "./app/useThreadRemoval";
+import { useSuggestionHandlers } from "./app/useSuggestionHandlers";
 import { useAppShortcuts } from "./app/useAppShortcuts";
 import { useSidebarResize } from "./app/useSidebarResize";
 
@@ -1050,60 +1050,19 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
       workflow: view === "thread" && visibleDetail ? visibleDetail.workflow : null,
     });
 
-  const handleStartSuggestion = useCallback(
-    async (s: WorkSuggestion) => {
-      const threadId = selectedThreadId;
-      if (!threadId) return;
-      // Stay on the thread the chip was clicked from; the new worker nests
-      // under it in the sidebar and runs in the background.
-      const t = await forkThread(threadId, { worktree: true, select: false });
-      if (!t) return;
-      // Resolve before startRun so a failed kickoff cannot leave the chip
-      // open — a retry would fork a second idle thread.
-      await resolveSuggestion(threadId, s.id, "started", {
-        startedThreadId: t.id,
-      });
-      try {
-        await startRun(s.prompt, t.id);
-      } catch {
-        // startRun already set the run-scope error. The fork exists and
-        // the chip is started; the new thread is nested under this one.
-      }
-    },
-    [selectedThreadId, forkThread, startRun, resolveSuggestion],
-  );
-
-  const handleFileSuggestion = useCallback(
-    async (s: WorkSuggestion) => {
-      const threadId = selectedThreadId;
-      const projectPath = project?.path;
-      if (!threadId || !projectPath) return;
-      const r = await createIssue(
-        projectPath,
-        s.title,
-        `${s.prompt}\n\n_Filed from a Solenta suggested-work chip._`,
-      );
-      if (!r.ok) {
-        // In-band like setIssuePlanStatus / planboard: show the reason, leave
-        // the chip open. ArchiveToast is App's surface for action failures.
-        setChipError(r.reason);
-        return;
-      }
-      setChipError(null);
-      await resolveSuggestion(threadId, s.id, "filed", {
-        issueNumber: r.number,
-      });
-    },
-    [selectedThreadId, project?.path, createIssue, resolveSuggestion],
-  );
-
-  const handleDismissSuggestion = useCallback(
-    async (s: WorkSuggestion) => {
-      if (!selectedThreadId) return;
-      await resolveSuggestion(selectedThreadId, s.id, "dismissed");
-    },
-    [selectedThreadId, resolveSuggestion],
-  );
+  const {
+    handleStartSuggestion,
+    handleFileSuggestion,
+    handleDismissSuggestion,
+  } = useSuggestionHandlers({
+    selectedThreadId,
+    project,
+    forkThread,
+    startRun,
+    createIssue,
+    resolveSuggestion,
+    setChipError,
+  });
 
   /** Provenance of a handed-off thread; a stable object while the row is. */
   const handoffFrom = visibleDetail?.thread.handoffFrom ?? null;
