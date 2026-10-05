@@ -78,10 +78,13 @@ import {
 } from "./sidebarWidth";
 import { useNarrow, useViewportWidth } from "./app/viewport";
 import { useAgentsPanelCollapse } from "./app/useAgentsPanelCollapse";
+import {
+  EMPTY_FORECAST,
+  useConflictForecast,
+} from "./app/useConflictForecast";
 import { useAppShortcuts } from "./app/useAppShortcuts";
 import { useSidebarResize } from "./app/useSidebarResize";
 
-const EMPTY_FORECAST: ConflictForecast = { pairs: [], computedAt: 0 };
 const EMPTY_AGENT_PROFILES: AgentProfile[] = [];
 
 export type AppView =
@@ -1113,40 +1116,12 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     setChangesOpen(false);
   }, [selectedThreadId]);
 
-  // Issue #249: refetch the cached forecast when the thread list moves.
-  // Keyed on a cheap derived value, not the live `threads` array: the array
-  // identity changes on every 700ms stream tick, which used to fire this IPC
-  // call ~1.4x/sec for the duration of any run.
-  const forecastKey = useMemo(
-    () =>
-      threads
-        .map((t) => `${t.id}:${t.branch ?? ""}:${t.worktreePath ?? ""}`)
-        .join("|"),
-    [threads],
-  );
-  useEffect(() => {
-    if (!selectedProjectId) {
-      setForecast(EMPTY_FORECAST);
-      return;
-    }
-    let cancelled = false;
-    const refresh = () => {
-      void conflictForecast(selectedProjectId).then((next) => {
-        if (!cancelled) setForecast(next);
-      });
-    };
-    refresh();
-    // Git state can move without branch/worktree changing (merges, pulls), so
-    // also refresh when the window regains focus — no steady-state timer.
-    const onVisible = () => {
-      if (!document.hidden) refresh();
-    };
-    document.addEventListener("visibilitychange", onVisible);
-    return () => {
-      cancelled = true;
-      document.removeEventListener("visibilitychange", onVisible);
-    };
-  }, [selectedProjectId, forecastKey, conflictForecast]);
+  useConflictForecast({
+    threads,
+    selectedProjectId,
+    conflictForecast,
+    setForecast,
+  });
 
   useEffect(() => {
     if (drawer === null) return;
