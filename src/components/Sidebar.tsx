@@ -117,6 +117,7 @@ import { useMoreMenuFocus } from "./sidebar/useMoreMenuFocus";
 import { useThreadSearch } from "./sidebar/useThreadSearch";
 import { useSidebarShortcuts } from "./sidebar/useSidebarShortcuts";
 import { ScopeMenu } from "./sidebar/ScopeMenu";
+import { BatchBar } from "./sidebar/BatchBar";
 import styles from "./Sidebar.module.css";
 
 export { displayWorkerTitle, statusPulseFor } from "./sidebar/status";
@@ -2719,61 +2720,14 @@ export const Sidebar = memo(function Sidebar({
           );
         })()}
 
-      {multiSelected.size >= 2 && (
-        <div className={styles.batchBar} data-batch-bar="">
-          <span className={styles.batchCount} data-batch-count="">
-            {multiSelected.size} selected
-          </span>
-          {batchFeedback && (
-            <span className={styles.batchFeedback} data-batch-feedback="">
-              {batchFeedback}
-            </span>
-          )}
-          <button
-            type="button"
-            className={styles.batchBtn}
-            data-batch-archive=""
-            onClick={() => void runBatchArchive()}
-          >
-            Archive
-          </button>
-          <button
-            type="button"
-            className={styles.batchBtn}
-            data-batch-settle=""
-            onClick={() => void runBatchSettle()}
-          >
-            Settle
-          </button>
-          <button
-            type="button"
-            className={styles.batchBtn}
-            data-batch-clear=""
-            onClick={clearMulti}
-          >
-            Clear
-          </button>
-        </div>
-      )}
-      {batchFeedback && multiSelected.size < 2 && (
-        <div
-          className={styles.batchBar}
-          data-batch-bar=""
-          data-batch-feedback-only=""
-        >
-          <span className={styles.batchFeedback} data-batch-feedback="">
-            {batchFeedback}
-          </span>
-          <button
-            type="button"
-            className={styles.batchBtn}
-            data-batch-clear=""
-            onClick={() => setBatchFeedback(null)}
-          >
-            Clear
-          </button>
-        </div>
-      )}
+      <BatchBar
+        multiSelected={multiSelected}
+        batchFeedback={batchFeedback}
+        runBatchArchive={runBatchArchive}
+        runBatchSettle={runBatchSettle}
+        clearMulti={clearMulti}
+        setBatchFeedback={setBatchFeedback}
+      />
 
       <footer className={styles.footer}>
         {projectError && (
