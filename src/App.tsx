@@ -82,6 +82,7 @@ import { useViewNavigation } from "./app/useViewNavigation";
 import { useThreadRemoval } from "./app/useThreadRemoval";
 import { useSuggestionHandlers } from "./app/useSuggestionHandlers";
 import { useThreadRoster } from "./app/useThreadRoster";
+import { useCrewHandlers } from "./app/useCrewHandlers";
 import { useAppShortcuts } from "./app/useAppShortcuts";
 import { useSidebarResize } from "./app/useSidebarResize";
 
@@ -1425,25 +1426,19 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     setPreferredSidebarWidth,
   });
 
-  const integrateSelectedWorker = useCallback(
-    async (workerThreadId: string) => {
-      if (selectedThreadId) await integrateWorker(selectedThreadId, workerThreadId);
-    },
-    [selectedThreadId, integrateWorker],
-  );
-  const verifySelectedLead = useCallback(async () => {
-    if (selectedThreadId) await runVerify(selectedThreadId);
-  }, [selectedThreadId, runVerify]);
-  const leadTitle = visibleDetail?.thread.title;
-  const landSelectedLead = useCallback(async () => {
-    if (!selectedThreadId) return;
-    const view = await crewIntegration(selectedThreadId);
-    if (view.finalAction === "pr") {
-      await createPr({ title: leadTitle || "Lead integration" });
-      return;
-    }
-    await mergeWorktree();
-  }, [selectedThreadId, crewIntegration, createPr, mergeWorktree, leadTitle]);
+  const {
+    integrateSelectedWorker,
+    verifySelectedLead,
+    landSelectedLead,
+  } = useCrewHandlers({
+    selectedThreadId,
+    visibleDetail,
+    integrateWorker,
+    runVerify,
+    crewIntegration,
+    createPr,
+    mergeWorktree,
+  });
 
   if (buildMismatch) {
     return (
