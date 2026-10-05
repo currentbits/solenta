@@ -100,7 +100,6 @@ import type {
   WorkSuggestionStatus,
 } from "./shared/ipc";
 import { resolveCoderApi } from "./coderApi";
-import { nextVisibleThreadId } from "./threadSelection";
 import {
   mergeThreadPatch,
   patchThreadList,
@@ -127,6 +126,7 @@ import { useCoderGitHub } from "./coder/useCoderGitHub";
 import { useCoderWorkspace } from "./coder/useCoderWorkspace";
 import { useCoderThreadActions } from "./coder/useCoderThreadActions";
 import { useCoderRuns } from "./coder/useCoderRuns";
+import { useCoderThreadRemoval } from "./coder/useCoderThreadRemoval";
 
 const STATUS_POLL_MS = 60_000;
 /** Debounce on the localStorage boot-snapshot writes (#364). */
@@ -1476,107 +1476,24 @@ export function useCoder(): UseCoderResult {
     applyThreads,
   });
 
-  const deleteThread = useCallback(async () => {
-    if (!selectedThreadId) return false;
-    const threadId = selectedThreadId;
-    try {
-      await api.threads.delete({ threadId });
-      const list = await api.threads.list();
-      applyThreads(list);
-      refreshTrashed();
-      if (selectedRef.current === threadId) {
-        const nextId = nextVisibleThreadId(list, threadId);
-        setSelectedThreadId(nextId);
-        setDetail(null);
-      }
-      setError(null);
-      return true;
-    } catch (err) {
-      setError({ scope: "run", message: errorMessage(err) });
-      return false;
-    }
-  }, [api, selectedThreadId, applyThreads, refreshTrashed]);
-
-  const restoreThread = useCallback(
-    async (threadId: string) => {
-      const id = String(threadId ?? "");
-      if (!id) return false;
-      try {
-        const thread = await api.threads.restore({ threadId: id });
-        const list = await api.threads.list();
-        applyThreads(list);
-        refreshTrashed();
-        setSelectedThreadId(thread.id);
-        setError(null);
-        return true;
-      } catch (err) {
-        setError({ scope: "run", message: errorMessage(err) });
-        return false;
-      }
-    },
-    [api, applyThreads, refreshTrashed],
-  );
-
-  const purgeThread = useCallback(
-    async (threadId: string) => {
-      const id = String(threadId ?? "");
-      if (!id) return false;
-      try {
-        await api.threads.purge({ threadId: id });
-        const list = await api.threads.list();
-        applyThreads(list);
-        refreshTrashed();
-        if (selectedRef.current === id) {
-          const nextId = nextVisibleThreadId(list, id);
-          setSelectedThreadId(nextId);
-          setDetail(null);
-        }
-        setError(null);
-        return true;
-      } catch (err) {
-        setError({ scope: "run", message: errorMessage(err) });
-        return false;
-      }
-    },
-    [api, applyThreads, refreshTrashed],
-  );
-
-  const removeProject = useCallback(
-    async (projectId: string) => {
-      const pid = String(projectId ?? "");
-      if (!pid) return;
-      // Capture whether the open thread belongs to this project BEFORE the
-      // remove — same "was the selected one the victim?" posture as deleteThread.
-      const openId = selectedRef.current;
-      const openBelongs =
-        openId != null &&
-        threadsRef.current.some(
-          (t) => t.id === openId && t.projectId === pid,
-        );
-      try {
-        await api.projects.remove({ projectId: pid });
-        const [nextProjects, list] = await Promise.all([
-          api.projects.list(),
-          api.threads.list(),
-        ]);
-        setProjects(nextProjects);
-        applyThreads(list);
-        detailCacheRef.current.dropProject(pid);
-        // Match deleteThread: only hand off when the selected thread was the
-        // one that just vanished (here: lived in the removed project).
-        if (openBelongs && openId != null && selectedRef.current === openId) {
-          const nextId = nextVisibleThreadId(list, openId);
-          setSelectedThreadId(nextId);
-          setDetail(null);
-        }
-        setError(null);
-      } catch (err) {
-        // Re-throw so the App can show the error toast; do not swallow.
-        throw err instanceof Error ? err : new Error(errorMessage(err));
-      }
-    },
-    [api, applyThreads],
-  );
+  const {
+    deleteThread,
+    restoreThread,
+    purgeThread,
+    removeProject,
+  } = useCoderThreadRemoval({
+    api,
+    selectedThreadId,
+    setSelectedThreadId,
+    setProjects,
+    setDetail,
+    setError,
+    selectedRef,
+    threadsRef,
+    detailCacheRef,
+    refreshTrashed,
+    applyThreads,
+  });
 
   const applyThreadUpdate = useCallback(
     (thread: ThreadInfo) => {
