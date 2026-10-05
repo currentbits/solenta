@@ -32,8 +32,9 @@ describe("CI workflow sign-off fails closed", () => {
   /** Last pendingPermission pushed per thread on thread:updated. */
   let pushed;
 
-  function newRunner() {
+  function newRunner(extra = {}) {
     const r = createRunner({
+      ...extra,
       store,
       core: {},
       userDataPath: tmpDir,
@@ -69,6 +70,11 @@ describe("CI workflow sign-off fails closed", () => {
       approved: true, expectedPath: project.path, expectedBranch: "main",
     };
     return { lead, worker, wt, file, args };
+  }
+
+  async function waitFor(cond) {
+    for (let i = 0; i < 200 && !cond(); i++) await new Promise((r) => setTimeout(r, 10));
+    assert.ok(cond(), "timed out waiting");
   }
 
   function landed() {
@@ -262,5 +268,47 @@ describe("CI workflow sign-off fails closed", () => {
     git(wt.worktreePath, ["reset", "--hard", "HEAD~1"]);
     await assertBlocked(args);
     assert.doesNotMatch(runner.getPendingPermission(lead.id).input, /\+on: push/);
+  });
+  it("an approval is not honoured during a notice-driven turn, and survives it", async () => {
+    // Generic provider path with a fake agent: the first turn (the notice)
+    // stays open until we end it, later turns finish at once.
+    const prevAgentCmd = process.env.CODER_AGENT_CMD;
+    process.env.CODER_AGENT_CMD = `${process.execPath} -e process.exit(0)`;
+    try {
+      let endNoticeTurn = null;
+      runner.stopAll();
+      runner = newRunner({
+        runAgentFn: ({ onDone }) => {
+          if (!endNoticeTurn) endNoticeTurn = () => onDone(0, "done", "");
+          else setImmediate(() => onDone(0, "done", ""));
+          return { kill() {} };
+        },
+      });
+      const { lead, args } = leadWithWorkflowWorker("Lead");
+      await assertBlocked(args);
+      runner.respondPermission({
+        threadId: lead.id, requestId: runner.getPendingPermission(lead.id).requestId, decision: "allow",
+      });
+
+      // A worker/peer notice wakes the lead: a machine turn, not the user.
+      store.updateThread(lead.id, { status: "idle" });
+      runner.deliverNotice({ threadId: lead.id, line: "[peer] worker finished" });
+      await waitFor(() => endNoticeTurn !== null);
+      assert.equal(runner.isAutoTurn(lead.id), true);
+
+      // handlers stub isAutoTurn false, so only the runner's own check refuses.
+      await assertBlocked(args);
+      assert.equal(runner.getPendingPermission(lead.id), null, "no fresh card: the approval is kept");
+
+      // The queued sign-off resume is a human turn; it resets the chain.
+      endNoticeTurn();
+      await waitFor(() => !runner.isAutoTurn(lead.id) && !runner.isRunning(lead.id));
+      const result = await handlers.thread_merge(args);
+      assert.equal(result.merged, true);
+      assert.equal(landed(), true);
+    } finally {
+      if (prevAgentCmd === undefined) delete process.env.CODER_AGENT_CMD;
+      else process.env.CODER_AGENT_CMD = prevAgentCmd;
+    }
   });
 });
