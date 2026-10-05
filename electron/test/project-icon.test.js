@@ -20,6 +20,7 @@ const {
   normalizeIconPath,
   clearIconCache,
   setGitCommonDirFn,
+  mainWorkTree,
   ICON_EXTENSIONS,
 } = require("../projectIcon.js");
 const { Store } = require("../store.js");
@@ -291,6 +292,33 @@ describe("projectIcon git worktree integration", () => {
       fs.realpathSync(found),
       fs.realpathSync(path.join(main, "public/favicon.png")),
     );
+  });
+
+  it("finds the common dir from disk, matching git (#1475)", () => {
+    const main = path.join(tmpDir, "repo");
+    fs.mkdirSync(main);
+    git(main, ["init"]);
+    git(main, ["-c", "user.email=t@e", "-c", "user.name=T", "commit", "--allow-empty", "-m", "init"]);
+    const wt = path.join(tmpDir, "wt");
+    git(main, ["worktree", "add", "--detach", wt]);
+    const sub = path.join(main, "pkg", "inner");
+    fs.mkdirSync(sub, { recursive: true });
+    for (const cwd of [main, wt, sub]) {
+      assert.equal(fs.realpathSync(mainWorkTree(cwd)), fs.realpathSync(main), cwd);
+    }
+    const plain = path.join(tmpDir, "plain");
+    fs.mkdirSync(plain);
+    assert.equal(mainWorkTree(plain), plain);
+  });
+
+  it("does not share a cache entry between two checkouts of one repo", () => {
+    const main = path.join(tmpDir, "main");
+    const wt = path.join(tmpDir, "wt");
+    fs.mkdirSync(main);
+    write(wt, "icon.png", PNG_1X1);
+    setGitCommonDirFn(() => path.join(main, ".git"));
+    assert.ok(iconDataUrlFor(wt));
+    assert.equal(iconDataUrlFor(main), null);
   });
 });
 
