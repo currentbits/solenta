@@ -120,6 +120,7 @@ import { ScopeMenu } from "./sidebar/ScopeMenu";
 import { BatchBar } from "./sidebar/BatchBar";
 import { TrashedShelf } from "./sidebar/TrashedShelf";
 import { RemoveProjectConfirm } from "./sidebar/RemoveProjectConfirm";
+import { InsightsMenu } from "./sidebar/InsightsMenu";
 import styles from "./Sidebar.module.css";
 
 export { displayWorkerTitle, statusPulseFor } from "./sidebar/status";
@@ -2641,86 +2642,19 @@ export const Sidebar = memo(function Sidebar({
           <span className={styles.srOnly}>Review</span>
         </button>
         {moreDestinations.length > 0 && (
-          <span
-            className={styles.filterMenuHost}
-            ref={moreHostRef}
-            onBlur={onMoreBlur}
-          >
-            <button
-              type="button"
-              ref={moreTriggerRef}
-              className={`${styles.viewNavBtn} ${styles.viewNavMore}`}
-              data-app-more=""
-              title="Insights: activity, usage, automations and more"
-              aria-haspopup="menu"
-              aria-expanded={moreOpen}
-              aria-controls="app-more-menu"
-              aria-current={moreCurrentLabel ? "page" : undefined}
-              data-active={moreCurrentLabel ? "true" : undefined}
-              aria-label={
-                moreCurrentLabel ? `Insights, ${moreCurrentLabel}` : undefined
-              }
-              onClick={toggleMore}
-              onKeyDown={onMoreKeyDown}
-            >
-              <Icon size={15}>
-                <path d="M4 20V10M10 20V4M16 20v-7M22 20H2" />
-              </Icon>
-              <span className={styles.srOnly}>Insights</span>
-            </button>
-            {moreOpen && (
-              <div
-                id="app-more-menu"
-                className={`${styles.menu} ${styles.appMoreMenu} ${styles.appMoreMenuUp}`}
-                role="menu"
-                aria-label="Insights"
-                data-app-more-menu=""
-                onKeyDown={onMoreKeyDown}
-              >
-                {moreCurrentLabel ? (
-                  <button
-                    type="button"
-                    className={styles.menuItem}
-                    role="menuitem"
-                    data-view-nav="threads"
-                    onClick={() => {
-                      closeMore(true);
-                      onOpenThreads?.();
-                    }}
-                  >
-                    Back to threads
-                  </button>
-                ) : null}
-                {moreDestinations.map((dest) => {
-                  const current = activeView === dest.view;
-                  return (
-                    <button
-                      key={dest.id}
-                      type="button"
-                      className={styles.menuItem}
-                      role="menuitem"
-                      data-view-nav={dest.id}
-                      data-active={current ? "true" : undefined}
-                      aria-current={current ? "page" : undefined}
-                      onClick={() => {
-                        closeMore(true);
-                        dest.run();
-                      }}
-                    >
-                      {dest.label}
-                      {current && (
-                        <span className={styles.filterCheck}>
-                          <Icon size={12}>
-                            <path d="M5 12.5 9 16.5 19 7.5" />
-                          </Icon>
-                        </span>
-                      )}
-                    </button>
-                  );
-                })}
-              </div>
-            )}
-          </span>
+          <InsightsMenu
+            moreHostRef={moreHostRef}
+            moreTriggerRef={moreTriggerRef}
+            onMoreBlur={onMoreBlur}
+            moreOpen={moreOpen}
+            moreCurrentLabel={moreCurrentLabel}
+            toggleMore={toggleMore}
+            onMoreKeyDown={onMoreKeyDown}
+            closeMore={closeMore}
+            onOpenThreads={onOpenThreads}
+            moreDestinations={moreDestinations}
+            activeView={activeView}
+          />
         )}
           </nav>
           {memoryEntries != null && (
