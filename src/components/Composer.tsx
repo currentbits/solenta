@@ -113,6 +113,7 @@ import { AttachmentChip } from "./composer/AttachmentChip";
 import { useComposerAttachments } from "./composer/useComposerAttachments";
 import { useComposerVim } from "./composer/useComposerVim";
 import { useMentionMenu } from "./composer/useMentionMenu";
+import { useOptionsPopoverPlacement } from "./composer/useOptionsPopoverPlacement";
 import { useSlashMenu } from "./composer/useSlashMenu";
 import { useEscapeInterrupt } from "./composer/useEscapeInterrupt";
 import { useTranscriptViewShortcuts } from "./composer/useTranscriptViewShortcuts";
@@ -826,38 +827,7 @@ export const Composer = memo(function Composer({
   // and restore would fight closeModelPicker / Escape-back.
   useModalFocus(modelOpen, modelPopoverRef, false);
   useModalFocus(optionsOpen, optionsPopoverRef);
-  // The pill wraps with the others, so its left edge is not the window's.
-  // Keep the panel on screen; the panel itself scrolls.
-  useLayoutEffect(() => {
-    if (!optionsOpen) return;
-    const pop = optionsPopoverRef.current;
-    const anchor = optionsWrapRef.current;
-    if (!pop || !anchor) return;
-    const place = () => {
-      const rect = anchor.getBoundingClientRect();
-      const margin = 8;
-      const width = Math.min(
-        320,
-        Math.max(160, window.innerWidth - margin * 2),
-      );
-      let left = 0;
-      if (rect.left + width > window.innerWidth - margin) {
-        left = window.innerWidth - margin - width - rect.left;
-      }
-      if (rect.left + left < margin) left = margin - rect.left;
-      const above = rect.top - margin;
-      pop.style.left = `${Math.round(left)}px`;
-      pop.style.width = `${Math.round(width)}px`;
-      pop.style.maxHeight = `${Math.round(Math.min(420, Math.max(0, above)))}px`;
-    };
-    place();
-    window.addEventListener("resize", place);
-    window.addEventListener("scroll", place, true);
-    return () => {
-      window.removeEventListener("resize", place);
-      window.removeEventListener("scroll", place, true);
-    };
-  }, [optionsOpen]);
+  useOptionsPopoverPlacement(optionsOpen, optionsPopoverRef, optionsWrapRef);
   useEffect(() => {
     if (!optionsOpen || !bestOfFocusRef.current) return;
     bestOfFocusRef.current = false;
