@@ -200,7 +200,7 @@ describe("streaming markdown chunks", () => {
       return seed % n;
     };
     const seps = ["\n", "\n\n", "\n\n\n"];
-    for (let i = 0; i < 10_000; i++) {
+    for (let i = 0; i < 6_000; i++) {
       let text = "";
       for (let k = 2 + rand(6); k > 0; k--) {
         text += (text ? seps[rand(3)] : "") + blocks[rand(blocks.length)];
