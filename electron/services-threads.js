@@ -12,6 +12,11 @@ const {
   honouredPermissionModes,
 } = require("./providers.js");
 const { resolveSandbox } = require("./sandbox.js");
+const {
+  messagesInMemory,
+  stampLastActivity,
+  backfillLastActivity,
+} = require("./thread-last-activity.js");
 const { scheduleImagePruneFromStore } = require("./image-store.js");
 const {
   PERMISSION_MODES,
@@ -1044,7 +1049,8 @@ const listThreadsCache = new WeakMap();
  * @param {object} row
  */
 function listRow(row) {
-  const { hypotheses, suggestions, ...rest } = row;
+  // lastActivity is threads:summaries-only; keep it off the full-list push.
+  const { hypotheses, suggestions, lastActivity, ...rest } = row;
   return rest;
 }
 
@@ -1095,13 +1101,19 @@ function listThreads(store) {
  *
  * Optional input scopes the walk BEFORE any message read (#1398): projectId
  * keeps one project's rows, threadIds keeps exact ids. Omitted = all rows.
+ *
+ * Never reads a shard (#1475): in-memory transcripts are read (and restamped)
+ * directly; otherwise the row's persisted lastActivity is used. Rows with no
+ * snippet yet return null now and are backfilled async for the next poll.
  * @param {import('./store').Store} store
  * @param {{ projectId?: string, threadIds?: string[] }} [input]
  */
 function threadSummaries(store, input) {
   const projectId = input && typeof input.projectId === "string" ? input.projectId : null;
   const ids = input && Array.isArray(input.threadIds) ? new Set(input.threadIds) : null;
-  return store
+  /** @type {string[]} */
+  const unknown = [];
+  const rows = store
     .getThreads()
     .filter(
       (t) =>
@@ -1111,7 +1123,10 @@ function threadSummaries(store, input) {
         (!ids || ids.has(t.id)),
     )
     .map((t) => {
-      const last = store.getLastAssistantMessage(t.id);
+      let last = null;
+      if (messagesInMemory(store, t.id)) last = stampLastActivity(store, t.id);
+      else if (t.lastActivity !== undefined) last = t.lastActivity;
+      else unknown.push(t.id);
       return {
         id: t.id,
         title: t.title,
@@ -1124,14 +1139,11 @@ function threadSummaries(store, input) {
         stoppedAt: t.stoppedAt ?? null,
         awaitingInput: t.awaitingInput === true,
         stalledAt: t.stalledAt ?? null,
-        lastActivity: last
-          ? {
-              text: String(last.text).split(/\r?\n/, 1)[0].trim().slice(0, 200),
-              at: Number(last.createdAt) || t.updatedAt,
-            }
-          : null,
+        lastActivity: last ? { text: last.text, at: last.at || t.updatedAt } : null,
       };
     });
+  if (unknown.length) backfillLastActivity(store, unknown);
+  return rows;
 }
 
 /**
