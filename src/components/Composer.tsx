@@ -58,7 +58,6 @@ import { useEscapeClose } from "../useEscapeClose";
 import { useModalFocus } from "../useModalFocus";
 import { ProviderMark } from "./ProviderMark";
 import { hintFor } from "./onboarding/installHints";
-import { applyMention, getMentionQuery, type MentionQuery } from "../mention";
 import { ArchiveToast } from "./ArchiveToast";
 import type { ReplyTarget } from "../replyContext";
 import { excerptReply, wrapReplyContext } from "../replyContext";
@@ -118,6 +117,7 @@ import { formatSpeechModelSize } from "../speechDraft";
 import { AttachmentChip } from "./composer/AttachmentChip";
 import { useComposerAttachments } from "./composer/useComposerAttachments";
 import { useComposerVim } from "./composer/useComposerVim";
+import { useMentionMenu } from "./composer/useMentionMenu";
 import { usePasteCards } from "./composer/usePasteCards";
 import {
   speechMicLabel,
@@ -557,16 +557,23 @@ export const Composer = memo(function Composer({
   const returnFocusToOptions = useRef(false);
   const modelListId = useId();
 
-  /** @-mention popup state; `mention` null means closed. */
-  const [mention, setMention] = useState<MentionQuery | null>(null);
-  const [mentionFiles, setMentionFiles] = useState<string[]>([]);
-  const [mentionIndex, setMentionIndex] = useState(0);
-  const mentionTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  /** Stale-response guard: only the latest lookup may paint the popup. */
-  const mentionSeq = useRef(0);
-  const mentionOpen =
-    mention != null &&
-    (mentionFiles.length > 0 || Boolean(onPickMentionFolder));
+  const {
+    mentionFiles,
+    mentionIndex,
+    setMentionIndex,
+    mentionOpen,
+    closeMention,
+    refreshMention,
+    acceptMention,
+    browseMentionFolder,
+  } = useMentionMenu({
+    textareaRef,
+    onListFiles,
+    onPickMentionFolder,
+    disabled,
+    writeDraft,
+    setLocalError,
+  });
 
   /** `/` command popup: `command` null means closed. */
   const [command, setCommand] = useState<string | null>(null);
@@ -657,78 +664,6 @@ export const Composer = memo(function Composer({
       void cancelDictationRef.current();
     };
   }, [threadId, syncHasPrompt]);
-
-  const closeMention = useCallback(() => {
-    if (mentionTimer.current) {
-      clearTimeout(mentionTimer.current);
-      mentionTimer.current = null;
-    }
-    setMention((prev) => (prev == null ? prev : null));
-    setMentionFiles((prev) => (prev.length === 0 ? prev : []));
-    setMentionIndex((prev) => (prev === 0 ? prev : 0));
-  }, []);
-
-  /** Recompute the active @token from the live textarea and (re)fetch files. */
-  const refreshMention = useCallback(() => {
-    const el = textareaRef.current;
-    if (!el || !onListFiles || disabled) {
-      closeMention();
-      return;
-    }
-    const q = getMentionQuery(el.value, el.selectionStart ?? el.value.length);
-    if (!q) {
-      closeMention();
-      return;
-    }
-    setMention((prev) =>
-      prev && prev.start === q.start && prev.query === q.query ? prev : q,
-    );
-    if (mentionTimer.current) clearTimeout(mentionTimer.current);
-    const seq = ++mentionSeq.current;
-    mentionTimer.current = setTimeout(() => {
-      onListFiles(q.query)
-        .then((files) => {
-          if (mentionSeq.current !== seq) return;
-          setMentionFiles(files);
-          setMentionIndex(0);
-        })
-        .catch(() => {
-          if (mentionSeq.current !== seq) return;
-          setMentionFiles([]);
-        });
-    }, 150);
-  }, [onListFiles, disabled, closeMention]);
-
-  const acceptMention = useCallback(
-    (path: string) => {
-      const el = textareaRef.current;
-      if (!el || !mention) return;
-      const next = applyMention(
-        el.value,
-        el.selectionStart ?? el.value.length,
-        mention.start,
-        path,
-      );
-      writeDraft(next.text, next.caret);
-      closeMention();
-    },
-    [mention, closeMention, writeDraft],
-  );
-
-  const browseMentionFolder = useCallback(() => {
-    if (!onPickMentionFolder || disabled) return;
-    void onPickMentionFolder()
-      .then((path) => {
-        if (path) acceptMention(path);
-      })
-      .catch((err) => {
-        const msg =
-          err instanceof Error && err.message
-            ? err.message
-            : "Failed to pick folder";
-        setLocalError(msg);
-      });
-  }, [onPickMentionFolder, disabled, acceptMention]);
 
   /**
    * Focus the input when a thread is opened (mount, or ThreadView swapping
