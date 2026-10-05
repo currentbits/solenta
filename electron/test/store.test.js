@@ -2859,6 +2859,63 @@ describe("Store", () => {
       assert.deepEqual(envelope.workLogByThread, {});
       assert.equal(JSON.stringify(envelope).includes("w-new"), false);
     });
+
+    it("reads a work-log shard only when that thread's log is first read (#1475)", () => {
+      const dir = path.join(tmpDir, "worklogs");
+      fs.mkdirSync(dir, { recursive: true });
+      for (const id of ["t-a", "t-b", "t-c"]) {
+        fs.writeFileSync(
+          path.join(dir, `${id}.json`),
+          JSON.stringify(workLogItems(2, id)),
+        );
+      }
+      fs.writeFileSync(
+        filePath,
+        JSON.stringify({
+          projects: [],
+          threads: ["t-a", "t-b", "t-c"].map((id) => ({
+            id,
+            projectId: "p1",
+            title: id,
+            status: "idle",
+            createdAt: 1,
+            updatedAt: 2,
+          })),
+          messagesByThread: {},
+          workLogByThread: {},
+        }),
+        "utf8",
+      );
+      const reads = [];
+      const origRead = fs.readFileSync;
+      fs.readFileSync = (p, ...rest) => {
+        if (String(p).includes(`${path.sep}worklogs${path.sep}`)) reads.push(path.basename(String(p)));
+        return origRead(p, ...rest);
+      };
+      try {
+        const store = new Store(filePath);
+        assert.deepEqual(reads, [], "constructor must not read work-log shards");
+        const map = store.data.workLogByThread;
+        assert.deepEqual(Object.keys(map).sort(), ["t-a", "t-b", "t-c"]);
+        assert.equal("t-b" in map, true);
+        assert.deepEqual(reads, [], "keys and `in` must not read shards");
+        assert.equal(store.getWorkLog("t-b")[1].id, "t-b1");
+        assert.equal(store.getWorkLog("t-b").length, 2);
+        assert.deepEqual(reads, ["t-b.json"]);
+        assert.deepEqual(store.getWorkLog("t-missing"), []);
+        store.appendWorkLog("t-a", { id: "new", runId: "r", label: "x", done: false, timestamp: 9 });
+        store.saveNow();
+        assert.deepEqual(reads.sort(), ["t-a.json", "t-b.json"]);
+      } finally {
+        fs.readFileSync = origRead;
+      }
+      const reloaded = new Store(filePath);
+      assert.deepEqual(
+        reloaded.getWorkLog("t-a").map((w) => w.id),
+        ["t-a0", "t-a1", "new"],
+      );
+      assert.equal(reloaded.getWorkLog("t-c")[0].id, "t-c0");
+    });
   });
 
   it("persists run artifacts, retains archive evidence, and removes deleted threads", () => {

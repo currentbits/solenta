@@ -825,10 +825,10 @@ class Store {
   }
 
   /**
-   * Load worklogs/<id>.json over the envelope map. Existing shards win
-   * against a leftover inline copy (interrupted migrate). Keeps arrays in
-   * memory — activity and crash recovery need them, and a 500-row cap is
-   * small compared to transcripts.
+   * Index worklogs/<id>.json without reading them (#1475): the proxy parses
+   * a shard on first access. Existing shards win against a leftover inline
+   * copy (interrupted migrate). Once read, arrays stay in memory — a
+   * 500-row cap is small compared to transcripts.
    * @param {object} data
    */
   _adoptWorkLogs(data) {
@@ -840,21 +840,33 @@ class Store {
         : {};
     this._inlineWorkLogIds = new Set(Object.keys(map));
     this._scanWorkLogShards();
-    for (const id of [...this._workLogShards]) {
-      const raw = this._readWorkLogFile(id);
-      if (raw == null) continue;
-      let val;
-      try {
-        val = JSON.parse(raw);
-      } catch {
-        val = [];
-      }
-      if (!Array.isArray(val)) val = [];
-      map[id] = val;
-    }
+    for (const id of this._workLogShards) delete map[id];
     data.workLogByThread = map;
     this._attachWorkLogProxy(data);
     this._workLogsSplit = this._inlineWorkLogIds.size === 0;
+  }
+
+  /**
+   * Parse one thread's work-log shard into the in-memory map.
+   * @param {Record<string, unknown>} map proxy target
+   * @param {string} threadId
+   * @returns {unknown[] | undefined}
+   */
+  _hydrateWorkLog(map, threadId) {
+    if (Object.prototype.hasOwnProperty.call(map, threadId)) {
+      return /** @type {unknown[]} */ (map[threadId]);
+    }
+    const raw = this._readWorkLogFile(threadId);
+    if (raw == null) return undefined;
+    let val;
+    try {
+      val = JSON.parse(raw);
+    } catch {
+      val = [];
+    }
+    if (!Array.isArray(val)) val = [];
+    map[threadId] = val;
+    return val;
   }
 
   /**
@@ -869,6 +881,39 @@ class Store {
         ? data.workLogByThread
         : {};
     data.workLogByThread = new Proxy(target, {
+      get(t, prop, recv) {
+        if (typeof prop !== "string") return Reflect.get(t, prop, recv);
+        if (prop === "constructor" || prop === "__proto__" || prop === "toJSON") {
+          return Reflect.get(t, prop, recv);
+        }
+        return store._hydrateWorkLog(t, prop);
+      },
+      has(t, prop) {
+        if (typeof prop !== "string") return prop in t;
+        return (
+          Object.prototype.hasOwnProperty.call(t, prop) ||
+          store._workLogShards.has(prop)
+        );
+      },
+      ownKeys(t) {
+        const keys = new Set(Object.keys(t));
+        for (const k of store._workLogShards) keys.add(k);
+        return [...keys];
+      },
+      getOwnPropertyDescriptor(t, prop) {
+        if (typeof prop !== "string") {
+          return Reflect.getOwnPropertyDescriptor(t, prop);
+        }
+        const own = Object.prototype.hasOwnProperty.call(t, prop);
+        if (!own && !store._workLogShards.has(prop)) return undefined;
+        // Do not read the shard: Object.keys / hasOwnProperty stay cheap.
+        return {
+          enumerable: true,
+          configurable: true,
+          writable: true,
+          value: own ? t[prop] : undefined,
+        };
+      },
       set(t, prop, value) {
         if (typeof prop !== "string") return Reflect.set(t, prop, value);
         t[prop] = value;
