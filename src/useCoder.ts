@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { isCiWorkflowBlockMessage } from "./blastRadius";
 import type {
   ActivityItem,
   AppSettings,
@@ -20,7 +19,6 @@ import type {
   TerminalState,
   DiffResult,
   ReviewContext,
-  ReviewSymbol,
   GitSyncInfo,
   GitRepoInfo,
   GitPullResult,
@@ -102,15 +100,11 @@ import type {
   WorkSuggestionStatus,
 } from "./shared/ipc";
 import { resolveCoderApi } from "./coderApi";
-import { isWebMode } from "./shared/wire";
-import { nextVisibleThreadId } from "./threadSelection";
 import {
   mergeThreadPatch,
   patchThreadList,
   reconcileThreadList,
 } from "./threadPatch";
-import { parseBtwCommand } from "./btw";
-import { parseFeedbackCommand } from "./feedback";
 import type { DroppedFolder } from "./dropFiles";
 import type { EditorId, EditorOption, ProviderUsage } from "./shared/ipc";
 import {
@@ -120,6 +114,19 @@ import {
   saveCachedThreadDetail,
 } from "./bootSnapshot";
 import { createThreadDetailCache } from "./threadDetailCache";
+import { errorMessage } from "./coder/errorMessage";
+import { useCoderMemory } from "./coder/useCoderMemory";
+import { useCoderAgentTools } from "./coder/useCoderAgentTools";
+import { useCoderInsights } from "./coder/useCoderInsights";
+import { useCoderRepoTools } from "./coder/useCoderRepoTools";
+import { useCoderProjects } from "./coder/useCoderProjects";
+import { useCoderUpdates } from "./coder/useCoderUpdates";
+import { useCoderWorkflows } from "./coder/useCoderWorkflows";
+import { useCoderGitHub } from "./coder/useCoderGitHub";
+import { useCoderWorkspace } from "./coder/useCoderWorkspace";
+import { useCoderThreadActions } from "./coder/useCoderThreadActions";
+import { useCoderRuns } from "./coder/useCoderRuns";
+import { useCoderThreadRemoval } from "./coder/useCoderThreadRemoval";
 
 const STATUS_POLL_MS = 60_000;
 /** Debounce on the localStorage boot-snapshot writes (#364). */
@@ -127,163 +134,12 @@ const BOOT_SNAPSHOT_DEBOUNCE_MS = 500;
 /** Renderer-side GitHub releases poll. One GET; 60 unauth req/hour is plenty. */
 export const UPDATE_CHECK_INTERVAL_MS = 60 * 60 * 1000;
 
-function readFileAsDataUrl(file: File): Promise<string | null> {
-  return new Promise((resolve) => {
-    const reader = new FileReader();
-    reader.onload = () =>
-      resolve(typeof reader.result === "string" ? reader.result : null);
-    reader.onerror = () => resolve(null);
-    reader.readAsDataURL(file);
-  });
-}
-
-/** Same extensions native classifyPaths treats as kind=image. */
-const WEB_IMAGE_EXTS = new Set([
-  "png",
-  "jpg",
-  "jpeg",
-  "gif",
-  "webp",
-  "bmp",
-  "svg",
-]);
-
-function isWebImageFile(file: File): boolean {
-  const dot = file.name.lastIndexOf(".");
-  const ext = dot >= 0 ? file.name.slice(dot + 1).toLowerCase() : "";
-  if (ext) return WEB_IMAGE_EXTS.has(ext);
-  return file.type.toLowerCase().startsWith("image/");
-}
-
-async function filesToAttachments(
-  files: File[],
-  save: {
-    image: (dataUrl: string) => Promise<AttachmentInfo | null>;
-    file: (name: string, dataUrl: string) => Promise<AttachmentInfo | null>;
-  },
-): Promise<AttachmentInfo[]> {
-  const out: AttachmentInfo[] = [];
-  for (const file of files) {
-    const dataUrl = await readFileAsDataUrl(file);
-    if (!dataUrl) continue;
-    const attachment = isWebImageFile(file)
-      ? await save.image(dataUrl)
-      : await save.file(file.name, dataUrl);
-    if (attachment) out.push(attachment);
-  }
-  return out;
-}
-
-/**
- * Web file picker. No accept and no webkitdirectory: folders are a
- * separate chip (showDirectoryPicker / saveFolder). No `accept=image/*`
- * so Spark can attach text files (#1173). Composer still drops kind=image
- * on text-only models.
- */
-function pickWebFiles(): Promise<File[]> {
-  return new Promise((resolve) => {
-    const input = document.createElement("input");
-    input.type = "file";
-    input.multiple = true;
-    let settled = false;
-    const finish = (files: File[]) => {
-      if (settled) return;
-      settled = true;
-      input.remove();
-      resolve(files);
-    };
-    input.addEventListener("change", () => finish(Array.from(input.files ?? [])));
-    input.addEventListener("cancel", () => finish([]));
-    input.click();
-  });
-}
-
-type WebFolderFile = { relativePath: string; dataUrl: string };
-
-type WebDirEntry = {
-  kind: string;
-  getFile?: () => Promise<File>;
-  entries?: () => AsyncIterableIterator<[string, WebDirEntry]>;
-};
-
-type WebDirHandle = {
-  name: string;
-  entries: () => AsyncIterableIterator<[string, WebDirEntry]>;
-};
-
-async function readDirectoryHandle(
-  handle: WebDirHandle,
-  prefix = "",
-): Promise<WebFolderFile[]> {
-  const out: WebFolderFile[] = [];
-  for await (const [name, entry] of handle.entries()) {
-    if (entry.kind === "file" && entry.getFile) {
-      const file = await entry.getFile();
-      const dataUrl = await readFileAsDataUrl(file);
-      if (dataUrl) out.push({ relativePath: `${prefix}${name}`, dataUrl });
-      continue;
-    }
-    if (entry.kind === "directory" && typeof entry.entries === "function") {
-      const nestedEntries = entry.entries.bind(entry);
-      out.push(
-        ...(await readDirectoryHandle(
-          { name, entries: nestedEntries },
-          `${prefix}${name}/`,
-        )),
-      );
-    }
-  }
-  return out;
-}
-
-async function pickWebFolder(): Promise<{
-  name: string;
-  files: WebFolderFile[];
-} | null> {
-  const picker = (
-    window as Window & { showDirectoryPicker?: () => Promise<WebDirHandle> }
-  ).showDirectoryPicker;
-  if (typeof picker !== "function") return null;
-  try {
-    const handle = await picker();
-    return { name: handle.name, files: await readDirectoryHandle(handle) };
-  } catch {
-    return null;
-  }
-}
-
 export type WorkflowSaveInput = Omit<WorkflowTemplateInfo, "id" | "builtin"> & {
   id?: string;
 };
 
-function upsertWorkflow(
-  list: WorkflowTemplateInfo[],
-  saved: WorkflowTemplateInfo,
-): WorkflowTemplateInfo[] {
-  const idx = list.findIndex((w) => w.id === saved.id);
-  if (idx >= 0) {
-    const next = list.slice();
-    next[idx] = saved;
-    return next;
-  }
-  return [...list, saved];
-}
-
 function resolveApi(): CoderApi {
   return resolveCoderApi();
-}
-
-function errorMessage(err: unknown): string {
-  const raw = err instanceof Error && err.message ? err.message : String(err);
-  for (const marker of [
-    "MERGE_CONFLICT:",
-    "WORKTREE_DIRTY:",
-    "WORKTREE_REBASE_CONFLICT:",
-  ]) {
-    const at = raw.indexOf(marker);
-    if (at !== -1) return raw.slice(at + marker.length).trim();
-  }
-  return raw;
 }
 
 /** A follow-up typed during a run, waiting for that run to land. */
@@ -1254,43 +1110,11 @@ export function useCoder(): UseCoderResult {
     }
   }, [api]);
 
-  // A rejected update call used to be an unhandled rejection: the spinner
-  // stopped, nothing was said, and a stale "Up to date." stayed on screen.
-  // The updater's own failures already come back as state:"error", so reuse
-  // that shape for transport/handler failures instead of a second channel.
-  const failUpdate = useCallback((err: unknown) => {
-    setUpdateStatus((prev) => ({
-      channel: prev?.channel ?? null,
-      tag: prev?.tag ?? null,
-      url: prev?.url ?? null,
-      state: "error",
-      error: err instanceof Error && err.message ? err.message : String(err),
-    }));
-  }, []);
-
-  const applyUpdate = useCallback(async () => {
-    try {
-      await api.app.applyUpdate();
-    } catch (err) {
-      failUpdate(err);
-    }
-  }, [api, failUpdate]);
-
-  const checkUpdate = useCallback(async () => {
-    try {
-      setUpdateStatus(await api.app.checkUpdate());
-    } catch (err) {
-      failUpdate(err);
-    }
-  }, [api, failUpdate]);
-
-  const downloadUpdate = useCallback(async () => {
-    try {
-      setUpdateStatus(await api.app.downloadUpdate());
-    } catch (err) {
-      failUpdate(err);
-    }
-  }, [api, failUpdate]);
+  const {
+    applyUpdate,
+    checkUpdate,
+    downloadUpdate,
+  } = useCoderUpdates({ api, setUpdateStatus });
 
   // Auto-update: check on boot, then every hour. The check only asks the
   // release API — downloading and swapping the bundle waits for a user click.
@@ -1550,1479 +1374,126 @@ export function useCoder(): UseCoderResult {
     setDetailRetryNonce((n) => n + 1);
   }, []);
 
-  const addProject = useCallback(async (
-    path?: string,
-    opts?: { remoteHost?: string; remotePath?: string },
-  ) => {
-    try {
-      const trimmed = typeof path === "string" ? path.trim() : "";
-      const remoteHost = opts?.remoteHost?.trim() || "";
-      const remotes = remoteHost
-        ? {
-            remoteHost,
-            remotePath: opts?.remotePath?.trim() || undefined,
-          }
-        : undefined;
-      // Native folder picker cannot run without Electron. Web callers must
-      // pass a path (the path-input modal). Never fall through to addViaDialog.
-      if (isWebMode() && !trimmed && !remoteHost) return null;
-      const p = trimmed || remoteHost
-        ? await api.projects.add(trimmed || remotes?.remotePath || "", remotes)
-        : await api.projects.addViaDialog();
-      if (p) {
-        setProjects((prev) => {
-          if (prev.some((x) => x.id === p.id)) return prev;
-          return [...prev, p];
-        });
-        setError(null);
-      }
-      return p;
-    } catch (err) {
-      setError({ scope: "project", message: errorMessage(err) });
-      return null;
-    }
-  }, [api]);
+  const {
+    addProject,
+    createProject,
+    ensureScratchProject,
+    updateProject,
+  } = useCoderProjects({ api, setProjects, setError });
 
-  const createProject = useCallback(async (input: CreateProjectInput) => {
-    try {
-      const p = await api.projects.create({
-        name: input.name.trim(),
-        parentDir: input.parentDir.trim(),
-      });
-      setProjects((prev) => {
-        if (prev.some((x) => x.id === p.id)) return prev;
-        return [...prev, p];
-      });
-      setError(null);
-      return p;
-    } catch (err) {
-      setError({ scope: "project", message: errorMessage(err) });
-      return null;
-    }
-  }, [api]);
+  const {
+    createThread,
+    forkThread,
+    startRun,
+    rewindAndResubmit,
+  } = useCoderRuns({
+    api,
+    projects,
+    settings,
+    selectedProjectId,
+    selectedThreadId,
+    setSelectedThreadId,
+    setDetail,
+    setError,
+    selectedRef,
+    threadsRef,
+    applyThreads,
+  });
 
-  const ensureScratchProject = useCallback(async () => {
-    try {
-      const p = await api.projects.ensureScratch();
-      setProjects((prev) => {
-        if (prev.some((x) => x.id === p.id)) return prev;
-        return [...prev, p];
-      });
-      setError(null);
-      return p;
-    } catch (err) {
-      setError({ scope: "project", message: errorMessage(err) });
-      return null;
-    }
-  }, [api]);
+  const {
+    refreshWorkflows,
+    refreshAutomations,
+    addAutomation,
+    updateAutomation,
+    removeAutomation,
+    runAutomationNow,
+    listAutomationRuns,
+    startWorkflowRun,
+    retryWorkflowAgent,
+    saveWorkflow,
+    removeWorkflow,
+  } = useCoderWorkflows({
+    api,
+    selectedThreadId,
+    setWorkflows,
+    setWorkflowListError,
+    setAutomations,
+    setDetail,
+    setError,
+    selectedRef,
+    threadsRef,
+    applyThreads,
+  });
 
-  const updateProject = useCallback(async (input: ProjectUpdateInput) => {
-    try {
-      const updated = await api.projects.update(input);
-      setProjects((prev) =>
-        prev.map((p) => (p.id === updated.id ? updated : p)),
-      );
-      setError(null);
-      return updated;
-    } catch (err) {
-      setError({ scope: "project", message: errorMessage(err) });
-      return null;
-    }
-  }, [api]);
+  const {
+    stopRun,
+    setPermissionMode,
+    respondPermission,
+    clearQuestion,
+    setProvider,
+    setReasoningEffort,
+    setWebSearch,
+    setArchived,
+    setSettled,
+    setPinned,
+    setSnoozed,
+    setTags,
+    setThreadProject,
+    setMuted,
+    setEjected,
+    setCrossThreadInbound,
+    setQuotaWaitAutoResume,
+    resumeQuotaWait,
+    renameThread,
+    setNotes,
+    setMessagePins,
+    setBaseBranch,
+    setPendingWorktree,
+    refreshWorkerSnapshot,
+    resolveSuggestion,
+    setFeltEstimate,
+    startSpec,
+    stopSpec,
+    reviewSpec,
+    specArtifact,
+    dispatchSpec,
+    convergeSpec,
+    startTeach,
+    stopTeach,
+    startAsk,
+    stopAsk,
+    dismissBtw,
+    promoteBtw,
+    requestTeachReview,
+  } = useCoderThreadActions({
+    api,
+    selectedThreadId,
+    setSelectedThreadId,
+    setDetail,
+    setError,
+    selectedRef,
+    threadsRef,
+    applyThreads,
+  });
 
-  const createThread = useCallback(
-    async (
-      title = "New Thread",
-      projectId?: string,
-      opts?: {
-        worktree?: boolean;
-        orchestrate?: boolean;
-        teach?: boolean;
-        ask?: boolean;
-        issueNumber?: number | null;
-        baseBranch?: string | null;
-        inheritProvider?: boolean;
-      },
-    ) => {
-      const pid = projectId ?? selectedProjectId;
-      if (!pid) return null;
-      // Settings can default new threads into a worktree or into an
-      // orchestrator; explicit opts win. Both are local-only, so remote
-      // projects always get plain threads. An orchestrator never holds a
-      // worktree itself — its worker does — so it wins over `worktree`.
-      // Ask (issue #392) wins over both: a Q&A thread must never grow a
-      // worktree or fork a worker, even when those defaults are on.
-      const project = projects.find((p) => p.id === pid);
-      const local = !project?.remoteHost;
-      const ask = opts?.ask === true;
-      const orchestrate =
-        !ask &&
-        (opts?.orchestrate ?? (settings?.defaultOrchestrate === true && local));
-      const worktree =
-        !ask &&
-        !orchestrate &&
-        (opts?.worktree ?? (settings?.defaultWorktree === true && local));
-      // Inherit provider+model from the currently selected thread when present.
-      const inheritFrom = selectedRef.current
-        ? threadsRef.current.find((x) => x.id === selectedRef.current)
-        : undefined;
-      let t;
-      try {
-        t = await api.threads.create({
-          projectId: pid,
-          title,
-          ...(worktree ? { worktree: true } : {}),
-          ...(orchestrate ? { orchestrate: true } : {}),
-          ...(opts?.teach ? { teach: true } : {}),
-          ...(ask ? { ask: true } : {}),
-          ...(opts?.issueNumber != null ? { issueNumber: opts.issueNumber } : {}),
-          ...(opts?.baseBranch ? { baseBranch: opts.baseBranch } : {}),
-        });
-      } catch (err) {
-        setError({ scope: "run", message: errorMessage(err) });
-        return null;
-      }
-      if (opts?.inheritProvider !== false && inheritFrom) {
-        const needsProvider = inheritFrom.provider !== t.provider;
-        const needsModel = inheritFrom.model !== t.model;
-        if (needsProvider || needsModel) {
-          t = await api.threads.setProvider({
-            threadId: t.id,
-            ...(needsProvider ? { provider: inheritFrom.provider } : {}),
-            ...(needsModel || needsProvider
-              ? { model: inheritFrom.model }
-              : {}),
-          });
-        }
-      }
-      const next = threadsRef.current.some((x) => x.id === t.id)
-        ? threadsRef.current.map((x) => (x.id === t.id ? t : x))
-        : [t, ...threadsRef.current];
-      applyThreads(next);
-      selectedRef.current = t.id;
-      setSelectedThreadId(t.id);
-      return t;
-    },
-    [api, selectedProjectId, applyThreads, projects, settings],
-  );
-
-  const forkThread = useCallback(
-    async (
-      threadId: string,
-      opts?: {
-        provider?: string;
-        model?: string | null;
-        worktree?: boolean;
-        select?: boolean;
-      },
-    ) => {
-      try {
-        const input: {
-          threadId: string;
-          provider?: string;
-          model?: string | null;
-          worktree?: boolean;
-        } = { threadId };
-        if (opts && Object.prototype.hasOwnProperty.call(opts, "provider")) {
-          input.provider = opts.provider;
-        }
-        if (opts && Object.prototype.hasOwnProperty.call(opts, "model")) {
-          input.model = opts.model;
-        }
-        if (opts && Object.prototype.hasOwnProperty.call(opts, "worktree")) {
-          input.worktree = opts.worktree;
-        }
-        const t = await api.threads.fork(input);
-        // Same selection path as createThread: prepend row, select new id.
-        const next = threadsRef.current.some((x) => x.id === t.id)
-          ? threadsRef.current.map((x) => (x.id === t.id ? t : x))
-          : [t, ...threadsRef.current];
-        applyThreads(next);
-        if (opts?.select !== false) setSelectedThreadId(t.id);
-        setError(null);
-        return t;
-      } catch (err) {
-        setError({ scope: "run", message: errorMessage(err) });
-        return null;
-      }
-    },
-    [api, applyThreads],
-  );
-
-  const startRun = useCallback(
-    async (
-      prompt: string,
-      targetThreadId?: string,
-      attachments?: AttachmentInfo[],
-      opts?: { fromNotice?: boolean; steer?: boolean; fromQueue?: boolean },
-    ) => {
-      const threadId = targetThreadId ?? selectedThreadId;
-      if (!threadId) return;
-      // Feedback (issue #681): goes to us, not to the model. Intercepted here
-      // with `/btw` so a busy thread does not queue it as the next prompt.
-      const feedbackText = parseFeedbackCommand(prompt);
-      if (feedbackText) {
-        try {
-          // The confirmation message arrives on the `thread:updated` push the
-          // handler broadcasts, so there is nothing to merge here.
-          await api.app.feedback({ text: feedbackText, threadId });
-          setError(null);
-        } catch (err) {
-          setError({ scope: "run", message: errorMessage(err) });
-          throw err;
-        }
-        return;
-      }
-      // Side question (issue #471): intercept BEFORE the busy-queue path so
-      // `/btw` never becomes the next follow-up and never starts a main turn.
-      const btwQuestion = parseBtwCommand(prompt);
-      if (btwQuestion) {
-        try {
-          const updated = await api.threads.btw({
-            threadId,
-            question: btwQuestion,
-          });
-          applyThreads(
-            threadsRef.current.map((t) =>
-              t.id === updated.id ? updated : t,
-            ),
-          );
-          setDetail((prev) =>
-            prev && prev.thread.id === updated.id
-              ? { ...prev, thread: updated }
-              : prev,
-          );
-          setError(null);
-        } catch (err) {
-          setError({ scope: "run", message: errorMessage(err) });
-          throw err;
-        }
-        return;
-      }
-      // Busy thread: hold the prompt instead of bouncing off the backend's
-      // "run already active" (issue #92). Append lives in setQueued so two
-      // mid-run sends cannot race-replace each other across the IPC hop.
-      // Steer (issue #156) injects into the live process instead; if the
-      // run just landed, fall back to queueing.
-      if (
-        threadsRef.current.find((t) => t.id === threadId)?.status === "working"
-      ) {
-        if (opts?.steer) {
-          try {
-            await api.runs.steer({ threadId, prompt, attachments });
-          } catch (err) {
-            const msg = errorMessage(err);
-            if (!/no live run/i.test(msg) && !/not accepting input/i.test(msg)) {
-              setError({ scope: "run", message: msg });
-              throw err;
-            }
-            try {
-              const updated = await api.threads.setQueued({
-                threadId,
-                prompt,
-                attachments,
-              });
-              applyThreads(
-                threadsRef.current.map((t) =>
-                  t.id === updated.id ? updated : t,
-                ),
-              );
-              setDetail((prev) =>
-                prev && prev.thread.id === updated.id
-                  ? { ...prev, thread: updated }
-                  : prev,
-              );
-              setError(null);
-            } catch (queueErr) {
-              setError({ scope: "run", message: errorMessage(queueErr) });
-              throw queueErr;
-            }
-            return;
-          }
-          // Steer already landed. A refresh miss must not look like
-          // undelivered work: Composer would keep the draft and send again.
-          try {
-            const d = await api.threads.get(threadId);
-            if (selectedRef.current !== threadId) return;
-            setDetail(d);
-            applyThreads(
-              threadsRef.current.map((t) =>
-                t.id === d.thread.id ? d.thread : t,
-              ),
-            );
-            setError(null);
-          } catch (err) {
-            setError({ scope: "run", message: errorMessage(err) });
-          }
-          return;
-        }
-        try {
-          const updated = await api.threads.setQueued({
-            threadId,
-            prompt,
-            attachments,
-          });
-          applyThreads(
-            threadsRef.current.map((t) =>
-              t.id === updated.id ? updated : t,
-            ),
-          );
-          setDetail((prev) =>
-            prev && prev.thread.id === updated.id
-              ? { ...prev, thread: updated }
-              : prev,
-          );
-          setError(null);
-        } catch (err) {
-          setError({ scope: "run", message: errorMessage(err) });
-        }
-        return;
-      }
-      try {
-        await api.runs.start({
-          threadId,
-          prompt,
-          attachments,
-          ...(opts?.fromNotice ? { fromNotice: true } : {}),
-          ...(opts?.fromQueue ? { fromQueue: true } : {}),
-        });
-        const d = await api.threads.get(threadId);
-        if (selectedRef.current !== threadId) return;
-        setDetail(d);
-        applyThreads(
-          threadsRef.current.map((t) =>
-            t.id === d.thread.id ? d.thread : t,
-          ),
-        );
-        setError(null);
-      } catch (err) {
-        setError({ scope: "run", message: errorMessage(err) });
-        throw err;
-      }
-    },
-    [api, selectedThreadId, applyThreads],
-  );
-
-  const rewindAndResubmit = useCallback(
-    async (
-      messageId: string,
-      prompt: string,
-      restoreFiles?: boolean,
-      attachments?: AttachmentInfo[],
-    ) => {
-      const threadId = selectedThreadId;
-      if (!threadId) return;
-      try {
-        await api.threads.rewind({
-          threadId,
-          messageId,
-          prompt,
-          restoreFiles,
-        });
-        setError(null);
-      } catch (err) {
-        setError({ scope: "run", message: errorMessage(err) });
-        throw err;
-      }
-      // Do not refetch between rewind and start: the edited bubble is in
-      // the dropped tail, so a reload unmounts the inline editor. Start
-      // success reloads via startRun; start reject undoes then reloads.
-      try {
-        await startRun(prompt, threadId, attachments);
-      } catch (err) {
-        try {
-          await api.threads.rewind({ threadId, undo: true });
-        } catch {
-          // Keep the start error; undo is best-effort.
-        }
-        try {
-          const d = await api.threads.get(threadId);
-          if (selectedRef.current === threadId) {
-            setDetail(d);
-            applyThreads(
-              threadsRef.current.map((t) =>
-                t.id === d.thread.id ? d.thread : t,
-              ),
-            );
-          }
-        } catch {
-          // Banner already set by startRun.
-        }
-        throw err;
-      }
-    },
-    [api, selectedThreadId, startRun, applyThreads],
-  );
-
-  const refreshWorkflows = useCallback(async () => {
-    try {
-      const list = await api.workflows.list();
-      setWorkflows(list);
-      setWorkflowListError(null);
-    } catch (err) {
-      setWorkflowListError(
-        `The workflow list failed to refresh: ${errorMessage(err)}`,
-      );
-      throw err;
-    }
-  }, [api]);
-
-  const refreshAutomations = useCallback(async () => {
-    const list = await api.automations.list();
-    setAutomations(list);
-  }, [api]);
-
-  const addAutomation = useCallback(
-    async (input: AutomationWrite) => {
-      const created = await api.automations.add(input);
-      await refreshAutomations();
-      return created;
-    },
-    [api, refreshAutomations],
-  );
-
-  const updateAutomation = useCallback(
-    async (input: Partial<AutomationWrite> & { id: string }) => {
-      const updated = await api.automations.update(input);
-      await refreshAutomations();
-      return updated;
-    },
-    [api, refreshAutomations],
-  );
-
-  const removeAutomation = useCallback(
-    async (automationId: string) => {
-      await api.automations.remove({ id: automationId });
-      await refreshAutomations();
-    },
-    [api, refreshAutomations],
-  );
-
-  const runAutomationNow = useCallback(
-    async (automationId: string) => {
-      try {
-        return await api.automations.runNow({ id: automationId });
-      } finally {
-        // runNow rethrows the agent failure AFTER the main process has already
-        // written lastError, so the row only shows it if we resync on the
-        // throwing path too (issue #85).
-        await refreshAutomations();
-      }
-    },
-    [api, refreshAutomations],
-  );
-
-  const listAutomationRuns = useCallback(
-    async (automationId: string) => {
-      return api.automations.listRuns({ id: automationId });
-    },
-    [api],
-  );
-
-  const startWorkflowRun = useCallback(
-    async (prompt: string, templateId?: string) => {
-      if (!selectedThreadId) return;
-      const threadId = selectedThreadId;
-      try {
-        await api.runs.startWorkflow({
-          threadId,
-          prompt,
-          ...(templateId ? { templateId } : {}),
-        });
-        const d = await api.threads.get(threadId);
-        if (selectedRef.current !== threadId) return;
-        setDetail(d);
-        applyThreads(
-          threadsRef.current.map((t) =>
-            t.id === d.thread.id ? d.thread : t,
-          ),
-        );
-        setError(null);
-      } catch (err) {
-        setError({ scope: "run", message: errorMessage(err) });
-        throw err;
-      }
-    },
-    [api, selectedThreadId, applyThreads],
-  );
-
-  const retryWorkflowAgent = useCallback(
-    async (agentId: string) => {
-      if (!selectedThreadId) return;
-      const threadId = selectedThreadId;
-      try {
-        await api.runs.retryWorkflowAgent({ threadId, agentId });
-        const d = await api.threads.get(threadId);
-        if (selectedRef.current !== threadId) return;
-        setDetail(d);
-        applyThreads(
-          threadsRef.current.map((t) =>
-            t.id === d.thread.id ? d.thread : t,
-          ),
-        );
-        setError(null);
-      } catch (err) {
-        setError({ scope: "run", message: errorMessage(err) });
-        throw err;
-      }
-    },
-    [api, selectedThreadId, applyThreads],
-  );
-
-  const saveWorkflow = useCallback(
-    async (template: WorkflowSaveInput) => {
-      setWorkflowListError(null);
-      const saved = await api.workflows.save(template);
-      // Adopt the write immediately. A later list rejection must not hide
-      // the new id or the next Save will create another template (#1138).
-      setWorkflows((prev) => upsertWorkflow(prev, saved));
-      try {
-        await refreshWorkflows();
-      } catch (err) {
-        setWorkflowListError(
-          `Saved, but the list failed to refresh: ${errorMessage(err)}`,
-        );
-      }
-      return saved;
-    },
-    [api, refreshWorkflows],
-  );
-
-  const removeWorkflow = useCallback(
-    async (workflowId: string) => {
-      setWorkflowListError(null);
-      await api.workflows.remove({ id: workflowId });
-      setWorkflows((prev) => prev.filter((w) => w.id !== workflowId));
-      try {
-        await refreshWorkflows();
-      } catch (err) {
-        setWorkflowListError(
-          `Removed, but the list failed to refresh: ${errorMessage(err)}`,
-        );
-      }
-    },
-    [api, refreshWorkflows],
-  );
-
-  const stopRun = useCallback(async () => {
-    if (!selectedThreadId) return;
-    const threadId = selectedThreadId;
-    try {
-      await api.runs.stop({ threadId });
-      const d = await api.threads.get(threadId);
-      if (selectedRef.current !== threadId) return;
-      setDetail(d);
-      applyThreads(
-        threadsRef.current.map((t) =>
-          t.id === d.thread.id ? d.thread : t,
-        ),
-      );
-    } catch (err) {
-      setError({ scope: "run", message: errorMessage(err) });
-    }
-  }, [api, selectedThreadId, applyThreads]);
-
-  const setPermissionMode = useCallback(
-    async (mode: PermissionMode, threadIdArg?: string) => {
-      const threadId = threadIdArg ?? selectedThreadId;
-      if (!threadId) return;
-      try {
-        const thread = await api.threads.setPermissionMode({
-          threadId,
-          mode,
-        });
-        applyThreads(
-          threadsRef.current.map((t) => (t.id === thread.id ? thread : t)),
-        );
-        if (selectedRef.current === threadId) {
-          setDetail((prev) =>
-            prev && prev.thread.id === thread.id
-              ? { ...prev, thread }
-              : prev,
-          );
-        }
-        setError(null);
-      } catch (err) {
-        setError({ scope: "run", message: errorMessage(err) });
-        throw err;
-      }
-    },
-    [api, selectedThreadId, applyThreads],
-  );
-
-  const respondPermission = useCallback(
-    async (
-      requestId: string,
-      decision: PermissionDecision,
-      answers?: Record<string, string>,
-      updatedCommand?: string,
-      inputValues?: InputValues,
-    ) => {
-      if (!selectedThreadId) return;
-      const threadId = selectedThreadId;
-      try {
-        // Updated detail (prompt cleared, decision event) arrives via
-        // thread:updated pushed by the runner.
-        await api.threads.respondPermission({
-          threadId,
-          requestId,
-          decision,
-          answers,
-          updatedCommand,
-          inputValues,
-        });
-        setError(null);
-      } catch (err) {
-        setError({ scope: "run", message: errorMessage(err) });
-        throw err;
-      }
-    },
-    [api, selectedThreadId],
-  );
-
-  /**
-   * Dismiss the persisted question card (issue #647). Answering it is an
-   * ordinary send, which clears the card in the main process — only the
-   * "no answer" path needs its own call.
-   */
-  const clearQuestion = useCallback(async () => {
-    if (!selectedThreadId) return;
-    try {
-      await api.threads.clearQuestion({ threadId: selectedThreadId });
-    } catch (err) {
-      setError({ scope: "run", message: errorMessage(err) });
-    }
-  }, [api, selectedThreadId]);
-
-  const setProvider = useCallback(
-    async (input: {
-      provider?: string;
-      model?: string | null;
-      threadId?: string;
-    }) => {
-      const threadId = input.threadId ?? selectedThreadId;
-      if (!threadId) return;
-      try {
-        const thread = await api.threads.setProvider({
-          threadId,
-          ...(input.provider !== undefined ? { provider: input.provider } : {}),
-          ...(input.model !== undefined ? { model: input.model } : {}),
-        });
-        applyThreads(
-          threadsRef.current.map((t) => (t.id === thread.id ? thread : t)),
-        );
-        if (selectedRef.current === threadId) {
-          setDetail((prev) =>
-            prev && prev.thread.id === thread.id
-              ? { ...prev, thread }
-              : prev,
-          );
-        }
-        setError(null);
-      } catch (err) {
-        setError({ scope: "run", message: errorMessage(err) });
-        throw err;
-      }
-    },
-    [api, selectedThreadId, applyThreads],
-  );
-
-  const setReasoningEffort = useCallback(
-    async (effort: ReasoningEffort | null, threadIdArg?: string) => {
-      const threadId = threadIdArg ?? selectedThreadId;
-      if (!threadId) return;
-      try {
-        const thread = await api.threads.setReasoningEffort({
-          threadId,
-          effort,
-        });
-        applyThreads(
-          threadsRef.current.map((t) => (t.id === thread.id ? thread : t)),
-        );
-        if (selectedRef.current === threadId) {
-          setDetail((prev) =>
-            prev && prev.thread.id === thread.id
-              ? { ...prev, thread }
-              : prev,
-          );
-        }
-        setError(null);
-      } catch (err) {
-        setError({ scope: "run", message: errorMessage(err) });
-        throw err;
-      }
-    },
-    [api, selectedThreadId, applyThreads],
-  );
-
-  const setWebSearch = useCallback(
-    async (webSearch: boolean, threadIdArg?: string) => {
-      const threadId = threadIdArg ?? selectedThreadId;
-      if (!threadId) return;
-      try {
-        const thread = await api.threads.setWebSearch({
-          threadId,
-          webSearch,
-        });
-        applyThreads(
-          threadsRef.current.map((t) => (t.id === thread.id ? thread : t)),
-        );
-        if (selectedRef.current === threadId) {
-          setDetail((prev) =>
-            prev && prev.thread.id === thread.id
-              ? { ...prev, thread }
-              : prev,
-          );
-        }
-        setError(null);
-      } catch (err) {
-        setError({ scope: "run", message: errorMessage(err) });
-        throw err;
-      }
-    },
-    [api, selectedThreadId, applyThreads],
-  );
-
-  const setArchived = useCallback(
-    async (archived: boolean, threadIdArg?: string) => {
-      const threadId = threadIdArg ?? selectedThreadId;
-      if (!threadId) return false;
-      try {
-        const thread = await api.threads.setArchived({ threadId, archived });
-        const next = threadsRef.current.map((t) =>
-          t.id === thread.id ? thread : t,
-        );
-        applyThreads(next);
-        // Only move selection when we archived the thread that was open.
-        if (archived && selectedRef.current === threadId) {
-          const nextId = nextVisibleThreadId(next, threadId);
-          setSelectedThreadId(nextId);
-          if (nextId == null) setDetail(null);
-        } else if (selectedRef.current === threadId) {
-          setDetail((prev) =>
-            prev && prev.thread.id === thread.id
-              ? { ...prev, thread }
-              : prev,
-          );
-        }
-        setError(null);
-        return true;
-      } catch (err) {
-        setError({ scope: "run", message: errorMessage(err) });
-        return false;
-      }
-    },
-    [api, selectedThreadId, applyThreads],
-  );
-
-  const setSettled = useCallback(
-    async (
-      threadId: string,
-      override: "settled" | "active" | null,
-    ) => {
-      try {
-        const thread = await api.threads.setSettled({ threadId, override });
-        applyThreads(
-          threadsRef.current.map((t) => (t.id === thread.id ? thread : t)),
-        );
-        setDetail((prev) =>
-          prev && prev.thread.id === thread.id
-            ? { ...prev, thread }
-            : prev,
-        );
-        setError(null);
-      } catch (err) {
-        setError({ scope: "run", message: errorMessage(err) });
-      }
-    },
-    [api, applyThreads],
-  );
-
-  const setPinned = useCallback(
-    async (threadId: string, pinned: boolean) => {
-      try {
-        const thread = await api.threads.setPinned({ threadId, pinned });
-        applyThreads(
-          threadsRef.current.map((t) => (t.id === thread.id ? thread : t)),
-        );
-        setDetail((prev) =>
-          prev && prev.thread.id === thread.id
-            ? { ...prev, thread }
-            : prev,
-        );
-        setError(null);
-      } catch (err) {
-        setError({ scope: "run", message: errorMessage(err) });
-      }
-    },
-    [api, applyThreads],
-  );
-
-  const setSnoozed = useCallback(
-    async (threadId: string, until: number | null) => {
-      try {
-        const thread = await api.threads.setSnoozed({ threadId, until });
-        applyThreads(
-          threadsRef.current.map((t) => (t.id === thread.id ? thread : t)),
-        );
-        setDetail((prev) =>
-          prev && prev.thread.id === thread.id
-            ? { ...prev, thread }
-            : prev,
-        );
-        setError(null);
-      } catch (err) {
-        setError({ scope: "run", message: errorMessage(err) });
-      }
-    },
-    [api, applyThreads],
-  );
-
-  const setTags = useCallback(
-    async (threadId: string, tags: string[]) => {
-      try {
-        const thread = await api.threads.setTags({ threadId, tags });
-        applyThreads(
-          threadsRef.current.map((t) => (t.id === thread.id ? thread : t)),
-        );
-        setDetail((prev) =>
-          prev && prev.thread.id === thread.id
-            ? { ...prev, thread }
-            : prev,
-        );
-        setError(null);
-      } catch (err) {
-        setError({ scope: "run", message: errorMessage(err) });
-      }
-    },
-    [api, applyThreads],
-  );
-
-  const setThreadProject = useCallback(
-    async (threadId: string, projectId: string) => {
-      try {
-        const thread = await api.threads.setThreadProject({
-          threadId,
-          projectId,
-        });
-        applyThreads(
-          threadsRef.current.map((t) => (t.id === thread.id ? thread : t)),
-        );
-        setDetail((prev) =>
-          prev && prev.thread.id === thread.id
-            ? { ...prev, thread }
-            : prev,
-        );
-        setError(null);
-      } catch (err) {
-        setError({ scope: "run", message: errorMessage(err) });
-      }
-    },
-    [api, applyThreads],
-  );
-
-  const setMuted = useCallback(
-    async (threadId: string, muted: boolean) => {
-      try {
-        const thread = await api.threads.setMuted({ threadId, muted });
-        applyThreads(
-          threadsRef.current.map((t) => (t.id === thread.id ? thread : t)),
-        );
-        setDetail((prev) =>
-          prev && prev.thread.id === thread.id ? { ...prev, thread } : prev,
-        );
-        setError(null);
-      } catch (err) {
-        setError({ scope: "run", message: errorMessage(err) });
-      }
-    },
-    [api, applyThreads],
-  );
-
-  const setEjected = useCallback(
-    async (threadId: string, ejected: boolean) => {
-      try {
-        const thread = await api.threads.setEjected({ threadId, ejected });
-        applyThreads(
-          threadsRef.current.map((t) => (t.id === thread.id ? thread : t)),
-        );
-        setDetail((prev) =>
-          prev && prev.thread.id === thread.id ? { ...prev, thread } : prev,
-        );
-        setError(null);
-      } catch (err) {
-        setError({ scope: "run", message: errorMessage(err) });
-      }
-    },
-    [api, applyThreads],
-  );
-
-  const setCrossThreadInbound = useCallback(
-    async (
-      threadId: string,
-      policy: "accept" | "queue-only" | "refuse",
-    ) => {
-      try {
-        const thread = await api.threads.setCrossThreadInbound({
-          threadId,
-          policy,
-        });
-        applyThreads(
-          threadsRef.current.map((t) => (t.id === thread.id ? thread : t)),
-        );
-        setDetail((prev) =>
-          prev && prev.thread.id === thread.id ? { ...prev, thread } : prev,
-        );
-        setError(null);
-      } catch (err) {
-        setError({ scope: "run", message: errorMessage(err) });
-      }
-    },
-    [api, applyThreads],
-  );
-
-  const setQuotaWaitAutoResume = useCallback(
-    async (threadId: string, enabled: boolean | null) => {
-      try {
-        const thread = await api.threads.setQuotaWaitAutoResume({
-          threadId,
-          enabled,
-        });
-        applyThreads(
-          threadsRef.current.map((t) => (t.id === thread.id ? thread : t)),
-        );
-        setDetail((prev) =>
-          prev && prev.thread.id === thread.id ? { ...prev, thread } : prev,
-        );
-        setError(null);
-      } catch (err) {
-        setError({ scope: "run", message: errorMessage(err) });
-      }
-    },
-    [api, applyThreads],
-  );
-
-  const resumeQuotaWait = useCallback(
-    async (threadId: string) => {
-      try {
-        await api.runs.resumeQuotaWait({ threadId });
-        const d = await api.threads.get(threadId);
-        if (selectedRef.current !== threadId) return;
-        setDetail(d);
-        applyThreads(
-          threadsRef.current.map((t) =>
-            t.id === d.thread.id ? d.thread : t,
-          ),
-        );
-        setError(null);
-      } catch (err) {
-        setError({ scope: "run", message: errorMessage(err) });
-      }
-    },
-    [api, applyThreads],
-  );
-
-  const renameThread = useCallback(
-    async (threadId: string, title: string) => {
-      try {
-        const thread = await api.threads.rename({ threadId, title });
-        applyThreads(
-          threadsRef.current.map((t) => (t.id === thread.id ? thread : t)),
-        );
-        setDetail((prev) =>
-          prev && prev.thread.id === thread.id ? { ...prev, thread } : prev,
-        );
-        setError(null);
-      } catch (err) {
-        setError({ scope: "run", message: errorMessage(err) });
-      }
-    },
-    [api, applyThreads],
-  );
-
-  const setNotes = useCallback(
-    async (threadId: string, notes: string) => {
-      try {
-        const thread = await api.threads.setNotes({ threadId, notes });
-        applyThreads(
-          threadsRef.current.map((t) => (t.id === thread.id ? thread : t)),
-        );
-        setDetail((prev) =>
-          prev && prev.thread.id === thread.id ? { ...prev, thread } : prev,
-        );
-        setError(null);
-      } catch (err) {
-        setError({ scope: "run", message: errorMessage(err) });
-        throw err;
-      }
-    },
-    [api, applyThreads],
-  );
-
-  const setMessagePins = useCallback(
-    async (
-      threadId: string,
-      pins: ThreadMessagePin[],
-    ) => {
-      try {
-        const thread = await api.threads.setMessagePins({ threadId, pins });
-        applyThreads(
-          threadsRef.current.map((t) => (t.id === thread.id ? thread : t)),
-        );
-        setDetail((prev) =>
-          prev && prev.thread.id === thread.id ? { ...prev, thread } : prev,
-        );
-        setError(null);
-      } catch (err) {
-        setError({ scope: "run", message: errorMessage(err) });
-        throw err;
-      }
-    },
-    [api, applyThreads],
-  );
-
-  const setBaseBranch = useCallback(
-    async (threadId: string, baseBranch: string | null) => {
-      try {
-        const thread = await api.threads.setBaseBranch({ threadId, baseBranch });
-        applyThreads(
-          threadsRef.current.map((t) => (t.id === thread.id ? thread : t)),
-        );
-        setDetail((prev) =>
-          prev && prev.thread.id === thread.id ? { ...prev, thread } : prev,
-        );
-        setError(null);
-      } catch (err) {
-        setError({ scope: "run", message: errorMessage(err) });
-        throw err;
-      }
-    },
-    [api, applyThreads],
-  );
-
-  const setPendingWorktree = useCallback(
-    async (threadId: string, worktree: boolean, fromOrigin?: boolean) => {
-      try {
-        const thread = await api.threads.setPendingWorktree({
-          threadId,
-          worktree,
-          ...(fromOrigin === undefined ? {} : { fromOrigin }),
-        });
-        applyThreads(
-          threadsRef.current.map((t) => (t.id === thread.id ? thread : t)),
-        );
-        setDetail((prev) =>
-          prev && prev.thread.id === thread.id ? { ...prev, thread } : prev,
-        );
-        setError(null);
-      } catch (err) {
-        setError({ scope: "run", message: errorMessage(err) });
-        throw err;
-      }
-    },
-    [api, applyThreads],
-  );
-
-  const refreshWorkerSnapshot = useCallback(
-    async (threadId: string) => {
-      try {
-        const thread = await api.threads.refreshWorkerSnapshot({ threadId });
-        applyThreads(
-          threadsRef.current.map((t) => (t.id === thread.id ? thread : t)),
-        );
-        setDetail((prev) =>
-          prev && prev.thread.id === thread.id ? { ...prev, thread } : prev,
-        );
-        setError(null);
-      } catch (err) {
-        setError({ scope: "run", message: errorMessage(err) });
-        throw err;
-      }
-    },
-    [api, applyThreads],
-  );
-
-  const resolveSuggestion = useCallback(
-    async (
-      threadId: string,
-      suggestionId: string,
-      status: Exclude<WorkSuggestionStatus, "open">,
-      extra?: { startedThreadId?: string; issueNumber?: number },
-    ) => {
-      try {
-        const thread = await api.threads.resolveSuggestion({
-          threadId,
-          suggestionId,
-          status,
-          ...extra,
-        });
-        applyThreads(
-          threadsRef.current.map((t) => (t.id === thread.id ? thread : t)),
-        );
-        setDetail((prev) =>
-          prev && prev.thread.id === thread.id ? { ...prev, thread } : prev,
-        );
-        setError(null);
-      } catch (err) {
-        setError({ scope: "run", message: errorMessage(err) });
-      }
-    },
-    [api, applyThreads],
-  );
-
-  const setFeltEstimate = useCallback(
-    async (threadId: string, savedMs: number | null) => {
-      try {
-        const thread = await api.threads.setFeltEstimate({ threadId, savedMs });
-        applyThreads(
-          threadsRef.current.map((t) => (t.id === thread.id ? thread : t)),
-        );
-        setDetail((prev) =>
-          prev && prev.thread.id === thread.id ? { ...prev, thread } : prev,
-        );
-        setError(null);
-      } catch (err) {
-        setError({ scope: "run", message: errorMessage(err) });
-      }
-    },
-    [api, applyThreads],
-  );
-
-  const startSpec = useCallback(
-    async (threadId: string) => {
-      try {
-        const thread = await api.threads.startSpec({ threadId });
-        applyThreads(
-          threadsRef.current.map((t) => (t.id === thread.id ? thread : t)),
-        );
-        setDetail((prev) =>
-          prev && prev.thread.id === thread.id ? { ...prev, thread } : prev,
-        );
-        setError(null);
-      } catch (err) {
-        setError({ scope: "run", message: errorMessage(err) });
-      }
-    },
-    [api, applyThreads],
-  );
-
-  const stopSpec = useCallback(
-    async (threadId: string) => {
-      try {
-        const thread = await api.threads.stopSpec({ threadId });
-        applyThreads(
-          threadsRef.current.map((t) => (t.id === thread.id ? thread : t)),
-        );
-        setDetail((prev) =>
-          prev && prev.thread.id === thread.id ? { ...prev, thread } : prev,
-        );
-        setError(null);
-      } catch (err) {
-        setError({ scope: "run", message: errorMessage(err) });
-      }
-    },
-    [api, applyThreads],
-  );
-
-  const reviewSpec = useCallback(
-    async (
-      threadId: string,
-      decision: "approve" | "revise",
-      feedback?: string,
-    ) => {
-      try {
-        const thread = await api.threads.reviewSpec({
-          threadId,
-          decision,
-          feedback,
-        });
-        applyThreads(
-          threadsRef.current.map((t) => (t.id === thread.id ? thread : t)),
-        );
-        setDetail((prev) =>
-          prev && prev.thread.id === thread.id ? { ...prev, thread } : prev,
-        );
-        setError(null);
-      } catch (err) {
-        setError({ scope: "run", message: errorMessage(err) });
-      }
-    },
-    [api, applyThreads],
-  );
-
-  const specArtifact = useCallback(
-    (threadId: string, stage: SpecArtifact) =>
-      api.threads.specArtifact({ threadId, stage }),
-    [api],
-  );
-
-  const dispatchSpec = useCallback(
-    async (threadId: string) => {
-      try {
-        const result = await api.threads.dispatchSpec({ threadId });
-        const thread = result.thread;
-        applyThreads(
-          threadsRef.current.map((t) => (t.id === thread.id ? thread : t)),
-        );
-        setDetail((prev) =>
-          prev && prev.thread.id === thread.id ? { ...prev, thread } : prev,
-        );
-        setError(null);
-      } catch (err) {
-        setError({ scope: "run", message: errorMessage(err) });
-      }
-    },
-    [api, applyThreads],
-  );
-
-  const convergeSpec = useCallback(
-    async (threadId: string) => {
-      try {
-        const thread = await api.threads.convergeSpec({ threadId });
-        applyThreads(
-          threadsRef.current.map((t) => (t.id === thread.id ? thread : t)),
-        );
-        setDetail((prev) =>
-          prev && prev.thread.id === thread.id ? { ...prev, thread } : prev,
-        );
-        setError(null);
-      } catch (err) {
-        setError({ scope: "run", message: errorMessage(err) });
-      }
-    },
-    [api, applyThreads],
-  );
-
-  const startTeach = useCallback(
-    async (threadId: string) => {
-      try {
-        const thread = await api.threads.startTeach({ threadId });
-        applyThreads(
-          threadsRef.current.map((t) => (t.id === thread.id ? thread : t)),
-        );
-        setDetail((prev) =>
-          prev && prev.thread.id === thread.id ? { ...prev, thread } : prev,
-        );
-        setError(null);
-      } catch (err) {
-        setError({ scope: "run", message: errorMessage(err) });
-      }
-    },
-    [api, applyThreads],
-  );
-
-  const stopTeach = useCallback(
-    async (threadId: string) => {
-      try {
-        const thread = await api.threads.stopTeach({ threadId });
-        applyThreads(
-          threadsRef.current.map((t) => (t.id === thread.id ? thread : t)),
-        );
-        setDetail((prev) =>
-          prev && prev.thread.id === thread.id ? { ...prev, thread } : prev,
-        );
-        setError(null);
-      } catch (err) {
-        setError({ scope: "run", message: errorMessage(err) });
-      }
-    },
-    [api, applyThreads],
-  );
-
-  const startAsk = useCallback(
-    async (threadId: string) => {
-      try {
-        const thread = await api.threads.startAsk({ threadId });
-        applyThreads(
-          threadsRef.current.map((t) => (t.id === thread.id ? thread : t)),
-        );
-        setDetail((prev) =>
-          prev && prev.thread.id === thread.id ? { ...prev, thread } : prev,
-        );
-        setError(null);
-      } catch (err) {
-        setError({ scope: "run", message: errorMessage(err) });
-      }
-    },
-    [api, applyThreads],
-  );
-
-  const stopAsk = useCallback(
-    async (threadId: string, opts?: { worktree?: boolean }) => {
-      try {
-        const thread = await api.threads.stopAsk({
-          threadId,
-          ...(opts?.worktree ? { worktree: true } : {}),
-        });
-        applyThreads(
-          threadsRef.current.map((t) => (t.id === thread.id ? thread : t)),
-        );
-        setDetail((prev) =>
-          prev && prev.thread.id === thread.id ? { ...prev, thread } : prev,
-        );
-        setError(null);
-      } catch (err) {
-        setError({ scope: "run", message: errorMessage(err) });
-      }
-    },
-    [api, applyThreads],
-  );
-
-  const dismissBtw = useCallback(
-    async (threadId: string, id: string) => {
-      try {
-        const thread = await api.threads.dismissBtw({ threadId, id });
-        applyThreads(
-          threadsRef.current.map((t) => (t.id === thread.id ? thread : t)),
-        );
-        setDetail((prev) =>
-          prev && prev.thread.id === thread.id ? { ...prev, thread } : prev,
-        );
-        setError(null);
-      } catch (err) {
-        setError({ scope: "run", message: errorMessage(err) });
-      }
-    },
-    [api, applyThreads],
-  );
-
-  const promoteBtw = useCallback(
-    async (threadId: string, id: string) => {
-      try {
-        const thread = await api.threads.promoteBtw({ threadId, id });
-        applyThreads(
-          threadsRef.current.map((t) => (t.id === thread.id ? thread : t)),
-        );
-        setDetail((prev) =>
-          prev && prev.thread.id === thread.id ? { ...prev, thread } : prev,
-        );
-        setError(null);
-      } catch (err) {
-        setError({ scope: "run", message: errorMessage(err) });
-      }
-    },
-    [api, applyThreads],
-  );
-
-  const requestTeachReview = useCallback(
-    async (threadId: string) => {
-      try {
-        const thread = await api.threads.requestTeachReview({ threadId });
-        applyThreads(
-          threadsRef.current.map((t) => (t.id === thread.id ? thread : t)),
-        );
-        setDetail((prev) =>
-          prev && prev.thread.id === thread.id ? { ...prev, thread } : prev,
-        );
-        setError(null);
-      } catch (err) {
-        setError({ scope: "run", message: errorMessage(err) });
-      }
-    },
-    [api, applyThreads],
-  );
-
-  const deleteThread = useCallback(async () => {
-    if (!selectedThreadId) return false;
-    const threadId = selectedThreadId;
-    try {
-      await api.threads.delete({ threadId });
-      const list = await api.threads.list();
-      applyThreads(list);
-      refreshTrashed();
-      if (selectedRef.current === threadId) {
-        const nextId = nextVisibleThreadId(list, threadId);
-        setSelectedThreadId(nextId);
-        setDetail(null);
-      }
-      setError(null);
-      return true;
-    } catch (err) {
-      setError({ scope: "run", message: errorMessage(err) });
-      return false;
-    }
-  }, [api, selectedThreadId, applyThreads, refreshTrashed]);
-
-  const restoreThread = useCallback(
-    async (threadId: string) => {
-      const id = String(threadId ?? "");
-      if (!id) return false;
-      try {
-        const thread = await api.threads.restore({ threadId: id });
-        const list = await api.threads.list();
-        applyThreads(list);
-        refreshTrashed();
-        setSelectedThreadId(thread.id);
-        setError(null);
-        return true;
-      } catch (err) {
-        setError({ scope: "run", message: errorMessage(err) });
-        return false;
-      }
-    },
-    [api, applyThreads, refreshTrashed],
-  );
-
-  const purgeThread = useCallback(
-    async (threadId: string) => {
-      const id = String(threadId ?? "");
-      if (!id) return false;
-      try {
-        await api.threads.purge({ threadId: id });
-        const list = await api.threads.list();
-        applyThreads(list);
-        refreshTrashed();
-        if (selectedRef.current === id) {
-          const nextId = nextVisibleThreadId(list, id);
-          setSelectedThreadId(nextId);
-          setDetail(null);
-        }
-        setError(null);
-        return true;
-      } catch (err) {
-        setError({ scope: "run", message: errorMessage(err) });
-        return false;
-      }
-    },
-    [api, applyThreads, refreshTrashed],
-  );
-
-  const removeProject = useCallback(
-    async (projectId: string) => {
-      const pid = String(projectId ?? "");
-      if (!pid) return;
-      // Capture whether the open thread belongs to this project BEFORE the
-      // remove — same "was the selected one the victim?" posture as deleteThread.
-      const openId = selectedRef.current;
-      const openBelongs =
-        openId != null &&
-        threadsRef.current.some(
-          (t) => t.id === openId && t.projectId === pid,
-        );
-      try {
-        await api.projects.remove({ projectId: pid });
-        const [nextProjects, list] = await Promise.all([
-          api.projects.list(),
-          api.threads.list(),
-        ]);
-        setProjects(nextProjects);
-        applyThreads(list);
-        detailCacheRef.current.dropProject(pid);
-        // Match deleteThread: only hand off when the selected thread was the
-        // one that just vanished (here: lived in the removed project).
-        if (openBelongs && openId != null && selectedRef.current === openId) {
-          const nextId = nextVisibleThreadId(list, openId);
-          setSelectedThreadId(nextId);
-          setDetail(null);
-        }
-        setError(null);
-      } catch (err) {
-        // Re-throw so the App can show the error toast; do not swallow.
-        throw err instanceof Error ? err : new Error(errorMessage(err));
-      }
-    },
-    [api, applyThreads],
-  );
+  const {
+    deleteThread,
+    restoreThread,
+    purgeThread,
+    removeProject,
+  } = useCoderThreadRemoval({
+    api,
+    selectedThreadId,
+    setSelectedThreadId,
+    setProjects,
+    setDetail,
+    setError,
+    selectedRef,
+    threadsRef,
+    detailCacheRef,
+    refreshTrashed,
+    applyThreads,
+  });
 
   const applyThreadUpdate = useCallback(
     (thread: ThreadInfo) => {
@@ -3038,591 +1509,80 @@ export function useCoder(): UseCoderResult {
     [applyThreads],
   );
 
-  const listBaseBranches = useCallback(
-    async (projectId: string) => {
-      return api.git.listBranches({ projectId });
-    },
-    [api],
-  );
+  const {
+    listBaseBranches,
+    setupWorktree,
+    mergeWorktree,
+    conflictContext,
+    removeWorktree,
+    fetchDiff,
+    fetchReviewContext,
+    setReviewAccepted,
+    commitChanges,
+    revertFile,
+    suggestCommitMessage,
+    listFiles,
+    searchFileContents,
+    resolvePaths,
+    openWorkspacePath,
+    loadToolImage,
+    saveAttachmentImage,
+    pickDirectory,
+    listSnapWindows,
+    captureSnapWindow,
+    pickAttachments,
+    pickFolderAttachments,
+    loadAttachmentImage,
+    dropAttachmentFiles,
+  } = useCoderWorkspace({
+    api,
+    selectedThreadId,
+    setDetail,
+    selectedRef,
+    stagedPathsRef,
+    applyThreadUpdate,
+  });
 
-  const setupWorktree = useCallback(async () => {
-    if (!selectedThreadId) return null;
-    const threadId = selectedThreadId;
-    const thread = await api.git.setupWorktree({ threadId });
-    if (selectedRef.current !== threadId) return thread;
-    applyThreadUpdate(thread);
-    // Refresh detail in case main also mutates other fields.
-    const d = await api.threads.get(threadId);
-    if (selectedRef.current === threadId) setDetail(d);
-    return thread;
-  }, [api, selectedThreadId, applyThreadUpdate]);
-
-  const mergeWorktree = useCallback(async (opts?: {
-    ciWorkflowApproved?: boolean;
-  }) => {
-    if (!selectedThreadId) return null;
-    const threadId = selectedThreadId;
-    const staged = stagedPathsRef.current;
-    const thread = await api.git.mergeWorktree({
-      threadId,
-      ciWorkflowApproved: opts?.ciWorkflowApproved,
-      ...(staged != null ? { paths: staged } : {}),
-    });
-    if (selectedRef.current !== threadId) return thread;
-    applyThreadUpdate(thread);
-    const d = await api.threads.get(threadId);
-    if (selectedRef.current === threadId) setDetail(d);
-    return thread;
-  }, [api, selectedThreadId, applyThreadUpdate]);
-
-  const conflictContext = useCallback(async (threadId: string) => {
-    return api.git.conflictContext({ threadId });
-  }, [api]);
-
-  const removeWorktree = useCallback(
-    async (force = false) => {
-      if (!selectedThreadId) return null;
-      const threadId = selectedThreadId;
-      const thread = await api.git.removeWorktree({ threadId, force });
-      if (selectedRef.current !== threadId) return thread;
-      applyThreadUpdate(thread);
-      const d = await api.threads.get(threadId);
-      if (selectedRef.current === threadId) setDetail(d);
-      return thread;
-    },
-    [api, selectedThreadId, applyThreadUpdate],
-  );
-
-  const fetchDiff = useCallback(async () => {
-    if (!selectedThreadId) {
-      return { files: [], patch: "", truncated: false };
-    }
-    const threadId = selectedThreadId;
-    return api.git.diff({ threadId });
-  }, [api, selectedThreadId]);
-
-  const fetchReviewContext = useCallback(async () => {
-    if (!selectedThreadId) {
-      return { annotation: null, symbols: [] as ReviewSymbol[], acceptedHunks: [] };
-    }
-    const threadId = selectedThreadId;
-    return api.git.reviewContext({ threadId });
-  }, [api, selectedThreadId]);
-
-  const setReviewAccepted = useCallback(
-    async (hashes: string[]) => {
-      if (!selectedThreadId) return;
-      const threadId = selectedThreadId;
-      const thread = await api.git.setReviewAccepted({ threadId, hashes });
-      if (selectedRef.current !== threadId) return;
-      applyThreadUpdate(thread);
-    },
-    [api, selectedThreadId, applyThreadUpdate],
-  );
-
-  const commitChanges = useCallback(
-    async (message: string, paths?: string[]) => {
-      if (!selectedThreadId) {
-        throw new Error("No thread selected");
-      }
-      const threadId = selectedThreadId;
-      const selected = paths ?? stagedPathsRef.current ?? undefined;
-      return api.git.commit({
-        threadId,
-        message,
-        ...(selected != null ? { paths: selected } : {}),
-      });
-    },
-    [api, selectedThreadId],
-  );
-
-  const revertFile = useCallback(
-    async (path: string, status: string) => {
-      if (!selectedThreadId) {
-        throw new Error("No thread selected");
-      }
-      const threadId = selectedThreadId;
-      return api.git.revertFile({ threadId, path, status });
-    },
-    [api, selectedThreadId],
-  );
-
-  const suggestCommitMessage = useCallback(async () => {
-    if (!selectedThreadId) {
-      throw new Error("No thread selected");
-    }
-    const threadId = selectedThreadId;
-    return api.git.suggestCommitMessage({ threadId });
-  }, [api, selectedThreadId]);
-
-  const listFiles = useCallback(
-    async (query: string, opts?: { limit?: number }) => {
-      if (!selectedThreadId) return [];
-      const threadId = selectedThreadId;
-      const result = await api.files.list({
-        threadId,
-        query,
-        limit: opts?.limit,
-      });
-      return result.files;
-    },
-    [api, selectedThreadId],
-  );
-
-  const searchFileContents = useCallback(
-    async (query: string) => {
-      if (!selectedThreadId || !query.trim()) return [];
-      const threadId = selectedThreadId;
-      const result = await api.files.search({ threadId, query });
-      return result.hits;
-    },
-    [api, selectedThreadId],
-  );
-
-  const resolvePaths = useCallback(
-    async (paths: string[]) => {
-      if (!selectedThreadId || paths.length === 0) {
-        return paths.map((p) => ({ path: p, abs: null }));
-      }
-      try {
-        const result = await api.files.resolve({
-          threadId: selectedThreadId,
-          paths,
-        });
-        return result.resolved;
-      } catch {
-        return paths.map((p) => ({ path: p, abs: null }));
-      }
-    },
-    [api, selectedThreadId],
-  );
-
-  const openWorkspacePath = useCallback(
-    async (abs: string, opts?: { reveal?: boolean }) => {
-      if (!selectedThreadId || !abs) return;
-      if (opts?.reveal) {
-        await api.shell.reveal({ threadId: selectedThreadId, path: abs });
-        return;
-      }
-      await api.shell.openPath({ threadId: selectedThreadId, path: abs });
-    },
-    [api, selectedThreadId],
-  );
-
-  const loadToolImage = useCallback(
-    async (name: string) => {
-      try {
-        const result = await api.files.image({ name });
-        return result.dataUrl;
-      } catch {
-        return null;
-      }
-    },
-    [api],
-  );
-
-  const saveAttachmentImage = useCallback(
-    async (dataUrl: string) => {
-      if (!selectedThreadId) return null;
-      const threadId = selectedThreadId;
-      try {
-        const result = await api.attachments.saveImage({ threadId, dataUrl });
-        return result.attachment;
-      } catch {
-        return null;
-      }
-    },
-    [api, selectedThreadId],
-  );
-
-  const saveAttachmentFile = useCallback(
-    async (name: string, dataUrl: string) => {
-      if (!selectedThreadId) return null;
-      try {
-        const result = await api.attachments.saveFile({
-          threadId: selectedThreadId,
-          name,
-          dataUrl,
-        });
-        return result.attachment;
-      } catch {
-        return null;
-      }
-    },
-    [api, selectedThreadId],
-  );
-
-  const pickDirectory = useCallback(async () => {
-    try {
-      return await api.projects.pickDirectory();
-    } catch {
-      return null;
-    }
-  }, [api]);
-
-  const listSnapWindows = useCallback(async () => {
-    try {
-      const result = await api.attachments.listWindows();
-      return result.windows;
-    } catch {
-      return [];
-    }
-  }, [api]);
-
-  const captureSnapWindow = useCallback(
-    async (sourceId: string) => {
-      if (!selectedThreadId) return null;
-      const result = await api.attachments.captureWindow({
-        threadId: selectedThreadId,
-        sourceId,
-      });
-      return result.attachment;
-    },
-    [api, selectedThreadId],
-  );
-
-  const pickAttachments = useCallback(async (opts?: {
-    includeImages?: boolean;
-  }) => {
-    if (isWebMode()) {
-      if (!selectedThreadId) return [];
-      return filesToAttachments(await pickWebFiles(), {
-        image: saveAttachmentImage,
-        file: saveAttachmentFile,
-      });
-    }
-    const result = await api.attachments.pick({
-      includeImages: opts?.includeImages !== false,
-    });
-    return result.attachments;
-  }, [api, saveAttachmentFile, saveAttachmentImage, selectedThreadId]);
-
-  const pickFolderAttachments = useCallback(async () => {
-    if (!selectedThreadId) return [];
-    const picked = await pickWebFolder();
-    if (!picked) return [];
-    try {
-      const result = await api.attachments.saveFolder({
-        threadId: selectedThreadId,
-        name: picked.name,
-        files: picked.files,
-      });
-      return result.attachment ? [result.attachment] : [];
-    } catch {
-      return [];
-    }
-  }, [api, selectedThreadId]);
-
-  const loadAttachmentImage = useCallback(
-    async (path: string) => {
-      try {
-        const result = await api.attachments.readImage({ path });
-        return result.dataUrl;
-      } catch {
-        return null;
-      }
-    },
-    [api],
-  );
-
-  const dropAttachmentFiles = useCallback(
-    async (files: File[], folders?: DroppedFolder[]) => {
-      // Absolute paths of dropped Files (including Finder directories)
-      // exist only behind the Electron preload (webUtils). Web/dev
-      // bridges persist bytes via saveImage / saveFile / saveFolder.
-      const pathOf = api.attachments.droppedFilePath;
-      if (pathOf) {
-        const paths = files
-          .map((file) => {
-            try {
-              return pathOf(file);
-            } catch {
-              return "";
-            }
-          })
-          .filter((p) => p.length > 0);
-        if (!paths.length) return [];
-        const result = await api.attachments.fromPaths({ paths });
-        return result.attachments;
-      }
-      const out: AttachmentInfo[] = [];
-      if (folders?.length && selectedThreadId) {
-        for (const folder of folders) {
-          try {
-            const result = await api.attachments.saveFolder({
-              threadId: selectedThreadId,
-              name: folder.name,
-              files: folder.files,
-            });
-            if (result.attachment) out.push(result.attachment);
-          } catch {
-            // skip a folder that the host refused
-          }
-        }
-      }
-      const folderNames = new Set((folders ?? []).map((folder) => folder.name));
-      const loose = files.filter((file) => !folderNames.has(file.name));
-      out.push(
-        ...(await filesToAttachments(loose, {
-          image: saveAttachmentImage,
-          file: saveAttachmentFile,
-        })),
-      );
-      return out;
-    },
-    [api, saveAttachmentFile, saveAttachmentImage, selectedThreadId],
-  );
-
-  const pushBranch = useCallback(async () => {
-    if (!selectedThreadId) {
-      throw new Error("No thread selected");
-    }
-    const threadId = selectedThreadId;
-    try {
-      const result = await api.git.push({ threadId });
-      setError(null);
-      return result;
-    } catch (err) {
-      setError({ scope: "run", message: errorMessage(err) });
-      throw err;
-    }
-  }, [api, selectedThreadId]);
-
-  const createPr = useCallback(
-    async (input: {
-      title: string;
-      body?: string;
-      draft?: boolean;
-      allowOversize?: boolean;
-    }) => {
-      if (!selectedThreadId) {
-        throw new Error("No thread selected");
-      }
-      const threadId = selectedThreadId;
-      try {
-        const pr = await api.git.createPr({
-          threadId,
-          title: input.title,
-          body: input.body,
-          draft: input.draft,
-          allowOversize: input.allowOversize,
-        });
-        if (selectedRef.current !== threadId) return pr;
-        // createPr records prNumber/prUrl on the thread; refresh so the badge updates.
-        const d = await api.threads.get(threadId);
-        if (selectedRef.current === threadId) {
-          applyThreadUpdate(d.thread);
-          setDetail(d);
-        }
-        setError(null);
-        return pr;
-      } catch (err) {
-        setError({ scope: "run", message: errorMessage(err) });
-        throw err;
-      }
-    },
-    [api, selectedThreadId, applyThreadUpdate],
-  );
-
-  const prStatus = useCallback(async () => {
-    const threadId = selectedThreadId;
-    if (!threadId) return null;
-    const pr = await api.git.prStatus({ threadId });
-    // prStatus records prNumber/prUrl on the thread; refresh the open header.
-    if (pr && selectedRef.current === threadId) {
-      const d = await api.threads.get(threadId);
-      if (selectedRef.current === threadId) {
-        applyThreadUpdate(d.thread);
-        setDetail(d);
-      }
-    }
-    return pr;
-  }, [api, selectedThreadId, applyThreadUpdate]);
-
-  const prChecks = useCallback(async () => {
-    if (!selectedThreadId) return { ok: false as const, reason: "no PR" };
-    return api.git.prChecks({ threadId: selectedThreadId });
-  }, [api, selectedThreadId]);
-
-  const prMerge = useCallback(async (opts?: {
-    ciWorkflowApproved?: boolean;
-  }) => {
-    if (!selectedThreadId) {
-      throw new Error("No thread selected");
-    }
-    const threadId = selectedThreadId;
-    try {
-      const pr = await api.git.prMerge({
-        threadId,
-        ciWorkflowApproved: opts?.ciWorkflowApproved,
-      });
-      if (selectedRef.current !== threadId) return pr;
-      const d = await api.threads.get(threadId);
-      if (selectedRef.current === threadId) {
-        applyThreadUpdate(d.thread);
-        setDetail(d);
-      }
-      setError(null);
-      return pr;
-    } catch (err) {
-      const msg = errorMessage(err);
-      if (!isCiWorkflowBlockMessage(msg)) {
-        setError({ scope: "run", message: msg });
-      }
-      throw err;
-    }
-  }, [api, selectedThreadId, applyThreadUpdate]);
-
-  const listPrs = useCallback(
-    async (projectPath: string, opts?: ListPrsOptions) => {
-      return api.git.listPrs(projectPath, opts);
-    },
-    [api],
-  );
-
-  const prTemplate = useCallback(
-    async (projectPath: string) => {
-      return api.git.prTemplate({ projectPath });
-    },
-    [api],
-  );
-
-  const prDetail = useCallback(
-    async (input: { projectPath: string; prNumber: number }) => {
-      return api.git.prDetail(input);
-    },
-    [api],
-  );
-
-  const prEdit = useCallback(
-    async (input: {
-      projectPath: string;
-      prNumber: number;
-      title?: string;
-      body?: string;
-    }) => {
-      return api.git.prEdit(input);
-    },
-    [api],
-  );
-
-  const prComment = useCallback(
-    async (input: {
-      projectPath: string;
-      prNumber: number;
-      body: string;
-    }) => {
-      return api.git.prComment(input);
-    },
-    [api],
-  );
-
-  const prClose = useCallback(
-    async (input: { projectPath: string; prNumber: number }) => {
-      return api.git.prClose(input);
-    },
-    [api],
-  );
-
-  const prReady = useCallback(
-    async (input: {
-      projectPath: string;
-      prNumber: number;
-      undo?: boolean;
-    }) => {
-      return api.git.prReady(input);
-    },
-    [api],
-  );
-
-  const prMergeAt = useCallback(
-    async (input: { projectPath: string; prNumber: number }) => {
-      return api.git.prMergeAt(input);
-    },
-    [api],
-  );
-
-  const checkoutPr = useCallback(
-    async (input: { projectId: string; prNumber: number }) => {
-      const result = await api.git.checkoutPr(input);
-      if (!result.ok) return result;
-      const t = result.thread;
-      const next = threadsRef.current.some((x) => x.id === t.id)
-        ? threadsRef.current.map((x) => (x.id === t.id ? t : x))
-        : [t, ...threadsRef.current];
-      applyThreads(next);
-      selectedRef.current = t.id;
-      setSelectedThreadId(t.id);
-      return result;
-    },
-    [api, applyThreads],
-  );
-
-  const listIssues = useCallback(
-    async (projectPath: string) => {
-      return api.issues.list(projectPath);
-    },
-    [api],
-  );
-
-  const setIssuePlanStatus = useCallback(
-    async (projectPath: string, number: number, status: PlanStatus) => {
-      return api.issues.setPlanStatus({ projectPath, number, status });
-    },
-    [api],
-  );
-
-  const createIssue = useCallback(
-    async (projectPath: string, title: string, body: string) => {
-      return api.issues.create({ projectPath, title, body });
-    },
-    [api],
-  );
-
-  const fetchIssue = useCallback(
-    async (projectPath: string, ref: string) => {
-      return api.issues.fetch({ projectPath, ref });
-    },
-    [api],
-  );
-  const listActivity = useCallback(async () => {
-    return api.activity.list();
-  }, [api]);
-
-  const listUsageByDay = useCallback(async () => {
-    return api.usage.byDay();
-  }, [api]);
-
-  const listProviderLimits = useCallback(async () => {
-    return api.usage.providerLimits();
-  }, [api]);
-
-  const listDigest = useCallback(async (input?: { sinceMs?: number }) => {
-    return api.digest.list(input);
-  }, [api]);
-
-  const markDigestSeen = useCallback(async () => {
-    return api.digest.markSeen();
-  }, [api]);
-
-  const listThreadSummaries = useCallback(
-    async (input?: ThreadSummariesInput) => api.threads.summaries(input),
-    [api],
-  );
-
-  const listCrewTasks = useCallback(
-    async (threadId: string) => {
-      return api.threads.crewTasks({ threadId });
-    },
-    [api],
-  );
-
-  const crewIntegration = useCallback(
-    async (threadId: string) => {
-      return api.threads.crewIntegration({ threadId });
-    },
-    [api],
-  );
+  const {
+    pushBranch,
+    createPr,
+    prStatus,
+    prChecks,
+    prMerge,
+    listPrs,
+    prTemplate,
+    prDetail,
+    prEdit,
+    prComment,
+    prClose,
+    prReady,
+    prMergeAt,
+    checkoutPr,
+    listIssues,
+    setIssuePlanStatus,
+    createIssue,
+    fetchIssue,
+  } = useCoderGitHub({
+    api,
+    selectedThreadId,
+    setSelectedThreadId,
+    setDetail,
+    setError,
+    selectedRef,
+    threadsRef,
+    applyThreads,
+    applyThreadUpdate,
+  });
+  const {
+    listActivity,
+    listUsageByDay,
+    listProviderLimits,
+    listDigest,
+    markDigestSeen,
+    listThreadSummaries,
+    listCrewTasks,
+    crewIntegration,
+  } = useCoderInsights(api);
 
   const integrateWorker = useCallback(
     async (
@@ -3765,155 +1725,25 @@ export function useCoder(): UseCoderResult {
     [api, selectedThreadId, threadRootPath],
   );
 
-  const gitSyncInfo = useCallback(
-    async (threadId: string) => {
-      try {
-        return await api.git.syncInfo({ threadId });
-      } catch {
-        return { hasUpstream: false } as GitSyncInfo;
-      }
-    },
-    [api],
-  );
-
-  const listDevScripts = useCallback(
-    async (threadId: string) => {
-      try {
-        return await api.devserver.scripts({ threadId });
-      } catch {
-        return [];
-      }
-    },
-    [api],
-  );
-
-  const gitFetch = useCallback(
-    async (threadId: string) => {
-      await api.git.fetch({ threadId });
-    },
-    [api],
-  );
-
-  const gitRepoInfo = useCallback(
-    async (threadId: string): Promise<GitRepoInfo> => {
-      try {
-        return await api.git.repoInfo({ threadId });
-      } catch {
-        return { ok: false };
-      }
-    },
-    [api],
-  );
-
-  const gitPull = useCallback(
-    async (threadId: string): Promise<GitPullResult> => {
-      try {
-        return await api.git.pull({ threadId });
-      } catch (err) {
-        return {
-          ok: false,
-          reason:
-            err instanceof Error && err.message ? err.message : "Pull failed",
-        };
-      }
-    },
-    [api],
-  );
-
-  const claimLane = useCallback(
-    async (input: { threadId: string }) => {
-      return api.mergeQueue.claimLane(input);
-    },
-    [api],
-  );
-
-  const listLanes = useCallback(
-    async (input: { projectId: string }) => {
-      return api.mergeQueue.listLanes(input);
-    },
-    [api],
-  );
-
-  const previewLane = useCallback(
-    async (input: { projectId: string; lane: number }) => {
-      return api.mergeQueue.previewLane(input);
-    },
-    [api],
-  );
-
-  const restorePreview = useCallback(
-    async (input: { projectId: string }) => {
-      return api.mergeQueue.restorePreview(input);
-    },
-    [api],
-  );
-
-  const recycleWedgedLanes = useCallback(
-    async (input: { projectId: string }) => {
-      return api.mergeQueue.recycleWedgedLanes(input);
-    },
-    [api],
-  );
-
-  const setSpotlight = useCallback(
-    async (input: { projectId: string; enabled: boolean }) => {
-      const result = await api.mergeQueue.setSpotlight(input);
-      try {
-        setProjects(await api.projects.list());
-      } catch {
-        // Keep the local checkbox; list refresh is best-effort.
-      }
-      return result;
-    },
-    [api],
-  );
-
-  const spotlightLane = useCallback(
-    async (input: { projectId: string; lane: number }) => {
-      return api.mergeQueue.spotlightLane(input);
-    },
-    [api],
-  );
-
-  const heartbeatLane = useCallback(
-    async (input: { threadId: string; now?: number }) => {
-      return api.mergeQueue.heartbeatLane(input);
-    },
-    [api],
-  );
-
-  const startDevServer = useCallback(
-    async (threadId: string, script: string) => {
-      return api.devserver.start({ threadId, script });
-    },
-    [api],
-  );
-
-  const stopDevServer = useCallback(
-    async (threadId: string) => {
-      return api.devserver.stop({ threadId });
-    },
-    [api],
-  );
-
-  const devServerStatus = useCallback(
-    async (threadId: string) => {
-      return api.devserver.status({ threadId });
-    },
-    [api],
-  );
-
-  const terminal = useMemo(
-    () => ({
-      open: (threadId: string) => api.terminal.open({ threadId }),
-      write: (threadId: string, data: string, since: number) =>
-        api.terminal.write({ threadId, data, since }),
-      read: (threadId: string, since: number) =>
-        api.terminal.read({ threadId, since }),
-      close: (threadId: string) => api.terminal.close({ threadId }),
-    }),
-    [api],
-  );
+  const {
+    gitSyncInfo,
+    listDevScripts,
+    gitFetch,
+    gitRepoInfo,
+    gitPull,
+    claimLane,
+    listLanes,
+    previewLane,
+    restorePreview,
+    recycleWedgedLanes,
+    setSpotlight,
+    spotlightLane,
+    heartbeatLane,
+    startDevServer,
+    stopDevServer,
+    devServerStatus,
+    terminal,
+  } = useCoderRepoTools({ api, setProjects });
 
   const setVerifyCommand = useCallback(
     async (threadId: string, command: string | null) => {
@@ -3987,268 +1817,47 @@ export function useCoder(): UseCoderResult {
     [saveSettings],
   );
 
-  const searchMemory = useCallback(
-    async (input: {
-      query: string;
-      project?: string;
-      type?: MemoryEntryInfo["type"];
-    }) => {
-      return api.memory.search(input);
-    },
-    [api],
-  );
+  const {
+    searchMemory,
+    recentMemory,
+    getMemory,
+    updateMemory,
+    removeMemory,
+    storeMemory,
+    maintenanceMemory,
+    resolveMemory,
+    loadCodeMap,
+  } = useCoderMemory(api);
 
-  const recentMemory = useCallback(
-    async (input?: {
-      limit?: number;
-      offset?: number;
-      project?: string;
-      type?: MemoryEntryInfo["type"];
-    }) => {
-      const wantLimit =
-        input?.limit != null && input.limit > 0 ? Math.floor(input.limit) : 20;
-      const offset =
-        input?.offset != null && input.offset > 0 ? Math.floor(input.offset) : 0;
-      const project =
-        input?.project != null && input.project !== ""
-          ? input.project
-          : undefined;
-      const type = input?.type;
-      const list = await api.memory.recent({
-        limit: wantLimit,
-        ...(offset > 0 ? { offset } : {}),
-        ...(project ? { project } : {}),
-        ...(type ? { type } : {}),
-      });
-      return list.slice(0, wantLimit);
-    },
-    [api],
-  );
-
-  const getMemory = useCallback(
-    async (input: { id: string }) => {
-      return api.memory.get(input);
-    },
-    [api],
-  );
-
-  const updateMemory = useCallback(
-    async (input: { id: string; title: string; body: string }) => {
-      return api.memory.update(input);
-    },
-    [api],
-  );
-
-  const removeMemory = useCallback(
-    async (input: { id: string }) => {
-      return api.memory.remove(input);
-    },
-    [api],
-  );
-
-  const storeMemory = useCallback(
-    async (input: {
-      type: MemoryEntryInfo["type"];
-      title: string;
-      body: string;
-      project?: string;
-      citations?: MemoryCitation[];
-    }) => {
-      return api.memory.store(input);
-    },
-    [api],
-  );
-
-  const maintenanceMemory = useCallback(
-    async (input?: { project?: string; summary?: boolean }) => {
-      return api.memory.maintenance(input);
-    },
-    [api],
-  );
-
-  const resolveMemory = useCallback(
-    async (input: { id: number; resolution: MemoryReviewResolution }) => {
-      return api.memory.resolve(input);
-    },
-    [api],
-  );
-
-  const loadCodeMap = useCallback(
-    async (input: { projectId: string }) => {
-      return api.projects.codeMap(input);
-    },
-    [api],
-  );
-
-  const lintAgentConfig = useCallback(
-    async (input: { projectId: string }) => {
-      return api.projects.lintAgentConfig(input);
-    },
-    [api],
-  );
-
-  const previewAgentConfig = useCallback(
-    async (input: { projectId: string; targets?: string[] }) => {
-      return api.projects.previewAgentConfig(input);
-    },
-    [api],
-  );
-
-  const writeAgentConfig = useCallback(
-    async (input: { projectId: string; targets?: string[] }) => {
-      return api.projects.writeAgentConfig(input);
-    },
-    [api],
-  );
-
-  const listMcpServers = useCallback(async () => {
-    return api.mcp.list();
-  }, [api]);
-
-  const saveMcpServer = useCallback(
-    async (input: McpServerSaveInput) => {
-      return api.mcp.save(input);
-    },
-    [api],
-  );
-
-  const removeMcpServer = useCallback(
-    async (input: { name: string }) => {
-      return api.mcp.remove(input);
-    },
-    [api],
-  );
-
-  const setMcpEnabled = useCallback(
-    async (input: { name: string; enabled: boolean }) => {
-      return api.mcp.setEnabled(input);
-    },
-    [api],
-  );
-
-  const listMcpCatalog = useCallback(async () => {
-    return api.mcp.catalog();
-  }, [api]);
-
-  const pickMcpImport = useCallback(async () => {
-    return api.mcp.pickImport();
-  }, [api]);
-
-  const previewMcpImport = useCallback(
-    async (input: McpPreviewImportInput) => {
-      return api.mcp.previewImport(input);
-    },
-    [api],
-  );
-
-  const installMcpImport = useCallback(
-    async (input: McpInstallRequest) => {
-      return api.mcp.installImport(input);
-    },
-    [api],
-  );
-
-  const discardMcpImport = useCallback(
-    async (input: { previewId: string }) => {
-      return api.mcp.discardImport(input);
-    },
-    [api],
-  );
-
-  const listSkills = useCallback(
-    async (input?: { projectPath?: string }) => {
-      return api.skills.list(input);
-    },
-    [api],
-  );
-
-  const addSkill = useCallback(
-    async (input: SkillWrite) => {
-      return api.skills.add(input);
-    },
-    [api],
-  );
-
-  const removeSkill = useCallback(
-    async (input: { name: string }) => {
-      return api.skills.remove(input);
-    },
-    [api],
-  );
-
-  const syncSkills = useCallback(async () => {
-    return api.skills.sync();
-  }, [api]);
-
-  const listSkillCatalog = useCallback(async () => {
-    return api.skills.catalog();
-  }, [api]);
-
-  const pickSkillImport = useCallback(async () => {
-    return api.skills.pickImport();
-  }, [api]);
-
-  const previewSkillImport = useCallback(
-    async (input: SkillPreviewImportInput) => {
-      return api.skills.previewImport(input);
-    },
-    [api],
-  );
-
-  const installSkillImport = useCallback(
-    async (input: SkillInstallRequest) => {
-      return api.skills.installImport(input);
-    },
-    [api],
-  );
-
-  const discardSkillImport = useCallback(
-    async (input: { previewId: string }) => {
-      return api.skills.discardImport(input);
-    },
-    [api],
-  );
-
-  const detectHarnessSources = useCallback(async () => {
-    return api.harness.detectSources();
-  }, [api]);
-
-  const previewHarnessImport = useCallback(
-    async (input: { source: HarnessSourceId; projectPath?: string }) => {
-      return api.harness.previewImport(input);
-    },
-    [api],
-  );
-
-  const installHarnessImport = useCallback(
-    async (input: HarnessInstallRequest) => {
-      return api.harness.installImport(input);
-    },
-    [api],
-  );
-
-  const discardHarnessImport = useCallback(
-    async (input: { previewId: string }) => {
-      return api.harness.discardImport(input);
-    },
-    [api],
-  );
-
-  const listCliCommands = useCallback(
-    async (input?: { projectPath?: string; provider?: string }) => {
-      return api.skills.commands(input);
-    },
-    [api],
-  );
-
-  const listCliSessions = useCallback(
-    async (input?: {
-      provider?: "codex" | "grok" | "claude" | "cursor" | "opencode" | "kimi" | "muse";
-    }) => {
-      return api.threads.listCliSessions(input);
-    },
-    [api],
-  );
+  const {
+    lintAgentConfig,
+    previewAgentConfig,
+    writeAgentConfig,
+    listMcpServers,
+    saveMcpServer,
+    removeMcpServer,
+    setMcpEnabled,
+    listMcpCatalog,
+    pickMcpImport,
+    previewMcpImport,
+    installMcpImport,
+    discardMcpImport,
+    listSkills,
+    addSkill,
+    removeSkill,
+    syncSkills,
+    listSkillCatalog,
+    pickSkillImport,
+    previewSkillImport,
+    installSkillImport,
+    discardSkillImport,
+    detectHarnessSources,
+    previewHarnessImport,
+    installHarnessImport,
+    discardHarnessImport,
+    listCliCommands,
+    listCliSessions,
+  } = useCoderAgentTools(api);
 
   const importCliSession = useCallback(
     async (input: {
