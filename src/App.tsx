@@ -77,10 +77,7 @@ import {
   sidebarFitCap,
 } from "./sidebarWidth";
 import { useNarrow, useViewportWidth } from "./app/viewport";
-import {
-  agentsPanelStartsCollapsed,
-  saveLastAgentsCollapsed,
-} from "./app/agentsPanelStorage";
+import { useAgentsPanelCollapse } from "./app/useAgentsPanelCollapse";
 import { useAppShortcuts } from "./app/useAppShortcuts";
 import { useSidebarResize } from "./app/useSidebarResize";
 
@@ -111,7 +108,7 @@ const SIDEBAR_RAIL_WIDTH =
     ? 84
     : 44;
 
-type DrawerId = "sidebar" | "agents";
+export type DrawerId = "sidebar" | "agents";
 
 type AppProps = {
   /**
@@ -1160,57 +1157,22 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     return () => window.removeEventListener("keydown", onKey);
   }, [drawer]);
 
-  const persistLastIfRemembering = useCallback((collapsed: boolean) => {
-    if (rememberLastRef.current) saveLastAgentsCollapsed(collapsed);
-  }, []);
-
-  useEffect(() => {
-    if (!settings) return;
-    const def = settings.agentsPanelDefault === "open" ? "open" : "closed";
-    if (appliedPanelDefaultRef.current === null) {
-      appliedPanelDefaultRef.current = def;
-      setAgentsCollapsed(
-        agentsPanelStartsCollapsed(def, settings.agentsPanelRememberLast),
-      );
-      return;
-    }
-    if (appliedPanelDefaultRef.current !== def) {
-      appliedPanelDefaultRef.current = def;
-      const collapsed = def !== "open";
-      setAgentsCollapsed(collapsed);
-      persistLastIfRemembering(collapsed);
-    }
-  }, [settings, persistLastIfRemembering]);
-
-  const collapseAgents = useCallback(() => {
-    collapseSourceRef.current = "user";
-    setAgentsCollapsed(true);
-    persistLastIfRemembering(true);
-  }, [persistLastIfRemembering]);
-
-  // A second workspace pane (Git, Terminal, Browser, …) takes the rail's
-  // width. Not flagged as a "user" collapse: focus stays where it was, and
-  // the expand button is still one click away.
-  const collapseAgentsForPanes = useCallback(() => setAgentsCollapsed(true), []);
-
-  const toggleAgents = useCallback(() => {
-    if (narrow) {
-      setDrawer((d) => (d === "agents" ? null : "agents"));
-      return;
-    }
-    collapseSourceRef.current = "user";
-    setAgentsCollapsed((c) => {
-      const next = !c;
-      persistLastIfRemembering(next);
-      return next;
-    });
-  }, [narrow, persistLastIfRemembering]);
-
-  useEffect(() => {
-    if (collapseSourceRef.current !== "user") return;
-    collapseSourceRef.current = null;
-    if (agentsCollapsed && !narrow) agentsExpandRef.current?.focus();
-  }, [agentsCollapsed, narrow]);
+  const {
+    persistLastIfRemembering,
+    collapseAgents,
+    collapseAgentsForPanes,
+    toggleAgents,
+  } = useAgentsPanelCollapse({
+    settings,
+    narrow,
+    agentsCollapsed,
+    setAgentsCollapsed,
+    setDrawer,
+    collapseSourceRef,
+    rememberLastRef,
+    appliedPanelDefaultRef,
+    agentsExpandRef,
+  });
 
   useAppShortcuts({
     toggleSidebar,
