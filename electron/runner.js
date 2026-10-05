@@ -26,6 +26,10 @@ const { createKimiRun } = require("./runner-provider-kimi.js");
 const { createOpencodeRun } = require("./runner-provider-opencode.js");
 const { createMuseRun } = require("./runner-provider-muse.js");
 const {
+  messagesInMemory,
+  stampLastActivity,
+} = require("./thread-last-activity.js");
+const {
   getProvider,
   resolveBin,
   isBinAvailable,
@@ -1094,6 +1098,9 @@ function createRunner(opts) {
       markVisited: false,
       pendingPermission: getPendingPermission(threadId),
     });
+    // Keep the row's summaries snippet current (#1475). Every message write
+    // ends in a push; the transcript is in memory here, so no shard read.
+    if (messagesInMemory(store, threadId)) stampLastActivity(store, threadId);
     // Stream tails, not the transcript: this runs on every chunk and even
     // capped threads (store.js retention cap) are large. The renderer merges
     // (src/threadPatch.ts); a cap drop shifts every index, so the prefix diff

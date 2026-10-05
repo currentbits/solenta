@@ -236,3 +236,209 @@ describe("threads summaries", () => {
     assert.equal(row.lastActivity.text.length, 200);
   });
 });
+
+describe("threads summaries: persisted lastActivity (#1475)", () => {
+  const {
+    stampLastActivity,
+    lastAssistantFromTail,
+  } = require("../thread-last-activity.js");
+  let tmpDir;
+  let filePath;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "coder-summaries-la-"));
+    filePath = path.join(tmpDir, "coder-store.json");
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  // The pre-#1475 implementation, verbatim: reads every shard synchronously.
+  function oldSummaries(store) {
+    return store
+      .getThreads()
+      .filter((t) => !(t && t.memoryConsolidate === true))
+      .map((t) => {
+        const last = store.getLastAssistantMessage(t.id);
+        return {
+          id: t.id,
+          title: t.title,
+          provider: t.provider,
+          status: t.status,
+          handoffFrom: t.handoffFrom ?? null,
+          orchWorker: t.orchWorker === true,
+          projectId: t.projectId,
+          runStartedAt: t.runStartedAt ?? null,
+          stoppedAt: t.stoppedAt ?? null,
+          awaitingInput: t.awaitingInput === true,
+          stalledAt: t.stalledAt ?? null,
+          lastActivity: last
+            ? {
+                text: String(last.text).split(/\r?\n/, 1)[0].trim().slice(0, 200),
+                at: Number(last.createdAt) || t.updatedAt,
+              }
+            : null,
+        };
+      });
+  }
+
+  const big = "y".repeat(80 * 1024);
+  const FIXTURE = {
+    multi: [
+      { id: "m1", role: "user", text: "q", createdAt: 10 },
+      { id: "m2", role: "assistant", text: "  first line  \nsecond", createdAt: 20 },
+      { id: "m3", role: "user", text: "later", createdAt: 30 },
+    ],
+    blank: [
+      { id: "m1", role: "assistant", text: "real", createdAt: 10 },
+      { id: "m2", role: "assistant", text: "   ", createdAt: 20 },
+    ],
+    noStamp: [{ id: "m1", role: "assistant", text: "no createdAt" }],
+    none: [{ id: "m1", role: "user", text: "only user", createdAt: 5 }],
+    long: [{ id: "m1", role: "assistant", text: "z".repeat(500), createdAt: 7 }],
+    // > 64 KB: last assistant sits in the tail, behind a nested `,{` payload.
+    bigTail: [
+      { id: "m0", role: "user", text: big, createdAt: 1 },
+      { id: "m1", role: "assistant", text: "tail hit ,{\"id\":\"x\"}]", createdAt: 2 },
+      {
+        id: "m2",
+        role: "tool",
+        text: "",
+        createdAt: 3,
+        tool: { id: "t", input: { items: [{ id: "a" }, { id: "b" }] } },
+      },
+    ],
+    // > 64 KB: last assistant is BEFORE the tail; full-file fallback.
+    bigHead: [
+      { id: "m1", role: "assistant", text: "head hit", createdAt: 4 },
+      { id: "m2", role: "tool", text: big, createdAt: 5 },
+    ],
+  };
+
+  /** Persist FIXTURE as real shards, then return a cold Store over them. */
+  function coldStore() {
+    const s = new Store(filePath);
+    s.setThreads(
+      Object.keys(FIXTURE).map((id) => makeThread({ id, updatedAt: 999 })),
+    );
+    for (const [id, msgs] of Object.entries(FIXTURE)) s.setMessages(id, msgs);
+    s.saveNow();
+    // Drop the snippets the first store may have stamped: cold = unknown.
+    const env = JSON.parse(fs.readFileSync(filePath, "utf8"));
+    for (const t of env.threads) delete t.lastActivity;
+    fs.writeFileSync(filePath, JSON.stringify(env));
+    return new Store(filePath);
+  }
+
+  async function waitFor(fn) {
+    for (let i = 0; i < 200; i++) {
+      if (fn()) return;
+      await new Promise((r) => setTimeout(r, 10));
+    }
+    throw new Error("timed out");
+  }
+
+  /** Count sync + async opens/reads under messages/. */
+  function spyShardReads() {
+    const dir = path.join(tmpDir, "messages");
+    const hits = [];
+    const origSync = fs.readFileSync;
+    const origOpen = fs.promises.open;
+    fs.readFileSync = function (p, ...rest) {
+      if (String(p).startsWith(dir)) hits.push(["sync", p]);
+      return origSync.call(this, p, ...rest);
+    };
+    fs.promises.open = function (p, ...rest) {
+      if (String(p).startsWith(dir)) hits.push(["async", p]);
+      return origOpen.call(this, p, ...rest);
+    };
+    return {
+      hits,
+      restore() {
+        fs.readFileSync = origSync;
+        fs.promises.open = origOpen;
+      },
+    };
+  }
+
+  it("appending an assistant message updates the row snippet (runner pushDetail path)", () => {
+    const store = new Store(filePath);
+    store.setThreads([makeThread({ id: "a" })]);
+    store.appendMessage("a", { id: "m1", role: "assistant", text: "one\nx", createdAt: 10 });
+    stampLastActivity(store, "a");
+    assert.deepEqual(store.getThread("a").lastActivity, { text: "one", at: 10 });
+    store.appendMessage("a", { id: "m2", role: "assistant", text: "two", createdAt: 20 });
+    stampLastActivity(store, "a");
+    assert.deepEqual(store.getThread("a").lastActivity, { text: "two", at: 20 });
+    // Persisted: a fresh store reads it straight off the row.
+    store.saveNow();
+    assert.deepEqual(new Store(filePath).getThread("a").lastActivity, {
+      text: "two",
+      at: 20,
+    });
+  });
+
+  it("does zero shard reads once every row has a snippet", async () => {
+    const store = coldStore();
+    services.threadSummaries(store);
+    await waitFor(() => store.getThreads().every((t) => t.lastActivity !== undefined));
+    store.saveNow();
+    const reloaded = new Store(filePath);
+    const spy = spyShardReads();
+    try {
+      const rows = services.threadSummaries(reloaded);
+      await new Promise((r) => setTimeout(r, 30));
+      assert.equal(rows.length, Object.keys(FIXTURE).length);
+      assert.deepEqual(spy.hits, []);
+    } finally {
+      spy.restore();
+    }
+  });
+
+  it("backfills unknown rows once, asynchronously", async () => {
+    const store = coldStore();
+    const spy = spyShardReads();
+    try {
+      const first = services.threadSummaries(store);
+      // Nothing known yet, and nothing read on the calling tick.
+      assert.ok(first.every((r) => r.lastActivity === null));
+      assert.deepEqual(spy.hits.filter(([k]) => k === "sync"), []);
+      await waitFor(() => store.getThreads().every((t) => t.lastActivity !== undefined));
+      const opened = spy.hits.length;
+      assert.equal(spy.hits.filter(([k]) => k === "sync").length, 0);
+      assert.equal(opened, Object.keys(FIXTURE).length, "one open per shard");
+      services.threadSummaries(store);
+      services.threadSummaries(store);
+      await new Promise((r) => setTimeout(r, 30));
+      assert.equal(spy.hits.length, opened, "never re-read");
+    } finally {
+      spy.restore();
+    }
+  });
+
+  it("matches the old implementation's output for a fixture set", async () => {
+    const expected = oldSummaries(coldStore());
+    const store = coldStore();
+    services.threadSummaries(store);
+    await waitFor(() => store.getThreads().every((t) => t.lastActivity !== undefined));
+    assert.deepEqual(services.threadSummaries(store), expected);
+    // Sanity: the fixture exercises the tail and fallback paths.
+    const byId = Object.fromEntries(expected.map((r) => [r.id, r]));
+    assert.equal(byId.bigTail.lastActivity.text, 'tail hit ,{"id":"x"}]');
+    assert.equal(byId.bigHead.lastActivity.text, "head hit");
+    assert.equal(byId.noStamp.lastActivity.at, 999);
+    assert.equal(byId.none.lastActivity, null);
+  });
+
+  it("lastAssistantFromTail ignores nested and in-string `,{` boundaries", () => {
+    const msgs = [
+      { id: "u", role: "user", text: "cut off by the tail" },
+      { id: "a", role: "assistant", text: "pick me", createdAt: 1 },
+      { id: "b", role: "tool", text: 'x,{"id":"q"}', tool: { l: [{ id: 1 }, { id: 2 }] } },
+    ];
+    const raw = JSON.stringify(msgs);
+    assert.equal(lastAssistantFromTail(raw.slice(5)).text, "pick me");
+    assert.equal(lastAssistantFromTail(JSON.stringify([msgs[2], msgs[2]]).slice(3)), undefined);
+  });
+});
