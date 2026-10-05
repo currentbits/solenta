@@ -1,14 +1,10 @@
 import {
   useCallback,
   useEffect,
-  useLayoutEffect,
   useMemo,
   useRef,
   useState,
-  useSyncExternalStore,
   type CSSProperties,
-  type KeyboardEvent as ReactKeyboardEvent,
-  type PointerEvent as ReactPointerEvent,
 } from "react";
 import { useCoder } from "./useCoder";
 import { isDevBuild, needsWebTokenGate } from "./coderApi";
@@ -18,7 +14,7 @@ import { Sidebar } from "./components/Sidebar";
 import { ThreadView } from "./components/ThreadView";
 import { PrListView } from "./components/PrListView";
 import { KanbanView } from "./components/KanbanView";
-import { PlanboardView, type ThreadStartMode } from "./components/PlanboardView";
+import { PlanboardView } from "./components/PlanboardView";
 import { AutomationsView } from "./components/AutomationsView";
 import { ActivityView } from "./components/ActivityView";
 import { InsightsView } from "./components/InsightsView";
@@ -44,7 +40,6 @@ import { WorkflowsModal } from "./components/WorkflowsModal";
 import { CommandPalette } from "./components/CommandPalette";
 import {
   PALETTE_ACTIONS,
-  matchPaletteShortcut,
   type PaletteMode,
 } from "./commandPalette";
 import { WebTokenGate } from "./components/WebTokenGate";
@@ -55,41 +50,40 @@ import {
   repeatDraftFromDetail,
   type RepeatDraft,
 } from "./repeatThread";
-import { sameTaskPeers, toComparePeer } from "./divergence";
-import {
-  providerPermissionModes,
-  snapToHonouredPermissionMode,
-} from "./format";
 import type {
   AgentProfile,
   ConflictForecast,
   DistilledWorkflow,
   ProjectUpdateInput,
-  WorkSuggestion,
 } from "./shared/ipc";
 import styles from "./App.module.css";
 import { syncTheme } from "./theme";
 import {
   isReturnableView,
-  validProjectId,
   type ThreadOpenOrigin,
   type ViewReturnState,
 } from "./viewReturn";
-import { isDirectCrewChild, sameCrewProject } from "./crewIntegration";
 import {
-  bindSidebarDrag,
-  browserSidebarStorage,
   initialSidebarWidth,
-  nextSidebarPreference,
-  saveSidebarWidth,
-  SIDEBAR_WIDTH_DEFAULT,
   SIDEBAR_WIDTH_MIN,
-  SIDEBAR_WIDTH_STEP,
-  SIDEBAR_WIDTH_STEP_COARSE,
   sidebarFitCap,
 } from "./sidebarWidth";
+import { useNarrow, useViewportWidth } from "./app/viewport";
+import { useAgentsPanelCollapse } from "./app/useAgentsPanelCollapse";
+import {
+  EMPTY_FORECAST,
+  useConflictForecast,
+} from "./app/useConflictForecast";
+import { useViewNavigation } from "./app/useViewNavigation";
+import { useThreadRemoval } from "./app/useThreadRemoval";
+import { useSuggestionHandlers } from "./app/useSuggestionHandlers";
+import { useThreadRoster } from "./app/useThreadRoster";
+import { useCrewHandlers } from "./app/useCrewHandlers";
+import { useOnboarding } from "./app/useOnboarding";
+import { useIssueStarters } from "./app/useIssueStarters";
+import { useAppShortcuts } from "./app/useAppShortcuts";
+import { useSidebarResize } from "./app/useSidebarResize";
 
-const EMPTY_FORECAST: ConflictForecast = { pairs: [], computedAt: 0 };
 const EMPTY_AGENT_PROFILES: AgentProfile[] = [];
 
 export type AppView =
@@ -116,81 +110,7 @@ const SIDEBAR_RAIL_WIDTH =
     ? 84
     : 44;
 
-type DrawerId = "sidebar" | "agents";
-
-// CSS px, so Electron zoom (settings.uiScale) is included. minWidth 1100 DIP
-// at 1.6× is ~688 CSS px, already under this threshold, so the three panes
-// collapse into drawers instead of crushing the thread (#652).
-const NARROW_QUERY = "(max-width: 900px)";
-
-function subscribeNarrow(onChange: () => void): () => void {
-  if (typeof window.matchMedia !== "function") return () => {};
-  const mq = window.matchMedia(NARROW_QUERY);
-  mq.addEventListener("change", onChange);
-  return () => mq.removeEventListener("change", onChange);
-}
-
-function getNarrow(): boolean {
-  return typeof window.matchMedia === "function"
-    ? window.matchMedia(NARROW_QUERY).matches
-    : false;
-}
-
-function useNarrow(): boolean {
-  return useSyncExternalStore(subscribeNarrow, getNarrow, () => false);
-}
-
-function subscribeViewport(onChange: () => void): () => void {
-  window.addEventListener("resize", onChange);
-  return () => window.removeEventListener("resize", onChange);
-}
-
-function getViewportWidth(): number {
-  return window.innerWidth;
-}
-
-function useViewportWidth(): number {
-  return useSyncExternalStore(subscribeViewport, getViewportWidth, () => 0);
-}
-
-const AGENTS_LAST_KEY = "coder.agents.collapsed";
-
-function loadLastAgentsCollapsed(): boolean | null {
-  try {
-    const raw = window.localStorage.getItem(AGENTS_LAST_KEY);
-    if (raw === "1" || raw === "true") return true;
-    if (raw === "0" || raw === "false") return false;
-    return null;
-  } catch {
-    return null;
-  }
-}
-
-function saveLastAgentsCollapsed(value: boolean): void {
-  try {
-    window.localStorage.setItem(AGENTS_LAST_KEY, value ? "1" : "0");
-  } catch {
-    // Quota/private mode: last state just stops persisting.
-  }
-}
-
-function agentsPanelStartsCollapsed(
-  defaultState: "closed" | "open" | null | undefined,
-  rememberLast?: boolean | null,
-): boolean {
-  if (rememberLast) {
-    const last = loadLastAgentsCollapsed();
-    if (last !== null) return last;
-  }
-  return defaultState !== "open";
-}
-
-function dialogOpen(): boolean {
-  return (
-    typeof document !== "undefined" &&
-    document.querySelector('[role="dialog"]') != null
-  );
-}
+export type DrawerId = "sidebar" | "agents";
 
 type AppProps = {
   /**
@@ -672,124 +592,35 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
   const selectedThreadProjectIdRef = useRef(selectedThreadProjectId);
   selectedThreadProjectIdRef.current = selectedThreadProjectId;
 
-  const consumeReturn = useCallback((viewName: ViewReturnState["view"]) => {
-    const dest = returnToRef.current;
-    const returning =
-      viewRef.current === "thread" && dest?.view === viewName;
-    if (!returning) {
-      setViewRestore(null);
-      setReturnTo(null);
-      return null;
-    }
-    setViewRestore(dest);
-    setReturnTo(null);
-    return dest;
-  }, []);
-
-  const openThreads = useCallback(() => {
-    setView("thread");
-    setDrawer(null);
-  }, []);
-  const openKanban = useCallback((pid?: string | null) => {
-    const dest = consumeReturn("kanban");
-    if (dest) {
-      setKanbanProjectId(
-        validProjectId(dest.projectId, projectsRef.current),
-      );
-    } else {
-      setKanbanProjectId(pid ?? null);
-    }
-    setView("kanban");
-    setDrawer(null);
-  }, [consumeReturn]);
-  const openPlanboard = useCallback(
-    (pid?: string | null) => {
-      const dest = consumeReturn("planboard");
-      if (dest) {
-        setPlanboardProjectId(
-          validProjectId(dest.projectId, projectsRef.current) ??
-            selectedThreadProjectIdRef.current,
-        );
-      } else {
-        setPlanboardProjectId(pid ?? selectedThreadProjectIdRef.current);
-      }
-      setView("planboard");
-      setDrawer(null);
-    },
-    [consumeReturn],
-  );
-  const openPrs = useCallback(() => {
-    consumeReturn("prs");
-    setView("prs");
-    setDrawer(null);
-  }, [consumeReturn]);
-  const openAutomations = useCallback(() => {
-    setRepeatDraft(null);
-    setReturnTo(null);
-    setViewRestore(null);
-    setView("automations");
-    setDrawer(null);
-  }, []);
-  const openActivity = useCallback((pid?: string | null) => {
-    const dest = consumeReturn("activity");
-    if (dest) {
-      setActivityProjectId(
-        validProjectId(dest.projectId, projectsRef.current),
-      );
-    } else {
-      setActivityProjectId(pid ?? null);
-    }
-    setView("activity");
-    setDrawer(null);
-  }, [consumeReturn]);
-  const openUsage = useCallback(() => {
-    setReturnTo(null);
-    setViewRestore(null);
-    setView("usage");
-    setDrawer(null);
-  }, []);
-  const openFleet = useCallback(() => {
-    setReturnTo(null);
-    setViewRestore(null);
-    setView("fleet");
-    setDrawer(null);
-  }, []);
-  const openInsights = useCallback(() => {
-    consumeReturn("insights");
-    setView("insights");
-    setDrawer(null);
-  }, [consumeReturn]);
-  const loadFailureModes = useCallback(
-    () => api.insights.failureModes(),
-    [api],
-  );
-  // ponytail: collect the widest range once; summarizeFleet slices client-side
-  const loadFleetEvidence = useCallback(
-    () => api.fleet.evidence({ days: 90 }),
-    [api],
-  );
-  const openDigest = useCallback(() => {
-    consumeReturn("digest");
-    setView("digest");
-    setDrawer(null);
-  }, [consumeReturn]);
-  const handleReturnToView = useCallback(() => {
-    const dest = returnToRef.current;
-    if (!dest) return;
-    if (dest.view === "planboard") openPlanboard();
-    else if (dest.view === "kanban") openKanban();
-    else if (dest.view === "activity") openActivity();
-    else if (dest.view === "digest") openDigest();
-    else if (dest.view === "prs") openPrs();
-    else if (dest.view === "insights") openInsights();
-  }, [
-    openPlanboard,
+  const {
+    openThreads,
     openKanban,
-    openActivity,
-    openDigest,
+    openPlanboard,
     openPrs,
+    openAutomations,
+    openActivity,
+    openUsage,
+    openFleet,
     openInsights,
-  ]);
+    loadFailureModes,
+    loadFleetEvidence,
+    openDigest,
+    handleReturnToView,
+  } = useViewNavigation({
+    api,
+    viewRef,
+    returnToRef,
+    projectsRef,
+    selectedThreadProjectIdRef,
+    setView,
+    setDrawer,
+    setReturnTo,
+    setViewRestore,
+    setRepeatDraft,
+    setKanbanProjectId,
+    setPlanboardProjectId,
+    setActivityProjectId,
+  });
   const openSettings = useCallback((pane?: SettingsPane) => {
     setSettingsPane(pane ?? "general");
     setSettingsOpen(true);
@@ -1094,141 +925,42 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     [editQueued],
   );
 
-  const handleSetArchived = useCallback(
-    async (archived: boolean) => {
-      if (archived) {
-        // Capture id before setArchived moves selection off the open thread.
-        const id = selectedThreadId;
-        if (!id) return;
-        setRemoveFailMessage(null);
-        if (await setArchived(true, id)) {
-          setDeleteToastId(null);
-          setArchiveToastIds([id]);
-        }
-      } else {
-        setArchiveToastIds(null);
-        await setArchived(false);
-      }
-    },
-    [selectedThreadId, setArchived],
-  );
-
-  /** Clear the settled tail: archive every settled thread, undoable as one unit. */
-  const handleClearSettled = useCallback(
-    async (ids: string[]) => {
-      if (ids.length === 0) return;
-      setRemoveFailMessage(null);
-      // Offer undo only for what actually archived: a mid-loop failure (its
-      // message lands in the run-error banner) used to leave a partial
-      // archive whose undo toast still claimed every id (issue #85).
-      const archived: string[] = [];
-      for (const id of ids) {
-        if (await setArchived(true, id)) archived.push(id);
-      }
-      if (archived.length > 0) {
-        setDeleteToastId(null);
-        setArchiveToastIds(archived);
-      }
-    },
-    [setArchived],
-  );
-
-  const dismissArchiveToast = useCallback(() => {
-    setArchiveToastIds(null);
-  }, []);
-
-  const undoArchive = useCallback(async () => {
-    if (!archiveToastIds) return;
-    const ids = archiveToastIds;
-    setArchiveToastIds(null);
-    for (const id of ids) {
-      await setArchived(false, id);
-    }
-  }, [archiveToastIds, setArchived]);
-
-  const handleDeleteThread = useCallback(async () => {
-    const id = selectedThreadId;
-    if (!id) return;
-    setArchiveToastIds(null);
-    if (await deleteThread()) setDeleteToastId(id);
-  }, [selectedThreadId, deleteThread]);
-
-  const dismissDeleteToast = useCallback(() => {
-    setDeleteToastId(null);
-  }, []);
-
-  const undoDelete = useCallback(async () => {
-    if (!deleteToastId) return;
-    const id = deleteToastId;
-    setDeleteToastId(null);
-    await restoreThread(id);
-  }, [deleteToastId, restoreThread]);
-
-  const handleRemoveProject = useCallback(
-    async (projectId: string) => {
-      const slug =
-        projectById.get(projectId)?.slug ??
-        projects.find((p) => p.id === projectId)?.slug ??
-        projectId;
-      setArchiveToastIds(null);
-      try {
-        await removeProject(projectId);
-        setRemoveFailMessage(null);
-      } catch (err) {
-        const reason = err instanceof Error ? err.message.trim() : "";
-        const title = reason
-          ? `Failed to remove "${slug}": ${reason}`
-          : `Failed to remove "${slug}"`;
-        setRemoveFailMessage(title);
-        throw new Error(title);
-      }
-    },
-    [projectById, projects, removeProject],
-  );
-
-  const dismissRemoveFail = useCallback(() => {
-    setRemoveFailMessage(null);
-  }, []);
+  const {
+    handleSetArchived,
+    handleClearSettled,
+    dismissArchiveToast,
+    undoArchive,
+    handleDeleteThread,
+    dismissDeleteToast,
+    undoDelete,
+    handleRemoveProject,
+    dismissRemoveFail,
+  } = useThreadRemoval({
+    selectedThreadId,
+    projects,
+    projectById,
+    setArchived,
+    deleteThread,
+    restoreThread,
+    removeProject,
+    archiveToastIds,
+    setArchiveToastIds,
+    deleteToastId,
+    setDeleteToastId,
+    setRemoveFailMessage,
+  });
 
   // Close the center Changes panel when switching threads (old behavior).
   useEffect(() => {
     setChangesOpen(false);
   }, [selectedThreadId]);
 
-  // Issue #249: refetch the cached forecast when the thread list moves.
-  // Keyed on a cheap derived value, not the live `threads` array: the array
-  // identity changes on every 700ms stream tick, which used to fire this IPC
-  // call ~1.4x/sec for the duration of any run.
-  const forecastKey = useMemo(
-    () =>
-      threads
-        .map((t) => `${t.id}:${t.branch ?? ""}:${t.worktreePath ?? ""}`)
-        .join("|"),
-    [threads],
-  );
-  useEffect(() => {
-    if (!selectedProjectId) {
-      setForecast(EMPTY_FORECAST);
-      return;
-    }
-    let cancelled = false;
-    const refresh = () => {
-      void conflictForecast(selectedProjectId).then((next) => {
-        if (!cancelled) setForecast(next);
-      });
-    };
-    refresh();
-    // Git state can move without branch/worktree changing (merges, pulls), so
-    // also refresh when the window regains focus — no steady-state timer.
-    const onVisible = () => {
-      if (!document.hidden) refresh();
-    };
-    document.addEventListener("visibilitychange", onVisible);
-    return () => {
-      cancelled = true;
-      document.removeEventListener("visibilitychange", onVisible);
-    };
-  }, [selectedProjectId, forecastKey, conflictForecast]);
+  useConflictForecast({
+    threads,
+    selectedProjectId,
+    conflictForecast,
+    setForecast,
+  });
 
   useEffect(() => {
     if (drawer === null) return;
@@ -1239,99 +971,31 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     return () => window.removeEventListener("keydown", onKey);
   }, [drawer]);
 
-  const persistLastIfRemembering = useCallback((collapsed: boolean) => {
-    if (rememberLastRef.current) saveLastAgentsCollapsed(collapsed);
-  }, []);
+  const {
+    persistLastIfRemembering,
+    collapseAgents,
+    collapseAgentsForPanes,
+    toggleAgents,
+  } = useAgentsPanelCollapse({
+    settings,
+    narrow,
+    agentsCollapsed,
+    setAgentsCollapsed,
+    setDrawer,
+    collapseSourceRef,
+    rememberLastRef,
+    appliedPanelDefaultRef,
+    agentsExpandRef,
+  });
 
-  useEffect(() => {
-    if (!settings) return;
-    const def = settings.agentsPanelDefault === "open" ? "open" : "closed";
-    if (appliedPanelDefaultRef.current === null) {
-      appliedPanelDefaultRef.current = def;
-      setAgentsCollapsed(
-        agentsPanelStartsCollapsed(def, settings.agentsPanelRememberLast),
-      );
-      return;
-    }
-    if (appliedPanelDefaultRef.current !== def) {
-      appliedPanelDefaultRef.current = def;
-      const collapsed = def !== "open";
-      setAgentsCollapsed(collapsed);
-      persistLastIfRemembering(collapsed);
-    }
-  }, [settings, persistLastIfRemembering]);
-
-  const collapseAgents = useCallback(() => {
-    collapseSourceRef.current = "user";
-    setAgentsCollapsed(true);
-    persistLastIfRemembering(true);
-  }, [persistLastIfRemembering]);
-
-  // A second workspace pane (Git, Terminal, Browser, …) takes the rail's
-  // width. Not flagged as a "user" collapse: focus stays where it was, and
-  // the expand button is still one click away.
-  const collapseAgentsForPanes = useCallback(() => setAgentsCollapsed(true), []);
-
-  const toggleAgents = useCallback(() => {
-    if (narrow) {
-      setDrawer((d) => (d === "agents" ? null : "agents"));
-      return;
-    }
-    collapseSourceRef.current = "user";
-    setAgentsCollapsed((c) => {
-      const next = !c;
-      persistLastIfRemembering(next);
-      return next;
-    });
-  }, [narrow, persistLastIfRemembering]);
-
-  useEffect(() => {
-    if (collapseSourceRef.current !== "user") return;
-    collapseSourceRef.current = null;
-    if (agentsCollapsed && !narrow) agentsExpandRef.current?.focus();
-  }, [agentsCollapsed, narrow]);
-
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (!(e.metaKey || e.ctrlKey) || e.altKey || e.shiftKey) return;
-      if (e.key.toLowerCase() !== "b" || narrow || dialogOpen()) return;
-      e.preventDefault();
-      toggleSidebar();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [toggleSidebar, narrow]);
-
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (!(e.metaKey || e.ctrlKey) || e.key !== ".") return;
-      if (e.altKey || e.shiftKey) return;
-      if (dialogOpen()) return;
-      e.preventDefault();
-      toggleAgents();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [toggleAgents]);
-
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      const next = matchPaletteShortcut(e);
-      if (!next) return;
-      const paletteEl = document.querySelector("[data-command-palette]");
-      if (dialogOpen() && !paletteEl) return;
-      e.preventDefault();
-      e.stopPropagation();
-      if (paletteEl && paletteModeRef.current === next) {
-        setPaletteOpen(false);
-        return;
-      }
-      setPaletteMode(next);
-      setPaletteOpen(true);
-    };
-    window.addEventListener("keydown", onKey, true);
-    return () => window.removeEventListener("keydown", onKey, true);
-  }, []);
+  useAppShortcuts({
+    toggleSidebar,
+    narrow,
+    toggleAgents,
+    paletteModeRef,
+    setPaletteMode,
+    setPaletteOpen,
+  });
 
   // ponytail: restore to the trigger, not a focus trap. Tab can leave the pane.
   useEffect(() => {
@@ -1384,299 +1048,51 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
       workflow: view === "thread" && visibleDetail ? visibleDetail.workflow : null,
     });
 
-  const handleStartSuggestion = useCallback(
-    async (s: WorkSuggestion) => {
-      const threadId = selectedThreadId;
-      if (!threadId) return;
-      // Stay on the thread the chip was clicked from; the new worker nests
-      // under it in the sidebar and runs in the background.
-      const t = await forkThread(threadId, { worktree: true, select: false });
-      if (!t) return;
-      // Resolve before startRun so a failed kickoff cannot leave the chip
-      // open — a retry would fork a second idle thread.
-      await resolveSuggestion(threadId, s.id, "started", {
-        startedThreadId: t.id,
-      });
-      try {
-        await startRun(s.prompt, t.id);
-      } catch {
-        // startRun already set the run-scope error. The fork exists and
-        // the chip is started; the new thread is nested under this one.
-      }
-    },
-    [selectedThreadId, forkThread, startRun, resolveSuggestion],
-  );
+  const {
+    handleStartSuggestion,
+    handleFileSuggestion,
+    handleDismissSuggestion,
+  } = useSuggestionHandlers({
+    selectedThreadId,
+    project,
+    forkThread,
+    startRun,
+    createIssue,
+    resolveSuggestion,
+    setChipError,
+  });
 
-  const handleFileSuggestion = useCallback(
-    async (s: WorkSuggestion) => {
-      const threadId = selectedThreadId;
-      const projectPath = project?.path;
-      if (!threadId || !projectPath) return;
-      const r = await createIssue(
-        projectPath,
-        s.title,
-        `${s.prompt}\n\n_Filed from a Solenta suggested-work chip._`,
-      );
-      if (!r.ok) {
-        // In-band like setIssuePlanStatus / planboard: show the reason, leave
-        // the chip open. ArchiveToast is App's surface for action failures.
-        setChipError(r.reason);
-        return;
-      }
-      setChipError(null);
-      await resolveSuggestion(threadId, s.id, "filed", {
-        issueNumber: r.number,
-      });
-    },
-    [selectedThreadId, project?.path, createIssue, resolveSuggestion],
-  );
-
-  const handleDismissSuggestion = useCallback(
-    async (s: WorkSuggestion) => {
-      if (!selectedThreadId) return;
-      await resolveSuggestion(selectedThreadId, s.id, "dismissed");
-    },
-    [selectedThreadId, resolveSuggestion],
-  );
-
-  /** Provenance of a handed-off thread; a stable object while the row is. */
-  const handoffFrom = visibleDetail?.thread.handoffFrom ?? null;
-  const handoffSource = useMemo(() => {
-    if (!handoffFrom) return null;
-    const parent = threads.find((t) => t.id === handoffFrom) ?? null;
-    if (!parent || !sameCrewProject(parent, visibleDetail?.thread)) return null;
-    return parent;
-  }, [threads, handoffFrom, visibleDetail?.thread]);
-  /** Direct same-project orchWorker children. Manual forks and cross-project rows do not count. */
-  const workerCount = useMemo(() => {
-    const parent = visibleDetail?.thread;
-    if (!parent) return 0;
-    let n = 0;
-    for (const t of threads) {
-      if (isDirectCrewChild(t, parent)) n++;
-    }
-    return n;
-  }, [threads, visibleDetail?.thread]);
-
-  /** Draft strip "Previous worktree": the project's most recently active
-   *  other worktree thread (#1411). */
-  const previousWorktree = useMemo(() => {
-    const cur = visibleDetail?.thread;
-    if (!cur) return null;
-    let best: (typeof threads)[number] | null = null;
-    for (const t of threads) {
-      if (t.id === cur.id || t.projectId !== cur.projectId) continue;
-      if (t.archived || !t.worktreePath || !t.branch) continue;
-      if (!best || t.updatedAt > best.updatedAt) best = t;
-    }
-    return best?.branch ? { branch: best.branch, title: best.title } : null;
-  }, [threads, visibleDetail?.thread]);
-
-  /** What the Agents team view refetches on: ids + statuses, not identity. */
-  const rosterKey = useMemo(
-    () => threads.map((t) => `${t.id}:${t.status}`).join(","),
-    [threads],
-  );
-
-  /** Agents panel refetch key: only the selected thread's project, so a
-   *  working thread elsewhere does not keep the team poll alive (#1398). */
-  const panelRosterKey = useMemo(() => {
-    const pid = visibleDetail?.thread.projectId;
-    if (!pid) return "";
-    return threads
-      .filter((t) => t.projectId === pid)
-      .map((t) => `${t.id}:${t.status}`)
-      .join(",");
-  }, [threads, visibleDetail?.thread.projectId]);
-
-  /**
-   * Same-task siblings for the divergence card. Keyed on roster + the open
-   * thread so a 700ms stream tick on an unrelated row does not rebuild this.
-   */
-  const comparePeers = useMemo(() => {
-    if (!visibleDetail) return [];
-    const peers = sameTaskPeers(visibleDetail.thread, threads);
-    return peers.map((t) => toComparePeer(t, peers, providers));
-  }, [
-    visibleDetail?.thread.id,
-    visibleDetail?.thread.handoffFrom,
-    visibleDetail?.thread.projectId,
-    rosterKey,
+  const {
+    handoffSource,
+    workerCount,
+    previousWorktree,
+    panelRosterKey,
+    comparePeers,
+  } = useThreadRoster({
+    threads,
+    visibleDetail,
     providers,
-  ]);
+  });
 
-  const handleImportCliSession = useCallback(
-    async (input: {
-      sessionId: string;
-      projectId: string;
-      provider?: "codex" | "grok" | "claude" | "cursor" | "opencode" | "kimi" | "muse";
-    }) => {
-      const t = await importCliSession(input);
-      setRevealThreadId(t.id);
-      return t;
-    },
-    [importCliSession],
-  );
-
-  const handleCreateThreadFromIssue = useCallback(
-    async (input: {
-      projectId: string;
-      projectPath: string;
-      ref: string;
-      mode?: ThreadStartMode;
-      agentProfileId?: string;
-    }) => {
-      let fetched;
-      try {
-        fetched = await fetchIssue(input.projectPath, input.ref);
-      } catch (err) {
-        return {
-          ok: false as const,
-          reason: err instanceof Error ? err.message : String(err),
-        };
-      }
-      if (!fetched.ok) return fetched;
-      const issue = fetched.issue;
-      let thread;
-      try {
-        // "default" (and the sidebar's issue button, which sends no mode)
-        // follows the app setting; the rest are explicit overrides.
-        const opts =
-          input.mode === "orchestrator"
-            ? { orchestrate: true }
-            : input.mode === "worktree"
-              ? { worktree: true }
-              : input.mode === "plain"
-                ? { worktree: false, orchestrate: false }
-                : undefined;
-        thread = await createThread(issue.title, input.projectId, {
-          ...opts,
-          // Linear identifiers are not GitHub issue numbers; post-merge
-          // reopen scans `GitHub issue #N:` and ThreadInfo.issueNumber.
-          ...(issue.source === "linear" ? {} : { issueNumber: issue.number }),
-        });
-      } catch (err) {
-        return {
-          ok: false as const,
-          reason: err instanceof Error ? err.message : String(err),
-        };
-      }
-      if (!thread) {
-        return { ok: false as const, reason: "Could not create thread" };
-      }
-      if (input.agentProfileId) {
-        const profile = (settings?.agentProfiles ?? []).find(
-          (p) => p.id === input.agentProfileId,
-        );
-        if (!profile) {
-          return { ok: false as const, reason: "Unknown agent profile" };
-        }
-        const info = providers.find((p) => p.id === profile.provider);
-        if (!info || info.available === false) {
-          return {
-            ok: false as const,
-            reason: `${profile.name} is not installed`,
-          };
-        }
-        try {
-          // Same order as Composer.pickProfile: setProvider clears effort
-          // on a harness switch, then effort, then permission.
-          await setProvider({
-            threadId: thread.id,
-            provider: profile.provider,
-            model: profile.model,
-          });
-          await setReasoningEffort(profile.reasoningEffort, thread.id);
-          await setPermissionMode(
-            snapToHonouredPermissionMode(
-              providerPermissionModes(info),
-              profile.permissionMode,
-            ),
-            thread.id,
-          );
-        } catch (err) {
-          return {
-            ok: false as const,
-            reason: err instanceof Error ? err.message : String(err),
-          };
-        }
-      }
-      const body = issue.body || "";
-      const heading =
-        issue.source === "linear"
-          ? `Linear issue ${issue.identifier || issue.number}`
-          : `GitHub issue #${issue.number}`;
-      const prompt = `${heading}: ${issue.title}\n${issue.url}\n\n${body}`;
-      try {
-        await startRun(prompt, thread.id);
-      } catch (err) {
-        return {
-          ok: false as const,
-          reason: err instanceof Error ? err.message : String(err),
-        };
-      }
-      // GitHub plan:* labels do not exist on Linear. Skip the column move.
-      if (issue.source === "linear") {
-        return { ok: true as const };
-      }
-      // The run is live either way, so a failed label move is a warning,
-      // not a failure: say so instead of pretending the card moved.
-      let moved;
-      try {
-        moved = await setIssuePlanStatus(
-          input.projectPath,
-          issue.number,
-          "doing",
-        );
-      } catch (err) {
-        const reason = err instanceof Error ? err.message : String(err);
-        return {
-          ok: true as const,
-          warning: `plan:doing not set (${reason})`,
-        };
-      }
-      return moved.ok
-        ? { ok: true as const }
-        : { ok: true as const, warning: `plan:doing not set (${moved.reason})` };
-    },
-    [
-      fetchIssue,
-      createThread,
-      startRun,
-      setIssuePlanStatus,
-      settings?.agentProfiles,
-      providers,
-      setProvider,
-      setReasoningEffort,
-      setPermissionMode,
-    ],
-  );
-
-  const handleCheckoutPr = useCallback(
-    async (input: { projectId: string; prNumber: number }) => {
-      let result;
-      try {
-        result = await checkoutPr(input);
-      } catch (err) {
-        return {
-          ok: false as const,
-          reason: err instanceof Error ? err.message : String(err),
-        };
-      }
-      if (!result.ok) return result;
-      setView("thread");
-      setRevealThreadId(result.thread.id);
-      if (result.created) {
-        try {
-          await startRun(result.prompt, result.thread.id);
-        } catch {
-          // Checkout landed; the run error is already in useCoder.error.
-        }
-      }
-      return result;
-    },
-    [checkoutPr, startRun],
-  );
+  const {
+    handleImportCliSession,
+    handleCreateThreadFromIssue,
+    handleCheckoutPr,
+  } = useIssueStarters({
+    settings,
+    providers,
+    importCliSession,
+    fetchIssue,
+    createThread,
+    startRun,
+    setIssuePlanStatus,
+    setProvider,
+    setReasoningEffort,
+    setPermissionMode,
+    checkoutPr,
+    setView,
+    setRevealThreadId,
+  });
 
   const handleAddProject = useCallback(() => {
     setAddPathOpen(true);
@@ -1737,60 +1153,26 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     ],
   );
 
-  const finishOnboarding = useCallback(async () => {
-    await saveSettings({ onboardingSeen: true });
-    createdFirstThreadRef.current = null;
-    setOnboardingDismissed(true);
-    setOnboardingForceOpen(false);
-  }, [saveSettings]);
-
-  const handleCreateFirstThread = useCallback(
-    async (input: { projectId: string; provider: string }) => {
-      const existing = createdFirstThreadRef.current;
-      let threadId =
-        existing && existing.projectId === input.projectId
-          ? existing.id
-          : null;
-      if (!threadId) {
-        const thread = await createThread("New Thread", input.projectId, {
-          inheritProvider: false,
-        });
-        if (!thread) {
-          throw new Error("Could not create thread");
-        }
-        threadId = thread.id;
-      }
-      createdFirstThreadRef.current = {
-        id: threadId,
-        projectId: input.projectId,
-      };
-      try {
-        await setProvider({ threadId, provider: input.provider });
-      } catch (err) {
-        const message =
-          err instanceof Error && err.message
-            ? err.message
-            : "Could not set the thread agent";
-        throw err instanceof Error ? err : new Error(message);
-      }
-      selectThread(threadId);
-      setView("thread");
-      setRevealThreadId(threadId);
-    },
-    [createThread, selectThread, setProvider],
-  );
-
-  const showOnboarding = useCallback(() => {
-    setSettingsOpen(false);
-    setOnboardingForceOpen(true);
-    createdFirstThreadRef.current = null;
-  }, []);
-
-  const onboardingOpen =
-    onboardingForceOpen ||
-    (settings !== null &&
-      settings.onboardingSeen !== true &&
-      !onboardingDismissed);
+  const {
+    finishOnboarding,
+    handleCreateFirstThread,
+    showOnboarding,
+    onboardingOpen,
+  } = useOnboarding({
+    settings,
+    saveSettings,
+    createThread,
+    selectThread,
+    setProvider,
+    createdFirstThreadRef,
+    onboardingDismissed,
+    setOnboardingDismissed,
+    onboardingForceOpen,
+    setOnboardingForceOpen,
+    setSettingsOpen,
+    setView,
+    setRevealThreadId,
+  });
 
   const submitAddPath = useCallback(
     async (
@@ -1842,124 +1224,32 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     [updateProject],
   );
 
-  const commitSidebarWidth = useCallback((width: number) => {
-    setPreferredSidebarWidth(width);
-    saveSidebarWidth(width, browserSidebarStorage());
-  }, []);
+  const {
+    onSidebarResizePointerDown,
+    onSidebarResizeKeyDown,
+    onSidebarResizeReset,
+  } = useSidebarResize({
+    narrow,
+    sidebarDragRef,
+    sidebarPaneRef,
+    preferredSidebarRef,
+    sidebarFitRef,
+    setPreferredSidebarWidth,
+  });
 
-  const endSidebarDrag = useCallback((commit: boolean) => {
-    const session = sidebarDragRef.current;
-    sidebarDragRef.current = null;
-    session?.finish(commit);
-  }, []);
-
-  useLayoutEffect(() => {
-    if (narrow) endSidebarDrag(false);
-  }, [narrow, endSidebarDrag]);
-
-  useLayoutEffect(() => {
-    return () => {
-      const session = sidebarDragRef.current;
-      sidebarDragRef.current = null;
-      session?.finish(false);
-    };
-  }, []);
-
-  const onSidebarResizePointerDown = (
-    event: ReactPointerEvent<HTMLDivElement>,
-  ) => {
-    if (event.button !== 0 || narrow || sidebarDragRef.current) return;
-    event.preventDefault();
-    event.stopPropagation();
-    const handle = event.currentTarget;
-    const pointerId = event.pointerId;
-    try {
-      handle.setPointerCapture(pointerId);
-    } catch {
-      // jsdom, or a pointer the browser will not capture.
-    }
-    try {
-      handle.focus({ preventScroll: true });
-    } catch {
-      handle.focus();
-    }
-    const startPreferred = preferredSidebarRef.current;
-    const sidebarLeft =
-      sidebarPaneRef.current?.getBoundingClientRect().left ?? 0;
-    const clearDrag = () => {
-      sidebarDragRef.current = null;
-    };
-    sidebarDragRef.current = bindSidebarDrag({
-      pointerId,
-      handle,
-      originX: event.clientX,
-      sidebarLeft,
-      startPreferred,
-      fitCap: () => sidebarFitRef.current,
-      onPreview: setPreferredSidebarWidth,
-      onCommit: (width) => {
-        clearDrag();
-        commitSidebarWidth(width);
-      },
-      onCancel: () => {
-        clearDrag();
-        setPreferredSidebarWidth(startPreferred);
-      },
-    });
-  };
-
-  const onSidebarResizeKeyDown = (
-    event: ReactKeyboardEvent<HTMLDivElement>,
-  ) => {
-    if (sidebarDragRef.current) return;
-    if (event.altKey || event.metaKey || event.ctrlKey) return;
-    if (event.key === "Enter") {
-      event.preventDefault();
-      commitSidebarWidth(SIDEBAR_WIDTH_DEFAULT);
-      return;
-    }
-    let delta = 0;
-    if (event.key === "ArrowLeft") {
-      delta = -(event.shiftKey ? SIDEBAR_WIDTH_STEP_COARSE : SIDEBAR_WIDTH_STEP);
-    } else if (event.key === "ArrowRight") {
-      delta = event.shiftKey ? SIDEBAR_WIDTH_STEP_COARSE : SIDEBAR_WIDTH_STEP;
-    } else {
-      return;
-    }
-    event.preventDefault();
-    const next = nextSidebarPreference(
-      preferredSidebarRef.current,
-      delta,
-      sidebarFitRef.current,
-      "delta",
-    );
-    if (next !== preferredSidebarRef.current) commitSidebarWidth(next);
-  };
-
-  const onSidebarResizeReset = () => {
-    if (sidebarDragRef.current) return;
-    commitSidebarWidth(SIDEBAR_WIDTH_DEFAULT);
-  };
-
-  const integrateSelectedWorker = useCallback(
-    async (workerThreadId: string) => {
-      if (selectedThreadId) await integrateWorker(selectedThreadId, workerThreadId);
-    },
-    [selectedThreadId, integrateWorker],
-  );
-  const verifySelectedLead = useCallback(async () => {
-    if (selectedThreadId) await runVerify(selectedThreadId);
-  }, [selectedThreadId, runVerify]);
-  const leadTitle = visibleDetail?.thread.title;
-  const landSelectedLead = useCallback(async () => {
-    if (!selectedThreadId) return;
-    const view = await crewIntegration(selectedThreadId);
-    if (view.finalAction === "pr") {
-      await createPr({ title: leadTitle || "Lead integration" });
-      return;
-    }
-    await mergeWorktree();
-  }, [selectedThreadId, crewIntegration, createPr, mergeWorktree, leadTitle]);
+  const {
+    integrateSelectedWorker,
+    verifySelectedLead,
+    landSelectedLead,
+  } = useCrewHandlers({
+    selectedThreadId,
+    visibleDetail,
+    integrateWorker,
+    runVerify,
+    crewIntegration,
+    createPr,
+    mergeWorktree,
+  });
 
   if (buildMismatch) {
     return (
