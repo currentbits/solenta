@@ -20,17 +20,10 @@ import { useWorktreeChrome } from "./WorktreeControl";
 import { WorkspaceStrip } from "./WorkspaceStrip";
 import { ProjectIcon } from "./ProjectIcon";
 import {
-  closePane,
-  defaultPaneLayout,
-  findLeaf,
-  firstLeafId,
   hasPaneType,
   hydratePaneLayout,
   leaves,
-  openPane,
-  savePaneLayout,
   type LayoutNode,
-  type PaneType,
 } from "../paneLayout";
 import type {
   AttachmentInfo,
@@ -176,6 +169,7 @@ import { useCliCommands } from "./thread/useCliCommands";
 import { useCiteShortcut } from "./thread/useCiteShortcut";
 import { useHeaderGitStatus } from "./thread/useHeaderGitStatus";
 import { useQueuedEdit } from "./thread/useQueuedEdit";
+import { usePaneLayoutActions } from "./thread/usePaneLayoutActions";
 import styles from "./ThreadView.module.css";
 
 const EMPTY_COMPARE_PEERS: ComparePeer[] = [];
@@ -1813,66 +1807,25 @@ export const ThreadView = memo(function ThreadView({
     }
   }, [detail?.thread.id]);
 
-  useEffect(() => {
-    if (threadId && threadId === layoutThreadId) {
-      savePaneLayout(threadId, layout);
-    }
-  }, [threadId, layoutThreadId, layout]);
-
-  useEffect(() => {
-    if (!changesOpen) return;
-    // A newly opened pane needs the width the agents rail is holding.
-    if (!hasPaneType(layout, "diff")) onPanesNeedRoom?.();
-    setLayout((prev) => {
-      if (hasPaneType(prev, "diff")) return prev;
-      const next = openPane(prev, "diff", focusedId);
-      setFocusedId(next.focusId);
-      return next.layout;
-    });
-  }, [changesOpen, changesNonce]);
-
-  const applyLayout = useCallback(
-    (next: LayoutNode, focusId: string) => {
-      setLayout(next);
-      setFocusedId(findLeaf(next, focusId) ? focusId : firstLeafId(next));
-      if (!hasPaneType(next, "diff")) onCloseChanges();
-    },
-    [onCloseChanges],
-  );
-
-  const handlePaneChange = useCallback(
-    (next: LayoutNode) => {
-      applyLayout(next, focusedId);
-    },
-    [applyLayout, focusedId],
-  );
-
-  const handleOpenPane = useCallback(
-    (type: PaneType) => {
-      const fresh = !hasPaneType(layout, type);
-      const next = openPane(layout, type, focusedId);
-      applyLayout(next.layout, next.focusId);
-      // Git, Terminal, Browser, … all want the width the agents rail holds.
-      if (fresh) onPanesNeedRoom?.();
-      if (type === "diff") onViewChanges?.();
-    },
-    [layout, focusedId, applyLayout, onViewChanges, onPanesNeedRoom],
-  );
-
-  const terminalLeaf = leaves(layout).find((l) => l.type === "terminal") ?? null;
-  const handleToggleTerminal = useCallback(() => {
-    if (!terminalLeaf) {
-      handleOpenPane("terminal");
-      return;
-    }
-    const next = closePane(layout, terminalLeaf.id);
-    if (next.closed) applyLayout(next.layout, next.focusId);
-  }, [terminalLeaf, layout, applyLayout, handleOpenPane]);
-
-  const handleResetLayout = useCallback(() => {
-    const next = defaultPaneLayout();
-    applyLayout(next, firstLeafId(next));
-  }, [applyLayout]);
+  const {
+    handlePaneChange,
+    handleOpenPane,
+    terminalLeaf,
+    handleToggleTerminal,
+    handleResetLayout,
+  } = usePaneLayoutActions({
+    threadId,
+    layoutThreadId,
+    layout,
+    setLayout,
+    focusedId,
+    setFocusedId,
+    changesOpen,
+    changesNonce,
+    onPanesNeedRoom,
+    onCloseChanges,
+    onViewChanges,
+  });
 
   const refreshRunStats = useCallback(async () => {
     const threadId = detail?.thread.id;
