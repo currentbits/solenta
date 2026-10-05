@@ -79,33 +79,49 @@ function toolInputField(tool: ToolCallInfo, field: string): string | null {
   }
 }
 
-function classifyTool(tool: ToolCallInfo, prov: MessageProvenance): void {
+type Tier = "repo" | "memory" | "issues";
+type ToolRef = readonly [Tier, string] | null;
+
+/** The one ref a tool call contributes, if any. */
+function classifyTool(tool: ToolCallInfo): ToolRef {
   if (MEMORY_TOOL_RE.test(tool.name)) {
-    pushcapped(prov.memory, tool.name.replace(/^mcp__[^_]+(?:_[^_]+)*__/, ""));
-    return;
+    return ["memory", tool.name.replace(/^mcp__[^_]+(?:_[^_]+)*__/, "")];
   }
   if (REPO_TOOLS.has(tool.name)) {
     const p =
       toolInputField(tool, "file_path") ??
       toolInputField(tool, "path") ??
       toolInputField(tool, "pattern");
-    pushcapped(prov.repo, p ?? tool.name);
-    return;
+    return ["repo", p ?? tool.name];
   }
   if (tool.name === "Bash") {
     const cmd = toolInputField(tool, "command") ?? tool.input;
     if (GH_ISSUE_RE.test(cmd)) {
       const n = cmd.match(GH_NUMBER_RE);
-      pushcapped(prov.issues, n ? `#${n[1]}` : "gh");
-      return;
+      return ["issues", n ? `#${n[1]}` : "gh"];
     }
-    if (GIT_READ_RE.test(cmd)) pushcapped(prov.repo, "git");
-    return;
+    return GIT_READ_RE.test(cmd) ? ["repo", "git"] : null;
   }
   if (tool.name === "WebFetch" || tool.name === "FetchURL") {
     const url = toolInputField(tool, "url") ?? "";
-    if (GH_ISSUE_RE.test(url)) pushcapped(prov.issues, url);
+    if (GH_ISSUE_RE.test(url)) return ["issues", url];
   }
+  return null;
+}
+
+/**
+ * Tool calls are immutable once received, and thread patches keep the
+ * unchanged prefix's objects, so each call is parsed once (#1475).
+ */
+const toolRefCache = new WeakMap<ToolCallInfo, ToolRef>();
+
+function applyTool(tool: ToolCallInfo, prov: MessageProvenance): void {
+  let ref = toolRefCache.get(tool);
+  if (ref === undefined) {
+    ref = classifyTool(tool);
+    toolRefCache.set(tool, ref);
+  }
+  if (ref) pushcapped(prov[ref[0]], ref[1]);
 }
 
 function classifyText(text: string, prov: MessageProvenance): void {
@@ -147,12 +163,74 @@ export function messageProvenance(
     tools.push(prev.tool);
   }
   for (let i = tools.length - 1; i >= 0; i--) {
-    classifyTool(tools[i], prov);
+    applyTool(tools[i], prov);
   }
-  classifyText(message.text, prov);
+  return finish(prov, message.text);
+}
+
+function finish(prov: MessageProvenance, text: string): MessageProvenance {
+  classifyText(text, prov);
   prov.grounded =
     prov.repo.length + prov.memory.length + prov.issues.length > 0;
   return prov;
+}
+
+function copyRefs(prov: MessageProvenance): MessageProvenance {
+  return {
+    repo: [...prov.repo],
+    memory: [...prov.memory],
+    issues: [...prov.issues],
+    grounded: false,
+  };
+}
+
+function sameList(a: string[], b: string[]): boolean {
+  return a.length === b.length && a.every((v, i) => v === b[i]);
+}
+
+/** Last result per assistant message, with the tool refs it was built on. */
+const messageCache = new WeakMap<
+  ChatMessage,
+  { tools: MessageProvenance; prov: MessageProvenance }
+>();
+
+/**
+ * `messageProvenance` for every assistant message, keyed by id, in one pass.
+ *
+ * A message's result depends only on the tool refs accumulated so far in its
+ * turn and on its own text, so the turn's refs are carried forward instead of
+ * rescanned per message, and a message whose object and accumulated refs are
+ * unchanged since the last call returns the same object (#1475). That keeps
+ * streaming pushes O(messages) with no re-parsing, and keeps memoized
+ * message rows from re-rendering.
+ */
+export function provenanceByMessageId(
+  messages: ChatMessage[],
+): Map<string, MessageProvenance> {
+  const map = new Map<string, MessageProvenance>();
+  let tools = emptyProvenance();
+  for (const message of messages) {
+    if (message.role === "user") {
+      tools = emptyProvenance();
+    } else if (message.role === "tool" && message.tool) {
+      applyTool(message.tool, tools);
+    } else if (message.role === "assistant") {
+      const hit = messageCache.get(message);
+      if (
+        hit &&
+        sameList(hit.tools.repo, tools.repo) &&
+        sameList(hit.tools.memory, tools.memory) &&
+        sameList(hit.tools.issues, tools.issues)
+      ) {
+        map.set(message.id, hit.prov);
+        continue;
+      }
+      const prov = finish(copyRefs(tools), message.text);
+      messageCache.set(message, { tools: copyRefs(tools), prov });
+      map.set(message.id, prov);
+    }
+  }
+  return map;
 }
 
 /**
