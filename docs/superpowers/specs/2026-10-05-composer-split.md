@@ -204,3 +204,12 @@ Stop before the model picker: it is the next-largest concern, but its
 state is written from four other concerns and its effects sit between the
 mousedown and focus-trap effects, so it can't be moved as one in-place
 block.
+
+## Outcome
+
+Items 1-12 landed, one commit each, all at 2701/2701 on the renderer
+suite. Composer.tsx went from 3,531 to 2,659 lines. Items 1-12 in the
+table map to files under `src/components/composer/`; item 12 became
+`ComposerPopups.tsx` (MentionList, CommandList), `ReplyChip.tsx` and
+`PasteCardList.tsx`, and item 11 is `SpeechControls.tsx`. The model picker
+and the rows after it remain, for the reasons in the table.
