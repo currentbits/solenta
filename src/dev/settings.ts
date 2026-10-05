@@ -4,9 +4,14 @@ import type {
   CoderApi,
   AgentProfile,
   McpServerInfo,
+  PairingCreated,
+  PairingCreateInput,
+  PairingInfo,
+  PairingList,
   SubagentPool,
   OtelSettings,
   WebhookSettings,
+  ThreadInfo,
 } from "../shared/ipc";
 import {
   mergeMcpSettingsPatch,
@@ -435,6 +440,89 @@ export function createSettings(ctx: DevCtx): Pick<CoderApi, "settings" | "stayAw
           onBattery: false,
           anyWorking,
         };
+      },
+    },
+  };
+}
+
+export function createPairing(ctx: DevCtx): Pick<CoderApi, "pairing"> {
+  let pairings: PairingInfo[] = [];
+
+  return {
+    pairing: {
+      async list(): Promise<PairingList> {
+        return {
+          pairings,
+          server: { running: true, port: 7422, url: "http://127.0.0.1:7422/mcp" },
+        };
+      },
+      async create(input: PairingCreateInput): Promise<PairingCreated> {
+        const pairing: PairingInfo = {
+          id: `pair-${pairings.length + 1}`,
+          name: String(input.name || "Pairing").trim() || "Pairing",
+          tokenPrefix: "devtoken",
+          capabilities: input.capabilities ?? ["read", "launch"],
+          projectIds: input.projectIds ?? null,
+          expiresAt:
+            input.ttlMs === 0 || input.ttlMs == null
+              ? input.ttlMs === 0
+                ? null
+                : Date.now() + 30 * 24 * 60 * 60 * 1000
+              : Date.now() + input.ttlMs,
+          createdAt: Date.now(),
+          lastUsedAt: null,
+          revokedAt: null,
+          requireApproval: input.requireApproval !== false,
+          managedWorktree: input.managedWorktree !== false,
+          launchesPerHour: input.launchesPerHour ?? 30,
+          readsPerMinute: input.readsPerMinute ?? 120,
+        };
+        pairings = pairings.concat(pairing);
+        const token = "d".repeat(64);
+        const url = "http://127.0.0.1:7422/mcp";
+        const claudeDesktopJson = JSON.stringify(
+          {
+            mcpServers: {
+              solenta: {
+                type: "http",
+                url,
+                headers: { Authorization: `Bearer ${token}` },
+              },
+            },
+          },
+          null,
+          2,
+        );
+        return {
+          pairing,
+          token,
+          url,
+          claudeDesktopJson,
+          pairingPrompt: `Connect to Solenta at ${url}`,
+        };
+      },
+      async revoke(input: { id: string }): Promise<PairingInfo> {
+        const existing = pairings.find((p) => p.id === input.id);
+        if (!existing) throw new Error(`Unknown pairing: ${input.id}`);
+        const revoked = { ...existing, revokedAt: Date.now() };
+        pairings = pairings.filter((p) => p.id !== input.id);
+        return revoked;
+      },
+      async approve(input: { threadId: string }) {
+        const t = ctx.threads.find((row) => row.id === input.threadId);
+        if (t) {
+          t.pendingExternalApproval = false;
+          t.pendingExternalPrompt = null;
+        }
+        return { runId: "dev-run" };
+      },
+      async reject(input: { threadId: string }): Promise<ThreadInfo> {
+        const t = ctx.threads.find((row) => row.id === input.threadId);
+        if (!t) throw new Error(`Unknown thread: ${input.threadId}`);
+        t.pendingExternalApproval = false;
+        t.pendingExternalPrompt = null;
+        t.archived = true;
+        return t;
       },
     },
   };
