@@ -8,7 +8,6 @@ import {
   useRef,
   useState,
 } from "react";
-import autoAnimate from "@formkit/auto-animate";
 import type {
   CliSessionCandidate,
   ConflictForecast,
@@ -108,13 +107,7 @@ import {
   moveAppMenuFocus,
   type SidebarNavView,
 } from "./sidebar/nav";
-import {
-  countIdChurn,
-  listMotionBlocked,
-  releaseAbortedRows,
-  type ListAnimCtrl,
-  type ListMotionSkip,
-} from "./sidebar/motion";
+import { countIdChurn } from "./sidebar/motion";
 import {
   loadFlag,
   loadOpenSet,
@@ -125,6 +118,7 @@ import {
 } from "./sidebar/storage";
 import { useStableThreadTitles } from "./sidebar/useStableThreadTitles";
 import { useProviderOptions } from "./sidebar/useProviderOptions";
+import { useListAnimation } from "./sidebar/useListAnimation";
 import styles from "./Sidebar.module.css";
 
 export { displayWorkerTitle, statusPulseFor } from "./sidebar/status";
@@ -146,7 +140,6 @@ const FILTERS_OPEN_KEY = "sidebar:filtersOpen";
 const SNOOZED_OPEN_KEY = "sidebar:snoozedOpen";
 const SETTLED_OPEN_KEY = "sidebar:settledOpen";
 const WORKER_OPEN_KEY = "sidebar:workerOpen";
-const FAMILY_MOTION_MS = 160;
 const BULK_ROW_DELTA = 40;
 type FilterMenu = "status" | "provider" | "group" | "tag" | "views";
 type ViewEditor = { mode: "save" | "rename"; name: string };
@@ -502,45 +495,8 @@ export const Sidebar = memo(function Sidebar({
   const [workerOpen, setWorkerOpen] = useState<Set<string>>(
     () => loadOpenSet(WORKER_OPEN_KEY),
   );
-  const listAnimCtrls = useRef(new Map<HTMLElement, ListAnimCtrl>());
-  const listAnimSkip = useRef<ListMotionSkip>({
-    hydrate: true,
-    bulk: false,
-    keyboard: false,
-  });
-  const prevRowIds = useRef<string[]>([]);
-  const applyListMotion = useCallback(() => {
-    const enable = !listMotionBlocked(listAnimSkip.current);
-    for (const [node, ctrl] of listAnimCtrls.current) {
-      if (enable) ctrl.enable();
-      else {
-        ctrl.disable();
-        releaseAbortedRows(node);
-      }
-    }
-  }, []);
-  const bindListAnimation = useCallback((node: HTMLElement | null) => {
-    if (!node) return;
-    if (typeof ResizeObserver === "undefined") return;
-    // The library samples prefers-reduced-motion only while binding and, when
-    // it matches, never installs an observer. enable() cannot bring that
-    // observer back, so a session that starts reduced stays frozen after the
-    // user turns motion on. Own the gate instead.
-    const ctrl = autoAnimate(node, {
-      duration: FAMILY_MOTION_MS,
-      easing: "ease-out",
-      disrespectUserMotionPreference: true,
-    });
-    listAnimCtrls.current.set(node, ctrl);
-    if (listMotionBlocked(listAnimSkip.current)) {
-      ctrl.disable();
-      releaseAbortedRows(node);
-    }
-    return () => {
-      ctrl.destroy?.();
-      listAnimCtrls.current.delete(node);
-    };
-  }, []);
+  const { listAnimSkip, prevRowIds, applyListMotion, bindListAnimation } =
+    useListAnimation();
   const [trashedOpen, setTrashedOpen] = useState(false);
   const [purgeConfirmId, setPurgeConfirmId] = useState<string | null>(null);
   const [settledVisibleCount, setSettledVisibleCount] = useState(
