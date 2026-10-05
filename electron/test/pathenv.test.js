@@ -159,3 +159,92 @@ describe("enrichProcessPath", () => {
     assert.equal(called, false);
   });
 });
+
+describe("primeProcessPath / refreshLoginPath (#1475)", () => {
+  const {
+    primeProcessPath,
+    refreshLoginPath,
+    whenPathReady,
+  } = require("../pathEnv.js");
+  const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), "pathenv-"));
+  /** execFile stand-in that answers only when release() is called. */
+  function deferredShell(out) {
+    const calls = [];
+    let release = () => {};
+    const execFn = (file, args, opts, cb) => {
+      calls.push(file);
+      release = () => cb(null, out);
+    };
+    return { execFn, calls, release: () => release() };
+  }
+
+  it("applies the cached PATH synchronously without spawning a shell", () => {
+    const dir = tmp();
+    const cacheFile = path.join(dir, "login-path.json");
+    fs.writeFileSync(cacheFile, JSON.stringify({ path: ["/cached/bin"] }));
+    const shell = deferredShell("");
+    const env = { PATH: "/usr/bin" };
+    const r = primeProcessPath({
+      cacheFile, env, execFn: shell.execFn, existsFn: () => false, home: "/h", platform: "darwin",
+    });
+    assert.equal(r.source, "cache");
+    assert.equal(env.PATH, "/cached/bin:/usr/bin");
+    assert.equal(shell.calls.length, 0);
+  });
+
+  it("first run without a cache: launch PATH now, login PATH after the async capture, then cached", async () => {
+    const dir = tmp();
+    const cacheFile = path.join(dir, "login-path.json");
+    const shell = deferredShell("__CODER_PATH_BEGIN__/login/bin:/usr/bin__CODER_PATH_END__");
+    const env = { PATH: "/usr/bin", SHELL: "/bin/zsh" };
+    const r = primeProcessPath({
+      cacheFile, env, execFn: shell.execFn, existsFn: () => false, home: "/h", platform: "darwin",
+    });
+    assert.equal(r.source, "fallback");
+    assert.equal(env.PATH, "/usr/bin");
+
+    // A spawn before the capture finishes gets a pending promise and waits.
+    const wait = whenPathReady();
+    assert.ok(wait, "spawn must wait while the capture is in flight");
+    assert.deepEqual(shell.calls, ["/bin/zsh"], "whenPathReady starts the capture");
+    let done = false;
+    void wait.then(() => { done = true; });
+    await new Promise((res) => setImmediate(res));
+    assert.equal(done, false);
+    assert.equal(env.PATH, "/usr/bin");
+
+    shell.release();
+    await wait;
+    assert.equal(env.PATH, "/login/bin:/usr/bin");
+    assert.equal(whenPathReady(), null, "settled: later spawns skip the await");
+    assert.deepEqual(JSON.parse(fs.readFileSync(cacheFile, "utf8")).path, ["/login/bin", "/usr/bin"]);
+    assert.equal(refreshLoginPath(), wait, "captures once per launch");
+  });
+
+  it("recapture replaces stale cached entries; a failed capture keeps the primed PATH", async () => {
+    const dir = tmp();
+    const cacheFile = path.join(dir, "login-path.json");
+    fs.writeFileSync(cacheFile, JSON.stringify({ path: ["/stale/bin"] }));
+    const ok = deferredShell("__CODER_PATH_BEGIN__/fresh/bin__CODER_PATH_END__");
+    const env = { PATH: "/usr/bin" };
+    primeProcessPath({ cacheFile, env, execFn: ok.execFn, existsFn: () => false, home: "/h", platform: "darwin" });
+    assert.equal(env.PATH, "/stale/bin:/usr/bin");
+    const p = refreshLoginPath();
+    ok.release();
+    await p;
+    assert.equal(env.PATH, "/fresh/bin:/usr/bin");
+
+    const failing = (file, args, opts, cb) => cb(new Error("timeout"), "");
+    const env2 = { PATH: "/usr/bin" };
+    primeProcessPath({ cacheFile, env: env2, execFn: failing, existsFn: () => false, home: "/h", platform: "darwin" });
+    assert.equal(await refreshLoginPath(), null);
+    assert.equal(env2.PATH, "/fresh/bin:/usr/bin");
+  });
+
+  it("is a no-op on win32 and never asks spawns to wait", () => {
+    const env = { PATH: "C:\\a;C:\\b" };
+    primeProcessPath({ cacheFile: "/nonexistent", env, platform: "win32" });
+    assert.equal(env.PATH, "C:\\a;C:\\b");
+    assert.equal(whenPathReady(), null);
+  });
+});
