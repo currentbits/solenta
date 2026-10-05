@@ -120,15 +120,10 @@ import {
   setComposerBusyAction,
   setLastReasoningEffort,
   setTranscriptViewMode,
-  useComposerVimEnabled,
   useTranscriptViewMode,
   type ComposerBusyAction,
 } from "../uiPrefs";
-import {
-  INITIAL_VIM,
-  applyComposerVim,
-  type VimState,
-} from "../composerVim";
+import { applyComposerVim } from "../composerVim";
 import {
   applySpeechDelta,
   applySpeechTranscript,
@@ -140,6 +135,7 @@ import {
   type SpeechCapture,
 } from "../speechCapture";
 import { AttachmentChip } from "./composer/AttachmentChip";
+import { useComposerVim } from "./composer/useComposerVim";
 import styles from "./Composer.module.css";
 
 function coderSpeech(): CoderApi["speech"] | undefined {
@@ -451,13 +447,8 @@ export const Composer = memo(function Composer({
   const currentProviderInfo = providers.find((p) => p.id === provider);
   const canAttachImages = supportsImagesForModel(currentProviderInfo, model);
   const transcriptView = useTranscriptViewMode();
-  const vimEnabled = useComposerVimEnabled();
-  const [vimMode, setVimMode] = useState(INITIAL_VIM.mode);
-  const vimStateRef = useRef<VimState>(INITIAL_VIM);
-  useEffect(() => {
-    vimStateRef.current = INITIAL_VIM;
-    setVimMode(INITIAL_VIM.mode);
-  }, [threadId, vimEnabled]);
+  const { vimEnabled, vimMode, setVimMode, vimStateRef } =
+    useComposerVim(threadId);
   const [viewOpen, setViewOpen] = useState(false);
   /**
    * Unsent drafts keyed by thread: one Composer instance serves every thread
