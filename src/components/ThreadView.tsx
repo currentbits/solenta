@@ -120,7 +120,6 @@ import { setTranscriptViewMode, useTranscriptViewMode } from "../uiPrefs";
 import { DROP_OVERLAY_MESSAGE, type DroppedFolder } from "../dropFiles";
 import { Composer } from "./Composer";
 import { repoRelativeDir } from "../mention";
-import { createDoubleOptionTracker } from "../appsnapHotkey";
 import {
   makeReplyTarget,
   replySourceUnavailable,
@@ -170,6 +169,7 @@ import { useCiteShortcut } from "./thread/useCiteShortcut";
 import { useHeaderGitStatus } from "./thread/useHeaderGitStatus";
 import { useQueuedEdit } from "./thread/useQueuedEdit";
 import { usePaneLayoutActions } from "./thread/usePaneLayoutActions";
+import { useAppSnap } from "./thread/useAppSnap";
 import styles from "./ThreadView.module.css";
 
 const EMPTY_COMPARE_PEERS: ComparePeer[] = [];
@@ -1423,111 +1423,22 @@ export const ThreadView = memo(function ThreadView({
     return repoRelativeDir(project?.path ?? "", dir);
   }, [onPickDirectory, project?.path]);
 
-  const openAppSnap = useCallback(async () => {
-    if (!onListSnapWindows) return;
-    setSnapError(null);
-    setSnapOpen(true);
-    try {
-      const windows = await onListSnapWindows();
-      setSnapWindows(windows);
-      if (windows.length === 0) {
-        setSnapError("No windows to capture. Grant screen recording if asked.");
-      }
-    } catch (err) {
-      setSnapWindows([]);
-      setSnapError(
-        err instanceof Error && err.message
-          ? err.message
-          : "Failed to list windows",
-      );
-    }
-  }, [onListSnapWindows]);
-
-  const isLiveScreenshotHandoff = (
-    originThreadId: string | null,
-    generation: number,
-  ) =>
-    originThreadId != null &&
-    originThreadId === screenshotHandoffThreadId.current &&
-    generation === screenshotHandoffGen.current;
-
-  const deliverIncomingAttachment = (
-    originThreadId: string,
-    generation: number,
-    att: AttachmentInfo,
-  ) => {
-    if (!isLiveScreenshotHandoff(originThreadId, generation)) return;
-    setIncomingHandoff({ threadId: originThreadId, items: [att] });
-  };
-
-  const attachBrowserScreenshot = useCallback(
-    async (dataUrl: string, originThreadId: string) => {
-      if (!onSaveAttachmentImage) return;
-      const generation = screenshotHandoffGen.current;
-      const att = await onSaveAttachmentImage(dataUrl);
-      if (!att) return;
-      deliverIncomingAttachment(originThreadId, generation, att);
-    },
-    [onSaveAttachmentImage],
-  );
-
-  const captureAppSnap = useCallback(
-    async (sourceId: string) => {
-      if (!onCaptureSnapWindow) return;
-      const originThreadId = screenshotHandoffThreadId.current;
-      const generation = screenshotHandoffGen.current;
-      setSnapBusy(true);
-      setSnapError(null);
-      try {
-        const att = await onCaptureSnapWindow(sourceId);
-        if (!isLiveScreenshotHandoff(originThreadId, generation)) return;
-        if (att && originThreadId) {
-          deliverIncomingAttachment(originThreadId, generation, att);
-          setSnapOpen(false);
-        } else if (!att) {
-          setSnapError("Could not capture that window");
-        }
-      } catch (err) {
-        if (!isLiveScreenshotHandoff(originThreadId, generation)) return;
-        setSnapError(
-          err instanceof Error && err.message
-            ? err.message
-            : "Failed to capture the window",
-        );
-      } finally {
-        if (isLiveScreenshotHandoff(originThreadId, generation)) {
-          setSnapBusy(false);
-        }
-      }
-    },
-    [onCaptureSnapWindow],
-  );
-
-  useEffect(() => {
-    if (!onListSnapWindows || isArchived) return;
-    const tracker = createDoubleOptionTracker();
-    const onKey = (e: KeyboardEvent) => {
-      if (
-        tracker.note(e.key, e.type as "keydown" | "keyup", {
-          meta: e.metaKey,
-          ctrl: e.ctrlKey,
-          shift: e.shiftKey,
-        })
-      ) {
-        e.preventDefault();
-        void openAppSnap();
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    window.addEventListener("keyup", onKey);
-    return () => {
-      window.removeEventListener("keydown", onKey);
-      window.removeEventListener("keyup", onKey);
-    };
-  }, [onListSnapWindows, isArchived, openAppSnap]);
-
-  useEscapeClose(snapOpen && !snapBusy, () => setSnapOpen(false));
-  useModalFocus(snapOpen, snapDialogRef);
+  const { attachBrowserScreenshot, captureAppSnap } = useAppSnap({
+    onListSnapWindows,
+    onCaptureSnapWindow,
+    onSaveAttachmentImage,
+    isArchived,
+    snapOpen,
+    setSnapOpen,
+    setSnapWindows,
+    setSnapError,
+    snapBusy,
+    setSnapBusy,
+    snapDialogRef,
+    setIncomingHandoff,
+    screenshotHandoffGen,
+    screenshotHandoffThreadId,
+  });
 
   /**
    * Fork one thread per selected provider or profile, then start the same
