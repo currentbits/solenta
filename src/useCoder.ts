@@ -126,6 +126,7 @@ import { useCoderAgentTools } from "./coder/useCoderAgentTools";
 import { useCoderInsights } from "./coder/useCoderInsights";
 import { useCoderRepoTools } from "./coder/useCoderRepoTools";
 import { useCoderProjects } from "./coder/useCoderProjects";
+import { useCoderUpdates } from "./coder/useCoderUpdates";
 
 const STATUS_POLL_MS = 60_000;
 /** Debounce on the localStorage boot-snapshot writes (#364). */
@@ -1247,43 +1248,11 @@ export function useCoder(): UseCoderResult {
     }
   }, [api]);
 
-  // A rejected update call used to be an unhandled rejection: the spinner
-  // stopped, nothing was said, and a stale "Up to date." stayed on screen.
-  // The updater's own failures already come back as state:"error", so reuse
-  // that shape for transport/handler failures instead of a second channel.
-  const failUpdate = useCallback((err: unknown) => {
-    setUpdateStatus((prev) => ({
-      channel: prev?.channel ?? null,
-      tag: prev?.tag ?? null,
-      url: prev?.url ?? null,
-      state: "error",
-      error: err instanceof Error && err.message ? err.message : String(err),
-    }));
-  }, []);
-
-  const applyUpdate = useCallback(async () => {
-    try {
-      await api.app.applyUpdate();
-    } catch (err) {
-      failUpdate(err);
-    }
-  }, [api, failUpdate]);
-
-  const checkUpdate = useCallback(async () => {
-    try {
-      setUpdateStatus(await api.app.checkUpdate());
-    } catch (err) {
-      failUpdate(err);
-    }
-  }, [api, failUpdate]);
-
-  const downloadUpdate = useCallback(async () => {
-    try {
-      setUpdateStatus(await api.app.downloadUpdate());
-    } catch (err) {
-      failUpdate(err);
-    }
-  }, [api, failUpdate]);
+  const {
+    applyUpdate,
+    checkUpdate,
+    downloadUpdate,
+  } = useCoderUpdates({ api, setUpdateStatus });
 
   // Auto-update: check on boot, then every hour. The check only asks the
   // release API — downloading and swapping the bundle waits for a user click.
