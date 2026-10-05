@@ -151,10 +151,15 @@ export function saveCachedThreadDetail(d: ThreadDetail | null): void {
       // Quota/private mode: a switch just shows the empty pane until the fetch.
     }
   };
+  whenIdle(write);
+}
+
+/** Runs `fn` in an idle slot, or within IDLE_WRITE_TIMEOUT_MS on a busy renderer. */
+export function whenIdle(fn: () => void): void {
   // Safari (web mode) has no requestIdleCallback.
   if (typeof window.requestIdleCallback === "function") {
-    window.requestIdleCallback(write, { timeout: IDLE_WRITE_TIMEOUT_MS });
+    window.requestIdleCallback(fn, { timeout: IDLE_WRITE_TIMEOUT_MS });
   } else {
-    window.setTimeout(write, 0);
+    window.setTimeout(fn, 0);
   }
 }

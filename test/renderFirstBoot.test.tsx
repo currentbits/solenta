@@ -18,6 +18,11 @@ import {
 } from "./support/fakeCoder.ts";
 import App from "../src/App";
 import type { ThreadDetail, ThreadInfo } from "../src/shared/ipc";
+import {
+  defaultPaneLayout,
+  openPane,
+  serializePaneLayout,
+} from "../src/paneLayout";
 
 const SNAPSHOT_KEY = "coder.bootSnapshot.v1";
 const DETAIL_KEY = "coder.threadDetail.v1";
@@ -389,6 +394,33 @@ describe("boot snapshot without archived threads (#1475)", () => {
     try {
       await m.flush();
       assert.match(m.text(), /Settled · 1/);
+    } finally {
+      m.unmount();
+    }
+  });
+});
+
+describe("pane layout pruning at boot (#1475)", () => {
+  it("drops layouts of threads missing from the loaded list", async () => {
+    const t1 = thread({ id: "t1", title: "live" });
+    const fake = createFakeCoder({
+      threads: [t1],
+      details: { t1: detail({ thread: t1 }) },
+    });
+    const split = serializePaneLayout(
+      openPane(defaultPaneLayout(), "diff", "pane-1").layout,
+    );
+    const m = await boot(fake, () => {
+      window.localStorage.setItem("coder.paneLayout.gone", split);
+      window.localStorage.setItem("coder.paneLayout.t1", split);
+    });
+    try {
+      await m.flush();
+      assert.equal(window.localStorage.getItem("coder.paneLayout.gone"), null);
+      assert.ok(
+        window.localStorage.getItem("coder.paneLayout.t1")?.includes('"diff"'),
+        "the open thread keeps its split",
+      );
     } finally {
       m.unmount();
     }

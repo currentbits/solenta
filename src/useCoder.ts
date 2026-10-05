@@ -112,7 +112,9 @@ import {
   loadCachedThreadDetail,
   saveBootSnapshot,
   saveCachedThreadDetail,
+  whenIdle,
 } from "./bootSnapshot";
+import { prunePaneLayouts } from "./paneLayout";
 import { createThreadDetailCache } from "./threadDetailCache";
 import { errorMessage } from "./coder/errorMessage";
 import { useCoderMemory } from "./coder/useCoderMemory";
@@ -1204,6 +1206,8 @@ export function useCoder(): UseCoderResult {
           if (selectedRef.current == null && preferred) {
             selectedRef.current = preferred;
           }
+          // Off the boot path: drop pane layouts of deleted threads (#1475).
+          whenIdle(() => prunePaneLayouts(threadsRef.current.map((t) => t.id)));
         } catch {
           // IPC may not be registered yet (#618); boot:ready retries.
         } finally {
