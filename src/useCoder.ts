@@ -122,6 +122,7 @@ import {
 import { createThreadDetailCache } from "./threadDetailCache";
 import { useCoderMemory } from "./coder/useCoderMemory";
 import { useCoderAgentTools } from "./coder/useCoderAgentTools";
+import { useCoderInsights } from "./coder/useCoderInsights";
 
 const STATUS_POLL_MS = 60_000;
 /** Debounce on the localStorage boot-snapshot writes (#364). */
@@ -3587,44 +3588,16 @@ export function useCoder(): UseCoderResult {
     },
     [api],
   );
-  const listActivity = useCallback(async () => {
-    return api.activity.list();
-  }, [api]);
-
-  const listUsageByDay = useCallback(async () => {
-    return api.usage.byDay();
-  }, [api]);
-
-  const listProviderLimits = useCallback(async () => {
-    return api.usage.providerLimits();
-  }, [api]);
-
-  const listDigest = useCallback(async (input?: { sinceMs?: number }) => {
-    return api.digest.list(input);
-  }, [api]);
-
-  const markDigestSeen = useCallback(async () => {
-    return api.digest.markSeen();
-  }, [api]);
-
-  const listThreadSummaries = useCallback(
-    async (input?: ThreadSummariesInput) => api.threads.summaries(input),
-    [api],
-  );
-
-  const listCrewTasks = useCallback(
-    async (threadId: string) => {
-      return api.threads.crewTasks({ threadId });
-    },
-    [api],
-  );
-
-  const crewIntegration = useCallback(
-    async (threadId: string) => {
-      return api.threads.crewIntegration({ threadId });
-    },
-    [api],
-  );
+  const {
+    listActivity,
+    listUsageByDay,
+    listProviderLimits,
+    listDigest,
+    markDigestSeen,
+    listThreadSummaries,
+    listCrewTasks,
+    crewIntegration,
+  } = useCoderInsights(api);
 
   const integrateWorker = useCallback(
     async (
