@@ -14,6 +14,7 @@ const { createDevices } = require("./ios-simulator-devices.js");
 const { createAppBundle } = require("./ios-simulator-app-bundle.js");
 const { createRecovery } = require("./ios-simulator-recovery.js");
 const { createRecording } = require("./ios-simulator-recording.js");
+const { createHelper } = require("./ios-simulator-helper.js");
 const worktrees = require("./worktrees.js");
 const {
   BUNDLE_ID_RE,
@@ -35,8 +36,6 @@ const SWIPE_MIN_DURATION_MS = 50;
 const SWIPE_MAX_DURATION_MS = 2000;
 const SWIPE_MAX_MOVES = 16;
 const TYPE_TEXT_MAX_BYTES = 4096;
-const HELPER_READY_TIMEOUT_MS = 5_000;
-const HELPER_RPC_TIMEOUT_MS = 10_000;
 const COORD_ABS_MAX = 1e6;
 const HARDWARE_BUTTONS = new Set([
   "home",
@@ -354,6 +353,10 @@ function createIOSSimulatorService({
     clearRecordingJournalBestEffort,
     finalizeRecording,
     finalizeIfRecorderClosed,
+    streamBroker,
+    getStreamBroker,
+    helperSessionWritable,
+    helperDisconnected,
   };
 
   const {
@@ -402,6 +405,13 @@ function createIOSSimulatorService({
     runRecordingFinalization,
     beginFinalization,
   } = createRecording(ctx);
+
+  const {
+    currentStreamBroker,
+    disconnectHelperSession,
+    waitForHelperReady,
+    helperRpcWithSession,
+  } = createHelper(ctx);
 
   function leasePresent() {
     return lease !== null;
@@ -501,11 +511,6 @@ function createIOSSimulatorService({
     return generation;
   }
 
-  function currentStreamBroker() {
-    if (typeof getStreamBroker === "function") return getStreamBroker();
-    return streamBroker;
-  }
-
   function helperConnectionState() {
     if (!helper) return disconnectedHelperState();
     return {
@@ -547,21 +552,6 @@ function createIOSSimulatorService({
       broadcast("simulator:changed", payload);
     } catch {
       // broadcast is best-effort
-    }
-  }
-
-  function disconnectHelperSession(session) {
-    session.stream = "disconnected";
-    session.input = "disconnected";
-    session.accessibility = "disconnected";
-    const broker = currentStreamBroker();
-    if (session.streamInfo && broker && typeof broker.closeSession === "function") {
-      try {
-        broker.closeSession(session.streamInfo.generation);
-      } catch {
-        // ignore
-      }
-      session.streamInfo = null;
     }
   }
 
@@ -631,83 +621,6 @@ function createIOSSimulatorService({
         // ignore
       }
     }
-  }
-
-  function waitForHelperReady(session) {
-    if (session.ready) return Promise.resolve();
-    if (session.exited) return Promise.reject(helperDisconnected());
-    return new Promise((resolve, reject) => {
-      const timer = setTimer(() => {
-        session.readyResolve = null;
-        session.readyReject = null;
-        reject(iosError("timeout", "Simulator helper did not become ready"));
-      }, HELPER_READY_TIMEOUT_MS);
-      session.readyResolve = () => {
-        clearTimer(timer);
-        resolve();
-      };
-      session.readyReject = (err) => {
-        clearTimer(timer);
-        reject(err);
-      };
-      if (session.exited) {
-        session.readyReject(helperDisconnected());
-      }
-    });
-  }
-
-  function helperRpcWithSession(session, method, payload) {
-    if (!session || !session.child) {
-      return Promise.reject(helperDisconnected());
-    }
-    const controlIn = session.child.stdio && session.child.stdio[3];
-    if (!controlIn || typeof controlIn.write !== "function") {
-      return Promise.reject(helperDisconnected());
-    }
-    if (!helperSessionWritable(session)) {
-      return Promise.reject(leaseStale());
-    }
-    const id = session.nextId;
-    session.nextId += 1;
-    const frame = {
-      id,
-      method,
-      generation: session.generation,
-      token: session.controlToken,
-      ...(payload && typeof payload === "object" ? payload : {}),
-    };
-    if (payload && typeof payload === "object") {
-      frame.payload = payload;
-    }
-    return new Promise((resolve, reject) => {
-      const timer = setTimer(() => {
-        session.pending.delete(id);
-        reject(iosError("timeout", "Simulator helper did not respond"));
-      }, HELPER_RPC_TIMEOUT_MS);
-      session.pending.set(id, {
-        resolve(result) {
-          clearTimer(timer);
-          resolve(result);
-        },
-        reject(err) {
-          clearTimer(timer);
-          reject(err);
-        },
-      });
-      try {
-        if (!helperSessionWritable(session)) {
-          session.pending.delete(id);
-          clearTimer(timer);
-          reject(leaseStale());
-          return;
-        }
-        controlIn.write(protocol.encodeControl(frame));
-      } catch (err) {
-        session.pending.delete(id);
-        clearTimer(timer);
-        reject(helperDisconnected());
-      }
-    });
   }
 
   async function withHelper(threadId, generation, fn) {
