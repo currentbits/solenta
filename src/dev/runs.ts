@@ -1,14 +1,19 @@
 /** Simulated run streaming for the browser-dev fixture: workflow and session ticks. */
 import type {
   AgentView,
+  CheckpointInfo,
+  CoderApi,
   SessionUsage,
   ThreadDetail,
+  ThreadInfo,
   WorkflowPhaseSpec,
   WorkflowTemplateInfo,
   WorkflowView,
 } from "../shared/ipc";
 import { mockData } from "../mockData.ts";
-import { TRAILER, id, capitalize } from "./util.ts";
+import type { DevCore, DevCtx } from "./context.ts";
+import { DEV_PROVIDERS } from "./seed.ts";
+import { TRAILER, TITLE_MAX, now, id, capitalize } from "./util.ts";
 
 export const TICK_MS = TRAILER ? 1600 : 700;
 export function formatUsd(n: number): string {
@@ -634,4 +639,517 @@ export function tickSessionRun(detail: ThreadDetail, run: RunState, t: number): 
   });
   run.sessionStep = 5;
   return true;
+}
+
+/** Run timers over the core state; buildDevCoder starts one per seeded working thread. */
+export function createRunEngine(ctx: DevCore) {
+  const { details, runTimers, runStates, checkpointsByThread, emitDetail, syncThreadRow } = ctx;
+  const clearRunTimer = (threadId: string) => {
+    const handle = runTimers.get(threadId);
+    if (handle != null) {
+      clearInterval(handle);
+      runTimers.delete(threadId);
+    }
+  };
+
+  const isSimulate = (thread: ThreadInfo) =>
+    thread.provider === "simulate" ||
+    (TRAILER && thread.id === mockData.activeThreadId);
+
+  const appendDevCheckpoint = (thread: ThreadInfo) => {
+    if (!thread.worktreePath) return;
+    const prev = checkpointsByThread.get(thread.id) || [];
+    const turn = prev.length + 1;
+    const entry: CheckpointInfo = {
+      sha: `devckpt${turn.toString(16).padStart(7, "0")}${id("c").slice(-8)}`,
+      turn,
+      message: `coder-checkpoint: turn ${turn}`,
+      at: now(),
+    };
+    // newest-first
+    checkpointsByThread.set(thread.id, [entry, ...prev]);
+  };
+
+  /** Bill the cost delta of a finished/stopped run into today's spend. */
+  const settleRunSpend = (detail: ThreadDetail, run: RunState | undefined) => {
+    if (!run) return;
+    const nowCost = detail.usage?.costUsd ?? 0;
+    const delta = Math.max(0, nowCost - run.costBaseline);
+    if (delta > 0) ctx.spendTodayUsd += delta;
+    // Prevent double-billing if settle is called twice for the same run.
+    run.costBaseline = nowCost;
+  };
+
+  const assertUnderBudget = () => {
+    if (ctx.dailyBudgetUsd == null) return;
+    if (ctx.spendTodayUsd >= ctx.dailyBudgetUsd) {
+      throw new Error(
+        dailyBudgetReachedMessage(ctx.spendTodayUsd, ctx.dailyBudgetUsd),
+      );
+    }
+  };
+
+  /** Prompt from the user message of the active run (for workflow final answer). */
+  const runPrompt = (detail: ThreadDetail, runId: string): string => {
+    const user = [...detail.messages]
+      .reverse()
+      .find((m) => m.role === "user" && m.runId === runId);
+    return user?.text ?? "";
+  };
+
+  const tickRun = (threadId: string) => {
+    const detail = details.get(threadId);
+    if (!detail) {
+      clearRunTimer(threadId);
+      return;
+    }
+
+    let run = runStates.get(threadId);
+    if (!run) {
+      run = {
+        runId: id("run"),
+        announced: new Set(),
+        settled: new Set(),
+        assistantMsgId: null,
+        sessionStep: 0,
+        kind: isSimulate(detail.thread) ? "simulate" : "session",
+        workflowStep: 0,
+        costBaseline: detail.usage?.costUsd ?? 0,
+      };
+      runStates.set(threadId, run);
+    }
+
+    const t = now();
+    let thread: ThreadInfo = {
+      ...detail.thread,
+      updatedAt: t,
+    };
+    let complete = false;
+
+    if (run.kind === "workflow" && detail.workflow && !detail.workflow.complete) {
+      complete = tickBuildWorkflow(
+        detail,
+        run,
+        t,
+        runPrompt(detail, run.runId),
+      );
+    } else if (
+      (run.kind === "simulate" || isSimulate(thread)) &&
+      detail.workflow &&
+      !detail.workflow.complete
+    ) {
+      const advanced = TRAILER
+        ? advanceWorkflowFanout(detail.workflow)
+        : advanceWorkflow(detail.workflow);
+      detail.workflow = advanced;
+      syncWorkLogForWorkflow(detail, run, t);
+      streamAssistant(detail, run, t);
+      if (advanced.complete) {
+        complete = true;
+        for (const item of detail.workLog) {
+          if (item.runId === run.runId) item.done = true;
+        }
+        detail.messages.push({
+          id: id("evt"),
+          role: "event",
+          text: "Run complete",
+          createdAt: t,
+          runId: run.runId,
+        });
+        bumpUsage(detail, {
+          inputTokens: 900,
+          outputTokens: 400,
+          costUsd: 0,
+          turns: 1,
+          model: "simulate-multiagent",
+        });
+      }
+    } else if (run.kind === "session" || !isSimulate(thread)) {
+      complete = tickSessionRun(detail, run, t);
+    } else {
+      complete = true;
+    }
+
+    if (complete) {
+      settleRunSpend(detail, run);
+      thread = {
+        ...thread,
+        status: "done",
+        updatedAt: t,
+        runStartedAt: null,
+      };
+      clearRunTimer(threadId);
+      appendDevCheckpoint(thread);
+    }
+
+    detail.thread = thread;
+    details.set(threadId, detail);
+    syncThreadRow(thread);
+    emitDetail(detail);
+  };
+
+  const startRunTimer = (threadId: string) => {
+    clearRunTimer(threadId);
+    const handle = setInterval(() => tickRun(threadId), TICK_MS);
+    runTimers.set(threadId, handle);
+  };
+
+  return {
+    clearRunTimer,
+    isSimulate,
+    appendDevCheckpoint,
+    settleRunSpend,
+    assertUnderBudget,
+    startRunTimer,
+  };
+}
+
+export function createRuns(ctx: DevCtx): Pick<CoderApi, "runs"> {
+  const { details, rewindRestore, runTimers, runStates, emitDetail, syncThreadRow, fakeWorktree, clearRunTimer, isSimulate, settleRunSpend, assertUnderBudget, startRunTimer } = ctx;
+  return {
+    runs: {
+      async start(input) {
+        const detail = details.get(input.threadId);
+        if (!detail) throw new Error(`Thread not found: ${input.threadId}`);
+
+        if (
+          detail.thread.status === "working" ||
+          runTimers.has(input.threadId)
+        ) {
+          throw new Error("A run is already active on this thread");
+        }
+
+        assertUnderBudget();
+        rewindRestore.delete(input.threadId);
+
+        const prompt = input.prompt.trim();
+        const t = now();
+        const runId = id("run");
+        const kind: RunState["kind"] = isSimulate(detail.thread)
+          ? "simulate"
+          : "session";
+        const run: RunState = {
+          runId,
+          announced: new Set(),
+          settled: new Set(),
+          assistantMsgId: null,
+          sessionStep: 0,
+          kind,
+          workflowStep: 0,
+          costBaseline: detail.usage?.costUsd ?? 0,
+        };
+        runStates.set(input.threadId, run);
+
+        detail.messages.push({
+          id: id("msg"),
+          role: "user",
+          text: prompt,
+          createdAt: t,
+          runId,
+        });
+
+        let thread = { ...detail.thread };
+        // A forked thread carries its source transcript on the first turn.
+        // electron/services.js buildHandoffPrefix builds the real digest; dev
+        // never spawns a CLI, so only the work-log line is visible.
+        if (thread.handoffFrom && !thread.sessionId) {
+          detail.workLog.push({
+            id: id("wl"),
+            runId,
+            label: "Hand-off context injected",
+            done: true,
+            timestamp: t,
+          });
+        }
+
+        // A worktree the demo asked for appears at first run.
+        if (thread.pendingWorktree && !thread.worktreePath) {
+          thread = { ...thread, ...fakeWorktree(thread) };
+        }
+
+        if (thread.title === "New Thread") {
+          const firstLine =
+            prompt.split("\n")[0]?.slice(0, TITLE_MAX) || "New Thread";
+          thread = { ...thread, title: firstLine };
+        }
+
+        // Persist a session id after the first turn so follow-ups resume.
+        if (!thread.sessionId) {
+          thread = { ...thread, sessionId: id("sess") };
+        }
+
+        // Real activity clears a stale "settled" pin.
+        // An explicit "active" pin survives.
+        thread = {
+          ...thread,
+          status: "working",
+          updatedAt: t,
+          runStartedAt: t,
+          stoppedAt: null,
+          ...(thread.settledOverride === "settled"
+            ? { settledOverride: null, settledAt: null }
+            : {}),
+        };
+        detail.thread = thread;
+
+        if (kind === "simulate") {
+          detail.workflow = createFreshWorkflow();
+          detail.workflow = advanceWorkflow(detail.workflow);
+          syncWorkLogForWorkflow(detail, run, t);
+          detail.messages.push({
+            id: id("evt"),
+            role: "event",
+            text: `Kicked off ${detail.workflow.total} subagents`,
+            createdAt: t + 1,
+            runId,
+          });
+          streamAssistant(detail, run, t + 2);
+        } else {
+          detail.workflow = null;
+          // First session tick immediately so the UI isn't empty for 700ms.
+          tickSessionRun(detail, run, t + 1);
+        }
+
+        details.set(input.threadId, detail);
+        syncThreadRow(thread);
+        emitDetail(detail);
+        startRunTimer(input.threadId);
+        return { runId };
+      },
+      async steer(input) {
+        const detail = details.get(input.threadId);
+        if (!detail) throw new Error(`Thread not found: ${input.threadId}`);
+        const run = runStates.get(input.threadId);
+        if (detail.thread.status !== "working" || !run) {
+          throw new Error("No live run to steer");
+        }
+        const prompt = input.prompt.trim();
+        if (!prompt) throw new Error("prompt is required");
+        const t = now();
+        detail.messages.push({
+          id: id("msg"),
+          role: "user",
+          text: prompt,
+          createdAt: t,
+          runId: run.runId,
+          steer: true,
+          ...(input.attachments?.length
+            ? { attachments: input.attachments }
+            : {}),
+        });
+        detail.thread = { ...detail.thread, updatedAt: t };
+        details.set(input.threadId, detail);
+        syncThreadRow(detail.thread);
+        emitDetail(detail);
+        return { runId: run.runId };
+      },
+      async startWorkflow(input) {
+        const detail = details.get(input.threadId);
+        if (!detail) throw new Error(`Thread not found: ${input.threadId}`);
+
+        if (
+          detail.thread.status === "working" ||
+          runTimers.has(input.threadId)
+        ) {
+          throw new Error("A run is already active on this thread");
+        }
+
+        assertUnderBudget();
+
+        const templateId = input.templateId?.trim() || "standard";
+        const template = ctx.templates.find((t) => t.id === templateId);
+        if (!template) {
+          throw new Error(`Unknown workflow template: ${templateId}`);
+        }
+
+        // Backend validates phase providers at start (naming the unavailable one).
+        for (const phase of template.phases) {
+          const prov = DEV_PROVIDERS.find((p) => p.id === phase.provider);
+          if (!prov) {
+            throw new Error(
+              `Provider "${phase.provider}" is not available`,
+            );
+          }
+          if (!prov.available) {
+            throw new Error(
+              `Provider "${phase.provider}" is not available`,
+            );
+          }
+        }
+
+        const prompt = input.prompt.trim();
+        const t = now();
+        const runId = id("run");
+        const run: RunState = {
+          runId,
+          announced: new Set(),
+          settled: new Set(),
+          assistantMsgId: null,
+          sessionStep: 0,
+          kind: "workflow",
+          workflowStep: 0,
+          phaseInstructions: template.phases.map((p) => p.instruction),
+          costBaseline: detail.usage?.costUsd ?? 0,
+        };
+        runStates.set(input.threadId, run);
+
+        detail.messages.push({
+          id: id("msg"),
+          role: "user",
+          text: prompt,
+          createdAt: t,
+          runId,
+        });
+
+        let thread = { ...detail.thread };
+        if (thread.pendingWorktree && !thread.worktreePath) {
+          thread = { ...thread, ...fakeWorktree(thread) };
+        }
+        if (thread.title === "New Thread") {
+          const firstLine =
+            prompt.split("\n")[0]?.slice(0, TITLE_MAX) || "New Thread";
+          thread = { ...thread, title: firstLine };
+        }
+
+        if (!thread.sessionId) {
+          thread = { ...thread, sessionId: id("sess") };
+        }
+
+        // Real activity clears a stale "settled" pin.
+        // An explicit "active" pin survives.
+        thread = {
+          ...thread,
+          status: "working",
+          updatedAt: t,
+          runStartedAt: t,
+          stoppedAt: null,
+          ...(thread.settledOverride === "settled"
+            ? { settledOverride: null, settledAt: null }
+            : {}),
+        };
+        detail.thread = thread;
+
+        detail.workflow = createWorkflowFromTemplate(template);
+        syncWorkLogForWorkflow(detail, run, t);
+        detail.messages.push({
+          id: id("evt"),
+          role: "event",
+          text: buildKickoffText(detail.workflow, template.phases),
+          createdAt: t + 1,
+          runId,
+        });
+
+        details.set(input.threadId, detail);
+        syncThreadRow(thread);
+        emitDetail(detail);
+        startRunTimer(input.threadId);
+        return { runId };
+      },
+      async retryWorkflowAgent(input: { threadId: string; agentId: string }) {
+        const detail = details.get(input.threadId);
+        if (!detail) throw new Error(`Thread not found: ${input.threadId}`);
+        if (
+          detail.thread.status === "working" ||
+          runTimers.has(input.threadId)
+        ) {
+          throw new Error("A run is already active on this thread");
+        }
+        const wf = detail.workflow;
+        if (!wf) throw new Error("No workflow to retry");
+        let agent = null;
+        for (const phase of wf.phases) {
+          agent = phase.agents.find((a) => a.id === input.agentId) ?? null;
+          if (agent) break;
+        }
+        if (!agent || agent.status !== "failed") {
+          throw new Error("Workflow agent is not failed");
+        }
+        const t = now();
+        const runId = id("run");
+        agent.status = "settled";
+        detail.thread = {
+          ...detail.thread,
+          status: "done",
+          updatedAt: t,
+          runStartedAt: null,
+        };
+        details.set(input.threadId, detail);
+        syncThreadRow(detail.thread);
+        emitDetail(detail);
+        return { runId };
+      },
+      async resumeQuotaWait(input: { threadId: string }) {
+        const detail = details.get(input.threadId);
+        if (!detail) throw new Error(`Thread not found: ${input.threadId}`);
+        if (detail.thread.status !== "quota-wait") {
+          throw new Error("Thread is not waiting on a provider quota reset");
+        }
+        return this.start({ threadId: input.threadId, prompt: "continue" });
+      },
+      async stop(input) {
+        const detail = details.get(input.threadId);
+        if (!detail) throw new Error(`Thread not found: ${input.threadId}`);
+
+        clearRunTimer(input.threadId);
+
+        const t = now();
+        const run = runStates.get(input.threadId);
+        settleRunSpend(detail, run);
+        // Mark any in-flight tools done so cards settle.
+        for (const m of detail.messages) {
+          if (m.role === "tool" && m.tool && !m.tool.done && m.runId === run?.runId) {
+            m.tool.done = true;
+            m.tool.isError = true;
+            m.tool.output = m.tool.output ?? "Stopped";
+          }
+        }
+        if (detail.workflow) {
+          const phases = detail.workflow.phases.map((p) => ({
+            ...p,
+            agents: p.agents.map((a) =>
+              a.status === "running"
+                ? { ...a, status: "failed" as const }
+                : a,
+            ),
+          }));
+          detail.workflow = recomputeWorkflow(phases, {
+            ...detail.workflow,
+            complete: false,
+          });
+        }
+        const thread: ThreadInfo = {
+          ...detail.thread,
+          status: "idle",
+          updatedAt: t,
+          runStartedAt: null,
+          stoppedAt: t,
+        };
+        detail.thread = thread;
+        detail.messages.push({
+          id: id("evt"),
+          role: "event",
+          text: "Run stopped",
+          createdAt: t,
+          runId: run?.runId,
+        });
+        details.set(input.threadId, detail);
+        syncThreadRow(thread);
+        emitDetail(detail);
+      },
+      async distill() {
+        return {
+          name: "Distilled workflow",
+          phases: [
+            {
+              name: "replay",
+              agentCount: 1,
+              instruction: "Replay what worked",
+              provider: "claude",
+              model: null,
+            },
+          ],
+        };
+      },
+    },
+  };
 }

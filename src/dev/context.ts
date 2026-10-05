@@ -16,9 +16,9 @@ import type {
   WorkflowTemplateInfo,
 } from "../shared/ipc";
 import type { MemoryRow } from "./memory.ts";
-import type { RunState } from "./runs.ts";
+import type { RunState, createRunEngine } from "./runs.ts";
 
-export type DevCtx = {
+export type DevCore = {
   projects: ProjectInfo[];
   threads: ThreadInfo[];
   templates: WorkflowTemplateInfo[];
@@ -44,12 +44,9 @@ export type DevCtx = {
   newThread: (over?: Partial<ThreadInfo>) => ThreadInfo;
   registerThread: (t: ThreadInfo) => ThreadInfo;
   fakeWorktree: (thread: ThreadInfo) => Partial<ThreadInfo>;
-  clearRunTimer: (threadId: string) => void;
-  isSimulate: (thread: ThreadInfo) => boolean;
-  settleRunSpend: (detail: ThreadDetail, run: RunState | undefined) => void;
-  assertUnderBudget: () => void;
-  startRunTimer: (threadId: string) => void;
-  appendDevCheckpoint: (thread: ThreadInfo) => void;
   /** The assembled api, for cross-namespace calls. Only call it lazily. */
   api: () => CoderApi;
 };
+
+/** DevCore plus the run timers built over it (createRunEngine in ./runs.ts). */
+export type DevCtx = DevCore & ReturnType<typeof createRunEngine>;
