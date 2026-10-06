@@ -45,6 +45,8 @@ export const WIRE_PUSH_CHANNELS = [
   // Terminal output (#1493). Web clients already run commands through
   // terminal:write; without this push the pane would never see output.
   "terminal:data",
+  // Add project from URL (#1506): clone progress lines.
+  "clone:progress",
 ] as const;
 
 /**

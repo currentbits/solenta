@@ -1568,6 +1568,20 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
         });
         return rec("projects.create", [input], created);
       },
+      clone: (input: { url: string; parentDir: string; name?: string }) => {
+        const name =
+          input.name?.trim() ||
+          input.url.replace(/\/+$/, "").split(/[/:]/).pop()?.replace(/\.git$/, "") ||
+          "repo";
+        const cloned = project({
+          name,
+          slug: name,
+          path: `${input.parentDir.trim().replace(/\/+$/, "")}/${name}`,
+        });
+        return rec("projects.clone", [input], cloned);
+      },
+      cancelClone: (input: { cloneId: string }) =>
+        rec("projects.cancelClone", [input], undefined),
       ensureScratch: () => {
         let found = projects.find((p) => p.scratch === true);
         if (!found) {
