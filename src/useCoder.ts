@@ -1207,7 +1207,9 @@ export function useCoder(): UseCoderResult {
             selectedRef.current = preferred;
           }
           // Off the boot path: drop pane layouts of deleted threads (#1475).
-          whenIdle(() => prunePaneLayouts(threadsRef.current.map((t) => t.id)));
+          // The fetched list, not threadsRef: a raced boot can still hold the
+          // snapshot, which leaves archived threads out.
+          whenIdle(() => prunePaneLayouts(list.map((t) => t.id)));
         } catch {
           // IPC may not be registered yet (#618); boot:ready retries.
         } finally {
