@@ -10,7 +10,11 @@ import type {
   ProviderInfo,
   ReasoningEffort,
 } from "../shared/ipc";
-import { PERMISSION_MODE_LABELS, providerPermissionModes } from "../format";
+import {
+  PERMISSION_MODE_LABELS,
+  providerPermissionModes,
+  snapToHonouredPermissionMode,
+} from "../format";
 import { effortDisplayLabel, effortsForModel } from "../modelPicker";
 import { ProjectIcon } from "./ProjectIcon";
 import styles from "./SettingsModal.module.css";
@@ -309,15 +313,24 @@ export function EditProjectModal({
                 data-edit-project-default-provider=""
                 value={defaults.provider ?? ""}
                 disabled={pending}
-                onChange={(e) =>
-                  // A model, effort or mode picked for one CLI is not
-                  // meaningful on another.
+                onChange={(e) => {
+                  // A model or effort picked for one CLI is not meaningful
+                  // on another; a mode snaps to what the new one honours.
+                  const provider = e.target.value || undefined;
+                  const info = providers.find((p) => p.id === provider);
+                  const mode = defaults.permissionMode
+                    ? snapToHonouredPermissionMode(
+                        providerPermissionModes(info),
+                        defaults.permissionMode,
+                      )
+                    : undefined;
                   patchDefaults({
-                    provider: e.target.value || undefined,
+                    provider,
                     model: undefined,
                     reasoningEffort: undefined,
-                  })
-                }
+                    permissionMode: mode === "default" ? undefined : mode,
+                  });
+                }}
               >
                 <option value="">Global default ({globalName})</option>
                 {providers.map((p) => (

@@ -464,7 +464,12 @@ describe("new thread defaults (#1501)", () => {
     const p1 = project({
       id: "p1",
       path: "/tmp/ledger",
-      threadDefaults: { provider: "claude", model: "claude-opus-5-5", reasoningEffort: "high" },
+      threadDefaults: {
+        provider: "claude",
+        model: "claude-opus-5-5",
+        reasoningEffort: "high",
+        permissionMode: "acceptEdits",
+      },
     });
     const m = await modal(p1, calls);
     assert.equal(m.query("[data-edit-project-default-missing]"), null);
@@ -481,7 +486,11 @@ describe("new thread defaults (#1501)", () => {
     assert.deepEqual(modes, ["", "plan", "bypassPermissions"]);
     await m.click(m.query("[data-edit-project-submit]"));
     await m.flush();
-    assert.deepEqual(calls[0]!.threadDefaults, { provider: "grok" });
+    // acceptEdits snaps to the nearest mode grok honours.
+    assert.deepEqual(calls[0]!.threadDefaults, {
+      provider: "grok",
+      permissionMode: "bypassPermissions",
+    });
     m.unmount();
   });
 
