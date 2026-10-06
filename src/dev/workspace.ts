@@ -13,33 +13,20 @@ export function createWorkspace(): Pick<CoderApi, "servers" | "simulator" | "pre
   /** Terminal scrollback per thread. The browser harness has no shell. */
   const demoTerminals = new Map<string, string>();
 
-  function demoTerminal(
-    threadId: string,
-    since: number | null | undefined,
-  ): TerminalState {
+  function demoTerminal(threadId: string, since?: number | null): TerminalState {
     const all = demoTerminals.get(threadId);
-    if (all == null) {
-      return {
-        running: false,
-        cwd: "",
-        shell: "",
-        cursor: 0,
-        text: "",
-        pending: "",
-        reset: true,
-        startedAt: 0,
-      };
-    }
-    const stale = typeof since !== "number" || since < 0 || since > all.length;
+    const stale = typeof since !== "number" || since < 0 || since > (all ?? "").length;
     return {
-      running: true,
-      cwd: "/demo/worktree",
-      shell: "/bin/zsh",
-      cursor: all.length,
-      text: stale ? all : all.slice(since),
-      pending: "",
+      termId: "1",
+      running: all != null,
+      pty: false,
+      cwd: all == null ? "" : "/demo/worktree",
+      shell: all == null ? "" : "/bin/zsh",
+      cursor: (all ?? "").length,
+      text: stale ? (all ?? "") : (all ?? "").slice(since),
       reset: stale,
       startedAt: 0,
+      staleRoot: false,
     };
   }
 
@@ -235,31 +222,25 @@ export function createWorkspace(): Pick<CoderApi, "servers" | "simulator" | "pre
       async open(input: { threadId: string }): Promise<TerminalState> {
         demoTerminals.set(
           input.threadId,
-          "Demo shell. Electron runs a real one.\n",
+          "Demo shell. Electron runs a real one.\r\n",
         );
-        return demoTerminal(input.threadId, null);
+        return demoTerminal(input.threadId);
       },
-      async write(input: {
-        threadId: string;
-        data: string;
-        since?: number;
-      }): Promise<TerminalState> {
-        const prev = demoTerminals.get(input.threadId) ?? "";
-        demoTerminals.set(
-          input.threadId,
-          `${prev}$ ${input.data}\n[demo: nothing runs in the browser]\n`,
-        );
+      async write(): Promise<{ ok: boolean }> {
+        return { ok: false };
+      },
+      async resize(): Promise<{ ok: boolean }> {
+        return { ok: false };
+      },
+      async read(input: { threadId: string; since?: number }): Promise<TerminalState> {
         return demoTerminal(input.threadId, input.since);
       },
-      async read(input: {
-        threadId: string;
-        since?: number;
-      }): Promise<TerminalState> {
-        return demoTerminal(input.threadId, input.since);
+      async list(): Promise<string[]> {
+        return [];
       },
       async close(input: { threadId: string }): Promise<TerminalState> {
         demoTerminals.delete(input.threadId);
-        return demoTerminal(input.threadId, null);
+        return demoTerminal(input.threadId);
       },
     },
     files: {

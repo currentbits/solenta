@@ -16,7 +16,6 @@ import type {
   ConflictContext,
   ConflictForecast,
   DevServerState,
-  TerminalState,
   DiffResult,
   ReviewContext,
   GitSyncInfo,
@@ -123,6 +122,7 @@ import { useCoderMemory } from "./coder/useCoderMemory";
 import { useCoderAgentTools } from "./coder/useCoderAgentTools";
 import { useCoderInsights } from "./coder/useCoderInsights";
 import { useCoderRepoTools } from "./coder/useCoderRepoTools";
+import type { TerminalApi } from "./components/TerminalPane";
 import { useCoderProjects } from "./coder/useCoderProjects";
 import { useCoderUpdates } from "./coder/useCoderUpdates";
 import { useCoderWorkflows } from "./coder/useCoderWorkflows";
@@ -684,20 +684,11 @@ export interface UseCoderResult {
   /** Live status for the thread's spawned dev server. */
   devServerStatus: (threadId: string) => Promise<DevServerState>;
   /**
-   * Terminal pane shell session (#147). Passed through as the namespace:
-   * the pane owns the open/poll/close lifecycle, so unwrapping four
-   * callbacks here would only be four more props to thread through App.
+   * Terminal pane shell sessions (#147, #1493). Passed through as the
+   * namespace plus the "terminal:data" subscription: the pane owns the
+   * open/stream/close lifecycle.
    */
-  terminal: {
-    open: (threadId: string) => Promise<TerminalState>;
-    write: (
-      threadId: string,
-      data: string,
-      since: number,
-    ) => Promise<TerminalState>;
-    read: (threadId: string, since: number) => Promise<TerminalState>;
-    close: (threadId: string) => Promise<TerminalState>;
-  };
+  terminal: TerminalApi;
   /** Embedded Browser pane guest (issue #155). Desktop-only. */
   preview: CoderApi["preview"];
   /** Desktop-only iOS Simulator pane (#248). */

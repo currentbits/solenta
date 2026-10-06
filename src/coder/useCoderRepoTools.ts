@@ -7,6 +7,7 @@ import type {
   GitSyncInfo,
   ProjectInfo,
 } from "../shared/ipc";
+import type { TerminalApi } from "../components/TerminalPane";
 
 /** Git sync, dev servers, merge lanes and the terminal bridge. */
 export function useCoderRepoTools({
@@ -154,14 +155,10 @@ export function useCoderRepoTools({
     [api],
   );
 
-  const terminal = useMemo(
+  const terminal = useMemo<TerminalApi>(
     () => ({
-      open: (threadId: string) => api.terminal.open({ threadId }),
-      write: (threadId: string, data: string, since: number) =>
-        api.terminal.write({ threadId, data, since }),
-      read: (threadId: string, since: number) =>
-        api.terminal.read({ threadId, since }),
-      close: (threadId: string) => api.terminal.close({ threadId }),
+      ...api.terminal,
+      onData: (cb) => api.on("terminal:data", cb),
     }),
     [api],
   );

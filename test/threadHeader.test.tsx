@@ -113,21 +113,28 @@ const noopSave = async () =>
 /** No shell under jsdom; the pane only needs the four calls to resolve. */
 const fakeTerminalApi = {
   open: async () => idleTerminal(),
-  write: async () => idleTerminal(),
+  write: async () => ({ ok: true }),
+  resize: async () => ({ ok: true }),
   read: async () => idleTerminal(),
+  // Never settles: these tests only toggle the pane, and a mounted view
+  // would load the real xterm, which jsdom cannot lay out.
+  list: () => new Promise<string[]>(() => {}),
   close: async () => idleTerminal(),
+  onData: () => () => {},
 };
 
 function idleTerminal(): TerminalState {
   return {
+    termId: "1",
     running: false,
+    pty: true,
     cwd: "/tmp/repo",
     shell: "/bin/zsh",
     cursor: 0,
     text: "",
-    pending: "",
     reset: true,
     startedAt: 0,
+    staleRoot: false,
   };
 }
 
