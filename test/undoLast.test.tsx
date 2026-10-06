@@ -55,6 +55,10 @@ const toastText = () => document.querySelector('[data-toast="archive"]')?.textCo
 
 describe("undo the last settle / snooze / archive", () => {
   it("⌘Z reverses a snooze, but never from inside a text field", async () => {
+    // Snooze presets depend on the hour; pin the clock like pinSnooze does.
+    const realNow = Date.now;
+    const frozen = new Date(2024, 5, 15, 14, 0, 0, 0).getTime();
+    Date.now = () => frozen;
     const { m, fake } = await bootTwo();
     try {
       await m.click(m.query('[data-snooze-btn="t-mid"]'));
@@ -79,6 +83,7 @@ describe("undo the last settle / snooze / archive", () => {
       assert.equal(fake.of("threads.setSnoozed").length, 2, "one undo per action");
     } finally {
       m.unmount();
+      Date.now = realNow;
     }
   });
 

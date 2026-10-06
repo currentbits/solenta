@@ -24,7 +24,7 @@ import { ClaimedLanesHeartbeat } from "./components/LaneHeartbeat";
 import type { SettingsPane } from "./components/SettingsModal";
 import { ArchiveToast } from "./components/ArchiveToast";
 import { UNDO_WINDOW_MS, useUndoLast } from "./app/useUndoLast";
-import { matchesBinding } from "./keybindings";
+import { bindingLabel, matchesBinding } from "./keybindings";
 import { isShortcutBlocked } from "./sidebarSelection";
 import {
   EMPTY_HISTORY,
@@ -1477,7 +1477,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
                 className={styles.sidebarRailBtn}
                 data-sidebar-show=""
                 aria-label="Show sidebar"
-                title="Show sidebar (⌘B)"
+                title={`Show sidebar (${bindingLabel("sidebar.toggle", true)})`}
                 onClick={toggleSidebar}
               >
                 <svg
@@ -1912,7 +1912,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
                 data-agents-expand=""
                 aria-expanded="false"
                 aria-controls="pane-agents"
-                title="Show agents panel (⌘.)"
+                title={`Show agents panel (${bindingLabel("agents.toggle", true)})`}
                 aria-label="Show agents panel"
                 onClick={() => {
                   collapseSourceRef.current = "user";

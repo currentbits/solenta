@@ -173,6 +173,7 @@ import { useQueuedEdit } from "./thread/useQueuedEdit";
 import { usePaneLayoutActions } from "./thread/usePaneLayoutActions";
 import { useAppSnap } from "./thread/useAppSnap";
 import { useStickToBottom } from "./thread/useStickToBottom";
+import { bindingLabel } from "../keybindings";
 import styles from "./ThreadView.module.css";
 import { lazyNamed } from "../lazyNamed";
 
@@ -3112,7 +3113,7 @@ export const ThreadView = memo(function ThreadView({
               data-active={agentsPanelOpen ? "true" : undefined}
               aria-pressed={Boolean(agentsPanelOpen)}
               aria-label="Right panel"
-              title={`${agentsPanelOpen ? "Hide" : "Show"} right panel (⌘.)`}
+              title={`${agentsPanelOpen ? "Hide" : "Show"} right panel (${bindingLabel("agents.toggle", true)})`}
               onClick={onToggleAgentsPanel}
             >
               <svg

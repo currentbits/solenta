@@ -76,7 +76,7 @@ export function KeyboardPane() {
       <div className={styles.fieldRow}>
         <button
           type="button"
-          className={styles.btnPrimary}
+          className={`${styles.btn} ${styles.btnPrimary}`}
           data-keybindings-apply=""
           disabled={!dirty}
           onClick={apply}
