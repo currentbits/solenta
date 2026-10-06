@@ -170,10 +170,12 @@ function emitNow(sess) {
 /** @param {TerminalSession} sess */
 function scheduleFlush(sess) {
   if (sess.flushTimer || !sess.logPath) return;
+  const owned = () => sessions.get(keyOf(sess.threadId, sess.termId)) === sess;
   sess.flushTimer = setTimeout(() => {
     sess.flushTimer = null;
     fs.mkdir(path.dirname(sess.logPath), { recursive: true }, () => {
-      fs.writeFile(sess.logPath, sess.buf, () => {});
+      // close() may have deleted the log meanwhile; do not resurrect it.
+      if (owned()) fs.writeFile(sess.logPath, sess.buf, () => {});
     });
   }, FLUSH_MS);
   if (typeof sess.flushTimer.unref === "function") sess.flushTimer.unref();
@@ -329,6 +331,9 @@ function open(threadId, root, opts = {}) {
     // #1183: never silently keep running in a checkout the thread left.
     return { ...toState(existing, null), staleRoot: existing.cwd !== root };
   }
+  // An exited shell's scrollback carries over to its replacement, the same
+  // way a log from a previous app run does below.
+  const carried = existing ? existing.buf : null;
   if (existing) {
     killSession(existing);
     sessions.delete(key);
@@ -377,14 +382,15 @@ function open(threadId, root, opts = {}) {
   };
   sessions.set(key, sess);
 
-  if (logPath) {
+  let old = carried;
+  if (old == null && logPath) {
     try {
-      const old = fs.readFileSync(logPath, "utf8");
-      if (old) commit(sess, old + RESTORE_MARK);
+      old = fs.readFileSync(logPath, "utf8");
     } catch {
       // no previous scrollback
     }
   }
+  if (old) commit(sess, old + RESTORE_MARK);
 
   if (project.remoteHost) {
     // #1184: a remote project's shell must never silently run locally.

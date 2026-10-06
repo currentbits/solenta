@@ -217,6 +217,36 @@ describe("terminal sessions", () => {
   });
 });
 
+describe("terminal restarts", () => {
+  const skip = POSIX ? false : "POSIX shell only";
+
+  it("carries an exited shell's scrollback into its replacement", { skip }, async () => {
+    const id = "t-exit";
+    terminal.open(id, os.tmpdir(), { env: ENV, pty: null });
+    terminal.write(id, "echo before; exit 3\r");
+    await waitFor(id, (t) => /exited \(3\)/.test(t));
+    const again = terminal.open(id, os.tmpdir(), { env: ENV, pty: null });
+    assert.equal(again.running, true);
+    assert.match(again.text, /before[\s\S]*exited \(3\)[\s\S]*restored output/);
+    terminal.close(id);
+  });
+
+  it("does not resurrect a closed terminal's log from a pending flush", { skip }, async () => {
+    const id = "t-flush";
+    const logDir = fs.mkdtempSync(path.join(os.tmpdir(), "solenta-term-"));
+    try {
+      terminal.open(id, os.tmpdir(), { env: ENV, pty: null, logDir });
+      terminal.write(id, "echo x\r");
+      await waitFor(id, (t) => /\r\nx\r\n/.test(t));
+      terminal.close(id);
+      await new Promise((r) => setTimeout(r, 1300));
+      assert.equal(fs.existsSync(path.join(logDir, id, "1.log")), false);
+    } finally {
+      fs.rmSync(logDir, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("terminal safety", () => {
   it("never runs an SSH project's shell locally", () => {
     let spawned = false;

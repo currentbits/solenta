@@ -160,7 +160,7 @@ done
 # prebuild, so no Electron-ABI rebuild. Its loader requires
 # @lydell/node-pty-<platform>-<arch>; this bundle is arm64 only (see the
 # speech runtime below). pty.node + the executable spawn-helper are loose
-# Mach-O files that codesign-app.sh signs in its nested-binary walk.
+# Mach-O files, signed by the nested-binary walk at the end of this script.
 ROOT_NM_PKGS=(ws cross-spawn path-key shebang-command shebang-regex which isexe yauzl pend @lydell/node-pty @lydell/node-pty-darwin-arm64)
 mkdir -p "$APP_DIR/node_modules"
 for pkg in "${ROOT_NM_PKGS[@]}"; do

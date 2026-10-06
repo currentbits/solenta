@@ -30,7 +30,11 @@ describe("ipcChannels table", () => {
       "thread:updated",
       "thread:select",
       "boot:ready",
+      "terminal:data",
     ]);
+    for (const ch of WIRE_PUSH_CHANNELS) {
+      assert.ok((PUSH_CHANNELS as readonly string[]).includes(ch), `${ch} is a desktop push too`);
+    }
     assert.ok((PUSH_CHANNELS as readonly string[]).includes("simulator:changed"));
     assert.ok((PUSH_CHANNELS as readonly string[]).includes("simulator:focus"));
   });
