@@ -67,11 +67,38 @@ export function loadBootSnapshot(): BootSnapshot | null {
   }
 }
 
+/**
+ * Archived rows are about half the list and only feed the collapsed Settled
+ * shelf, which fills in when loadBootLists answers (#1475). Keep the selected
+ * thread and any archived link in a live row's handoffFrom chain, so the first
+ * paint still opens it and nests families under the right lead.
+ */
+export function bootSnapshotThreads(
+  threads: ThreadInfo[],
+  selectedThreadId: string | null,
+): ThreadInfo[] {
+  const byId = new Map(threads.map((t) => [t.id, t]));
+  const keep = new Set<string>();
+  for (const t of threads) {
+    if (t.archived && t.id !== selectedThreadId) continue;
+    let cur: ThreadInfo | undefined = t;
+    while (cur && !keep.has(cur.id)) {
+      keep.add(cur.id);
+      cur = cur.handoffFrom ? byId.get(cur.handoffFrom) : undefined;
+    }
+  }
+  return threads.filter((t) => keep.has(t.id));
+}
+
 export function saveBootSnapshot(snap: Omit<BootSnapshot, "savedAt">): void {
   try {
     window.localStorage.setItem(
       SNAPSHOT_KEY,
-      JSON.stringify({ savedAt: Date.now(), ...snap }),
+      JSON.stringify({
+        savedAt: Date.now(),
+        ...snap,
+        threads: bootSnapshotThreads(snap.threads, snap.selectedThreadId),
+      }),
     );
   } catch {
     // Quota/private mode: the next launch simply boots empty.
@@ -124,10 +151,15 @@ export function saveCachedThreadDetail(d: ThreadDetail | null): void {
       // Quota/private mode: a switch just shows the empty pane until the fetch.
     }
   };
+  whenIdle(write);
+}
+
+/** Runs `fn` in an idle slot, or within IDLE_WRITE_TIMEOUT_MS on a busy renderer. */
+export function whenIdle(fn: () => void): void {
   // Safari (web mode) has no requestIdleCallback.
   if (typeof window.requestIdleCallback === "function") {
-    window.requestIdleCallback(write, { timeout: IDLE_WRITE_TIMEOUT_MS });
+    window.requestIdleCallback(fn, { timeout: IDLE_WRITE_TIMEOUT_MS });
   } else {
-    window.setTimeout(write, 0);
+    window.setTimeout(fn, 0);
   }
 }

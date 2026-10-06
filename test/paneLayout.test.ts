@@ -16,6 +16,7 @@ import {
   hydratePaneLayout,
   leafByType,
   loadPaneLayout,
+  prunePaneLayouts,
   movePane,
   openPane,
   parsePaneLayout,
@@ -209,6 +210,32 @@ describe("persistence", () => {
     assert.deepEqual(loadPaneLayout("t1", storage), opened);
     assert.equal(loadPaneLayout("t2", storage).kind, "leaf");
     assert.equal(loadPaneLayout("missing", storage).kind, "leaf");
+  });
+
+  it("prunes layouts of unknown threads and default-only layouts (#1475)", () => {
+    const store = new Map<string, string>();
+    const storage = {
+      get length() {
+        return store.size;
+      },
+      key: (i: number) => [...store.keys()][i] ?? null,
+      getItem: (k: string) => store.get(k) ?? null,
+      setItem: (k: string, v: string) => void store.set(k, v),
+      removeItem: (k: string) => void store.delete(k),
+      clear: () => store.clear(),
+    };
+    const opened = openPane(defaultPaneLayout(), "diff", "pane-1").layout;
+    savePaneLayout("live", opened, storage);
+    savePaneLayout("plain", defaultPaneLayout(), storage);
+    savePaneLayout("deleted", opened, storage);
+    storage.setItem("coder.other", "kept");
+    assert.equal(prunePaneLayouts(["live", "plain"], storage), 2);
+    assert.deepEqual([...store.keys()].sort(), [
+      "coder.other",
+      "coder.paneLayout.live",
+    ]);
+    assert.deepEqual(loadPaneLayout("live", storage), opened);
+    assert.deepEqual(loadPaneLayout("plain", storage), defaultPaneLayout());
   });
 
   it("hydratePaneLayout opens Git on request without dropping chat", () => {
