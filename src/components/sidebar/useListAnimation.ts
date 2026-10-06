@@ -3,9 +3,12 @@ import autoAnimate from "@formkit/auto-animate";
 import {
   listMotionBlocked,
   releaseAbortedRows,
+  skipDetachedObserve,
   type ListAnimCtrl,
   type ListMotionSkip,
 } from "./motion";
+
+skipDetachedObserve();
 
 const FAMILY_MOTION_MS = 160;
 

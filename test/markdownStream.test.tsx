@@ -9,7 +9,11 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { renderToStaticMarkup } from "react-dom/server";
 import { mount } from "./support/dom.ts";
-import { MarkdownBody, markdownParses } from "../src/components/Markdown";
+import {
+  MarkdownBody,
+  clearParsedMarkdown,
+  markdownParses,
+} from "../src/components/Markdown";
 import { markdownChunks } from "../src/components/markdownChunks";
 
 const CORPUS: Record<string, string> = {
@@ -235,8 +239,30 @@ describe("streaming markdown chunks", () => {
   });
 
   it("non-streaming text is one parse", async () => {
+    clearParsedMarkdown();
     const before = markdownParses.count;
     await mount(<MarkdownBody text={"a\n\nb\n\nc"} />);
     assert.equal(markdownParses.count - before, 1);
+  });
+
+  it("a remount of the same text reuses the parse (thread switch back)", async () => {
+    clearParsedMarkdown();
+    const text = CORPUS.mixed!;
+    const first = await mount(<MarkdownBody text={text} />);
+    const html = first.html();
+    first.unmount();
+    const before = markdownParses.count;
+    const again = await mount(<MarkdownBody text={text} />);
+    assert.equal(markdownParses.count - before, 0, "served from the cache");
+    assert.equal(again.html(), html);
+  });
+
+  it("does not cache the live tail of a streaming reply", async () => {
+    clearParsedMarkdown();
+    const head = "# Head\n\nSettled paragraph.\n\n";
+    await mount(<MarkdownBody text={head + "tail"} streaming />);
+    const before = markdownParses.count;
+    await mount(<MarkdownBody text={head + "tail"} streaming />);
+    assert.equal(markdownParses.count - before, 1, "head cached, tail re-parsed");
   });
 });
