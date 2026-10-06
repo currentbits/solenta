@@ -93,6 +93,7 @@ export const IPC_CHANNELS = [
   { ns: "automations", method: "listRuns" },
   { ns: "projects", method: "list" },
   { ns: "projects", method: "add" },
+  { ns: "projects", method: "discoverRecent" },
   { ns: "projects", method: "create" },
   { ns: "projects", method: "ensureScratch" },
   { ns: "projects", method: "update" },

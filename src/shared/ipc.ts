@@ -2460,6 +2460,25 @@ export interface ProviderInfo {
   auth?: "signedIn" | "signedOut" | "unknown";
 }
 
+/** A checkout found by first-run discovery (#1501). */
+export interface RecentRepo {
+  /** Main checkout; a linked worktree maps to it. */
+  path: string;
+  name: string;
+  /** Newest session there, epoch ms. */
+  lastActiveAt: number;
+  /** Provider ids whose sessions ran there. */
+  providers: string[];
+  /** Newest checkout of a recently active group: ticked by default. */
+  preselected: boolean;
+}
+
+/** Checkouts that share a git remote ("owner/repo"); null remote = one checkout. */
+export interface RecentRepoGroup {
+  remote: string | null;
+  repos: RecentRepo[];
+}
+
 /** One phase of a user-defined workflow template. */
 export interface WorkflowPhaseSpec {
   /** Display name, e.g. "analyze". */
@@ -3819,6 +3838,12 @@ export interface CoderApi {
     list(): Promise<ProjectInfo[]>;
     /** Validates the path is a git repo; rejects otherwise. Optional remotes skip the local checkout. */
     add(path: string, opts?: AddProjectOptions): Promise<ProjectInfo>;
+    /**
+     * First-run discovery (#1501): repos the user worked in recently with a
+     * provider CLI, grouped by git remote, newest first. Read-only scan of
+     * the CLIs' session stores; already-added projects are left out.
+     */
+    discoverRecent(): Promise<RecentRepoGroup[]>;
     /** Create a new folder + git repo at parentDir/name, then add it as a project. */
     create(input: CreateProjectInput): Promise<ProjectInfo>;
     /**

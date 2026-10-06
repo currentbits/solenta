@@ -386,4 +386,5 @@ module.exports = {
   absorbKimiSessionTurns,
   listKimiSessions,
   importKimiSession,
+  walkKimiSessions,
 };

@@ -419,4 +419,5 @@ module.exports = {
   listClaudeSessions,
   importClaudeSession,
   absorbClaudeSessionTurns,
+  walkClaudeSessions,
 };
