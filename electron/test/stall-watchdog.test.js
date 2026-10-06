@@ -173,7 +173,7 @@ describe("turn watchdog + queued drain (issue #314)", () => {
     assert.equal(store.getThread(thread.id).queued, null);
   });
 
-  it("a startRun that throws leaves the prompt queued with error", async () => {
+  it("a drain that loses the idle slot keeps the prompt queued without an error (#1501)", async () => {
     const thread = store.getThreads()[0];
     await runner.startRun({ threadId: thread.id, prompt: "busy" });
     assert.ok(runner.isRunning(thread.id));
@@ -187,7 +187,8 @@ describe("turn watchdog + queued drain (issue #314)", () => {
     const queued = store.getThread(thread.id).queued;
     assert.ok(queued, "prompt must stay queued");
     assert.equal(queued.prompt, "hold this");
-    assert.ok(queued.error, "delivery error must be set");
-    assert.match(queued.error, /already active/i);
+    // The run that holds the slot drains again at its own terminal, so
+    // this is not a delivery failure to put in front of the user.
+    assert.equal(queued.error, undefined);
   });
 });
