@@ -1030,6 +1030,10 @@
   text-decoration-color: var(--border-soft);
 }
 
+.reviewCommentHint {
+  color: var(--text-muted);
+}
+
 .reviewCommentInput {
   min-width: 200px;
   max-width: 360px;
@@ -1350,6 +1354,16 @@
   font-size: 11.5px;
   line-height: 1.4;
   color: var(--text-dim);
+}
+
+.signedOut {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0 8px 4px;
+  font-size: 11.5px;
+  color: var(--warning-fg);
 }
 
 .setupPanel a {

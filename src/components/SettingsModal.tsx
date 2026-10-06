@@ -37,11 +37,13 @@ import {
   type ProfileDraft,
 } from "./settings/AgentsPane";
 import { GeneralPane } from "./settings/GeneralPane";
+import { KeyboardPane } from "./settings/KeyboardPane";
 
 export { formatOtelHeaders, parseOtelHeaders } from "./settings/AdvancedPane";
 
 export const SETTINGS_PANES = [
   "general",
+  "keyboard",
   "threads",
   "spending",
   "git",
@@ -64,6 +66,11 @@ const PANE_META: Record<
     hint: "Display, notifications, the welcome tour, and this build.",
     keywords:
       "notifications sound badge dock tour welcome update version build channel nightly prod felt estimate time saved webhook slack discord ntfy push phone agents panel sidebar collapse remember last quit confirm accidental close display divergence compare run duration paste cards vim motions",
+  },
+  keyboard: {
+    label: "Keyboard",
+    hint: "Remap app shortcuts. Anything you leave alone keeps its default.",
+    keywords: "shortcuts keybindings hotkeys chord remap keys",
   },
   threads: {
     label: "Threads",
@@ -132,6 +139,10 @@ export interface SettingsModalProps {
   settings: AppSettings | null;
   /** Provider catalogue for the profiles form. Unavailable CLIs stay listed. */
   providers?: ProviderInfo[];
+  /** Re-list providers (re-probes sign-in) when Settings › Agents opens. */
+  onRefreshProviders?: () => void;
+  /** Start a provider's login command in a terminal (#1501). */
+  onProviderSignIn?: (providerId: string) => Promise<void>;
   /** Live app status for the memory section. */
   status: AppStatus | null;
   /** Auto-update check result for the build section. */
@@ -235,6 +246,8 @@ export function SettingsModal({
   initialPane = null,
   settings,
   providers = [],
+  onRefreshProviders,
+  onProviderSignIn,
   status,
   update,
   onCheckUpdate,
@@ -725,6 +738,8 @@ export function SettingsModal({
             persistProfiles={persistProfiles}
             persistPool={persistPool}
             onSaveSettings={onSaveSettings}
+            onRefreshProviders={onRefreshProviders}
+            onProviderSignIn={onProviderSignIn}
           />
           )}
 
@@ -757,6 +772,8 @@ export function SettingsModal({
             {...skills}
           />
           )}
+
+          {pane === "keyboard" && <KeyboardPane />}
 
           {pane === "general" && (
           <GeneralPane

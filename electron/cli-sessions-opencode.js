@@ -507,4 +507,6 @@ module.exports = {
   readOpenCodeImportTurns,
   importOpenCodeSession,
   absorbOpenCodeSessionTurns,
+  openOpenCodeDb,
+  closeOpenCodeDb,
 };

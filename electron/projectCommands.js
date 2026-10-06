@@ -8,6 +8,8 @@
  * same shell runner, triggered from the thread header.
  */
 
+const fs = require("node:fs");
+const path = require("node:path");
 const { randomUUID } = require("node:crypto");
 const {
   normalizeCommand,
@@ -15,6 +17,7 @@ const {
   VERIFY_TIMEOUT_MS,
   tailLog,
 } = require("./verify.js");
+const { effectiveCommands } = require("./repoConfig.js");
 
 /** Reserved actionId for the project's setupCommand. */
 const SETUP_ID = "setup";
@@ -27,6 +30,11 @@ const EVENT_LOG_MAX = 1500;
 
 /** @type {Map<string, Promise<unknown>>} */
 const inflight = new Map();
+/** Inflight promises that are a new worktree's setup, not a quick action. */
+const setupJobs = new WeakSet();
+/** Thrown when a solenta.json command has not been approved (#1506). */
+const REPO_CONFIG_UNTRUSTED = "REPO_CONFIG_UNTRUSTED";
+const SUBMODULE_COMMAND = "git submodule update --init --recursive";
 
 let runFn = runVerifyCommand;
 
@@ -176,25 +184,29 @@ function pushCommandState(store, threadId, broadcast) {
 }
 
 /**
+ * Setup (actionId omitted / "setup") or a named quick action, after the
+ * project-over-solenta.json precedence (#1506). `fromRepo` rows only run
+ * once the project has approved the file's current command hash.
+ *
  * @param {object | null | undefined} project
  * @param {string | null | undefined} actionId
- * @returns {{ id: string, name: string, command: string, timeoutMs: number } | null}
+ * @returns {{ id: string, name: string, command: string, timeoutMs: number, fromRepo: boolean, hash: string | null, trusted: boolean } | null}
  */
 function resolveCommand(project, actionId) {
+  const eff = effectiveCommands(project);
+  const trust = { hash: eff.hash, trusted: eff.trusted };
   if (!actionId || actionId === SETUP_ID) {
-    const command = normalizeSetupCommand(project && project.setupCommand);
-    if (!command) return null;
+    if (!eff.setup) return null;
     return {
       id: SETUP_ID,
       name: "setup",
-      command,
+      command: eff.setup.command,
       timeoutMs: SETUP_TIMEOUT_MS,
+      fromRepo: eff.setup.fromRepo,
+      ...trust,
     };
   }
-  const actions = Array.isArray(project && project.quickActions)
-    ? project.quickActions
-    : [];
-  const row = actions.find((a) => a && a.id === actionId);
+  const row = eff.quickActions.find((a) => a && a.id === actionId);
   if (!row) return null;
   const command = normalizeCommand(row.command);
   if (!command) return null;
@@ -207,6 +219,8 @@ function resolveCommand(project, actionId) {
     name,
     command,
     timeoutMs: VERIFY_TIMEOUT_MS,
+    fromRepo: row.fromRepo,
+    ...trust,
   };
 }
 
@@ -219,8 +233,22 @@ function waitForCommand(threadId) {
 }
 
 /**
- * Fire-and-forget: run setupCommand in `cwd` if the project has one.
- * Never throws. Joins an in-flight command on the same thread.
+ * The new-worktree setup job in flight on this thread, or null. Quick
+ * actions are not setup: the agent never waits on those (#1506).
+ * @param {string} threadId
+ */
+function pendingSetup(threadId) {
+  const p = inflight.get(String(threadId));
+  return p && setupJobs.has(p) ? p : null;
+}
+
+/**
+ * Fire-and-forget after a NEW worktree: `git submodule update` when the
+ * checkout has .gitmodules (best-effort, a failure is a warning event),
+ * then the setup command (project setting, else an approved solenta.json
+ * `setup`). An unapproved solenta.json setup is skipped with an event
+ * pointing at the Setup button, which asks for approval. Never throws.
+ * Joins an in-flight command on the same thread.
  *
  * @param {{
  *   store: import("./store").Store,
@@ -233,15 +261,58 @@ function waitForCommand(threadId) {
  */
 function kickWorktreeSetup(opts) {
   const { store, threadId, cwd, project, broadcast } = opts;
-  const resolved = resolveCommand(project, SETUP_ID);
-  if (!resolved) return Promise.resolve(null);
-  return enqueue(store, {
-    threadId,
-    cwd,
-    project,
-    resolved,
-    broadcast,
+  let resolved = resolveCommand(project, SETUP_ID);
+  if (resolved && resolved.fromRepo && !resolved.trusted) {
+    appendEvent(
+      store,
+      threadId,
+      "[setup] skipped: solenta.json setup needs your approval. Press Setup in the thread details to review and run it.",
+    );
+    store.save();
+    pushCommandState(store, threadId, broadcast);
+    resolved = null;
+  }
+  const submodules = hasGitmodules(cwd);
+  if (!resolved && !submodules) return Promise.resolve(null);
+  const id = String(threadId);
+  const existing = inflight.get(id);
+  if (existing) return existing;
+  const p = (async () => {
+    if (submodules) {
+      await runOne(store, {
+        threadId: id,
+        cwd,
+        project,
+        resolved: {
+          id: "submodules",
+          name: "submodules",
+          command: SUBMODULE_COMMAND,
+          timeoutMs: SETUP_TIMEOUT_MS,
+        },
+        broadcast,
+        // Never sit on a credential prompt nobody can see. The runner
+        // uses `env` as the whole environment, so start from ours.
+        env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
+      });
+    }
+    return resolved
+      ? runOne(store, { threadId: id, cwd, project, resolved, broadcast })
+      : null;
+  })().finally(() => {
+    if (inflight.get(id) === p) inflight.delete(id);
   });
+  setupJobs.add(p);
+  inflight.set(id, p);
+  return p;
+}
+
+/** @param {string} cwd */
+function hasGitmodules(cwd) {
+  try {
+    return fs.statSync(path.join(cwd, ".gitmodules")).isFile();
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -273,10 +344,11 @@ function enqueue(store, args) {
  *   project: object | null,
  *   resolved: { id: string, name: string, command: string, timeoutMs: number },
  *   broadcast?: (channel: string, payload: unknown) => void,
+ *   env?: Record<string, string>,
  * }} args
  */
 async function runOne(store, args) {
-  const { threadId, cwd, project, resolved, broadcast } = args;
+  const { threadId, cwd, project, resolved, broadcast, env } = args;
   appendEvent(
     store,
     threadId,
@@ -292,6 +364,7 @@ async function runOne(store, args) {
       cwd,
       project,
       timeoutMs: resolved.timeoutMs,
+      ...(env ? { env } : {}),
     });
   } catch (err) {
     ran = {
@@ -327,7 +400,7 @@ async function runOne(store, args) {
  * a result, not a throw.
  *
  * @param {import("./store").Store} store
- * @param {{ threadId: string, actionId?: string }} input
+ * @param {{ threadId: string, actionId?: string, trustRepoConfig?: string }} input
  * @param {{
  *   runner?: { isRunning: (id: string) => boolean },
  *   broadcast?: (channel: string, payload: unknown) => void,
@@ -357,11 +430,27 @@ async function runCommand(store, input, deps) {
     }
     throw new Error("Unknown quick action");
   }
+  let runProject = project;
+  if (resolved.fromRepo && !resolved.trusted) {
+    // One approval per project and command set (#1506): the renderer shows
+    // the file's commands and sends back the hash it showed. A stale hash
+    // (file edited meanwhile) re-prompts instead of approving unseen code.
+    if (!resolved.hash || input.trustRepoConfig !== resolved.hash) {
+      throw new Error(
+        `${REPO_CONFIG_UNTRUSTED}: approve this repo's solenta.json commands before they run`,
+      );
+    }
+    runProject = { ...project, repoConfigTrust: resolved.hash };
+    store.setProjects(
+      store.getProjects().map((p) => (p.id === project.id ? runProject : p)),
+    );
+    store.save();
+  }
   const cwd = thread.worktreePath || project.path || process.cwd();
   return enqueue(store, {
     threadId,
     cwd,
-    project,
+    project: runProject,
     resolved,
     broadcast: deps && deps.broadcast,
   });
@@ -376,8 +465,11 @@ module.exports = {
   normalizeSetupCommand,
   normalizeQuickActions,
   normalizeThreadDefaults,
+  REPO_CONFIG_UNTRUSTED,
+  SUBMODULE_COMMAND,
   kickWorktreeSetup,
   waitForCommand,
+  pendingSetup,
   runCommand,
   setRunCommandFn,
   formatDuration,

@@ -937,15 +937,22 @@ function createRunner(opts) {
   }
 
   /**
-   * Deliver a type-ahead prompt that survived the just-finished turn
-   * (issue #314). take-and-clear so the same prompt cannot fire twice.
-   * On throw, put it back with error so the renderer can Retry.
+   * Deliver the next type-ahead item that survived the just-finished turn
+   * (issue #314). One item per turn (#1501): the rest stay queued and the
+   * next "done" terminal drains the next one, so a failed or stopped turn
+   * leaves them parked. take-and-clear so the same item cannot fire twice.
+   * On throw, put it back in front with error so the renderer can Retry;
+   * "already active" (a notice or user turn won the idle slot) is not an
+   * error, that run's own terminal drains again.
+   * @param {string} threadId
+   * @param {{ rethrow?: boolean }} [opts] - "Send now" surfaces the failure
    */
-  async function drainQueued(threadId) {
+  async function drainQueued(threadId, opts = {}) {
     let taken;
     try {
-      taken = services.takeQueued(store, { threadId });
-    } catch {
+      taken = services.takeQueuedHead(store, { threadId });
+    } catch (err) {
+      if (opts.rethrow) throw err;
       return;
     }
     if (!taken) return;
@@ -961,22 +968,40 @@ function createRunner(opts) {
         fromQueue: true,
       });
     } catch (err) {
-      store.updateThread(threadId, {
-        queued: {
-          ...taken,
-          error: shortError(String((err && err.message) || err)),
-        },
+      const message = String((err && err.message) || err);
+      services.restoreQueuedHead(store, {
+        threadId,
+        taken,
+        error: /already active/i.test(message) ? null : shortError(message),
       });
-      store.save();
       pushDetail(threadId);
       pushThreadsChanged();
+      if (opts.rethrow) throw err;
     }
+  }
+
+  /**
+   * "Send now" on a parked queue (#1501): start its next item as its own
+   * turn and resume draining from there. Rejects while a run is active.
+   * @param {{ threadId: string }} input
+   */
+  async function sendQueued(input) {
+    const threadId = input && input.threadId;
+    const thread = threadId ? store.getThread(threadId) : null;
+    if (!thread) throw new Error(`Unknown thread: ${threadId}`);
+    if (active.has(threadId)) {
+      throw new Error("A run is already active on this thread");
+    }
+    await drainQueued(threadId, { rethrow: true });
   }
 
   function maybeDrainQueued(threadId) {
     const thread = store.getThread(threadId);
     if (!thread || thread.status === "working") return;
     if (services.isTrashed(thread)) return;
+    // A machine notice is about to take this idle slot; it keeps priority
+    // and its own terminal drains the queue (#1501).
+    if (isNoticeStarting(threadId)) return;
     // A persisted plan card is a mode switch, not a message. Hold the
     // type-ahead until the user approves or keeps planning so a queued
     // "implement it" does not run still in plan mode (issue #707).
@@ -1916,6 +1941,11 @@ function createRunner(opts) {
           : null,
       );
 
+    /** @type {() => void} */
+    let wakeOnStop = () => {};
+    const stopped = new Promise((resolve) => {
+      wakeOnStop = () => resolve(null);
+    });
     const pendingEntry = {
       kind: "preparing",
       runId,
@@ -1923,10 +1953,39 @@ function createRunner(opts) {
       handle: {
         kill() {
           pendingEntry.stopping = true;
+          wakeOnStop();
         },
       },
     };
     active.set(threadId, pendingEntry);
+
+    // #1506 "Agent waits for setup": a new worktree's setup (and submodule
+    // update) is in flight; hold the agent until it settles. The command's
+    // own 30 min timeout bounds the wait, and Stop cuts it short. A failed
+    // setup is reported and the agent starts anyway, same as setup failures
+    // everywhere else: the worktree is kept, the transcript carries the log,
+    // and the agent can often repair a half-installed tree itself.
+    const setupJob =
+      projectForGate && projectForGate.waitForSetup === true
+        ? require("./projectCommands.js").pendingSetup(threadId)
+        : null;
+    if (setupJob) {
+      const waitId = beginWorkLogStep(threadId, runId, "Waiting for setup");
+      stampPreparingSteps(threadId, runId, { workingId: waitId });
+      pushDetail(threadId);
+      const ran = await Promise.race([setupJob, stopped]);
+      completeWorkLogStep(threadId, waitId);
+      if (abortIfCancelled(threadId, runId)) return { runId };
+      if (ran && /** @type {any} */ (ran).ok === false) {
+        appendMessage(
+          threadId,
+          "event",
+          "Setup did not finish cleanly. Starting the agent anyway.",
+          runId,
+        );
+      }
+      pushDetail(threadId);
+    }
 
     const bootNote = await ask.prefetchBootstrapNote({
       userDataPath,
@@ -2470,6 +2529,7 @@ function createRunner(opts) {
     sweepDoneWorkers,
     stopCrew,
     isAutoTurn,
+    isNoticeStarting,
     cancelAll: cancelAllOrchNotices,
   } = createOrchNotices(ctx);
   // Read lazily by runner-verify-gate.js.
@@ -2628,6 +2688,7 @@ function createRunner(opts) {
     checkStalls,
     heartbeatActiveLanes,
     drainQueued,
+    sendQueued,
     refreshDetail,
   };
 }

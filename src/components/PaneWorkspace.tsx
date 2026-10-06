@@ -22,6 +22,7 @@ import {
   type PaneSplit,
   type PaneType,
 } from "../paneLayout";
+import { matchesBinding } from "../keybindings";
 import { isWebMode } from "../shared/wire";
 import styles from "./PaneWorkspace.module.css";
 
@@ -78,7 +79,7 @@ export function ViewsMenu({
         aria-haspopup="menu"
         aria-expanded={open}
         aria-label="Views"
-        title="Panes: Git, Browser, Simulator, layout"
+        title="Panes: Git, Files, Browser, Simulator, layout"
         data-views-btn=""
         onClick={() => setOpen((v) => !v)}
       >
@@ -189,8 +190,7 @@ export function PaneWorkspace({
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key !== "\\") return;
-      if (!(e.metaKey || e.ctrlKey) || e.altKey || e.shiftKey) return;
+      if (!matchesBinding(e, "pane.close")) return;
       if (document.querySelector('[role="dialog"][aria-modal="true"]')) return;
       e.preventDefault();
       closeFocused();

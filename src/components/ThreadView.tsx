@@ -16,6 +16,7 @@ import {
   ViewsMenu,
 } from "./PaneWorkspace";
 import type { TerminalApi } from "./TerminalPane";
+import type { FilesPaneApi } from "./FilesPane";
 import { useWorktreeChrome } from "./WorktreeControl";
 import { WorkspaceStrip } from "./WorkspaceStrip";
 import { ProjectIcon } from "./ProjectIcon";
@@ -173,6 +174,7 @@ import { useQueuedEdit } from "./thread/useQueuedEdit";
 import { usePaneLayoutActions } from "./thread/usePaneLayoutActions";
 import { useAppSnap } from "./thread/useAppSnap";
 import { useStickToBottom } from "./thread/useStickToBottom";
+import { bindingLabel } from "../keybindings";
 import styles from "./ThreadView.module.css";
 import { lazyNamed } from "../lazyNamed";
 
@@ -194,12 +196,16 @@ const BrowserPane = lazyNamed(() =>
 const SimulatorPane = lazyNamed(() =>
   import("./SimulatorPane").then((m) => m.SimulatorPane),
 );
+const FilesPane = lazyNamed(() =>
+  import("./FilesPane").then((m) => m.FilesPane),
+);
 const LAZY_PANES = [
   ChangesPanel,
   TurnDiffPanel,
   TerminalPane,
   BrowserPane,
   SimulatorPane,
+  FilesPane,
 ];
 
 function preloadPanesWhenIdle(): () => void {
@@ -293,6 +299,8 @@ interface ThreadViewProps {
   onCancelQueued?: () => void;
   /** Re-send a queued prompt after a delivery failure. */
   onRetryQueued?: () => void;
+  /** Steer queued item `index` into the live turn (#1501). */
+  onSteerQueued?: (index: number) => void;
   /** Replace the queued follow-up's text (edit in the strip, issue #364 / #809). */
   onEditQueued?: (
     prompt: string,
@@ -314,7 +322,12 @@ interface ThreadViewProps {
     answers?: Record<string, string>,
     updatedCommand?: string,
     inputValues?: InputValues,
+    feedback?: string,
   ) => void | Promise<void>;
+  /** "Implement in a new thread" from the plan prompt (#1501). */
+  onImplementPlan?: (plan: string) => void | Promise<void>;
+  /** "Save plan to file" from the plan prompt; resolves the path (#1501). */
+  onSavePlan?: (plan: string) => Promise<string>;
   /**
    * Dismiss the persisted question card (thread.pendingQuestion) without
    * answering (issue #647). Answering goes through onStartRun instead.
@@ -413,6 +426,10 @@ interface ThreadViewProps {
   onViewChanges?: () => void;
   /** Shell session for the Terminal pane (#147). */
   terminalApi?: TerminalApi;
+  /** Show the Terminal pane on this shell (Sign in, #1501). */
+  terminalReveal?: { nonce: number; termId: string; threadId: string } | null;
+  /** Tree, preview and open-in for the Files pane (#1506). */
+  filesApi?: FilesPaneApi;
   /**
    * Fires whenever the workspace holds more than one pane. App collapses
    * the agents rail so the panes get the width.
@@ -576,10 +593,14 @@ interface ThreadViewProps {
   onRefreshWorkerSnapshot?: (
     threadId: string,
   ) => void | Promise<void>;
-  /** Run the project's setup command or a named quick action (issue #153). */
+  /**
+   * Run the project's setup command or a named quick action (issue #153).
+   * trustRepoConfig approves the project's solenta.json commands (#1506).
+   */
   onRunCommand?: (
     threadId: string,
     actionId?: string,
+    trustRepoConfig?: string,
   ) => Promise<unknown>;
   runError?: string | null;
   onDismissRunError?: () => void;
@@ -624,6 +645,8 @@ interface ThreadViewProps {
   onPeekThread?: (id: string) => Promise<ThreadDetail>;
   /** Fired when the composer model picker opens (provider list refresh). */
   onModelPickerOpen?: () => void;
+  /** Sign in a signed-out provider from the picker (#1501). */
+  onProviderSignIn?: (providerId: string) => Promise<void>;
   loadProviderLimits?: ProviderLimitsLoader;
   /** Seeded demo quotas for browser preview. */
   quotaDemo?: boolean;
@@ -681,10 +704,13 @@ export const ThreadView = memo(function ThreadView({
   queuedError = null,
   onCancelQueued,
   onRetryQueued,
+  onSteerQueued,
   onEditQueued,
   restoreDraft = null,
   onSetPermissionMode,
   onRespondPermission,
+  onImplementPlan,
+  onSavePlan,
   onClearQuestion,
   onSetProvider,
   onSetReasoningEffort,
@@ -718,6 +744,8 @@ export const ThreadView = memo(function ThreadView({
   onCloseChanges,
   onViewChanges,
   terminalApi,
+  terminalReveal = null,
+  filesApi,
   onPanesNeedRoom,
   runStats,
   onFetchTurnDiff,
@@ -792,6 +820,7 @@ export const ThreadView = memo(function ThreadView({
   comparePeers = EMPTY_COMPARE_PEERS,
   onPeekThread,
   onModelPickerOpen,
+  onProviderSignIn,
   loadProviderLimits,
   quotaDemo = false,
 }: ThreadViewProps) {
@@ -916,6 +945,8 @@ export const ThreadView = memo(function ThreadView({
   /** Header quick action currently in flight (issue #153). */
   const [commandRunningId, setCommandRunningId] = useState<string | null>(null);
   const [commandError, setCommandError] = useState<string | null>(null);
+  /** solenta.json command waiting on the approval card (#1506). */
+  const [approveCommandId, setApproveCommandId] = useState<string | null>(null);
   /** Image opened in the lightbox; null when closed. */
   const [lightbox, setLightbox] = useState<{ src: string; alt: string } | null>(
     null,
@@ -1157,6 +1188,14 @@ export const ThreadView = memo(function ThreadView({
   const verboseTools = transcriptView === "verbose";
   const summaryMode = transcriptView === "summary";
   const isWorking = detail?.thread.status === "working";
+  /** Queued items can be steered into the live turn only where the CLI takes stdin. */
+  const canSteerQueued = Boolean(
+    onSteerQueued &&
+      isWorking &&
+      providers.find((p) => p.id === detail?.thread.provider)?.supportsSteer,
+  );
+  /** Queued item being dragged to a new slot (#1501). */
+  const [queuedDrag, setQueuedDrag] = useState<number | null>(null);
   const displayTimeline = useMemo(() => {
     if (summaryMode) {
       // Focus folds replace tool groups: keep groupable messages as plain
@@ -1876,6 +1915,8 @@ export const ThreadView = memo(function ThreadView({
     setFocusedId,
     changesOpen,
     changesNonce,
+    terminalNonce:
+      terminalReveal && terminalReveal.threadId === threadId ? terminalReveal.nonce : 0,
     onPanesNeedRoom,
     onCloseChanges,
     onViewChanges,
@@ -2205,34 +2246,68 @@ export const ThreadView = memo(function ThreadView({
   };
   const projectSlug = project?.slug ?? "project";
   const newThreadLabel = `New thread in ${projectSlug}`;
-  const headerCommands: Array<{ id: string; name: string; command: string }> =
-    [];
+  // Project settings win over solenta.json field by field (#1506).
+  const repoConfig = project?.repoConfig;
+  const headerCommands: Array<{
+    id: string;
+    name: string;
+    command: string;
+    fromRepo?: boolean;
+  }> = [];
   if (onRunCommand) {
-    if (project?.setupCommand) {
+    const setup = project?.setupCommand || repoConfig?.setupCommand;
+    if (setup) {
       headerCommands.push({
         id: "setup",
         name: "Setup",
-        command: project.setupCommand,
+        command: setup,
+        fromRepo: !project?.setupCommand,
       });
     }
-    for (const action of project?.quickActions ?? []) {
+    const ownActions = project?.quickActions ?? [];
+    for (const action of ownActions.length
+      ? ownActions
+      : (repoConfig?.quickActions ?? []).map((a) => ({ ...a, fromRepo: true }))) {
       if (action && action.id && action.name) headerCommands.push(action);
     }
   }
+  // The approval covers every command in the file (its hash), so list them
+  // all, including any a project setting currently overrides.
+  const repoCommandsShown = [
+    ...(repoConfig?.setupCommand
+      ? [{ id: "setup", name: "Setup", command: repoConfig.setupCommand }]
+      : []),
+    ...(repoConfig?.quickActions ?? []),
+  ];
 
-  const runHeaderCommand = (actionId: string) => {
+  const runHeaderCommand = (actionId: string, trust?: string) => {
     if (!onRunCommand || commandRunningId) return;
+    const row = headerCommands.find((a) => a.id === actionId);
+    if (row?.fromRepo && !repoConfig?.trusted && !trust) {
+      setApproveCommandId(actionId);
+      return;
+    }
+    setApproveCommandId(null);
     setCommandRunningId(actionId);
     setCommandError(null);
-    void onRunCommand(thread.id, actionId === "setup" ? "setup" : actionId)
+    void onRunCommand(
+      thread.id,
+      actionId === "setup" ? "setup" : actionId,
+      trust,
+    )
       .then(() => {
         setCommandRunningId(null);
       })
       .catch((err: unknown) => {
         setCommandRunningId(null);
-        setCommandError(
-          err instanceof Error && err.message ? err.message : String(err),
-        );
+        const message =
+          err instanceof Error && err.message ? err.message : String(err);
+        // solenta.json changed since it was approved: ask again.
+        if (message.includes("REPO_CONFIG_UNTRUSTED")) {
+          setApproveCommandId(actionId);
+          return;
+        }
+        setCommandError(message);
       });
   };
 
@@ -3019,6 +3094,50 @@ export const ThreadView = memo(function ThreadView({
                       </div>
                     </div>
                   ) : null}
+                  {approveCommandId && repoConfig?.hash ? (
+                    <div
+                      className={styles.permissionCard}
+                      role="alertdialog"
+                      aria-label="Approve solenta.json commands"
+                      data-repo-config-approve=""
+                    >
+                      <div className={styles.permissionHead}>
+                        Run commands from this repo&apos;s solenta.json?
+                      </div>
+                      <p className={styles.repoApproveNote}>
+                        These come from a checked-in file, so anyone who
+                        can push to the repo can change them. You will be
+                        asked again if they change.
+                      </p>
+                      <ul className={styles.repoApproveList}>
+                        {repoCommandsShown.map((a) => (
+                          <li key={a.id}>
+                            <span>{a.name}</span>
+                            <code>{a.command}</code>
+                          </li>
+                        ))}
+                      </ul>
+                      <div className={styles.permissionActions}>
+                        <button
+                          type="button"
+                          className={styles.permissionAllow}
+                          data-repo-config-approve-run=""
+                          onClick={() =>
+                            runHeaderCommand(approveCommandId, repoConfig.hash)
+                          }
+                        >
+                          Approve and run
+                        </button>
+                        <button
+                          type="button"
+                          className={styles.permissionDeny}
+                          onClick={() => setApproveCommandId(null)}
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
+                  ) : null}
                 </section>
                       {onSetNotes && (
                         <button
@@ -3112,7 +3231,7 @@ export const ThreadView = memo(function ThreadView({
               data-active={agentsPanelOpen ? "true" : undefined}
               aria-pressed={Boolean(agentsPanelOpen)}
               aria-label="Right panel"
-              title={`${agentsPanelOpen ? "Hide" : "Show"} right panel (⌘.)`}
+              title={`${agentsPanelOpen ? "Hide" : "Show"} right panel (${bindingLabel("agents.toggle", true)})`}
               onClick={onToggleAgentsPanel}
             >
               <svg
@@ -3362,11 +3481,31 @@ export const ThreadView = memo(function ThreadView({
               />
             );
           }
+          if (leaf.type === "files" && filesApi && detail) {
+            return (
+              <FilesPane
+                key={detail.thread.id}
+                threadId={detail.thread.id}
+                api={filesApi}
+                remote={Boolean(project?.remoteHost)}
+                onAddToPrompt={
+                  isArchived
+                    ? undefined
+                    : (comment) =>
+                        setReviewComments(detail.thread.id, (prev) => [
+                          ...prev,
+                          comment,
+                        ])
+                }
+              />
+            );
+          }
           if (leaf.type === "terminal" && terminalApi) {
             return (
               <TerminalPane
                 threadId={detail?.thread.id ?? null}
                 api={terminalApi}
+                reveal={terminalReveal}
               />
             );
           }
@@ -3904,6 +4043,8 @@ export const ThreadView = memo(function ThreadView({
             key={detail.pendingPermission.requestId}
             pending={detail.pendingPermission}
             onRespond={onRespondPermission}
+            onImplement={onImplementPlan}
+            onSave={onSavePlan}
           />
         ) : detail.pendingPermission ? (
           <PermissionPrompt
@@ -3921,7 +4062,9 @@ export const ThreadView = memo(function ThreadView({
             {queuedItems.length > 1 ? (
               <>
                 <div className={styles.statusLeft}>
-                  <span className={styles.queuedLabel}>Queued</span>
+                  <span className={styles.queuedLabel} data-queued-label="">
+                    {isWorking ? "Queued" : "Queued, paused"}
+                  </span>
                   {queuedError ? (
                     <span
                       className={styles.permissionGuardrail}
@@ -3943,8 +4086,27 @@ export const ThreadView = memo(function ThreadView({
                   {queuedItems.map((item, i) => (
                     <li
                       key={i}
-                      className={styles.queuedItem}
+                      className={`${styles.queuedItem}${queuedDrag === i ? ` ${styles.queuedItemDragging}` : ""}`}
                       data-queued-item={String(i)}
+                      draggable={editingQueued == null && !queuedWritePending}
+                      onDragStart={(e) => {
+                        e.dataTransfer.effectAllowed = "move";
+                        e.dataTransfer.setData("text/plain", String(i));
+                        setQueuedDrag(i);
+                      }}
+                      onDragOver={(e) => {
+                        if (queuedDrag == null) return;
+                        e.preventDefault();
+                        e.dataTransfer.dropEffect = "move";
+                      }}
+                      onDrop={(e) => {
+                        e.preventDefault();
+                        const from = queuedDrag;
+                        setQueuedDrag(null);
+                        if (from == null || from === i) return;
+                        writeQueuedItems(swapQueuedItem(queuedItems, from, i - from));
+                      }}
+                      onDragEnd={() => setQueuedDrag(null)}
                     >
                       {editingQueued === i ? (
                         <>
@@ -4004,6 +4166,17 @@ export const ThreadView = memo(function ThreadView({
                             className={styles.queuedActions}
                             data-queued-actions=""
                           >
+                            {canSteerQueued ? (
+                              <button
+                                type="button"
+                                className={styles.retryBtn}
+                                disabled={queuedWritePending}
+                                onClick={() => onSteerQueued?.(i)}
+                                data-steer-queued=""
+                              >
+                                Steer now
+                              </button>
+                            ) : null}
                             {i > 0 ? (
                               <button
                                 type="button"
@@ -4095,7 +4268,9 @@ export const ThreadView = memo(function ThreadView({
               </>
             ) : editingQueued != null ? (
               <>
-                <span className={styles.queuedLabel}>Queued</span>
+                <span className={styles.queuedLabel} data-queued-label="">
+                    {isWorking ? "Queued" : "Queued, paused"}
+                  </span>
                 <textarea
                   className={styles.queuedEdit}
                   value={queuedEditDraft}
@@ -4148,7 +4323,9 @@ export const ThreadView = memo(function ThreadView({
             ) : (
               <>
                 <div className={styles.queuedBody}>
-                  <span className={styles.queuedLabel}>Queued</span>
+                  <span className={styles.queuedLabel} data-queued-label="">
+                    {isWorking ? "Queued" : "Queued, paused"}
+                  </span>
                   <span className={styles.queuedText}>{queuedPrompt}</span>
                   {queuedError ? (
                     <span
@@ -4163,6 +4340,16 @@ export const ThreadView = memo(function ThreadView({
                   className={styles.queuedActions}
                   data-queued-actions=""
                 >
+                  {canSteerQueued ? (
+                    <button
+                      type="button"
+                      className={styles.retryBtn}
+                      onClick={() => onSteerQueued?.(0)}
+                      data-steer-queued=""
+                    >
+                      Steer now
+                    </button>
+                  ) : null}
                   {onEditQueued ? (
                     <button
                       type="button"
@@ -4287,6 +4474,7 @@ export const ThreadView = memo(function ThreadView({
         onBestOfN={onFork && !thread.ask ? runBestOfN : undefined}
         onDelegate={onFork && !thread.ask ? runDelegate : undefined}
         onModelPickerOpen={onModelPickerOpen}
+        onProviderSignIn={onProviderSignIn}
         error={runError}
         onDismissError={onDismissRunError}
         onListFiles={onListFiles}

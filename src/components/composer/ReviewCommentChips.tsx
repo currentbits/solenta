@@ -59,7 +59,9 @@ export function ReviewCommentChips({
                   setEditing(c.id);
                 }}
               >
-                {c.text}
+                {c.text || (
+                  <span className={styles.reviewCommentHint}>Add a note</span>
+                )}
               </button>
             )}
             <button

@@ -15,6 +15,7 @@
  */
 import type {
   AppSettings,
+  RecentRepoGroup,
   AppStatus,
   AttachmentInfo,
   AutomationInfo,
@@ -222,6 +223,8 @@ export function detail(over: Partial<ThreadDetail> = {}): ThreadDetail {
 
 export interface FakeOptions {
   projects?: ProjectInfo[];
+  /** projects.discoverRecent result (#1501). */
+  recentRepos?: RecentRepoGroup[];
   spaces?: SpaceInfo[];
   threads?: ThreadInfo[];
   providers?: ProviderInfo[];
@@ -1569,6 +1572,22 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
         });
         return rec("projects.create", [input], created);
       },
+      clone: (input: { url: string; parentDir: string; name?: string }) => {
+        const name =
+          input.name?.trim() ||
+          input.url.replace(/\/+$/, "").split(/[/:]/).pop()?.replace(/\.git$/, "") ||
+          "repo";
+        const cloned = project({
+          name,
+          slug: name,
+          path: `${input.parentDir.trim().replace(/\/+$/, "")}/${name}`,
+        });
+        return rec("projects.clone", [input], cloned);
+      },
+      cancelClone: (input: { cloneId: string }) =>
+        rec("projects.cancelClone", [input], undefined),
+      discoverRecent: () =>
+        rec("projects.discoverRecent", [], opts.recentRepos ?? ([] as RecentRepoGroup[])),
       ensureScratch: () => {
         let found = projects.find((p) => p.scratch === true);
         if (!found) {
@@ -2582,12 +2601,15 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
        * Rejects unknown source and invalid provider/model with production
        * error strings (byte-equal).
        */
+      savePlan: (input: unknown) =>
+        rec("threads.savePlan", [input], { path: "docs/plans/2026-10-06-plan.md" }),
       fork: (input: unknown) => {
         const i = input as {
           threadId: string;
           provider?: string;
           model?: string | null;
           worktree?: boolean;
+          leavePlan?: boolean;
         };
         calls.push({ channel: "threads.fork", args: [input] });
         const err = fail["threads.fork"];
@@ -2691,7 +2713,10 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
           provider: nextProvider,
           model: nextModel,
           sessionId: null,
-          permissionMode: source.permissionMode,
+          permissionMode:
+            i.leavePlan && source.permissionMode === "plan"
+              ? "default"
+              : source.permissionMode,
           teach: source.teach ?? null,
           ask: source.ask === true,
           // Production fork never patches reasoningEffort; create leaves null.
@@ -2934,6 +2959,7 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
           return value;
         }),
       steer: (input: unknown) => rec("runs.steer", [input], { runId: "r1" }),
+      sendQueued: (input: unknown) => rec("runs.sendQueued", [input], undefined),
       startWorkflow: (input: unknown) =>
         rec("runs.startWorkflow", [input], { runId: "r2" }),
       retryWorkflowAgent: (input: unknown) =>
@@ -3551,6 +3577,11 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
       read: (input: unknown) => rec("terminal.read", [input], fakeTerminal()),
       list: (input: unknown) => rec("terminal.list", [input], [] as string[]),
       close: (input: unknown) => rec("terminal.close", [input], fakeTerminal()),
+      signIn: (input: { provider: string; threadId?: string | null }) =>
+        rec("terminal.signIn", [input], {
+          threadId: input.threadId || "__signin__",
+          termId: "signin",
+        }),
     },
     simulator: {
       capabilities: (input: unknown) =>
@@ -3763,6 +3794,10 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
           })),
         });
       },
+      tree: (input: unknown) =>
+        rec("files.tree", [input], { entries: [], truncated: false }),
+      read: (input: unknown) =>
+        rec("files.read", [input], { kind: "text", size: 0, text: "" }),
     },
     fs: {
       browse: (input: unknown) => {

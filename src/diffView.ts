@@ -166,6 +166,8 @@ export interface ReviewComment {
   removed: boolean;
   code: string;
   text: string;
+  /** Lines picked in the Files pane (#1506): sent as context even with no note. */
+  excerpt?: boolean;
 }
 
 /** Lines of the comment excerpt sent to the agent. */
@@ -211,7 +213,7 @@ export function reviewCommentLabel(
  * the agent does not have to hunt for "line 42 of foo.ts".
  */
 export function formatReviewCommentsPrompt(comments: ReviewComment[]): string {
-  const live = comments.filter((c) => c.text.trim());
+  const live = comments.filter((c) => c.text.trim() || c.excerpt);
   if (!live.length) return "";
   const blocks = live.map((c) => {
     const lines = c.code.split("\n");
@@ -219,8 +221,13 @@ export function formatReviewCommentsPrompt(comments: ReviewComment[]): string {
     if (lines.length > shown.length) {
       shown.push(`    … ${lines.length - shown.length} more lines`);
     }
-    return `${reviewCommentLabel(c)}\n${shown.join("\n")}\n\n${c.text.trim()}`;
+    const note = c.text.trim() ? `\n\n${c.text.trim()}` : "";
+    return `${reviewCommentLabel(c)}\n${shown.join("\n")}${note}`;
   });
-  const head = live.length === 1 ? "Review comment:" : "Review comments:";
+  const head = live.every((c) => !c.text.trim())
+    ? "Selected code:"
+    : live.length === 1
+      ? "Review comment:"
+      : "Review comments:";
   return `${head}\n\n${blocks.join("\n\n")}`;
 }

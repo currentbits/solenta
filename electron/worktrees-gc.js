@@ -101,7 +101,7 @@ async function maybeCleanupMergedWorktree(store, threadId) {
 /**
  * Commit a dirty orphan's working state to `recovered/<name>` (#1386) so
  * the sweep can remove the folder without losing it. The branch is not
- * `coder/`, so no GC path ever deletes it. Fixed identity and no hooks or
+ * under an app branch prefix, so no GC path ever deletes it. Fixed identity and no hooks or
  * signing: this is a salvage commit, not the user's own.
  *
  * @param {string} dir
@@ -133,6 +133,23 @@ async function saveOrphanToRecoveryBranch(dir, name) {
     if (!r.ok) return null;
   }
   return branch;
+}
+
+/**
+ * Prefixes the app names worktree branches with: the default plus every
+ * project's own (#1506), so an orphan keeps getting its branch tidied
+ * after its project changed prefix. Deletion stays non-force.
+ * @param {import('./store').Store} store
+ * @returns {string[]}
+ */
+function appBranchPrefixes(store) {
+  const { DEFAULT_BRANCH_PREFIX, branchPrefixFor } = require("./worktrees-branches.js");
+  return [
+    ...new Set([
+      DEFAULT_BRANCH_PREFIX,
+      ...store.getProjects().map((p) => branchPrefixFor(p)),
+    ]),
+  ];
 }
 
 /**
@@ -236,7 +253,7 @@ async function sweepOrphanWorktrees(opts) {
         result.kept.push(dir);
         continue;
       }
-      if (branch && branch.startsWith("coder/")) {
+      if (branch && appBranchPrefixes(store).some((p) => branch.startsWith(p))) {
         // Non-force: an unmerged orphan branch survives as a recoverable ref.
         await gitTryAsync(repoPath, ["branch", "-d", branch]);
       }

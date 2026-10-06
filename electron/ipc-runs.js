@@ -44,6 +44,9 @@ module.exports = {
   "runs:steer": async (ctx, input) => {
     return ctx.runner.steerRun(input);
   },
+  "runs:sendQueued": async (ctx, input) => {
+    return ctx.runner.sendQueued(input);
+  },
   "runs:startWorkflow": async (ctx, input) => {
     return ctx.runner.startWorkflowRun(input);
   },

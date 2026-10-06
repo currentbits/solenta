@@ -8,6 +8,8 @@ const { normalizeAcceptedHunks } = require("./reviewItinerary.js");
 const { normalizeBtwCards } = require("./btw.js");
 const { normalizePendingQuestion } = require("./questions.js");
 const { normalizeMessagePins } = require("./messagePins.js");
+const { branchPrefixError } = require("./worktrees-branches.js");
+const { normalizeTrustHash } = require("./repoConfig.js");
 const {
   normalizeSetupCommand,
   normalizeQuickActions,
@@ -224,6 +226,16 @@ function migrateProject(p) {
   const threadDefaults = normalizeThreadDefaults(next.threadDefaults);
   if (threadDefaults) next.threadDefaults = threadDefaults;
   else delete next.threadDefaults;
+  // #1506: strictly boolean; a bad prefix falls back to the default.
+  if (next.waitForSetup === true) next.waitForSetup = true;
+  else delete next.waitForSetup;
+  if (typeof next.branchPrefix !== "string" || branchPrefixError(next.branchPrefix)) {
+    delete next.branchPrefix;
+  }
+  const trust = normalizeTrustHash(next.repoConfigTrust);
+  if (trust) next.repoConfigTrust = trust;
+  else delete next.repoConfigTrust;
+  delete next.repoConfig;
   return next;
 }
 

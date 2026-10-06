@@ -504,6 +504,9 @@ function presentProject(project) {
     next = { ...next };
     delete next.iconUrl;
   }
+  // #1506: checked-in solenta.json commands, derived at list time.
+  const repoConfig = require("./repoConfig.js").presentRepoConfig(next);
+  if (repoConfig) next = { ...next, repoConfig };
   return attachScm(next);
 }
 

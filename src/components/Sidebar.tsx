@@ -119,6 +119,8 @@ import {
   type ViewEditor,
 } from "./sidebar/FilterBar";
 import { CreateThreadMenu } from "./sidebar/CreateThreadMenu";
+import { bindingLabel } from "../keybindings";
+import { useKeybindingOverrides } from "../uiPrefs";
 import styles from "./Sidebar.module.css";
 
 export { displayWorkerTitle, statusPulseFor } from "./sidebar/status";
@@ -367,6 +369,8 @@ export const Sidebar = memo(function Sidebar({
   onRevealHandled,
   conflictForecast = null,
 }: SidebarProps) {
+  // Memoised: re-render when a chord is remapped so the ⌘K hint follows.
+  useKeybindingOverrides();
   const [savedViews, setSavedViews] = useState<SavedView[]>(() =>
     parseSavedViews(loadStored(SAVED_VIEWS_KEY)),
   );
@@ -1400,7 +1404,7 @@ export const Sidebar = memo(function Sidebar({
             className={styles.iconBtn}
             data-sidebar-collapse=""
             aria-label="Hide sidebar"
-            title="Hide sidebar (⌘B)"
+            title={`Hide sidebar (${bindingLabel("sidebar.toggle", true)})`}
             onClick={onCollapseSidebar}
           >
             <Icon size={15}>
@@ -1430,9 +1434,9 @@ export const Sidebar = memo(function Sidebar({
           {query === "" ? (
             <kbd
               className={styles.searchKbd}
-              title="Search threads, projects and actions anywhere (⌘K)"
+              title={`Search threads, projects and actions anywhere (${bindingLabel("palette.command", true)})`}
             >
-              ⌘K
+              {bindingLabel("palette.command", true)}
             </kbd>
           ) : null}
         </span>

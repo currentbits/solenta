@@ -241,4 +241,5 @@ module.exports = {
   listCodexSessions,
   importCodexSession,
   absorbCodexSessionTurns,
+  walkCodexRollouts,
 };

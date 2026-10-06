@@ -3108,7 +3108,30 @@ button.diffLineGutter:focus-visible {
 
 .permissionActions {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
+}
+
+.planFeedback {
+  resize: vertical;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+  font-size: 12.5px;
+  line-height: 1.4;
+  padding: 6px 8px;
+  outline: none;
+}
+
+.planFeedback:focus {
+  border-color: var(--text-muted);
+}
+
+.planSaved {
+  font-size: 12px;
+  color: var(--text-muted);
 }
 
 .permissionAllow {
@@ -3435,6 +3458,14 @@ button.diffLineGutter:focus-visible {
   flex-direction: column;
   align-items: stretch;
   min-width: 0;
+}
+
+.queuedItem[draggable="true"] {
+  cursor: grab;
+}
+
+.queuedItemDragging {
+  opacity: 0.5;
 }
 
 .queuedList {
@@ -4397,4 +4428,32 @@ button.heroProject:hover {
   height: 6px;
   border-radius: 50%;
   background: var(--amber);
+}
+
+/* solenta.json approval (#1506): the commands the hash covers. */
+.repoApproveNote {
+  margin: 0;
+  line-height: 1.4;
+}
+
+.repoApproveList {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.repoApproveList li {
+  display: grid;
+  grid-template-columns: minmax(6ch, 12ch) minmax(0, 1fr);
+  gap: 8px;
+}
+
+.repoApproveList code {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--text);
+  overflow-wrap: anywhere;
 }

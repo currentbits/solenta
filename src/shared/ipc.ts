@@ -39,6 +39,21 @@ export interface EditorOption {
   name: string;
 }
 
+/** One row of the Files pane tree; `path` is repo-relative with `/`. */
+export interface FileTreeEntry {
+  name: string;
+  path: string;
+  dir: boolean;
+  /** Only set when listed with showIgnored. */
+  ignored?: boolean;
+}
+
+export type FilePreview =
+  | { kind: "text"; size: number; text: string }
+  | { kind: "image"; size: number; dataUrl: string }
+  | { kind: "binary"; size: number }
+  | { kind: "tooLarge"; size: number };
+
 export interface ProjectInfo {
   id: string;
   /** e.g. "pingdotgg/t3code", derived from git remote or folder name */
@@ -99,6 +114,15 @@ export interface ProjectInfo {
    * Absent/empty = none. Cap 8.
    */
   quickActions?: ProjectQuickAction[];
+  /** Checked-in solenta.json commands (#1506). Never persisted. */
+  repoConfig?: ProjectRepoConfig;
+  /**
+   * First run in a new worktree waits for setup to finish (#1506).
+   * Absent = the agent starts alongside setup.
+   */
+  waitForSetup?: boolean;
+  /** Worktree branch prefix (#1506). Absent = "coder/". */
+  branchPrefix?: string;
   /** Defaults for new threads in this project (#1501). Absent = global defaults. */
   threadDefaults?: ProjectThreadDefaults;
   /**
@@ -146,6 +170,21 @@ export interface ProjectQuickAction {
   id: string;
   name: string;
   command: string;
+}
+
+/**
+ * Commands from a checked-in solenta.json (#1506), derived at list time.
+ * Project settings win field by field. They only run once the user approved
+ * this `hash` for the project; pass it as runCommand's trustRepoConfig.
+ * `error` set = the file is invalid and contributes no commands.
+ */
+export interface ProjectRepoConfig {
+  setupCommand?: string;
+  /** Ids are `repo:<index>`. */
+  quickActions?: ProjectQuickAction[];
+  hash?: string;
+  trusted: boolean;
+  error?: string;
 }
 
 /** Source-control probe for a local project checkout (issue #521). */
@@ -285,6 +324,21 @@ export interface CreateProjectInput {
   parentDir: string;
 }
 
+/** projects.clone (#1506). `name` defaults to the repo name in the URL. */
+export interface CloneProjectInput {
+  url: string;
+  parentDir: string;
+  name?: string;
+  /** Caller-minted id that tags "clone:progress" pushes and cancelClone. */
+  cloneId?: string;
+}
+
+/** One git progress line for an in-flight clone, pushed on "clone:progress". */
+export interface CloneProgressPush {
+  cloneId: string;
+  line: string;
+}
+
 /**
  * Patch for projects.update. An empty remoteHost string clears the remote
  * config, turning the project local again; a non-empty host requires an
@@ -314,6 +368,10 @@ export interface ProjectUpdateInput {
    * Named header actions (issue #153). Empty array clears them.
    */
   quickActions?: ProjectQuickAction[];
+  /** #1506. false / null clears it. */
+  waitForSetup?: boolean | null;
+  /** #1506. Empty / null restores "coder/"; an invalid prefix rejects. */
+  branchPrefix?: string | null;
   /** New-thread defaults (#1501). Replaces the whole object; null clears. */
   threadDefaults?: ProjectThreadDefaults | null;
 }
@@ -950,6 +1008,13 @@ export interface ThreadSpec {
 
 /** Cap for ThreadInfo.notes / threads.setNotes (issue #194). */
 export const THREAD_NOTES_MAX = 2000;
+
+/**
+ * Terminal "thread" for a Sign in with no thread open (#1501): a shell in
+ * the home directory. Thread ids are UUIDs, so this cannot collide.
+ * Mirrored in electron/ipc-devserver.js.
+ */
+export const SIGNIN_TERMINAL_ID = "__signin__";
 
 /** Per-thread transcript bookmarks (issue #1217). Mirror electron/messagePins.js. */
 export const THREAD_MESSAGE_PINS_MAX = 20;
@@ -2542,6 +2607,32 @@ export interface ProviderInfo {
    * `models` (issue #745).
    */
   catalogNote?: string;
+  /**
+   * Sign-in state from the CLI's own status command (#1501). "unknown" when
+   * the CLI has no such command; absent before the first probe or when the
+   * CLI is not installed. Probed after boot, re-probed (rate-limited) when
+   * the picker or Settings › Agents opens.
+   */
+  auth?: "signedIn" | "signedOut" | "unknown";
+}
+
+/** A checkout found by first-run discovery (#1501). */
+export interface RecentRepo {
+  /** Main checkout; a linked worktree maps to it. */
+  path: string;
+  name: string;
+  /** Newest session there, epoch ms. */
+  lastActiveAt: number;
+  /** Provider ids whose sessions ran there. */
+  providers: string[];
+  /** Newest checkout of a recently active group: ticked by default. */
+  preselected: boolean;
+}
+
+/** Checkouts that share a git remote ("owner/repo"); null remote = one checkout. */
+export interface RecentRepoGroup {
+  remote: string | null;
+  repos: RecentRepo[];
 }
 
 /** One phase of a user-defined workflow template. */
@@ -3708,6 +3799,8 @@ export type ThreadForkOpts = {
   leadSnapshotSha?: string | null;
   leadSnapshotBranch?: string | null;
   leadSnapshotDirty?: boolean;
+  /** Start the fork out of plan mode ("Implement in a new thread", #1501). */
+  leavePlan?: boolean;
 };
 
 /**
@@ -3909,8 +4002,22 @@ export interface CoderApi {
     list(): Promise<ProjectInfo[]>;
     /** Validates the path is a git repo; rejects otherwise. Optional remotes skip the local checkout. */
     add(path: string, opts?: AddProjectOptions): Promise<ProjectInfo>;
+    /**
+     * First-run discovery (#1501): repos the user worked in recently with a
+     * provider CLI, grouped by git remote, newest first. Read-only scan of
+     * the CLIs' session stores; already-added projects are left out.
+     */
+    discoverRecent(): Promise<RecentRepoGroup[]>;
     /** Create a new folder + git repo at parentDir/name, then add it as a project. */
     create(input: CreateProjectInput): Promise<ProjectInfo>;
+    /**
+     * `git clone` an https:// or ssh URL into parentDir/name, then add it
+     * (#1506). Rejects an existing non-empty target, other URL schemes, and
+     * on cancel ("Clone cancelled"); a failed clone leaves nothing behind.
+     */
+    clone(input: CloneProjectInput): Promise<ProjectInfo>;
+    /** Stop the clone tagged `cloneId`. Unknown ids are a no-op. */
+    cancelClone(input: { cloneId: string }): Promise<void>;
     /**
      * The built-in Scratch workspace ("start without a project", #1411):
      * created on first call under Solenta's data dir, no git. Idempotent.
@@ -4106,7 +4213,19 @@ export interface CoderApi {
        */
       updatedCommand?: string;
       inputValues?: InputValues;
+      /**
+       * "Keep planning" notes (#1501). Deny on a plan prompt only: a live
+       * CLI gets them in the rejection; a persisted plan card sends them
+       * as the next planning turn.
+       */
+      feedback?: string;
     }): Promise<void>;
+    /**
+     * "Save plan to file" (#1501): write plan markdown to
+     * docs/plans/<date>-<slug>.md in the thread's checkout. Never
+     * overwrites. Resolves the repo-relative path written.
+     */
+    savePlan(input: { threadId: string; plan: string }): Promise<{ path: string }>;
     /**
      * Drop the persisted question card (ThreadInfo.pendingQuestion) without
      * answering it — the Dismiss button (issue #647). ANSWERING does not come
@@ -4477,10 +4596,14 @@ export interface CoderApi {
      * named quick action (issue #153). Rejects when no command is set, the
      * action is unknown, a run is active, or another command is in flight.
      * Command failure is a result, not a throw. Logged as transcript events.
+     * A solenta.json command rejects with REPO_CONFIG_UNTRUSTED until
+     * `trustRepoConfig` carries the ProjectRepoConfig.hash the user approved
+     * (#1506); that approval is stored on the project.
      */
     runCommand(input: {
       threadId: string;
       actionId?: string;
+      trustRepoConfig?: string;
     }): Promise<CommandRunResult>;
     /**
      * Move an eligible thread to Recently deleted for seven days (#940).
@@ -4589,6 +4712,12 @@ export interface CoderApi {
       prompt: string;
       attachments?: AttachmentInfo[];
     }): Promise<{ runId: string }>;
+    /**
+     * "Send now" on a parked queue (#1501): start the next queued item as
+     * its own turn; the rest drain one per successful turn after it.
+     * Rejects while a run is active; a failed start puts the item back.
+     */
+    sendQueued(input: { threadId: string }): Promise<void>;
     /**
      * Starts an orchestrated multi-phase workflow run (the Build action)
      * from a template (default template when templateId omitted). Each phase
@@ -5039,6 +5168,21 @@ export interface CoderApi {
       threadId: string;
       paths: string[];
     }): Promise<{ resolved: Array<{ path: string; abs: string | null }> }>;
+    /**
+     * Files pane (#1506). One directory of the thread checkout (`dir`
+     * repo-relative, root when omitted), dirs first. Gitignored entries are
+     * dropped unless `showIgnored`. `all` returns every non-ignored file
+     * instead, for the filter. Rejects paths outside the root and remote
+     * projects.
+     */
+    tree(input: {
+      threadId: string;
+      dir?: string;
+      showIgnored?: boolean;
+      all?: boolean;
+    }): Promise<{ entries: FileTreeEntry[]; truncated: boolean }>;
+    /** Read-only preview of one file in the thread checkout (1 MB cap). */
+    read(input: { threadId: string; path: string }): Promise<FilePreview>;
   };
   /**
    * Environment-scoped directory listing for add-project (#609) and the
@@ -5192,6 +5336,15 @@ export interface CoderApi {
     list(input: { threadId: string }): Promise<string[]>;
     /** Kill the shell and drop its scrollback. */
     close(input: { threadId: string; termId?: string }): Promise<TerminalState>;
+    /**
+     * Type a provider's login command into a fresh "signin" shell (#1501):
+     * the thread's when one is given, else a dedicated one in the home
+     * directory (threadId SIGNIN_TERMINAL_ID). Returns where it runs.
+     */
+    signIn(input: {
+      provider: string;
+      threadId?: string | null;
+    }): Promise<{ threadId: string; termId: string }>;
   };
   /**
    * Embedded Browser pane (issue #155). Desktop-only: the renderer hosts a
@@ -5370,6 +5523,8 @@ export interface CoderApi {
   on(channel: "speech:changed", cb: (status: SpeechStatus) => void): () => void;
   /** Batched Terminal pane output (#1493). */
   on(channel: "terminal:data", cb: (push: TerminalDataPush) => void): () => void;
+  /** Add project from URL: git clone progress (#1506). */
+  on(channel: "clone:progress", cb: (push: CloneProgressPush) => void): () => void;
 }
 
 declare global {

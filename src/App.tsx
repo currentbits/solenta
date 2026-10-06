@@ -23,6 +23,15 @@ import {
 import { ClaimedLanesHeartbeat } from "./components/LaneHeartbeat";
 import type { SettingsPane } from "./components/SettingsModal";
 import { ArchiveToast } from "./components/ArchiveToast";
+import { UNDO_WINDOW_MS, useUndoLast } from "./app/useUndoLast";
+import { bindingLabel, matchesBinding } from "./keybindings";
+import { isShortcutBlocked } from "./sidebarSelection";
+import {
+  EMPTY_HISTORY,
+  stepThread,
+  visitThread,
+  type ThreadHistory,
+} from "./threadHistory";
 import { WorkflowsModal } from "./components/WorkflowsModal";
 import {
   PALETTE_ACTIONS,
@@ -37,11 +46,13 @@ import {
   type RepeatDraft,
 } from "./repeatThread";
 import type {
+  CloneProgressPush,
   AgentProfile,
   ConflictForecast,
   DistilledWorkflow,
   ProjectUpdateInput,
 } from "./shared/ipc";
+import { SIGNIN_TERMINAL_ID } from "./shared/ipc";
 import styles from "./App.module.css";
 import { syncTheme } from "./theme";
 import {
@@ -102,6 +113,9 @@ const DigestView = lazyNamed(() =>
 );
 const SettingsModal = lazyNamed(() =>
   import("./components/SettingsModal").then((m) => m.SettingsModal),
+);
+const SignInTerminal = lazyNamed(() =>
+  import("./components/SignInTerminal").then((m) => m.SignInTerminal),
 );
 const OnboardingModal = lazyNamed(() =>
   import("./components/onboarding/OnboardingModal").then((m) => m.OnboardingModal),
@@ -181,6 +195,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     clearError,
     addProject,
     createProject,
+    cloneProject,
     ensureScratchProject,
     updateProject,
     createThread,
@@ -191,6 +206,8 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     queued,
     cancelQueued,
     retryQueued,
+    steerQueued,
+    savePlan,
     editQueued,
     fetchIssue,
     startWorkflowRun,
@@ -320,6 +337,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     stopDevServer,
     devServerStatus,
     terminal,
+    files,
     preview,
     simulator,
     simulatorStatus,
@@ -691,11 +709,38 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     void createThread("New Thread");
   }, [createThread]);
 
+  // ⌘Z / toast undo for settle, snooze, archive and their inverses (#1506).
+  // Each offer stores the IPC call that restores the state read just before.
+  const threadsRef = useRef(threads);
+  threadsRef.current = threads;
+  const { undoKey, undoMessage, offerUndo, dismissUndo, runUndo } =
+    useUndoLast();
+  const offerUndoOnly = useCallback(
+    (verb: string, reverse: () => unknown) => {
+      setArchiveToastIds(null);
+      offerUndo(verb, reverse);
+    },
+    [offerUndo],
+  );
+  useEffect(() => {
+    if (archiveToastIds) dismissUndo();
+  }, [archiveToastIds, dismissUndo]);
+
   const handleSetSettled = useCallback(
     (threadId: string, override: "settled" | "active" | null) => {
-      void setSettled(threadId, override);
+      const prev =
+        threadsRef.current.find((t) => t.id === threadId)?.settledOverride ?? null;
+      if (prev === override) {
+        void setSettled(threadId, override);
+        return;
+      }
+      void setSettled(threadId, override).then(() =>
+        offerUndoOnly(override === "settled" ? "Settled" : "Unsettled", () =>
+          setSettled(threadId, prev),
+        ),
+      );
     },
-    [setSettled],
+    [setSettled, offerUndoOnly],
   );
 
   const handleSetPinned = useCallback(
@@ -707,9 +752,15 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
 
   const handleSetSnoozed = useCallback(
     (threadId: string, until: number | null) => {
-      void setSnoozed(threadId, until);
+      const was = threadsRef.current.find((t) => t.id === threadId)?.snoozedUntil;
+      const prev = was != null && was > Date.now() ? was : null;
+      void setSnoozed(threadId, until).then(() =>
+        offerUndoOnly(until != null ? "Snoozed" : "Unsnoozed", () =>
+          setSnoozed(threadId, prev),
+        ),
+      );
     },
-    [setSnoozed],
+    [setSnoozed, offerUndoOnly],
   );
 
   const handleSetTags = useCallback(
@@ -767,9 +818,9 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
   // tick (issue #91); keep it identity-stable per selected thread.
   const handleSettleOpenThread = useCallback(
     () => {
-      if (selectedThreadId) void setSettled(selectedThreadId, "settled");
+      if (selectedThreadId) handleSetSettled(selectedThreadId, "settled");
     },
-    [selectedThreadId, setSettled],
+    [selectedThreadId, handleSetSettled],
   );
 
   const handleRepeatSchedule = useCallback(() => {
@@ -914,9 +965,14 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
 
   const handleRowArchived = useCallback(
     (threadId: string, archived: boolean) => {
-      void setArchived(archived, threadId);
+      void setArchived(archived, threadId).then((ok) => {
+        if (!ok) return;
+        offerUndoOnly(archived ? "Archived" : "Unarchived", () =>
+          setArchived(!archived, threadId),
+        );
+      });
     },
-    [setArchived],
+    [setArchived, offerUndoOnly],
   );
 
   const handleRowFork = useCallback(
@@ -942,6 +998,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     void refreshProviders();
   }, [refreshProviders]);
 
+
   // Wrapped, not passed through: this one is bound straight to a button's
   // onClick, so cancelQueued's optional threadId would swallow the DOM event
   // and cancel nothing.
@@ -959,6 +1016,28 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
   const handleRetryQueued = useCallback(() => {
     retryQueued();
   }, [retryQueued]);
+
+  // "Implement in a new thread" (#1501): the ordinary fork path, out of
+  // plan mode, with the plan as its first prompt.
+  const handleImplementPlan = useCallback(
+    async (plan: string) => {
+      if (!selectedThreadId) return;
+      const t = await forkThread(selectedThreadId, { leavePlan: true });
+      if (!t) return;
+      await startRun(`Implement this plan:\n\n${plan}`, t.id);
+    },
+    [selectedThreadId, forkThread, startRun],
+  );
+
+  const handleSavePlan = useCallback(
+    (plan: string) => savePlan(plan),
+    [savePlan],
+  );
+
+  const handleSteerQueued = useCallback(
+    (index: number) => void steerQueued(index),
+    [steerQueued],
+  );
 
   const handleEditQueued = useCallback(
     (prompt: string, items?: string[]) => {
@@ -991,6 +1070,38 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     setDeleteToastId,
     setRemoveFailMessage,
   });
+
+  /** ThreadView's unarchive gets the same undo; archive already has its toast. */
+  const handleSetArchivedUndoable = useCallback(
+    async (archived: boolean) => {
+      const id = selectedThreadId;
+      await handleSetArchived(archived);
+      if (!archived && id) {
+        offerUndoOnly("Unarchived", () => setArchived(true, id));
+      }
+    },
+    [selectedThreadId, handleSetArchived, offerUndoOnly, setArchived],
+  );
+
+  // ⌘Z reverses whichever undo toast is showing. Never inside text inputs,
+  // the composer or the terminal (isShortcutBlocked), where ⌘Z edits text.
+  const undoTargetRef = useRef<(() => unknown) | null>(null);
+  undoTargetRef.current = archiveToastIds
+    ? undoArchive
+    : undoKey != null
+      ? runUndo
+      : null;
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.defaultPrevented || !matchesBinding(e, "undo")) return;
+      const undo = undoTargetRef.current;
+      if (!undo || isShortcutBlocked(e.target)) return;
+      e.preventDefault();
+      void undo();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
 
   // Close the center Changes panel when switching threads (old behavior).
   useEffect(() => {
@@ -1030,10 +1141,31 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     agentsExpandRef,
   });
 
+  // Back/forward over opened threads (#1506): every selection lands here,
+  // whatever opened it; stepping moves the index first so it is not re-pushed.
+  const historyRef = useRef<ThreadHistory>(EMPTY_HISTORY);
+  useEffect(() => {
+    if (selectedThreadId) {
+      historyRef.current = visitThread(historyRef.current, selectedThreadId);
+    }
+  }, [selectedThreadId]);
+  const goHistory = useCallback(
+    (delta: 1 | -1) => {
+      const step = stepThread(historyRef.current, delta, (id) =>
+        threadsRef.current.some((t) => t.id === id),
+      );
+      if (!step) return;
+      historyRef.current = step.history;
+      handleSelectThread(step.id);
+    },
+    [handleSelectThread],
+  );
+
   useAppShortcuts({
     toggleSidebar,
     narrow,
     toggleAgents,
+    goHistory,
     paletteModeRef,
     setPaletteMode,
     setPaletteOpen,
@@ -1063,6 +1195,46 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
   // the new thread while the user reads the old one (issue #83).
   const visibleDetail =
     detail && detail.thread.id === selectedThreadId ? detail : null;
+
+  // Sign in (#1501): the login command runs in the open thread's Terminal
+  // pane, or in a dedicated shell when no thread is on screen.
+  const [terminalReveal, setTerminalReveal] = useState<{
+    nonce: number;
+    termId: string;
+    threadId: string;
+  } | null>(null);
+  const [signInShell, setSignInShell] = useState<{
+    providerName: string;
+    nonce: number;
+  } | null>(null);
+  const signInThreadId =
+    view === "thread" && visibleDetail ? visibleDetail.thread.id : null;
+  const handleProviderSignIn = useCallback(
+    async (providerId: string) => {
+      const res = await terminal.signIn({
+        provider: providerId,
+        threadId: signInThreadId,
+      });
+      // Either way Settings closes: two modal focus traps fight each other.
+      setSettingsOpen(false);
+      if (res.threadId === SIGNIN_TERMINAL_ID) {
+        const providerName =
+          providers.find((p) => p.id === providerId)?.name ?? providerId;
+        setSignInShell((cur) => ({ providerName, nonce: (cur?.nonce ?? 0) + 1 }));
+        return;
+      }
+      setTerminalReveal((cur) => ({
+        termId: res.termId,
+        threadId: res.threadId,
+        nonce: (cur?.nonce ?? 0) + 1,
+      }));
+    },
+    [terminal, signInThreadId, providers],
+  );
+  const closeSignInShell = useCallback(() => {
+    setSignInShell(null);
+    void refreshProviders();
+  }, [refreshProviders]);
 
   const project =
     (visibleDetail && projectById.get(visibleDetail.thread.projectId)) ||
@@ -1235,6 +1407,32 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     [createProject],
   );
 
+  const cancelClone = useCallback(
+    (cloneId: string) => void api.projects.cancelClone({ cloneId }),
+    [api],
+  );
+
+  const subscribeCloneProgress = useCallback(
+    (cb: (push: CloneProgressPush) => void) => api.on("clone:progress", cb),
+    [api],
+  );
+
+  const discoverRecentRepos = useCallback(
+    () => api.projects.discoverRecent(),
+    [api],
+  );
+  // One at a time: each add runs git checks, and projects.add is not batched.
+  const addProjectPaths = useCallback(
+    async (paths: string[]) => {
+      const added: string[] = [];
+      for (const path of paths) {
+        if (await addProject(path)) added.push(path);
+      }
+      return added;
+    },
+    [addProject],
+  );
+
   const pickProjectDirectory = useCallback(
     () => api.projects.pickDirectory(),
     [api],
@@ -1377,7 +1575,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
                 className={styles.sidebarRailBtn}
                 data-sidebar-show=""
                 aria-label="Show sidebar"
-                title="Show sidebar (⌘B)"
+                title={`Show sidebar (${bindingLabel("sidebar.toggle", true)})`}
                 onClick={toggleSidebar}
               >
                 <svg
@@ -1691,6 +1889,9 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         }
         onCancelQueued={handleCancelQueued}
         onRetryQueued={handleRetryQueued}
+        onSteerQueued={handleSteerQueued}
+        onImplementPlan={handleImplementPlan}
+        onSavePlan={handleSavePlan}
         onEditQueued={handleEditQueued}
         restoreDraft={queuedDraftRestore}
         onSetPermissionMode={setPermissionMode}
@@ -1699,7 +1900,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         onSetProvider={setProvider}
         onSetReasoningEffort={setReasoningEffort}
         onSetWebSearch={setWebSearch}
-        onSetArchived={handleSetArchived}
+        onSetArchived={handleSetArchivedUndoable}
         onSetCrossThreadInbound={
           selectedThreadId
             ? (policy) => setCrossThreadInbound(selectedThreadId, policy)
@@ -1734,6 +1935,9 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         onCloseChanges={closeChanges}
         onViewChanges={openChanges}
         terminalApi={terminal}
+        terminalReveal={terminalReveal}
+        onProviderSignIn={handleProviderSignIn}
+        filesApi={files}
         onPanesNeedRoom={collapseAgentsForPanes}
         runStats={runStats}
         onFetchTurnDiff={fetchTurnDiff}
@@ -1812,7 +2016,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
                 data-agents-expand=""
                 aria-expanded="false"
                 aria-controls="pane-agents"
-                title="Show agents panel (⌘.)"
+                title={`Show agents panel (${bindingLabel("agents.toggle", true)})`}
                 aria-label="Show agents panel"
                 onClick={() => {
                   collapseSourceRef.current = "user";
@@ -1936,6 +2140,8 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
           initialPane={settingsPane}
           settings={settings}
           providers={providers}
+          onRefreshProviders={handleModelPickerOpen}
+          onProviderSignIn={handleProviderSignIn}
           status={appStatus}
           update={updateStatus}
           onCheckUpdate={checkUpdate}
@@ -1981,6 +2187,16 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         )}
         </Suspense>
         <Suspense fallback={null}>
+        {signInShell && (
+          <SignInTerminal
+            providerName={signInShell.providerName}
+            nonce={signInShell.nonce}
+            api={terminal}
+            onClose={closeSignInShell}
+          />
+        )}
+        </Suspense>
+        <Suspense fallback={null}>
         {onboardingLoaded && (
         <OnboardingModal
           open={onboardingOpen}
@@ -1988,6 +2204,8 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
           onFinish={finishOnboarding}
           providers={providers}
           refreshProviders={refreshProviders}
+          discoverRecentRepos={discoverRecentRepos}
+          onAddProjectPaths={addProjectPaths}
           projects={projects}
           onAddProject={handleAddProject}
           settings={settings}
@@ -2006,6 +2224,16 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
             }
             onUndo={() => void undoArchive()}
             onDismiss={dismissArchiveToast}
+            durationMs={UNDO_WINDOW_MS}
+          />
+        )}
+        {undoMessage && (
+          <ArchiveToast
+            key={`undo-${undoKey}`}
+            message={undoMessage}
+            onUndo={() => void runUndo()}
+            onDismiss={dismissUndo}
+            durationMs={UNDO_WINDOW_MS}
           />
         )}
         {deleteToastId && (
@@ -2046,6 +2274,9 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
             onClose={() => setAddPathOpen(false)}
             onSubmit={submitAddPath}
             onCreate={submitCreateProject}
+            onClone={cloneProject}
+            onCancelClone={cancelClone}
+            onCloneProgress={subscribeCloneProgress}
             onBrowse={browseFilesystem}
             currentProjectCwd={
               (selectedProjectId

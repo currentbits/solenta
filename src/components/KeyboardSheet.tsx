@@ -1,5 +1,10 @@
 import { useCallback, useRef } from "react";
-import { useComposerVimEnabled, useEnterSendsEnabled } from "../uiPrefs";
+import { bindingLabel, formatChord, KEYBINDINGS } from "../keybindings";
+import {
+  useComposerVimEnabled,
+  useEnterSendsEnabled,
+  useKeybindingOverrides,
+} from "../uiPrefs";
 import { useEscapeClose } from "../useEscapeClose";
 import { useModalFocus } from "../useModalFocus";
 import styles from "./KeyboardSheet.module.css";
@@ -8,30 +13,6 @@ interface ShortcutRow {
   keys: string;
   action: string;
 }
-
-/** Static shortcut list — not a remapping panel. */
-const APP_SHORTCUTS: readonly ShortcutRow[] = [
-  { keys: "⌘ + N", action: "New thread" },
-  { keys: "⌘ + ⇧ + N", action: "New thread in current project" },
-  { keys: "⌘ + click", action: "Toggle thread in multi-select" },
-  { keys: "⇧ + click", action: "Select range in visible list" },
-  { keys: "⌘ + 1…9", action: "Jump to nth visible thread" },
-  { keys: "⌘ + J / ⇧J", action: "Next / previous thread" },
-  { keys: "⌘ + K", action: "Command palette" },
-  { keys: "⌘ + P", action: "Search files in this project" },
-  { keys: "⌘ + ⇧ + F", action: "Search file contents" },
-  { keys: "⌘ + Enter", action: "Send message" },
-  { keys: "↑", action: "Recall the last sent prompt (empty composer)" },
-  { keys: "⌥ + Enter", action: "Ask a side question (/btw)" },
-  { keys: "⌘ + ⇧ + Enter", action: "Steer the live turn" },
-  { keys: "⌘ + S", action: "Stash the draft" },
-  { keys: "Escape", action: "Stop the live turn · close menus" },
-  { keys: "Escape Escape", action: "Rewind the last turn" },
-  { keys: "Ctrl + C", action: "Stop the live turn" },
-  { keys: "?", action: "Show this keyboard reference" },
-  { keys: "⌘ + \\", action: "Close the focused pane" },
-  { keys: "⌘ + .", action: "Toggle agents panel" },
-];
 
 /** Escape in insert leaves vim; Escape from normal still stops the run. */
 const VIM_ESCAPE: ShortcutRow = {
@@ -56,29 +37,30 @@ const VIM_SHORTCUTS: readonly ShortcutRow[] = [
   { keys: "o / O", action: "Open line below / above" },
 ];
 
-const ENTER_SENDS_ROWS: readonly ShortcutRow[] = [
-  { keys: "Enter", action: "Send message" },
-  { keys: "⇧ + Enter", action: "New line" },
-];
+function enterSendsRows(): ShortcutRow[] {
+  return [
+    { keys: "Enter", action: "Send message" },
+    { keys: formatChord("shift+enter"), action: "New line" },
+  ];
+}
 
+/** Rendered from the shared table, so remapped chords show as remapped. */
 function appShortcutRows(
   composerVim: boolean,
   enterSends: boolean,
 ): readonly ShortcutRow[] {
-  return APP_SHORTCUTS.flatMap((row) =>
-    composerVim && row.keys === "Escape"
-      ? [VIM_ESCAPE]
-      : enterSends && row.keys === "⌘ + Enter"
-        ? ENTER_SENDS_ROWS
-        : [row],
-  );
+  return KEYBINDINGS.flatMap((def): ShortcutRow[] => {
+    if (composerVim && def.id === "composer.stop") return [VIM_ESCAPE];
+    if (enterSends && def.id === "composer.send") return enterSendsRows();
+    return [{ keys: bindingLabel(def.id) ?? "", action: def.label }];
+  });
 }
 
 function ShortcutList({ rows }: { rows: readonly ShortcutRow[] }) {
   return (
     <ul className={styles.list}>
       {rows.map((row) => (
-        <li key={row.keys} className={styles.row}>
+        <li key={`${row.keys} ${row.action}`} className={styles.row}>
           <kbd className={styles.keys}>{row.keys}</kbd>
           <span className={styles.action}>{row.action}</span>
         </li>
@@ -95,6 +77,7 @@ interface KeyboardSheetProps {
 export function KeyboardSheet({ open, onClose }: KeyboardSheetProps) {
   const composerVim = useComposerVimEnabled();
   const enterSends = useEnterSendsEnabled();
+  useKeybindingOverrides();
   const dialogRef = useRef<HTMLDivElement>(null);
   const handleClose = useCallback(() => onClose(), [onClose]);
   useEscapeClose(open, handleClose);

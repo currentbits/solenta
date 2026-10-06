@@ -120,6 +120,31 @@ describe("command palette ui", () => {
     m.unmount();
   });
 
+  it("a leading > shows actions only (#1506)", async () => {
+    const searched: string[] = [];
+    const m = await mount(
+      <PalletteHost
+        searchThreads={async ({ query }) => {
+          searched.push(query);
+          return [];
+        }}
+      />,
+    );
+    const input = m.query("[data-command-palette-input]") as HTMLInputElement;
+    await m.type(input, ">");
+    await m.flush();
+    assert.match(m.text(), /New thread/);
+    assert.doesNotMatch(m.text(), /Fix the search box/, "no recent threads");
+    assert.match(m.text(), /Actions/);
+    await m.type(input, "> kanban");
+    await new Promise((r) => setTimeout(r, 200));
+    await m.flush();
+    assert.match(m.text(), /Open kanban/);
+    assert.doesNotMatch(m.text(), /Old kanban layout/, "threads are filtered out");
+    assert.deepEqual(searched, [], "no transcript search for actions");
+    m.unmount();
+  });
+
   it("arrow keys move the highlight to a thread and Enter selects it", async () => {
     const selected: string[] = [];
     const m = await mount(

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { AppSettings } from "../../shared/ipc";
 import type { OnboardingStepProps } from "./OnboardingModal";
+import { RecentRepos } from "./RecentRepos";
 import styles from "./OnboardingModal.module.css";
 
 const PREVIEW_COUNT = 4;
@@ -30,9 +31,13 @@ function errorMessage(err: unknown): string {
 export default function SetupStep({
   projects,
   onAddProject,
+  discoverRecentRepos,
+  onAddProjectPaths,
+  providers,
   settings,
   onSaveSettings,
 }: OnboardingStepProps) {
+  const [recentCount, setRecentCount] = useState(0);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [budgetText, setBudgetText] = useState("");
@@ -85,6 +90,15 @@ export default function SetupStep({
         Choose a folder. New threads run against it.
       </p>
 
+      {discoverRecentRepos && onAddProjectPaths ? (
+        <RecentRepos
+          discover={discoverRecentRepos}
+          onAdd={onAddProjectPaths}
+          providers={providers}
+          onFound={setRecentCount}
+        />
+      ) : null}
+
       {projects.length === 0 ? (
         <div className={styles.setupSection}>
           <p className={styles.stepBody}>
@@ -92,11 +106,13 @@ export default function SetupStep({
           </p>
           <button
             type="button"
-            className={`${styles.btn} ${styles.btnPrimary}`}
+            className={
+              recentCount > 0 ? styles.btn : `${styles.btn} ${styles.btnPrimary}`
+            }
             data-onboarding-add-project=""
             onClick={onAddProject}
           >
-            Add project
+            {recentCount > 0 ? "Choose another folder" : "Add project"}
           </button>
         </div>
       ) : (

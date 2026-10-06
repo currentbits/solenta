@@ -329,4 +329,5 @@ module.exports = {
   listGrokSessions,
   importGrokSession,
   absorbGrokSessionTurns,
+  walkGrokSessions,
 };

@@ -11,6 +11,7 @@ import type {
   CheckpointInfo,
   CoderApi,
   DigestResult,
+  CloneProjectInput,
   CreateProjectInput,
   RunStatInfo,
   ConflictContext,
@@ -125,6 +126,7 @@ import { useCoderAgentTools } from "./coder/useCoderAgentTools";
 import { useCoderInsights } from "./coder/useCoderInsights";
 import { useCoderRepoTools } from "./coder/useCoderRepoTools";
 import type { TerminalApi } from "./components/TerminalPane";
+import type { FilesPaneApi } from "./components/FilesPane";
 import { useCoderProjects } from "./coder/useCoderProjects";
 import { useCoderUpdates } from "./coder/useCoderUpdates";
 import { useCoderWorkflows } from "./coder/useCoderWorkflows";
@@ -193,6 +195,8 @@ export interface UseCoderResult {
   ) => Promise<ProjectInfo | null>;
   /** Create a new folder + git repo (projects.create) and add it. */
   createProject: (input: CreateProjectInput) => Promise<ProjectInfo | null>;
+  /** git clone a URL and add it (projects.clone, #1506). Rejects on failure. */
+  cloneProject: (input: CloneProjectInput) => Promise<ProjectInfo>;
   /** The built-in Scratch workspace ("start without a project", #1411). */
   ensureScratchProject: () => Promise<ProjectInfo | null>;
   /** Patch name, SSH remotes, or worktree retention of a project. */
@@ -225,6 +229,7 @@ export interface UseCoderResult {
       model?: string | null;
       worktree?: boolean;
       select?: boolean;
+      leavePlan?: boolean;
     },
   ) => Promise<ThreadInfo | null>;
   /**
@@ -257,6 +262,8 @@ export interface UseCoderResult {
   cancelQueued: (threadId?: string) => Promise<boolean>;
   /** Re-send a queued prompt after a delivery failure (issue #314). */
   retryQueued: (threadId?: string) => void;
+  /** Steer one queued item into the live turn, then drop it (#1501). */
+  steerQueued: (index: number, threadId?: string) => Promise<void>;
   /** Replace a thread's queued follow-up text in place (issue #364 / #809). */
   editQueued: (
     prompt: string,
@@ -308,7 +315,10 @@ export interface UseCoderResult {
     answers?: Record<string, string>,
     updatedCommand?: string,
     inputValues?: InputValues,
+    feedback?: string,
   ) => Promise<void>;
+  /** Write plan markdown into the thread's checkout; resolves the path (#1501). */
+  savePlan: (plan: string, threadId?: string) => Promise<string>;
   /** Dismiss the selected thread's persisted question card (issue #647). */
   clearQuestion: () => Promise<void>;
   /**
@@ -699,6 +709,8 @@ export interface UseCoderResult {
    * open/stream/close lifecycle.
    */
   terminal: TerminalApi;
+  /** Files pane (#1506): tree, preview and open-in. */
+  files: FilesPaneApi;
   /** Embedded Browser pane guest (issue #155). Desktop-only. */
   preview: CoderApi["preview"];
   /** Desktop-only iOS Simulator pane (#248). */
@@ -1021,61 +1033,24 @@ export function useCoder(): UseCoderResult {
     [api, applyThreads],
   );
 
+  /** Threads with a "Send now" in flight, so a double click sends once. */
+  const sendingQueuedRef = useRef<Set<string>>(new Set());
   const retryQueued = useCallback(
     (threadId?: string) => {
       const id = threadId ?? selectedRef.current;
       if (!id) return;
       const held = threadsRef.current.find((t) => t.id === id);
-      const pending = held?.queued;
-      if (!pending || held?.status === "working") return;
-      // Clear first so a second click cannot double-send.
-      applyThreads(
-        threadsRef.current.map((t) =>
-          t.id === id ? { ...t, queued: null } : t,
-        ),
-      );
-      void (async () => {
-        let cleared = false;
-        try {
-          await api.threads.setQueued({ threadId: id, prompt: null });
-          cleared = true;
-          await api.runs.start({
-            threadId: id,
-            prompt: pending.prompt,
-            attachments: pending.attachments,
-          });
-        } catch (err) {
-          // A failed retry must not eat the prompt — that is the loss this
-          // issue exists to kill. Re-enqueue only if the host actually
-          // dropped it: setQueued appends, so compensating a failed clear
-          // duplicates prompt and attachments (issue #925).
-          const message = errorMessage(err);
-          setError({ scope: "run", message });
-          let queued: QueuedMessage = { ...pending, error: message };
-          if (cleared) {
-            try {
-              const updated = await api.threads.setQueued({
-                threadId: id,
-                prompt: pending.prompt,
-                attachments: pending.attachments,
-              });
-              if (updated.queued) {
-                queued = { ...updated.queued, error: message };
-              }
-            } catch {
-              // Keep the in-memory payload; a second restore miss must not
-              // eat the prompt the user still has locally.
-            }
-          }
-          applyThreads(
-            threadsRef.current.map((t) =>
-              t.id === id ? { ...t, queued } : t,
-            ),
-          );
-        }
-      })();
+      if (!held?.queued || held.status === "working") return;
+      // One click, one item: main takes the head atomically and puts it
+      // back in front on a failed start (#1501), so nothing is lost here.
+      if (sendingQueuedRef.current.has(id)) return;
+      sendingQueuedRef.current.add(id);
+      void api.runs
+        .sendQueued({ threadId: id })
+        .catch((err) => setError({ scope: "run", message: errorMessage(err) }))
+        .finally(() => sendingQueuedRef.current.delete(id));
     },
-    [api, applyThreads],
+    [api],
   );
 
   const editQueued = useCallback(
@@ -1106,6 +1081,50 @@ export function useCoder(): UseCoderResult {
       }
     },
     [api, applyThreads],
+  );
+
+  const steerQueued = useCallback(
+    async (index: number, threadId?: string) => {
+      const id = threadId ?? selectedRef.current;
+      if (!id) return;
+      const itemsOf = (q: QueuedMessage | null | undefined) =>
+        !q ? [] : q.items?.length ? q.items : [q.prompt];
+      const held = threadsRef.current.find((t) => t.id === id)?.queued;
+      const items = itemsOf(held);
+      const item = items[index];
+      if (item == null) return;
+      try {
+        // ponytail: attachments stay queued and ride with the next drained
+        // head; the blob does not record which item they belong to.
+        await api.runs.steer({ threadId: id, prompt: item });
+      } catch (err) {
+        setError({ scope: "run", message: errorMessage(err) });
+        return;
+      }
+      // The queue may have moved during the hop (drain, edit): drop the
+      // steered text from the latest copy, not by the stale index.
+      const latest = threadsRef.current.find((t) => t.id === id)?.queued;
+      const now = itemsOf(latest);
+      const at = now.indexOf(item);
+      if (at < 0) return;
+      const rest = now.filter((_, j) => j !== at);
+      if (rest.length === 0) {
+        await cancelQueued(id);
+        return;
+      }
+      await editQueued(rest.join("\n\n"), id, rest).catch(() => {});
+    },
+    [api, cancelQueued, editQueued],
+  );
+
+  const savePlan = useCallback(
+    async (plan: string, threadId?: string) => {
+      const id = threadId ?? selectedRef.current;
+      if (!id) throw new Error("No thread selected");
+      const { path } = await api.threads.savePlan({ threadId: id, plan });
+      return path;
+    },
+    [api],
   );
 
   const clearError = useCallback(() => {
@@ -1441,6 +1460,7 @@ export function useCoder(): UseCoderResult {
   const {
     addProject,
     createProject,
+    cloneProject,
     ensureScratchProject,
     updateProject,
   } = useCoderProjects({ api, setProjects, setError });
@@ -1809,6 +1829,16 @@ export function useCoder(): UseCoderResult {
     terminal,
   } = useCoderRepoTools({ api, setProjects });
 
+  const filesApi = useMemo<FilesPaneApi>(
+    () => ({
+      tree: api.files.tree,
+      read: api.files.read,
+      editors: api.shell.editors,
+      openIn: api.shell.openIn,
+    }),
+    [api],
+  );
+
   const setVerifyCommand = useCallback(
     async (threadId: string, command: string | null) => {
       const thread = await api.threads.setVerifyCommand({ threadId, command });
@@ -1841,8 +1871,24 @@ export function useCoder(): UseCoderResult {
   );
 
   const runCommand = useCallback(
-    async (threadId: string, actionId?: string) => {
-      return api.threads.runCommand({ threadId, actionId });
+    async (threadId: string, actionId?: string, trustRepoConfig?: string) => {
+      const run = api.threads.runCommand({
+        threadId,
+        actionId,
+        ...(trustRepoConfig ? { trustRepoConfig } : {}),
+      });
+      // The approval lives on the project (#1506): pick up trusted=true, or
+      // the file's new hash when it changed under an older approval.
+      const refresh = () => {
+        void api.projects.list().then(setProjects).catch(() => {});
+      };
+      if (trustRepoConfig) refresh();
+      return run.catch((err: unknown) => {
+        if (String(err instanceof Error ? err.message : err).includes("REPO_CONFIG_UNTRUSTED")) {
+          refresh();
+        }
+        throw err;
+      });
     },
     [api],
   );
@@ -1977,6 +2023,7 @@ export function useCoder(): UseCoderResult {
     clearError,
     addProject,
     createProject,
+    cloneProject,
     ensureScratchProject,
     updateProject,
     createThread,
@@ -1987,6 +2034,8 @@ export function useCoder(): UseCoderResult {
     queued,
     cancelQueued,
     retryQueued,
+    steerQueued,
+    savePlan,
     editQueued,
     startWorkflowRun,
     retryWorkflowAgent,
@@ -2121,6 +2170,7 @@ export function useCoder(): UseCoderResult {
     stopDevServer,
     devServerStatus,
     terminal,
+    files: filesApi,
     preview: api.preview,
     simulator: api.simulator,
     simulatorStatus,

@@ -5,7 +5,30 @@ import type {
   TerminalState,
   PreviewSnapshot,
   LocalServerInfo,
+  FileTreeEntry,
+  FilePreview,
 } from "../shared/ipc";
+import { SIGNIN_TERMINAL_ID } from "../shared/ipc";
+
+/** Files pane fixture (#1506): a tiny checkout with one ignored folder. */
+const DEMO_FILES: Record<string, string> = {
+  "README.md":
+    "# Solenta\n\nRun several coding agents side by side, each in its own worktree.\n\n## Develop\n\n```sh\nnpm install\nnpm run dev\n```\n\n- Threads keep their own branch\n- The Files pane browses the checkout\n",
+  "package.json": '{\n  "name": "solenta",\n  "version": "0.22.0",\n  "scripts": {\n    "dev": "vite"\n  }\n}\n',
+  "src/App.tsx":
+    'import { useState } from "react";\nimport { ThreadView } from "./components/ThreadView";\n\n/** Root view: sidebar plus the selected thread. */\nexport function App() {\n  const [threadId, setThreadId] = useState<string | null>(null);\n  // Nothing selected yet: show the welcome screen.\n  if (!threadId) return <Welcome onPick={setThreadId} />;\n  return <ThreadView threadId={threadId} />;\n}\n\nfunction Welcome({ onPick }: { onPick: (id: string) => void }) {\n  return <button onClick={() => onPick("t1")}>Open a thread</button>;\n}\n',
+  "src/components/ThreadView.tsx":
+    'export function ThreadView({ threadId }: { threadId: string }) {\n  return <section data-thread={threadId} />;\n}\n',
+  "src/useCoder.ts": "export const api = window.coder;\n",
+  "electron/main.js": '"use strict";\nconst { app } = require("electron");\napp.whenReady().then(() => {});\n',
+  "docs/logo.svg":
+    '<svg xmlns="http://www.w3.org/2000/svg" width="96" height="96" viewBox="0 0 96 96"><rect width="96" height="96" rx="20" fill="#1c1b19"/><circle cx="48" cy="48" r="18" fill="#f2c94c"/></svg>',
+  "docs/archive.zip": "",
+  "assets/font.bin": "",
+  "node_modules/react/index.js": "module.exports = {};\n",
+  "dist/index.js": "console.log(1);\n",
+};
+const DEMO_IGNORED = /^(node_modules|dist)\//;
 
 export function createWorkspace(): Pick<CoderApi, "servers" | "simulator" | "preview" | "devserver" | "terminal" | "files" | "fs" | "attachments" | "shell"> {
   /** In-memory per-thread demo servers (Vite-only; Electron uses electron/devservers.js). */
@@ -242,6 +265,11 @@ export function createWorkspace(): Pick<CoderApi, "servers" | "simulator" | "pre
         demoTerminals.delete(input.threadId);
         return demoTerminal(input.threadId);
       },
+      async signIn(input: { provider: string; threadId?: string | null }) {
+        const threadId = input.threadId || SIGNIN_TERMINAL_ID;
+        demoTerminals.set(threadId, `Demo shell. Electron would run: ${input.provider} login\r\n`);
+        return { threadId, termId: "signin" };
+      },
     },
     files: {
       async list(input: { threadId: string; query?: string; limit?: number }) {
@@ -302,6 +330,52 @@ export function createWorkspace(): Pick<CoderApi, "servers" | "simulator" | "pre
             abs: known.has(p) ? `/Users/demo/project/${p}` : null,
           })),
         };
+      },
+      async tree(input: {
+        threadId: string;
+        dir?: string;
+        showIgnored?: boolean;
+        all?: boolean;
+      }) {
+        const visible = Object.keys(DEMO_FILES).filter(
+          (p) => input.showIgnored || !DEMO_IGNORED.test(p),
+        );
+        if (input.all) {
+          return {
+            entries: visible
+              .filter((p) => !DEMO_IGNORED.test(p))
+              .map((p) => ({ name: p.split("/").pop()!, path: p, dir: false })),
+            truncated: false,
+          };
+        }
+        const prefix = input.dir ? `${input.dir}/` : "";
+        const seen = new Map<string, FileTreeEntry>();
+        for (const p of visible) {
+          if (!p.startsWith(prefix)) continue;
+          const [name, ...rest] = p.slice(prefix.length).split("/");
+          const path = prefix + name;
+          const entry: FileTreeEntry = { name: name!, path, dir: rest.length > 0 };
+          if (DEMO_IGNORED.test(path + (entry.dir ? "/" : ""))) entry.ignored = true;
+          seen.set(path, entry);
+        }
+        const entries = [...seen.values()].sort((a, b) =>
+          a.dir !== b.dir ? (a.dir ? -1 : 1) : a.name.localeCompare(b.name),
+        );
+        return { entries, truncated: false };
+      },
+      async read(input: { threadId: string; path: string }): Promise<FilePreview> {
+        const text = DEMO_FILES[input.path];
+        if (text == null) throw new Error("Path does not exist");
+        if (input.path.endsWith(".svg")) {
+          return {
+            kind: "image",
+            size: text.length,
+            dataUrl: `data:image/svg+xml;base64,${btoa(text)}`,
+          };
+        }
+        if (input.path.endsWith(".bin")) return { kind: "binary", size: 2048 };
+        if (input.path.endsWith(".zip")) return { kind: "tooLarge", size: 4_200_000 };
+        return { kind: "text", size: text.length, text };
       },
     },
     fs: {

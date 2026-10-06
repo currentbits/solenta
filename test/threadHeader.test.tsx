@@ -25,6 +25,7 @@ import type {
   WorkflowTemplateInfo,
 } from "../src/shared/ipc";
 import { setRunDurationEnabled } from "../src/uiPrefs";
+import { resetComposerSession } from "../src/composerSession";
 
 const project: ProjectInfo = {
   id: "p1",
@@ -121,6 +122,19 @@ const fakeTerminalApi = {
   list: () => new Promise<string[]>(() => {}),
   close: async () => idleTerminal(),
   onData: () => () => {},
+};
+
+/** One-file checkout for the Files pane seam test (#1506). */
+const fakeFilesApi = {
+  tree: async (input: { dir?: string; all?: boolean }) => ({
+    entries: input.dir || input.all
+      ? []
+      : [{ name: "a.ts", path: "a.ts", dir: false }],
+    truncated: false,
+  }),
+  read: async () => ({ kind: "text" as const, size: 8, text: "one\ntwo\n" }),
+  editors: async () => [],
+  openIn: async () => {},
 };
 
 function idleTerminal(): TerminalState {
@@ -221,6 +235,7 @@ function view(props: {
       onCloseChanges={props.onCloseChanges ?? (() => {})}
       onViewChanges={props.onViewChanges}
       terminalApi={fakeTerminalApi}
+      filesApi={fakeFilesApi}
       onPanesNeedRoom={props.onPanesNeedRoom}
       onFetchDiff={async () => ({ files: [], patch: "", truncated: false })}
       onCommitChanges={async () => ({ subject: "x" })}
@@ -1326,6 +1341,25 @@ describe("Views menu pane workspace (issue #552)", () => {
     m.unmount();
   });
 
+  it("Files pane line picks land as composer chips (#1506)", async () => {
+    resetComposerSession();
+    const m = await mount(view({}));
+    await m.flush();
+    await m.click(m.query("[data-views-btn]"));
+    await m.click(m.query("[data-views-item='files']"));
+    await m.flush();
+    assert.equal(m.query("[data-pane-placeholder='files']"), null);
+    await m.click(m.query("[data-files-row='a.ts']"));
+    await m.flush();
+    await m.click(m.query("[data-files-line='2']"));
+    await m.click(m.query("[data-files-add]"));
+    const chip = m.query("[data-review-comment-chip]");
+    assert.ok(chip, "chip in the composer");
+    assert.match(chip!.textContent ?? "", /a\.ts:L2.*Add a note/);
+    m.unmount();
+    resetComposerSession();
+  });
+
   it("opens the Browser pane as a real preview, not a placeholder", async () => {
     const m = await mount(view({}));
     await m.flush();
@@ -1341,10 +1375,11 @@ describe("Views menu pane workspace (issue #552)", () => {
     const m = await mount(view({}));
     await m.flush();
     await m.click(m.query("[data-views-btn]"));
-    for (const type of ["files", "tasks", "subagent"]) {
+    for (const type of ["tasks", "subagent"]) {
       assert.equal(m.query(`[data-views-item='${type}']`), null, `${type} is not offered`);
     }
     assert.ok(m.query("[data-views-item='diff']"), "Git is offered");
+    assert.ok(m.query("[data-views-item='files']"), "Files is offered (#1506)");
     m.unmount();
   });
 
@@ -1645,6 +1680,83 @@ describe("project quick actions in Thread details (#153)", () => {
     const err = m.query("[data-thread-command-error]");
     assert.ok(err);
     assert.match(err!.textContent || "", /already active/);
+    m.unmount();
+  });
+});
+
+describe("solenta.json commands in Thread details (#1506)", () => {
+  const HASH = "b".repeat(64);
+  const repoProject = (trusted: boolean) => ({
+    ...project,
+    repoConfig: {
+      setupCommand: "npm ci",
+      quickActions: [{ id: "repo:0", name: "Test", command: "npm test" }],
+      hash: HASH,
+      trusted,
+    },
+  });
+
+  it("asks once before running an unapproved file command, listing all of them", async () => {
+    const calls: unknown[][] = [];
+    const m = await mount(
+      view({
+        project: repoProject(false),
+        onRunCommand: async (...args) => {
+          calls.push(args);
+        },
+      }),
+    );
+    await m.flush();
+    await m.click(m.query("[data-thread-details-btn]"));
+    assert.equal(m.query('[data-thread-command="repo:0"]')?.textContent, "Test");
+    await m.click(m.query('[data-thread-command="repo:0"]'));
+    await m.flush();
+    assert.deepEqual(calls, [], "nothing runs before approval");
+    const card = m.query("[data-repo-config-approve]");
+    assert.ok(card);
+    assert.match(card!.textContent || "", /npm ci/);
+    assert.match(card!.textContent || "", /npm test/);
+    await m.click(m.query("[data-repo-config-approve-run]"));
+    await m.flush();
+    assert.deepEqual(calls, [["t1", "repo:0", HASH]]);
+    assert.equal(m.query("[data-repo-config-approve]"), null);
+    m.unmount();
+  });
+
+  it("runs approved file commands directly, and own settings win", async () => {
+    const calls: unknown[][] = [];
+    const m = await mount(
+      view({
+        project: { ...repoProject(true), setupCommand: "make deps" },
+        onRunCommand: async (...args) => {
+          calls.push(args);
+        },
+      }),
+    );
+    await m.flush();
+    await m.click(m.query("[data-thread-details-btn]"));
+    assert.equal(m.query('[data-thread-command="setup"]')?.getAttribute("title"), "make deps");
+    await m.click(m.query('[data-thread-command="repo:0"]'));
+    await m.flush();
+    assert.deepEqual(calls, [["t1", "repo:0", undefined]]);
+    m.unmount();
+  });
+
+  it("reopens the approval when main says the file changed", async () => {
+    const m = await mount(
+      view({
+        project: repoProject(true),
+        onRunCommand: async () => {
+          throw new Error("REPO_CONFIG_UNTRUSTED: approve this repo's solenta.json commands before they run");
+        },
+      }),
+    );
+    await m.flush();
+    await m.click(m.query("[data-thread-details-btn]"));
+    await m.click(m.query('[data-thread-command="setup"]'));
+    await m.flush();
+    assert.ok(m.query("[data-repo-config-approve]"));
+    assert.equal(m.query("[data-thread-command-error]"), null);
     m.unmount();
   });
 });

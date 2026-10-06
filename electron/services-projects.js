@@ -30,6 +30,10 @@ const {
   purgeThread,
 } = require("./services-shared.js");
 const { gitOutAsync } = require("./services-git.js");
+const {
+  DEFAULT_BRANCH_PREFIX,
+  branchPrefixError,
+} = require("./worktrees-branches.js");
 
 /**
  * Derive owner/repo from a git remote URL, or null if unparseable.
@@ -456,6 +460,26 @@ function updateProject(store, projectId, patch) {
     else delete next.quickActions;
   }
 
+  // #1506. false / null deletes the key so old stores stay clean.
+  if (input.waitForSetup === true) next.waitForSetup = true;
+  else if (input.waitForSetup === false || input.waitForSetup === null) {
+    delete next.waitForSetup;
+  }
+
+  // #1506. Empty / null / the default restores the default. An invalid
+  // prefix rejects the save rather than minting broken branch names.
+  if (Object.prototype.hasOwnProperty.call(input, "branchPrefix")) {
+    const raw =
+      typeof input.branchPrefix === "string" ? input.branchPrefix.trim() : "";
+    if (!raw || raw === DEFAULT_BRANCH_PREFIX) {
+      delete next.branchPrefix;
+    } else {
+      const why = branchPrefixError(raw);
+      if (why) throw new Error(why);
+      next.branchPrefix = raw;
+    }
+  }
+
   // #1501. Replaces the whole object; null / empty clears it.
   if (Object.prototype.hasOwnProperty.call(input, "threadDefaults")) {
     const threadDefaults = normalizeThreadDefaults(input.threadDefaults);
@@ -823,6 +847,7 @@ async function writeAgentConfig(store, input, deps) {
 
 module.exports = {
   slugFromRemoteUrl,
+  normalizePathKey,
   addProject,
   ensureScratchProject,
   createProject,

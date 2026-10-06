@@ -10,7 +10,7 @@
  */
 import assert from "node:assert/strict";
 import { describe, it, afterEach } from "node:test";
-import { useState } from "react";
+import { cloneElement, useState } from "react";
 import { mount, unmountAll } from "./support/dom.ts";
 import { SettingsModal, type SettingsPane } from "../src/components/SettingsModal";
 import type { MemoryProjectToolsApi } from "../src/components/MemoryTab";
@@ -2510,5 +2510,53 @@ describe("SettingsModal Skills & MCP pane (moved from the Skills tab)", () => {
     const m = await mount(modal({ skills: skillsApi([]) }));
     await m.type(m.query("[data-settings-search]"), "mcp server");
     assert.ok(m.query('[data-settings-nav="skills"]'));
+  });
+});
+
+describe("SettingsModal Agents › Providers sign-in (#1501)", () => {
+  afterEach(() => unmountAll());
+
+  const CLAUDE: ProviderInfo = { ...KIMI, id: "claude", name: "Claude Code", auth: "signedIn" };
+  const CODEX: ProviderInfo = { ...KIMI, id: "codex", name: "Codex", auth: "signedOut" };
+  const GROK: ProviderInfo = { ...KIMI, id: "grok", name: "Grok", auth: "unknown" };
+  const MUSE: ProviderInfo = { ...KIMI, id: "muse", name: "Muse", available: false };
+
+  function withSignIn(onSignIn: (id: string) => Promise<void>, onRefresh = () => {}) {
+    return cloneElement(
+      modal({ initialPane: "agents", providers: [CLAUDE, CODEX, GROK, MUSE] }),
+      { onProviderSignIn: onSignIn, onRefreshProviders: onRefresh },
+    );
+  }
+
+  it("re-probes on open and shows each provider's state", async () => {
+    let refreshes = 0;
+    const m = await mount(withSignIn(async () => {}, () => refreshes++));
+    assert.equal(refreshes, 1, "opening Agents re-lists providers");
+    const state = (id: string) =>
+      m.query(`[data-provider-row="${id}"] [data-auth-state]`)?.textContent;
+    assert.equal(state("claude"), "Signed in");
+    assert.equal(state("codex"), "Signed out");
+    assert.equal(state("grok"), "Sign-in unknown");
+    assert.equal(state("muse"), "Not installed");
+    assert.equal(m.query('[data-provider-signin="claude"]'), null, "signed in: no button");
+    assert.equal(m.query('[data-provider-signin="muse"]'), null, "not installed: no button");
+    assert.ok(m.query('[data-provider-signin="grok"]'), "unknown still offers Sign in");
+  });
+
+  it("Sign in hands the provider id to the app", async () => {
+    const calls: string[] = [];
+    const m = await mount(withSignIn(async (id) => void calls.push(id)));
+    await m.click(m.query('[data-provider-signin="codex"]'));
+    assert.deepEqual(calls, ["codex"]);
+  });
+
+  it("a failed Sign in shows the error", async () => {
+    const m = await mount(
+      withSignIn(async () => {
+        throw new Error("No sign-in command for codex");
+      }),
+    );
+    await m.click(m.query('[data-provider-signin="codex"]'));
+    assert.ok(m.text().includes("No sign-in command for codex"), m.text());
   });
 });

@@ -72,6 +72,8 @@ describe("edit project", () => {
       worktreeRetention: 10,
       autoDispatch: false,
       setupCommand: null,
+      waitForSetup: false,
+      branchPrefix: null,
       quickActions: [],
     });
     assert.equal(
@@ -523,5 +525,83 @@ describe("new thread defaults (#1501)", () => {
         m.unmount();
       }
     }
+  });
+});
+
+describe("worktree setup options (#1506)", () => {
+  function modal(over: Partial<Parameters<typeof EditProjectModal>[0]["project"]> = {}) {
+    const submitted: ProjectUpdateInput[] = [];
+    const el = (
+      <EditProjectModal
+        project={{
+          id: "p1",
+          slug: "ledger",
+          name: "ledger",
+          path: "/tmp/ledger",
+          ...over,
+        }}
+        onClose={() => {}}
+        onSubmit={async (input) => {
+          submitted.push(input);
+          return input;
+        }}
+      />
+    );
+    return { el, submitted };
+  }
+
+  it("sends the wait flag and branch prefix", async () => {
+    const { el, submitted } = modal();
+    const m = await mount(el);
+    await m.click(m.query("[data-edit-project-wait-setup]"));
+    await m.type(m.query("[data-edit-project-branch-prefix]"), "ai/");
+    await m.click(m.query("[data-edit-project-submit]"));
+    await m.flush();
+    assert.equal(submitted[0]!.waitForSetup, true);
+    assert.equal(submitted[0]!.branchPrefix, "ai/");
+    m.unmount();
+  });
+
+  it("marks solenta.json commands and says project settings win", async () => {
+    const { el, submitted } = modal({
+      repoConfig: {
+        setupCommand: "npm ci",
+        quickActions: [{ id: "repo:0", name: "Test", command: "npm test" }],
+        hash: "a".repeat(64),
+        trusted: false,
+      },
+    });
+    const m = await mount(el);
+    assert.ok(m.query('[data-repo-config-source="setup"]'));
+    assert.equal(
+      (m.query("[data-edit-project-setup]") as HTMLInputElement).placeholder,
+      "npm ci",
+    );
+    assert.match(m.container.textContent || "", /Leave empty to use the setup in solenta\.json/);
+    assert.ok(m.query("[data-repo-config-action]"));
+    assert.match(
+      m.query("[data-repo-config-trust]")?.textContent || "",
+      /ask for your approval/,
+    );
+    await m.type(m.query("[data-edit-project-setup]"), "make deps");
+    assert.equal(m.query('[data-repo-config-source="setup"]'), null);
+    assert.match(m.container.textContent || "", /overrides the setup in solenta\.json/);
+    await m.click(m.query("[data-edit-project-submit]"));
+    await m.flush();
+    assert.equal(submitted[0]!.setupCommand, "make deps");
+    assert.deepEqual(submitted[0]!.quickActions, [], "file actions are never copied into settings");
+    m.unmount();
+  });
+
+  it("shows an invalid file's error", async () => {
+    const { el } = modal({
+      repoConfig: { error: "solenta.json: quickActions must be an array", trusted: false },
+    });
+    const m = await mount(el);
+    assert.match(
+      m.query("[data-repo-config-error]")?.textContent || "",
+      /quickActions must be an array/,
+    );
+    m.unmount();
   });
 });
