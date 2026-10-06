@@ -1,174 +1,342 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { TerminalState } from "../shared/ipc";
+import type { CoderApi, TerminalDataPush, TerminalState } from "../shared/ipc";
 import styles from "./TerminalPane.module.css";
 
-/** Output poll interval while a session is alive. */
-const POLL_MS = 250;
-/** Scrollback kept in the DOM. Main caps its own buffer at 200k. */
-const TEXT_LIMIT = 200_000;
+/** Terminals side by side in one pane. More than this is unreadable. */
+const MAX_SPLITS = 4;
 
-export type TerminalApi = {
-  open: (threadId: string) => Promise<TerminalState>;
-  write: (
-    threadId: string,
-    data: string,
-    since: number,
-  ) => Promise<TerminalState>;
-  read: (threadId: string, since: number) => Promise<TerminalState>;
-  close: (threadId: string) => Promise<TerminalState>;
+export type TerminalApi = CoderApi["terminal"] & {
+  onData: (cb: (push: TerminalDataPush) => void) => () => void;
 };
 
+/** The slice of xterm.js the pane drives. Tests pass a fake (jsdom has no layout). */
+export interface XtermLike {
+  cols: number;
+  rows: number;
+  options: { theme?: Record<string, string> };
+  open(el: HTMLElement): void;
+  write(data: string): void;
+  reset(): void;
+  focus(): void;
+  dispose(): void;
+  fit(): void;
+  hasSelection(): boolean;
+  getSelection(): string;
+  onData(cb: (data: string) => void): { dispose(): void };
+  onResize(cb: (size: { cols: number; rows: number }) => void): { dispose(): void };
+  attachCustomKeyEventHandler(fn: (e: KeyboardEvent) => boolean): void;
+}
+
+export type XtermLoader = () => Promise<() => XtermLike>;
+
+function cssVar(name: string): string {
+  return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+}
+
+/** Terminal colours from the app's tokens, so light/dark themes carry over. */
+function themeFromCss(): Record<string, string> {
+  const theme: Record<string, string> = {
+    background: cssVar("--bg"),
+    foreground: cssVar("--text"),
+    cursor: cssVar("--accent-edge") || cssVar("--accent"),
+    selectionBackground: cssVar("--accent-soft"),
+    red: cssVar("--danger"),
+    brightRed: cssVar("--danger-fg"),
+    green: cssVar("--success-fg"),
+    yellow: cssVar("--warning-fg"),
+  };
+  for (const k of Object.keys(theme)) if (!theme[k]) delete theme[k];
+  return theme;
+}
+
 /**
- * Shell pane for a thread's worktree (#147).
- *
- * ponytail: polled, not pushed. The main process already keeps the
- * scrollback and a cursor, so a 250 ms read is a handful of lines of client
- * against a whole new push channel through preload, wireClient and the web
- * bridge. Same call shape survives if that trade ever flips.
+ * xterm.js is ~300 KB, so it loads with the first Terminal pane rather
+ * than with the app.
+ */
+export const loadXterm: XtermLoader = async () => {
+  const [{ Terminal }, { FitAddon }, { WebLinksAddon }] = await Promise.all([
+    import("@xterm/xterm"),
+    import("@xterm/addon-fit"),
+    import("@xterm/addon-web-links"),
+    import("@xterm/xterm/css/xterm.css"),
+  ]);
+  return () => {
+    const term = new Terminal({
+      fontFamily: cssVar("--mono") || "monospace",
+      fontSize: 12,
+      cursorBlink: true,
+      scrollback: 5000,
+      theme: themeFromCss(),
+    });
+    const fit = new FitAddon();
+    term.loadAddon(fit);
+    // window.open goes through the app's link policy (external browser).
+    term.loadAddon(new WebLinksAddon((_e, uri) => window.open(uri, "_blank")));
+    return Object.assign(term, { fit: () => fit.fit() }) as unknown as XtermLike;
+  };
+};
+
+/** ⌘C / Ctrl+Shift+C copy a selection; without one the key goes to the shell. */
+function copyKeys(term: XtermLike) {
+  return (e: KeyboardEvent) => {
+    const combo = e.metaKey || (e.ctrlKey && e.shiftKey);
+    if (e.type === "keydown" && combo && e.key.toLowerCase() === "c" && term.hasSelection()) {
+      void navigator.clipboard?.writeText(term.getSelection()).catch(() => {});
+      return false;
+    }
+    return true;
+  };
+}
+
+function safeFit(term: XtermLike) {
+  try {
+    term.fit();
+  } catch {
+    // hidden pane: no size to fit to yet
+  }
+}
+
+function TerminalView({
+  threadId,
+  termId,
+  api,
+  load,
+  onClose,
+  onSplit,
+}: {
+  threadId: string;
+  termId: string;
+  api: TerminalApi;
+  load: XtermLoader;
+  onClose?: () => void;
+  onSplit?: () => void;
+}) {
+  const hostRef = useRef<HTMLDivElement>(null);
+  const [session, setSession] = useState<TerminalState | null>(null);
+  const [running, setRunning] = useState(false);
+  const [failed, setFailed] = useState(false);
+  // Restart = close, then a fresh mount of the effect below.
+  const [epoch, setEpoch] = useState(0);
+
+  useEffect(() => {
+    let live = true;
+    let term: XtermLike | null = null;
+    // Absolute offset into the session's output; -1 until open() lands.
+    let cursor = -1;
+    let reading = false;
+    const subs: { dispose(): void }[] = [];
+    setSession(null);
+    setFailed(false);
+
+    const apply = (s: TerminalState) => {
+      if (!live || !term) return;
+      if (s.reset) {
+        term.reset();
+        term.write(s.text);
+      } else if (s.cursor > cursor) {
+        term.write(s.text.slice(Math.max(0, s.text.length - (s.cursor - cursor))));
+      } else {
+        return;
+      }
+      cursor = s.cursor;
+      setSession(s);
+      setRunning(s.running);
+    };
+
+    // A push past our cursor means one was missed (e.g. while open() was in
+    // flight); the main process still has it, so re-read from the cursor.
+    const resync = () => {
+      if (reading) return;
+      reading = true;
+      void api
+        .read({ threadId, termId, since: cursor })
+        .then(apply)
+        .catch(() => {})
+        .finally(() => {
+          reading = false;
+        });
+    };
+
+    const offPush = api.onData((p) => {
+      if (!live || p.threadId !== threadId || p.termId !== termId || cursor < 0) return;
+      setRunning(p.running);
+      if (p.cursor <= cursor || !term) return;
+      if (p.from > cursor) return resync();
+      term.write(p.data.slice(cursor - p.from));
+      cursor = p.cursor;
+    });
+
+    void load()
+      .then((create) => {
+        if (!live || !hostRef.current) return;
+        const t = create();
+        term = t;
+        t.open(hostRef.current);
+        safeFit(t);
+        t.attachCustomKeyEventHandler(copyKeys(t));
+        subs.push(
+          t.onData((data) => {
+            void api.write({ threadId, termId, data }).catch(() => {});
+          }),
+          t.onResize(({ cols, rows }) => {
+            void api.resize({ threadId, termId, cols, rows }).catch(() => {});
+          }),
+        );
+        return api.open({ threadId, termId, cols: t.cols, rows: t.rows }).then((s) => {
+          apply({ ...s, reset: true });
+          if (live) t.focus();
+        });
+      })
+      .catch(() => {
+        if (live) setFailed(true);
+      });
+
+    let frame = 0;
+    const ro =
+      typeof ResizeObserver === "undefined"
+        ? null
+        : new ResizeObserver(() => {
+            cancelAnimationFrame(frame);
+            frame = requestAnimationFrame(() => term && safeFit(term));
+          });
+    if (ro && hostRef.current) ro.observe(hostRef.current);
+    const themeWatch = new MutationObserver(() => {
+      if (term) term.options.theme = themeFromCss();
+    });
+    themeWatch.observe(document.documentElement, { attributeFilter: ["data-theme"] });
+
+    return () => {
+      live = false;
+      offPush();
+      ro?.disconnect();
+      themeWatch.disconnect();
+      cancelAnimationFrame(frame);
+      for (const s of subs) s.dispose();
+      term?.dispose();
+    };
+  }, [threadId, termId, api, load, epoch]);
+
+  const restart = useCallback(() => {
+    void api
+      .close({ threadId, termId })
+      .catch(() => {})
+      .then(() => setEpoch((e) => e + 1));
+  }, [api, threadId, termId]);
+
+  return (
+    <div className={styles.view} data-terminal-view={termId}>
+      <div className={styles.bar}>
+        <span className={styles.cwd} title={session?.cwd ?? ""}>
+          {session?.cwd || "…"}
+        </span>
+        <span className={styles.state} data-running={running ? "true" : "false"}>
+          {running ? session?.shell : session ? "not running" : ""}
+        </span>
+        <button
+          type="button"
+          className={styles.button}
+          data-terminal-restart=""
+          onClick={restart}
+        >
+          Restart
+        </button>
+        {onSplit && (
+          <button
+            type="button"
+            className={styles.button}
+            data-terminal-split=""
+            title="Split terminal"
+            onClick={onSplit}
+          >
+            Split
+          </button>
+        )}
+        {onClose && (
+          <button
+            type="button"
+            className={styles.button}
+            data-terminal-close=""
+            aria-label="Close terminal"
+            title="Close terminal"
+            onClick={onClose}
+          >
+            ×
+          </button>
+        )}
+      </div>
+      {session?.staleRoot && (
+        <p className={styles.notice} data-terminal-stale="">
+          This shell started in {session.cwd}, which this thread has left. Restart to
+          open a shell in the current worktree.
+        </p>
+      )}
+      {session && !session.pty && running && (
+        <p className={styles.notice} data-terminal-basic="">
+          Basic shell: no PTY on this system, so full-screen programs and Ctrl-C do not
+          work.
+        </p>
+      )}
+      {failed && (
+        <p className={styles.notice} data-terminal-failed="">
+          Could not start a shell for this thread.
+        </p>
+      )}
+      <div
+        className={styles.screen}
+        ref={hostRef}
+        role="region"
+        aria-label={`Terminal ${termId}`}
+        data-terminal-output=""
+      />
+    </div>
+  );
+}
+
+/**
+ * Shell pane for a thread's worktree (#147, #1493): real PTYs rendered with
+ * xterm.js, side-by-side splits, scrollback that survives a restart.
  */
 export function TerminalPane({
   threadId,
   api,
+  load = loadXterm,
 }: {
   threadId: string | null;
   api: TerminalApi;
+  load?: XtermLoader;
 }) {
-  const [text, setText] = useState("");
-  const [pending, setPending] = useState("");
-  const [session, setSession] = useState<TerminalState | null>(null);
-  const [draft, setDraft] = useState("");
-  const cursorRef = useRef(0);
-  const generationRef = useRef(0);
-  const outRef = useRef<HTMLPreElement>(null);
-  const stickRef = useRef(true);
-  const historyRef = useRef<string[]>([]);
-  const historyPosRef = useRef(-1);
+  const [ids, setIds] = useState<string[] | null>(null);
 
-  const applyState = useCallback((state: TerminalState, generation: number) => {
-    if (generation !== generationRef.current) return;
-    if (state.cursor < cursorRef.current) return;
-    // Reads and writes can overlap. Their deltas end at the absolute cursor,
-    // so only append the suffix beyond the output we have already consumed.
-    const unseen = state.text.slice(
-      Math.max(0, state.text.length - (state.cursor - cursorRef.current)),
-    );
-    cursorRef.current = state.cursor;
-    setSession(state);
-    setPending(state.pending);
-    setText((prev) => {
-      const next = state.reset ? state.text : prev + unseen;
-      return next.length > TEXT_LIMIT ? next.slice(-TEXT_LIMIT) : next;
+  useEffect(() => {
+    if (!threadId) return;
+    let live = true;
+    setIds(null);
+    void api
+      .list({ threadId })
+      .catch(() => [] as string[])
+      .then((found) => {
+        if (live) setIds(found.length ? found : ["1"]);
+      });
+    return () => {
+      live = false;
+    };
+  }, [threadId, api]);
+
+  const split = useCallback(() => {
+    setIds((cur) => {
+      if (!cur || cur.length >= MAX_SPLITS) return cur;
+      const next = Math.max(0, ...cur.map(Number).filter(Number.isFinite)) + 1;
+      return [...cur, String(next)];
     });
   }, []);
 
-  // Open on mount and whenever the pane moves to another thread. Reset the
-  // cursor first so a stale offset from the previous thread cannot slice a
-  // fresh buffer.
-  useEffect(() => {
-    if (!threadId) return;
-    const generation = ++generationRef.current;
-    cursorRef.current = 0;
-    setText("");
-    setPending("");
-    setSession(null);
-    stickRef.current = true;
-    void api
-      .open(threadId)
-      .then((state) => {
-        applyState(state, generation);
-      })
-      .catch(() => {
-        if (generation === generationRef.current) {
-          setText("Could not start a shell for this thread.\n");
-        }
-      });
-    return () => {
-      generationRef.current += 1;
-    };
-  }, [threadId, api, applyState]);
-
-  const running = session?.running ?? false;
-
-  useEffect(() => {
-    if (!threadId || !running) return;
-    let live = true;
-    const timer = setInterval(() => {
-      const generation = generationRef.current;
-      void api
-        .read(threadId, cursorRef.current)
-        .then((state) => {
-          if (live) applyState(state, generation);
-        })
-        .catch(() => {});
-    }, POLL_MS);
-    return () => {
-      live = false;
-      clearInterval(timer);
-    };
-  }, [threadId, running, api, applyState]);
-
-  // Stay pinned to the newest output unless the reader scrolled away.
-  useEffect(() => {
-    const el = outRef.current;
-    if (!el || !stickRef.current) return;
-    el.scrollTop = el.scrollHeight;
-  }, [text, pending]);
-
-  const submit = useCallback(() => {
-    if (!threadId || !session) return;
-    const generation = generationRef.current;
-    const line = draft;
-    setDraft("");
-    historyPosRef.current = -1;
-    if (line.trim()) {
-      historyRef.current = [
-        ...historyRef.current.filter((h) => h !== line),
-        line,
-      ].slice(-100);
-    }
-    stickRef.current = true;
-    void api
-      .write(threadId, line, cursorRef.current)
-      .then((state) => applyState(state, generation))
-      .catch(() => {});
-  }, [threadId, session, draft, api, applyState]);
-
-  const restart = useCallback(() => {
-    if (!threadId) return;
-    // Invalidate replies before close settles; cursors only identify output
-    // within one session. Pause reads/writes until the replacement opens.
-    const generation = ++generationRef.current;
-    setSession(null);
-    setPending("");
-    void api
-      .close(threadId)
-      .then(async () => {
-        if (generation !== generationRef.current) return;
-        const state = await api.open(threadId);
-        if (generation !== generationRef.current) return;
-        cursorRef.current = 0;
-        setText("");
-        stickRef.current = true;
-        applyState({ ...state, reset: true }, generation);
-      })
-      .catch(() => {});
-  }, [threadId, api, applyState]);
-
-  const onHistory = useCallback(
-    (delta: number) => {
-      const history = historyRef.current;
-      if (!history.length) return;
-      const pos = historyPosRef.current;
-      const next =
-        pos < 0
-          ? delta < 0
-            ? history.length - 1
-            : -1
-          : Math.min(history.length, Math.max(-1, pos + (delta < 0 ? -1 : 1)));
-      historyPosRef.current = next >= history.length ? -1 : next;
-      setDraft(historyPosRef.current < 0 ? "" : history[historyPosRef.current]);
+  const closeTerm = useCallback(
+    (termId: string) => {
+      if (!threadId) return;
+      void api.close({ threadId, termId }).catch(() => {});
+      setIds((cur) => (cur ? cur.filter((id) => id !== termId) : cur));
     },
-    [],
+    [api, threadId],
   );
 
   if (!threadId) {
@@ -181,61 +349,20 @@ export function TerminalPane({
 
   return (
     <div className={styles.pane} data-terminal-pane="">
-      <div className={styles.bar}>
-        <span className={styles.cwd} title={session?.cwd ?? ""}>
-          {session?.cwd ?? "…"}
-        </span>
-        <span className={styles.state} data-running={running ? "true" : "false"}>
-          {running ? session?.shell : "not running"}
-        </span>
-        <button
-          type="button"
-          className={styles.restart}
-          data-terminal-restart=""
-          onClick={restart}
-        >
-          Restart
-        </button>
-      </div>
-      <pre
-        className={styles.out}
-        data-terminal-output=""
-        ref={outRef}
-        onScroll={(e) => {
-          const el = e.currentTarget;
-          stickRef.current =
-            el.scrollHeight - el.scrollTop - el.clientHeight < 24;
-        }}
-      >
-        {text}
-        {pending}
-      </pre>
-      <div className={styles.form}>
-        <span className={styles.prompt} aria-hidden>
-          $
-        </span>
-        <input
-          className={styles.input}
-          data-terminal-input=""
-          aria-label="Terminal command"
-          value={draft}
-          spellCheck={false}
-          autoComplete="off"
-          placeholder={running ? "" : "Shell is not running — Restart"}
-          onChange={(e) => setDraft(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") {
-              e.preventDefault();
-              submit();
-            } else if (e.key === "ArrowUp") {
-              e.preventDefault();
-              onHistory(-1);
-            } else if (e.key === "ArrowDown") {
-              e.preventDefault();
-              onHistory(1);
+      <div className={styles.splits}>
+        {(ids ?? []).map((id, i) => (
+          <TerminalView
+            key={`${threadId}:${id}`}
+            threadId={threadId}
+            termId={id}
+            api={api}
+            load={load}
+            onClose={ids && ids.length > 1 ? () => closeTerm(id) : undefined}
+            onSplit={
+              ids && i === ids.length - 1 && ids.length < MAX_SPLITS ? split : undefined
             }
-          }}
-        />
+          />
+        ))}
       </div>
     </div>
   );

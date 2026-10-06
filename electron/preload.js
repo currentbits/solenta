@@ -12,6 +12,7 @@ const PUSH_CHANNELS = new Set([
   "simulator:changed",
   "simulator:focus",
   "speech:changed",
+  "terminal:data",
 ]);
 /* </ipc-push> */
 
@@ -286,7 +287,9 @@ const IPC_CHANNELS = Object.freeze([
   { ns: "devserver", method: "status" },
   { ns: "terminal", method: "open" },
   { ns: "terminal", method: "write" },
+  { ns: "terminal", method: "resize" },
   { ns: "terminal", method: "read" },
+  { ns: "terminal", method: "list" },
   { ns: "terminal", method: "close" },
   { ns: "preview", method: "bind" },
   { ns: "preview", method: "unbind" },

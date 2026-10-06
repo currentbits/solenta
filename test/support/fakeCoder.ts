@@ -292,14 +292,16 @@ export interface FakeOptions {
 /** Idle terminal session for the harness; no shell exists under jsdom. */
 function fakeTerminal(): TerminalState {
   return {
+    termId: "1",
     running: true,
+    pty: true,
     cwd: "/tmp/worktree",
     shell: "/bin/zsh",
     cursor: 0,
     text: "",
-    pending: "",
     reset: true,
     startedAt: 0,
+    staleRoot: false,
   };
 }
 
@@ -3511,8 +3513,10 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
     },
     terminal: {
       open: (input: unknown) => rec("terminal.open", [input], fakeTerminal()),
-      write: (input: unknown) => rec("terminal.write", [input], fakeTerminal()),
+      write: (input: unknown) => rec("terminal.write", [input], { ok: true }),
+      resize: (input: unknown) => rec("terminal.resize", [input], { ok: true }),
       read: (input: unknown) => rec("terminal.read", [input], fakeTerminal()),
+      list: (input: unknown) => rec("terminal.list", [input], [] as string[]),
       close: (input: unknown) => rec("terminal.close", [input], fakeTerminal()),
     },
     simulator: {
