@@ -26,6 +26,7 @@ const {
   canHostWorktree,
   purgeThread,
 } = require("./services-shared.js");
+const terminal = require("./terminal.js");
 const {
   truncateThreadTitle,
   resolveOrdinaryForkTitle,
@@ -909,6 +910,9 @@ function trashThread(store, input, opts) {
   const updated = store.updateThread(threadId, { trashedAt: now });
   store.saveNow();
   void scheduleSimulatorRelease(opts, "releaseThread", { threadId });
+  // #1183: no shells left running for a deleted thread. Scrollback stays on
+  // disk until the purge so a restore still shows it.
+  terminal.killThread(threadId);
   const row = updated || { ...thread, trashedAt: now };
   return { thread: { ...row }, expiresAt: now + TRASH_TTL_MS };
 }

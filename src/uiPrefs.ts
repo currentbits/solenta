@@ -3,7 +3,11 @@ import {
   TRANSCRIPT_VIEW_MODES,
   type TranscriptViewMode,
 } from "./focusView";
-import { REASONING_EFFORTS, type ReasoningEffort } from "./shared/ipc";
+import {
+  REASONING_EFFORTS,
+  type DiffScope,
+  type ReasoningEffort,
+} from "./shared/ipc";
 
 /**
  * Boolean display preferences toggled from the Environment tab. Module state
@@ -210,5 +214,51 @@ export function setComposerBusyAction(action: ComposerBusyAction): void {
     window.localStorage.setItem(BUSY_ACTION_KEY, busyAction);
   } catch {
     // Private mode / quota: the preference just stops surviving a relaunch.
+  }
+}
+
+/** Git pane diff toggles (#1493): side-by-side, soft wrap, `git diff -w`. */
+const diffSplit = makeFlagPref("coder.diffSplit", false);
+export const setDiffSplit = diffSplit.set;
+export const useDiffSplit = diffSplit.use;
+const diffWrap = makeFlagPref("coder.diffWrap", false);
+export const setDiffWrap = diffWrap.set;
+export const useDiffWrap = diffWrap.use;
+const diffIgnoreWs = makeFlagPref("coder.diffIgnoreWhitespace", false);
+export const setDiffIgnoreWhitespace = diffIgnoreWs.set;
+export const useDiffIgnoreWhitespace = diffIgnoreWs.use;
+
+/** Git pane review scope per thread (#1493). Oldest threads drop past the cap. */
+const DIFF_SCOPE_KEY = "coder.diffScope";
+const DIFF_SCOPE_CAP = 200;
+let diffScopes: Map<string, DiffScope> | null = null;
+
+function loadDiffScopes(): Map<string, DiffScope> {
+  if (diffScopes) return diffScopes;
+  diffScopes = new Map();
+  try {
+    const raw = JSON.parse(window.localStorage.getItem(DIFF_SCOPE_KEY) || "{}");
+    for (const [id, scope] of Object.entries(raw ?? {})) {
+      if (scope === "branch" || scope === "turn") diffScopes.set(id, scope);
+    }
+  } catch {
+    // Corrupt or unavailable: every thread starts on Uncommitted.
+  }
+  return diffScopes;
+}
+
+export function getDiffScope(threadId: string | null): DiffScope {
+  return (threadId && loadDiffScopes().get(threadId)) || "uncommitted";
+}
+
+export function setDiffScope(threadId: string, scope: DiffScope): void {
+  const map = loadDiffScopes();
+  map.delete(threadId);
+  if (scope !== "uncommitted") map.set(threadId, scope);
+  while (map.size > DIFF_SCOPE_CAP) map.delete(map.keys().next().value!);
+  try {
+    window.localStorage.setItem(DIFF_SCOPE_KEY, JSON.stringify(Object.fromEntries(map)));
+  } catch {
+    // Private mode / quota: the choice just stops surviving a relaunch.
   }
 }

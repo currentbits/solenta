@@ -678,6 +678,13 @@ export interface ThreadInfo {
    */
   prMergeable?: "MERGEABLE" | "CONFLICTING" | "UNKNOWN" | null;
   /**
+   * PR watch-and-wake switch (#1493 D). null/absent = on, except threads
+   * made by checkoutPr (someone else's PR), which store false.
+   */
+  prWatch?: boolean | null;
+  /** Watch bookkeeping for the current PR; null until first seen. */
+  prWatchState?: PrWatchState | null;
+  /**
    * Verification gate (issue #296): a shell command the thread must pass
    * before a run may land "done". Null/empty = unarmed, runs settle on the
    * agent's word alone. Run in the thread's worktree (project root when the
@@ -1254,6 +1261,26 @@ export interface FileChange {
   status: string;
   additions: number;
   deletions: number;
+  /**
+   * Set when this file's patch is not in `DiffResult.patch` (#1493):
+   * `large` is over the per-file cap (offer "Show anyway"), `lazy` did not
+   * fit the list budget (fetch it when the file is opened).
+   */
+  patchOmitted?: "large" | "lazy";
+}
+
+/** Which changes the Git pane reviews (#1493). */
+export type DiffScope = "uncommitted" | "branch" | "turn";
+
+export interface DiffOptions {
+  /** Default `uncommitted`: the working tree vs HEAD. */
+  scope?: DiffScope;
+  /** `git diff -w`. */
+  ignoreWhitespace?: boolean;
+  /** Only this file's patch (`files` comes back empty). */
+  path?: string;
+  /** With `path`: lift the per-file cap ("Show anyway"). */
+  full?: boolean;
 }
 
 /** One mechanically-detected CI-workflow interpolation (issue #510). */
@@ -1296,9 +1323,12 @@ export interface ConflictContext {
 
 export interface DiffResult {
   files: FileChange[];
-  /** Unified diff text, truncated by main to ~100k chars. */
+  /** Whole-file patches up to ~100k chars; see FileChange.patchOmitted. */
   patch: string;
+  /** A single-file (`path`) patch was cut at its cap. */
   truncated: boolean;
+  /** What the scope compared, e.g. `Turn 3` or `since main (abc1234)`. */
+  scopeLabel?: string;
   /**
    * CI/workflow files in the working tree or the branch vs base (issue
    * #510). Null/absent when the change set does not touch a pipeline file.
@@ -2126,6 +2156,32 @@ export interface PrCheckInfo {
   bucket: PrCheckBucket;
   link?: string;
 }
+
+/**
+ * PR watch-and-wake state for one PR (electron/prWatch.js). `wakes` counts
+ * follow-up turns sent for this PR; at the cap the watch pauses until the
+ * user turns it off and on again.
+ */
+export interface PrWatchState {
+  pr: number;
+  wakes: number;
+  lastWakeAt: number | null;
+  /** "checks failed, merge conflict" — what the last wake-up was about. */
+  lastReason: string | null;
+  checks?: string;
+  review?: string;
+  conflict?: boolean;
+}
+
+/** Most watch wake-ups per PR; mirrors WAKE_CAP in electron/prWatch.js. */
+export const PR_WATCH_WAKE_CAP = 3;
+
+export type MergeMethod = "squash" | "merge" | "rebase";
+
+/** Merge methods the repo allows (`gh repo view`), in-band on failure. */
+export type MergeOptionsResult =
+  | { ok: true; methods: MergeMethod[]; defaultMethod: MergeMethod }
+  | { ok: false; reason: string };
 
 /** Per-thread prChecks result. Failures stay in-band so the UI can retry. */
 export type PrChecksResult =
@@ -4147,6 +4203,11 @@ export interface CoderApi {
       enabled: boolean | null;
     }): Promise<ThreadInfo>;
     /**
+     * Turn PR watch-and-wake on or off for a thread (#1493 D). Either way
+     * the wake count resets, so turning it back on re-arms a paused watch.
+     */
+    setPrWatch(input: { threadId: string; enabled: boolean }): Promise<ThreadInfo>;
+    /**
      * Set or clear the per-thread scratch pad. Trims, caps at
      * THREAD_NOTES_MAX, empty string clears. Never bumps updatedAt.
      */
@@ -4562,8 +4623,8 @@ export interface CoderApi {
     // See PrInfo below for the shape createPr/prStatus return.
     /** Creates a git worktree + branch for the thread; later runs execute in it. */
     setupWorktree(input: { threadId: string }): Promise<ThreadInfo>;
-    /** Working-tree changes in the thread's cwd (worktree if set, else project). */
-    diff(input: { threadId: string }): Promise<DiffResult>;
+    /** Changes in the thread's cwd (worktree if set, else project), by scope. */
+    diff(input: { threadId: string } & DiffOptions): Promise<DiffResult>;
     /**
      * Review itinerary extras (issue #421): author annotation file, code-index
      * symbols for the reuse scan, and hunk hashes already marked reviewed.
@@ -4601,6 +4662,12 @@ export interface CoderApi {
      * are no changes or the provider CLI is unavailable.
      */
     suggestCommitMessage(input: { threadId: string }): Promise<{ message: string }>;
+    /**
+     * Drafts a PR title and body from the branch's commits, diffstat vs
+     * base and the repo PR template, with the thread's provider in print
+     * mode. The result has passed the outbound secret scan. Never opens a PR.
+     */
+    suggestPrText(input: { threadId: string }): Promise<{ title: string; body: string }>;
     /**
      * Squash-merges the thread's worktree branch into the recorded base
      * (`ThreadInfo.baseBranch`) or the repo default (`origin/HEAD` → `main`)
@@ -4700,7 +4767,19 @@ export interface CoderApi {
        * pipeline file. Automations and the merge queue must not pass this.
        */
       ciWorkflowApproved?: boolean;
+      /** Default squash. */
+      method?: MergeMethod;
+      /** `gh pr merge --auto`: GitHub merges once required checks pass. */
+      auto?: boolean;
     }): Promise<PrInfo>;
+    /**
+     * Merge methods the repo allows and the one to preselect, for a
+     * thread's checkout or a project checkout (PR list view). Cached ~10
+     * minutes per checkout. Never rejects.
+     */
+    mergeOptions(
+      input: { threadId: string } | { projectPath: string },
+    ): Promise<MergeOptionsResult>;
     /**
      * Open PRs for a project checkout via `gh pr list`. Never rejects for
      * missing gh / non-GitHub remotes / auth: those come back as
@@ -4769,6 +4848,8 @@ export interface CoderApi {
     prMergeAt(input: {
       projectPath: string;
       prNumber: number;
+      method?: MergeMethod;
+      auto?: boolean;
     }): Promise<PrDetailResult>;
     /**
      * Checkpoints: after each successful turn that changed files, the runner

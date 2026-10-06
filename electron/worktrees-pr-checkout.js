@@ -389,6 +389,8 @@ async function checkoutPr(opts) {
     prUrl: pr.url,
     prState:
       pr.state === "MERGED" || pr.state === "CLOSED" ? pr.state : "OPEN",
+    // Someone else's PR: never wake this thread on its CI (#1493 D).
+    prWatch: false,
     pendingWorktree: false,
   });
   store.save();

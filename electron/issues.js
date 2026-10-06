@@ -674,6 +674,7 @@ async function createIssue(projectPath, input) {
 }
 
 module.exports = {
+  bannerUntrustedBody,
   parseIssueRef,
   parseTicketRef,
   parseLinearIssueRef,

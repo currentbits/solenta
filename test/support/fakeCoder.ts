@@ -43,6 +43,7 @@ import type {
   PrDetail,
   PrDetailResult,
   PrTemplateResult,
+  MergeOptionsResult,
   LocalServerInfo,
   McpImportPreview,
   McpInstallRequest,
@@ -2197,6 +2198,21 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
         threads = threads.map((t) => (t.id === i.threadId ? next : t));
         return Promise.resolve(next);
       },
+      setPrWatch: (input: unknown) => {
+        const i = input as { threadId: string; enabled: boolean };
+        calls.push({ channel: "threads.setPrWatch", args: [input] });
+        const existing = threads.find((t) => t.id === i.threadId);
+        if (!existing) {
+          return Promise.reject(new Error(`Unknown thread: ${i.threadId}`));
+        }
+        const next: ThreadInfo = {
+          ...existing,
+          prWatch: i.enabled,
+          prWatchState: null,
+        };
+        threads = threads.map((t) => (t.id === i.threadId ? next : t));
+        return Promise.resolve(next);
+      },
       /** Honest mute: flips the flag in place, never bumps updatedAt. */
       setMuted: (input: unknown) => {
         const i = input as { threadId: string; muted: boolean };
@@ -2982,6 +2998,17 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
         rec("git.suggestCommitMessage", [input], {
           message: "feat: suggested message",
         }),
+      suggestPrText: (input: unknown) =>
+        rec("git.suggestPrText", [input], {
+          title: "feat: generated title",
+          body: "## Summary\n\nGenerated body.",
+        }),
+      mergeOptions: (input: unknown) =>
+        rec("git.mergeOptions", [input], {
+          ok: true,
+          methods: ["squash", "merge", "rebase"],
+          defaultMethod: "squash",
+        } as MergeOptionsResult),
       mergeWorktree: (input: unknown) => rec("git.mergeWorktree", [input], thread()),
       integrateWorker: (input: unknown) =>
         rec("git.integrateWorker", [input], {

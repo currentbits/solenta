@@ -4,6 +4,7 @@
 
 const fs = require("node:fs");
 const path = require("node:path");
+const terminal = require("./terminal.js");
 
 const PERMISSION_MODES = new Set([
   "default",
@@ -83,6 +84,13 @@ function specCwd(store, thread) {
  */
 function purgeThread(store, threadId) {
   store.removeThread(threadId);
+  // #1183: every permanent removal (delete, trash expiry, project removal,
+  // retention) ends the thread's shells and drops their saved scrollback.
+  // The store lives in userData, next to terminals/.
+  terminal.purgeThread(
+    threadId,
+    store.filePath ? terminal.logDirIn(path.dirname(store.filePath)) : undefined,
+  );
 }
 
 module.exports = {

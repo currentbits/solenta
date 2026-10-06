@@ -802,6 +802,14 @@ app.whenReady().then(async () => {
     broadcast,
     intervalMs: 5 * 60 * 1000,
     startupDelayMs: 30_000,
+    // Watch-and-wake (#1493 D): wake-ups go through the notice queue, so
+    // they wait for a working thread and count as machine turns.
+    refreshOpts: {
+      prWatch: {
+        deliver: (input) => runner && runner.deliverNotice(input),
+        isRunning: (id) => Boolean(runner && runner.isRunning(id)),
+      },
+    },
   });
   prStateRefresher.start();
 

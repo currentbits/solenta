@@ -19,6 +19,7 @@ const {
   isUnknownJsonField,
   tailErr,
   assertNoOutboundSecrets,
+  mergeFlags,
 } = require("./worktrees.js");
 
 const TEMPLATE_MAX_BYTES = 100 * 1024;
@@ -520,23 +521,30 @@ async function readyPr(projectPath, input, opts) {
 }
 
 /**
- * Squash-merge a listed PR by number. Unlike thread-scoped mergePr this does
+ * Merge a listed PR by number (squash unless input.method says otherwise;
+ * `--auto` when input.auto). Unlike thread-scoped mergePr this does
  * not update-from-base or run the local CI-workflow gate: the checkout may
  * not contain the PR branch.
  *
  * @param {string} projectPath
- * @param {{ prNumber: unknown }} input
+ * @param {{ prNumber: unknown, method?: unknown, auto?: unknown }} input
  * @param {{ store?: object, broadcast?: Function }} [opts]
  */
 async function mergePrAt(projectPath, input, opts) {
   const number = parsePrNumber(input && input.prNumber);
   if (number == null) return { ok: false, reason: "invalid PR number" };
+  let flags;
+  try {
+    flags = mergeFlags(input);
+  } catch (err) {
+    return { ok: false, reason: String(err && err.message) };
+  }
   const repo = await requireGitHubRepo(projectPath);
   if (!repo.ok) return repo;
 
   const merged = await ghTryAsync(
     repo.cwd,
-    ["pr", "merge", String(number), "--squash"],
+    ["pr", "merge", String(number), ...flags],
     GH_USER,
   );
   if (!merged.ok) {

@@ -4,6 +4,8 @@ import type {
   CoderApi,
   DiffResult,
   GitSyncInfo,
+  MergeMethod,
+  MergeOptionsResult,
   PrChecksResult,
   PrInfo,
   PrTemplateResult,
@@ -27,6 +29,23 @@ const PUSH_FLASH_MS = 3000;
 const CHECKS_POLL_MS = 8000;
 
 const NO_LINE_TOTALS = { added: 0, removed: 0 };
+
+const MERGE_METHOD_LABEL: Record<MergeMethod, string> = {
+  squash: "Squash",
+  merge: "Merge commit",
+  rebase: "Rebase",
+};
+
+type PrMergeOpts = {
+  ciWorkflowApproved?: boolean;
+  method?: MergeMethod;
+  auto?: boolean;
+};
+
+function coderGit(): CoderApi["git"] | undefined {
+  if (typeof window === "undefined") return undefined;
+  return (window as unknown as { coder?: CoderApi }).coder?.git;
+}
 
 /** Sum of per-file +/− lines for the header commit button (#1429). */
 export function diffLineTotals(
@@ -82,7 +101,7 @@ export function NextGitActionButton({
   loadPrTemplate?: () => Promise<PrTemplateResult>;
   onPrChecks?: () => Promise<PrChecksResult>;
   onPrStatus?: () => Promise<PrInfo | null>;
-  onPrMerge?: (opts?: { ciWorkflowApproved?: boolean }) => Promise<PrInfo>;
+  onPrMerge?: (opts?: PrMergeOpts) => Promise<PrInfo>;
   onStartRun: (prompt: string) => void | Promise<void>;
   providerName: string;
   onPushed: () => void;
@@ -107,6 +126,10 @@ export function NextGitActionButton({
   const [ciSignOff, setCiSignOff] = useState(false);
   const [composerOpen, setComposerOpen] = useState(false);
   const [composerError, setComposerError] = useState<string | null>(null);
+  const [mergeOpts, setMergeOpts] = useState<MergeOptionsResult | null>(null);
+  const [method, setMethod] = useState<MergeMethod | null>(null);
+  /** The CI sign-off bar is confirming an auto-merge, not a merge now. */
+  const signOffAuto = useRef(false);
   const lastSubmit = useRef({ title: thread.title, body: "", draft: false });
   const [github, setGithub] = useState<{
     ready: boolean;
@@ -149,8 +172,36 @@ export function NextGitActionButton({
     setCiSignOff(false);
     setComposerOpen(false);
     setComposerError(null);
+    setMethod(null);
+    signOffAuto.current = false;
     lastSubmit.current = { title: thread.title, body: "", draft: false };
   }, [thread.id]);
+
+  // Repo-allowed merge methods (cached main-side), once per open PR.
+  const hasMerge = Boolean(onPrMerge);
+  const openPr =
+    thread.prNumber != null &&
+    thread.prState !== "MERGED" &&
+    thread.prState !== "CLOSED";
+  useEffect(() => {
+    setMergeOpts(null);
+    const load = coderGit()?.mergeOptions;
+    if (!hasMerge || !openPr || remoteProject || typeof load !== "function") {
+      return;
+    }
+    let live = true;
+    load({ threadId: thread.id })
+      .then((result) => {
+        if (live) setMergeOpts(result);
+      })
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, [thread.id, hasMerge, openPr, remoteProject]);
+  const mergeMethods = mergeOpts?.ok ? mergeOpts.methods : null;
+  const chosenMethod: MergeMethod | undefined =
+    method ?? (mergeOpts?.ok ? mergeOpts.defaultMethod : undefined);
 
   const loadGit = useCallback(async () => {
     const id = thread.id;
@@ -339,17 +390,19 @@ export function NextGitActionButton({
     if (action.kind === "merge") {
       if (!onPrMerge) return;
       if (blastRadius) {
+        signOffAuto.current = false;
         setCiSignOff(true);
         return;
       }
       setPending(true);
       try {
-        await onPrMerge();
+        await onPrMerge({ method: chosenMethod });
         await loadGit();
         await loadChecks();
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         if (isCiWorkflowBlockMessage(msg)) {
+          signOffAuto.current = false;
           setCiSignOff(true);
         } else {
           void loadForge(true);
@@ -360,12 +413,48 @@ export function NextGitActionButton({
     }
   };
 
+  /** `gh pr merge --auto`: GitHub merges once required checks pass. */
+  const enableAutoMerge = async () => {
+    if (!onPrMerge || pending || isWorking) return;
+    if (blastRadius) {
+      signOffAuto.current = true;
+      setCiSignOff(true);
+      return;
+    }
+    setPending(true);
+    try {
+      await onPrMerge({ method: chosenMethod, auto: true });
+      showFlash("Auto-merge on");
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (isCiWorkflowBlockMessage(msg)) {
+        signOffAuto.current = true;
+        setCiSignOff(true);
+      } else {
+        void loadForge(true);
+      }
+    } finally {
+      setPending(false);
+    }
+  };
+
+  const showFlash = (text: string) => {
+    if (flashTimer.current != null) clearTimeout(flashTimer.current);
+    setFlash(text);
+    flashTimer.current = setTimeout(() => {
+      setFlash(null);
+      flashTimer.current = null;
+    }, PUSH_FLASH_MS);
+  };
+
   const approveCiAndMerge = async () => {
     if (!onPrMerge || pending || isWorking) return;
     setPending(true);
     try {
-      await onPrMerge({ ciWorkflowApproved: true });
+      const auto = signOffAuto.current;
+      await onPrMerge({ ciWorkflowApproved: true, method: chosenMethod, auto });
       setCiSignOff(false);
+      if (auto) showFlash("Auto-merge on");
       await loadGit();
       await loadChecks();
     } catch {
@@ -419,6 +508,11 @@ export function NextGitActionButton({
     <CreatePrDialog
       initialTitle={thread.title}
       loadTemplate={loadPrTemplate}
+      onGenerate={
+        typeof coderGit()?.suggestPrText === "function"
+          ? () => coderGit()!.suggestPrText({ threadId: thread.id })
+          : undefined
+      }
       pending={pending}
       error={composerError}
       oversize={oversizeMsg != null}
@@ -465,9 +559,81 @@ export function NextGitActionButton({
     .join(" ");
   const dataCreatePr = action.kind === "create-pr" ? "" : undefined;
   const href = action.href;
+  const baseTitle =
+    action.kind === "merge" && chosenMethod && chosenMethod !== "squash"
+      ? action.title.replace(
+          /Squash-merge(?= this pull request)|squash-merge$/,
+          chosenMethod === "rebase" ? "Rebase-merge" : "Merge",
+        )
+      : action.title;
   const actionTitle = blastRadius
-    ? `${action.title} · ${blastRadiusTitle(blastRadius)}`
-    : action.title;
+    ? `${baseTitle} · ${blastRadiusTitle(blastRadius)}`
+    : baseTitle;
+
+  const mergeLike = action.kind === "merge" || action.kind === "watch-checks";
+  const methodPicker =
+    mergeLike && onPrMerge && mergeMethods && mergeMethods.length > 1 ? (
+      <select
+        className={styles.mergeMethod}
+        data-merge-method=""
+        aria-label="Merge method"
+        value={chosenMethod}
+        disabled={isWorking || pending}
+        onChange={(event) => setMethod(event.target.value as MergeMethod)}
+      >
+        {mergeMethods.map((m) => (
+          <option key={m} value={m}>
+            {MERGE_METHOD_LABEL[m]}
+          </option>
+        ))}
+      </select>
+    ) : null;
+  // Checks still running: offer to let GitHub merge once they pass.
+  const autoMergeButton =
+    action.kind === "watch-checks" && onPrMerge && checks?.ok ? (
+      <button
+        type="button"
+        className={styles.btn}
+        data-auto-merge=""
+        disabled={isWorking || pending}
+        title="Merge automatically once required checks pass (gh pr merge --auto)"
+        onClick={() => void enableAutoMerge()}
+      >
+        Auto-merge
+      </button>
+    ) : null;
+
+  const ciSignOffBar = ciSignOff ? (
+    <span
+      className={styles.oversizeBar}
+      data-ci-signoff=""
+      role="alertdialog"
+    >
+      <span className={styles.oversizeText}>
+        {blastRadius
+          ? blastRadiusTitle(blastRadius)
+          : "This PR changes CI workflow files. Privilege-escalation — a human must sign off."}
+      </span>
+      <button
+        type="button"
+        className={styles.oversizeBtn}
+        data-ci-signoff-approve=""
+        disabled={isWorking || pending}
+        onClick={() => void approveCiAndMerge()}
+      >
+        {signOffAuto.current ? "Sign off & auto-merge" : "Sign off & merge"}
+      </button>
+      <button
+        type="button"
+        className={styles.oversizeDismiss}
+        data-ci-signoff-cancel=""
+        aria-label="Cancel"
+        onClick={() => setCiSignOff(false)}
+      >
+        ×
+      </button>
+    </span>
+  ) : null;
 
   const moreButton = onMore ? (
       <button
@@ -530,7 +696,10 @@ export function NextGitActionButton({
         {pending && <span className={styles.pushSpinner} aria-hidden />}
         {label}
       </a>
+      {methodPicker}
+      {autoMergeButton}
       {moreButton}
+      {ciSignOffBar}
       </>
     );
   }
@@ -546,6 +715,7 @@ export function NextGitActionButton({
           {blastRadiusLabel(blastRadius)}
         </span>
       ) : null}
+      {action.kind === "merge" ? methodPicker : null}
       <button
         type="button"
         className={className}
@@ -572,38 +742,10 @@ export function NextGitActionButton({
           </span>
         ) : null}
       </button>
+      {action.kind === "watch-checks" ? methodPicker : null}
+      {autoMergeButton}
       {moreButton}
-      {ciSignOff ? (
-        <span
-          className={styles.oversizeBar}
-          data-ci-signoff=""
-          role="alertdialog"
-        >
-          <span className={styles.oversizeText}>
-            {blastRadius
-              ? blastRadiusTitle(blastRadius)
-              : "This PR changes CI workflow files. Privilege-escalation — a human must sign off."}
-          </span>
-          <button
-            type="button"
-            className={styles.oversizeBtn}
-            data-ci-signoff-approve=""
-            disabled={disabled}
-            onClick={() => void approveCiAndMerge()}
-          >
-            Sign off & merge
-          </button>
-          <button
-            type="button"
-            className={styles.oversizeDismiss}
-            data-ci-signoff-cancel=""
-            aria-label="Cancel"
-            onClick={() => setCiSignOff(false)}
-          >
-            ×
-          </button>
-        </span>
-      ) : null}
+      {ciSignOffBar}
       {oversizeMsg && !composerOpen ? (
         <span
           className={styles.oversizeBar}

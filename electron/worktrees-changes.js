@@ -32,13 +32,30 @@ function isNoHeadError(err) {
   return /ambiguous argument 'HEAD'|bad revision|unknown revision/i.test(msg);
 }
 
+/** Review scopes for the Git pane (#1493). */
+const DIFF_SCOPES = new Set(["uncommitted", "branch", "turn"]);
+
+/** One file's patch above this ships only on "Show anyway" (#1493). */
+const FILE_PATCH_CAP = 60_000;
+/** Ceiling for "Show anyway", so one generated file cannot wedge the renderer. */
+const FILE_PATCH_MAX = 1_000_000;
+
 /**
- * Working-tree changes in the thread's cwd (worktree if set, else project).
+ * Changes in the thread's cwd (worktree if set, else project).
+ *
+ * `scope` picks the range: uncommitted (working tree vs HEAD, default),
+ * branch (merge-base with the thread's base to the working tree) or turn
+ * (the newest checkpoint's turn). With `path` only that file's patch is
+ * returned, capped at FILE_PATCH_CAP unless `full`.
  *
  * @param {object} opts
  * @param {import('./store').Store} opts.store
  * @param {string} opts.threadId
- * @returns {Promise<{ files: Array<{path: string, status: string, additions: number, deletions: number}>, patch: string, truncated: boolean }>}
+ * @param {string} [opts.scope]
+ * @param {boolean} [opts.ignoreWhitespace]
+ * @param {string} [opts.path]
+ * @param {boolean} [opts.full]
+ * @returns {Promise<{ files: Array<{path: string, status: string, additions: number, deletions: number, patchOmitted?: string}>, patch: string, truncated: boolean, scopeLabel?: string }>}
  */
 async function diff(opts) {
   const { store, threadId } = opts;
@@ -55,33 +72,147 @@ async function diff(opts) {
     ? project.remotePath || project.path
     : thread.worktreePath || project.path;
 
+  const view = {
+    scope: DIFF_SCOPES.has(String(opts.scope)) ? String(opts.scope) : "uncommitted",
+    ignoreWhitespace: opts.ignoreWhitespace === true,
+    path: opts.path ? String(opts.path) : "",
+    full: opts.full === true,
+  };
   const key = path.resolve(String(cwd || ""));
-  return cachedRead(diffByCwd, key, GIT_READ_TTL_MS, () =>
-    diffOnce(project, cwd),
+  const plain = view.scope === "uncommitted" && !view.ignoreWhitespace && !view.path;
+  // Only the default view is TTL-cached: invalidateGitReads clears it by cwd.
+  // Other views still coalesce concurrent calls but never serve stale reads.
+  return cachedRead(
+    diffByCwd,
+    plain ? key : `${key}\0${view.scope}\0${view.ignoreWhitespace}\0${view.path}\0${view.full}`,
+    plain ? GIT_READ_TTL_MS : 0,
+    () => diffOnce(store, thread, project, cwd, view),
   );
 }
 
 /**
- * Uncached working-tree diff. `diff()` coalesces this per cwd (#688).
+ * `git diff` revision args for a scope, or null when the scope has nothing
+ * to show yet (no checkpoint).
+ * @returns {Promise<{ range: string[], label: string } | null>}
+ */
+async function scopeRange(store, thread, project, cwd, scope) {
+  if (scope === "turn") {
+    // Lazy: worktrees-checkpoints requires this module.
+    const { latestTurnRange } = require("./worktrees-checkpoints.js");
+    const turn = project.remoteHost ? null : await latestTurnRange({ store, threadId: thread.id });
+    return turn ? { range: [turn.from, turn.to], label: `Turn ${turn.turn}` } : null;
+  }
+  if (scope === "branch") {
+    const base = thread.baseBranch
+      || (project.remoteHost ? "origin/HEAD" : await defaultBranchAsync(project.path));
+    for (const ref of diffBaseCandidates(base)) {
+      try {
+        const sha = await gitOutForDiffAsync(project, cwd, ["merge-base", ref, "HEAD"]);
+        if (sha) return { range: [sha], label: `since ${base} (${sha.slice(0, 7)})` };
+      } catch {
+        // try the next candidate
+      }
+    }
+    throw new Error(`No merge base with ${base}`);
+  }
+  return { range: ["HEAD"], label: "" };
+}
+
+/** Path a `diff --git` chunk belongs to (mirrors src/reviewItinerary.ts pathFromPatch). */
+function chunkPath(chunk) {
+  const plus = chunk.match(/^\+\+\+ [ab]\/(.+)$/m);
+  if (plus && plus[1] && plus[1] !== "/dev/null") return plus[1].trim();
+  const git = chunk.match(/^diff --git a\/(.+?) b\/(.+)$/m);
+  if (git) return (git[2] || git[1] || "").trim();
+  return "";
+}
+
+/**
+ * Keep whole-file patches up to PATCH_TRUNCATE total. Files over
+ * FILE_PATCH_CAP are "large" (Show anyway); files past the budget are
+ * "lazy" (fetched when opened). Nothing is cut mid-file.
+ * @param {string} patch
+ * @returns {{ patch: string, omitted: Map<string, string> }}
+ */
+function budgetPatch(patch) {
+  const omitted = new Map();
+  if (patch.length <= PATCH_TRUNCATE) return { patch, omitted };
+  const kept = [];
+  let used = 0;
+  for (const chunk of patch.split(/(?=^diff --git )/m)) {
+    const file = chunkPath(chunk);
+    if (chunk.length > FILE_PATCH_CAP) omitted.set(file, "large");
+    else if (used + chunk.length > PATCH_TRUNCATE) omitted.set(file, "lazy");
+    else {
+      kept.push(chunk);
+      used += chunk.length;
+    }
+  }
+  return { patch: kept.join(""), omitted };
+}
+
+/**
+ * Uncached diff. `diff()` coalesces this per cwd and view (#688).
+ * @param {import('./store').Store} store
+ * @param {object} thread
  * @param {object} project
  * @param {string} cwd
+ * @param {{ scope: string, ignoreWhitespace: boolean, path: string, full: boolean }} view
  */
-async function diffOnce(project, cwd) {
-  /** @type {Map<string, { path: string, status: string, additions: number, deletions: number }>} */
+async function diffOnce(store, thread, project, cwd, view) {
+  const { scope } = view;
+  const resolved = await scopeRange(store, thread, project, cwd, scope);
+  if (!resolved) {
+    return { files: [], patch: "", truncated: false, scopeLabel: "" };
+  }
+  const { range, label } = resolved;
+  // Committed scopes skip rename pairing so numstat, name-status and the
+  // patch all key a file by the same path.
+  const flags = [
+    ...(view.ignoreWhitespace ? ["-w"] : []),
+    ...(scope === "uncommitted" ? [] : ["--no-renames"]),
+  ];
+  /** @param {string[]} args @param {string} what */
+  const gitDiff = async (args, what) => {
+    try {
+      return await gitOutForDiffAsync(project, cwd, ["diff", ...flags, ...range, ...args]);
+    } catch (err) {
+      if (!isNoHeadError(err)) {
+        throw new Error(`git diff${what} failed: ${String(err.message || err).split("\n")[0]}`);
+      }
+      return "";
+    }
+  };
+
+  if (view.path) {
+    const rel = assertRelPathInCwd(path.resolve(String(cwd || "")), view.path);
+    const one = await gitDiff(["--", `:(literal)${rel}`], "");
+    const cap = view.full ? FILE_PATCH_MAX : FILE_PATCH_CAP;
+    return {
+      files: [],
+      patch: one.length > cap ? one.slice(0, cap) : one,
+      truncated: one.length > cap,
+      scopeLabel: label,
+    };
+  }
+
+  /** @type {Map<string, { path: string, status: string, additions: number, deletions: number, patchOmitted?: string }>} */
   const byPath = new Map();
 
-  // Porcelain status for all entries; -uall lists untracked files
-  // individually instead of collapsing whole directories into "?? dir/".
-  // raw: the 2-char XY column starts with a significant space.
-  const porcelain = await gitOutForDiffAsync(project, cwd, ["status", "--porcelain", "-uall"], {
-    raw: true,
-  });
+  if (scope !== "turn") {
+    // Porcelain status for all entries; -uall lists untracked files
+    // individually instead of collapsing whole directories into "?? dir/".
+    // raw: the 2-char XY column starts with a significant space.
+    const porcelain = await gitOutForDiffAsync(project, cwd, ["status", "--porcelain", "-uall"], {
+      raw: true,
+    });
 
-  if (porcelain) {
-    for (const line of porcelain.split("\n")) {
+    for (const line of String(porcelain || "").split("\n")) {
       if (!line) continue;
       // XY PATH or XY ORIG -> PATH for renames
       const status = line.slice(0, 2).trim() || line.slice(0, 1);
+      // Branch scope takes tracked letters from name-status below.
+      if (scope === "branch" && status !== "??") continue;
       let filePath = line.slice(3);
       if (filePath.includes(" -> ")) {
         filePath = filePath.split(" -> ").pop() || filePath;
@@ -100,38 +231,42 @@ async function diffOnce(project, cwd) {
     }
   }
 
-  // numstat for tracked diffs vs HEAD
-  let numstat = "";
-  try {
-    numstat = await gitOutForDiffAsync(project, cwd, ["diff", "HEAD", "--numstat"]);
-  } catch (err) {
-    if (!isNoHeadError(err)) {
-      throw new Error(`git diff --numstat failed: ${String(err.message || err).split("\n")[0]}`);
-    }
-    numstat = "";
-  }
-  if (numstat) {
-    for (const line of numstat.split("\n")) {
-      if (!line) continue;
+  if (scope !== "uncommitted") {
+    const nameStatus = await gitDiff(["--name-status"], " --name-status");
+    for (const line of nameStatus.split("\n")) {
       const parts = line.split("\t");
-      if (parts.length < 3) continue;
-      const addStr = parts[0];
-      const delStr = parts[1];
-      const filePath = parts.slice(2).join("\t");
-      const additions = addStr === "-" ? 0 : parseInt(addStr, 10) || 0;
-      const deletions = delStr === "-" ? 0 : parseInt(delStr, 10) || 0;
-      const existing = byPath.get(filePath);
-      if (existing) {
-        existing.additions = additions;
-        existing.deletions = deletions;
-      } else {
-        byPath.set(filePath, {
-          path: filePath,
-          status: "M",
-          additions,
-          deletions,
-        });
-      }
+      if (parts.length < 2) continue;
+      const filePath = parts[parts.length - 1].replace(/^"|"$/g, "");
+      byPath.set(filePath, {
+        path: filePath,
+        status: (parts[0].trim().charAt(0) || "M").toUpperCase(),
+        additions: 0,
+        deletions: 0,
+      });
+    }
+  }
+
+  const numstat = await gitDiff(["--numstat"], " --numstat");
+  for (const line of numstat.split("\n")) {
+    if (!line) continue;
+    const parts = line.split("\t");
+    if (parts.length < 3) continue;
+    const addStr = parts[0];
+    const delStr = parts[1];
+    const filePath = parts.slice(2).join("\t");
+    const additions = addStr === "-" ? 0 : parseInt(addStr, 10) || 0;
+    const deletions = delStr === "-" ? 0 : parseInt(delStr, 10) || 0;
+    const existing = byPath.get(filePath);
+    if (existing) {
+      existing.additions = additions;
+      existing.deletions = deletions;
+    } else {
+      byPath.set(filePath, {
+        path: filePath,
+        status: "M",
+        additions,
+        deletions,
+      });
     }
   }
 
@@ -142,15 +277,12 @@ async function diffOnce(project, cwd) {
         continue;
       }
       try {
-        const full = path.join(cwd, entry.path);
-        const text = fs.readFileSync(full, "utf8");
+        const text = fs.readFileSync(path.join(cwd, entry.path), "utf8");
+        // "a\nb\n" splits into 3 parts with a trailing empty: count 2.
         entry.additions = text.length === 0 ? 0 : text.split(/\r?\n/).length;
-        // If file ends with newline, split overcounts by 1 trailing empty — keep simple line count
         if (text.endsWith("\n") && entry.additions > 0) {
           entry.additions -= 1;
         }
-        // Actually for "line1\nline2\nline3\n" split gives 4 parts with trailing empty → 3 after adjust. Good.
-        // For "line1\nline2\nline3" (no trailing nl) split gives 3 → no adjust needed... endsWith false → 3. Good.
         entry.deletions = 0;
       } catch {
         entry.additions = 0;
@@ -159,24 +291,16 @@ async function diffOnce(project, cwd) {
     }
   }
 
-  let patch = "";
-  try {
-    patch = await gitOutForDiffAsync(project, cwd, ["diff", "HEAD"]);
-  } catch (err) {
-    if (!isNoHeadError(err)) {
-      throw new Error(`git diff failed: ${String(err.message || err).split("\n")[0]}`);
-    }
-    patch = "";
-  }
-
-  let truncated = false;
-  if (patch.length > PATCH_TRUNCATE) {
-    patch = patch.slice(0, PATCH_TRUNCATE);
-    truncated = true;
+  const rawPatch = await gitDiff([], "");
+  const budgeted = budgetPatch(rawPatch);
+  const patch = budgeted.patch;
+  for (const [file, why] of budgeted.omitted) {
+    const entry = byPath.get(file);
+    if (entry) entry.patchOmitted = why;
   }
 
   const extra = [];
-  let lintPatch = patch;
+  let lintPatch = rawPatch;
   if (!project.remoteHost) {
     try {
       const base = await defaultBranchAsync(project.path);
@@ -201,7 +325,7 @@ async function diffOnce(project, cwd) {
             ...committedCi,
           ]);
           if (vsPatch.ok && vsPatch.stdout) {
-            lintPatch = `${patch}\n${vsPatch.stdout}`;
+            lintPatch = `${rawPatch}\n${vsPatch.stdout}`;
           }
         }
       }
@@ -213,7 +337,8 @@ async function diffOnce(project, cwd) {
   return {
     files: [...byPath.values()],
     patch,
-    truncated,
+    truncated: false,
+    scopeLabel: label,
     blastRadius: blastRadiusFor(
       [...byPath.keys(), ...extra],
       lintPatch,

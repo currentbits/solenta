@@ -1,4 +1,5 @@
 import {
+  Suspense,
   useCallback,
   useEffect,
   useRef,
@@ -428,7 +429,8 @@ function Leaf({
             iOS Simulator is available in the desktop app.
           </div>
         ) : (
-          renderPane(leaf)
+          // Lazy panes (ThreadView) suspend here, not the whole thread view.
+          <Suspense fallback={null}>{renderPane(leaf)}</Suspense>
         )}
       </div>
     </section>

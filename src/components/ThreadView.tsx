@@ -2,6 +2,7 @@ import {
   Fragment,
   memo,
   startTransition,
+  Suspense,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -14,9 +15,7 @@ import {
   PaneWorkspace,
   ViewsMenu,
 } from "./PaneWorkspace";
-import { TerminalPane, type TerminalApi } from "./TerminalPane";
-import { BrowserPane } from "./BrowserPane";
-import { SimulatorPane } from "./SimulatorPane";
+import type { TerminalApi } from "./TerminalPane";
 import { useWorktreeChrome } from "./WorktreeControl";
 import { WorkspaceStrip } from "./WorkspaceStrip";
 import { ProjectIcon } from "./ProjectIcon";
@@ -36,6 +35,7 @@ import type {
   DiffResult,
   GitSyncInfo,
   PrChecksResult,
+  MergeMethod,
   PrInfo,
   PrTemplateResult,
   PermissionDecision,
@@ -81,10 +81,7 @@ import { QuestionPrompt } from "./QuestionPrompt";
 import { InputPrompt } from "./InputPrompt";
 import { formatQuestionAnswer } from "../questionAnswer";
 import { supportsImagesForModel } from "../modelPicker";
-import {
-  TurnDiffPanel,
-  type DiffViewMode,
-} from "./TurnDiffPanel";
+import type { DiffViewMode } from "./TurnDiffPanel";
 import {
   FIRST_PAINT_CHAR_BUDGET,
   TRANSCRIPT_WINDOW,
@@ -116,7 +113,12 @@ import {
   TRANSCRIPT_VIEW_LABELS,
   TRANSCRIPT_VIEW_MODES,
 } from "../focusView";
-import { setTranscriptViewMode, useTranscriptViewMode } from "../uiPrefs";
+import {
+  setDiffSplit,
+  setTranscriptViewMode,
+  useDiffSplit,
+  useTranscriptViewMode,
+} from "../uiPrefs";
 import { DROP_OVERLAY_MESSAGE, type DroppedFolder } from "../dropFiles";
 import { Composer } from "./Composer";
 import { repoRelativeDir } from "../mention";
@@ -161,7 +163,6 @@ import {
   FeltEstimateCard,
   DivergenceCard,
 } from "./thread/cards";
-import { ChangesPanel } from "./thread/ChangesPanel";
 import { setReviewComments } from "../composerSession";
 import { useRetryAnchors } from "./thread/useRetryAnchors";
 import { useTranscriptAnnotations } from "./thread/useTranscriptAnnotations";
@@ -173,6 +174,45 @@ import { usePaneLayoutActions } from "./thread/usePaneLayoutActions";
 import { useAppSnap } from "./thread/useAppSnap";
 import { useStickToBottom } from "./thread/useStickToBottom";
 import styles from "./ThreadView.module.css";
+import { lazyNamed } from "../lazyNamed";
+
+// Panes that are closed by default load on first use, keeping their code out
+// of the cold-start chunk (#1501 G4). Each is warmed on idle after the thread
+// view mounts, so the first open renders without a blank frame.
+const ChangesPanel = lazyNamed(() =>
+  import("./thread/ChangesPanel").then((m) => m.ChangesPanel),
+);
+const TurnDiffPanel = lazyNamed(() =>
+  import("./TurnDiffPanel").then((m) => m.TurnDiffPanel),
+);
+const TerminalPane = lazyNamed(() =>
+  import("./TerminalPane").then((m) => m.TerminalPane),
+);
+const BrowserPane = lazyNamed(() =>
+  import("./BrowserPane").then((m) => m.BrowserPane),
+);
+const SimulatorPane = lazyNamed(() =>
+  import("./SimulatorPane").then((m) => m.SimulatorPane),
+);
+const LAZY_PANES = [
+  ChangesPanel,
+  TurnDiffPanel,
+  TerminalPane,
+  BrowserPane,
+  SimulatorPane,
+];
+
+function preloadPanesWhenIdle(): () => void {
+  const preload = () => {
+    for (const pane of LAZY_PANES) void pane.preload().catch(() => {});
+  };
+  if (typeof window.requestIdleCallback === "function") {
+    const id = window.requestIdleCallback(preload, { timeout: 3000 });
+    return () => window.cancelIdleCallback(id);
+  }
+  const id = window.setTimeout(preload, 500);
+  return () => window.clearTimeout(id);
+}
 
 const EMPTY_COMPARE_PEERS: ComparePeer[] = [];
 
@@ -474,7 +514,11 @@ interface ThreadViewProps {
   /** Look up the branch's PR on GitHub and record it on the thread. */
   onPrStatus?: () => Promise<PrInfo | null>;
   /** Squash-merge the current OPEN PR. Pass ciWorkflowApproved after sign-off. */
-  onPrMerge?: (opts?: { ciWorkflowApproved?: boolean }) => Promise<PrInfo>;
+  onPrMerge?: (opts?: {
+    ciWorkflowApproved?: boolean;
+    method?: MergeMethod;
+    auto?: boolean;
+  }) => Promise<PrInfo>;
   /** Upstream state for the header sync pill; absent hides the pill. */
   gitSyncInfo?: (threadId: string) => Promise<GitSyncInfo>;
   /** Fetch remotes before the sync pill re-reads state. */
@@ -757,6 +801,7 @@ export const ThreadView = memo(function ThreadView({
   loadProviderLimits,
   quotaDemo = false,
 }: ThreadViewProps) {
+  useEffect(preloadPanesWhenIdle, []);
   const bodyRef = useRef<HTMLDivElement>(null);
   const dropHostRef = useRef<HTMLElement>(null);
   const [fileDrag, setFileDrag] = useState(false);
@@ -837,7 +882,8 @@ export const ThreadView = memo(function ThreadView({
   const [handoffBannerDismissed, setHandoffBannerDismissed] = useState(false);
   const [runStatList, setRunStatList] = useState<RunStatInfo[]>([]);
   const [openTurnSha, setOpenTurnSha] = useState<string | null>(null);
-  const [turnDiffMode, setTurnDiffMode] = useState<DiffViewMode>("unified");
+  // One split/unified choice for the turn panel and the Git pane (#1493).
+  const turnDiffMode: DiffViewMode = useDiffSplit() ? "split" : "unified";
   const openThreadId = detail?.thread.id ?? null;
   useEffect(() => {
     setOpenTurnSha(null);
@@ -3718,14 +3764,16 @@ export const ThreadView = memo(function ThreadView({
                           }}
                         />
                         {openTurnSha === bar.sha && onFetchTurnDiff ? (
-                          <TurnDiffPanel
-                            threadId={detail.thread.id}
-                            sha={bar.sha}
-                            turn={bar.turn}
-                            mode={turnDiffMode}
-                            onModeChange={setTurnDiffMode}
-                            onFetch={onFetchTurnDiff}
-                          />
+                          <Suspense fallback={null}>
+                            <TurnDiffPanel
+                              threadId={detail.thread.id}
+                              sha={bar.sha}
+                              turn={bar.turn}
+                              mode={turnDiffMode}
+                              onModeChange={(m) => setDiffSplit(m === "split")}
+                              onFetch={onFetchTurnDiff}
+                            />
+                          </Suspense>
                         ) : null}
                       </>
                     )}

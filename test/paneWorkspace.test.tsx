@@ -6,7 +6,8 @@
  */
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { useState } from "react";
+import { Suspense, useState } from "react";
+import { lazyNamed } from "../src/lazyNamed";
 import { inAct, mount } from "./support/dom.ts";
 import { PaneWorkspace } from "../src/components/PaneWorkspace";
 import {
@@ -33,6 +34,40 @@ function Harness({ initial }: { initial: LayoutNode }) {
 }
 
 describe("PaneWorkspace (issue #552)", () => {
+  it("keeps the chat pane visible while a lazy pane's chunk loads (#1501 G4)", async () => {
+    const split = openPane(defaultPaneLayout(), "diff", "pane-1").layout;
+    // App wraps ThreadView in a fallback={null} boundary; a pane that
+    // suspends past PaneWorkspace would blank the whole thread view.
+    const view = (Diff: ReturnType<typeof lazyNamed<object>> | null) => (
+      <Suspense fallback={<u>outer fallback</u>}>
+        <PaneWorkspace
+          layout={split}
+          focusedId={firstLeafId(split)}
+          onChange={() => {}}
+          onFocus={() => {}}
+          renderPane={(leaf) =>
+            leaf.type === "diff" && Diff ? <Diff /> : <i>{leaf.type}</i>
+          }
+        />
+      </Suspense>
+    );
+    const m = await mount(view(null));
+    let resolve!: (c: () => React.ReactElement) => void;
+    // Registered after mount() preloaded, so this one really suspends.
+    const Diff = lazyNamed<object>(() => new Promise((r) => (resolve = r)));
+    try {
+      await m.rerender(view(Diff));
+      assert.equal(m.query("u"), null, "outer boundary must not take over");
+      assert.equal(m.queryAll("[data-pane-leaf]").length, 2);
+      assert.equal(m.query("[data-pane-type='chat'] i")?.textContent, "chat");
+      await inAct(async () => resolve(() => <b>diff ready</b>));
+      await m.flush();
+      assert.equal(m.query("[data-pane-type='diff'] b")?.textContent, "diff ready");
+    } finally {
+      m.unmount();
+    }
+  });
+
   it("renders a lone chat leaf without a pane header", async () => {
     const m = await mount(<Harness initial={defaultPaneLayout()} />);
     assert.ok(m.query("[data-pane-workspace]"), "workspace root");
