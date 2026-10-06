@@ -14,6 +14,8 @@ type ArchiveToastProps =
       onUndo: () => void;
       /** Dismiss without undoing (timeout or explicit close). */
       onDismiss: () => void;
+      /** Undo window; defaults to ARCHIVE_TOAST_MS. */
+      durationMs?: number;
     }
   | {
       /** Error surface (e.g. failed projects.remove). */
@@ -30,12 +32,14 @@ type ArchiveToastProps =
  */
 export function ArchiveToast(props: ArchiveToastProps) {
   const { onDismiss } = props;
+  const durationMs =
+    (props.variant !== "error" && props.durationMs) || ARCHIVE_TOAST_MS;
   useEffect(() => {
     const handle = window.setTimeout(() => {
       onDismiss();
-    }, ARCHIVE_TOAST_MS);
+    }, durationMs);
     return () => window.clearTimeout(handle);
-  }, [onDismiss]);
+  }, [onDismiss, durationMs]);
 
   if (props.variant === "error") {
     return (

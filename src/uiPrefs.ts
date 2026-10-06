@@ -228,6 +228,56 @@ const diffIgnoreWs = makeFlagPref("coder.diffIgnoreWhitespace", false);
 export const setDiffIgnoreWhitespace = diffIgnoreWs.set;
 export const useDiffIgnoreWhitespace = diffIgnoreWs.use;
 
+/**
+ * User keybinding overrides (#1506): binding id → chord, e.g.
+ * {"palette.command": "mod+e"}. Empty means every default applies. Shape is
+ * checked here; chord validity and conflicts are src/keybindings.ts's job.
+ */
+const KEYBINDINGS_KEY = "coder.keybindings";
+let keybindingOverrides: Readonly<Record<string, string>> | null = null;
+const keybindingListeners = new Set<() => void>();
+const NO_OVERRIDES: Readonly<Record<string, string>> = Object.freeze({});
+
+export function getKeybindingOverrides(): Readonly<Record<string, string>> {
+  if (keybindingOverrides) return keybindingOverrides;
+  const out: Record<string, string> = {};
+  try {
+    const raw = JSON.parse(window.localStorage.getItem(KEYBINDINGS_KEY) || "{}");
+    for (const [id, chord] of Object.entries(raw ?? {})) {
+      if (typeof chord === "string") out[id] = chord;
+    }
+  } catch {
+    // Corrupt or unavailable: the defaults apply.
+  }
+  keybindingOverrides = Object.keys(out).length ? out : NO_OVERRIDES;
+  return keybindingOverrides;
+}
+
+export function setKeybindingOverrides(next: Record<string, string>): void {
+  keybindingOverrides = Object.keys(next).length ? { ...next } : NO_OVERRIDES;
+  try {
+    if (keybindingOverrides === NO_OVERRIDES) {
+      window.localStorage.removeItem(KEYBINDINGS_KEY);
+    } else {
+      window.localStorage.setItem(KEYBINDINGS_KEY, JSON.stringify(next));
+    }
+  } catch {
+    // Private mode / quota: the remap just stops surviving a relaunch.
+  }
+  for (const l of keybindingListeners) l();
+}
+
+export function useKeybindingOverrides(): Readonly<Record<string, string>> {
+  return useSyncExternalStore(
+    (onChange) => {
+      keybindingListeners.add(onChange);
+      return () => keybindingListeners.delete(onChange);
+    },
+    getKeybindingOverrides,
+    () => NO_OVERRIDES,
+  );
+}
+
 /** Git pane review scope per thread (#1493). Oldest threads drop past the cap. */
 const DIFF_SCOPE_KEY = "coder.diffScope";
 const DIFF_SCOPE_CAP = 200;

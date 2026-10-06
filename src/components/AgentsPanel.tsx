@@ -72,6 +72,7 @@ import {
 } from "../hypothesisLedger";
 import { useEscapeClose } from "../useEscapeClose";
 import { useModalFocus } from "../useModalFocus";
+import { bindingLabel } from "../keybindings";
 import styles from "./AgentsPanel.module.css";
 import { lazyNamed } from "../lazyNamed";
 
@@ -2941,7 +2942,7 @@ export const AgentsPanel = memo(function AgentsPanel({
             data-agents-collapse=""
             aria-expanded="true"
             aria-controls="pane-agents"
-            title="Hide agents panel (⌘.)"
+            title={`Hide agents panel (${bindingLabel("agents.toggle", true)})`}
             aria-label="Hide agents panel"
             onClick={onCollapse}
           >
