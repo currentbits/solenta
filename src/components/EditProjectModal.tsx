@@ -2,10 +2,16 @@ import { useCallback, useRef, useState } from "react";
 import { useEscapeClose } from "../useEscapeClose";
 import { useModalFocus } from "../useModalFocus";
 import type {
+  PermissionMode,
   ProjectInfo,
   ProjectQuickAction,
+  ProjectThreadDefaults,
   ProjectUpdateInput,
+  ProviderInfo,
+  ReasoningEffort,
 } from "../shared/ipc";
+import { PERMISSION_MODE_LABELS, providerPermissionModes } from "../format";
+import { effortDisplayLabel, effortsForModel } from "../modelPicker";
 import { ProjectIcon } from "./ProjectIcon";
 import styles from "./SettingsModal.module.css";
 
@@ -18,6 +24,10 @@ interface EditProjectModalProps {
     iconUrl: string | null;
   } | null>;
   onPreviewIcon?: (iconPath: string | null) => Promise<string | null>;
+  /** For the new-thread defaults pickers (#1501). */
+  providers?: ProviderInfo[];
+  /** settings.defaultProvider; null = the built-in Claude Code default. */
+  globalProvider?: string | null;
 }
 
 /**
@@ -32,6 +42,8 @@ export function EditProjectModal({
   onSubmit,
   onPickIcon,
   onPreviewIcon,
+  providers = [],
+  globalProvider = null,
 }: EditProjectModalProps) {
   const [name, setName] = useState(project.name);
   const [remoteHost, setRemoteHost] = useState(project.remoteHost ?? "");
@@ -53,6 +65,23 @@ export function EditProjectModal({
   const [quickActions, setQuickActions] = useState<ProjectQuickAction[]>(
     () => (project.quickActions ?? []).map((a) => ({ ...a })),
   );
+  const [defaults, setDefaults] = useState<ProjectThreadDefaults>(
+    () => ({ ...project.threadDefaults }),
+  );
+  // Only sent when touched: "last used" mode rewrites the stored defaults
+  // from main, and an unrelated save must not put back a stale copy.
+  const [defaultsDirty, setDefaultsDirty] = useState(false);
+  const patchDefaults = (patch: Partial<ProjectThreadDefaults>) => {
+    setDefaults((d) => ({ ...d, ...patch }));
+    setDefaultsDirty(true);
+  };
+  const defaultProvider = providers.find((p) => p.id === defaults.provider);
+  const globalName =
+    providers.find((p) => p.id === globalProvider)?.name ?? "Claude Code";
+  const defaultEfforts = effortsForModel(defaultProvider, defaults.model);
+  const defaultModes = defaults.provider
+    ? providerPermissionModes(defaultProvider)
+    : providerPermissionModes(null);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -108,6 +137,11 @@ export function EditProjectModal({
           .filter((a) => a.name && a.command),
       };
       if (iconDirty) payload.iconPath = iconPath;
+      if (defaultsDirty) {
+        payload.threadDefaults = Object.fromEntries(
+          Object.entries(defaults).filter(([, v]) => v !== undefined),
+        );
+      }
       const updated = await onSubmit(payload);
       if (!updated) {
         setError("Could not save the project.");
@@ -265,6 +299,147 @@ export function EditProjectModal({
                 Detected from the repo, or the project name if none is found.
               </p>
             )}
+          </div>
+          <div className={styles.field} data-edit-project-defaults="">
+            <span className={styles.fieldLabel}>New thread defaults</span>
+            <div className={styles.fieldRow}>
+              <select
+                className={styles.input}
+                aria-label="Default provider"
+                data-edit-project-default-provider=""
+                value={defaults.provider ?? ""}
+                disabled={pending}
+                onChange={(e) =>
+                  // A model, effort or mode picked for one CLI is not
+                  // meaningful on another.
+                  patchDefaults({
+                    provider: e.target.value || undefined,
+                    model: undefined,
+                    reasoningEffort: undefined,
+                  })
+                }
+              >
+                <option value="">Global default ({globalName})</option>
+                {providers.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name}
+                    {!p.available ? " (not installed)" : ""}
+                  </option>
+                ))}
+                {defaults.provider && !defaultProvider ? (
+                  <option value={defaults.provider}>{defaults.provider}</option>
+                ) : null}
+              </select>
+              {defaults.provider ? (
+                <select
+                  className={styles.input}
+                  aria-label="Default model"
+                  data-edit-project-default-model=""
+                  value={defaults.model ?? ""}
+                  disabled={pending}
+                  onChange={(e) => {
+                    const model = e.target.value || undefined;
+                    const efforts = effortsForModel(defaultProvider, model);
+                    patchDefaults({
+                      model,
+                      ...(defaults.reasoningEffort &&
+                      !efforts.includes(defaults.reasoningEffort)
+                        ? { reasoningEffort: undefined }
+                        : {}),
+                    });
+                  }}
+                >
+                  <option value="">Provider default</option>
+                  {(defaultProvider?.modelInfo ?? []).map((m) => (
+                    <option key={m.id} value={m.id}>
+                      {m.label}
+                    </option>
+                  ))}
+                  {defaults.model &&
+                  !defaultProvider?.modelInfo.some(
+                    (m) => m.id === defaults.model,
+                  ) ? (
+                    <option value={defaults.model}>{defaults.model}</option>
+                  ) : null}
+                </select>
+              ) : null}
+            </div>
+            <div className={styles.fieldRow}>
+              {defaultEfforts.length > 0 ? (
+                <select
+                  className={styles.input}
+                  aria-label="Default reasoning effort"
+                  data-edit-project-default-effort=""
+                  value={defaults.reasoningEffort ?? ""}
+                  disabled={pending}
+                  onChange={(e) =>
+                    patchDefaults({
+                      reasoningEffort:
+                        (e.target.value as ReasoningEffort) || undefined,
+                    })
+                  }
+                >
+                  <option value="">Effort: {effortDisplayLabel(null)}</option>
+                  {defaultEfforts.map((level) => (
+                    <option key={level} value={level}>
+                      Effort: {effortDisplayLabel(level)}
+                    </option>
+                  ))}
+                </select>
+              ) : null}
+              <select
+                className={styles.input}
+                aria-label="Default permission mode"
+                data-edit-project-default-permission=""
+                value={defaults.permissionMode ?? ""}
+                disabled={pending}
+                onChange={(e) =>
+                  patchDefaults({
+                    permissionMode:
+                      (e.target.value as PermissionMode) || undefined,
+                  })
+                }
+              >
+                <option value="">Permissions: {PERMISSION_MODE_LABELS.default}</option>
+                {defaultModes
+                  .filter((m) => m !== "default")
+                  .map((m) => (
+                    <option key={m} value={m}>
+                      Permissions: {PERMISSION_MODE_LABELS[m]}
+                    </option>
+                  ))}
+              </select>
+            </div>
+            <label className={styles.fieldRow} htmlFor="edit-project-last-used">
+              <input
+                id="edit-project-last-used"
+                type="checkbox"
+                data-edit-project-last-used=""
+                checked={defaults.lastUsed === true}
+                disabled={pending}
+                onChange={(e) =>
+                  patchDefaults({
+                    lastUsed: e.target.checked ? true : undefined,
+                  })
+                }
+              />
+              <span>Follow last used</span>
+            </label>
+            {defaults.provider &&
+            !project.remoteHost &&
+            (!defaultProvider || defaultProvider.available === false) ? (
+              <p className={styles.fieldError} data-edit-project-default-missing="">
+                {defaultProvider?.name ?? defaults.provider} is not installed.
+                New threads use {globalName} until it is.
+              </p>
+            ) : null}
+            <p className={styles.note}>
+              Applies to new threads in this project. Existing threads keep
+              their settings, and an agent profile or worker pool still wins.
+              {defaults.lastUsed
+                ? " These update to whatever you pick on a new thread before its first message."
+                : ""}
+            </p>
           </div>
           <div className={styles.field}>
             <label className={styles.fieldLabel} htmlFor="edit-project-path">

@@ -18,7 +18,7 @@ import {
 } from "./support/fakeCoder.ts";
 import App from "../src/App";
 import { EditProjectModal } from "../src/components/EditProjectModal";
-import type { ProjectUpdateInput } from "../src/shared/ipc";
+import type { ProjectUpdateInput, ProviderInfo } from "../src/shared/ipc";
 
 const TINY_PNG =
   "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
@@ -376,5 +376,143 @@ describe("edit project focus trap", () => {
     assert.equal(m.query("[data-edit-project]"), null);
     assert.equal(document.activeElement, opener, "Escape restores the opener");
     m.unmount();
+  });
+});
+
+describe("new thread defaults (#1501)", () => {
+  const providers = [
+    {
+      id: "claude",
+      name: "Claude Code",
+      available: true,
+      supportsResume: true,
+      models: ["claude-opus-5-5"],
+      modelInfo: [{ id: "claude-opus-5-5", label: "Opus 5.5" }],
+      efforts: ["low", "high"],
+    },
+    {
+      id: "grok",
+      name: "Grok",
+      available: false,
+      supportsResume: true,
+      models: [],
+      modelInfo: [],
+      efforts: [],
+      permissionModes: ["plan", "bypassPermissions"],
+    },
+  ] as ProviderInfo[];
+
+  function modal(
+    p: ReturnType<typeof project>,
+    calls: ProjectUpdateInput[],
+  ) {
+    return mount(
+      <EditProjectModal
+        project={p}
+        providers={providers}
+        globalProvider={null}
+        onClose={() => {}}
+        onSubmit={async (input) => {
+          calls.push(input);
+          return input;
+        }}
+      />,
+    );
+  }
+
+  it("saves provider, model, effort, permission and last used", async () => {
+    const calls: ProjectUpdateInput[] = [];
+    const m = await modal(project({ id: "p1", path: "/tmp/ledger" }), calls);
+    await m.change(m.query("[data-edit-project-default-provider]"), "claude");
+    await m.change(m.query("[data-edit-project-default-model]"), "claude-opus-5-5");
+    await m.change(m.query("[data-edit-project-default-effort]"), "high");
+    await m.change(m.query("[data-edit-project-default-permission]"), "acceptEdits");
+    await m.click(m.query("[data-edit-project-last-used]"));
+    await m.click(m.query("[data-edit-project-submit]"));
+    await m.flush();
+    assert.deepEqual(calls[0]!.threadDefaults, {
+      provider: "claude",
+      model: "claude-opus-5-5",
+      reasoningEffort: "high",
+      permissionMode: "acceptEdits",
+      lastUsed: true,
+    });
+    m.unmount();
+  });
+
+  it("leaves threadDefaults off an unrelated save so last-used updates survive", async () => {
+    const calls: ProjectUpdateInput[] = [];
+    const p1 = project({
+      id: "p1",
+      path: "/tmp/ledger",
+      threadDefaults: { provider: "claude", lastUsed: true },
+    });
+    const m = await modal(p1, calls);
+    assert.equal(
+      (m.query("[data-edit-project-default-provider]") as HTMLSelectElement).value,
+      "claude",
+      "prefills from the project",
+    );
+    await m.click(m.query("[data-edit-project-submit]"));
+    await m.flush();
+    assert.equal(Object.prototype.hasOwnProperty.call(calls[0], "threadDefaults"), false);
+    m.unmount();
+  });
+
+  it("shows the global fallback for an uninstalled provider and clears the model on a switch", async () => {
+    const calls: ProjectUpdateInput[] = [];
+    const p1 = project({
+      id: "p1",
+      path: "/tmp/ledger",
+      threadDefaults: { provider: "claude", model: "claude-opus-5-5", reasoningEffort: "high" },
+    });
+    const m = await modal(p1, calls);
+    assert.equal(m.query("[data-edit-project-default-missing]"), null);
+    await m.change(m.query("[data-edit-project-default-provider]"), "grok");
+    assert.match(
+      m.query("[data-edit-project-default-missing]")?.textContent || "",
+      /Grok is not installed\. New threads use Claude Code/,
+    );
+    // grok lists no efforts, and does not offer "acceptEdits".
+    assert.equal(m.query("[data-edit-project-default-effort]"), null);
+    const modes = [
+      ...(m.query("[data-edit-project-default-permission]") as HTMLSelectElement).options,
+    ].map((o) => o.value);
+    assert.deepEqual(modes, ["", "plan", "bypassPermissions"]);
+    await m.click(m.query("[data-edit-project-submit]"));
+    await m.flush();
+    assert.deepEqual(calls[0]!.threadDefaults, { provider: "grok" });
+    m.unmount();
+  });
+
+  it("a project default provider stops new threads inheriting the selected thread's provider", async () => {
+    for (const withDefault of [false, true]) {
+      const p1 = project({
+        id: "p1",
+        name: "ledger",
+        path: "/tmp/ledger",
+        ...(withDefault ? { threadDefaults: { provider: "claude" } } : {}),
+      });
+      const t1 = thread({ id: "t1", projectId: "p1", provider: "codex" });
+      const fake = createFakeCoder({
+        projects: [p1],
+        threads: [t1],
+        details: { t1: detail({ thread: t1 }) },
+      });
+      const m = await boot(fake);
+      try {
+        await m.click(m.query('[data-thread-card="t1"]'));
+        await m.click(m.query("[data-new-thread]"));
+        await m.flush();
+        assert.equal(fake.of("threads.create").length, 1);
+        assert.equal(
+          fake.of("threads.setProvider").length,
+          withDefault ? 0 : 1,
+          withDefault ? "project default wins" : "control: inherits without one",
+        );
+      } finally {
+        m.unmount();
+      }
+    }
   });
 });

@@ -1610,6 +1610,7 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
         iconPath?: string | null;
         setupCommand?: string | null;
         quickActions?: ProjectInfo["quickActions"];
+        threadDefaults?: ProjectInfo["threadDefaults"] | null;
       }) => {
         const found = projects.find((p) => p.id === input.projectId);
         const updated = found ? { ...found } : project();
@@ -1651,6 +1652,10 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
             : [];
           if (rows.length) updated.quickActions = rows;
           else delete updated.quickActions;
+        }
+        if (Object.prototype.hasOwnProperty.call(input, "threadDefaults")) {
+          if (input.threadDefaults) updated.threadDefaults = input.threadDefaults;
+          else delete updated.threadDefaults;
         }
         return rec("projects.update", [input], updated).then((v) => {
           if (found) {
