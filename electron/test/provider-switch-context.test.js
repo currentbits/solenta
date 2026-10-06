@@ -67,11 +67,13 @@ process.stdout.write("ok");
   return `${process.execPath} -e eval(Buffer.from('${hex}','hex').toString())`;
 }
 
+// Only complete lines: the fake agent may still be appending the last one, and
+// waitFor polls this under load, so a half-written tail must not throw.
 function readPrompts(logFile) {
   return fs
     .readFileSync(logFile, "utf8")
-    .trim()
     .split("\n")
+    .slice(0, -1)
     .map((l) => JSON.parse(l));
 }
 
