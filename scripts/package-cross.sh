@@ -28,8 +28,12 @@
 # than nothing. #397 / #437. What a real Windows packaging story takes:
 # Authenticode signing, then either submit this zip as installerType:
 # portable or add NSIS/WiX (electron-builder is a product decision; this
-# repo avoids it because npm blocks native postinstalls). There is no
-# node-pty in the repo, so a ConPTY rebuild CI step would be a no-op.
+# repo avoids it because npm blocks native postinstalls).
+#
+# Terminal PTY: @lydell/node-pty ships N-API prebuilds per platform as
+# optional deps (ConPTY on Windows), so no rebuild step. Only the host's
+# platform package is in node_modules; each target's is fetched below with
+# `npm pack` at the wrapper's exact version.
 #
 # Usage:
 #   bash scripts/package-cross.sh                # both targets
@@ -42,6 +46,7 @@ cd "$ROOT"
 VERSION="$(node -p "require('./package.json').version")"
 ELECTRON_VER="$(node -p "require('electron/package.json').version")"
 CACHE="out/.electron-cache"
+PTY_VER="$(node -p "require('./node_modules/@lydell/node-pty/package.json').version")"
 BUILD_SHA="$(git rev-parse --short HEAD 2>/dev/null || echo unknown)"
 git diff --quiet 2>/dev/null || BUILD_SHA="${BUILD_SHA}+dirty"
 BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
@@ -124,8 +129,9 @@ for f in electron/*.js; do
   cp "$f" "$PAYLOAD/electron/"
 done
 
-# Same explicit root deps as package-app.sh (ws + cross-spawn + yauzl trees).
-ROOT_NM_PKGS=(ws cross-spawn path-key shebang-command shebang-regex which isexe yauzl pend)
+# Same explicit root deps as package-app.sh (ws + cross-spawn + yauzl trees,
+# node-pty wrapper). The per-target node-pty binary package is added below.
+ROOT_NM_PKGS=(ws cross-spawn path-key shebang-command shebang-regex which isexe yauzl pend @lydell/node-pty)
 mkdir -p "$PAYLOAD/node_modules"
 for pkg in "${ROOT_NM_PKGS[@]}"; do
   if [[ ! -d "node_modules/$pkg" ]]; then
@@ -133,6 +139,7 @@ for pkg in "${ROOT_NM_PKGS[@]}"; do
     exit 1
   fi
   rm -rf "$PAYLOAD/node_modules/$pkg"
+  mkdir -p "$(dirname "$PAYLOAD/node_modules/$pkg")"
   cp -R "node_modules/$pkg" "$PAYLOAD/node_modules/$pkg"
 done
 
@@ -196,6 +203,16 @@ for target in "${TARGETS[@]}"; do
   rm -rf "$APP_DIR"
   mkdir -p "$APP_DIR"
   cp -R "$PAYLOAD"/. "$APP_DIR/"
+
+  # Per-target node-pty prebuild (pty.node, plus conpty.dll/OpenConsole.exe on
+  # win32). Cached like the Electron zip; same network need as that download.
+  PTY_PKG="node-pty-${os}-${cpu}"
+  PTY_TGZ="$CACHE/lydell-${PTY_PKG}-${PTY_VER}.tgz"
+  if [[ ! -f "$PTY_TGZ" ]]; then
+    (cd "$CACHE" && npm pack --silent "@lydell/${PTY_PKG}@${PTY_VER}" >/dev/null)
+  fi
+  mkdir -p "$APP_DIR/node_modules/@lydell/$PTY_PKG"
+  tar -xzf "$PTY_TGZ" -C "$APP_DIR/node_modules/@lydell/$PTY_PKG" --strip-components=1
 
   # Per-target memory-server deps (sharp's platform binaries come from
   # optional deps selected by os/cpu; linux sharp also keys on libc, which
@@ -266,6 +283,9 @@ for target in "${TARGETS[@]}"; do
   }
   [[ -d "$APP_DIR/node_modules/yauzl" ]] || {
     echo "ERROR: [$target] yauzl missing (skillPackages.js, boot-path require)" >&2; exit 1;
+  }
+  [[ -f "$APP_DIR/node_modules/@lydell/$PTY_PKG/package.json" ]] || {
+    echo "ERROR: [$target] @lydell/$PTY_PKG missing (Terminal PTY)" >&2; exit 1;
   }
   [[ -d "$APP_DIR/node_modules/pend" ]] || {
     echo "ERROR: [$target] pend missing (yauzl transitive)" >&2; exit 1;
