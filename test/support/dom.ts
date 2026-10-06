@@ -232,6 +232,11 @@ export async function mount(element: ReactElement): Promise<Mounted> {
   // tests can keep querying them right after the click that opens them.
   const { preloadLazyNamed } = await import("../../src/lazyNamed.tsx");
   await preloadLazyNamed();
+  // The highlighter is a lazy chunk too: preloaded, its setState runs as a
+  // microtask inside act instead of landing between act scopes, where React
+  // logs "not wrapped in act" and the console.error gate fails a later hook.
+  const { preloadHighlighter } = await import("../../src/syntaxHighlight.ts");
+  await preloadHighlighter();
   const container = dom.window.document.createElement("div");
   dom.window.document.body.appendChild(container);
 
