@@ -1016,7 +1016,7 @@ export const ThreadView = memo(function ThreadView({
           : windowStart,
       revealIndex,
     ),
-    timeline.length,
+    timeline,
   );
   if (threadId !== windowThreadId) {
     setWindowThreadId(threadId);
