@@ -18,6 +18,7 @@ import type {
   DevServerState,
   TerminalState,
   DiffResult,
+  DiffOptions,
   ReviewContext,
   GitSyncInfo,
   GitRepoInfo,
@@ -471,7 +472,7 @@ export interface UseCoderResult {
   /** Unmerged worktree files plus capped conflict-marker snippets (#163). */
   conflictContext: (threadId: string) => Promise<ConflictContext>;
   removeWorktree: (force?: boolean) => Promise<ThreadInfo | null>;
-  fetchDiff: () => Promise<DiffResult>;
+  fetchDiff: (opts?: DiffOptions) => Promise<DiffResult>;
   fetchReviewContext: () => Promise<ReviewContext>;
   setReviewAccepted: (hashes: string[]) => Promise<void>;
   /** Commit selected (or all) changes in the selected thread's cwd. */

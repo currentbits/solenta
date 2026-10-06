@@ -3,6 +3,7 @@ import type { Dispatch, RefObject, SetStateAction } from "react";
 import type {
   AttachmentInfo,
   CoderApi,
+  DiffOptions,
   ReviewSymbol,
   ThreadDetail,
   ThreadInfo,
@@ -86,12 +87,12 @@ export function useCoderWorkspace({
     [api, selectedThreadId, applyThreadUpdate],
   );
 
-  const fetchDiff = useCallback(async () => {
+  const fetchDiff = useCallback(async (opts?: DiffOptions) => {
     if (!selectedThreadId) {
       return { files: [], patch: "", truncated: false };
     }
     const threadId = selectedThreadId;
-    return api.git.diff({ threadId });
+    return api.git.diff({ threadId, ...opts });
   }, [api, selectedThreadId]);
 
   const fetchReviewContext = useCallback(async () => {
