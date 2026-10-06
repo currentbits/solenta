@@ -103,9 +103,15 @@ const ENVELOPE_THROTTLE_MS = 2000;
  * 3–5 MB of heap once hydrated, and browsing used to keep every one for the
  * session. Past this count the least recently read clean, non-running
  * thread drops back to its shard and is re-parsed on the next read.
- * ponytail: count cap, not bytes; 8 × the largest real shard is ~40 MB.
  */
 const MAX_HYDRATED_THREADS = 8;
+/**
+ * Byte budget for the same LRU, in shard JSON chars (parsed heap runs
+ * ~1.3× that). Eight 3–4 MB real threads held ~32 MB of heap under the
+ * count cap alone. Soft: dirty, working and in-flight threads stay, and the
+ * most recent read always stays so one huge thread is not re-parsed per read.
+ */
+const MAX_HYDRATED_BYTES = 16 * 1024 * 1024;
 
 /** Per-thread transcript files live next to coder-store.json (#225). */
 const MESSAGES_DIR = "messages";
@@ -312,7 +318,8 @@ class Store {
     // _messagesRaw; still-lazy blob slices on _messagesLazy (legacy envelope
     // only, dropped after the shard split).
     this._messagesHydrated = {};
-    // Read order of hydrated ids, oldest first (LRU for _evictHydrated).
+    // Read order of hydrated ids, oldest first (LRU for _evictHydrated),
+    // mapped to the transcript's JSON length when last parsed or flushed.
     this._hydratedReads = new Map();
     this._messagesLazy = null;
     this._messagesRaw = new Map();
@@ -726,6 +733,8 @@ class Store {
       let json = null;
       if (Object.prototype.hasOwnProperty.call(this._messagesHydrated, id)) {
         json = JSON.stringify(this._messagesHydrated[id] || []);
+        // Refresh the LRU size estimate in place (Map.set keeps the order).
+        if (this._hydratedReads.has(id)) this._hydratedReads.set(id, json.length);
       } else if (this._messagesRaw.has(id)) {
         json = this._messagesRaw.get(id);
       } else {
@@ -1276,8 +1285,7 @@ class Store {
    */
   _hydrateMessages(threadId) {
     if (Object.prototype.hasOwnProperty.call(this._messagesHydrated, threadId)) {
-      this._hydratedReads.delete(threadId);
-      this._hydratedReads.set(threadId, true);
+      this._touchHydrated(threadId);
       return this._messagesHydrated[threadId];
     }
     let json = null;
@@ -1310,21 +1318,36 @@ class Store {
     }
     this._messagesHydrated[threadId] = val;
     this._messagesRaw.delete(threadId);
-    this._hydratedReads.set(threadId, true);
+    this._hydratedReads.set(threadId, json.length);
     this._evictHydrated();
     return val;
   }
 
   /**
-   * Drop least recently read transcripts past MAX_HYDRATED_THREADS back to
-   * their shard. Only a thread whose shard on disk is current is eligible:
-   * never one that is working, dirty, mid-flush, or still on the legacy blob.
+   * Move a hydrated id to the most recent end of the LRU, keeping its size.
+   * @param {string} threadId
+   */
+  _touchHydrated(threadId) {
+    const bytes = this._hydratedReads.get(threadId) || 0;
+    this._hydratedReads.delete(threadId);
+    this._hydratedReads.set(threadId, bytes);
+  }
+
+  /**
+   * Drop least recently read transcripts past MAX_HYDRATED_THREADS or
+   * MAX_HYDRATED_BYTES back to their shard. Only a thread whose shard on disk
+   * is current is eligible: never one that is working, dirty, mid-flush, or
+   * still on the legacy blob, and never the most recent read.
    */
   _evictHydrated() {
     const hydrated = this._messagesHydrated;
     const ids = Object.keys(hydrated);
     let excess = ids.length - MAX_HYDRATED_THREADS;
-    if (excess <= 0) return;
+    let bytes = 0;
+    for (const id of ids) bytes += this._hydratedReads.get(id) || 0;
+    if (excess <= 0 && bytes <= MAX_HYDRATED_BYTES) return;
+    let newest;
+    for (const id of this._hydratedReads.keys()) newest = id;
     const working = new Set(
       (this.data ? this.data.threads : [])
         .filter((t) => t && t.status === "working")
@@ -1337,8 +1360,9 @@ class Store {
       ...this._hydratedReads.keys(),
     ];
     for (const id of order) {
-      if (excess <= 0) break;
+      if (excess <= 0 && bytes <= MAX_HYDRATED_BYTES) break;
       if (
+        id === newest ||
         !Object.prototype.hasOwnProperty.call(hydrated, id) ||
         working.has(id) ||
         !this._messageShards.has(id) ||
@@ -1349,6 +1373,7 @@ class Store {
       ) {
         continue;
       }
+      bytes -= this._hydratedReads.get(id) || 0;
       delete hydrated[id];
       this._hydratedReads.delete(id);
       excess -= 1;
@@ -2036,8 +2061,7 @@ class Store {
       `Older messages were dropped to cap this transcript at ${MAX_MESSAGES_PER_THREAD}.`,
     );
     this._markMessagesDirty(threadId);
-    this._hydratedReads.delete(threadId);
-    this._hydratedReads.set(threadId, true);
+    this._touchHydrated(threadId);
   }
 
   /**
@@ -2526,4 +2550,5 @@ module.exports = {
   SAVE_DEBOUNCE_MAX_MS,
   ENVELOPE_THROTTLE_MS,
   MAX_HYDRATED_THREADS,
+  MAX_HYDRATED_BYTES,
 };
