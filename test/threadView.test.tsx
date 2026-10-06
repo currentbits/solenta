@@ -3264,6 +3264,75 @@ describe("ThreadView transcript windowing (issue #564)", () => {
     }
   });
 
+  it("tail-first survives streaming pushes: one layout read, one idle chain (#1475)", async () => {
+    const answers = Array.from({ length: 6 }, (_, i) =>
+      msg({
+        id: `live-${i}`,
+        role: "assistant",
+        text: `LIVE_ANSWER_${i} ${"word ".repeat(1_800)}`,
+        createdAt: 10 + i,
+      }),
+    );
+    const working = (tail: string) =>
+      detail({
+        thread: thread({ id: "t-live", status: "working" }),
+        messages: [
+          ...answers,
+          msg({ id: "live-tail", role: "assistant", text: `STREAM ${tail}`, createdAt: 99 }),
+        ],
+      });
+    const small = detail({
+      thread: thread({ id: "t-small" }),
+      messages: [msg({ id: "s1", role: "assistant", text: "SMALL", createdAt: 1 })],
+    });
+    let push: (n: number) => void = () => {};
+    function Harness() {
+      const [open, setOpen] = useState(small);
+      push = (n) => setOpen(working("x".repeat(n)));
+      return view({ detail: open });
+    }
+    const layout = { clientHeight: 400, scrollHeight: 5_000, scrollTop: 0 };
+    const m = await mount(<Harness />);
+    const idleQueue: (() => void)[] = [];
+    const win = window as unknown as { requestIdleCallback?: unknown };
+    const prevIdle = win.requestIdleCallback;
+    win.requestIdleCallback = (cb: () => void) => idleQueue.push(cb);
+    const proto = HTMLElement.prototype;
+    const saved = ["clientHeight", "scrollHeight", "scrollTop"].map(
+      (k) => [k, Object.getOwnPropertyDescriptor(proto, k)] as const,
+    );
+    fakeScrollMetrics(proto as HTMLElement, layout);
+    let reads = 0;
+    Object.defineProperty(proto, "scrollHeight", {
+      configurable: true,
+      get: () => {
+        reads++;
+        return layout.scrollHeight;
+      },
+    });
+    try {
+      await inAct(async () => push(1));
+      assert.ok(!m.html().includes("LIVE_ANSWER_0"), "tail only after the switch");
+      assert.equal(idleQueue.length, 1, "one idle chain started");
+      reads = 0;
+      for (let n = 2; n <= 6; n++) await inAct(async () => push(n));
+      assert.equal(reads, 0, "streaming pushes must not force a layout read");
+      assert.equal(idleQueue.length, 1, "pushes must not restart the chain");
+      while (idleQueue.length) await inAct(async () => idleQueue.shift()!());
+      assert.ok(m.html().includes("LIVE_ANSWER_0"), "the full window still mounts");
+      await inAct(() => new Promise((r) => setTimeout(r, 120))); // stream throttle
+      assert.ok(m.html().includes("STREAM xxxxxx"), "with the latest push");
+      m.unmount();
+    } finally {
+      for (const [k, d] of saved) {
+        if (d) Object.defineProperty(proto, k, d);
+        else delete (proto as unknown as Record<string, unknown>)[k];
+      }
+      win.requestIdleCallback = prevIdle;
+      if (prevIdle === undefined) delete win.requestIdleCallback;
+    }
+  });
+
   it("extends the window to include a jump-to-anchor above it", async () => {
     const n = 500;
     const messages = bulkMessages(n);

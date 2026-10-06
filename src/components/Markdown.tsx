@@ -261,6 +261,11 @@ function cachedParse(text: string): ReactElement {
   return el;
 }
 
+/** Whether `text` is in the parse cache. */
+export function isParsed(text: string): boolean {
+  return parsed.has(text);
+}
+
 /** Parse `text` into the cache ahead of its mount (tail-first switch). */
 export function preparseMarkdown(text: string): void {
   cachedParse(text);

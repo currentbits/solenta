@@ -93,7 +93,7 @@ import {
   tailWindowStart,
 } from "../transcriptWindow";
 import { lastUserMessage } from "../retryTurn";
-import { preparseMarkdown } from "./Markdown";
+import { isParsed, preparseMarkdown } from "./Markdown";
 import {
   isEditableUserMessage,
   rewindConfirmText,
@@ -1051,6 +1051,11 @@ export const ThreadView = memo(function ThreadView({
     else start = tail;
   }
   const tailOnly = start !== windowAt;
+  const deferred = useRef({ timeline, from: windowAt, to: start });
+  deferred.current = { timeline, from: windowAt, to: start };
+  // Once per tail-only phase: streaming pushes re-render this view ~5/s, and
+  // re-running would force a layout read per push (#1482) and restart the
+  // idle chain.
   useLayoutEffect(() => {
     if (!tailOnly) return;
     const showAll = () => {
@@ -1067,9 +1072,10 @@ export const ThreadView = memo(function ThreadView({
     // Parse the deferred answers one per idle slot, so a 35 KB answer's
     // ~20 ms parse never shares a frame with the mount, then mount them all
     // from the cache.
+    const { timeline: entries, from, to } = deferred.current;
     const texts: string[] = [];
-    for (let i = windowAt; i < start; i++) {
-      const entry = timeline[i];
+    for (let i = from; i < to; i++) {
+      const entry = entries[i];
       if (entry?.kind === "message" && entry.message.role === "assistant") {
         texts.push(entry.message.text);
       }
@@ -1082,7 +1088,8 @@ export const ThreadView = memo(function ThreadView({
     let live = true;
     const step = () => {
       if (!live) return;
-      const text = texts.pop();
+      let text = texts.pop();
+      while (text !== undefined && isParsed(text)) text = texts.pop();
       if (text === undefined) {
         startTransition(showAll);
         return;
@@ -1094,7 +1101,7 @@ export const ThreadView = memo(function ThreadView({
     return () => {
       live = false;
     };
-  });
+  }, [tailOnly, threadId]);
 
   const visibleTimeline = start === 0 ? timeline : timeline.slice(start);
   const hiddenCount = start;
