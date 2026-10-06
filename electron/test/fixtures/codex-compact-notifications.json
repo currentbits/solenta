@@ -1,0 +1,103 @@
+[
+ {
+  "method": "thread/status/changed",
+  "params": {
+   "threadId": "01a11158-67af-7750-8e6a-50f370f63d51",
+   "status": {
+    "type": "active",
+    "activeFlags": []
+   }
+  }
+ },
+ {
+  "method": "turn/started",
+  "params": {
+   "threadId": "01a11158-67af-7750-8e6a-50f370f63d51",
+   "turn": {
+    "id": "01a11158-8476-7de0-b6ee-76fe77fef314",
+    "items": [],
+    "itemsView": "notLoaded",
+    "status": "inProgress",
+    "error": null,
+    "startedAt": 1791292376,
+    "completedAt": null,
+    "durationMs": null
+   }
+  }
+ },
+ {
+  "method": "item/started",
+  "params": {
+   "item": {
+    "type": "contextCompaction",
+    "id": "01a11158-847c-7cd2-b40d-345f6ffb05e9"
+   },
+   "threadId": "01a11158-67af-7750-8e6a-50f370f63d51",
+   "turnId": "01a11158-8476-7de0-b6ee-76fe77fef314",
+   "startedAtMs": 1791292376188
+  }
+ },
+ {
+  "method": "thread/tokenUsage/updated",
+  "params": {
+   "threadId": "01a11158-67af-7750-8e6a-50f370f63d51",
+   "turnId": "01a11158-8476-7de0-b6ee-76fe77fef314",
+   "tokenUsage": {
+    "total": {
+     "totalTokens": 19440,
+     "inputTokens": 19435,
+     "cachedInputTokens": 12288,
+     "cacheWriteInputTokens": 0,
+     "outputTokens": 5,
+     "reasoningOutputTokens": 0
+    },
+    "last": {
+     "totalTokens": 5579,
+     "inputTokens": 0,
+     "cachedInputTokens": 0,
+     "cacheWriteInputTokens": 0,
+     "outputTokens": 0,
+     "reasoningOutputTokens": 0
+    },
+    "modelContextWindow": 258400
+   }
+  }
+ },
+ {
+  "method": "item/completed",
+  "params": {
+   "item": {
+    "type": "contextCompaction",
+    "id": "01a11158-847c-7cd2-b40d-345f6ffb05e9"
+   },
+   "threadId": "01a11158-67af-7750-8e6a-50f370f63d51",
+   "turnId": "01a11158-8476-7de0-b6ee-76fe77fef314",
+   "completedAtMs": 1791292380529
+  }
+ },
+ {
+  "method": "thread/status/changed",
+  "params": {
+   "threadId": "01a11158-67af-7750-8e6a-50f370f63d51",
+   "status": {
+    "type": "idle"
+   }
+  }
+ },
+ {
+  "method": "turn/completed",
+  "params": {
+   "threadId": "01a11158-67af-7750-8e6a-50f370f63d51",
+   "turn": {
+    "id": "01a11158-8476-7de0-b6ee-76fe77fef314",
+    "items": [],
+    "itemsView": "notLoaded",
+    "status": "completed",
+    "error": null,
+    "startedAt": 1791292376,
+    "completedAt": 1791292380,
+    "durationMs": 4349
+   }
+  }
+ }
+]

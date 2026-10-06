@@ -583,6 +583,18 @@ async function runAppServer() {
       reply(msg.id, {});
       return;
     }
+    if (msg.method === "thread/compact/start") {
+      // Replays notifications captured from the real app-server.
+      reply(msg.id, {});
+      const file = require("node:path").join(
+        __dirname,
+        "../fixtures/codex-compact-notifications.json",
+      );
+      for (const n of JSON.parse(fs.readFileSync(file, "utf8"))) {
+        notify(n.method, { ...n.params, threadId });
+      }
+      return;
+    }
     if (msg.method === "thread/unsubscribe") {
       reply(msg.id, { status: "unsubscribed" });
       process.exit(0);

@@ -51,6 +51,7 @@ export function ContextRingBadge({
   open,
   onOpenChange,
   onFork,
+  onCompact,
 }: {
   ring: ContextRingView;
   segments: ContextBreakdownSegment[];
@@ -58,6 +59,8 @@ export function ContextRingBadge({
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onFork?: () => void;
+  /** Provider-native compaction; absent when the provider has none. */
+  onCompact?: () => void;
 }) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
@@ -134,10 +137,26 @@ export function ContextRingBadge({
             ))}
           </ul>
           <p className={styles.contextNote}>Estimated from the thread (chars÷4)</p>
-          {ring.warn && (
+          {(ring.warn || onCompact) && (
             <div className={styles.contextWarn}>
-              <p className={styles.contextWarnNote}>Compaction is close</p>
-              {onFork && (
+              {ring.warn && (
+                <p className={styles.contextWarnNote}>Compaction is close</p>
+              )}
+              {onCompact && (
+                <button
+                  type="button"
+                  className={styles.contextForkBtn}
+                  data-context-compact=""
+                  onClick={() => {
+                    triggerRef.current?.focus();
+                    onOpenChange(false);
+                    onCompact();
+                  }}
+                >
+                  Compact context
+                </button>
+              )}
+              {ring.warn && onFork && (
                 <button
                   type="button"
                   className={styles.contextForkBtn}
@@ -150,6 +169,11 @@ export function ContextRingBadge({
                 >
                   Fork to fresh context
                 </button>
+              )}
+              {ring.warn && onFork && !onCompact && (
+                <p className={styles.contextNote}>
+                  This provider can't compact in place, so /compact forks.
+                </p>
               )}
             </div>
           )}

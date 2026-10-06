@@ -9,6 +9,9 @@
  * is not in this list, so a send still goes through.
  */
 
+/** Providers whose own compaction `/compact` runs; mirrors electron/compaction.js. */
+export const NATIVE_COMPACT_PROVIDERS: readonly string[] = ["claude", "codex"];
+
 /** Immediate actions the palette can fire. Insert verbs have no action. */
 export type SlashAction =
   | "compact"
@@ -42,7 +45,7 @@ export interface SlashCommand {
 export const SLASH_COMMANDS: readonly SlashCommand[] = [
   {
     name: "/compact",
-    hint: "Fork to fresh context with recent history",
+    hint: "Compact context (forks to fresh where the provider can't)",
     kind: "run",
     action: "compact",
   },
