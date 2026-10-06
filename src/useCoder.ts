@@ -255,6 +255,8 @@ export interface UseCoderResult {
   cancelQueued: (threadId?: string) => Promise<boolean>;
   /** Re-send a queued prompt after a delivery failure (issue #314). */
   retryQueued: (threadId?: string) => void;
+  /** Steer one queued item into the live turn, then drop it (#1501). */
+  steerQueued: (index: number, threadId?: string) => Promise<void>;
   /** Replace a thread's queued follow-up text in place (issue #364 / #809). */
   editQueued: (
     prompt: string,
@@ -1059,6 +1061,40 @@ export function useCoder(): UseCoderResult {
       }
     },
     [api, applyThreads],
+  );
+
+  const steerQueued = useCallback(
+    async (index: number, threadId?: string) => {
+      const id = threadId ?? selectedRef.current;
+      if (!id) return;
+      const itemsOf = (q: QueuedMessage | null | undefined) =>
+        !q ? [] : q.items?.length ? q.items : [q.prompt];
+      const held = threadsRef.current.find((t) => t.id === id)?.queued;
+      const items = itemsOf(held);
+      const item = items[index];
+      if (item == null) return;
+      try {
+        // ponytail: attachments stay queued and ride with the next drained
+        // head; the blob does not record which item they belong to.
+        await api.runs.steer({ threadId: id, prompt: item });
+      } catch (err) {
+        setError({ scope: "run", message: errorMessage(err) });
+        return;
+      }
+      // The queue may have moved during the hop (drain, edit): drop the
+      // steered text from the latest copy, not by the stale index.
+      const latest = threadsRef.current.find((t) => t.id === id)?.queued;
+      const now = itemsOf(latest);
+      const at = now.indexOf(item);
+      if (at < 0) return;
+      const rest = now.filter((_, j) => j !== at);
+      if (rest.length === 0) {
+        await cancelQueued(id);
+        return;
+      }
+      await editQueued(rest.join("\n\n"), id, rest).catch(() => {});
+    },
+    [api, cancelQueued, editQueued],
   );
 
   const clearError = useCallback(() => {
@@ -1940,6 +1976,7 @@ export function useCoder(): UseCoderResult {
     queued,
     cancelQueued,
     retryQueued,
+    steerQueued,
     editQueued,
     startWorkflowRun,
     retryWorkflowAgent,

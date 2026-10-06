@@ -253,6 +253,8 @@ interface ThreadViewProps {
   onCancelQueued?: () => void;
   /** Re-send a queued prompt after a delivery failure. */
   onRetryQueued?: () => void;
+  /** Steer queued item `index` into the live turn (#1501). */
+  onSteerQueued?: (index: number) => void;
   /** Replace the queued follow-up's text (edit in the strip, issue #364 / #809). */
   onEditQueued?: (
     prompt: string,
@@ -637,6 +639,7 @@ export const ThreadView = memo(function ThreadView({
   queuedError = null,
   onCancelQueued,
   onRetryQueued,
+  onSteerQueued,
   onEditQueued,
   restoreDraft = null,
   onSetPermissionMode,
@@ -1111,6 +1114,14 @@ export const ThreadView = memo(function ThreadView({
   const verboseTools = transcriptView === "verbose";
   const summaryMode = transcriptView === "summary";
   const isWorking = detail?.thread.status === "working";
+  /** Queued items can be steered into the live turn only where the CLI takes stdin. */
+  const canSteerQueued = Boolean(
+    onSteerQueued &&
+      isWorking &&
+      providers.find((p) => p.id === detail?.thread.provider)?.supportsSteer,
+  );
+  /** Queued item being dragged to a new slot (#1501). */
+  const [queuedDrag, setQueuedDrag] = useState<number | null>(null);
   const displayTimeline = useMemo(() => {
     if (summaryMode) {
       // Focus folds replace tool groups: keep groupable messages as plain
@@ -3897,8 +3908,27 @@ export const ThreadView = memo(function ThreadView({
                   {queuedItems.map((item, i) => (
                     <li
                       key={i}
-                      className={styles.queuedItem}
+                      className={`${styles.queuedItem}${queuedDrag === i ? ` ${styles.queuedItemDragging}` : ""}`}
                       data-queued-item={String(i)}
+                      draggable={editingQueued == null && !queuedWritePending}
+                      onDragStart={(e) => {
+                        e.dataTransfer.effectAllowed = "move";
+                        e.dataTransfer.setData("text/plain", String(i));
+                        setQueuedDrag(i);
+                      }}
+                      onDragOver={(e) => {
+                        if (queuedDrag == null) return;
+                        e.preventDefault();
+                        e.dataTransfer.dropEffect = "move";
+                      }}
+                      onDrop={(e) => {
+                        e.preventDefault();
+                        const from = queuedDrag;
+                        setQueuedDrag(null);
+                        if (from == null || from === i) return;
+                        writeQueuedItems(swapQueuedItem(queuedItems, from, i - from));
+                      }}
+                      onDragEnd={() => setQueuedDrag(null)}
                     >
                       {editingQueued === i ? (
                         <>
@@ -3958,6 +3988,17 @@ export const ThreadView = memo(function ThreadView({
                             className={styles.queuedActions}
                             data-queued-actions=""
                           >
+                            {canSteerQueued ? (
+                              <button
+                                type="button"
+                                className={styles.retryBtn}
+                                disabled={queuedWritePending}
+                                onClick={() => onSteerQueued?.(i)}
+                                data-steer-queued=""
+                              >
+                                Steer now
+                              </button>
+                            ) : null}
                             {i > 0 ? (
                               <button
                                 type="button"
@@ -4121,6 +4162,16 @@ export const ThreadView = memo(function ThreadView({
                   className={styles.queuedActions}
                   data-queued-actions=""
                 >
+                  {canSteerQueued ? (
+                    <button
+                      type="button"
+                      className={styles.retryBtn}
+                      onClick={() => onSteerQueued?.(0)}
+                      data-steer-queued=""
+                    >
+                      Steer now
+                    </button>
+                  ) : null}
                   {onEditQueued ? (
                     <button
                       type="button"

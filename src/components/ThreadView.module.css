@@ -3312,6 +3312,14 @@ button.diffLineGutter:focus-visible {
   min-width: 0;
 }
 
+.queuedItem[draggable="true"] {
+  cursor: grab;
+}
+
+.queuedItemDragging {
+  opacity: 0.5;
+}
+
 .queuedList {
   list-style: none;
   margin: 0;

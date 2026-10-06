@@ -191,6 +191,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     queued,
     cancelQueued,
     retryQueued,
+    steerQueued,
     editQueued,
     fetchIssue,
     startWorkflowRun,
@@ -960,6 +961,11 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     retryQueued();
   }, [retryQueued]);
 
+  const handleSteerQueued = useCallback(
+    (index: number) => void steerQueued(index),
+    [steerQueued],
+  );
+
   const handleEditQueued = useCallback(
     (prompt: string, items?: string[]) => {
       return editQueued(prompt, undefined, items);
@@ -1691,6 +1697,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         }
         onCancelQueued={handleCancelQueued}
         onRetryQueued={handleRetryQueued}
+        onSteerQueued={handleSteerQueued}
         onEditQueued={handleEditQueued}
         restoreDraft={queuedDraftRestore}
         onSetPermissionMode={setPermissionMode}

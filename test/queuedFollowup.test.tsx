@@ -625,6 +625,92 @@ describe("queued follow-up (issue #92 / #314)", () => {
     await m.flush();
   }
 
+  async function bootBusySteerable(steer: boolean) {
+    const busy = working();
+    const fake = createFakeCoder({
+      projects: [project()],
+      threads: [decoy(), busy],
+      details: {
+        "t-decoy": detail({ thread: decoy() }),
+        "t-busy": detail({ thread: busy }),
+      },
+      providers: [
+        {
+          id: "claude",
+          name: "Claude Code",
+          available: true,
+          supportsResume: true,
+          supportsSteer: steer,
+          models: [],
+          modelInfo: [],
+          efforts: [],
+        },
+      ],
+    });
+    const m = await boot(fake);
+    await m.click(m.query('button[aria-label^="Select thread: busy target thread"]'));
+    await m.flush();
+    await queueTwoThoughts(m);
+    return { fake, m };
+  }
+
+  it("steers one queued thought into the live turn and drops it (#1501)", async () => {
+    const { fake, m } = await bootBusySteerable(true);
+    const second = m.query('[data-queued-item="1"]');
+    const steer = second!.querySelector("button[data-steer-queued]");
+    assert.ok(steer, "a steerable provider offers Steer now per item");
+    await m.click(steer);
+    await m.flush();
+
+    assert.deepEqual(fake.of("runs.steer").map((c) => c.args[0]), [
+      { threadId: "t-busy", prompt: "second thought" },
+    ]);
+    const replace = fake
+      .of("threads.setQueued")
+      .filter((c) => (c.args[0] as { replace?: boolean }).replace === true);
+    assert.equal(replace.length, 1);
+    assert.deepEqual((replace[0]!.args[0] as { items: string[] }).items, [
+      "first thought",
+    ]);
+    assert.equal(fake.of("runs.start").length, 0);
+    m.unmount();
+  });
+
+  it("hides Steer now when the provider cannot steer (#1501)", async () => {
+    const { m } = await bootBusySteerable(false);
+    assert.ok(m.query("[data-queued-item]"));
+    assert.equal(m.query("button[data-steer-queued]"), null);
+    m.unmount();
+  });
+
+  it("drags a queued thought to a new slot (#1501)", async () => {
+    const { fake, m } = await bootOnBusyThread();
+    await queueTwoThoughts(m);
+    const items = m.queryAll("[data-queued-item]");
+    assert.equal(items[1]!.getAttribute("draggable"), "true");
+    const drag = (el: Element, type: string) => {
+      const ev = new window.Event(type, { bubbles: true, cancelable: true });
+      Object.defineProperty(ev, "dataTransfer", {
+        value: { setData() {}, effectAllowed: "", dropEffect: "" },
+      });
+      el.dispatchEvent(ev);
+    };
+    await inAct(() => drag(items[1]!, "dragstart"));
+    await inAct(() => drag(items[0]!, "dragover"));
+    await inAct(() => drag(items[0]!, "drop"));
+    await m.flush();
+
+    const replace = fake
+      .of("threads.setQueued")
+      .filter((c) => (c.args[0] as { replace?: boolean }).replace === true);
+    assert.equal(replace.length, 1, "a drop writes the new order once");
+    assert.deepEqual((replace[0]!.args[0] as { items: string[] }).items, [
+      "second thought",
+      "first thought",
+    ]);
+    m.unmount();
+  });
+
   it("edits one of two queued thoughts without changing the other (issue #780)", async () => {
     const { fake, m } = await bootOnBusyThread();
     await queueTwoThoughts(m);
