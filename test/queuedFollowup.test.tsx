@@ -293,52 +293,26 @@ describe("queued follow-up (issue #92 / #314)", () => {
     await m.click(retry!);
     await m.flush();
 
-    const clears = fake
-      .of("threads.setQueued")
-      .filter((c) => (c.args[0] as { prompt: string | null }).prompt === null);
-    assert.ok(
-      clears.length >= 1,
-      "retry must clear the persisted queue before starting the run",
+    assert.equal(fake.of("runs.start").length, 0, "main starts the item, not the renderer");
+    assert.equal(
+      fake.of("threads.setQueued").length,
+      0,
+      "main takes the head itself (#1501); the renderer must not clear or re-enqueue",
     );
-    const started = fake.of("runs.start");
-    assert.equal(started.length, 1, "retry must start the queued prompt");
     assert.deepEqual(
-      started[0]!.args[0],
-      {
-        threadId: "t-idle-q",
-        prompt: "finish the changelog",
-        attachments: undefined,
-      },
-      "retry must send the queued prompt to the thread it was typed on",
+      fake.of("runs.sendQueued").map((c) => c.args[0]),
+      [{ threadId: "t-idle-q" }],
+      "Send now asks main for the next item",
     );
-    const channels = fake.channels();
-    const clearAt = channels.lastIndexOf("threads.setQueued");
-    const startAt = channels.indexOf("runs.start");
-    assert.ok(clearAt >= 0 && startAt >= 0 && clearAt < startAt);
     m.unmount();
   });
 
-  const RETRY_SHOT = {
-    kind: "image" as const,
-    path: "/tmp/retry.png",
-    name: "retry.png",
-  };
-
-  async function hostQueued(fake: FakeCoder, threadId: string) {
-    const rows = await fake.api.threads.list();
-    return rows.find((t) => t.id === threadId)?.queued ?? null;
-  }
-
-  async function bootIdleRetryQueue() {
+  it("surfaces a rejected Send now and leaves the queue to main (#1501)", async () => {
     const idle = thread({
       id: "t-idle-q",
       title: "idle with leftover queue",
       status: "idle",
-      queued: {
-        prompt: "Retry this once",
-        error: "CLI exited before ack",
-        attachments: [RETRY_SHOT],
-      },
+      queued: { prompt: "Retry this once", items: ["Retry this once"] },
     });
     const fake = createFakeCoder({
       projects: [project()],
@@ -348,109 +322,22 @@ describe("queued follow-up (issue #92 / #314)", () => {
         "t-idle-q": detail({ thread: idle }),
       },
     });
+    fake.api.runs.sendQueued = ((input: unknown) => {
+      fake.calls.push({ channel: "runs.sendQueued", args: [input] });
+      return Promise.reject(new Error("start failed"));
+    }) as typeof fake.api.runs.sendQueued;
     const m = await boot(fake);
-    const card = m.query(
-      'button[aria-label^="Select thread: idle with leftover queue"]',
+    await m.click(
+      m.query('button[aria-label^="Select thread: idle with leftover queue"]'),
     );
-    assert.ok(card, "leftover-queue thread card must exist");
-    await m.click(card);
     await m.flush();
-    return { fake, m };
-  }
-
-  it("does not duplicate the host queue when retry's clear rejects (issue #925)", async () => {
-    const { fake, m } = await bootIdleRetryQueue();
-    const origSetQueued = fake.api.threads.setQueued;
-    fake.api.threads.setQueued = ((input: unknown) => {
-      const i = input as { prompt: string | null };
-      if (i.prompt === null) {
-        fake.calls.push({ channel: "threads.setQueued", args: [input] });
-        return Promise.reject(new Error("queue write failed"));
-      }
-      return origSetQueued(input);
-    }) as typeof fake.api.threads.setQueued;
-
     await m.click(m.query("button[data-retry-queued]"));
     await m.flush();
 
-    assert.equal(fake.of("runs.start").length, 0, "a failed clear must not start");
-    const restores = fake
-      .of("threads.setQueued")
-      .filter((c) => (c.args[0] as { prompt: string | null }).prompt != null);
-    assert.equal(
-      restores.length,
-      0,
-      "a failed clear must not compensate by re-enqueueing",
-    );
-    const queued = await hostQueued(fake, "t-idle-q");
-    assert.equal(queued?.prompt, "Retry this once");
-    assert.deepEqual(queued?.attachments, [RETRY_SHOT]);
-    const strip = m.query("[data-queued-prompt]");
-    assert.ok(strip);
-    assert.equal(
-      (strip!.textContent || "").includes("Retry this once\n\nRetry this once"),
-      false,
-    );
-    assert.match(m.query("[data-queued-error]")?.textContent || "", /queue write failed/);
-    m.unmount();
-  });
-
-  it("restores the original payload once when retry's start rejects after a successful clear (issue #925)", async () => {
-    const { fake, m } = await bootIdleRetryQueue();
-    fake.api.runs.start = ((input: unknown) => {
-      fake.calls.push({ channel: "runs.start", args: [input] });
-      return Promise.reject(new Error("start failed"));
-    }) as typeof fake.api.runs.start;
-
-    await m.click(m.query("button[data-retry-queued]"));
-    await m.flush();
-
-    assert.equal(fake.of("runs.start").length, 1, "retry must attempt the run");
-    const restores = fake
-      .of("threads.setQueued")
-      .filter((c) => (c.args[0] as { prompt: string | null }).prompt != null);
-    assert.equal(restores.length, 1, "a rejected start must restore exactly once");
-    assert.deepEqual(restores[0]!.args[0], {
-      threadId: "t-idle-q",
-      prompt: "Retry this once",
-      attachments: [RETRY_SHOT],
-    });
-    const queued = await hostQueued(fake, "t-idle-q");
-    assert.equal(queued?.prompt, "Retry this once");
-    assert.deepEqual(queued?.attachments, [RETRY_SHOT]);
-    assert.match(m.query("[data-queued-error]")?.textContent || "", /start failed/);
-    m.unmount();
-  });
-
-  it("keeps a concurrently queued follow-up when retry's start rejects (issue #925)", async () => {
-    const { fake, m } = await bootIdleRetryQueue();
-    const origSetQueued = fake.api.threads.setQueued.bind(fake.api.threads);
-    fake.api.threads.setQueued = (async (input: unknown) => {
-      const result = await origSetQueued(input);
-      const i = input as { prompt: string | null };
-      if (i.prompt === null) {
-        await origSetQueued({
-          threadId: "t-idle-q",
-          prompt: "newer follow-up",
-        });
-      }
-      return result;
-    }) as typeof fake.api.threads.setQueued;
-    fake.api.runs.start = ((input: unknown) => {
-      fake.calls.push({ channel: "runs.start", args: [input] });
-      return Promise.reject(new Error("start failed"));
-    }) as typeof fake.api.runs.start;
-
-    await m.click(m.query("button[data-retry-queued]"));
-    await m.flush();
-
-    const queued = await hostQueued(fake, "t-idle-q");
-    assert.equal(queued?.prompt, "newer follow-up\n\nRetry this once");
-    assert.deepEqual(queued?.attachments, [RETRY_SHOT]);
-    const strip = m.query("[data-queued-prompt]");
-    assert.ok(strip);
-    assert.match(strip!.textContent || "", /newer follow-up/);
-    assert.match(strip!.textContent || "", /Retry this once/);
+    assert.equal(fake.of("runs.sendQueued").length, 1);
+    assert.equal(fake.of("threads.setQueued").length, 0);
+    assert.match(m.text(), /start failed/);
+    assert.ok(m.query("[data-queued-prompt]"), "the strip stays");
     m.unmount();
   });
 
@@ -601,13 +488,11 @@ describe("queued follow-up (issue #92 / #314)", () => {
 
     await m.click(sendNow!);
     await m.flush();
-    const started = fake.of("runs.start");
-    assert.equal(started.length, 1, "Send now must start the queued prompt");
-    assert.deepEqual(started[0]!.args[0], {
-      threadId: "t-idle-send",
-      prompt: "ship it",
-      attachments: undefined,
-    });
+    assert.deepEqual(
+      fake.of("runs.sendQueued").map((c) => c.args[0]),
+      [{ threadId: "t-idle-send" }],
+      "Send now must ask main to start the queued prompt",
+    );
     m.unmount();
   });
 

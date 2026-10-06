@@ -2912,6 +2912,7 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
           return value;
         }),
       steer: (input: unknown) => rec("runs.steer", [input], { runId: "r1" }),
+      sendQueued: (input: unknown) => rec("runs.sendQueued", [input], undefined),
       startWorkflow: (input: unknown) =>
         rec("runs.startWorkflow", [input], { runId: "r2" }),
       retryWorkflowAgent: (input: unknown) =>

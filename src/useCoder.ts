@@ -1011,61 +1011,24 @@ export function useCoder(): UseCoderResult {
     [api, applyThreads],
   );
 
+  /** Threads with a "Send now" in flight, so a double click sends once. */
+  const sendingQueuedRef = useRef<Set<string>>(new Set());
   const retryQueued = useCallback(
     (threadId?: string) => {
       const id = threadId ?? selectedRef.current;
       if (!id) return;
       const held = threadsRef.current.find((t) => t.id === id);
-      const pending = held?.queued;
-      if (!pending || held?.status === "working") return;
-      // Clear first so a second click cannot double-send.
-      applyThreads(
-        threadsRef.current.map((t) =>
-          t.id === id ? { ...t, queued: null } : t,
-        ),
-      );
-      void (async () => {
-        let cleared = false;
-        try {
-          await api.threads.setQueued({ threadId: id, prompt: null });
-          cleared = true;
-          await api.runs.start({
-            threadId: id,
-            prompt: pending.prompt,
-            attachments: pending.attachments,
-          });
-        } catch (err) {
-          // A failed retry must not eat the prompt — that is the loss this
-          // issue exists to kill. Re-enqueue only if the host actually
-          // dropped it: setQueued appends, so compensating a failed clear
-          // duplicates prompt and attachments (issue #925).
-          const message = errorMessage(err);
-          setError({ scope: "run", message });
-          let queued: QueuedMessage = { ...pending, error: message };
-          if (cleared) {
-            try {
-              const updated = await api.threads.setQueued({
-                threadId: id,
-                prompt: pending.prompt,
-                attachments: pending.attachments,
-              });
-              if (updated.queued) {
-                queued = { ...updated.queued, error: message };
-              }
-            } catch {
-              // Keep the in-memory payload; a second restore miss must not
-              // eat the prompt the user still has locally.
-            }
-          }
-          applyThreads(
-            threadsRef.current.map((t) =>
-              t.id === id ? { ...t, queued } : t,
-            ),
-          );
-        }
-      })();
+      if (!held?.queued || held.status === "working") return;
+      // One click, one item: main takes the head atomically and puts it
+      // back in front on a failed start (#1501), so nothing is lost here.
+      if (sendingQueuedRef.current.has(id)) return;
+      sendingQueuedRef.current.add(id);
+      void api.runs
+        .sendQueued({ threadId: id })
+        .catch((err) => setError({ scope: "run", message: errorMessage(err) }))
+        .finally(() => sendingQueuedRef.current.delete(id));
     },
-    [api, applyThreads],
+    [api],
   );
 
   const editQueued = useCallback(

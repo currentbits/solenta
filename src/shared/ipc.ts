@@ -4481,6 +4481,12 @@ export interface CoderApi {
       attachments?: AttachmentInfo[];
     }): Promise<{ runId: string }>;
     /**
+     * "Send now" on a parked queue (#1501): start the next queued item as
+     * its own turn; the rest drain one per successful turn after it.
+     * Rejects while a run is active; a failed start puts the item back.
+     */
+    sendQueued(input: { threadId: string }): Promise<void>;
+    /**
      * Starts an orchestrated multi-phase workflow run (the Build action)
      * from a template (default template when templateId omitted). Each phase
      * runs its agents as REAL one-shot calls on the phase's provider/model;

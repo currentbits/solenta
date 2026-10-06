@@ -3873,7 +3873,9 @@ export const ThreadView = memo(function ThreadView({
             {queuedItems.length > 1 ? (
               <>
                 <div className={styles.statusLeft}>
-                  <span className={styles.queuedLabel}>Queued</span>
+                  <span className={styles.queuedLabel} data-queued-label="">
+                    {isWorking ? "Queued" : "Queued, paused"}
+                  </span>
                   {queuedError ? (
                     <span
                       className={styles.permissionGuardrail}
@@ -4047,7 +4049,9 @@ export const ThreadView = memo(function ThreadView({
               </>
             ) : editingQueued != null ? (
               <>
-                <span className={styles.queuedLabel}>Queued</span>
+                <span className={styles.queuedLabel} data-queued-label="">
+                    {isWorking ? "Queued" : "Queued, paused"}
+                  </span>
                 <textarea
                   className={styles.queuedEdit}
                   value={queuedEditDraft}
@@ -4100,7 +4104,9 @@ export const ThreadView = memo(function ThreadView({
             ) : (
               <>
                 <div className={styles.queuedBody}>
-                  <span className={styles.queuedLabel}>Queued</span>
+                  <span className={styles.queuedLabel} data-queued-label="">
+                    {isWorking ? "Queued" : "Queued, paused"}
+                  </span>
                   <span className={styles.queuedText}>{queuedPrompt}</span>
                   {queuedError ? (
                     <span
