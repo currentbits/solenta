@@ -6,24 +6,52 @@ import {
   isEmptyDiff,
   type DiffLineKind,
 } from "../diffView";
-import { parsePatch } from "../reviewItinerary";
+import { parsePatch, type ReviewFilePatch } from "../reviewItinerary";
+import { languageForPath, useHighlightedLines } from "../syntaxHighlight";
 import {
-  splitHunkRows,
+  splitLineText,
+  splitRowIndices,
   type DiffViewMode,
-  type SplitCell,
 } from "../turnDiff";
 import styles from "./TurnDiffPanel.module.css";
 
 export type { DiffViewMode };
 
+/** Diff text, or its highlighted code (prefix stripped) once that is ready. */
+function LineText({
+  line,
+  kind,
+  html,
+  bare = false,
+}: {
+  line: string;
+  kind: DiffLineKind;
+  html: string | null;
+  bare?: boolean;
+}) {
+  const code = splitLineText(line, kind);
+  if (html == null) {
+    return <span className={styles.text}>{(bare ? code : line) || " "}</span>;
+  }
+  const marker = bare || code === line ? "" : line[0];
+  return (
+    <span className={styles.text} data-highlighted="">
+      {marker ? <span className={styles.marker}>{marker}</span> : null}
+      <span dangerouslySetInnerHTML={{ __html: html || " " }} />
+    </span>
+  );
+}
+
 function PatchLine({
   line,
   kind,
   n = null,
+  html = null,
 }: {
   line: string;
   kind?: DiffLineKind;
   n?: number | null;
+  html?: string | null;
 }) {
   const resolved = kind ?? diffLineKind(line);
   return (
@@ -31,20 +59,77 @@ function PatchLine({
       <span className={styles.gutter} aria-hidden>
         {n ?? ""}
       </span>
-      <span className={styles.text}>{line || " "}</span>
+      <LineText line={line} kind={resolved} html={html} />
     </div>
   );
 }
 
-function SplitSide({ cell }: { cell: SplitCell }) {
-  return (
-    <div className={styles.cell} data-kind={cell.kind}>
-      <span className={styles.gutter} aria-hidden>
-        {cell.line ?? ""}
-      </span>
-      <span className={styles.text}>{cell.text || " "}</span>
-    </div>
+/** One file's hunks, unified or split, with syntax colour (#1493). */
+function FileHunks({ patch, mode }: { patch: ReviewFilePatch; mode: DiffViewMode }) {
+  const layout = useMemo(() => {
+    let offset = 0;
+    return patch.hunks.map((hunk) => {
+      const rows = annotateHunkLines(hunk.header, hunk.body);
+      const out = { hunk, rows, pairs: splitRowIndices(rows), offset };
+      offset += rows.length;
+      return out;
+    });
+  }, [patch]);
+  const codes = useMemo(
+    () => layout.flatMap((h) => h.rows.map((r) => splitLineText(r.text, r.kind))),
+    [layout],
   );
+  const html = useHighlightedLines(languageForPath(patch.path), codes);
+  const hl = (offset: number, i: number, text: string) =>
+    text.startsWith("\\") ? null : (html[offset + i] ?? null);
+
+  return layout.map(({ hunk, rows, pairs, offset }) => (
+    <Fragment key={hunk.id}>
+      <div className={styles.hunkHead}>{hunk.header}</div>
+      {mode === "split"
+        ? pairs.map((pair, r) => (
+            <div
+              key={`${hunk.id}:${r}`}
+              className={styles.splitRow}
+              data-turn-diff-split-row=""
+            >
+              {[pair.left, pair.right].map((i, side) => {
+                const row = i == null ? null : rows[i]!;
+                return (
+                  <div
+                    key={side}
+                    className={styles.cell}
+                    data-kind={row ? row.kind : "empty"}
+                  >
+                    <span className={styles.gutter} aria-hidden>
+                      {(row && (side === 0 ? row.oldLine : row.newLine)) ?? ""}
+                    </span>
+                    {row ? (
+                      <LineText
+                        line={row.text}
+                        kind={row.kind}
+                        html={hl(offset, i!, row.text)}
+                        bare
+                      />
+                    ) : (
+                      <span className={styles.text}> </span>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          ))
+        : rows.map((row, i) => (
+            <PatchLine
+              key={`${hunk.id}:${i}`}
+              line={row.text}
+              kind={row.kind}
+              n={row.kind === "del" ? row.oldLine : row.newLine}
+              html={hl(offset, i, row.text)}
+            />
+          ))}
+    </Fragment>
+  ));
 }
 
 function FileChip({
@@ -215,42 +300,13 @@ export function TurnDiffPanel({
             <div className={styles.patch}>
               {visible.map((p) => (
                 <Fragment key={p.path}>
-                  {p.hunks.length === 0
-                    ? p.text.split("\n").map((line, i) => (
-                        <PatchLine key={`${p.path}:${i}`} line={line} />
-                      ))
-                    : p.hunks.map((hunk) => (
-                        <Fragment key={hunk.id}>
-                          <div className={styles.hunkHead}>{hunk.header}</div>
-                          {mode === "split"
-                            ? splitHunkRows(hunk.header, hunk.body).map(
-                                (row, i) => (
-                                  <div
-                                    key={`${hunk.id}:${i}`}
-                                    className={styles.splitRow}
-                                    data-turn-diff-split-row=""
-                                  >
-                                    <SplitSide cell={row.left} />
-                                    <SplitSide cell={row.right} />
-                                  </div>
-                                ),
-                              )
-                            : annotateHunkLines(hunk.header, hunk.body).map(
-                                (row, i) => (
-                                  <PatchLine
-                                    key={`${hunk.id}:${i}`}
-                                    line={row.text}
-                                    kind={row.kind}
-                                    n={
-                                      row.kind === "del"
-                                        ? row.oldLine
-                                        : row.newLine
-                                    }
-                                  />
-                                ),
-                              )}
-                        </Fragment>
-                      ))}
+                  {p.hunks.length === 0 ? (
+                    p.text.split("\n").map((line, i) => (
+                      <PatchLine key={`${p.path}:${i}`} line={line} />
+                    ))
+                  ) : (
+                    <FileHunks patch={p} mode={mode} />
+                  )}
                 </Fragment>
               ))}
             </div>
