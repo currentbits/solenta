@@ -133,3 +133,54 @@ describe("CreatePrDialog", () => {
     m.unmount();
   });
 });
+
+describe("CreatePrDialog Generate", () => {
+  it("fills title and body from the generator and submits them", async () => {
+    const submitted: Array<{ title: string; body: string; draft: boolean }> = [];
+    const m = await mount(
+      <CreatePrDialog
+        initialTitle="Thread title"
+        pending={false}
+        onGenerate={async () => ({ title: "feat: generated", body: "## Why\n\nBecause." })}
+        onSubmit={(input) => submitted.push(input)}
+        onClose={() => {}}
+      />,
+    );
+    await m.click(q(m, "[data-create-pr-generate]"));
+    await m.flush();
+    assert.equal((q(m, "[data-create-pr-title]") as HTMLInputElement).value, "feat: generated");
+    assert.equal((q(m, "[data-create-pr-body]") as HTMLTextAreaElement).value, "## Why\n\nBecause.");
+    await m.click(q(m, "[data-create-pr-submit]"));
+    assert.deepEqual(submitted, [
+      { title: "feat: generated", body: "## Why\n\nBecause.", draft: false },
+    ]);
+    m.unmount();
+  });
+
+  it("shows a refused generation (e.g. the secret scan) and keeps the draft", async () => {
+    const m = await mount(
+      <CreatePrDialog
+        initialTitle="Keep me"
+        pending={false}
+        onGenerate={async () => {
+          throw new Error("Refusing to send PR: secret.aws-key");
+        }}
+        onSubmit={() => {}}
+        onClose={() => {}}
+      />,
+    );
+    await m.click(q(m, "[data-create-pr-generate]"));
+    await m.flush();
+    assert.match(q(m, "[data-create-pr-error]")?.textContent ?? "", /secret\.aws-key/);
+    assert.equal((q(m, "[data-create-pr-title]") as HTMLInputElement).value, "Keep me");
+    m.unmount();
+  });
+
+  it("hides Generate when no generator is wired", async () => {
+    const m = await mount(
+      <CreatePrDialog initialTitle="x" pending={false} onSubmit={() => {}} onClose={() => {}} />,
+    );
+    assert.equal(q(m, "[data-create-pr-generate]"), null);
+    m.unmount();
+  });
+});

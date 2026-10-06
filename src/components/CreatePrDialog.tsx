@@ -10,6 +10,8 @@ import styles from "./CreatePrDialog.module.css";
 export interface CreatePrDialogProps {
   initialTitle: string;
   loadTemplate?: () => Promise<PrTemplateResult>;
+  /** Draft title + body with the thread's agent (already secret-scanned). */
+  onGenerate?: () => Promise<{ title: string; body: string }>;
   pending: boolean;
   error?: string | null;
   oversize?: boolean;
@@ -22,6 +24,7 @@ export interface CreatePrDialogProps {
 export function CreatePrDialog({
   initialTitle,
   loadTemplate,
+  onGenerate,
   pending,
   error,
   oversize = false,
@@ -37,6 +40,8 @@ export function CreatePrDialog({
   const [preview, setPreview] = useState(false);
   const [templates, setTemplates] = useState<PrTemplateFile[]>([]);
   const [templatePath, setTemplatePath] = useState<string | null>(null);
+  const [generating, setGenerating] = useState(false);
+  const [generateError, setGenerateError] = useState<string | null>(null);
   const close = useCallback(() => {
     if (pending) return;
     onClose();
@@ -65,7 +70,24 @@ export function CreatePrDialog({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const canSubmit = canSubmitPr(title) && !pending;
+  const canSubmit = canSubmitPr(title) && !pending && !generating;
+  const busy = pending || generating;
+
+  const generate = async () => {
+    if (!onGenerate || busy) return;
+    setGenerating(true);
+    setGenerateError(null);
+    try {
+      const next = await onGenerate();
+      setTitle(next.title);
+      setBody(next.body);
+      setPreview(false);
+    } catch (err) {
+      setGenerateError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setGenerating(false);
+    }
+  };
 
   const node = (
     <div
@@ -99,13 +121,28 @@ export function CreatePrDialog({
         </header>
         <div className={styles.body}>
           <label className={styles.field}>
-            <span className={styles.label}>Title</span>
+            <span className={styles.labelRow}>
+              <span className={styles.label}>Title</span>
+              {onGenerate ? (
+                <button
+                  type="button"
+                  className={styles.previewToggle}
+                  data-create-pr-generate=""
+                  disabled={busy}
+                  aria-busy={generating || undefined}
+                  title="Draft the title and description from this branch's commits and diff"
+                  onClick={() => void generate()}
+                >
+                  {generating ? "Generating…" : "Generate"}
+                </button>
+              ) : null}
+            </span>
             <input
               className={styles.input}
               data-create-pr-title=""
               value={title}
               onChange={(event) => setTitle(event.target.value)}
-              disabled={pending}
+              disabled={busy}
               autoComplete="off"
             />
           </label>
@@ -158,7 +195,7 @@ export function CreatePrDialog({
                 data-create-pr-body=""
                 value={body}
                 onChange={(event) => setBody(event.target.value)}
-                disabled={pending}
+                disabled={busy}
                 rows={10}
               />
             )}
@@ -173,9 +210,9 @@ export function CreatePrDialog({
             />
             Create as draft
           </label>
-          {error ? (
+          {error || generateError ? (
             <p className={styles.error} data-create-pr-error="">
-              {error}
+              {error || generateError}
             </p>
           ) : null}
           {oversize ? (
