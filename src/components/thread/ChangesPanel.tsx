@@ -18,6 +18,7 @@ import {
   annotateHunkLines,
   commentGutterLabel,
   commentLineRef,
+  diffHighlightGroups,
   diffLineKind,
   isEmptyDiff,
   reviewCommentFromAnchors,
@@ -336,7 +337,8 @@ function FilePatch({
     () => layout.flatMap((h) => h.rows.map((r) => splitLineText(r.text, r.kind))),
     [layout],
   );
-  const html = useHighlightedLines(languageForPath(patch.path), codes);
+  const groups = useMemo(() => diffHighlightGroups(layout), [layout]);
+  const html = useHighlightedLines(languageForPath(patch.path), codes, groups);
 
   const line = (h: HunkLayout, group: string, i: number, side?: "left" | "right") => {
     const row = h.rows[i]!;
