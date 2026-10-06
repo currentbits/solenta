@@ -123,13 +123,15 @@
   font-weight: 600;
 }
 
-.tree:focus-visible .row[data-active] {
+.tree:focus-visible .row[data-active],
+.side:has(.filter:focus) .row[data-active] {
   background: var(--card-hover);
   box-shadow: inset 2px 0 0 var(--accent);
 }
 
 .row[data-ignored] {
   color: var(--text-muted);
+  opacity: 0.6;
 }
 
 .twisty {
