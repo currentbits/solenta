@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import {
   PERMISSION_MODE_LABELS,
   providerPermissionModes,
@@ -131,6 +132,8 @@ export function AgentsPane({
   persistProfiles,
   persistPool,
   onSaveSettings,
+  onRefreshProviders,
+  onProviderSignIn,
 }: {
   settings: AppSettings | null;
   providers: ProviderInfo[];
@@ -143,7 +146,14 @@ export function AgentsPane({
   persistProfiles: (next: AgentProfile[]) => Promise<boolean>;
   persistPool: (next: SubagentPool) => Promise<boolean>;
   onSaveSettings: SettingsModalProps["onSaveSettings"];
+  onRefreshProviders?: () => void;
+  onProviderSignIn?: (providerId: string) => Promise<void>;
 }) {
+  // Mounted only while this pane shows: opening it re-probes sign-in state.
+  useEffect(() => {
+    onRefreshProviders?.();
+  }, []);
+
   const submitDraft = async () => {
     if (!draft) return;
     const name = draft.name.trim();
@@ -238,6 +248,23 @@ export function AgentsPane({
 
   return (
     <>
+      <ProviderStatusList
+        providers={providers}
+        onSignIn={
+          onProviderSignIn
+            ? (id) => {
+                setError(null);
+                return onProviderSignIn(id).catch((err) => {
+                  setError(
+                    err instanceof Error && err.message
+                      ? err.message
+                      : "Could not start sign in",
+                  );
+                });
+              }
+            : undefined
+        }
+      />
       <section className={styles.section} data-agent-profiles="">
         <h3 className={styles.sectionLabel}>Agent profiles</h3>
         <p className={styles.note}>
@@ -545,6 +572,76 @@ export function AgentsPane({
         )}
       </section>
     </>
+  );
+}
+
+const AUTH_LABELS = {
+  signedIn: "Signed in",
+  signedOut: "Signed out",
+  unknown: "Sign-in unknown",
+} as const;
+
+/** One row per provider CLI: installed, signed in, and a Sign in button (#1501). */
+function ProviderStatusList({
+  providers,
+  onSignIn,
+}: {
+  providers: ProviderInfo[];
+  onSignIn?: (providerId: string) => Promise<void>;
+}) {
+  const [pending, setPending] = useState<string | null>(null);
+  const rows = providers.filter((p) => p.id !== "simulate");
+  if (rows.length === 0) return null;
+  return (
+    <section className={styles.section} data-provider-status="">
+      <h3 className={styles.sectionLabel}>Providers</h3>
+      <p className={styles.note}>
+        Sign-in state comes from each CLI&apos;s own status command. Unknown
+        means the CLI has no way to ask.
+      </p>
+      {rows.map((p) => {
+        const state = !p.available ? "missing" : (p.auth ?? "checking");
+        const canSignIn =
+          onSignIn != null && p.available && p.auth != null && p.auth !== "signedIn";
+        return (
+          <div
+            key={p.id}
+            className={`${styles.memoryRow} ${styles.profileRow}`}
+            data-provider-row={p.id}
+          >
+            <div className={styles.profileMeta}>
+              <div className={styles.profileName}>{p.name}</div>
+              <p
+                className={styles.note}
+                data-auth-state={state}
+              >
+                {state === "missing"
+                  ? "Not installed"
+                  : state === "checking"
+                    ? "Checking sign-in…"
+                    : AUTH_LABELS[state]}
+              </p>
+            </div>
+            {canSignIn && (
+              <div className={styles.fieldRow}>
+                <button
+                  type="button"
+                  className={styles.btn}
+                  data-provider-signin={p.id}
+                  disabled={pending != null}
+                  onClick={() => {
+                    setPending(p.id);
+                    void onSignIn(p.id).finally(() => setPending(null));
+                  }}
+                >
+                  Sign in
+                </button>
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </section>
   );
 }
 

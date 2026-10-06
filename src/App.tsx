@@ -42,6 +42,7 @@ import type {
   DistilledWorkflow,
   ProjectUpdateInput,
 } from "./shared/ipc";
+import { SIGNIN_TERMINAL_ID } from "./shared/ipc";
 import styles from "./App.module.css";
 import { syncTheme } from "./theme";
 import {
@@ -102,6 +103,9 @@ const DigestView = lazyNamed(() =>
 );
 const SettingsModal = lazyNamed(() =>
   import("./components/SettingsModal").then((m) => m.SettingsModal),
+);
+const SignInTerminal = lazyNamed(() =>
+  import("./components/SignInTerminal").then((m) => m.SignInTerminal),
 );
 const OnboardingModal = lazyNamed(() =>
   import("./components/onboarding/OnboardingModal").then((m) => m.OnboardingModal),
@@ -942,6 +946,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     void refreshProviders();
   }, [refreshProviders]);
 
+
   // Wrapped, not passed through: this one is bound straight to a button's
   // onClick, so cancelQueued's optional threadId would swallow the DOM event
   // and cancel nothing.
@@ -1063,6 +1068,40 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
   // the new thread while the user reads the old one (issue #83).
   const visibleDetail =
     detail && detail.thread.id === selectedThreadId ? detail : null;
+
+  // Sign in (#1501): the login command runs in the open thread's Terminal
+  // pane, or in a dedicated shell when no thread is on screen.
+  const [terminalReveal, setTerminalReveal] = useState<{
+    nonce: number;
+    termId: string;
+  } | null>(null);
+  const [signInShell, setSignInShell] = useState<{
+    providerName: string;
+    nonce: number;
+  } | null>(null);
+  const signInThreadId =
+    view === "thread" && visibleDetail ? visibleDetail.thread.id : null;
+  const handleProviderSignIn = useCallback(
+    async (providerId: string) => {
+      const res = await terminal.signIn({
+        provider: providerId,
+        threadId: signInThreadId,
+      });
+      if (res.threadId === SIGNIN_TERMINAL_ID) {
+        const providerName =
+          providers.find((p) => p.id === providerId)?.name ?? providerId;
+        setSignInShell((cur) => ({ providerName, nonce: (cur?.nonce ?? 0) + 1 }));
+        return;
+      }
+      setSettingsOpen(false);
+      setTerminalReveal((cur) => ({ termId: res.termId, nonce: (cur?.nonce ?? 0) + 1 }));
+    },
+    [terminal, signInThreadId, providers],
+  );
+  const closeSignInShell = useCallback(() => {
+    setSignInShell(null);
+    void refreshProviders();
+  }, [refreshProviders]);
 
   const project =
     (visibleDetail && projectById.get(visibleDetail.thread.projectId)) ||
@@ -1734,6 +1773,8 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         onCloseChanges={closeChanges}
         onViewChanges={openChanges}
         terminalApi={terminal}
+        terminalReveal={terminalReveal}
+        onProviderSignIn={handleProviderSignIn}
         onPanesNeedRoom={collapseAgentsForPanes}
         runStats={runStats}
         onFetchTurnDiff={fetchTurnDiff}
@@ -1936,6 +1977,8 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
           initialPane={settingsPane}
           settings={settings}
           providers={providers}
+          onRefreshProviders={handleModelPickerOpen}
+          onProviderSignIn={handleProviderSignIn}
           status={appStatus}
           update={updateStatus}
           onCheckUpdate={checkUpdate}
@@ -1978,6 +2021,16 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
             discardHarnessImport,
           }}
         />
+        )}
+        </Suspense>
+        <Suspense fallback={null}>
+        {signInShell && (
+          <SignInTerminal
+            providerName={signInShell.providerName}
+            nonce={signInShell.nonce}
+            api={terminal}
+            onClose={closeSignInShell}
+          />
         )}
         </Suspense>
         <Suspense fallback={null}>

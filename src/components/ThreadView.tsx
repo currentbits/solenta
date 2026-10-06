@@ -373,6 +373,8 @@ interface ThreadViewProps {
   onViewChanges?: () => void;
   /** Shell session for the Terminal pane (#147). */
   terminalApi?: TerminalApi;
+  /** Show the Terminal pane on this shell (Sign in, #1501). */
+  terminalReveal?: { nonce: number; termId: string } | null;
   /**
    * Fires whenever the workspace holds more than one pane. App collapses
    * the agents rail so the panes get the width.
@@ -580,6 +582,8 @@ interface ThreadViewProps {
   onPeekThread?: (id: string) => Promise<ThreadDetail>;
   /** Fired when the composer model picker opens (provider list refresh). */
   onModelPickerOpen?: () => void;
+  /** Sign in a signed-out provider from the picker (#1501). */
+  onProviderSignIn?: (providerId: string) => Promise<void>;
   loadProviderLimits?: ProviderLimitsLoader;
   /** Seeded demo quotas for browser preview. */
   quotaDemo?: boolean;
@@ -674,6 +678,7 @@ export const ThreadView = memo(function ThreadView({
   onCloseChanges,
   onViewChanges,
   terminalApi,
+  terminalReveal = null,
   onPanesNeedRoom,
   runStats,
   onFetchTurnDiff,
@@ -748,6 +753,7 @@ export const ThreadView = memo(function ThreadView({
   comparePeers = EMPTY_COMPARE_PEERS,
   onPeekThread,
   onModelPickerOpen,
+  onProviderSignIn,
   loadProviderLimits,
   quotaDemo = false,
 }: ThreadViewProps) {
@@ -1830,6 +1836,7 @@ export const ThreadView = memo(function ThreadView({
     setFocusedId,
     changesOpen,
     changesNonce,
+    terminalNonce: terminalReveal?.nonce ?? 0,
     onPanesNeedRoom,
     onCloseChanges,
     onViewChanges,
@@ -3321,6 +3328,7 @@ export const ThreadView = memo(function ThreadView({
               <TerminalPane
                 threadId={detail?.thread.id ?? null}
                 api={terminalApi}
+                reveal={terminalReveal}
               />
             );
           }
@@ -4239,6 +4247,7 @@ export const ThreadView = memo(function ThreadView({
         onBestOfN={onFork && !thread.ask ? runBestOfN : undefined}
         onDelegate={onFork && !thread.ask ? runDelegate : undefined}
         onModelPickerOpen={onModelPickerOpen}
+        onProviderSignIn={onProviderSignIn}
         error={runError}
         onDismissError={onDismissRunError}
         onListFiles={onListFiles}

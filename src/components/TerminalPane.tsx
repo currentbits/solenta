@@ -300,12 +300,23 @@ export function TerminalPane({
   threadId,
   api,
   load = loadXterm,
+  reveal = null,
 }: {
   threadId: string | null;
   api: TerminalApi;
   load?: XtermLoader;
+  /**
+   * A shell the main process just (re)started, e.g. Sign in's (#1501). Each
+   * new nonce adds the split and remounts it onto the fresh session.
+   */
+  reveal?: { nonce: number; termId: string } | null;
 }) {
   const [ids, setIds] = useState<string[] | null>(null);
+
+  useEffect(() => {
+    if (!reveal) return;
+    setIds((cur) => (cur && !cur.includes(reveal.termId) ? [...cur, reveal.termId] : cur));
+  }, [reveal]);
 
   useEffect(() => {
     if (!threadId) return;
@@ -352,7 +363,7 @@ export function TerminalPane({
       <div className={styles.splits}>
         {(ids ?? []).map((id, i) => (
           <TerminalView
-            key={`${threadId}:${id}`}
+            key={`${threadId}:${id}:${reveal?.termId === id ? reveal.nonce : 0}`}
             threadId={threadId}
             termId={id}
             api={api}

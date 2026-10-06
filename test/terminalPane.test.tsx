@@ -194,6 +194,28 @@ describe("TerminalPane", () => {
     assert.equal(m.query("[data-terminal-split]"), null);
   });
 
+  it("reveal adds the Sign in shell and remounts it on each new nonce (#1501)", async () => {
+    const h = harness();
+    const el = (reveal: { nonce: number; termId: string } | null) => (
+      <TerminalPane threadId="t1" api={h.api} load={h.load} reveal={reveal} />
+    );
+    const m = await mount(el(null));
+    await settle();
+    await m.rerender(el({ nonce: 1, termId: "signin" }));
+    await settle();
+    assert.deepEqual(
+      m.queryAll("[data-terminal-view]").map((v) => v.getAttribute("data-terminal-view")),
+      ["1", "signin"],
+    );
+    const before = h.terms.length;
+    // A second Sign in restarts that shell in main: the view must re-attach.
+    await m.rerender(el({ nonce: 2, termId: "signin" }));
+    await settle();
+    assert.equal(h.terms.length, before + 1, "fresh xterm for the fresh session");
+    assert.equal(h.terms[before - 1].disposed, true);
+    assert.equal(h.terms[0].disposed, false, "other splits are untouched");
+  });
+
   it("restores the terminals main still knows about", async () => {
     const h = harness({ list: async () => ["1", "3"] });
     const m = await mount(<TerminalPane threadId="t1" api={h.api} load={h.load} />);

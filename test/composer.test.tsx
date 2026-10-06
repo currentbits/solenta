@@ -200,6 +200,7 @@ function composer(
     providers?: ProviderInfo[];
     agentProfiles?: AgentProfile[];
     onListFiles?: (query: string) => Promise<string[]>;
+    onProviderSignIn?: (providerId: string) => Promise<void>;
   } = {},
 ) {
   // Seed the emulation from the thread this element renders with, so the
@@ -223,6 +224,7 @@ function composer(
       }
       webSearch={over.webSearch === true}
       providers={over.providers ?? PROVIDERS}
+      onProviderSignIn={over.onProviderSignIn}
       ask={over.ask ?? false}
       agentProfiles={over.agentProfiles}
       workflows={over.workflows ?? WORKFLOWS}
@@ -1289,6 +1291,38 @@ describe("Composer model picker (#1429)", () => {
     const shown = m.query("[data-catalog-note]");
     assert.ok(shown, "picker must show the harness note");
     assert.equal(shown.textContent, note);
+    m.unmount();
+  });
+
+  it("marks a signed-out provider and offers Sign in (#1501)", async () => {
+    const h = makeHarness();
+    const signIns: string[] = [];
+    const m = await mount(
+      composer(h, {
+        provider: "codex",
+        model: null,
+        providers: [{ ...CODEX, auth: "signedOut" }],
+        onProviderSignIn: async (id: string) => void signIns.push(id),
+      }),
+    );
+    await m.click(m.query('button[aria-label^="Model:"]'));
+    const row = m.query('[data-signed-out="codex"]');
+    assert.ok(row, "picker must flag the signed-out harness");
+    assert.match(row.textContent ?? "", /Signed out/);
+    const btn = [...row.querySelectorAll("button")].find((b) => b.textContent === "Sign in");
+    await m.click(btn!);
+    assert.deepEqual(signIns, ["codex"]);
+    assert.equal(m.query('[role="dialog"][aria-label="Model picker"]'), null, "picker closes");
+    m.unmount();
+  });
+
+  it("says nothing about sign-in when signed in or unknown", async () => {
+    const h = makeHarness();
+    const m = await mount(
+      composer(h, { provider: "codex", model: null, providers: [{ ...CODEX, auth: "unknown" }] }),
+    );
+    await m.click(m.query('button[aria-label^="Model:"]'));
+    assert.equal(m.query("[data-signed-out]"), null);
     m.unmount();
   });
 
