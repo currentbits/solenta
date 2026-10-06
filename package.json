@@ -33,6 +33,7 @@
     "dompurify": "^3.4.16",
     "highlight.js": "^11.12.0",
     "mermaid": "^12.1.0",
+    "qrcode-generator": "2.0.4",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
     "react-markdown": "^10.1.0",

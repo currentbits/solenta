@@ -23,6 +23,7 @@ const gitHandlers = require("./ipc-git.js");
 const filesHandlers = require("./ipc-files.js");
 const devserverHandlers = require("./ipc-devserver.js");
 const simulatorHandlers = require("./ipc-simulator.js");
+const webHandlers = require("./ipc-web.js");
 
 /**
  * Default window fan-out (desktop transport). main.js replaces this with a
@@ -74,6 +75,7 @@ function makeCtx(deps) {
         : () => ({ running: false, port: null }),
     openRemoteConnection: deps.openRemoteConnection,
     forgetRemoteConnection: deps.forgetRemoteConnection,
+    webAccess: deps.webAccess || null,
     transport: "desktop",
   };
 }
@@ -107,6 +109,7 @@ const IPC_HANDLERS = {
   ...filesHandlers,
   ...devserverHandlers,
   ...simulatorHandlers,
+  ...webHandlers,
 };
 
 /**

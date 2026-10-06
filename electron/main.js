@@ -65,7 +65,10 @@ const {
   startWebServer,
   loadOrCreateToken,
   HOST_FLAG_HELP,
+  DEFAULT_PORT: WEB_DEFAULT_PORT,
 } = require("./webServer.js");
+const { createWebDevices } = require("./webDevices.js");
+const { createWebAccess } = require("./webAccess.js");
 const { migrateLegacyUserData } = require("./legacy-migration.js");
 const { configureDefaultSecrets } = require("./secrets.js");
 const { installCrashGuard } = require("./crash-guard.js");
@@ -166,8 +169,9 @@ let postMergeScheduler = null;
 /** @type {ReturnType<typeof startMemoryConsolidateScheduler> | null} */
 let memoryConsolidateScheduler = null;
 
-/** @type {Awaited<ReturnType<typeof startWebServer>> | null} */
-let webServer = null;
+/** Solenta Web: Settings switch, devices, Tailscale (#1512 I2). */
+/** @type {ReturnType<typeof createWebAccess> | null} */
+let webAccess = null;
 
 /** @type {InstanceType<typeof Store> | null} */
 let store = null;
@@ -360,8 +364,8 @@ function broadcast(channel, payload) {
       win.webContents.send(channel, payload);
     }
   }
-  if (webServer) {
-    webServer.broadcast(channel, payload);
+  if (webAccess) {
+    webAccess.broadcast(channel, payload);
   }
 }
 
@@ -768,7 +772,25 @@ app.whenReady().then(async () => {
   syncAttentionBadge(store);
   setInterval(() => syncAttentionBadge(store), 2000);
 
-  const registered = registerIpc({
+  // ctx is read when the server starts, after registerIpc below returns.
+  let registered = null;
+  const webStaticDir = path.join(__dirname, "../dist");
+  webAccess = createWebAccess({
+    devices: createWebDevices(userData),
+    defaultPort: WEB_DEFAULT_PORT,
+    startServer: (opts) =>
+      startWebServer({
+        ...opts,
+        staticDir: fs.existsSync(webStaticDir) ? webStaticDir : null,
+        ctx: registered.ctx,
+        artifactStore,
+        log: (msg) => console.warn(msg),
+      }),
+    log: (msg) => console.warn(msg),
+  });
+
+  registered = registerIpc({
+    webAccess,
     ipcMain,
     dialog,
     store,
@@ -829,26 +851,19 @@ app.whenReady().then(async () => {
 
   if (serveOpts.enabled) {
     const token = loadOrCreateToken(userData);
+    // --serve-web keeps printing one token; it is the Legacy device row.
+    webAccess.adoptLegacy(token);
     // Contract: print the token to stdout when serve mode starts.
     process.stdout.write(`solenta-web: token ${token}\n`);
     if (serveOpts.host !== "127.0.0.1") {
       process.stdout.write(`solenta-web: ${HOST_FLAG_HELP}\n`);
     }
-    const staticDir = path.join(__dirname, "../dist");
     // The port is fixed, so EADDRINUSE is routine (a previous instance still
     // holds it). Never let that reject out of whenReady: the rest of boot
     // (IPC ready push, schedulers) would be skipped even though the window
     // is already up.
     try {
-      webServer = await startWebServer({
-        host: serveOpts.host,
-        port: serveOpts.port,
-        staticDir: fs.existsSync(staticDir) ? staticDir : null,
-        token,
-        ctx: registered.ctx,
-        artifactStore,
-        log: (msg) => console.warn(msg),
-      });
+      await webAccess.start({ host: serveOpts.host, port: serveOpts.port });
     } catch (err) {
       // No listener means nothing to keep the process alive headless either.
       serveOpts.enabled = false;
@@ -856,6 +871,10 @@ app.whenReady().then(async () => {
         `solenta-web: cannot listen on ${serveOpts.host}:${serveOpts.port} (${err && err.message ? err.message : err}); continuing without web serve\n`,
       );
     }
+  } else {
+    // The Settings switch, if the user left it on. Loopback unless they
+    // also allowed network access. Never throws.
+    await webAccess.restore();
   }
 
   // Round 47: lazy PR-state freshness. Async/serialized/latched so a slow gh
@@ -1025,13 +1044,9 @@ shutdown = installShutdown({
 /** Servers, schedulers, and child processes: last, after runs and the device. */
 function teardownServices() {
   closeRemoteConnections();
-  if (webServer) {
-    try {
-      void webServer.close();
-    } catch {
-      // ignore
-    }
-    webServer = null;
+  if (webAccess) {
+    void webAccess.stop().catch(() => {});
+    webAccess = null;
   }
   if (prStateRefresher) {
     try {

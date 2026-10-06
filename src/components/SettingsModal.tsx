@@ -23,6 +23,7 @@ import { SkillsManager, type SkillsManagerProps } from "./SkillsTab";
 import styles from "./SettingsModal.module.css";
 import { IntegrationsSection } from "./IntegrationsSection";
 import { ConnectionsSection } from "./ConnectionsSection";
+import { WebAccessSection } from "./WebAccessSection";
 import { isWebMode } from "../shared/wire";
 import type { CoderApi } from "../shared/ipc";
 import { PaneIcon } from "./settings/PaneIcon";
@@ -108,8 +109,8 @@ const PANE_META: Record<
   },
   connections: {
     label: "Connections",
-    hint: "Run Solenta on another machine through SSH.",
-    keywords: "remote ssh host server tunnel workstation web token",
+    hint: "Open Solenta from your phone or a browser, or run it on another machine through SSH.",
+    keywords: "remote ssh host server tunnel workstation web token phone device qr pair tailscale https lan network browser",
   },
   integrations: {
     label: "Integrations",
@@ -751,7 +752,11 @@ export function SettingsModal({
           )}
 
           {pane === "connections" && !isWebMode() && (
+          <>
+          <WebAccessSection active={open && pane === "connections"} />
+          <p className={styles.sectionLabel}>Remote hosts</p>
           <ConnectionsSection onOpen={onOpenConnection} onForget={onForgetConnection} />
+          </>
           )}
 
           {pane === "memory" && (
