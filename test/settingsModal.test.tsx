@@ -2560,3 +2560,84 @@ describe("SettingsModal Agents › Providers sign-in (#1501)", () => {
     assert.ok(m.text().includes("No sign-in command for codex"), m.text());
   });
 });
+
+describe("SettingsModal Agents › named provider instances (#453)", () => {
+  afterEach(() => unmountAll());
+
+  const CLAUDE: ProviderInfo = { ...KIMI, id: "claude", name: "Claude Code", auth: "signedIn" };
+  const WORK: ProviderInfo = {
+    ...CLAUDE,
+    id: "claude:w1",
+    name: "Claude Code (work)",
+    auth: "signedOut",
+    baseProvider: "claude",
+    instanceId: "w1",
+  };
+  const INSTANCE = {
+    id: "w1",
+    name: "work",
+    provider: "claude",
+    configDir: "~/.claude-work",
+    env: { ANTHROPIC_BASE_URL: "https://router.example" },
+  };
+
+  it("adds an instance with a config folder and env", async () => {
+    const saved: Array<Partial<AppSettings>> = [];
+    const m = await mount(
+      modal({
+        initialPane: "agents",
+        providers: [CLAUDE],
+        settings: { providerInstances: [] } as Partial<AppSettings> as AppSettings,
+        onSaveSettings: async (patch) => {
+          saved.push(patch);
+          return patch as AppSettings;
+        },
+      }),
+    );
+    await m.click(m.query("[data-add-instance]"));
+    await m.type(m.query("#instance-name"), "work");
+    await m.type(m.query("#instance-dir"), "~/.claude-work");
+    await m.click(m.query("[data-instance-add-env]"));
+    await m.type(m.query('[data-instance-env-row] input[aria-label="Variable name"]'), "ANTHROPIC_BASE_URL");
+    const value = m.query('[data-instance-env-row] input[type="password"]');
+    assert.ok(value, "env values are masked");
+    await m.type(value, "https://router.example");
+    await m.click(m.queryAll("[data-instance-form] button").find((b) => b.textContent === "Add"));
+    const list = saved.at(-1)?.providerInstances;
+    assert.equal(list?.length, 1);
+    assert.match(list![0]!.id, /^[0-9a-f]{8}$/);
+    assert.deepEqual({ ...list![0], id: "x" }, { ...INSTANCE, id: "x" });
+  });
+
+  it("an instance row signs in under its ref, and edits or deletes", async () => {
+    const saved: Array<Partial<AppSettings>> = [];
+    const signIns: string[] = [];
+    const m = await mount(
+      cloneElement(
+        modal({
+          initialPane: "agents",
+          providers: [CLAUDE, WORK],
+          settings: { providerInstances: [INSTANCE] } as Partial<AppSettings> as AppSettings,
+          onSaveSettings: async (patch) => {
+            saved.push(patch);
+            return patch as AppSettings;
+          },
+        }),
+        { onProviderSignIn: async (id: string) => void signIns.push(id) },
+      ),
+    );
+    assert.equal(
+      m.query('[data-provider-row="claude:w1"] [data-auth-state]')?.textContent,
+      "Signed out",
+    );
+    await m.click(m.query('[data-provider-signin="claude:w1"]'));
+    assert.deepEqual(signIns, ["claude:w1"]);
+
+    await m.click(m.query('[data-instance-edit="w1"]'));
+    assert.equal((m.query("#instance-dir") as HTMLInputElement).value, "~/.claude-work");
+    assert.equal((m.query("#instance-provider") as HTMLSelectElement).disabled, true);
+
+    await m.click(m.query('[data-instance-delete="w1"]'));
+    assert.deepEqual(saved.at(-1), { providerInstances: [] });
+  });
+});

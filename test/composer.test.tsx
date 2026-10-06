@@ -1111,6 +1111,35 @@ describe("Composer model picker (#1429)", () => {
     m.unmount();
   });
 
+  it("a named instance is its own provider group and picks by ref (#453)", async () => {
+    const WORK: ProviderInfo = {
+      ...CLAUDE_WITH_INFO,
+      id: "claude:w1",
+      name: "Claude Code (work)",
+      baseProvider: "claude",
+      instanceId: "w1",
+    };
+    const providers = [CLAUDE_WITH_INFO, WORK, CODEX];
+    const h = makeHarness();
+    const m = await mount(composer(h, { provider: "claude", model: "claude-sonnet-4", providers }));
+    await m.click(m.query('button[aria-label^="Model:"]'));
+    await m.click(m.query('button[aria-label="Provider Claude Code (work)"]'));
+    await m.pressFocused("ArrowDown");
+    await m.pressFocused("Enter");
+    assert.deepEqual(h.providerSets.at(-1), { provider: "claude:w1", model: "claude-sonnet-4" });
+    m.unmount();
+
+    // On the instance, the picker opens on the instance, not the base.
+    const h2 = makeHarness();
+    const m2 = await mount(composer(h2, { provider: "claude:w1", model: null, providers }));
+    await m2.click(m2.query('button[aria-label^="Model:"]'));
+    assert.equal(
+      m2.query('button[aria-label="Provider Claude Code (work)"]')?.getAttribute("data-active"),
+      "true",
+    );
+    m2.unmount();
+  });
+
   it("switches harness when the model belongs to another provider", async () => {
     const h = makeHarness();
     const m = await mount(composer(h, { provider: "claude", model: null }));

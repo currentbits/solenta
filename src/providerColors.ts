@@ -13,5 +13,5 @@ const PROVIDER_COLORS: Record<string, string> = {
 };
 
 export function providerColor(id: string): string {
-  return PROVIDER_COLORS[id] ?? "var(--text-muted)";
+  return PROVIDER_COLORS[id.split(":")[0]!] ?? "var(--text-muted)";
 }
