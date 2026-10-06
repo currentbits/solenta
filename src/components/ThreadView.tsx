@@ -36,6 +36,7 @@ import type {
   DiffResult,
   GitSyncInfo,
   PrChecksResult,
+  MergeMethod,
   PrInfo,
   PrTemplateResult,
   PermissionDecision,
@@ -472,7 +473,11 @@ interface ThreadViewProps {
   /** Look up the branch's PR on GitHub and record it on the thread. */
   onPrStatus?: () => Promise<PrInfo | null>;
   /** Squash-merge the current OPEN PR. Pass ciWorkflowApproved after sign-off. */
-  onPrMerge?: (opts?: { ciWorkflowApproved?: boolean }) => Promise<PrInfo>;
+  onPrMerge?: (opts?: {
+    ciWorkflowApproved?: boolean;
+    method?: MergeMethod;
+    auto?: boolean;
+  }) => Promise<PrInfo>;
   /** Upstream state for the header sync pill; absent hides the pill. */
   gitSyncInfo?: (threadId: string) => Promise<GitSyncInfo>;
   /** Fetch remotes before the sync pill re-reads state. */

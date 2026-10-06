@@ -9,6 +9,7 @@ import type {
   PrDetail,
   PrDetailResult,
   PrTemplateResult,
+  MergeMethod,
   PrCheckInfo,
   PrInfo,
   ThreadInfo,
@@ -123,6 +124,13 @@ export function createGit(ctx: DevCtx): Pick<CoderApi, "git" | "mergeQueue"> {
           updatedAt: now(),
         });
         return merged;
+      },
+      async mergeOptions(_input: { threadId: string } | { projectPath: string }) {
+        return {
+          ok: true as const,
+          methods: ["squash", "merge", "rebase"] as MergeMethod[],
+          defaultMethod: "squash" as const,
+        };
       },
       async listPrs(projectPath: string) {
         const project = ctx.projects.find((p) => p.path === projectPath);
@@ -492,6 +500,14 @@ export function createGit(ctx: DevCtx): Pick<CoderApi, "git" | "mergeQueue"> {
         const detail = details.get(input.threadId);
         if (!detail) throw new Error(`Thread not found: ${input.threadId}`);
         return { message: "feat: update the centre pane" };
+      },
+      async suggestPrText(input) {
+        const detail = details.get(input.threadId);
+        if (!detail) throw new Error(`Thread not found: ${input.threadId}`);
+        return {
+          title: `feat: ${detail.thread.title}`,
+          body: "## Summary\n\n- Generated in dev mode.",
+        };
       },
       async conflictContext(input) {
         const detail = details.get(input.threadId);

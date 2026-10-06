@@ -113,7 +113,11 @@ function view(props: {
   }) => Promise<PrInfo>;
   onPrChecks?: () => Promise<PrChecksResult>;
   onPrStatus?: () => Promise<PrInfo | null>;
-  onPrMerge?: (opts?: { ciWorkflowApproved?: boolean }) => Promise<PrInfo>;
+  onPrMerge?: (opts?: {
+    ciWorkflowApproved?: boolean;
+    method?: "squash" | "merge" | "rebase";
+    auto?: boolean;
+  }) => Promise<PrInfo>;
   onStartRun?: (prompt: string) => void;
 }) {
   return (
@@ -801,5 +805,170 @@ describe("next-git-action button", () => {
         m.unmount();
       });
     });
+  });
+});
+
+describe("merge method, auto-merge and generated PR text (#1493 D)", () => {
+  type MergeCall = { method?: string; auto?: boolean; ciWorkflowApproved?: boolean };
+  const merged: PrInfo = {
+    number: 9,
+    url: "https://github.com/acme/repo/pull/9",
+    state: "OPEN",
+    branch: "coder/next-action-abc123",
+    created: false,
+  };
+  const prThread = () =>
+    detail({
+      thread: thread({
+        prNumber: 9,
+        prUrl: "https://github.com/acme/repo/pull/9",
+        prState: "OPEN",
+      }),
+    });
+
+  /** Run body with window.coder.git stubbed (jsdom exists after a mount). */
+  async function withGit(git: Record<string, unknown>, body: () => Promise<void>) {
+    const shell = await mount(<div />);
+    const w = window as unknown as { coder?: unknown };
+    const prev = w.coder;
+    w.coder = { git };
+    shell.unmount();
+    try {
+      await body();
+    } finally {
+      w.coder = prev;
+    }
+  }
+
+  it("merges with the repo default method and the one the user picks", async () => {
+    const calls: MergeCall[] = [];
+    await withGit(
+      {
+        mergeOptions: async () => ({
+          ok: true,
+          methods: ["merge", "rebase"],
+          defaultMethod: "rebase",
+        }),
+      },
+      async () => {
+        const m = await mount(
+          view({
+            detail: prThread(),
+            gitSyncInfo: async () => ({ hasUpstream: true, ahead: 0, behind: 0 }),
+            onPrChecks: async () => ({ ok: true, checks: [{ name: "ci", bucket: "pass" }] }),
+            onPrMerge: async (opts) => {
+              calls.push({ ...opts });
+              return merged;
+            },
+          }),
+        );
+        await m.flush();
+        const picker = m.query("[data-merge-method]") as HTMLSelectElement | null;
+        assert.ok(picker, "method picker");
+        assert.equal(picker!.value, "rebase");
+        assert.deepEqual(
+          [...picker!.options].map((o) => o.value),
+          ["merge", "rebase"],
+        );
+        await m.click(m.query('[data-next-git-action="merge"]'));
+        await m.flush();
+        await m.change(m.query("[data-merge-method]"), "merge");
+        await m.click(m.query('[data-next-git-action="merge"]'));
+        await m.flush();
+        assert.deepEqual(
+          calls.map((c) => c.method),
+          ["rebase", "merge"],
+        );
+        m.unmount();
+      },
+    );
+  });
+
+  it("offers auto-merge while checks are still running", async () => {
+    const calls: MergeCall[] = [];
+    await withGit(
+      {
+        mergeOptions: async () => ({
+          ok: true,
+          methods: ["squash", "merge"],
+          defaultMethod: "squash",
+        }),
+      },
+      async () => {
+        const m = await mount(
+          view({
+            detail: prThread(),
+            gitSyncInfo: async () => ({ hasUpstream: true, ahead: 0, behind: 0 }),
+            onPrChecks: async () => ({
+              ok: true,
+              checks: [{ name: "ci", bucket: "pending" }],
+            }),
+            onPrMerge: async (opts) => {
+              calls.push({ ...opts });
+              return merged;
+            },
+          }),
+        );
+        await m.flush();
+        assert.ok(m.query('[data-next-git-action="watch-checks"]'));
+        assert.ok(m.query("[data-merge-method]"), "picker beside auto-merge");
+        await m.click(m.query("[data-auto-merge]"));
+        await m.flush();
+        assert.deepEqual(calls, [{ method: "squash", auto: true }]);
+        assert.ok(m.byText("Auto-merge on"), "flash confirms");
+        m.unmount();
+      },
+    );
+  });
+
+  it("no picker when the repo allows a single method", async () => {
+    await withGit(
+      {
+        mergeOptions: async () => ({ ok: true, methods: ["squash"], defaultMethod: "squash" }),
+      },
+      async () => {
+        const m = await mount(
+          view({
+            detail: prThread(),
+            gitSyncInfo: async () => ({ hasUpstream: true, ahead: 0, behind: 0 }),
+            onPrChecks: async () => ({ ok: true, checks: [{ name: "ci", bucket: "pass" }] }),
+            onPrMerge: async () => merged,
+          }),
+        );
+        await m.flush();
+        assert.ok(m.query('[data-next-git-action="merge"]'));
+        assert.equal(m.query("[data-merge-method]"), null);
+        m.unmount();
+      },
+    );
+  });
+
+  it("Generate in the Create PR dialog asks the main process for this thread", async () => {
+    const asked: unknown[] = [];
+    await withGit(
+      {
+        suggestPrText: async (input: unknown) => {
+          asked.push(input);
+          return { title: "feat: generated", body: "Body." };
+        },
+      },
+      async () => {
+        const m = await mount(
+          view({
+            onCreatePr: async () => merged,
+          }),
+        );
+        await m.flush();
+        await m.click(m.query('[data-next-git-action="create-pr"]'));
+        await m.click(q(m, "[data-create-pr-generate]"));
+        await m.flush();
+        assert.deepEqual(asked, [{ threadId: "t1" }]);
+        assert.equal(
+          (q(m, "[data-create-pr-title]") as HTMLInputElement).value,
+          "feat: generated",
+        );
+        m.unmount();
+      },
+    );
   });
 });

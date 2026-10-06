@@ -10,6 +10,7 @@ import {
   createPrPrompt,
   isPrTooLargeMessage,
   PR_TOO_LARGE_PREFIX,
+  prWatchSummary,
   sidebarPrBadge,
   splitPrPrompt,
 } from "../src/prUi.ts";
@@ -100,5 +101,40 @@ describe("splitPrPrompt (#402)", () => {
       prompt.includes('"- PR created by the Claude Code agent"'),
       "must carry the exact attribution bullet",
     );
+  });
+});
+
+describe("prWatchSummary", () => {
+  const base = { prNumber: 7, prState: "OPEN" as const };
+  it("is null without an open PR", () => {
+    assert.equal(prWatchSummary({ prNumber: null, prState: null }, 3), null);
+    assert.equal(prWatchSummary({ ...base, prState: "MERGED" }, 3), null);
+  });
+  it("defaults to watching, counts wake-ups, and pauses at the cap", () => {
+    assert.equal(prWatchSummary(base, 3)?.watching, true);
+    assert.equal(
+      prWatchSummary(
+        { ...base, prWatchState: { pr: 7, wakes: 1, lastReason: "checks failed" } },
+        3,
+      )?.text,
+      "Watching PR · 1 of 3 follow-ups sent (checks failed)");
+    const paused = prWatchSummary(
+      { ...base, prWatchState: { pr: 7, wakes: 3, lastReason: null } },
+      3,
+    );
+    assert.equal(paused?.paused, true);
+    // State for an older PR number does not count against this one.
+    assert.equal(
+      prWatchSummary({ ...base, prWatchState: { pr: 6, wakes: 3, lastReason: null } }, 3)
+        ?.paused,
+      false,
+    );
+  });
+  it("reports an opted-out thread", () => {
+    assert.deepEqual(prWatchSummary({ ...base, prWatch: false }, 3), {
+      watching: false,
+      paused: false,
+      text: "Not watching this PR",
+    });
   });
 });

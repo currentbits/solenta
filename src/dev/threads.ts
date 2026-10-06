@@ -452,6 +452,12 @@ export function createThreads(ctx: DevCtx): Pick<CoderApi, "threads"> {
           quotaWaitAutoResume: input.enabled,
         });
       },
+      async setPrWatch(input: { threadId: string; enabled: boolean }) {
+        return patchThread(input.threadId, {
+          prWatch: input.enabled,
+          prWatchState: null,
+        });
+      },
       async setNotes(input: { threadId: string; notes: string }) {
         return patchThread(input.threadId, {
           notes: String(input.notes ?? "").trim().slice(0, 2000),

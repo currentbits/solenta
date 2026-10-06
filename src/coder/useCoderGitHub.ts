@@ -3,6 +3,7 @@ import type { Dispatch, RefObject, SetStateAction } from "react";
 import type {
   CoderApi,
   ListPrsOptions,
+  MergeMethod,
   PlanStatus,
   ThreadDetail,
   ThreadInfo,
@@ -106,6 +107,8 @@ export function useCoderGitHub({
 
   const prMerge = useCallback(async (opts?: {
     ciWorkflowApproved?: boolean;
+    method?: MergeMethod;
+    auto?: boolean;
   }) => {
     if (!selectedThreadId) {
       throw new Error("No thread selected");
@@ -115,6 +118,8 @@ export function useCoderGitHub({
       const pr = await api.git.prMerge({
         threadId,
         ciWorkflowApproved: opts?.ciWorkflowApproved,
+        method: opts?.method,
+        auto: opts?.auto,
       });
       if (selectedRef.current !== threadId) return pr;
       const d = await api.threads.get(threadId);
@@ -196,7 +201,7 @@ export function useCoderGitHub({
   );
 
   const prMergeAt = useCallback(
-    async (input: { projectPath: string; prNumber: number }) => {
+    async (input: { projectPath: string; prNumber: number; method?: MergeMethod }) => {
       return api.git.prMergeAt(input);
     },
     [api],
