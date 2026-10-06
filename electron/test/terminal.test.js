@@ -231,6 +231,51 @@ describe("terminal restarts", () => {
     terminal.close(id);
   });
 
+  it("Close session ends the shell, keeps its scrollback, and a reopen carries it (#1512)", { skip }, async () => {
+    const id = "t-end";
+    /** @type {any[]} */
+    const pushes = [];
+    const broadcast = (/** @type {string} */ _c, /** @type {any} */ p) => pushes.push(p);
+    terminal.open(id, os.tmpdir(), { env: ENV, pty: null, broadcast });
+    terminal.write(id, "echo kept\r");
+    await waitFor(id, (t) => /\r\nkept\r\n/.test(t));
+    const ended = terminal.close(id, undefined, undefined, true);
+    assert.equal(ended.running, false);
+    assert.match(ended.text, /kept[\s\S]*\[session closed\]/);
+    assert.equal(pushes.at(-1).running, false, "the pane hears it stopped");
+    assert.equal(terminal.read(id).running, false, "not restarted");
+    assert.deepEqual(terminal.list(id), ["1"]);
+    const again = terminal.open(id, os.tmpdir(), { env: ENV, pty: null });
+    assert.equal(again.running, true);
+    assert.match(again.text, /kept[\s\S]*session closed[\s\S]*restored output/);
+    terminal.close(id);
+  });
+
+  it("Move to worktree restarts a stale shell in the new root, keeping scrollback (#1512)", { skip }, async () => {
+    const id = "t-move";
+    const from = fs.mkdtempSync(path.join(os.tmpdir(), "solenta-from-"));
+    const to = fs.mkdtempSync(path.join(os.tmpdir(), "solenta-to-"));
+    try {
+      terminal.open(id, from, { env: ENV, pty: null });
+      terminal.write(id, "echo old-cwd\r");
+      await waitFor(id, (t) => /\r\nold-cwd\r\n/.test(t));
+      const moved = terminal.open(id, to, { env: ENV, pty: null, move: true });
+      assert.equal(moved.running, true);
+      assert.equal(moved.cwd, to);
+      assert.equal(moved.staleRoot, false);
+      assert.match(moved.text, new RegExp(`old-cwd[\\s\\S]*\\[moved to ${to}\\]`));
+      terminal.write(id, "pwd\r");
+      await waitFor(id, (t) => t.includes(`\r\n${fs.realpathSync(to)}\r\n`) || t.includes(`\r\n${to}\r\n`));
+      // Same root: move is a plain re-attach.
+      const same = terminal.open(id, to, { env: ENV, pty: null, move: true });
+      assert.equal(same.startedAt, moved.startedAt);
+      terminal.close(id);
+    } finally {
+      fs.rmSync(from, { recursive: true, force: true });
+      fs.rmSync(to, { recursive: true, force: true });
+    }
+  });
+
   it("does not resurrect a closed terminal's log from a pending flush", { skip }, async () => {
     const id = "t-flush";
     const logDir = fs.mkdtempSync(path.join(os.tmpdir(), "solenta-term-"));

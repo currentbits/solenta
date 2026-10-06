@@ -151,6 +151,7 @@ module.exports = {
       rows: input && input.rows,
       logDir,
       broadcast: ctx.broadcast,
+      move: Boolean(input && input.move),
     });
   },
   "terminal:write": async (ctx, input) => {
@@ -176,7 +177,7 @@ module.exports = {
   "terminal:close": async (ctx, input) => {
     const threadId = input && input.threadId;
     const { logDir } = terminalRoot(ctx, threadId);
-    return terminal.close(threadId, input && input.termId, logDir);
+    return terminal.close(threadId, input && input.termId, logDir, Boolean(input && input.keep));
   },
   // Sign in (#1501): a fresh "signin" shell with the provider's login
   // command typed in. The command comes from a fixed table, never the caller.

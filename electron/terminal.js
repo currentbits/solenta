@@ -35,6 +35,8 @@ const TERM_ID_RE = /^[A-Za-z0-9]{1,16}$/;
 /** Leave the alternate screen and reset attributes after replayed output. */
 const RESTORE_MARK =
   "\x1b[?1049l\x1b[0m\r\n\x1b[2m[restored output from a previous session]\x1b[0m\r\n";
+/** Separator above a shell that "Move to worktree" restarted in `cwd`. @param {string} cwd */
+const moveMark = (cwd) => `\x1b[?1049l\x1b[0m\r\n\x1b[2m[moved to ${cwd}]\x1b[0m\r\n`;
 
 /**
  * @typedef {{
@@ -319,6 +321,7 @@ function killSession(sess) {
  *   project?: { remoteHost?: string, remotePath?: string, path?: string } | null,
  *   logDir?: string,
  *   broadcast?: (channel: string, payload: unknown) => void,
+ *   move?: boolean,
  * }} [opts]
  * @returns {import("../src/shared/ipc").TerminalState}
  */
@@ -326,7 +329,9 @@ function open(threadId, root, opts = {}) {
   const termId = termIdOf(opts.termId);
   const key = keyOf(threadId, termId);
   const existing = sessions.get(key);
-  if (existing && isRunning(existing)) {
+  // "Move to worktree" (#1512): restart a shell the thread has left in `root`.
+  const moving = Boolean(opts.move && existing && isRunning(existing) && existing.cwd !== root);
+  if (existing && isRunning(existing) && !moving) {
     if (opts.broadcast) existing.broadcast = opts.broadcast;
     // #1183: never silently keep running in a checkout the thread left.
     return { ...toState(existing, null), staleRoot: existing.cwd !== root };
@@ -390,7 +395,7 @@ function open(threadId, root, opts = {}) {
       // no previous scrollback
     }
   }
-  if (old) commit(sess, old + RESTORE_MARK);
+  if (old) commit(sess, old + (moving ? moveMark(root) : RESTORE_MARK));
 
   if (project.remoteHost) {
     // #1184: a remote project's shell must never silently run locally.
@@ -572,17 +577,28 @@ function list(threadId, logDir) {
 
 /**
  * Kill the shell and forget it, scrollback file included. The pane's
- * Restart is close + open.
+ * Restart is close + open. With `keep` ("Close session", #1512) the shell
+ * ends but its scrollback stays, and the next open() carries it over.
  *
  * @param {string} threadId
  * @param {string} [termId]
  * @param {string} [logDir]
+ * @param {boolean} [keep]
  * @returns {import("../src/shared/ipc").TerminalState}
  */
-function close(threadId, termId, logDir) {
+function close(threadId, termId, logDir, keep = false) {
   const id = termIdOf(termId);
   const key = keyOf(threadId, id);
   const sess = sessions.get(key);
+  if (keep) {
+    if (!sess) return emptyState(id);
+    if (isRunning(sess)) {
+      killSession(sess);
+      commit(sess, "\r\n[session closed]\r\n");
+      emitNow(sess);
+    }
+    return toState(sess, null);
+  }
   if (sess) {
     sessions.delete(key);
     killSession(sess);

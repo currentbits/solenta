@@ -5321,6 +5321,8 @@ export interface CoderApi {
       termId?: string;
       cols?: number;
       rows?: number;
+      /** Restart a shell the thread left (staleRoot) in its worktree, keeping scrollback. */
+      move?: boolean;
     }): Promise<TerminalState>;
     /** Raw keystrokes / paste for the shell. */
     write(input: { threadId: string; termId?: string; data: string }): Promise<{ ok: boolean }>;
@@ -5334,8 +5336,8 @@ export interface CoderApi {
     read(input: { threadId: string; termId?: string; since?: number }): Promise<TerminalState>;
     /** Terminal ids for this thread: live ones plus scrollback kept on disk. */
     list(input: { threadId: string }): Promise<string[]>;
-    /** Kill the shell and drop its scrollback. */
-    close(input: { threadId: string; termId?: string }): Promise<TerminalState>;
+    /** Kill the shell and drop its scrollback; `keep` ends it but keeps the scrollback. */
+    close(input: { threadId: string; termId?: string; keep?: boolean }): Promise<TerminalState>;
     /**
      * Type a provider's login command into a fresh "signin" shell (#1501):
      * the thread's when one is given, else a dedicated one in the home
