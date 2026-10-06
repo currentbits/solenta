@@ -37,6 +37,32 @@ export function releaseAbortedRows(parent: HTMLElement): void {
   }
 }
 
+/**
+ * auto-animate 0.10 (and 1.0 beta) re-observes a row from a debounced timer
+ * (updatePos → observePosition) that can fire after the row left the DOM.
+ * The observer's root is the document element, so Blink keeps it, and the
+ * detached row subtree its callback closes over, alive for the session: a
+ * few leaked cards/shelves per status change (#1475). Observing a detached
+ * element measures nothing, so drop the call.
+ *
+ * ponytail: patches the prototype; auto-animate is the app's only
+ * IntersectionObserver user. Drop this once upstream checks isConnected.
+ */
+export function skipDetachedObserve(
+  IO: { prototype: IntersectionObserver } | undefined =
+    typeof IntersectionObserver === "undefined" ? undefined : IntersectionObserver,
+): void {
+  const proto = IO?.prototype as
+    | (IntersectionObserver & { __skipDetached?: true })
+    | undefined;
+  if (!proto || proto.__skipDetached) return;
+  const observe = proto.observe;
+  proto.observe = function (this: IntersectionObserver, target: Element) {
+    if (target.isConnected) observe.call(this, target);
+  };
+  proto.__skipDetached = true;
+}
+
 export function countIdChurn(
   prev: readonly string[],
   next: readonly string[],
