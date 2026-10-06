@@ -612,7 +612,7 @@ export function NextGitActionButton({
       <span className={styles.oversizeText}>
         {blastRadius
           ? blastRadiusTitle(blastRadius)
-          : "This PR changes CI workflow files. That is privilege escalation, so a human must sign off."}
+          : "This PR changes CI workflow files. Privilege-escalation: a human must sign off."}
       </span>
       <button
         type="button"

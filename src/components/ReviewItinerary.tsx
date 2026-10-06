@@ -52,7 +52,7 @@ export function ReviewItineraryView({
         >
           <strong>Blast radius: CI workflow</strong>
           <span>
-            That is privilege escalation, so a human must sign off before merge.
+            Privilege-escalation: a human must sign off before merge.
           </span>
           <span className={styles.paths}>
             {itinerary.blastRadius.files.join(" · ")}
