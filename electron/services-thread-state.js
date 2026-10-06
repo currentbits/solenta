@@ -4,6 +4,7 @@
 
 const { randomUUID } = require("node:crypto");
 const { normalizeMessagePins } = require("./messagePins.js");
+const { normalizeQueued, withItems } = require("./queued.js");
 const { ejectCommand } = require("./providers.js");
 const { normalizeCommand, runVerifyCommand } = require("./verify.js");
 const { prepareVerifyRun } = require("./verifyEfficiency.js");
@@ -167,6 +168,7 @@ function setPinned(store, input) {
  *   threadId: string,
  *   prompt: string | null,
  *   attachments?: object[],
+ *   itemAttachments?: object[][],
  *   replace?: boolean,
  *   fromThread?: { id: string, title: string } | null,
  *   inbound?: boolean,
@@ -202,19 +204,20 @@ function setQueued(store, input) {
     // Edit in place (issue #364): the user rewrote the blob, so it overwrites
     // prompt AND attachments, and drops any inbound/fromThread provenance —
     // the content is user-authored now. Still drops the delivery error.
-    const thoughts = queuedThoughts(null, prompt, input);
-    queued = { prompt: thoughts.prompt, items: thoughts.items };
-    if (attachments && attachments.length) queued.attachments = attachments;
+    // Files stay on their own item (#1512); a caller that only sends the
+    // flat list (single-item edit) gets them on the first item.
+    const { items } = queuedThoughts(null, prompt, input);
+    const per = input.itemAttachments;
+    const files =
+      Array.isArray(per) && per.length === items.length
+        ? per.map((f) => (Array.isArray(f) ? f : []))
+        : items.map((_, i) => (i === 0 && attachments ? attachments : []));
+    queued = withItems({}, items, files);
   } else if (prompt !== null) {
-    const prev = thread.queued;
-    const files = [...(prev?.attachments ?? []), ...(attachments ?? [])];
-    const thoughts = queuedThoughts(prev, prompt, input);
-    queued = {
-      prompt: thoughts.prompt,
-      items: thoughts.items,
-      attachments: files.length ? files : undefined,
-      // A new/appended prompt drops any previous delivery error (#314).
-    };
+    const prev = normalizeQueued(thread.queued);
+    const { items } = queuedThoughts(prev, prompt, input);
+    // A new/appended prompt drops any previous delivery error (#314).
+    queued = withItems({}, items, [...(prev?.itemAttachments ?? []), attachments ?? []]);
     const fromThread = input.fromThread || (prev && prev.fromThread);
     if (fromThread && fromThread.id) {
       queued.fromThread = {
@@ -268,10 +271,10 @@ function takeQueued(store, input) {
 }
 
 /**
- * Take only the first queued item so each one runs as its own turn (#1501).
- * The rest stay queued with their provenance; attachments ride with the
- * head (the blob does not record which item they came with). Legacy rows
- * without items[] are one item. Never bumps updatedAt.
+ * Take only the first queued item so each one runs as its own turn (#1501),
+ * with only the files it was queued with (#1512). The rest stay queued with
+ * their provenance. Legacy rows without items[] are one item. Never bumps
+ * updatedAt.
  *
  * @param {import('./store').Store} store
  * @param {{ threadId: string }} input
@@ -282,19 +285,15 @@ function takeQueuedHead(store, input) {
   if (!thread) {
     throw new Error(`Unknown thread: ${threadId}`);
   }
-  const queued = thread.queued || null;
+  const queued = normalizeQueued(thread.queued);
   if (!queued) return null;
-  const items = Array.isArray(queued.items) ? queued.items : [];
-  if (items.length <= 1) return takeQueued(store, input);
-  const { attachments, error: _error, ...keep } = queued;
-  const [head, ...rest] = items.map((s) => String(s));
-  store.updateThread(threadId, {
-    queued: { ...keep, prompt: rest.join("\n\n"), items: rest },
-  });
+  if (queued.items.length <= 1) return takeQueued(store, input);
+  const { error: _error, ...keep } = queued;
+  const [head, ...rest] = keep.items;
+  const [headFiles, ...restFiles] = keep.itemAttachments;
+  store.updateThread(threadId, { queued: withItems(keep, rest, restFiles) });
   store.save();
-  const taken = { ...keep, prompt: head, items: [head] };
-  if (attachments && attachments.length) taken.attachments = attachments;
-  return taken;
+  return withItems(keep, [head], [headFiles]);
 }
 
 /**
@@ -309,21 +308,14 @@ function restoreQueuedHead(store, input) {
   const { threadId, taken } = input;
   const thread = store.getThread(threadId);
   if (!thread || !taken) return;
-  const cur = thread.queued || null;
-  const headItems = Array.isArray(taken.items) && taken.items.length
-    ? taken.items
-    : [String(taken.prompt)];
-  const curItems = !cur
-    ? []
-    : Array.isArray(cur.items) && cur.items.length
-      ? cur.items
-      : [String(cur.prompt)];
-  const items = [...headItems, ...curItems];
-  const files = [...(taken.attachments || []), ...((cur && cur.attachments) || [])];
+  const cur = normalizeQueued(thread.queued);
+  const head = normalizeQueued(taken);
   /** @type {Record<string, unknown>} */
-  const queued = { ...(cur || {}), ...taken, prompt: items.join("\n\n"), items };
-  if (files.length) queued.attachments = files;
-  else delete queued.attachments;
+  const queued = withItems(
+    { ...(cur || {}), ...head },
+    [...head.items, ...(cur ? cur.items : [])],
+    [...head.itemAttachments, ...(cur ? cur.itemAttachments : [])],
+  );
   if (cur && !(cur.inbound === true && taken.inbound === true)) delete queued.inbound;
   if (cur && !(cur.posted === true && taken.posted === true)) delete queued.posted;
   if (input.error) queued.error = input.error;

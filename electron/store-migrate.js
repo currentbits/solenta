@@ -8,6 +8,7 @@ const { normalizeAcceptedHunks } = require("./reviewItinerary.js");
 const { normalizeBtwCards } = require("./btw.js");
 const { normalizePendingQuestion } = require("./questions.js");
 const { normalizeMessagePins } = require("./messagePins.js");
+const { normalizeQueued } = require("./queued.js");
 const { branchPrefixError } = require("./worktrees-branches.js");
 const { normalizeTrustHash } = require("./repoConfig.js");
 const {
@@ -493,8 +494,9 @@ function migrateThread(t) {
       : [],
     // One-tap felt estimate (issue #401): absent/invalid → never answered.
     feltEstimate: normalizeFeltEstimate(t.feltEstimate),
-    // Type-ahead queue (issue #137): absent → nothing waiting.
-    queued: t.queued !== undefined ? t.queued : null,
+    // Type-ahead queue (issue #137): absent → nothing waiting. Files move
+    // onto the item they were queued with (#1512).
+    queued: normalizeQueued(t.queued),
     // Verification gate (issue #296): absent / non-string → unarmed.
     verifyCommand: typeof t.verifyCommand === "string" ? t.verifyCommand : null,
     // Latest verify evidence (issue #296): absent → none yet.

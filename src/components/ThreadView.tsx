@@ -228,7 +228,7 @@ function shortSha(sha: string): string {
   return sha.length > 7 ? sha.slice(0, 7) : sha;
 }
 
-function swapQueuedItem(items: string[], index: number, delta: number): string[] {
+function swapQueuedItem<T>(items: T[], index: number, delta: number): T[] {
   const dest = index + delta;
   if (dest < 0 || dest >= items.length) return items;
   const next = items.slice();
@@ -293,6 +293,11 @@ interface ThreadViewProps {
   queuedPrompt?: string | null;
   /** Per-thought list when persisted (#809); else the strip splits prompt once. */
   queuedItems?: string[] | null;
+  /** The queue row's files: per item when persisted (#1512). */
+  queuedFiles?: {
+    itemAttachments?: AttachmentInfo[][];
+    attachments?: AttachmentInfo[];
+  } | null;
   /** Last delivery failure; the prompt is still queued (issue #314). */
   queuedError?: string | null;
   /** Drop the queued follow-up. */
@@ -305,6 +310,7 @@ interface ThreadViewProps {
   onEditQueued?: (
     prompt: string,
     items?: string[],
+    itemAttachments?: AttachmentInfo[][],
   ) => void | Promise<void>;
   /**
    * Text a cancelled queue pushed back toward the composer (issue #364).
@@ -701,6 +707,7 @@ export const ThreadView = memo(function ThreadView({
   onSetQuotaWaitAutoResume,
   queuedPrompt = null,
   queuedItems: queuedItemsProp = null,
+  queuedFiles: queuedFilesProp = null,
   queuedError = null,
   onCancelQueued,
   onRetryQueued,
@@ -856,6 +863,7 @@ export const ThreadView = memo(function ThreadView({
     queuedWritePending,
     queuedWriteError,
     queuedItems,
+    queuedFiles,
     writeQueuedItems,
     closeQueuedEdit,
     saveQueuedEdit,
@@ -863,9 +871,12 @@ export const ThreadView = memo(function ThreadView({
     detail,
     queuedPrompt,
     queuedItemsProp,
+    queuedFilesProp,
     onEditQueued,
     onCancelQueued,
   });
+  // Reorder/remove write index orders so files move with their item (#1512).
+  const queuedOrder = queuedItems.map((_, j) => j);
   const [notesOpen, setNotesOpen] = useState(false);
   const [notesDraft, setNotesDraft] = useState("");
   const [notesError, setNotesError] = useState<string | null>(null);
@@ -4104,7 +4115,7 @@ export const ThreadView = memo(function ThreadView({
                         const from = queuedDrag;
                         setQueuedDrag(null);
                         if (from == null || from === i) return;
-                        writeQueuedItems(swapQueuedItem(queuedItems, from, i - from));
+                        writeQueuedItems(swapQueuedItem(queuedOrder, from, i - from));
                       }}
                       onDragEnd={() => setQueuedDrag(null)}
                     >
@@ -4162,6 +4173,17 @@ export const ThreadView = memo(function ThreadView({
                       ) : (
                         <>
                           <span className={styles.queuedText}>{item}</span>
+                          {queuedFiles[i]?.length ? (
+                            <span
+                              className={styles.queuedFiles}
+                              title={queuedFiles[i]!.map((f) => f.name).join(", ")}
+                              data-queued-files={String(queuedFiles[i]!.length)}
+                            >
+                              {queuedFiles[i]!.length === 1
+                                ? "1 file"
+                                : `${queuedFiles[i]!.length} files`}
+                            </span>
+                          ) : null}
                           <div
                             className={styles.queuedActions}
                             data-queued-actions=""
@@ -4185,7 +4207,7 @@ export const ThreadView = memo(function ThreadView({
                                 disabled={queuedWritePending}
                                 onClick={() =>
                                   writeQueuedItems(
-                                    swapQueuedItem(queuedItems, i, -1),
+                                    swapQueuedItem(queuedOrder, i, -1),
                                   )
                                 }
                                 data-move-queued-up=""
@@ -4201,7 +4223,7 @@ export const ThreadView = memo(function ThreadView({
                                 disabled={queuedWritePending}
                                 onClick={() =>
                                   writeQueuedItems(
-                                    swapQueuedItem(queuedItems, i, 1),
+                                    swapQueuedItem(queuedOrder, i, 1),
                                   )
                                 }
                                 data-move-queued-down=""
@@ -4229,7 +4251,7 @@ export const ThreadView = memo(function ThreadView({
                               disabled={queuedWritePending}
                               onClick={() =>
                                 writeQueuedItems(
-                                  queuedItems.filter((_, j) => j !== i),
+                                  queuedOrder.filter((j) => j !== i),
                                 )
                               }
                               data-remove-queued=""

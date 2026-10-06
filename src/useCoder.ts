@@ -121,6 +121,7 @@ import { prunePaneLayouts } from "./paneLayout";
 import { pruneComposerDrafts } from "./composerSession";
 import { createThreadDetailCache } from "./threadDetailCache";
 import { errorMessage } from "./coder/errorMessage";
+import { queuedItemFiles } from "./queuedFiles";
 import { useCoderMemory } from "./coder/useCoderMemory";
 import { useCoderAgentTools } from "./coder/useCoderAgentTools";
 import { useCoderInsights } from "./coder/useCoderInsights";
@@ -155,6 +156,8 @@ export interface QueuedMessage {
   prompt: string;
   items?: string[];
   attachments?: AttachmentInfo[];
+  /** Each item's files, aligned with items (#1512). */
+  itemAttachments?: AttachmentInfo[][];
   /** Last delivery failure (issue #314); prompt is still queued. */
   error?: string | null;
 }
@@ -269,6 +272,7 @@ export interface UseCoderResult {
     prompt: string,
     threadId?: string,
     items?: string[],
+    itemAttachments?: AttachmentInfo[][],
   ) => Promise<void>;
   /** Fetch a GitHub or Linear issue for a project checkout. */
   fetchIssue: (
@@ -1054,7 +1058,12 @@ export function useCoder(): UseCoderResult {
   );
 
   const editQueued = useCallback(
-    async (prompt: string, threadId?: string, items?: string[]) => {
+    async (
+      prompt: string,
+      threadId?: string,
+      items?: string[],
+      itemAttachments?: AttachmentInfo[][],
+    ) => {
       const id = threadId ?? selectedRef.current;
       if (!id) return;
       const held = threadsRef.current.find((t) => t.id === id);
@@ -1066,6 +1075,7 @@ export function useCoder(): UseCoderResult {
           attachments: held.queued.attachments,
           replace: true,
           ...(items ? { items } : {}),
+          ...(itemAttachments ? { itemAttachments } : {}),
         });
         applyThreads(
           threadsRef.current.map((t) => (t.id === updated.id ? updated : t)),
@@ -1093,10 +1103,14 @@ export function useCoder(): UseCoderResult {
       const items = itemsOf(held);
       const item = items[index];
       if (item == null) return;
+      // The item steers with its own files (#1512).
+      const files = queuedItemFiles(held, items.length)[index] ?? [];
       try {
-        // ponytail: attachments stay queued and ride with the next drained
-        // head; the blob does not record which item they belong to.
-        await api.runs.steer({ threadId: id, prompt: item });
+        await api.runs.steer({
+          threadId: id,
+          prompt: item,
+          ...(files.length ? { attachments: files } : {}),
+        });
       } catch (err) {
         setError({ scope: "run", message: errorMessage(err) });
         return;
@@ -1112,7 +1126,8 @@ export function useCoder(): UseCoderResult {
         await cancelQueued(id);
         return;
       }
-      await editQueued(rest.join("\n\n"), id, rest).catch(() => {});
+      const restFiles = queuedItemFiles(latest, now.length).filter((_, j) => j !== at);
+      await editQueued(rest.join("\n\n"), id, rest, restFiles).catch(() => {});
     },
     [api, cancelQueued, editQueued],
   );

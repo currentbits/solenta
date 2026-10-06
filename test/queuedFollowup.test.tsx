@@ -625,8 +625,12 @@ describe("queued follow-up (issue #92 / #314)", () => {
     await m.flush();
   }
 
-  async function bootBusySteerable(steer: boolean) {
+  async function bootBusySteerable(
+    steer: boolean,
+    queued?: NonNullable<ReturnType<typeof working>["queued"]>,
+  ) {
     const busy = working();
+    if (queued) busy.queued = queued;
     const fake = createFakeCoder({
       projects: [project()],
       threads: [decoy(), busy],
@@ -650,9 +654,61 @@ describe("queued follow-up (issue #92 / #314)", () => {
     const m = await boot(fake);
     await m.click(m.query('button[aria-label^="Select thread: busy target thread"]'));
     await m.flush();
-    await queueTwoThoughts(m);
+    if (!queued) await queueTwoThoughts(m);
     return { fake, m };
   }
+
+  const ITEM_SHOT = { kind: "image" as const, path: "/tmp/b.png", name: "b.png" };
+  const perItemQueue = () => ({
+    prompt: "first thought\n\nsecond thought",
+    items: ["first thought", "second thought"],
+    itemAttachments: [[], [ITEM_SHOT]],
+    attachments: [ITEM_SHOT],
+  });
+
+  it("labels each queued thought with its own files (#1512)", async () => {
+    const { m } = await bootBusySteerable(false, perItemQueue());
+    assert.equal(m.query('[data-queued-item="0"] [data-queued-files]'), null);
+    const label = m.query('[data-queued-item="1"] [data-queued-files]');
+    assert.equal(label?.textContent, "1 file");
+    assert.equal(label?.getAttribute("title"), "b.png");
+    m.unmount();
+  });
+
+  it("a reorder carries each thought's files along (#1512)", async () => {
+    const { fake, m } = await bootBusySteerable(false, perItemQueue());
+    await m.click(m.query('[data-queued-item="1"] button[data-move-queued-up]'));
+    await m.flush();
+    const replace = fake
+      .of("threads.setQueued")
+      .filter((c) => (c.args[0] as { replace?: boolean }).replace === true);
+    assert.deepEqual(
+      (replace[0]!.args[0] as { itemAttachments: unknown }).itemAttachments,
+      [[ITEM_SHOT], []],
+    );
+    assert.equal(
+      m.query('[data-queued-item="0"] [data-queued-files]')?.textContent,
+      "1 file",
+    );
+    m.unmount();
+  });
+
+  it("Steer now sends only that thought's files (#1512)", async () => {
+    const { fake, m } = await bootBusySteerable(true, perItemQueue());
+    await m.click(m.query('[data-queued-item="1"] button[data-steer-queued]'));
+    await m.flush();
+    assert.deepEqual(fake.of("runs.steer").map((c) => c.args[0]), [
+      { threadId: "t-busy", prompt: "second thought", attachments: [ITEM_SHOT] },
+    ]);
+    const replace = fake
+      .of("threads.setQueued")
+      .filter((c) => (c.args[0] as { replace?: boolean }).replace === true);
+    assert.deepEqual(
+      (replace[0]!.args[0] as { itemAttachments: unknown }).itemAttachments,
+      [[]],
+    );
+    m.unmount();
+  });
 
   it("steers one queued thought into the live turn and drops it (#1501)", async () => {
     const { fake, m } = await bootBusySteerable(true);
@@ -740,6 +796,7 @@ describe("queued follow-up (issue #92 / #314)", () => {
       attachments: undefined,
       replace: true,
       items: ["edited first", "second thought"],
+      itemAttachments: [[], []],
     });
     const strip = m.query("[data-queued-prompt]");
     assert.ok(strip);
@@ -773,6 +830,7 @@ describe("queued follow-up (issue #92 / #314)", () => {
       attachments: undefined,
       replace: true,
       items: ["second thought"],
+      itemAttachments: [[]],
     });
     const strip = m.query("[data-queued-prompt]");
     assert.ok(strip, "the remaining thought stays queued");
@@ -812,6 +870,7 @@ describe("queued follow-up (issue #92 / #314)", () => {
       attachments: undefined,
       replace: true,
       items: ["second thought", "first thought"],
+      itemAttachments: [[], []],
     });
     const items = m.queryAll("[data-queued-item]");
     assert.equal(items.length, 2);
@@ -1067,6 +1126,7 @@ describe("queued follow-up (issue #92 / #314)", () => {
       attachments: [attach],
       replace: true,
       items: ["Revised instructions", "keep this second"],
+      itemAttachments: [[attach], []],
     });
     const strip = m.query("[data-queued-prompt]");
     assert.ok(strip);
@@ -1181,6 +1241,7 @@ describe("queued follow-up (issue #92 / #314)", () => {
       attachments: [QUEUED_SHOT],
       replace: true,
       items: ["second thought", "first thought"],
+      itemAttachments: [[], [QUEUED_SHOT]],
     });
     const retried = m.queryAll("[data-queued-item]");
     assert.match(retried[0]!.textContent || "", /second thought/);
@@ -1277,6 +1338,7 @@ describe("queued follow-up (issue #92 / #314)", () => {
       attachments: [QUEUED_SHOT],
       replace: true,
       items: ["second thought"],
+      itemAttachments: [[]],
     });
     const strip = m.query("[data-queued-prompt]");
     assert.ok(strip, "the remaining thought stays queued");

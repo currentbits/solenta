@@ -732,7 +732,14 @@ export interface ThreadInfo {
      * unchanged. Absent on old rows — split `prompt` once to migrate.
      */
     items?: string[];
+    /** All of the queue's files: the flattened itemAttachments. */
     attachments?: AttachmentInfo[];
+    /**
+     * The files each item was queued with, index for index (#1512), so a
+     * drained item sends only its own. Absent on old rows: their files all
+     * belong to the first item.
+     */
+    itemAttachments?: AttachmentInfo[][];
     /**
      * Why the last delivery attempt failed (issue #314). Set by the main
      * process when draining the queue at a run terminal throws; the prompt
@@ -4269,6 +4276,8 @@ export interface CoderApi {
       replace?: boolean;
       /** Source of truth for per-thought edit/remove/reorder (#809). */
       items?: string[];
+      /** With replace: each item's files, aligned with items (#1512). */
+      itemAttachments?: AttachmentInfo[][];
     }): Promise<ThreadInfo>;
     /**
      * Snooze until an epoch ms, or clear with null. Rejects a non-null
