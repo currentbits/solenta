@@ -473,7 +473,9 @@ export function createGit(ctx: DevCtx): Pick<CoderApi, "git" | "mergeQueue"> {
         if (detail.messages.length === 0 && detail.thread.status === "idle") {
           return { ...EMPTY_DIFF };
         }
-        return fakeDiff(detail.thread);
+        const label =
+          input.scope === "branch" ? "since main (3f2a9c1)" : input.scope === "turn" ? "Turn 2" : "";
+        return { ...fakeDiff(detail.thread), ...(label ? { scopeLabel: label } : {}) };
       },
       async commit(input) {
         const detail = details.get(input.threadId);
