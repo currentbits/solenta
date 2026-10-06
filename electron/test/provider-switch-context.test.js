@@ -221,4 +221,12 @@ describe("provider switch keeps context (#1493)", () => {
       codex.sessionPinsModel = prev;
     }
   });
+
+  it("moving a session-bearing thread to a new worktree replays too", () => {
+    const thread = threadWithHistory();
+    store.updateThread(thread.id, { worktreePath: path.join(tmpDir, "wt") });
+    const t = store.getThread(thread.id);
+    assert.equal(t.sessionId, null);
+    assert.equal(t.replayContext, true);
+  });
 });

@@ -2352,6 +2352,9 @@ class Store {
         !Object.prototype.hasOwnProperty.call(patch, "sessionId")
       ) {
         p = { ...patch, sessionId: null };
+        // Same rule as setProvider (#1493): a dropped session replays the
+        // thread's own tail so the next turn is not blind.
+        if (t.sessionId) p.replayContext = true;
       }
       // Snapshot the rollout model on first sessionId (or a replacement
       // id). Codex exec resume ignores later picker changes (#1215).
