@@ -506,10 +506,13 @@ export interface UseCoderResult {
   resolvePaths: (
     paths: string[],
   ) => Promise<Array<{ path: string; abs: string | null }>>;
-  /** Open or reveal a resolved worktree path in the default app / Finder. */
+  /**
+   * Open or reveal a resolved worktree path: the "Open in" editor picked in
+   * Thread details (at line/col when given), else the default app / Finder.
+   */
   openWorkspacePath: (
     abs: string,
-    opts?: { reveal?: boolean },
+    opts?: { reveal?: boolean; line?: number; col?: number },
   ) => Promise<void>;
   /** Data URL for one image a tool returned; null when it is gone. */
   loadToolImage: (name: string) => Promise<string | null>;

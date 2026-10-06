@@ -466,7 +466,7 @@ interface ThreadViewProps {
   /** Open or reveal a resolved worktree path. */
   onOpenWorkspacePath?: (
     abs: string,
-    opts?: { reveal?: boolean },
+    opts?: { reveal?: boolean; line?: number; col?: number },
   ) => void | Promise<void>;
   /** Loads an image a tool returned (ToolCallInfo.images) as a data URL. */
   onLoadImage?: (name: string) => Promise<string | null>;
@@ -1011,7 +1011,7 @@ export const ThreadView = memo(function ThreadView({
   );
 
   const handleOpenWorkspacePath = useCallback(
-    (abs: string, opts?: { reveal?: boolean }) => {
+    (abs: string, opts?: { reveal?: boolean; line?: number; col?: number }) => {
       void onOpenWorkspacePath?.(abs, opts);
     },
     [onOpenWorkspacePath],

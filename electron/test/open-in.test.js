@@ -35,11 +35,91 @@ describe("openIn (#1411)", () => {
     const run = async (cmd, args) => {
       runs.push([cmd, ...args]);
     };
-    await openIn("/wt", "vscode", { platform: "darwin", openPath: async () => "", run });
+    await openIn("/wt", "vscode", {
+      platform: "darwin",
+      exists: () => false,
+      openPath: async () => "",
+      run,
+    });
     await openIn("/wt", "zed", { platform: "linux", openPath: async () => "", run });
     assert.deepEqual(runs, [
       ["open", "-a", "Visual Studio Code", "/wt"],
       ["zed", "/wt"],
+    ]);
+  });
+
+  it("detects JetBrains IDEs by any bundle name or CLI launcher (#1506)", () => {
+    const mac = listEditors({
+      platform: "darwin",
+      home: "/Users/me",
+      exists: (p) =>
+        p === "/Applications/IntelliJ IDEA CE.app" ||
+        p === "/Users/me/Applications/RustRover.app",
+      onPath: () => false,
+    });
+    assert.deepEqual(mac.map((r) => r.id), ["idea", "rustrover", "finder"]);
+    const linux = listEditors({
+      platform: "linux",
+      home: "/home/me",
+      exists: () => false,
+      onPath: (bin) => bin === "webstorm" || bin === "fleet",
+    });
+    assert.deepEqual(linux.map((r) => r.id), ["webstorm", "fleet", "finder"]);
+  });
+
+  it("jumps to path:line:col with each editor's own syntax (#1506)", async () => {
+    const runs = [];
+    const run = async (cmd, args) => {
+      runs.push([cmd, ...args]);
+    };
+    const base = { openPath: async () => "", run };
+    await openIn("/wt/a.ts", "vscode", { ...base, platform: "linux", line: 12, col: 3 });
+    await openIn("/wt/a.ts", "cursor", { ...base, platform: "linux", line: 12 });
+    await openIn("/wt/a.ts", "zed", { ...base, platform: "linux", line: 12, col: 3 });
+    await openIn("/wt/a.ts", "goland", { ...base, platform: "linux", line: 12, col: 3 });
+    await openIn("/wt/a.ts", "fleet", { ...base, platform: "linux", line: 12 });
+    // Junk from IPC never reaches argv.
+    await openIn("/wt/a.ts", "vscode", {
+      ...base,
+      platform: "linux",
+      line: "12; rm -rf /",
+      col: 3,
+    });
+    assert.deepEqual(runs, [
+      ["code", "--goto", "/wt/a.ts:12:3"],
+      ["cursor", "--goto", "/wt/a.ts:12"],
+      ["zed", "/wt/a.ts:12:3"],
+      ["goland", "--line", "12", "--column", "3", "/wt/a.ts"],
+      ["fleet", "/wt/a.ts"],
+      ["code", "/wt/a.ts"],
+    ]);
+  });
+
+  it("uses the bundle CLI for a line on macOS, `open -a` otherwise (#1506)", async () => {
+    const runs = [];
+    const run = async (cmd, args) => {
+      runs.push([cmd, ...args]);
+    };
+    const installed = new Set([
+      "/Applications/PyCharm CE.app",
+      "/Applications/PyCharm CE.app/Contents/MacOS/pycharm",
+      "/Applications/Zed.app",
+    ]);
+    const base = {
+      platform: "darwin",
+      home: "/Users/me",
+      exists: (p) => installed.has(p),
+      openPath: async () => "",
+      run,
+    };
+    await openIn("/wt/a.py", "pycharm", { ...base, line: 4, col: 2 });
+    await openIn("/wt/a.py", "pycharm", base);
+    // Zed without its bundled cli falls back to opening the file.
+    await openIn("/wt/a.py", "zed", { ...base, line: 4 });
+    assert.deepEqual(runs, [
+      ["/Applications/PyCharm CE.app/Contents/MacOS/pycharm", "--line", "4", "--column", "2", "/wt/a.py"],
+      ["open", "-a", "PyCharm CE", "/wt/a.py"],
+      ["open", "-a", "Zed", "/wt/a.py"],
     ]);
   });
 

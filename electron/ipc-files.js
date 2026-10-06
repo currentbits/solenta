@@ -206,6 +206,8 @@ module.exports = {
   "shell:openIn": async (ctx, input) => {
     const target = resolveAllowedShellPath(ctx.store, input);
     await require("./openIn.js").openIn(target, input && input.editor, {
+      line: input && input.line,
+      col: input && input.column,
       openPath: (p) => shell.openPath(p),
     });
   },
