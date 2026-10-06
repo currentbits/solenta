@@ -46,6 +46,7 @@ import {
   type RepeatDraft,
 } from "./repeatThread";
 import type {
+  AttachmentInfo,
   CloneProgressPush,
   AgentProfile,
   ConflictForecast,
@@ -1040,8 +1041,8 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
   );
 
   const handleEditQueued = useCallback(
-    (prompt: string, items?: string[]) => {
-      return editQueued(prompt, undefined, items);
+    (prompt: string, items?: string[], itemAttachments?: AttachmentInfo[][]) => {
+      return editQueued(prompt, undefined, items, itemAttachments);
     },
     [editQueued],
   );
@@ -1884,6 +1885,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         queuedItems={
           selectedThreadId ? queued[selectedThreadId]?.items : undefined
         }
+        queuedFiles={selectedThreadId ? queued[selectedThreadId] : null}
         queuedError={
           selectedThreadId ? (queued[selectedThreadId]?.error ?? null) : null
         }

@@ -16,6 +16,7 @@ import type {
 } from "../shared/ipc";
 import { SPEC_ARTIFACTS, SPEC_DIR } from "../shared/ipc";
 import { normalizeMessagePins } from "../messagePins";
+import { queuedItemFiles, queuedRow } from "../queuedFiles";
 import { mockData } from "../mockData.ts";
 import type { DevCtx } from "./context.ts";
 import { DEV_SPEC_ARTIFACTS, SEED_CREW_TASKS } from "./seed.ts";
@@ -362,6 +363,7 @@ export function createThreads(ctx: DevCtx): Pick<CoderApi, "threads"> {
         attachments?: AttachmentInfo[];
         replace?: boolean;
         items?: string[];
+        itemAttachments?: AttachmentInfo[][];
       }) {
         const detail = details.get(input.threadId);
         if (!detail) throw new Error(`Thread not found: ${input.threadId}`);
@@ -371,25 +373,18 @@ export function createThreads(ctx: DevCtx): Pick<CoderApi, "threads"> {
             input.items && input.items.length
               ? input.items.map(String)
               : [input.prompt];
-          queued = { prompt: items.join("\n\n"), items };
-          if (input.attachments?.length) queued.attachments = input.attachments;
+          queued = queuedRow(items, queuedItemFiles(input, items.length));
         } else if (input.prompt !== null) {
           const prev = detail.thread.queued;
-          const files = [
-            ...(prev?.attachments ?? []),
-            ...(input.attachments ?? []),
-          ];
           const prevItems = prev?.items
             ? prev.items.map(String)
             : prev?.prompt != null
               ? prev.prompt.split("\n\n")
               : [];
-          const items = [...prevItems, input.prompt];
-          queued = {
-            prompt: items.join("\n\n"),
-            items,
-            attachments: files.length ? files : undefined,
-          };
+          queued = queuedRow(
+            [...prevItems, input.prompt],
+            [...queuedItemFiles(prev, prevItems.length), input.attachments ?? []],
+          );
         }
         return patchThread(input.threadId, { queued });
       },

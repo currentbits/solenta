@@ -472,4 +472,79 @@ describe("takeQueuedHead / restoreQueuedHead (#1501)", () => {
     assert.equal(q.prompt, "a\n\nb\n\nc");
     assert.equal(q.error, "boom");
   });
+
+  it("each item drains with only the files it was queued with (#1512)", async () => {
+    const { store, threadId } = await storeWithThread();
+    const x = { kind: "image", path: "/tmp/x.png", name: "x.png" };
+    const y = { kind: "folder", path: "/tmp/y", name: "y" };
+    services.setQueued(store, { threadId, prompt: "a" });
+    services.setQueued(store, { threadId, prompt: "b", attachments: [x, y] });
+    services.setQueued(store, { threadId, prompt: "c", attachments: [y] });
+
+    const a = services.takeQueuedHead(store, { threadId });
+    assert.equal(a.prompt, "a");
+    assert.equal(a.attachments, undefined, "a was queued without files");
+    assert.deepEqual(store.getThread(threadId).queued.itemAttachments, [[x, y], [y]]);
+
+    const b = services.takeQueuedHead(store, { threadId });
+    assert.deepEqual(b.attachments, [x, y]);
+    // b fails to start: it goes back in front with its own files.
+    services.restoreQueuedHead(store, { threadId, taken: b, error: "boom" });
+    const q = store.getThread(threadId).queued;
+    assert.deepEqual(q.items, ["b", "c"]);
+    assert.deepEqual(q.itemAttachments, [[x, y], [y]]);
+    assert.deepEqual(q.attachments, [x, y, y]);
+
+    services.takeQueuedHead(store, { threadId });
+    const c = services.takeQueuedHead(store, { threadId });
+    assert.deepEqual(c.attachments, [y]);
+    assert.equal(store.getThread(threadId).queued, null);
+  });
+
+  it("an edit keeps per-item files and a reorder carries them along (#1512)", async () => {
+    const { store, threadId } = await storeWithThread();
+    const x = { kind: "image", path: "/tmp/x.png", name: "x.png" };
+    services.setQueued(store, { threadId, prompt: "a", attachments: [x] });
+    services.setQueued(store, { threadId, prompt: "b" });
+    const swapped = services.setQueued(store, {
+      threadId,
+      prompt: "b\n\na",
+      items: ["b", "a"],
+      itemAttachments: [[], [x]],
+      replace: true,
+    });
+    assert.deepEqual(swapped.queued.itemAttachments, [[], [x]]);
+    const head = services.takeQueuedHead(store, { threadId });
+    assert.equal(head.attachments, undefined);
+  });
+});
+
+describe("queued row migration (#1512)", () => {
+  const { migrateThread } = require("../store-migrate.js");
+  const shot = { kind: "image", path: "/tmp/x.png", name: "x.png" };
+
+  it("moves an old row's files onto its first item", () => {
+    const t = migrateThread({
+      id: "t",
+      queued: { prompt: "one\n\ntwo", items: ["one", "two"], attachments: [shot] },
+    });
+    assert.deepEqual(t.queued.items, ["one", "two"]);
+    assert.deepEqual(t.queued.itemAttachments, [[shot], []]);
+    assert.deepEqual(t.queued.attachments, [shot]);
+  });
+
+  it("splits a pre-items row once and keeps a current row as is", () => {
+    const legacy = migrateThread({ id: "t", queued: { prompt: "one\n\ntwo" } });
+    assert.deepEqual(legacy.queued.items, ["one", "two"]);
+    assert.deepEqual(legacy.queued.itemAttachments, [[], []]);
+    assert.equal(legacy.queued.attachments, undefined);
+    const current = {
+      prompt: "a\n\nb",
+      items: ["a", "b"],
+      itemAttachments: [[], [shot]],
+      attachments: [shot],
+    };
+    assert.deepEqual(migrateThread({ id: "t", queued: current }).queued, current);
+    assert.equal(migrateThread({ id: "t" }).queued, null);
+  });
 });

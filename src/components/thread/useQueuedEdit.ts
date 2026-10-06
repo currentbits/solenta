@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import type { ThreadDetail } from "../../shared/ipc";
+import type { AttachmentInfo, ThreadDetail } from "../../shared/ipc";
+import { queuedItemFiles } from "../../queuedFiles";
 
 /** items[] when persisted (#809); else split prompt once (legacy rows). */
 function queuedThoughts(
@@ -16,13 +17,23 @@ export function useQueuedEdit({
   detail,
   queuedPrompt,
   queuedItemsProp,
+  queuedFilesProp = null,
   onEditQueued,
   onCancelQueued,
 }: {
   detail: ThreadDetail | null;
   queuedPrompt: string | null;
   queuedItemsProp: string[] | null;
-  onEditQueued?: (prompt: string, items?: string[]) => void | Promise<void>;
+  /** Each item's files (#1512); reorder/remove carry them along. */
+  queuedFilesProp?: {
+    itemAttachments?: AttachmentInfo[][];
+    attachments?: AttachmentInfo[];
+  } | null;
+  onEditQueued?: (
+    prompt: string,
+    items?: string[],
+    itemAttachments?: AttachmentInfo[][],
+  ) => void | Promise<void>;
   onCancelQueued?: () => void;
 }) {
   /** Inline edit of a queued follow-up item (issue #364 / #780). */
@@ -50,20 +61,25 @@ export function useQueuedEdit({
   }, [detail?.thread.id, queuedPrompt == null]);
 
   const queuedItems = queuedThoughts(queuedPrompt, queuedItemsProp);
+  const queuedFiles = queuedItemFiles(queuedFilesProp, queuedItems.length);
 
-  const writeQueuedItems = (items: string[]) => {
+  /** Rewrite the queue as `order` (indices into queuedItems), files and all. */
+  const writeQueuedItems = (order: number[]) => {
     if (queuedWriteInFlight.current || queuedEditSavingRef.current) return;
-    if (items.length === 0) {
+    if (order.length === 0) {
       onCancelQueued?.();
       return;
     }
+    const items = order.map((i) => queuedItems[i]!);
+    const files = order.map((i) => queuedFiles[i] ?? []);
+    if (order.every((i, j) => i === j) && order.length === queuedItems.length) return;
+    if (!onEditQueued) return;
     const next = items.join("\n\n");
-    if (next === queuedPrompt || !onEditQueued) return;
     queuedWriteInFlight.current = true;
     const gen = queuedWriteGen.current;
     setQueuedWritePending(true);
     setQueuedWriteError(null);
-    void Promise.resolve(onEditQueued(next, items))
+    void Promise.resolve(onEditQueued(next, items, files))
       .then(() => {
         if (gen !== queuedWriteGen.current) return;
         setQueuedWriteError(null);
@@ -87,7 +103,11 @@ export function useQueuedEdit({
     setQueuedEditError(null);
   };
 
-  const persistQueuedEdit = async (prompt: string, items?: string[]) => {
+  const persistQueuedEdit = async (
+    prompt: string,
+    items?: string[],
+    files?: AttachmentInfo[][],
+  ) => {
     if (!onEditQueued) {
       setEditingQueued(null);
       setQueuedEditError(null);
@@ -98,7 +118,7 @@ export function useQueuedEdit({
     setQueuedEditSaving(true);
     setQueuedEditError(null);
     try {
-      await onEditQueued(prompt, items);
+      await onEditQueued(prompt, items, files);
       setEditingQueued(null);
       setQueuedEditError(null);
     } catch (err) {
@@ -136,7 +156,7 @@ export function useQueuedEdit({
     }
     const next = queuedItems.slice();
     next[index] = text;
-    void persistQueuedEdit(next.join("\n\n"), next);
+    void persistQueuedEdit(next.join("\n\n"), next, queuedFiles);
   };
   return {
     editingQueued,
@@ -149,6 +169,7 @@ export function useQueuedEdit({
     queuedWritePending,
     queuedWriteError,
     queuedItems,
+    queuedFiles,
     writeQueuedItems,
     closeQueuedEdit,
     saveQueuedEdit,

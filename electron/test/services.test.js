@@ -779,6 +779,7 @@ describe("services", () => {
     assert.deepEqual(first.queued, {
       prompt: "first thought",
       items: ["first thought"],
+      itemAttachments: [[{ kind: "folder", path: "/tmp/a", name: "a" }]],
       attachments: [{ kind: "folder", path: "/tmp/a", name: "a" }],
     });
     assert.equal(first.updatedAt, 1_700_000_000_000);
@@ -792,6 +793,8 @@ describe("services", () => {
     assert.deepEqual(second.queued, {
       prompt: "first thought\n\nsecond thought",
       items: ["first thought", "second thought"],
+      // Each thought keeps its own files (#1512).
+      itemAttachments: [[{ kind: "folder", path: "/tmp/a", name: "a" }], [{ kind: "image", path: "/tmp/b.png", name: "b.png" }]],
       attachments: [
         { kind: "folder", path: "/tmp/a", name: "a" },
         { kind: "image", path: "/tmp/b.png", name: "b.png" },
@@ -834,6 +837,7 @@ describe("services", () => {
     assert.deepEqual(replaced.queued, {
       prompt: "rewritten",
       items: ["rewritten"],
+      itemAttachments: [[{ kind: "image", path: "/tmp/b.png", name: "b.png" }]],
       attachments: [{ kind: "image", path: "/tmp/b.png", name: "b.png" }],
     });
     assert.equal(replaced.updatedAt, 1_700_000_000_000);
@@ -844,7 +848,11 @@ describe("services", () => {
       prompt: "text only",
       replace: true,
     });
-    assert.deepEqual(bare.queued, { prompt: "text only", items: ["text only"] });
+    assert.deepEqual(bare.queued, {
+      prompt: "text only",
+      items: ["text only"],
+      itemAttachments: [[]],
+    });
     assert.equal(store.getThread(thread.id).updatedAt, 1_700_000_000_000);
   });
 
@@ -923,6 +931,7 @@ describe("services", () => {
     assert.deepEqual(taken, {
       prompt: "hold this",
       items: ["hold this"],
+      itemAttachments: [[{ kind: "folder", path: "/tmp/a", name: "a" }]],
       attachments: [{ kind: "folder", path: "/tmp/a", name: "a" }],
     });
     assert.equal(store.getThread(thread.id).queued, null);

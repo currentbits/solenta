@@ -112,6 +112,7 @@ function TerminalView({
   onSplit?: () => void;
 }) {
   const hostRef = useRef<HTMLDivElement>(null);
+  const termRef = useRef<XtermLike | null>(null);
   const [session, setSession] = useState<TerminalState | null>(null);
   const [running, setRunning] = useState(false);
   const [failed, setFailed] = useState(false);
@@ -170,7 +171,7 @@ function TerminalView({
       .then((create) => {
         if (!live || !hostRef.current) return;
         const t = create();
-        term = t;
+        term = termRef.current = t;
         t.open(hostRef.current);
         safeFit(t);
         t.attachCustomKeyEventHandler(copyKeys(t));
@@ -223,6 +224,21 @@ function TerminalView({
       .then(() => setEpoch((e) => e + 1));
   }, [api, threadId, termId]);
 
+  // Close session (#1512): end the shell, keep its scrollback on screen.
+  const end = useCallback(() => {
+    void api.close({ threadId, termId, keep: true }).catch(() => {});
+  }, [api, threadId, termId]);
+
+  // Move to worktree (#1512): main restarts the shell in the thread's
+  // current root with the old scrollback above a separator; remount re-attaches.
+  const move = useCallback(() => {
+    const t = termRef.current;
+    void api
+      .open({ threadId, termId, cols: t?.cols, rows: t?.rows, move: true })
+      .catch(() => {})
+      .then(() => setEpoch((e) => e + 1));
+  }, [api, threadId, termId]);
+
   return (
     <div className={styles.view} data-terminal-view={termId}>
       <div className={styles.bar}>
@@ -240,6 +256,17 @@ function TerminalView({
         >
           Restart
         </button>
+        {running && (
+          <button
+            type="button"
+            className={styles.button}
+            data-terminal-end=""
+            title="End this shell without starting a new one"
+            onClick={end}
+          >
+            Close session
+          </button>
+        )}
         {onSplit && (
           <button
             type="button"
@@ -266,8 +293,15 @@ function TerminalView({
       </div>
       {session?.staleRoot && (
         <p className={styles.notice} data-terminal-stale="">
-          This shell started in {session.cwd}, which this thread has left. Restart to
-          open a shell in the current worktree.
+          This shell started in {session.cwd}, which this thread has left.{" "}
+          <button
+            type="button"
+            className={styles.button}
+            data-terminal-move=""
+            onClick={move}
+          >
+            Move to worktree
+          </button>
         </p>
       )}
       {session && !session.pty && running && (

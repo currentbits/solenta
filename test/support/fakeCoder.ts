@@ -106,6 +106,7 @@ import type {
   WebhookTestResult,
 } from "../../src/shared/ipc";
 import { normalizeMessagePins } from "../../src/messagePins";
+import { queuedItemFiles, queuedRow } from "../../src/queuedFiles";
 import { buildActivity } from "../../src/activity";
 import { DEV_MCP_CATALOG, devMcpCatalogRows } from "../../src/devCoder.ts";
 import {
@@ -2050,6 +2051,7 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
           attachments?: AttachmentInfo[];
           replace?: boolean;
           items?: string[];
+          itemAttachments?: AttachmentInfo[][];
         };
         const existing = threads.find((t) => t.id === i.threadId);
         if (!existing) {
@@ -2060,25 +2062,18 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
         if (i.prompt !== null && i.replace === true) {
           const items =
             i.items && i.items.length ? i.items.map(String) : [i.prompt];
-          queued = { prompt: items.join("\n\n"), items };
-          if (i.attachments?.length) queued.attachments = i.attachments;
+          queued = queuedRow(items, queuedItemFiles(i, items.length));
         } else if (i.prompt !== null) {
           const prev = existing.queued;
-          const files = [
-            ...(prev?.attachments ?? []),
-            ...(i.attachments ?? []),
-          ];
           const prevItems = prev?.items
             ? prev.items.map(String)
             : prev?.prompt != null
               ? prev.prompt.split("\n\n")
               : [];
-          const items = [...prevItems, i.prompt];
-          queued = {
-            prompt: items.join("\n\n"),
-            items,
-            attachments: files.length ? files : undefined,
-          };
+          queued = queuedRow(
+            [...prevItems, i.prompt],
+            [...queuedItemFiles(prev, prevItems.length), i.attachments ?? []],
+          );
         }
         const next: ThreadInfo = { ...existing, queued };
         threads = threads.map((t) => (t.id === i.threadId ? next : t));
