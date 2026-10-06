@@ -3292,7 +3292,11 @@ describe("ThreadView transcript windowing (issue #564)", () => {
       assert.equal(layout.scrollTop, 5_000, "pinned on the switch");
 
       layout.scrollHeight = 9_000;
-      await inAct(() => new Promise((r) => setTimeout(r, 50)));
+      // Poll, not a fixed sleep: the idle chain parses five answers one slot
+      // at a time, which outran 50 ms on a loaded CI runner.
+      for (let i = 0; i < 100 && !m.html().includes("BIG_ANSWER_0"); i++) {
+        await inAct(() => new Promise((r) => setTimeout(r, 50)));
+      }
       assert.ok(m.html().includes("BIG_ANSWER_0"), "the full window mounts after paint");
       assert.equal(layout.scrollTop, 9_000, "and stays pinned to the bottom (#607)");
       m.unmount();
@@ -3360,7 +3364,10 @@ describe("ThreadView transcript windowing (issue #564)", () => {
       assert.equal(idleQueue.length, 1, "pushes must not restart the chain");
       while (idleQueue.length) await inAct(async () => idleQueue.shift()!());
       assert.ok(m.html().includes("LIVE_ANSWER_0"), "the full window still mounts");
-      await inAct(() => new Promise((r) => setTimeout(r, 120))); // stream throttle
+      // Stream throttle; poll so a loaded runner cannot outrun a fixed sleep.
+      for (let i = 0; i < 100 && !m.html().includes("STREAM xxxxxx"); i++) {
+        await inAct(() => new Promise((r) => setTimeout(r, 50)));
+      }
       assert.ok(m.html().includes("STREAM xxxxxx"), "with the latest push");
       m.unmount();
     } finally {
