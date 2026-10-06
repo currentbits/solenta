@@ -210,3 +210,25 @@
     transition: none;
   }
 }
+
+/* Highlighted code reads in ink; the marker and row tint carry the change (#1493). */
+.text[data-highlighted] {
+  color: var(--text);
+}
+
+.line[data-kind="ctx"] .text[data-highlighted],
+.cell[data-kind="ctx"] .text[data-highlighted] {
+  color: var(--text-muted);
+}
+
+.marker {
+  color: var(--text-dim);
+}
+
+.line[data-kind="add"] .marker {
+  color: var(--diff-add-fg);
+}
+
+.line[data-kind="del"] .marker {
+  color: var(--diff-del-fg);
+}

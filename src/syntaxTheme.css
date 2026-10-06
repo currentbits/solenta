@@ -1,0 +1,65 @@
+/* Syntax tokens for diffs and markdown code (#1493). Ships with the lazy
+   highlight chunk. Theme tokens only, so light and dark both follow. */
+.hljs-comment,
+.hljs-quote,
+.hljs-meta {
+  color: var(--text-dim);
+  font-style: italic;
+}
+
+.hljs-keyword,
+.hljs-selector-tag,
+.hljs-doctag,
+.hljs-tag,
+.hljs-name {
+  color: var(--violet);
+}
+
+.hljs-string,
+.hljs-regexp,
+.hljs-template-tag,
+.hljs-meta .hljs-string {
+  color: var(--info-fg);
+}
+
+.hljs-number,
+.hljs-literal,
+.hljs-symbol,
+.hljs-bullet,
+.hljs-link {
+  color: var(--orange);
+}
+
+.hljs-type,
+.hljs-built_in,
+.hljs-title.class_,
+.hljs-selector-class,
+.hljs-selector-id {
+  color: var(--success-fg);
+}
+
+.hljs-title,
+.hljs-section,
+.hljs-attr,
+.hljs-attribute,
+.hljs-property,
+.hljs-variable,
+.hljs-template-variable {
+  color: var(--text);
+}
+
+.hljs-addition {
+  color: var(--diff-add-fg);
+}
+
+.hljs-deletion {
+  color: var(--diff-del-fg);
+}
+
+.hljs-emphasis {
+  font-style: italic;
+}
+
+.hljs-strong {
+  font-weight: 650;
+}

@@ -1254,6 +1254,26 @@ export interface FileChange {
   status: string;
   additions: number;
   deletions: number;
+  /**
+   * Set when this file's patch is not in `DiffResult.patch` (#1493):
+   * `large` is over the per-file cap (offer "Show anyway"), `lazy` did not
+   * fit the list budget (fetch it when the file is opened).
+   */
+  patchOmitted?: "large" | "lazy";
+}
+
+/** Which changes the Git pane reviews (#1493). */
+export type DiffScope = "uncommitted" | "branch" | "turn";
+
+export interface DiffOptions {
+  /** Default `uncommitted`: the working tree vs HEAD. */
+  scope?: DiffScope;
+  /** `git diff -w`. */
+  ignoreWhitespace?: boolean;
+  /** Only this file's patch (`files` comes back empty). */
+  path?: string;
+  /** With `path`: lift the per-file cap ("Show anyway"). */
+  full?: boolean;
 }
 
 /** One mechanically-detected CI-workflow interpolation (issue #510). */
@@ -1296,9 +1316,12 @@ export interface ConflictContext {
 
 export interface DiffResult {
   files: FileChange[];
-  /** Unified diff text, truncated by main to ~100k chars. */
+  /** Whole-file patches up to ~100k chars; see FileChange.patchOmitted. */
   patch: string;
+  /** A single-file (`path`) patch was cut at its cap. */
   truncated: boolean;
+  /** What the scope compared, e.g. `Turn 3` or `since main (abc1234)`. */
+  scopeLabel?: string;
   /**
    * CI/workflow files in the working tree or the branch vs base (issue
    * #510). Null/absent when the change set does not touch a pipeline file.
@@ -4561,8 +4584,8 @@ export interface CoderApi {
     // See PrInfo below for the shape createPr/prStatus return.
     /** Creates a git worktree + branch for the thread; later runs execute in it. */
     setupWorktree(input: { threadId: string }): Promise<ThreadInfo>;
-    /** Working-tree changes in the thread's cwd (worktree if set, else project). */
-    diff(input: { threadId: string }): Promise<DiffResult>;
+    /** Changes in the thread's cwd (worktree if set, else project), by scope. */
+    diff(input: { threadId: string } & DiffOptions): Promise<DiffResult>;
     /**
      * Review itinerary extras (issue #421): author annotation file, code-index
      * symbols for the reuse scan, and hunk hashes already marked reviewed.

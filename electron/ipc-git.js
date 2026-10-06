@@ -82,7 +82,14 @@ module.exports = {
     });
   },
   "git:diff": async (ctx, input) => {
-    return diff({ store: ctx.store, threadId: input.threadId });
+    return diff({
+      store: ctx.store,
+      threadId: input.threadId,
+      scope: input.scope,
+      ignoreWhitespace: input.ignoreWhitespace,
+      path: input.path,
+      full: input.full,
+    });
   },
   "git:reviewContext": async (ctx, input) => {
     const { loadReviewContext } = require("./reviewItinerary.js");

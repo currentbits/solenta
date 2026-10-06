@@ -16,6 +16,7 @@ import ReactMarkdown, {
 } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { isAbsolutePath } from "../pathLinks";
+import { languageForFence, useHighlightedBlock } from "../syntaxHighlight";
 import { markdownChunks } from "./markdownChunks";
 import { linkifyNode, PathLinkContext, useResolvedMap } from "./PathLinks";
 import styles from "./Markdown.module.css";
@@ -129,6 +130,7 @@ function CodeBlock({ children }: { children?: ReactNode }) {
   code = code.replace(/\n$/, "");
 
   const [copied, setCopied] = useState(false);
+  const html = useHighlightedBlock(languageForFence(lang), code);
 
   const copy = async () => {
     // jsdom and insecure contexts have no clipboard; keep the button inert.
@@ -151,7 +153,11 @@ function CodeBlock({ children }: { children?: ReactNode }) {
         </button>
       </div>
       <pre className={styles.codePre}>
-        <code>{code}</code>
+        {html != null ? (
+          <code dangerouslySetInnerHTML={{ __html: html }} />
+        ) : (
+          <code>{code}</code>
+        )}
       </pre>
     </div>
   );

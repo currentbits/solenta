@@ -1,5 +1,19 @@
-import { Fragment, memo, useEffect, useMemo, useRef, useState } from "react";
-import type { DiffResult, FileChange } from "../../shared/ipc";
+import {
+  Fragment,
+  memo,
+  useEffect,
+  useMemo,
+  useReducer,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
+import type {
+  DiffOptions,
+  DiffResult,
+  DiffScope,
+  FileChange,
+} from "../../shared/ipc";
 import {
   annotateHunkLines,
   commentGutterLabel,
@@ -7,15 +21,37 @@ import {
   diffLineKind,
   isEmptyDiff,
   reviewCommentFromAnchors,
+  type AnnotatedDiffLine,
   type DiffCommentAnchor,
   type DiffLineKind,
   type ReviewComment,
 } from "../../diffView";
+import {
+  splitLineText,
+  splitRowIndices,
+  type SplitRowIndex,
+} from "../../turnDiff";
+import {
+  languageForPath,
+  useHighlightedLines,
+} from "../../syntaxHighlight";
+import {
+  getDiffScope,
+  setDiffIgnoreWhitespace,
+  setDiffScope,
+  setDiffSplit,
+  setDiffWrap,
+  useDiffIgnoreWhitespace,
+  useDiffSplit,
+  useDiffWrap,
+} from "../../uiPrefs";
 import { blastRadiusTitle, isCiWorkflowPath } from "../../blastRadius";
 import {
   buildReviewItinerary,
   orderedPatches,
   parseReviewAnnotation,
+  type ReviewFilePatch,
+  type ReviewHunk,
   type ReviewItinerary,
   type ReviewSymbol,
 } from "../../reviewItinerary";
@@ -30,6 +66,8 @@ const DiffLine = memo(function DiffLine({
   kind: kindOverride,
   oldLine = null,
   newLine = null,
+  side,
+  html = null,
   commentable = false,
   commenting = false,
   onCommentClick,
@@ -38,6 +76,10 @@ const DiffLine = memo(function DiffLine({
   kind?: DiffLineKind;
   oldLine?: number | null;
   newLine?: number | null;
+  /** Split view cell: show that side's number and drop the +/- prefix. */
+  side?: "left" | "right";
+  /** Highlighted code (prefix stripped), or null to print `line` as is. */
+  html?: string | null;
   commentable?: boolean;
   commenting?: boolean;
   /** `extend`: ⇧-click grows the open comment into a range. */
@@ -45,6 +87,9 @@ const DiffLine = memo(function DiffLine({
 }) {
   const kind = kindOverride ?? diffLineKind(line);
   const ref = commentLineRef({ kind, oldLine, newLine });
+  const n = side === "left" ? oldLine : side === "right" ? newLine : ref?.n;
+  const code = splitLineText(line, kind);
+  const marker = side || code === line ? "" : line[0];
   return (
     <div
       className={styles.diffLine}
@@ -61,14 +106,21 @@ const DiffLine = memo(function DiffLine({
           aria-expanded={commenting}
           onClick={(e) => onCommentClick(e.shiftKey)}
         >
-          {ref ? ref.n : "+"}
+          {n ?? "+"}
         </button>
       ) : (
         <span className={styles.diffLineGutter} data-static="" aria-hidden>
-          {ref ? ref.n : ""}
+          {n ?? ""}
         </span>
       )}
-      <span className={styles.diffLineText}>{line || " "}</span>
+      {html != null ? (
+        <span className={styles.diffLineText} data-highlighted="">
+          {marker ? <span className={styles.diffMarker}>{marker}</span> : null}
+          <span dangerouslySetInnerHTML={{ __html: html || " " }} />
+        </span>
+      ) : (
+        <span className={styles.diffLineText}>{(side ? code : line) || " "}</span>
+      )}
     </div>
   );
 });
@@ -145,6 +197,7 @@ function DiffCommentBox({
 
 function FileRow({
   file,
+  editable,
   selected,
   staged,
   confirmRevert,
@@ -154,6 +207,8 @@ function FileRow({
   onRevert,
 }: {
   file: FileChange;
+  /** Uncommitted scope: stage and discard apply. */
+  editable: boolean;
   selected: boolean;
   staged: boolean;
   confirmRevert: string | null;
@@ -164,6 +219,7 @@ function FileRow({
 }) {
   return (
     <li>
+      {editable ? (
       <button
         type="button"
         className={styles.fileStage}
@@ -178,6 +234,7 @@ function FileRow({
       >
         {staged ? "✓" : ""}
       </button>
+      ) : null}
       <button
         type="button"
         className={styles.fileRow}
@@ -202,6 +259,7 @@ function FileRow({
           <span className={styles.dels}>−{file.deletions}</span>
         </span>
       </button>
+      {editable ? (
       <button
         type="button"
         className={styles.fileRevert}
@@ -222,8 +280,206 @@ function FileRow({
             ? "Sure?"
             : "↩"}
       </button>
+      ) : null}
     </li>
   );
+}
+
+/** Comment plumbing the patch view borrows from ChangesPanel. */
+interface CommentWiring {
+  enabled: boolean;
+  inComment: (group: string, index: number) => boolean;
+  boxAt: (group: string, index: number) => ReactNode;
+  pick: (
+    group: string,
+    index: number,
+    rows: DiffCommentAnchor[],
+    extend: boolean,
+  ) => void;
+}
+
+type HunkLayout = {
+  rows: Array<AnnotatedDiffLine & { path: string }>;
+  pairs: SplitRowIndex[];
+  /** First row's index into the file's flat highlight list. */
+  offset: number;
+};
+
+/** One file's hunks, unified or side by side, with syntax colour. */
+function FilePatch({
+  patch,
+  split,
+  comments,
+  onToggleHunk,
+}: {
+  patch: ReviewFilePatch;
+  split: boolean;
+  comments: CommentWiring;
+  onToggleHunk: (hunk: ReviewHunk) => void;
+}) {
+  // Keyed on the text, not the object: "Mark reviewed" rebuilds the
+  // itinerary and must not restart highlighting.
+  const layout = useMemo((): HunkLayout[] => {
+    let offset = 0;
+    return patch.hunks.map((hunk) => {
+      const rows = annotateHunkLines(hunk.header, hunk.body).map((row) => ({
+        ...row,
+        path: patch.path,
+      }));
+      const out = { rows, pairs: splitRowIndices(rows), offset };
+      offset += rows.length;
+      return out;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- hunks derive from text
+  }, [patch.path, patch.text]);
+  const codes = useMemo(
+    () => layout.flatMap((h) => h.rows.map((r) => splitLineText(r.text, r.kind))),
+    [layout],
+  );
+  const html = useHighlightedLines(languageForPath(patch.path), codes);
+
+  const line = (h: HunkLayout, group: string, i: number, side?: "left" | "right") => {
+    const row = h.rows[i]!;
+    const commentable = comments.enabled && row.commentable;
+    return (
+      <DiffLine
+        line={row.text}
+        kind={row.kind}
+        oldLine={row.oldLine}
+        newLine={row.newLine}
+        side={side}
+        html={row.text.startsWith("\\") ? null : (html[h.offset + i] ?? null)}
+        commentable={commentable}
+        commenting={comments.inComment(group, i)}
+        onCommentClick={
+          commentable
+            ? (extend) => comments.pick(group, i, h.rows, extend)
+            : undefined
+        }
+      />
+    );
+  };
+
+  return patch.hunks.map((hunk, hi) => {
+    const h = layout[hi];
+    if (!h) return null;
+    return (
+      <div
+        key={hunk.id}
+        className={styles.hunkBlock}
+        data-review-hunk={hunk.id}
+        data-review-hunk-accepted={hunk.accepted ? "" : undefined}
+      >
+        <div className={styles.hunkBar}>
+          <span className={styles.hunkPath}>{patch.path}</span>
+          <button
+            type="button"
+            className={styles.hunkSeen}
+            aria-pressed={hunk.accepted}
+            title={
+              hunk.accepted
+                ? "Mark this hunk as new again"
+                : "Mark this hunk reviewed"
+            }
+            onClick={() => onToggleHunk(hunk)}
+          >
+            {hunk.accepted ? "Reviewed" : "Mark reviewed"}
+          </button>
+        </div>
+        <DiffLine line={hunk.header} />
+        {split
+          ? h.pairs.map((pair, r) => {
+              const box =
+                (pair.right != null ? comments.boxAt(hunk.id, pair.right) : null) ??
+                (pair.left != null && pair.left !== pair.right
+                  ? comments.boxAt(hunk.id, pair.left)
+                  : null);
+              return (
+                <Fragment key={`${hunk.id}:s${r}`}>
+                  <div className={styles.diffSplitRow} data-diff-split-row="">
+                    {pair.left != null ? (
+                      line(h, hunk.id, pair.left, "left")
+                    ) : (
+                      <div className={styles.diffLine} data-kind="empty" aria-hidden />
+                    )}
+                    {pair.right != null ? (
+                      line(h, hunk.id, pair.right, "right")
+                    ) : (
+                      <div className={styles.diffLine} data-kind="empty" aria-hidden />
+                    )}
+                  </div>
+                  {box}
+                </Fragment>
+              );
+            })
+          : h.rows.map((_, i) => (
+              <Fragment key={`${hunk.id}:${i}`}>
+                {line(h, hunk.id, i)}
+                {comments.boxAt(hunk.id, i)}
+              </Fragment>
+            ))}
+      </div>
+    );
+  });
+}
+
+/** A file whose patch is fetched on its own (#1493). */
+type FilePatchState = {
+  patch: string;
+  truncated: boolean;
+  loading?: boolean;
+  error?: string;
+};
+
+/** Placeholder for a file whose patch is not in the list payload. */
+function OmittedPatch({
+  file,
+  state,
+  onShow,
+}: {
+  file: FileChange | null;
+  state: FilePatchState | undefined;
+  onShow: (path: string) => void;
+}) {
+  if (state?.loading) {
+    return <p className={styles.changesEmpty}>Loading diff…</p>;
+  }
+  if (state?.error) {
+    return (
+      <p className={styles.inlineError} role="alert">
+        {state.error}
+      </p>
+    );
+  }
+  if (file?.patchOmitted === "large" && !state) {
+    const lines = file.additions + file.deletions;
+    return (
+      <div className={styles.changesEmpty} data-diff-large={file.path}>
+        <p className={styles.largeDiffNote}>
+          Large diff, {lines.toLocaleString()} changed lines. Hidden to keep
+          review fast.
+        </p>
+        <button type="button" className={styles.btn} onClick={() => onShow(file.path)}>
+          Show anyway
+        </button>
+      </div>
+    );
+  }
+  return <p className={styles.changesEmpty}>No textual diff for this file</p>;
+}
+
+const SCOPES: Array<{ id: DiffScope; label: string; title: string }> = [
+  { id: "uncommitted", label: "Uncommitted", title: "Working tree vs the last commit" },
+  { id: "branch", label: "Whole branch", title: "Everything since this branch left its base, committed or not" },
+  { id: "turn", label: "This turn", title: "What the agent changed in its last turn" },
+];
+
+function emptyCopy(scope: DiffScope, diff: DiffResult | null): string {
+  if (scope === "branch") return "No changes on this branch yet";
+  if (scope === "turn") {
+    return diff?.scopeLabel ? "No changes in the last turn" : "No turn checkpoint yet";
+  }
+  return "Working tree is clean";
 }
 
 export function ChangesPanel({
@@ -254,7 +510,7 @@ export function ChangesPanel({
   threadBaseBranch?: string | null;
   planText: string;
   openNonce: number;
-  onFetchDiff: () => Promise<DiffResult>;
+  onFetchDiff: (opts?: DiffOptions) => Promise<DiffResult>;
   onFetchReviewContext?: () => Promise<{
     annotation: unknown;
     symbols: ReviewSymbol[];
@@ -303,20 +559,41 @@ export function ChangesPanel({
   const knownFilesRef = useRef<Set<string>>(new Set());
   const threadIdRef = useRef(threadId);
   threadIdRef.current = threadId;
+  // Scope lives in uiPrefs per thread; the reducer re-reads it after a pick.
+  const [, bumpScope] = useReducer((n: number) => n + 1, 0);
+  const scope = getDiffScope(threadId);
+  const editable = scope === "uncommitted";
+  const split = useDiffSplit();
+  const wrap = useDiffWrap();
+  const ignoreWhitespace = useDiffIgnoreWhitespace();
+  /** Patches fetched one file at a time: lazy or "Show anyway" (#1493). */
+  const [filePatches, setFilePatches] = useState<Record<string, FilePatchState>>({});
+  /** Bumped per load so a slow fetch from an old scope cannot land. */
+  const loadGenRef = useRef(0);
+
+  const viewOptions = (): DiffOptions | undefined => {
+    if (editable && !ignoreWhitespace) return undefined;
+    return {
+      ...(editable ? {} : { scope }),
+      ...(ignoreWhitespace ? { ignoreWhitespace: true } : {}),
+    };
+  };
 
   const load = async () => {
     const forThread = threadId;
+    const gen = ++loadGenRef.current;
     setLoading(true);
     setError(null);
     setDiff(null);
+    setFilePatches({});
     try {
       const [result, context] = await Promise.all([
-        onFetchDiff(),
+        onFetchDiff(viewOptions()),
         onFetchReviewContext
           ? onFetchReviewContext().catch(() => null)
           : Promise.resolve(null),
       ]);
-      if (threadIdRef.current !== forThread) return;
+      if (threadIdRef.current !== forThread || loadGenRef.current !== gen) return;
       setDiff(result);
       if (context) {
         setSymbols(Array.isArray(context.symbols) ? context.symbols : []);
@@ -326,13 +603,55 @@ export function ChangesPanel({
         );
       }
     } catch (err) {
-      if (threadIdRef.current !== forThread) return;
+      if (threadIdRef.current !== forThread || loadGenRef.current !== gen) return;
       setError(
         err instanceof Error && err.message ? err.message : "Failed to load diff",
       );
     } finally {
-      if (threadIdRef.current === forThread) setLoading(false);
+      if (threadIdRef.current === forThread && loadGenRef.current === gen) {
+        setLoading(false);
+      }
     }
+  };
+
+  const fetchFilePatch = async (path: string, full: boolean) => {
+    const gen = loadGenRef.current;
+    setFilePatches((prev) => ({
+      ...prev,
+      [path]: { patch: "", truncated: false, loading: true },
+    }));
+    try {
+      const result = await onFetchDiff({
+        ...viewOptions(),
+        path,
+        ...(full ? { full: true } : {}),
+      });
+      if (loadGenRef.current !== gen) return;
+      setFilePatches((prev) => ({
+        ...prev,
+        [path]: { patch: result.patch, truncated: result.truncated },
+      }));
+    } catch (err) {
+      if (loadGenRef.current !== gen) return;
+      setFilePatches((prev) => ({
+        ...prev,
+        [path]: {
+          patch: "",
+          truncated: false,
+          error: err instanceof Error && err.message ? err.message : "Failed to load diff",
+        },
+      }));
+    }
+  };
+
+  const changeScope = (next: DiffScope) => {
+    if (!threadId || next === scope) return;
+    setDiffScope(threadId, next);
+    // Drop the old scope's diff now so staging never reconciles against it.
+    setDiff(null);
+    setFilePatches({});
+    setCommentTarget(null);
+    bumpScope();
   };
 
   // Never show one thread's diff under another thread.
@@ -348,14 +667,17 @@ export function ChangesPanel({
     setCommentTarget(null);
     setCommentDraft("");
     setStagedPaths(new Set());
+    setFilePatches({});
     knownFilesRef.current = new Set();
     onStagedPathsChange?.(null);
     // onStagedPathsChange is a stable setter from useCoder; threadId is the trigger.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [threadId]);
 
+  // Staging is an Uncommitted-scope idea; a branch or turn diff (cleared on
+  // every scope switch) must not reconcile into it.
   useEffect(() => {
-    if (!diff) return;
+    if (!diff || !editable) return;
     setStagedPaths((prev) => {
       const next = new Set<string>();
       const known = knownFilesRef.current;
@@ -366,12 +688,13 @@ export function ChangesPanel({
       knownFilesRef.current = new Set(diff.files.map((f) => f.path));
       return next;
     });
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- diff is the trigger
   }, [diff]);
 
   useEffect(() => {
-    if (!diff || isEmptyDiff(diff)) return;
+    if (!diff || isEmptyDiff(diff) || !editable) return;
     onStagedPathsChange?.([...stagedPaths]);
-  }, [diff, stagedPaths, onStagedPathsChange]);
+  }, [diff, stagedPaths, onStagedPathsChange, editable]);
 
   useEffect(() => {
     if (!diff || diff.files.length === 0) {
@@ -384,14 +707,23 @@ export function ChangesPanel({
 
   useEffect(() => {
     if (open) void load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- load when panel opens / thread / openNonce
-  }, [open, threadId, openNonce]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- load when panel opens / thread / openNonce / view
+  }, [open, threadId, openNonce, scope, ignoreWhitespace]);
+
+  const selectedFile = diff?.files.find((f) => f.path === selectedPath) ?? null;
+  useEffect(() => {
+    if (selectedFile?.patchOmitted !== "lazy" || filePatches[selectedFile.path]) return;
+    void fetchFilePatch(selectedFile.path, false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- fetch once per opened file
+  }, [selectedFile, filePatches]);
 
   const itinerary: ReviewItinerary | null = useMemo(() => {
     if (!diff || isEmptyDiff(diff)) return null;
     return buildReviewItinerary({
       files: diff.files,
-      patch: diff.patch,
+      patch: [diff.patch, ...Object.values(filePatches).map((f) => f.patch)]
+        .filter(Boolean)
+        .join("\n"),
       planText,
       threadTitle,
       symbols,
@@ -399,7 +731,16 @@ export function ChangesPanel({
       acceptedHunks,
       testsFirst,
     });
-  }, [diff, planText, threadTitle, symbols, annotation, acceptedHunks, testsFirst]);
+  }, [diff, filePatches, planText, threadTitle, symbols, annotation, acceptedHunks, testsFirst]);
+
+  const patches = useMemo(
+    () => (itinerary ? orderedPatches(itinerary) : []),
+    [itinerary],
+  );
+  const visiblePatches = useMemo(
+    () => (selectedPath ? patches.filter((p) => p.path === selectedPath) : patches),
+    [patches, selectedPath],
+  );
 
   if (!open) return null;
 
@@ -479,11 +820,6 @@ export function ChangesPanel({
     }
   };
 
-  const patches = itinerary ? orderedPatches(itinerary) : [];
-  const visiblePatches = selectedPath
-    ? patches.filter((p) => p.path === selectedPath)
-    : patches;
-
   const closeComment = () => {
     setCommentTarget(null);
     setCommentDraft("");
@@ -552,6 +888,13 @@ export function ChangesPanel({
       />
     ) : null;
 
+  const commentWiring: CommentWiring = {
+    enabled: Boolean(onComment),
+    inComment,
+    boxAt: commentBoxAt,
+    pick: pickCommentRow,
+  };
+
   return (
     <section
       className={styles.changesPane}
@@ -592,6 +935,29 @@ export function ChangesPanel({
         </div>
       </header>
 
+      <div className={styles.diffScopeBar}>
+        <div className={styles.diffSeg} role="group" aria-label="Review scope">
+          {SCOPES.map((s) => (
+            <button
+              key={s.id}
+              type="button"
+              className={styles.diffSegBtn}
+              data-diff-scope={s.id}
+              aria-pressed={scope === s.id}
+              title={s.title}
+              onClick={() => changeScope(s.id)}
+            >
+              {s.label}
+            </button>
+          ))}
+        </div>
+        {diff?.scopeLabel ? (
+          <span className={styles.diffScopeLabel} data-diff-scope-label="">
+            {diff.scopeLabel}
+          </span>
+        ) : null}
+      </div>
+
       {error && (
         <div className={styles.inlineError} role="alert">
           {error}
@@ -614,7 +980,7 @@ export function ChangesPanel({
               <span>{blastRadiusTitle(diff.blastRadius)}</span>
             </div>
           ) : null}
-          <p className={styles.changesEmpty}>Working tree is clean</p>
+          <p className={styles.changesEmpty}>{emptyCopy(scope, diff)}</p>
         </>
       )}
 
@@ -622,6 +988,7 @@ export function ChangesPanel({
         <>
           <div className={styles.changesSplit}>
             <div className={styles.changesFiles}>
+              {editable ? (
               <div className={styles.stageBar}>
                 <button
                   type="button"
@@ -649,6 +1016,7 @@ export function ChangesPanel({
                 </button>
                 {stagedPaths.size}/{diff.files.length} staged
               </div>
+              ) : null}
               <ReviewItineraryView
                 itinerary={itinerary}
                 testsFirst={testsFirst}
@@ -662,6 +1030,7 @@ export function ChangesPanel({
                       <FileRow
                         key={f.path}
                         file={f}
+                        editable={editable}
                         selected={selectedPath === f.path}
                         staged={stagedPaths.has(f.path)}
                         confirmRevert={confirmRevert}
@@ -676,10 +1045,48 @@ export function ChangesPanel({
               ))}
             </div>
             <div className={styles.changesDiff}>
+              <div className={styles.diffToolbar} role="group" aria-label="Diff view">
+                <button
+                  type="button"
+                  className={styles.diffSegBtn}
+                  data-diff-toggle="split"
+                  aria-pressed={split}
+                  onClick={() => setDiffSplit(!split)}
+                >
+                  Split
+                </button>
+                <button
+                  type="button"
+                  className={styles.diffSegBtn}
+                  data-diff-toggle="wrap"
+                  aria-pressed={wrap}
+                  onClick={() => setDiffWrap(!wrap)}
+                >
+                  Wrap
+                </button>
+                <button
+                  type="button"
+                  className={styles.diffSegBtn}
+                  data-diff-toggle="whitespace"
+                  aria-pressed={ignoreWhitespace}
+                  title="Hide whitespace-only changes"
+                  onClick={() => setDiffIgnoreWhitespace(!ignoreWhitespace)}
+                >
+                  Ignore whitespace
+                </button>
+              </div>
               {visiblePatches.length === 0 ? (
-                <p className={styles.changesEmpty}>No textual diff for this file</p>
+                <OmittedPatch
+                  file={selectedFile}
+                  state={selectedFile ? filePatches[selectedFile.path] : undefined}
+                  onShow={(path) => void fetchFilePatch(path, true)}
+                />
               ) : (
-                <div className={styles.patchScroll}>
+                <div
+                  className={styles.patchScroll}
+                  data-wrap={wrap ? "" : undefined}
+                  data-split={split ? "" : undefined}
+                >
                   {visiblePatches.map((p) => (
                     <Fragment key={p.path}>
                       {p.hunks.length === 0 &&
@@ -716,80 +1123,26 @@ export function ChangesPanel({
                             );
                           });
                         })()}
-                      {p.hunks.map((hunk) => (
-                        <div
-                          key={hunk.id}
-                          className={styles.hunkBlock}
-                          data-review-hunk={hunk.id}
-                          data-review-hunk-accepted={
-                            hunk.accepted ? "" : undefined
-                          }
-                        >
-                          <div className={styles.hunkBar}>
-                            <span className={styles.hunkPath}>{p.path}</span>
-                            <button
-                              type="button"
-                              className={styles.hunkSeen}
-                              aria-pressed={hunk.accepted}
-                              title={
-                                hunk.accepted
-                                  ? "Mark this hunk as new again"
-                                  : "Mark this hunk reviewed"
-                              }
-                              onClick={() =>
-                                toggleHunk(hunk.id, !hunk.accepted)
-                              }
-                            >
-                              {hunk.accepted ? "Reviewed" : "Mark reviewed"}
-                            </button>
-                          </div>
-                          <DiffLine line={hunk.header} />
-                          {(() => {
-                            const rows = annotateHunkLines(
-                              hunk.header,
-                              hunk.body,
-                            ).map((row) => ({ ...row, path: p.path }));
-                            return rows.map((row, i) => {
-                              const key = `${hunk.id}:${i}`;
-                              const commentable =
-                                Boolean(onComment) && row.commentable;
-                              return (
-                                <Fragment key={key}>
-                                  <DiffLine
-                                    line={row.text}
-                                    kind={row.kind}
-                                    oldLine={row.oldLine}
-                                    newLine={row.newLine}
-                                    commentable={commentable}
-                                    commenting={inComment(hunk.id, i)}
-                                    onCommentClick={
-                                      commentable
-                                        ? (extend) =>
-                                            pickCommentRow(
-                                              hunk.id,
-                                              i,
-                                              rows,
-                                              extend,
-                                            )
-                                        : undefined
-                                    }
-                                  />
-                                  {commentBoxAt(hunk.id, i)}
-                                </Fragment>
-                              );
-                            });
-                          })()}
-                        </div>
-                      ))}
+                      <FilePatch
+                        patch={p}
+                        split={split}
+                        comments={commentWiring}
+                        onToggleHunk={(hunk) => toggleHunk(hunk.id, !hunk.accepted)}
+                      />
                     </Fragment>
                   ))}
                 </div>
               )}
-              {diff.truncated && (
+              {selectedFile && filePatches[selectedFile.path]?.truncated ? (
+                <p className={styles.truncatedNote}>
+                  Diff cut at 1 MB. Open the file to see the rest.
+                </p>
+              ) : diff.truncated ? (
                 <p className={styles.truncatedNote}>Diff truncated</p>
-              )}
+              ) : null}
             </div>
           </div>
+          {editable ? (
           <div className={styles.commitBox}>
             <textarea
               className={styles.commitInput}
@@ -831,6 +1184,7 @@ export function ChangesPanel({
               </button>
             </div>
           </div>
+          ) : null}
         </>
       )}
     </section>
