@@ -22,6 +22,7 @@ import {
 } from "../src/composerSession";
 import { makePasteCard } from "../src/pasteCards";
 import type { ProviderInfo } from "../src/shared/ipc";
+import { setEnterSendsEnabled } from "../src/uiPrefs";
 
 const PROVIDERS: ProviderInfo[] = [
   {
@@ -213,5 +214,34 @@ describe("↑ recalls sent prompts", () => {
     assert.ok(m.container.querySelector('[role="listbox"][aria-label="Commands"]'));
     await m.press(textarea(m), "ArrowUp");
     assert.equal(textarea(m).value, "/");
+  });
+});
+
+describe("send-key preference", () => {
+  afterEach(() => setEnterSendsEnabled(false));
+
+  it("default: bare Enter is a newline, ⌘Enter sends", async () => {
+    const sends: string[] = [];
+    const m = await mountComposer({ sends });
+    await m.type(textarea(m), "hello");
+    await m.press(textarea(m), "Enter");
+    assert.deepEqual(sends, []);
+    await m.press(textarea(m), "Enter", { metaKey: true });
+    assert.deepEqual(sends, ["hello"]);
+  });
+
+  it("Enter sends: bare Enter sends, ⇧Enter does not, ⌘Enter still does", async () => {
+    setEnterSendsEnabled(true);
+    const sends: string[] = [];
+    const m = await mountComposer({ sends });
+    await m.type(textarea(m), "one");
+    await m.press(textarea(m), "Enter", { shiftKey: true });
+    assert.deepEqual(sends, [], "⇧Enter is the newline");
+    await m.press(textarea(m), "Enter");
+    assert.deepEqual(sends, ["one"]);
+    await m.type(textarea(m), "two");
+    await m.press(textarea(m), "Enter", { ctrlKey: true });
+    assert.deepEqual(sends, ["one", "two"]);
+    m.unmount();
   });
 });

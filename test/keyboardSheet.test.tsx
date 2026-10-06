@@ -7,7 +7,7 @@ import { afterEach, describe, it } from "node:test";
 import { useState } from "react";
 import { mount } from "./support/dom.ts";
 import { KeyboardSheet } from "../src/components/KeyboardSheet";
-import { setComposerVimEnabled } from "../src/uiPrefs";
+import { setComposerVimEnabled, setEnterSendsEnabled } from "../src/uiPrefs";
 
 const VIM_MOTION_KEYS = [
   "h / j / k / l",
@@ -209,6 +209,28 @@ describe("keyboard sheet focus trap", () => {
     await m.pressFocused("Escape");
     assert.equal(m.query("[data-keyboard-sheet]"), null);
     assert.equal(document.activeElement, opener, "Escape restores the opener");
+    m.unmount();
+  });
+});
+
+describe("keyboard sheet send key (#1493)", () => {
+  afterEach(() => setEnterSendsEnabled(false));
+
+  it("lists ⌘ + Enter by default and ↑ recall", async () => {
+    const { m, kbds } = await openSheet();
+    assert.ok(kbds.includes("⌘ + Enter"));
+    assert.ok(kbds.includes("↑"));
+    assert.ok(!kbds.includes("⇧ + Enter"));
+    m.unmount();
+  });
+
+  it("swaps to Enter / ⇧ + Enter when Enter sends", async () => {
+    setEnterSendsEnabled(true);
+    const { m, kbds, text } = await openSheet();
+    assert.ok(kbds.includes("Enter"));
+    assert.ok(kbds.includes("⇧ + Enter"));
+    assert.ok(!kbds.includes("⌘ + Enter"));
+    assert.match(text, /New line/);
     m.unmount();
   });
 });

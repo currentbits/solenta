@@ -108,6 +108,7 @@ import {
   getPasteCardsEnabled,
   setComposerBusyAction,
   setLastReasoningEffort,
+  useEnterSendsEnabled,
   useTranscriptViewMode,
   type ComposerBusyAction,
 } from "../uiPrefs";
@@ -357,6 +358,7 @@ export const Composer = memo(function Composer({
   const currentProviderInfo = providers.find((p) => p.id === provider);
   const canAttachImages = supportsImagesForModel(currentProviderInfo, model);
   const transcriptView = useTranscriptViewMode();
+  const enterSends = useEnterSendsEnabled();
   const { vimEnabled, vimMode, setVimMode, vimStateRef } =
     useComposerVim(threadId);
   const [viewOpen, setViewOpen] = useState(false);
@@ -1205,7 +1207,13 @@ export const Composer = memo(function Composer({
       else submitSend();
       return;
     }
-    if ((e.metaKey || e.ctrlKey || e.shiftKey) && e.key === "Enter") {
+    // Default: ⌘/Ctrl/⇧+Enter send, bare Enter is a newline. With the
+    // Enter-sends preference, bare Enter sends and ⇧Enter is the newline.
+    if (
+      e.key === "Enter" &&
+      !e.nativeEvent.isComposing &&
+      (e.metaKey || e.ctrlKey || (enterSends ? !e.shiftKey : e.shiftKey))
+    ) {
       e.preventDefault();
       submitSend();
       return;

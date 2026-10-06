@@ -1,5 +1,5 @@
 import { useCallback, useRef } from "react";
-import { useComposerVimEnabled } from "../uiPrefs";
+import { useComposerVimEnabled, useEnterSendsEnabled } from "../uiPrefs";
 import { useEscapeClose } from "../useEscapeClose";
 import { useModalFocus } from "../useModalFocus";
 import styles from "./KeyboardSheet.module.css";
@@ -21,6 +21,7 @@ const APP_SHORTCUTS: readonly ShortcutRow[] = [
   { keys: "⌘ + P", action: "Search files in this project" },
   { keys: "⌘ + ⇧ + F", action: "Search file contents" },
   { keys: "⌘ + Enter", action: "Send message" },
+  { keys: "↑", action: "Recall the last sent prompt (empty composer)" },
   { keys: "⌥ + Enter", action: "Ask a side question (/btw)" },
   { keys: "⌘ + ⇧ + Enter", action: "Steer the live turn" },
   { keys: "⌘ + S", action: "Stash the draft" },
@@ -55,10 +56,21 @@ const VIM_SHORTCUTS: readonly ShortcutRow[] = [
   { keys: "o / O", action: "Open line below / above" },
 ];
 
-function appShortcutRows(composerVim: boolean): readonly ShortcutRow[] {
-  if (!composerVim) return APP_SHORTCUTS;
-  return APP_SHORTCUTS.map((row) =>
-    row.keys === "Escape" ? VIM_ESCAPE : row,
+const ENTER_SENDS_ROWS: readonly ShortcutRow[] = [
+  { keys: "Enter", action: "Send message" },
+  { keys: "⇧ + Enter", action: "New line" },
+];
+
+function appShortcutRows(
+  composerVim: boolean,
+  enterSends: boolean,
+): readonly ShortcutRow[] {
+  return APP_SHORTCUTS.flatMap((row) =>
+    composerVim && row.keys === "Escape"
+      ? [VIM_ESCAPE]
+      : enterSends && row.keys === "⌘ + Enter"
+        ? ENTER_SENDS_ROWS
+        : [row],
   );
 }
 
@@ -82,6 +94,7 @@ interface KeyboardSheetProps {
 
 export function KeyboardSheet({ open, onClose }: KeyboardSheetProps) {
   const composerVim = useComposerVimEnabled();
+  const enterSends = useEnterSendsEnabled();
   const dialogRef = useRef<HTMLDivElement>(null);
   const handleClose = useCallback(() => onClose(), [onClose]);
   useEscapeClose(open, handleClose);
@@ -119,7 +132,7 @@ export function KeyboardSheet({ open, onClose }: KeyboardSheetProps) {
             ×
           </button>
         </header>
-        <ShortcutList rows={appShortcutRows(composerVim)} />
+        <ShortcutList rows={appShortcutRows(composerVim, enterSends)} />
         {composerVim && (
           <>
             <h3 className={styles.section}>Composer vim</h3>
