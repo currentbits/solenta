@@ -1352,6 +1352,16 @@
   color: var(--text-dim);
 }
 
+.signedOut {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0 8px 4px;
+  font-size: 11.5px;
+  color: var(--warning-fg);
+}
+
 .setupPanel a {
   text-decoration: none;
 }

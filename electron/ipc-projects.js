@@ -3,6 +3,7 @@
 const services = require("./services.js");
 const { browseFilesystem } = require("./fsBrowse.js");
 const { retireAgent } = require("./ipc-shared.js");
+const { discoverRecentRepos } = require("./recentRepos.js");
 
 /** IPC_HANDLERS rows for projects:*, fs:*, spaces:*; ipc.js spreads them in. */
 module.exports = {
@@ -11,6 +12,12 @@ module.exports = {
   },
   "projects:add": async (ctx, projectPath, opts) => {
     return services.addProject(ctx.store, projectPath, opts);
+  },
+  // First-run discovery (#1501): read-only scan of the provider CLIs' sessions.
+  "projects:discoverRecent": async (ctx) => {
+    return discoverRecentRepos({
+      existingPaths: services.listProjects(ctx.store).map((p) => p.path),
+    });
   },
   "projects:ensureScratch": async (ctx) => {
     return services.ensureScratchProject(ctx.store, ctx.userDataPath);

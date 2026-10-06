@@ -15,6 +15,7 @@
  */
 import type {
   AppSettings,
+  RecentRepoGroup,
   AppStatus,
   AttachmentInfo,
   AutomationInfo,
@@ -222,6 +223,8 @@ export function detail(over: Partial<ThreadDetail> = {}): ThreadDetail {
 
 export interface FakeOptions {
   projects?: ProjectInfo[];
+  /** projects.discoverRecent result (#1501). */
+  recentRepos?: RecentRepoGroup[];
   spaces?: SpaceInfo[];
   threads?: ThreadInfo[];
   providers?: ProviderInfo[];
@@ -1568,6 +1571,8 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
         });
         return rec("projects.create", [input], created);
       },
+      discoverRecent: () =>
+        rec("projects.discoverRecent", [], opts.recentRepos ?? ([] as RecentRepoGroup[])),
       ensureScratch: () => {
         let found = projects.find((p) => p.scratch === true);
         if (!found) {
@@ -3557,6 +3562,11 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
       read: (input: unknown) => rec("terminal.read", [input], fakeTerminal()),
       list: (input: unknown) => rec("terminal.list", [input], [] as string[]),
       close: (input: unknown) => rec("terminal.close", [input], fakeTerminal()),
+      signIn: (input: { provider: string; threadId?: string | null }) =>
+        rec("terminal.signIn", [input], {
+          threadId: input.threadId || "__signin__",
+          termId: "signin",
+        }),
     },
     simulator: {
       capabilities: (input: unknown) =>

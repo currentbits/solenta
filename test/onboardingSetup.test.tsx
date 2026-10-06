@@ -14,7 +14,7 @@ import {
   project,
 } from "./support/fakeCoder.ts";
 import App from "../src/App";
-import type { AppSettings } from "../src/shared/ipc";
+import type { AppSettings, RecentRepoGroup } from "../src/shared/ipc";
 
 async function boot(
   fake: ReturnType<typeof createFakeCoder>,
@@ -477,6 +477,66 @@ describe("Onboarding setup step (#630)", () => {
       (err.textContent || "").includes("could not write settings"),
       `error must show the async message, got: ${err.textContent}`,
     );
+    m.unmount();
+  });
+});
+
+describe("Onboarding setup step: recent repos (#1501)", () => {
+  const now = Date.now();
+  const recentRepos: RecentRepoGroup[] = [
+    {
+      remote: "acme/shop",
+      repos: [
+        { path: "/u/code/shop", name: "shop", lastActiveAt: now - 3_600_000, providers: ["claude"], preselected: true },
+        { path: "/u/old/shop", name: "shop", lastActiveAt: now - 40 * 86_400_000, providers: ["codex"], preselected: false },
+      ],
+    },
+    { remote: null, repos: [{ path: "/u/notes", name: "notes", lastActiveAt: now - 7_200_000, providers: ["grok"], preselected: true }] },
+    { remote: null, repos: [{ path: "/u/blog", name: "blog", lastActiveAt: now - 9_000_000, providers: ["kimi"], preselected: false }] },
+  ];
+
+  const box = (m: Awaited<ReturnType<typeof mount>>, path: string) =>
+    m.query(`[data-recent-repo="${path}"] input`) as HTMLInputElement;
+
+  it("lists repos by remote with the recent ones ticked, and adds the ticked ones in one step", async () => {
+    const fake = createFakeCoder({ settings: { onboardingSeen: false }, projects: [], recentRepos });
+    const m = await boot(fake);
+    await gotoSetup(m);
+    await m.flush();
+
+    assert.equal(fake.of("projects.discoverRecent").length, 1);
+    const groups = m.queryAll("[data-recent-group]").map((g) => g.querySelector("legend")?.textContent);
+    assert.deepEqual(groups, ["acme/shop", "Local only"], "remote-less repos share one group");
+    assert.equal(box(m, "/u/code/shop").checked, true);
+    assert.equal(box(m, "/u/old/shop").checked, false);
+    assert.equal(box(m, "/u/notes").checked, true);
+    assert.equal(box(m, "/u/blog").checked, false);
+    // The folder picker steps back to a secondary action.
+    assert.equal(m.query("[data-onboarding-add-project]")?.textContent, "Choose another folder");
+
+    await m.click(box(m, "/u/blog"));
+    const add = m.query("[data-onboarding-recent-add]") as HTMLButtonElement;
+    assert.equal(add.textContent, "Add 3 projects");
+    await m.click(add);
+    await m.flush();
+
+    assert.deepEqual(
+      fake.of("projects.add").map((c) => c.args[0]),
+      ["/u/code/shop", "/u/notes", "/u/blog"],
+    );
+    assert.equal(m.query('[data-recent-repo="/u/code/shop"]'), null, "added repos leave the list");
+    assert.ok(m.query('[data-recent-repo="/u/old/shop"]'), "unticked ones stay");
+    assert.ok(m.query("[data-onboarding-projects-done]"), "the step shows them as added");
+    m.unmount();
+  });
+
+  it("falls back to the plain Add project button when nothing is found", async () => {
+    const fake = createFakeCoder({ settings: { onboardingSeen: false }, projects: [] });
+    const m = await boot(fake);
+    await gotoSetup(m);
+    await m.flush();
+    assert.equal(m.query("[data-onboarding-recent]"), null);
+    assert.equal(m.query("[data-onboarding-add-project]")?.textContent, "Add project");
     m.unmount();
   });
 });

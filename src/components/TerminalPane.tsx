@@ -300,12 +300,29 @@ export function TerminalPane({
   threadId,
   api,
   load = loadXterm,
+  reveal = null,
 }: {
   threadId: string | null;
   api: TerminalApi;
   load?: XtermLoader;
+  /**
+   * A shell the main process just (re)started, e.g. Sign in's (#1501). Each
+   * new nonce adds the split and remounts it onto the fresh session. Only
+   * applies to its own thread.
+   */
+  reveal?: { nonce: number; termId: string; threadId: string } | null;
 }) {
   const [ids, setIds] = useState<string[] | null>(null);
+  const shown = reveal && reveal.threadId === threadId ? reveal : null;
+  const loaded = ids !== null;
+  const shownRef = useRef(shown);
+  shownRef.current = shown;
+
+  // Re-run once the list lands: a freshly opened pane gets the reveal first.
+  useEffect(() => {
+    if (!shown || !loaded) return;
+    setIds((cur) => (cur && !cur.includes(shown.termId) ? [...cur, shown.termId] : cur));
+  }, [shown?.nonce, shown?.termId, loaded]);
 
   useEffect(() => {
     if (!threadId) return;
@@ -315,7 +332,8 @@ export function TerminalPane({
       .list({ threadId })
       .catch(() => [] as string[])
       .then((found) => {
-        if (live) setIds(found.length ? found : ["1"]);
+        // Nothing yet but a reveal on the way: open just that shell.
+        if (live) setIds(found.length ? found : [shownRef.current?.termId ?? "1"]);
       });
     return () => {
       live = false;
@@ -352,7 +370,7 @@ export function TerminalPane({
       <div className={styles.splits}>
         {(ids ?? []).map((id, i) => (
           <TerminalView
-            key={`${threadId}:${id}`}
+            key={`${threadId}:${id}:${shown?.termId === id ? shown.nonce : 0}`}
             threadId={threadId}
             termId={id}
             api={api}

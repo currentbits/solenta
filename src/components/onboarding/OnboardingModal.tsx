@@ -5,6 +5,7 @@ import type {
   AppSettings,
   ProjectInfo,
   ProviderInfo,
+  RecentRepoGroup,
 } from "../../shared/ipc";
 import CliStep from "./CliStep";
 import SetupStep from "./SetupStep";
@@ -20,6 +21,10 @@ export interface OnboardingStepProps {
   refreshProviders: RefreshProviders;
   projects: ProjectInfo[];
   onAddProject: () => void;
+  /** First-run discovery (#1501). Absent: the step offers the folder picker only. */
+  discoverRecentRepos?: () => Promise<RecentRepoGroup[]>;
+  /** Adds each path as a project; resolves with the ones that were added. */
+  onAddProjectPaths?: (paths: string[]) => Promise<string[]>;
   settings: AppSettings | null;
   onSaveSettings: (patch: Partial<AppSettings>) => Promise<AppSettings>;
   onCreateFirstThread?: (input: {
