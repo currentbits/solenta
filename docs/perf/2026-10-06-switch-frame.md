@@ -38,7 +38,7 @@ The tail window of this thread holds two 34–36 KB answers far above the fold. 
 ## Changes
 
 1. **`c4ca6c72` Parsed-markdown LRU.** react-markdown's `Markdown()` is a pure function of the text, so its element tree is cached (400k chars total) and mounted again on the next switch. The live tail of a streaming reply isn't cached.
-2. **`e0f85612` Tail first.** The first render of a thread mounts the last 8k chars of message text.
+2. **`e0f85612` + `bb72da3a` Tail first.** The first render of a thread mounts the last 8k chars of message text.
    - After paint, the deferred answers are parsed into the cache, one per `requestIdleCallback` (100 ms timeout). The rest of the window then mounts in a `startTransition`.
    - If the tail doesn't fill the pane, everything mounts before paint, so nothing visibly grows.
    - `useStickToBottom` pins before paint when entries mount above a stuck view.
@@ -54,6 +54,7 @@ Tried and dropped: `content-visibility: auto` on transcript entries gave no meas
 | Big first open | 78 (frame 73, LoAF 73) | 70 (frame 66) | **16** (frame 22, full window at 103) |
 | Small switch | 11.6 (frame 17) | 10.7 (frame 17) | **7.5** (frame 17) |
 
+- **After `bb72da3a`** (the fill-in runs once per switch and skips cached answers): big reopen 11 ms (longest frame 22, full window at 36), big first open 18 ms (frame 25, full window at 114), small 8.7 ms (frame 18).
 - **Long frames:** none over 24 ms in any run after the change, against one 53–101 ms LoAF per big switch before.
 - **Pin:** the gap to the bottom is 0 px, both in the switch frame and after the full window mounts.
 - **Variance:** an earlier "before" session measured 60 / 106 ms for big re-switch / first open.
