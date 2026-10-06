@@ -6,6 +6,7 @@ import {
   useId,
   useRef,
   useState,
+  useSyncExternalStore,
   type ClipboardEvent,
   type CSSProperties,
   type KeyboardEvent,
@@ -81,11 +82,15 @@ import { parseDelegate } from "../delegate";
 import { asBtwPrompt } from "../btw";
 import { buildBestOfNEntries, providerVendor } from "../bestOfN";
 import {
+  getReviewComments,
   keptDrafts,
   recordSent,
   scheduleDraftSave,
   sentHistory,
+  setReviewComments,
+  subscribeReviewComments,
 } from "../composerSession";
+import { formatReviewCommentsPrompt } from "../diffView";
 import {
   pickerVerb,
   type SlashAction,
@@ -116,6 +121,7 @@ import { applyComposerVim } from "../composerVim";
 import { AttachmentChip } from "./composer/AttachmentChip";
 import { CommandList, MentionList } from "./composer/ComposerPopups";
 import { ReplyChip } from "./composer/ReplyChip";
+import { ReviewCommentChips } from "./composer/ReviewCommentChips";
 import { PasteCardList } from "./composer/PasteCardList";
 import { SpeechControls } from "./composer/SpeechControls";
 import { useComposerAttachments } from "./composer/useComposerAttachments";
@@ -481,6 +487,17 @@ export const Composer = memo(function Composer({
     removePasteCard,
     clearPasteCards,
   } = usePasteCards({ threadId, pasteCardsRef, syncOverflow, readDraft });
+  /** Diff comments from the Git pane, sent as one block with the next prompt. */
+  const readReviewComments = () => getReviewComments(threadId);
+  const reviewComments = useSyncExternalStore(
+    subscribeReviewComments,
+    readReviewComments,
+    readReviewComments,
+  );
+  const clearReviewComments = useCallback(
+    () => setReviewComments(threadId, () => []),
+    [threadId],
+  );
   const [stashToast, setStashToast] = useState<"stashed" | "restored" | null>(
     null,
   );
@@ -627,7 +644,9 @@ export const Composer = memo(function Composer({
     workflows.find((w) => w.id === templateId)?.name ?? null;
 
   const canSend =
-    !disabled && !sending && (hasPrompt || pasteCards.length > 0);
+    !disabled &&
+    !sending &&
+    (hasPrompt || pasteCards.length > 0 || reviewComments.length > 0);
   /**
    * Everything that cannot be queued (workflow start, model, permission mode)
    * waits for the run to land; only the prompt and Send stay live while busy.
@@ -877,7 +896,12 @@ export const Composer = memo(function Composer({
 
   const composeOutgoing = useCallback(
     (draft: string) => {
-      let body = composePastePrompt(draft.trim(), pasteCards);
+      let body = [
+        formatReviewCommentsPrompt(reviewComments),
+        composePastePrompt(draft.trim(), pasteCards),
+      ]
+        .filter(Boolean)
+        .join("\n\n");
       if (replyTo) {
         body = wrapReplyContext(replyTo.text, body, replyTo.messageId, {
           truncated: replyTo.truncated,
@@ -885,7 +909,7 @@ export const Composer = memo(function Composer({
       }
       return body;
     },
-    [pasteCards, replyTo],
+    [pasteCards, replyTo, reviewComments],
   );
 
   const runAction = async (
@@ -904,6 +928,7 @@ export const Composer = memo(function Composer({
       writeDraft("");
       clearAttachments();
       clearPasteCards();
+      clearReviewComments();
       onClearReply?.();
       closeMention();
       closeCommand();
@@ -1054,6 +1079,7 @@ export const Composer = memo(function Composer({
     writeDraft("");
     clearAttachments();
     clearPasteCards();
+    clearReviewComments();
     onClearReply?.();
     setStashToast("stashed");
   };
@@ -1620,6 +1646,21 @@ export const Composer = memo(function Composer({
             expandedCardIds={expandedCardIds}
             setExpandedCardIds={setExpandedCardIds}
             removePasteCard={removePasteCard}
+          />
+        )}
+        {reviewComments.length > 0 && (
+          <ReviewCommentChips
+            comments={reviewComments}
+            onEdit={(id, text) =>
+              setReviewComments(threadId, (prev) =>
+                prev.map((c) => (c.id === id ? { ...c, text } : c)),
+              )
+            }
+            onRemove={(id) =>
+              setReviewComments(threadId, (prev) =>
+                prev.filter((c) => c.id !== id),
+              )
+            }
           />
         )}
         {attachments.length > 0 && (

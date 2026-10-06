@@ -6,6 +6,7 @@
  */
 import type { AttachmentInfo } from "./shared/ipc";
 import type { PasteCard } from "./pasteCards";
+import type { ReviewComment } from "./diffView";
 
 export const keptDrafts: Record<string, string> = {};
 export const keptAttachments: Record<string, AttachmentInfo[]> = {};
@@ -13,6 +14,8 @@ export const keptPasteCards: Record<string, PasteCard[]> = {};
 /** Raw text of prompts sent per thread, oldest first, for ↑ recall. */
 export const sentHistory: Record<string, string[]> = {};
 export const SENT_HISTORY_CAP = 20;
+/** Diff comments waiting in the draft, sent together with the next prompt. */
+export const keptReviewComments: Record<string, ReviewComment[]> = {};
 
 export const DRAFTS_STORAGE_KEY = "coder.composerDrafts";
 export const DRAFTS_SAVE_MS = 400;
@@ -27,6 +30,7 @@ interface SavedDraft {
   attachments?: AttachmentInfo[];
   pasteCards?: PasteCard[];
   sent?: string[];
+  comments?: ReviewComment[];
 }
 
 function clearRecord<T>(store: Record<string, T>): void {
@@ -70,6 +74,9 @@ function snapshot(): Record<string, SavedDraft> {
   }
   for (const [id, list] of Object.entries(keptPasteCards)) {
     if (list.length) row(id).pasteCards = list;
+  }
+  for (const [id, list] of Object.entries(keptReviewComments)) {
+    if (list.length) row(id).comments = list;
   }
   for (const [id, list] of Object.entries(sentHistory)) {
     if (list.length) row(id).sent = list;
@@ -139,6 +146,7 @@ export function hydrateComposerSession(): void {
     if (Array.isArray(r.attachments)) keptAttachments[id] = r.attachments;
     if (Array.isArray(r.pasteCards)) keptPasteCards[id] = r.pasteCards;
     if (Array.isArray(r.sent)) sentHistory[id] = r.sent;
+    if (Array.isArray(r.comments)) keptReviewComments[id] = r.comments;
   }
 }
 
@@ -152,11 +160,45 @@ export function recordSent(threadId: string, text: string): void {
   scheduleDraftSave();
 }
 
+const reviewListeners = new Set<() => void>();
+const NO_COMMENTS: ReviewComment[] = [];
+
+function notifyReviewComments(): void {
+  for (const l of reviewListeners) l();
+}
+
+export function subscribeReviewComments(listener: () => void): () => void {
+  reviewListeners.add(listener);
+  return () => reviewListeners.delete(listener);
+}
+
+export function getReviewComments(threadId: string): ReviewComment[] {
+  return keptReviewComments[threadId] ?? NO_COMMENTS;
+}
+
+/** Replace a thread's pending comments; the array is new on every change. */
+export function setReviewComments(
+  threadId: string,
+  update: (prev: ReviewComment[]) => ReviewComment[],
+): void {
+  const next = update(getReviewComments(threadId));
+  if (next.length) keptReviewComments[threadId] = next;
+  else delete keptReviewComments[threadId];
+  scheduleDraftSave();
+  notifyReviewComments();
+}
+
 /** Drop drafts of threads that no longer exist (deleted, not archived). */
 export function pruneComposerDrafts(threadIds: Iterable<string>): number {
   const known = new Set(threadIds);
   const gone = new Set<string>();
-  for (const store of [keptDrafts, keptAttachments, keptPasteCards, sentHistory]) {
+  for (const store of [
+    keptDrafts,
+    keptAttachments,
+    keptPasteCards,
+    sentHistory,
+    keptReviewComments,
+  ]) {
     for (const id of Object.keys(store)) {
       if (known.has(id)) continue;
       delete store[id];
@@ -174,6 +216,8 @@ export function resetComposerSession(): void {
   clearRecord(keptAttachments);
   clearRecord(keptPasteCards);
   clearRecord(sentHistory);
+  clearRecord(keptReviewComments);
+  notifyReviewComments();
   try {
     storage()?.removeItem(DRAFTS_STORAGE_KEY);
   } catch {

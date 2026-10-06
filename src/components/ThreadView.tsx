@@ -161,6 +161,7 @@ import {
   DivergenceCard,
 } from "./thread/cards";
 import { ChangesPanel } from "./thread/ChangesPanel";
+import { setReviewComments } from "../composerSession";
 import { useRetryAnchors } from "./thread/useRetryAnchors";
 import { useTranscriptAnnotations } from "./thread/useTranscriptAnnotations";
 import { useCliCommands } from "./thread/useCliCommands";
@@ -3279,7 +3280,6 @@ export const ThreadView = memo(function ThreadView({
                 threadBaseBranch={detail?.thread.baseBranch ?? null}
                 planText={planTextOf(detail)}
                 openNonce={changesNonce}
-                isWorking={isWorking}
                 onFetchDiff={onFetchDiff}
                 onFetchReviewContext={onFetchReviewContext}
                 onSetReviewAccepted={onSetReviewAccepted}
@@ -3288,9 +3288,13 @@ export const ThreadView = memo(function ThreadView({
                 onRevert={onRevertFile}
                 onSuggest={onSuggestCommitMessage}
                 onComment={
-                  isArchived
+                  isArchived || !detail
                     ? undefined
-                    : (prompt) => onStartRun(prompt)
+                    : (comment) =>
+                        setReviewComments(detail.thread.id, (prev) => [
+                          ...prev,
+                          comment,
+                        ])
                 }
               />
             );

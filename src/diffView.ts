@@ -154,21 +154,73 @@ export function commentGutterLabel(
 }
 
 /**
- * Follow-up prompt with file/line context so the agent does not have to
- * hunt for "line 42 of foo.ts". Empty comments return "".
+ * A diff comment held in the composer draft until the next send (#1493).
+ * Lines are new-file numbers, or old-file ones when only removed lines
+ * were picked (`removed`). `code` is the selected diff text.
  */
-export function formatDiffCommentPrompt(
-  anchor: DiffCommentAnchor,
-  comment: string,
+export interface ReviewComment {
+  id: string;
+  path: string;
+  startLine: number | null;
+  endLine: number | null;
+  removed: boolean;
+  code: string;
+  text: string;
+}
+
+/** Lines of the comment excerpt sent to the agent. */
+export const REVIEW_CODE_LINES = 12;
+
+/** Turn one or more picked diff rows (same file, in order) into a comment. */
+export function reviewCommentFromAnchors(
+  anchors: DiffCommentAnchor[],
+  text: string,
+  id: string,
+): ReviewComment {
+  const refs = anchors
+    .map(commentLineRef)
+    .filter((r): r is { n: number; removed: boolean } => r != null);
+  const kept = refs.filter((r) => !r.removed);
+  const lines = kept.length ? kept : refs;
+  return {
+    id,
+    path: anchors[0]!.path,
+    startLine: lines[0]?.n ?? null,
+    endLine: lines[lines.length - 1]?.n ?? null,
+    removed: !kept.length && refs.length > 0,
+    code: anchors.map((a) => a.text).join("\n"),
+    text: text.trim(),
+  };
+}
+
+/** `src/a.ts:L12-18`, `src/a.ts:L12`, `src/a.ts (removed L4)`. */
+export function reviewCommentLabel(
+  c: Pick<ReviewComment, "path" | "startLine" | "endLine" | "removed">,
 ): string {
-  const body = comment.trim();
-  if (!body) return "";
-  const ref = commentLineRef(anchor);
-  const where =
-    ref == null
-      ? `Comment on ${anchor.path}:`
-      : ref.removed
-        ? `Comment on ${anchor.path} (removed line ${ref.n}):`
-        : `Comment on ${anchor.path}:${ref.n}:`;
-  return `${where}\n\n    ${anchor.text}\n\n${body}`;
+  if (c.startLine == null) return c.path;
+  const span =
+    c.endLine != null && c.endLine !== c.startLine
+      ? `L${c.startLine}-${c.endLine}`
+      : `L${c.startLine}`;
+  return c.removed ? `${c.path} (removed ${span})` : `${c.path}:${span}`;
+}
+
+/**
+ * The comments as one block ahead of the user's text, so five comments are
+ * one turn. Each carries its file/line and a short excerpt of the code so
+ * the agent does not have to hunt for "line 42 of foo.ts".
+ */
+export function formatReviewCommentsPrompt(comments: ReviewComment[]): string {
+  const live = comments.filter((c) => c.text.trim());
+  if (!live.length) return "";
+  const blocks = live.map((c) => {
+    const lines = c.code.split("\n");
+    const shown = lines.slice(0, REVIEW_CODE_LINES).map((l) => `    ${l}`);
+    if (lines.length > shown.length) {
+      shown.push(`    … ${lines.length - shown.length} more lines`);
+    }
+    return `${reviewCommentLabel(c)}\n${shown.join("\n")}\n\n${c.text.trim()}`;
+  });
+  const head = live.length === 1 ? "Review comment:" : "Review comments:";
+  return `${head}\n\n${blocks.join("\n\n")}`;
 }

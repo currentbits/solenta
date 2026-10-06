@@ -19,6 +19,7 @@ import {
   resetComposerSession,
   sentHistory,
   serializeDrafts,
+  setReviewComments,
 } from "../src/composerSession";
 import { makePasteCard } from "../src/pasteCards";
 import type { ProviderInfo } from "../src/shared/ipc";
@@ -96,6 +97,24 @@ describe("composer drafts survive restart", () => {
     assert.equal(textarea(again).value, "half a thought");
     assert.ok(again.container.querySelector('[data-attachment-kind="file"]'));
     assert.equal(keptPasteCards.t1?.length, 1);
+  });
+
+  it("restores pending review comment chips after a relaunch", async () => {
+    setReviewComments("t1", () => [
+      {
+        id: "c1",
+        path: "src/a.ts",
+        startLine: 12,
+        endLine: 18,
+        removed: false,
+        code: "+x",
+        text: "tighten this",
+      },
+    ]);
+    restart();
+    const m = await mountComposer();
+    const chip = m.container.querySelector("[data-review-comment-chip]");
+    assert.match(chip?.textContent || "", /src\/a\.ts:L12-18.*tighten this/);
   });
 
   it("writes on its own after the debounce, without an explicit flush", async () => {
