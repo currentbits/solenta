@@ -23,6 +23,9 @@ import {
 import { ClaimedLanesHeartbeat } from "./components/LaneHeartbeat";
 import type { SettingsPane } from "./components/SettingsModal";
 import { ArchiveToast } from "./components/ArchiveToast";
+import { UNDO_WINDOW_MS, useUndoLast } from "./app/useUndoLast";
+import { matchesBinding } from "./keybindings";
+import { isShortcutBlocked } from "./sidebarSelection";
 import {
   EMPTY_HISTORY,
   stepThread,
@@ -697,11 +700,38 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     void createThread("New Thread");
   }, [createThread]);
 
+  // ⌘Z / toast undo for settle, snooze, archive and their inverses (#1506).
+  // Each offer stores the IPC call that restores the state read just before.
+  const threadsRef = useRef(threads);
+  threadsRef.current = threads;
+  const { undoKey, undoMessage, offerUndo, dismissUndo, runUndo } =
+    useUndoLast();
+  const offerUndoOnly = useCallback(
+    (verb: string, reverse: () => unknown) => {
+      setArchiveToastIds(null);
+      offerUndo(verb, reverse);
+    },
+    [offerUndo],
+  );
+  useEffect(() => {
+    if (archiveToastIds) dismissUndo();
+  }, [archiveToastIds, dismissUndo]);
+
   const handleSetSettled = useCallback(
     (threadId: string, override: "settled" | "active" | null) => {
-      void setSettled(threadId, override);
+      const prev =
+        threadsRef.current.find((t) => t.id === threadId)?.settledOverride ?? null;
+      if (prev === override) {
+        void setSettled(threadId, override);
+        return;
+      }
+      void setSettled(threadId, override).then(() =>
+        offerUndoOnly(override === "settled" ? "Settled" : "Unsettled", () =>
+          setSettled(threadId, prev),
+        ),
+      );
     },
-    [setSettled],
+    [setSettled, offerUndoOnly],
   );
 
   const handleSetPinned = useCallback(
@@ -713,9 +743,15 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
 
   const handleSetSnoozed = useCallback(
     (threadId: string, until: number | null) => {
-      void setSnoozed(threadId, until);
+      const was = threadsRef.current.find((t) => t.id === threadId)?.snoozedUntil;
+      const prev = was != null && was > Date.now() ? was : null;
+      void setSnoozed(threadId, until).then(() =>
+        offerUndoOnly(until != null ? "Snoozed" : "Unsnoozed", () =>
+          setSnoozed(threadId, prev),
+        ),
+      );
     },
-    [setSnoozed],
+    [setSnoozed, offerUndoOnly],
   );
 
   const handleSetTags = useCallback(
@@ -773,9 +809,9 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
   // tick (issue #91); keep it identity-stable per selected thread.
   const handleSettleOpenThread = useCallback(
     () => {
-      if (selectedThreadId) void setSettled(selectedThreadId, "settled");
+      if (selectedThreadId) handleSetSettled(selectedThreadId, "settled");
     },
-    [selectedThreadId, setSettled],
+    [selectedThreadId, handleSetSettled],
   );
 
   const handleRepeatSchedule = useCallback(() => {
@@ -920,9 +956,14 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
 
   const handleRowArchived = useCallback(
     (threadId: string, archived: boolean) => {
-      void setArchived(archived, threadId);
+      void setArchived(archived, threadId).then((ok) => {
+        if (!ok) return;
+        offerUndoOnly(archived ? "Archived" : "Unarchived", () =>
+          setArchived(!archived, threadId),
+        );
+      });
     },
-    [setArchived],
+    [setArchived, offerUndoOnly],
   );
 
   const handleRowFork = useCallback(
@@ -998,6 +1039,38 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     setRemoveFailMessage,
   });
 
+  /** ThreadView's unarchive gets the same undo; archive already has its toast. */
+  const handleSetArchivedUndoable = useCallback(
+    async (archived: boolean) => {
+      const id = selectedThreadId;
+      await handleSetArchived(archived);
+      if (!archived && id) {
+        offerUndoOnly("Unarchived", () => setArchived(true, id));
+      }
+    },
+    [selectedThreadId, handleSetArchived, offerUndoOnly, setArchived],
+  );
+
+  // ⌘Z reverses whichever undo toast is showing. Never inside text inputs,
+  // the composer or the terminal (isShortcutBlocked), where ⌘Z edits text.
+  const undoTargetRef = useRef<(() => unknown) | null>(null);
+  undoTargetRef.current = archiveToastIds
+    ? undoArchive
+    : undoKey != null
+      ? runUndo
+      : null;
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.defaultPrevented || !matchesBinding(e, "undo")) return;
+      const undo = undoTargetRef.current;
+      if (!undo || isShortcutBlocked(e.target)) return;
+      e.preventDefault();
+      void undo();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
   // Close the center Changes panel when switching threads (old behavior).
   useEffect(() => {
     setChangesOpen(false);
@@ -1044,8 +1117,6 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
       historyRef.current = visitThread(historyRef.current, selectedThreadId);
     }
   }, [selectedThreadId]);
-  const threadsRef = useRef(threads);
-  threadsRef.current = threads;
   const goHistory = useCallback(
     (delta: 1 | -1) => {
       const step = stepThread(historyRef.current, delta, (id) =>
@@ -1728,7 +1799,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         onSetProvider={setProvider}
         onSetReasoningEffort={setReasoningEffort}
         onSetWebSearch={setWebSearch}
-        onSetArchived={handleSetArchived}
+        onSetArchived={handleSetArchivedUndoable}
         onSetCrossThreadInbound={
           selectedThreadId
             ? (policy) => setCrossThreadInbound(selectedThreadId, policy)
@@ -2035,6 +2106,16 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
             }
             onUndo={() => void undoArchive()}
             onDismiss={dismissArchiveToast}
+            durationMs={UNDO_WINDOW_MS}
+          />
+        )}
+        {undoMessage && (
+          <ArchiveToast
+            key={`undo-${undoKey}`}
+            message={undoMessage}
+            onUndo={() => void runUndo()}
+            onDismiss={dismissUndo}
+            durationMs={UNDO_WINDOW_MS}
           />
         )}
         {deleteToastId && (
