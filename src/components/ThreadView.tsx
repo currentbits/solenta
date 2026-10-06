@@ -102,6 +102,7 @@ import {
 import { mapReviewBars, type ReviewBar } from "../reviewBar";
 import { isRunCollapsed, toggleRunCollapsed } from "../runHeader";
 import type { SlashAction } from "../slashCommands";
+import { NATIVE_COMPACT_PROVIDERS } from "../slashCommands";
 import { ProviderQuotaDialog } from "./ProviderQuota";
 import type { ProviderLimitsLoader } from "../providerUsage";
 import { buildBestOfNEntries } from "../bestOfN";
@@ -1242,6 +1243,16 @@ export const ThreadView = memo(function ThreadView({
     if (isWorking || !onFork) return;
     void onFork();
   }, [isWorking, onFork]);
+  // Provider-native compaction needs a live session; otherwise /compact
+  // falls back to the fresh-context fork.
+  const nativeCompact =
+    Boolean(detail?.thread.sessionId) &&
+    NATIVE_COMPACT_PROVIDERS.includes(detail?.thread.provider ?? "");
+  const handleCompact = useCallback(() => {
+    if (isWorking) return;
+    if (nativeCompact) void onStartRun("/compact");
+    else handleForkFresh();
+  }, [isWorking, nativeCompact, onStartRun, handleForkFresh]);
   const hasTimeline = timeline.length > 0;
   const hasWorktree = Boolean(detail?.thread.worktreePath);
   const worktree = useWorktreeChrome({
@@ -1420,7 +1431,11 @@ export const ThreadView = memo(function ThreadView({
         if (ring) setContextOpen(true);
         return;
       }
-      if (action === "compact" || action === "fork") {
+      if (action === "compact") {
+        handleCompact();
+        return;
+      }
+      if (action === "fork") {
         handleForkFresh();
         return;
       }
@@ -1442,6 +1457,7 @@ export const ThreadView = memo(function ThreadView({
     },
     [
       ring,
+      handleCompact,
       handleForkFresh,
       handleSlashRewind,
       onNewThread,
@@ -2327,6 +2343,7 @@ export const ThreadView = memo(function ThreadView({
       open={contextOpen}
       onOpenChange={setContextOpen}
       onFork={onFork && !isWorking ? handleForkFresh : undefined}
+      onCompact={nativeCompact && !isWorking ? handleCompact : undefined}
     />
   ) : null;
 
