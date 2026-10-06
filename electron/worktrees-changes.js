@@ -892,5 +892,6 @@ module.exports = {
   revertFile,
   directoriesFromFiles,
   listFiles,
+  lsFiles,
   searchFiles,
 };

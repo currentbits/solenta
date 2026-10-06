@@ -3757,6 +3757,10 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
           })),
         });
       },
+      tree: (input: unknown) =>
+        rec("files.tree", [input], { entries: [], truncated: false }),
+      read: (input: unknown) =>
+        rec("files.read", [input], { kind: "text", size: 0, text: "" }),
     },
     fs: {
       browse: (input: unknown) => {

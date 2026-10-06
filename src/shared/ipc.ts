@@ -22,6 +22,21 @@ export interface EditorOption {
   name: string;
 }
 
+/** One row of the Files pane tree; `path` is repo-relative with `/`. */
+export interface FileTreeEntry {
+  name: string;
+  path: string;
+  dir: boolean;
+  /** Only set when listed with showIgnored. */
+  ignored?: boolean;
+}
+
+export type FilePreview =
+  | { kind: "text"; size: number; text: string }
+  | { kind: "image"; size: number; dataUrl: string }
+  | { kind: "binary"; size: number }
+  | { kind: "tooLarge"; size: number };
+
 export interface ProjectInfo {
   id: string;
   /** e.g. "pingdotgg/t3code", derived from git remote or folder name */
@@ -4991,6 +5006,21 @@ export interface CoderApi {
       threadId: string;
       paths: string[];
     }): Promise<{ resolved: Array<{ path: string; abs: string | null }> }>;
+    /**
+     * Files pane (#1506). One directory of the thread checkout (`dir`
+     * repo-relative, root when omitted), dirs first. Gitignored entries are
+     * dropped unless `showIgnored`. `all` returns every non-ignored file
+     * instead, for the filter. Rejects paths outside the root and remote
+     * projects.
+     */
+    tree(input: {
+      threadId: string;
+      dir?: string;
+      showIgnored?: boolean;
+      all?: boolean;
+    }): Promise<{ entries: FileTreeEntry[]; truncated: boolean }>;
+    /** Read-only preview of one file in the thread checkout (1 MB cap). */
+    read(input: { threadId: string; path: string }): Promise<FilePreview>;
   };
   /**
    * Environment-scoped directory listing for add-project (#609) and the
