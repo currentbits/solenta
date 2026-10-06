@@ -802,3 +802,8 @@
   color: var(--text-muted);
   overflow-wrap: anywhere;
 }
+
+/* Settings › Agents › Providers (#1501): only "signed out" asks for attention. */
+.note[data-auth-state="signedOut"] {
+  color: var(--warning-fg);
+}

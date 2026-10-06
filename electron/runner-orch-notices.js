@@ -42,6 +42,9 @@ function createOrchNotices(ctx) {
     stopRun,
   } = ctx;
 
+  /** threadId: a notice turn is between flush and startRun (#1501). */
+  const noticeStarting = new Set();
+
   /**
    * Pending wake-ups: threadId -> notice lines. Worker-finished notices,
    * peer messages, and task-unblock pokes share this one queue. Idle
@@ -257,6 +260,11 @@ function createOrchNotices(ctx) {
     codexParkNotified.delete(threadId);
     orchNotices.delete(threadId);
     const prompt = noticePrompt(notes);
+    // The start below is deferred, so a queued drain from the same terminal
+    // would win the idle slot and this notice would bounce off "already
+    // active" (#1501). Hold the drain until the notice turn owns the thread.
+    noticeStarting.add(threadId);
+    let started = false;
     // Per-orchestration ceiling (issue #67) and consecutive auto-turn cap
     // (issue #277): refuse the wake-up here, not in startRun, so user-sent
     // turns (and "Retry turn" after raising a cap) still run. The catch
@@ -272,6 +280,9 @@ function createOrchNotices(ctx) {
         }
         autoTurns.set(threadId, n + 1);
         return ctx.startRun({ threadId, prompt, fromNotice: true });
+      })
+      .then(() => {
+        started = true;
       })
       .catch((err) => {
       // Undeliverable (budget gate, missing CLI): the orchestration stops
@@ -299,7 +310,18 @@ function createOrchNotices(ctx) {
       } catch {
         // silent
       }
-    });
+    })
+      .finally(() => {
+        noticeStarting.delete(threadId);
+        // A notice turn that already ended skipped the drain while held
+        // above; run it now. A refused notice leaves the queue parked.
+        if (started && !active.has(threadId)) ctx.maybeDrainQueued(threadId);
+      });
+  }
+
+  /** @param {string} threadId */
+  function isNoticeStarting(threadId) {
+    return noticeStarting.has(threadId);
   }
 
   /**
@@ -454,6 +476,7 @@ function createOrchNotices(ctx) {
     sweepDoneWorkers,
     stopCrew,
     isAutoTurn,
+    isNoticeStarting,
     cancelAll() {
       for (const id of [...codexReleaseFlush.keys()]) {
         cancelCodexReleaseFlush(id);

@@ -43,6 +43,7 @@ import type {
   DistilledWorkflow,
   ProjectUpdateInput,
 } from "./shared/ipc";
+import { SIGNIN_TERMINAL_ID } from "./shared/ipc";
 import styles from "./App.module.css";
 import { syncTheme } from "./theme";
 import {
@@ -103,6 +104,9 @@ const DigestView = lazyNamed(() =>
 );
 const SettingsModal = lazyNamed(() =>
   import("./components/SettingsModal").then((m) => m.SettingsModal),
+);
+const SignInTerminal = lazyNamed(() =>
+  import("./components/SignInTerminal").then((m) => m.SignInTerminal),
 );
 const OnboardingModal = lazyNamed(() =>
   import("./components/onboarding/OnboardingModal").then((m) => m.OnboardingModal),
@@ -193,6 +197,8 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     queued,
     cancelQueued,
     retryQueued,
+    steerQueued,
+    savePlan,
     editQueued,
     fetchIssue,
     startWorkflowRun,
@@ -944,6 +950,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     void refreshProviders();
   }, [refreshProviders]);
 
+
   // Wrapped, not passed through: this one is bound straight to a button's
   // onClick, so cancelQueued's optional threadId would swallow the DOM event
   // and cancel nothing.
@@ -961,6 +968,28 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
   const handleRetryQueued = useCallback(() => {
     retryQueued();
   }, [retryQueued]);
+
+  // "Implement in a new thread" (#1501): the ordinary fork path, out of
+  // plan mode, with the plan as its first prompt.
+  const handleImplementPlan = useCallback(
+    async (plan: string) => {
+      if (!selectedThreadId) return;
+      const t = await forkThread(selectedThreadId, { leavePlan: true });
+      if (!t) return;
+      await startRun(`Implement this plan:\n\n${plan}`, t.id);
+    },
+    [selectedThreadId, forkThread, startRun],
+  );
+
+  const handleSavePlan = useCallback(
+    (plan: string) => savePlan(plan),
+    [savePlan],
+  );
+
+  const handleSteerQueued = useCallback(
+    (index: number) => void steerQueued(index),
+    [steerQueued],
+  );
 
   const handleEditQueued = useCallback(
     (prompt: string, items?: string[]) => {
@@ -1065,6 +1094,46 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
   // the new thread while the user reads the old one (issue #83).
   const visibleDetail =
     detail && detail.thread.id === selectedThreadId ? detail : null;
+
+  // Sign in (#1501): the login command runs in the open thread's Terminal
+  // pane, or in a dedicated shell when no thread is on screen.
+  const [terminalReveal, setTerminalReveal] = useState<{
+    nonce: number;
+    termId: string;
+    threadId: string;
+  } | null>(null);
+  const [signInShell, setSignInShell] = useState<{
+    providerName: string;
+    nonce: number;
+  } | null>(null);
+  const signInThreadId =
+    view === "thread" && visibleDetail ? visibleDetail.thread.id : null;
+  const handleProviderSignIn = useCallback(
+    async (providerId: string) => {
+      const res = await terminal.signIn({
+        provider: providerId,
+        threadId: signInThreadId,
+      });
+      // Either way Settings closes: two modal focus traps fight each other.
+      setSettingsOpen(false);
+      if (res.threadId === SIGNIN_TERMINAL_ID) {
+        const providerName =
+          providers.find((p) => p.id === providerId)?.name ?? providerId;
+        setSignInShell((cur) => ({ providerName, nonce: (cur?.nonce ?? 0) + 1 }));
+        return;
+      }
+      setTerminalReveal((cur) => ({
+        termId: res.termId,
+        threadId: res.threadId,
+        nonce: (cur?.nonce ?? 0) + 1,
+      }));
+    },
+    [terminal, signInThreadId, providers],
+  );
+  const closeSignInShell = useCallback(() => {
+    setSignInShell(null);
+    void refreshProviders();
+  }, [refreshProviders]);
 
   const project =
     (visibleDetail && projectById.get(visibleDetail.thread.projectId)) ||
@@ -1245,6 +1314,22 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
   const subscribeCloneProgress = useCallback(
     (cb: (push: CloneProgressPush) => void) => api.on("clone:progress", cb),
     [api],
+  );
+
+  const discoverRecentRepos = useCallback(
+    () => api.projects.discoverRecent(),
+    [api],
+  );
+  // One at a time: each add runs git checks, and projects.add is not batched.
+  const addProjectPaths = useCallback(
+    async (paths: string[]) => {
+      const added: string[] = [];
+      for (const path of paths) {
+        if (await addProject(path)) added.push(path);
+      }
+      return added;
+    },
+    [addProject],
   );
 
   const pickProjectDirectory = useCallback(
@@ -1703,6 +1788,9 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         }
         onCancelQueued={handleCancelQueued}
         onRetryQueued={handleRetryQueued}
+        onSteerQueued={handleSteerQueued}
+        onImplementPlan={handleImplementPlan}
+        onSavePlan={handleSavePlan}
         onEditQueued={handleEditQueued}
         restoreDraft={queuedDraftRestore}
         onSetPermissionMode={setPermissionMode}
@@ -1746,6 +1834,8 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         onCloseChanges={closeChanges}
         onViewChanges={openChanges}
         terminalApi={terminal}
+        terminalReveal={terminalReveal}
+        onProviderSignIn={handleProviderSignIn}
         onPanesNeedRoom={collapseAgentsForPanes}
         runStats={runStats}
         onFetchTurnDiff={fetchTurnDiff}
@@ -1948,6 +2038,8 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
           initialPane={settingsPane}
           settings={settings}
           providers={providers}
+          onRefreshProviders={handleModelPickerOpen}
+          onProviderSignIn={handleProviderSignIn}
           status={appStatus}
           update={updateStatus}
           onCheckUpdate={checkUpdate}
@@ -1993,6 +2085,16 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         )}
         </Suspense>
         <Suspense fallback={null}>
+        {signInShell && (
+          <SignInTerminal
+            providerName={signInShell.providerName}
+            nonce={signInShell.nonce}
+            api={terminal}
+            onClose={closeSignInShell}
+          />
+        )}
+        </Suspense>
+        <Suspense fallback={null}>
         {onboardingLoaded && (
         <OnboardingModal
           open={onboardingOpen}
@@ -2000,6 +2102,8 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
           onFinish={finishOnboarding}
           providers={providers}
           refreshProviders={refreshProviders}
+          discoverRecentRepos={discoverRecentRepos}
+          onAddProjectPaths={addProjectPaths}
           projects={projects}
           onAddProject={handleAddProject}
           settings={settings}

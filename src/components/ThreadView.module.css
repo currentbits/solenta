@@ -3108,7 +3108,30 @@ button.diffLineGutter:focus-visible {
 
 .permissionActions {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
+}
+
+.planFeedback {
+  resize: vertical;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+  font-size: 12.5px;
+  line-height: 1.4;
+  padding: 6px 8px;
+  outline: none;
+}
+
+.planFeedback:focus {
+  border-color: var(--text-muted);
+}
+
+.planSaved {
+  font-size: 12px;
+  color: var(--text-muted);
 }
 
 .permissionAllow {
@@ -3435,6 +3458,14 @@ button.diffLineGutter:focus-visible {
   flex-direction: column;
   align-items: stretch;
   min-width: 0;
+}
+
+.queuedItem[draggable="true"] {
+  cursor: grab;
+}
+
+.queuedItemDragging {
+  opacity: 0.5;
 }
 
 .queuedList {

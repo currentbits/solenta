@@ -27,6 +27,7 @@ export function usePaneLayoutActions({
   setFocusedId,
   changesOpen,
   changesNonce,
+  terminalNonce = 0,
   onPanesNeedRoom,
   onCloseChanges,
   onViewChanges,
@@ -39,6 +40,8 @@ export function usePaneLayoutActions({
   setFocusedId: Dispatch<SetStateAction<string>>;
   changesOpen: boolean;
   changesNonce: number;
+  /** Bumps when something (Sign in, #1501) wants the Terminal pane shown. */
+  terminalNonce?: number;
   onPanesNeedRoom?: () => void;
   onCloseChanges: () => void;
   onViewChanges?: () => void;
@@ -60,6 +63,17 @@ export function usePaneLayoutActions({
       return next.layout;
     });
   }, [changesOpen, changesNonce]);
+
+  useEffect(() => {
+    if (!terminalNonce) return;
+    if (!hasPaneType(layout, "terminal")) onPanesNeedRoom?.();
+    setLayout((prev) => {
+      if (hasPaneType(prev, "terminal")) return prev;
+      const next = openPane(prev, "terminal", focusedId);
+      setFocusedId(next.focusId);
+      return next.layout;
+    });
+  }, [terminalNonce]);
 
   const applyLayout = useCallback(
     (next: LayoutNode, focusId: string) => {

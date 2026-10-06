@@ -7,6 +7,7 @@ import type {
   AgentConfigWriteResult,
   ProjectCodeMap,
   ProjectInfo,
+  RecentRepoGroup,
   SpaceInfo,
 } from "../shared/ipc";
 import type { DevCtx } from "./context.ts";
@@ -131,6 +132,41 @@ export function createProjects(ctx: DevCtx): Pick<CoderApi, "projects" | "spaces
       async cancelClone(input) {
         devCloneCancels.get(input.cloneId)?.();
         devCloneCancels.delete(input.cloneId);
+      },
+      async discoverRecent(): Promise<RecentRepoGroup[]> {
+        const hour = 3_600_000;
+        const now = Date.now();
+        const all: RecentRepoGroup[] = [
+          {
+            remote: "acme/storefront",
+            repos: [
+              { path: "/Users/demo/code/storefront", name: "storefront", lastActiveAt: now - 2 * hour, providers: ["claude", "codex"], preselected: true },
+              { path: "/Users/demo/scratch/storefront-old", name: "storefront-old", lastActiveAt: now - 400 * hour, providers: ["claude"], preselected: false },
+            ],
+          },
+          {
+            remote: "acme/billing-api",
+            repos: [
+              { path: "/Users/demo/code/billing-api", name: "billing-api", lastActiveAt: now - 26 * hour, providers: ["codex"], preselected: true },
+            ],
+          },
+          {
+            remote: null,
+            repos: [
+              { path: "/Users/demo/notes-site", name: "notes-site", lastActiveAt: now - 90 * hour, providers: ["grok"], preselected: true },
+            ],
+          },
+          {
+            remote: "acme/infra",
+            repos: [
+              { path: "/Users/demo/code/infra", name: "infra", lastActiveAt: now - 600 * hour, providers: ["claude", "opencode"], preselected: false },
+            ],
+          },
+        ];
+        const added = new Set(ctx.projects.map((p) => p.path));
+        return all
+          .map((g) => ({ ...g, repos: g.repos.filter((r) => !added.has(r.path)) }))
+          .filter((g) => g.repos.length > 0);
       },
       async ensureScratch() {
         const found = ctx.projects.find((p) => p.scratch === true);

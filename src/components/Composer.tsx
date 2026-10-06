@@ -218,6 +218,8 @@ interface ComposerProps {
   onDelegate?: (providerId: string, task: string) => void | Promise<void>;
   /** Fired each time the model picker popover opens (provider list refresh). */
   onModelPickerOpen?: () => void;
+  /** Start a signed-out provider's login in a terminal (#1501). */
+  onProviderSignIn?: (providerId: string) => Promise<void>;
   placeholder?: string;
   /** Run-scope error from the parent hook (e.g. already active). */
   error?: string | null;
@@ -338,6 +340,7 @@ export const Composer = memo(function Composer({
   ask = false,
   onDelegate,
   onModelPickerOpen,
+  onProviderSignIn,
   placeholder = "Ask anything, @ files, $ skills, / commands",
   error = null,
   onDismissError,
@@ -1828,7 +1831,9 @@ export const Composer = memo(function Composer({
                         title={
                           p.available === false
                             ? `${p.name}: not installed`
-                            : p.name
+                            : p.auth === "signedOut"
+                              ? `${p.name}: signed out`
+                              : p.name
                         }
                         data-active={railActive === p.id ? "true" : undefined}
                         data-unavailable={
@@ -1957,10 +1962,11 @@ export const Composer = memo(function Composer({
                         const starrable = canFavourite(row);
                         const starred =
                           starrable && favouriteSet.has(favouriteKey(row));
-                        const note = row.groupHeading
+                        const groupInfo = row.groupHeading
                           ? providers.find((p) => p.id === row.providerId)
-                              ?.catalogNote
-                          : null;
+                          : undefined;
+                        const note = groupInfo?.catalogNote ?? null;
+                        const signedOut = groupInfo?.auth === "signedOut";
                         const hint =
                           row.setup && setupFor === row.providerId
                             ? hintFor(row.providerId)
@@ -1999,6 +2005,28 @@ export const Composer = memo(function Composer({
                                 data-catalog-note=""
                               >
                                 {note}
+                              </div>
+                            ) : null}
+                            {signedOut ? (
+                              <div
+                                className={styles.signedOut}
+                                data-signed-out={row.providerId}
+                              >
+                                <span>Signed out</span>
+                                {onProviderSignIn ? (
+                                  <button
+                                    type="button"
+                                    className={styles.customModelBtn}
+                                    onClick={() => {
+                                      closeModelPicker(false);
+                                      void onProviderSignIn(row.providerId).catch(
+                                        () => {},
+                                      );
+                                    }}
+                                  >
+                                    Sign in
+                                  </button>
+                                ) : null}
                               </div>
                             ) : null}
                             <div className={styles.modelRowLine}>

@@ -977,6 +977,13 @@ export interface ThreadSpec {
 /** Cap for ThreadInfo.notes / threads.setNotes (issue #194). */
 export const THREAD_NOTES_MAX = 2000;
 
+/**
+ * Terminal "thread" for a Sign in with no thread open (#1501): a shell in
+ * the home directory. Thread ids are UUIDs, so this cannot collide.
+ * Mirrored in electron/ipc-devserver.js.
+ */
+export const SIGNIN_TERMINAL_ID = "__signin__";
+
 /** Per-thread transcript bookmarks (issue #1217). Mirror electron/messagePins.js. */
 export const THREAD_MESSAGE_PINS_MAX = 20;
 export const THREAD_MESSAGE_PIN_EXCERPT_MAX = 120;
@@ -2568,6 +2575,32 @@ export interface ProviderInfo {
    * `models` (issue #745).
    */
   catalogNote?: string;
+  /**
+   * Sign-in state from the CLI's own status command (#1501). "unknown" when
+   * the CLI has no such command; absent before the first probe or when the
+   * CLI is not installed. Probed after boot, re-probed (rate-limited) when
+   * the picker or Settings › Agents opens.
+   */
+  auth?: "signedIn" | "signedOut" | "unknown";
+}
+
+/** A checkout found by first-run discovery (#1501). */
+export interface RecentRepo {
+  /** Main checkout; a linked worktree maps to it. */
+  path: string;
+  name: string;
+  /** Newest session there, epoch ms. */
+  lastActiveAt: number;
+  /** Provider ids whose sessions ran there. */
+  providers: string[];
+  /** Newest checkout of a recently active group: ticked by default. */
+  preselected: boolean;
+}
+
+/** Checkouts that share a git remote ("owner/repo"); null remote = one checkout. */
+export interface RecentRepoGroup {
+  remote: string | null;
+  repos: RecentRepo[];
 }
 
 /** One phase of a user-defined workflow template. */
@@ -3728,6 +3761,8 @@ export type ThreadForkOpts = {
   leadSnapshotSha?: string | null;
   leadSnapshotBranch?: string | null;
   leadSnapshotDirty?: boolean;
+  /** Start the fork out of plan mode ("Implement in a new thread", #1501). */
+  leavePlan?: boolean;
 };
 
 /**
@@ -3929,6 +3964,12 @@ export interface CoderApi {
     list(): Promise<ProjectInfo[]>;
     /** Validates the path is a git repo; rejects otherwise. Optional remotes skip the local checkout. */
     add(path: string, opts?: AddProjectOptions): Promise<ProjectInfo>;
+    /**
+     * First-run discovery (#1501): repos the user worked in recently with a
+     * provider CLI, grouped by git remote, newest first. Read-only scan of
+     * the CLIs' session stores; already-added projects are left out.
+     */
+    discoverRecent(): Promise<RecentRepoGroup[]>;
     /** Create a new folder + git repo at parentDir/name, then add it as a project. */
     create(input: CreateProjectInput): Promise<ProjectInfo>;
     /**
@@ -4134,7 +4175,19 @@ export interface CoderApi {
        */
       updatedCommand?: string;
       inputValues?: InputValues;
+      /**
+       * "Keep planning" notes (#1501). Deny on a plan prompt only: a live
+       * CLI gets them in the rejection; a persisted plan card sends them
+       * as the next planning turn.
+       */
+      feedback?: string;
     }): Promise<void>;
+    /**
+     * "Save plan to file" (#1501): write plan markdown to
+     * docs/plans/<date>-<slug>.md in the thread's checkout. Never
+     * overwrites. Resolves the repo-relative path written.
+     */
+    savePlan(input: { threadId: string; plan: string }): Promise<{ path: string }>;
     /**
      * Drop the persisted question card (ThreadInfo.pendingQuestion) without
      * answering it — the Dismiss button (issue #647). ANSWERING does not come
@@ -4621,6 +4674,12 @@ export interface CoderApi {
       prompt: string;
       attachments?: AttachmentInfo[];
     }): Promise<{ runId: string }>;
+    /**
+     * "Send now" on a parked queue (#1501): start the next queued item as
+     * its own turn; the rest drain one per successful turn after it.
+     * Rejects while a run is active; a failed start puts the item back.
+     */
+    sendQueued(input: { threadId: string }): Promise<void>;
     /**
      * Starts an orchestrated multi-phase workflow run (the Build action)
      * from a template (default template when templateId omitted). Each phase
@@ -5215,6 +5274,15 @@ export interface CoderApi {
     list(input: { threadId: string }): Promise<string[]>;
     /** Kill the shell and drop its scrollback. */
     close(input: { threadId: string; termId?: string }): Promise<TerminalState>;
+    /**
+     * Type a provider's login command into a fresh "signin" shell (#1501):
+     * the thread's when one is given, else a dedicated one in the home
+     * directory (threadId SIGNIN_TERMINAL_ID). Returns where it runs.
+     */
+    signIn(input: {
+      provider: string;
+      threadId?: string | null;
+    }): Promise<{ threadId: string; termId: string }>;
   };
   /**
    * Embedded Browser pane (issue #155). Desktop-only: the renderer hosts a

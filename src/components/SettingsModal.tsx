@@ -132,6 +132,10 @@ export interface SettingsModalProps {
   settings: AppSettings | null;
   /** Provider catalogue for the profiles form. Unavailable CLIs stay listed. */
   providers?: ProviderInfo[];
+  /** Re-list providers (re-probes sign-in) when Settings › Agents opens. */
+  onRefreshProviders?: () => void;
+  /** Start a provider's login command in a terminal (#1501). */
+  onProviderSignIn?: (providerId: string) => Promise<void>;
   /** Live app status for the memory section. */
   status: AppStatus | null;
   /** Auto-update check result for the build section. */
@@ -235,6 +239,8 @@ export function SettingsModal({
   initialPane = null,
   settings,
   providers = [],
+  onRefreshProviders,
+  onProviderSignIn,
   status,
   update,
   onCheckUpdate,
@@ -725,6 +731,8 @@ export function SettingsModal({
             persistProfiles={persistProfiles}
             persistPool={persistPool}
             onSaveSettings={onSaveSettings}
+            onRefreshProviders={onRefreshProviders}
+            onProviderSignIn={onProviderSignIn}
           />
           )}
 
