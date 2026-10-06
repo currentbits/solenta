@@ -9,10 +9,12 @@ import type {
 import { syncTheme, type ThemePreference } from "../../theme";
 import {
   setComposerVimEnabled,
+  setEnterSendsEnabled,
   setDivergenceCardEnabled,
   setPasteCardsEnabled,
   setRunDurationEnabled,
   useComposerVimEnabled,
+  useEnterSendsEnabled,
   useDivergenceCardEnabled,
   usePasteCardsEnabled,
   useRunDurationEnabled,
@@ -606,6 +608,7 @@ function DisplayPrefsSection() {
   const runDuration = useRunDurationEnabled();
   const pasteCards = usePasteCardsEnabled();
   const composerVim = useComposerVimEnabled();
+  const enterSends = useEnterSendsEnabled();
   return (
     <section className={styles.section} data-display-prefs="">
       <h3 className={styles.sectionLabel}>Display</h3>
@@ -644,6 +647,15 @@ function DisplayPrefsSection() {
           onChange={(e) => setComposerVimEnabled(e.target.checked)}
         />
         <span>Vim motions in the composer</span>
+      </label>
+      <label className={styles.fieldRow}>
+        <input
+          type="checkbox"
+          data-enter-sends-pref=""
+          checked={enterSends}
+          onChange={(e) => setEnterSendsEnabled(e.target.checked)}
+        />
+        <span>Send with Enter (⇧ Enter for a new line)</span>
       </label>
     </section>
   );

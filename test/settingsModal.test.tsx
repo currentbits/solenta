@@ -19,6 +19,7 @@ import {
   getDivergenceCardEnabled,
   getPasteCardsEnabled,
   setComposerVimEnabled,
+  setEnterSendsEnabled,
   setDivergenceCardEnabled,
   setPasteCardsEnabled,
   setRunDurationEnabled,
@@ -2226,6 +2227,16 @@ describe("SettingsModal Display group (moved from Environment)", () => {
     assert.equal(window.localStorage.getItem("coder.composerVim"), "off");
     assert.match(card.textContent || "", /Vim motions in the composer/);
     m.unmount();
+  });
+
+  it("turns on Enter-to-send from the Display group", async () => {
+    const m = await mount(modal());
+    const box = m.query("[data-enter-sends-pref]") as HTMLInputElement;
+    assert.equal(box.checked, false, "off by default");
+    await m.click(box);
+    assert.equal(window.localStorage.getItem("coder.enterSends"), "on");
+    m.unmount();
+    setEnterSendsEnabled(false);
   });
 
   it("turns the pref on from the Display group", async () => {

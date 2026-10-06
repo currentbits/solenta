@@ -9,6 +9,7 @@ import {
 } from "react";
 import type { CoderApi, SpeechStatus } from "../../shared/ipc";
 import { applySpeechDelta, applySpeechTranscript } from "../../speechDraft";
+import { scheduleDraftSave } from "../../composerSession";
 import {
   speechCaptureError,
   startSpeechCapture,
@@ -92,6 +93,7 @@ export function useComposerSpeech({
   const writeDraftFor = useCallback(
     (tid: string, text: string, caret?: number) => {
       draftsRef.current[tid] = text;
+      scheduleDraftSave();
       if (liveThreadIdRef.current !== tid) return;
       const el = textareaRef.current;
       if (el) {
