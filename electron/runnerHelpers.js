@@ -38,6 +38,8 @@ function shouldRecordSession(thread, providerOverride) {
 function noticePrompt(notes) {
   const body = notes.join("\n");
   const headed = /^\s*\[/.test(body) ? body : "[orchestration] " + body;
+  // PR watch wake-ups (electron/prWatch.js) are not orchestration.
+  if (notes.every((n) => String(n).startsWith("[pr watch]"))) return headed;
   return headed + "\nContinue orchestrating; thread_status has full details.";
 }
 

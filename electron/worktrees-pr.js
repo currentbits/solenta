@@ -18,6 +18,7 @@ const {
 const { push, assertNoOutboundSecrets, scanOutgoingPush } = require("./worktrees-push.js");
 const { gateCiWorkflowMerge } = require("./worktrees-changes.js");
 const { maybeCleanupMergedWorktree } = require("./worktrees-gc.js");
+const prWatch = require("./prWatch.js");
 
 /** Per-thread background PR refresh timeout. Hard kill; never block the main process. */
 const PR_REFRESH_TIMEOUT_MS = 8_000;
@@ -992,8 +993,93 @@ async function updatePrBranchFromBase(opts) {
   return { updated: before !== after, baseName };
 }
 
+const MERGE_METHODS = ["squash", "merge", "rebase"];
+
 /**
- * Squash-merge the thread's current PR via `gh pr merge --squash`, then
+ * `gh pr merge` flags for a merge method (default squash) and auto-merge.
+ * @param {{ method?: unknown, auto?: unknown } | null | undefined} opts
+ * @returns {string[]}
+ */
+function mergeFlags(opts) {
+  const method = opts && opts.method != null ? String(opts.method) : "squash";
+  if (!MERGE_METHODS.includes(method)) {
+    throw new Error(`Unknown merge method: ${method}`);
+  }
+  return opts && opts.auto === true ? [`--${method}`, "--auto"] : [`--${method}`];
+}
+
+const MERGE_OPTIONS_TTL_MS = 10 * 60 * 1000;
+/** @type {Map<string, { at: number, value: { ok: true, methods: string[], defaultMethod: string } }>} */
+const mergeOptionsCache = new Map();
+
+/**
+ * Merge methods the repo allows, and the one to preselect, from
+ * `gh repo view --json`. Cached per checkout for MERGE_OPTIONS_TTL_MS;
+ * failures stay in-band and are not cached.
+ *
+ * @param {string} cwd
+ * @param {{ runGh?: typeof ghTryAsync, now?: number }} [opts]
+ * @returns {Promise<{ ok: true, methods: string[], defaultMethod: string } | { ok: false, reason: string }>}
+ */
+async function repoMergeOptions(cwd, opts) {
+  const now = opts && opts.now != null ? opts.now : Date.now();
+  const hit = mergeOptionsCache.get(cwd);
+  if (hit && now - hit.at < MERGE_OPTIONS_TTL_MS) return hit.value;
+  const runGh = (opts && opts.runGh) || ghTryAsync;
+  const viewed = await runGh(
+    cwd,
+    [
+      "repo",
+      "view",
+      "--json",
+      "squashMergeAllowed,mergeCommitAllowed,rebaseMergeAllowed,viewerDefaultMergeMethod",
+    ],
+    { timeout: GH_TIMEOUT_MS },
+  );
+  if (!viewed.ok) {
+    return { ok: false, reason: tailErr(viewed.stderr || viewed.combined, "gh repo view failed") };
+  }
+  let data;
+  try {
+    data = JSON.parse(viewed.stdout);
+  } catch {
+    return { ok: false, reason: "gh returned unparseable repo JSON" };
+  }
+  const allowed = {
+    squash: data.squashMergeAllowed !== false,
+    merge: data.mergeCommitAllowed !== false,
+    rebase: data.rebaseMergeAllowed !== false,
+  };
+  const methods = MERGE_METHODS.filter((m) => allowed[m]);
+  if (methods.length === 0) methods.push("squash");
+  const viewerDefault = String(data.viewerDefaultMergeMethod || "").toLowerCase();
+  const defaultMethod = methods.includes(viewerDefault)
+    ? viewerDefault
+    : methods.includes("squash")
+      ? "squash"
+      : methods[0];
+  const value = { ok: /** @type {const} */ (true), methods, defaultMethod };
+  mergeOptionsCache.set(cwd, { at: now, value });
+  return value;
+}
+
+/**
+ * repoMergeOptions for a thread's checkout. Never throws.
+ * @param {{ store: import('./store').Store, threadId: string }} opts
+ */
+async function mergeOptions(opts) {
+  try {
+    const { cwd, originUrl } = await resolveThreadGit(opts.store, opts.threadId);
+    if (!isGitHubRemote(originUrl)) return { ok: false, reason: "not a GitHub repo" };
+    return await repoMergeOptions(cwd);
+  } catch (err) {
+    return { ok: false, reason: err && err.message ? String(err.message) : "no repo" };
+  }
+}
+
+/**
+ * Merge the thread's current PR via `gh pr merge` (squash unless
+ * opts.method says otherwise; `--auto` when opts.auto), then
  * return the refreshed PrInfo. Throws (with gh's own tail) on failure.
  * OPEN PRs are first updated from the base branch (issue #524).
  * CLOSED/MERGED PRs are left to gh; we do not invent a pre-check.
@@ -1002,6 +1088,8 @@ async function updatePrBranchFromBase(opts) {
  * @param {import('./store').Store} opts.store
  * @param {string} opts.threadId
  * @param {boolean} [opts.ciWorkflowApproved] explicit human sign-off (#510)
+ * @param {"squash" | "merge" | "rebase"} [opts.method] default squash
+ * @param {boolean} [opts.auto] `--auto`: GitHub merges once checks pass
  * @param {(channel: string, payload: unknown) => void} [opts.broadcast]
  * @returns {Promise<Awaited<ReturnType<typeof prStatus>>>}
  */
@@ -1084,7 +1172,7 @@ async function mergePr(opts) {
     "pr",
     "merge",
     String(info.number),
-    "--squash",
+    ...mergeFlags(opts),
   ]);
   if (!merged.ok) {
     throwGhFailure(merged, "gh pr merge failed");
@@ -1135,6 +1223,8 @@ function isPrRefreshCandidate(t) {
  * @param {(channel: string, payload: unknown) => void} [opts.broadcast]
  * @param {number} [opts.timeoutMs] default PR_REFRESH_TIMEOUT_MS
  * @param {(cwd: string, args: string[], opts?: object) => Promise<object>} [opts.ghTryAsyncFn] test inject
+ * @param {{ deliver: (input: { threadId: string, line: string }) => void, isRunning?: (threadId: string) => boolean }} [opts.prWatch]
+ *   runner hooks for watch-and-wake (electron/prWatch.js); absent = refresh only
  * @returns {Promise<{ examined: number, changed: number, spawned: number }>}
  */
 async function refreshPrStates(store, opts) {
@@ -1145,6 +1235,11 @@ async function refreshPrStates(store, opts) {
     opts && typeof opts.ghTryAsyncFn === "function"
       ? opts.ghTryAsyncFn
       : ghTryAsync;
+  // Watch-and-wake rides this pass instead of a second poller (#1493 D).
+  const prWatchDeps =
+    opts && opts.prWatch && typeof opts.prWatch.deliver === "function"
+      ? opts.prWatch
+      : null;
 
   const candidates = store.getThreads().filter(isPrRefreshCandidate);
   if (candidates.length === 0) {
@@ -1174,12 +1269,34 @@ async function refreshPrStates(store, opts) {
       }
 
       const prNumber = Number(snapshot.prNumber);
+      const watch = prWatchDeps && prWatch.isWatched(snapshot);
       spawned += 1;
-      const viewed = await runGh(
+      let viewed = await runGh(
         cwd,
-        ["pr", "view", String(prNumber), "--json", "number,url,state"],
+        [
+          "pr",
+          "view",
+          String(prNumber),
+          "--json",
+          watch ? prWatch.PR_WATCH_FIELDS : "number,url,state",
+        ],
         { timeout: timeoutMs },
       );
+      let watching = watch;
+      if (
+        watch &&
+        viewed &&
+        !viewed.ok &&
+        isUnknownJsonField(viewed.stderr || viewed.combined || viewed.stdout)
+      ) {
+        // Older gh without latestReviews/headRefOid: plain refresh, no watch.
+        watching = false;
+        viewed = await runGh(
+          cwd,
+          ["pr", "view", String(prNumber), "--json", "number,url,state"],
+          { timeout: timeoutMs },
+        );
+      }
       if (!viewed || !viewed.ok) {
         // gh missing / network / timeout / no-PR: skip silently.
         continue;
@@ -1190,6 +1307,20 @@ async function refreshPrStates(store, opts) {
         info = parsePrJson(viewed.stdout, "", false);
       } catch {
         continue;
+      }
+
+      if (watching) {
+        const woke = await prWatch.observePr({
+          store,
+          threadId,
+          view: JSON.parse(viewed.stdout),
+          cwd,
+          runGh,
+          deliver: prWatchDeps.deliver,
+          isRunning: prWatchDeps.isRunning,
+          timeoutMs,
+        });
+        if (woke) changed += 1;
       }
 
       const current = store.getThread(threadId);
@@ -1384,6 +1515,18 @@ async function diffStatVsBase(cwd, baseBranch, branch) {
 }
 
 /**
+ * Watch state for a PR this thread just opened: armed with no baseline so
+ * the first failing check already wakes it. Empty when the user opted out.
+ * @param {{ prWatch?: boolean | null }} thread
+ * @param {number} number
+ */
+function watchStart(thread, number) {
+  return prWatch.isWatched(thread)
+    ? { prWatchState: prWatch.freshState(number) }
+    : {};
+}
+
+/**
  * Push the thread branch, open a GitHub PR via gh, persist prNumber/prUrl.
  * Idempotent: an existing PR is returned with created:false.
  *
@@ -1568,6 +1711,7 @@ async function createPr(opts) {
           prNumber: info.number,
           prUrl: info.url,
           prState: info.state,
+          ...watchStart(thread, info.number),
         });
         store.save();
         if (typeof broadcast === "function") {
@@ -1585,6 +1729,7 @@ async function createPr(opts) {
     prNumber: info.number,
     prUrl: info.url,
     prState: info.state,
+    ...watchStart(thread, info.number),
   });
   store.save();
   if (typeof broadcast === "function") {
@@ -1613,6 +1758,9 @@ module.exports = {
   rollupPrChecks,
   prChecks,
   mergePr,
+  mergeFlags,
+  repoMergeOptions,
+  mergeOptions,
   isPrRefreshCandidate,
   refreshPrStates,
   createPrStateRefresher,

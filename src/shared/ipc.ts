@@ -678,6 +678,13 @@ export interface ThreadInfo {
    */
   prMergeable?: "MERGEABLE" | "CONFLICTING" | "UNKNOWN" | null;
   /**
+   * PR watch-and-wake switch (#1493 D). null/absent = on, except threads
+   * made by checkoutPr (someone else's PR), which store false.
+   */
+  prWatch?: boolean | null;
+  /** Watch bookkeeping for the current PR; null until first seen. */
+  prWatchState?: PrWatchState | null;
+  /**
    * Verification gate (issue #296): a shell command the thread must pass
    * before a run may land "done". Null/empty = unarmed, runs settle on the
    * agent's word alone. Run in the thread's worktree (project root when the
@@ -2104,6 +2111,32 @@ export interface PrCheckInfo {
   bucket: PrCheckBucket;
   link?: string;
 }
+
+/**
+ * PR watch-and-wake state for one PR (electron/prWatch.js). `wakes` counts
+ * follow-up turns sent for this PR; at the cap the watch pauses until the
+ * user turns it off and on again.
+ */
+export interface PrWatchState {
+  pr: number;
+  wakes: number;
+  lastWakeAt: number | null;
+  /** "checks failed, merge conflict" — what the last wake-up was about. */
+  lastReason: string | null;
+  checks?: string;
+  review?: string;
+  conflict?: boolean;
+}
+
+/** Most watch wake-ups per PR; mirrors WAKE_CAP in electron/prWatch.js. */
+export const PR_WATCH_WAKE_CAP = 3;
+
+export type MergeMethod = "squash" | "merge" | "rebase";
+
+/** Merge methods the repo allows (`gh repo view`), in-band on failure. */
+export type MergeOptionsResult =
+  | { ok: true; methods: MergeMethod[]; defaultMethod: MergeMethod }
+  | { ok: false; reason: string };
 
 /** Per-thread prChecks result. Failures stay in-band so the UI can retry. */
 export type PrChecksResult =
@@ -4093,6 +4126,11 @@ export interface CoderApi {
       enabled: boolean | null;
     }): Promise<ThreadInfo>;
     /**
+     * Turn PR watch-and-wake on or off for a thread (#1493 D). Either way
+     * the wake count resets, so turning it back on re-arms a paused watch.
+     */
+    setPrWatch(input: { threadId: string; enabled: boolean }): Promise<ThreadInfo>;
+    /**
      * Set or clear the per-thread scratch pad. Trims, caps at
      * THREAD_NOTES_MAX, empty string clears. Never bumps updatedAt.
      */
@@ -4548,6 +4586,12 @@ export interface CoderApi {
      */
     suggestCommitMessage(input: { threadId: string }): Promise<{ message: string }>;
     /**
+     * Drafts a PR title and body from the branch's commits, diffstat vs
+     * base and the repo PR template, with the thread's provider in print
+     * mode. The result has passed the outbound secret scan. Never opens a PR.
+     */
+    suggestPrText(input: { threadId: string }): Promise<{ title: string; body: string }>;
+    /**
      * Squash-merges the thread's worktree branch into the recorded base
      * (`ThreadInfo.baseBranch`) or the repo default (`origin/HEAD` → `main`)
      * when unset. Commits any uncommitted worktree changes first, then
@@ -4646,7 +4690,16 @@ export interface CoderApi {
        * pipeline file. Automations and the merge queue must not pass this.
        */
       ciWorkflowApproved?: boolean;
+      /** Default squash. */
+      method?: MergeMethod;
+      /** `gh pr merge --auto`: GitHub merges once required checks pass. */
+      auto?: boolean;
     }): Promise<PrInfo>;
+    /**
+     * Merge methods the thread's repo allows and the one to preselect.
+     * Cached ~10 minutes per checkout. Never rejects.
+     */
+    mergeOptions(input: { threadId: string }): Promise<MergeOptionsResult>;
     /**
      * Open PRs for a project checkout via `gh pr list`. Never rejects for
      * missing gh / non-GitHub remotes / auth: those come back as
@@ -4715,6 +4768,8 @@ export interface CoderApi {
     prMergeAt(input: {
       projectPath: string;
       prNumber: number;
+      method?: MergeMethod;
+      auto?: boolean;
     }): Promise<PrDetailResult>;
     /**
      * Checkpoints: after each successful turn that changed files, the runner

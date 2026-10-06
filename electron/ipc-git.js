@@ -16,6 +16,7 @@ const {
   prStatus,
   prChecks,
   mergePr,
+  mergeOptions,
   maybeCleanupMergedWorktree,
   listPrs,
   checkoutPr,
@@ -27,7 +28,7 @@ const {
   gcScan,
   gcClean,
 } = require("./worktrees.js");
-const { suggestCommitMessage } = require("./commitmsg.js");
+const { suggestCommitMessage, suggestPrText } = require("./commitmsg.js");
 const {
   claimLane,
   listLanes,
@@ -114,6 +115,9 @@ module.exports = {
   "git:suggestCommitMessage": async (ctx, input) => {
     return suggestCommitMessage({ store: ctx.store, threadId: input.threadId });
   },
+  "git:suggestPrText": async (ctx, input) => {
+    return suggestPrText({ store: ctx.store, threadId: input.threadId });
+  },
   "git:mergeWorktree": async (ctx, input) => {
     const merged = mergeWorktree({
       store: ctx.store,
@@ -190,6 +194,8 @@ module.exports = {
       store: ctx.store,
       threadId: input.threadId,
       ciWorkflowApproved: Boolean(input && input.ciWorkflowApproved),
+      method: input && input.method,
+      auto: Boolean(input && input.auto),
       broadcast: ctx.broadcast,
     });
     // Merged in-app: reclaim the worktree + branch right away (same rules
@@ -201,6 +207,9 @@ module.exports = {
     }
     await runRetention(ctx);
     return info;
+  },
+  "git:mergeOptions": async (ctx, input) => {
+    return mergeOptions({ store: ctx.store, threadId: input && input.threadId });
   },
   "git:listPrs": async (_ctx, projectPath, opts) => {
     return listPrs(projectPath, opts);
@@ -257,7 +266,11 @@ module.exports = {
   "git:prMergeAt": async (ctx, input) => {
     return mergePrAt(
       input && input.projectPath,
-      { prNumber: input && input.prNumber },
+      {
+        prNumber: input && input.prNumber,
+        method: input && input.method,
+        auto: Boolean(input && input.auto),
+      },
       { store: ctx.store, broadcast: ctx.broadcast },
     );
   },
