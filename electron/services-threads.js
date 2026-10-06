@@ -538,7 +538,7 @@ function setProvider(store, input) {
   const providerChanging =
     providerProvided && String(input.provider) !== String(thread.provider);
 
-  /** @type {{ provider?: string, model?: string | null, sessionId?: null, reasoningEffort?: null, webSearch?: boolean }} */
+  /** @type {{ provider?: string, model?: string | null, sessionId?: null, replayContext?: boolean, reasoningEffort?: null, webSearch?: boolean }} */
   const patch = {};
 
   if (providerChanging && thread.status === "working") {
@@ -610,6 +610,13 @@ function setProvider(store, input) {
     ) {
       patch.reasoningEffort = null;
     }
+  }
+
+  if (patch.sessionId === null) {
+    // The new CLI (or re-pinned model) starts with no memory of this thread.
+    // Replay its own retained tail on the next send, same as a rewind (#254),
+    // or a switch mid-task (and quota failover) restarts blind (#1493).
+    patch.replayContext = true;
   }
 
   const updated = store.updateThread(threadId, patch);
