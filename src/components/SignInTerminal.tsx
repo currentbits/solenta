@@ -52,7 +52,7 @@ export function SignInTerminal({
             threadId={SIGNIN_TERMINAL_ID}
             api={api}
             load={load}
-            reveal={{ nonce, termId: "signin" }}
+            reveal={{ nonce, termId: "signin", threadId: SIGNIN_TERMINAL_ID }}
           />
         </div>
       </div>

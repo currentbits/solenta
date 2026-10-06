@@ -374,7 +374,7 @@ interface ThreadViewProps {
   /** Shell session for the Terminal pane (#147). */
   terminalApi?: TerminalApi;
   /** Show the Terminal pane on this shell (Sign in, #1501). */
-  terminalReveal?: { nonce: number; termId: string } | null;
+  terminalReveal?: { nonce: number; termId: string; threadId: string } | null;
   /**
    * Fires whenever the workspace holds more than one pane. App collapses
    * the agents rail so the panes get the width.
@@ -1836,7 +1836,8 @@ export const ThreadView = memo(function ThreadView({
     setFocusedId,
     changesOpen,
     changesNonce,
-    terminalNonce: terminalReveal?.nonce ?? 0,
+    terminalNonce:
+      terminalReveal && terminalReveal.threadId === threadId ? terminalReveal.nonce : 0,
     onPanesNeedRoom,
     onCloseChanges,
     onViewChanges,

@@ -77,14 +77,18 @@ export const DEV_PROVIDERS: ProviderInfo[] = [
   {
     ...devProvider("claude", "Claude Code", ["claude-opus-5", "claude-sonnet-5"]),
     supportsSteer: true,
+    auth: "signedIn",
   },
   {
     ...devProvider("codex", "Codex", ["gpt-5.3-codex", "gpt-5.3"]),
     supportsSearch: true,
+    // Shows the signed-out picker line and Settings > Agents Sign in (#1501).
+    auth: "signedOut",
   },
   {
     ...devProvider("kimi", "Kimi", ["kimi-k3-thinking"]),
     permissionModes: ["bypassPermissions"],
+    auth: "unknown",
   },
   {
     ...devProvider("grok", "Grok", ["grok-4.6"], TRAILER),
@@ -93,8 +97,9 @@ export const DEV_PROVIDERS: ProviderInfo[] = [
   {
     ...devProvider("opencode", "OpenCode", ["opencode/grok-code"]),
     permissionModes: ["default", "bypassPermissions"],
+    auth: "signedIn",
   },
-  devProvider("muse", "Muse Code", ["muse-spark-1.3"]),
+  { ...devProvider("muse", "Muse Code", ["muse-spark-1.3"]), auth: "unknown" },
 ];
 
 /** Browser-dev fixture for the Agents-tab crew list (issue #277). */

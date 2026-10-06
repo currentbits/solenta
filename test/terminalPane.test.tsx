@@ -196,12 +196,12 @@ describe("TerminalPane", () => {
 
   it("reveal adds the Sign in shell and remounts it on each new nonce (#1501)", async () => {
     const h = harness();
-    const el = (reveal: { nonce: number; termId: string } | null) => (
+    const el = (reveal: { nonce: number; termId: string; threadId: string } | null) => (
       <TerminalPane threadId="t1" api={h.api} load={h.load} reveal={reveal} />
     );
     const m = await mount(el(null));
     await settle();
-    await m.rerender(el({ nonce: 1, termId: "signin" }));
+    await m.rerender(el({ nonce: 1, termId: "signin", threadId: "t1" }));
     await settle();
     assert.deepEqual(
       m.queryAll("[data-terminal-view]").map((v) => v.getAttribute("data-terminal-view")),
@@ -209,11 +209,64 @@ describe("TerminalPane", () => {
     );
     const before = h.terms.length;
     // A second Sign in restarts that shell in main: the view must re-attach.
-    await m.rerender(el({ nonce: 2, termId: "signin" }));
+    await m.rerender(el({ nonce: 2, termId: "signin", threadId: "t1" }));
     await settle();
     assert.equal(h.terms.length, before + 1, "fresh xterm for the fresh session");
     assert.equal(h.terms[before - 1].disposed, true);
     assert.equal(h.terms[0].disposed, false, "other splits are untouched");
+  });
+
+  it("a reveal that arrives before the terminal list still shows (#1501)", async () => {
+    let answer: (ids: string[]) => void = () => {};
+    const h = harness({ list: () => new Promise((r) => (answer = r)) });
+    const m = await mount(
+      <TerminalPane
+        threadId="t1"
+        api={h.api}
+        load={h.load}
+        reveal={{ nonce: 1, termId: "signin", threadId: "t1" }}
+      />,
+    );
+    await inAct(async () => answer(["1"]));
+    await settle();
+    assert.deepEqual(
+      m.queryAll("[data-terminal-view]").map((v) => v.getAttribute("data-terminal-view")),
+      ["1", "signin"],
+    );
+  });
+
+  it("an empty list with a reveal opens only the revealed shell", async () => {
+    const h = harness();
+    const m = await mount(
+      <TerminalPane
+        threadId="__signin__"
+        api={h.api}
+        load={h.load}
+        reveal={{ nonce: 1, termId: "signin", threadId: "__signin__" }}
+      />,
+    );
+    await settle();
+    assert.deepEqual(
+      m.queryAll("[data-terminal-view]").map((v) => v.getAttribute("data-terminal-view")),
+      ["signin"],
+    );
+  });
+
+  it("ignores a reveal meant for another thread", async () => {
+    const h = harness();
+    const m = await mount(
+      <TerminalPane
+        threadId="t2"
+        api={h.api}
+        load={h.load}
+        reveal={{ nonce: 1, termId: "signin", threadId: "t1" }}
+      />,
+    );
+    await settle();
+    assert.deepEqual(
+      m.queryAll("[data-terminal-view]").map((v) => v.getAttribute("data-terminal-view")),
+      ["1"],
+    );
   });
 
   it("restores the terminals main still knows about", async () => {

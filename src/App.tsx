@@ -1074,6 +1074,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
   const [terminalReveal, setTerminalReveal] = useState<{
     nonce: number;
     termId: string;
+    threadId: string;
   } | null>(null);
   const [signInShell, setSignInShell] = useState<{
     providerName: string;
@@ -1087,14 +1088,19 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         provider: providerId,
         threadId: signInThreadId,
       });
+      // Either way Settings closes: two modal focus traps fight each other.
+      setSettingsOpen(false);
       if (res.threadId === SIGNIN_TERMINAL_ID) {
         const providerName =
           providers.find((p) => p.id === providerId)?.name ?? providerId;
         setSignInShell((cur) => ({ providerName, nonce: (cur?.nonce ?? 0) + 1 }));
         return;
       }
-      setSettingsOpen(false);
-      setTerminalReveal((cur) => ({ termId: res.termId, nonce: (cur?.nonce ?? 0) + 1 }));
+      setTerminalReveal((cur) => ({
+        termId: res.termId,
+        threadId: res.threadId,
+        nonce: (cur?.nonce ?? 0) + 1,
+      }));
     },
     [terminal, signInThreadId, providers],
   );
