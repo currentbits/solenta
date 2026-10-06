@@ -78,7 +78,7 @@ export function ViewsMenu({
         aria-haspopup="menu"
         aria-expanded={open}
         aria-label="Views"
-        title="Panes: Git, Browser, Simulator, layout"
+        title="Panes: Git, Files, Browser, Simulator, layout"
         data-views-btn=""
         onClick={() => setOpen((v) => !v)}
       >

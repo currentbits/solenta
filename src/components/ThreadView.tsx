@@ -16,6 +16,7 @@ import {
   ViewsMenu,
 } from "./PaneWorkspace";
 import type { TerminalApi } from "./TerminalPane";
+import type { FilesPaneApi } from "./FilesPane";
 import { useWorktreeChrome } from "./WorktreeControl";
 import { WorkspaceStrip } from "./WorkspaceStrip";
 import { ProjectIcon } from "./ProjectIcon";
@@ -194,12 +195,16 @@ const BrowserPane = lazyNamed(() =>
 const SimulatorPane = lazyNamed(() =>
   import("./SimulatorPane").then((m) => m.SimulatorPane),
 );
+const FilesPane = lazyNamed(() =>
+  import("./FilesPane").then((m) => m.FilesPane),
+);
 const LAZY_PANES = [
   ChangesPanel,
   TurnDiffPanel,
   TerminalPane,
   BrowserPane,
   SimulatorPane,
+  FilesPane,
 ];
 
 function preloadPanesWhenIdle(): () => void {
@@ -413,6 +418,8 @@ interface ThreadViewProps {
   onViewChanges?: () => void;
   /** Shell session for the Terminal pane (#147). */
   terminalApi?: TerminalApi;
+  /** Tree, preview and open-in for the Files pane (#1506). */
+  filesApi?: FilesPaneApi;
   /**
    * Fires whenever the workspace holds more than one pane. App collapses
    * the agents rail so the panes get the width.
@@ -718,6 +725,7 @@ export const ThreadView = memo(function ThreadView({
   onCloseChanges,
   onViewChanges,
   terminalApi,
+  filesApi,
   onPanesNeedRoom,
   runStats,
   onFetchTurnDiff,
@@ -3352,6 +3360,25 @@ export const ThreadView = memo(function ThreadView({
                 onSuggest={onSuggestCommitMessage}
                 onComment={
                   isArchived || !detail
+                    ? undefined
+                    : (comment) =>
+                        setReviewComments(detail.thread.id, (prev) => [
+                          ...prev,
+                          comment,
+                        ])
+                }
+              />
+            );
+          }
+          if (leaf.type === "files" && filesApi && detail) {
+            return (
+              <FilesPane
+                key={detail.thread.id}
+                threadId={detail.thread.id}
+                api={filesApi}
+                remote={Boolean(project?.remoteHost)}
+                onAddToPrompt={
+                  isArchived
                     ? undefined
                     : (comment) =>
                         setReviewComments(detail.thread.id, (prev) => [

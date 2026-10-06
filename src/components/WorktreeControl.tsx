@@ -20,7 +20,7 @@ import { useEscapeClose } from "../useEscapeClose";
 import styles from "./WorktreeControl.module.css";
 import type { EditorId, EditorOption } from "../shared/ipc";
 
-const EDITOR_PREF_KEY = "solenta:openInEditor";
+export const EDITOR_PREF_KEY = "solenta:openInEditor";
 
 type GitAction = "setup" | "merge" | "remove" | null;
 

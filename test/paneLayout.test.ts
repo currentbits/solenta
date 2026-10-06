@@ -40,7 +40,8 @@ describe("pane registry (issue #552)", () => {
     ]);
   });
 
-  it("ships chat, git, terminal, browser, and simulator", () => {
+  it("ships chat, git, terminal, browser, simulator, and files", () => {
+    assert.equal(PANE_REGISTRY.files.shipped, true);
     assert.equal(PANE_REGISTRY.chat.shipped, true);
     assert.equal(PANE_REGISTRY.diff.shipped, true);
     assert.equal(PANE_REGISTRY.browser.shipped, true);

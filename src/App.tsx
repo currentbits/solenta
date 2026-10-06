@@ -320,6 +320,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     stopDevServer,
     devServerStatus,
     terminal,
+    files,
     preview,
     simulator,
     simulatorStatus,
@@ -1734,6 +1735,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         onCloseChanges={closeChanges}
         onViewChanges={openChanges}
         terminalApi={terminal}
+        filesApi={files}
         onPanesNeedRoom={collapseAgentsForPanes}
         runStats={runStats}
         onFetchTurnDiff={fetchTurnDiff}
