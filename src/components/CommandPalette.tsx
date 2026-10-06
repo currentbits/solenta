@@ -113,10 +113,12 @@ export function CommandPalette({
     setIndex(0);
   }, [mode, query]);
 
-  const trimmed = query.trim();
+  // A leading ">" narrows the command palette to actions (#1506).
+  const actionsOnly = mode === "command" && query.trimStart().startsWith(">");
+  const trimmed = actionsOnly ? query.trimStart().slice(1).trim() : query.trim();
 
   useEffect(() => {
-    if (!open || mode !== "command" || trimmed.length < 2) {
+    if (!open || mode !== "command" || actionsOnly || trimmed.length < 2) {
       setContentHits(null);
       return;
     }
@@ -138,7 +140,7 @@ export function CommandPalette({
       gen.current = false;
       window.clearTimeout(handle);
     };
-  }, [open, mode, trimmed, searchThreads]);
+  }, [open, mode, actionsOnly, trimmed, searchThreads]);
 
   useEffect(() => {
     if (!open || mode !== "files" || !canSearchWorkspace || !listFiles) {
@@ -229,6 +231,7 @@ export function CommandPalette({
         haystack: [action.title, action.subtitle ?? "", action.keywords ?? ""],
       });
     }
+    if (actionsOnly) return rankPaletteItems(seeds, trimmed, RESULT_CAP);
     if (trimmed.length > 0) {
       for (const project of projects) {
         seeds.push({
@@ -291,6 +294,7 @@ export function CommandPalette({
     projects,
     threads,
     contentHits,
+    actionsOnly,
     trimmed,
   ]);
 
@@ -433,7 +437,7 @@ export function CommandPalette({
             spellCheck={false}
             data-command-palette-input=""
           />
-          <span className={styles.mode}>{paletteModeLabel(mode)}</span>
+          <span className={styles.mode}>{actionsOnly ? "Actions" : paletteModeLabel(mode)}</span>
         </div>
         <div
           ref={listRef}
