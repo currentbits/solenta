@@ -1274,6 +1274,22 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     [createProject],
   );
 
+  const discoverRecentRepos = useCallback(
+    () => api.projects.discoverRecent(),
+    [api],
+  );
+  // One at a time: each add runs git checks, and projects.add is not batched.
+  const addProjectPaths = useCallback(
+    async (paths: string[]) => {
+      const added: string[] = [];
+      for (const path of paths) {
+        if (await addProject(path)) added.push(path);
+      }
+      return added;
+    },
+    [addProject],
+  );
+
   const pickProjectDirectory = useCallback(
     () => api.projects.pickDirectory(),
     [api],
@@ -2041,6 +2057,8 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
           onFinish={finishOnboarding}
           providers={providers}
           refreshProviders={refreshProviders}
+          discoverRecentRepos={discoverRecentRepos}
+          onAddProjectPaths={addProjectPaths}
           projects={projects}
           onAddProject={handleAddProject}
           settings={settings}

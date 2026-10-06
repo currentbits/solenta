@@ -411,3 +411,48 @@ fieldset.setupSection:disabled {
     max-height: min(90vh, 640px);
   }
 }
+
+/* SetupStep: recent repos found in the CLIs' history (#1501) */
+.recentGroup {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  border: none;
+  min-width: 0;
+}
+
+.recentGroup:disabled {
+  opacity: 0.55;
+}
+
+.recentRemote {
+  padding: 0 0 2px;
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--text-muted);
+}
+
+.recentText {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.recentName {
+  font-weight: 550;
+}
+
+.recentMeta {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: 11.5px;
+  color: var(--text-dim);
+}
+
+.recentActions {
+  display: flex;
+  gap: 8px;
+}
