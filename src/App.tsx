@@ -37,6 +37,7 @@ import {
   type RepeatDraft,
 } from "./repeatThread";
 import type {
+  CloneProgressPush,
   AgentProfile,
   ConflictForecast,
   DistilledWorkflow,
@@ -181,6 +182,7 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     clearError,
     addProject,
     createProject,
+    cloneProject,
     ensureScratchProject,
     updateProject,
     createThread,
@@ -1235,6 +1237,16 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     [createProject],
   );
 
+  const cancelClone = useCallback(
+    (cloneId: string) => void api.projects.cancelClone({ cloneId }),
+    [api],
+  );
+
+  const subscribeCloneProgress = useCallback(
+    (cb: (push: CloneProgressPush) => void) => api.on("clone:progress", cb),
+    [api],
+  );
+
   const pickProjectDirectory = useCallback(
     () => api.projects.pickDirectory(),
     [api],
@@ -2046,6 +2058,9 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
             onClose={() => setAddPathOpen(false)}
             onSubmit={submitAddPath}
             onCreate={submitCreateProject}
+            onClone={cloneProject}
+            onCancelClone={cancelClone}
+            onCloneProgress={subscribeCloneProgress}
             onBrowse={browseFilesystem}
             currentProjectCwd={
               (selectedProjectId

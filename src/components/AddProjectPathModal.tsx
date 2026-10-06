@@ -1,7 +1,9 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useEscapeClose } from "../useEscapeClose";
 import { useModalFocus } from "../useModalFocus";
 import type {
+  CloneProgressPush,
+  CloneProjectInput,
   FsBrowseInput,
   FsBrowseResult,
   ProjectInfo,
@@ -15,6 +17,31 @@ function failedDoctorChecks(result: unknown): WindowsDoctorCheck[] {
   if (!result || typeof result !== "object") return [];
   const checks = (result as ProjectInfo).windowsDoctor?.checks;
   return Array.isArray(checks) ? checks.filter((c) => !c.ok) : [];
+}
+
+/**
+ * Client copy of the main-process rule (projectClone.js): https:// or ssh
+ * only. Main re-checks; this just keeps the button honest.
+ */
+export function isCloneUrl(raw: string): boolean {
+  const u = raw.trim();
+  return (
+    /^https:\/\/[^/\s]+\/\S+$/i.test(u) ||
+    /^ssh:\/\/[^/\s]+\/\S+$/i.test(u) ||
+    /^[A-Za-z0-9._-]+@[A-Za-z0-9.-]+:[^/\s]\S*$/.test(u)
+  );
+}
+
+/** Folder name git picks for a URL: last segment without `.git`. */
+export function cloneFolderName(raw: string): string {
+  return (
+    raw
+      .trim()
+      .replace(/[/\\]+$/, "")
+      .split(/[/:]/)
+      .pop()
+      ?.replace(/\.git$/i, "") ?? ""
+  );
 }
 
 function browsePlatform(): string {
@@ -33,6 +60,11 @@ interface AddProjectPathModalProps {
   ) => Promise<unknown>;
   /** Create a brand-new folder + git repo inside an existing parent dir. */
   onCreate: (name: string, parentDir: string) => Promise<unknown>;
+  /** git clone a URL into parentDir, then add it (#1506). Omit to hide. */
+  onClone?: (input: CloneProjectInput) => Promise<unknown>;
+  onCancelClone?: (cloneId: string) => void;
+  /** Subscribe to "clone:progress"; returns the unsubscribe. */
+  onCloneProgress?: (cb: (push: CloneProgressPush) => void) => () => void;
   /**
    * Native directory picker; omit where no dialog exists (web mode) and the
    * Browse buttons disappear, leaving the typed/browsable path.
@@ -56,11 +88,26 @@ export function AddProjectPathModal({
   onClose,
   onSubmit,
   onCreate,
+  onClone,
+  onCancelClone,
+  onCloneProgress,
   onPickDirectory,
   onBrowse,
   currentProjectCwd,
 }: AddProjectPathModalProps) {
-  const [mode, setMode] = useState<"existing" | "create">("existing");
+  const [mode, setMode] = useState<"existing" | "create" | "clone">(
+    "existing",
+  );
+  const [cloneUrl, setCloneUrl] = useState("");
+  const [cloneName, setCloneName] = useState("");
+  const [cloneProgress, setCloneProgress] = useState<string | null>(null);
+  const cloneIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!onCloneProgress) return;
+    return onCloneProgress((push) => {
+      if (push.cloneId === cloneIdRef.current) setCloneProgress(push.line);
+    });
+  }, [onCloneProgress]);
   const [path, setPath] = useState(() => getAddProjectInitialQuery(null));
   const [remoteHost, setRemoteHost] = useState("");
   const [remotePath, setRemotePath] = useState(() =>
@@ -88,7 +135,9 @@ export function AddProjectPathModal({
   const host = remoteHost.trim();
   const rpath = remotePath.trim();
   const canSubmit =
-    mode === "create"
+    mode === "clone"
+      ? isCloneUrl(cloneUrl) && Boolean(location.trim())
+      : mode === "create"
       ? Boolean(name.trim()) && Boolean(location.trim())
       : host
         ? Boolean(rpath)
@@ -99,7 +148,41 @@ export function AddProjectPathModal({
     setPending(true);
     setError(null);
     try {
-      if (mode === "create") {
+      if (mode === "clone" && onClone) {
+        const resolved = resolveAddProjectPath({
+          rawPath: location.trim(),
+          platform: browsePlatform(),
+          currentProjectCwd,
+        });
+        if (!resolved.ok) {
+          setError(resolved.error);
+          return;
+        }
+        const cloneId =
+          typeof crypto !== "undefined" && crypto.randomUUID
+            ? crypto.randomUUID()
+            : `clone-${Date.now()}`;
+        cloneIdRef.current = cloneId;
+        setCloneProgress("Starting clone");
+        try {
+          const cloned = await onClone({
+            url: cloneUrl.trim(),
+            parentDir: resolved.path,
+            ...(cloneName.trim() ? { name: cloneName.trim() } : {}),
+            cloneId,
+          });
+          if (!cloned) {
+            setError("Could not clone that repository.");
+            return;
+          }
+          const failed = failedDoctorChecks(cloned);
+          if (failed.length) setDoctorIssues(failed);
+          else onClose();
+        } finally {
+          cloneIdRef.current = null;
+          setCloneProgress(null);
+        }
+      } else if (mode === "create") {
         const resolved = resolveAddProjectPath({
           rawPath: location.trim(),
           platform: browsePlatform(),
@@ -153,7 +236,9 @@ export function AddProjectPathModal({
           ? err.message
           : mode === "create"
             ? "Could not create that project."
-            : "Could not add that path.",
+            : mode === "clone"
+              ? "Could not clone that repository."
+              : "Could not add that path.",
       );
     } finally {
       setPending(false);
@@ -265,9 +350,110 @@ export function AddProjectPathModal({
             >
               Create new
             </button>
+            {onClone ? (
+              <button
+                type="button"
+                className={
+                  mode === "clone"
+                    ? `${styles.btn} ${styles.btnPrimary}`
+                    : styles.btn
+                }
+                data-add-project-mode-clone=""
+                aria-pressed={mode === "clone"}
+                disabled={pending}
+                onClick={() => {
+                  setMode("clone");
+                  setError(null);
+                }}
+              >
+                Clone from URL
+              </button>
+            ) : null}
           </div>
 
-          {mode === "create" ? (
+          {mode === "clone" ? (
+            <>
+              <div className={styles.field}>
+                <label
+                  className={styles.fieldLabel}
+                  htmlFor="add-project-clone-url"
+                >
+                  Repository URL
+                </label>
+                <input
+                  id="add-project-clone-url"
+                  className={`${styles.input} ${styles.monoInput}`}
+                  data-add-project-clone-url=""
+                  value={cloneUrl}
+                  onChange={(e) => setCloneUrl(e.target.value)}
+                  placeholder="https://github.com/owner/repo.git"
+                  autoComplete="off"
+                  spellCheck={false}
+                  disabled={pending}
+                  onKeyDown={onEnter}
+                />
+                {cloneUrl.trim() && !isCloneUrl(cloneUrl) ? (
+                  <p className={styles.fieldNote} data-add-project-clone-url-hint="">
+                    Use an https:// or ssh URL, for example
+                    git@github.com:owner/repo.git
+                  </p>
+                ) : null}
+              </div>
+              <div className={styles.field}>
+                <label
+                  className={styles.fieldLabel}
+                  htmlFor="add-project-clone-location"
+                >
+                  Clone into
+                </label>
+                <PathBrowser
+                  id="add-project-clone-location"
+                  value={location}
+                  onChange={setLocation}
+                  onBrowse={onBrowse}
+                  onPickDirectory={onPickDirectory}
+                  cwd={currentProjectCwd}
+                  disabled={pending}
+                  placeholder="~/code"
+                  onSubmit={() => void submit()}
+                  inputDataAttr="data-add-project-clone-location"
+                  browseDataAttr="data-add-project-browse-clone-location"
+                />
+              </div>
+              <div className={styles.field}>
+                <label
+                  className={styles.fieldLabel}
+                  htmlFor="add-project-clone-name"
+                >
+                  Folder name
+                </label>
+                <input
+                  id="add-project-clone-name"
+                  className={styles.input}
+                  data-add-project-clone-name=""
+                  value={cloneName}
+                  onChange={(e) => setCloneName(e.target.value)}
+                  placeholder={cloneFolderName(cloneUrl) || "repo"}
+                  autoComplete="off"
+                  spellCheck={false}
+                  disabled={pending}
+                  onKeyDown={onEnter}
+                />
+                <p className={styles.fieldNote}>
+                  The folder must not exist yet, or be empty.
+                </p>
+              </div>
+              {cloneProgress ? (
+                <p
+                  className={`${styles.fieldNote} ${styles.monoInput}`}
+                  data-add-project-clone-progress=""
+                  aria-live="polite"
+                >
+                  {cloneProgress}
+                </p>
+              ) : null}
+            </>
+          ) : mode === "create" ? (
             <>
               <div className={styles.field}>
                 <label
@@ -396,19 +582,36 @@ export function AddProjectPathModal({
               {pending
                 ? mode === "create"
                   ? "Creating…"
-                  : "Adding…"
+                  : mode === "clone"
+                    ? "Cloning…"
+                    : "Adding…"
                 : mode === "create"
                   ? "Create"
-                  : "Add"}
+                  : mode === "clone"
+                    ? "Clone"
+                    : "Add"}
             </button>
-            <button
-              type="button"
-              className={styles.btn}
-              disabled={pending}
-              onClick={handleClose}
-            >
-              Cancel
-            </button>
+            {pending && mode === "clone" && onCancelClone ? (
+              <button
+                type="button"
+                className={styles.btn}
+                data-add-project-clone-cancel=""
+                onClick={() => {
+                  if (cloneIdRef.current) onCancelClone(cloneIdRef.current);
+                }}
+              >
+                Stop clone
+              </button>
+            ) : (
+              <button
+                type="button"
+                className={styles.btn}
+                disabled={pending}
+                onClick={handleClose}
+              >
+                Cancel
+              </button>
+            )}
           </div>
             </>
           )}

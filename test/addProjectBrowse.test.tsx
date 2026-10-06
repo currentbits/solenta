@@ -8,7 +8,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { useState } from "react";
-import { mount } from "./support/dom.ts";
+import { inAct, mount } from "./support/dom.ts";
 import {
   createFakeCoder,
   installFakeCoder,
@@ -16,7 +16,11 @@ import {
 } from "./support/fakeCoder.ts";
 import App from "../src/App";
 import { AddProjectPathModal } from "../src/components/AddProjectPathModal";
-import type { FsBrowseResult } from "../src/shared/ipc";
+import type {
+  CloneProgressPush,
+  CloneProjectInput,
+  FsBrowseResult,
+} from "../src/shared/ipc";
 
 async function boot(fake: ReturnType<typeof createFakeCoder>) {
   const shell = await mount(<div />);
@@ -204,6 +208,103 @@ describe("Add project focus trap", () => {
     await m.pressFocused("Escape");
     assert.equal(m.query("[data-add-project-path]"), null);
     assert.equal(document.activeElement, opener, "Escape restores the opener");
+    m.unmount();
+  });
+});
+
+describe("Add project: clone from URL (#1506)", () => {
+  const browse = async () =>
+    ({ parentPath: "/", existed: true, entries: [] }) satisfies FsBrowseResult;
+
+  it("validates the URL, clones with progress, and can stop", async () => {
+    const cloned: CloneProjectInput[] = [];
+    const cancelled: string[] = [];
+    let push: ((p: CloneProgressPush) => void) | null = null;
+    let finish: (() => void) | null = null;
+    let closed = 0;
+    const m = await mount(
+      <AddProjectPathModal
+        onClose={() => {
+          closed += 1;
+        }}
+        onSubmit={async () => ({})}
+        onCreate={async () => ({})}
+        onBrowse={browse}
+        onClone={(input) => {
+          cloned.push(input);
+          return new Promise((resolve) => {
+            finish = () => resolve({ id: "p9" });
+          });
+        }}
+        onCancelClone={(id) => cancelled.push(id)}
+        onCloneProgress={(cb) => {
+          push = cb;
+          return () => {
+            push = null;
+          };
+        }}
+      />,
+    );
+    await m.click(m.query("[data-add-project-mode-clone]"));
+    const submit = m.query("[data-add-project-path-submit]") as HTMLButtonElement;
+    await m.type(m.query("[data-add-project-clone-url]"), "file:///etc");
+    assert.ok(m.query("[data-add-project-clone-url-hint]"));
+    assert.equal(submit.disabled, true, "file:// is refused");
+
+    const url = m.query("[data-add-project-clone-url]") as HTMLInputElement;
+    await m.type(url, "");
+    await m.type(url, "git@github.com:owner/app.git");
+    assert.equal(m.query("[data-add-project-clone-url-hint]"), null);
+    assert.equal(
+      (m.query("[data-add-project-clone-name]") as HTMLInputElement).placeholder,
+      "app",
+    );
+    await m.type(m.query("[data-add-project-clone-location]"), "/work");
+    await m.click(m.query("[data-add-project-path-submit]"));
+    await m.flush();
+    assert.equal(cloned.length, 1);
+    assert.equal(cloned[0]!.url, "git@github.com:owner/app.git");
+    assert.equal(cloned[0]!.parentDir, "/work");
+    assert.ok(cloned[0]!.cloneId);
+
+    await inAct(() => {
+      push!({ cloneId: "someone-else", line: "ignored" });
+      push!({ cloneId: cloned[0]!.cloneId!, line: "Receiving objects:  50%" });
+    });
+    assert.equal(
+      m.query("[data-add-project-clone-progress]")?.textContent,
+      "Receiving objects:  50%",
+    );
+    await m.click(m.query("[data-add-project-clone-cancel]"));
+    assert.deepEqual(cancelled, [cloned[0]!.cloneId]);
+
+    await inAct(async () => {
+      finish!();
+      await Promise.resolve();
+    });
+    await m.flush();
+    assert.equal(closed, 1, "closes once the project is added");
+    m.unmount();
+  });
+
+  it("shows a clone failure inline", async () => {
+    const m = await mount(
+      <AddProjectPathModal
+        onClose={() => {}}
+        onSubmit={async () => ({})}
+        onCreate={async () => ({})}
+        onBrowse={browse}
+        onClone={async () => {
+          throw new Error("Folder is not empty: /work/app");
+        }}
+      />,
+    );
+    await m.click(m.query("[data-add-project-mode-clone]"));
+    await m.type(m.query("[data-add-project-clone-url]"), "https://github.com/owner/app");
+    await m.type(m.query("[data-add-project-clone-location]"), "/work");
+    await m.click(m.query("[data-add-project-path-submit]"));
+    await m.flush();
+    assert.match(m.query('[role="alert"]')?.textContent || "", /Folder is not empty/);
     m.unmount();
   });
 });
