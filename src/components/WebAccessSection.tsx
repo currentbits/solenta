@@ -135,7 +135,7 @@ export function WebAccessSection({ active }: { active: boolean }) {
             {status.urls.map((u, i) => (
               <span key={u.url}>
                 {i > 0 ? ", " : ""}
-                <code data-web-url={u.kind}>{u.url}</code>
+                <code className={styles.webUrl} data-web-url={u.kind}>{u.url}</code>
               </span>
             ))}
           </span>
@@ -185,7 +185,7 @@ export function WebAccessSection({ active }: { active: boolean }) {
         </p>
       ) : null}
 
-      <p className={styles.fieldLabel}>Devices</p>
+      <span className={styles.fieldLabel}>Devices</span>
       {created ? (
         <div className={styles.pairingReveal} data-web-reveal="">
           <p className={styles.pairingName}>Pair {created.device.name}</p>
@@ -302,12 +302,12 @@ export function WebAccessSection({ active }: { active: boolean }) {
 
       {ts.installed ? (
         <div className={styles.field} data-web-tailscale={ts.serving ? "serving" : ts.loggedIn ? "ready" : "offline"}>
-          <p className={styles.fieldLabel}>Tailscale</p>
+          <span className={styles.fieldLabel}>Tailscale</span>
           {!ts.loggedIn ? (
             <p className={styles.note}>Tailscale is installed but not running or not logged in.</p>
           ) : ts.serving && ts.url ? (
             <div className={styles.fieldRow}>
-              <code data-web-tailscale-url="">{ts.url}</code>
+              <code className={styles.webUrl} data-web-tailscale-url="">{ts.url}</code>
               <button
                 type="button"
                 className={styles.btn}
