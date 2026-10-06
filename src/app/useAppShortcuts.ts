@@ -9,11 +9,15 @@ function dialogOpen(): boolean {
   );
 }
 
-/** Window shortcuts: ⌘B sidebar, ⌘. agents panel, palette modes. */
+/**
+ * Window shortcuts: ⌘B sidebar, ⌘. agents panel, palette modes, and
+ * thread back/forward from the keyboard or the mouse's side buttons.
+ */
 export function useAppShortcuts({
   toggleSidebar,
   narrow,
   toggleAgents,
+  goHistory,
   paletteModeRef,
   setPaletteMode,
   setPaletteOpen,
@@ -21,6 +25,7 @@ export function useAppShortcuts({
   toggleSidebar: () => void;
   narrow: boolean;
   toggleAgents: () => void;
+  goHistory: (delta: 1 | -1) => void;
   paletteModeRef: RefObject<PaletteMode>;
   setPaletteMode: Dispatch<SetStateAction<PaletteMode>>;
   setPaletteOpen: Dispatch<SetStateAction<boolean>>;
@@ -44,6 +49,33 @@ export function useAppShortcuts({
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [toggleAgents]);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const delta = matchesBinding(e, "history.back")
+        ? -1
+        : matchesBinding(e, "history.forward")
+          ? 1
+          : 0;
+      if (!delta || dialogOpen()) return;
+      // The terminal owns its keys (Alt+← is word-left in a shell).
+      if (e.target instanceof Element && e.target.closest(".xterm")) return;
+      e.preventDefault();
+      goHistory(delta);
+    };
+    // Mouse buttons 3/4 are the side Back/Forward buttons.
+    const onMouse = (e: MouseEvent) => {
+      if ((e.button !== 3 && e.button !== 4) || dialogOpen()) return;
+      e.preventDefault();
+      goHistory(e.button === 3 ? -1 : 1);
+    };
+    window.addEventListener("keydown", onKey);
+    window.addEventListener("mouseup", onMouse);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      window.removeEventListener("mouseup", onMouse);
+    };
+  }, [goHistory]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {

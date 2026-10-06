@@ -23,6 +23,12 @@ import {
 import { ClaimedLanesHeartbeat } from "./components/LaneHeartbeat";
 import type { SettingsPane } from "./components/SettingsModal";
 import { ArchiveToast } from "./components/ArchiveToast";
+import {
+  EMPTY_HISTORY,
+  stepThread,
+  visitThread,
+  type ThreadHistory,
+} from "./threadHistory";
 import { WorkflowsModal } from "./components/WorkflowsModal";
 import {
   PALETTE_ACTIONS,
@@ -1030,10 +1036,33 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     agentsExpandRef,
   });
 
+  // Back/forward over opened threads (#1506): every selection lands here,
+  // whatever opened it; stepping moves the index first so it is not re-pushed.
+  const historyRef = useRef<ThreadHistory>(EMPTY_HISTORY);
+  useEffect(() => {
+    if (selectedThreadId) {
+      historyRef.current = visitThread(historyRef.current, selectedThreadId);
+    }
+  }, [selectedThreadId]);
+  const threadsRef = useRef(threads);
+  threadsRef.current = threads;
+  const goHistory = useCallback(
+    (delta: 1 | -1) => {
+      const step = stepThread(historyRef.current, delta, (id) =>
+        threadsRef.current.some((t) => t.id === id),
+      );
+      if (!step) return;
+      historyRef.current = step.history;
+      handleSelectThread(step.id);
+    },
+    [handleSelectThread],
+  );
+
   useAppShortcuts({
     toggleSidebar,
     narrow,
     toggleAgents,
+    goHistory,
     paletteModeRef,
     setPaletteMode,
     setPaletteOpen,
