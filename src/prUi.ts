@@ -73,3 +73,45 @@ export function splitPrPrompt(agentName: string): string {
     `End each PR description with this exact bullet on its own line: "- PR created by the ${agentName} agent".`,
   ].join("\n");
 }
+
+/**
+ * Inspector line for PR watch-and-wake (#1493 D). Null when there is no
+ * open PR to watch. `paused` = the per-PR wake-up cap was reached.
+ */
+export function prWatchSummary(thread: {
+  prNumber: number | null;
+  prState: "OPEN" | "CLOSED" | "MERGED" | null;
+  prWatch?: boolean | null;
+  prWatchState?: {
+    pr: number;
+    wakes: number;
+    lastReason: string | null;
+  } | null;
+}, cap: number): { watching: boolean; paused: boolean; text: string } | null {
+  if (thread.prNumber == null) return null;
+  if (thread.prState === "MERGED" || thread.prState === "CLOSED") return null;
+  if (thread.prWatch === false) {
+    return { watching: false, paused: false, text: "Not watching this PR" };
+  }
+  const st =
+    thread.prWatchState && thread.prWatchState.pr === thread.prNumber
+      ? thread.prWatchState
+      : null;
+  const wakes = st ? st.wakes : 0;
+  if (wakes >= cap) {
+    return {
+      watching: true,
+      paused: true,
+      text: `Watch paused after ${cap} follow-ups`,
+    };
+  }
+  const last = st && wakes > 0 && st.lastReason ? ` (${st.lastReason})` : "";
+  return {
+    watching: true,
+    paused: false,
+    text:
+      wakes > 0
+        ? `Watching PR · ${wakes} of ${cap} follow-ups sent${last}`
+        : "Watching PR for failed checks, reviews and conflicts",
+  };
+}

@@ -11,6 +11,7 @@ import {
 import type {
   AgentStatus,
   CheckpointInfo,
+  CoderApi,
   DiffResult,
   GitSyncInfo,
   GitRepoInfo,
@@ -39,6 +40,8 @@ import type {
   VerifyResult,
   WorkflowView,
 } from "../shared/ipc";
+import { PR_WATCH_WAKE_CAP } from "../shared/ipc";
+import { prWatchSummary } from "../prUi";
 import {
   formatCostUsd,
   formatRelativeAge,
@@ -945,6 +948,79 @@ function ScmNotice({ project }: { project: ProjectInfo | null }) {
 }
 
 /**
+ * PR watch-and-wake status (#1493 D): what the watch has sent, and the
+ * switch to stop or re-arm it. Nothing without an open PR.
+ */
+function PrWatchRow({ thread }: { thread: ThreadInfo }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const summary = prWatchSummary(thread, PR_WATCH_WAKE_CAP);
+  const setPrWatch =
+    typeof window === "undefined"
+      ? undefined
+      : (
+          window as unknown as {
+            coder?: { threads?: { setPrWatch?: CoderApi["threads"]["setPrWatch"] } };
+          }
+        ).coder?.threads?.setPrWatch;
+  if (!summary) return null;
+  const toggle = async (enabled: boolean) => {
+    if (!setPrWatch || busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      // The thread prop refreshes from the threads:changed broadcast.
+      await setPrWatch({ threadId: thread.id, enabled });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <>
+      <div className={inspector.row} data-pr-watch={summary.watching ? "on" : "off"}>
+        <span
+          className={inspector.line}
+          title="Sends this thread one follow-up turn when a required check fails, a reviewer requests changes, or the PR conflicts. At most 3 per PR."
+        >
+          {summary.text}
+        </span>
+        {setPrWatch ? (
+          <span className={inspector.action}>
+            {summary.paused ? (
+              <button
+                type="button"
+                className={styles.syncBtn}
+                data-pr-watch-rearm=""
+                disabled={busy}
+                onClick={() => void toggle(true)}
+              >
+                Re-arm
+              </button>
+            ) : null}
+            <button
+              type="button"
+              className={styles.syncBtn}
+              data-pr-watch-toggle=""
+              disabled={busy}
+              onClick={() => void toggle(!summary.watching)}
+            >
+              {summary.watching ? "Stop watching" : "Watch PR"}
+            </button>
+          </span>
+        ) : null}
+      </div>
+      {error ? (
+        <p className={styles.pullError} role="alert">
+          {error}
+        </p>
+      ) : null}
+    </>
+  );
+}
+
+/**
  * Repository link: the thread root's git origin as owner/repo, linking to
  * the host. Renders nothing without an origin. No other surface shows it.
  */
@@ -1760,6 +1836,7 @@ export function GitTab({
               </span>
             ) : null}
           </div>
+          {remote ? null : <PrWatchRow thread={thread} />}
           <p className={inspector.line} data-recap-activity="">
             {activity?.text ?? "No activity yet"}
           </p>
