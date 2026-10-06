@@ -46,9 +46,18 @@ describe("transcriptWindow", () => {
   });
 
   it("clamp resets a start that now sits past the timeline", () => {
-    assert.equal(clampWindowStart(380, 500), 380);
-    assert.equal(clampWindowStart(380, 10), 0);
-    assert.equal(clampWindowStart(380, 0), 0);
+    assert.equal(clampWindowStart(380, entries(Array(500).fill(10))), 380);
+    assert.equal(clampWindowStart(380, entries(Array(10).fill(10))), 0);
+    assert.equal(clampWindowStart(380, []), 0);
+  });
+
+  it("clamp resets to the character-budgeted tail, not the last N entries (#1475)", () => {
+    // The store's retention cap drops ~100 messages from the front, so a
+    // scrolled-up window's start can land past the shorter timeline. Electron
+    // soak: a 120-entry reset mounted ~48k nodes of 45 KB answers at once.
+    const capped = entries([...Array(900).fill(10), ...Array(100).fill(45_000)]);
+    assert.equal(clampWindowStart(1090, capped), tailWindowStart(capped));
+    assert.equal(capped.length - clampWindowStart(1090, capped), Math.floor(TRANSCRIPT_CHAR_BUDGET / 45_000));
   });
 
   it("tail window stops at the character budget (#1475)", () => {

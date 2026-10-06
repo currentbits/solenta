@@ -68,16 +68,17 @@ export function ensureVisibleStart(start: number, index: number): number {
 }
 
 /**
- * Keep the start index on the current timeline. A rewind that drops the
- * tail (start past the new length) resets to a fresh tail window.
+ * Keep the start index on the current timeline. A rewind, or the store's
+ * retention cap dropping the head (#1475), can leave the start past the new
+ * length: reset to a fresh tail window, character budget included.
  */
 export function clampWindowStart(
   start: number,
-  length: number,
-  windowSize = TRANSCRIPT_WINDOW,
+  timeline: readonly TimelineEntry[],
 ): number {
+  const length = timeline.length;
   if (!(length > 0)) return 0;
-  if (start >= length) return initialWindowStart(length, windowSize);
+  if (start >= length) return tailWindowStart(timeline);
   if (start < 0) return 0;
   return start;
 }
