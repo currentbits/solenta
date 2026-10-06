@@ -1,4 +1,5 @@
-// Capture the four public website screenshots from deterministic browser fixtures.
+// Capture the four public website screenshots, plus the README images in
+// assets/, from deterministic browser fixtures.
 // Usage:
 //   VITE_TRAILER=1 npm run dev:browser
 //   npx electron scripts/capture-site-screenshots.js
@@ -10,6 +11,7 @@ const path = require("node:path");
 
 const URL = process.env.SITE_SCREENSHOT_URL || "http://localhost:5173";
 const OUT = path.join(__dirname, "..", "site", "assets");
+const README_OUT = path.join(__dirname, "..", "assets");
 const WIDTH = 1680;
 const HEIGHT = 1050;
 const THREAD_ID = "thread-1";
@@ -114,6 +116,12 @@ async function forceLightTheme(win) {
 }
 
 async function dismissOnboarding(win) {
+  // The wizard mounts only after settings hydrate, so wait for it briefly.
+  const deadline = Date.now() + 5_000;
+  while (Date.now() < deadline) {
+    if (await run(win, `Boolean(document.querySelector("[data-onboarding-skip]"))`)) break;
+    await sleep(150);
+  }
   const skipped = await run(
     win,
     `(() => {
@@ -126,7 +134,7 @@ async function dismissOnboarding(win) {
   if (!skipped) return;
   await waitFor(
     win,
-    `!document.querySelector("[data-onboarding]")`,
+    `!document.querySelector("[data-onboarding-skip]")`,
     "onboarding dismissed",
   );
 }
@@ -170,7 +178,7 @@ async function pinUserPrompt(win) {
   if (pinned !== "ok") throw new Error(`could not pin seeded user prompt (${pinned})`);
 }
 
-async function capture(win, name, expectedSelector) {
+async function capture(win, name, expectedSelector, dir = OUT) {
   await waitFor(win, `document.querySelector(${JSON.stringify(expectedSelector)})`, name);
   await forceLightTheme(win);
   await run(
@@ -188,7 +196,7 @@ async function capture(win, name, expectedSelector) {
   if (size.width !== WIDTH || size.height !== HEIGHT) {
     image = image.resize({ width: WIDTH, height: HEIGHT, quality: "best" });
   }
-  const target = path.join(OUT, name);
+  const target = path.join(dir, name);
   fs.writeFileSync(target, image.toPNG());
   const written = image.getSize();
   if (written.width !== WIDTH || written.height !== HEIGHT) {
@@ -272,6 +280,18 @@ app.whenReady().then(async () => {
     await closeInspector(win);
     await openView(win, "automations");
     await capture(win, "screen-automations.png", "[data-automations]");
+
+    // README: the site hero, the Memory tab, and Git review as a pane.
+    fs.copyFileSync(path.join(OUT, "screen-main.png"), path.join(README_OUT, "screenshot.png"));
+    await openView(win, "threads");
+    await selectThread(win);
+    await openInspectorTab(win, "memory");
+    await pinUserPrompt(win);
+    await capture(win, "screenshot-memory.png", "[data-memory-scroll]", README_OUT);
+    await openInspectorTab(win, "git");
+    await click(win, "[data-env-changes]", "changed files");
+    await pinUserPrompt(win);
+    await capture(win, "screenshot-git.png", "[data-diff-scope]", README_OUT);
   } catch (error) {
     console.error("site screenshot capture failed:", error?.stack || error);
     process.exitCode = 1;

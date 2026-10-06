@@ -26,7 +26,7 @@
 </p>
 
 <p align="center">
-  <img src="assets/screenshot.png" alt="Solenta: threads sidebar, a thread with its work log and plan, and the environment panel" width="100%" />
+  <img src="assets/screenshot.png" alt="Solenta: threads sidebar and a thread with recalled memories, agent messages, the plan, and the composer in one reading column" width="100%" />
 </p>
 
 ## The problem
@@ -119,7 +119,7 @@ it.
   GitHub issues. The only network traffic is a release check.
 
 <p align="center">
-  <img src="assets/screenshot-git.png" alt="Git open as a center pane beside the thread: review itinerary, per-file diff, and a commit box" width="100%" />
+  <img src="assets/screenshot-git.png" alt="Git review open as a pane beside the thread: uncommitted, whole-branch, or this-turn scope, review itinerary, a syntax-coloured diff, and a commit box with Generate" width="100%" />
 </p>
 
 ## Install
