@@ -17,6 +17,7 @@ import {
   keptPasteCards,
   pruneComposerDrafts,
   resetComposerSession,
+  sentHistory,
   serializeDrafts,
 } from "../src/composerSession";
 import { makePasteCard } from "../src/pasteCards";
@@ -114,7 +115,8 @@ describe("composer drafts survive restart", () => {
     await m.press(textarea(m), "Enter", { metaKey: true });
     assert.deepEqual(sends, ["ship it"]);
     flushDraftSave();
-    assert.equal(window.localStorage.getItem(DRAFTS_STORAGE_KEY), null);
+    const saved = JSON.parse(window.localStorage.getItem(DRAFTS_STORAGE_KEY)!);
+    assert.equal(saved.t1.text, undefined, "the sent draft is gone");
   });
 
   it("prunes drafts of threads that no longer exist", () => {
@@ -144,5 +146,72 @@ describe("composer drafts survive restart", () => {
     window.localStorage.setItem(DRAFTS_STORAGE_KEY, "{not json");
     hydrateComposerSession();
     assert.deepEqual(keptDrafts, {});
+  });
+});
+
+describe("↑ recalls sent prompts", () => {
+  async function sendAll(m: Mounted, prompts: string[]) {
+    for (const p of prompts) {
+      await m.type(textarea(m), p);
+      await m.press(textarea(m), "Enter", { metaKey: true });
+    }
+  }
+
+  it("↑ in an empty composer walks back, ↓ walks forward to empty", async () => {
+    const sends: string[] = [];
+    const m = await mountComposer({ sends });
+    await sendAll(m, ["first", "second"]);
+    assert.equal(textarea(m).value, "");
+    await m.press(textarea(m), "ArrowUp");
+    assert.equal(textarea(m).value, "second");
+    await m.press(textarea(m), "ArrowUp");
+    assert.equal(textarea(m).value, "first");
+    await m.press(textarea(m), "ArrowUp");
+    assert.equal(textarea(m).value, "first", "stops at the oldest");
+    await m.press(textarea(m), "ArrowDown");
+    assert.equal(textarea(m).value, "second");
+    await m.press(textarea(m), "ArrowDown");
+    assert.equal(textarea(m).value, "");
+  });
+
+  it("leaves ↑ alone in a non-empty draft", async () => {
+    const m = await mountComposer({ sends: [] });
+    await sendAll(m, ["old"]);
+    await m.type(textarea(m), "line one\nline two");
+    await m.press(textarea(m), "ArrowUp");
+    assert.equal(textarea(m).value, "line one\nline two");
+  });
+
+  it("stops walking once the recalled text is edited", async () => {
+    const m = await mountComposer({ sends: [] });
+    await sendAll(m, ["a", "b"]);
+    await m.press(textarea(m), "ArrowUp");
+    await m.type(textarea(m), "b edited");
+    await m.press(textarea(m), "ArrowUp");
+    assert.equal(textarea(m).value, "b edited");
+  });
+
+  it("keeps history per thread and across a restart", async () => {
+    const m = await mountComposer({ sends: [] });
+    await sendAll(m, ["for t1"]);
+    m.unmount();
+    restart();
+    assert.deepEqual(sentHistory.t1, ["for t1"]);
+    const other = await mountComposer({ threadId: "t2" });
+    await other.press(textarea(other), "ArrowUp");
+    assert.equal(textarea(other).value, "", "t2 has no history");
+    other.unmount();
+    const back = await mountComposer();
+    await back.press(textarea(back), "ArrowUp");
+    assert.equal(textarea(back).value, "for t1");
+  });
+
+  it("leaves ↑ to the slash popup while it is open", async () => {
+    const m = await mountComposer({ sends: [] });
+    await sendAll(m, ["old"]);
+    await m.type(textarea(m), "/");
+    assert.ok(m.container.querySelector('[role="listbox"][aria-label="Commands"]'));
+    await m.press(textarea(m), "ArrowUp");
+    assert.equal(textarea(m).value, "/");
   });
 });

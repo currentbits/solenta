@@ -10,6 +10,9 @@ import type { PasteCard } from "./pasteCards";
 export const keptDrafts: Record<string, string> = {};
 export const keptAttachments: Record<string, AttachmentInfo[]> = {};
 export const keptPasteCards: Record<string, PasteCard[]> = {};
+/** Raw text of prompts sent per thread, oldest first, for ↑ recall. */
+export const sentHistory: Record<string, string[]> = {};
+export const SENT_HISTORY_CAP = 20;
 
 export const DRAFTS_STORAGE_KEY = "coder.composerDrafts";
 export const DRAFTS_SAVE_MS = 400;
@@ -23,6 +26,7 @@ interface SavedDraft {
   text?: string;
   attachments?: AttachmentInfo[];
   pasteCards?: PasteCard[];
+  sent?: string[];
 }
 
 function clearRecord<T>(store: Record<string, T>): void {
@@ -67,12 +71,15 @@ function snapshot(): Record<string, SavedDraft> {
   for (const [id, list] of Object.entries(keptPasteCards)) {
     if (list.length) row(id).pasteCards = list;
   }
+  for (const [id, list] of Object.entries(sentHistory)) {
+    if (list.length) row(id).sent = list;
+  }
   return out;
 }
 
 /**
  * JSON for storage. Over DRAFTS_STORE_CAP, the largest paste cards are
- * dropped first; typed text and attachment references are always kept.
+ * dropped first, then ↑ history; typed text and attachment references stay.
  */
 export function serializeDrafts(cap = DRAFTS_STORE_CAP): string {
   const rows = snapshot();
@@ -86,9 +93,11 @@ export function serializeDrafts(cap = DRAFTS_STORE_CAP): string {
     r.pasteCards = r.pasteCards!.filter((x) => x !== c);
     if (!r.pasteCards.length) delete r.pasteCards;
     json = JSON.stringify(rows);
-    if (json.length <= cap) break;
+    if (json.length <= cap) return json;
   }
-  return json;
+  // Still over: ↑ history is a convenience, so it goes next.
+  for (const r of Object.values(rows)) delete r.sent;
+  return JSON.stringify(rows);
 }
 
 let saveTimer: ReturnType<typeof setTimeout> | null = null;
@@ -129,14 +138,25 @@ export function hydrateComposerSession(): void {
     if (typeof r.text === "string") keptDrafts[id] = r.text;
     if (Array.isArray(r.attachments)) keptAttachments[id] = r.attachments;
     if (Array.isArray(r.pasteCards)) keptPasteCards[id] = r.pasteCards;
+    if (Array.isArray(r.sent)) sentHistory[id] = r.sent;
   }
+}
+
+/** Remember a sent prompt for ↑ recall; a repeat of the last one is skipped. */
+export function recordSent(threadId: string, text: string): void {
+  const body = text.trim();
+  if (!body) return;
+  const list = sentHistory[threadId] ?? [];
+  if (list[list.length - 1] === body) return;
+  sentHistory[threadId] = [...list, body].slice(-SENT_HISTORY_CAP);
+  scheduleDraftSave();
 }
 
 /** Drop drafts of threads that no longer exist (deleted, not archived). */
 export function pruneComposerDrafts(threadIds: Iterable<string>): number {
   const known = new Set(threadIds);
   const gone = new Set<string>();
-  for (const store of [keptDrafts, keptAttachments, keptPasteCards]) {
+  for (const store of [keptDrafts, keptAttachments, keptPasteCards, sentHistory]) {
     for (const id of Object.keys(store)) {
       if (known.has(id)) continue;
       delete store[id];
@@ -153,6 +173,7 @@ export function resetComposerSession(): void {
   clearRecord(keptDrafts);
   clearRecord(keptAttachments);
   clearRecord(keptPasteCards);
+  clearRecord(sentHistory);
   try {
     storage()?.removeItem(DRAFTS_STORAGE_KEY);
   } catch {

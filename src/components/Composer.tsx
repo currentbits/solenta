@@ -80,7 +80,12 @@ import {
 import { parseDelegate } from "../delegate";
 import { asBtwPrompt } from "../btw";
 import { buildBestOfNEntries, providerVendor } from "../bestOfN";
-import { keptDrafts, scheduleDraftSave } from "../composerSession";
+import {
+  keptDrafts,
+  recordSent,
+  scheduleDraftSave,
+  sentHistory,
+} from "../composerSession";
 import {
   pickerVerb,
   type SlashAction,
@@ -572,10 +577,13 @@ export const Composer = memo(function Composer({
   });
   /** Last idle Esc; a second press within DOUBLE_ESC_MS rewinds (#478). */
   const lastEscAt = useRef(0);
+  /** Index into sentHistory while ↑/↓ is browsing; null when not. */
+  const recallIndexRef = useRef<number | null>(null);
 
   useEffect(() => {
     commandDismissed.current = false;
     lastEscAt.current = 0;
+    recallIndexRef.current = null;
     syncHasPrompt(draftsRef.current[threadId] ?? "");
     return () => {
       void cancelDictationRef.current();
@@ -882,12 +890,15 @@ export const Composer = memo(function Composer({
     action: (prompt: string) => void | Promise<void>,
     failLabel: string,
   ) => {
-    const prompt = composeOutgoing(readDraft());
+    const typed = readDraft();
+    const prompt = composeOutgoing(typed);
     if (!prompt.trim() || disabled || sending) return;
     setSending(true);
     setLocalError(null);
     try {
       await action(prompt);
+      recordSent(threadId, typed);
+      recallIndexRef.current = null;
       writeDraft("");
       clearAttachments();
       clearPasteCards();
@@ -1059,6 +1070,38 @@ export const Composer = memo(function Composer({
     applyStashEntry(entry);
   };
 
+  /**
+   * ↑ in an empty composer recalls the last prompt sent on this thread; ↑/↓
+   * keep walking while the recalled text is untouched. Edits, or a caret not
+   * on the first (↑) / last (↓) line, leave the arrows to the textarea.
+   */
+  const recallSent = (el: HTMLTextAreaElement, up: boolean): boolean => {
+    const history = sentHistory[threadId] ?? [];
+    const at = recallIndexRef.current;
+    const browsing = at != null && el.value === history[at];
+    if (!browsing) recallIndexRef.current = null;
+    let next: number | null;
+    if (up) {
+      if (browsing) {
+        const caret = el.selectionStart;
+        if (at === 0 || (caret > 0 && el.value.lastIndexOf("\n", caret - 1) !== -1))
+          return false;
+        next = at - 1;
+      } else {
+        if (el.value !== "" || !history.length) return false;
+        next = history.length - 1;
+      }
+    } else {
+      if (!browsing || el.value.indexOf("\n", el.selectionEnd) !== -1)
+        return false;
+      next = at + 1 < history.length ? at + 1 : null;
+    }
+    recallIndexRef.current = next;
+    const text = next == null ? "" : history[next]!;
+    writeDraft(text, text.length);
+    return true;
+  };
+
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if ((e.metaKey || e.ctrlKey) && !e.altKey && (e.key === "s" || e.key === "S")) {
       e.preventDefault();
@@ -1117,6 +1160,17 @@ export const Composer = memo(function Composer({
         closeCommand();
         return;
       }
+    }
+    if (
+      (e.key === "ArrowUp" || e.key === "ArrowDown") &&
+      !e.metaKey &&
+      !e.ctrlKey &&
+      !e.altKey &&
+      !e.shiftKey &&
+      recallSent(e.currentTarget, e.key === "ArrowUp")
+    ) {
+      e.preventDefault();
+      return;
     }
     // Ctrl+C interrupts a live turn when nothing is selected so copy still
     // works on a highlighted draft. Cmd+C is left to the platform copy chord.
