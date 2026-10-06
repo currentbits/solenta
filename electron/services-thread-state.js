@@ -268,6 +268,71 @@ function takeQueued(store, input) {
 }
 
 /**
+ * Take only the first queued item so each one runs as its own turn (#1501).
+ * The rest stay queued with their provenance; attachments ride with the
+ * head (the blob does not record which item they came with). Legacy rows
+ * without items[] are one item. Never bumps updatedAt.
+ *
+ * @param {import('./store').Store} store
+ * @param {{ threadId: string }} input
+ */
+function takeQueuedHead(store, input) {
+  const { threadId } = input;
+  const thread = store.getThread(threadId);
+  if (!thread) {
+    throw new Error(`Unknown thread: ${threadId}`);
+  }
+  const queued = thread.queued || null;
+  if (!queued) return null;
+  const items = Array.isArray(queued.items) ? queued.items : [];
+  if (items.length <= 1) return takeQueued(store, input);
+  const { attachments, error: _error, ...keep } = queued;
+  const [head, ...rest] = items.map((s) => String(s));
+  store.updateThread(threadId, {
+    queued: { ...keep, prompt: rest.join("\n\n"), items: rest },
+  });
+  store.save();
+  const taken = { ...keep, prompt: head, items: [head] };
+  if (attachments && attachments.length) taken.attachments = attachments;
+  return taken;
+}
+
+/**
+ * Put an undelivered head back in FRONT of whatever is queued now (#1501),
+ * so a failed start never reorders or drops the queue. inbound/posted stay
+ * set only when both parts carry them (same rule as setQueued's append).
+ *
+ * @param {import('./store').Store} store
+ * @param {{ threadId: string, taken: object, error?: string | null }} input
+ */
+function restoreQueuedHead(store, input) {
+  const { threadId, taken } = input;
+  const thread = store.getThread(threadId);
+  if (!thread || !taken) return;
+  const cur = thread.queued || null;
+  const headItems = Array.isArray(taken.items) && taken.items.length
+    ? taken.items
+    : [String(taken.prompt)];
+  const curItems = !cur
+    ? []
+    : Array.isArray(cur.items) && cur.items.length
+      ? cur.items
+      : [String(cur.prompt)];
+  const items = [...headItems, ...curItems];
+  const files = [...(taken.attachments || []), ...((cur && cur.attachments) || [])];
+  /** @type {Record<string, unknown>} */
+  const queued = { ...(cur || {}), ...taken, prompt: items.join("\n\n"), items };
+  if (files.length) queued.attachments = files;
+  else delete queued.attachments;
+  if (cur && !(cur.inbound === true && taken.inbound === true)) delete queued.inbound;
+  if (cur && !(cur.posted === true && taken.posted === true)) delete queued.posted;
+  if (input.error) queued.error = input.error;
+  else delete queued.error;
+  store.updateThread(threadId, { queued });
+  store.save();
+}
+
+/**
  * Open a `/btw` side-question card (issue #471). Returns `{ thread, card }`.
  * Never bumps updatedAt: a side question is not thread activity, same rule
  * as setQueued. Caps in-flight cards at BTW_RUNNING_MAX.
@@ -1239,6 +1304,8 @@ module.exports = {
   setPinned,
   setQueued,
   takeQueued,
+  takeQueuedHead,
+  restoreQueuedHead,
   addBtw,
   finishBtw,
   dismissBtw,

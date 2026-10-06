@@ -293,6 +293,8 @@ interface ThreadViewProps {
   onCancelQueued?: () => void;
   /** Re-send a queued prompt after a delivery failure. */
   onRetryQueued?: () => void;
+  /** Steer queued item `index` into the live turn (#1501). */
+  onSteerQueued?: (index: number) => void;
   /** Replace the queued follow-up's text (edit in the strip, issue #364 / #809). */
   onEditQueued?: (
     prompt: string,
@@ -314,7 +316,12 @@ interface ThreadViewProps {
     answers?: Record<string, string>,
     updatedCommand?: string,
     inputValues?: InputValues,
+    feedback?: string,
   ) => void | Promise<void>;
+  /** "Implement in a new thread" from the plan prompt (#1501). */
+  onImplementPlan?: (plan: string) => void | Promise<void>;
+  /** "Save plan to file" from the plan prompt; resolves the path (#1501). */
+  onSavePlan?: (plan: string) => Promise<string>;
   /**
    * Dismiss the persisted question card (thread.pendingQuestion) without
    * answering (issue #647). Answering goes through onStartRun instead.
@@ -681,10 +688,13 @@ export const ThreadView = memo(function ThreadView({
   queuedError = null,
   onCancelQueued,
   onRetryQueued,
+  onSteerQueued,
   onEditQueued,
   restoreDraft = null,
   onSetPermissionMode,
   onRespondPermission,
+  onImplementPlan,
+  onSavePlan,
   onClearQuestion,
   onSetProvider,
   onSetReasoningEffort,
@@ -1157,6 +1167,14 @@ export const ThreadView = memo(function ThreadView({
   const verboseTools = transcriptView === "verbose";
   const summaryMode = transcriptView === "summary";
   const isWorking = detail?.thread.status === "working";
+  /** Queued items can be steered into the live turn only where the CLI takes stdin. */
+  const canSteerQueued = Boolean(
+    onSteerQueued &&
+      isWorking &&
+      providers.find((p) => p.id === detail?.thread.provider)?.supportsSteer,
+  );
+  /** Queued item being dragged to a new slot (#1501). */
+  const [queuedDrag, setQueuedDrag] = useState<number | null>(null);
   const displayTimeline = useMemo(() => {
     if (summaryMode) {
       // Focus folds replace tool groups: keep groupable messages as plain
@@ -3904,6 +3922,8 @@ export const ThreadView = memo(function ThreadView({
             key={detail.pendingPermission.requestId}
             pending={detail.pendingPermission}
             onRespond={onRespondPermission}
+            onImplement={onImplementPlan}
+            onSave={onSavePlan}
           />
         ) : detail.pendingPermission ? (
           <PermissionPrompt
@@ -3921,7 +3941,9 @@ export const ThreadView = memo(function ThreadView({
             {queuedItems.length > 1 ? (
               <>
                 <div className={styles.statusLeft}>
-                  <span className={styles.queuedLabel}>Queued</span>
+                  <span className={styles.queuedLabel} data-queued-label="">
+                    {isWorking ? "Queued" : "Queued, paused"}
+                  </span>
                   {queuedError ? (
                     <span
                       className={styles.permissionGuardrail}
@@ -3943,8 +3965,27 @@ export const ThreadView = memo(function ThreadView({
                   {queuedItems.map((item, i) => (
                     <li
                       key={i}
-                      className={styles.queuedItem}
+                      className={`${styles.queuedItem}${queuedDrag === i ? ` ${styles.queuedItemDragging}` : ""}`}
                       data-queued-item={String(i)}
+                      draggable={editingQueued == null && !queuedWritePending}
+                      onDragStart={(e) => {
+                        e.dataTransfer.effectAllowed = "move";
+                        e.dataTransfer.setData("text/plain", String(i));
+                        setQueuedDrag(i);
+                      }}
+                      onDragOver={(e) => {
+                        if (queuedDrag == null) return;
+                        e.preventDefault();
+                        e.dataTransfer.dropEffect = "move";
+                      }}
+                      onDrop={(e) => {
+                        e.preventDefault();
+                        const from = queuedDrag;
+                        setQueuedDrag(null);
+                        if (from == null || from === i) return;
+                        writeQueuedItems(swapQueuedItem(queuedItems, from, i - from));
+                      }}
+                      onDragEnd={() => setQueuedDrag(null)}
                     >
                       {editingQueued === i ? (
                         <>
@@ -4004,6 +4045,17 @@ export const ThreadView = memo(function ThreadView({
                             className={styles.queuedActions}
                             data-queued-actions=""
                           >
+                            {canSteerQueued ? (
+                              <button
+                                type="button"
+                                className={styles.retryBtn}
+                                disabled={queuedWritePending}
+                                onClick={() => onSteerQueued?.(i)}
+                                data-steer-queued=""
+                              >
+                                Steer now
+                              </button>
+                            ) : null}
                             {i > 0 ? (
                               <button
                                 type="button"
@@ -4095,7 +4147,9 @@ export const ThreadView = memo(function ThreadView({
               </>
             ) : editingQueued != null ? (
               <>
-                <span className={styles.queuedLabel}>Queued</span>
+                <span className={styles.queuedLabel} data-queued-label="">
+                    {isWorking ? "Queued" : "Queued, paused"}
+                  </span>
                 <textarea
                   className={styles.queuedEdit}
                   value={queuedEditDraft}
@@ -4148,7 +4202,9 @@ export const ThreadView = memo(function ThreadView({
             ) : (
               <>
                 <div className={styles.queuedBody}>
-                  <span className={styles.queuedLabel}>Queued</span>
+                  <span className={styles.queuedLabel} data-queued-label="">
+                    {isWorking ? "Queued" : "Queued, paused"}
+                  </span>
                   <span className={styles.queuedText}>{queuedPrompt}</span>
                   {queuedError ? (
                     <span
@@ -4163,6 +4219,16 @@ export const ThreadView = memo(function ThreadView({
                   className={styles.queuedActions}
                   data-queued-actions=""
                 >
+                  {canSteerQueued ? (
+                    <button
+                      type="button"
+                      className={styles.retryBtn}
+                      onClick={() => onSteerQueued?.(0)}
+                      data-steer-queued=""
+                    >
+                      Steer now
+                    </button>
+                  ) : null}
                   {onEditQueued ? (
                     <button
                       type="button"

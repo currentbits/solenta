@@ -1074,6 +1074,35 @@ describe("cursor runner integration", () => {
     assert.ok(msgs.some((m) => m.role === "event" && m.text === "Plan rejected"));
   });
 
+  it("Keep planning notes on a persisted plan run as the next planning turn (#1501)", async () => {
+    process.env.CODER_FAKE_CURSOR_SCENARIO = "plan";
+    const thread = store.getThreads()[0];
+    store.updateThread(thread.id, { permissionMode: "plan" });
+    store.saveNow();
+
+    await runner.startRun({ threadId: thread.id, prompt: "plan it" });
+    await waitFor(() => store.getThread(thread.id).status === "done");
+    const pendingDeny = runner.getPendingPermission(thread.id);
+    assert.ok(pendingDeny, "expected a plan approval card");
+
+    runner.respondPermission({
+      threadId: thread.id,
+      requestId: pendingDeny.requestId,
+      decision: "deny",
+      feedback: "  split step 2 in two  ",
+    });
+
+    await waitFor(() =>
+      store
+        .getMessages(thread.id)
+        .some((m) => m.role === "user" && m.text === "split step 2 in two"),
+    );
+    await waitFor(() => store.getThread(thread.id).status !== "working");
+    const after = store.getThread(thread.id);
+    assert.equal(after.permissionMode, "plan", "the notes turn still plans");
+    assert.equal(after.queued ?? null, null);
+  });
+
   it("default-mode cursor run does not open a plan card (#707)", async () => {
     const thread = store.getThreads()[0];
     await runner.startRun({ threadId: thread.id, prompt: "do the thing" });

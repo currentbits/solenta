@@ -191,6 +191,9 @@ module.exports = {
     ctx.broadcast("threads:changed", services.listThreads(ctx.store));
     return ctx.store.getThread(thread.id);
   },
+  "threads:savePlan": async (ctx, input) => {
+    return services.savePlanFile(ctx.store, input);
+  },
   "threads:fork": async (ctx, input) => {
     const thread = services.forkThread(ctx.store, input);
     ctx.broadcast("threads:changed", services.listThreads(ctx.store));

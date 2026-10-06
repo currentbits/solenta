@@ -436,7 +436,7 @@ function setWebSearch(store, input) {
  * Fork / hand off: new thread in the source's project. Source is never modified.
  *
  * @param {import('./store').Store} store
- * @param {{ threadId: string, provider?: string, model?: string | null, worktree?: boolean, title?: string }} input
+ * @param {{ threadId: string, provider?: string, model?: string | null, worktree?: boolean, title?: string, leavePlan?: boolean }} input
  * @returns {object}
  */
 function forkThread(store, input) {
@@ -513,7 +513,11 @@ function forkThread(store, input) {
   // honour must not be copied onto the fork. Teach-mode caps still win.
   forkPatch.permissionMode = snapPermissionModeForThread(
     nextEntry,
-    source.permissionMode,
+    // "Implement in a new thread" (#1501): the fork carries out an
+    // approved plan, so it must not start still in plan mode.
+    input.leavePlan === true && source.permissionMode === "plan"
+      ? "default"
+      : source.permissionMode,
     forkPatch.teach,
   );
   // Ask mode is the same: a fork of a read-only Q&A thread stays read-only
@@ -537,6 +541,62 @@ function forkThread(store, input) {
   const updated = store.updateThread(created.id, forkPatch);
   store.save();
   return updated ? { ...updated } : { ...created, ...forkPatch };
+}
+
+/**
+ * "Save plan to file" (#1501): write plan markdown into the thread's
+ * checkout at docs/plans/<date>-<slug>.md. Never overwrites; a remote
+ * (SSH) checkout is not on this disk and is refused.
+ *
+ * @param {import('./store').Store} store
+ * @param {{ threadId: string, plan: string }} input
+ * @returns {{ path: string }} repo-relative path written
+ */
+function savePlanFile(store, input) {
+  const fs = require("node:fs");
+  const path = require("node:path");
+  const threadId = input && input.threadId;
+  const thread = store.getThread(threadId);
+  if (!thread) throw new Error(`Unknown thread: ${threadId}`);
+  const plan = String((input && input.plan) || "").trim();
+  if (!plan) throw new Error("The plan is empty");
+  const project = store.getProject(thread.projectId);
+  if (!project) throw new Error(`Unknown project for thread: ${threadId}`);
+  if (project.remoteHost) {
+    throw new Error("Saving a plan is not available for remote projects yet");
+  }
+  const cwd = thread.worktreePath || project.path;
+  if (!cwd || !fs.existsSync(cwd)) {
+    throw new Error("This thread has no checkout on disk yet");
+  }
+  const firstLine =
+    plan.split(/\r?\n/).find((l) => l.trim()) || String(thread.title || "");
+  const slug =
+    firstLine
+      .toLowerCase()
+      .replace(/^#+\s*/, "")
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .slice(0, 60)
+      .replace(/-+$/, "") || "plan";
+  const d = new Date();
+  const day = [
+    d.getFullYear(),
+    String(d.getMonth() + 1).padStart(2, "0"),
+    String(d.getDate()).padStart(2, "0"),
+  ].join("-");
+  const rel = path.posix.join("docs", "plans", `${day}-${slug}.md`);
+  const full = path.join(cwd, ...rel.split("/"));
+  fs.mkdirSync(path.dirname(full), { recursive: true });
+  try {
+    fs.writeFileSync(full, plan + "\n", { flag: "wx" });
+  } catch (err) {
+    if (err && err.code === "EEXIST") {
+      throw new Error(`${rel} already exists; not overwriting it`);
+    }
+    throw err;
+  }
+  return { path: rel };
 }
 
 /**
@@ -1344,6 +1404,7 @@ function getThreadDetail(store, threadId, workflow = null, opts) {
 }
 
 module.exports = {
+  savePlanFile,
   normalizeBaseBranch,
   createThread,
   recordLastUsedDefaults,

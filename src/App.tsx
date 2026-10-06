@@ -191,6 +191,8 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     queued,
     cancelQueued,
     retryQueued,
+    steerQueued,
+    savePlan,
     editQueued,
     fetchIssue,
     startWorkflowRun,
@@ -960,6 +962,28 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
     retryQueued();
   }, [retryQueued]);
 
+  // "Implement in a new thread" (#1501): the ordinary fork path, out of
+  // plan mode, with the plan as its first prompt.
+  const handleImplementPlan = useCallback(
+    async (plan: string) => {
+      if (!selectedThreadId) return;
+      const t = await forkThread(selectedThreadId, { leavePlan: true });
+      if (!t) return;
+      await startRun(`Implement this plan:\n\n${plan}`, t.id);
+    },
+    [selectedThreadId, forkThread, startRun],
+  );
+
+  const handleSavePlan = useCallback(
+    (plan: string) => savePlan(plan),
+    [savePlan],
+  );
+
+  const handleSteerQueued = useCallback(
+    (index: number) => void steerQueued(index),
+    [steerQueued],
+  );
+
   const handleEditQueued = useCallback(
     (prompt: string, items?: string[]) => {
       return editQueued(prompt, undefined, items);
@@ -1691,6 +1715,9 @@ export default function App({ rendererSha: rendererShaOverride }: AppProps = {})
         }
         onCancelQueued={handleCancelQueued}
         onRetryQueued={handleRetryQueued}
+        onSteerQueued={handleSteerQueued}
+        onImplementPlan={handleImplementPlan}
+        onSavePlan={handleSavePlan}
         onEditQueued={handleEditQueued}
         restoreDraft={queuedDraftRestore}
         onSetPermissionMode={setPermissionMode}

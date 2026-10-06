@@ -806,7 +806,7 @@ export function createRunEngine(ctx: DevCore) {
 
 export function createRuns(ctx: DevCtx): Pick<CoderApi, "runs"> {
   const { details, rewindRestore, runTimers, runStates, emitDetail, syncThreadRow, fakeWorktree, clearRunTimer, isSimulate, settleRunSpend, assertUnderBudget, startRunTimer } = ctx;
-  return {
+  const api: Pick<CoderApi, "runs"> = {
     runs: {
       async start(input) {
         const detail = details.get(input.threadId);
@@ -915,6 +915,26 @@ export function createRuns(ctx: DevCtx): Pick<CoderApi, "runs"> {
         emitDetail(detail);
         startRunTimer(input.threadId);
         return { runId };
+      },
+      async sendQueued(input) {
+        const detail = details.get(input.threadId);
+        if (!detail) throw new Error(`Thread not found: ${input.threadId}`);
+        const q = detail.thread.queued;
+        if (!q) return;
+        const items = q.items?.length ? q.items : [q.prompt];
+        const [head, ...rest] = items;
+        const thread: ThreadInfo = {
+          ...detail.thread,
+          queued: rest.length ? { prompt: rest.join("\n\n"), items: rest } : null,
+        };
+        detail.thread = thread;
+        syncThreadRow(thread);
+        await api.runs.start({
+          threadId: input.threadId,
+          prompt: head,
+          attachments: q.attachments,
+          fromQueue: true,
+        });
       },
       async steer(input) {
         const detail = details.get(input.threadId);
@@ -1152,4 +1172,5 @@ export function createRuns(ctx: DevCtx): Pick<CoderApi, "runs"> {
       },
     },
   };
+  return api;
 }

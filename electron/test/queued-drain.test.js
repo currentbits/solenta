@@ -285,3 +285,191 @@ describe("queued drain after failed / stopped (#1203)", () => {
     ]);
   });
 });
+
+function userRows(store, threadId) {
+  return (store.getMessages(threadId) || []).filter((m) => m.role === "user");
+}
+
+function queueItems(store, threadId, items) {
+  for (const prompt of items) services.setQueued(store, { threadId, prompt });
+}
+
+describe("queue drains one item per turn (#1501)", () => {
+  let prevSimulate;
+  let prevAgentCmd;
+  let fx;
+
+  beforeEach(() => {
+    prevSimulate = process.env.CODER_SIMULATE;
+    prevAgentCmd = process.env.CODER_AGENT_CMD;
+  });
+
+  afterEach(async () => {
+    if (fx) {
+      fx.runner.stopAll();
+      await rmTree(fx.tmpDir);
+      fx = null;
+    }
+    restoreEnv(prevSimulate, prevAgentCmd);
+  });
+
+  it("runs each queued item as its own turn, in order", async () => {
+    process.env.CODER_SIMULATE = "1";
+    delete process.env.CODER_AGENT_CMD;
+    fx = await makeFixture();
+    const { store, runner, thread } = fx;
+
+    await runner.startRun({ threadId: thread.id, prompt: "first turn" });
+    queueItems(store, thread.id, ["a", "b", "c"]);
+
+    await waitFor(() => {
+      const live = store.getThread(thread.id);
+      return userTexts(store, thread.id).includes("c") && live.status === "done";
+    });
+    assert.deepEqual(userTexts(store, thread.id), ["first turn", "a", "b", "c"]);
+    const runIds = userRows(store, thread.id).map((m) => m.runId);
+    assert.equal(new Set(runIds).size, 4, "each item must be its own run");
+    assert.equal(store.getThread(thread.id).queued, null);
+  });
+
+  it("a stop mid-queue keeps the rest queued", async () => {
+    delete process.env.CODER_SIMULATE;
+    process.env.CODER_AGENT_CMD = `${process.execPath} -e ${fakeAgentSuccessScript()}`;
+    fx = await makeFixture();
+    const { store, runner, thread } = fx;
+
+    await runner.startRun({ threadId: thread.id, prompt: "first turn" });
+    queueItems(store, thread.id, ["a", "b", "c"]);
+    // "a" spawns after the first turn lands, so it picks up the slow agent.
+    process.env.CODER_AGENT_CMD = `${process.execPath} -e ${fakeAgentSlowScript()}`;
+    await waitFor(
+      () =>
+        userTexts(store, thread.id).includes("a") &&
+        store.getThread(thread.id).status === "working",
+    );
+    await settle(80);
+    await runner.stopRun({ threadId: thread.id });
+    await settle();
+
+    const live = store.getThread(thread.id);
+    assert.notEqual(live.status, "working");
+    assert.deepEqual(live.queued.items, ["b", "c"]);
+    assert.equal(live.queued.prompt, "b\n\nc");
+    assert.deepEqual(userTexts(store, thread.id), ["first turn", "a"]);
+  });
+
+  it("a failure mid-queue keeps the rest queued", async () => {
+    delete process.env.CODER_SIMULATE;
+    process.env.CODER_AGENT_CMD = `${process.execPath} -e ${fakeAgentSuccessScript()}`;
+    fx = await makeFixture();
+    const { store, runner, thread } = fx;
+
+    await runner.startRun({ threadId: thread.id, prompt: "first turn" });
+    queueItems(store, thread.id, ["a", "b", "c"]);
+    process.env.CODER_AGENT_CMD = `${process.execPath} -e ${fakeAgentFailScript()}`;
+    await waitFor(
+      () =>
+        userTexts(store, thread.id).includes("a") &&
+        store.getThread(thread.id).status === "failed",
+    );
+    await settle();
+
+    const live = store.getThread(thread.id);
+    assert.equal(live.status, "failed");
+    assert.deepEqual(live.queued.items, ["b", "c"]);
+    assert.deepEqual(userTexts(store, thread.id), ["first turn", "a"]);
+  });
+
+  it("a notice arriving mid-queue runs first and the queue resumes after it", async () => {
+    process.env.CODER_SIMULATE = "1";
+    delete process.env.CODER_AGENT_CMD;
+    fx = await makeFixture();
+    const { store, runner, thread } = fx;
+
+    await runner.startRun({ threadId: thread.id, prompt: "first turn" });
+    queueItems(store, thread.id, ["a", "b"]);
+    runner.deliverNotice({ threadId: thread.id, line: "[peer from x] heads up" });
+
+    await waitFor(() => {
+      const live = store.getThread(thread.id);
+      return userTexts(store, thread.id).includes("b") && live.status === "done";
+    });
+    const texts = userTexts(store, thread.id);
+    const notice = texts.findIndex((t) => /heads up/.test(t));
+    assert.ok(notice > 0, "the notice is delivered as its own turn");
+    assert.ok(notice < texts.indexOf("a"), "the notice keeps priority over the queue");
+    assert.deepEqual(
+      texts.filter((t) => !/heads up/.test(t)),
+      ["first turn", "a", "b"],
+    );
+    assert.equal(store.getThread(thread.id).queued, null);
+    assert.notEqual(store.getThread(thread.id).status, "failed");
+  });
+
+  it("Send now on a parked queue resumes one item at a time", async () => {
+    delete process.env.CODER_SIMULATE;
+    process.env.CODER_AGENT_CMD = `${process.execPath} -e ${fakeAgentFailScript()}`;
+    fx = await makeFixture();
+    const { store, runner, thread } = fx;
+
+    await runner.startRun({ threadId: thread.id, prompt: "first turn" });
+    queueItems(store, thread.id, ["a", "b"]);
+    await waitFor(() => store.getThread(thread.id).status === "failed");
+    await settle();
+    assert.deepEqual(store.getThread(thread.id).queued.items, ["a", "b"]);
+
+    process.env.CODER_AGENT_CMD = `${process.execPath} -e ${fakeAgentSuccessScript()}`;
+    await runner.sendQueued({ threadId: thread.id });
+    await waitFor(
+      () =>
+        userTexts(store, thread.id).includes("b") &&
+        store.getThread(thread.id).status === "done",
+    );
+    assert.deepEqual(userTexts(store, thread.id), ["first turn", "a", "b"]);
+    assert.equal(store.getThread(thread.id).queued, null);
+  });
+});
+
+describe("takeQueuedHead / restoreQueuedHead (#1501)", () => {
+  let tmpDir;
+  afterEach(async () => {
+    if (tmpDir) await rmTree(tmpDir);
+    tmpDir = null;
+  });
+
+  async function storeWithThread() {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "coder-qhead-"));
+    const store = new Store(path.join(tmpDir, "store.json"));
+    const repo = path.join(tmpDir, "app");
+    fs.mkdirSync(repo);
+    git(repo, ["init"]);
+    const project = await services.addProject(store, repo);
+    const thread = services.createThread(store, { projectId: project.id });
+    return { store, threadId: thread.id };
+  }
+
+  it("takes the head with the attachments and leaves the rest", async () => {
+    const { store, threadId } = await storeWithThread();
+    const shot = { kind: "image", path: "/tmp/x.png", name: "x.png" };
+    services.setQueued(store, { threadId, prompt: "a", attachments: [shot] });
+    services.setQueued(store, { threadId, prompt: "b" });
+    const head = services.takeQueuedHead(store, { threadId });
+    assert.equal(head.prompt, "a");
+    assert.deepEqual(head.attachments, [shot]);
+    const rest = store.getThread(threadId).queued;
+    assert.deepEqual(rest.items, ["b"]);
+    assert.equal(rest.attachments, undefined);
+  });
+
+  it("a failed head goes back in front of anything queued since", async () => {
+    const { store, threadId } = await storeWithThread();
+    queueItems(store, threadId, ["a", "b"]);
+    const head = services.takeQueuedHead(store, { threadId });
+    services.setQueued(store, { threadId, prompt: "c" });
+    services.restoreQueuedHead(store, { threadId, taken: head, error: "boom" });
+    const q = store.getThread(threadId).queued;
+    assert.deepEqual(q.items, ["a", "b", "c"]);
+    assert.equal(q.prompt, "a\n\nb\n\nc");
+    assert.equal(q.error, "boom");
+  });
+});

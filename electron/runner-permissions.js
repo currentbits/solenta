@@ -289,6 +289,11 @@ function createPermissions(ctx) {
   function respondPermission(input) {
     const { threadId, requestId, decision, answers, updatedCommand } =
       input || {};
+    // "Keep planning" may carry the user's notes for the next plan (#1501).
+    const feedback =
+      decision === "deny" && input && typeof input.feedback === "string"
+        ? input.feedback.trim()
+        : "";
     const ci = ciWorkflowSignOffs.get(threadId);
     if (ci && !ci.approved && ci.id === requestId) {
       if (decision !== "allow" && decision !== "deny") {
@@ -317,13 +322,13 @@ function createPermissions(ctx) {
     }
     const e = active.get(threadId);
     if (!e || !e.handle) {
-      return respondPersistedPlan(threadId, requestId, decision);
+      return respondPersistedPlan(threadId, requestId, decision, feedback);
     }
     if (e.kind === "codex") {
       return respondCodexPermission(e, threadId, input);
     }
     if (e.kind !== "claude") {
-      return respondPersistedPlan(threadId, requestId, decision);
+      return respondPersistedPlan(threadId, requestId, decision, feedback);
     }
     const idx = e.pendingPermissions.findIndex((p) => p.id === requestId);
     if (idx < 0) {
@@ -365,7 +370,8 @@ function createPermissions(ctx) {
       response = {
         behavior: "deny",
         message: isPlan
-          ? "Plan rejected by user in Coder; keep planning"
+          ? "Plan rejected by user in Coder; keep planning" +
+            (feedback ? `. User feedback on the plan:\n${feedback}` : "")
           : "Denied by user in Coder",
       };
     }
@@ -387,7 +393,9 @@ function createPermissions(ctx) {
     }
     const label = isPlan
       ? decision === "deny"
-        ? "Plan rejected"
+        ? feedback
+          ? `Plan rejected: ${truncate(feedback, 200)}`
+          : "Plan rejected"
         : "Plan approved"
       : decision === "deny"
         ? `Denied: ${pending.summary}`
@@ -550,8 +558,9 @@ function createPermissions(ctx) {
    * @param {string} threadId
    * @param {string} requestId
    * @param {string} decision
+   * @param {string} [feedback] - deny only: sent as the next planning turn
    */
-  function respondPersistedPlan(threadId, requestId, decision) {
+  function respondPersistedPlan(threadId, requestId, decision, feedback = "") {
     const thread = store.getThread(threadId);
     const pending = thread && thread.pendingPlan;
     if (
@@ -585,6 +594,14 @@ function createPermissions(ctx) {
       "event",
       approved ? "Plan approved" : "Plan rejected",
     );
+    // No live CLI to hear the notes: they go first in line as the next
+    // turn, still in plan mode, and the drain below sends them.
+    if (!approved && feedback) {
+      services.restoreQueuedHead(store, {
+        threadId,
+        taken: { prompt: feedback, items: [feedback] },
+      });
+    }
     store.save();
     pushDetail(threadId);
     pushThreadsChanged();
