@@ -74,9 +74,17 @@ export function useStickToBottom({
     setWindowStart((s) => extendWindowStart(s));
   };
 
+  const prevStart = useRef(start);
   useLayoutEffect(() => {
+    const grewUp = start < prevStart.current;
+    prevStart.current = start;
     const prev = pendingPrepend.current;
-    if (prev == null) return;
+    if (prev == null) {
+      // Entries mounted above a pinned view (the tail-first switch filling
+      // in): stay at the bottom before paint.
+      if (grewUp) pinIfStuck();
+      return;
+    }
     pendingPrepend.current = null;
     const el = bodyRef.current;
     if (!el) return;

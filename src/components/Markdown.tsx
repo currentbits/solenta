@@ -7,6 +7,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type ReactElement,
   type ReactNode,
 } from "react";
 import ReactMarkdown, {
@@ -213,18 +214,76 @@ const COMPONENTS: Components = {
 /** Test hook: how many times a markdown chunk has been parsed. */
 export const markdownParses = { count: 0 };
 
-/** One parse. memo: a settled chunk of a streaming reply keeps its text. */
-const MarkdownChunk = memo(function MarkdownChunk({ text }: { text: string }) {
+/**
+ * Parsed markdown by text, most recently used last (#1475). The parse is a
+ * pure function of the text, and a React element tree can be mounted again,
+ * so switching back to a recently viewed thread skips micromark/mdast/hast,
+ * which was ~45% of the big-thread switch frame. Bounded by text length:
+ * a mounted tail window holds at most TRANSCRIPT_CHAR_BUDGET (100k) chars,
+ * so this covers the last few threads viewed.
+ */
+const PARSED_CHAR_BUDGET = 400_000;
+const parsed = new Map<string, ReactElement>();
+let parsedChars = 0;
+
+function parseMarkdown(text: string): ReactElement {
   markdownParses.count++;
-  return (
-    <ReactMarkdown
-      remarkPlugins={REMARK_PLUGINS}
-      urlTransform={markdownUrlTransform}
-      components={COMPONENTS}
-    >
-      {text}
-    </ReactMarkdown>
-  );
+  return ReactMarkdown({
+    children: text,
+    remarkPlugins: REMARK_PLUGINS,
+    urlTransform: markdownUrlTransform,
+    components: COMPONENTS,
+  });
+}
+
+/** Test hook: drop every cached parse. */
+export function clearParsedMarkdown() {
+  parsed.clear();
+  parsedChars = 0;
+}
+
+function cachedParse(text: string): ReactElement {
+  const hit = parsed.get(text);
+  if (hit) {
+    parsed.delete(text);
+    parsed.set(text, hit);
+    return hit;
+  }
+  const el = parseMarkdown(text);
+  if (text.length > PARSED_CHAR_BUDGET) return el;
+  parsed.set(text, el);
+  parsedChars += text.length;
+  for (const key of parsed.keys()) {
+    if (parsedChars <= PARSED_CHAR_BUDGET) break;
+    parsed.delete(key);
+    parsedChars -= key.length;
+  }
+  return el;
+}
+
+/** Whether `text` is in the parse cache. */
+export function isParsed(text: string): boolean {
+  return parsed.has(text);
+}
+
+/** Parse `text` into the cache ahead of its mount (tail-first switch). */
+export function preparseMarkdown(text: string): void {
+  cachedParse(text);
+}
+
+/**
+ * One parse. memo: a settled chunk of a streaming reply keeps its text.
+ * `live` marks the growing tail of a streaming reply: its text changes on
+ * every push, so caching it would only evict settled parses.
+ */
+const MarkdownChunk = memo(function MarkdownChunk({
+  text,
+  live = false,
+}: {
+  text: string;
+  live?: boolean;
+}) {
+  return live ? parseMarkdown(text) : cachedParse(text);
 });
 
 /**
@@ -248,7 +307,10 @@ export function MarkdownBody({
       {chunks.map((chunk, i) => (
         <Fragment key={i}>
           {i > 0 && "\n"}
-          <MarkdownChunk text={chunk} />
+          <MarkdownChunk
+            text={chunk}
+            live={streaming && i === chunks.length - 1}
+          />
         </Fragment>
       ))}
     </div>
