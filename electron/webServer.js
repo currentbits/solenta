@@ -3,9 +3,11 @@
 /**
  * HTTP static server for Solenta Web, plus the --serve-web flag parser.
  *
- * Binding: 127.0.0.1 by default. --serve-host widens it.
- * There is no TLS in v1. Opening the bind beyond loopback puts the
+ * Binding: 127.0.0.1 by default. --serve-host, or the Settings "Allow
+ * devices on my network" switch, widens it; nothing else does.
+ * There is no TLS here. Opening the bind beyond loopback puts the
  * token-gated API on the LAN; that is the operator's informed choice.
+ * Tailscale Serve (webAccess.js) is the TLS path.
  *
  * Requiring this module creates ZERO listeners. Listeners exist only
  * after startWebServer() is called (main.js does that solely when
@@ -17,7 +19,13 @@ const fs = require("node:fs");
 const path = require("node:path");
 const crypto = require("node:crypto");
 const { pipeline } = require("node:stream/promises");
-const { attachWebBridge, WS_PATH } = require("./webBridge.js");
+const {
+  attachWebBridge,
+  createAuthLimiter,
+  resolveAuthorize,
+  tokensEqual,
+  WS_PATH,
+} = require("./webBridge.js");
 const { resolveByteRange } = require("./artifact-range.js");
 
 const TOKEN_FILENAME = "web-token";
@@ -201,17 +209,6 @@ function serveStatic(req, res, staticDir) {
 }
 
 /**
- * @param {string} a
- * @param {string} b
- */
-function tokensEqual(a, b) {
-  const ba = Buffer.from(String(a));
-  const bb = Buffer.from(String(b));
-  if (ba.length !== bb.length) return false;
-  return crypto.timingSafeEqual(ba, bb);
-}
-
-/**
  * @param {string} filePath
  * @param {{ start: number, end: number, length: number }} range
  * @param {typeof fs.createReadStream} createReadStream
@@ -288,13 +285,14 @@ async function pipeArtifactStream(req, res, stream) {
  * @param {import("node:http").IncomingMessage} req
  * @param {import("node:http").ServerResponse} res
  * @param {object} opts
- * @param {string} opts.token
+ * @param {string} [opts.token]
+ * @param {(token: string) => ({ id: string } | null)} [opts.authorize]
+ * @param {ReturnType<typeof createAuthLimiter>} [opts.limiter]
  * @param {{ open: Function } | null | undefined} opts.artifactStore
  * @param {URL} opts.url
  * @param {typeof fs.createReadStream} [opts.createReadStream]
  */
 async function serveRunArtifact(req, res, opts) {
-  const token = opts.token;
   const artifactStore = opts.artifactStore;
   const url = opts.url;
   const createReadStream = opts.createReadStream || fs.createReadStream;
@@ -315,8 +313,16 @@ async function serveRunArtifact(req, res, opts) {
     return true;
   }
 
-  const queryToken = url.searchParams.get("token");
-  if (!tokensEqual(queryToken, token)) {
+  // Checked on every request, so a revoked device's links die at once.
+  const remote = (req.socket && req.socket.remoteAddress) || "unknown";
+  if (opts.limiter && opts.limiter.blocked(remote)) {
+    res.writeHead(429, artifactSecurityHeaders());
+    res.end();
+    return true;
+  }
+  const authorize = resolveAuthorize(opts);
+  if (!authorize(url.searchParams.get("token") || "")) {
+    if (opts.limiter) opts.limiter.fail(remote);
     res.writeHead(401, artifactSecurityHeaders());
     res.end();
     return true;
@@ -401,7 +407,8 @@ async function serveRunArtifact(req, res, opts) {
  * @param {object} opts
  * @param {string} [opts.host]
  * @param {number} [opts.port]
- * @param {string} opts.token
+ * @param {string} [opts.token]  one fixed token; or pass authorize
+ * @param {(token: string) => ({ id: string } | null)} [opts.authorize]
  * @param {object} opts.ctx
  * @param {object} [opts.handlers]
  * @param {string | null} [opts.staticDir]
@@ -412,16 +419,16 @@ async function serveRunArtifact(req, res, opts) {
 function startWebServer(opts) {
   const host = (opts && opts.host) || DEFAULT_HOST;
   const port = opts && opts.port != null ? opts.port : DEFAULT_PORT;
-  const token = opts && opts.token;
+  const authorize = resolveAuthorize(opts);
+  // One limiter for both doors, so the artifact route is no side channel.
+  const limiter = createAuthLimiter();
   const ctx = opts && opts.ctx;
   const staticDir = (opts && opts.staticDir) || null;
   const artifactStore = (opts && opts.artifactStore) || null;
   const createReadStream = (opts && opts.createReadStream) || fs.createReadStream;
   const log = (opts && opts.log) || (() => {});
 
-  if (!token) throw new Error("startWebServer requires a token");
-
-  // No TLS. Default bind is loopback. --serve-host is an informed LAN choice.
+  // No TLS. Default bind is loopback. LAN is an informed, explicit choice.
   const server = http.createServer(async (req, res) => {
     let url;
     try {
@@ -432,7 +439,8 @@ function startWebServer(opts) {
       return;
     }
     const handled = await serveRunArtifact(req, res, {
-      token,
+      authorize,
+      limiter,
       artifactStore,
       url,
       createReadStream,
@@ -442,7 +450,8 @@ function startWebServer(opts) {
   });
 
   const bridge = attachWebBridge(server, {
-    token,
+    authorize,
+    limiter,
     ctx,
     handlers: opts.handlers,
     path: WS_PATH,
@@ -476,6 +485,7 @@ function startWebServer(opts) {
       server,
       bridge,
       broadcast: bridge.broadcast,
+      disconnect: bridge.disconnect,
       close,
     };
   });

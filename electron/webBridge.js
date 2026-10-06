@@ -8,6 +8,10 @@
  * An invoke before auth-ok gets an error reply, then the socket is dropped.
  * After auth-ok, invoke is dispatched through IPC_HANDLERS (the same object
  * ipcMain registration iterates).
+ *
+ * Failed auth is rate-limited per remote address: past the limit the socket
+ * is closed before the token is even compared. Each authed socket remembers
+ * its device, so revoking a device drops its live sockets at once.
  */
 
 const crypto = require("node:crypto");
@@ -27,6 +31,56 @@ function tokensEqual(a, b) {
   return crypto.timingSafeEqual(ba, bb);
 }
 
+const AUTH_MAX_FAILURES = 10;
+const AUTH_WINDOW_MS = 60 * 1000;
+// Close code for "too many failed attempts" (4000-4999 is app-defined).
+const CLOSE_RATE_LIMITED = 4429;
+
+/**
+ * Failed-auth counter per key (remote address), sliding window.
+ *
+ * @param {{ maxFailures?: number, windowMs?: number, now?: () => number }} [opts]
+ */
+function createAuthLimiter(opts = {}) {
+  const maxFailures = opts.maxFailures ?? AUTH_MAX_FAILURES;
+  const windowMs = opts.windowMs ?? AUTH_WINDOW_MS;
+  const now = opts.now || Date.now;
+  /** @type {Map<string, number[]>} */
+  const fails = new Map();
+  function recent(key) {
+    const t = now();
+    const list = (fails.get(key) || []).filter((x) => t - x < windowMs);
+    if (list.length) fails.set(key, list);
+    else fails.delete(key);
+    return list;
+  }
+  return {
+    blocked(key) {
+      return recent(String(key)).length >= maxFailures;
+    },
+    fail(key) {
+      const k = String(key);
+      // ponytail: crude cap so a spray of addresses cannot grow the map forever
+      if (!fails.has(k) && fails.size >= 1000) fails.delete(fails.keys().next().value);
+      const list = recent(k);
+      list.push(now());
+      fails.set(k, list);
+    },
+  };
+}
+
+/**
+ * Accept either an authorize(token) → {id}|null function or one fixed token.
+ *
+ * @param {{ authorize?: (token: string) => { id: string } | null, token?: string }} opts
+ */
+function resolveAuthorize(opts) {
+  if (opts && typeof opts.authorize === "function") return opts.authorize;
+  const token = opts && opts.token;
+  if (!token) throw new Error("web auth requires a token or an authorize function");
+  return (presented) => (tokensEqual(presented, token) ? { id: "token" } : null);
+}
+
 /**
  * @param {import("ws").WebSocket} ws
  * @param {object} obj
@@ -42,7 +96,9 @@ function sendJson(ws, obj) {
  *
  * @param {import("node:http").Server} httpServer
  * @param {object} opts
- * @param {string} opts.token
+ * @param {string} [opts.token]  one fixed token (tests, legacy callers)
+ * @param {(token: string) => ({ id: string } | null)} [opts.authorize]
+ * @param {ReturnType<typeof createAuthLimiter>} [opts.limiter]
  * @param {object} opts.ctx  ctx passed as first arg to IPC_HANDLERS[channel]
  * @param {typeof IPC_HANDLERS} [opts.handlers]  defaults to the exported map
  * @param {string} [opts.path]
@@ -51,20 +107,21 @@ function sendJson(ws, obj) {
  * @returns {{
  *   wss: import("ws").WebSocketServer,
  *   broadcast: (channel: string, payload: unknown) => void,
+ *   disconnect: (deviceId: string) => number,
  *   close: () => Promise<void>,
  * }}
  */
 function attachWebBridge(httpServer, opts) {
-  const token = opts && opts.token;
-  if (!token) throw new Error("attachWebBridge requires a token");
+  const authorize = resolveAuthorize(opts);
+  const limiter = opts.limiter || createAuthLimiter();
   const ctx = opts.ctx;
   const handlers = opts.handlers || IPC_HANDLERS;
   const path = opts.path || WS_PATH;
   const pingIntervalMs = opts.pingIntervalMs ?? 30000;
   const maxBufferedBytes = opts.maxBufferedBytes ?? 4 * 1024 * 1024;
 
-  /** @type {Set<import("ws").WebSocket>} */
-  const authed = new Set();
+  /** Authed socket → device id. @type {Map<import("ws").WebSocket, string>} */
+  const authed = new Map();
 
   const wss = new WebSocketServer({ server: httpServer, path });
 
@@ -85,7 +142,8 @@ function attachWebBridge(httpServer, opts) {
     clearInterval(interval);
   });
 
-  wss.on("connection", (ws) => {
+  wss.on("connection", (ws, req) => {
+    const remote = (req && req.socket && req.socket.remoteAddress) || "unknown";
     let sawFirst = false;
     let isAuthed = false;
     ws.isAlive = true;
@@ -115,12 +173,18 @@ function attachWebBridge(httpServer, opts) {
           ws.close();
           return;
         }
-        if (!tokensEqual(msg.token, token)) {
+        if (limiter.blocked(remote)) {
+          ws.close(CLOSE_RATE_LIMITED, "Too many failed attempts");
+          return;
+        }
+        const device = authorize(msg.token);
+        if (!device) {
+          limiter.fail(remote);
           ws.close();
           return;
         }
         isAuthed = true;
-        authed.add(ws);
+        authed.set(ws, device.id);
         sendJson(ws, { kind: "auth-ok" });
         return;
       }
@@ -177,7 +241,7 @@ function attachWebBridge(httpServer, opts) {
       return;
     }
     const frame = JSON.stringify({ kind: "push", channel, payload });
-    for (const client of authed) {
+    for (const client of authed.keys()) {
       if (client.readyState !== WebSocket.OPEN) continue;
       if (client.bufferedAmount > maxBufferedBytes) {
         authed.delete(client);
@@ -186,6 +250,18 @@ function attachWebBridge(httpServer, opts) {
       }
       client.send(frame);
     }
+  }
+
+  /** Terminate every socket a device authed with. Returns how many. */
+  function disconnect(deviceId) {
+    let n = 0;
+    for (const [client, id] of authed) {
+      if (id !== deviceId) continue;
+      authed.delete(client);
+      client.terminate();
+      n++;
+    }
+    return n;
   }
 
   async function close() {
@@ -202,10 +278,14 @@ function attachWebBridge(httpServer, opts) {
     });
   }
 
-  return { wss, broadcast, close };
+  return { wss, broadcast, disconnect, close };
 }
 
 module.exports = {
   attachWebBridge,
+  createAuthLimiter,
+  resolveAuthorize,
+  tokensEqual,
+  CLOSE_RATE_LIMITED,
   WS_PATH,
 };
