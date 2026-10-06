@@ -510,4 +510,4 @@ function buildDevCoder(): CoderApi {
   return api;
 }
 
-export const devCoder: CoderApi = buildDevCoder();
+export const devCoder: CoderApi = /* @__PURE__ */ buildDevCoder();

@@ -1,5 +1,6 @@
 import {
   memo,
+  Suspense,
   useCallback,
   useEffect,
   useMemo,
@@ -52,8 +53,6 @@ import {
   sameCrewProject,
 } from "../crewIntegration";
 import { CrewIntegration } from "./CrewIntegration";
-import { MemoryTab } from "./MemoryTab";
-import { SkillsTab } from "./SkillsTab";
 import { InspectorSection } from "./InspectorSection";
 import inspector from "./Inspector.module.css";
 import type { SettingsPane } from "./SettingsModal";
@@ -71,6 +70,15 @@ import {
 import { useEscapeClose } from "../useEscapeClose";
 import { useModalFocus } from "../useModalFocus";
 import styles from "./AgentsPanel.module.css";
+import { lazyNamed } from "../lazyNamed";
+
+// Never the default tab, so they load on first open (#1475 finding 7).
+const MemoryTab = lazyNamed(() =>
+  import("./MemoryTab").then((m) => m.MemoryTab),
+);
+const SkillsTab = lazyNamed(() =>
+  import("./SkillsTab").then((m) => m.SkillsTab),
+);
 
 export type PanelTab = "agents" | "git" | "memory" | "skills";
 
@@ -2930,6 +2938,7 @@ export const AgentsPanel = memo(function AgentsPanel({
           spotlightLane={spotlightLane}
         />
       ) : tab === "memory" ? (
+        <Suspense fallback={null}>
         <MemoryTab
           projectSlug={project?.path ?? project?.slug ?? null}
           consolidation={project ?? null}
@@ -2945,7 +2954,9 @@ export const AgentsPanel = memo(function AgentsPanel({
             onOpenSettings ? () => onOpenSettings("memory") : undefined
           }
         />
+        </Suspense>
       ) : tab === "skills" ? (
+        <Suspense fallback={null}>
         <SkillsTab
           projectPath={project?.path ?? null}
           listSkills={listSkills}
@@ -2954,6 +2965,7 @@ export const AgentsPanel = memo(function AgentsPanel({
           onManage={onOpenSettings ? () => onOpenSettings("skills") : undefined}
           refreshKey={skillsRefreshKey}
         />
+        </Suspense>
       ) : null}
       </div>
     </aside>

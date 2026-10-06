@@ -89,6 +89,8 @@ export function resolveCoderApi(isDev: boolean = isDevBuild()): CoderApi {
   // devCoder`, which round 51's web selection dropped). In a PRODUCTION web
   // build a missing token is the token-gate case (needsWebTokenGate), and
   // BootApp renders the gate before this is reached.
-  if (isDev) return devCoder;
+  // The MODE check is a build-time constant, so production bundles drop
+  // devCoder and its fake-data modules (~100 kB) entirely (#1475).
+  if (isDev && import.meta.env?.MODE !== "production") return devCoder;
   throw new Error("Missing web token");
 }

@@ -18,6 +18,11 @@ import {
 } from "./support/fakeCoder.ts";
 import App from "../src/App";
 import type { ThreadDetail, ThreadInfo } from "../src/shared/ipc";
+import {
+  defaultPaneLayout,
+  openPane,
+  serializePaneLayout,
+} from "../src/paneLayout";
 
 const SNAPSHOT_KEY = "coder.bootSnapshot.v1";
 const DETAIL_KEY = "coder.threadDetail.v1";
@@ -346,6 +351,78 @@ describe("cached thread detail write (#1475)", () => {
       if (prevIdle) w.requestIdleCallback = prevIdle;
       else delete w.requestIdleCallback;
       shell.unmount();
+    }
+  });
+});
+
+describe("boot snapshot without archived threads (#1475)", () => {
+  it("drops archived rows but keeps the selection and live rows' handoff chain", async () => {
+    const shell = await mount(<div />);
+    try {
+      const { saveBootSnapshot, loadBootSnapshot } = await import(
+        "../src/bootSnapshot"
+      );
+      const threads = [
+        thread({ id: "live" }),
+        thread({ id: "old", archived: true }),
+        thread({ id: "picked", archived: true }),
+        // live grandchild → archived worker → archived lead
+        thread({ id: "lead", archived: true }),
+        thread({ id: "mid", archived: true, handoffFrom: "lead", orchWorker: true }),
+        thread({ id: "kid", handoffFrom: "mid", orchWorker: true }),
+      ];
+      saveBootSnapshot({ projects: [], threads, selectedThreadId: "picked" });
+      assert.deepEqual(
+        loadBootSnapshot()?.threads.map((t) => t.id),
+        ["live", "picked", "lead", "mid", "kid"],
+      );
+    } finally {
+      shell.unmount();
+    }
+  });
+
+  it("boots with the Settled shelf filled in once the list loads", async () => {
+    const live = thread({ id: "t1", title: "live title" });
+    const gone = thread({ id: "t2", title: "archived title", archived: true });
+    const fake = createFakeCoder({
+      threads: [live, gone],
+      details: { t1: detail({ thread: live }) },
+    });
+    const m = await boot(fake, () => {
+      seedSnapshot({ threads: [live], selectedThreadId: "t1" });
+    });
+    try {
+      await m.flush();
+      assert.match(m.text(), /Settled · 1/);
+    } finally {
+      m.unmount();
+    }
+  });
+});
+
+describe("pane layout pruning at boot (#1475)", () => {
+  it("drops layouts of threads missing from the loaded list", async () => {
+    const t1 = thread({ id: "t1", title: "live" });
+    const fake = createFakeCoder({
+      threads: [t1],
+      details: { t1: detail({ thread: t1 }) },
+    });
+    const split = serializePaneLayout(
+      openPane(defaultPaneLayout(), "diff", "pane-1").layout,
+    );
+    const m = await boot(fake, () => {
+      window.localStorage.setItem("coder.paneLayout.gone", split);
+      window.localStorage.setItem("coder.paneLayout.t1", split);
+    });
+    try {
+      await m.flush();
+      assert.equal(window.localStorage.getItem("coder.paneLayout.gone"), null);
+      assert.ok(
+        window.localStorage.getItem("coder.paneLayout.t1")?.includes('"diff"'),
+        "the open thread keeps its split",
+      );
+    } finally {
+      m.unmount();
     }
   });
 });

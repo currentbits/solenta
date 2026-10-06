@@ -98,7 +98,7 @@ export const DEV_PROVIDERS: ProviderInfo[] = [
 ];
 
 /** Browser-dev fixture for the Agents-tab crew list (issue #277). */
-export const SEED_CREW_NOW = Date.now();
+export const SEED_CREW_NOW = /* @__PURE__ */ Date.now();
 export const SEED_CREW_TASKS: CrewTaskView[] = [
   {
     id: "t1",

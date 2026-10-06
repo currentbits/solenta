@@ -205,3 +205,160 @@ describe("applyThreads identity (#617)", () => {
     m.unmount();
   });
 });
+
+/**
+ * threads:changed carries row patches (#1475). A patch only applies on top of
+ * the push it names as base; anything else resyncs with threads.list.
+ */
+describe("threads:changed row patches (#1475)", () => {
+  it("applies an in-order patch and keeps untouched rows", async () => {
+    const rows = [
+      thread({ id: "t1", title: "one" }),
+      thread({ id: "t2", title: "two" }),
+      thread({ id: "t3", title: "three" }),
+    ];
+    const fake = createFakeCoder({ threads: rows });
+    let latest: ThreadInfo[] = [];
+    const m = await bootProbe(fake, (r) => {
+      latest = r;
+    });
+    await inAct(() => fake.emitThreads({ seq: 1, threads: latest.slice() }));
+    await m.flush();
+    const first = latest;
+    const listsBefore = fake.of("threads.list").length;
+
+    await inAct(() =>
+      fake.emitThreads({
+        seq: 2,
+        base: 1,
+        upserts: [{ ...first[1], title: "renamed" }],
+        removedIds: ["t3"],
+      }),
+    );
+    await m.flush();
+
+    assert.deepEqual(
+      latest.map((t) => [t.id, t.title]),
+      [
+        ["t1", "one"],
+        ["t2", "renamed"],
+      ],
+    );
+    assert.equal(latest[0], first[0], "untouched row keeps identity");
+    assert.equal(fake.of("threads.list").length, listsBefore, "no resync");
+    m.unmount();
+  });
+
+  it("resyncs with threads.list when a patch skips a push", async () => {
+    const rows = [
+      thread({ id: "t1", title: "one" }),
+      thread({ id: "t2", title: "two" }),
+    ];
+    const fake = createFakeCoder({ threads: rows });
+    let latest: ThreadInfo[] = [];
+    const m = await bootProbe(fake, (r) => {
+      latest = r;
+    });
+    await inAct(() => fake.emitThreads({ seq: 1, threads: latest.slice() }));
+    await m.flush();
+    const listsBefore = fake.of("threads.list").length;
+
+    // Push 2 was missed: main's list also has t1 renamed by it.
+    rows[0] = { ...rows[0], title: "one-v2" };
+    rows[1] = { ...rows[1], title: "two-v3" };
+    const list = fake.api.threads.list;
+    fake.api.threads.list = async () => {
+      await list();
+      return rows.map((t) => ({ ...t }));
+    };
+    await inAct(() =>
+      fake.emitThreads({
+        seq: 3,
+        base: 2,
+        upserts: [rows[1]],
+        removedIds: [],
+      }),
+    );
+    await m.flush();
+
+    assert.equal(fake.of("threads.list").length, listsBefore + 1);
+    assert.deepEqual(
+      latest.map((t) => t.title),
+      ["one-v2", "two-v3"],
+      "the resync, not the gapped patch, sets the list",
+    );
+
+    // The resync adopted seq 3, so push 4 patches again without a refetch.
+    await inAct(() =>
+      fake.emitThreads({
+        seq: 4,
+        base: 3,
+        upserts: [{ ...rows[0], title: "one-v4" }],
+        removedIds: [],
+      }),
+    );
+    await m.flush();
+    assert.equal(latest[0].title, "one-v4");
+    assert.equal(fake.of("threads.list").length, listsBefore + 1);
+    m.unmount();
+  });
+
+  it("retries a resync when a patch lands before the list reply", async () => {
+    let main = [
+      thread({ id: "t1", title: "one" }),
+      thread({ id: "t2", title: "two" }),
+    ];
+    const fake = createFakeCoder({ threads: main });
+    let latest: ThreadInfo[] = [];
+    const m = await bootProbe(fake, (r) => {
+      latest = r;
+    });
+    await inAct(() => fake.emitThreads({ seq: 1, threads: latest.slice() }));
+    await m.flush();
+
+    // The first list call is held: main snapshots its list at request time,
+    // then sends push 4 before the reply goes out.
+    let release: () => void = () => {};
+    let calls = 0;
+    fake.api.threads.list = () => {
+      const snapshot = main.map((t) => ({ ...t }));
+      if (calls++ > 0) return Promise.resolve(snapshot);
+      return new Promise((resolve) => {
+        release = () => resolve(snapshot);
+      });
+    };
+    const set = (id: string, title: string) => {
+      main = main.map((t) => (t.id === id ? { ...t, title } : t));
+      return main.find((t) => t.id === id)!;
+    };
+
+    // Push 2 was missed, so push 3 cannot apply and starts a resync.
+    set("t1", "one-v2");
+    const p3 = set("t1", "one-v3");
+    await inAct(() =>
+      fake.emitThreads({ seq: 3, base: 2, upserts: [p3], removedIds: [] }),
+    );
+    // The held list predates push 4, which arrives before the reply.
+    const listAtRequest = main;
+    const p4 = set("t2", "two-v4");
+    await inAct(() =>
+      fake.emitThreads({ seq: 4, base: 3, upserts: [p4], removedIds: [] }),
+    );
+    assert.equal(listAtRequest[1].title, "two");
+    await inAct(() => release());
+    await m.flush();
+
+    const p5 = set("t1", "one-v5");
+    await inAct(() =>
+      fake.emitThreads({ seq: 5, base: 4, upserts: [p5], removedIds: [] }),
+    );
+    await m.flush();
+
+    assert.equal(calls, 2, "the raced reply is discarded and refetched");
+    assert.deepEqual(
+      latest.map((t) => t.title),
+      main.map((t) => t.title),
+    );
+    m.unmount();
+  });
+});

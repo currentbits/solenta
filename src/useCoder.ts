@@ -104,6 +104,7 @@ import {
   mergeThreadPatch,
   patchThreadList,
   reconcileThreadList,
+  applyThreadListPush,
 } from "./threadPatch";
 import type { DroppedFolder } from "./dropFiles";
 import type { EditorId, EditorOption, ProviderUsage } from "./shared/ipc";
@@ -112,7 +113,9 @@ import {
   loadCachedThreadDetail,
   saveBootSnapshot,
   saveCachedThreadDetail,
+  whenIdle,
 } from "./bootSnapshot";
+import { prunePaneLayouts } from "./paneLayout";
 import { createThreadDetailCache } from "./threadDetailCache";
 import { errorMessage } from "./coder/errorMessage";
 import { useCoderMemory } from "./coder/useCoderMemory";
@@ -883,6 +886,12 @@ export function useCoder(): UseCoderResult {
   );
   /** Bumped on every threads:changed push so a late initial list cannot clobber it. */
   const threadsListGen = useRef(0);
+  /** Seq of the threads:changed push our list reflects; null = unknown (#1475). */
+  const threadsSeqRef = useRef<number | null>(null);
+  /** Seq of the last threads:changed push received (null: none, or seq-less). */
+  const lastThreadsPushSeqRef = useRef<number | null>(null);
+  /** A threads.list resync is in flight; patches that miss wait for it. */
+  const threadsResyncRef = useRef(false);
   const threadsRef = useRef<ThreadInfo[]>(bootSnapshot?.threads ?? []);
   /** Prior status by thread id; used to detect working → settled for spend refresh. */
   const prevStatusRef = useRef<Map<string, ThreadInfo["status"]>>(new Map());
@@ -1152,17 +1161,45 @@ export function useCoder(): UseCoderResult {
     let unsubBoot: (() => void) | undefined;
     let unsubSimulator: (() => void) | undefined;
 
+    // A list reply is current as of the last push seq only when no push
+    // arrived while it was in flight: main may build the list, then send a
+    // push before the reply, and that push is not in the list.
+    const fetchThreads = () => {
+      const gen = threadsListGen.current;
+      return api.threads.list().then((list) => ({
+        list,
+        gen,
+        seq: lastThreadsPushSeqRef.current,
+      }));
+    };
+
+    const resyncThreads = () => {
+      if (threadsResyncRef.current) return;
+      threadsResyncRef.current = true;
+      void fetchThreads()
+        .then(({ list, gen, seq }) => {
+          threadsResyncRef.current = false;
+          if (cancelled) return;
+          // A push raced the reply: retry. Pushes are rare, so it converges.
+          if (threadsListGen.current !== gen) return resyncThreads();
+          applyThreads(list);
+          threadsSeqRef.current = seq;
+        })
+        .catch(() => {
+          threadsResyncRef.current = false;
+        });
+    };
+
     const loadBootLists = () => {
-      const loadGen = threadsListGen.current;
       return (async () => {
         try {
           // status/settings are best-effort: missing IPC handlers (merge before
           // backend) must not blank the whole boot (no catch on this IIFE).
           // projects/threads/providers/workflows may also reject when the
           // window beat registerIpc (#618); boot:ready retries.
-          const [p, list, prov, wfs, autos, status, sett] = await Promise.all([
+          const [p, loaded, prov, wfs, autos, status, sett] = await Promise.all([
             api.projects.list(),
-            api.threads.list(),
+            fetchThreads(),
             api.providers.list(),
             api.workflows.list(),
             api.automations.list().catch(() => [] as AutomationInfo[]),
@@ -1182,15 +1219,19 @@ export function useCoder(): UseCoderResult {
           if (status != null) setAppStatus(status);
           if (sett != null) setSettings(sett);
           if (awake != null) setStayAwake(awake);
+          const { list } = loaded;
           for (const t of list) {
             prevStatusRef.current.set(t.id, t.status);
           }
-          if (threadsListGen.current === loadGen) {
+          // A push since the request may be newer than `list`; it was
+          // applied (or started a resync) on arrival.
+          const fresh = threadsListGen.current === loaded.gen;
+          if (fresh) {
             applyThreads(list);
+            threadsSeqRef.current = loaded.seq;
           }
           refreshTrashed();
-          const source =
-            threadsListGen.current === loadGen ? list : threadsRef.current;
+          const source = fresh ? list : threadsRef.current;
           const preferred =
             source.find((t) => !t.archived && t.status === "working")?.id ??
             source.find((t) => !t.archived)?.id ??
@@ -1204,6 +1245,10 @@ export function useCoder(): UseCoderResult {
           if (selectedRef.current == null && preferred) {
             selectedRef.current = preferred;
           }
+          // Off the boot path: drop pane layouts of deleted threads (#1475).
+          // The fetched list, not threadsRef: a raced boot can still hold the
+          // snapshot, which leaves archived threads out.
+          whenIdle(() => prunePaneLayouts(list.map((t) => t.id)));
         } catch {
           // IPC may not be registered yet (#618); boot:ready retries.
         } finally {
@@ -1212,9 +1257,22 @@ export function useCoder(): UseCoderResult {
       })();
     };
 
-    unsubChanged = api.on("threads:changed", (next) => {
+    unsubChanged = api.on("threads:changed", (push) => {
       threadsListGen.current += 1;
-      applyThreads(next);
+      const seq = Array.isArray(push) ? null : push.seq;
+      lastThreadsPushSeqRef.current = seq;
+      const next = applyThreadListPush(
+        threadsRef.current,
+        push,
+        threadsSeqRef.current,
+      );
+      if (next) {
+        applyThreads(next);
+        threadsSeqRef.current = seq;
+      } else {
+        // Missed a push (boot race, web reconnect): the patch has no base.
+        resyncThreads();
+      }
       refreshTrashed();
       // Import (and any other main-process mint) can add projects without
       // going through projects.add. Refresh so the sidebar sees them.

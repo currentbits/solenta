@@ -227,6 +227,10 @@ export async function mount(element: ReactElement): Promise<Mounted> {
   // Imported AFTER the globals exist. A static import would be hoisted above
   // installDom() and bind react-dom to a documentless world.
   const { createRoot } = await import("react-dom/client");
+  // Lazy views (src/lazyNamed.tsx) render synchronously once loaded, so
+  // tests can keep querying them right after the click that opens them.
+  const { preloadLazyNamed } = await import("../../src/lazyNamed.tsx");
+  await preloadLazyNamed();
   const container = dom.window.document.createElement("div");
   dom.window.document.body.appendChild(container);
 

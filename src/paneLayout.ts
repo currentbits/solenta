@@ -244,6 +244,38 @@ export function savePaneLayout(
   }
 }
 
+/**
+ * Every visited thread leaves a layout key, and deleted threads never clear
+ * theirs: 1,667 of 1,684 localStorage keys on a real install (#1475). Drops
+ * keys for threads not in `threadIds` and keys holding only the default
+ * layout, which loadPaneLayout falls back to anyway.
+ */
+export function prunePaneLayouts(
+  threadIds: Iterable<string>,
+  storage: Storage | null = resolveStorage() as Storage | null,
+): number {
+  if (!storage) return 0;
+  const known = new Set(threadIds);
+  const fallback = serializePaneLayout(defaultPaneLayout());
+  const drop: string[] = [];
+  try {
+    for (let i = 0; i < storage.length; i++) {
+      const key = storage.key(i);
+      if (!key?.startsWith(LAYOUT_KEY_PREFIX)) continue;
+      if (
+        !known.has(key.slice(LAYOUT_KEY_PREFIX.length)) ||
+        storage.getItem(key) === fallback
+      ) {
+        drop.push(key);
+      }
+    }
+    for (const key of drop) storage.removeItem(key);
+  } catch {
+    // Storage went away mid-sweep; the next boot tries again.
+  }
+  return drop.length;
+}
+
 function resolveStorage(): LayoutStorage | null {
   try {
     if (typeof window !== "undefined" && window.localStorage) {

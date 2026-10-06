@@ -1739,6 +1739,18 @@ export interface ThreadPatch extends ThreadDetail {
   seq?: number;
 }
 
+/**
+ * A "threads:changed" push (#1475). Main sends row patches built by
+ * electron/threadListPush.js; apply with applyThreadListPush. A plain array
+ * is a full list with no seq (web reconnect resync, dev/test coders).
+ */
+export type ThreadListPush =
+  | ThreadInfo[]
+  /** Full list: first push, or a row was added / the order moved. */
+  | { seq: number; threads: ThreadInfo[] }
+  /** Replace rows by id and drop removedIds, on top of push `base` only. */
+  | { seq: number; base: number; upserts: ThreadInfo[]; removedIds: string[] };
+
 export interface GitStatus {
   isRepo: boolean;
   branch: string;
@@ -5177,7 +5189,7 @@ export interface CoderApi {
     ): Promise<string | null>;
   };
   /** Returns an unsubscribe function. */
-  on(channel: "threads:changed", cb: (threads: ThreadInfo[]) => void): () => void;
+  on(channel: "threads:changed", cb: (push: ThreadListPush) => void): () => void;
   on(channel: "thread:updated", cb: (patch: ThreadPatch) => void): () => void;
   /** Desktop notification click: select this thread. */
   on(channel: "thread:select", cb: (threadId: string) => void): () => void;

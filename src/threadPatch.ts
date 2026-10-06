@@ -1,4 +1,9 @@
-import type { ThreadDetail, ThreadInfo, ThreadPatch } from "./shared/ipc";
+import type {
+  ThreadDetail,
+  ThreadInfo,
+  ThreadListPush,
+  ThreadPatch,
+} from "./shared/ipc";
 
 /**
  * Structural equality for pushed payloads. They cross an IPC/JSON boundary and
@@ -94,6 +99,36 @@ export function reconcileThreadList(
     }
   }
   return allReused ? prev : out;
+}
+
+/**
+ * The list a threads:changed push leaves us with (#1475), given that `prev`
+ * reflects push `heldSeq` (null: unknown). Full pushes replace; a row patch
+ * replaces rows in place and drops removed ids, keeping order.
+ *
+ * Returns null when the patch does not apply — its base is not the push we
+ * hold, or it names a row we lack — so the caller must resync with
+ * threads.list. Feed the result through reconcileThreadList.
+ */
+export function applyThreadListPush(
+  prev: ThreadInfo[],
+  push: ThreadListPush,
+  heldSeq: number | null,
+): ThreadInfo[] | null {
+  if (Array.isArray(push)) return push;
+  if ("threads" in push) return push.threads;
+  if (heldSeq == null || push.base !== heldSeq) return null;
+  if (push.upserts.length === 0 && push.removedIds.length === 0) return prev;
+  const upserts = new Map(push.upserts.map((t) => [t.id, t]));
+  const removed = new Set(push.removedIds);
+  const out: ThreadInfo[] = [];
+  for (const t of prev) {
+    if (removed.has(t.id)) continue;
+    const next = upserts.get(t.id);
+    if (next) upserts.delete(t.id);
+    out.push(next ?? t);
+  }
+  return upserts.size === 0 ? out : null;
 }
 
 /**
