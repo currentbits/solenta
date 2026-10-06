@@ -1,7 +1,10 @@
 import {
+  createContext,
   Fragment,
   isValidElement,
+  lazy,
   memo,
+  Suspense,
   useContext,
   useEffect,
   useMemo,
@@ -111,6 +114,15 @@ function flattenText(node: ReactNode): string {
   return "";
 }
 
+/** True inside the growing tail chunk of a streaming reply. */
+const LiveChunkContext = createContext(false);
+
+/**
+ * ```mermaid fences draw as diagrams (#1506). The component, mermaid and
+ * DOMPurify are all one lazy chunk; the code block is the Suspense fallback.
+ */
+const MermaidDiagram = lazy(() => import("./MermaidDiagram"));
+
 /**
  * Fenced code block with a header bar: language label + Copy.
  * Replaces react-markdown's <pre>; the inner <code> element is unwrapped so
@@ -131,6 +143,9 @@ function CodeBlock({ children }: { children?: ReactNode }) {
 
   const [copied, setCopied] = useState(false);
   const html = useHighlightedBlock(languageForFence(lang), code);
+  // ponytail: the whole live chunk counts as unclosed, so a closed fence
+  // stays code until the next block settles it or the reply ends.
+  const live = useContext(LiveChunkContext);
 
   const copy = async () => {
     // jsdom and insecure contexts have no clipboard; keep the button inert.
@@ -144,6 +159,16 @@ function CodeBlock({ children }: { children?: ReactNode }) {
     }
   };
 
+  const pre = (
+    <pre className={styles.codePre}>
+      {html != null ? (
+        <code dangerouslySetInnerHTML={{ __html: html }} />
+      ) : (
+        <code>{code}</code>
+      )}
+    </pre>
+  );
+
   return (
     <div className={styles.codeBlock}>
       <div className={styles.codeHead}>
@@ -152,13 +177,13 @@ function CodeBlock({ children }: { children?: ReactNode }) {
           {copied ? "Copied" : "Copy"}
         </button>
       </div>
-      <pre className={styles.codePre}>
-        {html != null ? (
-          <code dangerouslySetInnerHTML={{ __html: html }} />
-        ) : (
-          <code>{code}</code>
-        )}
-      </pre>
+      {lang === "mermaid" && !live ? (
+        <Suspense fallback={pre}>
+          <MermaidDiagram code={code} fallback={pre} />
+        </Suspense>
+      ) : (
+        pre
+      )}
     </div>
   );
 }
@@ -289,7 +314,11 @@ const MarkdownChunk = memo(function MarkdownChunk({
   text: string;
   live?: boolean;
 }) {
-  return live ? parseMarkdown(text) : cachedParse(text);
+  return live ? (
+    <LiveChunkContext.Provider value>{parseMarkdown(text)}</LiveChunkContext.Provider>
+  ) : (
+    cachedParse(text)
+  );
 });
 
 /**
