@@ -802,6 +802,17 @@ a.btn {
   color: var(--text-on-accent);
 }
 
+/* Merge method picker beside the merge / auto-merge button (#1493 D). */
+.mergeMethod {
+  height: 30px;
+  padding: 0 6px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
 .pushBtn {
   display: inline-flex;
   align-items: center;
