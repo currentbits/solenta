@@ -8,7 +8,7 @@ const loaders: Array<() => Promise<unknown>> = [];
  */
 export function lazyNamed<P extends object>(
   load: () => Promise<ComponentType<P>>,
-): ComponentType<P> {
+): ComponentType<P> & { preload: () => Promise<unknown> } {
   let loaded: ComponentType<P> | null = null;
   let pending: Promise<ComponentType<P>> | null = null;
   const preload = () =>
@@ -24,6 +24,8 @@ export function lazyNamed<P extends object>(
     const C = loaded ?? (Lazy as unknown as ComponentType<P>);
     return <C {...props} />;
   }
+  // Warm the chunk ahead of first use so opening the view never suspends.
+  LazyNamed.preload = preload;
   return LazyNamed;
 }
 

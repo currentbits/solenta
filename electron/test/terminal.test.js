@@ -247,6 +247,62 @@ describe("terminal restarts", () => {
   });
 });
 
+describe("terminal thread deletion (#1183)", () => {
+  const skip = POSIX ? false : "POSIX shell only";
+
+  it("killThread ends only that thread's shells and keeps their scrollback", { skip }, async () => {
+    const id = "t-del";
+    const other = "t-del-other";
+    const logDir = fs.mkdtempSync(path.join(os.tmpdir(), "solenta-term-"));
+    try {
+      terminal.open(id, os.tmpdir(), { env: ENV, pty: null, logDir });
+      terminal.open(id, os.tmpdir(), { env: ENV, pty: null, logDir, termId: "2" });
+      terminal.open(other, os.tmpdir(), { env: ENV, pty: null, logDir });
+      terminal.write(id, "echo kept-on-trash\r");
+      await waitFor(id, (t) => /\r\nkept-on-trash\r\n/.test(t));
+
+      terminal.killThread(id);
+      assert.equal(terminal.listLive().includes(id), false);
+      assert.equal(terminal.read(id).running, false);
+      assert.equal(terminal.read(other).running, true, "other thread untouched");
+      assert.match(fs.readFileSync(path.join(logDir, id, "1.log"), "utf8"), /kept-on-trash/);
+      assert.deepEqual(terminal.list(id, logDir), ["1", "2"]);
+
+      const reopened = terminal.open(id, os.tmpdir(), { env: ENV, pty: null, logDir });
+      assert.match(reopened.text, /kept-on-trash[\s\S]*restored output/);
+    } finally {
+      terminal.close(id);
+      terminal.close(id, "2");
+      terminal.close(other);
+      fs.rmSync(logDir, { recursive: true, force: true });
+    }
+  });
+
+  it("purgeThread ends its shells and deletes all its scrollback", { skip }, async () => {
+    const id = "t-purge";
+    const logDir = fs.mkdtempSync(path.join(os.tmpdir(), "solenta-term-"));
+    try {
+      // A log left by an earlier app run, with no live session behind it.
+      fs.mkdirSync(path.join(logDir, id));
+      fs.writeFileSync(path.join(logDir, id, "7.log"), "old run\n");
+      fs.writeFileSync(path.join(logDir, "keep.txt"), "");
+      terminal.open(id, os.tmpdir(), { env: ENV, pty: null, logDir });
+      terminal.write(id, "echo bye\r");
+      await waitFor(id, (t) => /\r\nbye\r\n/.test(t));
+
+      terminal.purgeThread(id, logDir);
+      assert.equal(terminal.listLive().includes(id), false);
+      assert.equal(fs.existsSync(path.join(logDir, id)), false);
+      assert.deepEqual(terminal.list(id, logDir), []);
+      assert.equal(fs.existsSync(path.join(logDir, "keep.txt")), true, "siblings untouched");
+      await new Promise((r) => setTimeout(r, 1300));
+      assert.equal(fs.existsSync(path.join(logDir, id, "1.log")), false, "no flush resurrects it");
+    } finally {
+      fs.rmSync(logDir, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("terminal safety", () => {
   it("never runs an SSH project's shell locally", () => {
     let spawned = false;
