@@ -3604,6 +3604,8 @@ export type ThreadForkOpts = {
   leadSnapshotSha?: string | null;
   leadSnapshotBranch?: string | null;
   leadSnapshotDirty?: boolean;
+  /** Start the fork out of plan mode ("Implement in a new thread", #1501). */
+  leavePlan?: boolean;
 };
 
 /**
@@ -4002,7 +4004,19 @@ export interface CoderApi {
        */
       updatedCommand?: string;
       inputValues?: InputValues;
+      /**
+       * "Keep planning" notes (#1501). Deny on a plan prompt only: a live
+       * CLI gets them in the rejection; a persisted plan card sends them
+       * as the next planning turn.
+       */
+      feedback?: string;
     }): Promise<void>;
+    /**
+     * "Save plan to file" (#1501): write plan markdown to
+     * docs/plans/<date>-<slug>.md in the thread's checkout. Never
+     * overwrites. Resolves the repo-relative path written.
+     */
+    savePlan(input: { threadId: string; plan: string }): Promise<{ path: string }>;
     /**
      * Drop the persisted question card (ThreadInfo.pendingQuestion) without
      * answering it — the Dismiss button (issue #647). ANSWERING does not come

@@ -30,23 +30,67 @@ import styles from "../ThreadView.module.css";
 
 /**
  * Plan approval (ExitPlanMode): the plan rendered as markdown in the prompt
- * panel, approve or send the agent back to planning.
+ * panel, approve or send the agent back to planning (with optional notes),
+ * or take the plan elsewhere: a new thread, or a file in the checkout.
  */
 export function PlanPrompt({
   pending,
   onRespond,
+  onImplement,
+  onSave,
 }: {
   pending: PendingPermissionInfo;
   onRespond: (
     requestId: string,
     decision: PermissionDecision,
+    answers?: undefined,
+    updatedCommand?: undefined,
+    inputValues?: undefined,
+    feedback?: string,
   ) => void | Promise<void>;
+  onImplement?: (plan: string) => void | Promise<void>;
+  onSave?: (plan: string) => Promise<string>;
 }) {
   const [sent, setSent] = useState(false);
+  const [feedback, setFeedback] = useState("");
+  const [saved, setSaved] = useState<string | null>(null);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [implementing, setImplementing] = useState(false);
+  const plan = pending.plan ?? "";
   const answer = (decision: PermissionDecision) => {
     if (sent) return;
     setSent(true);
-    void onRespond(pending.requestId, decision);
+    const notes = decision === "deny" ? feedback.trim() : "";
+    void onRespond(
+      pending.requestId,
+      decision,
+      undefined,
+      undefined,
+      undefined,
+      notes || undefined,
+    );
+  };
+  const save = async () => {
+    if (!onSave || saving) return;
+    setSaving(true);
+    setSaveError(null);
+    try {
+      setSaved(await onSave(plan));
+    } catch (err) {
+      setSaveError(err instanceof Error && err.message ? err.message : String(err));
+    } finally {
+      setSaving(false);
+    }
+  };
+  const implement = async () => {
+    if (!onImplement || implementing) return;
+    setImplementing(true);
+    try {
+      await onImplement(plan);
+    } finally {
+      setImplementing(false);
+    }
   };
   return (
     <div
@@ -56,8 +100,18 @@ export function PlanPrompt({
     >
       <div className={styles.permissionHead}>Agent proposed a plan</div>
       <div className={styles.planBody}>
-        <Markdown text={pending.plan ?? ""} />
+        <Markdown text={plan} />
       </div>
+      <textarea
+        className={styles.planFeedback}
+        rows={2}
+        value={feedback}
+        disabled={sent}
+        placeholder="Notes for the next draft (optional, sent with Keep planning)"
+        aria-label="Notes for Keep planning"
+        data-plan-feedback=""
+        onChange={(e) => setFeedback(e.target.value)}
+      />
       <div className={styles.permissionActions}>
         <button
           type="button"
@@ -72,10 +126,43 @@ export function PlanPrompt({
           className={styles.permissionDeny}
           disabled={sent}
           onClick={() => answer("deny")}
+          data-keep-planning=""
         >
           Keep planning
         </button>
+        {onImplement ? (
+          <button
+            type="button"
+            className={styles.retryBtn}
+            disabled={implementing || !plan}
+            onClick={() => void implement()}
+            data-implement-plan=""
+          >
+            Implement in a new thread
+          </button>
+        ) : null}
+        {onSave ? (
+          <button
+            type="button"
+            className={styles.retryBtn}
+            disabled={saving || saved != null || !plan}
+            onClick={() => void save()}
+            data-save-plan=""
+          >
+            Save plan to file
+          </button>
+        ) : null}
       </div>
+      {saved ? (
+        <div className={styles.planSaved} data-plan-saved="">
+          Saved to <code>{saved}</code>
+        </div>
+      ) : null}
+      {saveError ? (
+        <div className={styles.permissionGuardrail} data-plan-save-error="">
+          {saveError}
+        </div>
+      ) : null}
     </div>
   );
 }

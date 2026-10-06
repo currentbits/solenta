@@ -2560,12 +2560,15 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
        * Rejects unknown source and invalid provider/model with production
        * error strings (byte-equal).
        */
+      savePlan: (input: unknown) =>
+        rec("threads.savePlan", [input], { path: "docs/plans/2026-10-06-plan.md" }),
       fork: (input: unknown) => {
         const i = input as {
           threadId: string;
           provider?: string;
           model?: string | null;
           worktree?: boolean;
+          leavePlan?: boolean;
         };
         calls.push({ channel: "threads.fork", args: [input] });
         const err = fail["threads.fork"];
@@ -2669,7 +2672,10 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
           provider: nextProvider,
           model: nextModel,
           sessionId: null,
-          permissionMode: source.permissionMode,
+          permissionMode:
+            i.leavePlan && source.permissionMode === "plan"
+              ? "default"
+              : source.permissionMode,
           teach: source.teach ?? null,
           ask: source.ask === true,
           // Production fork never patches reasoningEffort; create leaves null.

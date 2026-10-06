@@ -155,6 +155,7 @@ export const IPC_CHANNELS = [
   { ns: "threads", method: "promoteBtw" },
   { ns: "threads", method: "rename" },
   { ns: "threads", method: "fork" },
+  { ns: "threads", method: "savePlan" },
   { ns: "threads", method: "resolveSuggestion" },
   { ns: "threads", method: "rewind" },
   { ns: "threads", method: "setProvider" },

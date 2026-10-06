@@ -276,7 +276,12 @@ interface ThreadViewProps {
     answers?: Record<string, string>,
     updatedCommand?: string,
     inputValues?: InputValues,
+    feedback?: string,
   ) => void | Promise<void>;
+  /** "Implement in a new thread" from the plan prompt (#1501). */
+  onImplementPlan?: (plan: string) => void | Promise<void>;
+  /** "Save plan to file" from the plan prompt; resolves the path (#1501). */
+  onSavePlan?: (plan: string) => Promise<string>;
   /**
    * Dismiss the persisted question card (thread.pendingQuestion) without
    * answering (issue #647). Answering goes through onStartRun instead.
@@ -644,6 +649,8 @@ export const ThreadView = memo(function ThreadView({
   restoreDraft = null,
   onSetPermissionMode,
   onRespondPermission,
+  onImplementPlan,
+  onSavePlan,
   onClearQuestion,
   onSetProvider,
   onSetReasoningEffort,
@@ -3867,6 +3874,8 @@ export const ThreadView = memo(function ThreadView({
             key={detail.pendingPermission.requestId}
             pending={detail.pendingPermission}
             onRespond={onRespondPermission}
+            onImplement={onImplementPlan}
+            onSave={onSavePlan}
           />
         ) : detail.pendingPermission ? (
           <PermissionPrompt

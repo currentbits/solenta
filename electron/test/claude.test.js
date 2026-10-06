@@ -1056,6 +1056,9 @@ async function main() {
         let msg;
         try { msg = JSON.parse(line); } catch { continue; }
         if (msg.type !== "control_response") continue;
+        if (process.env.CODER_FAKE_CLAUDE_CTRL_FILE) {
+          fs.writeFileSync(process.env.CODER_FAKE_CLAUDE_CTRL_FILE, JSON.stringify(msg), "utf8");
+        }
         emit({
           type: "result",
           subtype: "success",
@@ -1784,6 +1787,37 @@ describe("runner claude provider", () => {
     // from the result string (issue #707).
     assert.ok(!store.getThread(thread.id).pendingPlan);
     assert.equal(runner.getPendingPermission(thread.id), null);
+  });
+
+  it("sends Keep planning notes to the live CLI with the rejection (#1501)", async () => {
+    process.env.CODER_FAKE_CLAUDE_SCENARIO = "plan";
+    const ctrlFile = path.join(tmpDir, "ctrl-plan-notes.json");
+    process.env.CODER_FAKE_CLAUDE_CTRL_FILE = ctrlFile;
+    try {
+      const thread = store.getThreads()[0];
+      store.updateThread(thread.id, { permissionMode: "plan" });
+      await runner.startRun({ threadId: thread.id, prompt: "plan it" });
+
+      await waitFor(() => runner.getPendingPermission(thread.id) != null);
+      runner.respondPermission({
+        threadId: thread.id,
+        requestId: runner.getPendingPermission(thread.id).requestId,
+        decision: "deny",
+        feedback: "split step 2",
+      });
+      await waitFor(() => store.getThread(thread.id).status === "done");
+
+      const ctrl = JSON.parse(fs.readFileSync(ctrlFile, "utf8"));
+      assert.equal(ctrl.response.response.behavior, "deny");
+      assert.match(ctrl.response.response.message, /keep planning/);
+      assert.match(ctrl.response.response.message, /split step 2/);
+      const msgs = store.getMessages(thread.id);
+      assert.ok(
+        msgs.some((m) => m.role === "event" && m.text === "Plan rejected: split step 2"),
+      );
+    } finally {
+      delete process.env.CODER_FAKE_CLAUDE_CTRL_FILE;
+    }
   });
 
   it("pairs tool_result is_error into tool message", async () => {

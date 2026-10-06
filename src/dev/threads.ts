@@ -232,7 +232,10 @@ export function createThreads(ctx: DevCtx): Pick<CoderApi, "threads"> {
             : providerChanging
               ? null
               : source.model,
-          permissionMode: source.permissionMode,
+          permissionMode:
+            input.leavePlan && source.permissionMode === "plan"
+              ? "default"
+              : source.permissionMode,
           teach: source.teach ?? null,
           ask: source.ask === true,
           handoffFrom: source.id,
@@ -313,6 +316,12 @@ export function createThreads(ctx: DevCtx): Pick<CoderApi, "threads"> {
           permissionMode: input.mode,
           updatedAt: now(),
         });
+      },
+      async savePlan(input) {
+        if (!details.has(input.threadId)) {
+          throw new Error(`Unknown thread: ${input.threadId}`);
+        }
+        return { path: "docs/plans/dev-plan.md" };
       },
       async respondPermission() {
         // Dev threads never spawn a real CLI, so nothing is ever pending.

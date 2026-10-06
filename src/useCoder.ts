@@ -223,6 +223,7 @@ export interface UseCoderResult {
       model?: string | null;
       worktree?: boolean;
       select?: boolean;
+      leavePlan?: boolean;
     },
   ) => Promise<ThreadInfo | null>;
   /**
@@ -308,7 +309,10 @@ export interface UseCoderResult {
     answers?: Record<string, string>,
     updatedCommand?: string,
     inputValues?: InputValues,
+    feedback?: string,
   ) => Promise<void>;
+  /** Write plan markdown into the thread's checkout; resolves the path (#1501). */
+  savePlan: (plan: string, threadId?: string) => Promise<string>;
   /** Dismiss the selected thread's persisted question card (issue #647). */
   clearQuestion: () => Promise<void>;
   /**
@@ -1095,6 +1099,16 @@ export function useCoder(): UseCoderResult {
       await editQueued(rest.join("\n\n"), id, rest).catch(() => {});
     },
     [api, cancelQueued, editQueued],
+  );
+
+  const savePlan = useCallback(
+    async (plan: string, threadId?: string) => {
+      const id = threadId ?? selectedRef.current;
+      if (!id) throw new Error("No thread selected");
+      const { path } = await api.threads.savePlan({ threadId: id, plan });
+      return path;
+    },
+    [api],
   );
 
   const clearError = useCallback(() => {
@@ -1977,6 +1991,7 @@ export function useCoder(): UseCoderResult {
     cancelQueued,
     retryQueued,
     steerQueued,
+    savePlan,
     editQueued,
     startWorkflowRun,
     retryWorkflowAgent,

@@ -92,6 +92,7 @@ export function useCoderThreadActions({
       answers?: Record<string, string>,
       updatedCommand?: string,
       inputValues?: InputValues,
+      feedback?: string,
     ) => {
       if (!selectedThreadId) return;
       const threadId = selectedThreadId;
@@ -105,6 +106,7 @@ export function useCoderThreadActions({
           answers,
           updatedCommand,
           inputValues,
+          ...(feedback ? { feedback } : {}),
         });
         setError(null);
       } catch (err) {
