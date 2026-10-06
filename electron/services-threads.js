@@ -480,7 +480,9 @@ function forkThread(store, input) {
   let nextInstance = source.providerInstance || null;
   if (providerProvided) {
     const id = String(input.provider || "");
-    if (!isKnownProviderRef(id, store.getSettings())) {
+    const settings =
+      typeof store.getSettings === "function" ? store.getSettings() : null;
+    if (!isKnownProviderRef(id, settings)) {
       throw new Error(`Unknown provider: ${input.provider}`);
     }
     ({ provider: nextProvider, instance: nextInstance } = parseProviderRef(id));
