@@ -21,6 +21,7 @@ const path = require("node:path");
 const { truncate, INPUT_TRUNCATE, OUTPUT_TRUNCATE } = require("./claude.js");
 const codexParse = require("./codex.js");
 const { isCodexChildThread } = require("./codex-appserver.js");
+const { isNativeCompactTurn, recordCompaction } = require("./compaction.js");
 const { guardrailNotice } = require("./guardrail-hook-core.js");
 
 /**
@@ -115,6 +116,8 @@ function createCodexRun(ctx) {
     let terminalError = null;
     /** Run-local usage for memory footers (not cumulative store totals). */
     const runUsage = { tokensIn: 0, tokensOut: 0, costUsd: 0 };
+    /** @type {number | undefined} ring size when a compaction item started */
+    let compactBefore;
 
     const localCwd = thread.worktreePath || project.path;
     const binary = resolveBin(providerEntry);
@@ -383,9 +386,30 @@ function createCodexRun(ctx) {
       model: thread.model || null,
       reasoningEffort: thread.reasoningEffort || null,
       permissionMode: thread.permissionMode || "default",
+      compact: isNativeCompactTurn("codex", prompt, resumeId),
       onServerRequest: (req) => handleCodexServerRequest(threadId, req),
       onEvent: (ev) => {
         if (!guard()) return;
+
+        // Native compaction (thread/compact/start or auto). Usage for the
+        // compacted context lands between started and completed, so the
+        // "before" size is read at started.
+        const compactItem = ev.item && ev.item.type === "contextCompaction";
+        if (compactItem && ev.type === "item.started") {
+          compactBefore = (store.getUsage(threadId) || {}).contextTokens;
+          return;
+        }
+        if (compactItem && ev.type === "item.completed") {
+          const after = (store.getUsage(threadId) || {}).contextTokens;
+          recordCompaction({ store, appendMessage }, threadId, runId, {
+            pre: compactBefore,
+            post: after !== compactBefore ? after : null,
+            auto: !isNativeCompactTurn("codex", prompt, resumeId),
+          });
+          store.save();
+          pushDetail(threadId, codexState);
+          return;
+        }
 
         if (ev.type === "server_request.resolved") {
           const live = active.get(threadId);

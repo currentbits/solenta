@@ -7,6 +7,7 @@ const { runAgent } = require("./agent.js");
 const { whenPathReady } = require("./pathEnv.js");
 const { truncate, toolSummary } = require("./claude.js");
 const { runCodexAppServerTurn } = require("./codex-appserver.js");
+const { isNativeCompactTurn } = require("./compaction.js");
 const { heartbeatLane } = require("./mergeQueue.js");
 const { createWatchdogs } = require("./runner-watchdogs.js");
 const { createAskRuns } = require("./runner-ask-runs.js");
@@ -1938,7 +1939,15 @@ function createRunner(opts) {
     });
     if (abortIfCancelled(threadId, runId)) return { runId };
 
-    const dispatchPrompt = promptPrefix + bootNote;
+    // Native `/compact` goes out bare: Claude reads any trailing text as
+    // summary instructions, and Codex swaps the turn for thread/compact/start.
+    const dispatchPrompt = isNativeCompactTurn(
+      provider,
+      rawPrompt,
+      dispatchThread.sessionId,
+    )
+      ? "/compact"
+      : promptPrefix + bootNote;
 
     const name = workflowNameFromThreadId(threadId);
 
