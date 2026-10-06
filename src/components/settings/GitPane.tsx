@@ -108,7 +108,7 @@ export function GitPane({
           </div>
           <p className={styles.note}>
             PRs created from the app larger than this are refused with an
-            offer to split them into stacked PRs — small batches keep
+            offer to split them into stacked PRs. Small batches keep
             human review affordable. Default 400; empty means no cap.
           </p>
         </div>

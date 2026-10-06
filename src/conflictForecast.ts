@@ -53,7 +53,7 @@ export function formatForecastHoverLine(line: ForecastHoverLine): string {
       ? ""
       : `${line.files.join(", ")}${line.extra > 0 ? ` +${line.extra} more` : ""}`;
   if (line.kind === "conflict") {
-    return files ? `${line.name} — ${files}` : line.name;
+    return files ? `${line.name}: ${files}` : line.name;
   }
-  return files ? `overlaps ${line.name} — ${files}` : `overlaps ${line.name}`;
+  return files ? `overlaps ${line.name}: ${files}` : `overlaps ${line.name}`;
 }

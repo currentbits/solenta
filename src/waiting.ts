@@ -215,9 +215,9 @@ export function waitTooltip(state: WaitState): string {
     ...state.children.map((c) => {
       const note =
         c.state === "blocked"
-          ? " — blocked on you"
+          ? " (blocked on you)"
           : c.state === "stopped"
-            ? " — stopped mid-run"
+            ? " (stopped mid-run)"
             : "";
       return `• ${c.title}${note}`;
     }),

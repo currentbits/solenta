@@ -33,7 +33,7 @@ describe("liveWorkingLabel", () => {
         toolSummary: "Bash: npm test",
         thinking: true,
       }),
-      "No output for 12m — the agent may be hung",
+      "No output for 12m. The agent may be hung",
     );
   });
 

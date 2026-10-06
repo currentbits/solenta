@@ -249,7 +249,7 @@ function FileRow({
           <span
             className={styles.fileBlast}
             data-blast-radius-file=""
-            title="CI workflow — privilege-escalation, human sign-off required"
+            title="CI workflow: privilege-escalation, human sign-off required"
           >
             CI
           </span>
@@ -976,7 +976,7 @@ export function ChangesPanel({
               role="alert"
               data-blast-radius="ci-workflow"
             >
-              <strong>Blast radius — CI workflow</strong>
+              <strong>Blast radius: CI workflow</strong>
               <span>{blastRadiusTitle(diff.blastRadius)}</span>
             </div>
           ) : null}

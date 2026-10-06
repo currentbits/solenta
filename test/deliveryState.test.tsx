@@ -174,7 +174,7 @@ describe("thread stalled strip + queued error (issue #314)", () => {
       }),
     );
     assert.match(html, /No output for/);
-    assert.match(html, /the agent may be hung/);
+    assert.match(html, /The agent may be hung/);
     assert.ok(html.includes("Stop"), "Stop stays on a stalled turn");
     assert.ok(!html.includes("Agent working…"));
   });

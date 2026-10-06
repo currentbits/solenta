@@ -244,5 +244,5 @@ export function blastRadiusTitle(info: BlastRadiusInfo): string {
           info.findings.length === 1 ? "" : "s"
         }.`
       : "";
-  return `This change edits CI workflow files (${files}). Privilege-escalation — a human must sign off.${lint}`;
+  return `This change edits CI workflow files (${files}). That is privilege escalation, so a human must sign off.${lint}`;
 }

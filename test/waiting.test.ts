@@ -83,7 +83,7 @@ describe("buildWaitStates", () => {
     const wait = states.get("orch")!;
     assert.equal(wait.blocked, 1);
     assert.equal(waitLabel(wait, NOW), "Waiting on 1 worker · 1h · 1 blocked");
-    assert.match(waitTooltip(wait), /Fork: migrate — blocked on you/);
+    assert.match(waitTooltip(wait), /Fork: migrate \(blocked on you\)/);
   });
 
   it("a worker stopped mid-run counts under its own label (issue #183)", () => {
@@ -108,7 +108,7 @@ describe("buildWaitStates", () => {
     assert.equal(wait.blocked, 0);
     assert.equal(wait.since, NOW - 120_000, "anchors on the stop stamp");
     assert.equal(waitLabel(wait, NOW), "Waiting on 1 worker · 2m · 1 stopped");
-    assert.match(waitTooltip(wait), /Fork: migrate — stopped mid-run/);
+    assert.match(waitTooltip(wait), /Fork: migrate \(stopped mid-run\)/);
     assert.equal(
       isDelegating("done", wait),
       true,

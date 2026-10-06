@@ -699,7 +699,7 @@ export const Composer = memo(function Composer({
   const modeChoiceLocked =
     honouredModes.length <= 1 && currentModeHonoured;
   const permissionTitle = !currentModeHonoured
-    ? `${permissionName} cannot honor ${PERMISSION_MODE_LABELS[permissionMode]} — pick a mode this CLI actually sends`
+    ? `${permissionName} cannot honor ${PERMISSION_MODE_LABELS[permissionMode]}. Pick a mode this CLI actually sends`
     : modeChoiceLocked
       ? `${permissionName} always runs tools unprompted`
       : undefined;
@@ -2361,7 +2361,7 @@ export const Composer = memo(function Composer({
                     const gated = !teachPermissionAllowed(mode, teach);
                     const blocked = gated || !honoured;
                     const title = !honoured
-                      ? `${permissionName} cannot honor ${PERMISSION_MODE_LABELS[mode]} — pick a mode this CLI actually sends`
+                      ? `${permissionName} cannot honor ${PERMISSION_MODE_LABELS[mode]}. Pick a mode this CLI actually sends`
                       : gated
                         ? `Teach mode (${teach?.autonomy ?? "hint"}) does not allow this yet`
                         : undefined;

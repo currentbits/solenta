@@ -326,7 +326,7 @@ export function PlanboardView({
             <span
               className={styles.reviewLoad}
               data-review-load={review.level}
-              title="Open, non-draft PRs awaiting human review and their combined size — the reviewer is the bottleneck, not the agents"
+              title="Open, non-draft PRs awaiting human review and their combined size. The reviewer is the bottleneck, not the agents"
             >
               Review load: {review.openPrs} PR{review.openPrs === 1 ? "" : "s"} ·{" "}
               {formatLineCount(review.totalLines)} lines

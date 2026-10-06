@@ -84,7 +84,7 @@ export function ThreadsPane({
             </button>
           </div>
           <p className={styles.note}>
-            Empty means Never — quiet threads only settle via PR state or
+            Empty means Never: quiet threads only settle via PR state or
             an explicit settle.
           </p>
           <label className={styles.fieldRow}>

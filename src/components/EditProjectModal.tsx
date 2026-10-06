@@ -496,7 +496,7 @@ export function EditProjectModal({
             />
             <p className={styles.note}>
               0 keeps every worktree. New projects start at 10. Fork and
-              archived worktrees never take a slot — those are reclaimed as
+              archived worktrees never take a slot. They are reclaimed as
               soon as they go quiet. Cleanup removes directories only.
               Branches stay.
             </p>

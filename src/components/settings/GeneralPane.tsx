@@ -568,7 +568,7 @@ export function GeneralPane({
               Update {update.tag} available
               {update.url ? (
                 <>
-                  {" — "}
+                  {": "}
                   <a href={update.url} target="_blank" rel="noreferrer">
                     release page
                   </a>

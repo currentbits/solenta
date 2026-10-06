@@ -3518,7 +3518,7 @@ export const ThreadView = memo(function ThreadView({
                 showEarlier();
               }}
             >
-              {`Show earlier — ${hiddenCount} ${hiddenCount === 1 ? "message" : "messages"}`}
+              {`Show ${hiddenCount} earlier ${hiddenCount === 1 ? "message" : "messages"}`}
             </button>
           </div>
         )}

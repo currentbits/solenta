@@ -177,7 +177,7 @@ export function SpendingPane({
           Caps the combined spend of one orchestrator thread and its
           fan-out workers. When a crew reaches it, the next worker
           wake-up is refused and the thread lands failed with the
-          reason — raise or clear the cap, then Retry turn.
+          reason. Raise or clear the cap, then Retry turn.
         </p>
       </div>
     </section>

@@ -66,7 +66,7 @@ describe("forecastHoverLines", () => {
       titles,
     );
     assert.equal(lines.length, 1);
-    assert.equal(formatForecastHoverLine(lines[0]!), "beta work — src/a.ts");
+    assert.equal(formatForecastHoverLine(lines[0]!), "beta work: src/a.ts");
   });
 
   it("marks auto-mergeable overlap as quieter copy", () => {
@@ -85,7 +85,7 @@ describe("forecastHoverLines", () => {
     assert.equal(lines[0]!.kind, "overlap");
     assert.equal(
       formatForecastHoverLine(lines[0]!),
-      "overlaps gamma work — src/c.ts",
+      "overlaps gamma work: src/c.ts",
     );
   });
 
