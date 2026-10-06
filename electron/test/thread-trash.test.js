@@ -19,6 +19,7 @@ const { saveToolImages, extractImages } = require("../tool-images.js");
 const attachments = require("../attachments.js");
 const { decideCrossThreadSend } = require("../crossThread.js");
 const ipc = require("../ipc.js");
+const terminal = require("../terminal.js");
 
 const PNG_B64 =
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==";
@@ -114,6 +115,41 @@ describe("recently deleted threads (#940)", () => {
     );
     const hits = await services.searchThreads(store, { query: "auth" });
     assert.equal(hits.some((t) => t.id === gone.id), false);
+  });
+
+  it("trash ends the thread's shells, restore replays scrollback, expiry deletes it (#1183)", {
+    skip: process.platform === "win32" ? "POSIX shell only" : false,
+  }, async () => {
+    const thread = await seedThread("Has a terminal");
+    // ipc-devserver keeps scrollback in <userData>/terminals; the store sits in userData.
+    const logDir = terminal.logDirIn(tmpDir);
+    const env = { ...process.env, SHELL: "/bin/sh" };
+    try {
+      terminal.open(thread.id, tmpDir, { env, pty: null, logDir });
+      terminal.write(thread.id, "echo before-trash\r");
+      for (let i = 0; i < 200 && !/\r\nbefore-trash\r\n/.test(terminal.read(thread.id).text); i++) {
+        await new Promise((r) => setTimeout(r, 25));
+      }
+
+      const now = Date.now();
+      services.trashThread(store, { threadId: thread.id }, { now });
+      assert.equal(terminal.listLive().includes(thread.id), false, "no shell outlives the delete");
+      assert.deepEqual(terminal.list(thread.id, logDir), ["1"], "scrollback kept for restore");
+
+      services.restoreThread(store, { threadId: thread.id }, { now });
+      const reopened = terminal.open(thread.id, tmpDir, { env, pty: null, logDir });
+      assert.match(reopened.text, /before-trash[\s\S]*restored output/);
+
+      services.trashThread(store, { threadId: thread.id }, { now });
+      assert.equal(
+        services.expireTrashedThreads(store, { now: now + services.TRASH_TTL_MS }),
+        1,
+      );
+      assert.equal(fs.existsSync(path.join(logDir, thread.id)), false, "purge drops scrollback");
+      assert.deepEqual(terminal.list(thread.id, logDir), []);
+    } finally {
+      terminal.purgeThread(thread.id, logDir);
+    }
   });
 
   it("restoreThread recovers the same identity after a store reload", async () => {

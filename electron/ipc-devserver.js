@@ -1,6 +1,5 @@
 "use strict";
 
-const path = require("node:path");
 const { listLocalServers } = require("./servers.js");
 const { spotlightEnv, spotlightLane } = require("./mergeQueue.js");
 const { spawnEnvForDevServer, laneEnvExtra } = require("./worktreeEnv.js");
@@ -27,7 +26,7 @@ function sinceOf(input) {
  * @returns {string | undefined}
  */
 function terminalLogDir(ctx) {
-  return ctx.userDataPath ? path.join(ctx.userDataPath, "terminals") : undefined;
+  return ctx.userDataPath ? terminal.logDirIn(ctx.userDataPath) : undefined;
 }
 
 /**

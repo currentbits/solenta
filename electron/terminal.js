@@ -594,13 +594,46 @@ function close(threadId, termId, logDir) {
   return emptyState(id);
 }
 
-/** Quit path: flush every scrollback to disk, then kill every shell. */
-function killAll() {
+/** Flush scrollback to disk, then kill and forget each matching shell. @param {(sess: TerminalSession) => boolean} match */
+function killMatching(match) {
   for (const [key, sess] of [...sessions]) {
+    if (!match(sess)) continue;
     flushSync(sess);
     sessions.delete(key);
     killSession(sess);
   }
+}
+
+/** Quit path: flush every scrollback to disk, then kill every shell. */
+function killAll() {
+  killMatching(() => true);
+}
+
+/**
+ * Thread moved to Recently deleted (#1183): end its shells but keep their
+ * scrollback, so a restore replays it the way an app restart does.
+ *
+ * @param {string} threadId
+ */
+function killThread(threadId) {
+  killMatching((sess) => sess.threadId === threadId);
+}
+
+/**
+ * Thread permanently removed (#1183): end its shells and delete
+ * <logDir>/<thread>, scrollback from earlier app runs included.
+ *
+ * @param {string} threadId
+ * @param {string} [logDir]
+ */
+function purgeThread(threadId, logDir) {
+  killThread(threadId);
+  if (logDir) fs.rmSync(threadLogDir(logDir, threadId), { recursive: true, force: true });
+}
+
+/** Scrollback root under the app's userData dir. @param {string} userDataPath */
+function logDirIn(userDataPath) {
+  return path.join(userDataPath, "terminals");
 }
 
 /** One thread id per live shell (a thread with a split counts twice). */
@@ -625,6 +658,9 @@ module.exports = {
   list,
   close,
   killAll,
+  killThread,
+  purgeThread,
+  logDirIn,
   listLive,
   ptyAvailable,
   LINE_LIMIT,
