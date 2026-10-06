@@ -1629,6 +1629,37 @@ describe("SettingsModal quota-wait auto-resume (#462)", () => {
   });
 });
 
+describe("SettingsModal resume interrupted runs (#1512 I3)", () => {
+  it("is off by default and saves the toggle", async () => {
+    const patches: Partial<AppSettings>[] = [];
+    const m = await mount(
+      modal({
+        initialPane: "threads",
+        settings: {
+          dailyBudgetUsd: null,
+          autoSettleAfterDays: 3,
+        } as AppSettings,
+        onSaveSettings: async (patch) => {
+          patches.push(patch);
+          return {
+            dailyBudgetUsd: null,
+            autoSettleAfterDays: 3,
+            resumeInterruptedRuns: patch.resumeInterruptedRuns === true,
+          } as AppSettings;
+        },
+      }),
+    );
+    const box = m.query("[data-resume-interrupted-runs]") as HTMLInputElement;
+    assert.ok(box, "resume checkbox");
+    assert.equal(box.checked, false);
+    assert.ok(m.text().includes("Resume interrupted runs after restart"));
+    await m.click(box);
+    assert.equal(patches.length, 1);
+    assert.equal(patches[0].resumeInterruptedRuns, true);
+    m.unmount();
+  });
+});
+
 describe("SettingsModal worker model pool (issue #467)", () => {
   const namedPool: SubagentPool = {
     defaultAlias: "fast",

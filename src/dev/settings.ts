@@ -429,6 +429,7 @@ export function createSettings(ctx: DevCtx): Pick<CoderApi, "settings" | "stayAw
           stayAwake,
           quotaWaitAutoResume: ctx.quotaWaitAutoResume,
           confirmQuitWithActiveWork,
+          resumeInterruptedRuns,
           guardrailsEnabled,
           agentProfiles: agentProfiles.map((p) => ({ ...p })),
           defaultOrchestratorProfileId,

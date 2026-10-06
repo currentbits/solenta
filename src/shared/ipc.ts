@@ -589,6 +589,11 @@ export interface ThreadInfo {
    */
   stoppedAt?: number | null;
   /**
+   * When the app gave this thread its one automatic turn after a restart
+   * interrupted its run (issue #1512 I3). Cleared by the next human turn.
+   */
+  autoResumedAt?: number | null;
+  /**
    * True while the active run is blocked on the user (a permission prompt or
    * an agent question). Only meaningful when status is "working" — the
    * sidebar renders Waiting instead of Working. Cleared when the prompt is
