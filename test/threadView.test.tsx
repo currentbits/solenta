@@ -3171,6 +3171,46 @@ describe("ThreadView transcript windowing (issue #564)", () => {
     m.unmount();
   });
 
+  it("stays stuck when a trim's scrollTop clamp lands after the tail grew (#1475)", async () => {
+    const n = 500;
+    const Harness = streamHarness(n);
+    const m = await mount(<Harness />);
+    const body = m.query(".body") as HTMLElement;
+    const layout = { clientHeight: 400, scrollHeight: 20_000, scrollTop: 19_600 };
+    fakeScrollMetrics(body, layout);
+    // Frames: rAF callbacks wait until the frame runs, as in a browser.
+    const g = globalThis as { requestAnimationFrame: typeof requestAnimationFrame };
+    const realRaf = g.requestAnimationFrame;
+    let frame: FrameRequestCallback[] = [];
+    g.requestAnimationFrame = (cb) => frame.push(cb);
+    const runFrame = () => {
+      const due = frame;
+      frame = [];
+      for (const cb of due) cb(0);
+    };
+    try {
+      // The append trims the head. The next layout clamps scrollTop to the
+      // shorter body and queues a scroll event for the frame after.
+      await m.click(m.query("[data-append-stream]"));
+      assert.ok(m.text().includes("Show earlier — 381 messages"), "the append trimmed");
+      runFrame();
+      layout.scrollHeight = 19_000;
+      layout.scrollTop = layout.scrollHeight - layout.clientHeight;
+      // Another streamed push grows the tail before that event is dispatched.
+      layout.scrollHeight += 200;
+      body.dispatchEvent(new Event("scroll"));
+      runFrame();
+    } finally {
+      g.requestAnimationFrame = realRaf;
+    }
+    await m.click(m.query("[data-append-stream]"));
+    assert.ok(
+      m.text().includes("Show earlier — 382 messages"),
+      "the clamp's scroll event must not unstick the view and stop the trim",
+    );
+    m.unmount();
+  });
+
   it("Show earlier still pages older entries in after the head was trimmed (#1475)", async () => {
     const n = 500;
     const Harness = streamHarness(n);
