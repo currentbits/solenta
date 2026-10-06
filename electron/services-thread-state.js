@@ -726,6 +726,30 @@ function setQuotaWaitAutoResume(store, input) {
 }
 
 /**
+ * Per-thread PR watch-and-wake switch (#1493 D, electron/prWatch.js).
+ * Turning it on re-arms a paused watch: the wake count and reported
+ * fingerprints reset, so the next refresher pass takes a fresh baseline.
+ * Never bumps updatedAt.
+ *
+ * @param {import('./store').Store} store
+ * @param {{ threadId: string, enabled: boolean }} input
+ */
+function setPrWatch(store, input) {
+  const { threadId, enabled } = input;
+  const thread = store.getThread(threadId);
+  if (!thread) {
+    throw new Error(`Unknown thread: ${threadId}`);
+  }
+  if (enabled !== true && enabled !== false) {
+    throw new Error("prWatch must be true or false");
+  }
+  const patch = { prWatch: enabled, prWatchState: null };
+  const updated = store.updateThread(threadId, patch);
+  store.save();
+  return decorateThread(store, updated || { ...thread, ...patch });
+}
+
+/**
  * Set or clear the per-thread scratch pad (issue #194). User-facing only:
  * the agent never reads it. Trims, caps at THREAD_NOTES_MAX, empty string
  * clears. Never bumps updatedAt.
@@ -1226,6 +1250,7 @@ module.exports = {
   setEjected,
   setCrossThreadInbound,
   setQuotaWaitAutoResume,
+  setPrWatch,
   setNotes,
   setMessagePins,
   setBaseBranch,

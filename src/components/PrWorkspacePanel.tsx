@@ -2,6 +2,9 @@ import { useCallback, useEffect, useState } from "react";
 import { formatRelativeAge } from "../format";
 import { canSubmitComment, canSubmitPr } from "../prUi";
 import type {
+  CoderApi,
+  MergeMethod,
+  MergeOptionsResult,
   PrCommentResult,
   PrDetail,
   PrDetailResult,
@@ -9,6 +12,12 @@ import type {
 } from "../shared/ipc";
 import { Markdown } from "./Markdown";
 import styles from "./PrWorkspacePanel.module.css";
+
+const MERGE_LABEL: Record<MergeMethod, string> = {
+  squash: "Squash merge",
+  merge: "Merge commit",
+  rebase: "Rebase merge",
+};
 
 function rejectReason(err: unknown, fallback: string): string {
   return err instanceof Error && err.message ? err.message : fallback;
@@ -45,6 +54,7 @@ export interface PrWorkspacePanelProps {
   prMergeAt: (input: {
     projectPath: string;
     prNumber: number;
+    method?: MergeMethod;
   }) => Promise<PrDetailResult>;
   onSelectThread: (id: string) => void;
   onClose: () => void;
@@ -72,6 +82,25 @@ export function PrWorkspacePanel({
   const [preview, setPreview] = useState(false);
   const [pending, setPending] = useState<string | null>(null);
   const [confirm, setConfirm] = useState<"merge" | "close" | null>(null);
+  const [mergeOpts, setMergeOpts] = useState<MergeOptionsResult | null>(null);
+  const [method, setMethod] = useState<MergeMethod | null>(null);
+  // Repo-allowed merge methods for the confirm bar's picker (#1493 D).
+  useEffect(() => {
+    const load =
+      typeof window === "undefined"
+        ? undefined
+        : (window as unknown as { coder?: CoderApi }).coder?.git?.mergeOptions;
+    if (typeof load !== "function") return;
+    let live = true;
+    load({ projectPath })
+      .then((r) => live && setMergeOpts(r))
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, [projectPath]);
+  const methods = mergeOpts?.ok ? mergeOpts.methods : null;
+  const chosen = method ?? (mergeOpts?.ok ? mergeOpts.defaultMethod : "squash");
   const [now] = useState(() => Date.now());
 
   const load = useCallback(async () => {
@@ -314,9 +343,24 @@ export function PrWorkspacePanel({
             <div className={styles.confirm} data-pr-confirm={confirm}>
               <p className={styles.confirmText}>
                 {confirm === "merge"
-                  ? "Squash-merge this pull request?"
+                  ? `${MERGE_LABEL[chosen]} this pull request?`
                   : "Close this pull request?"}
               </p>
+              {confirm === "merge" && methods && methods.length > 1 ? (
+                <select
+                  data-merge-method=""
+                  aria-label="Merge method"
+                  value={chosen}
+                  disabled={pending != null}
+                  onChange={(e) => setMethod(e.target.value as MergeMethod)}
+                >
+                  {methods.map((m) => (
+                    <option key={m} value={m}>
+                      {MERGE_LABEL[m]}
+                    </option>
+                  ))}
+                </select>
+              ) : null}
               <button
                 type="button"
                 className={confirm === "merge" ? styles.primary : styles.danger}
@@ -325,7 +369,7 @@ export function PrWorkspacePanel({
                 onClick={() =>
                   void runAction(confirm, () =>
                     confirm === "merge"
-                      ? prMergeAt({ projectPath, prNumber })
+                      ? prMergeAt({ projectPath, prNumber, method: chosen })
                       : prClose({ projectPath, prNumber }),
                   )
                 }
@@ -335,7 +379,7 @@ export function PrWorkspacePanel({
                     ? "Merging…"
                     : "Closing…"
                   : confirm === "merge"
-                    ? "Squash merge"
+                    ? MERGE_LABEL[chosen]
                     : "Close PR"}
               </button>
               <button

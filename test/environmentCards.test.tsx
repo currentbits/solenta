@@ -592,3 +592,61 @@ describe("Environment layout (inspector redesign)", () => {
     m.unmount();
   });
 });
+
+describe("PR watch row (#1493 D)", () => {
+  it("shows the watch, its wake-ups, and stops it from the inspector", async () => {
+    const shell = await mount(<div />);
+    const w = window as unknown as { coder?: unknown };
+    const prev = w.coder;
+    const calls: unknown[] = [];
+    w.coder = {
+      threads: {
+        setPrWatch: async (input: unknown) => {
+          calls.push(input);
+          return thread();
+        },
+      },
+    };
+    shell.unmount();
+    try {
+      const m = await mount(
+        tab({
+          thread: thread({
+            prNumber: 7,
+            prState: "OPEN",
+            prWatchState: { pr: 7, wakes: 1, lastWakeAt: 1, lastReason: "checks failed" },
+          }),
+        }),
+      );
+      await m.flush();
+      const row = m.query("[data-pr-watch]");
+      assert.equal(row?.getAttribute("data-pr-watch"), "on");
+      assert.match(row?.textContent || "", /1 of 3 follow-ups sent \(checks failed\)/);
+      await m.click(m.query("[data-pr-watch-toggle]"));
+      await m.flush();
+      assert.deepEqual(calls, [{ threadId: "t1", enabled: false }]);
+      m.unmount();
+    } finally {
+      w.coder = prev;
+    }
+  });
+
+  it("says the watch paused at the cap, and shows nothing without a PR", async () => {
+    const m = await mount(
+      tab({
+        thread: thread({
+          prNumber: 7,
+          prState: "OPEN",
+          prWatchState: { pr: 7, wakes: 3, lastWakeAt: 1, lastReason: null },
+        }),
+      }),
+    );
+    await m.flush();
+    assert.match(m.query("[data-pr-watch]")?.textContent || "", /paused after 3/);
+    m.unmount();
+    const none = await mount(tab({}));
+    await none.flush();
+    assert.equal(none.query("[data-pr-watch]"), null);
+    none.unmount();
+  });
+});

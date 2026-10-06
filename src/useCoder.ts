@@ -59,6 +59,7 @@ import type {
   PrChecksResult,
   PrCommentResult,
   PrDetailResult,
+  MergeMethod,
   PrInfo,
   PrTemplateResult,
   ProjectInfo,
@@ -546,7 +547,11 @@ export interface UseCoderResult {
   /** CI checks for the selected thread's current PR. Failures are in-band. */
   prChecks: () => Promise<PrChecksResult>;
   /** Squash-merge the selected thread's current OPEN PR. */
-  prMerge: (opts?: { ciWorkflowApproved?: boolean }) => Promise<PrInfo>;
+  prMerge: (opts?: {
+    ciWorkflowApproved?: boolean;
+    method?: MergeMethod;
+    auto?: boolean;
+  }) => Promise<PrInfo>;
   /** Open PRs for a project checkout (`gh pr list`). Failures are in-band. */
   listPrs: (
     projectPath: string,
@@ -587,6 +592,7 @@ export interface UseCoderResult {
   prMergeAt: (input: {
     projectPath: string;
     prNumber: number;
+    method?: MergeMethod;
   }) => Promise<PrDetailResult>;
   /** Issues for a project checkout (`gh issue list`). Failures are in-band. */
   listIssues: (projectPath: string) => Promise<ListIssuesResult>;

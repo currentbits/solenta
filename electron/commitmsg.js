@@ -6,7 +6,14 @@
 // prompt travels in argv (#442).
 const spawn = require("cross-spawn");
 const { getProvider, resolveBin, isBinAvailable } = require("./providers.js");
-const { diff, assertNoOutboundSecrets } = require("./worktrees.js");
+const {
+  diff,
+  assertNoOutboundSecrets,
+  gitTryAsync,
+  recordedBaseBranch,
+  repoDefaultBranchAsync,
+} = require("./worktrees.js");
+const { readPrTemplate } = require("./prWorkspace.js");
 const { fmRun } = require("./fm.js");
 
 const TIMEOUT_MS = 60000;
@@ -225,14 +232,35 @@ async function suggestCommitMessage(opts) {
     }
   }
 
+  const message = cleanSubject(await providerText(thread, prompt, env));
+  if (!message) {
+    throw new Error(`${providerLabel(thread)} returned an empty message`);
+  }
+  assertNoOutboundSecrets(message, "commit message");
+  return { message };
+}
+
+/** @param {{ provider?: string }} thread */
+function providerLabel(thread) {
+  const entry = getProvider(thread.provider);
+  return entry ? entry.name : String(thread.provider);
+}
+
+/**
+ * Run the thread's provider CLI in print mode on one prompt and return the
+ * model's raw reply text (codex/muse JSONL already unwrapped).
+ *
+ * @param {{ provider?: string, model?: string | null, worktreePath?: string | null }} thread
+ * @param {string} prompt
+ * @param {NodeJS.ProcessEnv} env
+ * @returns {Promise<string>}
+ */
+async function providerText(thread, prompt, env) {
   const entry = getProvider(thread.provider);
   if (!entry) {
     throw new Error(`Provider has no print mode: ${thread.provider}`);
   }
-  const args = buildSuggestArgs(entry.id, {
-    model: thread.model,
-    prompt: "", // placeholder; real prompt below
-  });
+  const args = buildSuggestArgs(entry.id, { model: thread.model, prompt });
   if (!args) {
     throw new Error(`Provider has no print mode: ${thread.provider}`);
   }
@@ -240,16 +268,102 @@ async function suggestCommitMessage(opts) {
   if (!isBinAvailable(bin, undefined, env)) {
     throw new Error(`${entry.name} CLI is not installed`);
   }
-  // The prompt is the trailing argv element for every provider above.
-  args[args.length - 1] = prompt;
-
   const stdout = await runPrint(bin, args, thread.worktreePath || undefined, env);
-  const message = extractSubject(entry.id, stdout);
-  if (!message) {
-    throw new Error(`${entry.name} returned an empty message`);
+  if (entry.id === "codex") return extractCodexMessage(stdout);
+  if (entry.id === "muse") return require("./muse.js").extractStdoutText(stdout);
+  return String(stdout);
+}
+
+/**
+ * @param {{ commits: string, stat: string, template: string, baseBranch: string }} input
+ * @returns {string}
+ */
+function buildPrPrompt(input) {
+  const stat =
+    input.stat.length > PROMPT_PATCH_LIMIT
+      ? input.stat.slice(0, PROMPT_PATCH_LIMIT) + "\n... (truncated)"
+      : input.stat;
+  return [
+    `Write a GitHub pull request title and description for this branch (base: ${input.baseBranch}).`,
+    "Reply in exactly this shape, nothing else:",
+    "line 1: the title (max 72 characters, no quotes, no trailing period)",
+    "line 2: empty",
+    "line 3 onward: the description in Markdown. Explain what changed and why; do not invent details the commits and diffstat do not show.",
+    input.template.trim()
+      ? "Fill in this pull request template for the description, keeping its headings:\n\n" +
+        input.template.trim()
+      : "",
+    "",
+    "Commits:",
+    input.commits.trim() || "(none listed)",
+    "",
+    "Diffstat:",
+    stat.trim() || "(none)",
+  ].join("\n");
+}
+
+/**
+ * Model reply -> { title, body }: first usable line is the title, the rest
+ * (minus a wrapping code fence) is the body.
+ *
+ * @param {string} text
+ * @returns {{ title: string, body: string }}
+ */
+function parsePrText(text) {
+  const lines = String(text).replace(/\r\n/g, "\n").trim().split("\n");
+  if (lines[0] && lines[0].trim().startsWith("```")) lines.shift();
+  if (lines.length && lines[lines.length - 1].trim() === "```") lines.pop();
+  const title = cleanSubject(lines.shift() || "").replace(/^title:\s*/i, "");
+  return { title, body: lines.join("\n").trim() };
+}
+
+/**
+ * Draft a PR title + body for the thread branch from its commit list, the
+ * diffstat vs the base branch, and the repo's PR template, using the
+ * thread's provider in print mode. Never opens the PR.
+ *
+ * @param {object} opts
+ * @param {import('./store').Store} opts.store
+ * @param {string} opts.threadId
+ * @param {NodeJS.ProcessEnv} [opts.env]
+ * @returns {Promise<{ title: string, body: string }>}
+ */
+async function suggestPrText(opts) {
+  const { store, threadId } = opts;
+  const env = opts.env || process.env;
+  const thread = store.getThread(threadId);
+  if (!thread) {
+    throw new Error(`Unknown thread: ${threadId}`);
   }
-  assertNoOutboundSecrets(message, "commit message");
-  return { message };
+  const project = store.getProject(thread.projectId);
+  const cwd = thread.worktreePath || (project && project.path);
+  if (!cwd) {
+    throw new Error("Thread has no checkout");
+  }
+  const baseBranch =
+    recordedBaseBranch(thread) ||
+    (await repoDefaultBranchAsync(project ? project.path : cwd));
+  const [log, stat, tpl] = await Promise.all([
+    gitTryAsync(cwd, ["log", "--format=- %s", `${baseBranch}..HEAD`]),
+    gitTryAsync(cwd, ["diff", "--stat", `${baseBranch}...HEAD`]),
+    readPrTemplate(project ? project.path : cwd),
+  ]);
+  const commits = log.ok ? log.stdout : "";
+  if (!commits.trim()) {
+    throw new Error(`Branch has no commits ahead of ${baseBranch}`);
+  }
+  const prompt = buildPrPrompt({
+    commits,
+    stat: stat.ok ? stat.stdout : "",
+    template: tpl.ok ? tpl.body : "",
+    baseBranch,
+  });
+  const out = parsePrText(await providerText(thread, prompt, env));
+  if (!out.title) {
+    throw new Error(`${providerLabel(thread)} returned an empty title`);
+  }
+  assertNoOutboundSecrets(`${out.title}\n${out.body}`, "PR");
+  return out;
 }
 
 /**
@@ -274,7 +388,7 @@ function runPrint(bin, args, cwd, env) {
       if (settled) return;
       settled = true;
       child.kill("SIGKILL");
-      reject(new Error("Commit message generation timed out"));
+      reject(new Error("Text generation timed out"));
     }, TIMEOUT_MS);
 
     child.stdout.on("data", (chunk) => {
@@ -307,6 +421,9 @@ function runPrint(bin, args, cwd, env) {
 
 module.exports = {
   suggestCommitMessage,
+  suggestPrText,
+  buildPrPrompt,
+  parsePrText,
   buildSuggestArgs,
   buildPrompt,
   extractSubject,
