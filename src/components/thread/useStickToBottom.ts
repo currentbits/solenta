@@ -46,6 +46,8 @@ export function useStickToBottom({
   const seenThread = useRef(false);
   const prevPermReq = useRef<string | null>(null);
   const pendingPrepend = useRef<number | null>(null);
+  /** Non-zero while a trim's scrollTop clamp may still fire a scroll. */
+  const trimClamp = useRef(0);
   const pinIfStuck = () => {
     const el = bodyRef.current;
     if (!el || !stickToBottom.current) return;
@@ -77,12 +79,28 @@ export function useStickToBottom({
   const prevStart = useRef(start);
   useLayoutEffect(() => {
     const grewUp = start < prevStart.current;
+    const trimmed = start > prevStart.current;
     prevStart.current = start;
     const prev = pendingPrepend.current;
     if (prev == null) {
       // Entries mounted above a pinned view (the tail-first switch filling
       // in): stay at the bottom before paint.
       if (grewUp) pinIfStuck();
+      // The window trimmed above a pinned view (#1475): the next layout
+      // clamps scrollTop to the shorter body, and that clamp's scroll event
+      // can be dispatched after another streamed push grew the tail past
+      // STICK_BOTTOM_PX, which read as the user scrolling up. The clamp
+      // lands in the next frame's layout and its event in the frame after,
+      // before that frame's rAF callbacks: ignore scrolls until then.
+      // No layout read here; a trim can ride on any streamed push.
+      if (trimmed && stickToBottom.current) {
+        const hold = ++trimClamp.current;
+        requestAnimationFrame(() =>
+          requestAnimationFrame(() => {
+            if (trimClamp.current === hold) trimClamp.current = 0;
+          }),
+        );
+      }
       return;
     }
     pendingPrepend.current = null;
@@ -175,7 +193,7 @@ export function useStickToBottom({
 
   const onBodyScroll = () => {
     const el = bodyRef.current;
-    if (!el || pinning.current) return;
+    if (!el || pinning.current || trimClamp.current) return;
     const distance = el.scrollHeight - el.scrollTop - el.clientHeight;
     if (forceStick.current) {
       if (distance <= STICK_BOTTOM_PX) {
