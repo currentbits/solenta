@@ -233,7 +233,11 @@ describe("PathLinkProvider batching (#1475)", () => {
         }}
         openPath={() => {}}
       >
-        <Markdown text={text} />
+        {/* key: remount so the link asks again. Markdown keeps a stable
+            components map (#1483), so a same-path rerender reuses the
+            mounted link and its settled lookup; the provider contract under
+            test is only that the failure was not cached. */}
+        <Markdown key={text} text={text} />
       </PathLinkProvider>
     );
     const m = await mount(tree("see `src/foo.ts`"));
