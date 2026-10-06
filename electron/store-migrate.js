@@ -582,6 +582,13 @@ function migrateThread(t) {
   } else {
     delete next.sessionStartModel;
   }
+  // Named provider instance (#453). Omitted when unset so old fixtures
+  // still deepEqual.
+  if (typeof t.providerInstance === "string" && t.providerInstance) {
+    next.providerInstance = t.providerInstance;
+  } else {
+    delete next.providerInstance;
+  }
   return next;
 }
 

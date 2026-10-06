@@ -3,6 +3,7 @@ import type {
   AppSettings,
   CoderApi,
   AgentProfile,
+  ProviderInstance,
   McpServerInfo,
   PairingCreated,
   PairingCreateInput,
@@ -65,6 +66,7 @@ export function createSettings(ctx: DevCtx): Pick<CoderApi, "settings" | "stayAw
   };
   /** Saved agent profiles (Settings tab), in-memory. */
   let agentProfiles: AgentProfile[] = [];
+  let providerInstances: ProviderInstance[] = [];
   /** Planboard Orchestrator: Default (#725). */
   let defaultOrchestratorProfileId: string | null = null;
   /** Described worker-model pool (Settings), in-memory. */
@@ -148,6 +150,7 @@ export function createSettings(ctx: DevCtx): Pick<CoderApi, "settings" | "stayAw
           confirmQuitWithActiveWork,
           guardrailsEnabled,
           agentProfiles: agentProfiles.map((p) => ({ ...p })),
+          providerInstances: providerInstances.map((p) => ({ ...p, env: { ...p.env } })),
           defaultOrchestratorProfileId,
           subagentPool: {
             ...subagentPool,
@@ -327,6 +330,12 @@ export function createSettings(ctx: DevCtx): Pick<CoderApi, "settings" | "stayAw
             defaultOrchestratorProfileId = null;
           }
         }
+        if (Object.prototype.hasOwnProperty.call(patch, "providerInstances")) {
+          if (!Array.isArray(patch.providerInstances)) {
+            throw new Error("providerInstances must be an array");
+          }
+          providerInstances = patch.providerInstances.map((p) => ({ ...p, env: { ...p.env } }));
+        }
         if (
           Object.prototype.hasOwnProperty.call(
             patch,
@@ -423,6 +432,7 @@ export function createSettings(ctx: DevCtx): Pick<CoderApi, "settings" | "stayAw
           confirmQuitWithActiveWork,
           guardrailsEnabled,
           agentProfiles: agentProfiles.map((p) => ({ ...p })),
+          providerInstances: providerInstances.map((p) => ({ ...p, env: { ...p.env } })),
           defaultOrchestratorProfileId,
           subagentPool: {
             ...subagentPool,

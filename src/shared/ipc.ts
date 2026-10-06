@@ -152,7 +152,7 @@ export interface ProjectInfo {
  * provider it was picked for.
  */
 export interface ProjectThreadDefaults {
-  /** ProviderInfo.id. Kept even when that CLI is not installed. */
+  /** ProviderInfo.id, or a `<provider>:<instance>` ref (#453). Kept even when that CLI is not installed. */
   provider?: string;
   /** Model id for `provider`; absent = provider default. */
   model?: string;
@@ -807,6 +807,8 @@ export interface ThreadInfo {
   postMergeVerify?: PostMergeVerify | null;
   /** Agent harness backing this thread: a ProviderInfo.id ("claude", "codex", "grok", "opencode", "cursor", "simulate"). */
   provider: string;
+  /** Named instance of `provider` (#453); absent on the base provider. */
+  providerInstance?: string | null;
   /** Model override passed to the provider CLI when set (e.g. claude --model). */
   model: string | null;
   /** Provider session id, persisted after the first turn so follow-ups resume context. */
@@ -2614,6 +2616,30 @@ export interface ProviderInfo {
    * the picker or Settings › Agents opens.
    */
   auth?: "signedIn" | "signedOut" | "unknown";
+  /**
+   * Set on a named instance row (#453): `id` is then the ref
+   * `<baseProvider>:<instanceId>` and every capability is the base's.
+   */
+  baseProvider?: string;
+  instanceId?: string;
+}
+
+/**
+ * A named configuration of an installed CLI (#453), e.g. "Claude (work)".
+ * Threads, profiles, defaults and the failover chain select it by the ref
+ * `<provider>:<id>`.
+ */
+export interface ProviderInstance {
+  /** Lowercase letters, digits, dashes; 1-40 chars. Never reused. */
+  id: string;
+  /** Short label shown as "Claude (<name>)". 1-40 chars. */
+  name: string;
+  /** Base provider: "claude" or "codex". */
+  provider: string;
+  /** CLAUDE_CONFIG_DIR / CODEX_HOME. null = the CLI's default folder. */
+  configDir: string | null;
+  /** Extra env for this instance's spawns only. Stored like MCP secrets. */
+  env: Record<string, string>;
 }
 
 /** A checkout found by first-run discovery (#1501). */
@@ -2889,6 +2915,8 @@ export interface AppSettings {
    * combination, it does not introduce a fourth kind of thread state.
    */
   agentProfiles: AgentProfile[];
+  /** Named provider instances (#453). */
+  providerInstances: ProviderInstance[];
   /**
    * Agent profile the Planboard's Orchestrator: Default option applies
    * (issue #725). null = inherit the currently selected thread, which is
@@ -3004,7 +3032,7 @@ export interface AgentProfile {
   id: string;
   /** Display name, 1-40 chars after trim. */
   name: string;
-  /** ProviderInfo.id. Kept even when that CLI is not installed. */
+  /** ProviderInfo.id, or a `<provider>:<instance>` ref (#453). Kept even when that CLI is not installed. */
   provider: string;
   /** Model override id; null = provider default. */
   model: string | null;
