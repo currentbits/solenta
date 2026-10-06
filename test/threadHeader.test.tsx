@@ -25,6 +25,7 @@ import type {
   WorkflowTemplateInfo,
 } from "../src/shared/ipc";
 import { setRunDurationEnabled } from "../src/uiPrefs";
+import { resetComposerSession } from "../src/composerSession";
 
 const project: ProjectInfo = {
   id: "p1",
@@ -121,6 +122,19 @@ const fakeTerminalApi = {
   list: () => new Promise<string[]>(() => {}),
   close: async () => idleTerminal(),
   onData: () => () => {},
+};
+
+/** One-file checkout for the Files pane seam test (#1506). */
+const fakeFilesApi = {
+  tree: async (input: { dir?: string; all?: boolean }) => ({
+    entries: input.dir || input.all
+      ? []
+      : [{ name: "a.ts", path: "a.ts", dir: false }],
+    truncated: false,
+  }),
+  read: async () => ({ kind: "text" as const, size: 8, text: "one\ntwo\n" }),
+  editors: async () => [],
+  openIn: async () => {},
 };
 
 function idleTerminal(): TerminalState {
@@ -221,6 +235,7 @@ function view(props: {
       onCloseChanges={props.onCloseChanges ?? (() => {})}
       onViewChanges={props.onViewChanges}
       terminalApi={fakeTerminalApi}
+      filesApi={fakeFilesApi}
       onPanesNeedRoom={props.onPanesNeedRoom}
       onFetchDiff={async () => ({ files: [], patch: "", truncated: false })}
       onCommitChanges={async () => ({ subject: "x" })}
@@ -1326,6 +1341,25 @@ describe("Views menu pane workspace (issue #552)", () => {
     m.unmount();
   });
 
+  it("Files pane line picks land as composer chips (#1506)", async () => {
+    resetComposerSession();
+    const m = await mount(view({}));
+    await m.flush();
+    await m.click(m.query("[data-views-btn]"));
+    await m.click(m.query("[data-views-item='files']"));
+    await m.flush();
+    assert.equal(m.query("[data-pane-placeholder='files']"), null);
+    await m.click(m.query("[data-files-row='a.ts']"));
+    await m.flush();
+    await m.click(m.query("[data-files-line='2']"));
+    await m.click(m.query("[data-files-add]"));
+    const chip = m.query("[data-review-comment-chip]");
+    assert.ok(chip, "chip in the composer");
+    assert.match(chip!.textContent ?? "", /a\.ts:L2.*Add a note/);
+    m.unmount();
+    resetComposerSession();
+  });
+
   it("opens the Browser pane as a real preview, not a placeholder", async () => {
     const m = await mount(view({}));
     await m.flush();
@@ -1341,10 +1375,11 @@ describe("Views menu pane workspace (issue #552)", () => {
     const m = await mount(view({}));
     await m.flush();
     await m.click(m.query("[data-views-btn]"));
-    for (const type of ["files", "tasks", "subagent"]) {
+    for (const type of ["tasks", "subagent"]) {
       assert.equal(m.query(`[data-views-item='${type}']`), null, `${type} is not offered`);
     }
     assert.ok(m.query("[data-views-item='diff']"), "Git is offered");
+    assert.ok(m.query("[data-views-item='files']"), "Files is offered (#1506)");
     m.unmount();
   });
 

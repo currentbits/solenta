@@ -273,6 +273,8 @@ const IPC_CHANNELS = Object.freeze([
   { ns: "files", method: "search" },
   { ns: "files", method: "image" },
   { ns: "files", method: "resolve" },
+  { ns: "files", method: "tree" },
+  { ns: "files", method: "read" },
   { ns: "fs", method: "browse" },
   { ns: "attachments", method: "pick" },
   { ns: "attachments", method: "fromPaths" },

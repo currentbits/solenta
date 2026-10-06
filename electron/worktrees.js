@@ -43,6 +43,7 @@ const {
   revertFile,
   directoriesFromFiles,
   listFiles,
+  lsFiles,
   searchFiles,
 } = require("./worktrees-changes.js");
 const {
@@ -134,6 +135,7 @@ module.exports = {
   commit,
   revertFile,
   listFiles,
+  lsFiles,
   searchFiles,
   directoriesFromFiles,
   listChangedPaths,
