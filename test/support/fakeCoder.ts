@@ -363,6 +363,7 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
     stayAwake: "agent",
     quotaWaitAutoResume: true,
     confirmQuitWithActiveWork: true,
+    resumeInterruptedRuns: false,
     prDiffCapLines: 400,
     onboardingSeen: true,
     uiScale: 1,
@@ -936,6 +937,16 @@ export function createFakeCoder(opts: FakeOptions = {}): FakeCoder {
             );
           }
           next.confirmQuitWithActiveWork = v;
+        }
+        if (Object.prototype.hasOwnProperty.call(p, "resumeInterruptedRuns")) {
+          const v = p.resumeInterruptedRuns;
+          if (typeof v !== "boolean") {
+            calls.push({ channel: "settings.set", args: [patch] });
+            return Promise.reject(
+              new Error("resumeInterruptedRuns must be a boolean"),
+            );
+          }
+          next.resumeInterruptedRuns = v;
         }
         if (Object.prototype.hasOwnProperty.call(p, "prDiffCapLines")) {
           const v = p.prDiffCapLines;

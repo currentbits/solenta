@@ -55,7 +55,11 @@ const { startScheduler } = require("./automations.js");
 const { startAutoDispatch } = require("./autodispatch.js");
 const { startPostMergeScheduler } = require("./postmerge.js");
 const { startMemoryConsolidateScheduler } = require("./memory-consolidate.js");
-const { primeProcessPath, refreshLoginPath } = require("./pathEnv.js");
+const {
+  primeProcessPath,
+  refreshLoginPath,
+  whenPathReady,
+} = require("./pathEnv.js");
 const {
   parseServeWebArgs,
   startWebServer,
@@ -800,6 +804,28 @@ app.whenReady().then(async () => {
   // Renderer may already have mounted against empty state; this is the
   // signal that invoke channels will answer (#618).
   broadcast("boot:ready");
+
+  // Opt-in resume after restart (issue #1512 I3): only after first paint
+  // and the login-shell PATH, so the notice can render and providers resolve.
+  void (async () => {
+    await whenPathReady();
+    await Promise.all(
+      BrowserWindow.getAllWindows()
+        .filter((w) => w.webContents.isLoading())
+        .map(
+          (w) =>
+            new Promise((resolve) =>
+              w.webContents.once("did-finish-load", resolve),
+            ),
+        ),
+    );
+    if (runner) await runner.resumeInterruptedRuns();
+  })().catch((err) =>
+    console.warn(
+      "solenta: resume after restart failed:",
+      err && err.message ? err.message : err,
+    ),
+  );
 
   if (serveOpts.enabled) {
     const token = loadOrCreateToken(userData);
