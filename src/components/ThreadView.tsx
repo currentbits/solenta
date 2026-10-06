@@ -112,7 +112,12 @@ import {
   TRANSCRIPT_VIEW_LABELS,
   TRANSCRIPT_VIEW_MODES,
 } from "../focusView";
-import { setTranscriptViewMode, useTranscriptViewMode } from "../uiPrefs";
+import {
+  setDiffSplit,
+  setTranscriptViewMode,
+  useDiffSplit,
+  useTranscriptViewMode,
+} from "../uiPrefs";
 import { DROP_OVERLAY_MESSAGE, type DroppedFolder } from "../dropFiles";
 import { Composer } from "./Composer";
 import { repoRelativeDir } from "../mention";
@@ -866,7 +871,8 @@ export const ThreadView = memo(function ThreadView({
   const [handoffBannerDismissed, setHandoffBannerDismissed] = useState(false);
   const [runStatList, setRunStatList] = useState<RunStatInfo[]>([]);
   const [openTurnSha, setOpenTurnSha] = useState<string | null>(null);
-  const [turnDiffMode, setTurnDiffMode] = useState<DiffViewMode>("unified");
+  // One split/unified choice for the turn panel and the Git pane (#1493).
+  const turnDiffMode: DiffViewMode = useDiffSplit() ? "split" : "unified";
   const openThreadId = detail?.thread.id ?? null;
   useEffect(() => {
     setOpenTurnSha(null);
@@ -3750,7 +3756,7 @@ export const ThreadView = memo(function ThreadView({
                               sha={bar.sha}
                               turn={bar.turn}
                               mode={turnDiffMode}
-                              onModeChange={setTurnDiffMode}
+                              onModeChange={(m) => setDiffSplit(m === "split")}
                               onFetch={onFetchTurnDiff}
                             />
                           </Suspense>

@@ -45,45 +45,45 @@ function rightCell(line: AnnotatedDiffLine): SplitCell {
   };
 }
 
+/** Indices into annotated hunk lines for one side-by-side row. */
+export interface SplitRowIndex {
+  left: number | null;
+  right: number | null;
+}
+
 /**
- * Pair a hunk body into aligned left (old) / right (new) rows.
+ * Pair annotated hunk lines into aligned left (old) / right (new) rows.
  * Consecutive deletions zip with the additions that follow; context spans both.
  */
-export function splitHunkRows(header: string, body: string): SplitRow[] {
-  const lines = annotateHunkLines(header, body);
-  const rows: SplitRow[] = [];
-  let dels: AnnotatedDiffLine[] = [];
-  let adds: AnnotatedDiffLine[] = [];
-
+export function splitRowIndices(lines: AnnotatedDiffLine[]): SplitRowIndex[] {
+  const rows: SplitRowIndex[] = [];
+  let dels: number[] = [];
+  let adds: number[] = [];
   const flushChange = () => {
     const n = Math.max(dels.length, adds.length);
     for (let i = 0; i < n; i++) {
-      const del = dels[i];
-      const add = adds[i];
-      rows.push({
-        left: del ? leftCell(del) : EMPTY_CELL,
-        right: add ? rightCell(add) : EMPTY_CELL,
-      });
+      rows.push({ left: dels[i] ?? null, right: adds[i] ?? null });
     }
     dels = [];
     adds = [];
   };
-
-  for (const line of lines) {
-    if (line.kind === "del") {
-      dels.push(line);
-      continue;
+  lines.forEach((line, i) => {
+    if (line.kind === "del") dels.push(i);
+    else if (line.kind === "add") adds.push(i);
+    else {
+      flushChange();
+      rows.push({ left: i, right: i });
     }
-    if (line.kind === "add") {
-      adds.push(line);
-      continue;
-    }
-    flushChange();
-    rows.push({
-      left: leftCell(line),
-      right: rightCell(line),
-    });
-  }
+  });
   flushChange();
   return rows;
+}
+
+/** {@link splitRowIndices} as display cells for one hunk. */
+export function splitHunkRows(header: string, body: string): SplitRow[] {
+  const lines = annotateHunkLines(header, body);
+  return splitRowIndices(lines).map(({ left, right }) => ({
+    left: left == null ? EMPTY_CELL : leftCell(lines[left]!),
+    right: right == null ? EMPTY_CELL : rightCell(lines[right]!),
+  }));
 }

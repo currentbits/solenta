@@ -80,6 +80,27 @@ async function runStats(opts) {
 const EMPTY_TURN_DIFF = { files: [], patch: "", truncated: false };
 
 /**
+ * Diff endpoints of the newest checkpoint, paired like turnDiff (N vs N-1,
+ * first vs `<sha>^`). Null when the thread has no checkpoint yet.
+ * @param {{ store: import('./store').Store, threadId: string }} opts
+ * @returns {Promise<{ from: string, to: string, turn: number } | null>}
+ */
+async function latestTurnRange(opts) {
+  const list = await listCheckpoints(opts);
+  if (!list.length) return null;
+  const oldestFirst = [...list].sort((a, b) =>
+    a.turn !== b.turn ? a.turn - b.turn : a.at - b.at,
+  );
+  const i = oldestFirst.length - 1;
+  const cp = oldestFirst[i];
+  return {
+    from: i === 0 ? `${cp.sha}^` : oldestFirst[i - 1].sha,
+    to: cp.sha,
+    turn: cp.turn,
+  };
+}
+
+/**
  * Unquote a git path (`"foo bar"` → `foo bar`). Porcelain and name-status
  * quote paths that contain spaces.
  * @param {string} filePath
@@ -490,6 +511,7 @@ module.exports = {
   parseShortstat,
   runStats,
   turnDiff,
+  latestTurnRange,
   maybeCreateCheckpoint,
   listCheckpoints,
   restoreCheckpoint,
