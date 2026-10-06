@@ -3207,6 +3207,44 @@ export interface PairingCreated {
   pairingPrompt: string | null;
 }
 
+/** A browser or phone allowed into Solenta Web (#1512 I2). Token never listed. */
+export interface WebDeviceInfo {
+  id: string;
+  name: string;
+  createdAt: number;
+  /** Last successful sign-in, minute precision. */
+  lastSeenAt: number | null;
+  /** The single pre-device token (userData/web-token). */
+  legacy: boolean;
+}
+
+/** Detected, never installed. `url` is set while Serve points at Solenta Web. */
+export interface WebTailscaleStatus {
+  installed: boolean;
+  loggedIn: boolean;
+  /** MagicDNS name, without the trailing dot. */
+  host: string | null;
+  serving: boolean;
+  url: string | null;
+  error?: string;
+}
+
+export interface WebAccessStatus {
+  running: boolean;
+  /** Listening beyond loopback (0.0.0.0). Off unless the user turns it on. */
+  lan: boolean;
+  port: number;
+  urls: { kind: "local" | "lan"; url: string }[];
+  devices: WebDeviceInfo[];
+  tailscale: WebTailscaleStatus;
+}
+
+/** Returned once from addDevice. The token is stored only as a hash. */
+export interface WebDeviceCreated {
+  device: WebDeviceInfo;
+  token: string;
+}
+
 /** Whole-definition upsert input. Omitted secrets preserve existing values. */
 export type McpServerSaveInput =
   | {
@@ -3975,6 +4013,18 @@ export interface CoderApi {
     revoke(input: { id: string }): Promise<PairingInfo>;
     approve(input: { threadId: string }): Promise<unknown>;
     reject(input: { threadId: string }): Promise<ThreadInfo>;
+  };
+  /**
+   * Solenta Web (#1512 I2): the in-app server switch, per-device tokens and
+   * the optional Tailscale Serve helper. Desktop only; a web client gets an
+   * error. Revoking a device drops its open sockets at once.
+   */
+  web: {
+    status(): Promise<WebAccessStatus>;
+    setEnabled(input: { enabled: boolean; lan?: boolean }): Promise<WebAccessStatus>;
+    addDevice(input: { name: string }): Promise<WebDeviceCreated>;
+    revokeDevice(input: { id: string }): Promise<WebDeviceInfo>;
+    setTailscale(input: { on: boolean }): Promise<WebTailscaleStatus>;
   };
   /**
    * Agent skills on disk (SKILL.md files). A skill is installed once and

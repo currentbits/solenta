@@ -494,7 +494,7 @@ describe("one map, two transports + packaging", () => {
     assert.match(verify, /webBridge\.js/);
   });
 
-  it("main.js starts only on --serve-web via shared ctx", () => {
+  it("main.js starts on --serve-web or the saved switch, via shared ctx", () => {
     const main = fs.readFileSync(path.join(__dirname, "../main.js"), "utf8");
     assert.match(main, /parseServeWebArgs/);
     assert.match(main, /startWebServer/);
@@ -504,6 +504,8 @@ describe("one map, two transports + packaging", () => {
     assert.match(main, /HOST_FLAG_HELP/);
     assert.doesNotMatch(main, /parseServeArgs\(/);
     assert.match(main, /process\.stdout\.write\(`solenta-web: token/);
+    assert.match(main, /webAccess\.adoptLegacy\(token\)/);
+    assert.match(main, /\} else \{[^}]*await webAccess\.restore\(\);/);
   });
 
   it("main.js survives a web-server bind failure and still opens a window", async () => {
@@ -511,8 +513,8 @@ describe("one map, two transports + packaging", () => {
     // #618: createWindow is first-paint (via bootFirstPaint), so a bind
     // failure can no longer skip the window. The try/catch still matters:
     // without it whenReady rejects and IPC-ready / schedulers never run.
-    assert.match(main, /try \{\s*webServer = await startWebServer\(/);
-    const start = main.indexOf("webServer = await startWebServer(");
+    assert.match(main, /try \{\s*await webAccess\.start\(/);
+    const start = main.indexOf("await webAccess.start(");
     const guard = main.slice(start, start + 900);
     assert.match(guard, /\} catch \(err\) \{/);
     assert.match(guard, /serveOpts\.enabled = false/);
