@@ -17,7 +17,13 @@ const { createRunner } = require("../runner.js");
 const { RESUME_EVENT } = require("../runner-auto-resume.js");
 const { rmTree } = require("./support/rmTree.js");
 
-const FAST = { pollMs: 5, startGraceMs: 2000 };
+// Ref'd sleep: the app's unref'd poll timers let node:test drain the event
+// loop mid-await and cancel the test.
+const FAST = {
+  pollMs: 5,
+  startGraceMs: 2000,
+  sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+};
 
 async function loadCore() {
   const corePath = path.join(__dirname, "../../core/dist/index.js");
@@ -214,5 +220,17 @@ describe("resume interrupted runs after restart (#1512 I3)", () => {
     await pending;
     assert.deepEqual(texts(store, queued, "user"), []);
     assert.ok(!texts(store, queued, "event").includes(RESUME_EVENT));
+  });
+
+  it("stopAll mid-resume settles the pending resume and starts nothing queued", async () => {
+    enable();
+    const a = interrupted("a");
+    const b = interrupted("b");
+    const pending = runner.resumeInterruptedRuns({ ...FAST, concurrency: 1 });
+    await waitFor(() => runner.listActiveThreadIds().length === 1);
+    const queued = runner.isRunning(a) ? b : a;
+    runner.stopAll();
+    await pending;
+    assert.deepEqual(texts(store, queued, "user"), []);
   });
 });

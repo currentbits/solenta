@@ -52,26 +52,23 @@ function createAutoResume(ctx) {
 
   /** Thread ids marked for resume whose turn has not been delivered yet. */
   let queue = [];
+  /** Bumped by cancelAll (stopAll at quit) so no lane keeps polling. */
+  let generation = 0;
 
-  function sleep(ms) {
+  /** Unref'd: polling must never hold the app open at quit. */
+  function unrefSleep(ms) {
     return new Promise((resolve) => {
       const timer = setTimeout(resolve, ms);
       if (typeof timer.unref === "function") timer.unref();
     });
   }
 
-  async function waitFor(predicate, timeoutMs, pollMs) {
-    const start = Date.now();
-    while (!predicate()) {
-      if (Date.now() - start > timeoutMs) return;
-      await sleep(pollMs);
-    }
-  }
-
   /**
    * Resume every eligible interrupted thread, at most `concurrency` at once.
    * Resolves once each resumed turn has finished (or never started).
-   * @param {{ now?: number, maxAgeMs?: number, concurrency?: number, pollMs?: number, startGraceMs?: number }} [opts]
+   * `sleep` is a test seam: node:test needs ref'd timers or the event loop
+   * drains mid-await.
+   * @param {{ now?: number, maxAgeMs?: number, concurrency?: number, pollMs?: number, startGraceMs?: number, sleep?: (ms: number) => Promise<void> }} [opts]
    * @returns {Promise<string[]>} the thread ids that were marked for resume
    */
   async function resumeInterruptedRuns(opts = {}) {
@@ -80,6 +77,15 @@ function createAutoResume(ctx) {
     const maxAgeMs = opts.maxAgeMs ?? MAX_AGE_MS;
     const pollMs = opts.pollMs ?? POLL_MS;
     const startGraceMs = opts.startGraceMs ?? START_GRACE_MS;
+    const sleep = opts.sleep ?? unrefSleep;
+    const gen = generation;
+    const waitFor = async (predicate, timeoutMs) => {
+      const start = Date.now();
+      while (!predicate() && gen === generation) {
+        if (Date.now() - start > timeoutMs) return;
+        await sleep(pollMs);
+      }
+    };
     const ids = store
       .getThreads()
       .filter((t) => !active.has(t.id) && isResumable(t, now, maxAgeMs))
@@ -99,8 +105,8 @@ function createAutoResume(ctx) {
       store.save();
       pushDetail(id, null);
       ctx.deliverNotice({ threadId: id, line: RESUME_LINE });
-      await waitFor(() => active.has(id), startGraceMs, pollMs);
-      await waitFor(() => !active.has(id), Infinity, pollMs);
+      await waitFor(() => active.has(id), startGraceMs);
+      await waitFor(() => !active.has(id), Infinity);
     };
     const lane = async () => {
       while (queue.length > 0) {
@@ -128,6 +134,7 @@ function createAutoResume(ctx) {
     cancel,
     cancelAll() {
       queue = [];
+      generation += 1;
     },
   };
 }
