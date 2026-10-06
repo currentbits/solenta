@@ -14,7 +14,7 @@ const {
   extractSubject,
   PROMPT_PATCH_LIMIT,
 } = require("../commitmsg.js");
-const { buildPrompt } = require("../commitmsg.js");
+const { buildPrompt, suggestPrText, parsePrText } = require("../commitmsg.js");
 const { writeFakeBin } = require("./support/fakeBin.js");
 const { rmTree } = require("./support/rmTree.js");
 
@@ -397,5 +397,102 @@ process.exit(3);
     assert.equal(result.message, "feat: generated subject");
     const argv = JSON.parse(fs.readFileSync(logPath, "utf8"));
     assert.equal(argv[0], "-p");
+  });
+});
+
+describe("parsePrText", () => {
+  it("splits title from body and drops a wrapping fence", () => {
+    assert.deepEqual(parsePrText("```\nTitle: feat: add x\n\n## Summary\n- y\n```"), {
+      title: "feat: add x",
+      body: "## Summary\n- y",
+    });
+    assert.deepEqual(parsePrText("just a title"), { title: "just a title", body: "" });
+  });
+});
+
+describe("suggestPrText", () => {
+  let tmpDir;
+  let store;
+  let thread;
+  let logPath;
+
+  /** Fake claude: logs argv, replies with whatever FAKE_REPLY says. */
+  function env(reply) {
+    const bin = writeFakeBin(
+      path.join(tmpDir, "fake-claude"),
+      `#!/usr/bin/env node
+require("fs").writeFileSync(process.env.FAKE_CLAUDE_LOG, JSON.stringify(process.argv.slice(2)));
+process.stdout.write(process.env.FAKE_REPLY);
+`,
+    );
+    return {
+      ...process.env,
+      CODER_CLAUDE_BIN: bin,
+      FAKE_CLAUDE_LOG: logPath,
+      FAKE_REPLY: reply,
+    };
+  }
+
+  beforeEach(async () => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "coder-prtext-"));
+    logPath = path.join(tmpDir, "log.json");
+    store = new Store(path.join(tmpDir, "store.json"));
+    const repo = path.join(tmpDir, "repo");
+    fs.mkdirSync(repo);
+    git(repo, ["init", "-b", "main"]);
+    git(repo, ["config", "user.email", "test@example.com"]);
+    git(repo, ["config", "user.name", "Test"]);
+    fs.mkdirSync(path.join(repo, ".github"));
+    fs.writeFileSync(
+      path.join(repo, ".github", "pull_request_template.md"),
+      "## Why\n\n## Testing\n",
+    );
+    git(repo, ["add", "-A"]);
+    git(repo, ["commit", "-m", "init"]);
+    git(repo, ["switch", "-c", "feature"]);
+    fs.writeFileSync(path.join(repo, "a.txt"), "one\n");
+    git(repo, ["add", "-A"]);
+    git(repo, ["commit", "-m", "feat: add a.txt"]);
+    const project = await services.addProject(store, repo);
+    thread = services.createThread(store, { projectId: project.id, title: "PR text" });
+    store.updateThread(thread.id, { baseBranch: "main" });
+  });
+
+  afterEach(async () => {
+    await rmTree(tmpDir);
+  });
+
+  it("drafts title and body from commits, diffstat and the PR template", async () => {
+    const result = await suggestPrText({
+      store,
+      threadId: thread.id,
+      env: env("feat: add a.txt\n\n## Why\nNeeded it.\n\n## Testing\nRan it."),
+    });
+    assert.equal(result.title, "feat: add a.txt");
+    assert.match(result.body, /^## Why\nNeeded it\./);
+    const argv = JSON.parse(fs.readFileSync(logPath, "utf8"));
+    const prompt = argv[argv.length - 1];
+    assert.match(prompt, /- feat: add a\.txt/);
+    assert.match(prompt, /a\.txt \| 1 \+/);
+    assert.match(prompt, /## Testing/);
+  });
+
+  it("refuses generated text that carries a secret", async () => {
+    await assert.rejects(
+      suggestPrText({
+        store,
+        threadId: thread.id,
+        env: env(`feat: x\n\nkey AKIAIOSFODNN7EXAMPLE`),
+      }),
+      /secret/i,
+    );
+  });
+
+  it("refuses a branch with nothing ahead of base", async () => {
+    store.updateThread(thread.id, { baseBranch: "feature" });
+    await assert.rejects(
+      suggestPrText({ store, threadId: thread.id, env: env("x") }),
+      /no commits ahead/,
+    );
   });
 });
