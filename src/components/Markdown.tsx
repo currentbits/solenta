@@ -314,10 +314,12 @@ const MarkdownChunk = memo(function MarkdownChunk({
   text: string;
   live?: boolean;
 }) {
-  return live ? (
-    <LiveChunkContext.Provider value>{parseMarkdown(text)}</LiveChunkContext.Provider>
-  ) : (
-    cachedParse(text)
+  // Always the Provider, so a chunk settling keeps its tree (and each code
+  // block's highlight state) instead of remounting it.
+  return (
+    <LiveChunkContext.Provider value={live}>
+      {live ? parseMarkdown(text) : cachedParse(text)}
+    </LiveChunkContext.Provider>
   );
 });
 

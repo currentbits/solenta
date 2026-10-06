@@ -106,3 +106,13 @@ describe("mermaid sanitiser (#1506)", () => {
     assert.match(out, /<text>ok<\/text>/);
   });
 });
+
+describe("chunk settling (#1506)", () => {
+  it("keeps code blocks mounted when the streaming tail settles", async () => {
+    const text = "Intro\n\n```ts\nconst x = 1;\n```";
+    const m = await mount(<MarkdownBody text={text} streaming />);
+    const pre = m.query("pre");
+    await m.rerender(<MarkdownBody text={`${text}\n\nNext`} streaming />);
+    assert.equal(m.query("pre"), pre, "same <pre> node, not a remount");
+  });
+});
