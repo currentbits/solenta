@@ -12,6 +12,11 @@ function loadEngine(): Promise<Engine> {
   return enginePromise;
 }
 
+/** Load the engine now. Tests call this so highlight updates land inside act. */
+export function preloadHighlighter(): Promise<unknown> {
+  return loadEngine();
+}
+
 const BY_EXT: Record<string, string> = {
   ts: "typescript", tsx: "typescript", mts: "typescript", cts: "typescript",
   js: "javascript", jsx: "javascript", mjs: "javascript", cjs: "javascript",
